@@ -25,11 +25,12 @@ export type ShownItem = { index: number; id: string; date: string | null; label:
 
 export type ActorContext = { userId: string; companyId: string };
 
-const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {
+export const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {
   'expense.list_recent': { file: 'modules/line-ai/application/use-cases/erp-tools.use-case.js', exportName: 'ExpenseListRecentTool' },
   'expense.get_breakdown': { file: 'modules/line-ai/application/use-cases/erp-business-tools.use-case.js', exportName: 'ExpenseGetBreakdownTool' },
   'expense.get_detail': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ExpenseGetDetailTool' },
   'reimbursement.list_pending_approvals': { file: 'modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.js', exportName: 'ReimbursementListPendingApprovalsTool' },
+  'reimbursement.get_approval_backlog': { file: 'modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.js', exportName: 'ReimbursementGetApprovalBacklogTool' },
   'reimbursement.get_summary': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetSummaryTool' },
   'reimbursement.get_detail': { file: 'modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.js', exportName: 'ReimbursementGetDetailTool' },
   'expense.get_daily_closing': { file: 'modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.js', exportName: 'ExpenseGetDailyClosingTool' },
@@ -187,6 +188,7 @@ const DEFAULT_ANSWER_SHAPE: Record<string, AnswerShape> = {
   'expense.get_breakdown': 'breakdown',
   'expense.get_detail': 'detail',
   'reimbursement.list_pending_approvals': 'pending_approvals',
+  'reimbursement.get_approval_backlog': 'pending_approvals',
   'reimbursement.get_summary': 'single_metric',
   'reimbursement.get_detail': 'detail',
   'expense.get_daily_closing': 'daily_closing',

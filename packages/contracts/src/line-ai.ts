@@ -313,6 +313,14 @@ export type LineAiConversationContext = {
 };
 
 /** Internal request from API to AI Gateway for one LINE turn. */
+/** Current message wins over account locale and saved style; Thai-English input stays Thai. */
+export function lineReplyLanguage(text: string, fallback: 'th' | 'en' = 'th'): 'th' | 'en' {
+  if (/[\u0E00-\u0E7F]/u.test(text)) return 'th';
+  if (/^\/[a-z][a-z0-9-]*(?:\s|$)/iu.test(text.trim())) return fallback;
+  if (/^[A-Z0-9_.:/-]+$/u.test(text.trim()) && /\d/u.test(text)) return fallback;
+  return /[A-Za-z]/u.test(text) ? 'en' : fallback;
+}
+
 export type LineAiTurnRequest = {
   requestId: string;
   /** Idempotency key: LINE webhook event id */
@@ -328,6 +336,8 @@ export type LineAiTurnRequest = {
    *  about the caller's own company only — never another company's, never a permission grant. */
   entitledFeatureKeys?: string[];
   messageText: string;
+  /** Preserved presentation language for synthetic button/continuation turns. Never authority. */
+  language?: 'th' | 'en';
   /** Complete immutable v2 raw webhook evidence. When present, receivers must validate it and may
    *  not normalize, truncate, or fall back to the legacy parser after a mismatch. */
   inputEvidence?: LineAiInputEvidenceV2;

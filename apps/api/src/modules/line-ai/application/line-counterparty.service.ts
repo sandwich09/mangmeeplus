@@ -1,3 +1,4 @@
+import { lineControlData, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { BUYER_ENTITY_KINDS, hasToolFeature, scrubRecordIdentifier, scrubRecordText, thaiTaxIdChecksumValid, type BuyerEntityKind, type RequestContext, type ToolResult } from '@watchdog-bms/contracts';
@@ -19,13 +20,13 @@ export const COUNTERPARTY_DETAIL_PERMISSIONS = ['accounting.counterparty.read', 
   'expense.receipt.upload', 'expense.receipt.line_upload'] as const;
 type Patch = { displayName?: string; legalName?: string; taxId?: string; addressText?: string; branchCode?: string; entityKind?: BuyerEntityKind };
 export type CounterpartyControl = { action: 'counterparty_confirm' | 'counterparty_cancel'; token: string };
-export type CounterpartyPreview = { token: string; expiresAt: string; lines: string[] };
+export type CounterpartyPreview = { language?: LineReplyLanguage; token: string; expiresAt: string; lines: string[] };
 type StoredCounterparty = { previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; requestId: string; expiresAt: string; counterpartyId?: string; revision?: string;
   patch: Patch; preview: CounterpartyPreview; applied?: { id: string; revision: string } };
 const EXPIRED = 'ข้อมูลหรือการ์ดเปลี่ยนแล้วค่ะ กรุณาเตรียมการ์ดคู่ค้าใหม่';
 const LABELS: Record<keyof Patch, string> = { displayName: 'ชื่อคู่ค้า', legalName: 'ชื่อตามกฎหมาย', taxId: 'เลขผู้เสียภาษี', addressText: 'ที่อยู่', branchCode: 'สาขาภาษี', entityKind: 'ประเภทผู้รับเงิน' };
-const display = (value: unknown, key: string) => value === 'JURISTIC' ? 'นิติบุคคล' : value === 'INDIVIDUAL' ? 'บุคคลธรรมดา'
+const display = (value: unknown, key: string, language: LineReplyLanguage = 'th') => language === 'en' ? value === 'JURISTIC' ? 'Company' : value === 'INDIVIDUAL' ? 'Individual' : (key === 'taxId' || key === 'branchCode' ? scrubRecordIdentifier(String(value ?? '')) : scrubRecordText(String(value ?? ''), 500)) || 'Not provided' : value === 'JURISTIC' ? 'นิติบุคคล' : value === 'INDIVIDUAL' ? 'บุคคลธรรมดา'
   : (key === 'taxId' || key === 'branchCode' ? scrubRecordIdentifier(String(value ?? '')) : scrubRecordText(String(value ?? ''), 500)) || 'ยังไม่มี';
 
 export function isLineCounterpartyCommand(text: string): boolean {
@@ -44,11 +45,11 @@ export function parseCounterpartyControl(raw: unknown): CounterpartyControl | nu
     || !['counterparty_confirm', 'counterparty_cancel'].includes(action ?? '') || !token || !/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/u.test(token)) return null;
   return { action: action as CounterpartyControl['action'], token };
 }
-export function buildCounterpartyCard(preview: CounterpartyPreview): LineReplyMessage {
+export function buildCounterpartyCard(preview: CounterpartyPreview, language: LineReplyLanguage = preview.language ?? 'th'): LineReplyMessage {
   return asCompleteLineCard({ type: 'flex', altText: preview.lines[0]!, canonicalText: preview.lines.join('\n'), contents: { type: 'bubble',
     body: { type: 'box', layout: 'vertical', spacing: 'md', contents: preview.lines.map((text, i) => ({ type: 'text', text, wrap: true, ...(i === 0 ? { weight: 'bold' } : {}) })) },
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: (['counterparty_confirm', 'counterparty_cancel'] as const).map((action, i) => ({
-      type: 'button', style: i ? 'secondary' : 'primary', action: { type: 'postback', label: i ? 'ไม่ทำ' : 'ยืนยันบันทึก', data: new URLSearchParams({ action, token: preview.token }).toString() },
+      type: 'button', style: i ? 'secondary' : 'primary', action: { type: 'postback', label: language === 'en' ? i ? 'Cancel action' : 'Confirm save' : i ? 'ไม่ทำ' : 'ยืนยันบันทึก', data: lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) },
     })) } } });
 }
 function context(ctx: ErpToolContext): RequestContext {
@@ -127,14 +128,15 @@ export class LineCounterpartyService {
     const expected = this.sign(entry), supplied = token ?? entry.preview.token;
     return supplied.length === expected.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
   }
-  async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>): Promise<{ reply: string; preview?: CounterpartyPreview }> {
+  async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, language: LineReplyLanguage = 'th'): Promise<{ reply: string; preview?: CounterpartyPreview }> {
+    const en = language === 'en';
     try {
-      if (!chat || !this.store.available || !this.config.aiGatewayInternalSecret) return { reply: 'กรุณาเตรียมคู่ค้าในแชตส่วนตัวอีกครั้งค่ะ' };
+      if (!chat || !this.store.available || !this.config.aiGatewayInternalSecret) return { reply: (en ? 'Please prepare the supplier in a private chat.' : 'กรุณาเตรียมคู่ค้าในแชตส่วนตัวอีกครั้งค่ะ') };
       const owner = await this.owner(ctx, chat);
-      if (!owner) return { reply: EXPIRED };
+      if (!owner) return { reply: en ? 'This proposal expired; please prepare a new supplier card.' : EXPIRED };
       if (!['CREATE', 'UPDATE'].includes(String(input.action))) throw new BadRequestException('เลือกเพิ่มหรือแก้ไขคู่ค้าค่ะ');
       const id = input.action === 'UPDATE' && typeof input.counterpartyId === 'string' ? input.counterpartyId.trim() : undefined;
-      if (input.action === 'UPDATE' && (!id || id.length > 200)) return { reply: 'ต้องการแก้ไขคู่ค้ารายไหนคะ' };
+      if (input.action === 'UPDATE' && (!id || id.length > 200)) return { reply: (en ? 'Which supplier would you like to edit?' : 'ต้องการแก้ไขคู่ค้ารายไหนคะ') };
       const old = await this.authorize(ctx, id);
       const patch: Patch = {};
       for (const key of Object.keys(LABELS) as Array<keyof Patch>) {
@@ -149,20 +151,20 @@ export class LineCounterpartyService {
         if (key === 'taxId' && value && /^[\d\s-]+$/u.test(value) && !/^\d{13}$/u.test(value.replace(/[\s-]/gu, ''))) throw new BadRequestException('เลขผู้เสียภาษีไทยต้องมีสิบสามหลักค่ะ');
         Object.assign(patch, { [key]: key === 'taxId' && /^[\d\s-]+$/u.test(value) ? value.replace(/[\s-]/gu, '') : key === 'branchCode' && value ? normalizeBranchCode(value)! : value });
       }
-      if (!id && !patch.displayName) return { reply: 'คู่ค้าที่จะเพิ่มชื่ออะไรคะ' };
-      if (!Object.keys(patch).length) return { reply: 'ต้องการแก้ไขข้อมูลส่วนไหนของคู่ค้าคะ' };
+      if (!id && !patch.displayName) return { reply: (en ? 'What is the new supplier’s name?' : 'คู่ค้าที่จะเพิ่มชื่ออะไรคะ') };
+      if (!Object.keys(patch).length) return { reply: (en ? 'Which supplier details would you like to change?' : 'ต้องการแก้ไขข้อมูลส่วนไหนของคู่ค้าคะ') };
       const before = old ? { ...old, addressText: counterpartyAddressText(old.billingAddressJson) } : {};
-      const lines = [id ? 'ตรวจข้อมูลที่จะแก้ไขแล้วกดยืนยันค่ะ' : 'ตรวจคู่ค้าที่จะเพิ่มแล้วกดยืนยันค่ะ',
-        ...Object.entries(patch).map(([key, value]) => `${LABELS[key as keyof Patch]}: ${display((before as Record<string, unknown>)[key], key)} → ${display(value, key)}`),
-        ...(patch.taxId && /^\d{13}$/u.test(patch.taxId) && !thaiTaxIdChecksumValid(patch.taxId) ? ['เลขท้ายไม่ตรงตามสูตร ตรวจอีกครั้ง หรือกดบันทึกถ้าแน่ใจค่ะ'] : [])];
+      const lines = [id ? (en ? 'Review the changes before confirming.' : 'ตรวจข้อมูลที่จะแก้ไขแล้วกดยืนยันค่ะ') : (en ? 'Review the new supplier before confirming.' : 'ตรวจคู่ค้าที่จะเพิ่มแล้วกดยืนยันค่ะ'),
+        ...Object.entries(patch).map(([key, value]) => `${en ? ({ displayName: 'Supplier name', legalName: 'Legal name', taxId: 'Tax ID', addressText: 'Address', branchCode: 'Tax branch', entityKind: 'Payee type' } as Record<string, string>)[key] : LABELS[key as keyof Patch]}: ${display((before as Record<string, unknown>)[key], key, language)} → ${display(value, key, language)}`),
+        ...(patch.taxId && /^\d{13}$/u.test(patch.taxId) && !thaiTaxIdChecksumValid(patch.taxId) ? [(en ? 'The tax ID checksum differs; review it before confirming.' : 'เลขท้ายไม่ตรงตามสูตร ตรวจอีกครั้ง หรือกดบันทึกถ้าแน่ใจค่ะ')] : [])];
       const entry: StoredCounterparty = { previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, requestId: ctx.requestId,
         expiresAt: new Date(Date.now() + 600_000).toISOString(), ...(id ? { counterpartyId: id, revision: old!.updatedAt.toISOString() } : {}), patch,
-        preview: { token: '', expiresAt: '', lines } };
-      entry.preview = { token: this.sign(entry), expiresAt: entry.expiresAt, lines };
-      if (!await this.store.save(entry)) return { reply: 'กำลังบันทึกคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง' };
+        preview: { language, token: '', expiresAt: '', lines } };
+      entry.preview = { language, token: this.sign(entry), expiresAt: entry.expiresAt, lines };
+      if (!await this.store.save(entry)) return { reply: (en ? 'A previous request is still saving; please try again.' : 'กำลังบันทึกคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
       return { reply: lines[0]!, preview: entry.preview };
-    } catch (error) { if (!(error instanceof HttpException)) throw error; return { reply: this.refusal(error) }; }
+    } catch (error) { if (!(error instanceof HttpException)) throw error; return { reply: en ? error instanceof ForbiddenException ? 'Ask the shop owner or an authorized administrator to manage this supplier.' : 'Please check the supplier details and try again.' : this.refusal(error) }; }
   }
   async pending(ctx: RequestContext, chat: string, requestId?: string): Promise<CounterpartyPreview | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
@@ -174,27 +176,27 @@ export class LineCounterpartyService {
     if (!row || row.updatedAt.toISOString() !== revision) throw new NotFoundException();
     return { id: row.id, name: row.displayName, taxId: row.taxId ?? null, address: counterpartyAddressText(row.billingAddressJson), entityKind: row.entityKind ?? null };
   }
-  async apply(ctx: RequestContext, chat: string, control: CounterpartyControl): Promise<{ status: 'applied' | 'replayed' | 'blocked' | 'cancelled'; reply: string; source?: { id: string; revision: string } }> {
+  async apply(ctx: RequestContext, chat: string, control: CounterpartyControl, language: LineReplyLanguage = 'th'): Promise<{ status: 'applied' | 'replayed' | 'blocked' | 'cancelled'; reply: string; source?: { id: string; revision: string } }> {
     const previous = await this.store.loadApplied(ctx.companyId, this.key(chat));
     if (previous?.applied && await this.bound(ctx, chat, previous, control.token)) {
       try { const row = await this.authorize(ctx, previous.applied.id); return row?.updatedAt.toISOString() === previous.applied.revision
-        ? { status: 'replayed', reply: 'บันทึกคู่ค้ารายการนี้แล้วค่ะ', source: previous.applied } : { status: 'blocked', reply: EXPIRED }; } catch { return { status: 'blocked', reply: EXPIRED }; }
+        ? { status: 'replayed', reply: language === 'en' ? 'This supplier has already been saved.' : 'บันทึกคู่ค้ารายการนี้แล้วค่ะ', source: previous.applied } : { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; } catch { return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; }
     }
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), control.token.split('.')[0]!);
-    if (!claim) return { status: 'blocked', reply: EXPIRED };
+    if (!claim) return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED };
     const entry = claim.entry;
     try {
-      if (!await this.bound(ctx, chat, entry, control.token)) return { status: 'blocked', reply: EXPIRED };
-      if (control.action === 'counterparty_cancel') { await this.store.discard(ctx.companyId, this.key(chat)); return { status: 'cancelled', reply: 'ไม่บันทึกการแก้ไขคู่ค้าค่ะ' }; }
+      if (!await this.bound(ctx, chat, entry, control.token)) return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED };
+      if (control.action === 'counterparty_cancel') { await this.store.discard(ctx.companyId, this.key(chat)); return { status: 'cancelled', reply: language === 'en' ? 'Supplier changes cancelled.' : 'ไม่บันทึกการแก้ไขคู่ค้าค่ะ' }; }
       const old = await this.authorize(ctx, entry.counterpartyId);
-      if (old && old.updatedAt.toISOString() !== entry.revision) return { status: 'blocked', reply: EXPIRED };
+      if (old && old.updatedAt.toISOString() !== entry.revision) return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED };
       const row = entry.counterpartyId ? await this.update.execute(ctx, entry.counterpartyId, { ...entry.patch, expectedUpdatedAt: entry.revision })
         : await this.create.execute(ctx, { ...entry.patch, displayName: entry.patch.displayName! });
       entry.applied = { id: row.id, revision: row.updatedAt.toISOString() };
       await this.store.remember(ctx.companyId, this.key(chat), entry);
       await this.store.discard(ctx.companyId, this.key(chat));
-      return { status: 'applied', reply: 'บันทึกข้อมูลคู่ค้าแล้วค่ะ', source: entry.applied };
-    } catch (error) { if (!(error instanceof HttpException)) throw error; return { status: 'blocked', reply: this.refusal(error) }; }
+      return { status: 'applied', reply: language === 'en' ? 'Supplier details saved.' : 'บันทึกข้อมูลคู่ค้าแล้วค่ะ', source: entry.applied };
+    } catch (error) { if (!(error instanceof HttpException)) throw error; return { status: 'blocked', reply: language === 'en' ? error instanceof ForbiddenException || error instanceof NotFoundException ? 'Ask the shop owner or an authorized administrator to manage this supplier.' : 'Please review the supplier details and prepare a new card.' : this.refusal(error) }; }
     finally { await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token); }
   }
   private refusal(error: HttpException) {
@@ -207,6 +209,6 @@ export class CounterpartyActionPreviewTool implements ErpReadToolPort {
   readonly toolName = 'counterparty.action.preview';
   constructor(private readonly service: LineCounterpartyService) {}
   async execute(ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> {
-    return result(ctx, this.toolName, await this.service.preview(context(ctx), ctx.chatKeyHash, input));
+    return result(ctx, this.toolName, await this.service.preview(context(ctx), ctx.chatKeyHash, input, ctx.locale.startsWith('en') ? 'en' : 'th'));
   }
 }

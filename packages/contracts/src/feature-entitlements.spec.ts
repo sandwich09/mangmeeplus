@@ -269,7 +269,7 @@ import { verifyLineAiRetainedTaskSource } from './line-ai.js';
 describe('Fix-up 15: action entry × capability group × current access', () => {
   for (const action of LINE_CHAT_ACTIONS) it(`${action.group}/${action.id} requires its real operation permission and feature`, () => {
     const features = new Set([...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload']);
-    const permissions = ['ai.tool.invoke', action.permission];
+    const permissions = ['ai.tool.invoke', action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])];
     assert.ok(LINE_CAPABILITY_GROUPS.some(group => group.id === action.group));
     assert.equal(canUseLineChatAction(action.id, permissions, features), true);
     assert.equal(canUseLineChatAction(action.id, ['ai.tool.invoke'], features), false);

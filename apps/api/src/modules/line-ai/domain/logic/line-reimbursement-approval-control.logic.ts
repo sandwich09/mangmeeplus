@@ -1,3 +1,4 @@
+import { lineControlData, type LineReplyLanguage } from './line-language.logic';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export type ReimbursementApprovalOpenAction = 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit';
@@ -8,9 +9,9 @@ export function verifyReimbursementApprovalOpenToken(secret: string, company: st
   const expected = reimbursementApprovalOpenToken(secret, company, user, token.split('.')[0]!, action);
   return Boolean(secret) && token.length === expected.length && timingSafeEqual(Buffer.from(token), Buffer.from(expected));
 }
-export function reimbursementApprovalButtons(secret: string, company: string, user: string, id: string) {
+export function reimbursementApprovalButtons(secret: string, company: string, user: string, id: string, language: LineReplyLanguage = 'th') {
   return (['expense_action_approve', 'expense_action_reject'] as const).map((action, i) => ({
-    type: 'button', style: i === 0 ? 'primary' : 'secondary', action: { type: 'postback', label: i === 0 ? 'อนุมัติ' : 'ไม่อนุมัติ',
-      data: new URLSearchParams({ action, token: reimbursementApprovalOpenToken(secret, company, user, id, action) }).toString() },
+    type: 'button', style: i === 0 ? 'primary' : 'secondary', action: { type: 'postback', label: language === 'en' ? i === 0 ? 'Approve' : 'Reject' : i === 0 ? 'อนุมัติ' : 'ไม่อนุมัติ',
+      data: lineControlData(new URLSearchParams({ action, token: reimbursementApprovalOpenToken(secret, company, user, id, action) }).toString(), language) },
   }));
 }

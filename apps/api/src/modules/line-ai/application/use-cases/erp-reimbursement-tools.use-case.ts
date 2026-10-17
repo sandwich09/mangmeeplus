@@ -1,8 +1,10 @@
+import { lineReplyLanguage, lineUiLabel } from '../../domain/logic/line-language.logic';
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type { SourceRef, ToolResult } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+import { ListReimbursementsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { GetReimbursementApprovalBacklogUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import { BUSINESS_READ_BASIS_VERSION, appliedQuery, completeResult } from '../../domain/logic/business-read-source.logic';
 
@@ -19,27 +21,26 @@ function toCtx(ctx: ErpToolContext): RequestContext {
 export class ReimbursementListPendingApprovalsTool implements ErpReadToolPort {
   toolName = 'reimbursement.list_pending_approvals';
 
-  // The web approval queue is `ListApprovalQueueUseCase`: it needs `reimbursement.approve` and
-  // returns only the rows this approver may act on (branch scope + eligible approval step). This
-  // tool used to gate on `reimbursement.read` and read the repository directly, so any reader got
-  // the whole company's pending queue over LINE — a wider answer than the same person can see on
-  // the web. Going through the use case keeps the scoping correct by construction.
-  constructor(private readonly approvalQueue: ListApprovalQueueUseCase) {}
+  constructor(
+    private readonly approvalQueue: ListApprovalQueueUseCase,
+    private readonly claims: ListReimbursementsUseCase,
+  ) {}
 
-  async execute(ctx: ErpToolContext, _input?: Record<string, unknown>): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: Record<string, unknown> = {}): Promise<ToolResult> {
     const asOf = new Date().toISOString();
-    // Item 3 (223-turn eval batch 2, T-143): a bare 'forbidden' gave the caller nothing to render,
-    // so a STAFF user asking for the approval queue got their own claims summary instead (either a
-    // silent fallback to a different tool, or a swap the model made on its own) with no statement
-    // that they cannot see the queue at all. A typed errorCode survives the gateway's
-    // enforceSourceHonesty boundary (non-'ok' results keep only toolName/status/sourceRefs/asOf/
-    // errorCode/errorMessage) so the gateway can render an honest "คุณไม่มีสิทธิ์ดูรายการรออนุมัติ"
-    // instead of any answer shaped like the approval queue.
-    if (!ctx.permissions.includes('reimbursement.approve')) {
+    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale.startsWith('en') ? 'en' : 'th');
+    const canReadAll = ctx.permissions.includes('reimbursement.read');
+    const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
+    if (!canReadAll && !canReadRelated && !ctx.permissions.includes('reimbursement.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf, errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED' };
     }
 
-    const rows = await this.approvalQueue.execute(toCtx(ctx));
+    // Owner 2026-10-17: reading pending claims uses the web list's read/branch guards;
+    // only an explicit "waiting for me to approve" uses the actionable approval queue.
+    const forApprover = input.approver === 'me' && ctx.permissions.includes('reimbursement.approve');
+    const accessScope = forApprover ? 'approver' : canReadAll ? 'company' : canReadRelated ? 'related' : 'own';
+    const page = forApprover ? undefined : await this.claims.execute(toCtx(ctx), { status: 'PENDING_APPROVAL', page: 1, pageSize: 10 });
+    const rows = page?.items ?? await this.approvalQueue.execute(toCtx(ctx));
     const sourceRefs: SourceRef[] = [{
       label: 'รายการเบิกจ่ายรออนุมัติ',
       module: 'reimbursements',
@@ -53,7 +54,8 @@ export class ReimbursementListPendingApprovalsTool implements ErpReadToolPort {
       toolName: this.toolName,
       status: 'ok',
       data: {
-        total: rows.length,
+        accessScope,
+        total: page?.total ?? rows.length,
         items: rows.slice(0, 10).map((row) => ({
           id: row.id,
           documentNumber: row.requestNo ?? null,
@@ -63,6 +65,9 @@ export class ReimbursementListPendingApprovalsTool implements ErpReadToolPort {
           submittedAt: row.submittedAt ?? null,
           status: row.status,
           branch: row.branchId ?? null,
+          ...('currentDesk' in row && row.currentDesk ? {
+            waitingOn: row.currentDesk.names?.join(language === 'en' ? ' or ' : ' หรือ ') || lineUiLabel(REIMBURSEMENT_DESK_LABELS[row.currentDesk.kind], language),
+          } : {}),
         })),
       },
       sourceRefs,

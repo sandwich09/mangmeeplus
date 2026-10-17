@@ -1283,3 +1283,18 @@ describe('internal timeout cost estimates (owner no-charge rule)', () => {
     assert.equal(media.outputTokens, 17);
   });
 });
+
+
+it('Exam D: a zero-token provider failure logs its exception class and HTTP status without private error text', async () => {
+  const provider = makeProvider(), captured = captureUsageLines();
+  (provider as any).client = { send: async () => { throw Object.assign(new Error('private user text'), {
+    name: 'ServiceUnavailableException', $metadata: { httpStatusCode: 503 } }); } };
+  try {
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'ดูค่าใช้จ่าย' }], usageTag: 'line.intake-route' });
+    assert.equal(result.ok, false);
+    assert.equal(captured.lines.length, 1);
+    assert.equal(captured.lines[0].providerStatus, 503);
+    assert.equal(captured.lines[0].providerErrorClass, 'ServiceUnavailableException');
+    assert.doesNotMatch(JSON.stringify(captured.lines), /private user text/);
+  } finally { captured.restore(); }
+});

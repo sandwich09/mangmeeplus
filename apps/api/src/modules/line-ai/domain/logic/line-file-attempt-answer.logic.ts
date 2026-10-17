@@ -57,7 +57,8 @@ const timeLabel = (at: Date): string =>
   new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(at);
 
 /** The list shown when more than one attempt could be the one the customer means (§17.5). */
-export function fileAttemptChoiceList(attempts: readonly LineFileAttemptFacts[]): string {
+export function fileAttemptChoiceList(attempts: readonly LineFileAttemptFacts[], language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') return ['Which file do you mean?', ...attempts.map(attempt => `• ${attempt.fileNameSanitized ?? (attempt.messageType === 'file' ? 'File' : 'Photo')} · ${timeLabel(attempt.createdAt)} · ${englishAttemptState(attempt)}`)].join('\n');
   return [
     FILE_ATTEMPT_AMBIGUOUS_LEAD,
     ...attempts.map(attempt =>
@@ -87,7 +88,17 @@ function shortStateTh(attempt: LineFileAttemptFacts): string {
 export function fileAttemptAnswer(
   attempt: LineFileAttemptFacts,
   resolvedFrom?: LineFileAttemptFacts,
+  language: 'th' | 'en' = 'th',
 ): string {
+  if (language === 'en') {
+    const link = linkTail(attempt);
+    if (resolvedFrom?.outcome === 'REJECTED' && attempt.outcome !== 'REJECTED') return `The earlier upload was rejected; now ${englishAttemptState(attempt).toLowerCase()}.${link}`;
+    if (attempt.outcome !== 'REJECTED') return `${englishAttemptState(attempt)}.${link}`;
+    if (attempt.reasonCode === 'oversize_declared' || attempt.reasonCode === 'oversize_measured') return `This file exceeds the accepted size${attempt.capability.maxBytes ? ` of ${expenseCaptureMegabytes(attempt.capability.maxBytes)}` : ''}; it was not stored, so send a smaller file.`;
+    if (['METADATA_REJECTED', 'EXTENSION_MIME_MISMATCH'].includes(attempt.reasonCode)) return 'This file type is unsupported and was not stored; send a PDF or supported image file.';
+    if (['CONTENT_REJECTED', 'MALWARE_DETECTED', 'MALWARE_SCAN_FAILED'].includes(attempt.reasonCode)) return 'This file did not pass the security check and was not stored; resend the original file from its source.';
+    return 'This file could not be received or stored; no expense was created, so check the web before resending it.';
+  }
   if (resolvedFrom && resolvedFrom.outcome === 'REJECTED' && attempt.outcome !== 'REJECTED') {
     return `ตอนแรก ${rejectionCauseTh(resolvedFrom)} ตอนนี้ ${shortStateTh(attempt)} แล้วค่ะ${linkTail(attempt)}`;
   }
@@ -176,6 +187,11 @@ function mimeLabel(mimeType: string): string {
  * UXE-25: the read finished but LINE never accepted the push. The answer must say the RESULT is
  * ready and where to see it, without claiming the customer was told.
  */
-export const FILE_ATTEMPT_DELIVERY_FAILED_REPLY = (link: string): string =>
+export const FILE_ATTEMPT_DELIVERY_FAILED_REPLY = (link: string, language: 'th' | 'en' = 'th'): string =>
+  language === 'en' ? `Document reading finished, but the result could not be delivered here; view it on the web: ${link}` :
   `อ่านเอกสารเสร็จแล้วค่ะ แต่ส่งผลให้ทางแชตนี้ไม่สำเร็จ จึงยังไม่ได้แจ้งผลก่อนหน้านี้ `
   + `เปิดดูผลได้ที่นี่\n${link}`;
+
+function englishAttemptState(attempt: LineFileAttemptFacts): string {
+  return ({ REJECTED: 'File not stored', STORED: 'File stored; automatic reading has not started', STORED_READING: 'File stored and being read', STORED_READ_FAILED: 'File stored; reading failed, so review it on the web', STORED_READ_PARTIAL: 'File stored; some details still need review on the web', STORED_READ_DONE: 'Document reading finished', UNKNOWN: 'The file status could not be verified' } as const)[attempt.outcome];
+}

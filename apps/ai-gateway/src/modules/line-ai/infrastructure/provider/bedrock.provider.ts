@@ -204,6 +204,7 @@ export class BedrockProvider implements IModelProvider {
     let usage: TokenUsage | undefined;
     let usageEstimated = false;
     let errorCode: string | undefined;
+    let providerFailure: { providerErrorClass?: string; providerStatus?: number } | undefined;
     let retryCount = 0;
     try {
       // The retry lives INSIDE this one guarded call rather than at a call site: a throttled attempt
@@ -218,6 +219,9 @@ export class BedrockProvider implements IModelProvider {
           if ('completion' in parsed && parsed.completion === 'output_limit') errorCode = 'PROVIDER_OUTPUT_INCOMPLETE';
           return { ok: true, ...parsed };
         } catch (err) {
+          const failure = err as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+          providerFailure = { ...(typeof failure?.name === 'string' ? { providerErrorClass: failure.name } : {}),
+            ...(typeof failure?.$metadata?.httpStatusCode === 'number' ? { providerStatus: failure.$metadata.httpStatusCode } : {}) };
           const timedOut = controller.signal.aborted;
           const providerCode = (err as { code?: unknown })?.code;
           const isProviderResponseError = providerCode === 'PROVIDER_OUTPUT_INCOMPLETE' || providerCode === 'PROVIDER_BLOCKED'
@@ -249,7 +253,7 @@ export class BedrockProvider implements IModelProvider {
       context?.signal?.removeEventListener('abort', abortFromCaller);
       // Logged here so exactly one line is emitted whatever throws, and so logging can never
       // double-log or turn a success into an error.
-      logProviderUsage(this.cfg.modelId, usageTag, startedAt, usage, errorCode, usageEstimated, retryCount);
+      logProviderUsage(this.cfg.modelId, usageTag, startedAt, usage, errorCode, usageEstimated, retryCount, errorCode ? providerFailure : undefined);
     }
   }
 
@@ -312,6 +316,7 @@ export function logProviderUsage(
   errorCode?: string,
   usageEstimated = false,
   retryCount = 0,
+  providerFailure?: { providerErrorClass?: string; providerStatus?: number },
 ): void {
   const entry: AiUsageEntry = {
     tag: tag ?? 'untagged',
@@ -338,6 +343,7 @@ export function logProviderUsage(
       ok: entry.ok,
       ...(companyId ? { companyId } : {}),
       ...(errorCode ? { errorCode } : {}),
+      ...providerFailure,
       ...(usage ? {
         inputTokens: entry.inputTokens,
         outputTokens: entry.outputTokens,

@@ -1,3 +1,4 @@
+import { lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -49,13 +50,13 @@ export class LineVoucherActionService {
     return '';
   }
 
-  async payeeChoices(ctx: RequestContext) {
+  async payeeChoices(ctx: RequestContext, language: LineReplyLanguage = 'th') {
     await this.authorize(ctx, 'VOUCHER_CREATE');
     const rows = ctx.permissions.includes('accounting.counterparty.read') && this.listCounterparties
       ? (await this.listCounterparties.execute(ctx, 1, 4)).data : [];
     return rows.filter(row => isVoucherPayeeName(row.displayName)).slice(0, 4)
       .map(row => ({ label: scrubRecordText(row.displayName, 20), text: row.displayName }))
-      .concat([{ label: 'พิมพ์ชื่อเอง', text: 'พิมพ์ชื่อเอง' }]);
+      .concat([{ label: language === 'en' ? 'Type payee name' : 'พิมพ์ชื่อเอง', text: language === 'en' ? 'Type payee name' : 'พิมพ์ชื่อเอง' }]);
   }
 
   async authorize(ctx: RequestContext, action: VoucherAction) {
@@ -99,7 +100,8 @@ export class LineVoucherActionService {
       vendorNameSnapshot: handoffs?.[0]?.prefill.payeeSnapshot.name ?? voucher.header.payeeName, grandTotalAmount: handoffs?.[0]?.prefill.grossAmount ?? voucher.header.totalAmount, currency: voucher.header.currency, status: voucher.header.status,
       claim: undefined as ReimbursementRequestDetail | undefined, digest: deliveryHash({ voucher, handoffs }) };
   }
-  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
+  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>, language: LineReplyLanguage = 'th'): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
+    const en = language === 'en';
     await this.authorize(ctx, action);
     const payload: VoucherActionPayload = { action, id, ...(typeof input.reason === 'string' ? { reason: input.reason.trim() } : {}) };
     const details: string[] = [];
@@ -118,11 +120,11 @@ export class LineVoucherActionService {
       try { await this.vouchers.previewLineAction(ctx, 'create', { draft: payload.draft }); } catch (error) {
         if ((error as { getResponse?: () => { code?: string } }).getResponse?.().code === 'disbursement_payee_confirmation_required') {
           payload.draft.payeeConfirmed = true;
-          details.push(`กดสร้างเพื่อยืนยันว่ารายจ่ายทั้งหมดจ่ายให้ ${scrubRecordText(sources[0]!.vendorNameSnapshot, 80)} ค่ะ`);
+          details.push(en ? `Confirm that all selected expenses are payable to ${scrubRecordText(sources[0]!.vendorNameSnapshot, 80)}.` : `กดสร้างเพื่อยืนยันว่ารายจ่ายทั้งหมดจ่ายให้ ${scrubRecordText(sources[0]!.vendorNameSnapshot, 80)} ค่ะ`);
           await this.vouchers.previewLineAction(ctx, 'create', { draft: payload.draft });
         } else throw error;
       }
-      details.push(...sources.map(row => `${scrubRecordText(row.vendorNameSnapshot, 60)} · จ่าย ${payload.draft!.lines.find(line => line.expenseId === row.id)!.amount} บาท · หักภาษี ${new Decimal(row.whtAmount).toFixed(2)} บาท`));
+      details.push(...sources.map(row => `${scrubRecordText(row.vendorNameSnapshot, 60)} · ${en ? 'Payment' : 'จ่าย'} ${payload.draft!.lines.find(line => line.expenseId === row.id)!.amount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${new Decimal(row.whtAmount).toFixed(2)} ${en ? 'THB' : 'บาท'}`));
     } else {
       const voucher = await this.vouchers.get(ctx, id, true);
       if ((action === 'VOUCHER_APPROVE' || action === 'VOUCHER_PAY') && ['DRAFT', 'PENDING_APPROVAL'].includes(voucher.header.status)) {
@@ -149,11 +151,11 @@ export class LineVoucherActionService {
           else awaitingField = 'payeeAddress';
         }
         // The web issuer owns every precondition. A placeholder lets us check the remaining fields while asking for the missing address.
-        const previews = await Promise.all(handoffs.map(row => this.issue.previewLineAction(ctx, row.id, payload.payeeAddress ?? (awaitingField ? 'รอที่อยู่ผู้รับเงิน' : undefined))));
-        details.push(...previews.map(row => `ผู้รับเงิน: ${scrubRecordText(row.prefill.payeeSnapshot.name, 80)} · ประเภทเงินได้: ${scrubRecordText(row.prefill.incomeCategoryName, 80)}`));
-        details.push(...previews.map(row => `เงินได้ ${row.prefill.grossAmount} บาท · หักภาษี ${row.prefill.withheldAmount} บาท`));
+        const previews = await Promise.all(handoffs.map(row => this.issue.previewLineAction(ctx, row.id, payload.payeeAddress ?? (awaitingField ? (en ? 'Payee address required' : 'รอที่อยู่ผู้รับเงิน') : undefined))));
+        details.push(...previews.map(row => `${en ? 'Payee' : 'ผู้รับเงิน'}: ${scrubRecordText(row.prefill.payeeSnapshot.name, 80)} · ${en ? 'Income category' : 'ประเภทเงินได้'}: ${scrubRecordText(row.prefill.incomeCategoryName, 80)}`));
+        details.push(...previews.map(row => `${en ? 'Gross income' : 'เงินได้'} ${row.prefill.grossAmount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${row.prefill.withheldAmount} ${en ? 'THB' : 'บาท'}`));
         const address = payload.payeeAddress ?? whtPayeeAddress(handoffs[0]!.payeeAddress, handoffs[0]!.prefill.payeeSnapshot.address);
-        if (address) details.push(`ที่อยู่ผู้รับเงิน: ${address.replace(/[\u0000-\u001f\u007f]/gu, ' ').slice(0, 500)}`);
+        if (address) details.push(`${en ? 'Payee address' : 'ที่อยู่ผู้รับเงิน'}: ${address.replace(/[\u0000-\u001f\u007f]/gu, ' ').slice(0, 500)}`);
       } else {
         if ((action === 'VOUCHER_RETURN' || action === 'VOUCHER_CANCEL') && !payload.reason) awaitingField = 'reason';
         if (action === 'VOUCHER_PAY') payload.payment = { commandId: 'line-preview', expectedVersion: voucher.header.version,
@@ -161,8 +163,8 @@ export class LineVoucherActionService {
           ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as PayDisbursementVoucherInput['paymentMethod'] } : {}) };
         if (payload.payment && !payload.payment.paymentMethod && !voucher.header.plannedMethod) awaitingField = 'paymentMethod';
         await this.vouchers.previewLineAction(ctx, operation(action), { id, reason: awaitingField === 'reason' ? 'รอเหตุผลจากผู้ใช้' : payload.reason, payment: awaitingField === 'paymentMethod' ? { ...payload.payment!, paymentMethod: 'CASH' } : payload.payment });
-        details.push(...voucher.lines.map(line => `${scrubRecordText(line.vendorName, 60)} · จ่าย ${line.amount} บาท · หักภาษี ${line.whtAmount} บาท`));
-        if (payload.payment) details.push(`วันที่จ่าย ${formatThaiDate(payload.payment.paidDate!)} · ${((payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CASH' ? 'เงินสด' : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'BANK_TRANSFER' ? 'โอนเงิน' : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CARD' ? 'บัตร' : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CHEQUE' ? 'เช็ค' : 'วิธีอื่น')}`);
+        details.push(...voucher.lines.map(line => `${scrubRecordText(line.vendorName, 60)} · ${en ? 'Payment' : 'จ่าย'} ${line.amount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${line.whtAmount} ${en ? 'THB' : 'บาท'}`));
+        if (payload.payment) details.push(`${en ? 'Payment date' : 'วันที่จ่าย'} ${lineDisplayDate(payload.payment.paidDate!, language)} · ${((payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CASH' ? (en ? 'Cash' : (en ? 'Cash' : 'เงินสด')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'BANK_TRANSFER' ? (en ? 'Bank transfer' : (en ? 'Bank transfer' : 'โอนเงิน')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CARD' ? (en ? 'Card' : (en ? 'Card' : 'บัตร')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CHEQUE' ? (en ? 'Cheque' : (en ? 'Cheque' : 'เช็ค')) : (en ? 'Other' : 'วิธีอื่น'))}`);
       }
     }
     return { payload, details, awaitingField, record: await this.read(ctx, payload), nextStatus: action === 'VOUCHER_CREATE' || action === 'VOUCHER_RETURN' ? 'DRAFT' : action === 'VOUCHER_SUBMIT' ? 'PENDING_APPROVAL' : action === 'VOUCHER_APPROVE' ? 'APPROVED' : action === 'VOUCHER_PAY' ? 'PAID' : action === 'VOUCHER_CANCEL' ? 'CANCELLED' : 'PAID' };

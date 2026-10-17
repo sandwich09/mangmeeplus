@@ -74,6 +74,7 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
   if (typeof envelope.messagingChannelId !== 'string') return null;
   if (envelope.channelKind !== undefined && !['USER', 'GROUP', 'ROOM'].includes(envelope.channelKind)) return null;
   if (!item || typeof item.webhookEventId !== 'string' || typeof item.replyToken !== 'string') return null;
+  if ('language' in item && item.language !== undefined && item.language !== 'th' && item.language !== 'en') return null;
   if (item.kind === 'text') {
     if (typeof item.text !== 'string') return null;
     if ('inputEvidence' in item && !parseLineAiInputEvidence(item.inputEvidence, item.text)) return null;

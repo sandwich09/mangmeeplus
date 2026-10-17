@@ -66,7 +66,16 @@ function isFileAttemptQuestion(original: string, normalized: string): boolean {
  *  so they cannot say it differently. */
 export type ReceiptProgress = { state: string; next?: string; tone: 'ok' | 'pending' | 'closed' };
 
-export function receiptProgress(status: string, verificationStatus?: string | null): ReceiptProgress {
+export function receiptProgress(status: string, verificationStatus?: string | null, language: 'th' | 'en' = 'th'): ReceiptProgress {
+  if (language === 'en') {
+    if (status === 'CONFIRMED') return { state: 'Expense confirmed', tone: 'ok' };
+    if (status === 'VOIDED') return { state: 'Expense voided', tone: 'closed' };
+    if (status === 'REJECTED') return { state: 'Expense rejected', tone: 'closed' };
+    if (status === 'EXTRACTING' || verificationStatus === 'VERIFYING') return { state: 'Reading receipt', tone: 'pending' };
+    if (verificationStatus === 'FAILED') return { state: 'Image stored', next: 'reading failed; review on web', tone: 'pending' };
+    if (['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(status)) return { state: 'Draft saved', next: 'awaiting your review and confirmation', tone: 'pending' };
+    return { state: 'Status not verified', tone: 'pending' };
+  }
   if (status === 'CONFIRMED') return { state: 'ยืนยันรายการแล้ว', tone: 'ok' };
   if (status === 'VOIDED') return { state: 'ยกเลิกรายการแล้ว', tone: 'closed' };
   if (status === 'REJECTED') return { state: 'รายการไม่ผ่านการตรวจ', tone: 'closed' };
@@ -76,7 +85,7 @@ export function receiptProgress(status: string, verificationStatus?: string | nu
   return { state: 'ยังยืนยันสถานะไม่ได้', tone: 'pending' };
 }
 
-export function receiptProgressLabel(status: string, verificationStatus?: string | null): string {
-  const { state, next } = receiptProgress(status, verificationStatus);
+export function receiptProgressLabel(status: string, verificationStatus?: string | null, language: 'th' | 'en' = 'th'): string {
+  const { state, next } = receiptProgress(status, verificationStatus, language);
   return next ? `${state} ${next}` : state;
 }

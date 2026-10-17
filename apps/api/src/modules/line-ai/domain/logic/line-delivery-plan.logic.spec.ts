@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
-import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
+import { EXPENSE_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
+import { buildLineDeliveryPlan, lineDeliveryPlanId, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
 import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
 import { receiptProgress } from './line-receipt-status.logic';
 import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard, draftUpdateCanonicalDiff } from './line-draft-update-card.logic';
@@ -415,5 +415,173 @@ test('Fix-up 24: lifecycle next buttons survive primary and fallback only with t
     assert.ok(parseLineDeliveryPlan(p));
     for (const frozen of [p.batches[0]!.primary, p.batches[0]!.fallback]) if (frozen)
       assert.equal(JSON.stringify(frozen.messages).includes('expense_action_next'), applied);
+  }
+});
+
+// Language is checked after both the durable plan and the actual LINE wire adapter.
+// Names/descriptions remain source data; the fixture uses Latin names so fixed Thai UI copy cannot hide.
+test('reply surface × th/en/mixed: primary and fallback delivered payloads follow the current message', async () => {
+  const { lineReplyLanguage, lineControlLanguage } = await import('./line-language.logic');
+  const cards = await import('./line-business-card.logic');
+  const { buildExpenseActionCard } = await import('./line-expense-action-card.logic');
+  const { buildReimbursementDraftMessages, buildReimbursementOptionsMessages } = await import('./line-reimbursement-draft-card.logic');
+  const { buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, buildReceiptCapturePrompt, buildCapabilityCard, buildContactCard } = await import('./line-staff-menu.logic');
+  const { lineWaitStages, lineWaitStageMessage, lineMediaGroupAckStage } = await import('./line-message-buffer.logic');
+  const { formatRefusal } = await import('./line-ai-formatter.logic');
+  const { linePaymentEvidenceReply } = await import('./line-payment-evidence-reply.logic');
+  const { LineReplyAdapter } = await import('../../infrastructure/line-reply.adapter');
+  const { lineMessagingCredentialsFixture } = await import('../../../../common/config/line-messaging-credentials.fixture');
+  const { buildSubstituteReceiptActionCard } = await import('../../application/line-substitute-receipt-action.service');
+  const { buildCounterpartyCard } = await import('../../application/line-counterparty.service');
+  const { buildPackagePurchaseCard } = await import('../../application/line-package-purchase.service');
+  const { formatCaptureAutoHandoffReply, CAPTURE_READ_FAILED_REPLY, CAPTURE_READ_PARTIAL_REPLY, CAPTURE_READ_PAUSED_REPLY, nonReceiptReply } = await import('./line-non-receipt-reply.logic');
+  const { ProcessLineWebhookUseCase, formatPaypersReply, formatNextStepGuidanceReply, formatCorrectionGuidanceReply } = await import('../../application/use-cases/process-line-webhook.use-case');
+  const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
+  const { productHelpAction } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/approved-product-help');
+  const { ReimbursementListPendingApprovalsTool } = await import('../../application/use-cases/erp-reimbursement-tools.use-case');
+  const scope = await import('../../../../../../ai-gateway/src/modules/line-ai/domain/logic/line-ai-scope-policy.logic');
+  const { formatPreparedSimpleRead } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/prepared-simple-read-formatter');
+  const { formatLineExpenseDraftReply } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const originalFetch = globalThis.fetch;
+  const delivered: LineReplyMessage[][] = [];
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => { delivered.push(JSON.parse(String(init?.body)).messages); return new Response('{}', { status: 200 }); }) as typeof fetch;
+  const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+  try {
+    for (const [form, question] of [['th', 'ช่วยตรวจค่าใช้จ่ายค่ะ'], ['en', 'Could you check my expenses?'], ['mixed', 'ช่วย check expenses ค่ะ']] as const) {
+      const language = lineReplyLanguage(question), en = language === 'en', text = en ? 'Please review this expense.' : 'ตรวจรายละเอียดค่าใช้จ่ายได้เลยค่ะ';
+      const context = { language, permissions: ['expense.read', 'expense.create', 'expense.receipt.upload'], roles: ['OWNER'], isOwner: true, entitledFeatureKeys: new Set(['expenses', 'expenses.upload']), displayName: 'Jane', roleLabel: 'Owner', branchScopeLabel: 'All branches', companyId: 'company', webBaseUrl: 'https://app.test' };
+      const action = { action: 'CONFIRM' as const, token: 'preview.token', previewId: 'preview', expiresAt, summary: en ? 'Review before confirming.' : 'ตรวจข้อมูลก่อนยืนยันค่ะ', record: { vendorName: 'ABC', amount: '120.00', currency: 'THB', date: '2026-09-27', status: 'ร่าง', nextStatus: 'ยืนยันแล้ว' } };
+      const draft = { previewId: '550e8400-e29b-41d4-a716-446655440000', recordType: 'expense' as const, expenseId: 'expense', record: { vendorName: 'ABC', expenseDate: '2026-09-27', statusLabel: 'ร่าง' }, tool: 'expense.draft.set_header', diff: [{ field: 'vendorName', label: 'ผู้ขาย', kind: 'text' as const, before: 'ABC', after: 'DEF' }], totalsBefore: { grandTotalAmount: '120' }, totalsAfter: { grandTotalAmount: '120' }, warnings: [], expiresAt } as any;
+      const claim = { schemaVersion: 1, actionId: 'claim-action', operation: 'CREATE', previewRevision: 1, confirmationDigest: 'a'.repeat(64), expiresAt, warnings: [], diff: [],
+        after: { requesterUserId: 'user', requesterDisplayName: 'Jane', currency: 'THB', reason: 'Travel', amount: '120.0000', incurredDate: '2026-09-27', categoryKey: 'travel', receiptRequirementStatus: 'REQUIRED', status: 'DRAFT', signatureImpact: 'NONE',
+          lines: [{ lineRef: 'line', lineNo: 1, incurredDate: '2026-09-27', description: 'Taxi', amount: '120.0000', categoryKey: 'travel' }] } } as any;
+      const staff = await import('./line-staff-menu.logic');
+      const substitute = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case');
+      const fileStatus = await import('./line-file-attempt-answer.logic');
+      const progress = await import('./line-receipt-status.logic');
+      const file = { ref: 'file', messageType: 'file' as const, fileNameSanitized: 'bill.pdf', stage: 'READ' as const, reasonCode: 'reading', outcome: 'STORED_READ_FAILED' as const, declaredFileSize: 200, measuredByteSize: 200, capability: {}, createdAt: new Date(createdAt) };
+      const candidate = { id: 'expense', label: 'ใบเสร็จรับเงิน · 27 ก.ย. 2569 · 120.00', sourceDocumentType: 'RECEIPT', expenseDate: '2026-09-27', amount: '120.00', createdAt } as const;
+      const event = { messageText: question }, flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+      flow.config = { webBaseUrl: context.webBaseUrl };
+      flow.boundConversations = new WeakMap([[event, { owner: {}, epoch: 1 }]]);
+      flow.reimbursementAdapter = { photoTarget: async () => ({ branchId: 'branch' }) };
+      const claimPhoto = await flow.reimbursementDraftMessages({ status: 'applied', receipt: { requestId: 'claim', amount: '120', currency: 'THB', committedState: 'DRAFT' } }, { companyId: 'company', permissions: [] }, event);
+      const helpSurfaces: Array<[string, LineReplyMessage[]]> = LINE_CHAT_ACTIONS.map(entry => {
+        const help = productHelpAction({ actionId: entry.id, language, permissions: [entry.permission], featureKeys: null, companyId: 'company' })!;
+        return [`how-to-${entry.id}`, [cards.buildLineBusinessAnswerMessage({ requestId: 'help', replyText: help.replyText, presentation: help.presentation,
+          sourceRefs: [], sourceLabels: [], webLinks: [], toolsInvoked: [], intent: 'unknown', agent: 'general', refused: false, durationMs: 1 }, help.replyText, context.webBaseUrl, 'company', question, language)]];
+      });
+      const pendingSurfaces: Array<[string, LineReplyMessage[]]> = await Promise.all(['company', 'related', 'own'].map(async accessScope => {
+        const tool = new ReimbursementListPendingApprovalsTool({ execute: async () => { throw new Error('reader is not an approver'); } } as any,
+          { execute: async () => ({ total: 1, items: [{ requesterDisplayNameSnapshot: 'Jane', amount: '120', currency: 'THB', currentDesk: { kind: 'APPROVER', names: [] } }] }) } as any);
+        const read = await tool.execute({ companyId: 'company', userId: 'user', permissions: [accessScope === 'company' ? 'reimbursement.read' : accessScope === 'related' ? 'reimbursement.read_related' : 'reimbursement.read_own'], locale: en ? 'en-GB' : 'th-TH', groundingText: question });
+        const result = formatPreparedSimpleRead('reimbursement.list_pending_approvals::list', { agent: 'reimbursement', status: 'SUCCEEDED', summary: '', facts: [], suggestions: [], toolCalls: [], requiresHumanReview: false,
+          toolData: [{ tool: 'reimbursement.list_pending_approvals', data: read.data }], asOf: createdAt } as any,
+          { language, locale: en ? 'en-GB' : 'th-TH' });
+        assert.equal(result.kind, 'answer');
+        return [`pending-${accessScope}`, [{ type: 'text', text: result.kind === 'answer' ? result.replyText : '' }]] as [string, LineReplyMessage[]];
+      }));
+      const draftQuestion = formatLineExpenseDraftReply({ language, categories: [], state: { header: {}, items: [], status: 'OPEN',
+        unresolvedQuestions: [{ field: 'expenseDate', prompt: 'จ่ายวันไหน?' }, { field: 'price', prompt: 'ยอดเท่าไร?' }] } as any });
+      assert.doesNotMatch(draftQuestion, en ? /unit price|total/ : /ยอดเท่าไร/u, 'only the first missing field is asked');
+      const surfaces: Array<[string, LineReplyMessage[], any?]> = [
+        ...Object.entries(EXPENSE_STATUS_LABELS).map(([status, label]): [string, LineReplyMessage[]] => [`expense-status-${status}`, [buildExpenseActionCard({ ...action, record: { ...action.record, status: label } }, undefined, language)]]),
+        ...Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([type, label]): [string, LineReplyMessage[]] => [`document-type-${type}`, [cards.buildExpenseDraftCardMessage(text, cards.expenseDraftCardFactsFrom({ expenseId: 'expense', subject: 'ร่างค่าใช้จ่าย', documentType: label, status: 'ร่าง' }), context.webBaseUrl, 'company', language)]]),
+        ['next-step', [{ type: 'text', text: formatNextStepGuidanceReply(context.webBaseUrl, 'company', candidate, language) }]],
+        ['correction-guidance', [{ type: 'text', text: formatCorrectionGuidanceReply(context.webBaseUrl, 'company', [candidate], true, undefined, language) }]],
+        ['company-context', [staff.buildCompanyContextMessage({ companyName: 'ABC', displayName: 'Jane', roleLabels: [], isOwner: true, openWebUrl: 'https://app.test/shop' }, language)]],
+        ['company-picker', [staff.buildCompanyPickerMessage([{ companyId: 'company', companyName: 'ABC' }], undefined, 1, language)]],
+        ['services', [staff.buildServiceEntitlementMessage(new Set(['expenses', 'reimbursement']), language)]],
+        ['promotion', [staff.buildPromotionCard('owner', 'https://app.test/packages', language)]],
+        ['package-review', [staff.buildPackageReviewCard('ABC', 'https://app.test/packages', language)]],
+        ['approval-queue', [staff.buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'], entitledFeatureKeys: null }, { reimbursement: { total: 1, items: [{ title: 'Claim', detail: 'Jane · 120.00 THB' }] } })]],
+        ['profile-guard', [cards.buildProfileGuardNudgeCard(language)]],
+        ['public-policy', [cards.buildPublicPolicyCardMessage({ topic: 'quota', title: 'สิทธิ์อ่าน', text: 'อ่านใบเสร็จค่ะ' }, language)]],
+        ['file-attempt', [{ type: 'text', text: fileStatus.fileAttemptAnswer(file, undefined, language) }]],
+        ['file-choice', [{ type: 'text', text: fileStatus.fileAttemptChoiceList([file], language) }]],
+        ['file-delivery-failed', [{ type: 'text', text: fileStatus.FILE_ATTEMPT_DELIVERY_FAILED_REPLY('https://app.test/result', language) }]],
+        ['receipt-progress', [{ type: 'text', text: progress.receiptProgressLabel('DRAFT', null, language) }]],
+        ['substitute-scan', [{ type: 'text', text: substitute.substituteScanConfirmQuestion({ documentNumber: 'SUB-001', amountLabel: en ? '120.00 THB' : '120.00 บาท' }, language) }]],
+        ['substitute-media', [{ type: 'text', text: substitute.substituteMediaQuestion(['PAYMENT_EVIDENCE', 'NO_RECORD'], language) }]],
+        ['assistant', [cards.buildLineAssistantTextCardMessage(text, context.webBaseUrl, 'company', undefined, undefined, language)]],
+        ['business', [cards.buildLineBusinessAnswerMessage({ requestId: 'r', replyText: text, sourceRefs: [{ module: 'expenses', entityType: 'expense', label: 'ค่าใช้จ่าย', permissionChecked: true, webPath: '/companies/company/expenses' }], sourceLabels: ['ค่าใช้จ่าย'], webLinks: [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company/expenses' }], toolsInvoked: [], intent: 'unknown', agent: 'general', refused: false, durationMs: 1 }, text, context.webBaseUrl, 'company', question, language)]],
+        ['permission', [{ type: 'text', text: formatRefusal('forbidden', undefined, language) }]],
+        ['timeout', [{ type: 'text', text: formatRefusal('ai_timeout', undefined, language) }]],
+        ['ask-back', [cards.buildReimbursementPayerClarificationMessage(language)]],
+        ['claim-handoff', [cards.buildReimbursementHandoffMessage(context.webBaseUrl, 'company', language)]],
+        ['legal', [cards.buildLegalAcceptanceRequiredMessage(context.webBaseUrl, 'company', language)]],
+        ['signup', [cards.buildSignupDoorCard(undefined, context.webBaseUrl, language)]],
+        ['signup-status', [cards.buildSignupStatusCard('ABC', true, language)]],
+        ['package', [cards.buildPackageRequiredMessage({ companyId: 'company', lockReason: 'no_package', webBaseUrl: context.webBaseUrl, language })]],
+        ['budget', [cards.buildAiBudgetExceededMessage(false, { budgetScope: 'CHAT' }, true, language)]],
+        ['quota', [cards.buildReceiptQuotaExceededMessage(en ? 'Allowance used.' : 'ใช้โควตาครบแล้วค่ะ', true, language)]],
+        ['capture', [cards.buildExpenseDraftCardMessage(formatPaypersReply(context.webBaseUrl, 'company', 'expense', { language, sourceDocumentType: 'RECEIPT', compact: true, fields: { vendorName: 'ABC', grandTotalAmount: '120.00', expenseDate: '2026-09-27' } }), cards.expenseDraftCardFactsFrom({ expenseId: 'expense', subject: 'ร่างค่าใช้จ่าย', vendor: 'ABC', total: '120.00', status: 'ร่าง' }), context.webBaseUrl, 'company', language)]],
+        ['expense-confirm', [buildExpenseActionCard(action, undefined, language)], { kind: 'EXPENSE_ACTION_CONFIRM', token: action.token, expiresAt }],
+        ['voucher-confirm', [buildExpenseActionCard({ ...action, action: 'VOUCHER_CREATE' }, undefined, language)], { kind: 'EXPENSE_ACTION_CONFIRM', token: action.token, expiresAt }],
+        ['edit-confirm', [buildDraftUpdatePreviewCard(draft, context.webBaseUrl, language)], { kind: 'EXPENSE_EDIT_CONFIRM', previewId: draft.previewId, previewRevision: '1', expiresAt }],
+        ['claim-confirm', buildReimbursementDraftMessages({ status: 'preview', preview: claim } as any, context.webBaseUrl, 'company', [], undefined, language), { kind: 'REIMBURSEMENT_DRAFT_CONFIRM', actionId: claim.actionId, previewRevision: 1, confirmationDigest: claim.confirmationDigest, expiresAt }],
+        ['claim-missing', buildReimbursementDraftMessages({ status: 'needs_fields', fieldPaths: ['reason', 'lines.0.amount'] } as any, context.webBaseUrl, 'company', [], undefined, language)],
+        ['expense-first-question', [{ type: 'text', text: draftQuestion }]],
+        ['claim-photo-after-save', claimPhoto],
+        ['claim-photo-category', buildReimbursementOptionsMessages({ choices: [{ kind: 'CATEGORY', label: 'Travel', choiceId: 'travel' }], pages: {}, awaitingPhoto: true, collection: { lineChosen: true, receiptChosen: true, categoryChosen: false }, control: { actionId: 'claim-action', revision: '1' } }, context.webBaseUrl, language)],
+        ['claim-no-receipt-reason', buildReimbursementOptionsMessages({ choices: [], pages: {}, reasonQuestion: 'ไม่มีใบเสร็จเพราะอะไรคะ', collection: { lineChosen: true, receiptChosen: true, categoryChosen: true } }, context.webBaseUrl, language)],
+        ['limit-owner', [{ type: 'text', text: scope.permissionLimitReplyText(language, en ? 'approve claims' : 'อนุมัติใบเบิก', ['expense.read_own']) }]],
+        ['limit-package', [{ type: 'text', text: scope.featureLimitReplyText('wht_pnd53', language) }]],
+        ['limit-unsold', [{ type: 'text', text: scope.unsoldModuleReplyText({ featureKey: null, topicLabelTh: 'เงินเดือน', topicLabelEn: 'payroll' }, language) }]],
+        ...helpSurfaces, ...pendingSurfaces,
+        ['claim-options', buildReimbursementOptionsMessages({ choices: [], pages: {}, collection: { lineChosen: true, receiptChosen: false, categoryChosen: false }, control: { actionId: 'claim-action', revision: '1' } }, context.webBaseUrl, language)],
+        ['payment-evidence', [linePaymentEvidenceReply({ kind: 'ASK', slipId: 'slip', candidates: [{ id: 'expense', vendorName: 'ABC', amount: '120.00', documentDay: '2026-09-27' }] } as any, 0, language)!]],
+        ['counterparty-confirm', [buildCounterpartyCard({ token: action.token, expiresAt, lines: [text] }, language)], { kind: 'COUNTERPARTY_CONFIRM', token: action.token, expiresAt }],
+        ['package-confirm', [buildPackagePurchaseCard({ token: action.token, expiresAt, lines: [text] }, language)], { kind: 'PACKAGE_PURCHASE_CONFIRM', token: action.token, expiresAt }],
+        ['substitute-web', [buildSubstituteReceiptActionCard({ token: '', expiresAt, label: en ? 'Sign on web' : 'เปิดลงนามในเว็บ', summary: text, webPath: 'https://app.test/companies/company/expenses/substitute-receipts', webOnly: true }, text, false, language)]],
+        ['file-success', [{ type: 'text', text: formatCaptureAutoHandoffReply({ language, link: 'https://app.test/companies/company/expenses/expense', amount: '120.00', vendorName: 'ABC', expenseDate: '2026-09-27' }).text }]],
+        ['file-failed', [{ type: 'text', text: CAPTURE_READ_FAILED_REPLY('https://app.test/companies/company/expenses/expense', language) }]],
+        ['file-partial', [{ type: 'text', text: CAPTURE_READ_PARTIAL_REPLY('https://app.test/companies/company/expenses/expense', language) }]],
+        ['file-paused', [{ type: 'text', text: CAPTURE_READ_PAUSED_REPLY('https://app.test/companies/company/expenses/expense', 'credits', language) }]],
+        ['non-receipt', [{ type: 'text', text: nonReceiptReply('NR07', { language }) }]],
+        ['menu', [buildStaffMainMenu(context)]], ['query-menu', [buildStaffQueryMenu(context)]], ['receipt-prompt', [buildReceiptCapturePrompt(context)]],
+        ['capabilities', [buildCapabilityCard(language)]], ['contact', [buildContactCard(language)]],
+        ['completion', [{ type: 'text', text, quickReply: buildStaffCompletionQuickReply(context, language) }]],
+        ['waiting', lineWaitStages({ kind: 'text', language, messageText: question, seed: 'test', loadingEnabled: false, latestAcceptedAt: 0, now: 0 }).map(stage => lineWaitStageMessage(stage, context.webBaseUrl))],
+        ['media-ack', [lineWaitStageMessage(lineMediaGroupAckStage(['image'], language), context.webBaseUrl)]],
+      ];
+      for (const [surface, messages, controlBase] of surfaces) {
+        const id = `${form}-${surface}`;
+        const auth = { ...privateAuthorization, proofs: [{ id: 'capture', kind: 'CAPTURE_RESULT', recordIds: ['slip', 'expense'] }, { id: 'options', kind: 'REIMBURSEMENT_OPTIONS', actionId: 'claim-action', controlRevision: '1' }] };
+        const p = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: id, createdAt, expiresAt, readyAt: createdAt, firstDispatchDeadlineAt: expiresAt, authorization: auth, language,
+          businessResult: null, control: controlBase ? { ...controlBase, requiredItemIds: messages.map((_m, i) => `${lineDeliveryPlanId('WEBHOOK', id)}:item:${i}`) } : null,
+          answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: messages.map(m => ({ kind: 'answer', text: m.type === 'text' ? m.text : m.type === 'flex' ? m.canonicalText ?? m.altText : '', required: true, sourceProofIds: [] })) },
+          preferredMessages: messages, ...(controlBase ? { controlMessage: messages.at(-1) } : {}) });
+        for (const batch of p.batches) for (const frozen of [batch.primary, batch.fallback]) if (frozen) {
+          assert.equal(await adapter.sendReply('test-token', frozen.messages), 'ok', id);
+          const payload = delivered.at(-1)!;
+          const visible: string[] = [];
+          const walk = (value: any): void => { if (!value || typeof value !== 'object') return; for (const [key, child] of Object.entries(value)) { if (['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string') visible.push(child); else if (typeof child === 'object') walk(child); } };
+          walk(payload);
+          assert.ok(visible.length, id);
+          if (en) assert.doesNotMatch(visible.join('\n'), /[\u0E00-\u0E7F]/u, id);
+          else assert.match(visible.join('\n'), /[\u0E00-\u0E7F]/u, id);
+          assert.ok(!JSON.stringify(payload).includes('canonicalText'), id);
+          for (const msg of payload) for (const item of msg.quickReply?.items ?? []) if (item.action.type === 'postback' && en) assert.equal(lineControlLanguage(item.action.data).language, 'en', id);
+        }
+      }
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('legacy package ask-backs, holds and refusals use the current language', async () => {
+  const { LinePackagePurchaseService } = await import('../../application/line-package-purchase.service');
+  const { ForbiddenException } = await import('@nestjs/common');
+  const { lineReplyLanguage } = await import('./line-language.logic');
+  for (const [question, expected] of [['Please help me choose a package', 'en'], ['ช่วยเลือกแพ็กเกจค่ะ', 'th'], ['ช่วย choose package ค่ะ', 'th']] as const) {
+    for (const scenario of ['selection', 'unavailable', 'busy', 'existing', 'forbidden'] as const) {
+      const language = lineReplyLanguage(question);
+      const service = new LinePackagePurchaseService({ client: { aiConversation: { findFirst: async () => scenario === 'unavailable' ? null : { id: 'conversation', lifecycleEpoch: 1 } } } } as any,
+        { assertOwner: async () => { if (scenario === 'forbidden') throw new ForbiddenException(); }, status: async () => ({ ...(scenario === 'existing' ? { attemptId: 'attempt' } : {}), interval: 'month', availablePurchaseModes: ['CARD_AUTO', 'PROMPTPAY_ONCE'] }), catalog: async () => ({ offers: [] }), resume: async () => ({ checkoutUrl: null }) } as any,
+        { available: true, load: async () => null, save: async () => scenario !== 'busy' } as any,
+        { aiGatewayInternalSecret: 'test-secret' } as any);
+      const result = await service.prepare({ companyId: 'company', userId: 'user', membershipId: 'member' } as any, 'chat', question, language);
+      if (expected === 'en') assert.doesNotMatch(result.reply, /[\u0E00-\u0E7F]/u, scenario); else assert.match(result.reply, /[\u0E00-\u0E7F]/u, scenario);
+    }
   }
 });

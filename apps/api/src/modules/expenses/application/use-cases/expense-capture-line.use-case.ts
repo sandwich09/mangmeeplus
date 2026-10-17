@@ -118,7 +118,7 @@ export class ExpenseCaptureLineUseCase {
   async readFinishedExpenseSnapshot(companyId: string, expenseId: string): Promise<{
     expense: {
       id: string; status: string; captureSource: string; createdByUserId: string;
-      lineChatKeyHash: string | null; linePushTargetId: string | null;
+      lineChatKeyHash: string | null; linePushTargetId: string | null; language?: 'th' | 'en';
       vendorNameSnapshot: string | null; grandTotalAmount: string | null; currency: string | null;
       sourceDocumentType: string | null; expenseDate: Date | null; primaryAttachmentId: string | null;
       vendorDocumentNumber: string | null; categoryName: string | null; vatAmount: string | null; vatMode: string;
@@ -135,7 +135,7 @@ export class ExpenseCaptureLineUseCase {
       },
     });
     if (!expense) return null;
-    const channel = (expense.sourceChannelMetadataJson ?? null) as { chatKeyHash?: string; pushTargetId?: string } | null;
+    const channel = (expense.sourceChannelMetadataJson ?? null) as { chatKeyHash?: string; pushTargetId?: string; language?: 'th' | 'en' } | null;
     const jobs = await this.prisma.client.expenseCaptureReadJob.findMany({
       where: { companyId, expenseId },
       orderBy: { createdAt: 'desc' }, take: 3,
@@ -145,6 +145,7 @@ export class ExpenseCaptureLineUseCase {
       expense: {
         id: expense.id, status: expense.status, captureSource: expense.captureSource,
         createdByUserId: expense.createdByUserId,
+        ...(channel?.language === 'th' || channel?.language === 'en' ? { language: channel.language } : {}),
         lineChatKeyHash: channel?.chatKeyHash ?? null,
         linePushTargetId: channel?.pushTargetId ?? null,
         vendorNameSnapshot: expense.vendorNameSnapshot,

@@ -1,0 +1,1453 @@
+[
+  {
+    "id": "X102-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbjirxw-29-a8a06381",
+              "replyToken": "rt-fbdd0462-e224-4656-8093-d69c0f14fc9f",
+              "message": {
+                "type": "text",
+                "id": "m179218977918882",
+                "text": "จดค่าข้าวให้หน่อย 165 เมื่อกลางวัน",
+                "quoteToken": "e87d7a5ccd0b0a3e"
+              },
+              "timestamp": 1792189779188,
+              "source": {
+                "type": "user",
+                "userId": "U4de437a5ca8471d8562413c9658aac5f"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "th",
+          "confidence": 0.93,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "th",
+            "description": "ค่าข้าวกลางวัน",
+            "amount": "165",
+            "expenseCategoryId": "category-b-other",
+            "confidence": 0.85,
+            "missingFields": [
+              "expenseDate",
+              "vendorName"
+            ]
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าข้าวกลางวัน 165 บาท เป็นรายจ่าย",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 34,
+                  "rawSha256": "5bde542eb2390d66cba8c72f1e2a3190e9ea03891421919662b33ec75a89fe2f"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X085-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbi631g-d-bbb8a86e",
+              "replyToken": "rt-956fce51-c159-465f-bd28-23c5fa87cf1d",
+              "message": {
+                "type": "text",
+                "id": "m179218750742814",
+                "text": "recrod fuel 360 bath today",
+                "quoteToken": "a4d8e3c9adc63582"
+              },
+              "timestamp": 1792187507428,
+              "source": {
+                "type": "user",
+                "userId": "Uf584e0b4ed4e036b3d25bcaf43bdb962"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "en",
+          "confidence": 0.93,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "en",
+            "description": "fuel",
+            "expenseDate": "2026-10-17",
+            "amount": "360",
+            "expenseCategoryId": "category-a-fuel",
+            "items": [
+              {
+                "sourceText": "fuel 360",
+                "description": "ค่าน้ำมัน",
+                "quantity": "1",
+                "unitPrice": "360",
+                "totalAmount": "360",
+                "expenseCategoryId": "category-a-fuel",
+                "taxTreatment": "no VAT assumed",
+                "accountingClass": "OPEX",
+                "itemBehavior": "NON_STOCK",
+                "confidence": 0.85,
+                "missingFields": [
+                  "unit"
+                ]
+              }
+            ],
+            "vatMode": "NEEDS_REVIEW",
+            "confidence": 0.9,
+            "missingFields": [
+              "vendorName",
+              "documentNumber"
+            ]
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Record fuel expense 360 baht today",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 26,
+                  "rawSha256": "cbcfda4c6d376032263c1d584ee59759124c27e3d679494f71433c66a4f4f1f8"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X092-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbj9yb7-1f-fea4a1d9",
+              "replyToken": "rt-a1f1a44d-dc42-4c85-b407-ae98c9e51e8c",
+              "message": {
+                "type": "text",
+                "id": "m179218936753952",
+                "text": "Log a 230 baht taxi fare for today",
+                "quoteToken": "2f0c522e775c0a68"
+              },
+              "timestamp": 1792189367539,
+              "source": {
+                "type": "user",
+                "userId": "U909ee01aaa9cc82dd963b043ec609d84"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "en",
+          "confidence": 0.97,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "en",
+            "description": "Taxi fare",
+            "expenseDate": "2026-10-17",
+            "amount": "230",
+            "expenseCategoryId": "category-b-travel",
+            "items": [
+              {
+                "sourceText": "230 baht taxi fare for today",
+                "description": "ค่าแท็กซี่",
+                "quantity": "1",
+                "unit": "เที่ยว",
+                "unitPrice": "230",
+                "totalAmount": "230",
+                "expenseCategoryId": "category-b-travel",
+                "taxTreatment": "no VAT (transport service)",
+                "accountingClass": "OPEX",
+                "itemBehavior": "SERVICE",
+                "confidence": 0.9,
+                "missingFields": []
+              }
+            ],
+            "vatMode": "NEEDS_REVIEW",
+            "confidence": 0.95,
+            "missingFields": []
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าแท็กซี่ 230 บาท วันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 34,
+                  "rawSha256": "00beab4c3187d2c8e42cd9bbdc695b64470afbb13f81ca3b90e548900d1c4ee7"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X008-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvboblql-v-3b438703",
+              "replyToken": "rt-b7586b5f-6c35-4541-89e5-a38e1bc94794",
+              "message": {
+                "type": "text",
+                "id": "m179219784263732",
+                "text": "ลงค่าใช้จ่าย ค่าไปรษณีย์ส่งของ 125 บาท วันนี้",
+                "quoteToken": "07192c72267d1d8d"
+              },
+              "timestamp": 1792197842637,
+              "source": {
+                "type": "user",
+                "userId": "U6288899b3f91f2649c5415b9655cf863"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "th",
+          "confidence": 0.97,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "th",
+            "description": "ค่าไปรษณีย์ส่งของ",
+            "businessPurpose": "ค่าไปรษณีย์ส่งของ",
+            "expenseDate": "2026-10-17",
+            "amount": "125",
+            "expenseCategoryId": "category-a-other",
+            "vatMode": "NEEDS_REVIEW",
+            "confidence": 0.93,
+            "missingFields": []
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าใช้จ่ายค่าไปรษณีย์ส่งของ 125 บาท วันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 45,
+                  "rawSha256": "d8469c723d8e485731d636318e739ef61708e8da48eed3454e8c93ba152192fa"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X012-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbn3ncm-26-618e4e85",
+              "replyToken": "rt-300c4a3b-baaf-4bf9-bb9f-c5da4f5dbe28",
+              "message": {
+                "type": "text",
+                "id": "m179219579186279",
+                "text": "add ค่าน้ำแข็ง 60 บาท today",
+                "quoteToken": "0183d2194de9c1e0"
+              },
+              "timestamp": 1792195791862,
+              "source": {
+                "type": "user",
+                "userId": "U5c9d99e15f4660654a5a3659c8d37eed"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "en",
+          "confidence": 0.97,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "th",
+            "description": "ค่าน้ำแข็ง",
+            "expenseDate": "2026-10-17",
+            "amount": "60",
+            "expenseCategoryId": "category-a-other",
+            "items": [
+              {
+                "sourceText": "ค่าน้ำแข็ง 60 บาท",
+                "description": "ค่าน้ำแข็ง",
+                "quantity": "1",
+                "unitPrice": "60",
+                "totalAmount": "60",
+                "taxTreatment": "ไม่มี VAT หรือรวม VAT แล้ว",
+                "accountingClass": "OPEX",
+                "itemBehavior": "NON_STOCK",
+                "confidence": 0.9,
+                "missingFields": []
+              }
+            ],
+            "vatMode": "NEEDS_REVIEW",
+            "confidence": 0.97,
+            "missingFields": []
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าใช้จ่ายค่าน้ำแข็ง 60 บาท วันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 27,
+                  "rawSha256": "b821e84fe13fbcdb7ed7d998e3ddb2ef087b5a1ded1553e6c5b1ed574629daef"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "F051-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbjji6s-2c-e6d96b94",
+              "replyToken": "rt-6e5e4376-776b-440d-9140-4d3416ed0e0b",
+              "message": {
+                "type": "text",
+                "id": "m179218981320485",
+                "text": "บันทกค่าน้ำมนั 480",
+                "quoteToken": "a9f015217412a840"
+              },
+              "timestamp": 1792189813204,
+              "source": {
+                "type": "user",
+                "userId": "U64edcbb0a34801d3504f04556221b06b"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "CLARIFY",
+          "language": "th",
+          "confidence": 0.97,
+          "documentClassification": {
+            "contentKind": "NON_DOCUMENT_IMAGE",
+            "documentFamily": "NON_BUSINESS",
+            "documentKind": "NEEDS_REVIEW",
+            "businessDirection": "PURCHASE_EXPENSE",
+            "transactionState": "UNKNOWN",
+            "evidenceRoles": [
+              "EXPENSE_SUPPORT"
+            ],
+            "confidence": 0.97,
+            "evidenceSignals": [],
+            "amountSignals": [],
+            "settlementSignals": [],
+            "missingRequiredSignals": [
+              "NO_DOCUMENT_STRUCTURE",
+              "MISSING_VENDOR",
+              "MISSING_DOCUMENT_NUMBER"
+            ],
+            "contradictionSignals": [],
+            "requiresClarification": true
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าน้ำมัน 480 บาท เป็นค่าใช้จ่ายบริษัท",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 18,
+                  "rawSha256": "8c9649557ebcfa5fd6cb1e55206065ff4835cfa3e74b79fd6edec128b0f3b683"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbjju80-2d-bddee2a2",
+              "replyToken": "rt-44893c75-1a5d-4d7b-b077-3b52a6af8fdb",
+              "message": {
+                "type": "text",
+                "id": "m179218982880086",
+                "text": "วันนี่",
+                "quoteToken": "d265f9a06b318768"
+              },
+              "timestamp": 1792189828800,
+              "source": {
+                "type": "user",
+                "userId": "U64edcbb0a34801d3504f04556221b06b"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DRAFT_CONTINUATION",
+          "language": "th",
+          "confidence": 0.82,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "description": "ค่าน้ำมัน",
+            "amount": "480",
+            "expenseCategoryId": "category-b-fuel",
+            "confidence": 0.82,
+            "missingFields": [
+              "expenseDate",
+              "vendorName"
+            ]
+          },
+          "resolvedClarificationIds": [
+            "1792189825563-0"
+          ],
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าน้ำมัน 480 บาท วันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "f32dd8ab011776bd9009fa592b2fb2a01db963ff9ad802dc97c5de5ca6a43acb",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 6,
+                  "rawSha256": "5ebc4d5c0a2659486714b3c1b89f2a7e4c6da0ed46038cba93b6ba40c432d31d"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "F036-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbmdzjc-2g-fab0ac2e",
+              "replyToken": "rt-10160aa8-99a7-4fda-b591-e7d696958518",
+              "message": {
+                "type": "text",
+                "id": "m179219459460089",
+                "text": "add fuel 720 baht today",
+                "quoteToken": "03b078f2b2f8b508"
+              },
+              "timestamp": 1792194594600,
+              "source": {
+                "type": "user",
+                "userId": "Uebbb942b1bf4121f484d366206adbeb2"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "en",
+          "confidence": 0.97,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "en",
+            "description": "Fuel",
+            "expenseDate": "2026-10-17",
+            "amount": "720",
+            "expenseCategoryId": "category-a-fuel",
+            "confidence": 0.95,
+            "missingFields": []
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Record fuel expense 720 baht today",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 23,
+                  "rawSha256": "b4ad9a124194bfb88430b809e2aeab065388ce9e5e4b0a9b75ec1001a02360a0"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbme6oj-2h-f72738a8",
+              "replyToken": "rt-a93badb7-0107-4f47-a0ea-8bd62d721348",
+              "message": {
+                "type": "text",
+                "id": "m179219460385990",
+                "text": "actually it was 750",
+                "quoteToken": "79946943db910bb7"
+              },
+              "timestamp": 1792194603859,
+              "source": {
+                "type": "user",
+                "userId": "Uebbb942b1bf4121f484d366206adbeb2"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_CAPTURE_CORRECTION",
+          "language": "en",
+          "confidence": 0.93,
+          "correctionHints": {
+            "targetExpenseId": "cmvbme46605ja2sk1l0moq0i1",
+            "amount": {
+              "to": "750",
+              "from": "720"
+            },
+            "confidence": 0.93
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Correct fuel expense amount from 720 to 750 baht",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 19,
+                  "rawSha256": "5a37795947d3eba4007d6372e9425904a867c1ef37546fb7672459142ba84442"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X036-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbkehc2-1c-1624057f",
+              "replyToken": "rt-37bae61f-21ae-4782-8ea7-d179395ffaba",
+              "message": {
+                "type": "text",
+                "id": "m179219125843449",
+                "text": "ทำ claim ค่า grab 215 บาท ไปส่งเอกสาร วันนี้",
+                "quoteToken": "c77a4aa14e9d65d2"
+              },
+              "timestamp": 1792191258434,
+              "source": {
+                "type": "user",
+                "userId": "Ud4a1b1da8392ff45f595639138a25191"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.93,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่า grab ไปส่งเอกสาร",
+            "businessPurpose": "ไปส่งเอกสาร",
+            "amount": "215",
+            "confidence": 0.9,
+            "missingFields": [
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่า grab 215 บาท ไปส่งเอกสาร วันนี้",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 44,
+                  "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvbkez0f-1d-6aa8b6ca",
+              "replyToken": "rt-b3236dc0-815e-47c2-93bc-1d34d08a4abb",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=4eb2b2b6-421a-5472-827c-50f2944046ce&revision=3895a792545a818b9a5b962314cfe49c97f99a948bb0474ed733850006927645&choice=photo"
+              },
+              "timestamp": 1792191281343,
+              "source": {
+                "type": "user",
+                "userId": "Ud4a1b1da8392ff45f595639138a25191"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.82,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่า grab ไปส่งเอกสาร",
+            "businessPurpose": "ไปส่งเอกสาร",
+            "confidence": 0.82,
+            "missingFields": [
+              "amount",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "แนบรูปใบเสร็จสำหรับใบเบิกค่า grab 215 บาท",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "8e29769a2ea67731e3daa9d6bcb82c062b0b007dd996bd0cce57b0c1d333a147",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 28,
+                  "rawSha256": "1a56a5b03e0d35c6b6f54a003e912630c9c3e35d3d3e1e6f7e254f12c5afa852"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": [
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      },
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.preview_create",
+        "input": {
+          "action": {
+            "taskId": "732938c7-a9c5-56f9-a580-1c7c4a894ff6",
+            "actionId": "4eb2b2b6-421a-5472-827c-50f2944046ce",
+            "operation": "CREATE"
+          },
+          "proposal": {
+            "schemaVersion": 1,
+            "taskId": "732938c7-a9c5-56f9-a580-1c7c4a894ff6",
+            "taskRevision": 0,
+            "operation": "CREATE",
+            "lineChanges": [
+              {
+                "operation": "ADD",
+                "values": {
+                  "description": {
+                    "value": "ค่า\ngrab\nไปส่งเอกสาร",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 9,
+                          "endUtf16": 12,
+                          "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                        },
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 13,
+                          "endUtf16": 17,
+                          "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                        },
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 26,
+                          "endUtf16": 37,
+                          "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                        }
+                      ]
+                    }
+                  },
+                  "amount": {
+                    "value": "215",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "3227e40603ffd927c394215ef75c17dec4bb95cfa7309bab630af3924359ab75",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 18,
+                          "endUtf16": 21,
+                          "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                        }
+                      ]
+                    }
+                  },
+                  "incurredDate": {
+                    "value": "2026-10-17",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "9b8667efaf3e6c0758ec7d48f00ca7f86c52f9013e63815ea887e04255dc8f56",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 38,
+                          "endUtf16": 44,
+                          "rawSha256": "26a4b9d731c624a8e791a1ab63ca0f9cc41c2d53c221c5182bc4deecb3fa7add"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "fields": {}
+          },
+          "suggestedCategoryChoiceId": "cec04f451fd0d11c5091fe4d8f55bc51d68adb7fdacccb58e4c0933c1793a569"
+        }
+      }
+    ]
+  },
+  {
+    "id": "X095-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbjfdyt-1y-a106ff91",
+              "replyToken": "rt-eeeec4aa-ad44-44c9-929c-539c72eeee78",
+              "message": {
+                "type": "text",
+                "id": "m179218962110971",
+                "text": "เบิกค่าที่พัก 1,800 บาท ไปต่างจังหวัดเมื่อวาน",
+                "quoteToken": "f6de5f60d974aa00"
+              },
+              "timestamp": 1792189621109,
+              "source": {
+                "type": "user",
+                "userId": "U15532a72f1d42f391f8cfe95eee0224c"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าที่พัก ไปต่างจังหวัด",
+            "businessPurpose": "ไปต่างจังหวัด",
+            "amount": "1800",
+            "confidence": 0.88,
+            "missingFields": [
+              "fundingSource",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าที่พัก 1,800 บาท ไปต่างจังหวัดเมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 45,
+                  "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "postback",
+              "webhookEventId": "harness-mvbjfwg6-1z-efac0c96",
+              "replyToken": "rt-61b3d0bb-d1a1-4461-a39f-474b3cb82dd9",
+              "postback": {
+                "data": "action=reimbursement_choice&actionId=1a6d187c-f14d-50f0-9e6d-5aa9265c0e8a&revision=e1d771ea540f83e078ddbf5d65e687584fc07895f5e4a92e10fbe8ff133453cd&choice=photo"
+              },
+              "timestamp": 1792189645062,
+              "source": {
+                "type": "user",
+                "userId": "U15532a72f1d42f391f8cfe95eee0224c"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.88,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่าที่พัก",
+            "businessPurpose": "ไปต่างจังหวัด",
+            "confidence": 0.85,
+            "missingFields": [
+              "amount",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "แนบรูปใบเสร็จค่าที่พักสำหรับใบเบิกที่กำลังสร้าง",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "taskRef": {
+                "taskId": "97f60e602bd54678888a513c9b87865fa28c362083c9396ef9fdaedce46aa11f",
+                "taskRevision": 1,
+                "subrequestIndex": 0
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 28,
+                  "rawSha256": "1a56a5b03e0d35c6b6f54a003e912630c9c3e35d3d3e1e6f7e254f12c5afa852"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": [
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      },
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.preview_create",
+        "input": {
+          "action": {
+            "taskId": "3c32cd7f-fb31-52b1-bff4-18d43c88dc23",
+            "actionId": "1a6d187c-f14d-50f0-9e6d-5aa9265c0e8a",
+            "operation": "CREATE"
+          },
+          "proposal": {
+            "fields": {},
+            "lineChanges": [
+              {
+                "operation": "ADD",
+                "values": {
+                  "description": {
+                    "value": "ค่าที่พัก\nไปต่างจังหวัด",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 4,
+                          "endUtf16": 13,
+                          "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                        },
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 24,
+                          "endUtf16": 37,
+                          "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                        }
+                      ]
+                    }
+                  },
+                  "amount": {
+                    "value": "1800",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "71e0b3edd5523dd761214256d0fa89f9ab812c7e80d5207f0c7399182c0a17bd",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 14,
+                          "endUtf16": 19,
+                          "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                        }
+                      ]
+                    }
+                  },
+                  "incurredDate": {
+                    "value": "2026-10-16",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "candidateId": "ec0b5ea9d8a68b499cf30e929ced50e49eddee2d9ab38994149f7e1be80f4984",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 37,
+                          "endUtf16": 45,
+                          "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+            "schemaVersion": 1,
+            "taskId": "3c32cd7f-fb31-52b1-bff4-18d43c88dc23",
+            "taskRevision": 0,
+            "operation": "CREATE"
+          },
+          "suggestedCategoryChoiceId": "dd2c46e03acd25f2bef6c56c2569fbce9d7aa69ed91ced33e79b87002a345259"
+        }
+      }
+    ]
+  },
+  {
+    "id": "X042-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbnxf5p-29-d0099470",
+              "replyToken": "rt-6e591fa7-66bf-4bdf-980f-ed76c5dd794b",
+              "message": {
+                "type": "text",
+                "id": "m179219718092582",
+                "text": "เบิกค่าที่พัก 1,800 บาท ไปต่างจังหวัดเมื่อวาน",
+                "quoteToken": "5b696ceda02f66f4"
+              },
+              "timestamp": 1792197180925,
+              "source": {
+                "type": "user",
+                "userId": "Uff1fb16093f5403f8b988fc4204044b1"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าที่พัก ไปต่างจังหวัด",
+            "businessPurpose": "ไปต่างจังหวัด",
+            "amount": "1800",
+            "confidence": 0.88,
+            "missingFields": [
+              "fundingSource",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าที่พัก 1,800 บาท ไปต่างจังหวัดเมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 45,
+                  "rawSha256": "c1272902c892a79780536885ada91bbffa53a2c128f24788d9ff5c6d684271bf"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": [
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      }
+    ]
+  },
+  {
+    "id": "X037-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbo13q7-0-862abcd6",
+              "replyToken": "rt-81397b1a-fd9f-401c-af46-6f7f44a023cd",
+              "message": {
+                "type": "text",
+                "id": "m17921973527351",
+                "text": "เบิก คชจ เดินทาง 640 บ. เมื่อวาน",
+                "quoteToken": "7c6411aa32bfa218"
+              },
+              "timestamp": 1792197352735,
+              "source": {
+                "type": "user",
+                "userId": "U32a1b6418525b6e9a91f0a9f63e54a53"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าใช้จ่ายเดินทาง",
+            "businessPurpose": "เดินทาง",
+            "amount": "640",
+            "confidence": 0.88,
+            "missingFields": [
+              "fundingSource",
+              "purpose",
+              "reason",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าเดินทาง 640 บาท เมื่อวาน",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 32,
+                  "rawSha256": "ae1546daf011028775810b278bfc977b2bc22468ecc1036fc9bbd53b4bb9356b"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": [
+      {
+        "turn": 0,
+        "tool": "reimbursement.draft.get_options",
+        "input": {
+          "operation": "CREATE",
+          "subrequestIndex": 0
+        }
+      }
+    ]
+  },
+  {
+    "id": "X064-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbnt63x-1w-26c6c8b7",
+              "replyToken": "rt-3f208b0a-3661-4c12-a8fc-8d22f038df28",
+              "message": {
+                "type": "text",
+                "id": "m179219698257369",
+                "text": "แก้ยอดรายการร่าง หจก. ออฟฟิศ ซัพพลาย 711 เป็น 750",
+                "quoteToken": "e6b0021b866af3a8"
+              },
+              "timestamp": 1792196982573,
+              "source": {
+                "type": "user",
+                "userId": "Ufbe366ab29cd188d4d8bc61a159cb373"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_CAPTURE_CORRECTION",
+          "language": "th",
+          "confidence": 0.91,
+          "correctionHints": {
+            "amount": {
+              "to": "750",
+              "from": "711"
+            },
+            "vendorName": {
+              "to": "หจก. ออฟฟิศ ซัพพลาย"
+            },
+            "confidence": 0.91
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "แก้ยอดรายการร่าง หจก. ออฟฟิศ ซัพพลาย จาก 711 เป็น 750",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "vendorName": "หจก. ออฟฟิศ ซัพพลาย",
+                "amount": "750"
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 49,
+                  "rawSha256": "acb8c42eabcd1f7e4bb5cb1f22add5ca479b45f1e23ebe7d6ce5c000785ba68b"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  },
+  {
+    "id": "X010-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvbia6im-q-f24bef2f",
+              "replyToken": "rt-3d19c167-ceec-4dee-b2f5-752d6e97b434",
+              "message": {
+                "type": "text",
+                "id": "m179218769855827",
+                "text": "add a fuel expense of 800 baht yesterday",
+                "quoteToken": "9bc9166011b8b669"
+              },
+              "timestamp": 1792187698558,
+              "source": {
+                "type": "user",
+                "userId": "Udb3a93086ec66320f80c50c0a5e31380"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "EXPENSE_DOCUMENT_CAPTURE",
+          "language": "en",
+          "confidence": 0.97,
+          "captureHints": {
+            "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+            "sourceDocumentLanguage": "en",
+            "description": "Fuel expense",
+            "expenseDate": "2026-10-16",
+            "amount": "800",
+            "expenseCategoryId": "category-a-fuel",
+            "items": [
+              {
+                "sourceText": "fuel expense of 800 baht",
+                "description": "ค่าน้ำมัน",
+                "quantity": "1",
+                "unitPrice": "800",
+                "totalAmount": "800",
+                "expenseCategoryId": "category-a-fuel",
+                "taxTreatment": "standard",
+                "accountingClass": "OPEX",
+                "itemBehavior": "NON_STOCK",
+                "confidence": 0.95,
+                "missingFields": []
+              }
+            ],
+            "vatMode": "NEEDS_REVIEW",
+            "confidence": 0.95,
+            "missingFields": []
+          },
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "บันทึกค่าน้ำมัน 800 บาท วันที่ 16 ต.ค. 2569",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 40,
+                  "rawSha256": "a2059f536431a578c0b51367c06a977c6092f4ea1e9528e5f18c57b819bbfbf2"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "tools": []
+  }
+]

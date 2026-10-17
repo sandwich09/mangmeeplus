@@ -655,7 +655,7 @@ describe('semantic turn v2: A3 (batch5) the code-computed pending-approvals tota
       valueCandidates: extractValueCandidates(text, '2026-09-28'),
       semanticSubrequests: [{ index: 0, kind: 'read', goal: 'ใบเบิกรออนุมัติ', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
-        permissions: ['reimbursement.approve'], roles: ['manager'], branchIds: [], locationIds: [], locale: 'th-TH' },
+        permissions: ['reimbursement.read', 'reimbursement.approve'], roles: ['manager'], branchIds: [], locationIds: [], locale: 'th-TH' },
     };
   }
   const PENDING_CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }], questions: [] });

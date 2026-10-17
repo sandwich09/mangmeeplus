@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveGoldCallInput, extractExpectedFacts, type ShownItem } from './oracle';
+import { TOOL_MODULES, resolveGoldCallInput, extractExpectedFacts, type ShownItem } from './oracle';
 import type { GoldCall } from './types';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z'); // 13:00 Bangkok, 27 Sep 2026
@@ -86,4 +86,25 @@ describe('extractExpectedFacts: task item 2 (per-turn requiredFacts)', () => {
     const facts = extractExpectedFacts('expense.list_recent', { status: 'ok', data: { summary: { totalAmount: '500', countedItems: 3 } } });
     assert.deepEqual(new Set(facts.map((f) => f.label)), new Set(['total', 'count']));
   });
+});
+
+
+it('Exam D: every corpus gold alternative is wired, including approval backlog facts', async () => {
+  const { readFileSync } = await import('node:fs');
+  for (const name of ['sample', 'tuning', 'heldout']) {
+    const corpus = JSON.parse(readFileSync(new URL(`./corpus.${name}.json`, import.meta.url), 'utf8'));
+    const visit = (value: any): void => {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') {
+        if (typeof value.tool === 'string') assert.ok(TOOL_MODULES[value.tool], `${name}: ${value.tool}`);
+        Object.values(value).forEach(visit);
+      }
+    };
+    visit(corpus);
+  }
+  assert.equal(TOOL_MODULES['reimbursement.get_approval_backlog'].exportName, 'ReimbursementGetApprovalBacklogTool');
+  const facts = extractExpectedFacts('reimbursement.get_approval_backlog', { status: 'ok', data: {
+    total: 2, items: [{ amount: '350' }, { amount: '500' }] } });
+  assert.ok(facts.some(fact => fact.kind === 'count' && fact.value === 2));
+  assert.ok(facts.some(fact => fact.kind === 'money' && fact.value === 850));
 });

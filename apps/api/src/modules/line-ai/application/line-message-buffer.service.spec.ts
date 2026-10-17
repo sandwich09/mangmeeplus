@@ -900,7 +900,7 @@ describe('LineMessageBufferService – overflow guard', () => {
     await h.service.enqueue(textEnv('h22', 'x22'));
     assert.equal(h.rows.get('h21')?.status, 'rate_limited');
     assert.equal(h.rows.get('h22')?.status, 'rate_limited');
-    assert.equal(h.replies.filter((r) => r.includes('กำลังประมวลผลข้อความก่อนหน้า')).length, 1, 'one notice per episode');
+    assert.equal(h.replies.filter((r) => /กำลังประมวลผลข้อความก่อนหน้า|previous request is still processing/iu.test(r)).length, 1, 'one notice per episode');
     assert.equal(h.auditLogs.filter((a) => a.action === 'ai.line.flood_dropped').length, 2);
     release();
     await sleep(40);
@@ -1643,4 +1643,23 @@ it('Round 4 preserves a signed package control through durable buffering and dis
   assert.deepEqual((h.rows.get('package-confirm')?.payloadJson as any)?.item?.packagePurchaseControl, control);
   await sleep(20);
   assert.deepEqual(h.executed[0]?.packagePurchaseControl, control);
+});
+
+it('preserves English presentation language on a Thai synthetic confirmation through durable buffering and dispatch', async () => {
+  const { lineControlData, lineControlLanguage } = await import('../domain/logic/line-language.logic');
+  const { parseExpenseActionControl } = await import('./line-expense-action.service');
+  const token = '550e8400-e29b-41d4-a716-446655440000.' + 'a'.repeat(43);
+  const raw = lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token }).toString(), 'en');
+  const control = lineControlLanguage(raw);
+  assert.equal(control.language, 'en');
+  assert.ok(parseExpenseActionControl(control.data));
+  assert.equal(lineControlLanguage(raw + '&language=th').language, undefined, 'ambiguous metadata must not reach a domain parser');
+  const h = makeHarness({ debounceMs: 0 });
+  const envelope = textEnv('english-confirmation', 'ตรวจผลรายการค่าใช้จ่าย');
+  Object.assign(envelope.item, { language: control.language, expenseActionControl: parseExpenseActionControl(control.data) });
+  await h.service.enqueue(envelope);
+  assert.equal((h.rows.get('english-confirmation')?.payloadJson as any)?.item?.language, 'en');
+  await sleep(20);
+  assert.equal(h.executed[0]?.language, 'en');
+  assert.equal(h.executed[0]?.messageText, 'ตรวจผลรายการค่าใช้จ่าย');
 });

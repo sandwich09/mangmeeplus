@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { bindSourceDraftLines, refreshExpenseSourceDraft, sourceDraftFinancialLines, SOURCE_DRAFT_MUTABLE_STATUSES } from '../../domain/logic/expense-source-draft.logic';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -49,11 +50,11 @@ function replySource(expense: { id: string; updatedAt: Date }, state: LineExpens
     categories: categories.filter(category => ids.has(category.id)).map(({ id, name }) => ({ id, name })) };
 }
 
-function routeContexts(rows: ContinuationRow[]): LineExpenseDraftRouteContext[] {
+function routeContexts(rows: ContinuationRow[], language: 'th' | 'en' = 'th'): LineExpenseDraftRouteContext[] {
   const openRows = rows.filter((row) => row.state.status === 'OPEN');
   const focusedExpenseId = rows.length === 1 ? rows[0]!.id : openRows.length === 1 ? openRows[0]!.id : undefined;
   return rows.map((row) => ({
-    expenseId: row.id, revision: row.updatedAt.toISOString(), label: label(row), status: row.state.status as LineExpenseDraftRouteContext['status'],
+    expenseId: row.id, revision: row.updatedAt.toISOString(), label: label(row, language), status: row.state.status as LineExpenseDraftRouteContext['status'],
     questions: (row.id === focusedExpenseId && row.state.status === 'OPEN' ? row.state.unresolvedQuestions : []).map((question) => ({
       id: question.id, prompt: question.prompt.slice(0, 200), ...(question.itemRef ? { itemRef: question.itemRef } : {}),
     })),
@@ -61,13 +62,14 @@ function routeContexts(rows: ContinuationRow[]): LineExpenseDraftRouteContext[] 
 }
 
 function ordinal(text: string, count: number): number | null {
-  const match = text.normalize('NFKC').trim().match(/^ร่าง\s*(\d{1,2})$/u);
+  const match = text.normalize('NFKC').trim().match(/^(?:ร่าง|draft)\s*(\d{1,2})$/iu);
   if (!match) return null;
   const index = Number(match[1]) - 1;
   return index >= 0 && index < count ? index : null;
 }
 
-function label(row: ContinuationRow): string {
+function label(row: ContinuationRow, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') return [row.vendorNameSnapshot ?? row.state.header.vendorName ?? 'Receipt', row.expenseDate?.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }), `${Number(row.grandTotalAmount).toLocaleString('en-GB')} THB`].filter(Boolean).join(' · ');
   const incomplete = row.state.items.some((item) => !item.lineId || !item.quantity || (!item.unitPrice && !item.totalAmount) || item.reviewRequired);
   const amount = incomplete ? ' · ยอดรายการยังไม่ครบ' : Number.isFinite(Number(row.grandTotalAmount)) ? ` · ยอดในร่าง ${Number(row.grandTotalAmount).toLocaleString('th-TH')} บาท` : '';
   const date = row.expenseDate ? ` · ${row.expenseDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' })}` : '';
@@ -75,7 +77,9 @@ function label(row: ContinuationRow): string {
   return `${subject?.slice(0, 60) || 'ใบเสร็จ'}${date}${amount}`;
 }
 
-function targetRequired(rows: ContinuationRow[]): LineExpenseDraftConversationResult {
+function targetRequired(rows: ContinuationRow[], language: 'th' | 'en' = 'th'): LineExpenseDraftConversationResult {
+  if (language === 'en') return { handled: true, status: 'TARGET_REQUIRED', source: { records: rows.map(({ id, updatedAt }) => ({ id, updatedAt })), categories: [], choices: routeContexts(rows) }, acceptedFields: [],
+    replyTexts: ['Several expense drafts are available; please choose the shop name or draft to continue.\n' + rows.map((row, index) => `Draft ${index + 1}: ${row.vendorNameSnapshot ?? row.state.header.vendorName ?? 'Seller not provided'}`).join('\n')] };
   return {
     handled: true,
     status: 'TARGET_REQUIRED',
@@ -115,13 +119,13 @@ export class LineExpenseDraftConversationUseCase {
     });
   }
 
-  async routeContexts(ctx: RequestContext, chatKeyHash: string): Promise<LineExpenseDraftRouteContext[]> {
-    return routeContexts(await this.rows(ctx, chatKeyHash));
+  async routeContexts(ctx: RequestContext, chatKeyHash: string, language: 'th' | 'en' = 'th'): Promise<LineExpenseDraftRouteContext[]> {
+    return routeContexts(await this.rows(ctx, chatKeyHash), language);
   }
 
   async answersOpenDraft(ctx: RequestContext, chatKeyHash: string, messageText: string, hints?: LineIntakeCaptureHints): Promise<boolean> {
     if (isClearlyNonExpenseDirection(messageText)
-      || !hints && /^(?:ช่วย)?(?:สร้าง|บันทึก|เพิ่ม|ทำรายการ|ซื้อ|จ่าย|ชำระ)|[?？]|(?:ไหม|มั้ย|เท่าไร|เท่าไหร่|อะไร|อย่างไร|ทำไม)/u.test(messageText.trim())) return false;
+      || !hints && /^(?:ช่วย)?(?:สร้าง|บันทึก|เพิ่ม|ทำรายการ|ซื้อ|จ่าย|ชำระ|แก้|เปลี่ยน|ยืนยัน|ลบ|ยกเลิก|edit\b|change\b|confirm\b|delete\b)|[?？]|(?:ไหม|มั้ย|เท่าไร|เท่าไหร่|อะไร|อย่างไร|ทำไม)/iu.test(messageText.trim())) return false;
     const open = (await this.rows(ctx, chatKeyHash)).filter(row => hints?.targetExpenseId ? row.id === hints.targetExpenseId : row.state.status === 'OPEN');
     if (open.length !== 1 || !hints && !open[0]!.state.unresolvedQuestions.length) return false;
     const result = applyLineExpenseDraftAnswer({ state: open[0]!.state, messageText, hints, categories: await this.repo.listCategories(ctx.companyId) });
@@ -141,10 +145,11 @@ export class LineExpenseDraftConversationUseCase {
     ocrFields?: ReceiptOcrFieldResult | null;
     businessPurpose?: string;
     suggestedCategoryId?: string;
+    language?: 'th' | 'en';
   }): Promise<LineExpenseDraftConversationResult> {
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
     if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD') {
-      return { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
+      return { handled: true, status: 'NOT_FOUND', replyTexts: [input.language === 'en' ? 'This draft is unavailable under your current access or branch.' : 'ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
     }
     if (!SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status)) {
       // An idempotent redelivery may find a legacy or already-progressed expense. Let the caller
@@ -161,7 +166,7 @@ export class LineExpenseDraftConversationUseCase {
         source: replySource(expense, existing, categories),
         workflowId: existing.workflowId,
         acceptedFields: [],
-        replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({
+        replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({ language: input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th'),
           state: refreshExpenseSourceDraft(existing, expense, categories),
           categories,
           label: expense.expenseNumber ?? expense.id,
@@ -200,6 +205,7 @@ export class LineExpenseDraftConversationUseCase {
       })) ?? []);
     sourceParts.push(...itemHints.map((item) => item.sourceText));
     let state = buildInitialLineExpenseDraftContinuation({
+      itemSource: 'LINE_MEDIA_OCR',
       workflowId: randomUUID(),
       companyId: ctx.companyId,
       userId: ctx.userId,
@@ -240,12 +246,13 @@ export class LineExpenseDraftConversationUseCase {
       source: replySource(updated, saved, categories),
       workflowId: state.workflowId,
       acceptedFields: [],
-      replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state: saved, categories, label: expense.expenseNumber ?? expense.id })),
+      replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({ language: input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th'), state: saved, categories, label: expense.expenseNumber ?? expense.id })),
     };
   }
 
   async execute(ctx: RequestContext, input: {
     messageText: string;
+    language?: 'th' | 'en';
     chatKeyHash: string;
     webhookEventId?: string;
     captureHints?: LineIntakeCaptureHints;
@@ -261,18 +268,18 @@ export class LineExpenseDraftConversationUseCase {
       && requestedState.expenseId === requestedExpense.id && requestedState.companyId === ctx.companyId && requestedState.userId === ctx.userId
       && requestedState.chatKeyHash === input.chatKeyHash && RESUMABLE.has(requestedState.status)
       ? { ...requestedExpense, state: requestedState } : undefined;
-    if (!rows.length && !requested) return { handled: Boolean(requestedId), status: 'NOT_FOUND', replyTexts: requestedId ? ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'] : [], acceptedFields: [] };
+    if (!rows.length && !requested) return { handled: Boolean(requestedId), status: 'NOT_FOUND', replyTexts: requestedId ? [(input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th')) === 'en' ? 'This draft is unavailable under your current access or branch.' : 'ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'] : [], acceptedFields: [] };
     const selected = requestedId
       ? requested
       : selectedIndex !== null ? rows[selectedIndex]
         : rows.length === 1 ? rows[0]
           : openRows.length === 1 ? openRows[0]
             : undefined;
-    if (!selected) return requestedId ? { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] } : targetRequired(rows);
+    if (!selected) return requestedId ? { handled: true, status: 'NOT_FOUND', replyTexts: [input.language === 'en' ? 'This draft is unavailable under your current access or branch.' : 'ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] } : targetRequired(rows, input.language ?? lineReplyLanguage(input.messageText));
 
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, selected.id, undefined, ctx.scopes ?? {});
     if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD' || !SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status)) {
-      return { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
+      return { handled: true, status: 'NOT_FOUND', replyTexts: [input.language === 'en' ? 'This draft is unavailable under your current access or branch.' : 'ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
     }
     const categories = await this.repo.listCategories(ctx.companyId);
     const control = lineExpenseDraftControl(input.messageText);
@@ -292,7 +299,7 @@ export class LineExpenseDraftConversationUseCase {
     }
     if (['INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(selected.state.status) && control === 'end') {
       const currentState = refreshExpenseSourceDraft(selected.state, expense, categories);
-      const text = `${formatLineExpenseDraftReply({ state: currentState, categories, label: label(selected) })}\n\nพิมพ์ “ต่อ” ก่อนหากต้องการแก้หรือเติมร่างนี้`;
+      const text = `${formatLineExpenseDraftReply({ language: input.language ?? lineReplyLanguage(input.messageText), state: currentState, categories, label: label(selected, input.language ?? lineReplyLanguage(input.messageText)) })}\n\n${(input.language ?? lineReplyLanguage(input.messageText)) === 'en' ? 'Say “continue” to edit this draft.' : 'พิมพ์ “ต่อ” ก่อนหากต้องการแก้หรือเติมร่างนี้'}`;
       return { handled: true, status: 'ENDED', replyTexts: splitLineExpenseDraftReply(text), expenseId: expense.id,
         source: replySource(expense, currentState, categories), workflowId: selected.state.workflowId, acceptedFields: [] };
     }
@@ -309,11 +316,18 @@ export class LineExpenseDraftConversationUseCase {
           webhookEventId: input.webhookEventId,
         });
 
+    if (/^(?:ช่วย)?(?:แก้|เปลี่ยน).*?(?:ยอด|ราคา|จำนวนเงิน)|^(?:edit|change).*?(?:amount|total|price)/iu.test(input.messageText.trim())
+      && !changed.acceptedFields.some(field => field.endsWith('-PRICE'))) {
+      return { handled: true, status: 'TARGET_REQUIRED', expenseId: expense.id, workflowId: selected.state.workflowId, acceptedFields: [],
+        source: replySource(expense, selected.state, categories), replyTexts: [(input.language ?? lineReplyLanguage(input.messageText)) === 'en'
+          ? 'The amount has not been changed; send the new total or review the draft on the web.' : 'ยังไม่ได้แก้ยอดเงินค่ะ บอกยอดใหม่หรือเปิดร่างเพื่อตรวจในเว็บได้เลย'] };
+    }
+
     if (changed.acceptedFields.includes('D-PURPOSE') && changed.state.header.businessPurpose
       && withPurposeNote(expense.note, changed.state.header.businessPurpose, Number.POSITIVE_INFINITY).length > 500) {
       return { handled: true, status: 'TARGET_REQUIRED', expenseId: expense.id, workflowId: selected.state.workflowId, acceptedFields: [],
         source: replySource(expense, selected.state, categories),
-        replyTexts: ['หมายเหตุรวมวัตถุประสงค์ยาวเกิน 500 ตัวอักษรค่ะ กรุณาย่อข้อความ ยังไม่ได้แก้ข้อมูลในร่าง'] };
+        replyTexts: [(input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th')) === 'en' ? 'The note and purpose exceed 500 characters; shorten them, and the draft has not been changed.' : 'หมายเหตุรวมวัตถุประสงค์ยาวเกิน 500 ตัวอักษรค่ะ กรุณาย่อข้อความ ยังไม่ได้แก้ข้อมูลในร่าง'] };
     }
     changed.state = bindSourceDraftLines(changed.state, expense);
     changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
@@ -360,8 +374,8 @@ export class LineExpenseDraftConversationUseCase {
           fromSuggested: Boolean(item.suggestedCategoryId),
         });
       }
-      const reply = formatLineExpenseDraftReply({
-        state: savedState, categories, acceptedFields: changed.acceptedFields, label: label(selected),
+      const reply = formatLineExpenseDraftReply({ language: input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th'),
+        state: savedState, categories, acceptedFields: changed.acceptedFields, label: label(selected, input.language ?? lineReplyLanguage(input.messageText)),
         includeQuestions: control === 'resume' || selectedIndex !== null || changed.acceptedFields.length === 0,
       });
       const status = savedState.status === 'PAUSED' || savedState.status === 'PAUSED_INTERRUPTED' ? 'PAUSED'
@@ -385,7 +399,7 @@ export class LineExpenseDraftConversationUseCase {
         expenseId: expense.id,
         workflowId: selected.state.workflowId,
         acceptedFields: [],
-        replyTexts: ['ร่างนี้ถูกแก้ไขจากเว็บหรืออีกข้อความแล้ว จึงไม่เขียนทับค่ะ กรุณาพิมพ์ “ต่อ” เพื่อโหลดข้อมูลล่าสุด'],
+        replyTexts: [(input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th')) === 'en' ? 'This draft changed on the web or in another message; no newer data was overwritten, so say “continue” to reload it.' : 'ร่างนี้ถูกแก้ไขจากเว็บหรืออีกข้อความแล้ว จึงไม่เขียนทับค่ะ กรุณาพิมพ์ “ต่อ” เพื่อโหลดข้อมูลล่าสุด'],
       };
     }
   }

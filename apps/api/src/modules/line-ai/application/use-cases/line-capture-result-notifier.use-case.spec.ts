@@ -767,3 +767,13 @@ it('R11 T1: every preview exception still freezes and delivers the capture resul
     assert.ok(!JSON.stringify(plan).includes('expense_action_confirm'));
   }
 });
+
+it('keeps persisted English capture language through the asynchronous result card and completion buttons', async () => {
+  const h = makeNotifier({ payload: { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', documentCount: 1, applied: true },
+    expenseFacts: { language: 'en', vendorNameSnapshot: 'ABC', expenseDate: new Date('2026-07-25T00:00:00Z') } });
+  const result = await h.notifier.execute();
+  assert.equal(result.pushed, 1);
+  assert.equal(h.pushes.length, 1);
+  assert.doesNotMatch(JSON.stringify(h.pushes[0]!.messages), /[\u0E00-\u0E7F]/u);
+  assert.match(JSON.stringify(h.pushes[0]!.messages), /draft|Draft/u);
+});

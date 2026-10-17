@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { lineUiLabel } from '../../../line-ai/domain/logic/line-language.logic';
 import Decimal from 'decimal.js';
 import {
   extractValueCandidates,
@@ -174,6 +175,7 @@ function groundedDate(text: string, value: unknown, todayIso = todayCivilDate())
   const candidates = extractValueCandidates(text, todayIso);
   const days = [...new Set([...candidates.dates.filter(candidate => !isAmbiguousDateCandidate(candidate)).map(candidate => candidate.isoDate),
     ...(candidates.periods ?? []).filter(period => period.kind === 'day' && period.fromDate === period.toDate).map(period => period.fromDate)])];
+  if (days.length !== 1) return undefined;
   return typeof value === 'string' && days.includes(value) ? value : value === undefined && days.length === 1 ? days[0] : undefined;
 }
 
@@ -194,7 +196,7 @@ export function lineExpenseItemDescription(text: string | undefined, fallback?: 
   if (!text) return fallback ? lineExpenseItemDescription(fallback, undefined, maxLength) : undefined;
   const values = extractValueCandidates(text, todayCivilDate('Asia/Bangkok'));
   const ranges: Array<[number, number]> = [];
-  for (const candidate of [...values.amounts, ...values.dates]) {
+  for (const candidate of [...values.amounts, ...values.dates, ...(values.periods ?? []).filter(period => period.kind === 'day')]) {
     let offset = 0, start: number;
     while ((start = text.indexOf(candidate.span, offset)) !== -1) {
       let end = start + candidate.span.length;
@@ -219,6 +221,18 @@ export function lineExpenseItemDescription(text: string | undefined, fallback?: 
   const cleaned = text.split('').map((char, index) => ranges.some(([start, end]) => index >= start && index < end) ? ' ' : char).join('');
   const result = cleaned.replace(/\s+/gu, ' ').replace(/^[\s,;:—–-]+|[\s,;:—–-]+$/gu, '').trim();
   return result ? result.slice(0, maxLength) : fallback ? lineExpenseItemDescription(fallback, undefined, maxLength) : undefined;
+}
+
+/** Called only after semantic intake admitted an expense/claim: keep the user's item words when a
+ * translated or paraphrased hint cannot be grounded. This never decides intent or invents a label. */
+export function lineExpenseNoteDescription(text: string): string | undefined {
+  const values = extractValueCandidates(text, todayCivilDate('Asia/Bangkok'));
+  let source = text;
+  for (const value of [...values.amounts, ...values.dates, ...(values.periods ?? [])]) source = source.replace(value.span, '\n');
+  return source.split('\n').map(part => part
+    .replace(/^(?:(?:ช่วย|ขอ|รบกวน|จด|บันทึก|บันทก|ลง|เพิ่ม|ทำ|สร้าง|เบิก|สำรองจ่าย|ค่าใช้จ่าย|คชจ|บิล|รายการ|ให้)\s*|(?:please|record|recrod|log|add|claim|an?|expense|of|for|paid)\b\s*)+/iu, '')
+    .replace(/(?:ให้หน่อย|ให้ที|หน่อย|ด้วย|นะคะ|นะ|ค่ะ|ครับ|คะ|บาท|บ\.|baht|bath|for)\s*$/giu, '').trim())
+    .find(part => part.length > 1)?.slice(0, 120);
 }
 
 function initialItem(
@@ -263,17 +277,18 @@ function initialItem(
 }
 
 export function collectLineExpenseDraftQuestions(
-  state: Pick<LineExpenseDraftContinuation, 'header' | 'items'>,
+  state: Pick<LineExpenseDraftContinuation, 'header' | 'items' | 'itemSource'> & Partial<Pick<LineExpenseDraftContinuation, 'provenance'>>,
   categories: readonly ExpenseCategorySummary[],
 ): LineExpenseDraftQuestion[] {
   const result: LineExpenseDraftQuestion[] = [];
+  const media = state.itemSource === 'LINE_MEDIA_OCR' || Object.values(state.provenance ?? {}).some(value => value.source === 'LINE_MEDIA_OCR');
   if (!state.header.expenseDate) result.push({ id: 'D-DATE', scope: 'DOCUMENT', field: 'expenseDate', prompt: 'วันที่ซื้อหรือวันที่จ่ายคือวันไหน?' });
-  if (!state.header.vendorName) result.push({ id: 'D-VENDOR', scope: 'DOCUMENT', field: 'vendorName', prompt: 'ซื้อจากร้านหรือผู้ขายชื่ออะไร?' });
+  if (media && !state.header.vendorName) result.push({ id: 'D-VENDOR', scope: 'DOCUMENT', field: 'vendorName', prompt: 'ซื้อจากร้านหรือผู้ขายชื่ออะไรคะ' });
   if (state.items.length === 0) result.push({ id: 'D-ITEMS', scope: 'DOCUMENT', field: 'items', prompt: 'มีสินค้าหรือบริการอะไรบ้าง?' });
   const names = new Map(categories.map((category) => [category.id, category.name]));
   for (const item of state.items) {
     if (!item.description) result.push({ id: `${item.itemRef}-DESC`, scope: 'ITEM', itemRef: item.itemRef, field: 'description', prompt: `${item.itemRef} รายการนี้คือสินค้า/บริการอะไร?` });
-    if (!item.quantity && !item.totalAmount) result.push({ id: `${item.itemRef}-QTY`, scope: 'ITEM', itemRef: item.itemRef, field: 'quantity', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} จำนวนเท่าไร และหน่วยอะไร?` });
+    if (media && !item.quantity && !item.totalAmount) result.push({ id: `${item.itemRef}-QTY`, scope: 'ITEM', itemRef: item.itemRef, field: 'quantity', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} จำนวนเท่าไร และหน่วยอะไร?` });
     if (!item.unitPrice && !item.totalAmount) result.push({ id: `${item.itemRef}-PRICE`, scope: 'ITEM', itemRef: item.itemRef, field: 'price', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} ราคาต่อหน่วยหรือยอดรวมเท่าไร?` });
     if (item.reviewRequired) result.push({ id: `${item.itemRef}-REVIEW`, scope: 'ITEM', itemRef: item.itemRef, field: 'review', prompt: `${item.itemRef} ตรวจรายการนี้ในเว็บก่อน เพื่อเก็บรายการและภาษีเดิมให้ครบ` });
     if (!item.expenseCategoryId) {
@@ -336,18 +351,28 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   // The note's own category covers every item that names none of its own; it never replaces one.
   const noteCategoryId = activeCategoryId(input.hints?.expenseCategoryId, categories);
   for (const item of hintedItems) if (!item.suggestedCategoryId && noteCategoryId) item.suggestedCategoryId = noteCategoryId;
-  const totalAmount = groundedNumber(input.messageText, input.hints?.amount);
+  const statedAmounts = [...new Set(extractValueCandidates(input.messageText).amounts.filter(candidate => candidate.currencyToken && !candidate.assumptions?.length).map(candidate => candidate.value))];
+  const totalAmount = groundedNumber(input.messageText, input.hints?.amount)
+    ?? (statedAmounts.length === 1 ? decimal(statedAmounts[0]) : undefined);
   const fallbackDescription = lineExpenseItemDescription(groundedText(input.messageText, input.hints?.description),
-    purpose ?? (totalAmount && vendor ? `${input.applyCategoryHints && noteCategoryId ? categories.get(noteCategoryId)!.name : 'ค่าใช้จ่าย'} ${vendor}` : undefined));
+    purpose ?? (totalAmount && vendor ? `${input.applyCategoryHints && noteCategoryId ? categories.get(noteCategoryId)!.name : 'ค่าใช้จ่าย'} ${vendor}` : undefined)
+      ?? (!input.itemSource ? lineExpenseNoteDescription(input.messageText) : undefined));
   const items: LineExpenseDraftItem[] = hintedItems.length > 0 ? hintedItems : [{
     itemRef: 'I01', sourceText: fallbackDescription ?? 'รายการค่าใช้จ่าย',
     ...(fallbackDescription ? { description: fallbackDescription.slice(0, 120) } : {}),
     ...(totalAmount ? { totalAmount, quantity: '1', unit: 'งาน' } : {}),
     ...(noteCategoryId ? { suggestedCategoryId: noteCategoryId } : {}),
   }];
+  // A one-item note's grounded document total belongs to that item even when the model's
+  // item span contains only its name. Never distribute a document total across several items.
+  if (!input.itemSource && items.length === 1 && totalAmount && !items[0]!.totalAmount && !items[0]!.unitPrice) {
+    items[0]!.totalAmount = totalAmount;
+    items[0]!.quantity ??= '1';
+  }
   if (input.applyCategoryHints) for (const item of items) if (item.suggestedCategoryId) item.expenseCategoryId = item.suggestedCategoryId;
   const dates = extractValueCandidates(input.messageText).dates.filter(candidate => !isAmbiguousDateCandidate(candidate));
   const expenseDate = groundedDate(input.messageText, input.hints?.expenseDate, input.provisionalExpenseDate)
+    ?? groundedDate(input.messageText, undefined, input.provisionalExpenseDate)
     ?? (new Set(dates.map(candidate => candidate.isoDate)).size === 1 ? dates[0]!.isoDate : undefined);
   const header = {
     provisionalExpenseDate: input.provisionalExpenseDate,
@@ -430,10 +455,10 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
 
 export function lineExpenseDraftControl(text: string): LineExpenseDraftControl | null {
   const value = normalized(text).toLocaleLowerCase('th-TH');
-  if (/^(พัก|พักไว้ก่อน|หยุด|ไว้ก่อน|บันทึกไปก่อน|บันทึกไว้ก่อน|เดี๋ยวไปแก้ในเว็บ)$/u.test(value)) return 'pause';
-  if (/^(ต่อ|ทำต่อ|กรอกต่อ|ทำรายการต่อ)$/u.test(value)) return 'resume';
-  if (/^(หมด|จบ|ไม่มีแล้ว)$/u.test(value)) return 'end';
-  if (/^(ยกเลิก|ยกเลิกรายการนี้|ไม่เอาแล้ว)$/u.test(value)) return 'cancel';
+  if (/^(พัก|พักไว้ก่อน|หยุด|pause|save for later|stop|ไว้ก่อน|บันทึกไปก่อน|บันทึกไว้ก่อน|เดี๋ยวไปแก้ในเว็บ)$/u.test(value)) return 'pause';
+  if (/^(ต่อ|ทำต่อ|กรอกต่อ|ทำรายการต่อ|continue|resume)$/u.test(value)) return 'resume';
+  if (/^(หมด|จบ|ไม่มีแล้ว|done|finish|no more)$/u.test(value)) return 'end';
+  if (/^(ยกเลิก|ยกเลิกรายการนี้|ไม่เอาแล้ว|cancel|discard this draft)$/u.test(value)) return 'cancel';
   return null;
 }
 
@@ -512,6 +537,9 @@ export function applyLineExpenseDraftAnswer(input: {
   const vendor = groundedText(input.messageText, hints?.vendorName);
   if (vendor) { next.header.vendorName = vendor; record('D-VENDOR'); }
   else if (hints?.vendorName !== undefined) reject('D-VENDOR', 'NOT_GROUNDED_OR_INVALID');
+  else if (/^(?:ร้าน|ผู้ขาย)\s*[:=]?\s+\S/u.test(input.messageText.trim())) {
+    next.header.vendorName = bounded(input.messageText.trim())!; record('D-VENDOR');
+  }
   const purpose = groundedText(input.messageText, hints?.businessPurpose);
   if (purpose) { next.header.businessPurpose = purpose; record('D-PURPOSE'); }
   else if (hints?.businessPurpose !== undefined) reject('D-PURPOSE', 'NOT_GROUNDED_OR_INVALID');
@@ -786,6 +814,7 @@ function acceptedFieldText(
 }
 
 export function formatLineExpenseDraftReply(input: {
+  language?: 'th' | 'en';
   state: LineExpenseDraftContinuation;
   categories: readonly ExpenseCategorySummary[];
   acceptedFields?: string[];
@@ -795,7 +824,25 @@ export function formatLineExpenseDraftReply(input: {
 }): string {
   const state = input.state;
   const names = new Map(input.categories.map((category) => [category.id, category.name]));
-  const fieldLabels: Record<string, string> = { description: 'ชื่อสินค้า/บริการ', quantity: 'จำนวนและหน่วย', price: 'ราคาต่อหน่วยหรือยอดรวม', expenseCategoryId: 'หมวดค่าใช้จ่าย', review: 'ตรวจรายการเดิมในเว็บ' };
+  if (input.language === 'en') {
+    const fields: Record<string, string> = { vendorName: 'seller name', expenseDate: 'expense date', businessPurpose: 'business purpose',
+      description: 'item or service', quantity: 'quantity and unit', price: 'unit price or total', expenseCategoryId: 'expense category', review: 'review the existing item on the web' };
+    const lines = ['🧾 Expense draft saved, awaiting your confirmation.'];
+    if (input.acceptedFields?.length) lines.push('Draft updated; the current details are below.');
+    if (state.header.vendorName) lines.push(`Seller: ${state.header.vendorName}`);
+    lines.push(`Date: ${state.header.expenseDate ? new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'Not provided'}`);
+    if (state.header.businessPurpose) lines.push(`Purpose: ${state.header.businessPurpose}`);
+    for (const item of state.items) if (item.description && (item.quantity || item.totalAmount) && (item.unitPrice || item.totalAmount))
+      lines.push(`Item: ${item.description} · ${item.quantity ?? '1'}${item.unit ? ` ${lineUiLabel(item.unit, 'en')}` : ''} · ${item.unitPrice ? `${item.unitPrice} THB per unit` : `${item.totalAmount} THB`}`);
+    if (state.status === 'CANCELLED') lines.push('Draft conversation cancelled; the existing draft and evidence are kept.');
+    else if (state.status === 'INPUT_ENDED_COMPLETE') lines.push('Ready for an authorized reviewer; nothing has been posted.');
+    else if (state.status === 'INPUT_ENDED_INCOMPLETE') lines.push('The details you provided are kept.');
+    else if (state.status === 'OPEN' && input.includeQuestions !== false && state.unresolvedQuestions.length) {
+      const question = state.unresolvedQuestions[0]!;
+      lines.push(`Please add the ${fields[question.field] ?? 'item details'}.`);
+    }
+    return lines.join('\n');
+  }
   const lines: string[] = [];
   if (input.acceptedFields?.length) {
     lines.push(state.items.length > 10 ? `แก้ร่างแล้ว ${input.acceptedFields.length} ข้อ — ดูข้อมูลปัจจุบันด้านล่าง` : `แก้ร่างแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
@@ -818,13 +865,8 @@ export function formatLineExpenseDraftReply(input: {
   } else if (state.status === 'INPUT_ENDED_INCOMPLETE') {
     lines.push('', 'เก็บข้อมูลที่กรอกไว้แล้วค่ะ');
   } else if (input.includeQuestions !== false && state.unresolvedQuestions.length) {
-    lines.push('', 'ข้อมูลที่ต้องใช้สำหรับทำรายการนี้ต่อ');
-    for (const question of state.unresolvedQuestions.filter((question) => question.scope === 'DOCUMENT')) lines.push(`• ${question.prompt}`);
-    for (const item of state.items) {
-      const questions = state.unresolvedQuestions.filter((question) => question.itemRef === item.itemRef);
-      if (questions.length) lines.push(`• ${(item.description ?? 'รายการนี้').slice(0, 60)}: ${questions.map((question) => fieldLabels[question.field] ?? 'ข้อมูลรายการ').join(' และ ')}`);
-    }
-    lines.push('', 'ตอบรวมในข้อความเดียวได้ค่ะ');
+    const question = state.unresolvedQuestions[0]!;
+    lines.push('', question.prompt.replace(/^I\d+\s*/u, '').replace(/\?$/u, 'คะ'));
   }
   return lines.join('\n');
 }

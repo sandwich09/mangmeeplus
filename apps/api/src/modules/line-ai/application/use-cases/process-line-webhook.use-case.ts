@@ -1,3 +1,5 @@
+import { lineDisplayDate, lineUiLabel, lineSourceLabel } from '../../domain/logic/line-language.logic';
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard, type SubstituteActionPreview } from '../line-substitute-receipt-action.service';
 import { LineQuotedMessageService, quoteReadMemory, quoteRecordsFromReads, validQuoteRecords, type LineQuotedRecord, type LineQuoteOwner } from '../line-quoted-message.service';
 import { LineCounterpartyService, buildCounterpartyCard, isLineCounterpartyCommand, type CounterpartyPreview } from '../line-counterparty.service';
@@ -217,6 +219,7 @@ export type LineTextEvent = {
   lineUserId: string;
   replyToken: string;
   messageText: string;
+  language?: 'th' | 'en';
   inputEvidence?: import('@watchdog-bms/contracts').LineAiInputEvidenceV2;
   messagingChannelId: string;
   channelKind?: 'USER' | 'GROUP' | 'ROOM';
@@ -244,9 +247,15 @@ export type LineTextEvent = {
 };
 
 /** The identity an outgoing message is addressed to; the only thing a handoff token binds. */
+function replyLanguage(event: object): 'th' | 'en' {
+  const turn = event as Partial<LineTextEvent>;
+  return turn.language ?? lineReplyLanguage(turn.messageText ?? '');
+}
+
 export type LineHandoffRecipient = { userId: string; companyId: string };
 
 export type LineReceiptUploadEvent = {
+  language?: 'th' | 'en';
   webhookEventId: string;
   lineUserId: string;
   replyToken: string;
@@ -287,14 +296,14 @@ export type LineLegalAcceptancePreflight =
   | { status: 'continue'; companyId?: string; assistantPaused?: true }
   | { status: 'required'; companyId: string };
 
-const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
+const UNLINKED_REPLY = { th: '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ', en: "Please link your MangmeePlus account to LINE through the web app." };
 // ── P10-L §7 copy. Owner-editable; no plus sign anywhere a customer reads (write "และ"). ──
 /** The staff door of §3.1: the employee link is issued by the owner, never self-served. */
-const EMPLOYEE_DOOR_REPLY = `👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เปิดเมนู "พนักงาน" ในเว็บแอป `
-  + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)';
+const EMPLOYEE_DOOR_REPLY = { th: `👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เปิดเมนู "พนักงาน" ในเว็บแอป `
+  + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)', en: "Ask the shop owner to open Employees on the web and send you a LINE linking code." };
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
-const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
-  + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ';
+const WELCOME_BACK_REPLY = { th: '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
+  + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ', en: "Welcome back; send a receipt or ask about your shop here." };
 /**
  * Owner copy 2026-09-21: the first hello, sent IN FRONT of the door card to someone who has just
  * added the OA. The card alone answered "which door" without ever answering "what is this and what
@@ -302,7 +311,7 @@ const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลั�
  * The business-package line follows the Owner's sign-off of 2026-09-27 (purchase-without-setup G20:
  * the 1,999 package has the same menus as the others and adds ภ.ง.ด.53 and 50 ทวิ).
  */
-const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n'
+const FOLLOW_WELCOME_REPLY = { th: 'สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n'
   + 'น้องมั่งมีเป็นผู้ช่วยบัญชี AI สำหรับร้านค้าและ SME ค่ะ\n'
   + '📸 ถ่ายใบเสร็จส่งในแชทนี้ ระบบอ่านและบันทึกค่าใช้จ่ายให้เอง\n'
   + '📊 ถามยอดขาย ค่าใช้จ่าย สรุปบัญชี ได้ทุกเมื่อ\n'
@@ -313,58 +322,58 @@ const FOLLOW_WELCOME_REPLY = 'สวัสดีค่ะ 🙏 ขอบคุ�
   + '2. เลือกแพ็กเกจในแอป เริ่มต้น 249 บาท/เดือน แล้วชำระ\n'
   + '3. ใช้งานได้ทันที ทั้งในแอปและในแชทนี้\n'
   + '\n'
-  + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ';
+  + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ', en: "Welcome to MangmeePlus; link your account or register your shop to get started." };
 /** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
  *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
  *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
 const RESUME_HINT = `· กดปุ่ม "${RESUME_AI_COMMAND}" หรือพิมพ์ "${RESUME_AI_COMMAND}" เมื่ออยากให้น้องมั่งมีตอบต่อ`;
 /** line-support-request-spec-th §2.1.4. Carries the way out, because a 24h pause with no exit was
  *  the other half of the complaint. No plus sign anywhere a customer reads. */
-const STAFF_CONTACT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
-  + `หากรีบ โทร 098-256-5628 ได้เลยค่ะ ${RESUME_HINT}`;
+const STAFF_CONTACT_REPLY = { th: '📮 รับเรื่องแล้วค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
+  + `หากรีบ โทร 098-256-5628 ได้เลยค่ะ ${RESUME_HINT}`, en: "Your request was received; our team will reply here during business hours, Monday–Saturday, 9:00–18:00." };
 /** §2.2.4: a second tap while the first request is still OPEN. Honest, and pages nobody twice. */
-const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ '
-  + `(จันทร์–เสาร์ 9:00–18:00) นะคะ ${RESUME_HINT}`;
+const SUPPORT_ALREADY_OPEN_REPLY = { th: '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะตอบในแชทนี้ในเวลาทำการ '
+  + `(จันทร์–เสาร์ 9:00–18:00) นะคะ ${RESUME_HINT}`, en: "Your request is still queued; our team will reply here during business hours, Monday–Saturday, 9:00–18:00." };
 /** §2.4: the assistant is back, said in the assistant's own voice. */
-const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
+const ASSISTANT_RESUMED_REPLY = { th: '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ', en: "Nong Mangmee is back; how can I help?" };
 /** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
  *  help, and the requests they already opened are in the operator inbox either way. */
-const SUPPORT_DAILY_LIMIT_REPLY = '📮 วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้ค่ะ '
-  + 'หากยังต้องการความช่วยเหลือ โทร 098-256-5628 ได้เลยค่ะ';
+const SUPPORT_DAILY_LIMIT_REPLY = { th: '📮 วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้ค่ะ '
+  + 'หากยังต้องการความช่วยเหลือ โทร 098-256-5628 ได้เลยค่ะ', en: "You cannot open another support request today; please continue your existing request or try tomorrow." };
 /** G19: what the inbox shows for a callback request (requestText/lastMessageText + thread line). */
 const PACKAGE_CALLBACK_NOTE = 'ขอให้ทีมงานติดต่อกลับเรื่องแพ็กเกจ';
 /** G19: no pause — the assistant keeps answering while the team calls back (RV32). */
-const PACKAGE_CALLBACK_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
-  + 'ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ';
+const PACKAGE_CALLBACK_REPLY = { th: '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) '
+  + 'ระหว่างนี้ถามน้องมั่งมีต่อได้เลยนะคะ', en: "Your package enquiry was received; our team will contact you during business hours, Monday–Saturday, 9:00–18:00." };
 /** …except where no ACTIVE shop resolves: the assistant cannot answer there, so it is not offered. */
-const PACKAGE_CALLBACK_NO_ASSISTANT_REPLY = '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
-const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
+const PACKAGE_CALLBACK_NO_ASSISTANT_REPLY = { th: '📮 รับเรื่องแล้วค่ะ ทีมงานจะติดต่อกลับเรื่องแพ็กเกจในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ', en: "Your package enquiry was received; our team will contact you during business hours, Monday–Saturday, 9:00–18:00." };
+const PACKAGE_CALLBACK_ALREADY_OPEN_REPLY = { th: '📮 คำขอของคุณยังอยู่ในคิวค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ', en: "Your package enquiry is still queued; our team will contact you during business hours, Monday–Saturday, 9:00–18:00." };
 /** Sent while a support pause is running and there is no live request to write to (§8). */
-const SUPPORT_PAUSED_REPLY = '📮 ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จค่ะ '
-  + 'กรุณากด "ติดต่อเจ้าหน้าที่" อีกครั้ง หากยังไม่ได้ โทร 098-256-5628 ได้เลยค่ะ';
+const SUPPORT_PAUSED_REPLY = { th: '📮 ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จค่ะ '
+  + 'กรุณากด "ติดต่อเจ้าหน้าที่" อีกครั้ง หากยังไม่ได้ โทร 098-256-5628 ได้เลยค่ะ', en: "Your message could not be queued for the team; please try again." };
 /**
  * UAT 2026-09-06. The reply above was told to a customer whose message had just been dropped on the
  * floor, which is the one thing it must never mean. This one is only ever sent once the message is
  * ON the request an operator reads, so "ส่งถึงทีมงานแล้ว" is a fact rather than a comfort.
  */
-const SUPPORT_FOLLOW_UP_REPLY = '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
-  + RESUME_HINT;
+const SUPPORT_FOLLOW_UP_REPLY = { th: '📮 ส่งข้อความถึงทีมงานแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้นะคะ '
+  + RESUME_HINT, en: "Your message was sent to the team; they will reply here." };
 /**
  * UAT 2026-09-06 (§2.2 delta รอบ 6). The full confirmation is worth saying once; said to every line
  * of a burst it is the noise the Owner saw three times in one screen — and the menu hint least of
  * all, since the customer has just read it. The MESSAGE is still recorded every time; only the
  * speech is rationed, off the `lastMessageAt` the row already carries.
  */
-const SUPPORT_FOLLOW_UP_REPEAT_REPLY = '📮 รับข้อความแล้วค่ะ';
+const SUPPORT_FOLLOW_UP_REPEAT_REPLY = { th: '📮 รับข้อความแล้วค่ะ', en: "Message received." };
 const SUPPORT_MEDIA_RECEIVED_REPLIES = {
   image: '📎 รับรูปแล้วค่ะ ส่งให้ทีมงานแล้ว',
   file: '📎 รับไฟล์แล้วค่ะ ส่งให้ทีมงานแล้ว',
 } as const;
 const SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS = 10 * 60 * 1000;
 const SUPPORT_FOLLOW_UP_REPLIES = {
-  none: SUPPORT_PAUSED_REPLY,
-  recorded: SUPPORT_FOLLOW_UP_REPLY,
-  repeat: SUPPORT_FOLLOW_UP_REPEAT_REPLY,
+  none: SUPPORT_PAUSED_REPLY['th'],
+  recorded: SUPPORT_FOLLOW_UP_REPLY['th'],
+  repeat: SUPPORT_FOLLOW_UP_REPEAT_REPLY['th'],
 } as const;
 type SupportFollowUpOutcome = keyof typeof SUPPORT_FOLLOW_UP_REPLIES;
 /** §3 PDPA: one line of context for the operator, never a transcript. */
@@ -379,28 +388,28 @@ const SUPPORT_THREAD_TEXT_MAX_LENGTH = 2000;
  */
 const SUPPORT_THREAD_MAX_MESSAGES = 500;
 const SUPPORT_THREAD_MAX_MEDIA = 50;
-const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
-const PACKAGE_CHANGE_NOT_OWNER_REPLY = `📦 หากต้องการเปลี่ยนแพ็กเกจ รบกวนแจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้พิมพ์ `
-  + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
-const PACKAGE_CHANGE_UNAVAILABLE_REPLY = '📦 ตอนนี้เปิดคำขอเปลี่ยนแพ็กเกจให้ไม่ได้ค่ะ รบกวนติดต่อทีมงานที่ 098-256-5628 นะคะ';
+const PACKAGE_CHANGE_ACCEPTED_REPLY = { th: '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ', en: "Your request was received; our team will contact you during business hours, Monday–Saturday, 9:00–18:00." };
+const PACKAGE_CHANGE_NOT_OWNER_REPLY = { th: `📦 หากต้องการเปลี่ยนแพ็กเกจ รบกวนแจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้พิมพ์ `
+  + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ', en: "Ask the shop owner or an authorized package manager to request the package change." };
+const PACKAGE_CHANGE_UNAVAILABLE_REPLY = { th: '📦 ตอนนี้เปิดคำขอเปลี่ยนแพ็กเกจให้ไม่ได้ค่ะ รบกวนติดต่อทีมงานที่ 098-256-5628 นะคะ', en: "The package request could not be opened; please contact the team at 098-256-5628." };
 /** What the admin queue shows for a request that came from a chat button with no tier chosen. */
 const PACKAGE_CHANGE_LINE_NOTE = 'ขอผ่าน LINE ยังไม่ได้เลือกแพ็กเกจ ทีมงานคุยกับร้านแล้วปรับได้';
-const PROFILE_GUARD_ACCEPTED_REPLY = '🔐 ได้เลยค่ะ ใส่อีเมลหรือเบอร์ไว้ในหน้าตั้งค่าได้ที่ลิงก์นี้นะคะ';
-const PROFILE_GUARD_LATER_REPLY = '👍 ได้ค่ะ ไว้พร้อมเมื่อไหร่พิมพ์ "ตั้งค่า" มาได้เลยนะคะ';
+const PROFILE_GUARD_ACCEPTED_REPLY = { th: '🔐 ได้เลยค่ะ ใส่อีเมลหรือเบอร์ไว้ในหน้าตั้งค่าได้ที่ลิงก์นี้นะคะ', en: "Add your email or phone number through this settings link." };
+const PROFILE_GUARD_LATER_REPLY = { th: '👍 ได้ค่ะ ไว้พร้อมเมื่อไหร่พิมพ์ "ตั้งค่า" มาได้เลยนะคะ', en: "When ready, send “settings” here." };
 /** The states in which an application is still travelling, so the door shows status (§3.1/§5). */
 const OPEN_LINE_SIGNUP_STATES = [
   'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'PROVISIONING_FAILED', 'READY',
 ] as const;
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
-const AI_OPT_OUT_REPLY = 'คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
+const AI_OPT_OUT_REPLY = { th: 'คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ', en: "AI assistance is off, so this message was not processed by AI; enable it in the web app under Settings → Security." };
 export { LEGAL_ACCEPTANCE_REQUIRED_REPLY } from '../../domain/logic/line-business-card.logic';
-const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
-const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+const FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ', en: "You cannot use LINE AI for this shop; ask the owner or an authorized administrator." };
+const ERROR_REPLY = { th: '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ', en: "A temporary error occurred; please try again shortly." };
 /** The bytes never arrived from LINE, so "nothing was saved" is provably true — say so, and name
  *  what to resend (a generic "ลองใหม่" left users unsure what failed). §17.1: the noun matches what
  *  the customer actually sent, so a PDF is never called a รูป (UXE-03). */
-export const mediaDownloadFailedReply = (messageType: 'image' | 'file'): string => messageType === 'file'
+export const mediaDownloadFailedReply = (messageType: 'image' | 'file', language: 'th' | 'en' = 'th'): string => language === 'en' ? `The ${messageType === 'file' ? 'file' : 'photo'} could not be downloaded; nothing was saved from it, so please resend it.` : messageType === 'file'
   ? '📄 น้องยังรับไฟล์จาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากไฟล์นี้นะคะ รบกวนส่งไฟล์เดิมอีกครั้งค่ะ'
   : '📷 น้องยังรับรูปจาก LINE ไม่สำเร็จค่ะ ยังไม่ได้บันทึกรายการใด ๆ จากรูปนี้นะคะ รบกวนส่งรูปเดิมอีกครั้งค่ะ';
 /** The media turn failed somewhere after the bytes arrived, so the record state is uncertain —
@@ -415,15 +424,15 @@ type SupportMediaDownloadCarrier = LineReceiptUploadEvent & { [SUPPORT_MEDIA_DOW
 type SavedLineReceipt = { expenseId: string; companyId: string; uploaded: boolean };
 type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean; noReceipt?: boolean };
 
-export const mediaProcessingFailedReply = (messageType: 'image' | 'file'): string => messageType === 'file'
+export const mediaProcessingFailedReply = (messageType: 'image' | 'file', language: 'th' | 'en' = 'th'): string => language === 'en' ? `The ${messageType === 'file' ? 'file' : 'photo'} could not be processed; please resend it and I’ll flag any duplicate already saved.` : messageType === 'file'
   ? '📄 ขออภัยค่ะ ระบบประมวลผลไฟล์นี้ไม่สำเร็จ รบกวนส่งไฟล์เดิมอีกครั้งนะคะ ถ้าไฟล์นี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ'
   : '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
-const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
+const RATE_LIMIT_REPLY = { th: '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ', en: "A previous message is still being processed; please wait a moment and try again." };
 /** Spec §9.1 `AI_BUDGET_UNAVAILABLE`: the meter could not be READ. It is not the budget card (we do
  *  not know that the budget is full) and not the generic error (nothing broke on the customer's
  *  side). Deterministic, no model call, no money figure, no company configuration. */
-const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
-  + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ';
+const AI_BUDGET_UNAVAILABLE_REPLY = { th: '⏳ ตอนนี้ยังตรวจสอบเครดิต AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
+  + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ', en: "Your shop’s AI credit could not be checked, so this task has not started; try again shortly or use the web app." };
 /** Post-OCR branch ambiguity (multi-branch company, no defaultable head office): the read
  *  succeeded, only the branch decision is missing — send the user to the web picker honestly.
  *  Says "เอกสาร", not "ใบเสร็จ": the same refusal now answers the check-bill lane, where calling
@@ -454,14 +463,14 @@ const BRANCH_RETRY_ANSWER = '\nไฟล์เดิมยังเก็บไ�
  */
 export function lineCaptureFailureReply(
   error: unknown,
-  tail: string,
+  tail: string, language: 'th' | 'en' = 'th',
 ): { reply: string; status: string; errorCode: string } | undefined {
   const code = error instanceof HttpException
     ? (error.getResponse() as { code?: string } | undefined)?.code
     : undefined;
   if (code === 'TRANSACTION_BRANCH_REQUIRED' || code === 'TRANSACTION_BRANCH_INVALID') {
     return {
-      reply: `${RECEIPT_BRANCH_REQUIRED_REPLY}${tail}`,
+      reply: language === 'en' ? LEGACY_LINE_COPY_EN.RECEIPT_BRANCH_REQUIRED_REPLY + (tail === BRANCH_RETRY_RESEND ? ' Then resend the photo.' : ' The earlier file is retained; repeat your answer after choosing the branch.') : `${RECEIPT_BRANCH_REQUIRED_REPLY}${tail}`,
       status: 'clarification_required',
       errorCode: 'RECEIPT_BRANCH_SELECTION_REQUIRED',
     };
@@ -470,7 +479,7 @@ export function lineCaptureFailureReply(
 }
 /** Sent INSTEAD of RATE_LIMIT_REPLY when the turn's ledger entry exists: the reclaim drain WILL
  *  answer it, so telling the user to resend would produce a double answer (UAT 2026-08-27). */
-const BUSY_FOLLOW_UP_REPLY = '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ';
+const BUSY_FOLLOW_UP_REPLY = { th: '⏳ น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่ค่ะ ข้อความนี้รับไว้แล้ว เดี๋ยวตามมาตอบให้เองนะคะ ไม่ต้องส่งซ้ำค่ะ', en: "Your message is queued while I answer the previous one; I’ll reply here, so there is no need to resend." };
 /** How long a live turn may wait for the per-company AI admission lease before giving up. The
  *  lease frees between a media turn's model calls, so a queued chat message usually slips into
  *  one of those gaps well inside this window; LINE's loading indicator covers the wait. */
@@ -491,13 +500,13 @@ export function lineIntakeOfferedToolNames(input: {
     .map((tool) => tool.name)
     .sort();
 }
-const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
+const RECEIPT_LINK_REPLY = { th: '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ', en: "Please link your MangmeePlus account to LINE before sending receipts." };
 /** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
  *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
  *  employee to connect an account they already connected. */
 export const PACKAGE_REQUIRED_MEMBER_REPLY = `ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ`;
-const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
-const EXPENSE_FEATURE_DISABLED_REPLY = `📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\n${LINE_FEATURE_DISABLED_HELP_TH}`;
+const RECEIPT_FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ', en: "You cannot capture expenses; ask the shop owner or an authorized administrator." };
+const EXPENSE_FEATURE_DISABLED_REPLY = { th: `📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\n${LINE_FEATURE_DISABLED_HELP_TH}`, en: "Your package does not include expenses; ask the shop owner for help." };
 /**
  * The CLOSED-route copy the runbook left unwritten (`feature-launch-control.md` OPEN-9).
  *
@@ -521,30 +530,34 @@ const CAPABILITY_ENTITLEMENT_NOTE = '💡 ปุ่ม “บริการข�
 /** `staff_menu_` prefix on purpose: `classifyLineAiTerminalOutcome` reads it as `delivered`, which
  *  this turn is — a distinct status so it can still be counted apart from a bare refusal. */
 const CAPABILITY_ENTITLEMENT_STATUS = 'staff_menu_capability_entitlements';
-const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null): LineReplyMessage[] =>
-  [{ type: 'text', text: `${lead}\n${CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled)];
+const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null, language: 'th' | 'en' = 'th'): LineReplyMessage[] =>
+  [{ type: 'text', text: `${lead}\n${language === 'en' ? LEGACY_LINE_COPY_EN.CAPABILITY_ENTITLEMENT_NOTE : CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled, language)];
 const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
-const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
-const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
-const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
+const SIGNATURE_FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ', en: "You cannot manage signatures; ask the shop owner or an authorized administrator." };
+const SIGNATURE_NEED_IMAGE_REPLY = { th: '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ', en: "Please send a clear photo of your signature on a plain background." };
+const CLARIFY_REPLY = { th: '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"', en: "What would you like help with?" };
 const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี หรือยื่นภาษีได้ค่ะ\nกรุณาทำรายการในเว็บมั่งมีนะคะ';
 const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อเก็บเป็นลายเซ็นประจำตัวค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
 const MEDIA_SECURITY_REJECTED_REPLY = `⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ`;
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
-const MEDIA_CLARIFY_REPLY = '🤔 รูปนี้เป็นอะไรคะ เลือกบันทึกใบเสร็จ ภาพประกอบ หรือสรุปหลายรายการได้เลยค่ะ';
+const MEDIA_CLARIFY_REPLY = { th: '🤔 รูปนี้เป็นอะไรคะ เลือกบันทึกใบเสร็จ ภาพประกอบ หรือสรุปหลายรายการได้เลยค่ะ', en: "Is this an expense receipt, a signature, or an illustration?" };
 const MEDIA_REVIEW_CHOICE = 'เลือกเก็บรูปไว้ตรวจโดยไม่สร้างค่าใช้จ่าย แล้วส่งเอกสารแยกทีละภาพได้ค่ะ';
-const MULTI_DOCUMENT_CLARIFY_REPLY = [
+const MULTI_DOCUMENT_CLARIFY_REPLY = { th: [
   '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ จึงยังไม่ดึงยอดไปบันทึกเป็นค่าใช้จ่ายรายการเดียวค่ะ',
   MEDIA_REVIEW_CHOICE,
-].join('\n');
-function mediaChoiceQuickReply(text: string): LineReplyMessage['quickReply'] | undefined {
-  if (text.includes(MEDIA_CLARIFY_REPLY)) return lineChoiceQuickReply([
+].join('\n'), en: "This image contains several documents; please send each document separately." };
+function mediaChoiceQuickReply(text: string, language: 'th' | 'en' = 'th'): LineReplyMessage['quickReply'] | undefined {
+  if (language === 'en') { return lineChoiceQuickReply([{ label: 'Record receipt', text: 'Record receipt' }, { label: 'Question only', text: 'Question only; do not record' }, { label: 'Several documents', text: 'Summarize several documents' }]); }
+
+  if (text.includes(MEDIA_CLARIFY_REPLY['th'])) return lineChoiceQuickReply([
     { label: 'บันทึกใบเสร็จ', text: 'บันทึกใบเสร็จ' }, { label: 'ภาพประกอบคำถาม', text: 'ภาพประกอบคำถาม' }, { label: 'สรุปหลายรายการ', text: 'สรุปหลายรายการ' },
   ]);
   return text.includes(MEDIA_REVIEW_CHOICE) ? lineChoiceQuickReply([{ label: 'สรุปหลายรายการ', text: 'สรุปหลายรายการ' }]) : undefined;
 }
-function formatUtilityDocumentsReply(parts: NonNullable<ReceiptOcrResponse['utilityDocuments']>): string {
+function formatUtilityDocumentsReply(parts: NonNullable<ReceiptOcrResponse['utilityDocuments']>, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') { return [`Found ${parts.length} utility-document sections in this image:`, ...parts.slice(0, 4).map(part => `• ${part.role === 'BILL_DUE' ? 'Bill due' : 'Receipt'} · ${part.period} · ${part.amount} THB`), 'Please send each document separately to review it without combining amounts.'].join('\n'); }
+
   return [
     `📄 อ่านเอกสารค่าน้ำ/ค่าไฟได้ ${parts.length} ส่วนจากภาพเดียว:`,
     ...parts.slice(0, 4).map((part) => {
@@ -639,14 +652,16 @@ function savedUtilityBill(expense: ExpenseRecordWithRelations): NonNullable<Rece
  * `readFailed` marks a transient read failure (timeout/empty/truncated output): the honest lead-in
  * is "the read failed", not the bare "what is this picture?" that reads as if the photo were the
  * problem (owner UX review 2026-08-29). */
-export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed = false): string {
+export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed = false, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') { return aiBudgetReasonTh(errorCode) ? 'The photo is kept, but the shop’s AI allowance currently prevents document reading; no expense was created, so review it on the web or choose how to handle the photo.' : errorCode === 'AI_DOCUMENT_READING_DISABLED' ? 'Automatic document reading is disabled for this shop; the file can be kept for manual review.' : readFailed ? 'The photo could not be read; it is kept and no expense was created, so resend a clearer copy or review it on the web.' : 'The photo is kept; please choose whether to record a receipt or use it for a question.'; }
+
   // §9.2: the company's AI MONEY closed the read. The picture IS kept (this branch only runs once
   // `ensurePendingMedia` has a row), nothing was recorded, and no automatic retry is promised. The
   // old wording — "ระบบอ่านเอกสารขัดข้องชั่วคราว" — was a false outage story for a policy decision.
   const budgetReason = aiBudgetReasonTh(errorCode);
   if (budgetReason) {
     return `${isDocumentReadingCreditSpent(errorCode) ? '💚' : '⏳'} รับรูปไว้แล้วค่ะ แต่${budgetReason} `
-      + `จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ\n\n${MEDIA_CLARIFY_REPLY}`;
+      + `จึงยังไม่ได้อ่านและยังไม่ได้บันทึกรายการค่าใช้จ่ายนะคะ\n\n${MEDIA_CLARIFY_REPLY['th']}`;
   }
   const notice = errorCode === 'OCR_FEATURE_DISABLED'
     ? 'บริษัทปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ระบบยังเก็บไฟล์นี้ไว้ได้ แต่จะไม่อ่านข้อมูลให้อัตโนมัติ'
@@ -655,7 +670,7 @@ export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed =
       : readFailed
         ? '📷 น้องอ่านรูปนี้ไม่สำเร็จค่ะ ระบบอ่านเอกสารขัดข้องชั่วคราว รูปยังเก็บไว้ให้และยังไม่ได้บันทึกรายการนะคะ'
         : null;
-  return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
+  return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY['th']}` : MEDIA_CLARIFY_REPLY['th'];
 }
 /** The outcome that same reply reports, for its card's heading: the picture is kept but was not read
  *  (no credit, reading switched off, a failed read), or the reply is the question alone. */
@@ -697,16 +712,15 @@ const isDocumentReadingCreditSpent = (errorCode?: string): boolean =>
 /**
  * Spec §8: an intake route that never reached the model — the gateway call itself did not complete
  * (`ROUTER_UNREACHABLE`, tryRouteIntake's own catch block), the provider itself could not be reached
- * in time (`PROVIDER_THROTTLED`/`PROVIDER_TIMEOUT` — the two provider codes the gateway always marks
- * `retryable: true`, in `bedrock.provider.ts`/`openai.provider.ts`, regardless of which call site hit
- * them), or our AI budget gate could not run — reads to the customer as "the system is slow right
+ * or failed (`PROVIDER_*`, including unknown failures whose HTTP status is logged by the provider),
+ * or our AI budget gate could not run — reads to the customer as "the system is slow right
  * now", never "I don't understand you". A credit that is spent or too small for the call is answered
- * before this choice, by `answerAiCreditRefusal`. Everything else with `status !== 'ROUTED'`
- * (the model answered but produced an invalid or unroutable plan, e.g. `ROUTER_SEMANTIC_SCHEMA_INVALID`)
- * is the model genuinely not making sense of the text.
+ * before this choice, by `answerAiCreditRefusal`. Invalid router output is also a system failure:
+ * ask the customer to retry the same input, not to rephrase a valid request.
  */
 const isTransientLineAiRouteFailure = (errorCode?: string): boolean =>
-  errorCode === 'ROUTER_UNREACHABLE' || errorCode === 'PROVIDER_THROTTLED' || errorCode === 'PROVIDER_TIMEOUT'
+  errorCode === 'ROUTER_UNREACHABLE' || errorCode?.startsWith('PROVIDER_') === true
+  || errorCode === 'ROUTER_SEMANTIC_SCHEMA_INVALID' || errorCode === 'ROUTER_JSON_PARSE_FAILED'
   || isAiBudgetRefusalCode(errorCode);
 const LINE_AI_ROUTE_TRANSIENT_REPLY = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
 const LINE_AI_ROUTE_UNCLEAR_REPLY = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
@@ -726,8 +740,10 @@ const LINE_AI_ROUTE_UNCLEAR_REPLY = 'ขอโทษค่ะ น้องมั
  */
 export function formatBudgetMediaNotStoredReply(
   errorCode: string | undefined,
-  kind: 'save_failed' | 'open_question' | 'no_permission',
+  kind: 'save_failed' | 'open_question' | 'no_permission', language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { return kind === 'open_question' ? 'A previous photo is waiting for your answer; this photo has not been stored or recorded, so finish that question or use the web app.' : kind === 'save_failed' ? 'Document reading is unavailable and this photo could not be kept; no expense was created, so use the web app or resend it later.' : 'Document reading is unavailable; this photo was not read, stored or recorded as an expense.'; }
+
   const reason = aiBudgetReasonTh(errorCode) ?? 'เครดิตสำหรับการอ่านเอกสารไม่พอ';
   const tail = kind === 'save_failed'
     ? 'และระบบยังเก็บรูปนี้ไว้ไม่สำเร็จค่ะ จึงยังไม่ได้บันทึกรายการใด ๆ นะคะ รบกวนบันทึกผ่านเว็บแอป หรือส่งรูปเข้ามาใหม่อีกครั้งภายหลังค่ะ'
@@ -740,7 +756,7 @@ export function formatBudgetMediaNotStoredReply(
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
 const MEDIA_NOT_RECORDED_REPLY = '🖼️ รับทราบค่ะ เก็บรูปไว้เฉยๆ ไม่ได้บันทึกเป็นหลักฐานของรายการไหน';
-const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
+const TEXT_EXPENSE_CLARIFY_REPLY = { th: '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”', en: "Is this a shop expense or a personal payment you want to claim back?" };
 /** Field-specific clarifications (spec §8.2): a field the gate ALREADY accepted is never asked again —
  *  that re-ask is the UAT defect where an accepted `60` was demanded a second time. */
 const TEXT_EXPENSE_AMOUNT_ONLY_REPLY = '🧾 รับรายการแล้วค่ะ ขอทราบยอดเงินด้วยนะคะ เช่น “60 บาท”';
@@ -750,10 +766,10 @@ const TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY = '🧾 ยังไม่สร้า�
 const EXACT_GREETING_REPLY = 'สวัสดีค่ะ 😊 วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ?';
 /** Reimbursement semantic intake: canonical server copy persisted/ledgered for each outcome. The Flex cards
  *  own their own wording; these are the previews recorded before delivery. LINE never creates the record. */
-const REIMBURSEMENT_PAYER_CLARIFY_REPLY = 'รายการนี้ใครเป็นคนจ่ายคะ? ตอบกลับได้เลยว่า “เบิกคืน” หรือ “บริษัทจ่าย”';
+const REIMBURSEMENT_PAYER_CLARIFY_REPLY = { th: 'รายการนี้ใครเป็นคนจ่ายคะ? ตอบกลับได้เลยว่า “เบิกคืน” หรือ “บริษัทจ่าย”', en: "Was this paid with shop funds or your own money?" };
 const REIMBURSEMENT_CLARIFY_ONLY_REPLY = '🧾 เข้าใจว่าต้องการเบิกคืนค่าใช้จ่ายที่จ่ายส่วนตัวไปก่อนค่ะ\nน้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้ และการส่งต่อไปกรอกในเว็บยังไม่เปิดใช้งานในตอนนี้ค่ะ';
 const REIMBURSEMENT_HANDOFF_REPLY = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
-const REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY = '🔒 ยังไม่สามารถส่งต่อการเบิกคืนค่าใช้จ่ายผ่าน LINE สำหรับบริษัทนี้ได้ค่ะ';
+const REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY = { th: '🔒 ยังไม่สามารถส่งต่อการเบิกคืนค่าใช้จ่ายผ่าน LINE สำหรับบริษัทนี้ได้ค่ะ', en: "You cannot create a claim; ask the shop owner or an authorized administrator." };
 /** LINE hard limits: at most 5 messages per reply, at most 5000 characters in a text message. */
 const LINE_MAX_MESSAGES_PER_REPLY = 5;
 const LINE_TEXT_MESSAGE_MAX_CHARS = 5000;
@@ -792,7 +808,9 @@ function pendingMediaByOrderWords<T>(text: string, ordered: readonly T[]): T | u
 }
 
 /** "รูปที่ 2" / "ไฟล์ที่ 1", optionally with its arrival time — how a pending file is named to the customer. */
-function pendingMediaOrderLabel(row: { mimeType?: string | null; createdAt?: Date }, index: number, withTime = false): string {
+function pendingMediaOrderLabel(row: { mimeType?: string | null; createdAt?: Date }, index: number, withTime = false, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') { return `${row.mimeType?.startsWith('image/') ? 'Photo' : 'File'} ${index + 1}${withTime && row.createdAt ? ` (sent at ${new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(row.createdAt)} Bangkok time)` : ''}`; }
+
   const label = `${row.mimeType?.startsWith('image/') ? 'รูป' : 'ไฟล์'}ที่ ${index + 1}`;
   return withTime && row.createdAt instanceof Date
     ? `${label} (ส่งเมื่อ ${new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(row.createdAt)} น.)`
@@ -1025,9 +1043,15 @@ export function formatBusinessDocumentReply(
   classification: BusinessDocumentClassification | null,
   webBaseUrl: string | undefined,
   companyId: string,
-  options: { captureLink?: string; amountLabel?: string } = {},
+  options: { captureLink?: string; amountLabel?: string } = {}, language: 'th' | 'en' = 'th'
 ): string {
-  if (!classification) return MEDIA_CLARIFY_REPLY;
+  if (language === 'en') { if (!classification) return MEDIA_CLARIFY_REPLY.en;
+if (classification.contentKind === 'MULTI_DOCUMENT') return 'This image contains several documents; please send each separately to avoid combining their amounts.';
+if (classification.contentKind === 'UNREADABLE') return 'Please send a clear photo of the whole document without blur or glare.';
+if (options.captureLink) return `The document is kept as a draft for review: ${options.captureLink}`;
+return 'This document is not yet verified as expense evidence; please send the final receipt or explain its business purpose before recording it.'; }
+
+  if (!classification) return MEDIA_CLARIFY_REPLY['th'];
   if (classification.contentKind === 'MULTI_DOCUMENT') return '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ กรุณาถ่ายแยกเอกสารละ 1 ภาพ เพื่อไม่ให้ยอดหรือร้านค้าถูกรวมผิดค่ะ';
   if (classification.contentKind === 'UNREADABLE') return '📷 ยังอ่านเอกสารนี้ได้ไม่ชัด กรุณาถ่ายใหม่ให้เห็นทั้งใบ ภาพตรง ไม่เบลอ และไม่มีแสงสะท้อนค่ะ';
   const nr = classifyNonReceiptCase(classification);
@@ -1060,7 +1084,9 @@ export function formatBusinessDocumentReply(
   }
 }
 
-function formatCheckBillDecisionReply(): string {
+function formatCheckBillDecisionReply(language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') { return 'This bill shows an amount due, without proof of payment; no expense has been created yet, so choose its payment status below.'; }
+
   return [
     '🧾 รูปนี้ยังไม่ใช่ใบเสร็จค่ะ',
     'ใบนี้บอกยอดที่ต้องจ่าย แต่ยังไม่ยืนยันว่าร้านรับเงินแล้ว',
@@ -1070,7 +1096,9 @@ function formatCheckBillDecisionReply(): string {
   ].join('\n');
 }
 
-export function buildCheckBillDecisionQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
+export function buildCheckBillDecisionQuickReply(language: 'th' | 'en' = 'th'): NonNullable<LineReplyMessage['quickReply']> {
+  if (language === 'en') { return { items: [{ type: 'action', action: { type: 'message', label: 'Paid, no receipt', text: '1' } }, { type: 'action', action: { type: 'message', label: 'Not paid yet', text: '2' } }, { type: 'action', action: { type: 'message', label: 'Have final receipt', text: '3' } }] }; }
+
   return {
     items: [
       { type: 'action', action: { type: 'message', label: 'จ่ายแล้ว ไม่ได้ใบ', text: 'จ่ายแล้ว แต่ไม่มีใบเสร็จ' } },
@@ -1080,7 +1108,9 @@ export function buildCheckBillDecisionQuickReply(): NonNullable<LineReplyMessage
   };
 }
 
-function buildCheckBillReceiptUploadQuickReply(): NonNullable<LineReplyMessage['quickReply']> {
+function buildCheckBillReceiptUploadQuickReply(language: 'th' | 'en' = 'th'): NonNullable<LineReplyMessage['quickReply']> {
+  if (language === 'en') { return { items: [{ type: 'action', action: { type: 'cameraRoll', label: 'Choose receipt photo' } }, { type: 'action', action: { type: 'camera', label: 'Take receipt photo' } }] }; }
+
   return {
     items: [
       { type: 'action', action: { type: 'cameraRoll', label: 'เลือกรูปใบเสร็จ' } },
@@ -1094,9 +1124,11 @@ function buildCheckBillReceiptUploadQuickReply(): NonNullable<LineReplyMessage['
  *  go unmentioned here because this reply never saw the apply outcome at all (F6). */
 export function formatCheckBillDraftCreatedReply(
   continuation: Pick<LineSubstituteReceiptContinuationResult, 'status' | 'replyText' | 'pendingQuestion'>,
-  charges: readonly ExpenseChargeSummary[] = [],
+  charges: readonly ExpenseChargeSummary[] = [], language: 'th' | 'en' = 'th'
 ): string {
-  const chargeBlock = chargeSummaryLines(charges);
+  if (language === 'en') { return ['One expense draft was created; the original bill is retained as evidence without creating a duplicate.', continuation.replyText, ...chargeSummaryLines(charges, 'en')].filter(Boolean).join('\n\n'); }
+
+  const chargeBlock = chargeSummaryLines(charges, language);
   const hardFailure = ['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status);
   if (hardFailure || !continuation.pendingQuestion) {
     return `✅ สร้างร่างค่าใช้จ่าย 1 รายการแล้วค่ะ\n\n${continuation.replyText}`;
@@ -1121,8 +1153,10 @@ function formatSignatureTicketReply(
   webBaseUrl: string | undefined,
   companyId: string,
   signatureId: string,
-  steerToPendingDecision = false,
+  steerToPendingDecision = false, language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { return [ 'Your signature photo was saved as your reusable signature and is available immediately.', ...(steerToPendingDecision ? ['Select Prepare document to continue with signing on the web.'] : []), `View signature: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/signatures?signatureId=${signatureId}`)}` ].join('\n'); }
+
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/signatures?signatureId=${signatureId}`);
   return [
     '✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว',
@@ -1205,13 +1239,14 @@ export function isExactStandaloneGreeting(normalizedText: string): boolean {
  * over a missing field (an unresolved 60-vs-200 makes every other answer premature), and a legacy
  * fieldless error still falls back to the exact previous copy.
  */
-export function formatTextExpenseClarifyReply(error: LineTextExpenseCaptureIncompleteError): string {
+export function formatTextExpenseClarifyReply(error: LineTextExpenseCaptureIncompleteError, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') return error.conflictingFields.includes('amount') ? LEGACY_LINE_COPY_EN.TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY : error.missingFields.includes('amount') ? LEGACY_LINE_COPY_EN.TEXT_EXPENSE_AMOUNT_ONLY_REPLY : LEGACY_LINE_COPY_EN.TEXT_EXPENSE_PURPOSE_ONLY_REPLY;
   if (error.conflictingFields.includes('amount')) return TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY;
   const needsAmount = error.missingFields.includes('amount');
   const needsPurpose = error.missingFields.includes('description') || error.missingFields.includes('purpose');
   if (needsAmount && !needsPurpose) return TEXT_EXPENSE_AMOUNT_ONLY_REPLY;
   if (needsPurpose && !needsAmount) return TEXT_EXPENSE_PURPOSE_ONLY_REPLY;
-  return TEXT_EXPENSE_CLARIFY_REPLY;
+  return TEXT_EXPENSE_CLARIFY_REPLY['th'];
 }
 
 /** Bounded affirmative confirmation to a pending substitute-start question (never a negation). */
@@ -1285,11 +1320,11 @@ export function toCanonicalTextMessages(messages: LineReplyMessage[]): LineReply
     : message));
 }
 
-export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
+export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined, language: 'th' | 'en' = lineReplyLanguage(response.replyText)): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
     // Same Thai label the Flex answer cards use, so the plain-text fallback reads consistently.
-    lines.push(`แหล่งข้อมูล: ${response.sourceLabels.slice(0, 5).join(', ')}`);
+    lines.push(`${language === 'en' ? 'Sources' : 'แหล่งข้อมูล'}: ${response.sourceLabels.slice(0, 5).map(label => lineSourceLabel(label, response.sourceRefs.find(ref => ref.label === label)?.module, language)).join(', ')}`);
   }
   const firstLink = response.webLinks[0];
   if (firstLink) {
@@ -1297,7 +1332,8 @@ export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string
     // `absoluteWebLink` returns the path unchanged when no base URL is configured, and a bare
     // "/companies/…" in a LINE message is not a link — it is a string nobody can open. Say the
     // words instead; the reply is still true, it just stops pretending to be actionable.
-    lines.push(/^https?:\/\//i.test(url) ? `เปิดดู: ${firstLink.label} ${url}` : `เปิดเว็บมั่งมีพลัส: ${firstLink.label}`);
+    const label = lineSourceLabel(firstLink.label, response.sourceRefs.find(ref => ref.webPath === firstLink.path)?.module, language);
+    lines.push(/^https?:\/\//i.test(url) ? `${language === 'en' ? 'View' : 'เปิดดู'}: ${label} ${url}` : `${language === 'en' ? 'Open MangmeePlus' : 'เปิดเว็บมั่งมีพลัส'}: ${label}`);
   }
   return lines.join('\n');
 }
@@ -1340,6 +1376,9 @@ export function pendingWorkReply(text: string): 'cancel' | 'review' | null {
 
 export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'multiple' | 'ambiguous' {
   const t = (text ?? '').toLowerCase().trim();
+  if (/^(?:record receipt|record expense|use this as expense evidence)$/u.test(t)) return 'receipt';
+  if (/^(?:question only(?:; do not record)?|illustration)$/u.test(t)) return 'illustration';
+  if (/^(?:summarize )?several documents$/u.test(t)) return 'multiple';
   // The question is numbered, so a lone choice is unambiguous. Anchored to the whole reply on
   // purpose: a bare '1' is an answer, but '1500' or 'จ่ายไป 2 ใบ' is not.
   const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([123])[.)]?$/.exec(t);
@@ -1383,8 +1422,8 @@ export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'i
   return { decision: match[1] === '1' ? 'receipt' : match[1] === '2' ? 'illustration' : 'multiple', remainder: match[2].trim() };
 }
 
-function companyLabel(membership: LineCompanyMembership): string {
-  return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
+function companyLabel(membership: LineCompanyMembership, language: 'th' | 'en' = 'th'): string {
+  return membership.company?.brandName ?? membership.company?.name ?? (language === 'en' ? 'Unnamed shop' : 'ไม่ระบุบริษัท');
 }
 
 /** R-C8: the same wording as LIFF (R-C2) for a locked shop in the picker and the context card. */
@@ -1397,9 +1436,9 @@ function companyStateLabel(membership: LineCompanyMembership, now = new Date()):
 }
 
 /** One picker row; the lock label only on a locked shop, so an ACTIVE row keeps its exact bytes. */
-function companyPickerItem(membership: LineCompanyMembership): CompanyPickerItem {
+function companyPickerItem(membership: LineCompanyMembership, language: 'th' | 'en' = 'th'): CompanyPickerItem {
   const stateLabel = companyStateLabel(membership);
-  return { companyId: membership.companyId, companyName: companyLabel(membership), ...(stateLabel ? { stateLabel } : {}) };
+  return { companyId: membership.companyId, companyName: companyLabel(membership, language), ...(stateLabel ? { stateLabel: lineUiLabel(stateLabel, language) } : {}) };
 }
 
 /** Where บริษัทของฉัน's web button lands: a locked shop's plan manager goes straight to the package
@@ -1472,10 +1511,10 @@ function receiptFeatureDisabled(access: { permissions: string[]; entitlementDeni
   return RECEIPT_CAPTURE_PERMISSIONS.some((permission) => access.entitlementDeniedPermissions?.[permission]);
 }
 
-function receiptDeniedReply(access: { permissions: string[]; entitlementDeniedPermissions?: Record<string, string> }): string {
+function receiptDeniedReply(access: { permissions: string[]; entitlementDeniedPermissions?: Record<string, string> }, language: 'th' | 'en' = 'th'): string {
   return receiptFeatureDisabled(access)
-    ? EXPENSE_FEATURE_DISABLED_REPLY
-    : RECEIPT_FORBIDDEN_REPLY;
+    ? EXPENSE_FEATURE_DISABLED_REPLY[language]
+    : RECEIPT_FORBIDDEN_REPLY[language];
 }
 
 // `ของ` only counts as goods when it LEADS the phrase (`ซื้อของอะไรบ้าง`). Trailing, it is the
@@ -1508,7 +1547,9 @@ function receiptItemLines(
 /** Spec §5.1: the charge block, in one place, so the receipt card and the check-bill reply cannot
  *  drift apart. `label` already comes from `EXPENSE_LINE_CHARGE_KIND_LABELS` via `expenseLineCharges`
  *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
-function chargeSummaryLines(charges: readonly ExpenseChargeSummary[]): string[] {
+function chargeSummaryLines(charges: readonly ExpenseChargeSummary[], language: 'th' | 'en' = 'th'): string[] {
+  if (language === 'en') { return charges.map(charge => `• ${({ SERVICE_CHARGE: 'Service charge', SHIPPING: 'Shipping', ROUNDING: 'Rounding', OTHER: 'Other charge' } as Record<string, string>)[charge.kind] ?? 'Additional charge'}: ${moneyLabel(charge.amount)} THB`); }
+
   if (charges.length === 0) return [];
   const additional = charges.filter((charge) => charge.kind !== 'ROUNDING');
   const rounding = charges.filter((charge) => charge.kind === 'ROUNDING');
@@ -1554,17 +1595,19 @@ export function receiptCardDateLine(
 const THAI_DATE_REPLY_FORMATTER = new Intl.DateTimeFormat('th-TH', {
   timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
 });
-function formatReplyDate(value: string | undefined): string | undefined {
+function formatReplyDate(value: string | undefined, language: 'th' | 'en' = 'th'): string | undefined {
+  if (language === 'en') return value ? lineDisplayDate(value, language) : undefined;
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-type PaypersReplyOptions = { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean };
+type PaypersReplyOptions = { language?: 'th' | 'en'; acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean };
 
 /** ONE reading of what the capture grounded, for the reply text and for the review card alike: a
  *  figure that is `undefined` here was not grounded, and neither of them may state it. */
 function paypersReplyFacts(options: PaypersReplyOptions) {
+  const en = options.language === 'en';
   const money = (value: string) => Number(toMoney4(value)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const amountValue = options.acceptedAmounts?.grandTotalAmount ?? options.fields?.grandTotalAmount ?? options.amount;
   const vatValue = options.acceptedAmounts?.vatAmount ?? options.fields?.vatAmount;
@@ -1597,24 +1640,24 @@ function paypersReplyFacts(options: PaypersReplyOptions) {
   const foreignCurrency = options.fields?.currency && options.fields.currency !== 'THB' ? options.fields.currency : undefined;
   return {
     amount: amountValue && Number(toMoney4(amountValue)) > 0 ? money(amountValue) : undefined,
-    docType: options.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] : undefined,
+    docType: options.sourceDocumentType ? lineUiLabel(SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] ?? '', options.language ?? 'th') : undefined,
     vat: vatMode !== 'NO_VAT' && vatMode !== 'EXEMPT' && vatValue && Number(toMoney4(vatValue)) > 0 ? money(vatValue) : undefined,
     wht: whtValue && Number(toMoney4(whtValue)) > 0 ? money(whtValue) : undefined,
-    otherCharges: additionalTotal !== 0 ? `${money(String(additionalTotal))} บาท`
-      : foldedTotal !== 0 ? `${money(String(foldedTotal))} บาท (รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ)` : undefined,
-    dateLine: receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified')),
+    otherCharges: additionalTotal !== 0 ? `${money(String(additionalTotal))} ${en ? 'THB' : 'บาท'}`
+      : foldedTotal !== 0 ? en ? `${money(String(foldedTotal))} THB (included in the total; review on web)` : `${money(String(foldedTotal))} บาท (รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ)` : undefined,
+    dateLine: en ? options.fields?.expenseDate && options.dateStatus !== 'unverified' ? lineDisplayDate(options.fields.expenseDate, 'en') : 'Awaiting date review' : receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified')),
     itemBlock: itemLines && ['🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
       ? itemLines
       : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ'])],
-    textOnlyNote: options.textOnly ? '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน' : undefined,
-    duplicateNote: options.hasDuplicate ? '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน' : undefined,
+    textOnlyNote: options.textOnly ? en ? 'No attachment; attach the required photo or PDF on the web before confirming.' : '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน' : undefined,
+    duplicateNote: options.hasDuplicate ? en ? 'This file may duplicate an existing expense; review before confirming.' : '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน' : undefined,
     // Vendor-address §11.3: the one question this card may ask, and only when the draft conversation
     // has an unretired ask on it — so a full tax invoice whose address could not be read is asked
     // exactly once, and every other document (and every later card) says nothing about addresses.
-    addressAsk: options.askVendorAddress ? LINE_VENDOR_ADDRESS_PROMPT : undefined,
+    addressAsk: options.askVendorAddress ? en ? 'What is the seller’s address as printed on the tax invoice?' : LINE_VENDOR_ADDRESS_PROMPT : undefined,
     foreignCurrency,
     currencyNote: foreignCurrency
-      ? `⚠️ เอกสารนี้เป็นสกุลเงิน ${foreignCurrency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก` : undefined,
+      ? en ? `This document uses ${foreignCurrency}; review and convert its amounts to THB before saving.` : `⚠️ เอกสารนี้เป็นสกุลเงิน ${foreignCurrency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก` : undefined,
   };
 }
 
@@ -1628,6 +1671,16 @@ export function formatPaypersReply(
   const facts = paypersReplyFacts(options);
   const amount = facts.amount ?? 'ยังไม่ระบุ';
   const docType = facts.docType;
+  if (options.language === 'en') {
+    return ['Expense draft saved, awaiting review and your confirmation.',
+      ...(options.fields?.vendorName ? [`Seller: ${options.fields.vendorName}`] : []),
+      `Total: ${facts.amount ? `${facts.amount} ${facts.foreignCurrency ?? 'THB'}` : 'Not yet read'}`,
+      `Date: ${facts.dateLine}`, ...(facts.docType ? [`Document: ${facts.docType}`] : []),
+      ...(options.categoryName ? [`Category: ${options.categoryName}`] : []),
+      ...(facts.vat ? [`VAT: ${facts.vat} THB`] : []), ...(facts.wht ? [`Withholding tax: ${facts.wht} THB`] : []),
+      ...(facts.otherCharges ? [`Other charges: ${facts.otherCharges}`] : []),
+      facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, `Review expense: ${link}`].filter(Boolean).join('\n');
+  }
   const parts = options.compact ? [
     '🧾 เก็บรูปและร่างแล้วค่ะ',
     ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
@@ -1677,13 +1730,13 @@ function expenseDraftCardFacts(
     documentNumber: scrubRecordIdentifier(options.fields?.documentNumber ?? null, 40),
     documentType: facts.docType,
     category: options.categoryName,
-    total: facts.amount && `${facts.amount} ${facts.foreignCurrency ?? 'บาท'}`,
-    vat: facts.vat && `${facts.vat} บาท`,
-    withholdingTax: facts.wht && `${facts.wht} บาท`,
+    total: facts.amount && `${facts.amount} ${facts.foreignCurrency ?? (options.language === 'en' ? 'THB' : 'บาท')}`,
+    vat: facts.vat && `${facts.vat} ${options.language === 'en' ? 'THB' : 'บาท'}`,
+    withholdingTax: facts.wht && `${facts.wht} ${options.language === 'en' ? 'THB' : 'บาท'}`,
     otherCharges: facts.otherCharges,
     status: (EXPENSE_STATUS_LABELS as Record<string, string>)[options.status ?? ''] ?? EXPENSE_STATUS_LABELS.NEEDS_REVIEW,
     notesBefore: [options.lead],
-    notesAfter: [facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail],
+    notesAfter: [options.language === 'en' ? undefined : facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail],
   });
 }
 
@@ -1709,8 +1762,11 @@ export function formatGroundedReceiptFollowUp(
   companyId: string,
   expense: ExpenseRecordWithRelations,
   categoryName?: string,
-  questionText = '',
+  questionText = '', language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { const fields = receiptSummaryFields(expense);
+return [ 'Details from the latest expense in this chat:', `Seller: ${fields.vendorName ?? expense.vendorNameSnapshot ?? 'Not specified'}`, `Document date: ${fields.expenseDate ? lineDisplayDate(fields.expenseDate, language) : 'Not verified'}`, `Document number: ${fields.documentNumber ?? 'Not verified'}`, `Amount read: ${fields.grandTotalAmount ?? 'Not verified'}`, `Current amount: ${moneyLabel(expense.grandTotalAmount)} ${expense.currency}`, `Category: ${categoryName ?? 'Not specified'}`, 'Review the source evidence and business purpose on the web before confirmation; a substitute receipt is not a tax invoice.', `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}` ].join('\n'); }
+
   const fields = receiptSummaryFields(expense);
   const missing = expense.aiVerificationSummaryJson?.['missingFields'];
   const missingFields = Array.isArray(missing) ? missing.filter((item): item is string => typeof item === 'string').slice(0, 10) : [];
@@ -1731,7 +1787,7 @@ export function formatGroundedReceiptFollowUp(
   }
   const printed = [
     `• ผู้ขาย/ผู้รับเงิน – ${fields.vendorName ?? 'ยังอ่านยืนยันไม่ได้'}`,
-    `• วันที่พิมพ์บนเอกสาร – ${formatReplyDate(fields.expenseDate) ?? 'ยังอ่านยืนยันไม่ได้'}`,
+    `• วันที่พิมพ์บนเอกสาร – ${formatReplyDate(fields.expenseDate, language) ?? 'ยังอ่านยืนยันไม่ได้'}`,
     `• เลขที่เอกสาร – ${fields.documentNumber ?? 'ยังอ่านยืนยันไม่ได้'}`,
     `• ยอดจากการอ่านเอกสาร – ${fields.grandTotalAmount ? Number(fields.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังอ่านยืนยันไม่ได้'}`,
     `• VAT ที่อ่านได้ – ${fields.vatAmount ? Number(fields.vatAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังอ่านยืนยันไม่ได้'}`,
@@ -1755,6 +1811,12 @@ export function formatGroundedReceiptFollowUp(
   ].join('\n');
 }
 
+function correctionCandidateLabel(candidate: LineIntakeCorrectionCandidate, language: 'th' | 'en'): string {
+  if (language !== 'en' || !candidate.sourceDocumentType) return candidate.label;
+  return [lineUiLabel(SOURCE_DOC_TYPE_REPLY_LABELS[candidate.sourceDocumentType] ?? 'เอกสารค่าใช้จ่าย', language),
+    formatReplyDate(candidate.expenseDate, language), candidate.amount].filter(Boolean).join(' · ');
+}
+
 /** GAP C tier 2: “ต้องทำยังไงต่อ” with no substitute document in flight, but with an expense this
  *  chat captured. Names the three things that actually exist for THAT record — evidence, review,
  *  ใบรับรองแทนใบเสร็จรับเงิน — instead of the model's “ส่วนนี้ยังไม่พร้อมใช้งานผ่าน LINE”. Each option
@@ -1763,17 +1825,19 @@ export function formatGroundedReceiptFollowUp(
 export function formatNextStepGuidanceReply(
   webBaseUrl: string | undefined,
   companyId: string,
-  candidate: LineIntakeCorrectionCandidate,
+  candidate: LineIntakeCorrectionCandidate, language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { return [ `The latest expense, ${correctionCandidateLabel(candidate, language)}, needs review.`, 'Send supporting evidence here, review the expense on the web, or ask to prepare a substitute receipt if no receipt is available.', 'No approval, payment or final accounting entry was performed in LINE.', `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}` ].join('\n'); }
+
   return [
     '🧭 รายการล่าสุดที่บันทึกไว้ในแชทนี้ยังรอตรวจสอบอยู่ค่ะ',
     '',
     `รายการ: ${candidate.label}`,
     '',
     'ทำต่อได้ 3 ทางค่ะ',
-    '1) ส่งรูปใบเสร็จ/สลิปเข้าแชทนี้ หรือแนบไฟล์ในเว็บ เพื่อเก็บเป็นหลักฐาน',
-    '2) เปิดในเว็บเพื่อตรวจยอด หมวดค่าใช้จ่าย แล้วให้ผู้มีสิทธิ์ยืนยัน',
-    '3) ถ้าไม่มีใบเสร็จ พิมพ์ “ทำใบรับรองแทนใบเสร็จ” เพื่อจัดทำใบรับรองแทนใบเสร็จรับเงินให้รายการนี้',
+    '• ส่งรูปใบเสร็จ/สลิปเข้าแชทนี้ หรือแนบไฟล์ในเว็บ เพื่อเก็บเป็นหลักฐาน',
+    '• เปิดในเว็บเพื่อตรวจยอด หมวดค่าใช้จ่าย แล้วให้ผู้มีสิทธิ์ยืนยัน',
+    '• ถ้าไม่มีใบเสร็จ พิมพ์ “ทำใบรับรองแทนใบเสร็จ” เพื่อจัดทำใบรับรองแทนใบเสร็จรับเงินให้รายการนี้',
     '',
     'LINE ยังไม่ได้อนุมัติ จ่ายเงิน หรือลงบัญชีขั้นสุดท้ายให้นะคะ',
     `เปิดรายการนี้: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}`,
@@ -1794,8 +1858,11 @@ export function formatCorrectionGuidanceReply(
   companyId: string,
   candidates: LineIntakeCorrectionCandidate[],
   canEdit: boolean,
-  reason?: string,
+  reason?: string, language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { const action = canEdit ? 'Edit on web' : 'Open on web for an authorized reviewer';
+return [ reason === 'empty_note' ? 'No note text was found, so nothing was saved.' : candidates.length ? 'Edit the existing expense; no new expense was created.' : 'No recent editable expense was found in this chat.', ...candidates.map(candidate => `• ${correctionCandidateLabel(candidate, language)}`), `${action}: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses${candidates.length === 1 ? `/${candidates[0]!.id}` : ''}`)}` ].join('\n'); }
+
   const listLink = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses`);
   const action = canEdit ? 'เปิดแก้ไขในเว็บแอป' : 'เปิดตรวจสอบ และส่งต่อผู้มีสิทธิ์แก้ไข';
   const named = reason ? CORRECTION_GUIDANCE_REASON_LINES[reason] : undefined;
@@ -1832,7 +1899,7 @@ export function formatCorrectionGuidanceReply(
 
 /** One clarify template for the direction case: the message named a value the record already
  *  holds, so writing either reading would be a guess. */
-const CORRECTION_DIRECTION_CLARIFY_REPLY = '🤔 ข้อความมีทั้งค่าเดิมและค่าใหม่ กรุณาระบุให้ชัดว่าต้องการแก้เป็นค่าใดนะคะ (เช่น "แก้เป็น 590")';
+const CORRECTION_DIRECTION_CLARIFY_REPLY = { th: '🤔 ข้อความมีทั้งค่าเดิมและค่าใหม่ กรุณาระบุให้ชัดว่าต้องการแก้เป็นค่าใดนะคะ (เช่น "แก้เป็น 590")', en: "Please specify the new value you want to use." };
 
 const CORRECTION_FIELD_LABELS: Record<string, string> = {
   expenseDate: 'วันที่เอกสาร', amount: 'ยอดรวม', vendorName: 'ผู้ขาย/ผู้รับเงิน',
@@ -1859,8 +1926,11 @@ export function formatCorrectionAppliedReply(
   expenseId: string,
   fields: Record<string, { from: string | null; to: string }>,
   messageText = '',
-  noteOutcome?: 'truncated' | 'duplicate',
+  noteOutcome?: 'truncated' | 'duplicate', language: 'th' | 'en' = 'th'
 ): string {
+  if (language === 'en') { const labels: Record<string, string> = { note: 'Note', documentNumber: 'Document number', expenseDate: 'Expense date', vendorName: 'Seller', grandTotalAmount: 'Total' };
+return [Object.keys(fields).every(field => field === 'note') ? 'The note was retained; expense amounts were not changed.' : 'The existing expense was updated without creating a new one.', ...Object.entries(fields).map(([field, change]) => `• ${labels[field] ?? 'Detail'}: ${field === 'expenseDate' ? lineDisplayDate(change.to, language) : change.to}${field === 'note' && noteOutcome === 'duplicate' ? ' (already present)' : field === 'note' && noteOutcome === 'truncated' ? ' (partly saved; note limit reached)' : ''}`), `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`].join('\n'); }
+
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const changed = Object.keys(fields);
   const noteOnly = changed.length > 0 && changed.every((field) => field === 'note');
@@ -1873,8 +1943,8 @@ export function formatCorrectionAppliedReply(
       if (noteOutcome === 'truncated') return `• บันทึกหมายเหตุไว้ (ตัดบางส่วน): ${change.to}`;
       return `• บันทึกหมายเหตุไว้: ${change.to}`;
     }
-    const from = field === 'expenseDate' ? formatReplyDate(change.from ?? undefined) : change.from;
-    const to = field === 'expenseDate' ? formatReplyDate(change.to) : change.to;
+    const from = field === 'expenseDate' ? formatReplyDate(change.from ?? undefined, language) : change.from;
+    const to = field === 'expenseDate' ? formatReplyDate(change.to, language) : change.to;
     return `• เปลี่ยน${label} จาก ${from ?? 'ยังไม่ระบุ'} เป็น ${to}`;
   });
   return [
@@ -2028,11 +2098,11 @@ export function lineAssistantDisabledFor(entitled: ReadonlySet<string> | null): 
 export const branchScopeFallbackLabel = (branchIds?: string[]) =>
   branchIds?.length ? `${branchIds.length} สาขา` : 'ทุกสาขา';
 
-const bahtText = (amount: string) => {
+const bahtText = (amount: string, language: 'th' | 'en' = 'th') => {
   const value = Number(amount);
   return Number.isFinite(value)
-    ? `${value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
-    : `${amount} บาท`;
+    ? `${value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${language === 'en' ? 'THB' : 'บาท'}`
+    : `${amount} ${language === 'en' ? 'THB' : 'บาท'}`;
 };
 
 type LineClarificationSource = {
@@ -2261,8 +2331,8 @@ export class ProcessLineWebhookUseCase {
       const body = (error as { getResponse?: () => unknown })?.getResponse?.() as { code?: string } | undefined;
       if (body?.code !== FEATURE_TEMPORARILY_UNAVAILABLE) throw error;
     }
-    if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(LAUNCH_ROUTE_CLOSED_REPLY));
-    else await this.deliverReply(event, LAUNCH_ROUTE_CLOSED_REPLY);
+    if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp((replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LAUNCH_ROUTE_CLOSED_REPLY : LAUNCH_ROUTE_CLOSED_REPLY)));
+    else await this.deliverReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LAUNCH_ROUTE_CLOSED_REPLY : LAUNCH_ROUTE_CLOSED_REPLY));
     await this.audit.log({
       companyId,
       actorUserId,
@@ -2318,7 +2388,7 @@ export class ProcessLineWebhookUseCase {
    * out of the snapshot rather than reported as zero: "ไม่มีรายการ" and "อ่านไม่ได้" must not look
    * the same to someone deciding whether to open the web app.
    */
-  private async loadPendingApprovals(ctx: RequestContext, keys: ApprovalSurfaceKey[]): Promise<PendingApprovalSnapshot> {
+  private async loadPendingApprovals(ctx: RequestContext, keys: ApprovalSurfaceKey[], language: 'th' | 'en' = 'th'): Promise<PendingApprovalSnapshot> {
     const pending: PendingApprovalSnapshot = {};
     const failed = (queue: string) => (error: unknown) => {
       this.logger.warn({ msg: 'LINE pending approval queue unavailable', queue, companyId: ctx.companyId, ...safeLineErrorDetails(error) });
@@ -2331,9 +2401,9 @@ export class ProcessLineWebhookUseCase {
         pending.reimbursement = {
           total: rows.length,
           items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => ({
-            title: row.requestNo ?? 'คำขอเบิกเงิน',
-            ...(this.config.aiGatewayInternalSecret ? { buttons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, ctx.companyId, ctx.userId, row.id) } : {}),
-            detail: [row.requesterDisplayNameSnapshot, bahtText(row.amount)].filter(Boolean).join(' · '),
+            title: row.requestNo ?? (language === 'en' ? 'Claim' : 'คำขอเบิกเงิน'),
+            ...(this.config.aiGatewayInternalSecret ? { buttons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, ctx.companyId, ctx.userId, row.id, language) } : {}),
+            detail: [row.requesterDisplayNameSnapshot, bahtText(row.amount, language)].filter(Boolean).join(' · '),
           })),
         };
       }
@@ -2349,8 +2419,8 @@ export class ProcessLineWebhookUseCase {
         pending.procurement = {
           total: (requests?.total ?? 0) + (orders?.total ?? 0),
           items: [
-            ...(requests?.data ?? []).map((row) => ({ title: row.requestNumber ?? 'ใบขอซื้อ', detail: bahtText(row.grandTotalAmount) })),
-            ...(orders?.data ?? []).map((row) => ({ title: row.purchaseOrderNumber ?? 'ใบสั่งซื้อ', detail: bahtText(row.grandTotalAmount) })),
+            ...(requests?.data ?? []).map((row) => ({ title: row.requestNumber ?? (language === 'en' ? 'Purchase request' : 'ใบขอซื้อ'), detail: bahtText(row.grandTotalAmount, language) })),
+            ...(orders?.data ?? []).map((row) => ({ title: row.purchaseOrderNumber ?? (language === 'en' ? 'Purchase order' : 'ใบสั่งซื้อ'), detail: bahtText(row.grandTotalAmount, language) })),
           ].slice(0, PENDING_APPROVAL_ITEM_LIMIT),
         };
       }
@@ -2369,7 +2439,7 @@ export class ProcessLineWebhookUseCase {
     // Card, not plain text: the button lands on the company home, and `event.handoff` is already
     // bound at both call sites, so the delivery seam turns it into a one-tap login link.
     await this.deliverRequiredMessages(event, [
-      buildLegalAcceptanceRequiredMessage(this.config.webBaseUrl, companyId),
+      buildLegalAcceptanceRequiredMessage(this.config.webBaseUrl, companyId, replyLanguage(event)),
     ]);
     await this.updateEventLog(
       event.webhookEventId,
@@ -2479,7 +2549,7 @@ export class ProcessLineWebhookUseCase {
         ...(input.webhookEventId ? { webhookEventId: input.webhookEventId } : {}),
         companyId: input.companyId,
         userId: input.userId,
-        locale: 'th-TH',
+        locale: (input.event ? replyLanguage(input.event) : lineReplyLanguage(input.messageText)) === 'en' ? 'en-GB' : 'th-TH',
         messageText: input.messageText,
         ...reliabilityContext,
         ...(input.event && this.retainedTaskSources?.get(input.event) ? { retainedTaskSource: this.retainedTaskSources.get(input.event)!.source } : {}),
@@ -2588,11 +2658,11 @@ export class ProcessLineWebhookUseCase {
     /** For a reply to a photo or a file: what became of that document (its card's second header line). */
     outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
-    quickReply ??= mediaChoiceQuickReply(text);
+    quickReply ??= mediaChoiceQuickReply(text, replyLanguage(event));
     const substituteAction = this.deliverySubstituteActions.get(event);
-    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied) : undefined;
+    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied, replyLanguage(event)) : undefined;
     const facts = this.deliverySubstituteContinuations.get(event);
-    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text) : undefined;
+    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text, replyLanguage(event)) : undefined;
     if (designed && quickReply) designed = inheritCompleteLineBusinessAnswerPresentation(designed, { ...designed, quickReply });
     const card = designed ? undefined : this.boundReplyCard(event, text, undefined, outcome);
     const result = await this.deliverMessages(event, [designed
@@ -2626,8 +2696,8 @@ export class ProcessLineWebhookUseCase {
       ? { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES[outcome ?? 'result']] as const }
       : lineAnswerCardHeader(typed);
     if (!bound || !header) return undefined;
-    const card = buildLineSystemTextCardMessage({ text, ...(badge?.trim() ? { paper: `${badge.trim()}\n${text}` } : {}), header,
-      webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
+    const card = buildLineSystemTextCardMessage({ ...({ text, ...(badge?.trim() ? { paper: `${badge.trim()}\n${text}` } : {}), header,
+      webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' }), language: replyLanguage(event) });
     return card?.type === 'flex' && !lineSystemCardTexts(card.contents).some((line) => /https?:\/\//iu.test(line)) ? card : undefined;
   }
 
@@ -2650,17 +2720,17 @@ export class ProcessLineWebhookUseCase {
     const locked = await lockedCompanyFor(this.prisma, userId, event.lineUserId);
     if (!locked) return false;
     if (!locked.canManagePlan) {
-      await this.deliverReply(event, PACKAGE_REQUIRED_MEMBER_REPLY);
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.PACKAGE_REQUIRED_MEMBER_REPLY : PACKAGE_REQUIRED_MEMBER_REPLY));
     } else if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
       // R-B2 (b): the link is minted here, before the outcome is recorded, so the card is one tap
       // into the package page whether or not the delivery seam wraps (it does not with the replay
       // flag on — production). `event.handoff` still binds the turn's tenant for bookkeeping.
       event.handoff = { userId, companyId: locked.companyId };
       const packageUrl = await this.oneTapPackageUrl(event, userId, locked.companyId, 'locked_card_packages');
-      await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({
+      await this.deliverRequiredMessages(event, [buildPackageRequiredMessage({ ...({
         lockReason: locked.lockReason, companyId: locked.companyId, webBaseUrl: this.config.webBaseUrl,
         companyName: locked.companyName, ...(packageUrl ? { packageUrl } : {}),
-      })]);
+      }), language: replyLanguage(event) })]);
     } else {
       // Billing closed (or no web base): there is no package page to send anyone to, so the reply
       // stays the text and quick reply it has always been — worded for the shop's own lock reason.
@@ -2684,19 +2754,19 @@ export class ProcessLineWebhookUseCase {
    * stranger who merely typed is answered by the card alone, and an application already travelling
    * gets its status card — whose footer has no "เปิดร้านใหม่" for the greeting's step 1 to name.
    */
-  private async entryDoorMessages(lineUserId: string, welcome = false): Promise<LineReplyMessage[]> {
+  private async entryDoorMessages(lineUserId: string, welcome = false, language: 'th' | 'en' = 'th'): Promise<LineReplyMessage[]> {
     const pending = await this.findOpenLineSignup(lineUserId);
     if (!pending) {
-      if (!welcome) return [this.doorCard()];
+      if (!welcome) return [this.doorCard(language)];
       // R-C4 (§18.2): the how-to picture showed no "choose a package" step, and a locked shop cannot
       // take the steps it did show. Withdrawn until a new asset under a NEW file name exists (LINE
       // caches by URL; apps/web/public is a Release Contracts trigger — the old PNG stays untouched).
-      return [{ type: 'text', text: FOLLOW_WELCOME_REPLY }, this.doorCard()];
+      return [{ type: 'text', text: FOLLOW_WELCOME_REPLY[language] }, this.doorCard(language)];
     }
     return [buildSignupStatusCard(pending.companyName, isBusinessHours(new Date(), {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
-    }))];
+    }), language)];
   }
 
   /**
@@ -2723,7 +2793,7 @@ export class ProcessLineWebhookUseCase {
    * cost the card two of its three doors, so it says so at ERROR rather than degrading quietly —
    * the staff door still works, which is why the card is still worth sending.
    */
-  private doorCard(): LineReplyMessage {
+  private doorCard(language: 'th' | 'en' = 'th'): LineReplyMessage {
     const liffId = this.config.lineLiffId;
     if (!liffId || !LIFF_ID_PATTERN.test(liffId)) {
       this.logger.error({
@@ -2761,10 +2831,10 @@ export class ProcessLineWebhookUseCase {
    */
   private async promotionCard(event: LineTextEvent): Promise<LineReplyMessage> {
     const identity = await this.resolveLineIdentity(event);
-    if (!identity || identity.user.status !== 'ACTIVE') return buildPromotionCard('stranger', this.newShopSignupUrl());
+    if (!identity || identity.user.status !== 'ACTIVE') return buildPromotionCard('stranger', this.newShopSignupUrl(), replyLanguage(event));
     // R-C11: whoever may buy for the shop gets the button, owner or custom role alike.
     const owners = (await this.listLineCompanies(identity.userId)).filter((membership) => canManagePlan(membership.roles));
-    if (owners.length === 0) return buildPromotionCard('employee');
+    if (owners.length === 0) return buildPromotionCard('employee', undefined, replyLanguage(event));
     // Which shop: the one this chat is already on, else the oldest owned. ponytail: a picker in
     // front of a card whose whole point is one tap costs more than it saves, and an owner who
     // meant the other shop switches with บริษัทของฉัน exactly as they do for every other link.
@@ -2772,11 +2842,11 @@ export class ProcessLineWebhookUseCase {
       where: { lineUserId: event.lineUserId }, select: { companyId: true },
     });
     const companyId = (owners.find((row) => row.companyId === context?.companyId) ?? owners[0]!).companyId;
-    if (!this.config.webBaseUrl) return buildPromotionCard('owner');
+    if (!this.config.webBaseUrl) return buildPromotionCard('owner', undefined, replyLanguage(event));
     const targetPath = `/companies/${encodeURIComponent(companyId)}/billing?channel=line`;
     // Same mint as the lock card; in a group/room the button stays the plain package page (RV08).
     return buildPromotionCard('owner', await this.oneTapPackageUrl(event, identity.userId, companyId, 'promotion_card_packages')
-      ?? new URL(targetPath, this.config.webBaseUrl).toString());
+      ?? new URL(targetPath, this.config.webBaseUrl).toString(), replyLanguage(event));
   }
 
   /**
@@ -2841,7 +2911,7 @@ export class ProcessLineWebhookUseCase {
     canManagePlan: boolean,
   ): Promise<boolean> {
     if (!isAiBudgetPermanentRefusal(refusal.budgetErrorCode)) return false;
-    await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan)]);
+    await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan, replyLanguage(event))]);
     await this.updateEventLog(
       event.webhookEventId,
       refusal.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded',
@@ -2889,7 +2959,7 @@ export class ProcessLineWebhookUseCase {
       // Still waiting on us, so the assistant stays out of the thread: a repeat tap re-arms the
       // pause even though it opens nothing — including for someone whose request names no shop.
       if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
-      await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY);
+      await this.deliverReply(event, SUPPORT_ALREADY_OPEN_REPLY[replyLanguage(event)]);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
@@ -2907,7 +2977,7 @@ export class ProcessLineWebhookUseCase {
 
     const created = await this.openSupportRequest(event.lineUserId, asker, asker?.lastMessageText);
     if (!created) {
-      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY[replyLanguage(event)]);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
@@ -2928,7 +2998,7 @@ export class ProcessLineWebhookUseCase {
     // someone who unlinked is talking to the door card, so there is nothing to pause — but they
     // still reach a human (§2.1.2).
     if (asker?.companyId) await this.pauseAssistant(event.lineUserId, asker.companyId);
-    await this.deliverReply(event, STAFF_CONTACT_REPLY);
+    await this.deliverReply(event, STAFF_CONTACT_REPLY[replyLanguage(event)]);
     await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({
       action: 'signup.line.support_requested',
@@ -3017,7 +3087,7 @@ export class ProcessLineWebhookUseCase {
     const live = await this.findLiveSupportRequest(event.lineUserId);
     if (live) {
       await this.recordSupportFollowUp(event.lineUserId, requestId, { text: PACKAGE_CALLBACK_NOTE }, { extendPause: false }, reference);
-      await this.deliverReply(event, PACKAGE_CALLBACK_ALREADY_OPEN_REPLY);
+      await this.deliverReply(event, PACKAGE_CALLBACK_ALREADY_OPEN_REPLY[replyLanguage(event)]);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
@@ -3030,7 +3100,7 @@ export class ProcessLineWebhookUseCase {
     }
     const created = await this.openSupportRequest(event.lineUserId, asker, PACKAGE_CALLBACK_NOTE, reference);
     if (!created) {
-      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
+      await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY[replyLanguage(event)]);
       await this.audit.log({
         action: 'signup.line.support_requested',
         ...(asker?.companyId ? { companyId: asker.companyId } : {}),
@@ -3041,7 +3111,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     // Deliberately NO pauseAssistant here (the one difference from handleStaffContact).
-    await this.deliverReply(event, asker?.assistantAnswers ? PACKAGE_CALLBACK_REPLY : PACKAGE_CALLBACK_NO_ASSISTANT_REPLY);
+    await this.deliverReply(event, asker?.assistantAnswers ? PACKAGE_CALLBACK_REPLY[replyLanguage(event)] : PACKAGE_CALLBACK_NO_ASSISTANT_REPLY[replyLanguage(event)]);
     await this.signupNotify?.enqueueSupportRequest(created.id);
     await this.audit.log({
       action: 'signup.line.support_requested',
@@ -3412,8 +3482,8 @@ export class ProcessLineWebhookUseCase {
     });
     const available = Boolean(identity && identity.user.status === 'ACTIVE');
     await this.deliverRequiredMessages(event, available
-      ? [{ type: 'text', text: ASSISTANT_RESUMED_REPLY }]
-      : await this.entryDoorMessages(event.lineUserId));
+      ? [{ type: 'text', text: ASSISTANT_RESUMED_REPLY[replyLanguage(event)] }]
+      : await this.entryDoorMessages(event.lineUserId, false, replyLanguage(event)));
     await this.audit.log({
       action: 'signup.line.support_resumed',
       targetType: 'line_user',
@@ -3452,7 +3522,7 @@ export class ProcessLineWebhookUseCase {
         select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } } },
     });
     if (memberships.length === 0) {
-      await this.deliverReply(event, PACKAGE_CHANGE_NOT_OWNER_REPLY);
+      await this.deliverReply(event, PACKAGE_CHANGE_NOT_OWNER_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'package_change_denied', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
@@ -3463,8 +3533,8 @@ export class ProcessLineWebhookUseCase {
       : memberships.length === 1 ? memberships[0] : undefined;
     if (!owned) {
       await this.deliverRequiredMessages(event, [
-        buildCompanyPickerMessage(memberships.map(companyPickerItem)),
-        { type: 'text', text: 'เลือกร้านที่ต้องการก่อน แล้วกด “ขอเปลี่ยนแพ็กเกจ” อีกครั้งค่ะ',
+        buildCompanyPickerMessage(memberships.map(membership => companyPickerItem(membership, replyLanguage(event))), undefined, undefined, replyLanguage(event)),
+        { type: 'text', text: (replyLanguage(event) === 'en' ? "Choose your shop, then request the package change again." : 'เลือกร้านที่ต้องการก่อน แล้วกด “ขอเปลี่ยนแพ็กเกจ” อีกครั้งค่ะ'),
           quickReply: { items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }] } },
       ]);
       await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
@@ -3477,12 +3547,12 @@ export class ProcessLineWebhookUseCase {
       event.handoff = { userId, companyId: owned.companyId };
       const plainUrl = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
       const url = await this.oneTapPackageUrl(event, userId, owned.companyId, 'package_change_reply') ?? plainUrl;
-      await this.deliverRequiredMessages(event, [buildPackageReviewCard(companyLabel(owned), url)]);
+      await this.deliverRequiredMessages(event, [buildPackageReviewCard(companyLabel(owned, replyLanguage(event)), url, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'billing_review_link', undefined, owned.companyId);
       return;
     }
     if (!this.packageChange) {
-      await this.deliverReply(event, PACKAGE_CHANGE_UNAVAILABLE_REPLY);
+      await this.deliverReply(event, PACKAGE_CHANGE_UNAVAILABLE_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'package_change_unavailable');
       return;
     }
@@ -3495,7 +3565,7 @@ export class ProcessLineWebhookUseCase {
       note: PACKAGE_CHANGE_LINE_NOTE,
       requestId,
     });
-    await this.deliverReply(event, PACKAGE_CHANGE_ACCEPTED_REPLY);
+    await this.deliverReply(event, PACKAGE_CHANGE_ACCEPTED_REPLY[replyLanguage(event)]);
     await this.updateEventLog(event.webhookEventId, 'package_change_requested', undefined, owned.companyId);
   }
 
@@ -3506,7 +3576,7 @@ export class ProcessLineWebhookUseCase {
     accepted: boolean,
   ): Promise<void> {
     if (!accepted) {
-      await this.deliverReply(event, PROFILE_GUARD_LATER_REPLY);
+      await this.deliverReply(event, PROFILE_GUARD_LATER_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'profile_guard_declined');
       return;
     }
@@ -3516,7 +3586,7 @@ export class ProcessLineWebhookUseCase {
       select: { companyId: true },
     });
     if (!membership) {
-      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.deliverReply(event, UNLINKED_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'profile_guard_no_company', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -3529,7 +3599,7 @@ export class ProcessLineWebhookUseCase {
     // ponytail: literal until L-E exports the path constant from packages/contracts; swap at integration.
     const link = `${(this.config.webBaseUrl ?? '').replace(/\/+$/, '')}`
       + `/companies/${membership.companyId}/settings/profile#account`;
-    await this.deliverReply(event, `${PROFILE_GUARD_ACCEPTED_REPLY}\n${link}`);
+    await this.deliverReply(event, `${PROFILE_GUARD_ACCEPTED_REPLY[replyLanguage(event)]}\n${link}`);
     await this.updateEventLog(event.webhookEventId, 'profile_guard_accepted', undefined, membership.companyId);
   }
 
@@ -3548,21 +3618,21 @@ export class ProcessLineWebhookUseCase {
     const continuation = isPackagePurchaseAnswer(event.messageText);
     if (!explicit && !control && !continuation) return false;
     if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
-      await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please continue in a private chat." : 'กรุณาทำรายการในแชตส่วนตัวค่ะ')); return true;
     }
     const current = await this.prisma.client.lineCompanyContext.findUnique({ where: { lineUserId: event.lineUserId }, select: { companyId: true } });
     const memberships = await this.listLineCompanies(userId);
     const selected = current?.companyId ? memberships.find(m => m.companyId === current.companyId) : memberships.length === 1 ? memberships[0] : undefined;
     if (!selected) {
       if (!explicit && !control) return false;
-      await this.deliverRequiredMessages(event, memberships.length ? [buildCompanyPickerMessage(memberships.map(companyPickerItem)),
-        { type: 'text', text: 'เลือกร้านแล้วบอกแพ็กเกจที่ต้องการอีกครั้งค่ะ' }] : [{ type: 'text', text: `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ` }]);
+      await this.deliverRequiredMessages(event, memberships.length ? [buildCompanyPickerMessage(memberships.map(membership => companyPickerItem(membership, replyLanguage(event))), undefined, undefined, replyLanguage(event)),
+        { type: 'text', text: (replyLanguage(event) === 'en' ? "Choose your shop, then tell me the package you want." : 'เลือกร้านแล้วบอกแพ็กเกจที่ต้องการอีกครั้งค่ะ') }] : [{ type: 'text', text: (replyLanguage(event) === 'en' ? `Ask ${'shop owner'} or ${'administrator'} with package-management access to buy the package.` : `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ`) }]);
       await this.updateEventLog(event.webhookEventId, memberships.length ? 'needs_company_selection' : 'package_purchase_denied');
       return true;
     }
     let access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
     try { access = await this.permissionResolver.resolveAccess(userId, selected.companyId); }
-    catch { await this.deliverReply(event, `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ`); return true; }
+    catch { await this.deliverReply(event, (replyLanguage(event) === 'en' ? `Ask ${'shop owner'} or ${'administrator'} with package-management access to buy the package.` : `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ที่มีสิทธิ์จัดการแพ็กเกจเป็นผู้ซื้อค่ะ`)); return true; }
     const ctx: RequestContext = { requestId, authSubject: userId, authProvider: 'line', userId, companyId: selected.companyId,
       membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes };
     if (!explicit && !control && !await this.packagePurchases.accepts(ctx, chatKeyHashOf(event), event.messageText)) return false;
@@ -3576,14 +3646,14 @@ export class ProcessLineWebhookUseCase {
       const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId,
         planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
       if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
-        await this.deliverReply(event, 'ยังสร้างลิงก์ไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน'); return true;
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please read the full proposal before creating the payment link." : 'ยังสร้างลิงก์ไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน')); return true;
       }
     }
-    const result: Awaited<ReturnType<LinePackagePurchaseService['prepare']>> = control ? await this.packagePurchases.apply(ctx, chatKeyHashOf(event), control)
-      : await this.packagePurchases.prepare(ctx, chatKeyHashOf(event), event.messageText);
+    const result: Awaited<ReturnType<LinePackagePurchaseService['prepare']>> = control ? await this.packagePurchases.apply(ctx, chatKeyHashOf(event), control, replyLanguage(event))
+      : await this.packagePurchases.prepare(ctx, chatKeyHashOf(event), event.messageText, replyLanguage(event));
     if (result.view) this.deliveryPackagePurchases.set(event, { context: ctx, view: result.view });
-    const purchaseMessage: LineReplyMessage = result.view ? buildPackagePurchaseCard(result.view) : result.choices?.length
-      ? buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId) : { type: 'text', text: result.reply };
+    const purchaseMessage: LineReplyMessage = result.view ? buildPackagePurchaseCard(result.view, replyLanguage(event)) : result.choices?.length
+      ? buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event)) : { type: 'text', text: result.reply };
     if (result.choices?.length) purchaseMessage.quickReply = lineChoiceQuickReply(result.choices);
     await this.deliverRequiredMessages(event, [purchaseMessage]);
     await this.updateEventLog(event.webhookEventId, result.view?.payment ? 'package_purchase_link' : result.view ? 'package_purchase_preview' : 'package_purchase_answer', undefined, ctx.companyId);
@@ -3593,26 +3663,26 @@ export class ProcessLineWebhookUseCase {
   private async handleExpenseActionPostback(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<void> {
     if (!event.expenseActionControl || event.channelKind === 'GROUP' || event.channelKind === 'ROOM'
       || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
-      await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ'); return;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please continue in a private chat." : 'กรุณาทำรายการในแชตส่วนตัวค่ะ')); return;
     }
-    if (!event.expenseActionControl.token.startsWith('team_') && features !== null && !features.has('expenses')) { await this.deliverReply(event, 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ'); return; }
+    if (!event.expenseActionControl.token.startsWith('team_') && features !== null && !features.has('expenses')) { await this.deliverReply(event, (replyLanguage(event) === 'en' ? "This feature is not included in your current package." : 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ')); return; }
     const control = event.expenseActionControl;
     if (control.action === 'expense_action_confirm') {
       const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
         planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
       if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
         if (control.token.startsWith('sub_') && this.substituteActions) {
-          await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(this.substituteActions.webHandoff(ctx))]); return;
+          await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(this.substituteActions.webHandoff(ctx, replyLanguage(event)), undefined, undefined, replyLanguage(event))]); return;
         }
-        await this.deliverReply(event, 'ยังยืนยันไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน'); return;
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please read the full proposal before confirming." : 'ยังยืนยันไม่ได้ค่ะ กรุณาอ่านรายละเอียดการ์ดให้ครบก่อน')); return;
       }
     }
     if (control.token.startsWith('sub_')) {
-      const result = await this.substituteActions?.apply(ctx, chatKeyHashOf(event), control);
-      let reply = result?.reply ?? 'ยังดำเนินการไม่ได้ค่ะ กรุณาลองใหม่อีกครั้ง';
+      const result = await this.substituteActions?.apply(ctx, chatKeyHashOf(event), control, replyLanguage(event));
+      let reply = result?.reply ?? (replyLanguage(event) === 'en' ? "This step could not be completed; please try again." : 'ยังดำเนินการไม่ได้ค่ะ กรุณาลองใหม่อีกครั้ง');
       if (result?.expenseId) {
         if (result.preview) this.deliverySubstituteActions.set(event, { context: ctx, preview: result.preview, applied: true });
-        const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), result.expenseId);
+        const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), result.expenseId, replyLanguage(event));
         if (next?.preview) {
           this.deliverySubstituteActions.set(event, { context: ctx, preview: next.preview });
           if (next.preview.webOnly) reply = next.preview.summary;
@@ -3628,33 +3698,33 @@ export class ProcessLineWebhookUseCase {
         await this.consumeClarifications(ctx.companyId, mediaChatKey(event), ctx.userId, waiting, resolved, 'business_answer');
       }
       if (result?.expenseId) await this.deliverCompletedReply(event, reply, ctx.companyId, ctx);
-      else if (result?.preview?.webOnly) await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(result.preview)]);
+      else if (result?.preview?.webOnly) await this.deliverRequiredMessages(event, [buildSubstituteReceiptActionCard(result.preview, undefined, undefined, replyLanguage(event))]);
       else await this.deliverReply(event, reply);
       await this.updateEventLog(event.webhookEventId, 'substitute_action_result', undefined, ctx.companyId);
       return;
     }
-    const result = await this.expenseActions.apply(ctx, chatKeyHashOf(event), control);
+    const result = await this.expenseActions.apply(ctx, chatKeyHashOf(event), control, replyLanguage(event));
     if ('preview' in result) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview, applied: result.status !== 'prepared' });
     if ((result.status === 'applied' || result.status === 'replayed') && result.expenseIds?.length)
       await this.expenseSequenceTask(event, result.expenseIds, result.preview.action);
-    const choices = await this.expenseActions.repairChoices?.(ctx, chatKeyHashOf(event)) ?? expenseActionNextStepChoices(result.reply);
+    const choices = await this.expenseActions.repairChoices?.(ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
     let nextCard: LineReplyMessage | undefined;
-    const nextItems: NonNullable<LineReplyMessage['quickReply']>['items'] = choices.map(choice => ({ type: 'action', action: { type: 'message', ...choice } }));
+    const nextItems = lineChoiceQuickReply(choices).items;
     if (result.status === 'blocked' && control.action === 'expense_action_submit' && /หลักฐานใบเบิก|เหตุผลที่ไม่มีใบเสร็จ/u.test(result.reply)) {
       const claimId = control.token.split('.')[0]!;
       const uri = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/reimbursements/${claimId}`);
       if (uri.startsWith('https://')) nextCard = { type: 'text', text: result.reply,
-        quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'แนบหลักฐาน / เปิดใบเบิก', uri } }] } };
+        quickReply: { items: [{ type: 'action', action: { type: 'uri', label: (replyLanguage(event) === 'en' ? "Attach proof / view claim" : 'แนบหลักฐาน / เปิดใบเบิก'), uri } }] } };
     }
     if (result.status === 'blocked' && !nextItems.length && !nextCard) {
       const records = await this.expenseActions.quoteRecords?.(ctx, chatKeyHashOf(event), control.token);
       const record = records?.length === 1 && records[0]?.tool === 'expense.get_detail' ? records[0] : undefined;
       const uri = record ? absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${record.id}`) : '';
-      if (uri.startsWith('https://')) nextCard = buildLineSystemTextCardMessage({ text: `${result.reply}\n${uri}`,
-        header: { lines: ['รายการค่าใช้จ่าย', 'ขั้นตอนถัดไป'] }, webBaseUrl: this.config.webBaseUrl, companyId: ctx.companyId, linkLabel: 'เปิดตรวจรายการ' })
-        ?? buildLineAssistantTextCardMessage(`${result.reply}\n${uri}`, this.config.webBaseUrl, ctx.companyId);
+      if (uri.startsWith('https://')) nextCard = buildLineSystemTextCardMessage({ ...({ text: `${result.reply}\n${uri}`,
+        header: { lines: [(replyLanguage(event) === 'en' ? "Expense" : 'รายการค่าใช้จ่าย'), (replyLanguage(event) === 'en' ? "Next step" : 'ขั้นตอนถัดไป')] }, webBaseUrl: this.config.webBaseUrl, companyId: ctx.companyId, linkLabel: (replyLanguage(event) === 'en' ? "Review record" : 'เปิดตรวจรายการ') }), language: replyLanguage(event) })
+        ?? buildLineAssistantTextCardMessage(`${result.reply}\n${uri}`, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
     }
-    await this.deliverRequiredMessages(event, ['preview' in result ? buildExpenseActionCard(result.preview, result.status === 'prepared' ? undefined : result.reply) : nextCard ?? { type: 'text', text: result.reply,
+    await this.deliverRequiredMessages(event, ['preview' in result ? buildExpenseActionCard(result.preview, result.status === 'prepared' ? undefined : result.reply, replyLanguage(event)) : nextCard ?? { type: 'text', text: result.reply,
       ...(nextItems.length ? { quickReply: { items: nextItems } } : {}) }]);
     await this.updateEventLog(event.webhookEventId, `expense_action_${result.status}`, undefined, ctx.companyId);
   }
@@ -3664,7 +3734,7 @@ export class ProcessLineWebhookUseCase {
     const text = event.messageText.trim();
     const amountOnly = /^[\d๐-๙]+(?:,[\d๐-๙]{3})*(?:\.[\d๐-๙]{1,2})?(?:\s*บาท)?$/u.test(text);
     if (!this.expenseRepo || (!amountOnly && !/^(?:จ่ายแล้ว|โอนแล้ว|บันทึกจ่าย)(?:\s*(?:ค่ะ|ครับ|คะ|ให้หน่อย|รายการนี้))*$/u.test(text))) return false;
-    if (features && !features.has('expenses')) { await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY); return true; }
+    if (features && !features.has('expenses')) { await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)]); return true; }
     const expenseTools = ['expense.get_detail', 'expense.list_recent', 'expense.list_substitute_receipts_to_sign'];
     const quoted = conversation?.quotedRecords;
     const shown = conversation?.recentReads?.find(read => expenseTools.includes(read.tool))?.shownItems?.filter(item => !item.kind);
@@ -3686,12 +3756,12 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
       return true;
     }
-    const result = ids.length === 1 ? await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'RECORD_PAYMENT', expenseId: ids[0] })
-      : { reply: 'ต้องการบันทึกจ่ายรายการไหนคะ' };
+    const result = ids.length === 1 ? await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'RECORD_PAYMENT', expenseId: ids[0] }, undefined, undefined, replyLanguage(event))
+      : { reply: (replyLanguage(event) === 'en' ? "Which expense would you like to record payment for?" : 'ต้องการบันทึกจ่ายรายการไหนคะ') };
     if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
-    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), ctx.requestId) ?? expenseActionNextStepChoices(result.reply);
-    await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview) : { type: 'text', text: result.reply,
-      ...(choices.length ? { quickReply: { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } } : {}) }]);
+    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), ctx.requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
+    await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event)) : { type: 'text', text: result.reply,
+      ...(choices.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
     await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
     return true;
   }
@@ -3728,7 +3798,7 @@ export class ProcessLineWebhookUseCase {
     const v2Preview = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId, userId: ctx.userId,
       planJson: { path: ['control', 'previewId'], equals: event.draftUpdatePreviewId } }, select: { status: true, planJson: true } });
     if (v2Preview && (v2Preview.status !== 'ACCEPTED' || !parseLineDeliveryPlan(v2Preview.planJson))) {
-      const pending = 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน';
+      const pending = (replyLanguage(event) === 'en' ? "Please read the rest of the proposed changes before confirming." : 'ยังยืนยันไม่ได้ค่ะ รายละเอียดคำขอแก้ไขยังส่งไม่ครบ กรุณารอหรืออ่านส่วนที่เหลือก่อน');
       await this.deliverReply(event, pending, undefined, unchanged(pending));
       await this.updateEventLog(event.webhookEventId, 'draft_update_blocked', 'PREVIEW_NOT_FULLY_DELIVERED', ctx.companyId);
       return;
@@ -3740,7 +3810,7 @@ export class ProcessLineWebhookUseCase {
     const cardState = outcome.status === 'applied' ? 'applied' as const : outcome.status === 'blocked' ? draftUpdateBlockedState(outcome.reason) : 'unchanged' as const;
     if (outcome.status === 'applied') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash, requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'APPLIED' });
-      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview, outcome.vendorCounterpartyAutoSave);
+      const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview, outcome.vendorCounterpartyAutoSave, replyLanguage(event));
       // A double tap is the commonest thing a person does to a slow button; saying "nothing is
       // pending" would deny an edit they really made.
       reply = outcome.replayed ? `${DRAFT_UPDATE_ALREADY_APPLIED_PREFIX} ${applied}` : applied;
@@ -3751,7 +3821,7 @@ export class ProcessLineWebhookUseCase {
       reply = DRAFT_UPDATE_EXPIRED_REPLY;
       status = 'draft_update_expired';
     } else {
-      reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+      reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId, replyLanguage(event));
       status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
     }
     const repaired = outcome.status === 'applied'
@@ -3759,11 +3829,11 @@ export class ProcessLineWebhookUseCase {
     if (repaired?.preview) {
       this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHash, requestId: ctx.requestId, preview: repaired.preview });
       const outcomeCard = buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId);
-      await this.deliverRequiredMessages(event, [outcomeCard ?? { type: 'text', text: reply }, buildExpenseActionCard(repaired.preview)]);
+      await this.deliverRequiredMessages(event, [outcomeCard ?? { type: 'text', text: reply }, buildExpenseActionCard(repaired.preview, undefined, replyLanguage(event))]);
     } else {
       if (repaired) reply = `${reply}\n${repaired.reply}`;
-      const choices = repaired ? await this.expenseActions.repairChoices(ctx, chatKeyHash) : null;
-      if (choices?.length) await this.deliverReply(event, reply, { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) });
+      const choices = repaired ? await this.expenseActions.repairChoices(ctx, chatKeyHash, undefined, replyLanguage(event)) : null;
+      if (choices?.length) await this.deliverReply(event, reply, lineChoiceQuickReply(choices));
       else await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
         buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
     }
@@ -3804,7 +3874,7 @@ export class ProcessLineWebhookUseCase {
     if (outcome.status === 'preview') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: chatKeyHashOf(event), requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'PENDING' });
       try {
-        await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview, this.config.webBaseUrl)]);
+        await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview, this.config.webBaseUrl, replyLanguage(event))]);
       } catch (error) {
         const savedPlan = this.boundConversations.has(event) && await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId }, select: { presentationKind: true } });
         if (!savedPlan || savedPlan.presentationKind !== 'delivery_plan_v2') await this.draftUpdate.discardUndeliveredPreview(ctx, chatKeyHashOf(event), outcome.preview.previewId);
@@ -3815,7 +3885,7 @@ export class ProcessLineWebhookUseCase {
         userMessagePreview: normalizeLineText(event.messageText),
         replyText: outcome.preview.previewId, intent: 'CORRECTION',
       });
-      await this.settleWriteLane(event, 'needs_user', 'กดยืนยันในบัตรเพื่อแก้รายการ หรือพิมพ์ยกเลิก');
+      await this.settleWriteLane(event, 'needs_user', (replyLanguage(event) === 'en' ? "Confirm the card to apply the changes, or reply “cancel”." : 'กดยืนยันในบัตรเพื่อแก้รายการ หรือพิมพ์ยกเลิก'));
       await this.updateEventLog(event.webhookEventId, 'draft_update_preview', undefined, ctx.companyId);
       return 'proposed';
     }
@@ -3834,7 +3904,7 @@ export class ProcessLineWebhookUseCase {
     // existing lane is the correct, unchanged answer. Everything else is a real fact about THIS
     // record and must be said rather than swallowed.
     if (outcome.reason === 'feature_disabled') return 'not_handled';
-    const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
+    const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId, replyLanguage(event));
     await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
       buildDraftUpdateOutcomeCard(draftUpdateBlockedState(outcome.reason), reply, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event,
@@ -3862,14 +3932,15 @@ export class ProcessLineWebhookUseCase {
     message: LineReplyMessage,
     companyId: string,
     access: { permissions: string[]; roles: string[] },
+    language: 'th' | 'en' = lineReplyLanguage(message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? message.altText : ''),
   ): Promise<LineReplyMessage> {
     return inheritCompleteLineBusinessAnswerPresentation(message, {
       ...message,
-      quickReply: message.quickReply ?? mediaChoiceQuickReply(message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? message.altText : '') ?? buildStaffCompletionQuickReply({
+      quickReply: message.quickReply ?? mediaChoiceQuickReply(message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? message.altText : '', language) ?? buildStaffCompletionQuickReply({
         permissions: access.permissions,
         entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         isOwner: access.roles.includes('OWNER'),
-      }),
+      }, language),
     });
   }
 
@@ -3887,9 +3958,9 @@ export class ProcessLineWebhookUseCase {
     outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
     const substituteAction = this.deliverySubstituteActions.get(event);
-    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied) : undefined;
+    designed ??= substituteAction ? buildSubstituteReceiptActionCard(substituteAction.preview, substituteAction.applied || text.includes(substituteAction.preview.summary) ? text : `${text}\n\n${substituteAction.preview.summary}`, substituteAction.applied, replyLanguage(event)) : undefined;
     const facts = this.deliverySubstituteContinuations.get(event);
-    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text) : undefined;
+    designed ??= facts ? buildSubstituteReceiptFactsCard(facts, text, replyLanguage(event)) : undefined;
     // Bound chats render the same card production sends (UAT 2026-09-29: the receipt draft reply had
     // become plain text ending in a raw link with ids). A lossless card is a complete presentation, so
     // the delivery plan sends the card itself with this text as its fallback.
@@ -3899,10 +3970,9 @@ export class ProcessLineWebhookUseCase {
     // In a bound chat the reply stands on the locked design under the reader's own words; the card from
     // before the design is what a chat that is not bound, or a reply to a photo or a tap, still gets.
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      designed ?? this.boundReplyCard(event, text, badge, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
+      designed ?? this.boundReplyCard(event, text, badge, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge, undefined, replyLanguage(event)),
       companyId,
-      access,
-    ));
+      access, replyLanguage(event)));
     await this.deliverRequiredMessages(event, [message]);
   }
 
@@ -3915,12 +3985,12 @@ export class ProcessLineWebhookUseCase {
     return this.lineReply.buildTextMessage(text);
   }
 
-  private withDraftWebLink(texts: string[], companyId: string, expenseId?: string): string[] {
+  private withDraftWebLink(texts: string[], companyId: string, expenseId?: string, language: 'th' | 'en' = 'th'): string[] {
     if (!expenseId) return texts;
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     if (texts.some((text) => text.includes(link))) return texts;
     const suffix = `
-เปิดดูรายการ: ${link}`;
+${language === 'en' ? 'View record' : 'เปิดดูรายการ'}: ${link}`;
     const last = texts.length - 1;
     return texts.map((text, index) => index === last ? `${text}${suffix}` : text);
   }
@@ -3934,6 +4004,17 @@ export class ProcessLineWebhookUseCase {
     outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > (this.boundConversations.has(event) ? 15 : LINE_MAX_MESSAGES_PER_REPLY)) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
+    const source = this.deliveryReceiptSources.get(event);
+    if (!expenseDraft && source?.records.size === 1 && this.expenseRepo) {
+      const [id, revision] = [...source.records][0]!;
+      const record = await this.expenseRepo.findByIdWithRelations(companyId, id, undefined, source.context.scopes);
+      const state = parseLineExpenseDraftContinuation(record?.sourceChannelMetadataJson?.lineExpenseDraftContinuation);
+      if (record?.updatedAt?.toISOString() === revision && state?.status === 'OPEN' && !state.unresolvedQuestions.length) {
+        expenseDraft = expenseDraftCardFacts(id, { textOnly: true, status: record.status, amount: record.grandTotalAmount,
+          item: state.items.map(item => item.description).filter(Boolean).join(' · '), sourceDocumentType: record.sourceDocumentType,
+          fields: { expenseDate: state.header.expenseDate, vendorName: record.vendorNameSnapshot ?? undefined }, language: replyLanguage(event) });
+      }
+    }
     // Production's render handles up to one LINE reply's worth of parts; a longer bound answer is
     // split across the plan's batches as lossless text.
     if (this.boundConversations.has(event) && texts.length > LINE_MAX_MESSAGES_PER_REPLY) {
@@ -3946,13 +4027,13 @@ export class ProcessLineWebhookUseCase {
       // decides this (owner 2026-09-29): what keeps a reply whole is the rule below — a card is the
       // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
-        ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
-        : this.boundReplyCard(event, text, undefined, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
+        ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId, replyLanguage(event))
+        : this.boundReplyCard(event, text, undefined, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
         const parts = texts.slice(0, -1).map((text) => this.buildLosslessTextMessage(text));
-        parts.push(await this.withCompletionMenu(terminalCard(terminal), companyId, access));
+        parts.push(await this.withCompletionMenu(terminalCard(terminal), companyId, access, replyLanguage(event)));
         return parts;
       }
       // The terminal text is longer than a Flex body holds. Feeding it to the card would drop everything
@@ -3960,12 +4041,12 @@ export class ProcessLineWebhookUseCase {
       // and only when a message slot is left. At the cap, five lossless text parts beat a card.
       const parts = texts.map((text) => this.buildLosslessTextMessage(text));
       if (parts.length >= LINE_MAX_MESSAGES_PER_REPLY) {
-        parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
+        parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access, replyLanguage(event));
         return parts;
       }
-      parts.push(await this.withCompletionMenu(buildLineSystemTextCardMessage({ text: MULTIPART_TERMINAL_FLEX_CLOSER,
-        header: { lines: ['น้องมั่งมี', 'ขั้นตอนถัดไป'] }, webBaseUrl: this.config.webBaseUrl, companyId })
-        ?? buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId), companyId, access));
+      parts.push(await this.withCompletionMenu(buildLineSystemTextCardMessage({ ...({ text: MULTIPART_TERMINAL_FLEX_CLOSER,
+        header: { lines: [(replyLanguage(event) === 'en' ? "Nong Mangmee" : 'น้องมั่งมี'), (replyLanguage(event) === 'en' ? "Next step" : 'ขั้นตอนถัดไป')] }, webBaseUrl: this.config.webBaseUrl, companyId }), language: replyLanguage(event) })
+        ?? buildLineAssistantTextCardMessage(MULTIPART_TERMINAL_FLEX_CLOSER, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event)), companyId, access, replyLanguage(event)));
       return parts;
     });
     await this.deliverRequiredMessages(event, messages);
@@ -3990,25 +4071,25 @@ export class ProcessLineWebhookUseCase {
     const businessCoverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = mixed.businessIndexes.map(index => ({ index,
       status: mixed.selectionRequired ? 'needs_user' : mixed.businessStatus,
       ...(mixed.selectionRequired ? { question: businessText, reasonCode: 'FINANCIAL_ACTION_SELECTION_REQUIRED' }
-        : mixed.businessStatus === 'needs_user' ? { question: businessText.length <= 500 && businessText.trim() ? businessText : 'กรุณาตอบข้อมูลที่รายการนี้ถามให้ครบ', reasonCode: 'BUSINESS_INPUT_REQUIRED' } : {}) }));
+        : mixed.businessStatus === 'needs_user' ? { question: businessText.length <= 500 && businessText.trim() ? businessText : (replyLanguage(event) === 'en' ? "Please provide the missing details for this request." : 'กรุณาตอบข้อมูลที่รายการนี้ถามให้ครบ'), reasonCode: 'BUSINESS_INPUT_REQUIRED' } : {}) }));
     const unresolvedDependencies = (item: { dependsOn: number[] }) => item.dependsOn.filter(index =>
       mixed.selectionRequired || mixed.businessStatus !== 'handled' || !mixed.businessIndexes.includes(index));
     const dependentCoverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = mixed.dependentQuestions.map(item => ({ index: item.index,
       status: 'needs_user', reasonCode: 'DEPENDENCY_SOURCE_PENDING',
       question: unresolvedDependencies(item).length === 0
-        ? `กรุณาถามข้อ ${item.index + 1} ต่อโดยอ้างรายการที่เพิ่งบันทึก`
-        : `กรุณาทำข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} ให้เสร็จก่อน แล้วถามข้อ ${item.index + 1} ต่อ` }));
+        ? (replyLanguage(event) === 'en' ? `Please ask part ${item.index + 1} again using the newly saved record.` : `กรุณาถามข้อ ${item.index + 1} ต่อโดยอ้างรายการที่เพิ่งบันทึก`)
+        : (replyLanguage(event) === 'en' ? `Please finish part ${unresolvedDependencies(item).map(index => index + 1).join(', ')} first, then ask part ${item.index + 1} to continue.` : `กรุณาทำข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} ให้เสร็จก่อน แล้วถามข้อ ${item.index + 1} ต่อ`) }));
     const coverage: NonNullable<LineAiTurnResponse['semanticCoverage']> = [...mixed.coverage, ...businessCoverage, ...dependentCoverage]
       .sort((a, b) => a.index - b.index);
     this.semanticDelivery.set(event, coverage);
     const dependentText = mixed.dependentQuestions.map(item => unresolvedDependencies(item).length === 0
-      ? `⏳ ข้อ ${item.index + 1} “${item.goal}” ยังรออ่านจากผลจริงค่ะ กรุณาถามข้อนี้อีกครั้งโดยอ้าง “รายการที่เพิ่งบันทึก”`
-      : `⏳ ข้อ ${item.index + 1} “${item.goal}” ต้องรอให้ข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} เสร็จก่อน ระบบยังไม่ได้ตอบข้อนี้จากข้อมูลที่ยังไม่บันทึก`).join('\n');
-    const sideText = [mixed.response.replyText.trim() ? formatLineReply(mixed.response, this.config.webBaseUrl) : '', dependentText].filter(Boolean).join('\n\n');
+      ? (replyLanguage(event) === 'en' ? `Part ${item.index + 1} “${item.goal}” is waiting for the saved result; ask again using the newly saved record.` : `⏳ ข้อ ${item.index + 1} “${item.goal}” ยังรออ่านจากผลจริงค่ะ กรุณาถามข้อนี้อีกครั้งโดยอ้าง “รายการที่เพิ่งบันทึก”`)
+      : (replyLanguage(event) === 'en' ? `Part ${item.index + 1} “${item.goal}” must wait for part ${unresolvedDependencies(item).map(index => index + 1).join(', ')} to finish; this answer has not been generated from unsaved data.` : `⏳ ข้อ ${item.index + 1} “${item.goal}” ต้องรอให้ข้อ ${unresolvedDependencies(item).map(index => index + 1).join(', ')} เสร็จก่อน ระบบยังไม่ได้ตอบข้อนี้จากข้อมูลที่ยังไม่บันทึก`)).join('\n');
+    const sideText = [mixed.response.replyText.trim() ? formatLineReply(mixed.response, this.config.webBaseUrl, replyLanguage(event)) : '', dependentText].filter(Boolean).join('\n\n');
     const nextWrite = mixed.orderedWrites?.[1];
     const remainingChoices: LineReplyMessage[] = nextWrite && mixed.businessStatus === 'handled'
-      ? [{ type: 'text', text: 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ', quickReply: lineChoiceQuickReply([
-        { label: nextWrite.goal, text: `ทำข้อ ${nextWrite.index + 1} ก่อน` },
+      ? [{ type: 'text', text: (replyLanguage(event) === 'en' ? "Continue to the next step when the first record is ready." : 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ'), quickReply: lineChoiceQuickReply([
+        { label: replyLanguage(event) === 'en' ? 'Next step' : 'ทำขั้นตอนถัดไป', text: (replyLanguage(event) === 'en' ? `Do part ${nextWrite.index + 1} first` : `ทำข้อ ${nextWrite.index + 1} ก่อน`) },
       ]) }]
       : this.retainedTaskSources?.has(event) && mixed.businessStatus === 'handled' ? await this.remainingTaskChoiceMessages(event) : [];
     const sideMessages: LineReplyMessage[] = splitLineExpenseDraftReply(sideText).filter(Boolean).map(text => ({ type: 'text' as const, text }));
@@ -4037,7 +4118,7 @@ export class ProcessLineWebhookUseCase {
     // An expense draft still collecting answers in this chat is pending work too (NAT-12: "เดี๋ยว ๆ
     // ยกเลิกก่อน" after a text-note draft must not be answered "nothing was saved").
     const openDrafts = reply === 'cancel' && this.expenseDraftConversation
-      ? (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash).catch(() => [])).filter(draft => draft.status === 'OPEN')
+      ? (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash, replyLanguage(event)).catch(() => [])).filter(draft => draft.status === 'OPEN')
       : [];
     // Nothing pending is an ordinary turn; two pending things are the router's to ask about.
     if ([edit, action, ...openDrafts].filter(Boolean).length !== 1) return false;
@@ -4045,29 +4126,31 @@ export class ProcessLineWebhookUseCase {
     // The pending edit's own states are cards of the locked design; the other pending work keeps its text.
     let editState: Parameters<typeof buildDraftUpdateOutcomeCard>[0] | undefined;
     if (openDrafts.length) {
-      const result = await this.expenseDraftConversation!.execute(ctx, { messageText: 'ยกเลิก', chatKeyHash,
+      const result = await this.expenseDraftConversation!.execute(ctx, { language: replyLanguage(event), messageText: 'ยกเลิก', chatKeyHash,
         webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: openDrafts[0]!.expenseId } });
       if (!result.handled || result.status !== 'CANCELLED') return false;
       await this.closeWaitingWriteTask(bound);
-      text = [...result.replyTexts, 'ร่างนี้ยังบันทึกไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ',
+      text = [...result.replyTexts, (replyLanguage(event) === 'en' ? 'The expense draft is retained, unconfirmed and unpaid; delete it on the web if no longer needed.' : 'ร่างนี้ยังบันทึกไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ'),
         absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${openDrafts[0]!.expenseId}`)].join('\n');
     } else if (edit) {
       const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${edit.expenseId}`);
       editState = 'unchanged';
       if (reply === 'review') {
         editState = 'preview';
-        text = `${draftUpdateCanonicalDiff(edit)}\n\nยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`;
+        text = `${draftUpdateCanonicalDiff(edit, replyLanguage(event))}\n\n${replyLanguage(event) === 'en' ? 'No changes have been made; confirm on the card when ready, or cancel.' : 'ยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย'}`;
       } else if (await this.draftUpdate!.cancel(ctx, chatKeyHash, edit.previewId) === 'cancelled') {
         await this.closeWaitingWriteTask(bound);
         editState = 'cancelled';
-        text = [`ยกเลิกการแก้ไขแล้วค่ะ รายการเดิมไม่เปลี่ยน: ${formatRecordLabel(edit.record)} · ยอดรวม ${moneyLabel(edit.totalsBefore.grandTotalAmount)} บาท`,
-          'รายการนี้ยังบันทึกเป็นร่างไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ', link].join('\n');
-      } else text = 'คำขอแก้ไขนี้หมดอายุหรือรายการเปลี่ยนไปแล้วค่ะ ยังไม่ได้แก้ไขรายการ';
+        text = [(replyLanguage(event) === 'en' ? `The edit was cancelled and the existing expense was retained: ${edit.record.vendorName ?? 'This expense'} · Total ${moneyLabel(edit.totalsBefore.grandTotalAmount)} THB` : `ยกเลิกการแก้ไขแล้วค่ะ รายการเดิมไม่เปลี่ยน: ${formatRecordLabel(edit.record)} · ยอดรวม ${moneyLabel(edit.totalsBefore.grandTotalAmount)} บาท`),
+          (replyLanguage(event) === 'en' ? 'The expense draft is retained, unconfirmed and unpaid; delete it on the web if no longer needed.' : 'รายการนี้ยังบันทึกเป็นร่างไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ'), link].join('\n');
+      } else text = (replyLanguage(event) === 'en' ? 'This edit expired or the record changed; no edit was applied.' : 'คำขอแก้ไขนี้หมดอายุหรือรายการเปลี่ยนไปแล้วค่ะ ยังไม่ได้แก้ไขรายการ');
     } else {
       const current = await this.reimbursementDrafts.get({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: action!.id });
       if (reply === 'review') text = current.status === 'preview'
-        ? `${await this.reimbursementReviewText(ctx, current.preview)}\n\nยังไม่ได้บันทึกใบเบิกค่ะ กดบันทึกในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`
-        : 'ร่างใบเบิกนี้ยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร บอกบิลหรือข้อมูลที่ต้องการเบิกต่อได้เลย หรือพิมพ์ยกเลิก';
+        ? (replyLanguage(event) === 'en' ? `${await this.reimbursementReviewText(ctx, current.preview, replyLanguage(event))}
+
+The claim has not been saved; confirm the card when ready, or reply “cancel”.` : `${await this.reimbursementReviewText(ctx, current.preview, replyLanguage(event))}\n\nยังไม่ได้บันทึกใบเบิกค่ะ กดบันทึกในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`)
+        : (replyLanguage(event) === 'en' ? "The claim draft is incomplete and nothing was saved; send the expense details to continue, or reply “cancel”." : 'ร่างใบเบิกนี้ยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร บอกบิลหรือข้อมูลที่ต้องการเบิกต่อได้เลย หรือพิมพ์ยกเลิก');
       else {
         const result = current.status === 'preview'
           ? await this.reimbursementDrafts.cancel({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, control: { action: 'reimbursement_draft_cancel',
@@ -4076,9 +4159,9 @@ export class ProcessLineWebhookUseCase {
         if (result.status === 'cancelled') {
           await this.finishReimbursementTask(bound.owner, bound.epoch, action!.id, false);
           await this.closeWaitingWriteTask(bound);
-          text = 'ยกเลิกร่างใบเบิกนี้แล้วค่ะ ยังไม่ได้สร้างใบเบิกหรือเปลี่ยนรายการใด ถ้าพร้อมแล้วเริ่มใหม่ได้เลย';
-        } else text = result.status === 'applied' ? 'ร่างใบเบิกนี้บันทึกไปแล้วค่ะ จึงยกเลิกจากแชตไม่ได้ ตรวจหรือยกเลิกได้ในเว็บ'
-          : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก';
+          text = (replyLanguage(event) === 'en' ? "The claim draft was cancelled without creating a claim or changing records; start again when ready." : 'ยกเลิกร่างใบเบิกนี้แล้วค่ะ ยังไม่ได้สร้างใบเบิกหรือเปลี่ยนรายการใด ถ้าพร้อมแล้วเริ่มใหม่ได้เลย');
+        } else text = result.status === 'applied' ? (replyLanguage(event) === 'en' ? "This claim was already saved; review or cancel it on the web." : 'ร่างใบเบิกนี้บันทึกไปแล้วค่ะ จึงยกเลิกจากแชตไม่ได้ ตรวจหรือยกเลิกได้ในเว็บ')
+          : (replyLanguage(event) === 'en' ? "This claim draft expired or changed; no claim was created." : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก');
       }
     }
     await this.deliverReply(event, text, undefined, editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId));
@@ -4089,11 +4172,13 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** The pending reimbursement preview in words, with each source bill's own shop and document number. */
-  private async reimbursementReviewText(ctx: RequestContext, preview: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftPreview): Promise<string> {
+  private async reimbursementReviewText(ctx: RequestContext, preview: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftPreview, language: 'th' | 'en' = 'th'): Promise<string> {
+  if (language === 'en') { return ['Claim draft awaiting your confirmation:', ...preview.after.lines.map(line => `• ${line.description} · ${lineDisplayDate(line.incurredDate, language)} · ${moneyLabel(line.amount)} THB`), `Total: ${moneyLabel(preview.after.amount)} THB`, `Reason: ${preview.after.reason}`].join('\n'); }
+
     const lines = await Promise.all(preview.after.lines.map(async line => {
       const source = line.linkedExpenseId ? await this.expenseRepo?.findById(ctx.companyId, line.linkedExpenseId).catch(() => null) : null;
       return [`• ${source?.vendorNameSnapshot ?? line.description}${source?.vendorDocumentNumber ? ` (${source.vendorDocumentNumber})` : ''}`,
-        `  ${line.description} · ${formatReplyDate(line.incurredDate) ?? line.incurredDate} · ${moneyLabel(line.amount)} บาท`,
+        `  ${line.description} · ${formatReplyDate(line.incurredDate, language) ?? line.incurredDate} · ${moneyLabel(line.amount)} บาท`,
         ...(line.purpose ? [`  วัตถุประสงค์: ${line.purpose}`] : [])].join('\n');
     }));
     return ['ร่างใบเบิกที่รอยืนยัน:', ...lines, `ยอดรวม ${moneyLabel(preview.after.amount)} บาท`, `เหตุผล: ${preview.after.reason}`].join('\n');
@@ -4116,7 +4201,7 @@ export class ProcessLineWebhookUseCase {
   private async handleDocumentQaControl(event: LineTextEvent): Promise<boolean> {
     const text = event.messageText.trim();
     const match = /^\/qa cancel ([A-Za-z0-9_-]{1,128})$/u.exec(text);
-    const bound = this.boundConversations.get(event); if ((!match && text !== DOCUMENT_QA_CANCEL_COMMAND) || !bound) return false;
+    const bound = this.boundConversations.get(event); if ((!match && text !== DOCUMENT_QA_CANCEL_COMMAND && text !== 'Cancel file reading') || !bound) return false;
     // The button words name no job: take this chat's latest read that is still pending. None means the
     // words were ordinary chat, so the turn continues normally.
     const jobId = match ? match[1]! : (await this.prisma.client.lineIntakePendingMedia.findFirst({ where: { companyId: bound.owner.companyId,
@@ -4126,7 +4211,7 @@ export class ProcessLineWebhookUseCase {
     const owner = { ...bound.owner, ownerEpoch: bound.epoch }, job = await this.documentQa.getById(jobId).catch(() => null);
     if (!job || job.companyId !== owner.companyId || job.userId !== owner.userId || job.ownerMembershipId !== owner.membershipId
       || job.ownerEpoch !== owner.ownerEpoch || job.messagingChannelId !== owner.messagingChannelId || job.chatKeyHash !== owner.chatKeyHash) {
-      await this.deliverReply(event, 'ไม่พบงานอ่านไฟล์นี้ในแชตปัจจุบันค่ะ'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "This file-reading task is not available in the current chat." : 'ไม่พบงานอ่านไฟล์นี้ในแชตปัจจุบันค่ะ')); return true;
     }
     const canceled = await this.documentQa.cancel(job.id, owner);
     const pending = await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId: owner.companyId, userId: owner.userId,
@@ -4145,8 +4230,8 @@ export class ProcessLineWebhookUseCase {
         await this.deliveryPlans.cancelPlan(outcome!.deliveryPlan!.id, outcome!.deliveryPlan!.planHash);
       }
     }
-    await this.deliverReply(event, canceled ? 'ยกเลิกงานอ่านไฟล์แล้วค่ะ ยังไม่ได้สร้างรายการ'
-      : 'หยุดการส่งคำตอบอ่านไฟล์ที่ค้างแล้วค่ะ ไม่ได้ย้อนข้อมูลหรือรายการใด');
+    await this.deliverReply(event, canceled ? (replyLanguage(event) === 'en' ? "The file-reading task was cancelled; no expense was created." : 'ยกเลิกงานอ่านไฟล์แล้วค่ะ ยังไม่ได้สร้างรายการ')
+      : (replyLanguage(event) === 'en' ? "Pending file-reading replies were stopped; existing records were retained." : 'หยุดการส่งคำตอบอ่านไฟล์ที่ค้างแล้วค่ะ ไม่ได้ย้อนข้อมูลหรือรายการใด'));
     const inventory = await this.restoreDocumentQaTask(event, job.id);
     if (inventory.length) await this.settleSemanticTask(event, inventory.map(item => ({ index: item.index,
       status: item.kind === 'file' ? 'unsupported' as const : 'needs_user' as const,
@@ -4158,18 +4243,19 @@ export class ProcessLineWebhookUseCase {
     this.intermediateDeliveries.add(event);
     // The tap sends the button's own words; `handleDocumentQaControl` finds this chat's running read.
     await this.deliverRequiredMessages(event, [{ type: 'text', text, quickReply: { items: [{ type: 'action',
-      action: { type: 'message', label: DOCUMENT_QA_CANCEL_COMMAND, text: DOCUMENT_QA_CANCEL_COMMAND } }] } }]);
+      action: { type: 'message', label: replyLanguage(event) === 'en' ? 'Cancel file reading' : DOCUMENT_QA_CANCEL_COMMAND, text: replyLanguage(event) === 'en' ? 'Cancel file reading' : DOCUMENT_QA_CANCEL_COMMAND } }] } }]);
   }
 
   /** Owner 2026-09-29 ("รหัสไฟล์อะไรออกมาไม่รู้ งง"): the customer reads and sends no ids. Files are named by
    *  order and time, and every button sends the words on it; `handlePendingMediaControl` maps those words
    *  back to the pending rows in this same order (createdAt ascending), so the ids stay server-side. */
-  private pendingMediaSelectionMessage(rows: Array<{ attachmentId: string; mimeType?: string | null; createdAt?: Date }>): LineReplyMessage {
+  private pendingMediaSelectionMessage(rows: Array<{ attachmentId: string; mimeType?: string | null; createdAt?: Date }>, language: 'th' | 'en' = 'th'): LineReplyMessage {
     const choices = rows.slice(0, 6), a = choices[0], b = choices[1];
+    if (language === 'en') return { type: 'text', text: 'The files are stored separately; choose one to continue, replace the earlier file, or keep both, and unselected files will not be read or recorded.', quickReply: { items: [...choices.map((row, i) => ({ type: 'action' as const, action: { type: 'message' as const, label: `Select ${pendingMediaOrderLabel(row, i, false, language)}`, text: `Select ${pendingMediaOrderLabel(row, i, false, language)}` } })), ...(a && b ? ['Replace earlier file', 'Keep both files'].map(text => ({ type: 'action' as const, action: { type: 'message' as const, label: text, text } })) : [])] } };
     const button = (text: string) => ({ type: 'action' as const, action: { type: 'message' as const, label: text, text } });
-    return { type: 'text', text: `เก็บไฟล์แต่ละไฟล์แยกกันแล้วค่ะ กรุณาเลือกไฟล์ที่จะทำต่อ หรือระบุว่าไฟล์ใหม่แทนหรือเพิ่มเติมไฟล์เดิม ยังไม่ได้อ่านหรือสร้างรายการจากไฟล์ที่ไม่ได้เลือก\n${choices.map((row, i) => pendingMediaOrderLabel(row, i, true)).join('\n')}`,
+    return { type: 'text', text: `เก็บไฟล์แต่ละไฟล์แยกกันแล้วค่ะ กรุณาเลือกไฟล์ที่จะทำต่อ หรือระบุว่าไฟล์ใหม่แทนหรือเพิ่มเติมไฟล์เดิม ยังไม่ได้อ่านหรือสร้างรายการจากไฟล์ที่ไม่ได้เลือก\n${choices.map((row, i) => pendingMediaOrderLabel(row, i, true, language)).join('\n')}`,
       quickReply: { items: [
-        ...choices.map((row, i) => button(`เลือก${pendingMediaOrderLabel(row, i)}`)),
+        ...choices.map((row, i) => button(`เลือก${pendingMediaOrderLabel(row, i, undefined, language)}`)),
         ...(a && b ? [button(MEDIA_REPLACE_COMMAND), button(MEDIA_SUPPLEMENT_COMMAND)] : []),
       ] } };
   }
@@ -4179,8 +4265,8 @@ export class ProcessLineWebhookUseCase {
     const text = event.messageText.trim();
     // Legacy `/media …` quick replies may still sit in a chat; the button words are the current form.
     const legacy = /^\/media (select|replace|supplement) ([A-Za-z0-9_-]{1,128})(?: ([A-Za-z0-9_-]{1,128}))?$/u.exec(text);
-    const ordinal = MEDIA_SELECT_COMMAND_PATTERN.exec(text);
-    const pair = text === MEDIA_REPLACE_COMMAND ? 'replace' : text === MEDIA_SUPPLEMENT_COMMAND ? 'supplement' : undefined;
+    const ordinal = MEDIA_SELECT_COMMAND_PATTERN.exec(text) ?? /^Select (?:Photo|File) ([1-6])$/iu.exec(text);
+    const pair = text === MEDIA_REPLACE_COMMAND || text === 'Replace earlier file' ? 'replace' : text === MEDIA_SUPPLEMENT_COMMAND || text === 'Keep both files' ? 'supplement' : undefined;
     const bound = this.boundConversations.get(event); if ((!legacy && !ordinal && !pair) || !bound) return false;
     const where = { companyId: bound.owner.companyId, userId: bound.owner.userId, status: 'PENDING' as const,
       expiresAt: { gt: new Date() }, ...this.pendingMediaBinding(event) };
@@ -4191,11 +4277,11 @@ export class ProcessLineWebhookUseCase {
     const firstId = legacy ? legacy[2]! : ordinal ? rows[Number(ordinal[1]) - 1]?.attachmentId ?? '' : rows[0]?.attachmentId ?? '';
     const secondId = legacy ? legacy[3] : pair ? rows[1]?.attachmentId ?? '' : undefined;
     if (operation === 'select' ? secondId !== undefined : !secondId || secondId === firstId) {
-      await this.deliverReply(event, 'คำสั่งเลือกไฟล์ไม่ครบค่ะ กรุณาเลือกจากปุ่มของไฟล์ปัจจุบัน'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please choose a file using the current file buttons." : 'คำสั่งเลือกไฟล์ไม่ครบค่ะ กรุณาเลือกจากปุ่มของไฟล์ปัจจุบัน')); return true;
     }
     const a = rows.find(row => row.attachmentId === firstId), b = secondId ? rows.find(row => row.attachmentId === secondId) : undefined;
     if (!a || secondId && !b || rows.some(row => row.readJobId)) {
-      await this.deliverReply(event, 'ไฟล์ที่เลือกเปลี่ยนหรือเริ่มอ่านแล้วค่ะ กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้เปลี่ยนไฟล์ของงานเดิม'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The selected file changed or is already being read; resend the file with your question, as the earlier task was not changed." : 'ไฟล์ที่เลือกเปลี่ยนหรือเริ่มอ่านแล้วค่ะ กรุณาส่งคำถามใหม่พร้อมไฟล์ ยังไม่ได้เปลี่ยนไฟล์ของงานเดิม')); return true;
     }
     const selected = operation === 'replace' ? b! : a, ids = operation === 'supplement' ? [a.attachmentId, b!.attachmentId] : [selected.attachmentId];
     try {
@@ -4209,11 +4295,11 @@ export class ProcessLineWebhookUseCase {
         }
       });
     } catch {
-      await this.deliverReply(event, 'รายการไฟล์เปลี่ยนระหว่างเลือกค่ะ กรุณาเลือกใหม่ ยังไม่ได้เปลี่ยนไฟล์ให้'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The file list changed while you were selecting; please choose again, as no file selection was changed." : 'รายการไฟล์เปลี่ยนระหว่างเลือกค่ะ กรุณาเลือกใหม่ ยังไม่ได้เปลี่ยนไฟล์ให้')); return true;
     }
-    await this.deliverReply(event, operation === 'supplement' ? 'เก็บทั้งสองไฟล์เป็นชุดเดียวกันแล้วค่ะ บอกคำถามที่ต้องการให้ช่วยอ่านได้เลย ยังไม่ได้สร้างรายการ'
-      : operation === 'replace' ? 'เลือกไฟล์ใหม่แทนไฟล์เดิมแล้วค่ะ ไฟล์เดิมจะไม่ถูกนำไปอ่านในงานนี้ ยังไม่ได้สร้างรายการ'
-        : 'เลือกไฟล์นี้ไว้แล้วค่ะ บอกคำถามหรือประเภทเอกสารที่จะทำต่อได้เลย ยังไม่ได้สร้างรายการ');
+    await this.deliverReply(event, operation === 'supplement' ? (replyLanguage(event) === 'en' ? "Both files are now grouped; send your question, and no expense has been created." : 'เก็บทั้งสองไฟล์เป็นชุดเดียวกันแล้วค่ะ บอกคำถามที่ต้องการให้ช่วยอ่านได้เลย ยังไม่ได้สร้างรายการ')
+      : operation === 'replace' ? (replyLanguage(event) === 'en' ? "The new file replaced the earlier file for this reading task; no expense was created." : 'เลือกไฟล์ใหม่แทนไฟล์เดิมแล้วค่ะ ไฟล์เดิมจะไม่ถูกนำไปอ่านในงานนี้ ยังไม่ได้สร้างรายการ')
+        : (replyLanguage(event) === 'en' ? "This file is selected; send your question or document task, and no expense has been created." : 'เลือกไฟล์นี้ไว้แล้วค่ะ บอกคำถามหรือประเภทเอกสารที่จะทำต่อได้เลย ยังไม่ได้สร้างรายการ'));
     await this.updateEventLog(event.webhookEventId, 'media_selection_saved', undefined, bound.owner.companyId); return true;
   }
 
@@ -4238,7 +4324,7 @@ export class ProcessLineWebhookUseCase {
   private async applyPreferenceCommand(event: LineTextEvent, requestId: string, command: LinePreferenceCommand): Promise<void> {
     const bound = this.boundConversations.get(event);
     if (!bound || !this.config.lineAiPreferencesEnabled) {
-      await this.deliverReply(event, 'การจำรูปแบบคำตอบยังไม่เปิดใช้ในแชตนี้ค่ะ คุณยังระบุรูปแบบที่ต้องการสำหรับคำตอบครั้งนี้ได้');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Saved answer preferences are unavailable in this chat; you can still specify a style for this answer." : 'การจำรูปแบบคำตอบยังไม่เปิดใช้ในแชตนี้ค่ะ คุณยังระบุรูปแบบที่ต้องการสำหรับคำตอบครั้งนี้ได้'));
       await this.updateEventLog(event.webhookEventId, 'preference_unavailable'); return;
     }
     let reply: string, status = 'preference_completed';
@@ -4255,7 +4341,7 @@ export class ProcessLineWebhookUseCase {
           requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { operation: command.kind, fields: command.kind === 'set' ? Object.keys(command.values) : command.keys } });
         reply = linePreferenceChangedText(command, current.values);
       }
-    } catch { reply = 'ตอนนี้ตรวจสอบหรือบันทึกความจำไม่ได้ค่ะ ยังยืนยันไม่ได้ว่าระบบจำหรือลบให้แล้ว'; status = 'preference_unavailable'; }
+    } catch { reply = (replyLanguage(event) === 'en' ? "I could not verify or update saved preferences; I cannot confirm that anything was remembered or deleted." : 'ตอนนี้ตรวจสอบหรือบันทึกความจำไม่ได้ค่ะ ยังยืนยันไม่ได้ว่าระบบจำหรือลบให้แล้ว'); status = 'preference_unavailable'; }
     await this.deliverReply(event, reply); await this.updateEventLog(event.webhookEventId, status, undefined, bound.owner.companyId);
   }
 
@@ -4316,26 +4402,26 @@ export class ProcessLineWebhookUseCase {
     try { grant = await this.aiGateway.narrowLineReliabilityGrant(initial, 'general', ['line-answer/2']); }
     catch (error) {
       if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
-      await this.deliverReply(event, formatRefusal('ai_timeout'));
+      await this.deliverReply(event, formatRefusal('ai_timeout', undefined, replyLanguage(event)));
       await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, bound.owner.companyId);
       return;
     }
     if (!grant) {
-      await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not finish this answer; please try again." : 'ยังตอบคำถามนี้ไม่สำเร็จในรอบนี้ค่ะ กรุณาลองใหม่อีกครั้ง'));
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_ADMISSION_UNAVAILABLE', bound.owner.companyId);
       return;
     }
     this.budgetGrantsV2.set(event, grant);
     const resumes = route.semanticSubrequests.some(item => item.taskRef);
     if (resumes && !await this.preserveSemanticTask(event, route.semanticSubrequests)) {
-      await this.deliverReply(event, 'งานที่ต้องการทำต่อเปลี่ยนแล้วค่ะ กรุณาระบุงานปัจจุบันอีกครั้ง');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The pending task changed; please tell me which current task to continue." : 'งานที่ต้องการทำต่อเปลี่ยนแล้วค่ะ กรุณาระบุงานปัจจุบันอีกครั้ง'));
       await this.updateEventLog(event.webhookEventId, 'clarification_required', 'STALE_TASK_SELECTION', bound.owner.companyId);
       return;
     }
     const request: LineAiTurnRequest = { requestId, webhookEventId: event.webhookEventId,
       userContext: { lineUserId: '[REDACTED]', internalUserId: bound.owner.userId, companyId: bound.owner.companyId,
         membershipId: bound.owner.membershipId, permissions: access.permissions, roles: access.roles, branchIds: access.scopes.branchIds,
-        entitledFeatureKeys: features ? [...features] : undefined, locale: 'th-TH', chatKeyHash: bound.owner.chatKeyHash },
+        entitledFeatureKeys: features ? [...features] : undefined, locale: replyLanguage(event) === 'en' ? 'en-GB' : 'th-TH', chatKeyHash: bound.owner.chatKeyHash },
       messageText: event.messageText, messagePreviewHash: hashMessagePreview(event.messageText),
       inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
       semanticSubrequests: route.semanticSubrequests, ...await this.reliabilityContext(event),
@@ -4354,10 +4440,10 @@ export class ProcessLineWebhookUseCase {
       if (budget && await this.answerAiCreditRefusal(event, bound.owner.companyId,
         { budgetErrorCode: budget.code, ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}) },
         access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
-      await this.deliverReply(event, 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่'); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not finish this answer; please try again." : 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่')); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return;
     }
     if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
-      await this.deliverReply(event, 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not verify every part of the answer; please try again." : 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่'));
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', bound.owner.companyId);
       return;
     }
@@ -4367,8 +4453,8 @@ export class ProcessLineWebhookUseCase {
       event.messageText.slice(0, PREVIEW_MAX_CHARS), response, event);
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
     // The answer on the locked design, under the reader's own question; its text where the design cannot be drawn.
-    const answerText = formatLineReply(response, this.config.webBaseUrl);
-    const message = buildDesignedLineAnswerMessage(response, answerText, this.config.webBaseUrl, bound.owner.companyId, event.messageText)
+    const answerText = formatLineReply(response, this.config.webBaseUrl, replyLanguage(event));
+    const message = buildDesignedLineAnswerMessage(response, answerText, this.config.webBaseUrl, bound.owner.companyId, event.messageText, replyLanguage(event))
       ?? { type: 'text' as const, text: answerText };
     const quickReply = productHelpQuickReply(response, access.permissions, features === null ? null : new Set(features));
     if (quickReply) message.quickReply = quickReply;
@@ -4423,7 +4509,7 @@ export class ProcessLineWebhookUseCase {
     const request: LineAiTurnRequest = { requestId, webhookEventId: event.webhookEventId, userContext: { lineUserId: '[REDACTED]', internalUserId: bound.owner.userId,
       companyId: bound.owner.companyId, membershipId: bound.owner.membershipId, permissions: access.permissions, roles: access.roles,
       branchIds: access.scopes.branchIds, locationIds: access.scopes.locationIds, entitledFeatureKeys: features ? [...features] : undefined,
-      locale: 'th-TH', chatKeyHash: bound.owner.chatKeyHash }, messageText: event.messageText, messagePreviewHash: hashMessagePreview(event.messageText),
+      locale: replyLanguage(event) === 'en' ? 'en-GB' : 'th-TH', chatKeyHash: bound.owner.chatKeyHash }, messageText: event.messageText, messagePreviewHash: hashMessagePreview(event.messageText),
       inputEvidence: event.inputEvidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
       semanticSubrequests: independent.map((item, index) => ({ ...item, index, dependsOn: item.dependsOn.map(dep => indices.get(dep)!).filter(dep => dep !== undefined) })),
       ...await this.reliabilityContext(event), ...(candidates ? { valueCandidates: candidates } : {}),
@@ -4445,9 +4531,9 @@ export class ProcessLineWebhookUseCase {
       if (!evidenceIds) throw new Error('MIXED_READ_EVIDENCE_UNAVAILABLE');
       this.deliverySources.set(event, { requestId, ids: evidenceIds });
     } catch {
-      response = { replyText: independent.map(item => `${item.goal}: ยังตอบส่วนนี้ไม่สำเร็จค่ะ กรุณาถามส่วนนี้อีกครั้ง`).join('\n'),
+      response = { replyText: independent.map(item => (replyLanguage(event) === 'en' ? `${item.goal}: this part could not be answered; please ask it again.` : `${item.goal}: ยังตอบส่วนนี้ไม่สำเร็จค่ะ กรุณาถามส่วนนี้อีกครั้ง`)).join('\n'),
         requestId, intent: 'unknown', agent: 'general', durationMs: 0, toolsInvoked: [], sourceLabels: [], sourceRefs: [], webLinks: [], refused: false,
-        semanticCoverage: independent.map((_item, index) => ({ index, status: 'needs_user', reasonCode: 'INDEPENDENT_ANSWER_UNAVAILABLE', question: 'กรุณาถามส่วนนี้อีกครั้ง' })) };
+        semanticCoverage: independent.map((_item, index) => ({ index, status: 'needs_user', reasonCode: 'INDEPENDENT_ANSWER_UNAVAILABLE', question: (replyLanguage(event) === 'en' ? "Please ask this part again." : 'กรุณาถามส่วนนี้อีกครั้ง') })) };
       this.deliverySources.set(event, { requestId, ids: [] });
     } else this.deliverySources.set(event, { requestId, ids: [] });
     const orderedWrites = this.orderedExpenseWrites(inventory);
@@ -4459,7 +4545,7 @@ export class ProcessLineWebhookUseCase {
       dependentQuestions: dependent.map(item => ({ index: item.index, goal: item.goal, dependsOn: item.dependsOn.filter(index => blocked.has(index)) })), response,
       coverage: [...response.semanticCoverage!.map(item => ({ ...item, index: independent[item.index]!.index })),
         ...(orderedWrites?.slice(1).map(item => ({ index: item.index, status: 'needs_user' as const,
-          reasonCode: 'DEPENDENCY_SOURCE_PENDING', question: 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ' })) ?? [])] });
+          reasonCode: 'DEPENDENCY_SOURCE_PENDING', question: (replyLanguage(event) === 'en' ? "Continue to the next step when the first record is ready." : 'กดทำขั้นตอนถัดไปเมื่อรายการแรกพร้อมค่ะ') })) ?? [])] });
     return true;
   }
 
@@ -4501,7 +4587,7 @@ export class ProcessLineWebhookUseCase {
    *  accepted for a button delivered before that change. */
   private async prepareRetainedTaskSelection(event: LineTextEvent): Promise<boolean> {
     const words = /^ทำ(ข้อ|รายการ) ([1-8]) (?:ก่อน|ต่อ)$/u.exec(event.messageText.trim());
-    const more = event.messageText.trim() === 'ขอดูงานค้างที่เหลือ';
+    const more = event.messageText.trim() === (replyLanguage(event) === 'en' ? "Show remaining tasks" : 'ขอดูงานค้างที่เหลือ');
     if (!event.messageText.startsWith('/task choose ') && !words && !more) return false;
     const bound = this.boundConversations.get(event);
     if (!bound) return false;
@@ -4521,9 +4607,9 @@ export class ProcessLineWebhookUseCase {
       if (!waiting.length) return false;
       if (more) {
         const choices = waiting.slice(4, 8);
-        await this.deliverMessages(event, [{ type: 'text', text: 'เลือกงานที่จะทำต่อ แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจค่ะ',
+        await this.deliverMessages(event, [{ type: 'text', text: (replyLanguage(event) === 'en' ? "Choose a task to continue; I will use the existing details to prepare it for your review." : 'เลือกงานที่จะทำต่อ แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจค่ะ'),
           quickReply: lineChoiceQuickReply((choices.length ? choices : waiting.slice(0, 4)).map(({ sub, originalIndex }) => ({
-            label: sub.goal, text: `ทำข้อ ${originalIndex + 1} ก่อน`,
+            label: sub.goal, text: (replyLanguage(event) === 'en' ? `Do part ${originalIndex + 1} first` : `ทำข้อ ${originalIndex + 1} ก่อน`),
           }))) }]);
         return true;
       }
@@ -4581,7 +4667,7 @@ export class ProcessLineWebhookUseCase {
         inputEvidence: evidence, semanticSubrequest: original }, sourceText, operationId: deliveryHash(['line-task-action', bound.id, task.taskId, localIndex]) });
       return false;
     } catch {
-      await this.deliverReply(event, 'งานที่เลือกเปลี่ยนหรือหมดอายุแล้วค่ะ ยังไม่ได้ทำรายการ กรุณาเลือกงานค้างปัจจุบันอีกครั้ง');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The selected task changed or expired; nothing was applied, so choose a current pending task." : 'งานที่เลือกเปลี่ยนหรือหมดอายุแล้วค่ะ ยังไม่ได้ทำรายการ กรุณาเลือกงานค้างปัจจุบันอีกครั้ง'));
       return true;
     }
   }
@@ -4653,11 +4739,13 @@ export class ProcessLineWebhookUseCase {
       const original = (item: typeof a) => Number(item.task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${item.sub.index}_`))?.sourceType.split('_').at(-1));
       return order.indexOf(original(a)) - order.indexOf(original(b));
     }).slice(0, 1) : remaining.slice(0, 4);
-    return [{ type: 'text', text: 'รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย', quickReply: lineChoiceQuickReply([
-      ...choices.map(({ task, sub }, index) => ({ label: sub.goal, text: orderedTask
-        ? `ทำข้อ ${Number(task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`))?.sourceType.split('_').at(-1)) + 1} ก่อน`
-        : `ทำรายการ ${index + 1} ต่อ` })),
-      ...(remaining.length > 4 ? [{ label: 'อื่นๆ', text: 'ขอดูงานค้างที่เหลือ' }] : []),
+    return [{ type: 'text', text: orderedTask
+      ? (replyLanguage(event) === 'en' ? 'Continue to the next step to prepare the document.' : 'กดทำขั้นตอนถัดไปเพื่อเตรียมเอกสารต่อค่ะ')
+      : (replyLanguage(event) === 'en' ? "The existing details are retained; choose a task to continue." : 'รายละเอียดเดิมยังอยู่ค่ะ เลือกงานที่จะทำต่อได้เลย'), quickReply: lineChoiceQuickReply([
+      ...choices.map(({ task, sub }, index) => ({ label: orderedTask ? (replyLanguage(event) === 'en' ? 'Next step' : 'ทำขั้นตอนถัดไป') : sub.goal, text: orderedTask
+        ? (replyLanguage(event) === 'en' ? `Do part ${Number(task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`))?.sourceType.split('_').at(-1)) + 1} first` : `ทำข้อ ${Number(task.sourceRevisionLocators?.find(ref => ref.sourceType.startsWith(`LINE_ACCEPTED_TASK_${sub.index}_`))?.sourceType.split('_').at(-1)) + 1} ก่อน`)
+        : (replyLanguage(event) === 'en' ? `Continue record ${index + 1} to continue.` : `ทำรายการ ${index + 1} ต่อ`) })),
+      ...(remaining.length > 4 ? [{ label: (replyLanguage(event) === 'en' ? "More options" : 'อื่นๆ'), text: (replyLanguage(event) === 'en' ? "Show remaining tasks" : 'ขอดูงานค้างที่เหลือ') }] : []),
     ]) }];
   }
 
@@ -4671,10 +4759,10 @@ export class ProcessLineWebhookUseCase {
       if (!task || !mapping) throw new Error('LINE_TASK_SOURCE_MISSING');
       // The words name the clause; prepareRetainedTaskSelection maps them back to this waiting task.
       return { type: 'action' as const, action: { type: 'message' as const, label: Array.from(item.goal).slice(0, 20).join(''),
-        text: `ทำข้อ ${item.index + 1} ก่อน` } };
+        text: (replyLanguage(event) === 'en' ? `Do part ${item.index + 1} first` : `ทำข้อ ${item.index + 1} ก่อน`) } };
     });
-    if (writes.length > 4) items.push({ type: 'action', action: { type: 'message', label: 'อื่นๆ', text: 'ขอดูงานค้างที่เหลือ' } });
-    const text = 'เลือกงานที่จะทำก่อน แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจทีละรายการค่ะ';
+    if (writes.length > 4) items.push({ type: 'action', action: { type: 'message', label: (replyLanguage(event) === 'en' ? "More options" : 'อื่นๆ'), text: (replyLanguage(event) === 'en' ? "Show remaining tasks" : 'ขอดูงานค้างที่เหลือ') } });
+    const text = (replyLanguage(event) === 'en' ? "Choose the first task; I will use the existing details to prepare each record for review." : 'เลือกงานที่จะทำก่อน แล้วน้องใช้รายละเอียดเดิมเตรียมให้ตรวจทีละรายการค่ะ');
     const messages: LineReplyMessage[] = splitLineExpenseDraftReply(text).map(part => ({ type: 'text', text: part }));
     const last = messages.at(-1); if (last?.type === 'text') last.quickReply = { items };
     return this.deliverMessages(event, messages);
@@ -4822,12 +4910,12 @@ export class ProcessLineWebhookUseCase {
     messageText: string, candidates: LineIntakeCorrectionCandidate[]) {
     if (!hints || !this.expenseDraftConversation || !(hints.amount || hints.expenseDate || hints.vendorName)) return null;
     const chatKeyHash = chatKeyHashOf(event);
-    const open = (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash)).filter(draft => draft.status === 'OPEN');
+    const open = (await this.expenseDraftConversation.routeContexts(ctx, chatKeyHash, replyLanguage(event))).filter(draft => draft.status === 'OPEN');
     const draft = open.length === 1 && candidates.some(candidate => candidate.id === open[0]!.expenseId) ? open[0]! : undefined;
     if (!draft || (hints.targetExpenseId && hints.targetExpenseId !== draft.expenseId)) return null;
     const itemRef = hints.amount ? await this.expenseDraftConversation.soleItemRef(ctx, chatKeyHash, draft.expenseId) : undefined;
     if (hints.amount && !itemRef) return null;
-    const result = await this.expenseDraftConversation.execute(ctx, { messageText, chatKeyHash, webhookEventId: event.webhookEventId,
+    const result = await this.expenseDraftConversation.execute(ctx, { language: replyLanguage(event), messageText, chatKeyHash, webhookEventId: event.webhookEventId,
       captureHints: { targetExpenseId: draft.expenseId,
         ...(hints.expenseDate ? { expenseDate: hints.expenseDate.to } : {}),
         ...(hints.vendorName ? { vendorName: hints.vendorName.to } : {}),
@@ -4909,12 +4997,12 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async reliabilityContext(event: LineTextEvent) {
-    const bound = this.boundConversations.get(event); if (!bound) return {};
+    const bound = this.boundConversations.get(event); if (!bound) return { language: replyLanguage(event) };
     const taskProjection = await this.contextV2.projection(bound.owner);
     if (!taskProjection || taskProjection.lifecycleEpoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
     const preferences = this.config.lineAiPreferencesEnabled ? await this.contextV2.listPreferences(bound.owner) : null;
     if (preferences && preferences.epoch !== bound.epoch) throw new Error('LINE_CONTEXT_STALE_EPOCH');
-    return { taskProjection, ...(preferences ? { responsePreferences: { language: 'th' as const, detail: 'normal' as const, presentation: 'prose' as const, ...preferences.values } } : {}) };
+    return { taskProjection, language: event.language ?? lineReplyLanguage(event.messageText), ...(preferences ? { responsePreferences: { detail: 'normal' as const, presentation: 'prose' as const, ...preferences.values, language: event.language ?? lineReplyLanguage(event.messageText) } } : {}) };
   }
 
   private async bindConversation(event: LineTextEvent | LineReceiptUploadEvent): Promise<void> {
@@ -5177,25 +5265,33 @@ export class ProcessLineWebhookUseCase {
     return 'failed_other';
   }
 
-  private reimbursementDraftMessages(result: LineReimbursementDraftResult, ctx: RequestContext) {
+  private async reimbursementDraftMessages(result: LineReimbursementDraftResult, ctx: RequestContext, event: object): Promise<LineReplyMessage[]> {
     const id = result.status === 'applied' ? result.receipt.requestId : undefined;
     const secret = this.config.aiGatewayInternalSecret;
     const token = typeof id === 'string' && secret
       ? reimbursementApprovalOpenToken(secret, ctx.companyId, ctx.userId, id, 'expense_action_submit') : undefined;
-    return buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId, ctx.permissions, token);
+    const language = replyLanguage(event);
+    const messages = buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId, ctx.permissions, token, language);
+    const bound = this.boundConversations.get(event);
+    if (result.status === 'applied' && bound && await this.reimbursementAdapter?.photoTarget?.({ ctx, owner: bound.owner, ownerEpoch: bound.epoch })
+      && messages[0]?.type === 'text') {
+      messages[0] = { type: 'text', text: language === 'en' ? 'Claim draft saved. Send the receipt photo to attach to this claim.' : 'บันทึกร่างใบเบิกแล้วค่ะ ส่งรูปใบเสร็จมาแนบใบนี้ได้เลย',
+        quickReply: { items: [{ type: 'action', action: { type: 'cameraRoll', label: language === 'en' ? 'Attach receipt' : 'แนบใบเสร็จ' } }] } };
+    }
+    return messages;
   }
 
   /** This handler is reached only after verified identity, current company/member/legal admission. */
   private async deliverReimbursementCollection(event: LineTextEvent | LineReceiptUploadEvent, ctx: RequestContext,
     result: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftResult) {
     this.deliveryReimbursements.set(event, { context: ctx, result });
-    let messages = this.reimbursementDraftMessages(result, ctx);
+    let messages = await this.reimbursementDraftMessages(result, ctx, event);
     const bound = this.boundConversations.get(event);
     if (bound && (result.status === 'needs_fields' || result.status === 'needs_target')) {
       const options = await this.reimbursementAdapter.readDisplayOptions({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: result.actionId });
       if (options) {
         this.reimbursementOptionsDelivery.set(event, { actionId: result.actionId, options });
-        const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '');
+        const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '', replyLanguage(event));
         if (choices.length) messages = choices;
       }
     }
@@ -5208,7 +5304,7 @@ export class ProcessLineWebhookUseCase {
       channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
     const current = await this.contextV2.load(owner);
     if (!current || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
-      await this.deliverReply(event, 'ร่างนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "This draft expired or your access changed." : 'ร่างนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ'));
       await this.updateEventLog(event.webhookEventId, 'reimbursement_blocked', 'STALE_OWNER', ctx.companyId); return;
     }
     const ownerEpoch = current.row.lifecycleEpoch;
@@ -5262,7 +5358,7 @@ export class ProcessLineWebhookUseCase {
     this.deliveryReimbursements.set(event, { context: ctx, result });
     const remaining = (result.status === 'applied' || result.status === 'cancelled') && this.semanticTaskMappings.has(event)
       ? await this.remainingTaskChoiceMessages(event) : [];
-    await this.deliverRequiredMessages(event, [...this.reimbursementDraftMessages(result, ctx), ...remaining]);
+    await this.deliverRequiredMessages(event, [...await this.reimbursementDraftMessages(result, ctx, event), ...remaining]);
   }
 
   private async handleAnswerDeliveryControl(event: LineTextEvent): Promise<void> {
@@ -5273,17 +5369,17 @@ export class ProcessLineWebhookUseCase {
       ? await this.captureNotifier.verifyCaptureDeliveryPlan(plan, event).catch(() => null)
       : plan.producerKind === 'LEDGER' ? await this.ledgerDrain.verifyLedgerDeliveryPlan(plan, event).catch(() => false)
       : await this.verifyWebhookPlan(plan, event).catch(() => false))) {
-      await this.sendTrackedReply(event, [{ type: 'text', text: 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: replyLanguage(event) === 'en' ? 'This answer expired or your access changed; please ask again.' : 'คำตอบชุดนี้หมดอายุหรือสิทธิ์เปลี่ยนแล้วค่ะ กรุณาถามใหม่' }]);
       await this.updateEventLog(event.webhookEventId, 'delivery_failed', 'LINE_PLAN_CONTROL_DENIED'); return;
     }
     if (control.action === 'cancel') {
       const canceled = await this.deliveryPlans.cancelPlan(row.id, row.planHash);
-      await this.sendTrackedReply(event, [{ type: 'text', text: canceled ? 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว' : 'คำตอบชุดนี้สิ้นสุดแล้วค่ะ' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: replyLanguage(event) === 'en' ? canceled ? 'Remaining answers cancelled; any completed record changes are kept.' : 'This answer has ended.' : canceled ? 'หยุดส่งส่วนที่เหลือแล้วค่ะ การหยุดส่งคำตอบไม่ย้อนรายการที่บันทึกไปแล้ว' : 'คำตอบชุดนี้สิ้นสุดแล้วค่ะ' }]);
       await this.updateEventLog(event.webhookEventId, 'completed'); return;
     }
     const continued = await this.deliveryPlans.continuePlan(row.id, row.planHash, control.next);
     if (plan.producerKind === 'CAPTURE_OUTBOX' || plan.producerKind === 'LEDGER') {
-      await this.sendTrackedReply(event, [{ type: 'text', text: continued ? 'กำลังส่งคำตอบส่วนที่เหลือค่ะ' : 'คำตอบส่วนนี้กำลังส่งหรือสิ้นสุดแล้วค่ะ' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: replyLanguage(event) === 'en' ? continued ? 'Sending the remaining answers.' : 'This answer is already sending or has ended.' : continued ? 'กำลังส่งคำตอบส่วนที่เหลือค่ะ' : 'คำตอบส่วนนี้กำลังส่งหรือสิ้นสุดแล้วค่ะ' }]);
       await this.updateEventLog(event.webhookEventId, 'completed'); return;
     }
     const result = await this.replayDeliveryPlan(row.id, event);
@@ -5334,9 +5430,9 @@ export class ProcessLineWebhookUseCase {
       ...failedPages.map(page => `file:${page.attachmentId}:page:${page.page}`)];
     const missingLimitations: string[] = [];
     for (const limitation of [
-      ...pending.map(item => ({ match: item.question, text: item.question ?? 'ขอข้อมูลเพิ่มเติมเพื่อทำรายการต่อค่ะ' })),
+      ...pending.map(item => ({ match: item.question, text: item.question ?? (replyLanguage(event) === 'en' ? "Please provide more information to continue." : 'ขอข้อมูลเพิ่มเติมเพื่อทำรายการต่อค่ะ') })),
       ...failedPages.map(page => {
-        const text = `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`;
+        const text = (replyLanguage(event) === 'en' ? `Could not read attachment ${attachmentIds.indexOf(page.attachmentId) + 1} page ${page.page}.` : `ยังอ่านเอกสารแนบลำดับที่ ${attachmentIds.indexOf(page.attachmentId) + 1} หน้า ${page.page} ไม่สำเร็จ`);
         return { match: text, text };
       }),
     ]) {
@@ -5373,11 +5469,11 @@ export class ProcessLineWebhookUseCase {
     const durableMediaResult = !('messageText' in event);
     const qaDeadline = this.documentQaDelivery.get(event)?.jobDeadlineAt.getTime();
     const foregroundDeadline = qaDeadline ?? (log.budgetAuthorityJson as { grant?: { finalDeadlineAtMs?: number } } | null)?.grant?.finalDeadlineAtMs ?? log.createdAt.getTime() + 40_000;
-    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
+    const plan = buildLineDeliveryPlan({ ...({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
       firstDispatchDeadlineAt: qaDeadline === undefined && (durableMediaResult || foregroundDeadline < now.getTime() + 500) ? expiresAt : new Date(foregroundDeadline).toISOString(), authorization, control, businessResult: reimbursement?.status === 'applied' ? { kind: 'REIMBURSEMENT_DRAFT', operationKey: String(reimbursement.receipt.actionId), committedAt: String(reimbursement.receipt.committedAt), recordIds: [String(reimbursement.receipt.requestId)], resultingRevisions: [String(reimbursement.receipt.appliedRequestUpdatedAt)] } : null,
       answer: { status: pendingSubrequestIds.length ? 'PARTIAL' : 'COMPLETE', pendingSubrequestIds, items },
       preferredMessages: items.map((_item, index) => index < messages.length && index !== financialControlIndex ? messages[index]! : null),
-      ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) });
+      ...(control ? { controlMessage: messages[financialControlIndex]! } : {}) }), language: replyLanguage(event) });
     // Spec §4 R-M2 / deliveredExpenseSummary regression: graduating to a delivery plan must not
     // silently drop the SAME access-proof recordTurnOutcome persists — see buildTurnAuthorizationJson.
     const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
@@ -5678,7 +5774,7 @@ export class ProcessLineWebhookUseCase {
     const proofs = this.deliverySubstituteSources.get(event) ?? [];
     proofs.push({ context, source: result.source }); this.deliverySubstituteSources.set(event, proofs);
     if (result.expenseId && result.status === 'READY_FOR_WEB' && this.substituteActions) {
-      const offered = await this.substituteActions.prepare(context, chatKeyHashOf(event), result.expenseId);
+      const offered = await this.substituteActions.prepare(context, chatKeyHashOf(event), result.expenseId, replyLanguage(event));
       if (offered.preview) {
         this.deliverySubstituteActions.set(event, { context, preview: offered.preview });
         result.replyText = offered.preview.summary;
@@ -5824,7 +5920,7 @@ export class ProcessLineWebhookUseCase {
       // `reason` separates a missing consumer group, an unreadable Redis and an incomplete scan for
       // operators; the customer reply and the terminal status stay the same for all of them.
       this.logger.warn({ msg: 'line_ai_marker_unavailable', requestId, reason: err.reason });
-      await this.deliverReply(event, ERROR_REPLY);
+      await this.deliverReply(event, ERROR_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', ctx.companyId);
       return null;
     }
@@ -5843,7 +5939,7 @@ export class ProcessLineWebhookUseCase {
       ? await this.loadCorrectionCandidates(ctx.companyId, ctx.userId, chatKeyHashOf(event), ctx.scopes ?? {})
       : [];
     let activeExpenseDrafts = input.drafts && this.expenseDraftConversation
-      ? await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event))
+      ? await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event), replyLanguage(event))
       : [];
     const quotedExpenses = (await this.quotedRecordsForEvent(event)).filter(record => record.tool === 'expense.get_detail');
     if (quotedExpenses.length) activeExpenseDrafts = activeExpenseDrafts.filter(draft => quotedExpenses.some(record => record.id === draft.expenseId));
@@ -5891,7 +5987,7 @@ export class ProcessLineWebhookUseCase {
               : !!substituteMediaAnswer(text, asked.choices))) return true;
     }
     if (!drafts || !this.expenseDraftConversation) return false;
-    const open = await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event));
+    const open = await this.expenseDraftConversation.routeContexts(ctx, chatKeyHashOf(event), replyLanguage(event));
     return open.length > 0 && (isDeterministicLineExpenseDraftInput(text)
       || !!await this.expenseDraftConversation.answersOpenDraft?.(ctx, chatKeyHashOf(event), text));
   }
@@ -5936,10 +6032,10 @@ export class ProcessLineWebhookUseCase {
       // This separate refusal contains no stored business facts, company link or handoff token.
       // Do not route it through the saved-outcome path, which retains the original private answer.
       const messages = [this.lineReply.buildTextMessage(event.pushTargetId && event.pushTargetId !== event.lineUserId
-        ? 'เพื่อความเป็นส่วนตัว กรุณาเปิดแชตส่วนตัวกับมั่งมี หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
+        ? (replyLanguage(event) === 'en' ? "Please use a private chat; if you already submitted a request, check its status on the web before repeating it." : 'เพื่อความเป็นส่วนตัว กรุณาเปิดแชตส่วนตัวกับมั่งมี หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')
         : denialCode !== 'LINE_DELIVERY_ACCESS_CHANGED'
-          ? 'ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
-          : 'สิทธิ์หรือร้านที่เลือกเปลี่ยนระหว่างดำเนินการ กรุณาเลือกร้านแล้วถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
+          ? (replyLanguage(event) === 'en' ? "The source data changed or could not be verified; check the record on the web before asking again or repeating a create request." : 'ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')
+          : (replyLanguage(event) === 'en' ? "Your access or selected shop changed; select the shop and check any existing request on the web before asking again." : 'สิทธิ์หรือร้านที่เลือกเปลี่ยนระหว่างดำเนินการ กรุณาเลือกร้านแล้วถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'))];
       try {
         const result = await this.sendTrackedReply(event, messages);
         if (result === 'failed_token') await this.sendTrackedPush(event, event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:access-denied`);
@@ -6134,7 +6230,7 @@ export class ProcessLineWebhookUseCase {
     const channelKind = event.channelKind === 'GROUP' || event.channelKind === 'ROOM' ? event.channelKind : target !== event.lineUserId ? 'GROUP' : 'USER';
     const admission = await this.preflightPublicGeneral({ lineUserId: event.lineUserId, messagingChannelId: event.messagingChannelId, chatId: target, channelKind }).catch(() => null);
     if (!admission) {
-      const messages = [{ type: 'text' as const, text: 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว' }];
+      const messages = [{ type: 'text' as const, text: (replyLanguage(event) === 'en' ? "AI replies are unavailable in this chat; please send document or shop-data requests in a private chat." : 'แชตนี้ยังไม่พร้อมตอบด้วย AI ค่ะ งานเอกสารหรือข้อมูลบริษัทกรุณาส่งในแชตส่วนตัว') }];
       const result = await this.sendTrackedReply(event, messages);
       if (result === 'failed_token') await this.sendTrackedPush(event, target, messages, `public-unavailable:${event.webhookEventId}`);
       await this.updateEventLog(event.webhookEventId, 'public_unavailable'); return;
@@ -6152,11 +6248,11 @@ export class ProcessLineWebhookUseCase {
       owner: { kind: 'PUBLIC_GENERAL', owner: { companyId: admission.companyId, channel: 'line', channelKind, messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) } },
       turnKey: evidence.turnKey, attemptKey: deliveryHash(['public-turn-v2', event.webhookEventId]), inputDigest: evidence.joinedSha256, requestKind: 'TEXT',
       admittedAtMs: first, coalescingExtraMs: Math.min(6000, Math.max(0, last - first)), lane: 'general', allowedProfileIds: ['line-answer/2'] });
-    if (!grant) { await this.sendTrackedReply(event, [{ type: 'text', text: AI_BUDGET_UNAVAILABLE_REPLY }]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE'); return; }
+    if (!grant) { await this.sendTrackedReply(event, [{ type: 'text', text: AI_BUDGET_UNAVAILABLE_REPLY[replyLanguage(event)] }]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE'); return; }
     const response = await this.aiGateway.requestLinePublicGeneral({ requestId, webhookEventId: event.webhookEventId, kind: 'PUBLIC_GENERAL', messageText: event.messageText,
       inputEvidence: evidence, budgetGrantV2: grant, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], publicAdmission: { channelKind, channelKeyHash: chatKeyHashOf(event), payerCompanyId: admission.companyId, admissionId: log.id } });
     if (response.status !== 'answered' || Date.now() >= grant.finalDeadlineAtMs - 500) {
-      await this.sendTrackedReply(event, [{ type: 'text', text: 'ยังตอบคำขอนี้ไม่สำเร็จค่ะ ระบบไม่ได้อ่านหรือทำรายการในบริษัทให้' }]);
+      await this.sendTrackedReply(event, [{ type: 'text', text: (replyLanguage(event) === 'en' ? "I could not finish this answer; no shop data was read or changed." : 'ยังตอบคำขอนี้ไม่สำเร็จค่ะ ระบบไม่ได้อ่านหรือทำรายการในบริษัทให้') }]);
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', response.errorCode ?? 'DEADLINE_EXCEEDED'); return;
     }
     const now = new Date(), expiresAt = new Date(log.createdAt.getTime() + 60 * 60_000).toISOString(), outcomeId = deliveryHash(['line-outcome-v2', event.webhookEventId]);
@@ -6164,8 +6260,8 @@ export class ProcessLineWebhookUseCase {
     const authorization: DeliveryAuthorizationV2 = { v: 2, kind: 'PUBLIC_GENERAL', admissionOwner: { kind: 'WEBHOOK', id: outcomeId, revision: current.budgetAuthorityRevision },
       destination: { channelId: event.messagingChannelId, channel: 'line', channelKind, lineTargetId: target, targetHash: deliveryHash(target), chatKeyHash: chatKeyHashOf(event) }, actorUserId: admission.actorUserId,
       initiatorHash: deliveryHash(event.lineUserId), admissionPolicyDigest: admission.policyDigest, sourceManifestDigest: deliveryHash('public-general:2.4'), approvedPublicSourceIds: [], issuedAt: now.toISOString(), expiresAt };
-    const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: new Date(grant.finalDeadlineAtMs).toISOString(), authorization,
-      control: null, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: response.replyText, required: true, sourceProofIds: [] }] } });
+    const plan = buildLineDeliveryPlan({ ...({ producerKind: 'WEBHOOK', producerId: outcomeId, createdAt: log.createdAt.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: new Date(grant.finalDeadlineAtMs).toISOString(), authorization,
+      control: null, businessResult: null, answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: response.replyText, required: true, sourceProofIds: [] }] } }), language: replyLanguage(event) });
     // Same access-proof shape recordTurnOutcome persists — see buildTurnAuthorizationJson. A public
     // turn has no deliveryAccess/deliverySources of its own, so this is just {v, producerId}.
     const authorizationJson = this.buildTurnAuthorizationJson(event, randomUUID());
@@ -6220,7 +6316,7 @@ export class ProcessLineWebhookUseCase {
             const owner = await this.prisma.client.lineWebhookEventLog.updateMany({ where: { webhookEventId: event.webhookEventId,
               OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }] }, data: { deliveryOwnerId: 'webhook' } });
             if (owner.count === 1) {
-              const messages = [this.lineReply.buildTextMessage(ERROR_REPLY)];
+              const messages = [this.lineReply.buildTextMessage(ERROR_REPLY[replyLanguage(event)])];
               const result = await this.sendTrackedReply(event, messages);
               if (result === 'failed_token') await this.sendTrackedPush(event, event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:fallback`);
             }
@@ -6244,7 +6340,7 @@ export class ProcessLineWebhookUseCase {
     if (event.answerDeliveryControl) { await this.handleAnswerDeliveryControl(event); return; }
     if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
       if (event.counterpartyControl || event.expenseActionControl || event.packagePurchaseControl || isPackagePurchaseIntent(event.messageText)) {
-        await this.deliverReply(event, 'กรุณาทำรายการในแชตส่วนตัวค่ะ');
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please continue in a private chat." : 'กรุณาทำรายการในแชตส่วนตัวค่ะ'));
         await this.updateEventLog(event.webhookEventId, 'expense_action_private_required');
       } else await this.executePublicGeneral(event, requestId);
       return;
@@ -6256,7 +6352,7 @@ export class ProcessLineWebhookUseCase {
     // The staff door (§3.1): closes the trap where an employee with no email signs their shop up a
     // second time. Public because nobody arriving here has an account yet by definition.
     if (publicCommand === 'employee') {
-      await this.deliverReply(event, EMPLOYEE_DOOR_REPLY);
+      await this.deliverReply(event, EMPLOYEE_DOOR_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'line_employee_door');
       return;
     }
@@ -6277,7 +6373,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if (publicCommand === 'contact') {
-      await this.deliverRequiredMessages(event, [buildContactCard()]);
+      await this.deliverRequiredMessages(event, [buildContactCard(replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
       return;
     }
@@ -6290,7 +6386,7 @@ export class ProcessLineWebhookUseCase {
         await this.handleAssistantResume(event, requestId);
         return;
       }
-      await this.deliverReply(event, ASSISTANT_TALK_GREETING);
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.ASSISTANT_TALK_GREETING : ASSISTANT_TALK_GREETING));
       await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
       return;
     }
@@ -6301,7 +6397,7 @@ export class ProcessLineWebhookUseCase {
     if (publicCommand === 'promotion') {
       this.publicPolicyTopics.set(event, 'trial');
       // Owner 2026-09-30: the package poster first, then the card, for every audience.
-      const poster = buildPackagePosterMessage(this.config.webBaseUrl);
+      const poster = buildPackagePosterMessage(this.config.webBaseUrl, replyLanguage(event));
       await this.deliverRequiredMessages(event, [...(poster ? [poster] : []), await this.promotionCard(event)]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
@@ -6312,7 +6408,7 @@ export class ProcessLineWebhookUseCase {
     const policyAnswer = resolvePublicPolicyAnswer(event.messageText, previousPolicy);
     if (policyAnswer && !await this.assistantPaused(event.lineUserId)) {
       this.publicPolicyTopics.set(event, policyAnswer.topic);
-      await this.deliverRequiredMessages(event, [buildPublicPolicyCardMessage(policyAnswer)]);
+      await this.deliverRequiredMessages(event, [buildPublicPolicyCardMessage(policyAnswer, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_trial_pricing');
       return;
     }
@@ -6333,7 +6429,7 @@ export class ProcessLineWebhookUseCase {
       // entitlements (capability-help spec §8/§8.1) — including, below, the support pause, which
       // this lane used to jump ahead of.
       if (isCapabilityQuestion(event.messageText)) {
-        await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
+        await this.deliverRequiredMessages(event, [buildCapabilityCard(replyLanguage(event))]);
         await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
         return;
       }
@@ -6354,7 +6450,7 @@ export class ProcessLineWebhookUseCase {
       // gets the greeting in front of it (Owner 2026-09-21); a typed message gets the card alone,
       // because the hello belongs to the moment the friend was added.
       const invitedEntry = publicCommand === 'follow';
-      await this.deliverRequiredMessages(event, await this.entryDoorMessages(event.lineUserId, invitedEntry));
+      await this.deliverRequiredMessages(event, await this.entryDoorMessages(event.lineUserId, invitedEntry, replyLanguage(event)));
       // L-B follow-up (c): adding the OA as a friend is the INVITED first step of this flow, not an
       // attempt to reach anything. Recording it DENIED puts every prospect into a security signal
       // whose whole value is that it is rare — the door card is the correct, successful answer to
@@ -6381,7 +6477,7 @@ export class ProcessLineWebhookUseCase {
       // chat's shop is locked, so that customer hears the lock reply their next message would get.
       if (!await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId)
         && await this.replyIfCompanyLocked(event, identity.userId)) return;
-      await this.deliverReply(event, WELCOME_BACK_REPLY);
+      await this.deliverReply(event, WELCOME_BACK_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'line_follow_known');
       return;
     }
@@ -6436,7 +6532,7 @@ export class ProcessLineWebhookUseCase {
     // PDPA opt-out gate (M-05 §3.1). `user` is already loaded by the identity include, so
     // this costs no extra query; the status string is the discriminator in the event log.
     if (identity.user.aiAssistantOptOutAt) {
-      await this.deliverReply(event, AI_OPT_OUT_REPLY);
+      await this.deliverReply(event, AI_OPT_OUT_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'ai_opt_out', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
@@ -6454,13 +6550,13 @@ export class ProcessLineWebhookUseCase {
     const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
     if (!resolved) {
       if (await this.replyIfCompanyLocked(event, identity.userId)) return;
-      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.deliverReply(event, UNLINKED_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
     if ('needsSelection' in resolved) {
       const memberships = await this.listLineCompanies(identity.userId);
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem))]);
+      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(membership => companyPickerItem(membership, replyLanguage(event))), undefined, undefined, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -6471,7 +6567,7 @@ export class ProcessLineWebhookUseCase {
     try {
       resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
     } catch {
-      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.deliverReply(event, UNLINKED_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
@@ -6504,10 +6600,10 @@ export class ProcessLineWebhookUseCase {
         const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId, userId: identity.userId,
           planJson: { path: ['control', 'token'], equals: control.token } }, select: { status: true, planJson: true } });
         if (plan && (plan.status !== 'ACCEPTED' || !parseLineDeliveryPlan(plan.planJson))) {
-          await this.deliverReply(event, 'กรุณาอ่านรายละเอียดคู่ค้าให้ครบก่อนยืนยันค่ะ'); return;
+          await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please read all supplier details before confirming." : 'กรุณาอ่านรายละเอียดคู่ค้าให้ครบก่อนยืนยันค่ะ')); return;
         }
       }
-      const result = await this.counterparties.apply(ctx, chatKeyHashOf(event), control);
+      const result = await this.counterparties.apply(ctx, chatKeyHashOf(event), control, replyLanguage(event));
       if (result.status === 'applied' || result.status === 'replayed') await this.counterpartyTask(event, control.token, true, result.source);
       const remaining = (result.status === 'applied' || result.status === 'replayed') && this.semanticTaskMappings.has(event)
         ? await this.remainingTaskChoiceMessages(event) : [];
@@ -6528,7 +6624,7 @@ export class ProcessLineWebhookUseCase {
       const answer = await this.expenseActions?.answerTeam?.(teamCtx, chatKeyHashOf(event), event.messageText);
       if (answer) {
         if (answer.preview) this.deliveryExpenseActions.set(event, { context: teamCtx, chat: chatKeyHashOf(event), requestId, preview: answer.preview });
-        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview) : { type: 'text', text: answer.reply }]);
+        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview, undefined, replyLanguage(event)) : { type: 'text', text: answer.reply }]);
         await this.updateEventLog(event.webhookEventId, 'team_action_input', undefined, companyId);
         return;
       }
@@ -6537,42 +6633,42 @@ export class ProcessLineWebhookUseCase {
       const reasonCtx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
         scopes: resolvedAccess.scopes, authProvider: 'line' };
-      const signing = await this.substituteActions?.resume(reasonCtx, chatKeyHashOf(event), event.messageText);
+      const signing = await this.substituteActions?.resume(reasonCtx, chatKeyHashOf(event), event.messageText, replyLanguage(event));
       if (signing) {
         if (signing.preview) this.deliverySubstituteActions.set(event, { context: reasonCtx, preview: signing.preview });
         await this.deliverCompletedReply(event, signing.reply ?? signing.preview!.summary, companyId, resolvedAccess);
         await this.updateEventLog(event.webhookEventId, 'substitute_signature_preview', undefined, companyId);
         return;
       }
-      const evidence = await this.expenseActions?.answerEvidence?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      const evidence = await this.expenseActions?.answerEvidence?.(reasonCtx, chatKeyHashOf(event), event.messageText, replyLanguage(event));
       if (evidence) {
         if ('substituteExpenseId' in evidence && evidence.substituteExpenseId && this.substituteReceiptContinuation) {
-          const result = await this.substituteReceiptContinuation.execute(reasonCtx, { chatKeyHash: chatKeyHashOf(event),
+          const result = await this.substituteReceiptContinuation.execute(reasonCtx, { language: replyLanguage(event), chatKeyHash: chatKeyHashOf(event),
             messageText: 'ไม่มีใบเสร็จ ขอทำใบรับรองแทนใบเสร็จ', recentCandidates: [{ id: evidence.substituteExpenseId, label: 'รายการนี้' }],
             boundCandidateExpenseIds: [evidence.substituteExpenseId], confirmedStart: true, webBaseUrl: this.config.webBaseUrl });
           await this.rememberSubstituteDeliverySource(event, reasonCtx, result);
           await this.deliverReply(event, result.replyText);
         } else {
           if ('preview' in evidence && evidence.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: evidence.preview });
-          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event));
-          await this.deliverRequiredMessages(event, ['preview' in evidence && evidence.preview ? buildExpenseActionCard(evidence.preview)
-            : { type: 'text', text: evidence.reply, ...(choices?.length ? { quickReply: { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } } : {}) }]);
+          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+          await this.deliverRequiredMessages(event, ['preview' in evidence && evidence.preview ? buildExpenseActionCard(evidence.preview, undefined, replyLanguage(event))
+            : { type: 'text', text: evidence.reply, ...(choices?.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
         }
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const category = await this.expenseActions?.answerCategory?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      const category = await this.expenseActions?.answerCategory?.(reasonCtx, chatKeyHashOf(event), event.messageText, replyLanguage(event));
       if (category) {
         if ('preview' in category && category.preview) {
           this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: category.preview });
-          await this.deliverRequiredMessages(event, [buildExpenseActionCard(category.preview)]);
+          await this.deliverRequiredMessages(event, [buildExpenseActionCard(category.preview, undefined, replyLanguage(event))]);
         } else if ('reply' in category) {
-          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event));
-          await this.deliverRequiredMessages(event, [{ type: 'text', text: category.reply!, quickReply: { items: (choices ?? []).map(choice => ({ type: 'action', action: { type: 'message', ...choice } })) } }]);
+          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+          await this.deliverRequiredMessages(event, [{ type: 'text', text: category.reply!, quickReply: lineChoiceQuickReply(choices ?? []) }]);
         } else {
           const proposed = await this.proposeDraftUpdate(event, reasonCtx, resolvedAccess, category,
             [{ text: event.messageText, todayIso: todayCivilDate() }], category.expenseId);
-          if (proposed === 'not_handled') await this.deliverReply(event, 'ยังขาดหมวดค่าใช้จ่าย แก้หมวดในหน้ารายการแล้วพิมพ์ยืนยันอีกครั้งค่ะ');
+          if (proposed === 'not_handled') await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The expense category is missing; set it on the expense page before confirming again." : 'ยังขาดหมวดค่าใช้จ่าย แก้หมวดในหน้ารายการแล้วพิมพ์ยืนยันอีกครั้งค่ะ'));
           const preview = await this.draftUpdate?.pendingPreview(reasonCtx, chatKeyHashOf(event), requestId);
           if (preview) await this.expenseActions.linkRepairEdit(reasonCtx, chatKeyHashOf(event), preview.previewId);
         }
@@ -6581,9 +6677,11 @@ export class ProcessLineWebhookUseCase {
       }
       const answer = await this.expenseActions?.answerReason?.(reasonCtx, chatKeyHashOf(event), event.messageText);
       if (answer) {
+        // A bare payee/category value is continuation data; retain its signed proposal’s language.
+        if (answer.preview?.language) event.language = answer.preview.language;
         if (answer.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: answer.preview });
-        const choices = answer.preview ? undefined : await this.expenseActions.repairChoices?.(reasonCtx, chatKeyHashOf(event));
-        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview) : { type: 'text', text: answer.reply,
+        const choices = answer.preview ? undefined : await this.expenseActions.repairChoices?.(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+        await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview, undefined, replyLanguage(event)) : { type: 'text', text: answer.reply,
           ...(choices?.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
         await this.updateEventLog(event.webhookEventId, answer.preview ? 'expense_action_prepared' : 'clarification_required', undefined, companyId);
         return;
@@ -6603,7 +6701,7 @@ export class ProcessLineWebhookUseCase {
     // These two cards are deterministic product entry points, not AI turns. They keep their own
     // feature/permission gates and remain available when the model provider or AI feature is off.
     if (menuCommand === 'services') {
-      await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys)]);
+      await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
       return;
     }
@@ -6611,7 +6709,7 @@ export class ProcessLineWebhookUseCase {
       const receiptFeatureEnabled = entitledFeatureKeys === null || entitledFeatureKeys.has('expenses.upload');
       if (!receiptFeatureEnabled || !canCaptureExpense) {
         const featureDisabled = !receiptFeatureEnabled;
-        await this.deliverReply(event, featureDisabled ? EXPENSE_FEATURE_DISABLED_REPLY : RECEIPT_FORBIDDEN_REPLY);
+        await this.deliverReply(event, featureDisabled ? EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)] : RECEIPT_FORBIDDEN_REPLY[replyLanguage(event)]);
         await this.audit.log({
           companyId,
           actorUserId: identity.userId,
@@ -6629,7 +6727,7 @@ export class ProcessLineWebhookUseCase {
           companyId);
         return;
       }
-      await this.deliverRequiredMessages(event, [buildReceiptCapturePrompt({
+      await this.deliverRequiredMessages(event, [buildReceiptCapturePrompt({ ...({
         displayName: identity.user.displayName,
         roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
         branchScopeLabel: branchScopeFallbackLabel(resolvedAccess.scopes.branchIds),
@@ -6638,7 +6736,7 @@ export class ProcessLineWebhookUseCase {
         webBaseUrl: this.config.webBaseUrl,
         companyId,
         isOwner: resolvedAccess.roles.includes('OWNER'),
-      })]);
+      }), language: replyLanguage(event) })]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
       return;
     }
@@ -6674,7 +6772,7 @@ export class ProcessLineWebhookUseCase {
     // Owner 2026-09-06 (§8.2 residual): a capability question survives a shut AI lane — both gates
     // below keep their own words and their DENIED audit row, and add the scoped entitlement card.
     const capabilityHelp = isCapabilityQuestion(event.messageText)
-      ? (lead: string) => capabilityEntitlementReply(lead, entitledFeatureKeys)
+      ? (lead: string) => capabilityEntitlementReply(lead, entitledFeatureKeys, replyLanguage(event))
       : undefined;
     // This is the one user turn whose contract forbids non-transport persistence. The shadow sweep
     // flushes an operational telemetry row, so skip that observation for this narrow question;
@@ -6683,8 +6781,8 @@ export class ProcessLineWebhookUseCase {
     if (!editCapabilityQuestion) await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId, capabilityHelp)) return;
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
-      if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(formatRefusal('feature_disabled')));
-      else await this.deliverReply(event, formatRefusal('feature_disabled'));
+      if (capabilityHelp) await this.deliverRequiredMessages(event, capabilityHelp(formatRefusal('feature_disabled', undefined, replyLanguage(event))));
+      else await this.deliverReply(event, formatRefusal('feature_disabled', undefined, replyLanguage(event)));
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -6726,7 +6824,7 @@ export class ProcessLineWebhookUseCase {
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     if (!canQuery && !canCaptureExpense && !canSubmitSignature && !editCapabilityQuestion) {
-      await this.deliverReply(event, FORBIDDEN_REPLY);
+      await this.deliverReply(event, FORBIDDEN_REPLY[replyLanguage(event)]);
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -6743,7 +6841,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (menuCommand === 'main' || menuCommand === 'query' || menuCommand === 'approval') {
-      const menuContext: StaffMenuContext = {
+      const menuContext: StaffMenuContext = { language: replyLanguage(event),
         displayName: identity.user.displayName,
         roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
         branchScopeLabel: menuCommand === 'main'
@@ -6756,9 +6854,9 @@ export class ProcessLineWebhookUseCase {
         isOwner: resolvedAccess.roles.includes('OWNER'),
       };
       const message = menuCommand === 'main'
-        ? buildStaffMainMenu(menuContext)
+        ? buildStaffMainMenu({ ...(menuContext), language: replyLanguage(event) })
         : menuCommand === 'query'
-          ? buildStaffQueryMenu(menuContext)
+          ? buildStaffQueryMenu({ ...(menuContext), language: replyLanguage(event) })
           // The card shows its whole text, so a delivery plan may send the card itself (text stays the fallback).
           : asCompleteLineCard(buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
               requestId,
@@ -6770,7 +6868,7 @@ export class ProcessLineWebhookUseCase {
               permissions: resolvedAccess.permissions,
               scopes: resolvedAccess.scopes,
               authProvider: 'line',
-            }, availableApprovalSurfaceKeys(menuContext)), THAI_DATE_REPLY_FORMATTER.format(new Date())));
+            }, availableApprovalSurfaceKeys(menuContext), replyLanguage(event)), THAI_DATE_REPLY_FORMATTER.format(new Date())));
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
       return;
@@ -6820,7 +6918,7 @@ export class ProcessLineWebhookUseCase {
       if (semanticRoutePlan.status !== 'ROUTED' || !semanticRoutePlan.semanticSubrequests?.length) {
         if (await this.answerAiCreditRefusal(event, companyId, semanticRoutePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
         await this.deliverReply(event, isTransientLineAiRouteFailure(semanticRoutePlan.errorCode)
-          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+          ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_TRANSIENT_REPLY) : (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_UNCLEAR_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY));
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       if (this.paymentEvidence && (semanticRoutePlan.intent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'
@@ -6849,17 +6947,17 @@ export class ProcessLineWebhookUseCase {
       : [await this.prisma.client.lineIntakePendingMedia.findFirst({ where: pendingWhere, orderBy: { createdAt: 'desc' } })].filter((row): row is NonNullable<typeof row> => !!row);
     const explicitlySelected = pendingRows.filter(row => (row.askedQuestionJson as { selectedForContinuation?: boolean } | null)?.selectedForContinuation === true);
     if (pendingRows.length > 1 && explicitlySelected.length !== 1) {
-      await this.deliverRequiredMessages(event, [this.pendingMediaSelectionMessage(pendingRows)]);
+      await this.deliverRequiredMessages(event, [this.pendingMediaSelectionMessage(pendingRows, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'clarification_required', 'MEDIA_SELECTION_REQUIRED', companyId); return;
     }
     const pendingMedia = explicitlySelected[0] ?? pendingRows[0];
     if (pendingMedia && ((pendingMedia.askedQuestionJson as { selectedAttachmentIds?: string[] } | null)?.selectedAttachmentIds?.length ?? 0) > 1) {
-      await this.deliverReply(event, 'ไฟล์ชุดนี้ยังเก็บไว้ครบค่ะ หากจะบันทึกรายการ กรุณาเลือกไฟล์หลักจากปุ่มก่อน หรือถามให้อ่านทั้งชุดได้โดยไม่สร้างรายการ');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "All files are retained; choose the main file before recording an expense, or ask to read the whole group without creating one." : 'ไฟล์ชุดนี้ยังเก็บไว้ครบค่ะ หากจะบันทึกรายการ กรุณาเลือกไฟล์หลักจากปุ่มก่อน หรือถามให้อ่านทั้งชุดได้โดยไม่สร้างรายการ'));
       await this.updateEventLog(event.webhookEventId, 'clarification_required', 'MEDIA_PURPOSE_REQUIRED', companyId); return;
     }
     if (editCapabilityQuestion && pendingMedia) {
       await this.deliverCompletedReply(event,
-        'มีรูปก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบคำถามของรูปนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ',
+        (replyLanguage(event) === 'en' ? "An earlier photo is waiting for your answer; finish that question before requesting an edit." : 'มีรูปก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบคำถามของรูปนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ'),
         companyId, resolvedAccess);
       await this.updateEventLog(event.webhookEventId, 'expense_edit_capability_waiting', undefined, companyId);
       return;
@@ -6893,7 +6991,8 @@ export class ProcessLineWebhookUseCase {
       if (substituteAnswer?.outcome === 'not_answered') {
         // Ours, but not an answer to it. The row stays PENDING and the reminder rides the turn, so
         // no other classifier can act on bytes that are waiting on a different question.
-        mediaResumeCapsule = `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${substituteAnswer.question}`;
+        mediaResumeCapsule = (replyLanguage(event) === 'en' ? `The photo awaiting classification is retained.
+${substituteAnswer.question}` : `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${substituteAnswer.question}`);
       }
       const splitReply = substituteAnswer ? null : splitPendingMediaReply(normalizedText);
       const answer = substituteAnswer?.outcome === 'new_expense'
@@ -6913,7 +7012,7 @@ export class ProcessLineWebhookUseCase {
         } catch (error) {
           // Same rule as the answer above: a data state the sender can fix gets its own sentence and
           // leaves the row PENDING; anything else is still a real fault and belongs to the dispatcher.
-          if (!lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER)) throw error;
+          if (!lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER, replyLanguage(event))) throw error;
           await this.replyPendingMediaFailure(event, companyId, requestId, error);
           return;
         }
@@ -6939,9 +7038,9 @@ export class ProcessLineWebhookUseCase {
         })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_MULTI_ENTRY_REVIEW' };
         const reply = [
           detectedMultiDocument
-            ? '📄 รูปเดิมมีเอกสารมากกว่า 1 ฉบับ เก็บไฟล์ไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวค่ะ'
-            : '📋 เก็บไฟล์สรุปหลายรายการไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวจากยอดรวมค่ะ',
-          'ระบบ LINE ยังไม่รองรับการแยกหลายรายการอัตโนมัติ กรุณาส่งเอกสารแยกรายการ หรือบันทึก/ตรวจในเว็บแอป:',
+            ? (replyLanguage(event) === 'en' ? "The image contains several documents; it is retained for review without combining them into one expense." : '📄 รูปเดิมมีเอกสารมากกว่า 1 ฉบับ เก็บไฟล์ไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวค่ะ')
+            : (replyLanguage(event) === 'en' ? "The multi-record file is retained for review; its combined total was not recorded as one expense." : '📋 เก็บไฟล์สรุปหลายรายการไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวจากยอดรวมค่ะ'),
+          (replyLanguage(event) === 'en' ? "Send each document separately, or review and record them on the web:" : 'ระบบ LINE ยังไม่รองรับการแยกหลายรายการอัตโนมัติ กรุณาส่งเอกสารแยกรายการ หรือบันทึก/ตรวจในเว็บแอป:'),
           absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`),
         ].join('\n');
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
@@ -6953,7 +7052,8 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       if (decision === 'ambiguous' && isInterveningQuestionText(normalizedText)) {
-        mediaResumeCapsule = `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${MEDIA_CLARIFY_REPLY}`;
+        mediaResumeCapsule = (replyLanguage(event) === 'en' ? `The photo awaiting classification is retained.
+${MEDIA_CLARIFY_REPLY[replyLanguage(event)]}` : `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${MEDIA_CLARIFY_REPLY[replyLanguage(event)]}`);
       }
       // ambiguous → fall through with the original reply; the row stays PENDING. Unlike before, the
       // ledger now carries this question as an open clarification WITH the stored file, so the turn
@@ -6974,8 +7074,8 @@ export class ProcessLineWebhookUseCase {
         await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
         return;
       }
-      const reply = !canCaptureExpense ? receiptDeniedReply(resolvedAccess)
-        : entitledFeatureKeys !== null && !entitledFeatureKeys.has('expenses.upload') ? EXPENSE_FEATURE_DISABLED_REPLY
+      const reply = !canCaptureExpense ? receiptDeniedReply(resolvedAccess, replyLanguage(event))
+        : entitledFeatureKeys !== null && !entitledFeatureKeys.has('expenses.upload') ? EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)]
         : await this.saveRecentUtilityBill(event, expenseDraftCtx, recentCapturedExpenses, normalizedText);
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({ event,
@@ -6991,7 +7091,7 @@ export class ProcessLineWebhookUseCase {
     const draftRouteCurrent = async () => {
       if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
       try {
-        if (JSON.stringify(await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))) === draftRouteSnapshot) return true;
+        if (JSON.stringify(await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event), replyLanguage(event))) === draftRouteSnapshot) return true;
       } catch { /* An unavailable source cannot authorize the retained route. */ }
       await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
       return false;
@@ -7007,7 +7107,7 @@ export class ProcessLineWebhookUseCase {
       }
       if (waitingForEarlierWork) {
         await this.deliverCompletedReply(event,
-          'มีงานก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบหรือจบงานนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ',
+          (replyLanguage(event) === 'en' ? "An earlier task is waiting for your answer; finish or cancel it before requesting an edit." : 'มีงานก่อนหน้าที่รอคำตอบอยู่ค่ะ กรุณาตอบหรือจบงานนั้นก่อน แล้วค่อยถามเรื่องแก้รายการอีกครั้งนะคะ'),
           companyId, resolvedAccess);
         await this.updateEventLog(event.webhookEventId, 'expense_edit_capability_waiting', undefined, companyId);
         return;
@@ -7018,21 +7118,23 @@ export class ProcessLineWebhookUseCase {
         ? await this.aiGateway.lineDraftEditCapabilityEnabled(requestId)
         : false;
       const reply = !servingEnabled
-        ? `ตอนนี้ยังแก้รายการผ่าน LINE ไม่ได้ค่ะ${canEditLine ? ' กรุณาเปิดรายการในเว็บแอปเพื่อตรวจและแก้ไข:' : ' ต้องมีสิทธิ์แก้ไขรายการก่อนค่ะ'}\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`
+        ? (replyLanguage(event) === 'en' ? `This expense cannot be edited in LINE yet.${canEditLine ? ' กรุณาเปิดรายการในเว็บแอปเพื่อตรวจและแก้ไข:' : ' ต้องมีสิทธิ์แก้ไขรายการก่อนค่ะ'}
+${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}` : `ตอนนี้ยังแก้รายการผ่าน LINE ไม่ได้ค่ะ${canEditLine ? ' กรุณาเปิดรายการในเว็บแอปเพื่อตรวจและแก้ไข:' : ' ต้องมีสิทธิ์แก้ไขรายการก่อนค่ะ'}\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`)
         : recentCapturedExpenses.length === 0
-          ? `ระบบรองรับการแก้รายการเดิมผ่าน LINE แต่ยังไม่พบรายการที่คุณบันทึกไว้ในแชทนี้ภายใน 24 ชั่วโมงซึ่งแก้ได้ค่ะ\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`
+          ? (replyLanguage(event) === 'en' ? `No editable expense saved by you in this chat was found within the last 24 hours; review the expense list on the web:
+${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}` : `ระบบรองรับการแก้รายการเดิมผ่าน LINE แต่ยังไม่พบรายการที่คุณบันทึกไว้ในแชทนี้ภายใน 24 ชั่วโมงซึ่งแก้ได้ค่ะ\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`)}`)
           : [
             recentCapturedExpenses.length === 1
-              ? `ถ้าหมายถึงรายการนี้ แก้ผ่าน LINE ได้ค่ะ: ${recentCapturedExpenses[0]!.label}`
-              : 'ถ้าหมายถึงรายการใดรายการหนึ่งในรายการด้านล่าง แก้ผ่าน LINE ได้ค่ะ:',
+              ? (replyLanguage(event) === 'en' ? `You can prepare an edit for this expense: ${correctionCandidateLabel(recentCapturedExpenses[0]!, 'en')}` : `ถ้าหมายถึงรายการนี้ แก้ผ่าน LINE ได้ค่ะ: ${recentCapturedExpenses[0]!.label}`)
+              : (replyLanguage(event) === 'en' ? "Choose the expense below to prepare an edit:" : 'ถ้าหมายถึงรายการใดรายการหนึ่งในรายการด้านล่าง แก้ผ่าน LINE ได้ค่ะ:'),
             ...(recentCapturedExpenses.length > 1
               ? recentCapturedExpenses.map(candidate => candidate.label)
               : []),
-            'พิมพ์ฟิลด์กับค่าใหม่ เช่น “แก้วันที่เป็น 20 กันยายน 2569” ระบบจะแสดงตัวอย่างให้ตรวจ และจะบันทึกก็ต่อเมื่อคุณกด “ยืนยัน” เท่านั้น',
-            ...(recentCapturedExpenses.length > 1 ? ['กรุณาระบุบิลหรือวันที่ก่อนแก้ค่ะ'] : []),
+            (replyLanguage(event) === 'en' ? "Send the field and new value; I will show the proposed changes and save them only after you confirm the card." : 'พิมพ์ฟิลด์กับค่าใหม่ เช่น “แก้วันที่เป็น 20 กันยายน 2569” ระบบจะแสดงตัวอย่างให้ตรวจ และจะบันทึกก็ต่อเมื่อคุณกด “ยืนยัน” เท่านั้น'),
+            ...(recentCapturedExpenses.length > 1 ? [(replyLanguage(event) === 'en' ? "Please identify the bill or its date before editing." : 'กรุณาระบุบิลหรือวันที่ก่อนแก้ค่ะ')] : []),
           ].join('\n');
-      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
-      if (servingEnabled && recentCapturedExpenses.length > 1) card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
+      if (servingEnabled && recentCapturedExpenses.length > 1) card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(candidate => ({ label: correctionCandidateLabel(candidate, replyLanguage(event)), text: (replyLanguage(event) === 'en' ? `Edit expense ${correctionCandidateLabel(candidate, 'en')}` : `ขอแก้รายการ ${candidate.label}`) })));
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
       await this.updateEventLog(event.webhookEventId, 'expense_edit_capability', undefined, companyId);
       return;
@@ -7048,8 +7150,8 @@ export class ProcessLineWebhookUseCase {
     }
     if (statusQuestion === 'receipt' || (statusQuestion === 'contextual' && openWaiting.length === 0)) {
       const listLink = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
-      let reply = `ตอนนี้ยังตรวจสอบสถานะใบเสร็จให้ไม่ได้ค่ะ เปิดดูรายการล่าสุดได้ที่ ${listLink}`;
-      if (!canCaptureExpense) reply = receiptDeniedReply(resolvedAccess);
+      let reply = (replyLanguage(event) === 'en' ? `The receipt status could not be verified; view the latest record: ${listLink}` : `ตอนนี้ยังตรวจสอบสถานะใบเสร็จให้ไม่ได้ค่ะ เปิดดูรายการล่าสุดได้ที่ ${listLink}`);
+      if (!canCaptureExpense) reply = receiptDeniedReply(resolvedAccess, replyLanguage(event));
       else try {
         const rows = this.expenseRepo ? await listRecentLineCaptureCandidates(this.expenseRepo, {
           companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event), scopes: resolvedAccess.scopes,
@@ -7069,9 +7171,11 @@ export class ProcessLineWebhookUseCase {
           const amountValue = Number(expense.grandTotalAmount);
           const amount = expense.grandTotalAmount == null || !Number.isFinite(amountValue)
             || (amountValue === 0 && (verification === 'FAILED' || verification === 'VERIFYING' || expense.status === 'EXTRACTING'))
-            ? 'ยังไม่ทราบยอด'
-            : `${amountValue.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${expense.currency && expense.currency !== 'THB' ? expense.currency : 'บาท'}`;
-          lines.push(`${lines.length + 1}) ${number ? `บิล ${number} · ` : ''}${amount}\n${receiptProgressLabel(expense.status, verification)}\nเปิดรายการที่ ${lines.length + 1}: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`);
+            ? (replyLanguage(event) === 'en' ? "Amount not verified" : 'ยังไม่ทราบยอด')
+            : `${amountValue.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${expense.currency && expense.currency !== 'THB' ? expense.currency : replyLanguage(event) === 'en' ? 'THB' : 'บาท'}`;
+          lines.push((replyLanguage(event) === 'en' ? `• ${number ? `Receipt ${number} · ` : ''}${amount}
+${receiptProgressLabel(expense.status, verification, replyLanguage(event))}
+View record ${lines.length + 1}: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}` : `${lines.length + 1}) ${number ? `บิล ${number} · ` : ''}${amount}\n${receiptProgressLabel(expense.status, verification, replyLanguage(event))}\nเปิดรายการที่ ${lines.length + 1}: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`));
         }
         // §17.5 / appendix §3: a LINE file that has not (yet) become an expense is still real work.
         // It lives in the capture aggregate, which the expense list above cannot see — so the same
@@ -7083,12 +7187,18 @@ export class ProcessLineWebhookUseCase {
           }).catch(() => [])
           : [];
         reply = lines.length
-          ? `ตรวจพบรายการล่าสุดจากแชทนี้ ${lines.length} ใบค่ะ\n\n${lines.join('\n\n')}\n\nถ้ายังมีรูปที่ไม่ปรากฏในรายการนี้ ระบบยังยืนยันผลของรูปนั้นไม่ได้ค่ะ\nดูรายการทั้งหมด: ${listLink}`
+          ? (replyLanguage(event) === 'en' ? `Found ${lines.length} recent expenses in this chat:
+
+${lines.join('\n\n')}
+
+Any photo absent from this list has no verified result yet.
+View all expenses: ${listLink}` : `ตรวจพบรายการล่าสุดจากแชทนี้ ${lines.length} ใบค่ะ\n\n${lines.join('\n\n')}\n\nถ้ายังมีรูปที่ไม่ปรากฏในรายการนี้ ระบบยังยืนยันผลของรูปนั้นไม่ได้ค่ะ\nดูรายการทั้งหมด: ${listLink}`)
           : openGroups.length
             ? openGroups.map((group) => captureGroupStatusReply(
               absoluteWebLink(this.config.webBaseUrl, group.webPath), group.reading,
             )).join('\n\n')
-            : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
+            : (replyLanguage(event) === 'en' ? `No expense from this chat was found in the last 24 hours, so completion cannot be confirmed.
+View expenses: ${listLink}` : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`);
       } catch (error) {
         this.logger.warn({ msg: 'line_receipt_status_unavailable', ...safeLineErrorDetails(error) });
       }
@@ -7103,7 +7213,7 @@ export class ProcessLineWebhookUseCase {
     const interruptExpenseDraft = async (excludeExpenseIds: string[] = []) => {
       if (!this.expenseDraftConversation || !activeExpenseDrafts.some(draft => draft.status === 'OPEN' && !excludeExpenseIds.includes(draft.expenseId))) return undefined;
       const reply = await this.expenseDraftConversation.interruptOpen(expenseDraftCtx, chatKeyHashOf(event), excludeExpenseIds);
-      activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event));
+      activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event), replyLanguage(event));
       draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
       const routing = this.clarificationRouteSources.get(event);
       if (routing) routing.draftRouting = draftRoutingRevisions(activeExpenseDrafts);
@@ -7113,7 +7223,7 @@ export class ProcessLineWebhookUseCase {
       && (isDeterministicLineExpenseDraftInput(normalizedText)
         || !!await this.expenseDraftConversation.answersOpenDraft?.(expenseDraftCtx, chatKeyHashOf(event), normalizedText))) {
       if (!await draftRouteCurrent() || !await this.mayDeliverBusinessReply(event)) return;
-      const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
+      const result = await this.expenseDraftConversation.execute(expenseDraftCtx, { language: replyLanguage(event),
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
@@ -7122,7 +7232,7 @@ export class ProcessLineWebhookUseCase {
         const mixedContinuation = this.mixedBusinessQuestions?.get(event);
         if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId, replyLanguage(event)), companyId, resolvedAccess);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
@@ -7150,9 +7260,9 @@ export class ProcessLineWebhookUseCase {
     if (this.expenseRepo && isGroundedReceiptFollowUp(normalizedText) && !isSubstituteReceiptConversationText(normalizedText)) {
       if (recentCapturedExpenses.length > 1) {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
-        const reply = 'พบรายการล่าสุดมากกว่า 1 รายการค่ะ เลือกรายการที่จะตรวจได้เลย';
-        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
-        card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(item => ({ label: item.label, text: `ขอดูรายการ ${item.label}` })));
+        const reply = (replyLanguage(event) === 'en' ? "More than one recent expense matches; choose one to review." : 'พบรายการล่าสุดมากกว่า 1 รายการค่ะ เลือกรายการที่จะตรวจได้เลย');
+        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
+        card.quickReply = lineChoiceQuickReply(recentCapturedExpenses.map(item => ({ label: correctionCandidateLabel(item, replyLanguage(event)), text: (replyLanguage(event) === 'en' ? `Show expense ${correctionCandidateLabel(item, 'en')}` : `ขอดูรายการ ${item.label}`) })));
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7183,7 +7293,7 @@ export class ProcessLineWebhookUseCase {
             ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === current.expenseCategoryId)
             : undefined;
           this.rememberReceiptDeliverySource(event, expenseDraftCtx, current, category);
-          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, current, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
+          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, current, category?.name, normalizedText, replyLanguage(event))}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7254,11 +7364,11 @@ export class ProcessLineWebhookUseCase {
       // out to be a side question, the later router must receive the resulting current context.
       const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
       if (expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation) {
-        activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event));
+        activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event), replyLanguage(event));
         draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
       }
       let captureReply = captured
-        ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
+        ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, { ...({
           textOnly: true,
           amount: captured.insertedAmount,
           categoryName: captured.categoryName,
@@ -7268,18 +7378,18 @@ export class ProcessLineWebhookUseCase {
             ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
           ...(Number(captured.expense.whtAmount) > 0 ? { whtAmount: captured.expense.whtAmount } : {}),
           } as ReceiptOcrFieldResult,
-        })
+        }), language: replyLanguage(event) })
         : undefined;
       let result: LineSubstituteReceiptContinuationResult;
       try {
-        result = await this.substituteReceiptContinuation.execute(continuationCtx, {
+        result = await this.substituteReceiptContinuation.execute(continuationCtx, { language: replyLanguage(event),
           messageText: normalizedText,
           chatKeyHash: chatKeyHashOf(event),
           ...(originalChoiceIds ? { boundCandidateExpenseIds: originalChoiceIds } : {}),
           recentCandidates: originalChoiceIds
             ? originalChoiceIds.map(id => ({ id, label: id }))
             : captured
-            ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
+            ? [{ id: captured.expense.id, label: (replyLanguage(event) === 'en' ? `Newly saved expense ${captured.expense.expenseNumber ?? captured.expense.id}` : `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}`) }]
             // GAP C tier 1: the one document this chat is in the middle of, so the card reports IT
             // instead of asking which of several recent captures the question was about.
             : nextStepSubstituteTarget
@@ -7382,7 +7492,7 @@ export class ProcessLineWebhookUseCase {
     // AI owns intent whenever it is reachable, and this is only the floor under it.
     if (nextStepQuestion && !nextStepSubstituteTarget && recentCapturedExpenses.length > 0) {
       this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
-      const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0]);
+      const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0], replyLanguage(event));
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7411,9 +7521,9 @@ export class ProcessLineWebhookUseCase {
       // (it swallows its own failure) and no seam re-sends a persisted outcome on a later retry.
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: EXACT_GREETING_REPLY, intent: 'UNKNOWN',
+        userMessagePreview: normalizedText, replyText: (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.EXACT_GREETING_REPLY : EXACT_GREETING_REPLY), intent: 'UNKNOWN',
       });
-      await this.deliverCompletedReply(event, EXACT_GREETING_REPLY, companyId, resolvedAccess);
+      await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.EXACT_GREETING_REPLY : EXACT_GREETING_REPLY), companyId, resolvedAccess);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -7454,10 +7564,13 @@ export class ProcessLineWebhookUseCase {
     }));
     const claimOwner = this.boundConversations.get(event);
     if (claimOwner && this.budgetGrantsV2.has(event) && event.inputEvidence && routePlan.status === 'ROUTED'
-      && (routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' || routePlan.semanticOutcome === 'AMBIGUOUS')
-      && (routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION' || routePlan.intent === 'REIMBURSEMENT_REQUEST_START')) {
+      && (routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' || routePlan.semanticOutcome === 'AMBIGUOUS'
+        || valueCandidates?.amounts.length === 0)
+      && ['EXPENSE_DRAFT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START', 'CLARIFY', 'EXPENSE_DOCUMENT_CAPTURE'].includes(routePlan.intent)
+      && (routePlan.semanticSubrequests ?? []).every(item => item.kind === 'write')) {
       const answer = await this.reimbursementAdapter?.answerReason?.({ ctx: expenseDraftCtx, owner: claimOwner.owner,
-        ownerEpoch: claimOwner.epoch, evidence: event.inputEvidence, text: normalizedText });
+        ownerEpoch: claimOwner.epoch, evidence: event.inputEvidence, text: normalizedText,
+        purposeFallback: !routePlan.semanticSubrequests?.some(item => item.taskRef) });
       if (answer) {
         await this.deliverReimbursementCollection(event, expenseDraftCtx, answer);
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
@@ -7492,7 +7605,7 @@ export class ProcessLineWebhookUseCase {
         || selected.writeIntent !== retainedTask.source.semanticSubrequest.writeIntent || !ref
         || ref.taskId !== retainedTask.source.taskRef.taskId || ref.taskRevision !== retainedTask.source.taskRef.taskRevision
         || ref.subrequestIndex !== retainedTask.source.taskRef.subrequestIndex) {
-        await this.deliverReply(event, 'ยังตรวจสอบรายการที่เลือกไม่สำเร็จค่ะ รายละเอียดเดิมยังเก็บไว้ ยังไม่ได้สร้างหรือแก้เอกสาร'); return;
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The selected record could not be verified; its details are retained and no document was created or changed." : 'ยังตรวจสอบรายการที่เลือกไม่สำเร็จค่ะ รายละเอียดเดิมยังเก็บไว้ ยังไม่ได้สร้างหรือแก้เอกสาร')); return;
       }
       // Domain grounding sees the selected immutable clause. The current intake input/grant stay on the selection event.
       normalizedText = retainedTask.sourceText;
@@ -7536,7 +7649,7 @@ export class ProcessLineWebhookUseCase {
       if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
         // A missing grant is a system/budget-admission gap, not a text the model failed to parse.
         await this.deliverReply(event, !initialGrantV2 || isTransientLineAiRouteFailure(routePlan.errorCode)
-          ? LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY);
+          ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_TRANSIENT_REPLY) : (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_UNCLEAR_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY));
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', routePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
       const hasPublic = routePlan.semanticSubrequests?.some(item => item.kind === 'public') === true && this.config.lineAiPublicLookupEnabled;
@@ -7552,14 +7665,14 @@ export class ProcessLineWebhookUseCase {
       try { narrowed = await this.aiGateway.narrowLineReliabilityGrant(initialGrantV2, lane, profiles); }
       catch (error) {
         if (!(error instanceof LineAiBudgetDeadlineExceededError)) throw error;
-        await this.deliverReply(event, formatRefusal('ai_timeout'));
+        await this.deliverReply(event, formatRefusal('ai_timeout', undefined, replyLanguage(event)));
         await this.updateEventLog(event.webhookEventId, 'ai_timeout', error.code, companyId); return;
       }
-      if (!narrowed) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE', companyId); return; }
+      if (!narrowed) { await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY[replyLanguage(event)]); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_BUDGET_UNAVAILABLE', companyId); return; }
       this.budgetGrantsV2.set(event, narrowed);
     }
     if (routePlan.semanticSubrequests && !await this.preserveSemanticTask(event, routePlan.semanticSubrequests)) {
-      await this.deliverReply(event, 'ยังบันทึกบริบทคำขอชุดนี้ไม่ได้ค่ะ กรุณาเลือกงานค้างที่จะทำต่อหรือส่งคำขออีกครั้ง ยังไม่ได้ทำรายการใหม่ให้');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The task context could not be stored; choose a pending task or resend the request, as no new record was created." : 'ยังบันทึกบริบทคำขอชุดนี้ไม่ได้ค่ะ กรุณาเลือกงานค้างที่จะทำต่อหรือส่งคำขออีกครั้ง ยังไม่ได้ทำรายการใหม่ให้'));
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'LINE_CONTEXT_STALE_STATE', companyId); return;
     }
     if (!await this.mayDeliverBusinessReply(event) || !await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
@@ -7574,10 +7687,10 @@ export class ProcessLineWebhookUseCase {
     // Navigation follows the metered intake; the buttons carry requests, never mutation authority.
     if (routePlan.status === 'ROUTED' && /^(?:ช่วย)?แก้(?:ไข)?ข้อมูล(?:ให้)?(?:หน่อย)?(?:ค่ะ|คะ|ครับ)?[?？]?$/u.test(normalizedText.replace(/\s+/gu, ''))
       && routePlan.semanticSubrequests?.length === 1 && ['general', 'help', 'write'].includes(routePlan.semanticSubrequests[0]!.kind)) {
-      const choices = await this.recentEditableChoices(expenseDraftCtx, recentCapturedExpenses, activeExpenseDrafts, entitledFeatureKeys);
-      const reply = 'ต้องการแก้ไขรายการไหนคะ';
-      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
-      card.quickReply = lineChoiceQuickReply([...choices, { label: 'อื่นๆ', text: 'ต้องการแก้ไขข้อมูลอื่น ช่วยถามว่าข้อมูลส่วนไหน' }]);
+      const choices = await this.recentEditableChoices(expenseDraftCtx, recentCapturedExpenses, activeExpenseDrafts, entitledFeatureKeys, replyLanguage(event));
+      const reply = (replyLanguage(event) === 'en' ? "Which record would you like to edit?" : 'ต้องการแก้ไขรายการไหนคะ');
+      const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
+      card.quickReply = lineChoiceQuickReply([...choices, { label: (replyLanguage(event) === 'en' ? "More options" : 'อื่นๆ'), text: (replyLanguage(event) === 'en' ? "I want to edit another detail; ask which detail." : 'ต้องการแก้ไขข้อมูลอื่น ช่วยถามว่าข้อมูลส่วนไหน') }]);
       for (const [index, choice] of choices.entries()) if (choice.uri) {
         card.quickReply!.items[index]!.action = { type: 'uri', label: card.quickReply!.items[index]!.action.label, uri: choice.uri };
       }
@@ -7597,7 +7710,8 @@ export class ProcessLineWebhookUseCase {
     }
     const semanticTurnV2 = !mixedBusiness && !!initialGrantV2 && !!routePlan.semanticSubrequests && (
       routePlan.semanticSubrequests.length > 1 || routePlan.semanticSubrequests.every(item => ['general', 'help', 'read', 'public'].includes(item.kind))
-      || this.config.lineAiReimbursementDraftWriteEnabled && routePlan.intent === 'REIMBURSEMENT_REQUEST_START');
+      || this.config.lineAiReimbursementDraftWriteEnabled && (routePlan.intent === 'REIMBURSEMENT_REQUEST_START'
+        || routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' && typedWrites?.some(item => item.taskRef)));
     if (!semanticTurnV2) {
     // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
     // draft passes every delivery-time gate is answered HERE from the single intake call — no
@@ -7698,7 +7812,7 @@ export class ProcessLineWebhookUseCase {
         // eligibility BEFORE any save; a question/negation/denied result writes nothing. An affirmative
         // to a pending start clarification confirms the paraphrase start for that ONE bound expense.
         const interruption = await interruptExpenseDraft();
-        const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
+        const result = await this.substituteReceiptContinuation.execute(continuationCtx, { language: replyLanguage(event),
           messageText: normalizedText,
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: executeCandidates,
@@ -7800,12 +7914,12 @@ export class ProcessLineWebhookUseCase {
         // ledger question, zero writes — a denied user is never left waiting on an answer we cannot use.
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY,
+          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY[replyLanguage(event)],
           intent: 'MUTATION_REQUEST', refused: true,
         });
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           resolvedReimbursementIds, 'reimbursement_forbidden');
-        await this.deliverReply(event, REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY);
+        await this.deliverReply(event, REIMBURSEMENT_HANDOFF_FORBIDDEN_REPLY[replyLanguage(event)]);
         await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
         return;
       }
@@ -7813,20 +7927,20 @@ export class ProcessLineWebhookUseCase {
       if (routePlan.semanticOutcome !== 'REIMBURSEMENT_CLAIM' || routePlan.fundingSource !== 'EMPLOYEE_PAID') {
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_PAYER_CLARIFY_REPLY, intent: 'CLARIFY',
+          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_PAYER_CLARIFY_REPLY[replyLanguage(event)], intent: 'CLARIFY',
         });
         // An answer that did not settle the payer closes the question it answered and opens the NEXT one,
         // in that order — otherwise the stale entry outlives the reply and the next message inherits it.
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           resolvedReimbursementIds, 'reimbursement_payer_reclarify');
         await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
-          () => this.withCompletionMenu(buildReimbursementPayerClarificationMessage(), companyId, resolvedAccess))]);
+          () => this.withCompletionMenu(buildReimbursementPayerClarificationMessage(replyLanguage(event)), companyId, resolvedAccess, replyLanguage(event)))]);
         await this.appendSourceBoundClarifications(event, {
           messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
-            text: normalizedText, state: 'waiting_user', clarifyQuestion: REIMBURSEMENT_PAYER_CLARIFY_REPLY,
+            text: normalizedText, state: 'waiting_user', clarifyQuestion: REIMBURSEMENT_PAYER_CLARIFY_REPLY[replyLanguage(event)],
             intent: 'CLARIFY', clarifyForIntent: 'REIMBURSEMENT_REQUEST_START',
           }],
         });
@@ -7836,25 +7950,25 @@ export class ProcessLineWebhookUseCase {
       if (reimbursementMode === 'clarify_only') {
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText: REIMBURSEMENT_CLARIFY_ONLY_REPLY, intent: 'MUTATION_REQUEST',
+          userMessagePreview: normalizedText, replyText: (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.REIMBURSEMENT_CLARIFY_ONLY_REPLY : REIMBURSEMENT_CLARIFY_ONLY_REPLY), intent: 'MUTATION_REQUEST',
         });
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           resolvedReimbursementIds, 'reimbursement_clarify_only');
         // Server card with no CTA: the text carries no link, so the card renders no button.
         await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
-          async () => buildLineAssistantTextCardMessage(REIMBURSEMENT_CLARIFY_ONLY_REPLY, this.config.webBaseUrl, companyId))]);
+          async () => buildLineAssistantTextCardMessage((replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.REIMBURSEMENT_CLARIFY_ONLY_REPLY : REIMBURSEMENT_CLARIFY_ONLY_REPLY), this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event)))]);
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return;
       }
       // handoff, allowed: the web form is still the only place the record is created.
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: REIMBURSEMENT_HANDOFF_REPLY, intent: 'MUTATION_REQUEST',
+        userMessagePreview: normalizedText, replyText: (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.REIMBURSEMENT_HANDOFF_REPLY : REIMBURSEMENT_HANDOFF_REPLY), intent: 'MUTATION_REQUEST',
       });
       await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
         resolvedReimbursementIds, 'reimbursement_handoff');
       await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
-        () => this.withCompletionMenu(buildReimbursementHandoffMessage(this.config.webBaseUrl, companyId), companyId, resolvedAccess))]);
+        () => this.withCompletionMenu(buildReimbursementHandoffMessage(this.config.webBaseUrl, companyId, replyLanguage(event)), companyId, resolvedAccess, replyLanguage(event)))]);
       await this.audit.log({
         companyId, actorUserId: identity.userId, action: 'reimbursement.line_handoff',
         targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'SUCCESS', riskLevel: 'LOW',
@@ -7871,19 +7985,19 @@ export class ProcessLineWebhookUseCase {
         && !isLineExpenseDraftStartEligible(normalizedText, routePlan.captureHints,
           routePlan.semanticOutcome === 'BUSINESS_EXPENSE' && routePlan.fundingSource === 'COMPANY_PAID'))) {
       if (!expenseDraftConversationEnabled) {
-        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY[replyLanguage(event)]);
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
       if (!canCaptureExpense || !this.expenseDraftConversation) {
-        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess, replyLanguage(event)));
         await this.updateEventLog(event.webhookEventId,
           receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
           receiptFeatureDisabled(resolvedAccess) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
           companyId);
         return;
       }
-      let result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
+      let result = await this.expenseDraftConversation.execute(expenseDraftCtx, { language: replyLanguage(event),
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
@@ -7892,14 +8006,14 @@ export class ProcessLineWebhookUseCase {
           : routePlan.captureHints,
       });
       if (!result.handled && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
-        result = await this.expenseDraftConversation.execute(expenseDraftCtx, { messageText: 'ต่อ', chatKeyHash: chatKeyHashOf(event),
+        result = await this.expenseDraftConversation.execute(expenseDraftCtx, { language: replyLanguage(event), messageText: 'ต่อ', chatKeyHash: chatKeyHashOf(event),
           webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: activeExpenseDrafts.find(draft => draft.status === 'OPEN')!.expenseId } });
       }
       if (result.handled) {
         const mixedContinuation = this.mixedBusinessQuestions?.get(event);
         if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId, replyLanguage(event)), companyId, resolvedAccess);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
@@ -7912,7 +8026,7 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
       if (!canCaptureExpense) {
-        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess, replyLanguage(event)));
         await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload', route: 'text_note' } });
         await this.updateEventLog(event.webhookEventId,
           receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
@@ -7921,7 +8035,7 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       if (!this.captureExpenseNote) {
-        await this.deliverReply(event, ERROR_REPLY);
+        await this.deliverReply(event, ERROR_REPLY[replyLanguage(event)]);
         await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId);
         return;
       }
@@ -7976,7 +8090,7 @@ export class ProcessLineWebhookUseCase {
           // state does not belong to. FAIL CLOSED — no capture call, no consumption marker, no
           // ledger ack, so the open question survives and the customer is re-asked with the same
           // canonical copy instead of having a guessed amount written for them.
-          await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+          await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY[replyLanguage(event)]);
           await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
           return;
         }
@@ -8025,7 +8139,7 @@ export class ProcessLineWebhookUseCase {
         if (!(error instanceof LineTextExpenseCaptureIncompleteError)) throw error;
         // One canonical question for the fields that are actually missing — the same string is delivered,
         // persisted and ledgered, so a later turn resolves exactly what the user was asked.
-        const clarifyReply = formatTextExpenseClarifyReply(error);
+        const clarifyReply = formatTextExpenseClarifyReply(error, replyLanguage(event));
         await this.deliverReply(event, clarifyReply);
         await this.settleWriteLane(event, 'needs_user', clarifyReply);
         await this.persistIntakeTurn({ event,
@@ -8092,17 +8206,18 @@ export class ProcessLineWebhookUseCase {
       // only; a reply the draft conversation wrote keeps the card that shows its text.
       const ownSummary = captured.replyTexts.length === 0;
       const replyTexts = ownSummary
-        ? [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, captureSummary)]
+        ? [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, { ...(captureSummary), language: replyLanguage(event) })]
         : captured.replyTexts;
       const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
       if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
-      const confirmation = await this.requestedCaptureConfirmation(event, ctx, captured.expense.id, normalizedText);
+      const confirmation = await this.requestedCaptureConfirmation(event, ctx, captured.expense.id, normalizedText, Number(captured.expense.whtAmount) > 0);
       if (confirmation) {
-        await this.deliverRequiredMessages(event, [...replyTexts.map(text => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId)), confirmation]);
+        await this.deliverRequiredMessages(event, [...replyTexts.map(text => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event))), confirmation]);
       } else {
-        await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess, ownSummary
+        const state = parseLineExpenseDraftContinuation(captured.expense.sourceChannelMetadataJson?.lineExpenseDraftContinuation);
+        await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess, ownSummary || state?.unresolvedQuestions.length === 0
           ? expenseDraftCardFacts(captured.expense.id, { ...captureSummary, status: captured.expense.status, item: captured.expense.note,
-            ...(expenseDraftInterruption ? { tail: expenseDraftInterruption } : {}) })
+            ...(expenseDraftInterruption ? { tail: expenseDraftInterruption } : {}), language: replyLanguage(event) })
           : undefined);
       }
       await this.settleWriteLane(event, sequenceCapture ? 'needs_user' : 'handled');
@@ -8118,8 +8233,15 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_CAPTURE_CORRECTION') {
       if ((entitledFeatureKeys === null || entitledFeatureKeys.has('expenses'))
         && await this.explainLockedExpenseEdit(event, expenseDraftCtx, resolvedAccess, routePlan.correctionHints?.targetExpenseId, recentCapturedExpenses, routePlan.correctionHints?.vendorName?.to)) return;
+      const vendorReference = routePlan.correctionHints?.amount && routePlan.correctionHints.vendorName?.from === undefined
+        && !/(?:แก้|เปลี่ยน)(?:ชื่อ)?(?:ร้าน|ผู้ขาย)|\b(?:vendor|seller|rename)\b/iu.test(normalizedText)
+        ? routePlan.correctionHints.vendorName?.to : undefined;
+      if (vendorReference) {
+        const { vendorName: _reference, ...changes } = routePlan.correctionHints!;
+        routePlan = { ...routePlan, correctionHints: changes };
+      }
       if (!canCaptureExpense && !canEditLine) {
-        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess, replyLanguage(event)));
         await this.updateEventLog(event.webhookEventId,
           receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
           receiptFeatureDisabled(resolvedAccess) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
@@ -8138,7 +8260,21 @@ export class ProcessLineWebhookUseCase {
       const originalIds = resolvedChoices[0]?.candidateExpenseIds;
       const originalCandidates = originalIds ? await this.loadCorrectionCandidates(companyId, identity.userId,
         chatKeyHashOf(event), resolvedAccess.scopes, originalIds) : recentCapturedExpenses;
-      const correctionCandidates = originalIds ? originalIds.flatMap(id => originalCandidates.filter(item => item.id === id)) : originalCandidates;
+      let correctionCandidates = originalIds ? originalIds.flatMap(id => originalCandidates.filter(item => item.id === id)) : originalCandidates;
+      if (!originalIds && vendorReference && this.editableExpenses && canEdit) {
+        const pages = await Promise.all((['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as const)
+          .map(status => this.editableExpenses!.execute(expenseDraftCtx, { status, page: 1, pageSize: 200 })));
+        // ponytail: bounded discovery; an incomplete page never establishes a unique target.
+        if (pages.every(page => page.total <= page.data.length)) {
+          const rows = pages.flatMap(page => page.data).filter(row => !routePlan.correctionHints?.amount?.from
+            || Number(row.grandTotalAmount) === Number(routePlan.correctionHints.amount.from));
+          const match = resolveNameCandidate(normalizeVendorName(vendorReference), rows.filter(row => row.vendorNameSnapshot)
+            .map(row => ({ id: row.id, name: normalizeVendorName(row.vendorNameSnapshot!) })), VENDOR_NAME_STRIP_PREFIXES);
+          const row = match.kind === 'resolved' ? rows.find(row => row.id === match.id) : undefined;
+          if (row) correctionCandidates = [{ id: row.id, label: row.vendorNameSnapshot ?? 'ร่างค่าใช้จ่าย',
+            expenseDate: row.expenseDate.toISOString(), amount: row.grandTotalAmount, createdAt: row.createdAt.toISOString() }];
+        }
+      }
       if (originalIds && correctionCandidates.length !== originalIds.length) {
         await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
         return;
@@ -8167,7 +8303,7 @@ export class ProcessLineWebhookUseCase {
         : null;
       if (draftAnswer) {
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, draftAnswer);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId), companyId, resolvedAccess);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId, replyLanguage(event)), companyId, resolvedAccess);
         await this.settleWriteLane(event, 'needs_user', draftAnswer.replyTexts.join('\n'));
         await this.ackConsumed(correctionPlan, 'correction_apply');
         await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -8180,10 +8316,10 @@ export class ProcessLineWebhookUseCase {
         .filter((field) => hints?.[field] !== undefined);
       if (hints?.targetExpenseId && correctionCandidates.some(candidate => candidate.id === hints.targetExpenseId) && !hintedFields.length && !detectLineDraftEditRequest(normalizedText)) {
         const selected = hints?.targetExpenseId ? correctionCandidates.filter(candidate => candidate.id === hints.targetExpenseId) : correctionCandidates;
-        const reply = selected.length === 1 ? 'ต้องการแก้ไขช่องไหนเป็นค่าอะไรคะ' : 'ต้องการแก้ไขรายการไหนคะ';
+        const reply = selected.length === 1 ? (replyLanguage(event) === 'en' ? 'Which field and new value would you like?' : 'ต้องการแก้ไขช่องไหนเป็นค่าอะไรคะ') : (replyLanguage(event) === 'en' ? "Which record would you like to edit?" : 'ต้องการแก้ไขรายการไหนคะ');
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
-        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId);
-        if (selected.length > 1) card.quickReply = lineChoiceQuickReply(selected.slice(0, 4).map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+        const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
+        if (selected.length > 1) card.quickReply = lineChoiceQuickReply(selected.slice(0, 4).map(candidate => ({ label: correctionCandidateLabel(candidate, replyLanguage(event)), text: (replyLanguage(event) === 'en' ? `Edit expense ${correctionCandidateLabel(candidate, 'en')}` : `ขอแก้รายการ ${candidate.label}`) })));
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess, undefined, card);
         await this.appendSourceBoundClarifications(event, { companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId, userId: identity.userId,
           items: [{ text: normalizedText, state: 'waiting_user', clarifyQuestion: reply, intent: 'CLARIFY', clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION', candidateExpenseIds: selected.map(candidate => candidate.id) }] });
@@ -8193,7 +8329,7 @@ export class ProcessLineWebhookUseCase {
       }
       const detectedRequest = detectLineDraftEditRequest(normalizedText);
       const headerFields = hintedFields.filter((field) => field !== 'amount');
-      const mixedEdit = (detectedRequest && hintedFields.length > 0)
+      const mixedEdit = (detectedRequest && hintedFields.some(field => field !== 'amount'))
         || (headerFields.length > 0 && hintedFields.includes('amount'));
       let draftRequest: { tool: LineDraftUpdateTool; input: Record<string, unknown> } | null = detectedRequest;
       let draftTargetId = hints?.targetExpenseId && correctionCandidates.some(candidate => candidate.id === hints.targetExpenseId) ? hints.targetExpenseId : undefined;
@@ -8204,7 +8340,7 @@ export class ProcessLineWebhookUseCase {
           : correctionCandidates.length === 1 ? correctionCandidates[0] : undefined;
         if (!hintedTarget && correctionCandidates.length > 1) {
           draftClarification = [
-            'พบหลายรายการค่ะ กรุณาระบุบิลหรือวันที่ก่อน แล้วส่งการแก้ไขทีละอย่างนะคะ',
+            (replyLanguage(event) === 'en' ? 'Several records match; identify the bill or date, then send one change at a time.' : 'พบหลายรายการค่ะ กรุณาระบุบิลหรือวันที่ก่อน แล้วส่งการแก้ไขทีละอย่างนะคะ'),
             ...correctionCandidates.map(candidate => candidate.label),
           ].join('\n');
         } else if (hintedTarget && this.expenseRepo && hints) {
@@ -8217,10 +8353,10 @@ export class ProcessLineWebhookUseCase {
               vendorDocumentNumber: target.vendorDocumentNumber,
               note: target.note,
             }, correctionEvidence, ['expenseDate', 'amount', 'vendorName', 'documentNumber', 'note']);
-            if (checked.status === 'clarify') draftClarification = CORRECTION_DIRECTION_CLARIFY_REPLY;
+            if (checked.status === 'clarify') draftClarification = CORRECTION_DIRECTION_CLARIFY_REPLY[replyLanguage(event)];
             if (checked.status === 'guidance' && checked.reason.startsWith('field_too_long:')) {
               const [, field, limit] = checked.reason.split(':');
-              draftClarification = `ข้อมูลช่อง ${field} ยาวเกิน ${limit} ตัวอักษร กรุณาส่งค่าที่สั้นลงค่ะ ยังไม่ได้แก้ไขรายการ`;
+              draftClarification = (replyLanguage(event) === 'en' ? `The value for ${field} exceeds ${limit} characters; send a shorter value, and no changes have been applied.` : `ข้อมูลช่อง ${field} ยาวเกิน ${limit} ตัวอักษร กรุณาส่งค่าที่สั้นลงค่ะ ยังไม่ได้แก้ไขรายการ`);
             }
             if (checked.status === 'applicable') {
               const fields = checked.fields;
@@ -8239,11 +8375,11 @@ export class ProcessLineWebhookUseCase {
           }
         }
       }
-      if (mixedEdit) draftClarification = 'ขอแก้ทีละอย่างก่อนนะคะ เพื่อให้ตัวอย่างแสดงการเปลี่ยนแปลงครบและไม่ตกหล่นค่ะ';
+      if (mixedEdit) draftClarification = (replyLanguage(event) === 'en' ? 'Send one change at a time so the proposal can show every change clearly.' : 'ขอแก้ทีละอย่างก่อนนะคะ เพื่อให้ตัวอย่างแสดงการเปลี่ยนแปลงครบและไม่ตกหล่นค่ะ');
       if (draftClarification) {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
-        const card = buildLineAssistantTextCardMessage(draftClarification, this.config.webBaseUrl, companyId);
-        if (correctionCandidates.length > 1) card.quickReply = lineChoiceQuickReply(correctionCandidates.map(candidate => ({ label: candidate.label, text: `ขอแก้รายการ ${candidate.label}` })));
+        const card = buildLineAssistantTextCardMessage(draftClarification, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
+        if (correctionCandidates.length > 1) card.quickReply = lineChoiceQuickReply(correctionCandidates.map(candidate => ({ label: correctionCandidateLabel(candidate, replyLanguage(event)), text: (replyLanguage(event) === 'en' ? `Edit expense ${correctionCandidateLabel(candidate, 'en')}` : `ขอแก้รายการ ${candidate.label}`) })));
         await this.deliverCompletedReply(event, draftClarification, companyId, resolvedAccess, undefined, card);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -8275,8 +8411,8 @@ export class ProcessLineWebhookUseCase {
         : { status: 'guidance' as const, reason: 'correction_module_unavailable' };
 
       let reply = guidanceOutcome.status === 'clarify'
-        ? CORRECTION_DIRECTION_CLARIFY_REPLY
-        : formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, correctionCandidates, canEdit, guidanceOutcome.reason);
+        ? CORRECTION_DIRECTION_CLARIFY_REPLY[replyLanguage(event)]
+        : formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, correctionCandidates, canEdit, guidanceOutcome.reason, replyLanguage(event));
       if (guidanceOutcome.status !== 'clarify') {
         this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
@@ -8307,14 +8443,14 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'SIGNATURE_UPLOAD_TICKET') {
       if (!canSubmitSignature) {
-        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY);
+        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY[replyLanguage(event)]);
         await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
         return;
       }
       // Text asked for a signature upload but no image came with it: ask for the image only.
       await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'signature_request');
       const expenseDraftInterruption = await interruptExpenseDraft();
-      const reply = `${SIGNATURE_NEED_IMAGE_REPLY}${expenseDraftInterruption ? `\n\n${expenseDraftInterruption}` : ''}`;
+      const reply = `${SIGNATURE_NEED_IMAGE_REPLY[replyLanguage(event)]}${expenseDraftInterruption ? `\n\n${expenseDraftInterruption}` : ''}`;
       await this.deliverReply(event, reply);
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -8327,7 +8463,7 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY') {
       // Discovery: prefer the router's own clarifying question (bounded at parse) over the template.
       if (recentCapturedExpenses.length) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
-      const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
+      const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY[replyLanguage(event)];
       await this.deliverReply(event, clarifyReply);
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -8356,7 +8492,7 @@ export class ProcessLineWebhookUseCase {
     // BUSINESS_READ_QUESTION, MUTATION_REQUEST_REFUSAL, UNSUPPORTED, or router
     // UNAVAILABLE: continue through the normal permission-checked AI turn path.
     if (!canQuery) {
-      await this.deliverReply(event, FORBIDDEN_REPLY);
+      await this.deliverReply(event, FORBIDDEN_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
@@ -8377,7 +8513,7 @@ export class ProcessLineWebhookUseCase {
       entitledFeatureKeys: resolvedAccess.entitledFeatureKeys,
       roles: resolvedAccess.roles,
       branchIds: resolvedAccess.scopes.branchIds,
-      locale: 'th-TH',
+      locale: replyLanguage(event) === 'en' ? 'en-GB' : 'th-TH',
       // Chat provenance for read tools that resolve "บิลเมื่อกี้" (spec §5.5). Same hash the intake
       // lane stores on a LINE-captured record, so the tool sees the SAME chat the correction lane
       // does. Never the raw LINE id — that stays redacted above.
@@ -8395,7 +8531,9 @@ export class ProcessLineWebhookUseCase {
       ...await this.reliabilityContext(event),
       ...(routePlan.semanticSubrequests ? { semanticSubrequests: mixedBusiness && orderedWrites?.[0] && !orderedWrites[0].writeIntent
         ? [{ ...orderedWrites[0], index: 0, dependsOn: [] }] : routePlan.semanticSubrequests } : {}),
-      ...(routePlan.intent === 'REIMBURSEMENT_REQUEST_START' && routePlan.reimbursementHints ? { reimbursementHints: routePlan.reimbursementHints } : {}),
+      ...(routePlan.reimbursementHints ? { reimbursementHints: routePlan.reimbursementHints }
+        : routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' && routePlan.captureHints?.businessPurpose
+          ? { reimbursementHints: { businessPurpose: routePlan.captureHints.businessPurpose } } : {}),
       ...(routePlan.resolvedClarificationIds ? { resolvedClarificationIds: routePlan.resolvedClarificationIds } : {}),
       ...(retainedTask ? { retainedTaskSource: retainedTask.source } : {}),
       ...(this.budgetGrantsV2.get(event) && event.inputEvidence ? { inputEvidence: event.inputEvidence, budgetGrantV2: this.budgetGrantsV2.get(event), contractCapabilities: ['input-evidence-v2' as const, 'budget-envelope-v2' as const] } : {}),
@@ -8449,7 +8587,7 @@ export class ProcessLineWebhookUseCase {
     // existing bounded wait and its existing ledger follow-up.
     if (routePlan.budgetErrorCode && routePlan.budgetErrorCode !== AI_BUDGET_REFUSAL_CODES.busy) {
       if (await this.answerAiCreditRefusal(event, companyId, routePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
-      await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY);
+      await this.deliverReply(event, AI_BUDGET_UNAVAILABLE_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', routePlan.budgetErrorCode, companyId,
         routePlan.budgetScope ? { budgetScope: routePlan.budgetScope } : undefined);
       return;
@@ -8486,7 +8624,7 @@ export class ProcessLineWebhookUseCase {
       if (failure.replyKind === 'budget_exceeded') {
         await this.deliverRequiredMessages(event, [
           buildAiBudgetExceededMessage(await this.isTrialTier(companyId), { budgetErrorCode: failure.budgetCode, budgetScope: failure.budgetScope },
-            resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY)),
+            resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY), replyLanguage(event)),
         ]);
         if (ledgerTurnId && this.ledger) {
           await this.ledger.ack(
@@ -8503,12 +8641,12 @@ export class ProcessLineWebhookUseCase {
       await this.deliverReply(
         event,
         failure.replyKind === 'timeout'
-          ? formatRefusal('ai_timeout')
+          ? formatRefusal('ai_timeout', undefined, replyLanguage(event))
           // The meter could not be read — say that, rather than the generic "something broke".
-          : failure.replyKind === 'budget_unavailable' ? AI_BUDGET_UNAVAILABLE_REPLY
+          : failure.replyKind === 'budget_unavailable' ? AI_BUDGET_UNAVAILABLE_REPLY[replyLanguage(event)]
           // With a ledger entry the reclaim drain WILL answer this turn — say so instead of
           // inviting a resend that would double-answer. No entry ⇒ the legacy resend copy.
-          : failure.replyKind === 'rate_limited' ? (ledgerTurnId ? BUSY_FOLLOW_UP_REPLY : RATE_LIMIT_REPLY) : ERROR_REPLY,
+          : failure.replyKind === 'rate_limited' ? (ledgerTurnId ? BUSY_FOLLOW_UP_REPLY[replyLanguage(event)] : RATE_LIMIT_REPLY[replyLanguage(event)]) : ERROR_REPLY[replyLanguage(event)],
       );
       await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId,
         failure.budgetScope ? { budgetScope: failure.budgetScope } : undefined);
@@ -8550,7 +8688,8 @@ export class ProcessLineWebhookUseCase {
     if (resumeCapsules.length > 0) {
       const resumeText = resumeCapsules.length === 1
         ? resumeCapsules[0]
-        : `↩️ ยังมีงานค้าง ${resumeCapsules.length} งานค่ะ\n${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}`;
+        : (replyLanguage(event) === 'en' ? `There are ${resumeCapsules.length} pending tasks:
+${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}` : `↩️ ยังมีงานค้าง ${resumeCapsules.length} งานค่ะ\n${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}`);
       const actionCard = turnResponse.presentation?.cards.find(card => card.chatActionId);
       const replyText = `${turnResponse.replyText}\n\n${resumeText}`;
       turnResponse = {
@@ -8572,11 +8711,10 @@ export class ProcessLineWebhookUseCase {
     if (turnResponse.semanticCoverage) this.semanticDelivery.set(event, turnResponse.semanticCoverage);
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const completionMessage = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl), this.config.webBaseUrl, companyId, normalizedText),
+      buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl, replyLanguage(event)), this.config.webBaseUrl, companyId, normalizedText, replyLanguage(event)),
       companyId,
-      resolvedAccess,
-    ));
-    const actionHelpQuickReply = productHelpQuickReply(turnResponse, resolvedAccess.permissions, entitledFeatureKeys);
+      resolvedAccess, replyLanguage(event)));
+    const actionHelpQuickReply = productHelpQuickReply(turnResponse, resolvedAccess.permissions, entitledFeatureKeys, replyLanguage(event));
     if (actionHelpQuickReply) completionMessage.quickReply = actionHelpQuickReply;
     if (evidenceIds && turnResponse.toolsInvoked.includes('wht.calculate_withholding') && this.readEvidence.whtReadChoicesForTurn) {
       const choices = await this.readEvidence.whtReadChoicesForTurn(turnRequest, turnResponse).catch(() => undefined);
@@ -8613,10 +8751,10 @@ export class ProcessLineWebhookUseCase {
         && ref.permissionChecked && ref.webPath?.startsWith(`/companies/${companyId}/reimbursements/`)) : undefined;
     if (actionPreview) this.deliveryExpenseActions.set(event, { context: expenseDraftCtx, chat: chatKeyHashOf(event), requestId, preview: actionPreview });
     const repairChoices = turnResponse.toolsInvoked.includes('expense.action.preview')
-      ? await this.expenseActions.repairChoices(expenseDraftCtx, chatKeyHashOf(event), requestId) ?? expenseActionNextStepChoices(turnResponse.replyText) : null;
+      ? await this.expenseActions.repairChoices(expenseDraftCtx, chatKeyHashOf(event), requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(turnResponse.replyText) : null;
     const completionWithChoices = repairChoices?.length ? inheritCompleteLineBusinessAnswerPresentation(completionMessage, {
-      ...completionMessage, quickReply: { items: repairChoices.map(choice => ({ type: 'action' as const, action: choice.text === 'ส่งสลิปโอนสำหรับใบเบิกนี้'
-        ? { type: 'cameraRoll' as const, label: choice.label } : { type: 'message' as const, ...choice } })) },
+      ...completionMessage, quickReply: lineChoiceQuickReply(repairChoices.map(choice => ({ ...choice,
+        cameraRoll: choice.text === 'ส่งสลิปโอนสำหรับใบเบิกนี้' || 'cameraRoll' in choice && choice.cameraRoll === true }))),
     }) : completionMessage;
     const bound = this.boundConversations.get(event);
     const actionIds = [...new Set(turnResponse.sourceRefs.filter(ref => ref.module === 'reimbursements'
@@ -8625,12 +8763,12 @@ export class ProcessLineWebhookUseCase {
     if (bound && actionIds.length === 1 && turnResponse.toolsInvoked.some(name => name.startsWith('reimbursement.draft.'))) {
       const result = await this.reimbursementDrafts.get({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
       this.deliveryReimbursements.set(event, { context: expenseDraftCtx, result });
-      reimbursementMessages = this.reimbursementDraftMessages(result, expenseDraftCtx);
+      reimbursementMessages = await this.reimbursementDraftMessages(result, expenseDraftCtx, event);
       if (result.status === 'needs_fields' || result.status === 'needs_target') {
         const options = await this.reimbursementAdapter?.readDisplayOptions({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
         if (options) {
           this.reimbursementOptionsDelivery.set(event, { actionId: actionIds[0]!, options });
-          const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '');
+          const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '', replyLanguage(event));
           if (choices.length) reimbursementMessages = choices;
         }
       }
@@ -8644,9 +8782,10 @@ export class ProcessLineWebhookUseCase {
 
     const delivery = await this.deliverMessages(
       event,
-      [...(actionOnly ? [] : draftPreview ? [completionWithChoices, buildDraftUpdatePreviewCard(draftPreview, this.config.webBaseUrl)]
-        : claimHandoff ? [buildLineAssistantTextCardMessage(`${turnResponse.replyText}\nเปิดใบเบิก: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}`, this.config.webBaseUrl, companyId)]
-        : [completionWithChoices]), ...reimbursementMessages, ...(counterpartyPreview ? [buildCounterpartyCard(counterpartyPreview)] : []), ...(actionPreview ? [buildExpenseActionCard(actionPreview)] : [])],
+      [...(actionOnly ? [] : draftPreview ? [completionWithChoices, buildDraftUpdatePreviewCard(draftPreview, this.config.webBaseUrl, replyLanguage(event))]
+        : claimHandoff ? [buildLineAssistantTextCardMessage((replyLanguage(event) === 'en' ? `${turnResponse.replyText}
+View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` : `${turnResponse.replyText}\nเปิดใบเบิก: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}`), this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event))]
+        : [completionWithChoices]), ...reimbursementMessages, ...(counterpartyPreview ? [buildCounterpartyCard(counterpartyPreview, replyLanguage(event))] : []), ...(actionPreview ? [buildExpenseActionCard(actionPreview, undefined, replyLanguage(event))] : [])],
     );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
@@ -8769,7 +8908,7 @@ export class ProcessLineWebhookUseCase {
     currentCompanyId: string | undefined,
     page: number | undefined,
   ): Promise<CompanyPickerItem[]> {
-    const items: CompanyPickerItem[] = memberships.map(companyPickerItem);
+    const items: CompanyPickerItem[] = memberships.map(membership => companyPickerItem(membership, replyLanguage(event)));
     if (!this.handoffLinks) return items;
     const visible = new Set(companyPickerPage(items, currentCompanyId, page).visible.map((item) => item.companyId));
     return Promise.all(items.map(async (item, index) => (visible.has(item.companyId)
@@ -8786,7 +8925,7 @@ export class ProcessLineWebhookUseCase {
   private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
-      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.deliverReply(event, UNLINKED_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -8803,7 +8942,7 @@ export class ProcessLineWebhookUseCase {
         await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
           await this.companyPickerItems(event, userId, memberships, undefined, command.page),
           undefined,
-          command.page,
+          command.page, replyLanguage(event)
         )]);
         await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
         return;
@@ -8815,7 +8954,7 @@ export class ProcessLineWebhookUseCase {
       const pendingSignup = await this.findOpenLineSignup(event.lineUserId);
       const stateLabel = companyStateLabel(currentMembership);
       const messages: LineReplyMessage[] = [buildCompanyContextMessage({
-        companyName: companyLabel(currentMembership),
+        companyName: companyLabel(currentMembership, replyLanguage(event)),
         ...(stateLabel ? { stateLabel } : {}),
         displayName,
         roleLabels: companyRoleLabels(currentMembership),
@@ -8831,12 +8970,12 @@ export class ProcessLineWebhookUseCase {
           { userId, companyId: currentMembership.companyId, lineUserId: event.lineUserId, surface: LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN },
           companyWebPath(currentMembership),
         ) ?? undefined,
-      })];
+      }, replyLanguage(event))];
       if (memberships.length > 1) {
         messages.push(buildCompanyPickerMessage(
           await this.companyPickerItems(event, userId, memberships, currentMembership.companyId, command.page),
           currentMembership.companyId,
-          command.page,
+          command.page, replyLanguage(event)
         ));
       }
       await this.deliverRequiredMessages(event, messages);
@@ -8848,7 +8987,7 @@ export class ProcessLineWebhookUseCase {
     // index or companyId that is not theirs falls through to the picker below.
     const selected = findCompanySelection(memberships, command.value);
     if (!selected) {
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem), current?.companyId)]);
+      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(membership => companyPickerItem(membership, replyLanguage(event))), current?.companyId, undefined, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'company_context_selection_invalid', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY, current?.companyId);
       return;
     }
@@ -8871,7 +9010,7 @@ export class ProcessLineWebhookUseCase {
       riskLevel: 'LOW',
       metadataJson: { lineUserId: '[REDACTED]' },
     });
-    await this.deliverReply(event, `🏢 เปลี่ยนบริษัทเป็น ${companyLabel(selected)} แล้ว`);
+    await this.deliverReply(event, (replyLanguage(event) === 'en' ? `Selected shop: ${companyLabel(selected, replyLanguage(event))}.` : `🏢 เปลี่ยนบริษัทเป็น ${companyLabel(selected, replyLanguage(event))} แล้ว`));
     await this.updateEventLog(event.webhookEventId, 'company_context_switched', undefined, selected.companyId);
   }
 
@@ -9153,6 +9292,9 @@ export class ProcessLineWebhookUseCase {
         refused: true,
       },
     });
+    // Only presentation continuity: prior user wording cannot grant data or mutation authority.
+    if (!event.language || ('messageText' in event && (!/[A-Za-z\u0E00-\u0E7F]/u.test(event.messageText) || /^\/(?:company|companies)\b/iu.test(event.messageText)))) event.language = lineReplyLanguage('messageText' in event ? event.messageText : '',
+      lineReplyLanguage(rows.find(row => row.userMessagePreview && !row.userMessagePreview.startsWith('['))?.userMessagePreview ?? '', event.language));
     const captureAccess = this.expenseRepo?.listRecentLineCaptures
       ? await this.permissionResolver.resolveAccess(userId, companyId) : null;
     const canReadCaptures = captureAccess && (RECEIPT_CAPTURE_PERMISSIONS.some(permission => captureAccess.permissions.includes(permission))
@@ -9269,6 +9411,7 @@ export class ProcessLineWebhookUseCase {
   /** `captionText` is the joined text of bubbles buffered together with this
    *  media message (spec §8); it feeds the intake route as the user's words. */
   async executeReceiptUpload(event: LineReceiptUploadEvent, captionText?: string): Promise<LineMediaTurnOutcome> {
+    if (captionText?.trim()) event.language = lineReplyLanguage(captionText, event.language);
     // A committed-stage marker belongs to this attempt, even if the caller reuses its input object.
     event = { ...event };
     delete (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT];
@@ -9293,7 +9436,7 @@ export class ProcessLineWebhookUseCase {
       if (saved?.uploaded) {
         const summary = await this.savedReceiptReply(event, saved.companyId, saved.expenseId);
         const delivered = await this.deliverRequiredMessages(event, await Promise.all(summary.texts.map(async (text) => await this.receiptReviewCard(event, text, summary.draft, saved!.companyId)
-          ?? this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId))))
+          ?? this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId, undefined, undefined, replyLanguage(event)))))
           .then(() => true, (error: unknown) => {
             this.logger.warn({ msg: 'line_receipt_saved_reply_failed', webhookEventId: event.webhookEventId, expenseId: saved!.expenseId, ...safeLineErrorDetails(error) });
             return false;
@@ -9306,7 +9449,7 @@ export class ProcessLineWebhookUseCase {
       }
       // Branch ambiguity is a data-setup state, not a transient fault: say what to do instead of
       // the "ชั่วคราว ลองใหม่" copy that retries into the identical failure (Owner 2026-08-27).
-      const deterministic = lineCaptureFailureReply(err, BRANCH_RETRY_RESEND);
+      const deterministic = lineCaptureFailureReply(err, BRANCH_RETRY_RESEND, replyLanguage(event));
       if (deterministic) {
         this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
         await this.deliverReply(event, deterministic.reply, undefined, undefined, 'notTaken').catch(() => {});
@@ -9315,7 +9458,7 @@ export class ProcessLineWebhookUseCase {
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(err) });
       // What was kept is not known here (see the reply's own note), so the card does not say "not taken".
-      await this.deliverReply(event, mediaProcessingFailedReply(event.messageType)).catch(() => {});
+      await this.deliverReply(event, mediaProcessingFailedReply(event.messageType, replyLanguage(event))).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
       return { outcome: 'done' };
     } finally {
@@ -9348,14 +9491,14 @@ export class ProcessLineWebhookUseCase {
     // intake, OCR, model or expense-draft work. The reply is deterministic support state, not AI.
     if (event.assistantPaused || await this.assistantPaused(event.lineUserId)) {
       await this.deliverReply(event,
-        supportMediaRecorded ? SUPPORT_MEDIA_RECEIVED_REPLIES[event.messageType] : SUPPORT_PAUSED_REPLY);
+        supportMediaRecorded ? SUPPORT_MEDIA_RECEIVED_REPLIES[event.messageType] : SUPPORT_PAUSED_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'support_paused');
       return { outcome: captionText?.trim() ? 'defer_text' : 'done' };
     }
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
-      await this.deliverReply(event, RECEIPT_LINK_REPLY);
+      await this.deliverReply(event, RECEIPT_LINK_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -9363,7 +9506,7 @@ export class ProcessLineWebhookUseCase {
     // PDPA opt-out gate (M-05 §3.1) — media intake is part of the LINE assistant, so the
     // same refusal applies; web receipt upload (P2, legal-obligation basis) is unaffected.
     if (identity.user.aiAssistantOptOutAt) {
-      await this.deliverReply(event, AI_OPT_OUT_REPLY);
+      await this.deliverReply(event, AI_OPT_OUT_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'ai_opt_out', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
@@ -9377,10 +9520,10 @@ export class ProcessLineWebhookUseCase {
         // is the same "no company resolved" dead end the text turn hits. `locked` lets the buffer
         // close the rest of the photo batch on this one card instead of one card per photo.
         if (await this.replyIfCompanyLocked(event, identity.userId)) return { outcome: 'locked' };
-        await this.deliverReply(event, RECEIPT_LINK_REPLY);
+        await this.deliverReply(event, RECEIPT_LINK_REPLY[replyLanguage(event)]);
       } else {
         const memberships = await this.listLineCompanies(identity.userId);
-        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(companyPickerItem))]);
+        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(memberships.map(membership => companyPickerItem(membership, replyLanguage(event))), undefined, undefined, replyLanguage(event))]);
       }
       await this.updateEventLog(event.webhookEventId, !resolved ? 'unlinked' : 'needs_company_selection', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
@@ -9391,7 +9534,7 @@ export class ProcessLineWebhookUseCase {
     try {
       access = await this.permissionResolver.resolveAccess(identity.userId, companyId);
     } catch {
-      await this.deliverReply(event, RECEIPT_LINK_REPLY);
+      await this.deliverReply(event, RECEIPT_LINK_REPLY[replyLanguage(event)]);
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
@@ -9412,7 +9555,7 @@ export class ProcessLineWebhookUseCase {
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
     await this.bindConversation(event);
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'), undefined, undefined, 'notTaken');
+      await this.deliverReply(event, formatRefusal('feature_disabled', undefined, replyLanguage(event)), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
       return;
@@ -9427,7 +9570,7 @@ export class ProcessLineWebhookUseCase {
       && access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission));
     const canCaptureClaimPayment = !!this.boundConversations.get(event) && access.permissions.includes('reimbursement.payment.record');
     if (!canCaptureExpense && !canSubmitSignature && !canReadDocument && !canStageReimbursement && !canCaptureClaimPayment) {
-      await this.deliverReply(event, receiptDeniedReply(access), undefined, undefined, 'notTaken');
+      await this.deliverReply(event, receiptDeniedReply(access, replyLanguage(event)), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
       await this.updateEventLog(event.webhookEventId,
         receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
@@ -9436,7 +9579,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if ((!this.initReceiptUpload || !this.completeReceiptUpload) && !canReadDocument && !canStageReimbursement && !canCaptureClaimPayment) {
-      await this.deliverReply(event, ERROR_REPLY, undefined, undefined, 'notTaken');
+      await this.deliverReply(event, ERROR_REPLY[replyLanguage(event)], undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId);
       return;
     }
@@ -9481,7 +9624,7 @@ export class ProcessLineWebhookUseCase {
         ...(downloaded.declaredFileSize !== undefined ? { declaredFileSize: downloaded.declaredFileSize } : {}),
         ...(downloaded.measuredByteSize !== undefined ? { measuredByteSize: downloaded.measuredByteSize } : {}),
       });
-      await this.deliverReply(event, mediaDownloadFailedReply(event.messageType), undefined, undefined, 'notTaken');
+      await this.deliverReply(event, mediaDownloadFailedReply(event.messageType, replyLanguage(event)), undefined, undefined, 'notTaken');
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_LINE_MEDIA_DOWNLOAD_FAILED', companyId);
       return;
     }
@@ -9492,7 +9635,7 @@ export class ProcessLineWebhookUseCase {
         companyId, stage: 'SECURITY', reasonCode: mediaRejectionReason, outcome: 'REJECTED',
         measuredByteSize: media.byteSize, fileName: media.fileName,
       });
-      await this.deliverReply(event, MEDIA_SECURITY_REJECTED_REPLY, undefined, undefined, 'notTaken');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_SECURITY_REJECTED_REPLY : MEDIA_SECURITY_REJECTED_REPLY), undefined, undefined, 'notTaken');
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -9535,22 +9678,22 @@ export class ProcessLineWebhookUseCase {
         permissions: access.permissions, entitledFeatureKeys, messageText: textEvent.messageText,
         attachment: { id: event.lineMessageId, mimeType: media.mimeType, ...(media.contentBase64 ? { contentBase64: media.contentBase64 } : {}) } });
       if (route.status !== 'ROUTED' || !this.budgetGrantsV2.has(textEvent)) {
-        await this.deliverReply(event, 'ยังแนบหลักฐานไม่สำเร็จค่ะ กรุณาลองส่งรูปอีกครั้ง'); return;
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The evidence could not be attached; please resend the photo." : 'ยังแนบหลักฐานไม่สำเร็จค่ะ กรุณาลองส่งรูปอีกครั้ง')); return;
       }
       if (payoutPending) {
-        const slip = await this.expenseActions.captureClaimSlip(ctx, chatKeyHashOf(event), media, intent => this.uploadLineMedia(intent, media));
+        const slip = await this.expenseActions.captureClaimSlip(ctx, chatKeyHashOf(event), media, intent => this.uploadLineMedia(intent, media), replyLanguage(event));
         if (slip?.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId, preview: slip.preview });
-        await this.deliverRequiredMessages(event, [slip?.preview ? buildExpenseActionCard(slip.preview) : slip?.webPath
-          ? buildLineSystemTextCardMessage({ text: `${slip.reply}\n${absoluteWebLink(this.config.webBaseUrl, slip.webPath)}`,
-            webBaseUrl: this.config.webBaseUrl, companyId, header: { lines: ['บันทึกจ่ายคืน', 'ตรวจข้อมูลในเว็บ'] }, linkLabel: 'เปิดใบเบิก' })
+        await this.deliverRequiredMessages(event, [slip?.preview ? buildExpenseActionCard(slip.preview, undefined, replyLanguage(event)) : slip?.webPath
+          ? buildLineSystemTextCardMessage({ ...({ text: `${slip.reply}\n${absoluteWebLink(this.config.webBaseUrl, slip.webPath)}`,
+            webBaseUrl: this.config.webBaseUrl, companyId, header: { lines: [(replyLanguage(event) === 'en' ? "Record reimbursement" : 'บันทึกจ่ายคืน'), (replyLanguage(event) === 'en' ? "Review on web" : 'ตรวจข้อมูลในเว็บ')] }, linkLabel: (replyLanguage(event) === 'en' ? "View claim" : 'เปิดใบเบิก') }), language: replyLanguage(event) })
             ?? { type: 'text', text: slip.reply }
-          : { type: 'text', text: slip?.reply ?? 'ยังแนบสลิปไม่สำเร็จค่ะ กรุณาลองใหม่' }]);
+          : { type: 'text', text: slip?.reply ?? (replyLanguage(event) === 'en' ? "The payment slip could not be attached; please try again." : 'ยังแนบสลิปไม่สำเร็จค่ะ กรุณาลองใหม่') }]);
       } else if (claimPhoto) {
         const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } } });
         const attachmentId = await this.stageReimbursementMedia(event, ctx, textEvent.messageText, media, claimOwner, pending, claimPhoto.branchId);
         const result = await this.reimbursementAdapter.attachPhoto({ ctx, owner: claimOwner.owner, ownerEpoch: claimOwner.epoch, attachmentId });
         if (result) await this.deliverReimbursementCollection(event, ctx, result);
-        else await this.deliverReply(event, 'รายการใบเบิกเปลี่ยนแล้วค่ะ เปิดร่างล่าสุดก่อนแนบรูปอีกครั้ง');
+        else await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The claim changed; open its latest draft before attaching the photo again." : 'รายการใบเบิกเปลี่ยนแล้วค่ะ เปิดร่างล่าสุดก่อนแนบรูปอีกครั้ง'));
       }
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
@@ -9558,7 +9701,7 @@ export class ProcessLineWebhookUseCase {
 
     if (this.substituteReceiptContinuation && canCaptureExpense && access.permissions.includes('expense.receipt.upload')
       && event.messageType === 'image' && !isSignatureCaptionText(caption)) {
-      const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+      const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event), replyLanguage(event));
       if (context?.paymentEvidenceRequestedAt && substituteAwaitsCaptionlessPhoto(context)
         && (!caption || /สลิป|หลักฐาน|โอน/u.test(caption))) {
         const outcome = await this.handleSubstituteMediaArrival({ event, ctx, access, companyId, userId: identity.userId,
@@ -9567,9 +9710,9 @@ export class ProcessLineWebhookUseCase {
       }
     }
 
-    const evidenceTarget = event.messageType === 'image' ? await this.expenseActions?.evidencePhotoTarget?.(ctx, chatKeyHashOf(event)) : null;
+    const evidenceTarget = event.messageType === 'image' ? await this.expenseActions?.evidencePhotoTarget?.(ctx, chatKeyHashOf(event), replyLanguage(event)) : null;
     if (evidenceTarget && 'reply' in evidenceTarget) {
-      await this.deliverReply(event, evidenceTarget.reply!, { items: [{ type: 'action', action: { type: 'message', label: 'ดูรายการล่าสุด', text: 'ดูรายการนี้ล่าสุด' } }] });
+      await this.deliverReply(event, evidenceTarget.reply!, { items: [{ type: 'action', action: { type: 'message', label: (replyLanguage(event) === 'en' ? "View latest record" : 'ดูรายการล่าสุด'), text: (replyLanguage(event) === 'en' ? "Show this record’s current status" : 'ดูรายการนี้ล่าสุด') } }] });
       return;
     }
     if (evidenceTarget && this.createUploadIntent && this.completeReceiptUpload) {
@@ -9580,11 +9723,11 @@ export class ProcessLineWebhookUseCase {
         checksumSha256: media.checksumSha256, byteSize: media.byteSize, intent: 'replace', expectedUpdatedAt: evidenceTarget.revision,
         ...(evidenceTarget.primaryAttachmentId ? { expectedPrimaryAttachmentId: evidenceTarget.primaryAttachmentId } : {}), operationId: event.lineMessageId });
       (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: evidenceTarget.expenseId, companyId, uploaded: true };
-      const result = await this.expenseActions.afterEvidencePhoto(ctx, chatKeyHashOf(event), evidenceTarget.expenseId);
+      const result = await this.expenseActions.afterEvidencePhoto(ctx, chatKeyHashOf(event), evidenceTarget.expenseId, replyLanguage(event));
       if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId, preview: result.preview });
-      const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event));
-      await this.deliverReply(event, result.reply, choices?.length ? { items: choices.map(choice => ({ type: 'action' as const, action: { type: 'message' as const, ...choice } })) } : undefined,
-        result.preview ? buildExpenseActionCard(result.preview) : undefined);
+      const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
+      await this.deliverReply(event, result.reply, choices?.length ? lineChoiceQuickReply(choices) : undefined,
+        result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event)) : undefined);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -9593,7 +9736,7 @@ export class ProcessLineWebhookUseCase {
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
-      await this.deliverReply(event, ERROR_REPLY, undefined, undefined, 'notTaken');
+      await this.deliverReply(event, ERROR_REPLY[replyLanguage(event)], undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId); return;
     }
 
@@ -9607,19 +9750,19 @@ export class ProcessLineWebhookUseCase {
         || !isBranchInScope(ctx.scopes ?? {}, exact.branchId)
         || exact.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
       this.rememberReceiptDeliverySource(event, ctx, exact);
-      const total = `${moneyLabel(exact.grandTotalAmount)} บาท`;
+      const total = (replyLanguage(event) === 'en' ? `${moneyLabel(exact.grandTotalAmount)} THB` : `${moneyLabel(exact.grandTotalAmount)} บาท`);
       const keptReply = [
-        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ',
-        ...(exact.vendorNameSnapshot ? [`ผู้ขาย – ${exact.vendorNameSnapshot}`] : []),
-        `ยอดรวม – ${total}`,
-        `สถานะ – ${receiptProgressLabel(exact.status, exact.aiVerificationStatus)}`,
-        `เปิดใบเสร็จเดิม: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}`,
+        (replyLanguage(event) === 'en' ? "This photo matches an existing bill." : '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ'),
+        ...(exact.vendorNameSnapshot ? [(replyLanguage(event) === 'en' ? `Seller: ${exact.vendorNameSnapshot}` : `ผู้ขาย – ${exact.vendorNameSnapshot}`)] : []),
+        (replyLanguage(event) === 'en' ? `Total: ${total}` : `ยอดรวม – ${total}`),
+        (replyLanguage(event) === 'en' ? `Status: ${receiptProgressLabel(exact.status, exact.aiVerificationStatus, replyLanguage(event))}` : `สถานะ – ${receiptProgressLabel(exact.status, exact.aiVerificationStatus, replyLanguage(event))}`),
+        (replyLanguage(event) === 'en' ? `View existing receipt: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}` : `เปิดใบเสร็จเดิม: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}`),
       ].join('\n');
       // The same reply as a row card of the locked design, from the same facts. A bill not read yet
       // holds no amount (the record's 0), so its card has no total row; the sentence is as it was.
       await this.deliverCompletedReply(event, keptReply, companyId, access, undefined, buildKeptReceiptCard(keptReply, {
         expenseId: exact.id, vendor: exact.vendorNameSnapshot, ...(Number(toMoney4(exact.grandTotalAmount)) !== 0 ? { total } : {}),
-        progress: receiptProgress(exact.status, exact.aiVerificationStatus),
+        progress: receiptProgress(exact.status, exact.aiVerificationStatus, replyLanguage(event)),
       }, this.config.webBaseUrl, companyId));
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
@@ -9637,7 +9780,7 @@ export class ProcessLineWebhookUseCase {
     // certificate belongs to THAT question, not to a new evidence group.
     if (!this.boundConversations.has(event) && event.messageType === 'file' && canCaptureExpense && this.captureLine && this.initReceiptUpload) {
       const substituteOpen = this.substituteReceiptContinuation && access.permissions.includes('expense.receipt.upload')
-        ? await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event)).catch(() => null)
+        ? await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event), replyLanguage(event)).catch(() => null)
         : null;
       if (!substituteOpen) {
         return await this.captureLineFile({
@@ -9670,7 +9813,7 @@ export class ProcessLineWebhookUseCase {
         if (!this.substituteReceiptContinuation || !access.permissions.includes('expense.receipt.upload')) return false;
         try {
           // Asked only for a caption-less photo: open work claims it only right after asking for exactly it.
-          const open = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+          const open = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event), replyLanguage(event));
           return !!open && substituteAwaitsCaptionlessPhoto(open);
         } catch {
           return true;
@@ -9715,13 +9858,13 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'SIGNATURE_UPLOAD_TICKET') {
       if (!canSubmitSignature) {
-        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY, undefined, undefined, 'notTaken');
+        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY[replyLanguage(event)], undefined, undefined, 'notTaken');
         await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_signature_owner_permission', route: 'signature' } });
         await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
         return;
       }
       if (event.messageType !== 'image' || !this.initSignatureUpload || !this.createSignatureAsset) {
-        await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY, undefined, undefined, 'question');
+        await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY[replyLanguage(event)], undefined, undefined, 'question');
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
@@ -9766,8 +9909,8 @@ export class ProcessLineWebhookUseCase {
       && routePlan.intent !== 'MUTATION_REQUEST_REFUSAL';
     if (v2NeedsCaptureClarification || (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY')) {
       const clarifyReply = routePlan.clarifyQuestion ?? (v2NeedsCaptureClarification
-        ? 'ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ'
-        : CLARIFY_REPLY);
+        ? (replyLanguage(event) === 'en' ? "Read this file to answer a question, or use it as expense evidence? No expense has been created yet." : 'ต้องการให้อ่านไฟล์นี้เพื่อตอบคำถาม หรือใช้เป็นหลักฐานบันทึกค่าใช้จ่ายคะ ยังไม่ได้สร้างรายการให้ค่ะ')
+        : CLARIFY_REPLY[replyLanguage(event)]);
       // A4: this branch asked a question about a photo and then threw the photo away. Whatever the
       // customer answered — “ใบเสร็จ”, “ลายเซ็น”, “หลักฐานการจ่าย” — there were no bytes left to act
       // on. Park them on the same pending row every other clarify uses; the reply is unchanged, and
@@ -9783,8 +9926,8 @@ export class ProcessLineWebhookUseCase {
         }
       }
       await this.deliverReply(event, clarifyReply, v2NeedsCaptureClarification ? { items: [
-        { type: 'action', action: { type: 'message', label: 'บันทึกเป็นค่าใช้จ่าย', text: 'ใช้เป็นหลักฐานบันทึกค่าใช้จ่าย' } },
-        { type: 'action', action: { type: 'message', label: 'ถามจากไฟล์', text: 'ถามจากไฟล์' } },
+        { type: 'action', action: { type: 'message', label: (replyLanguage(event) === 'en' ? "Record expense" : 'บันทึกเป็นค่าใช้จ่าย'), text: (replyLanguage(event) === 'en' ? "Use this as expense evidence" : 'ใช้เป็นหลักฐานบันทึกค่าใช้จ่าย') } },
+        { type: 'action', action: { type: 'message', label: (replyLanguage(event) === 'en' ? "Ask about file" : 'ถามจากไฟล์'), text: (replyLanguage(event) === 'en' ? "Ask about file" : 'ถามจากไฟล์') } },
       ] } : undefined, undefined, 'question');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -9802,10 +9945,10 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'MUTATION_REQUEST_REFUSAL') {
-      await this.deliverCompletedReply(event, MUTATION_REFUSAL_REPLY, companyId, access, undefined, undefined, 'notTaken');
+      await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MUTATION_REFUSAL_REPLY : MUTATION_REFUSAL_REPLY), companyId, access, undefined, undefined, 'notTaken');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MUTATION_REFUSAL_REPLY, intent: 'MUTATION_REQUEST', refused: true,
+        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MUTATION_REFUSAL_REPLY : MUTATION_REFUSAL_REPLY), intent: 'MUTATION_REQUEST', refused: true,
       });
       await this.updateEventLog(event.webhookEventId, 'forbidden', undefined, companyId);
       return;
@@ -9823,15 +9966,15 @@ export class ProcessLineWebhookUseCase {
           receiptClarifyQuestion(event),
         );
         if (created) {
-          await this.deliverReply(event, MEDIA_CLARIFY_REPLY, undefined, undefined, 'question');
+          await this.deliverReply(event, MEDIA_CLARIFY_REPLY[replyLanguage(event)], undefined, undefined, 'question');
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
+            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY[replyLanguage(event)], intent: 'CLARIFY',
           });
           if (pending) {
             await this.appendMediaClarification(event, {
               companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
-              userId: identity.userId, caption, question: MEDIA_CLARIFY_REPLY, pending,
+              userId: identity.userId, caption, question: MEDIA_CLARIFY_REPLY[replyLanguage(event)], pending,
             });
           }
         }
@@ -9843,7 +9986,7 @@ export class ProcessLineWebhookUseCase {
         );
         return { outcome: 'done' };
       }
-      await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access, undefined, undefined, 'notTaken');
+      await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_UNSUPPORTED_REPLY : MEDIA_UNSUPPORTED_REPLY), companyId, access, undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -9861,7 +10004,7 @@ export class ProcessLineWebhookUseCase {
       && access.permissions.includes('expense.receipt.upload')
       && (routePlan.status !== 'ROUTED' || routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE')) {
       try {
-        const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+        const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event), replyLanguage(event));
         // UAT round 10: a caption-less photo is a new expense unless this chat was just asked for exactly that
         // picture. A caption keeps its own signals and a file keeps its lane, as before.
         const claims = context && (event.messageType !== 'image' || caption || substituteAwaitsCaptionlessPhoto(context));
@@ -9892,7 +10035,7 @@ export class ProcessLineWebhookUseCase {
     // never read an existing expense. Every possible capture/fallback branch is denied here.
     const isReferenceOnlyRoute = routePlan.status === 'ROUTED' && routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE';
     if (!canCaptureExpense && !isReferenceOnlyRoute) {
-      await this.deliverReply(event, receiptDeniedReply(access), undefined, undefined, 'notTaken');
+      await this.deliverReply(event, receiptDeniedReply(access, replyLanguage(event)), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload', route: 'capture' } });
       await this.updateEventLog(event.webhookEventId,
         receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
@@ -9970,7 +10113,7 @@ export class ProcessLineWebhookUseCase {
     // false outage story for a policy decision, and it invited a resend that spends nothing but the
     // customer's patience. Retention is claimed ONLY from a pending row that really exists (B-04).
     if (isAiBudgetRefusalCode(ocr.errorCode)) {
-      const reply = formatOcrGovernanceClarifyReply(ocr.errorCode, true);
+      const reply = formatOcrGovernanceClarifyReply(ocr.errorCode, true, replyLanguage(event));
       const permanent = isAiBudgetPermanentRefusal(ocr.errorCode);
       // Whichever hop actually met the gate is the one that knows the scope.
       const budgetScope = routePlan.budgetScope ?? ocr.budgetScope;
@@ -9982,7 +10125,7 @@ export class ProcessLineWebhookUseCase {
       // admitted intake call and the OCR hop. Parking a file and offering "1) record as receipt"
       // would hand them a workflow they are not allowed to finish, so neither happens.
       if (!canCaptureExpense) {
-        const denied = formatBudgetMediaNotStoredReply(ocr.errorCode, 'no_permission');
+        const denied = formatBudgetMediaNotStoredReply(ocr.errorCode, 'no_permission', replyLanguage(event));
         await this.deliverReply(event, denied, undefined, undefined, 'notTaken');
         await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
           { ...(budgetScope ? { budgetScope } : {}), mediaState: 'not_stored_no_permission' });
@@ -9997,7 +10140,7 @@ export class ProcessLineWebhookUseCase {
         // The bytes are NOT stored. Confirming retention from the webhook alone is exactly what
         // §9.2 forbids, so say what is true and keep the money reason.
         this.logger.warn({ msg: 'line_budget_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
-        await this.deliverReply(event, formatBudgetMediaNotStoredReply(ocr.errorCode, 'save_failed'), undefined, undefined, 'notTaken');
+        await this.deliverReply(event, formatBudgetMediaNotStoredReply(ocr.errorCode, 'save_failed', replyLanguage(event)), undefined, undefined, 'notTaken');
         await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
           { ...(budgetScope ? { budgetScope } : {}), mediaState: 'save_failed' });
         return { outcome: 'done' };
@@ -10010,7 +10153,7 @@ export class ProcessLineWebhookUseCase {
       const retained = parked.created
         || (!!parked.pending && parked.pending.lineMessageId === event.lineMessageId);
       const notStored = !parked.created && !retained
-        ? formatBudgetMediaNotStoredReply(ocr.errorCode, 'open_question')
+        ? formatBudgetMediaNotStoredReply(ocr.errorCode, 'open_question', replyLanguage(event))
         : null;
       if (parked.created || notStored) {
         const text = notStored ?? reply;
@@ -10083,7 +10226,7 @@ export class ProcessLineWebhookUseCase {
             && !decision.classification.missingRequiredSignals.some((signal) =>
               signal === 'MISSING_MONETARY_AMOUNT' || signal === 'MISSING_TRANSACTION_TOTAL')));
       if (checkBillAwaitingDecision && canCaptureExpense && this.substituteReceiptContinuation) {
-        const reply = formatCheckBillDecisionReply();
+        const reply = formatCheckBillDecisionReply(replyLanguage(event));
         const { created, pending } = await this.ensurePendingMedia(
           ctx, event, companyId, identity.userId, caption, media,
           {
@@ -10093,7 +10236,7 @@ export class ProcessLineWebhookUseCase {
           },
         );
         if (created) {
-          await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply(), undefined, 'question');
+          await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply(replyLanguage(event)), undefined, 'question');
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `[ผู้ใช้ส่งเช็กบิล]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
@@ -10126,7 +10269,7 @@ export class ProcessLineWebhookUseCase {
         : undefined;
       const reply = decision.outcome === 'reference'
         ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId,
-          { ...(captureLink ? { captureLink } : {}) })
+          { ...(captureLink ? { captureLink } : {}) }, replyLanguage(event))
         : MEDIA_UNSUPPORTED_REPLY;
       await this.deliverCompletedReply(event, reply, companyId, access, undefined, undefined,
         decision.outcome === 'reference' ? businessDocumentOutcome(decision.classification, Boolean(captureLink)) : 'notTaken');
@@ -10174,9 +10317,9 @@ export class ProcessLineWebhookUseCase {
       }
       const reply = decision.persistMedia
         ? ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && decision.classification?.contentKind === 'MULTI_DOCUMENT'
-          ? ocr.utilityDocuments?.length ? formatUtilityDocumentsReply(ocr.utilityDocuments) : MULTI_DOCUMENT_CLARIFY_REPLY
-          : formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
-        : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
+          ? ocr.utilityDocuments?.length ? formatUtilityDocumentsReply(ocr.utilityDocuments, replyLanguage(event)) : MULTI_DOCUMENT_CLARIFY_REPLY[replyLanguage(event)]
+          : formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED', replyLanguage(event))
+        : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId, undefined, replyLanguage(event));
       // What the reply reports, for its card's heading: several documents in one picture is a question;
       // a read that failed or was refused leaves the picture kept and unread; a reply about what the
       // document is follows what the reader found.
@@ -10205,7 +10348,7 @@ export class ProcessLineWebhookUseCase {
         }
         if (!created) terminalStatus = 'duplicate_media_pending';
       } else {
-        await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply, undefined, undefined, decision.persistMedia ? 'notTaken' : clarifyOutcome);
+        await this.deliverReply(event, decision.persistMedia ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_UNSUPPORTED_REPLY : MEDIA_UNSUPPORTED_REPLY) : reply, undefined, undefined, decision.persistMedia ? 'notTaken' : clarifyOutcome);
       }
       await this.updateEventLog(event.webhookEventId, terminalStatus, undefined, companyId);
       return;
@@ -10400,7 +10543,7 @@ export class ProcessLineWebhookUseCase {
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
       .includes(normalizeLineText(purposeHint).toLocaleLowerCase('th-TH')) ? purposeHint : undefined;
     const draftSuggestedCategoryId = effectiveCategory?.id ?? categorySuggestion?.expenseCategoryId;
-    if (expenseDraftConversationEnabled) await this.expenseDraftConversation!.startFromReceipt(ctx, {
+    if (expenseDraftConversationEnabled) await this.expenseDraftConversation!.startFromReceipt(ctx, { language: replyLanguage(event),
         expenseId: intent.expenseId,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
@@ -10423,12 +10566,12 @@ export class ProcessLineWebhookUseCase {
     // สร้างรายการ" is impossible here by construction, which is exactly §18.4's rule.
     const nrOnExpense = expensePathNonReceiptLead(decision.classification, ocrFields?.grandTotalAmount);
     const utilityLead = utilityReceipt ? [
-      `📄 รูปนี้มีเอกสาร${/(?:ค่าน้ำ|ประปา)/u.test(utilityReceipt.bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ'} 2 งวดค่ะ`,
-      `• งวดก่อน ${utilityReceipt.receipt.period}: ใบเสร็จ ${utilityReceipt.receipt.amount} บาท — บันทึกร่างค่าใช้จ่ายจากใบเสร็จแล้ว รอตรวจข้อมูล`,
-      `• งวดปัจจุบัน ${utilityReceipt.bill.period}: ${utilityReceipt.bill.titleEvidence} ${utilityReceipt.bill.amount} บาท — เป็นยอดที่เรียกเก็บ ยังไม่ใช่หลักฐานว่าชำระ และยังไม่ได้บันทึกจากภาพนี้`,
-      'ไม่ได้รวมสองยอดหรือบันทึกการชำระเงินจากใบแจ้งค่ะ',
-      'หากต้องการบันทึกใบแจ้งงวดปัจจุบันเป็นร่างบิลค้างชำระด้วย พิมพ์ “บันทึกใบแจ้งหนี้ด้วย” ค่ะ',
-      'เมื่อชำระงวดปัจจุบันแล้ว ส่งใบเสร็จของงวดนั้นเข้ามาเพื่อบันทึกค่าใช้จ่ายค่ะ',
+      (replyLanguage(event) === 'en' ? `This image contains ${/(?:ค่าน้ำ|ประปา)/u.test(utilityReceipt.bill.titleEvidence) ? 'water' : 'electricity'} utility documents for two billing periods.` : `📄 รูปนี้มีเอกสาร${/(?:ค่าน้ำ|ประปา)/u.test(utilityReceipt.bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ'} 2 งวดค่ะ`),
+      (replyLanguage(event) === 'en' ? `• Previous period ${utilityReceipt.receipt.period}: receipt ${utilityReceipt.receipt.amount} THB — an expense draft was created from the receipt for review.` : `• งวดก่อน ${utilityReceipt.receipt.period}: ใบเสร็จ ${utilityReceipt.receipt.amount} บาท — บันทึกร่างค่าใช้จ่ายจากใบเสร็จแล้ว รอตรวจข้อมูล`),
+      (replyLanguage(event) === 'en' ? `• Current period ${utilityReceipt.bill.period}: ${utilityReceipt.bill.titleEvidence} ${utilityReceipt.bill.amount} THB — an amount due, without proof of payment; it was not recorded from this image.` : `• งวดปัจจุบัน ${utilityReceipt.bill.period}: ${utilityReceipt.bill.titleEvidence} ${utilityReceipt.bill.amount} บาท — เป็นยอดที่เรียกเก็บ ยังไม่ใช่หลักฐานว่าชำระ และยังไม่ได้บันทึกจากภาพนี้`),
+      (replyLanguage(event) === 'en' ? "The two amounts were not combined, and the bill was not used to record a payment." : 'ไม่ได้รวมสองยอดหรือบันทึกการชำระเงินจากใบแจ้งค่ะ'),
+      (replyLanguage(event) === 'en' ? "Ask to save the current bill as an unpaid draft if needed." : 'หากต้องการบันทึกใบแจ้งงวดปัจจุบันเป็นร่างบิลค้างชำระด้วย พิมพ์ “บันทึกใบแจ้งหนี้ด้วย” ค่ะ'),
+      (replyLanguage(event) === 'en' ? "After paying the current period, send its receipt to record the expense." : 'เมื่อชำระงวดปัจจุบันแล้ว ส่งใบเสร็จของงวดนั้นเข้ามาเพื่อบันทึกค่าใช้จ่ายค่ะ'),
     ].join('\n') : undefined;
     // What leads the summary in the text leads the review card's notes, in the same order.
     const leads = [utilityLead, nrOnExpense].filter((lead): lead is string => !!lead);
@@ -10451,10 +10594,10 @@ export class ProcessLineWebhookUseCase {
     const bound = this.boundConversations.get(event);
     const claim = ctx && bound && this.reimbursementDrafts
       ? await this.reimbursementDrafts.active({ ctx, owner: bound.owner, ownerEpoch: bound.epoch }) : null;
-    const nextAction = claim?.status === 'COLLECTING' ? { label: 'ใช้บิลนี้ทำใบเบิก', text: 'ใช้บิลที่เพิ่งส่งรูปทำใบเบิกต่อ' } : undefined;
+    const nextAction = claim?.status === 'COLLECTING' ? { label: (replyLanguage(event) === 'en' ? "Use bill for claim" : 'ใช้บิลนี้ทำใบเบิก'), text: (replyLanguage(event) === 'en' ? "Continue the claim using the bill just uploaded" : 'ใช้บิลที่เพิ่งส่งรูปทำใบเบิกต่อ') } : undefined;
     const confirmation = ctx && bound && !nextAction
-      ? await this.expenseActions?.preview(ctx, chatKeyHashOf(event), { action: 'CONFIRM', expenseId: draft.expenseId }, true) : undefined;
-    const card = buildExpenseDraftReviewCard(text, { ...draft, notes: [...leads, ...draft.notes] }, this.config.webBaseUrl, companyId, confirmation?.preview, nextAction);
+      ? await this.expenseActions?.preview(ctx, chatKeyHashOf(event), { action: 'CONFIRM', expenseId: draft.expenseId }, true, undefined, replyLanguage(event)) : undefined;
+    const card = buildExpenseDraftReviewCard(text, { ...draft, notes: [...leads, ...draft.notes] }, this.config.webBaseUrl, companyId, confirmation?.preview, nextAction, replyLanguage(event));
     if (card && confirmation?.preview) this.deliveryExpenseActions.set(event, { context: ctx!, chat: chatKeyHashOf(event), requestId: ctx!.requestId, preview: confirmation.preview });
     if (card && nextAction) card.quickReply = lineChoiceQuickReply([nextAction]);
     return card;
@@ -10465,7 +10608,7 @@ export class ProcessLineWebhookUseCase {
   private async savedReceiptReply(event: LineReceiptUploadEvent | LineTextEvent, companyId: string, expenseId: string, questionText?: string): Promise<{ texts: string[]; draft?: LineExpenseDraftCardFacts }> {
     const texts = (text: string) => ({ texts: [text] });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
-    const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
+    const fallback = (replyLanguage(event) === 'en' ? "The existing receipt could not be verified; check the record on the web before resending it." : 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ');
     try {
       if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return texts(fallback);
       const access = await this.permissionResolver.resolveAccess(event.handoff.userId, companyId);
@@ -10476,7 +10619,8 @@ export class ProcessLineWebhookUseCase {
       this.rememberReceiptDeliverySource(event, { requestId: event.webhookEventId, authSubject: event.handoff.userId,
         userId: event.handoff.userId, companyId, membershipId: access.membershipId, roles: access.roles,
         permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, expense, category);
-      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return texts(`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`);
+      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return texts((replyLanguage(event) === 'en' ? `This expense is already stored.
+View record: ${link}` : `เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`));
       const summary = expense.aiVerificationSummaryJson;
       const reconciliation = summary?.chargeReconciliation as { status?: unknown; chargesApplied?: unknown } | undefined;
       const options: PaypersReplyOptions = {
@@ -10502,8 +10646,8 @@ export class ProcessLineWebhookUseCase {
         hasDuplicate: Boolean(expense.duplicateOfExpenseId) || expense.duplicateStatus === 'POSSIBLE_DUPLICATE',
         dateStatus: (summary?.dateStatus as ExpenseDocumentDateStatus | undefined) ?? (expense.reviewedAt ? 'verified' : 'unverified'),
       };
-      return { texts: [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, options)],
-        draft: expenseDraftCardFacts(expenseId, { ...options, status: expense.status }) };
+      return { texts: [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { ...(options), language: replyLanguage(event) })],
+        draft: expenseDraftCardFacts(expenseId, { ...({ ...options, status: expense.status }), language: replyLanguage(event) }) };
     } catch (error) {
       this.logger.warn({ msg: 'line_receipt_summary_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
       return texts(fallback);
@@ -10555,7 +10699,7 @@ export class ProcessLineWebhookUseCase {
         // No file was sent in this chat, so a bare "บันทึกไปยัง" asks about the note just captured and
         // the record lanes answer it (NAT-12). Naming a file still gets the honest "no file" reply.
         if (!namesLineMedia(input.normalizedText)) return false;
-        reply = FILE_ATTEMPT_NONE_REPLY;
+        reply = replyLanguage(event) === 'en' ? 'No file is available to read; tap +, choose File, and send it here again.' : FILE_ATTEMPT_NONE_REPLY;
       } else {
         // A numbered answer to an ambiguity list already shown wins over a fresh list (§17.5).
         const chosen = await this.resolveFileAttemptChoice(input, chatKeyHash, lineUserIdHash, input.normalizedText);
@@ -10569,19 +10713,19 @@ export class ProcessLineWebhookUseCase {
           const earlier = messageId
             ? facts.find((fact) => fact.ref !== target.ref && byMessage(fact.ref) === messageId && fact.outcome === 'REJECTED')
             : undefined;
-          reply = fileAttemptAnswer(target, earlier);
+          reply = fileAttemptAnswer(target, earlier, replyLanguage(event));
         } else {
-          reply = fileAttemptChoiceList(facts);
-          choices = lineChoiceQuickReply(facts.map((fact, index) => ({ label: `ไฟล์ที่ ${index + 1} ${fact.fileNameSanitized ?? ''}`, text: String(index + 1) })));
+          reply = fileAttemptChoiceList(facts, replyLanguage(event));
+          choices = lineChoiceQuickReply(facts.map((fact, index) => ({ label: (replyLanguage(event) === 'en' ? `File ${index + 1} ${fact.fileNameSanitized ?? ''}` : `ไฟล์ที่ ${index + 1} ${fact.fileNameSanitized ?? ''}`), text: String(index + 1) })));
           await this.recordFileAttemptChoiceList(event, input.companyId, facts.map((fact) => fact.ref));
         }
       }
     } catch (error) {
       // §17.5: a lookup that failed is NEVER reported as "no file found".
       this.logger.warn({ msg: 'line_file_attempt_lookup_failed', ...safeLineErrorDetails(error) });
-      reply = FILE_ATTEMPT_LOOKUP_FAILED_REPLY; choices = undefined;
+      reply = replyLanguage(event) === 'en' ? 'The file status could not be checked; I cannot confirm whether it was stored.' : FILE_ATTEMPT_LOOKUP_FAILED_REPLY; choices = undefined;
     }
-    const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, input.companyId);
+    const card = buildLineAssistantTextCardMessage(reply, this.config.webBaseUrl, input.companyId, undefined, undefined, replyLanguage(event));
     if (choices) card.quickReply = choices;
     await this.deliverCompletedReply(event, reply, input.companyId, access, undefined, card);
     await this.persistIntakeTurn({ event,
@@ -10679,7 +10823,7 @@ export class ProcessLineWebhookUseCase {
   private async deliverPaymentEvidence(event: LineTextEvent | LineReceiptUploadEvent, ctx: RequestContext,
     result: LinePaymentEvidenceResult, requestedPage = 0): Promise<boolean> {
     const page = result.kind === 'ASK' ? paymentEvidencePage(result, requestedPage) : 0;
-    const raw = linePaymentEvidenceReply(result, page);
+    const raw = linePaymentEvidenceReply(result, page, replyLanguage(event));
     if (!raw) return false;
     const message = raw.type === 'flex' ? asCompleteLineCard(raw) : raw;
     const ids = result.kind === 'LINKED' ? [result.slipId, result.receiptId]
@@ -10693,12 +10837,12 @@ export class ProcessLineWebhookUseCase {
       const expense = await this.getLinkedExpense.execute(ctx, result.receiptId).catch(() => null);
       if (expense) {
         const total = `${moneyLabel(expense.grandTotalAmount)} ${expense.currency === 'THB' ? 'บาท' : expense.currency}`;
-        const date = formatReplyDate(expense.expenseDate.toISOString());
+        const date = formatReplyDate(expense.expenseDate.toISOString(), replyLanguage(event));
         const status = EXPENSE_STATUS_LABELS[expense.status];
         const card = buildExpenseDraftReviewCard(
         `${expense.vendorNameSnapshot ?? 'ค่าใช้จ่าย'} ${total} ${date} ${status}`,
         expenseDraftCardFactsFrom({ expenseId: expense.id, status, subject: expenseDraftCardSubject(expense.sourceDocumentType),
-          vendor: expense.vendorNameSnapshot, total, date }), this.config.webBaseUrl, ctx.companyId);
+          vendor: expense.vendorNameSnapshot, total, date }), this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
         if (card) messages.push(card);
       }
     }
@@ -10716,30 +10860,30 @@ export class ProcessLineWebhookUseCase {
         await this.deliverPaymentEvidence(event, ctx, await this.paymentEvidence.choices(ctx, chat, control.slipId), Number(control.page)); return;
       } else if (control?.operation === 'undo') {
         await this.paymentEvidence.undo(ctx, chat, control.slipId, control.operationId!);
-        await say('แยกสลิปกลับเป็นรายการร่างแล้วค่ะ');
+        await say((replyLanguage(event) === 'en' ? "The payment slip was separated back into an expense draft." : 'แยกสลิปกลับเป็นรายการร่างแล้วค่ะ'));
       } else if (control?.operation === 'new') {
         await this.paymentEvidence.separate(ctx, chat, control.slipId);
-        await say('เก็บสลิปเป็นรายการร่างแยกแล้วค่ะ');
+        await say((replyLanguage(event) === 'en' ? "The payment slip was kept as a separate expense draft." : 'เก็บสลิปเป็นรายการร่างแยกแล้วค่ะ'));
       } else {
         const result = control?.operation === 'link'
           ? await this.paymentEvidence.link(ctx, chat, control.slipId, control.receiptId)
           : await this.paymentEvidence.recent(ctx, chat);
         if (await this.deliverPaymentEvidence(event, ctx, result)) return;
-        await say('ยังไม่พบสลิปกับใบเสร็จที่จับคู่ได้ในแชตนี้ค่ะ กรุณาส่งเอกสารที่เกี่ยวข้องอีกครั้ง');
+        await say((replyLanguage(event) === 'en' ? "No matching receipt and payment slip were found in this chat; please resend the relevant documents." : 'ยังไม่พบสลิปกับใบเสร็จที่จับคู่ได้ในแชตนี้ค่ะ กรุณาส่งเอกสารที่เกี่ยวข้องอีกครั้ง'));
       }
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
     } catch (error) {
       if (!(error instanceof ForbiddenException || error instanceof ConflictException || error instanceof NotFoundException)) throw error;
       await say(error instanceof ForbiddenException
-        ? 'คุณยังไม่มีสิทธิ์แนบหลักฐานกับรายการนี้ค่ะ'
-        : 'รายการหรือหลักฐานเปลี่ยนไปแล้วค่ะ กรุณาเปิดรายการล่าสุดเพื่อตรวจสอบ');
+        ? (replyLanguage(event) === 'en' ? "Your current access does not allow attaching evidence to this expense." : 'คุณยังไม่มีสิทธิ์แนบหลักฐานกับรายการนี้ค่ะ')
+        : (replyLanguage(event) === 'en' ? "The expense or evidence changed; open the current record to review it." : 'รายการหรือหลักฐานเปลี่ยนไปแล้วค่ะ กรุณาเปิดรายการล่าสุดเพื่อตรวจสอบ'));
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
     }
   }
 
   private captureOwnerMetadata(event: LineReceiptUploadEvent | LineTextEvent, lineMessageId = event.lineMessageId ?? '') {
     const bound = this.boundConversations.get(event);
-    return { lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event),
+    return { language: replyLanguage(event), lineMessageId, lineEventId: event.webhookEventId, chatKeyHash: chatKeyHashOf(event),
       pushTargetId: event.pushTargetId ?? event.lineUserId,
       ...(bound ? { ownerBinding: { conversationId: bound.id, membershipId: bound.owner.membershipId,
         channelId: bound.owner.messagingChannelId, ownerEpoch: bound.epoch } } : {}) };
@@ -10818,7 +10962,7 @@ export class ProcessLineWebhookUseCase {
     const existing = await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId);
     if (existing) {
       await this.deliverCompletedReply(
-        event, this.fileStoredReply(this.expenseCaptureLink(companyId, existing.id)), companyId, access, undefined, undefined, 'reading',
+        event, this.fileStoredReply(this.expenseCaptureLink(companyId, existing.id), replyLanguage(input.event)), companyId, access, undefined, undefined, 'reading',
       );
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
       return finished();
@@ -10837,7 +10981,7 @@ export class ProcessLineWebhookUseCase {
         companyId, stage: 'PERSIST', reasonCode: 'persist_failed', outcome: 'REJECTED',
         measuredByteSize: media.byteSize, fileName: media.fileName,
       });
-      const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_RESEND);
+      const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_RESEND, replyLanguage(input.event));
       if (deterministic) {
         await this.deliverReply(event, deterministic.reply, undefined, undefined, 'notTaken').catch(() => {});
         await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode, companyId);
@@ -10852,11 +10996,11 @@ export class ProcessLineWebhookUseCase {
       targetType: 'expense', targetId: persisted.expenseId,
     });
 
-    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link), companyId, access, undefined, undefined, 'reading');
+    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link, replyLanguage(input.event)), companyId, access, undefined, undefined, 'reading');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
-      replyText: this.fileStoredReply(persisted.link), intent: 'EVIDENCE_CAPTURE',
+      replyText: this.fileStoredReply(persisted.link, replyLanguage(input.event)), intent: 'EVIDENCE_CAPTURE',
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'retained' });
     return finished();
@@ -10904,7 +11048,9 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** §16.7 UX: persisted, being read, and where to look while it is — nothing about a deadline. */
-  private fileStoredReply(link: string): string {
+  private fileStoredReply(link: string, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') { return `The file is stored and being read; I will send the result here.${link ? ` View file: ${link}` : ''}`; }
+
     return '📄 เก็บไฟล์แล้วค่ะ กำลังอ่านเอกสาร เสร็จแล้วน้องจะสรุปให้ทางแชตนี้'
       + (link ? ` ระหว่างนี้เปิดดูได้ที่: ${link}` : '');
   }
@@ -10961,17 +11107,19 @@ export class ProcessLineWebhookUseCase {
     const canContinue = Boolean(expense.primaryAttachmentId) && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && (expense.status === 'DRAFT' || expense.status === 'NEEDS_REVIEW');
-    if (canContinue) await this.expenseDraftConversation?.startFromReceipt(ctx, {
+    if (canContinue) await this.expenseDraftConversation?.startFromReceipt(ctx, { language: replyLanguage(event),
       expenseId: expense.id, chatKeyHash: chatKeyHashOf(event), webhookEventId: event.webhookEventId,
       ocrFields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
     });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status) || !expense.primaryAttachmentId)
       this.rememberReceiptDeliverySource(event, ctx, expense);
-    if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
-${link}`, ctx.companyId, access, undefined, undefined, 'stored');
-    else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
-${link}`, ctx.companyId, access, undefined, undefined, 'stored');
+    if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? `This record is stored; check its current status:
+${link}` : `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
+${link}`), ctx.companyId, access, undefined, undefined, 'stored');
+    else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? `The draft is stored, but its photo upload is not verified; review the existing draft:
+${link}` : `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
+${link}`), ctx.companyId, access, undefined, undefined, 'stored');
     else {
       const summary = await this.savedReceiptReply(event, ctx.companyId, expense.id);
       const text = summary.texts.join('\n');
@@ -11033,7 +11181,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     if (route.status === 'ROUTED' && route.intent === 'REIMBURSEMENT_REQUEST_START' && this.config.lineAiReimbursementDraftWriteEnabled
       && route.semanticSubrequests?.some(item => item.kind === 'write') && this.budgetGrantsV2.has(textEvent)) {
       if (!access.permissions.includes('attachment.create') || !access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) {
-        await this.deliverReply(event, 'สิทธิ์ปัจจุบันยังไม่อนุญาตเก็บไฟล์สำหรับร่างใบเบิกค่ะ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken'); return { handled: true };
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Your current access does not allow storing files for a claim draft; no record was created." : 'สิทธิ์ปัจจุบันยังไม่อนุญาตเก็บไฟล์สำหรับร่างใบเบิกค่ะ ยังไม่ได้สร้างรายการ'), undefined, undefined, 'notTaken'); return { handled: true };
       }
       await this.stageReimbursementMedia(event, ctx, caption, media, bound, pending);
       this.mediaTextContinuations.set(textEvent, { route, requestId: ctx.requestId });
@@ -11042,10 +11190,10 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     }
     if (!route.semanticSubrequests?.some(item => item.kind === 'file')) return { route };
     if (!this.config.lineAiDocumentQaEnabled) {
-      await this.deliverReply(event, 'การอ่านไฟล์เพื่อตอบคำถามยังไม่เปิดใช้งานค่ะ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken'); return { handled: true };
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "File question answering is unavailable; no expense was created." : 'การอ่านไฟล์เพื่อตอบคำถามยังไม่เปิดใช้งานค่ะ ยังไม่ได้สร้างรายการ'), undefined, undefined, 'notTaken'); return { handled: true };
     }
     if (route.semanticSubrequests.some(item => !['file', 'general', 'help'].includes(item.kind))) {
-      await this.deliverReply(event, 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้', undefined, undefined, 'question');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Choose whether to read the file for a question or keep it as expense evidence; no expense has been created." : 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้'), undefined, undefined, 'question');
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId); return { handled: true };
     }
     const grant = this.budgetGrantsV2.get(textEvent);
@@ -11053,17 +11201,17 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     let pages = 1;
     if (media.mimeType === 'application/pdf') pages = (await PDFDocument.load(media.bytes, { ignoreEncryption: false })).getPageCount();
     if (pages < 1 || pages > 20 || media.byteSize > 10 * 1024 * 1024) {
-      await this.deliverReply(event, 'ไฟล์นี้เกินขอบเขตการอ่าน กรุณาส่งไม่เกิน 20 หน้าและ 10 MiB ต่อไฟล์ ยังไม่ได้สร้างรายการให้', undefined, undefined, 'notTaken');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please send a file of up to 20 pages and 10 MiB; this file exceeded the reading limits and no expense was created." : 'ไฟล์นี้เกินขอบเขตการอ่าน กรุณาส่งไม่เกิน 20 หน้าและ 10 MiB ต่อไฟล์ ยังไม่ได้สร้างรายการให้'), undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'input_rejected', 'QA_INPUT_LIMIT', ctx.companyId); return { handled: true };
     }
     if (pending && (pending.userId !== bound.owner.userId || pending.channelKind !== 'USER'
       || pending.messagingChannelId !== bound.owner.messagingChannelId || pending.chatKeyHash !== bound.owner.chatKeyHash
       || pending.membershipId !== bound.owner.membershipId || pending.lifecycleEpoch !== bound.epoch)) {
-      await this.deliverReply(event, 'ไฟล์เดิมไม่อยู่ในบริบทแชตปัจจุบันค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken');
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The earlier file is unavailable in this chat; resend it, and no expense has been created." : 'ไฟล์เดิมไม่อยู่ในบริบทแชตปัจจุบันค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ'), undefined, undefined, 'notTaken');
       return { handled: true };
     }
     if (!await this.preserveSemanticTask(textEvent, route.semanticSubrequests)) {
-      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มอ่านไฟล์นี้', undefined, undefined, 'notTaken'); return { handled: true };
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The pending-task list is full; continue or cancel an existing task before reading this file." : 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มอ่านไฟล์นี้'), undefined, undefined, 'notTaken'); return { handled: true };
     }
     this.semanticTaskMappings.set(event, this.semanticTaskMappings.get(textEvent)!);
     let attachmentId = pending?.attachmentId;
@@ -11096,7 +11244,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     await Promise.race([running, new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs); })]);
     if (timer) clearTimeout(timer);
     if (!await this.deliverDocumentQaResult(event, admitted.jobId, owner)) {
-      await this.deliverDocumentQaProgress(event, admitted.jobId, 'กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก');
+      await this.deliverDocumentQaProgress(event, admitted.jobId, (replyLanguage(event) === 'en' ? "The file is being read for your question; I will reply here, and no expense or claim has been created." : 'กำลังอ่านไฟล์เพื่อตอบคำถามค่ะ เมื่ออ่านเสร็จจะตอบในแชตนี้ ยังไม่ได้สร้างรายการค่าใช้จ่ายหรือใบเบิก'));
       await this.updateEventLog(event.webhookEventId, 'document_qa_pending', undefined, ctx.companyId);
     }
     return { handled: true };
@@ -11151,7 +11299,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       : current.length ? current : candidates.length === 1 ? candidates : [];
     if (!selected.length || selected.length > 5 || requestedIds.size && selected.length !== requestedIds.size
       || !requestedIds.size && !byOrder && selectedIds.length > 0 && selected.length !== selectedIds.length) {
-      await this.deliverReply(event, `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาบอกว่าหมายถึงไฟล์ไหน เช่น "${pendingMediaOrderLabel(ordered[0]!, 0)}" ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true)).join('\n')}`);
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? `Several earlier files are available; identify the file, for example "${pendingMediaOrderLabel(ordered[0]!, 0, undefined, replyLanguage(event))}"; no file was chosen for you.
+${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true, replyLanguage(event))).join('\n')}` : `มีไฟล์ก่อนหน้าหลายไฟล์ค่ะ กรุณาบอกว่าหมายถึงไฟล์ไหน เช่น "${pendingMediaOrderLabel(ordered[0]!, 0, undefined, replyLanguage(event))}" ไม่ได้เลือกไฟล์ล่าสุดแทนให้\n${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true, replyLanguage(event))).join('\n')}`));
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, bound.owner.companyId); return true;
     }
     const values = await this.textValueCandidates(event, event.messageText);
@@ -11170,12 +11319,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         && (!item.requestedFilters.attachmentId || item.requestedFilters.attachmentId === row.attachmentId))?.requestedFilters.page;
       if (requestedPage !== undefined && (!Number.isSafeInteger(requestedPage) || Number(requestedPage) < 1 || Number(requestedPage) > 20
         || !values?.amounts.some(candidate => candidate.value === String(requestedPage)))) {
-        await this.deliverReply(event, `เลขหน้าที่ขอสำหรับ${pendingMediaOrderLabel(row, ordered.indexOf(row))} ไม่ถูกต้อง กรุณาระบุหน้า 1 ถึง 20 ค่ะ`); return true;
+        await this.deliverReply(event, (replyLanguage(event) === 'en' ? `The requested page in ${pendingMediaOrderLabel(row, ordered.indexOf(row), undefined, replyLanguage(event))} is invalid; choose a page from 1 to 20.` : `เลขหน้าที่ขอสำหรับ${pendingMediaOrderLabel(row, ordered.indexOf(row), undefined, replyLanguage(event))} ไม่ถูกต้อง กรุณาระบุหน้า 1 ถึง 20 ค่ะ`)); return true;
       }
       attachments.push({ attachmentId: row.attachmentId, requestedPages: requestedPage === undefined ? source.requestedPages : [Number(requestedPage)] });
     }
     if (!await this.preserveSemanticTask(event, route.semanticSubrequests)) {
-      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มคำถามใหม่นี้'); return true;
+      await this.deliverReply(event, (replyLanguage(event) === 'en' ? "The pending-task list is full; continue or cancel an existing task before starting this question." : 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มคำถามใหม่นี้')); return true;
     }
     let admitted: Awaited<ReturnType<LineDocumentQaService['admit']>>;
     try {
@@ -11185,8 +11334,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     } catch (error) {
       if (!(error instanceof LineDocumentQaError) || !['QA_PAGE_OUT_OF_RANGE', 'QA_ATTACHMENT_UNAVAILABLE', 'QA_SOURCE_CHANGED'].includes(error.code)) throw error;
       await this.deliverReply(event, error.code === 'QA_PAGE_OUT_OF_RANGE'
-        ? 'ไฟล์นี้ไม่มีหน้าที่ขอค่ะ กรุณาตรวจสอบเลขหน้า ยังไม่ได้สร้างรายการ'
-        : 'ไฟล์เดิมไม่พร้อมให้อ่านแล้วค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ');
+        ? (replyLanguage(event) === 'en' ? "The requested page is not in this file; check the page number, and no expense has been created." : 'ไฟล์นี้ไม่มีหน้าที่ขอค่ะ กรุณาตรวจสอบเลขหน้า ยังไม่ได้สร้างรายการ')
+        : (replyLanguage(event) === 'en' ? "The earlier file is unavailable for reading; resend it, and no expense has been created." : 'ไฟล์เดิมไม่พร้อมให้อ่านแล้วค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ'));
       await this.updateEventLog(event.webhookEventId, 'clarification_required', error.code, bound.owner.companyId); return true;
     }
     for (const row of selected) {
@@ -11202,7 +11351,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     if (timer) clearTimeout(timer);
     if (!await this.deliverDocumentQaResult(event, admitted.jobId,
       { ...bound.owner, ownerEpoch: bound.epoch })) {
-      await this.deliverDocumentQaProgress(event, admitted.jobId, 'กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ');
+      await this.deliverDocumentQaProgress(event, admitted.jobId, (replyLanguage(event) === 'en' ? "The earlier file is being read for this new question; no expense has been created." : 'กำลังอ่านไฟล์เดิมเพื่อตอบคำถามใหม่นี้ค่ะ ยังไม่ได้สร้างรายการ'));
       await this.updateEventLog(event.webhookEventId, 'document_qa_pending', undefined, bound.owner.companyId);
     }
     return true;
@@ -11239,7 +11388,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     const saved = await this.expenseRepo.findById(companyId, expenseId);
     await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: file.attachmentId, attachmentChecksum: attachment.checksumSha256 ?? null,
       expectedSourceUpdatedAt: saved?.updatedAt ?? null });
-    const reply = 'กำลังอ่านไฟล์นี้เพื่อทำร่างค่าใช้จ่ายให้ตรวจค่ะ อ่านเสร็จจะส่งร่างในแชตนี้ ยังไม่ได้ยืนยันรายการหรือจ่ายเงิน';
+    const reply = (replyLanguage(event) === 'en' ? "The file is being read to prepare an expense draft for your review; no expense confirmation or payment has occurred." : 'กำลังอ่านไฟล์นี้เพื่อทำร่างค่าใช้จ่ายให้ตรวจค่ะ อ่านเสร็จจะส่งร่างในแชตนี้ ยังไม่ได้ยืนยันรายการหรือจ่ายเงิน');
     await this.deliverCompletedReply(event, reply, companyId, access);
     await this.persistIntakeTurn({ event, userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: event.messageText, replyText: reply, intent: 'EVIDENCE_CAPTURE' });
@@ -11255,14 +11404,16 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       if (!terminal || !['FAILED', 'EXPIRED', 'CANCELED'].includes(terminal.status)
         || terminal.companyId !== owner.companyId || terminal.userId !== owner.userId || terminal.ownerMembershipId !== owner.membershipId
         || terminal.ownerEpoch !== owner.ownerEpoch || terminal.messagingChannelId !== owner.messagingChannelId || terminal.chatKeyHash !== owner.chatKeyHash) return false;
-      const text = terminal.status === 'CANCELED' ? 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้'
-        : terminal.status === 'EXPIRED' ? 'งานอ่านไฟล์นี้หมดเวลาแล้ว ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้งได้เลยค่ะ ยังไม่ได้สร้างรายการให้'
-          : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้ง ส่งไฟล์ที่ชัดกว่า หรือเลือกหน้าใหม่ได้ค่ะ ยังไม่ได้สร้างรายการให้';
+      const text = terminal.status === 'CANCELED' ? (replyLanguage(event) === 'en' ? "This file-reading task was cancelled; no expense was created." : 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้')
+        : terminal.status === 'EXPIRED' ? (replyLanguage(event) === 'en' ? "The file-reading task expired, but the file is retained; ask again, and no expense has been created." : 'งานอ่านไฟล์นี้หมดเวลาแล้ว ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้งได้เลยค่ะ ยังไม่ได้สร้างรายการให้')
+          : (replyLanguage(event) === 'en' ? "The file could not be read for this question, but is retained; ask again, send a clearer file, or choose another page, and no expense has been created." : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้ง ส่งไฟล์ที่ชัดกว่า หรือเลือกหน้าใหม่ได้ค่ะ ยังไม่ได้สร้างรายการให้');
       const said = documentQaAskedWords(terminal);
       const coverage = inventory.map(item => ({ index: item.index, status: 'needs_user' as const, reasonCode: 'QA_NOT_COMPLETED', question: said(item) }));
       if (coverage.length) this.semanticDelivery.set(event, coverage);
       const remaining = inventory.filter(item => item.kind !== 'file');
-      const notice = remaining.length ? `\n\nส่วนที่ยังไม่ได้ตอบ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+      const notice = remaining.length ? (replyLanguage(event) === 'en' ? `
+
+Parts still unanswered: ${remaining.map(said).join(' / ')}; choose a part to continue.` : `\n\nส่วนที่ยังไม่ได้ตอบ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ`) : '';
       if (await this.deliverMessages(event, [{ type: 'text', text: text + notice }]) !== 'ok') return false;
       if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
       // A failed or timed-out read keeps the file, so asking again or a new page reads it again; only a
@@ -11277,8 +11428,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // Owner 2026-09-29: files by their order in this read, never an attachment id or a reader code. The
     // failed-page wording is the one sendMessagesV2 matches, so the delivery plan never repeats it.
     const readOrder = [...new Set(result.coverage.requested.map(page => page.attachmentId))];
-    const fileOrdinal = (attachmentId: string) => readOrder.includes(attachmentId) ? ` ลำดับที่ ${readOrder.indexOf(attachmentId) + 1}` : '';
-    const failed = result.coverage.failed.map(page => `ยังอ่านเอกสารแนบ${fileOrdinal(page.attachmentId)} หน้า ${page.page} ไม่สำเร็จ`).join('\n');
+    const fileOrdinal = (attachmentId: string) => readOrder.includes(attachmentId) ? (replyLanguage(event) === 'en' ? ` ${readOrder.indexOf(attachmentId) + 1}` : ` ลำดับที่ ${readOrder.indexOf(attachmentId) + 1}`) : '';
+    const failed = result.coverage.failed.map(page => (replyLanguage(event) === 'en' ? `Could not read attachment ${fileOrdinal(page.attachmentId)} page ${page.page}.` : `ยังอ่านเอกสารแนบ${fileOrdinal(page.attachmentId)} หน้า ${page.page} ไม่สำเร็จ`)).join('\n');
     const said = documentQaAskedWords(job);
     const coverage = inventory.map(item => {
       const answer = result.questionCoverage?.find(answer => answer.subrequestIndex === item.index);
@@ -11288,10 +11439,15 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     });
     if (coverage.length) this.semanticDelivery.set(event, coverage);
     const remaining = inventory.filter(item => coverage.find(entry => entry.index === item.index)?.status === 'needs_user');
-    const notice = remaining.length ? `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ` : '';
+    const notice = remaining.length ? (replyLanguage(event) === 'en' ? `
+
+Parts still awaiting answers: ${remaining.map(said).join(' / ')}; choose a part to continue.` : `\n\nยังตอบได้ไม่ครบทุกส่วน ส่วนที่ยังรอ: ${remaining.map(said).join(' / ')} กรุณาเลือกถามต่อได้ค่ะ`) : '';
     // A reader that still names a file by its id is rewritten to the file's order (Owner 2026-09-29: no ids reach the customer).
-    const answer = readOrder.reduce((value, attachmentId, index) => value.replaceAll(attachmentId, `ไฟล์ที่ ${index + 1}`), result.answer);
-    const text = `${answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`;
+    const answer = readOrder.reduce((value, attachmentId, index) => value.replaceAll(attachmentId, (replyLanguage(event) === 'en' ? `File ${index + 1}` : `ไฟล์ที่ ${index + 1}`)), result.answer);
+    const text = (replyLanguage(event) === 'en' ? `${answer}
+
+Answer sources: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}
+Read ${result.coverage.read.length}/${result.coverage.requested.length} pages${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}` : `${answer}\n\nแหล่งคำตอบ: ${result.answerPageRefs.map(ref => `เอกสารแนบ${fileOrdinal(ref.attachmentId)} หน้า ${ref.page}`).join(', ')}\nอ่าน ${result.coverage.read.length}/${result.coverage.requested.length} หน้า${failed ? `\nหน้าที่ยังอ่านไม่ได้\n${failed}` : ''}${notice}`);
     const delivery = await this.deliverMessages(event, [{ type: 'text', text }]);
     if (delivery !== 'ok') return false;
     if (coverage.length) await this.settleSemanticTask(event as LineTextEvent, coverage);
@@ -11389,7 +11545,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // Rendered from the SAME ordered query `handlePendingMediaControl` resolves the tapped words against.
     if (open && pending && this.boundConversations.has(event)) this.pendingMediaNotices.set(event, this.pendingMediaSelectionMessage(
       await this.prisma.client.lineIntakePendingMedia.findMany({ where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() }, ...binding },
-        orderBy: { createdAt: 'asc' }, take: 6 })));
+        orderBy: { createdAt: 'asc' }, take: 6 }), replyLanguage(event)));
     return { created: true, ...(pending ? { pending } : {}) };
   }
 
@@ -11495,7 +11651,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       const offered = expenseId ? await this.substituteActions.prepare(input.ctx, chat, expenseId) : undefined;
       if (offered?.preview) this.deliverySubstituteActions.set(input.sourceEvent, { context: input.ctx, preview: offered.preview });
     }
-    return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision);
+    return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision, replyLanguage(input.sourceEvent));
   }
 
   /** §11 arrival half. The bytes are held by the SAME pending-media row the receipt clarify uses,
@@ -11552,7 +11708,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       });
     }
     // §11: two classes stay plausible, so exactly one question is asked and the file waits.
-    const text = question.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? substituteScanConfirmQuestion(scan!) : substituteMediaQuestion(choices);
+    const text = question.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? substituteScanConfirmQuestion(scan!, replyLanguage(event)) : substituteMediaQuestion(choices, replyLanguage(event));
     await this.deliverReply(event, text, undefined, undefined, 'question');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
@@ -11581,7 +11737,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   }): Promise<LineMediaTurnOutcome> {
     const { event, companyId } = input;
     if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'done' };
-    const attached = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
+    const attached = await this.substituteReceiptContinuation!.attachMedia(input.ctx, { language: replyLanguage(event),
       expenseId: input.context.expenseId,
       attachmentId: input.pending.attachmentId,
       purpose: input.purpose,
@@ -11601,11 +11757,13 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
 
   private async currentSubstituteAttachmentReply(event: LineReceiptUploadEvent | LineTextEvent, ctx: RequestContext, expenseId: string, fallback: string): Promise<string> {
     try {
-      const continued = await this.substituteReceiptContinuation!.execute(ctx, { messageText: 'ทำใบรับรองต่อ',
+      const continued = await this.substituteReceiptContinuation!.execute(ctx, { language: replyLanguage(event), messageText: 'ทำใบรับรองต่อ',
         chatKeyHash: chatKeyHashOf(event), recentCandidates: [{ id: expenseId, label: 'รายการนี้' }],
         boundCandidateExpenseIds: [expenseId], webBaseUrl: this.config.webBaseUrl });
       await this.rememberSubstituteDeliverySource(event as LineTextEvent, ctx, continued);
-      return `แนบหลักฐานให้แล้วค่ะ\n\n${continued.replyText}`;
+      return (replyLanguage(event) === 'en' ? `The evidence was attached.
+
+${continued.replyText}` : `แนบหลักฐานให้แล้วค่ะ\n\n${continued.replyText}`);
     } catch (error) {
       // The attachment committed. A failed refresh must never recapture it as a new expense.
       this.logger.warn({ msg: 'line_substitute_after_attachment_refresh_failed', ...safeLineErrorDetails(error) });
@@ -11639,12 +11797,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   private async replyPendingMediaFailure(
     event: LineTextEvent, companyId: string, requestId: string, error: unknown,
   ): Promise<void> {
-    const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER);
+    const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_ANSWER, replyLanguage(event));
     this.logger.warn({
       msg: deterministic ? 'line_pending_media_answer_needs_setup' : 'line_substitute_media_answer_failed',
       requestId, ...(deterministic && { errorCode: deterministic.errorCode }), ...safeLineErrorDetails(error),
     });
-    await this.deliverReply(event, deterministic?.reply ?? ERROR_REPLY);
+    await this.deliverReply(event, deterministic?.reply ?? ERROR_REPLY[replyLanguage(event)]);
     await this.updateEventLog(
       event.webhookEventId,
       deterministic?.status ?? 'substitute_media_answer_failed',
@@ -11681,12 +11839,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     // §14 keeps `expense.receipt.upload` as the attach gate. Someone who lost it between question
     // and answer gets the truth, not a generic failure that also loses what they typed.
     if (!ctx.permissions.includes('expense.receipt.upload')) {
-      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access));
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access, replyLanguage(event)));
     }
-    const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHash);
+    const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHash, replyLanguage(event));
     if (!context) {
       return this.refuseSubstituteMediaAnswer(event, ctx, access, text,
-        '📄 งานใบรับรองแทนใบเสร็จรับเงินในแชทนี้ไม่ได้เปิดค้างไว้แล้วค่ะ ไฟล์ที่ส่งมายังเก็บไว้ ยังไม่ได้บันทึกเป็นหลักฐานของรายการใด');
+        (replyLanguage(event) === 'en' ? "The substitute-receipt work is no longer open; the file is retained without being attached as expense evidence." : '📄 งานใบรับรองแทนใบเสร็จรับเงินในแชทนี้ไม่ได้เปิดค้างไว้แล้วค่ะ ไฟล์ที่ส่งมายังเก็บไว้ ยังไม่ได้บันทึกเป็นหลักฐานของรายการใด'));
     }
     // The list to fall back on once no form is awaiting a scan. Derived from the live context
     // rather than a fixed const, so A3's signature choice survives every re-ask: this chat can be
@@ -11701,37 +11859,37 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       if (scan && confirmed === 'NO') {
         const others = context.awaitingScans.filter((item) => item.evidenceId !== asked.evidenceId);
         return others.length
-          ? this.askSubstituteMediaQuestion(event, ctx, access, pending, text, substituteScanPickQuestion(others),
+          ? this.askSubstituteMediaQuestion(event, ctx, access, pending, text, substituteScanPickQuestion(others, replyLanguage(event)),
             { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash, evidenceIds: others.map((item) => item.evidenceId) })
           : this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-            substituteMediaQuestion(withoutScanChoices),
+            substituteMediaQuestion(withoutScanChoices, replyLanguage(event)),
             { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
       // The form stopped awaiting a scan while the question was open: never link, ask again.
       if (!scan) {
         return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-          substituteMediaQuestion(withoutScanChoices),
+          substituteMediaQuestion(withoutScanChoices, replyLanguage(event)),
           { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
-      return { outcome: 'not_answered', question: substituteScanConfirmQuestion(scan) };
+      return { outcome: 'not_answered', question: substituteScanConfirmQuestion(scan, replyLanguage(event)) };
     }
     if (asked.kind === 'SUBSTITUTE_SCAN_PICK') {
       const offered = asked.evidenceIds
         .map((id) => context.awaitingScans.find((item) => item.evidenceId === id))
         .filter((item): item is LineSubstituteMediaScan => !!item);
       const index = numberedSelection(text, offered.length);
-      if (index === undefined) return { outcome: 'not_answered', question: substituteScanPickQuestion(offered) };
+      if (index === undefined) return { outcome: 'not_answered', question: substituteScanPickQuestion(offered, replyLanguage(event)) };
       return this.linkSubstituteScan(event, ctx, access, pending, text, offered[index]!);
     }
     const answer = substituteMediaAnswer(text, asked.choices);
-    if (!answer) return { outcome: 'not_answered', question: substituteMediaQuestion(asked.choices) };
+    if (!answer) return { outcome: 'not_answered', question: substituteMediaQuestion(asked.choices, replyLanguage(event)) };
     if (answer === 'NEW_EXPENSE') return { outcome: 'new_expense' };
     if (answer === 'NO_RECORD') {
-      await this.deliverCompletedReply(event, MEDIA_NOT_RECORDED_REPLY, ctx.companyId, access);
+      await this.deliverCompletedReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_NOT_RECORDED_REPLY : MEDIA_NOT_RECORDED_REPLY), ctx.companyId, access);
       await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
       await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: text, replyText: MEDIA_NOT_RECORDED_REPLY, intent: 'CLARIFY',
+        userMessagePreview: text, replyText: (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_NOT_RECORDED_REPLY : MEDIA_NOT_RECORDED_REPLY), intent: 'CLARIFY',
       });
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
       return { outcome: 'handled' };
@@ -11740,13 +11898,13 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       // A3: the photo the assistant asked for, finally reaching the library. §14's rule stands —
       // the answer is checked against the permission the action needs, not the one that parked it.
       if (!maySubmitSignature(ctx.permissions) || !this.initSignatureUpload || !this.createSignatureAsset) {
-        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_FORBIDDEN_REPLY);
+        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_FORBIDDEN_REPLY[replyLanguage(event)]);
       }
       // F9: certification resolves signatures through a PNG/JPEG-only lookup, so a PDF answered as
       // "my signature" would become an ACTIVE asset that can never sign anything — a dead end from
       // the first turn now that nothing is held for review. Refuse it while the sender is still here.
       if (pending.mimeType !== 'image/png' && pending.mimeType !== 'image/jpeg') {
-        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_NEED_IMAGE_REPLY);
+        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_NEED_IMAGE_REPLY[replyLanguage(event)]);
       }
       // W1: consume the row BEFORE the bytes are claimed as a signature asset. The link is
       // irreversible and the LINE delivery between them can throw; with the resolve last, that throw
@@ -11780,12 +11938,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       const scan = context.awaitingScans[0];
       if (!scan) {
         return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-          substituteMediaQuestion(withoutScanChoices),
+          substituteMediaQuestion(withoutScanChoices, replyLanguage(event)),
           { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
       return this.linkSubstituteScan(event, ctx, access, pending, text, scan);
     }
-    const { replyText } = await this.substituteReceiptContinuation.attachMedia(ctx, {
+    const { replyText } = await this.substituteReceiptContinuation.attachMedia(ctx, { language: replyLanguage(event),
       expenseId: context.expenseId,
       attachmentId: pending.attachmentId,
       purpose: answer === 'PAYMENT_EVIDENCE' ? 'expense.payment.evidence' : 'expense.receipt.supporting',
@@ -11805,23 +11963,23 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   ): Promise<{ outcome: 'handled' } | { outcome: 'not_answered'; question: string }> {
     const chatKeyHash = chatKeyHashOf(event);
     const choice = checkBillPaymentChoice(text);
-    if (!choice) return { outcome: 'not_answered', question: formatCheckBillDecisionReply() };
+    if (!choice) return { outcome: 'not_answered', question: formatCheckBillDecisionReply(replyLanguage(event)) };
 
     if (choice === 'UNPAID' || choice === 'FINAL_RECEIPT') {
       const reply = choice === 'UNPAID'
         ? [
-            '⏸️ ยังไม่สร้างรายการค่าใช้จ่ายค่ะ',
-            'เพราะเช็กบิลใบนี้แสดงเพียงยอดที่ต้องจ่าย แต่ยังไม่มีหลักฐานว่าร้านรับเงินแล้ว',
-            'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามาได้เลยค่ะ',
+            (replyLanguage(event) === 'en' ? "No expense has been created yet." : '⏸️ ยังไม่สร้างรายการค่าใช้จ่ายค่ะ'),
+            (replyLanguage(event) === 'en' ? "The bill shows an amount due without evidence that the seller was paid." : 'เพราะเช็กบิลใบนี้แสดงเพียงยอดที่ต้องจ่าย แต่ยังไม่มีหลักฐานว่าร้านรับเงินแล้ว'),
+            (replyLanguage(event) === 'en' ? "After payment, please send the final receipt." : 'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามาได้เลยค่ะ'),
           ].join('\n')
         : [
-            '📷 ได้เลยค่ะ ยังไม่สร้างรายการจากเช็กบิลใบนี้',
-            'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามา ระบบจะอ่านและสร้างรายการจากใบเสร็จจริงค่ะ',
+            (replyLanguage(event) === 'en' ? "No expense has been created from this bill yet." : '📷 ได้เลยค่ะ ยังไม่สร้างรายการจากเช็กบิลใบนี้'),
+            (replyLanguage(event) === 'en' ? "Please send the final receipt photo to prepare the expense from the actual receipt." : 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามา ระบบจะอ่านและสร้างรายการจากใบเสร็จจริงค่ะ'),
           ].join('\n');
       await this.deliverReply(
         event,
         reply,
-        choice === 'FINAL_RECEIPT' ? buildCheckBillReceiptUploadQuickReply() : undefined,
+        choice === 'FINAL_RECEIPT' ? buildCheckBillReceiptUploadQuickReply(replyLanguage(event)) : undefined,
       );
       await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
       await this.persistIntakeTurn({ event,
@@ -11835,7 +11993,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
       .some((permission) => access.permissions.includes(permission));
     if (!canCaptureExpense || !this.expenseRepo || !this.substituteReceiptContinuation) {
-      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access));
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access, replyLanguage(event)));
     }
     const existing = await this.expenseRepo.findByLineMessageId(ctx.companyId, pending.lineMessageId);
     let expenseId: string;
@@ -11891,17 +12049,17 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         nextAction: 'check_bill_payment_decision_confirmed',
       },
     });
-    const started = await this.substituteReceiptContinuation.startFromCheckBill(ctx, {
+    const started = await this.substituteReceiptContinuation.startFromCheckBill(ctx, { language: replyLanguage(event),
       expenseId,
       chatKeyHash,
       webBaseUrl: this.config.webBaseUrl,
     });
     const continuation = started.status === 'FORBIDDEN'
       ? started
-      : await this.substituteReceiptContinuation.execute(ctx, {
+      : await this.substituteReceiptContinuation.execute(ctx, { language: replyLanguage(event),
           messageText: '1',
           chatKeyHash,
-          recentCandidates: [{ id: expenseId, label: `เช็กบิลที่ยืนยันว่าจ่ายแล้ว ${expenseId}` }],
+          recentCandidates: [{ id: expenseId, label: (replyLanguage(event) === 'en' ? `Bill confirmed as paid ${expenseId}` : `เช็กบิลที่ยืนยันว่าจ่ายแล้ว ${expenseId}`) }],
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
@@ -11909,7 +12067,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     const completed = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, access.scopes);
     if (!completed) throw new ConflictException('Receipt changed before the reply.');
     this.rememberReceiptDeliverySource(event, ctx, completed);
-    const reply = formatCheckBillDraftCreatedReply(continuation, completed.charges ?? []);
+    const reply = formatCheckBillDraftCreatedReply(continuation, completed.charges ?? [], replyLanguage(event));
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {
@@ -11953,14 +12111,14 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     scan: LineSubstituteMediaScan,
   ): Promise<{ outcome: 'handled' }> {
     try {
-      const { replyText, badge } = await this.substituteReceiptContinuation!.linkWetSignedScan(ctx, {
+      const { replyText, badge } = await this.substituteReceiptContinuation!.linkWetSignedScan(ctx, { language: replyLanguage(event),
         expenseId: scan.expenseId,
         evidenceId: scan.evidenceId,
         attachmentId: pending.attachmentId,
         checksumSha256: await this.pendingMediaChecksum(ctx.companyId, pending.attachmentId),
         webBaseUrl: this.config.webBaseUrl,
       });
-      const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), scan.expenseId);
+      const next = await this.substituteActions?.prepare(ctx, chatKeyHashOf(event), scan.expenseId, replyLanguage(event));
       if (next?.preview) this.deliverySubstituteActions.set(event, { context: ctx, preview: next.preview });
       return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText, badge);
     } catch (error: unknown) {
@@ -11970,7 +12128,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         ? (body as { message: string }).message
         : error.message;
       return this.refuseSubstituteMediaAnswer(event, ctx, access, text,
-        `📄 ยังรับรูปนี้เป็นฟอร์มที่เซ็นแล้วของ ${scan.documentNumber} ไม่ได้ค่ะ\n${detail}\nส่งรูปใหม่ที่ชัดเจน หรือแนบไฟล์ในเว็บได้เลย`);
+        (replyLanguage(event) === 'en' ? `This photo cannot be accepted as the signed form for ${scan.documentNumber}; send a clearer photo or attach the file on the web.` : `📄 ยังรับรูปนี้เป็นฟอร์มที่เซ็นแล้วของ ${scan.documentNumber} ไม่ได้ค่ะ\n${detail}\nส่งรูปใหม่ที่ชัดเจน หรือแนบไฟล์ในเว็บได้เลย`));
     }
   }
 
@@ -12138,7 +12296,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   ): Promise<void> {
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'].some((p) => access.permissions.includes(p));
     if (!canCaptureExpense || !this.expenseRepo) {
-      await this.deliverReply(event, receiptDeniedReply(access));
+      await this.deliverReply(event, receiptDeniedReply(access, replyLanguage(event)));
       await this.updateEventLog(event.webhookEventId,
         receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
         receiptFeatureDisabled(access) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
@@ -12191,10 +12349,10 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
           requestId, authSubject: userId, userId, companyId,
           membershipId: access.membershipId, roles: access.roles, permissions: access.permissions,
           scopes: access.scopes, authProvider: 'line',
-        }, {
+        }, { language: replyLanguage(event),
           messageText: additionalText,
           chatKeyHash: chatKeyHashOf(event),
-          recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
+          recentCandidates: [{ id: expenseId, label: (replyLanguage(event) === 'en' ? `Newly saved expense ${expenseId}` : `รายการที่เพิ่งบันทึก ${expenseId}`) }],
           webBaseUrl: this.config.webBaseUrl,
         });
         await this.rememberSubstituteDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
@@ -12207,7 +12365,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       }
     }
     const summary = pdfReading
-      ? { texts: [this.fileStoredReply(this.expenseCaptureLink(companyId, expenseId))], draft: undefined }
+      ? { texts: [this.fileStoredReply(this.expenseCaptureLink(companyId, expenseId), replyLanguage(event))], draft: undefined }
       : await this.savedReceiptReply(event, companyId, expenseId);
     const receiptReply = summary.texts.join('\n');
     const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
@@ -12262,36 +12420,37 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
 
   /** Correction candidates for this turn (spec §8 candidate scope). Structured-only labels:
    *  vendor/category free text is deliberately excluded so the payload cannot carry injection. */
-  private async requestedCaptureConfirmation(event: LineTextEvent, ctx: RequestContext, expenseId: string, text: string): Promise<LineReplyMessage | null> {
-    if (!this.retainedTaskSources.get(event)?.source.semanticSubrequest.goal.match(/^บันทึก(?:ค่าใช้จ่าย|รายจ่าย|ค่าจ้าง)/u) && !/(?:ยืนยัน(?:เลย|ด้วย|ให้)|พร้อมยืนยัน|confirm)/iu.test(text) || /(?:ไม่|อย่า|ยังไม่)\s*ยืนยัน/u.test(text) || !this.expenseActions) return null;
+  private async requestedCaptureConfirmation(event: LineTextEvent, ctx: RequestContext, expenseId: string, text: string, withholding = false): Promise<LineReplyMessage | null> {
+    if (!withholding && !this.retainedTaskSources.get(event)?.source.semanticSubrequest.goal.match(/^บันทึก(?:ค่าใช้จ่าย|รายจ่าย|ค่าจ้าง)/u) && !/(?:ยืนยัน(?:เลย|ด้วย|ให้)|พร้อมยืนยัน|confirm)/iu.test(text) || /(?:ไม่|อย่า|ยังไม่)\s*ยืนยัน/u.test(text) || !this.expenseActions) return null;
+    if (withholding && !ctx.permissions.includes('expense.confirm')) return null;
     const paid = /(?:จ่าย|ชำระ)(?:เงินสด|ด้วยเงินสด|เงิน|ด้วยบัตร|บัตร|โอนไป)?แล้ว|โอนแล้ว/u.test(text) && !/(?:ยังไม่|ไม่ได้|ยังไม่ได้)\s*(?:จ่าย|ชำระ|โอน)/u.test(text);
     const paymentMethod = /เงินสด/u.test(text) ? 'CASH' : /โอน/u.test(text) ? 'BANK_TRANSFER' : /บัตร/u.test(text) ? 'CARD' : /เช็ค|เช็ก/u.test(text) ? 'CHEQUE' : undefined;
     const result = await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'CONFIRM', expenseId,
-      ...(paid ? { recordPaymentAfterConfirm: true, ...(paymentMethod ? { paymentMethod } : {}), paidAt: todayCivilDate('Asia/Bangkok') } : {}) }, true);
+      ...(paid && !withholding ? { recordPaymentAfterConfirm: true, ...(paymentMethod ? { paymentMethod } : {}), paidAt: todayCivilDate('Asia/Bangkok') } : {}) }, true, undefined, replyLanguage(event));
     if (result.preview) {
       this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
-      return buildExpenseActionCard(result.preview);
+      return buildExpenseActionCard(result.preview, undefined, replyLanguage(event));
     }
-    const card = buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId);
-    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event));
+    const card = buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
+    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
     if (choices?.length) card.quickReply = lineChoiceQuickReply(choices);
     else if (result.webPath) {
       const uri = absoluteWebLink(this.config.webBaseUrl, result.webPath);
       if (uri.startsWith('https://')) card.quickReply = { items: [{ type: 'action', action: { type: 'uri',
-        label: result.webPath === '/system/wht-income-categories' ? 'ตั้งค่าประเภทเงินได้' : 'เปิดตรวจรายการ', uri } }] };
+        label: result.webPath === '/system/wht-income-categories' ? (replyLanguage(event) === 'en' ? "Set income category" : 'ตั้งค่าประเภทเงินได้') : (replyLanguage(event) === 'en' ? "Review record" : 'เปิดตรวจรายการ'), uri } }] };
     }
     return card;
   }
 
-  private async recentEditableChoices(ctx: RequestContext, recent: LineIntakeCorrectionCandidate[], drafts: LineExpenseDraftRouteContext[], features: Set<string> | null): Promise<Array<{ label: string; text: string; uri?: string }>> {
+  private async recentEditableChoices(ctx: RequestContext, recent: LineIntakeCorrectionCandidate[], drafts: LineExpenseDraftRouteContext[], features: Set<string> | null, language: 'th' | 'en' = 'th'): Promise<Array<{ label: string; text: string; uri?: string }>> {
     const choices: Array<{ label: string; text: string; uri?: string }> = [];
     if ((features === null || features.has('expenses')) && ctx.permissions.includes('expense.update')) {
       const seen = new Set<string>();
-      for (const row of [...drafts.map(draft => ({ id: draft.expenseId, label: draft.label, amount: undefined })), ...recent]) {
+      for (const row of [...drafts.map(draft => ({ id: draft.expenseId, label: draft.label, amount: undefined })), ...recent.map(row => ({ ...row, label: correctionCandidateLabel(row, language) }))]) {
         if (seen.has(row.id)) continue;
         seen.add(row.id);
         const label = scrubRecordText(row.label, 120);
-        choices.push({ label: row.amount ? `${row.amount} บาท · ${label}` : label, text: `ขอแก้รายการ ${label}` });
+        choices.push({ label: row.amount ? `${row.amount} ${language === 'en' ? 'THB' : 'บาท'} · ${label}` : label, text: language === 'en' ? `Edit expense ${label}` : `ขอแก้รายการ ${label}` });
       }
       if (choices.length < 4 && this.editableExpenses) {
         try {
@@ -12300,9 +12459,9 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
             for (const row of page.data) {
               if (seen.has(row.id) || row.status !== status || (!ctx.permissions.includes('expense.review') && row.createdByUserId !== ctx.userId)) continue;
               seen.add(row.id);
-              const label = [scrubRecordText(row.vendorNameSnapshot, 60) || 'รายจ่าย', formatReplyDate(row.expenseDate.toISOString()), `${row.grandTotalAmount} บาท`].join(' · ');
+              const label = [scrubRecordText(row.vendorNameSnapshot, 60) || (language === 'en' ? 'Expense' : 'รายจ่าย'), formatReplyDate(row.expenseDate.toISOString(), language), `${row.grandTotalAmount} ${language === 'en' ? 'THB' : 'บาท'}`].join(' · ');
               // Company records keep the web editor's guards; chat-local edits retain their existing signed preview.
-              choices.push({ label, text: `ขอแก้รายการ ${label}`, uri: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${row.id}`) });
+              choices.push({ label, text: language === 'en' ? `Edit expense ${label}` : `ขอแก้รายการ ${label}`, uri: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${row.id}`) });
               if (choices.length >= 4) break;
             }
             if (choices.length >= 4) break;
@@ -12315,7 +12474,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         const page = await this.editableClaims.execute(ctx, { scope: ctx.permissions.includes('reimbursement.finance_review') ? 'all' : 'own', status: 'DRAFT', page: 1, pageSize: 4 });
         for (const row of page.items) if ((row.requesterUserId === ctx.userId || ctx.permissions.includes('reimbursement.finance_review')) && row.status === 'DRAFT') {
           const label = scrubRecordText(row.requestNo || row.title || row.reason, 100);
-          choices.push({ label: `ใบเบิก ${label}`, text: `ขอแก้ไขใบเบิก ${label}` });
+          choices.push({ label: language === 'en' ? `Claim ${label}` : `ใบเบิก ${label}`, text: language === 'en' ? `Edit claim ${label}` : `ขอแก้ไขใบเบิก ${label}` });
         }
       } catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
     }
@@ -12325,18 +12484,18 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         const detail = await this.getEditableCounterparty.execute(ctx, row.id);
         if (!detail.canEdit) continue;
         const label = scrubRecordText(row.displayName, 100);
-        choices.push({ label: `คู่ค้า ${label}`, text: `ขอแก้ไขคู่ค้า ${label}` });
+        choices.push({ label: language === 'en' ? `Supplier ${label}` : `คู่ค้า ${label}`, text: language === 'en' ? `Edit supplier ${label}` : `ขอแก้ไขคู่ค้า ${label}` });
       }
     }
     return choices.slice(0, 4);
   }
 
   private async explainLockedExpenseEdit(event: LineTextEvent, ctx: RequestContext, access: { permissions: string[]; roles: string[] }, targetId: string | undefined, editable: LineIntakeCorrectionCandidate[], vendorName?: string): Promise<boolean> {
-    let reply: string | undefined, label = 'เปิดตรวจสอบรายจ่าย', id: string | undefined;
+    let reply: string | undefined, label = (replyLanguage(event) === 'en' ? "Review expense" : 'เปิดตรวจสอบรายจ่าย'), id: string | undefined;
     let offerVoid = false;
     const namedVendor = vendorName?.trim() && event.messageText.includes(vendorName.trim()) ? vendorName.trim() : undefined;
     if (!ctx.permissions.includes('expense.update')) {
-      reply = 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายแก้รายการนี้ค่ะ';
+      reply = (replyLanguage(event) === 'en' ? "Ask the shop owner or an authorized expense editor to edit this record." : 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายแก้รายการนี้ค่ะ');
     } else if ((!targetId && namedVendor) || (targetId && !editable.some(row => row.id === targetId)) || (!targetId && !editable.length)) {
       // A finalized row is read through the web guard; never mistake an empty EDITABLE list for absence.
       const rows = this.expenseRepo ? await listRecentLineCaptureCandidates(this.expenseRepo, { companyId: ctx.companyId, userId: ctx.userId,
@@ -12361,19 +12520,19 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         if (record.status !== 'CONFIRMED') return false;
         const capability = await this.getLinkedExpense.correctionCapabilities(ctx, id);
         reply = capability.canReopen
-          ? 'รายการนี้ยืนยันแล้ว ให้เปิดแก้ไขเอกสารบนเว็บเพื่อตรวจและยืนยันใหม่ค่ะ'
-          : `${expenseReopenBlockerMessages(capability)[0] ?? 'รายการนี้ล็อกการแก้ไขแล้ว กรุณาเปิดตรวจสอบทางแก้บนเว็บ'}ค่ะ`;
-        label = capability.canReopen ? 'แก้ไขเอกสารบนเว็บ' : 'ตรวจทางแก้บนเว็บ';
-        if (record.paymentStatus === 'PAID') reply = 'รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ';
+          ? (replyLanguage(event) === 'en' ? "This expense is confirmed; reopen its document on the web to review and confirm changes." : 'รายการนี้ยืนยันแล้ว ให้เปิดแก้ไขเอกสารบนเว็บเพื่อตรวจและยืนยันใหม่ค่ะ')
+          : (replyLanguage(event) === 'en' ? 'This record is locked; review the available correction options on the web.' : `${expenseReopenBlockerMessages(capability)[0] ?? 'รายการนี้ล็อกการแก้ไขแล้ว กรุณาเปิดตรวจสอบทางแก้บนเว็บ'}ค่ะ`);
+        label = capability.canReopen ? (replyLanguage(event) === 'en' ? "Edit on web" : 'แก้ไขเอกสารบนเว็บ') : (replyLanguage(event) === 'en' ? "Review options on web" : 'ตรวจทางแก้บนเว็บ');
+        if (record.paymentStatus === 'PAID') reply = (replyLanguage(event) === 'en' ? "This expense is confirmed and paid; its original amount cannot be edited directly." : 'รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ');
         if (ctx.permissions.includes('expense.void') && this.previewEditVoid) {
           try {
-            await this.previewEditVoid.previewLineAction(ctx, id, 'แก้ไขข้อมูลที่บันทึกผิด');
+            await this.previewEditVoid.previewLineAction(ctx, id, (replyLanguage(event) === 'en' ? "Correct recorded details" : 'แก้ไขข้อมูลที่บันทึกผิด'));
             offerVoid = true;
           } catch (error) { if (!(error instanceof HttpException)) throw error; }
         }
       } catch (error) {
         if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
-        reply = 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายตรวจและแก้รายการนี้ค่ะ';
+        reply = (replyLanguage(event) === 'en' ? "Ask the shop owner or an authorized expense editor to review and correct this record." : 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ไขรายจ่ายตรวจและแก้รายการนี้ค่ะ');
         id = undefined;
       }
     }
@@ -12382,8 +12541,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     const response: LineAiTurnResponse = { requestId: ctx.requestId, replyText: reply, sourceRefs: [], sourceLabels: [], webLinks: [],
       intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [], durationMs: 0,
       presentation: { kind: 'answer_cards', cards: [{ text: reply, webLink: { label, path } }] } };
-    const card = buildLineBusinessAnswerMessage(response, reply, this.config.webBaseUrl, ctx.companyId);
-    if (offerVoid) card.quickReply = { items: [{ type: 'action', action: { type: 'uri', label: 'ยกเลิกและสร้างใหม่', uri: absoluteWebLink(this.config.webBaseUrl, path) } }] };
+    const card = buildLineBusinessAnswerMessage(response, reply, this.config.webBaseUrl, ctx.companyId, undefined, replyLanguage(event));
+    if (offerVoid) card.quickReply = { items: [{ type: 'action', action: { type: 'uri', label: (replyLanguage(event) === 'en' ? "Void and recreate" : 'ยกเลิกและสร้างใหม่'), uri: absoluteWebLink(this.config.webBaseUrl, path) } }] };
     await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined, card);
     await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: event.messageText, replyText: reply, intent: 'CORRECTION' });
@@ -12425,7 +12584,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
   private async saveRecentUtilityBill(
     event: LineTextEvent, ctx: RequestContext, recent: LineIntakeCorrectionCandidate[], command: string,
   ): Promise<string> {
-    if (!this.expenseRepo) return 'ยังบันทึกใบแจ้งจากรูปเดิมไม่ได้ค่ะ กรุณาเปิดรายการค่าใช้จ่ายในเว็บแอป';
+    if (!this.expenseRepo) return (replyLanguage(event) === 'en' ? "The bill could not be saved from the earlier photo; open the expense list on the web." : 'ยังบันทึกใบแจ้งจากรูปเดิมไม่ได้ค่ะ กรุณาเปิดรายการค่าใช้จ่ายในเว็บแอป');
     const requestedPeriod = mapThaiDigits(command).match(/\b\d{1,2}\s*[/.-]\s*(?:\d{2}|\d{4})\b/u)?.[0];
     const candidates: Array<{ source: ExpenseRecordWithRelations; bill: NonNullable<ReceiptOcrResponse['utilityDocuments']>[number] }> = [];
     for (const item of recent) {
@@ -12440,12 +12599,12 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       if (bill && (!requestedPeriod || utilityMonthIndex(requestedPeriod) === utilityMonthIndex(bill.period))) candidates.push({ source, bill });
     }
     if (candidates.length !== 1) return candidates.length > 1
-      ? 'พบรูปบิลค่าน้ำ/ค่าไฟหลายรูปในแชทนี้ กรุณาระบุงวด เช่น “บันทึกใบแจ้งค่าน้ำงวด 09/69” ค่ะ'
-      : 'ยังไม่พบใบแจ้งค่าน้ำ/ค่าไฟจากรูปที่อ่านแยกงวดได้ในแชทนี้ กรุณาส่งรูปอีกครั้งค่ะ';
+      ? (replyLanguage(event) === 'en' ? "Several utility bills are in this chat; please identify the billing period to record." : 'พบรูปบิลค่าน้ำ/ค่าไฟหลายรูปในแชทนี้ กรุณาระบุงวด เช่น “บันทึกใบแจ้งค่าน้ำงวด 09/69” ค่ะ')
+      : (replyLanguage(event) === 'en' ? "No readable utility bill with a billing period was found in this chat; please resend the photo." : 'ยังไม่พบใบแจ้งค่าน้ำ/ค่าไฟจากรูปที่อ่านแยกงวดได้ในแชทนี้ กรุณาส่งรูปอีกครั้งค่ะ');
     const { source, bill } = candidates[0]!;
     const utilityKind = /(?:ค่าน้ำ|ประปา)/u.test(bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ';
     if (!requestedPeriod && recent[0]?.id !== source.id) {
-      return `มีเอกสารอื่นส่งต่อจากรูป${utilityKind}แล้วค่ะ หากหมายถึงใบแจ้งงวด ${bill.period} ให้พิมพ์ “บันทึกใบแจ้ง${utilityKind}งวด ${bill.period}”`;
+      return (replyLanguage(event) === 'en' ? `Another document followed this ${utilityKind} image; if you mean the bill for period ${bill.period} ask to save the utility bill ${utilityKind} for period ${bill.period}”` : `มีเอกสารอื่นส่งต่อจากรูป${utilityKind}แล้วค่ะ หากหมายถึงใบแจ้งงวด ${bill.period} ให้พิมพ์ “บันทึกใบแจ้ง${utilityKind}งวด ${bill.period}”`);
     }
     const amount = toMoney4(mapThaiDigits(bill.amount).replace(/,/gu, ''));
     await assertExpenseRootOpen(this.launchGate, this.audit, ctx, 'expense.create');
@@ -12471,7 +12630,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
         draftReplayScopes: ctx.scopes ?? {},
         captureSource: 'LINE_UPLOAD', expenseDate: civilDateToUtcDate(todayCivilDate()), currency: 'THB',
         vatMode: 'NEEDS_REVIEW', inputVatClaimStatus: 'NEEDS_REVIEW',
-        note: `${bill.titleEvidence} งวด ${bill.period}`.slice(0, 240),
+        note: (replyLanguage(event) === 'en' ? `${bill.titleEvidence} for period ${bill.period}` : `${bill.titleEvidence} งวด ${bill.period}`).slice(0, 240),
         createdByUserId: ctx.userId, lineEventId: event.webhookEventId,
         sourceDocumentType: 'SUPPLIER_BILL', taxEvidenceStatus: 'NEEDS_REVIEW',
         taxEvidenceReasonCode: 'UNREADABLE_OR_LOW_CONFIDENCE', aiVerificationStatus: 'NEEDS_REVIEW',
@@ -12498,7 +12657,8 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     if (!currentSource || !currentBill) throw new ConflictException('The saved bill is unavailable.');
     this.rememberReceiptDeliverySource(event, ctx, currentSource);
     this.rememberReceiptDeliverySource(event, ctx, currentBill);
-    return `${inserted ? '✅ บันทึก' : '✅ มี'}ร่างบิล${utilityKind}งวด ${bill.period} ${bill.amount} บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'}ค่ะ\nยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน กรุณาตรวจข้อมูลและ VAT ในเว็บแอป หากจะเก็บใบเสร็จงวดนี้กับรายการเดิม ให้แนบขณะยังเป็นร่างก่อนส่งตรวจ เพื่อไม่ให้เกิดรายการซ้ำ: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}`;
+    return (replyLanguage(event) === 'en' ? `${inserted ? 'Saved' : 'Existing'} utility bill draft ${utilityKind} for period ${bill.period} ${bill.amount} THB${inserted ? '' : ''}.
+No payment was recorded; review the details and VAT on the web, and attach the period’s receipt to this draft before review to avoid duplicates: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}` : `${inserted ? '✅ บันทึก' : '✅ มี'}ร่างบิล${utilityKind}งวด ${bill.period} ${bill.amount} บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'}ค่ะ\nยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน กรุณาตรวจข้อมูลและ VAT ในเว็บแอป หากจะเก็บใบเสร็จงวดนี้กับรายการเดิม ให้แนบขณะยังเป็นร่างก่อนส่งตรวจ เพื่อไม่ให้เกิดรายการซ้ำ: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}`);
   }
 
   /** Durably record which clarifications this terminal turn consumed, then let Redis catch up.
@@ -12705,7 +12865,7 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
       : receiptQuotaExceededShortTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot, canManagePlan);
     let delivered = true;
     try {
-      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text, canManagePlan)]);
+      if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text, canManagePlan, replyLanguage(event))]);
       else await this.deliverReply(event, text, undefined, undefined, 'notTaken');
     } catch (error) {
       // The month is claimed BEFORE the send, which is what makes the card exactly-once. If the send
@@ -13051,3 +13211,24 @@ ${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     }).catch(() => {});
   }
 }
+
+/** Fixed legacy surface copy; customer facts and authority are never translated here. */
+const LEGACY_LINE_COPY_EN = {
+  "RECEIPT_BRANCH_REQUIRED_REPLY": "The document was read, but no expense was saved because a branch must be selected; choose it on the web or ask an administrator to set your default branch.",
+  "PACKAGE_REQUIRED_MEMBER_REPLY": "This shop needs an active package; ask the owner or an authorized package manager to choose one.",
+  "LAUNCH_ROUTE_CLOSED_REPLY": "The assistant is temporarily unavailable; you can continue using the web app.",
+  "CAPABILITY_ENTITLEMENT_NOTE": "The Services and Contact buttons remain available in this chat.",
+  "ASSISTANT_TALK_GREETING": "Hello, I’m Nong Mangmee; how can I help?",
+  "MUTATION_REFUSAL_REPLY": "Please complete approval, payment, final accounting entries or tax filing on the web.",
+  "MEDIA_UNSUPPORTED_REPLY": "Send expense evidence to prepare a draft, or a signature photo to save a reusable signature; review final actions on the web.",
+  "MEDIA_SECURITY_REJECTED_REPLY": "This file could not be accepted; send an undamaged PDF or supported image that passes the security check.",
+  "LINE_AI_ROUTE_TRANSIENT_REPLY": "The answer is taking longer than usual; please send the same question again.",
+  "LINE_AI_ROUTE_UNCLEAR_REPLY": "Please rephrase what you would like to check, such as monthly expenses or expenses by category.",
+  "MEDIA_NOT_RECORDED_REPLY": "The image is kept without being recorded as evidence for an expense.",
+  "TEXT_EXPENSE_AMOUNT_ONLY_REPLY": "What was the expense amount?",
+  "TEXT_EXPENSE_PURPOSE_ONLY_REPLY": "What was the expense for?",
+  "TEXT_EXPENSE_AMOUNT_CONFLICT_REPLY": "There are several amounts in this conversation and no expense has been created; specify the replacement amount if you want to change it.",
+  "EXACT_GREETING_REPLY": "Hello, how can I help?",
+  "REIMBURSEMENT_CLARIFY_ONLY_REPLY": "You want to claim back an expense paid personally; no claim was created, and the web handoff is currently unavailable.",
+  "REIMBURSEMENT_HANDOFF_REPLY": "No claim has been created; open the claim page on the web, review the details, and save it there."
+} as const;

@@ -1536,9 +1536,9 @@ describe('R-L4 F10 reimbursement.list_pending_approvals::list — เบิก�
   });
 
   // erp-reimbursement-tools.use-case.ts's ReimbursementListPendingApprovalsTool returns 'forbidden'
-  // with this errorCode for a caller without reimbursement.approve — preparedTerminalReply must name
+  // with this errorCode for a caller without any claim-read permission — preparedTerminalReply must name
   // the self-serve alternative instead of the generic 🔒 permission line.
-  it('a caller without reimbursement.approve gets the role-limit reply, not the generic permission line', () => {
+  it('a caller without any claim-read permission gets the role-limit reply, not the generic permission line', () => {
     const denied: SpecialistOutput = {
       agent: 'accounting', status: 'PERMISSION_DENIED', summary: 'ไม่มีสิทธิ์เข้าถึงข้อมูลบัญชี',
       facts: [], suggestions: [], requiresHumanReview: false, toolData: [], asOf: undefined,
@@ -1546,8 +1546,8 @@ describe('R-L4 F10 reimbursement.list_pending_approvals::list — เบิก�
     };
     assert.equal(formatPreparedSimpleRead(REIMBURSEMENT_APPROVALS, denied, TH).kind, 'unverified');
     const th = preparedTerminalReply(denied, TH);
-    assert.match(th, /บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ/);
-    assert.match(th, /ใบเบิกของฉันถึงไหนแล้ว/);
+    assert.match(th, /คุณยังไม่มีสิทธิ์ดูใบเบิก/);
+    assert.match(th, /ดูแพ็กเกจ/);
     assert.doesNotMatch(th, /🔒/);
     assert.match(preparedTerminalReply(denied, EN), /does not have permission/);
   });
@@ -1558,7 +1558,7 @@ describe('R-L4 F10 reimbursement.list_pending_approvals::list — เบิก�
       facts: [], suggestions: [], requiresHumanReview: false, toolData: [], asOf: undefined,
       toolCalls: [{ name: 'reimbursement.list_pending_approvals', status: 'forbidden', durationMs: 1 }],
     };
-    assert.match(preparedTerminalReply(denied, TH), /🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ/);
+    assert.match(preparedTerminalReply(denied, TH), /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ/);
   });
 });
 
@@ -2511,3 +2511,26 @@ describe('design lock context 2 — the reader\'s waiting work, several reads on
   });
 });
 
+
+
+it('Owner 2026-10-17: pending lists name the shop/related/own read scope and waiting person, never a reader approval', () => {
+  for (const [scope, label] of [['company', 'ใบเบิกของร้านที่รออนุมัติ'], ['related', 'เฉพาะใบเบิกที่เกี่ยวข้องกับคุณ'], ['own', 'เฉพาะใบเบิกของคุณ']]) {
+    const result = formatPreparedSimpleRead(REIMBURSEMENT_APPROVALS, approvalsOutput({ accessScope: scope, total: 1, items: [approvalItem({ waitingOn: 'สมศรี' })] }), TH);
+    assert.equal(result.kind, 'answer');
+    if (result.kind === 'answer') {
+      assert.match(result.replyText, /สมศรี/);
+      assert.ok(JSON.stringify(result.layout).includes(label!));
+      assert.doesNotMatch(JSON.stringify(result), /รอคุณอนุมัติ/);
+    }
+  }
+});
+
+
+it('Owner 2026-10-17: composed reader wording never assigns approval to the reader', async () => {
+  const { reimbursementReadScopeWording } = await import('../domain/logic/business-read-result-semantics');
+  for (const accessScope of ['company', 'related', 'own']) {
+    assert.equal(reimbursementReadScopeWording('ใบเบิกของร้านรอคุณอนุมัติค่ะ', { accessScope }), 'ใบเบิกของร้านรอผู้มีสิทธิ์อนุมัติค่ะ');
+    assert.equal(reimbursementReadScopeWording('Shop claims waiting for your approval', { accessScope }), 'Shop claims waiting for approval');
+  }
+  assert.equal(reimbursementReadScopeWording('รอคุณอนุมัติค่ะ', { accessScope: 'approver' }), 'รอคุณอนุมัติค่ะ');
+});
