@@ -1,4 +1,5 @@
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
+import { todayCivilDate } from '@watchdog-bms/contracts';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -479,6 +480,10 @@ export class LineReimbursementDraftAdapterService {
       await this.validateProposalProofs(authority.ctx, options, proposal);
       const suggestedCategoryChoiceId = wrapper.suggestedCategoryChoiceId ?? accepted.suggestedCategoryChoiceId;
       if (suggestedCategoryChoiceId) await this.currentChoice(authority.ctx, this.findChoice(options, suggestedCategoryChoiceId, 'CATEGORY'), options);
+      if (operation === 'CREATE' && suggestedCategoryChoiceId && proposal.lineChanges?.length === 1) {
+        const line = proposal.lineChanges[0]!;
+        if (line.operation === 'ADD' && !line.values.categoryChoiceId && !line.values.linkedExpenseChoiceId) line.values.categoryChoiceId = suggestedCategoryChoiceId;
+      }
       // Rebuild from the merged proposal so UPDATE continuations keyed by stable lineRef cannot
       // overwrite a prior line's index-based receipt when the new fragment starts at index zero.
       const receipts = this.proposalReceipts(proposal);
@@ -538,16 +543,16 @@ export class LineReimbursementDraftAdapterService {
     const dates = [...authority.candidates.dates.map(item => ({ ...item, value: item.isoDate })),
       ...authority.candidates.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => ({ ...item, value: item.fromDate }))];
     const date = dates.length === 1 ? dates[0] : undefined;
-    if (!description || !amount || !date || hints['amount'] !== undefined && (typeof hints['amount'] !== 'string'
+    if (!description || !amount || hints['amount'] !== undefined && (typeof hints['amount'] !== 'string'
       || normalizeReimbursementAmount(hints['amount'].replace(/,/gu, '')) !== normalizeReimbursementAmount(amount.value))) return undefined;
-    const values = { [amount.candidateId]: amount.value, [date.candidateId]: date.value };
+    const values = { [amount.candidateId]: amount.value, ...(date ? { [date.candidateId]: date.value } : {}) };
     return parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: options.taskId, taskRevision: options.taskRevision,
       operation: 'CREATE', fields: { ...(reason ? { reason } : {}) }, lineChanges: [{ operation: 'ADD', values: {
         description, ...(purpose ? { purpose } : {}),
         amount: { value: amount.value, proof: { kind: 'USER_TEXT', candidateId: amount.candidateId, refs: [amount.source] } },
-        incurredDate: { value: date.value, proof: { kind: 'USER_TEXT', candidateId: date.candidateId, refs: [date.source] } },
+        ...(date ? { incurredDate: { value: date.value, proof: { kind: 'USER_TEXT', candidateId: date.candidateId, refs: [date.source] } } } : {}),
       } }] }, { evidence: authority.evidence, candidateValues: values,
-      candidateSources: { [amount.candidateId]: amount.source, [date.candidateId]: date.source } }) ?? undefined;
+      candidateSources: { [amount.candidateId]: amount.source, ...(date ? { [date.candidateId]: date.source } : {}) } }) ?? undefined;
   }
 
   private async authority(ctx: ErpToolContext, update = false): Promise<Authority | null> {
@@ -1054,7 +1059,13 @@ export class LineReimbursementDraftAdapterService {
     for (const [index, change] of changes.entries()) {
       if (change.operation !== 'ADD') continue;
       const line = await this.hydrateLine(ctx, options, change.values, undefined, index, missing);
-      if (line) lines.push({ ...line, lineNo: lines.length + 1 });
+      if (line) {
+        lines.push({ ...line, lineNo: lines.length + 1 });
+        if (!change.values.incurredDate && !change.values.linkedExpenseChoiceId) receipts = this.mergeReceipts(receipts, [{
+          fieldPath: `lineChanges.${index}.values.incurredDate`, valueDigest: digest(line.incurredDate),
+          proof: { kind: 'SERVER_DEFAULT', key: 'CLAIM_DATE_TODAY' }, validatedAt: new Date().toISOString(),
+        }]);
+      }
     }
     const noReceipt = !awaitingPhoto && changes.some(change => change.operation === 'ADD' && change.values.attachmentChoiceId === null);
     if (noReceipt && !proposal.fields.missingReceiptReason?.value) {
@@ -1120,7 +1131,7 @@ export class LineReimbursementDraftAdapterService {
   private async hydrateLine(ctx: RequestContext, options: StoredOptions, values: any, base: ReimbursementLineInput | undefined,
     index: number, missing: string[]): Promise<Omit<ReimbursementLineInput, 'lineNo'> | null> {
     let linked = base?.linkedExpenseId, sourceUpdatedAt = base?.sourceExpenseUpdatedAt;
-    let incurredDate = values.incurredDate?.value ?? base?.incurredDate;
+    let incurredDate = values.incurredDate?.value ?? base?.incurredDate ?? (options.operation === 'CREATE' ? todayCivilDate('Asia/Bangkok') : undefined);
     let description = values.description?.value ?? base?.description;
     let purpose = values.purpose?.value ?? base?.purpose;
     let amount = values.amount?.value ?? base?.amount;

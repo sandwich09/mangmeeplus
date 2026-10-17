@@ -1,3 +1,4 @@
+import { lineCustomerText } from './line-language.logic';
 import { isLineNavigationPostback, type LineReplyLanguage } from './line-language.logic';
 import { linePaymentEvidencePostbackCommand, parseLinePaymentEvidenceControl } from './line-payment-evidence-reply.logic';
 import { createHash } from 'node:crypto';
@@ -41,11 +42,18 @@ export function canonicalDeliveryJson(value: unknown): string {
 }
 export const deliveryHash = (value: unknown) => createHash('sha256').update(canonicalDeliveryJson(value)).digest('hex');
 export const lineDeliveryPlanId = (kind: LineDeliveryProducer, id: string) => deliveryHash(['line-delivery-v2', kind, id]);
+function safeVisibleText<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(safeVisibleText) as T;
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
+    ['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string' ? lineCustomerText(child)
+      : typeof child === 'object' ? safeVisibleText(child) : child])) as T;
+}
 export function lineDeliveryWireMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
   return messages.map(message => {
-    if (message.type !== 'flex') return message;
+    if (message.type !== 'flex') return safeVisibleText(message);
     const { canonicalText: _internal, ...wire } = message;
-    return wire;
+    return safeVisibleText(wire);
   });
 }
 export function lineDeliveryRetryKey(planId: string, index: number, variant: 'primary' | 'fallback', wireHash: string): string {
@@ -149,8 +157,8 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
   // rebuilds each item from its frozen parts. Uncapped per item (splitLineDeliveryText keeps every part
   // ≤ 4,800); if the escaped total would pass the plan's 60,000 bound, every item stays as is.
   const escapeAll = input.answer.items.reduce((n, item) => n + withLineExternalBrowserText(item.text, Number.POSITIVE_INFINITY).length, 0) <= 60_000;
-  const escape = (text: string) => escapeAll ? withLineExternalBrowserText(text, Number.POSITIVE_INFINITY) : text;
-  const items = input.answer.items.map((item, i) => ({ ...item, text: escape(item.text), id: `${planId}:item:${i}` }));
+  const escape = (text: string) => lineCustomerText(escapeAll ? withLineExternalBrowserText(text, Number.POSITIVE_INFINITY) : text);
+  const items = input.answer.items.map((item, i) => ({ ...item, text: escape(item.text) || (language === 'en' ? 'Open on web' : 'เปิดดูในเว็บ'), id: `${planId}:item:${i}` }));
   if (preferredMessages && preferredMessages.length !== items.length) fail('PLAN_INVALID_PRESENTATION');
   const all: Array<{ primary: LineReplyMessage; fallback?: LineReplyMessage; span?: DeliveryPlanV2['batches'][number]['spans'][number] }> = [];
   let coveredControl: (typeof all)[number] | undefined;
@@ -165,9 +173,21 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
     const evidenceActions = preferred && authorizedInlineActions(preferred, input.authorization);
     const navigationActions = preferred && controlActions(preferred).length > 0 && controlActions(preferred).every(action => isLineNavigationPostback(action.data));
     // Completion menus cannot replace the card's authorized actions in its text fallback.
-    const quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
+    let quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
       ? ((isControl || evidenceActions || navigationActions) && controlActions(preferred).length <= 13
         ? { items: controlActions(preferred).map(action => ({ type: 'action' as const, action })) } : preferred.quickReply) : undefined;
+    // Only a link already accepted by the card's tenant/origin guard may become a fallback button.
+    const links: Array<{ type: 'action'; action: { type: 'uri'; label: string; uri: string } }> = [];
+    const collectLinks = (value: unknown): void => {
+      if (Array.isArray(value)) { value.forEach(collectLinks); return; }
+      if (!value || typeof value !== 'object') return;
+      const row = value as Record<string, unknown>;
+      if (row.type === 'uri' && typeof row.uri === 'string' && typeof row.label === 'string' && lineCustomerText(row.uri) !== row.uri)
+        links.push({ type: 'action', action: { type: 'uri', label: row.label, uri: row.uri } });
+      else Object.values(row).forEach(collectLinks);
+    };
+    if (preferred) collectLinks(preferred);
+    if (links.length) quickReply = { items: [...(quickReply?.items ?? []), ...links.filter(link => !quickReply?.items.some(item => item.action.type === 'uri' && item.action.uri === link.action.uri))].slice(0, 13) };
     if (preferred?.type === 'flex' && matches && (isControl || isCompleteLineBusinessAnswerPresentation(preferred))
       && parts.length === 1 && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
       && parseOutcomeMessages(lineDeliveryWireMessages([preferred]))) {

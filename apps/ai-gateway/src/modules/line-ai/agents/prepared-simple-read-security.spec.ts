@@ -473,3 +473,16 @@ describe('item 4 (spec §3 rows 3/11): the misrouted-tool guard runs before the 
     assert.equal(calls.length, 0, 'the fast lane must never answer a reimbursement claim question with the expense ledger');
   });
 });
+
+
+describe('Exam G3: the accepted message language owns prepared card wording', () => {
+  for (const language of ['th', 'en'] as const) it(`${language} overrides a stale router language without changing the read`, async () => {
+    const req = baseReq(); req.language = language;
+    req.preparedPlan!.intentPlan.language = language === 'en' ? 'th' : 'en';
+    const { client, calls } = makeErp();
+    const result = await new OrchestratorAgent(client, makeConfig()).run(req);
+    assert.deepEqual(calls, ['sales.get_sales_summary']);
+    assert.match(result.replyText, language === 'en' ? /Sales|sales/ : /ยอดขาย/);
+    if (language === 'en') assert.doesNotMatch(result.replyText, /[\u0E00-\u0E7F]/u);
+  });
+});

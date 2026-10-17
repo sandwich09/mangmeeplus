@@ -729,6 +729,7 @@ export class LineExpenseActionService {
     await this.repairs.discard(ctx.companyId, repair.chatKeyHash);
     return this.preview(ctx, chat, { ...repair.paymentIntent, recordPaymentAfterConfirm: !!repair.paymentIntent, expenseId, action: repair.action });
   }
+  async teamCapacityReply(ctx: RequestContext, action: 'BRANCH_CREATE' | 'EMPLOYEE_CREATE', language: 'th' | 'en') { return this.teams?.capacityReply(ctx, action, language) ?? null; }
   async answerTeam(ctx: RequestContext, chat: string, text: string) { return this.teams?.answer(ctx, chat, text) ?? null; }
   async pending(ctx: RequestContext, chat: string, requestId?: string): Promise<ExpenseActionPreview | null> {
     const team = await this.teams?.pending(ctx, chat, requestId);

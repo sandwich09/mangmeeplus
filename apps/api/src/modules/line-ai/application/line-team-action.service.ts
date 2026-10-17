@@ -14,7 +14,8 @@ import { CreateEmployeeDto, UpdateEmployeeDto } from '../../employee-access/pres
 import { CreateBranchDto, UpdateBranchDto } from '../../data-model-core/presentation/http/data-model-core.dtos';
 import { CreateBranchUseCase } from '../../data-model-core/application/use-cases/create-branch.use-case';
 import { UpdateBranchUseCase } from '../../data-model-core/application/use-cases/update-branch.use-case';
-import { assertBranchLimit, assertEmployeeLimit } from '../../system-partner-management/application/plan-term-limit';
+import { BILLING_PAID_TIERS, billingOffer } from '@watchdog-bms/contracts';
+import { assertBranchLimit, assertEmployeeLimit, planCapacityUsed } from '../../system-partner-management/application/plan-term-limit';
 import { LineDraftPreviewStore, LINE_DRAFT_PREVIEW_TTL_SECONDS } from '../../expenses/application/services/line-draft-preview.store';
 import { canonicalDeliveryJson, deliveryHash } from '../domain/logic/line-delivery-plan.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../domain/ports/erp-read-tool.port';
@@ -103,6 +104,24 @@ export class LineTeamActionService {
     if (errors.length) throw new BadRequestException('ขอข้อมูลให้ครบและถูกต้องตามแบบฟอร์มค่ะ');
     return dto;
   }
+  async capacityReply(ctx: RequestContext, action: 'BRANCH_CREATE' | 'EMPLOYEE_CREATE', language: 'th' | 'en' = 'th'): Promise<string | null> {
+    try {
+      if (action === 'BRANCH_CREATE') await assertBranchLimit(this.prisma, ctx.companyId);
+      else await assertEmployeeLimit(this.prisma, ctx.companyId);
+      return null;
+    } catch (error) {
+      if (!(error instanceof HttpException) || error.getStatus() !== 422) throw error;
+      const response = error.getResponse();
+      const code = typeof response === 'object' && response ? String((response as any).code ?? '') : '';
+      if (code !== 'plan_branch_limit_exceeded' && !/แพ็กเกจ.*พนักงาน/u.test(error.message)) throw error;
+      const used = action === 'BRANCH_CREATE' ? await planCapacityUsed.branches(this.prisma.client, ctx.companyId) : await planCapacityUsed.members(this.prisma.client, ctx.companyId);
+      const offer = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(item => action === 'BRANCH_CREATE' ? item.branchLimit > used : item.employeeLimit > used);
+      const price = offer ? (offer.priceSatang / 100).toLocaleString('en-US') : '';
+      const pack = offer && (language === 'en' ? `${offer.offerKey.split('_')[0]} ${price} baht` : `${offer.label.replace(/\s*\(.*\)$/u, '')} ${price} บาท`);
+      return language === 'en' ? `Your current package has reached its ${action === 'BRANCH_CREATE' ? 'branch' : 'employee'} limit; ${pack ? `choose ${pack} for more capacity` : 'contact the team for more capacity'}.`
+        : `แพ็กเกจปัจจุบันใช้จำนวน${action === 'BRANCH_CREATE' ? 'สาขา' : 'พนักงาน'}ครบแล้วค่ะ ${pack ? `เลือกแพ็กเกจ ${pack} เพื่อเพิ่มได้ค่ะ` : 'ติดต่อทีมงานเพื่อเพิ่มจำนวนได้ค่ะ'}`;
+    }
+  }
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>): Promise<{ reply: string; preview?: ExpenseActionPreview }> {
     if (!chat || !ctx.membershipId || !this.config.aiGatewayInternalSecret || !this.store.available) return { reply: 'กรุณาทำรายการในแชตส่วนตัวค่ะ' };
     const owner = await this.owner(ctx, chat);
@@ -111,6 +130,10 @@ export class LineTeamActionService {
     if (!Object.hasOwn(TEAM_ACTION_LABELS, action)) return { reply: 'ต้องการจัดการพนักงานหรือสาขาอย่างไรคะ' };
     try {
       this.authorize(ctx, action);
+      if (action === 'BRANCH_CREATE' || action === 'EMPLOYEE_CREATE') {
+        const limit = await this.capacityReply(ctx, action);
+        if (limit) return { reply: limit };
+      }
       // Flat named inputs only: model-provided commands, ids and context never reach a use-case.
       const text = (key: string) => typeof input[key] === 'string' ? (input[key] as string).trim() : '';
       const payload: Payload = { action, fields: {} }, details: string[] = [];

@@ -673,7 +673,7 @@ export class LineReimbursementDraftUseCase {
     if (value['kind'] === 'USER_CHOICE') return exactKeys(value, ['kind', 'choiceId', 'choiceRevision'])
       && ['choiceId', 'choiceRevision'].every((key) => typeof value[key] === 'string' && (value[key] as string).length >= 1 && (value[key] as string).length <= 200);
     return value['kind'] === 'SERVER_DEFAULT' && exactKeys(value, ['kind', 'key'])
-      && ['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY'].includes(String(value['key']));
+      && ['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY', 'CLAIM_DATE_TODAY'].includes(String(value['key']));
   }
 
   private toLineInputs(lines: ReimbursementLineRecord[]): ReimbursementLineInput[] {

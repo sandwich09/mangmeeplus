@@ -1,0 +1,2875 @@
+[
+  {
+    "id": "v2-X098-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc2v1nn-9-e5ede9cd",
+              "replyToken": "rt-d13d488e-bd38-4087-9ed8-06f9de7c2f7d",
+              "message": {
+                "type": "text",
+                "id": "m179222226435510",
+                "text": "เบิก 120 แท็กซี่ ไม่มีบิล",
+                "quoteToken": "fdfd9871b87e258b"
+              },
+              "timestamp": 1792222264355,
+              "source": {
+                "type": "user",
+                "userId": "U9b6eaf738d4de17acd20f05d9a869e38"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "th",
+          "confidence": 0.88,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "reimbursementHints": {
+            "description": "ค่าแท็กซี่",
+            "amount": "120",
+            "confidence": 0.82,
+            "missingFields": [
+              "fundingSource",
+              "purpose",
+              "incurredDate",
+              "reason"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่าแท็กซี่ 120 บาท ไม่มีบิล",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 25,
+                  "rawSha256": "6b357b8adb14824d891d6da2aac813d460368f6bd64ebc7377ddb53b6bf32e0a"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.draft.get_options",
+            "input": {
+              "operation": "CREATE",
+              "subrequestIndex": 0
+            },
+            "result": {
+              "toolName": "reimbursement.draft.get_options",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "fieldPaths": [],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "taskId": "eab48b53-e0bc-5737-b6c1-76a01f4c4a02",
+                  "operation": "CREATE"
+                },
+                "options": {
+                  "schemaVersion": 1,
+                  "taskRevision": 0,
+                  "expiresAt": "2026-10-17T07:41:14.159Z",
+                  "control": {
+                    "actionId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                    "revision": "7eb8a17d799090ba74603af6c96201e57499c19e878a515d609eaac8f7d47ea9"
+                  },
+                  "awaitingPhoto": false,
+                  "revision": "6e79d65a809986362dbd0d710094cde38dfcb921d0cc781227fec05d7c8a51cc",
+                  "selected": {
+                    "branchChoiceId": "c13d21279793bb7cbdb3d061d22a9f6c434ef49165ed47c945fef1fd1f84b7f9",
+                    "requesterChoiceId": "13d43918557207bbfc2874e9ff8f026688f179c7091382005970d268b98ad2c5"
+                  },
+                  "choices": [
+                    {
+                      "choiceId": "c13d21279793bb7cbdb3d061d22a9f6c434ef49165ed47c945fef1fd1f84b7f9",
+                      "kind": "BRANCH",
+                      "label": "สำนักงานใหญ่ (BR1)",
+                      "revision": "2026-10-17T07:31:04.054Z"
+                    },
+                    {
+                      "choiceId": "13d43918557207bbfc2874e9ff8f026688f179c7091382005970d268b98ad2c5",
+                      "kind": "REQUESTER",
+                      "label": "พนักงาน (A)",
+                      "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1"
+                    },
+                    {
+                      "choiceId": "e2313ed4be6c65f14b85e7266929b857937dadcd636877b464abd3790d8eba51",
+                      "kind": "CATEGORY",
+                      "label": "ค่าน้ำมัน",
+                      "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e"
+                    },
+                    {
+                      "choiceId": "9dec1dc6b5362f871d3b7eba188474a5f4353328ec66d4e76bfd55acd7c99832",
+                      "kind": "CATEGORY",
+                      "label": "ค่าบริการ",
+                      "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3"
+                    },
+                    {
+                      "choiceId": "5c2b75e7b969ba24e6cd261dac0adddbc392e59e2e2eba77d6048030f7c5d2f6",
+                      "kind": "CATEGORY",
+                      "label": "ค่าออฟฟิศ",
+                      "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc"
+                    },
+                    {
+                      "choiceId": "5bcffa577c5b32ad865e1c310e252adbb5277a96427947e3d6ea4f1251b0c229",
+                      "kind": "CATEGORY",
+                      "label": "ค่าเดินทาง",
+                      "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513"
+                    },
+                    {
+                      "choiceId": "d74ae2ee76eb900699e6ea3a17a80b3164fe95184e857a83edd58d26cb3c3029",
+                      "kind": "CATEGORY",
+                      "label": "ค่าใช้จ่ายอื่นๆ",
+                      "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130"
+                    }
+                  ],
+                  "pages": {
+                    "branch": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "requester": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "category": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "source": {
+                      "returned": 0,
+                      "hasMore": false
+                    },
+                    "attachment": {
+                      "returned": 0,
+                      "hasMore": false
+                    }
+                  },
+                  "collection": {
+                    "lineChosen": false,
+                    "receiptChosen": false,
+                    "categoryChosen": false
+                  }
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T07:31:14.235Z"
+            }
+          },
+          {
+            "tool": "reimbursement.draft.preview_create",
+            "input": {
+              "action": {
+                "taskId": "eab48b53-e0bc-5737-b6c1-76a01f4c4a02",
+                "actionId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                "operation": "CREATE"
+              },
+              "proposal": {
+                "schemaVersion": 1,
+                "taskId": "eab48b53-e0bc-5737-b6c1-76a01f4c4a02",
+                "taskRevision": 0,
+                "operation": "CREATE",
+                "lineChanges": [
+                  {
+                    "operation": "ADD",
+                    "values": {
+                      "description": {
+                        "value": "แท็กซี่",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 9,
+                              "endUtf16": 16,
+                              "rawSha256": "6b357b8adb14824d891d6da2aac813d460368f6bd64ebc7377ddb53b6bf32e0a"
+                            }
+                          ]
+                        }
+                      },
+                      "amount": {
+                        "value": "120",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "087b0dc9366f7eecdb41c52dd15005d82b2aea8efeb779926c8db7642098735b",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 5,
+                              "endUtf16": 8,
+                              "rawSha256": "6b357b8adb14824d891d6da2aac813d460368f6bd64ebc7377ddb53b6bf32e0a"
+                            }
+                          ]
+                        }
+                      },
+                      "incurredDate": "2026-10-17",
+                      "attachmentChoiceId": null
+                    }
+                  }
+                ],
+                "fields": {}
+              },
+              "suggestedCategoryChoiceId": "5bcffa577c5b32ad865e1c310e252adbb5277a96427947e3d6ea4f1251b0c229"
+            },
+            "result": {
+              "toolName": "reimbursement.draft.preview_create",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "blocked",
+                  "errorCode": "invalid_provenance"
+                },
+                "actionLocator": {
+                  "actionId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "taskId": "eab48b53-e0bc-5737-b6c1-76a01f4c4a02",
+                  "operation": "CREATE"
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "e353f608-1c40-503c-accf-c7d892b1dd85",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T07:31:27.496Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-X044-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc46jly-16-bf0a530b",
+              "replyToken": "rt-a6f44ecd-540d-46dc-bbb1-980043091903",
+              "message": {
+                "type": "text",
+                "id": "m179222448045443",
+                "text": "claim ค่า grab 199 บาท เมื่อวาน ไม่มีใบเสร็จ",
+                "quoteToken": "895b22c04946c859"
+              },
+              "timestamp": 1792224480454,
+              "source": {
+                "type": "user",
+                "userId": "U20377d8bc1eef33d292a6a258cf82b87"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "en",
+          "confidence": 0.91,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "ค่า grab",
+            "amount": "199",
+            "confidence": 0.87,
+            "missingFields": [
+              "purpose",
+              "reason",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "สร้างใบเบิกค่า Grab 199 บาท เมื่อวาน ไม่มีใบเสร็จ",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 44,
+                  "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.draft.get_options",
+            "input": {
+              "operation": "CREATE",
+              "subrequestIndex": 0
+            },
+            "result": {
+              "toolName": "reimbursement.draft.get_options",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "fieldPaths": [],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "taskId": "d4944f0e-4fe8-5c5c-ac9e-e463339d5b2c",
+                  "operation": "CREATE"
+                },
+                "options": {
+                  "schemaVersion": 1,
+                  "taskRevision": 0,
+                  "expiresAt": "2026-10-17T08:18:09.416Z",
+                  "control": {
+                    "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                    "revision": "78476d4697a1a5993f15de5dc3160d6c5f30b6cb4d07345ed8bc34ef662f5e93"
+                  },
+                  "awaitingPhoto": false,
+                  "revision": "5fb66063a3894d91166e4331105eb3ca9671015e9b44f62da068636100c5b543",
+                  "selected": {
+                    "branchChoiceId": "9f228d7a8b0b749d406e089877f0f30ec9a4e4ebab72e653e6c92b3e14bd3199",
+                    "requesterChoiceId": "d0068603457582a9b921b4df51610b0320e6bbcd082557e39bca485267de6caf"
+                  },
+                  "choices": [
+                    {
+                      "choiceId": "95c487130e5ec8c07c56c6607aebb4a1bcad4cd538d0d894202d1fa23a786ae0",
+                      "kind": "BRANCH",
+                      "label": "สาขา 2 (BR2)",
+                      "revision": "2026-10-17T08:08:00.262Z"
+                    },
+                    {
+                      "choiceId": "9f228d7a8b0b749d406e089877f0f30ec9a4e4ebab72e653e6c92b3e14bd3199",
+                      "kind": "BRANCH",
+                      "label": "สำนักงานใหญ่ (BR1)",
+                      "revision": "2026-10-17T08:08:00.261Z"
+                    },
+                    {
+                      "choiceId": "d0068603457582a9b921b4df51610b0320e6bbcd082557e39bca485267de6caf",
+                      "kind": "REQUESTER",
+                      "label": "พนักงาน (B)",
+                      "revision": "25ccd83b997bcf90ce8fae9e2f604c374cffed64e56baed8d745c92589d4fe9b"
+                    },
+                    {
+                      "choiceId": "81a18e692ff0234f87e78ad4f8183d391e898d71f952b53fb1a6003a37b3563b",
+                      "kind": "CATEGORY",
+                      "label": "ค่าน้ำมัน",
+                      "revision": "099871bebb430f0d23ca5840d1e7ba188b2aad0318a22295993be991193e73d2"
+                    },
+                    {
+                      "choiceId": "aa6674df607a0281d4beb58204eb67b8d339f977e5bc6038aa08583a1cf1eb0a",
+                      "kind": "CATEGORY",
+                      "label": "ค่าบริการ",
+                      "revision": "24e95034d7857e11d12d441c06ac1f6f2a499626d667b97c36129379890f2e51"
+                    },
+                    {
+                      "choiceId": "ba21ae3e8c47868033fec948d5e43e471e1eebb7d0586437ec1eb6f60a7c5c42",
+                      "kind": "CATEGORY",
+                      "label": "ค่าออฟฟิศ",
+                      "revision": "a21446c99159f58471dd85405777e84e731efeefbfd97d0e6d17b4b7de6bcc04"
+                    },
+                    {
+                      "choiceId": "2ad85e8837ee57e255d5ee7700786793f652fb4b4f5b83c0478d1933ab37ad83",
+                      "kind": "CATEGORY",
+                      "label": "ค่าเดินทาง",
+                      "revision": "ca0df356b10f9c825c77316ac745d4c78f5d514927a7177d8449484d016cbbd4"
+                    },
+                    {
+                      "choiceId": "6752f07d5738307084fc8a465d1b8215a7e89b39a13c88bf176e00bc12c19170",
+                      "kind": "CATEGORY",
+                      "label": "ค่าใช้จ่ายอื่นๆ",
+                      "revision": "2742574a94b235c066fc234169e53c4635f267835eff52e0ea20e3a1556fcff4"
+                    }
+                  ],
+                  "pages": {
+                    "branch": {
+                      "returned": 2,
+                      "hasMore": false
+                    },
+                    "requester": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "category": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "source": {
+                      "returned": 0,
+                      "hasMore": false
+                    },
+                    "attachment": {
+                      "returned": 0,
+                      "hasMore": false
+                    }
+                  },
+                  "collection": {
+                    "lineChosen": true,
+                    "receiptChosen": false,
+                    "categoryChosen": false
+                  },
+                  "collected": {
+                    "schemaVersion": 1,
+                    "taskId": "d4944f0e-4fe8-5c5c-ac9e-e463339d5b2c",
+                    "taskRevision": 0,
+                    "operation": "CREATE",
+                    "fields": {
+                      "reason": {
+                        "value": "ค่า grab",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9",
+                              "startUtf16": 6,
+                              "endUtf16": 14
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "lineChanges": [
+                      {
+                        "operation": "ADD",
+                        "values": {
+                          "incurredDate": {
+                            "value": "2026-10-16",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 23,
+                                  "endUtf16": 31,
+                                  "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                                }
+                              ],
+                              "candidateId": "e4b44e28dafc04d3067007943bbc1fd917f3d456e3a2992c346147d77770d950"
+                            }
+                          },
+                          "description": {
+                            "value": "ค่า grab",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9",
+                                  "startUtf16": 6,
+                                  "endUtf16": 14
+                                }
+                              ]
+                            }
+                          },
+                          "amount": {
+                            "value": "199",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 15,
+                                  "endUtf16": 18,
+                                  "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                                }
+                              ],
+                              "candidateId": "5080b44e3364d1b3af4f58dad86f93d324b13ad0d90a23d1cee7bd1ded99963c"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T08:08:09.454Z"
+            }
+          },
+          {
+            "tool": "reimbursement.draft.preview_create",
+            "input": {
+              "action": {
+                "taskId": "d4944f0e-4fe8-5c5c-ac9e-e463339d5b2c",
+                "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                "operation": "CREATE"
+              },
+              "proposal": {
+                "schemaVersion": 1,
+                "taskId": "d4944f0e-4fe8-5c5c-ac9e-e463339d5b2c",
+                "taskRevision": 0,
+                "operation": "CREATE",
+                "lineChanges": [
+                  {
+                    "operation": "ADD",
+                    "values": {
+                      "description": {
+                        "value": "ค่า grab",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 6,
+                              "endUtf16": 14,
+                              "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                            }
+                          ]
+                        }
+                      },
+                      "amount": {
+                        "value": "199",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "5080b44e3364d1b3af4f58dad86f93d324b13ad0d90a23d1cee7bd1ded99963c",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 15,
+                              "endUtf16": 18,
+                              "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                            }
+                          ]
+                        }
+                      },
+                      "incurredDate": {
+                        "value": "2026-10-16",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "e4b44e28dafc04d3067007943bbc1fd917f3d456e3a2992c346147d77770d950",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 23,
+                              "endUtf16": 31,
+                              "rawSha256": "7f379f094f717ff8c22ef397af0a61c0020b865384deb16d4dfbd7d7a13bedc9"
+                            }
+                          ]
+                        }
+                      },
+                      "attachmentChoiceId": null
+                    }
+                  }
+                ],
+                "fields": {}
+              },
+              "suggestedCategoryChoiceId": "2ad85e8837ee57e255d5ee7700786793f652fb4b4f5b83c0478d1933ab37ad83"
+            },
+            "result": {
+              "toolName": "reimbursement.draft.preview_create",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "fieldPaths": [
+                    "lineChanges.0.values.categoryChoiceId"
+                  ],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "taskId": "d4944f0e-4fe8-5c5c-ac9e-e463339d5b2c",
+                  "operation": "CREATE"
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "0f966923-d421-5b2c-9398-4808f232ac9e",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T08:08:18.637Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-X092-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc7j6mh-2o-b575f4b4",
+              "replyToken": "rt-46d4a884-fe0c-428a-b4a4-93b48cfa7d59",
+              "message": {
+                "type": "text",
+                "id": "m179223010900197",
+                "text": "cliam 324 baht taxi tday no reciept",
+                "quoteToken": "47806e9d8917f8be"
+              },
+              "timestamp": 1792230109001,
+              "source": {
+                "type": "user",
+                "userId": "U544605a27c926909e0b5945646ec493f"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "en",
+          "confidence": 0.88,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "taxi fare",
+            "businessPurpose": "taxi today",
+            "reason": "no receipt — substitute receipt may be needed",
+            "amount": "324",
+            "confidence": 0.82,
+            "missingFields": [
+              "incurredDate",
+              "purpose"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Start reimbursement claim for 324 baht taxi, no receipt",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 35,
+                  "rawSha256": "111b353c28d1bc12bd932000864cfb846cd8cb6cf6d48981922780cccbab39b3"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.draft.get_options",
+            "input": {
+              "operation": "CREATE",
+              "subrequestIndex": 0
+            },
+            "result": {
+              "toolName": "reimbursement.draft.get_options",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "fieldPaths": [],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "taskId": "77a3f91c-2253-562d-a7a3-d837fead951a",
+                  "operation": "CREATE"
+                },
+                "options": {
+                  "schemaVersion": 1,
+                  "taskRevision": 0,
+                  "expiresAt": "2026-10-17T09:51:57.189Z",
+                  "control": {
+                    "actionId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                    "revision": "83c74e90d98bc6b5aa78a54bf53ca87cbe7899ca15c8ea8d9bc40420dfce6b6e"
+                  },
+                  "awaitingPhoto": false,
+                  "revision": "d27eef47ae337a6221194fea1a624dc2da2c94080470132dfec1127a42bef641",
+                  "selected": {
+                    "branchChoiceId": "29a1a4b53623d2d787c9176ee11b34aa64b9bfe556ac991e1c9e00c67fa9dd5c",
+                    "requesterChoiceId": "adc9792e4a8accab549499323f0bee698c11e6d6ceba7779ce9d851819b768ff"
+                  },
+                  "choices": [
+                    {
+                      "choiceId": "29a1a4b53623d2d787c9176ee11b34aa64b9bfe556ac991e1c9e00c67fa9dd5c",
+                      "kind": "BRANCH",
+                      "label": "สำนักงานใหญ่ (BR1)",
+                      "revision": "2026-10-17T09:41:48.707Z"
+                    },
+                    {
+                      "choiceId": "adc9792e4a8accab549499323f0bee698c11e6d6ceba7779ce9d851819b768ff",
+                      "kind": "REQUESTER",
+                      "label": "พนักงาน (A)",
+                      "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1"
+                    },
+                    {
+                      "choiceId": "7df5182ba197033f2077dbb3342c127db8ae79bc7b02a35176474a8a4300e906",
+                      "kind": "CATEGORY",
+                      "label": "ค่าน้ำมัน",
+                      "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e"
+                    },
+                    {
+                      "choiceId": "6c3f683608c766c23e64c045878e177340022215ae408d0564d217c2bb8ed39b",
+                      "kind": "CATEGORY",
+                      "label": "ค่าบริการ",
+                      "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3"
+                    },
+                    {
+                      "choiceId": "765da317e4a37743b474e321664d9015c96d84fa815f6eec233efd0d3e66693c",
+                      "kind": "CATEGORY",
+                      "label": "ค่าออฟฟิศ",
+                      "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc"
+                    },
+                    {
+                      "choiceId": "b594772509ce6eae5f5bb4afaf73e28c7d15d0f365a5836a5413e6cebe3a48a9",
+                      "kind": "CATEGORY",
+                      "label": "ค่าเดินทาง",
+                      "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513"
+                    },
+                    {
+                      "choiceId": "e0f8557053e6edc125cd7d59975eb2f828ac1ff06178a10c72260a113abd1e26",
+                      "kind": "CATEGORY",
+                      "label": "ค่าใช้จ่ายอื่นๆ",
+                      "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130"
+                    }
+                  ],
+                  "pages": {
+                    "branch": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "requester": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "category": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "source": {
+                      "returned": 0,
+                      "hasMore": false
+                    },
+                    "attachment": {
+                      "returned": 0,
+                      "hasMore": false
+                    }
+                  },
+                  "collection": {
+                    "lineChosen": false,
+                    "receiptChosen": false,
+                    "categoryChosen": false
+                  }
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T09:41:57.240Z"
+            }
+          },
+          {
+            "tool": "reimbursement.draft.preview_create",
+            "input": {
+              "action": {
+                "taskId": "77a3f91c-2253-562d-a7a3-d837fead951a",
+                "actionId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                "operation": "CREATE"
+              },
+              "suggestedCategoryChoiceId": "b594772509ce6eae5f5bb4afaf73e28c7d15d0f365a5836a5413e6cebe3a48a9",
+              "proposal": {
+                "operation": "CREATE",
+                "fields": {
+                  "missingReceiptReason": "ไม่มีใบเสร็จ"
+                },
+                "lineChanges": [
+                  {
+                    "operation": "ADD",
+                    "values": {
+                      "description": {
+                        "value": "taxi",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 15,
+                              "endUtf16": 19,
+                              "rawSha256": "111b353c28d1bc12bd932000864cfb846cd8cb6cf6d48981922780cccbab39b3"
+                            }
+                          ]
+                        }
+                      },
+                      "amount": {
+                        "value": "324",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "1be77280e1e706c948781b43fa03cb26002e957c18d0c55fba80a99fa774094e",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 6,
+                              "endUtf16": 9,
+                              "rawSha256": "111b353c28d1bc12bd932000864cfb846cd8cb6cf6d48981922780cccbab39b3"
+                            }
+                          ]
+                        }
+                      },
+                      "incurredDate": "2026-10-17",
+                      "attachmentChoiceId": null
+                    }
+                  }
+                ],
+                "schemaVersion": 1,
+                "taskId": "77a3f91c-2253-562d-a7a3-d837fead951a",
+                "taskRevision": 0
+              }
+            },
+            "result": {
+              "toolName": "reimbursement.draft.preview_create",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "blocked",
+                  "errorCode": "invalid_provenance"
+                },
+                "actionLocator": {
+                  "actionId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "taskId": "77a3f91c-2253-562d-a7a3-d837fead951a",
+                  "operation": "CREATE"
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "97afd8a3-c167-5d0f-b07f-f22a1ffa7880",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T09:42:06.075Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-X031-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc6q43m-8-4a4c9fd2",
+              "replyToken": "rt-8684b590-c96a-430e-9b5d-11b92e4e8204",
+              "message": {
+                "type": "text",
+                "id": "m17922287527069",
+                "text": "Claim 615 baht for a client dinner yesterday, I have no receipt",
+                "quoteToken": "ebdc8eaee42d694f"
+              },
+              "timestamp": 1792228752706,
+              "source": {
+                "type": "user",
+                "userId": "Uefc38dfcc876dccf5b10946acf742473"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "en",
+          "confidence": 0.93,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "client dinner",
+            "businessPurpose": "client dinner",
+            "amount": "615",
+            "confidence": 0.88,
+            "missingFields": [
+              "reason",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Start reimbursement claim for client dinner 615 baht yesterday",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 63,
+                  "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.draft.get_options",
+            "input": {
+              "operation": "CREATE",
+              "subrequestIndex": 0
+            },
+            "result": {
+              "toolName": "reimbursement.draft.get_options",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "fieldPaths": [],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "taskId": "21be7cfb-3376-5218-9753-22c206ab3c3f",
+                  "operation": "CREATE"
+                },
+                "options": {
+                  "schemaVersion": 1,
+                  "taskRevision": 0,
+                  "expiresAt": "2026-10-17T09:29:23.808Z",
+                  "control": {
+                    "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                    "revision": "bf748a99f9dd72149ad9585d97488dc6add0460b910f73207e52371f0eb9bdc5"
+                  },
+                  "awaitingPhoto": false,
+                  "revision": "93d8c2e9a52431d7a4a650da407e5b82b367ed5fce1779e9bee8fe7d76ce1d35",
+                  "selected": {
+                    "branchChoiceId": "eade9f1e26e2f2d5c6c8e25e7d70a3db14881e59430319dc00d1260b991b513e",
+                    "requesterChoiceId": "6623fdb846b0291a991dac0f751b2ef70d472fa7907cd61bbad28e96e89d329f"
+                  },
+                  "choices": [
+                    {
+                      "choiceId": "eade9f1e26e2f2d5c6c8e25e7d70a3db14881e59430319dc00d1260b991b513e",
+                      "kind": "BRANCH",
+                      "label": "สำนักงานใหญ่ (BR1)",
+                      "revision": "2026-10-17T09:19:12.416Z"
+                    },
+                    {
+                      "choiceId": "6623fdb846b0291a991dac0f751b2ef70d472fa7907cd61bbad28e96e89d329f",
+                      "kind": "REQUESTER",
+                      "label": "พนักงาน (A)",
+                      "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1"
+                    },
+                    {
+                      "choiceId": "f472661b6dc9113ac6977d8e735eba67b6ea3e0d66731cf060c66d3ba57ad4ff",
+                      "kind": "CATEGORY",
+                      "label": "ค่าน้ำมัน",
+                      "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e"
+                    },
+                    {
+                      "choiceId": "96b99e6701425424b3da8c626a7258563498a17058edea1f114e55f7ba8931b0",
+                      "kind": "CATEGORY",
+                      "label": "ค่าบริการ",
+                      "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3"
+                    },
+                    {
+                      "choiceId": "caa903fee2663f7ba8f6ff6e6580c4f8a6008e0342ef74e1258f5269cd253f08",
+                      "kind": "CATEGORY",
+                      "label": "ค่าออฟฟิศ",
+                      "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc"
+                    },
+                    {
+                      "choiceId": "d1809ae927f215e3cf5fd94797949ec90f7efa4478e677c704704227bfdb1da9",
+                      "kind": "CATEGORY",
+                      "label": "ค่าเดินทาง",
+                      "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513"
+                    },
+                    {
+                      "choiceId": "59e04c609ed4aa4e610f8382c308dc8cef79ecf3375ac0c341047f8054293d3d",
+                      "kind": "CATEGORY",
+                      "label": "ค่าใช้จ่ายอื่นๆ",
+                      "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130"
+                    }
+                  ],
+                  "pages": {
+                    "branch": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "requester": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "category": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "source": {
+                      "returned": 0,
+                      "hasMore": false
+                    },
+                    "attachment": {
+                      "returned": 0,
+                      "hasMore": false
+                    }
+                  },
+                  "collection": {
+                    "lineChosen": true,
+                    "receiptChosen": false,
+                    "categoryChosen": false
+                  },
+                  "collected": {
+                    "schemaVersion": 1,
+                    "taskId": "21be7cfb-3376-5218-9753-22c206ab3c3f",
+                    "taskRevision": 0,
+                    "operation": "CREATE",
+                    "fields": {
+                      "reason": {
+                        "value": "client dinner",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1",
+                              "startUtf16": 21,
+                              "endUtf16": 34
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "lineChanges": [
+                      {
+                        "operation": "ADD",
+                        "values": {
+                          "incurredDate": {
+                            "value": "2026-10-16",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 35,
+                                  "endUtf16": 44,
+                                  "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                                }
+                              ],
+                              "candidateId": "b3e5eaf2c92ab4b8e17a540418f874d7a2faea17b4b932dea8cc837492626188"
+                            }
+                          },
+                          "description": {
+                            "value": "client dinner",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1",
+                                  "startUtf16": 21,
+                                  "endUtf16": 34
+                                }
+                              ]
+                            }
+                          },
+                          "purpose": {
+                            "value": "client dinner",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1",
+                                  "startUtf16": 21,
+                                  "endUtf16": 34
+                                }
+                              ]
+                            }
+                          },
+                          "amount": {
+                            "value": "615",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 6,
+                                  "endUtf16": 9,
+                                  "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                                }
+                              ],
+                              "candidateId": "e5618244eff9ea30106c8828b7b30f4be5b55c9415aaccd5bb5d0af3d777c62a"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T09:19:23.881Z"
+            }
+          },
+          {
+            "tool": "reimbursement.draft.preview_create",
+            "input": {
+              "action": {
+                "taskId": "21be7cfb-3376-5218-9753-22c206ab3c3f",
+                "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                "operation": "CREATE"
+              },
+              "suggestedCategoryChoiceId": "59e04c609ed4aa4e610f8382c308dc8cef79ecf3375ac0c341047f8054293d3d",
+              "proposal": {
+                "schemaVersion": 1,
+                "taskId": "21be7cfb-3376-5218-9753-22c206ab3c3f",
+                "taskRevision": 0,
+                "operation": "CREATE",
+                "fields": {
+                  "reason": {
+                    "value": "client dinner",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 21,
+                          "endUtf16": 34,
+                          "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "lineChanges": [
+                  {
+                    "operation": "ADD",
+                    "values": {
+                      "description": {
+                        "value": "client dinner",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 21,
+                              "endUtf16": 34,
+                              "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                            }
+                          ]
+                        }
+                      },
+                      "amount": {
+                        "value": "615",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "e5618244eff9ea30106c8828b7b30f4be5b55c9415aaccd5bb5d0af3d777c62a",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 6,
+                              "endUtf16": 9,
+                              "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                            }
+                          ]
+                        }
+                      },
+                      "incurredDate": {
+                        "value": "2026-10-16",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "b3e5eaf2c92ab4b8e17a540418f874d7a2faea17b4b932dea8cc837492626188",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 35,
+                              "endUtf16": 44,
+                              "rawSha256": "798f009232faf6f81e70f5a56134c5bb75f69f9321c9b9ad320863808b7f9cd1"
+                            }
+                          ]
+                        }
+                      },
+                      "attachmentChoiceId": null
+                    }
+                  }
+                ]
+              }
+            },
+            "result": {
+              "toolName": "reimbursement.draft.preview_create",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "fieldPaths": [
+                    "lineChanges.0.values.categoryChoiceId"
+                  ],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "taskId": "21be7cfb-3376-5218-9753-22c206ab3c3f",
+                  "operation": "CREATE"
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "50f85e54-ab6c-5fe7-bc5f-98f4d9571218",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T09:19:33.136Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-X041-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc5cp6e-1f-5d978888",
+              "replyToken": "rt-0b36fd72-bce6-44bd-8651-6b194d808b7d",
+              "message": {
+                "type": "text",
+                "id": "m179222644722252",
+                "text": "I need to claim 730 baht for a courier I paid today, no receipt",
+                "quoteToken": "e8f34e7e56ddb1ea"
+              },
+              "timestamp": 1792226447222,
+              "source": {
+                "type": "user",
+                "userId": "U4f00e64b44d5b0e6283bbfe13546cee1"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "REIMBURSEMENT_REQUEST_START",
+          "language": "en",
+          "confidence": 0.95,
+          "semanticOutcome": "REIMBURSEMENT_CLAIM",
+          "fundingSource": "EMPLOYEE_PAID",
+          "reimbursementHints": {
+            "description": "courier",
+            "businessPurpose": "courier paid by employee today",
+            "amount": "730",
+            "confidence": 0.9,
+            "missingFields": [
+              "purpose",
+              "reason",
+              "incurredDate"
+            ]
+          },
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Start a reimbursement claim for 730 baht courier paid today",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "writeIntent": "REIMBURSEMENT_REQUEST_START",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 63,
+                  "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.draft.get_options",
+            "input": {
+              "operation": "CREATE",
+              "subrequestIndex": 0
+            },
+            "result": {
+              "toolName": "reimbursement.draft.get_options",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "fieldPaths": [],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "taskId": "03043231-d806-5ac5-aa75-d962ab869394",
+                  "operation": "CREATE"
+                },
+                "options": {
+                  "schemaVersion": 1,
+                  "taskRevision": 0,
+                  "expiresAt": "2026-10-17T08:50:57.554Z",
+                  "control": {
+                    "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                    "revision": "e7588fed1ff3c2aceac7c65e621678777bbb38498e0e4d0d304cf5666f056362"
+                  },
+                  "awaitingPhoto": false,
+                  "revision": "38396e9f2fb0e398b02b615c233711cf4f01c276999779c1ef503d6d501fc9b2",
+                  "selected": {
+                    "branchChoiceId": "961366b3db2d1a890657523a7802dd1b923f8437463966a38e5558a5b2c5f03d",
+                    "requesterChoiceId": "d1f1fdfafa8478a93b7102c69bf7ddb9e16e230dbaecfb9641852a9830b49935"
+                  },
+                  "choices": [
+                    {
+                      "choiceId": "961366b3db2d1a890657523a7802dd1b923f8437463966a38e5558a5b2c5f03d",
+                      "kind": "BRANCH",
+                      "label": "สำนักงานใหญ่ (BR1)",
+                      "revision": "2026-10-17T08:40:46.913Z"
+                    },
+                    {
+                      "choiceId": "d1f1fdfafa8478a93b7102c69bf7ddb9e16e230dbaecfb9641852a9830b49935",
+                      "kind": "REQUESTER",
+                      "label": "นักบัญชี (A)",
+                      "revision": "57ba1bb041a783c400f99bdf73a08ec7cce9230d0ebc46ba2c22e3bf63b55224"
+                    },
+                    {
+                      "choiceId": "a7e64b14490d6463d4caa3c2e8fd4dcc85850323b100fd2d70e409bf9ae346b3",
+                      "kind": "REQUESTER",
+                      "label": "ผู้จัดการ (A)",
+                      "revision": "60aa92b22b7f2b037ca5cb956731dfed09fc7c9f765fb88782ed8b74ebdec55d"
+                    },
+                    {
+                      "choiceId": "19c810bb90984fbcf932aabf621e4a52b2c67664b7d60ddf5f1a5aff05b39a07",
+                      "kind": "REQUESTER",
+                      "label": "ผู้ตรวจสอบ (A)",
+                      "revision": "0d92e41a93fe15156b52ba5e6a2539bc3a7d58ddfab7aaca757c812a54800a30"
+                    },
+                    {
+                      "choiceId": "0200b924480264571369d610d499aed0ee62faef2fe48113342a123facc46490",
+                      "kind": "REQUESTER",
+                      "label": "พนักงาน (A)",
+                      "revision": "9fe87e46c54a1221f1e1a1875a9555cafa825b6511c6ae9ec264956da8158cc1"
+                    },
+                    {
+                      "choiceId": "ab3c94d76791bf99ddec3dc7c0ccda363197b553fd7e95557d41678bf7c1bc99",
+                      "kind": "REQUESTER",
+                      "label": "เจ้าของร้าน (A)",
+                      "revision": "209fddcbe51ad784a1adf2905239ac65c1695d1331a1e447c4a8152562cbd09b"
+                    },
+                    {
+                      "choiceId": "67a4c02db8822375a8c980eee5b328c41b6982cd6287e46137276bd2cf4cf0f7",
+                      "kind": "CATEGORY",
+                      "label": "ค่าน้ำมัน",
+                      "revision": "04fde5d262c8748a00a45139b4dcb0d1a98d13457b1ea7691dbf1ce76bb66e4e"
+                    },
+                    {
+                      "choiceId": "2e9c821414694641f4795e8da1fef70d95cc61bf1bbc85279b3dac259d6ca180",
+                      "kind": "CATEGORY",
+                      "label": "ค่าบริการ",
+                      "revision": "439dcccf8a2b2b7efe3ee5fecf7b486a7d00b7dc8b0148c3ff767a66799d92f3"
+                    },
+                    {
+                      "choiceId": "871eeac39f3af87bdb3cf8a3f9d10f9dd75959ba39b69ded98f0d8b8bf833bac",
+                      "kind": "CATEGORY",
+                      "label": "ค่าออฟฟิศ",
+                      "revision": "b81ce85082870d5b022d865ac3cd2b1db0874e3223dda9ef53a1b8b8321924cc"
+                    },
+                    {
+                      "choiceId": "d44441b5289fa2bed3dc6906879d9e87c759adc07a55c0b85690e1954a8cd441",
+                      "kind": "CATEGORY",
+                      "label": "ค่าเดินทาง",
+                      "revision": "c620319519d561448adff5cbe418b56c726d4a304f58f536f49deb2faf7c1513"
+                    },
+                    {
+                      "choiceId": "5d1f118f41ab330d6f80046cbe8aa8b9596a8ff6a13d80eb0c384e5bf003e1c2",
+                      "kind": "CATEGORY",
+                      "label": "ค่าใช้จ่ายอื่นๆ",
+                      "revision": "62253ca5eed2b043592b4a6f97304a5d0cfffeb92d0ea317d01eca9b784b3130"
+                    }
+                  ],
+                  "pages": {
+                    "branch": {
+                      "returned": 1,
+                      "hasMore": false
+                    },
+                    "requester": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "category": {
+                      "returned": 5,
+                      "hasMore": false
+                    },
+                    "source": {
+                      "returned": 0,
+                      "hasMore": false
+                    },
+                    "attachment": {
+                      "returned": 0,
+                      "hasMore": false
+                    }
+                  },
+                  "collection": {
+                    "lineChosen": true,
+                    "receiptChosen": false,
+                    "categoryChosen": false
+                  },
+                  "collected": {
+                    "schemaVersion": 1,
+                    "taskId": "03043231-d806-5ac5-aa75-d962ab869394",
+                    "taskRevision": 0,
+                    "operation": "CREATE",
+                    "fields": {
+                      "reason": {
+                        "value": "courier",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77",
+                              "startUtf16": 31,
+                              "endUtf16": 38
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "lineChanges": [
+                      {
+                        "operation": "ADD",
+                        "values": {
+                          "incurredDate": {
+                            "value": "2026-10-17",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 46,
+                                  "endUtf16": 51,
+                                  "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                                }
+                              ],
+                              "candidateId": "b3ed069caf6e663670994fba1e6b8fb60873203216f04b2fb35d2f819d9a35d3"
+                            }
+                          },
+                          "description": {
+                            "value": "courier",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77",
+                                  "startUtf16": 31,
+                                  "endUtf16": 38
+                                }
+                              ]
+                            }
+                          },
+                          "amount": {
+                            "value": "730",
+                            "proof": {
+                              "kind": "USER_TEXT",
+                              "refs": [
+                                {
+                                  "partId": "part-0",
+                                  "startUtf16": 16,
+                                  "endUtf16": 19,
+                                  "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                                }
+                              ],
+                              "candidateId": "9c4b13b3e15b532049a8abd122f77e40fff7c5ecf949216a67c0a1e4b7656b37"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T08:40:57.604Z"
+            }
+          },
+          {
+            "tool": "reimbursement.draft.preview_create",
+            "input": {
+              "action": {
+                "taskId": "03043231-d806-5ac5-aa75-d962ab869394",
+                "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                "operation": "CREATE"
+              },
+              "suggestedCategoryChoiceId": "d44441b5289fa2bed3dc6906879d9e87c759adc07a55c0b85690e1954a8cd441",
+              "proposal": {
+                "schemaVersion": 1,
+                "taskId": "03043231-d806-5ac5-aa75-d962ab869394",
+                "taskRevision": 0,
+                "operation": "CREATE",
+                "fields": {
+                  "reason": {
+                    "value": "courier",
+                    "proof": {
+                      "kind": "USER_TEXT",
+                      "refs": [
+                        {
+                          "partId": "part-0",
+                          "startUtf16": 31,
+                          "endUtf16": 38,
+                          "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "lineChanges": [
+                  {
+                    "operation": "ADD",
+                    "values": {
+                      "description": {
+                        "value": "courier",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 31,
+                              "endUtf16": 38,
+                              "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                            }
+                          ]
+                        }
+                      },
+                      "amount": {
+                        "value": "730",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "9c4b13b3e15b532049a8abd122f77e40fff7c5ecf949216a67c0a1e4b7656b37",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 16,
+                              "endUtf16": 19,
+                              "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                            }
+                          ]
+                        }
+                      },
+                      "incurredDate": {
+                        "value": "2026-10-17",
+                        "proof": {
+                          "kind": "USER_TEXT",
+                          "candidateId": "b3ed069caf6e663670994fba1e6b8fb60873203216f04b2fb35d2f819d9a35d3",
+                          "refs": [
+                            {
+                              "partId": "part-0",
+                              "startUtf16": 46,
+                              "endUtf16": 51,
+                              "rawSha256": "918b5d9bbd3253d13b4c09df667e22e61b2201a79673abc19dbde89fb58d7f77"
+                            }
+                          ]
+                        }
+                      },
+                      "attachmentChoiceId": null
+                    }
+                  }
+                ]
+              }
+            },
+            "result": {
+              "toolName": "reimbursement.draft.preview_create",
+              "status": "ok",
+              "data": {
+                "reimbursementDraft": {
+                  "status": "needs_fields",
+                  "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "fieldPaths": [
+                    "lineChanges.0.values.categoryChoiceId"
+                  ],
+                  "actionRevision": 0
+                },
+                "actionLocator": {
+                  "actionId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "taskId": "03043231-d806-5ac5-aa75-d962ab869394",
+                  "operation": "CREATE"
+                }
+              },
+              "sourceRefs": [
+                {
+                  "id": "reimbursement-action:fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "label": "ร่างใบเบิกที่ตรวจสิทธิ์แล้ว",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_draft_action",
+                  "entityId": "fd299419-de3d-5c03-ac77-c59073d3f564",
+                  "permissionChecked": true,
+                  "sourceType": "ACTION"
+                }
+              ],
+              "asOf": "2026-10-17T08:41:06.186Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-D118-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc408el-m-fa256a09",
+              "replyToken": "rt-46b72b2d-43ec-427b-9bc6-3e07cc766674",
+              "message": {
+                "type": "text",
+                "id": "m179222418599723",
+                "text": "How much did head office spend this month?",
+                "quoteToken": "9186540a93f66840"
+              },
+              "timestamp": 1792224185997,
+              "source": {
+                "type": "user",
+                "userId": "U543378521e842ba5709bb5f1390e944e"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.93,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "read",
+              "goal": "Total expenses spent by head office this month",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "fromDate": "2026-10-01",
+                "toDate": "2026-10-17",
+                "branchId": "HEAD_OFFICE"
+              },
+              "toolHint": "expense.list_recent",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 42,
+                  "rawSha256": "f70f710e69f8dc7e83cbcc3cb7f20af9b37ce243e790d0bcbf9038727d885055"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "fromDate": "2026-10-01",
+              "toDate": "2026-10-17",
+              "branchId": "HEAD_OFFICE"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "branchUnresolved": "HEAD_OFFICE",
+                "availableBranches": [
+                  {
+                    "id": "branch-b-1",
+                    "name": "สำนักงานใหญ่",
+                    "code": "BR1"
+                  },
+                  {
+                    "id": "branch-b-2",
+                    "name": "สาขา 2",
+                    "code": "BR2"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T08:03:12.546Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-b/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T08:03:12.546Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-D127-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc3tr0n-5-f82368e2",
+              "replyToken": "rt-b8e0cf88-5212-4866-a710-774d59cd6553",
+              "message": {
+                "type": "text",
+                "id": "m17922238835276",
+                "text": "Branch 2 spending last month",
+                "quoteToken": "d68ccca9d4bc141d"
+              },
+              "timestamp": 1792223883527,
+              "source": {
+                "type": "user",
+                "userId": "Uba79a9c0348185a0cfdaf69ab1664e89"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.92,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "read",
+              "goal": "Branch 2 total spending last month",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "fromDate": "2026-09-01",
+                "toDate": "2026-09-30",
+                "branchId": "Branch 2"
+              },
+              "toolHint": "expense.list_recent",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 28,
+                  "rawSha256": "ab7d2f84393f85fdb4db713bbfddceb93950ff6cc2289ee24a633e9ffa00d125"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "fromDate": "2026-09-01",
+              "toDate": "2026-09-30",
+              "branchId": "Branch 2"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "branchUnresolved": "Branch 2",
+                "availableBranches": [
+                  {
+                    "id": "branch-b-1",
+                    "name": "สำนักงานใหญ่",
+                    "code": "BR1"
+                  },
+                  {
+                    "id": "branch-b-2",
+                    "name": "สาขา 2",
+                    "code": "BR2"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T07:58:11.930Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-b/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T07:58:11.930Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-D036-B",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-b",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc41dr9-q-24d8be09",
+              "replyToken": "rt-b7a78675-4182-45c4-8d69-db67bebbd702",
+              "message": {
+                "type": "text",
+                "id": "m179222423958927",
+                "text": "category travel เดือนก่อน",
+                "quoteToken": "abfcf57090b8acdc"
+              },
+              "timestamp": 1792224239589,
+              "source": {
+                "type": "user",
+                "userId": "U02f9750053666303502173dfaf21a5e5"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "th",
+          "confidence": 0.92,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "read",
+              "goal": "ยอดค่าใช้จ่าย หมวดค่าเดินทาง เดือนที่แล้ว",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "fromDate": "2026-09-01",
+                "toDate": "2026-09-30",
+                "categoryName": "travel"
+              },
+              "toolHint": "expense.list_recent",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 25,
+                  "rawSha256": "ffd9628babcbcc82fed14bc5c62685594bd256e2b5ad48eba732ad08bd8af67b"
+                }
+              ]
+            }
+          ],
+          "preparedPlan": {
+            "version": 1,
+            "complexity": "simple",
+            "confidence": 0.82,
+            "intentPlan": {
+              "status": "ROUTABLE",
+              "language": "th",
+              "intents": [
+                {
+                  "intent": "read_summary",
+                  "subject": "expense",
+                  "agent": "accounting",
+                  "priority": 1,
+                  "requiredTools": [
+                    "expense.list_recent"
+                  ],
+                  "missingContext": []
+                }
+              ],
+              "refusals": [],
+              "requiresHumanReview": false
+            },
+            "proposedCalls": [
+              {
+                "toolName": "expense.list_recent",
+                "input": {
+                  "fromDate": "2026-09-01",
+                  "toDate": "2026-09-30",
+                  "categoryName": "travel"
+                }
+              }
+            ],
+            "responseMode": "simple_grounded",
+            "answerShape": "single_metric"
+          }
+        },
+        "tools": [
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "fromDate": "2026-09-01",
+              "toDate": "2026-09-30",
+              "categoryName": "travel"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "categoryUnresolved": "travel",
+                "availableCategories": [
+                  {
+                    "id": "category-b-fuel",
+                    "name": "ค่าน้ำมัน"
+                  },
+                  {
+                    "id": "category-b-service",
+                    "name": "ค่าบริการ"
+                  },
+                  {
+                    "id": "category-b-office",
+                    "name": "ค่าออฟฟิศ"
+                  },
+                  {
+                    "id": "category-b-travel",
+                    "name": "ค่าเดินทาง"
+                  },
+                  {
+                    "id": "category-b-other",
+                    "name": "ค่าใช้จ่ายอื่นๆ"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T08:04:06.249Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-b/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T08:04:06.249Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-K012-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc338ot-y-b1b9d9f2",
+              "replyToken": "rt-58baa197-22f8-4da5-92e1-4202bcc9af63",
+              "message": {
+                "type": "text",
+                "id": "m179222264671735",
+                "text": "Can I add a branch in Chiang Rai?",
+                "quoteToken": "c3064932fe81dcac"
+              },
+              "timestamp": 1792222646717,
+              "source": {
+                "type": "user",
+                "userId": "U7983b25c612dd3571e704214bec67468"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.87,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "help",
+              "goal": "Find out how to add a new branch in Chiang Rai",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "entityReference": {
+                "kind": "user_text",
+                "value": "branch in Chiang Rai"
+              },
+              "toolHint": "billing.get_package_usage",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 33,
+                  "rawSha256": "fb63ea99419b0d619d7e8e0c68d69b15cecc6cb03d47079215a98c1012263637"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": []
+      }
+    ]
+  },
+  {
+    "id": "v2-D087-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc2s1ke-0-8124b053",
+              "replyToken": "rt-885b8fa4-4654-432b-9012-55cbb1792f82",
+              "message": {
+                "type": "text",
+                "id": "m17922221242701",
+                "text": "Pending claims for my approval?",
+                "quoteToken": "64adf500c5612b33"
+              },
+              "timestamp": 1792222124270,
+              "source": {
+                "type": "user",
+                "userId": "Ue2f506ec56d5074581b3af56cf586576"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.97,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "read",
+              "goal": "List reimbursement claims pending this user's approval",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "approver": "me"
+              },
+              "toolHint": "reimbursement.list_pending_approvals",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 31,
+                  "rawSha256": "63293b18a2954b25cb352518d1aaa6d0165163f7992ccf805fd68f696da0218e"
+                }
+              ]
+            }
+          ],
+          "preparedPlan": {
+            "version": 1,
+            "complexity": "simple",
+            "confidence": 0.97,
+            "intentPlan": {
+              "status": "ROUTABLE",
+              "language": "en",
+              "intents": [
+                {
+                  "intent": "read_summary",
+                  "subject": "reimbursement",
+                  "agent": "accounting",
+                  "priority": 1,
+                  "requiredTools": [
+                    "reimbursement.list_pending_approvals"
+                  ],
+                  "missingContext": []
+                }
+              ],
+              "refusals": [],
+              "requiresHumanReview": false
+            },
+            "proposedCalls": [
+              {
+                "toolName": "reimbursement.list_pending_approvals",
+                "input": {
+                  "approver": "me"
+                }
+              }
+            ],
+            "responseMode": "simple_grounded",
+            "answerShape": "list"
+          }
+        },
+        "tools": [
+          {
+            "tool": "reimbursement.list_pending_approvals",
+            "input": {
+              "approver": "me"
+            },
+            "result": {
+              "toolName": "reimbursement.list_pending_approvals",
+              "status": "ok",
+              "data": {
+                "accessScope": "approver",
+                "total": 2,
+                "items": [
+                  {
+                    "id": "reimbursement-company-a-5",
+                    "documentNumber": null,
+                    "requesterDisplayName": "ผู้เบิก STAFF",
+                    "amount": "1455",
+                    "currency": "THB",
+                    "submittedAt": "2026-10-06T04:00:00.000Z",
+                    "status": "PENDING_APPROVAL",
+                    "branch": "branch-a-1",
+                    "waitingOn": "Authorized approver"
+                  },
+                  {
+                    "id": "reimbursement-company-a-1",
+                    "documentNumber": null,
+                    "requesterDisplayName": "ผู้เบิก STAFF",
+                    "amount": "611",
+                    "currency": "THB",
+                    "submittedAt": "2026-10-02T04:00:00.000Z",
+                    "status": "PENDING_APPROVAL",
+                    "branch": "branch-a-1",
+                    "waitingOn": "Authorized approver"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการเบิกจ่ายรออนุมัติ",
+                  "module": "reimbursements",
+                  "entityType": "reimbursement_approval_queue",
+                  "asOf": "2026-10-17T07:28:50.857Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-a/reimbursements"
+                }
+              ],
+              "asOf": "2026-10-17T07:28:50.857Z"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-F031-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc3k1ay-28-ddad17b1",
+              "replyToken": "rt-cff65237-e67c-431c-ae8a-d8982c6b2990",
+              "message": {
+                "type": "text",
+                "id": "m179222343029881",
+                "text": "how much was it?",
+                "quoteToken": "b154f973ef397ac8"
+              },
+              "timestamp": 1792223430298,
+              "source": {
+                "type": "user",
+                "userId": "Ued3b36763fb6093dcb02824f554b35a3"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "CLARIFY",
+          "language": "en",
+          "confidence": 0.45,
+          "clarifyQuestion": "Could you clarify what you're referring to? Are you asking about the total on a receipt or document you'd like to send me, or about a specific expense record already captured in this chat?",
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "general",
+              "goal": "Clarify what 'how much was it?' refers to",
+              "requiredEvidence": [],
+              "requestedFilters": {},
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 16,
+                  "rawSha256": "a81dd523a1f53c87a161e602edb2098af0683f2d4b698e1f02c2ce18c3d87d0a"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": []
+      },
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc3kcde-29-2de09886",
+              "replyToken": "rt-b6f1fe14-2879-49af-ac80-fc549aa5a825",
+              "message": {
+                "type": "text",
+                "id": "m179222344464282",
+                "text": "fuel, this month",
+                "quoteToken": "69e9512cc07744c0"
+              },
+              "timestamp": 1792223444642,
+              "source": {
+                "type": "user",
+                "userId": "Ued3b36763fb6093dcb02824f554b35a3"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.82,
+          "semanticOutcome": "AMBIGUOUS",
+          "fundingSource": "UNKNOWN",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "read",
+              "goal": "fuel expenses total or list for this month",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "categoryName": "ค่าน้ำมัน",
+                "fromDate": "2026-10-01",
+                "toDate": "2026-10-17"
+              },
+              "toolHint": "expense.list_recent",
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 16,
+                  "rawSha256": "9eb85ec36edd967c80f7662afe5b365a1aa5324f1cbd8f462f779fc5c27f9922"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "categoryName": "ค่าน้ำมัน",
+              "fromDate": "2026-10-01",
+              "toDate": "2026-10-17"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "total": 3,
+                "period": {
+                  "fromDate": "2026-10-01",
+                  "toDate": "2026-10-17",
+                  "defaultedToCurrentMonth": false
+                },
+                "summary": {
+                  "countedItems": 3,
+                  "cancelledCount": 0,
+                  "totalAmount": "3640.5",
+                  "pendingAmount": "2355",
+                  "draftAmount": "0",
+                  "confirmedAmount": "1285.5",
+                  "paidAmount": "300.5",
+                  "unpaidAmount": "3340"
+                },
+                "totalsByCurrency": [
+                  {
+                    "currency": "THB",
+                    "count": 3,
+                    "totalAmount": "3640.5",
+                    "paidAmount": "300.5",
+                    "outstandingAmount": "3340"
+                  }
+                ],
+                "queryApplied": {
+                  "timezone": "Asia/Bangkok",
+                  "period": {
+                    "startDate": "2026-10-01",
+                    "endDate": "2026-10-17",
+                    "timezone": "Asia/Bangkok",
+                    "defaulted": false
+                  },
+                  "branch": {
+                    "mode": "all_authorized",
+                    "branchId": null
+                  },
+                  "dateBasis": "expense_incurred_date",
+                  "statusBasis": "exclude_rejected_voided",
+                  "dataset": "operational_expense_records",
+                  "accessScope": "company",
+                  "filters": {
+                    "categoryId": "category-a-fuel",
+                    "categoryName": "ค่าน้ำมัน"
+                  }
+                },
+                "completeness": {
+                  "aggregate": "complete",
+                  "rows": {
+                    "returned": 3,
+                    "hasMore": false,
+                    "nextCursor": null
+                  },
+                  "groups": {
+                    "returned": 0,
+                    "hasMore": false,
+                    "nextCursor": null
+                  },
+                  "businessRecording": "unknown"
+                },
+                "items": [
+                  {
+                    "id": "expense-company-a-15",
+                    "expenseNumber": null,
+                    "expenseDate": "2026-10-16T04:00:00.000Z",
+                    "vendorNameSnapshot": "ร้านสมใจการค้า",
+                    "vendorDocumentNumber": null,
+                    "status": "NEEDS_REVIEW",
+                    "paymentStatus": "UNPAID",
+                    "grandTotalAmount": "2355",
+                    "paidAmount": "0",
+                    "outstandingAmount": "2355"
+                  },
+                  {
+                    "id": "expense-company-a-5",
+                    "expenseNumber": null,
+                    "expenseDate": "2026-10-06T04:00:00.000Z",
+                    "vendorNameSnapshot": "Grab",
+                    "vendorDocumentNumber": null,
+                    "status": "CONFIRMED",
+                    "paymentStatus": "UNPAID",
+                    "grandTotalAmount": "985",
+                    "paidAmount": "0",
+                    "outstandingAmount": "985"
+                  },
+                  {
+                    "id": "expense-company-a-0",
+                    "expenseNumber": null,
+                    "expenseDate": "2026-10-01T04:00:00.000Z",
+                    "vendorNameSnapshot": "ร้านสมใจ",
+                    "vendorDocumentNumber": null,
+                    "status": "CONFIRMED",
+                    "paymentStatus": "PAID",
+                    "grandTotalAmount": "300.5",
+                    "paidAmount": "300.5",
+                    "outstandingAmount": "0"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T07:50:52.058Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-a/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T07:50:52.058Z",
+              "queryApplied": {
+                "timezone": "Asia/Bangkok",
+                "period": {
+                  "startDate": "2026-10-01",
+                  "endDate": "2026-10-17",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": false
+                },
+                "branch": {
+                  "mode": "all_authorized",
+                  "branchId": null
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "dataset": "operational_expense_records",
+                "accessScope": "company",
+                "filters": {
+                  "categoryId": "category-a-fuel",
+                  "categoryName": "ค่าน้ำมัน"
+                }
+              },
+              "basisVersion": "mangmee-business-read-v2",
+              "facts": [
+                {
+                  "id": "expense.total.THB",
+                  "metric": "expense_total",
+                  "value": "3640.5",
+                  "unit": "money",
+                  "currency": "THB",
+                  "period": {
+                    "startDate": "2026-10-01",
+                    "endDate": "2026-10-17",
+                    "timezone": "Asia/Bangkok",
+                    "defaulted": false
+                  },
+                  "dateBasis": "expense_incurred_date",
+                  "statusBasis": "exclude_rejected_voided",
+                  "sourceRefIds": [
+                    "expenses:expense_summary:summary"
+                  ],
+                  "asOf": "2026-10-17T07:50:52.058Z",
+                  "state": "known"
+                }
+              ],
+              "completeness": {
+                "aggregate": "complete",
+                "rows": {
+                  "returned": 3,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "groups": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "businessRecording": "unknown"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "v2-R011-A",
+    "turns": [
+      {
+        "body": {
+          "destination": "channel-a",
+          "events": [
+            {
+              "type": "message",
+              "webhookEventId": "harness-mvc7ibq6-2m-e6d7d5b5",
+              "replyToken": "rt-75572182-4b19-447b-981f-d21b55433a16",
+              "message": {
+                "type": "text",
+                "id": "m179223006895895",
+                "text": "Record that the 574 PTT bill was paid",
+                "quoteToken": "64a529d0a323a1d3"
+              },
+              "timestamp": 1792230068958,
+              "source": {
+                "type": "user",
+                "userId": "U93fd93f6dbc3fc7a5086aeeec7fa757b"
+              },
+              "mode": "active",
+              "deliveryContext": {
+                "isRedelivery": false
+              }
+            }
+          ]
+        },
+        "route": {
+          "status": "ROUTED",
+          "intent": "BUSINESS_READ_QUESTION",
+          "language": "en",
+          "confidence": 0.92,
+          "semanticOutcome": "BUSINESS_EXPENSE",
+          "fundingSource": "COMPANY_PAID",
+          "semanticSubrequests": [
+            {
+              "index": 0,
+              "kind": "write",
+              "goal": "Record payment for the 574 PTT expense bill",
+              "requiredEvidence": [],
+              "requestedFilters": {
+                "vendorName": "PTT",
+                "amount": "574"
+              },
+              "dependsOn": [],
+              "evidenceRefs": [
+                {
+                  "partId": "part-0",
+                  "startUtf16": 0,
+                  "endUtf16": 37,
+                  "rawSha256": "72838a8a7c84f1a67bfb97aa6a228738ac3fef525f79bba072f46bec1ca845cf"
+                }
+              ]
+            }
+          ]
+        },
+        "tools": [
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "vendorName": "PTT",
+              "paymentStatus": "UNPAID"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "vendorUnresolved": "PTT",
+                "availableVendors": [
+                  {
+                    "id": "counterparty-company-a-0",
+                    "name": "ร้านสมใจ"
+                  },
+                  {
+                    "id": "counterparty-company-a-1",
+                    "name": "ร้านสมใจการค้า"
+                  },
+                  {
+                    "id": "counterparty-company-a-2",
+                    "name": "ปั๊มน้ำมัน ปตท."
+                  },
+                  {
+                    "id": "counterparty-company-a-4",
+                    "name": "ร้านอาหารทะเลชายทะเล"
+                  },
+                  {
+                    "id": "counterparty-company-a-5",
+                    "name": "Grab"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T09:41:16.555Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-a/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T09:41:16.555Z"
+            }
+          },
+          {
+            "tool": "expense.list_recent",
+            "input": {
+              "vendorId": "counterparty-company-a-2",
+              "paymentStatus": "UNPAID"
+            },
+            "result": {
+              "toolName": "expense.list_recent",
+              "status": "ok",
+              "data": {
+                "total": 2,
+                "period": {
+                  "fromDate": "2026-10-01",
+                  "toDate": "2026-10-17",
+                  "defaultedToCurrentMonth": true
+                },
+                "summary": {
+                  "countedItems": 2,
+                  "cancelledCount": 0,
+                  "totalAmount": "2107",
+                  "pendingAmount": "1533",
+                  "draftAmount": "0",
+                  "confirmedAmount": "574",
+                  "paidAmount": "0",
+                  "unpaidAmount": "2107"
+                },
+                "totalsByCurrency": [
+                  {
+                    "currency": "THB",
+                    "count": 2,
+                    "totalAmount": "2107",
+                    "paidAmount": "0",
+                    "outstandingAmount": "2107"
+                  }
+                ],
+                "queryApplied": {
+                  "timezone": "Asia/Bangkok",
+                  "period": {
+                    "startDate": "2026-10-01",
+                    "endDate": "2026-10-17",
+                    "timezone": "Asia/Bangkok",
+                    "defaulted": true
+                  },
+                  "branch": {
+                    "mode": "all_authorized",
+                    "branchId": null
+                  },
+                  "dateBasis": "expense_incurred_date",
+                  "statusBasis": "exclude_rejected_voided",
+                  "dataset": "operational_expense_records",
+                  "accessScope": "company",
+                  "filters": {
+                    "vendorId": "counterparty-company-a-2",
+                    "paymentStatus": "UNPAID"
+                  }
+                },
+                "completeness": {
+                  "aggregate": "complete",
+                  "rows": {
+                    "returned": 2,
+                    "hasMore": false,
+                    "nextCursor": null
+                  },
+                  "groups": {
+                    "returned": 0,
+                    "hasMore": false,
+                    "nextCursor": null
+                  },
+                  "businessRecording": "unknown"
+                },
+                "items": [
+                  {
+                    "id": "expense-company-a-9",
+                    "expenseNumber": null,
+                    "expenseDate": "2026-10-10T04:00:00.000Z",
+                    "vendorNameSnapshot": "ปั๊มน้ำมัน ปตท.",
+                    "vendorDocumentNumber": null,
+                    "status": "NEEDS_REVIEW",
+                    "paymentStatus": "UNPAID",
+                    "grandTotalAmount": "1533",
+                    "paidAmount": "0",
+                    "outstandingAmount": "1533"
+                  },
+                  {
+                    "id": "expense-company-a-2",
+                    "expenseNumber": null,
+                    "expenseDate": "2026-10-03T04:00:00.000Z",
+                    "vendorNameSnapshot": "ปั๊มน้ำมัน ปตท.",
+                    "vendorDocumentNumber": null,
+                    "status": "CONFIRMED",
+                    "paymentStatus": "UNPAID",
+                    "grandTotalAmount": "574",
+                    "paidAmount": "0",
+                    "outstandingAmount": "574"
+                  }
+                ]
+              },
+              "sourceRefs": [
+                {
+                  "label": "รายการค่าใช้จ่าย",
+                  "module": "expenses",
+                  "entityType": "expense_summary",
+                  "asOf": "2026-10-17T09:41:18.810Z",
+                  "permissionChecked": true,
+                  "webPath": "/companies/company-a/expenses"
+                }
+              ],
+              "asOf": "2026-10-17T09:41:18.810Z",
+              "queryApplied": {
+                "timezone": "Asia/Bangkok",
+                "period": {
+                  "startDate": "2026-10-01",
+                  "endDate": "2026-10-17",
+                  "timezone": "Asia/Bangkok",
+                  "defaulted": true
+                },
+                "branch": {
+                  "mode": "all_authorized",
+                  "branchId": null
+                },
+                "dateBasis": "expense_incurred_date",
+                "statusBasis": "exclude_rejected_voided",
+                "dataset": "operational_expense_records",
+                "accessScope": "company",
+                "filters": {
+                  "vendorId": "counterparty-company-a-2",
+                  "paymentStatus": "UNPAID"
+                }
+              },
+              "basisVersion": "mangmee-business-read-v2",
+              "facts": [
+                {
+                  "id": "expense.total.THB",
+                  "metric": "expense_total",
+                  "value": "2107",
+                  "unit": "money",
+                  "currency": "THB",
+                  "period": {
+                    "startDate": "2026-10-01",
+                    "endDate": "2026-10-17",
+                    "timezone": "Asia/Bangkok",
+                    "defaulted": true
+                  },
+                  "dateBasis": "expense_incurred_date",
+                  "statusBasis": "exclude_rejected_voided",
+                  "sourceRefIds": [
+                    "expenses:expense_summary:summary"
+                  ],
+                  "asOf": "2026-10-17T09:41:18.810Z",
+                  "state": "known"
+                }
+              ],
+              "completeness": {
+                "aggregate": "complete",
+                "rows": {
+                  "returned": 2,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "groups": {
+                  "returned": 0,
+                  "hasMore": false,
+                  "nextCursor": null
+                },
+                "businessRecording": "unknown"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
