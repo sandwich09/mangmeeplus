@@ -57,7 +57,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
       status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
       refusals: [{ request: 'ของอะไรใกล้หมด', reason: 'feature_disabled' }],
     }, [], 'ของอะไรใกล้หมด', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
-    assert.match(reply.replyText, /ระบบคลังสินค้า/);
+    assert.match(reply.replyText, /Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ/);
     assert.equal(reply.replyText.includes('ไม่มีสิทธิ์'), false);
     assert.equal(reply.replyText.includes('inventory'), false);
     assert.deepEqual(reply.sourceRefs, []);
@@ -72,7 +72,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
         { request: 'ขอดูข้อมูลลูกค้า', reason: 'forbidden' },
       ],
     }, [], 'ของอะไรใกล้หมด และขอดูข้อมูลลูกค้า', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
-    assert.match(reply.replyText, /ระบบคลังสินค้า/);
+    assert.match(reply.replyText, /Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ/);
     assert.match(reply.replyText, /ไม่มีสิทธิ์/);
     assert.deepEqual(reply.sourceRefs, []);
     assert.deepEqual(reply.webLinks, []);
@@ -921,7 +921,7 @@ describe('ResponseComposerAgent – capability help', () => {
     const noUpload = teach(['expense.read'], EXPENSES_ONLY);
     assert.doesNotMatch(noUpload, /ถ่ายรูปใบเสร็จ/);
     assert.match(noUpload, /^1\) อยากดูสรุปค่าใช้จ่าย/mu, 'numbering restarts from the first rendered step');
-    const approver = teach(['expense.read', 'reimbursement.approve'], EXPENSES_ONLY);
+    const approver = teach(['expense.read', 'reimbursement.read', 'reimbursement.approve'], EXPENSES_ONLY);
     assert.equal(approver.split('\n').filter((line) => line.includes('รายการรออนุมัติ')).length, 1);
     assert.match(approver, /เตรียมการ์ดให้กดยืนยันค่ะ/);
     assert.doesNotMatch(teach(STAFF, EXPENSES_ONLY), /รายการรออนุมัติ/);
@@ -1072,7 +1072,7 @@ it('sold feature help names an owner permission check without promising a shop f
     status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
     refusals: [{ request: 'ค่าใช้จ่ายเดือนนี้', reason: 'feature_disabled' }],
   }, [], 'ค่าใช้จ่ายเดือนนี้', 'th-TH', { featureDisabledTools: ['expense.list_recent'] });
-  assert.match(reply.replyText, /ตรวจแพ็กเกจหรือติดต่อทีมงาน/);
+  assert.match(reply.replyText, /STARTER.*249 บาทต่อเดือนค่ะ/);
   assert.doesNotMatch(reply.replyText, /เปิดฟีเจอร์ในเว็บแอป/);
 });
 
@@ -1088,9 +1088,9 @@ it('the shared specialist fallback describes unavailable data without guessing a
 
 
 it('disabled dashboard guidance names หน้าแรก while English capability terminology stays intact', () => {
-  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /หน้าแรกและแจ้งเตือน/);
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /STARTER.*249 บาทต่อเดือน/);
   assert.doesNotMatch(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /แดชบอร์ด/);
-  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /dashboard and notifications/);
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /STARTER.*249 baht per month/);
 
 });
 it('F3/F5: casual free compose cannot claim a write or leak Markdown', async () => {
@@ -1100,4 +1100,183 @@ it('F3/F5: casual free compose cannot claim a write or leak Markdown', async () 
     } as IModelProvider);
     assert.doesNotMatch(result, /บันทึกค่าใช้จ่ายแล้ว|[*#]/u);
   }
+});
+
+
+// Offline replays of six independent exam conversations; original input and router inventory are
+// preserved, while a language-sensitive provider double exposes the language sent to composition.
+describe('exam A: current-message language survives Thai account defaults', () => {
+  const replays = [
+  {
+    "id": "C016-A",
+    "messageText": "Are you a real person or a bot?",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "Answer identity question: real person or bot",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 31,
+            "rawSha256": "1a2866590a068c84c452107e093d412b2ef89689e1f6167f2324134669fef485"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "C021-A",
+    "messageText": "bye",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "Respond to farewell greeting",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 3,
+            "rawSha256": "b49f425a7e1f9cff3856329ada223f2f9d368f15a00cf48df16ca95986137fe8"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "O002-A",
+    "messageText": "What's the weather in Bangkok today?",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "Answer weather question for Bangkok today",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 36,
+            "rawSha256": "783e1183dea735696cf9e4801a80fdadaada5bf2a4e495d672d6245b44f4325b"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H031-A",
+    "messageText": "What does \"needs review\" mean on my expense?",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "Explain what 'needs review' status means on an expense",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 44,
+            "rawSha256": "903747b0c58f1b06167a1b0b60d1ef1b9e92244952ef975b426e5122adc17f87"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H047-A",
+    "messageText": "Can I give you my bank account number for my claim payout?",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "Set up personal payout bank account for claim reimbursement",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 58,
+            "rawSha256": "07743a8cbbec0f2e010a1d20543d6f0fe8d1607f40785e370910b76a1e0ba66d"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H050-A",
+    "messageText": "How do I change who approves claims?",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "How to change who approves reimbursement claims",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "toolHint": "company.get_roles",
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 36,
+            "rawSha256": "b7c7c99731dcb1081adad499939fc26b2a4c0917e2fdb97fb57cf8e512728ca7"
+          }
+        ]
+      }
+    ]
+  }
+] as const;
+  for (const replay of replays) it(`replays ${replay.id} through the semantic composer`, async () => {
+    const { runSemanticTurnV2 } = await import('./semantic-turn-v2');
+    const { createLineAiInputEvidence } = await import('@watchdog-bms/contracts');
+    const evidence = await createLineAiInputEvidence({ turnKey: replay.id, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1, rawText: replay.messageText }] });
+    const sent: any[] = [];
+    const result = await runSemanticTurnV2({ req: { requestId: replay.id, webhookEventId: replay.id, messageText: replay.messageText,
+      messagePreviewHash: 'a'.repeat(64), inputEvidence: evidence!.inputEvidence,
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'member', permissions: ['line.ai.query', 'ai.tool.invoke'], roles: ['OWNER'], locale: 'th-TH' },
+      responsePreferences: { language: 'th', detail: 'normal', presentation: 'prose' }, semanticSubrequests: JSON.parse(JSON.stringify(replay.semanticSubrequests)) },
+      provider: { async generateText(input: any) { const payload = JSON.parse(input.messages[0].text); sent.push(payload);
+        return { ok: true, text: JSON.stringify({ answers: replay.semanticSubrequests.map(item => ({ index: item.index, status: 'handled', topic: 'social',
+          text: payload.language === 'en' ? 'I can help with your shop questions.' : 'ช่วยเรื่องร้านได้ค่ะ', sourceRefIds: [] })) }) }; } },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => assert.fail('These replayed help/social questions must not mutate records.'),
+    });
+    assert.equal(result.plan.language, 'en');
+    assert.doesNotMatch(result.replyText, /[\u0E00-\u0E7F]/u);
+    for (const payload of sent) { assert.equal(payload.language, 'en'); if (payload.responsePreferences) assert.equal(payload.responsePreferences.language, 'en'); }
+  });
+  for (const [messageText, expected] of [['Could you explain VAT?', 'en'], ['VAT คืออะไรคะ', 'th'], ['ช่วย explain VAT ค่ะ', 'th']] as const) {
+    it(`composes ${expected} despite opposite saved preferences: ${messageText}`, async () => {
+      const { runSemanticTurnV2 } = await import('./semantic-turn-v2');
+      const sent: any[] = [];
+      const result = await runSemanticTurnV2({ req: { requestId: 'matrix', webhookEventId: 'matrix', messageText, messagePreviewHash: 'a'.repeat(64),
+        userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'member', permissions: [], roles: [], locale: 'th-TH' },
+        responsePreferences: { language: expected === 'en' ? 'th' : 'en', detail: 'normal', presentation: 'prose' },
+        semanticSubrequests: [{ index: 0, kind: 'general', goal: 'Explain VAT', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] },
+        provider: { async generateText(input: any) { const payload = JSON.parse(input.messages[0].text); sent.push(payload); return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: payload.language === 'en' ? 'VAT is a tax on goods and services.' : 'VAT คือภาษีมูลค่าเพิ่มค่ะ' }] }) }; } },
+        draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false, invoke: async () => assert.fail('No ERP read is needed.') });
+      assert.equal(result.plan.language, expected); assert.equal(sent[0].language, expected); assert.equal(sent[0].responsePreferences.language, expected);
+      if (expected === 'en') assert.doesNotMatch(result.replyText, /[\u0E00-\u0E7F]/u); else assert.match(result.replyText, /ค่ะ/u);
+    });
+  }
+  it('keeps English status words and web-page references English during sanitization', async () => {
+    const { safeModelLineText } = await import('./response-composer.agent');
+    const reply = safeModelLineText('The expense is NEEDS_REVIEW; check /companies/company/expenses.', true);
+    assert.match(reply, /needs review/u); assert.doesNotMatch(reply, /[\u0E00-\u0E7F]/u);
+  });
 });

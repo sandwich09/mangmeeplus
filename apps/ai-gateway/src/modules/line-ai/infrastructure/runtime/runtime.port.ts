@@ -11,6 +11,7 @@ export type AgentCoreInvokeInput = {
   locationIds?: string[];
   roles?: string[];
   messageText: string;
+  language?: 'th' | 'en';
   locale: string;
   permissions: string[];
   entitlementDeniedPermissions?: Record<string, string>;

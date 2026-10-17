@@ -5162,7 +5162,7 @@
       "turns": [
         {
           "user": "มีใบเบิกรออนุมัติกี่ใบคะ",
-          "category": "18",
+          "category": "10",
           "language": [
             "th"
           ],
@@ -5182,7 +5182,6 @@
             "tags": {
               "must_answer": true,
               "must_mention_any": [
-                "ไม่มีสิทธิ์",
                 "เกี่ยวข้องกับคุณ",
                 "ของคุณ"
               ]

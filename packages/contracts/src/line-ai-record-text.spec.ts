@@ -275,3 +275,12 @@ describe('scrubRecordIdentifier', () => {
     assert.equal(scrubRecordIdentifier('<b>x</b>'), null);
   });
 });
+
+it('selects current LINE language independently of account locale or style', async () => {
+  const { lineReplyLanguage } = await import('./line-ai.js');
+  for (const [text, fallback, expected] of [
+    ['Can you explain this charge?', 'th', 'en'], ['What’s the next step?', 'th', 'en'],
+    ['ช่วยตรวจให้ค่ะ', 'en', 'th'], ['ช่วย check ให้หน่อย', 'en', 'th'],
+    ['123.45', 'en', 'en'], ['', 'th', 'th'], ['EXP-2026-000123', 'th', 'th'],
+  ] as const) assert.equal(lineReplyLanguage(text, fallback), expected, text);
+});

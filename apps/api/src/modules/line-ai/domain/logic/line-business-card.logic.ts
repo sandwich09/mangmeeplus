@@ -1,3 +1,4 @@
+import { lineReplyLanguage, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
 import { AI_BUDGET_REFUSAL_CODES, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
@@ -15,7 +16,7 @@ import {
   VIEW_PACKAGES_COMMAND,
 } from './line-staff-menu.logic';
 
-import type { PublicPolicyAnswer } from './line-public-policy.logic';
+import { publicPolicyAnswerLanguage, type PublicPolicyAnswer } from './line-public-policy.logic';
 import { HANDOFF_PATH_PREFIX } from '../../../auth/domain/logic/line-handoff.logic';
 import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
@@ -37,17 +38,18 @@ const ANSWER_CARD_SOURCE_LIMIT = 5;
 const ANSWER_CARD_SOURCE_LABEL_LIMIT = 60;
 const completeBusinessAnswerPresentations = new WeakMap<object, string>();
 
-export function lineChoiceQuickReply(choices: readonly { label: string; text: string; uri?: string }[]): NonNullable<LineReplyMessage['quickReply']> {
+export function lineChoiceQuickReply(choices: readonly { label: string; text: string; uri?: string; cameraRoll?: boolean }[]): NonNullable<LineReplyMessage['quickReply']> {
   return { items: choices.slice(0, 13).map(choice => ({ type: 'action', action: choice.uri
     ? { type: 'uri', label: Array.from(choice.label).slice(0, 20).join(''), uri: choice.uri }
+    : choice.cameraRoll ? { type: 'cameraRoll', label: Array.from(choice.label).slice(0, 20).join('') }
     : { type: 'message', label: Array.from(choice.label).slice(0, 20).join(''), text: choice.text } })) };
 }
 
 /** Recheck current access; a gateway-selected action is navigation advice, never authority. */
-export function productHelpQuickReply(response: LineAiTurnResponse, permissions: readonly string[], entitled: ReadonlySet<string> | null): LineReplyMessage['quickReply'] | undefined {
+export function productHelpQuickReply(response: LineAiTurnResponse, permissions: readonly string[], entitled: ReadonlySet<string> | null, language: LineReplyLanguage = lineReplyLanguage(response.replyText ?? '')): LineReplyMessage['quickReply'] | undefined {
   const action = response.presentation?.cards.map(card => lineChatAction(card.chatActionId)).find(Boolean);
   if (response.refused || !action || 'webPath' in action || !canUseLineChatAction(action.id, permissions, entitled)) return undefined;
-  return lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: action.command }]);
+  return language === 'en' ? { items: [{ type: 'action', action: { type: 'postback', label: 'Prepare this for me', data: lineControlData(new URLSearchParams({ action: 'chat-action', id: action.id }).toString(), language) } }] } : lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: action.command }]);
 }
 
 function businessAnswerPresentationFingerprint(message: LineReplyMessage): string | null {
@@ -139,14 +141,15 @@ function bubble(
   companyId: string,
   suppliedButtons?: SafeButton[],
   rows?: DetailRow[],
+  language: LineReplyLanguage = lineReplyLanguage(card.text),
 ): Record<string, unknown> {
   // LINE refuses a message for one empty text or label, so a title or label of only spaces falls back too.
-  const title = bounded(card.title ?? '', 80) || 'ข้อมูลจากน้องมั่งมี';
+  const title = bounded(card.title ?? '', 80) || lineUiLabel('ข้อมูลจากน้องมั่งมี', language);
   const text = bounded(card.text, 1_200);
   const badge = bounded(card.badge ?? '', 40);
   const sources = (card.sourceLabels ?? []).map((label) => bounded(label, 60)).filter(Boolean).slice(0, 5);
   const link = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
-  const buttons = suppliedButtons ?? (link ? [{ label: bounded(card.webLink?.label ?? '', 40) || 'เปิดดูข้อมูล', uri: link }] : []);
+  const buttons = suppliedButtons ?? (link ? [{ label: bounded(card.webLink?.label ?? '', 40) || lineUiLabel('เปิดดูข้อมูล', language), uri: link }] : []);
   return {
     type: 'bubble',
     styles: {
@@ -174,7 +177,7 @@ function bubble(
           ],
         })),
         ...(sources.length > 0
-          ? [{ type: 'text', text: `แหล่งข้อมูล: ${sources.join(', ')}`, color: THEME.muted, size: 'xs', wrap: true }]
+          ? [{ type: 'text', text: `${language === 'en' ? 'Sources' : 'แหล่งข้อมูล'}: ${sources.join(', ')}`, color: THEME.muted, size: 'xs', wrap: true }]
           : []),
       ],
     },
@@ -197,13 +200,14 @@ function bubble(
 /** Public policy uses the same card as assistant answers, without a tenant or model lookup.
  *  Owner 2026-09-30 (advisor spec §2.2): the answer leads to a person, not the public package page —
  *  its one button opens the company's official staff LINE, so no quick reply repeats it. */
-export function buildPublicPolicyCardMessage(answer: PublicPolicyAnswer): LineReplyMessage {
+export function buildPublicPolicyCardMessage(answer: PublicPolicyAnswer, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  answer = publicPolicyAnswerLanguage(answer, language);
   return {
     type: 'flex',
     altText: preview(answer.text, 400),
     canonicalText: answer.text,
     contents: bubble({ title: answer.title, text: answer.text }, undefined, '',
-      [{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL }]),
+      [{ label: language === 'en' ? 'Contact staff' : STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL }], undefined, language),
   };
 }
 
@@ -224,7 +228,8 @@ function answerTopic(tools: readonly string[]): string {
   return new Set(topics).size === 1 ? topics[0]! : '';
 }
 
-function answerCardTitle(response: LineAiTurnResponse): string {
+function answerCardTitle(response: LineAiTurnResponse, language: LineReplyLanguage): string {
+  if (language === 'en') return response.refused ? 'A note from Nong Mangmee' : 'Nong Mangmee’s answer';
   if (response.refused) return 'น้องมั่งมีแจ้งให้ทราบนะคะ';
   const topic = answerTopic(response.toolsInvoked);
   if (response.intent === 'read_summary' || response.intent === 'read_detail'
@@ -247,7 +252,7 @@ function labelFromLine(line: string): string | undefined {
   // `เปิดดู: <name>` is how `completeAnswerText` writes the page a source opens: the name is the label.
   // Owner 2026-10-05, on a real answer with three such lines left on the card above "เปิดลิงก์ 1 / 2 / 3":
   // "ลิ้งชื่อปุ่ม ใช้ชื่อได้เลย ไม่ต้องบอกว่าปุ่มลิ้ง 1 2 3".
-  const named = /^เปิดดู:\s*(\S.*)$/u.exec(trimmed)?.[1];
+  const named = /^(?:เปิดดู|View):\s*(\S.*)$/u.exec(trimmed)?.[1];
   const label = named ?? (trimmed.endsWith(':') ? trimmed.slice(0, -1).trim() : '');
   return label && Array.from(label).length <= MAX_BUTTON_LABEL ? label : undefined;
 }
@@ -299,19 +304,21 @@ export function buildLineAssistantTextCardMessage(
   webBaseUrl: string | undefined,
   companyId: string,
   badge?: string,
-  title = 'ข้อมูลจากน้องมั่งมี',
+  title?: string,
+  language: LineReplyLanguage = lineReplyLanguage(text),
 ): LineReplyMessage {
+  title ??= lineUiLabel('ข้อมูลจากน้องมั่งมี', language);
   const { body, links } = splitReplyLinks(text, webBaseUrl, companyId);
   // A link nothing names says where it leads; it is never numbered (owner 2026-10-05).
-  const buttons = links.map((link) => ({ label: link.label ?? UNNAMED_LINK_LABEL, uri: link.uri }));
-  const cardText = body || 'เปิดดูรายละเอียดในเว็บแอป';
+  const buttons = links.map((link) => ({ label: link.label ?? lineUiLabel(UNNAMED_LINK_LABEL, language), uri: link.uri }));
+  const cardText = body || (language === 'en' ? 'Open the details in the web app.' : 'เปิดดูรายละเอียดในเว็บแอป');
   const message: LineReplyMessage = {
     type: 'flex',
     altText: preview(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
     canonicalText: text,
     contents: bubble(
       { title, text: cardText, ...(badge ? { badge } : {}) },
-      webBaseUrl, companyId, buttons,
+      webBaseUrl, companyId, buttons, undefined, language,
     ),
   };
   // Nothing was cut: the prose is the body and every safe link is its own labelled button. A delivery
@@ -420,6 +427,7 @@ function withPlainScope(text: string): string {
  */
 export function buildLineSystemTextCardMessage(input: {
   text: string;
+  language?: LineReplyLanguage;
   /** The words drawn, when the canonical text has lines a card does not print (an answer's source line). */
   paper?: string;
   header: LineSystemCard['header'];
@@ -432,14 +440,15 @@ export function buildLineSystemTextCardMessage(input: {
   footnotes?: readonly string[];
 }): LineReplyMessage | undefined {
   if (!lineSystemCardAvailable(input.webBaseUrl)) return undefined;
+  const language = input.language ?? lineReplyLanguage(input.text);
   const { body, links } = splitReplyLinks(withPlainScope(input.paper ?? input.text), input.webBaseUrl, input.companyId);
   if (!body || links.length > LINE_SYSTEM_CARD_BUTTONS_MAX) return undefined;
   const buttons = links.map((link) => ({
-    action: { type: 'uri' as const, label: bounded(link.label ?? input.linkLabel ?? UNNAMED_LINK_LABEL, MAX_BUTTON_LABEL), uri: link.uri },
+    action: { type: 'uri' as const, label: bounded(link.label ?? input.linkLabel ?? lineUiLabel(UNNAMED_LINK_LABEL, language), MAX_BUTTON_LABEL), uri: link.uri },
     icon: input.icon ?? 'receipt' as const,
   }));
   const contents = drawLineSystemCard({
-    mascot: 'general', header: input.header, text: body, textStyle: input.textStyle ?? 'result',
+    mascot: 'general', header: { ...input.header, lines: input.header.lines.map(line => lineUiLabel(line, language)) as [string, string] }, text: body, textStyle: input.textStyle ?? 'result',
     ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
     // One link is the design's one button; several stand under one another, each with its own name.
     ...(buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
@@ -539,8 +548,9 @@ export function buildExpenseDraftCardMessage(
   facts: LineExpenseDraftCardFacts,
   webBaseUrl: string | undefined,
   companyId: string,
+  language: LineReplyLanguage = lineReplyLanguage(canonicalText),
 ): LineReplyMessage {
-  return buildExpenseDraftReviewCard(canonicalText, facts, webBaseUrl, companyId) ?? buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId);
+  return buildExpenseDraftReviewCard(canonicalText, facts, webBaseUrl, companyId, undefined, undefined, language) ?? buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId, undefined, undefined, language);
 }
 
 /** The review card alone: `undefined` where `buildExpenseDraftCardMessage` falls back to the text card. */
@@ -551,23 +561,24 @@ export function buildExpenseDraftReviewCard(
   companyId: string,
   confirmation?: ExpenseActionPreview,
   nextAction?: { label: string; text: string },
+  language: LineReplyLanguage = lineReplyLanguage(canonicalText),
 ): LineReplyMessage | undefined {
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
-  const rows = facts.rows.filter((row) => row.value.trim());
-  const notes = [...facts.notes, ...(confirmation ? [[confirmation.summary, ...(confirmation.details ?? [])].join('\n')] : [])].filter((note) => note.trim());
+  const rows = facts.rows.filter((row) => row.value.trim()).map(row => ({ ...row, label: lineUiLabel(row.label, language), value: ['สถานะเอกสาร', 'ประเภทเอกสาร'].includes(row.label) ? lineUiLabel(row.value, language) : row.value }));
+  const notes = [...facts.notes.map(note => lineUiLabel(note, language)), ...(confirmation ? [[confirmation.summary, ...(confirmation.details ?? [])].join('\n')] : [])].filter((note) => note.trim());
   if (!actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
   const contents = drawLineSystemCard({
-    mascot: 'review', header: { lines: [facts.subject, 'รอตรวจสอบ'] }, rows, notes,
-    choice: [nextAction ? { type: 'message', ...nextAction } : confirmation ? { type: 'postback', label: confirmation.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ',
-      data: new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString() }
-      : { type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' },
-      { type: 'uri', label: 'เปิดดูในเว็บ', uri: actionUrl }],
+    mascot: 'review', header: { lines: [lineUiLabel(facts.subject, language), lineUiLabel('รอตรวจสอบ', language)] }, rows, notes,
+    choice: [nextAction ? { type: 'message', ...nextAction } : confirmation ? { type: 'postback', label: lineUiLabel(confirmation.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
+      data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString(), language) }
+      : { type: 'message', label: lineUiLabel('ยืนยันรายการ', language), text: language === 'en' ? 'Confirm this expense' : 'ยืนยันรายการนี้' },
+      { type: 'uri', label: lineUiLabel('เปิดดูในเว็บ', language), uri: actionUrl }],
   }, webBaseUrl);
   return contents && asCompleteLineCard({
     type: 'flex',
     altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
     // The button as a line too: a text delivery still carries the way in.
-    canonicalText: [canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
+    canonicalText: [canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\n${language === 'en' ? 'View record' : 'เปิดดูรายการ'}: ${actionUrl}`,
       ...(confirmation ? [confirmation.summary, ...(confirmation.details ?? [])] : [])].join('\n'),
     contents,
   });
@@ -641,7 +652,12 @@ export function buildKeptReceiptCard(
 
 /** Reimbursement intake, step one. Who paid decides the whole flow, so this card asks exactly that and
  *  nothing else: no link, no amounts, and no model text — the wording is owned here. */
-export function buildReimbursementPayerClarificationMessage(): LineReplyMessage {
+export function buildReimbursementPayerClarificationMessage(language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    const text = 'Was this paid with your own money to claim back, or with shop funds?';
+    return completeCard({ type: 'flex', altText: text, canonicalText: text, contents: bubble({ title: 'Who paid?', text }, undefined, '', [
+      { label: 'Claim back', text: 'I paid personally and want to claim reimbursement' }, { label: 'Shop paid', text: 'The shop paid this expense' }]) }, text);
+  }
   const text = [
     'รายการนี้ใครเป็นคนจ่ายคะ?',
     '• จ่ายเงินส่วนตัวไปก่อน แล้วต้องการเบิกคืนจากบริษัท',
@@ -660,7 +676,14 @@ export function buildReimbursementPayerClarificationMessage(): LineReplyMessage 
  *  record is created, so the badge says so and the one button opens exactly that form — no query, no
  *  hash, no prefill. An untrusted base or a company id that cannot form a tenant path leaves the card
  *  without a button rather than with a guessed one. */
-export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined, companyId: string): LineReplyMessage {
+export function buildReimbursementHandoffMessage(webBaseUrl: string | undefined, companyId: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    const text = 'No claim has been created; review the details and save it on the web.';
+    const webLink = { label: 'Prepare claim', path: `/companies/${encodeURIComponent(companyId)}/reimbursements/new` };
+    const link = safeTenantLink(webBaseUrl, companyId, webLink.path);
+    return completeCard({ type: 'flex', altText: text, canonicalText: link ? `${text}\n${webLink.label}: ${link}` : text,
+      contents: bubble({ title: 'Expense reimbursement', badge: 'Not created', text, webLink }, webBaseUrl, companyId) }, text);
+  }
   const text = 'น้องมั่งมียังไม่ได้สร้างรายการเบิกคืนให้นะคะ '
     + 'กรุณาเปิดหน้าเว็บเพื่อตรวจสอบและกรอกรายละเอียดการเบิกคืนด้วยตนเอง '
     + 'ระบบจะสร้างรายการเมื่อกดบันทึกในเว็บเท่านั้นค่ะ';
@@ -694,7 +717,13 @@ export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้า
 export function buildLegalAcceptanceRequiredMessage(
   webBaseUrl: string | undefined,
   companyId: string | undefined,
+  language: LineReplyLanguage = 'th',
 ): LineReplyMessage {
+  if (language === 'en') {
+    const text = 'Your LINE account is linked; accept the terms and acknowledge the privacy policy in the web app before continuing here.';
+    return completeCard({ type: 'flex', altText: text, canonicalText: text, contents: bubble({ title: 'Accept the terms', text,
+      ...(companyId ? { webLink: { label: 'Review terms on web', path: `/companies/${encodeURIComponent(companyId)}` } } : {}) }, webBaseUrl, companyId ?? '') }, text);
+  }
   const text = 'บัญชีของคุณผูก LINE เรียบร้อยแล้ว เหลืออีกขั้นเดียวค่ะ: เข้าเว็บแอป MangmeePlus '
     + 'เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัว เสร็จแล้วกลับมาใช้งานผ่าน LINE ได้ทันทีนะคะ';
   return {
@@ -719,7 +748,17 @@ export function buildLegalAcceptanceRequiredMessage(
  * A missing LIFF id (unconfigured env) drops that door rather than sending a broken link — the same
  * fail-open policy every other card here uses for an unusable URL.
  */
-export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: string): LineReplyMessage {
+export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    const text = 'Welcome to MangmeePlus; choose how you would like to get started.';
+    const linkUrl = existingAccountLinkUrl(webBaseUrl);
+    return completeCard({ type: 'flex', altText: text, canonicalText: text, contents: bubble({ title: 'MangmeePlus ✅', badge: 'Verified official account', text }, undefined, '', [
+      ...(liffId && LIFF_ID_PATTERN.test(liffId) ? [{ label: 'Register shop', uri: `https://liff.line.me/${liffId}/signup` }] : []),
+      { label: 'Packages and prices', data: lineControlData('action=view-packages', language) },
+      { label: 'I am an employee', data: lineControlData('action=employee-door', language) },
+      ...(linkUrl ? [{ label: 'Link existing account', uri: linkUrl }] : []),
+      { label: 'Contact team', data: lineControlData('action=staff-contact', language) }]) }, text);
+  }
   const liff = liffId && LIFF_ID_PATTERN.test(liffId) ? liffId : undefined;
   const text = 'สวัสดีค่ะ ยินดีต้อนรับสู่มั่งมีพลัส เลือกทางที่ตรงกับคุณได้เลยค่ะ';
   const linkUrl = existingAccountLinkUrl(webBaseUrl);
@@ -779,7 +818,12 @@ export const LIFF_ID_PATTERN = /^[0-9]{4,20}-[A-Za-z0-9]{1,32}$/;
  * P10-L §3.1/§7. The door card becomes this one while an application is travelling: the same three
  * sentences the LIFF page shows, so the customer never gets two different answers to "where is it".
  */
-export function buildSignupStatusCard(companyName: string, businessHours: boolean): LineReplyMessage {
+export function buildSignupStatusCard(companyName: string, businessHours: boolean, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    const text = `${companyName.trim() ? `${bounded(companyName, 60)}: ` : ''}Your registration is ${businessHours ? 'being reviewed' : 'queued for the next business day'}; our team works Monday–Saturday, 9:00–18:00 and will notify you here.`;
+    return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text, contents: bubble({ title: 'Registration received', text }, undefined, '',
+      [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]) }, text);
+  }
   const shop = companyName.trim() ? `ร้าน ${bounded(companyName, 60)} ` : '';
   // The bubble's own title already says "ได้รับคำขอแล้ว", so the body says what happens next and
   // does not repeat it — the same edit the LIFF waiting card took (Owner 2026-09-05).
@@ -812,7 +856,19 @@ export function buildAiBudgetExceededMessage(
   refusal: { budgetErrorCode?: string; budgetScope?: AiBudgetScope } | undefined,
   /** The reader holds `company.plan.manage` (advisor spec §2.2). Only they get the package buttons. */
   canManagePlan: boolean,
+  language: LineReplyLanguage = 'th',
 ): LineReplyMessage {
+  if (language === 'en') {
+    const insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
+    const chat = refusal?.budgetScope === 'CHAT';
+    const text = `${chat ? 'Chat AI credit' : 'AI credit'} ${insufficient ? 'is insufficient to start this task' : 'has run out'} for this month; it resets next month.${chat
+      ? ' Changing packages does not refill this month’s chat credit; contact the team to check special-deal eligibility.'
+      : canManagePlan ? ' You can request a package change to continue.' : ' Ask the shop owner or an authorized package manager for help.'}`;
+    const actions = chat ? [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]
+      : canManagePlan ? [{ label: 'View packages', data: lineControlData('action=view-packages', language) }, { label: 'Change package', data: lineControlData('action=package-change', language) }] : [];
+    return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text,
+      contents: bubble({ title: insufficient ? 'Insufficient AI credit' : 'Monthly AI credit used', text }, undefined, '', actions) }, text);
+  }
   // §9.1: money is LEFT — it just cannot cover this job's upper bound. Saying "ครบ/เต็ม" here would
   // be false, and the shop would stop trying smaller work that still fits.
   const insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
@@ -880,6 +936,7 @@ function oneTapPackageLink(webBaseUrl: string | undefined, candidate: string | u
  * this web origin — the handoff page or this company's own web tenant.
  */
 export function buildPackageRequiredMessage(input: {
+  language?: LineReplyLanguage;
   lockReason: PlanTermLockReason;
   companyId: string;
   /** Absent when billing is closed or no web base is configured — the card then keeps only the
@@ -893,6 +950,12 @@ export function buildPackageRequiredMessage(input: {
   companyName?: string;
 }): LineReplyMessage {
   const shop = input.companyName?.trim();
+  if (input.language === 'en') {
+    const text = `${shop ? `${shop}: ` : ''}Choose an active package before using the assistant; all your data is kept.`;
+    const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId, `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
+    return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text, contents: bubble({ title: input.lockReason === 'no_package' ? 'No active package' : 'Package expired', text }, input.webBaseUrl, input.companyId,
+      [...(link ? [{ label: 'Choose package', uri: link }] : []), { label: 'Contact team', data: lineControlData('action=staff-contact', 'en') }]) }, text);
+  }
   const text = `${shop ? `🏪 ${shop}\n` : ''}น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ`;
   const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId,
     `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
@@ -922,7 +985,8 @@ export function buildPackageRequiredMessage(input: {
  * buttons are postbacks: the answer is an intent, and neither belongs in the chat transcript as a
  * message the shop owner appears to have typed.
  */
-export function buildProfileGuardNudgeCard(): LineReplyMessage {
+export function buildProfileGuardNudgeCard(language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') return { type: 'text', text: 'Add an email address or phone number on the web so you can recover shop access if your LINE account changes.', quickReply: { items: [ { type: 'action', action: { type: 'postback', label: 'Set recovery details', data: lineControlData('action=profile-guard', language) } }, { type: 'action', action: { type: 'postback', label: 'Later', data: lineControlData('action=profile-guard-later', language) } } ] } };
   const text = 'ใช้มาครบสัปดาห์แล้วค่ะ 👍 ใส่อีเมลหรือเบอร์ไว้หน่อยไหมคะ เผื่อเปลี่ยนมือถือแล้ว LINE หลุด จะได้กู้ร้านคืนได้';
   return {
     type: 'flex',
@@ -950,7 +1014,12 @@ export function buildProfileGuardNudgeCard(): LineReplyMessage {
  * The limit is passed in, never written into the sentence: a warm-up shop meets this wall at 10.
  * Advisor spec §2.2: the buttons only for a reader who may buy; `text` already says who to ask otherwise.
  */
-export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: boolean): LineReplyMessage {
+export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: boolean, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    text = 'This month’s document-reading allowance is used up; enter the expense on the web or wait for the next cycle.';
+    return completeCard({ type: 'flex', altText: text, canonicalText: text, contents: bubble({ title: 'Reading allowance used', text }, undefined, '',
+      canManagePlan ? [{ label: 'View packages', data: lineControlData('action=view-packages', language) }, { label: 'Change package', data: lineControlData('action=package-change', language) }] : []) }, text);
+  }
   return completeCard({
     type: 'flex',
     altText: preview(text, 400),
@@ -970,19 +1039,20 @@ export function buildReceiptQuotaExceededMessage(text: string, canManagePlan: bo
 }
 
 /** Every page an answer opens that this chat may open, each once, as `completeAnswerText` writes it. */
-function answerLinkLines(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string[] {
+function answerLinkLines(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string, language: LineReplyLanguage = lineReplyLanguage(response.replyText ?? '')): string[] {
   const lines: string[] = [];
   const seen = new Set<string>();
   for (const link of [...response.webLinks, ...cards.flatMap(card => card.webLink ? [card.webLink] : [])]) {
     const url = safeTenantLink(webBaseUrl, companyId, link.path);
     if (!url || seen.has(url)) continue;
-    seen.add(url); lines.push(`เปิดดู: ${link.label.trim() || 'เปิดดูข้อมูล'} ${url}`);
+    seen.add(url); const english = language === 'en';
+    lines.push(`${english ? 'View' : 'เปิดดู'}: ${link.label.trim() || (english ? 'View details' : 'เปิดดูข้อมูล')} ${url}`);
   }
   return lines;
 }
 
 /** The whole answer as text — the canonical text: the reply, what its cards add, its sources and each page it opens. */
-function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
+function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string, language: LineReplyLanguage = lineReplyLanguage(response.replyText ?? '')): string {
   const parts: string[] = [];
   const blocks = new Set<string>();
   const append = (value: string | undefined) => {
@@ -992,15 +1062,15 @@ function completeAnswerText(response: LineAiTurnResponse, cards: LineAiAnswerCar
   append(response.replyText);
   for (const card of cards) { append(card.title); append(card.badge); append(card.text); }
   const sources = [...new Set([...response.sourceLabels, ...cards.flatMap(card => card.sourceLabels ?? [])].map(label => label.trim()).filter(Boolean))];
-  if (sources.length) append(`แหล่งข้อมูล: ${sources.join(', ')}`);
-  for (const line of answerLinkLines(response, cards, webBaseUrl, companyId)) append(line);
+  if (sources.length) append(`${language === 'en' ? 'Sources' : 'แหล่งข้อมูล'}: ${sources.join(', ')}`);
+  for (const line of answerLinkLines(response, cards, webBaseUrl, companyId, language)) append(line);
   return parts.join('\n\n');
 }
 
 /** What a prose card of the locked design prints of that answer: each sentence once, a card's title
  *  above its own text, and no line naming the sources (owner 2026-10-05: the card ends with the answer
  *  and its named buttons). The page lines stay, so that each becomes a button with its page's name. */
-function answerPaperText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): string {
+function answerPaperText(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string, language: LineReplyLanguage = lineReplyLanguage(response.replyText ?? '')): string {
   const parts: string[] = [];
   const append = (value: string | undefined) => {
     const text = value?.trim();
@@ -1010,7 +1080,7 @@ function answerPaperText(response: LineAiTurnResponse, cards: LineAiAnswerCard[]
   const reply = response.replyText.trim();
   if (!cards.some((card) => card.text.includes(reply))) append(reply);
   for (const card of cards) { append(card.title); append(card.badge); append(card.text); }
-  return [...parts, ...answerLinkLines(response, cards, webBaseUrl, companyId)].join('\n\n');
+  return [...parts, ...answerLinkLines(response, cards, webBaseUrl, companyId, language)].join('\n\n');
 }
 
 function answerCardsCoverCompleteReply(response: LineAiTurnResponse, cards: LineAiAnswerCard[], webBaseUrl: string | undefined, companyId: string): boolean {
@@ -1095,13 +1165,14 @@ export function buildDesignedLineAnswerMessage(
   webBaseUrl: string | undefined,
   companyId: string,
   question: string | undefined,
+  language: LineReplyLanguage = lineReplyLanguage(question ?? response.replyText),
 ): LineReplyMessage | undefined {
   if (!lineSystemCardAvailable(webBaseUrl)) return undefined;
   const cards = answerCards(response);
-  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId) || fallbackText;
+  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId, language) || fallbackText;
   // A layout stands for the whole reply or for nothing: it is honoured on the one card whose text IS the reply.
   const only = cards.length === 1 && cards[0]!.text.trim() === response.replyText.trim() ? cards[0]! : undefined;
-  const layout = only && parseLineAiAnswerCardLayout(only.layout);
+  const layout = language === 'en' ? undefined : only && parseLineAiAnswerCardLayout(only.layout);
   if (only && layout && layout.context !== 'edit_command') {
     const contents = designedRowsBubble({ ...layout, context: layout.context }, only, response, webBaseUrl, companyId);
     if (contents) return asCompleteLineCard({ type: 'flex', altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี', canonicalText, contents });
@@ -1110,7 +1181,7 @@ export function buildDesignedLineAnswerMessage(
   // text and is not drawn (owner 2026-10-05: the card ends with the answer and its named buttons).
   const header = layout ? { lines: layout.header } : lineAnswerCardHeader(question);
   return header && buildLineSystemTextCardMessage({
-    text: canonicalText, paper: answerPaperText(response, cards, webBaseUrl, companyId) || fallbackText,
+    language, text: canonicalText, paper: answerPaperText(response, cards, webBaseUrl, companyId, language) || fallbackText,
     header, webBaseUrl, companyId, textStyle: layout ? 'result' : 'answer', icon: layout ? 'receipt' : 'file',
   });
 }
@@ -1124,16 +1195,25 @@ export function buildLineBusinessAnswerMessage(
   webBaseUrl: string | undefined,
   companyId: string,
   question?: string,
+  language: LineReplyLanguage = lineReplyLanguage(question ?? response.replyText),
 ): LineReplyMessage {
-  const designed = buildDesignedLineAnswerMessage(response, fallbackText, webBaseUrl, companyId, question);
+  if (language === 'en') {
+    const sourceLabel = (label: string) => lineSourceLabel(label, response.sourceRefs.find(ref => ref.label === label)?.module, language);
+    const link = (entry: NonNullable<LineAiTurnResponse['webLinks']>[number]) => ({ ...entry,
+      label: lineSourceLabel(entry.label, response.sourceRefs.find(ref => ref.webPath === entry.path)?.module, language) });
+    response = { ...response, sourceLabels: response.sourceLabels.map(sourceLabel), webLinks: response.webLinks.map(link),
+      ...(response.presentation ? { presentation: { ...response.presentation, cards: response.presentation.cards.map(card => ({ ...card,
+        ...(card.sourceLabels ? { sourceLabels: card.sourceLabels.map(sourceLabel) } : {}), ...(card.webLink ? { webLink: link(card.webLink) } : {}) })) } } : {}) };
+  }
+  const designed = buildDesignedLineAnswerMessage(response, fallbackText, webBaseUrl, companyId, question, language);
   if (designed) return designed;
   const cards = answerCards(response);
-  const title = answerCardTitle(response);
-  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId);
-  if (cards.length === 0) return buildLineAssistantTextCardMessage(canonicalText || fallbackText, webBaseUrl, companyId, undefined, title);
+  const title = answerCardTitle(response, language);
+  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId, language);
+  if (cards.length === 0) return buildLineAssistantTextCardMessage(canonicalText || fallbackText, webBaseUrl, companyId, undefined, title, language);
   if (!answerCardsCoverCompleteReply(response, cards, webBaseUrl, companyId)) return { type: 'text', text: canonicalText };
 
-  const bubbles = cards.map((card) => bubble({ ...card, title: card.title?.trim() || title }, webBaseUrl, companyId));
+  const bubbles = cards.map((card) => bubble({ ...card, title: card.title?.trim() || title }, webBaseUrl, companyId, undefined, undefined, language));
   const message: LineReplyMessage = {
     type: 'flex',
     altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',

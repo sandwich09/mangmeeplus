@@ -232,7 +232,7 @@ Implementation PRs must attach a table mapping every AC-01 through AC-16 to a te
 
 | Acceptance | Deterministic repository evidence | Live evidence |
 | --- | --- | --- |
-| AC-01, AC-02, AC-04 | `preserves every item and asks every document/item gap together without inventing paper numbers`; `does not borrow another item number as evidence for an incomplete item` | P-F07 pending |
+| AC-01, AC-02, AC-04 | `preserves every item and asks only the next required gap without inventing paper numbers`; `does not borrow another item number as evidence for an incomplete item` | P-F07 pending |
 | AC-03, AC-13 | `accepts several numbered answers, keeps the full snapshot, and leaves only real gaps`; `applies several answers with CAS, materializes valid lines, and returns all remaining questions` | P-F07 pending |
 | AC-05 | paper+laptop advisory assertions; category ambiguity/negation tests; `fails closed on a clearly non-expense direction even when model hints look complete` | P-F07 pending |
 | AC-06 | `keeps pause, end-input, cancel, and resume as distinct non-financial states`; use-case no-final-mutation test | P-F07 pending |

@@ -59,8 +59,11 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
  * `canManagePlan` (advisor spec §2.2): only a reader who may buy is pointed at a package change;
  * anyone else is told who to ask. The chat-credit wording offers a purchase to neither.
  */
-export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudgetScope, canManagePlan = true): string {
+export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudgetScope, canManagePlan = true, language: 'th' | 'en' = 'th'): string {
   const insufficient = code === AI_BUDGET_REFUSAL_CODES.insufficient;
+  if (language === 'en') return `${budgetScope === 'CHAT' ? 'Chat AI credit' : 'AI credit'} ${insufficient ? 'was insufficient to answer your earlier message' : 'has run out for this month, so your earlier message has not been answered'}; it resets next month.${budgetScope === 'CHAT'
+    ? ' Changing packages does not refill this month’s chat credit; contact the team to check special-deal eligibility.'
+    : canManagePlan ? ' You can request a package change to continue.' : ' Ask the shop owner or an authorized package manager for help.'}`;
   if (budgetScope === 'CHAT') {
     return insufficient
       ? '💚 เครดิต AI ส่วนแชตที่เหลือของเดือนนี้ไม่พอตอบข้อความก่อนหน้านี้ค่ะ น้องมั่งมีจึงยังไม่ได้ตอบให้นะคะ '
@@ -76,8 +79,16 @@ export function formatAiBudgetRefusalNotice(code: string, budgetScope?: AiBudget
       + `เดือนหน้าเริ่มใหม่ ${next}`;
 }
 
-export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): string {
-  const base = REFUSAL_MESSAGES[reason];
+export function formatRefusal(reason: LineAiRefusalReason, webPath?: string, language: 'th' | 'en' = 'th'): string {
+  const english: Record<string, string> = {
+    mutation_blocked: 'Please complete this action in the web app.', safety_crisis: 'Are you somewhere safe with someone you trust? If you are in immediate danger, call 1669; Thailand’s Mental Health Hotline is 1323.',
+    privacy_rumor: 'I cannot speculate about someone’s private life.', unsupported_module: 'This feature is unavailable in LINE; please use the web app.',
+    unsupported_yet: 'This task is available in the web app.', forbidden: 'You do not have access; ask the shop owner or an authorized administrator.',
+    unlinked_user: 'Please link your MangmeePlus account to LINE through the web app.', ambiguous_company: 'Please choose your shop in the web app.',
+    tool_unavailable: 'The information is temporarily unavailable; please try again.', feature_disabled: 'This feature is not enabled for your shop.',
+    ai_timeout: 'This request timed out; please send your question again.', line_delivery_failure: 'The message could not be delivered; please try again.',
+  };
+  const base = language === 'en' ? english[reason] ?? 'This request is unavailable; please use the web app.' : REFUSAL_MESSAGES[reason];
   if (webPath) {
     return `${base}\n🌐 ${webLink(webPath)}`;
   }

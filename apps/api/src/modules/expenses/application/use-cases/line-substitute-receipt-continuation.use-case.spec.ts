@@ -564,7 +564,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       ],
     });
     assert.equal(listed.status, 'TARGET_REQUIRED');
-    assert.match(listed.replyText, /1\).*200\.00[\s\S]*2\).*90\.00/);
+    assert.match(listed.replyText, /•.*200\.00[\s\S]*•.*90\.00/);
     assert.equal(listed.pendingQuestion, listed.replyText.split('ทำต่อ: ')[1],
       'the offered choice stays pending so the dispatcher routes the next “1” back here');
 
@@ -758,7 +758,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       ? expense({ id, expenseNumber: 'EXP-002' }) : read(companyId, id);
     const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'TARGET_REQUIRED');
-    assert.match(result.replyText, /1\).*EXP-001[\s\S]*2\).*EXP-002/);
+    assert.match(result.replyText, /•.*EXP-001[\s\S]*•.*EXP-002/);
     assert.deepEqual(result.source?.records.map(item => item.id), ['expense-1', 'expense-2']);
     assert.equal(result.pendingQuestion, result.replyText.split('ทำต่อ: ')[1], 'the numbered choice stays pending');
     assert.equal(result.replyText.includes('/companies/'), false, 'an ambiguous target offers no link at all');
@@ -916,9 +916,9 @@ describe('R13 — the assistant asks before producing the document', () => {
     // Choice 1 describes what taking it actually does. With no saved signature that is TWO steps, and
     // the old unconditional “ใช้ลายเซ็นที่บันทึกไว้” promised one — an option offered as ready when it
     // was not.
-    assert.match(asked.replyText, /1\) ออกเอกสาร \(ยังไม่มีลายเซ็นที่บันทึกไว้ ระบบจะขอรูปลายเซ็นก่อน 1 ครั้ง/);
-    assert.match(asked.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
-    assert.match(asked.replyText, /3\) แก้ข้อมูลก่อน/);
+    assert.match(asked.replyText, /• ออกเอกสาร \(ยังไม่มีลายเซ็นที่บันทึกไว้ ระบบจะขอรูปลายเซ็นก่อน 1 ครั้ง/);
+    assert.match(asked.replyText, /• ขอฟอร์มไปเซ็นเอง/);
+    assert.match(asked.replyText, /• แก้ข้อมูลก่อน/);
     assert.match(asked.replyText, /ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้/, 'nothing is produced unasked');
     assert.equal(
       getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
@@ -929,7 +929,7 @@ describe('R13 — the assistant asks before producing the document', () => {
   it('promises the one-step route only when a saved signature really exists', async () => {
     const { asked } = await readyHarness({ signature: { id: 'signature-1' } });
 
-    assert.match(asked.replyText, /1\) ออกเอกสาร \(ใช้ลายเซ็นที่บันทึกไว้\)/);
+    assert.match(asked.replyText, /• ออกเอกสาร \(ใช้ลายเซ็นที่บันทึกไว้\)/);
     assert.equal(/ระบบจะขอรูปลายเซ็น/u.test(asked.replyText), false);
   });
 
@@ -1090,9 +1090,9 @@ describe('R13 — the assistant asks before producing the document', () => {
       assert.equal(h.prepares.length, 0, 'an unrecognised answer never produces a document');
       assert.equal(result.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
       // The point of the unmatched path: the options are visible again, so the next turn works.
-      assert.match(result.replyText, /1\) ออกเอกสาร/);
-      assert.match(result.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
-      assert.match(result.replyText, /3\) แก้ข้อมูลก่อน/);
+      assert.match(result.replyText, /• ออกเอกสาร/);
+      assert.match(result.replyText, /• ขอฟอร์มไปเซ็นเอง/);
+      assert.match(result.replyText, /• แก้ข้อมูลก่อน/);
     });
   }
 
@@ -1529,8 +1529,8 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
     const question = substituteScanConfirmQuestion(SCAN);
     assert.match(question, /SUB-202608-00007/);
     assert.match(question, /200\.00 บาท/);
-    assert.match(question, /1\) ใช่/);
-    assert.match(question, /2\) ไม่ใช่ เป็นหลักฐานอื่น/);
+    assert.match(question, /• ใช่/);
+    assert.match(question, /• ไม่ใช่ เป็นหลักฐานอื่น/);
     assert.equal(substituteScanConfirmAnswer('1'), 'YES');
     assert.equal(substituteScanConfirmAnswer('ใช่'), 'YES');
     assert.equal(substituteScanConfirmAnswer('2'), 'NO');
@@ -1549,14 +1549,14 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
     const blocked = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [], signatureRequested: true });
     assert.deepEqual(blocked, ['SIGNATURE', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
     assert.equal(substituteMediaAnswer('1', blocked), 'SIGNATURE');
-    assert.match(substituteMediaQuestion(blocked), /1\) ลายเซ็นของฉัน/);
+    assert.match(substituteMediaQuestion(blocked), /• ลายเซ็นของฉัน/);
     // Offered only while the work is blocked on one.
     assert.equal(substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [SCAN], signatureRequested: false }).includes('SIGNATURE'), false);
 
     const plain = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [], signatureRequested: false });
     assert.deepEqual(plain, ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
     assert.equal(substituteMediaQuestion(plain).includes('ฟอร์มที่เซ็นแล้ว'), false);
-    assert.match(substituteMediaQuestion(plain), /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);
+    assert.match(substituteMediaQuestion(plain), /• ภาพประกอบคำถาม ไม่ต้องบันทึก/);
     assert.equal(substituteMediaAnswer('1', plain), 'PAYMENT_EVIDENCE');
     assert.equal(substituteMediaAnswer('5', plain), undefined, 'a number past the offered list answers nothing');
     assert.equal(substituteMediaAnswer('ยอดเท่าไร', plain), undefined);
@@ -1651,8 +1651,8 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
     const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
 
     assert.deepEqual(context?.awaitingScans.map((item) => item.documentNumber), ['SUB-202608-00009', 'SUB-202608-00007']);
-    assert.match(substituteScanPickQuestion(context!.awaitingScans), /1\) SUB-202608-00009 ยอด 99\.00 บาท/);
-    assert.match(substituteScanPickQuestion(context!.awaitingScans), /2\) SUB-202608-00007/);
+    assert.match(substituteScanPickQuestion(context!.awaitingScans), /• SUB-202608-00009 ยอด 99\.00 บาท/);
+    assert.match(substituteScanPickQuestion(context!.awaitingScans), /• SUB-202608-00007/);
   });
 
   it('keeps an open workflow as the target for evidence even when nothing awaits a scan', async () => {
@@ -1918,8 +1918,8 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
     assert.equal(category.collectableInLine, true, 'and it is now answerable in chat');
     assert.equal(/[A-Za-z]{4,}/u.test(category.message), false, `still English: ${category.message}`);
     assert.match(result.replyText, /ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
-    assert.match(result.replyText, /1\) ค่าเดินทาง/);
-    assert.match(result.replyText, /2\) ค่าอาหาร/);
+    assert.match(result.replyText, /• ค่าเดินทาง/);
+    assert.match(result.replyText, /• ค่าอาหาร/);
     assert.match(result.pendingQuestion ?? '', /ตอบข้อมูลที่ยังขาดรวม.*\n• ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
   });
 
@@ -1983,8 +1983,8 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
       recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
     });
 
-    const numbered = asked.replyText.split('\n').filter((line) => /^\d+\) /u.test(line));
-    assert.deepEqual(numbered, ['1) \u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', '2) \u0e04\u0e48\u0e32\u0e2d\u0e32\u0e2b\u0e32\u0e23'], 'no label appears twice under two numbers');
+    const numbered = asked.replyText.split('\n').filter((line) => /^• (?:ค่าเดินทาง|ค่าอาหาร)$/u.test(line));
+    assert.deepEqual(numbered, ['• \u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', '• \u0e04\u0e48\u0e32\u0e2d\u0e32\u0e2b\u0e32\u0e23'], 'no label appears twice under two numbers');
 
     const answered = await h.useCase.execute(ctx(), {
       messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
@@ -2540,4 +2540,29 @@ describe('Original offered choices take precedence over reordered active workflo
       assert.equal(second.saves.length, 1, 'the other workflow is unchanged');
     });
   }
+});
+
+
+describe('exam A: legacy substitute replies preserve current language', () => {
+  for (const [messageText, language] of [['Please prepare a substitute receipt', 'en'], ['ทำใบรับรองค่ะ', 'th'], ['ช่วย prepare ใบรับรองค่ะ', 'th']] as const) {
+    it(`localizes blocked, target, forbidden, stale and paused replies for ${language}: ${messageText}`, async () => {
+      const h = harness({ expense: expense({ vendorNameSnapshot: 'ABC', lines: [{ description: 'Travel', expenseCategoryId: 'cat-travel' }] }), categories: [{ id: 'cat-travel', name: 'Travel' }] });
+      const input = { language, messageText, chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'Travel' }], webBaseUrl: WEB_BASE };
+      const replies = [await h.useCase.execute(ctx([]), input), await h.useCase.execute(ctx(), { ...input, recentCandidates: [] }), await h.useCase.execute(ctx(), input)];
+      const paused = await h.useCase.execute(ctx(), { ...input, recentCandidates: [], messageText: language === 'en' ? 'pause substitute receipt' : 'พัก' });
+      replies.push(paused);
+      for (const result of replies) {
+        const visible = [result.replyText, result.badge, result.pendingQuestion, result.resumeCapsule].filter(Boolean).join('\n');
+        if (language === 'en') assert.doesNotMatch(visible, /[\u0E00-\u0E7F]/u); else assert.match(visible, /[\u0E00-\u0E7F]/u);
+      }
+    });
+  }
+  it('accepts English labels without asking again for already supplied facts', async () => {
+    const h = harness({ expense: expense({ vendorNameSnapshot: 'ABC', attachments: [{ id: 'proof', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }] }), categories: [{ id: 'cat-travel', name: 'Travel' }] });
+    const result = await h.useCase.execute(ctx(), { language: 'en', messageText: 'No receipt\nreason: seller cannot issue a receipt\npurpose: customer visit\npayee: ABC\nI am the payer\ncompany paid full amount\npayment method: cash\npayment date: 16 October 2026', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'Travel' }], webBaseUrl: WEB_BASE });
+    assert.ok(result.acceptedFields.includes('businessPurpose'));
+    assert.ok(result.acceptedFields.includes('payeeName'));
+    assert.doesNotMatch(result.replyText, /[\u0E00-\u0E7F]/u);
+    assert.equal(result.blockers.some(item => ['payer_required', 'business_purpose_required', 'payee_required'].includes(item.code)), false);
+  });
 });

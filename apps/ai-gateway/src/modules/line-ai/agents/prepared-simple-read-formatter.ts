@@ -44,6 +44,8 @@ export type PreparedFormatContext = {
   /** The reader's own message. It never changes a figure: it only tells a question about PAYING from a
    *  question about the record, which are two cards of the same permission-checked read. */
   messageText?: string;
+  /** Display-only context for a truthful permitted alternative after a runtime denial. */
+  permissions?: readonly string[];
 };
 
 export const isEnglish = (ctx: PreparedFormatContext): boolean =>
@@ -1322,7 +1324,7 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
   if (data && aggregationIncomplete(data)) return { kind: 'unverified' };
 
   const english = isEnglish(ctx);
-  const rows: Array<{ requester: string; date?: string; amount: string | number; currency: string }> = [];
+  const rows: Array<{ requester: string; date?: string; amount: string | number; currency: string; waitingOn?: string }> = [];
   for (const raw of items) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
     const item = raw as Record<string, unknown>;
@@ -1332,7 +1334,7 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
     const requester = typeof item['requesterDisplayName'] === 'string' && item['requesterDisplayName']
       ? item['requesterDisplayName'] as string : (english ? 'Unknown requester' : 'ไม่ระบุผู้ขอ');
     const submittedAt = typeof item['submittedAt'] === 'string' ? item['submittedAt'].slice(0, 10) : undefined;
-    rows.push({ requester, date: submittedAt, amount, currency });
+    rows.push({ requester, date: submittedAt, amount, currency, waitingOn: typeof item['waitingOn'] === 'string' ? item['waitingOn'] : undefined });
   }
 
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
@@ -1342,7 +1344,7 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
   const listYear = civilYear(output.asOf);
   const itemLines = shown.map((row, index) => {
     const dateLabel = row.date ? thaiAbbrDate(row.date, english, listYear) ?? row.date : undefined;
-    return `\n${index + 1}. ${row.requester}${dateLabel ? ` (${dateLabel})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}`;
+    return `\n${index + 1}. ${row.requester}${dateLabel ? ` (${dateLabel})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}${row.waitingOn ? ` · ${english ? 'waiting for' : 'รอ'} ${row.waitingOn}` : ''}`;
   }).join('');
   const moreText = total > shown.length
     ? (english ? `\nShowing ${shown.length} of ${plural(total, 'request')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)
@@ -1354,9 +1356,14 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
       ? `, totaling ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`
       : ` รวม ${moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency)}`)
     : '';
+  const scope = data?.['accessScope'];
+  const subject = scope === 'company' ? (english ? 'Shop claims pending approval' : 'ใบเบิกของร้านที่รออนุมัติ')
+    : scope === 'related' ? (english ? 'Related claims pending approval' : 'ใบเบิกที่เกี่ยวข้องกับคุณรออนุมัติ')
+    : scope === 'own' ? (english ? 'Your claims pending approval' : 'ใบเบิกของคุณที่รออนุมัติ')
+    : (english ? 'Pending approvals' : 'เบิกจ่ายรออนุมัติ');
   const headline = english
-    ? `Pending approvals: ${plural(total, 'request')}${totalText}`
-    : `เบิกจ่ายรออนุมัติ: ${groupThousands(String(total))} รายการ${totalText}`;
+    ? `${subject}: ${plural(total, 'request')}${totalText}`
+    : `${subject}: ${groupThousands(String(total))} รายการ${totalText}`;
 
   const replyText = `${headline}${itemLines}${moreText}${sourceText}${asOfLine(output.asOf, english)}`;
   // The same queue on the locked card (context 2): how many wait, their total where the sentence
@@ -1370,11 +1377,11 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
       ...(sumGrounded && rows[0] ? [{ label: 'ยอดรวม', value: moneyWithCurrency(rows.reduce((sum, row) => sum + moneyNumber(row.amount), 0), rows[0].currency), emphasis: 'total' as const }] : []),
       ...shown.map((row) => {
         const dateLabel = row.date ? thaiAbbrDate(row.date, false, listYear) ?? row.date : undefined;
-        return { label: row.requester, value: `${moneyWithCurrency(row.amount, row.currency)}${dateLabel ? ` · ${dateLabel}` : ''}` };
+        return { label: row.requester, value: `${moneyWithCurrency(row.amount, row.currency)}${dateLabel ? ` · ${dateLabel}` : ''}${row.waitingOn ? ` · รอ ${row.waitingOn}` : ''}` };
       }),
       ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
     ],
-    ...cardNotes([moreText, 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ']),
+    ...cardNotes([moreText, data?.['accessScope'] === 'company' ? 'ใบเบิกของร้านที่รออนุมัติ' : data?.['accessScope'] === 'related' ? 'เฉพาะใบเบิกที่เกี่ยวข้องกับคุณ' : data?.['accessScope'] === 'own' ? 'เฉพาะใบเบิกของคุณ' : 'ตรวจเฉพาะใบเบิกที่รอคุณอนุมัติ']),
   });
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
 }
@@ -1707,7 +1714,7 @@ export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFor
     if (output.toolCalls.some((call) => call.errorCode === REIMBURSEMENT_APPROVAL_NOT_PERMITTED)) {
       return reimbursementApprovalNotPermittedReplyText(english);
     }
-    return toolPermissionReplyText(english ? 'en' : 'th');
+    return toolPermissionReplyText(english ? 'en' : 'th', ctx.permissions);
   }
   // C4 (batch 5c, T-008-b/T-019-a/T-064-a): expense.list_recent/get_breakdown's own not-found/
   // ambiguous/out-of-scope branch/category/vendor result is a real, grounded answer from the tool's

@@ -83,11 +83,11 @@ describe('item 2: expense name resolution (ambiguous/not-found)', () => {
 describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_APPROVAL_NOT_PERMITTED)', () => {
   it('names the role limit and the self-serve alternative, in Thai and English', () => {
     const th = reimbursementApprovalNotPermittedReplyText(false);
-    assert.match(th, /บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ/);
-    assert.match(th, /ใบเบิกของฉันถึงไหนแล้ว/);
+    assert.match(th, /คุณยังไม่มีสิทธิ์ดูใบเบิก/);
+    assert.match(th, /ดูแพ็กเกจ/);
     const en = reimbursementApprovalNotPermittedReplyText(true);
     assert.match(en, /does not have permission/);
-    assert.match(en, /reimbursement claim/);
+    assert.match(en, /view claims/);
   });
 });
 

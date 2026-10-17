@@ -1,3 +1,4 @@
+import { lineControlData, lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -16,7 +17,7 @@ import type { LineReplyMessage } from '../infrastructure/line-reply.adapter';
 import { asCompleteLineCard } from '../domain/logic/line-business-card.logic';
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 
-export type SubstituteActionPreview = { token: string; expiresAt: string; label: string; summary: string; webPath: string; webOnly?: boolean };
+export type SubstituteActionPreview = { language?: LineReplyLanguage; token: string; expiresAt: string; label: string; summary: string; webPath: string; webOnly?: boolean };
 type StoredAction = {
   previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; expenseId: string; branchId: string | null;
@@ -82,28 +83,29 @@ export class LineSubstituteReceiptActionService {
       && (mode !== 'DESIGNATED_APPROVERS' || policy!.approverUserIds.includes(ctx.userId));
   }
 
-  async resume(ctx: RequestContext, chat: string, message: string): Promise<{ preview?: SubstituteActionPreview; reply?: string } | null> {
+  async resume(ctx: RequestContext, chat: string, message: string, language: LineReplyLanguage = 'th'): Promise<{ preview?: SubstituteActionPreview; reply?: string } | null> {
     const match = /^(?:ลงนามใบรับรอง(?:แทนใบเสร็จ)?|อนุมัติใบรับรอง(?:แทนใบเสร็จ)?|ทำใบรับรองต่อ)(?:\s+(\S+))?$/u.exec(message.trim());
     if (!match) return null;
     const queue = await this.queue.execute(ctx, { limit: 10 });
     const items = [...(queue.asPayer?.items ?? []), ...(queue.asApprover?.items ?? [])];
     const selected = match[1] ? items.find(item => item.documentNumber === match[1]) : items.length === 1 ? items[0] : undefined;
-    if (!selected) return items.length > 1 ? { reply: `เลือกใบที่ต้องการแล้วพิมพ์ “ลงนามใบรับรอง” ตามด้วยเลขที่เอกสารค่ะ\n${items.map(item => `${item.documentNumber} · ${item.payeeName} · ${item.amount} บาท`).join('\n')}` } : null;
+    if (!selected) return items.length > 1 ? { reply: (language === 'en' ? `Choose a document to continue on the web:\n${items.map(item => `${item.documentNumber} · ${item.payeeName} · ${item.amount} THB`).join('\n')}` : `เลือกใบที่ต้องการแล้วพิมพ์ “ลงนามใบรับรอง” ตามด้วยเลขที่เอกสารค่ะ\n${items.map(item => `${item.documentNumber} · ${item.payeeName} · ${item.amount} บาท`).join('\n')}`) } : null;
     const row = await this.prisma.client.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId: ctx.companyId,
       documentNumber: selected.documentNumber }, select: { expenseId: true } });
-    if (!row) return { reply: CHANGED };
-    const next = await this.prepare(ctx, chat, row.expenseId);
+    if (!row) return { reply: language === 'en' ? 'The expense changed; please check the latest details before continuing.' : CHANGED };
+    const next = await this.prepare(ctx, chat, row.expenseId, language);
     return next.preview || next.reply ? next : null;
   }
 
-  async prepare(ctx: RequestContext, chat: string, expenseId: string): Promise<{ preview?: SubstituteActionPreview; reply?: string }> {
+  async prepare(ctx: RequestContext, chat: string, expenseId: string, language: LineReplyLanguage = 'th'): Promise<{ preview?: SubstituteActionPreview; reply?: string }> {
+    const en = language === 'en';
     if (ctx.authProvider !== 'line') return {};
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!expense || !isBranchInScope(ctx.scopes ?? {}, expense.branchId)) return {};
     const evidence = expense.substituteReceiptEvidence;
     const state = stateOf(expense);
     const webPath = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence?.id ?? `new?expenseId=${encodeURIComponent(expense.id)}${state?.workflowId ? `&workflow=${encodeURIComponent(state.workflowId)}` : ''}`}`);
-    if (evidence?.status === 'ISSUED') return { reply: `ออกใบรับรองแล้วค่ะ เปิดเอกสารได้ที่ ${webPath}\nพิมพ์ “ยืนยันรายการนี้” เพื่อทำค่าใช้จ่ายต่อค่ะ` };
+    if (evidence?.status === 'ISSUED') return { reply: en ? `The substitute receipt has been issued; open it on the web: ${webPath}` : `ออกใบรับรองแล้วค่ะ เปิดเอกสารได้ที่ ${webPath}\nพิมพ์ “ยืนยันรายการนี้” เพื่อทำค่าใช้จ่ายต่อค่ะ` };
     let action: StoredAction['action'];
     let label: string;
     let summary: string;
@@ -111,36 +113,36 @@ export class LineSubstituteReceiptActionService {
       if (!ctx.permissions.includes('expense.review') || state?.status !== 'OPEN' || state.pendingDecision !== 'ISSUE_CONFIRM'
         || state.userId !== ctx.userId || state.companyId !== ctx.companyId || state.chatKeyHash !== chat
         || state.targetRevision !== expense.updatedAt.toISOString()) return {};
-      if (state.signatureRequested && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) return { reply: signatureAsk };
-      action = 'PREPARE'; label = 'เตรียมใบรับรอง'; summary = 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ';
+      if (state.signatureRequested && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) return { reply: en ? 'Please send your signature photo here.' : signatureAsk };
+      action = 'PREPARE'; label = en ? 'Prepare document' : 'เตรียมใบรับรอง'; summary = en ? 'Review the details, then prepare the substitute receipt for signing on the web.' : 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ';
     } else {
       const approver = await this.canApprove(ctx, expense);
       if (evidence.payerUserId !== ctx.userId && !ctx.permissions.includes('expense.review') && !approver) return {};
       action = 'WEB_LINK';
       label = (evidence.status !== 'PREPARED' || evidence.payerUserId !== ctx.userId) && approver
-        ? 'เปิดอนุมัติในเว็บ' : 'เปิดลงนามในเว็บ';
-      summary = 'เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อลงนามและอนุมัติ';
+        ? en ? 'Approve on web' : 'เปิดอนุมัติในเว็บ' : en ? 'Sign on web' : 'เปิดลงนามในเว็บ';
+      summary = en ? 'The substitute receipt is prepared; sign and approve it on the web.' : 'เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อลงนามและอนุมัติ';
     }
     const owner = await this.owner(ctx, chat);
-    if (!owner || !this.store.available || !this.config.aiGatewayInternalSecret) return { reply: 'ยังเตรียมการ์ดยืนยันไม่ได้ค่ะ กรุณาลองใหม่อีกครั้ง' };
-    const preview: SubstituteActionPreview = { token: '', expiresAt: new Date(Date.now() + 600_000).toISOString(), label,
-      ...(action === 'WEB_LINK' ? { webOnly: true } : {}), summary: [summary, `ผู้รับเงิน: ${(action === 'PREPARE' ? state?.acceptedValues.payeeName : evidence?.payeeName) ?? expense.vendorNameSnapshot ?? '-'}`,
-        `ยอด: ${expense.grandTotalAmount} บาท`,
-        ...(evidence ? [`เหตุผล: ${evidence.missingReceiptReason}`, `วัตถุประสงค์: ${evidence.businessPurpose}`,
-          `ผู้รับรอง: ${evidence.payerName}`, `แหล่งเงิน: ${evidence.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน'}`,
-          `วิธีจ่าย: ${evidence.paymentMethod === 'BANK_TRANSFER' ? 'โอนเงิน' : evidence.paymentMethod === 'CASH' ? 'เงินสด' : evidence.paymentMethod === 'CARD' ? 'บัตร' : 'เช็ค'}`,
-          `วันที่จ่าย: ${evidence.paymentDate ? formatThaiDate(evidence.paymentDate) : '-'}`] : substituteReceiptFactLines({
+    if (!owner || !this.store.available || !this.config.aiGatewayInternalSecret) return { reply: (language === 'en' ? 'I could not prepare the confirmation card; please try again.' : 'ยังเตรียมการ์ดยืนยันไม่ได้ค่ะ กรุณาลองใหม่อีกครั้ง') };
+    const preview: SubstituteActionPreview = { language, token: '', expiresAt: new Date(Date.now() + 600_000).toISOString(), label,
+      ...(action === 'WEB_LINK' ? { webOnly: true } : {}), summary: [summary, `${en ? 'Payee' : 'ผู้รับเงิน'}: ${(action === 'PREPARE' ? state?.acceptedValues.payeeName : evidence?.payeeName) ?? expense.vendorNameSnapshot ?? '-'}`,
+        `${en ? 'Amount' : 'ยอด'}: ${expense.grandTotalAmount} ${en ? 'THB' : 'บาท'}`,
+        ...(evidence ? [`${en ? 'Reason' : 'เหตุผล'}: ${evidence.missingReceiptReason}`, `${en ? 'Purpose' : 'วัตถุประสงค์'}: ${evidence.businessPurpose}`,
+          `${en ? 'Payer' : 'ผู้รับรอง'}: ${evidence.payerName}`, `${en ? 'Funding' : 'แหล่งเงิน'}: ${evidence.fundingSource === 'COMPANY' ? en ? 'Shop funds, paid in full' : 'บริษัทจ่ายเต็มจำนวน' : en ? 'Personal advance, paid in full' : 'พนักงานสำรองจ่ายเต็มจำนวน'}`,
+          `${en ? 'Payment method' : 'วิธีจ่าย'}: ${evidence.paymentMethod === 'BANK_TRANSFER' ? en ? 'Bank transfer' : 'โอนเงิน' : evidence.paymentMethod === 'CASH' ? en ? 'Cash' : 'เงินสด' : evidence.paymentMethod === 'CARD' ? en ? 'Card' : 'บัตร' : en ? 'Cheque' : 'เช็ค'}`,
+          `${en ? 'Payment date' : 'วันที่จ่าย'}: ${evidence.paymentDate ? lineDisplayDate(evidence.paymentDate, language) : '-'}`] : substituteReceiptFactLines({
           missingReceiptReason: expense.missingReceiptReason ?? undefined,
           paymentMethod: expense.paymentMethod ?? undefined, paymentDate: expense.paidAt?.toISOString().slice(0, 10),
           ...state!.acceptedValues,
-        }, await this.repo.listCategories(ctx.companyId))),
-        'ใบรับรองนี้ไม่ใช่ใบกำกับภาษีค่ะ'].join('\n'), webPath };
+        }, await this.repo.listCategories(ctx.companyId), language)),
+        (en ? 'This substitute receipt is not a tax invoice.' : 'ใบรับรองนี้ไม่ใช่ใบกำกับภาษีค่ะ')].join('\n'), webPath };
     const entry: StoredAction = { previewId: `sub_${randomUUID()}`, companyId: ctx.companyId, userId: ctx.userId,
       membershipId: ctx.membershipId, chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,
       expenseId, branchId: expense.branchId, revision: expense.updatedAt.toISOString(), digest: digest(expense), action,
       preview };
     preview.token = `${entry.previewId}.${this.sign(entry)}`;
-    return await this.store.save(entry) ? { preview } : { reply: 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง' };
+    return await this.store.save(entry) ? { preview } : { reply: (language === 'en' ? 'Your earlier request is still processing; please try again shortly.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
   }
 
   async current(ctx: RequestContext, chat: string, token: string, applied = false) {
@@ -165,39 +167,40 @@ export class LineSubstituteReceiptActionService {
     return entry ? [{ tool: 'expense.get_detail', id: entry.expenseId }] : [];
   }
 
-  webHandoff(ctx: RequestContext): SubstituteActionPreview {
+  webHandoff(ctx: RequestContext, language: LineReplyLanguage = 'th'): SubstituteActionPreview {
+    if (language === 'en') return { token: '', expiresAt: new Date(Date.now() + 600_000).toISOString(), label: 'Open substitute receipts', summary: 'Review, sign and approve substitute receipts in the web app.', webOnly: true, webPath: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts`) };
     return { token: '', expiresAt: new Date(Date.now() + 600_000).toISOString(), webOnly: true,
       label: ctx.permissions.includes('expense.confirm') ? 'เปิดอนุมัติในเว็บ' : 'เปิดลงนามในเว็บ',
       summary: 'เปิดเว็บเพื่อลงนามและอนุมัติใบรับรองค่ะ',
       webPath: absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts`) };
   }
 
-  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl): Promise<{ reply: string; expenseId?: string; preview?: SubstituteActionPreview }> {
-    if (!['expense_action_confirm', 'expense_action_cancel'].includes(control.action)) return { reply: EXPIRED };
+  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<{ reply: string; expenseId?: string; preview?: SubstituteActionPreview }> {
+    if (!['expense_action_confirm', 'expense_action_cancel'].includes(control.action)) return { reply: language === 'en' ? 'This proposal expired; please prepare a fresh card.' : EXPIRED };
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), control.token.split('.')[0]!);
-    if (!claim) { const preview = this.webHandoff(ctx); return { reply: preview.summary, preview }; }
+    if (!claim) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
     const entry = claim.entry;
     try {
-      if (!await this.bound(ctx, chat, entry, control.token)) { const preview = this.webHandoff(ctx); return { reply: preview.summary, preview }; }
+      if (!await this.bound(ctx, chat, entry, control.token)) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
       // Old sign/approve cards are navigation only, even if their source revision has changed.
       if (entry.action !== 'PREPARE') {
         const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
-        const preview = this.webHandoff(ctx);
+        const preview = this.webHandoff(ctx, language);
         if (expense && isBranchInScope(ctx.scopes ?? {}, expense.branchId) && expense.substituteReceiptEvidence) {
           preview.webPath = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${expense.substituteReceiptEvidence.id}`);
           preview.label = (expense.substituteReceiptEvidence.status !== 'PREPARED' || expense.substituteReceiptEvidence.payerUserId !== ctx.userId)
             && await this.canApprove(ctx, expense)
-            ? 'เปิดอนุมัติในเว็บ' : 'เปิดลงนามในเว็บ';
+            ? (language === 'en' ? 'Approve on web' : 'เปิดอนุมัติในเว็บ') : (language === 'en' ? 'Sign on web' : 'เปิดลงนามในเว็บ');
         }
         return { reply: preview.summary, preview };
       }
       if (control.action === 'expense_action_cancel') {
-        await this.store.discard(ctx.companyId, this.key(chat)); return { reply: 'ยังไม่ทำขั้นตอนนี้ค่ะ ข้อมูลเดิมยังอยู่' };
+        await this.store.discard(ctx.companyId, this.key(chat)); return { reply: (language === 'en' ? 'This step was cancelled; the existing details are retained.' : 'ยังไม่ทำขั้นตอนนี้ค่ะ ข้อมูลเดิมยังอยู่') };
       }
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
-      if (!expense || expense.updatedAt.toISOString() !== entry.revision || digest(expense) !== entry.digest) return { reply: CHANGED };
+      if (!expense || expense.updatedAt.toISOString() !== entry.revision || digest(expense) !== entry.digest) return { reply: language === 'en' ? 'The expense changed; please check the latest details before continuing.' : CHANGED };
       if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException();
-      const result = await this.continuation.execute(ctx, { messageText: '1', chatKeyHash: chat,
+      const result = await this.continuation.execute(ctx, { language, messageText: '1', chatKeyHash: chat,
         recentCandidates: [{ id: expense.id, label: 'รายการนี้' }], boundCandidateExpenseIds: [expense.id], webBaseUrl: this.config.webBaseUrl });
       const reply = result.replyText;
       if (result.blockers.some(item => item.code === 'reusable_signature_required')) {
@@ -211,32 +214,32 @@ export class LineSubstituteReceiptActionService {
       await this.store.discard(ctx.companyId, this.key(chat));
       return { reply, expenseId: expense.id, preview: entry.preview };
     } catch (error) {
-      return { reply: error instanceof ForbiddenException ? 'คุณไม่มีสิทธิ์ทำขั้นตอนนี้ค่ะ ให้ผู้ลงนามที่บริษัทอนุญาตดำเนินการ'
-        : error instanceof ConflictException ? CHANGED : 'ยังดำเนินการไม่สำเร็จค่ะ พิมพ์ “ทำใบรับรองต่อ” เพื่อตรวจข้อมูลล่าสุด' };
+      return { reply: error instanceof ForbiddenException ? (language === 'en' ? 'Ask a signer authorized by your shop to complete this step.' : 'คุณไม่มีสิทธิ์ทำขั้นตอนนี้ค่ะ ให้ผู้ลงนามที่บริษัทอนุญาตดำเนินการ')
+        : error instanceof ConflictException ? (language === 'en' ? 'This expense changed; review its current details before continuing.' : CHANGED) : (language === 'en' ? 'This step did not finish; say “resume substitute receipt” to check its current state.' : 'ยังดำเนินการไม่สำเร็จค่ะ พิมพ์ “ทำใบรับรองต่อ” เพื่อตรวจข้อมูลล่าสุด') };
     } finally { await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token); }
   }
 }
 
-export function buildSubstituteReceiptActionCard(preview: SubstituteActionPreview, text = preview.summary, applied = false): LineReplyMessage {
-  return asCompleteLineCard({ type: 'flex', altText: preview.label, canonicalText: text, contents: { type: 'bubble',
+export function buildSubstituteReceiptActionCard(preview: SubstituteActionPreview, text = preview.summary, applied = false, language: LineReplyLanguage = preview.language ?? 'th'): LineReplyMessage {
+  return asCompleteLineCard({ type: 'flex', altText: language === 'en' ? preview.webOnly ? 'Continue on web' : 'Prepare substitute receipt' : preview.label, canonicalText: text, contents: { type: 'bubble',
     body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
       ...text.replace(/https?:\/\/[^\s]+/gu, '').split('\n').filter(line => line.trim())
         .map(text => ({ type: 'text', text, wrap: true })),
-      ...(!applied && !preview.webOnly ? [{ type: 'text', text: 'ดูเอกสาร', color: '#157B56', action: { type: 'uri', uri: preview.webPath } }] : []),
+      ...(!applied && !preview.webOnly ? [{ type: 'text', text: language === 'en' ? 'View document' : 'ดูเอกสาร', color: '#157B56', action: { type: 'uri', uri: preview.webPath } }] : []),
     ] },
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       ...(applied || preview.webOnly ? [] : (['expense_action_confirm', 'expense_action_cancel'] as const).map((action, i) => ({ type: 'button', style: i === 0 ? 'primary' : 'secondary',
-        action: { type: 'postback', label: i === 0 ? preview.label : 'ยังไม่ทำ', data: new URLSearchParams({ action, token: preview.token }).toString() } }))),
-      ...(applied || preview.webOnly ? [{ type: 'button', style: 'primary', action: { type: 'uri', label: preview.webOnly ? preview.label : 'ดูเอกสาร', uri: preview.webPath } }] : []),
+        action: { type: 'postback', label: language === 'en' ? i === 0 ? 'Prepare document' : 'Cancel action' : i === 0 ? preview.label : 'ยังไม่ทำ', data: lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) } }))),
+      ...(applied || preview.webOnly ? [{ type: 'button', style: 'primary', action: { type: 'uri', label: language === 'en' ? preview.webOnly ? 'Continue on web' : 'View document' : preview.webOnly ? preview.label : 'ดูเอกสาร', uri: preview.webPath } }] : []),
     ] },
   } });
 }
 
-export function buildSubstituteReceiptFactsCard(result: LineSubstituteReceiptContinuationResult, text = result.replyText): LineReplyMessage | undefined {
+export function buildSubstituteReceiptFactsCard(result: LineSubstituteReceiptContinuationResult, text = result.replyText, language: LineReplyLanguage = 'th'): LineReplyMessage | undefined {
   if (result.status !== 'BLOCKED' || !result.webPath || !result.blockers.some(item => item.code === 'payer_required')) return undefined;
-  const self = { type: 'message' as const, label: 'ฉันเป็นผู้จ่าย', text: 'ฉันเป็นผู้จ่าย' };
-  const other = { type: 'uri' as const, label: 'เลือกสมาชิกคนอื่น', uri: result.webPath };
-  return asCompleteLineCard({ type: 'flex', altText: 'ตรวจข้อมูลและเลือกผู้รับรองการจ่ายค่ะ', canonicalText: text,
+  const self = { type: 'message' as const, label: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย', text: language === 'en' ? 'I am the payer' : 'ฉันเป็นผู้จ่าย' };
+  const other = { type: 'uri' as const, label: language === 'en' ? 'Choose another member' : 'เลือกสมาชิกคนอื่น', uri: result.webPath };
+  return asCompleteLineCard({ type: 'flex', altText: language === 'en' ? 'Review details and choose the payer' : 'ตรวจข้อมูลและเลือกผู้รับรองการจ่ายค่ะ', canonicalText: text,
     contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'md', contents:
       text.replace(/https?:\/\/[^\s]+/gu, '').split('\n').filter(line => line.trim()).map(text => ({ type: 'text', text, wrap: true })) },
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [self, other].map((action, index) => ({

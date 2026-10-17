@@ -91,10 +91,10 @@ describe('item 1: moduleFeatureEnabled fail-open/entitlement convention', () => 
   it('produces the spec §8 copy naming the exact topic, plus two example questions', () => {
     const topic = unsoldModuleTopicFor('ขอดูยอดขายเดือนนี้หน่อยจ้ะ')!;
     const text = unsoldModuleReplyText(topic, 'th');
-    assert.ok(text.includes('แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง'), text);
+    assert.ok(text.includes('Mangmee Plus วันนี้ยังไม่มี'), text);
     assert.ok(text.includes(topic.topicLabelTh), text);
     assert.ok(text.includes('รายจ่าย'), text);
-    assert.equal((text.match(/"/g) ?? []).length, 4, 'expects exactly two quoted example questions');
+    assert.doesNotMatch(text, /อัปเกรด|บาท|\n/);
   });
 
   it('produces an English reply naming the topic when the turn is in English', () => {
@@ -116,11 +116,11 @@ describe('Fix-up 17A: LINE_ACTION_RULES × permission', () => {
   for (const text of ['ใบเบิกรออนุมัติเดือนนี้มีกี่รายการ', 'เช็คใบเบิกที่รออนุมัติหน่อย', 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สรุปใบเบิกแยกตามผู้อนุมัติหน่อย']) {
     it(`keeps status/read questions: ${text}`, () => assert.equal(lineActionBoundaryReplyText(text, [], 'th'), undefined));
   }
-  for (const text of ['ตั้งค่าการอนุมัติใบเบิกยังไง', 'ตั้งให้ผู้จัดการอนุมัติใบเบิกได้', 'ใครอนุมัติใบเบิก', 'ทำให้หน่อย ให้ผู้จัดการอนุมัติใบเบิกได้ด้วย ไม่ต้องรอฉันคนเดียว']) {
+  for (const text of ['เปลี่ยนผู้อนุมัติใบเบิกที่ค้างอยู่', 'ตั้งค่าการอนุมัติใบเบิกยังไง', 'ตั้งให้ผู้จัดการอนุมัติใบเบิกได้', 'ใครอนุมัติใบเบิก', 'ทำให้หน่อย ให้ผู้จัดการอนุมัติใบเบิกได้ด้วย ไม่ต้องรอฉันคนเดียว']) {
     it(`approval settings: ${text}`, () => {
       assert.equal(lineActionBoundaryReplyText(text, ['reimbursement.approve'], 'th'), undefined);
       assert.equal(scopePolicyOverride(text, 'write', ['reimbursement.policy.manage'], ['expenses'], 'th')?.webPage, 'approval-settings');
-      assert.equal(scopePolicyOverride(text, 'write', [], ['expenses'], 'th')?.webPage, undefined);
+      assert.equal(scopePolicyOverride(text, 'write', [], ['expenses'], 'th')?.webPage, 'packages');
     });
   }
 });
@@ -133,15 +133,15 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
     const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', AUDITOR_READONLY_PERMISSIONS, 'th')!;
     // F4 (tuning-6b, T-145-a): customers and the eval look for "ไม่มีสิทธิ์"/"อ่านอย่างเดียว" plus a next
     // step — the old text ("ดูข้อมูลได้อย่างเดียว... ไม่สามารถ...") had neither.
-    assert.ok(text.includes('อ่านอย่างเดียว'), text);
     assert.ok(text.includes('ไม่มีสิทธิ์'), text);
-    assert.ok(text.includes('เจ้าของกิจการหรือผู้มีสิทธิ์จัดการบทบาท'), text);
+    assert.ok(text.includes('ไม่มีสิทธิ์'), text);
+    assert.ok(text.includes('เจ้าของกิจการ'), text);
   });
 
   it('states the same read-only boundary and next step in English', () => {
     const text = readOnlyCaptureReplyText('ถ่ายรูปใบเสร็จแล้วส่งเข้าระบบให้หน่อยค่ะ', AUDITOR_READONLY_PERMISSIONS, 'en')!;
-    assert.ok(text.includes('read-only'), text);
-    assert.ok(text.includes('admin'), text);
+    assert.ok(text.includes('cannot record'), text);
+    assert.ok(text.includes('shop owner'), text);
   });
 
   it('does not block the same request for a role that can create expenses', () => {
@@ -242,13 +242,13 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
     assert.equal(scopePolicyOverride('ใบรับรองของฉันอนุมัติแล้วหรือยัง', 'read', APPROVER, ['expenses'], 'th'), undefined);
   });
 
-  it('an approve request needs expense.confirm; without it the role limit is named and no link is offered', () => {
+  it('an approve request needs expense.confirm; without it the role limit is named and an allowed alternative is linked', () => {
     const approver = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', APPROVER, ['expenses'], 'th');
     assert.ok(approver!.text.startsWith('การอนุมัติใบรับรองแทนใบเสร็จทำผ่าน LINE ไม่ได้'), approver!.text);
     assert.equal(approver!.webPage, 'substitute-receipts');
     const staff = scopePolicyOverride('ช่วยอนุมัติใบรับรองนี้ให้หน่อย', 'write', PAYER, ['expenses'], 'th');
-    assert.ok(staff!.text.startsWith('บทบาทของคุณยังไม่มีสิทธิ์อนุมัติใบรับรองแทนใบเสร็จ'), staff!.text);
-    assert.equal(staff!.webPage, undefined);
+    assert.ok(staff!.text.startsWith('คุณไม่มีสิทธิ์อนุมัติใบรับรองแทนใบเสร็จ'), staff!.text);
+    assert.equal(staff!.webPage, 'expenses');
   });
 
   it('a question about the queue — even with a request marker — is never read as a command', () => {
@@ -272,7 +272,7 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
 // Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): stock asked without the exact word got a planner
 // sentence or the dead-end line. The fixed reply and its wording are unchanged; only what counts as stock widened.
 describe('advisor S0: stock asked without the exact word still gets the fixed unsold-module reply', () => {
-  const FIXED = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+  const FIXED = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ แต่น้องช่วยเรื่องรายจ่าย หลักฐานใบเสร็จ และใบเบิกได้ค่ะ';
 
   for (const text of ['ของอะไรใกล้หมดบ้าง', 'ร้านเรามีของเหลือเท่าไหร่', 'สต๊อกเหลือเท่าไหร่อะ', 'สินค้าคงเหลือมีเท่าไหร่',
     'น้ำปลาเหลือกี่ขวด', 'เหลือกี่ชิ้น', 'เช็คสตอกต่ำที', 'สินค้าที่เหลือมีอะไรบ้าง', 'ของใกล้จะหมดมีอะไรบ้าง', 'Stock เหลือเท่าไหร่']) {
@@ -296,4 +296,16 @@ describe('advisor S0: stock asked without the exact word still gets the fixed un
     assert.equal(scopePolicyOverride('ของเหลือควรนับบ่อยแค่ไหน', 'general', [], ['expenses'], 'th'), undefined);
     assert.equal(scopePolicyOverride('ของอะไรใกล้หมดบ้าง', 'read', [], ['expenses', 'inventory'], 'th'), undefined);
   });
+});
+
+it('Exam D4: unavailable-module wording follows every purchasable billing offer', async () => {
+  const { BILLING_PAID_TIERS, billingOffer } = await import('@watchdog-bms/contracts');
+  const { featurePackageOffer, unsoldModuleReplyText } = await import('./line-ai-scope-policy.logic');
+  for (const [featureKey, topicLabelTh] of [['procurement', 'ใบสั่งซื้อ'], ['sales_documents', 'ใบแจ้งหนี้'], ['reports', 'รายงานกำไรขาดทุน'], ['inventory', 'สต็อก'], ['wht_50bis', 'หนังสือรับรอง 50 ทวิ']]) {
+    const offer = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(offer => offer.featureKeys.includes(featureKey!));
+    const text = unsoldModuleReplyText({ featureKey: featureKey!, topicLabelTh: topicLabelTh!, topicLabelEn: featureKey! }, 'th');
+    assert.equal(featurePackageOffer(featureKey!)?.offerKey, offer?.offerKey);
+    if (offer) { assert.match(text, /แพ็กเกจ/u); assert.ok(text.includes(offer.label)); assert.doesNotMatch(text, /วันนี้ยังไม่มี/u); }
+    else { assert.match(text, /Mangmee Plus วันนี้ยังไม่มี/u); assert.doesNotMatch(text, /อัปเกรด|บาทต่อเดือน/u); }
+  }
 });

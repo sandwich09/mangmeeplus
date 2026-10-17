@@ -144,18 +144,26 @@ export function expenseNameResolutionReplyText(issue: ExpenseNameResolutionIssue
 
 // ─── reimbursement.list_pending_approvals forbidden outcome ────────────────────────────────────
 // erp-reimbursement-tools.use-case.ts (ReimbursementListPendingApprovalsTool) returns status
-// 'forbidden' with this errorCode for a caller without `reimbursement.approve` — a real, typed
-// outcome, not a bare denial, so both lanes can name the one thing this caller CAN ask about (their
-// own claim) instead of the generic "no permission" line. Shared here for the same reason as the
+// 'forbidden' with this errorCode for a caller without any claim-read permission — a real, typed
+// outcome, not a bare denial, so both lanes name the permitted package comparison instead of
+// offering a claim read this caller cannot perform. Shared here for the same reason as the
 // name-resolution helpers above: orchestrator.agent.ts (via prepared-simple-read-formatter.ts's
 // preparedTerminalReply) and semantic-turn-v2.ts both render it, and must say the same thing.
 export const REIMBURSEMENT_APPROVAL_NOT_PERMITTED = 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED';
 
+/** Reading shop/related/own claims never assigns their approval to the reader. */
+export function reimbursementReadScopeWording(text: string, data: unknown): string {
+  if (!data || typeof data !== 'object' || !('accessScope' in data)
+    || !['company', 'related', 'own'].includes(String(data.accessScope))) return text;
+  return text.replace(/รอ(?:ให้)?(?:คุณ|ฉัน|เรา)อนุมัติ/gu, 'รอผู้มีสิทธิ์อนุมัติ')
+    .replace(/waiting for you(?:r approval| to approve)?|(?:pending|awaiting) (?:your|my|our) approval/giu, 'waiting for approval');
+}
+
 /** Terminal, permission-scoped answer — never a question, never a waiting task. */
 export function reimbursementApprovalNotPermittedReplyText(english: boolean): string {
   return english
-    ? 'Your role does not have permission to view or approve other people\'s reimbursement claims; ask the company owner or an authorized approver, or ask about your own claim.'
-    : 'บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ ให้เจ้าของกิจการหรือผู้มีสิทธิ์อนุมัติช่วยได้ค่ะ หรือถามว่า “ใบเบิกของฉันถึงไหนแล้ว” ได้ค่ะ';
+    ? 'Your role does not have permission to view claims; ask the company owner or manager, and you can compare packages instead.'
+    : 'คุณยังไม่มีสิทธิ์ดูใบเบิก ให้เจ้าของกิจการหรือผู้จัดการช่วยตรวจ ส่วนคุณดูแพ็กเกจได้ค่ะ';
 }
 
 // ─── Advisor S3: reimbursement.get_approval_backlog wording that must not depend on the model ──────

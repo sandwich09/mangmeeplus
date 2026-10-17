@@ -195,3 +195,7 @@ for more than ~60 s (LINE's loading indicator ceiling) between acceptance and it
 
 - [x] LINE rich-menu labels and behavior are resolved by [[specs/line-rich-menu-v2-spec|LINE Rich Menu V2 Spec]].
 - Which alert types should support simple acknowledgement in LINE?
+
+### Owner amendment — pending claim visibility (2026-10-17)
+
+Any role with reimbursement.read, reimbursement.read_related or reimbursement.read_own may read pending claims within the same scope as the web claim list (including branch limits); reading does not require approval/rejection rights. Generic pending-claim questions use this read scope and state the waiting desk/person. Only explicit requests for claims waiting for the caller to approve use their actionable approval queue. Read-only answers never say "รอคุณอนุมัติ". This supersedes the approver-only reading rule above; approval and rejection guards remain unchanged.

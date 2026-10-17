@@ -1,0 +1,434 @@
+[
+  {
+    "id": "R015-A",
+    "role": "ACCOUNTANT",
+    "intent": "permission",
+    "tier": "STARTER_249",
+    "messageText": "อนุมัติใบเบิก รอบ 6 ให้หน่อย",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "write",
+        "goal": "อนุมัติใบเบิก รอบ 6 ให้ผู้ใช้",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 28,
+            "rawSha256": "e11f646d1ec18ffa48937d33ce874008792bf28f92e49989fad0a89f6c38b093"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "R013-A",
+    "role": "AUDITOR_READONLY",
+    "intent": "permission",
+    "tier": "STARTER_249",
+    "messageText": "delete รายการ draft 711 ให้หน่อย",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "write",
+        "goal": "ลบร่างค่าใช้จ่าย (draft) รายการที่มีข้อมูลเกี่ยวกับ 711",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 32,
+            "rawSha256": "ad71ef2b64bd4385d7299b81eefd851f017faf3cc97e650bdd538b304dd70a8e"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "K001-A",
+    "role": "OWNER",
+    "intent": "package_limit",
+    "tier": "STARTER_249",
+    "messageText": "ออก 50 ทวิ ให้ร้านสมใจการค้าหน่อย",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "write",
+        "goal": "ออก 50 ทวิ (หนังสือรับรองการหักภาษี ณ ที่จ่าย) ให้ร้านสมใจการค้า",
+        "requiredEvidence": [],
+        "requestedFilters": {
+          "vendorName": "ร้านสมใจการค้า",
+          "amount": "50"
+        },
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 33,
+            "rawSha256": "76857ad560faa87ae52e7f23f10c459076ba9e38d6cefc26930527b17d649f13"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "K004-A",
+    "role": "OWNER",
+    "intent": "package_limit",
+    "tier": "STARTER_249",
+    "messageText": "ภงด3 ด.นี้ยอดเท่าไหร่",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "read",
+        "goal": "ยอดภาษีหัก ณ ที่จ่าย ภ.ง.ด.3 เดือนนี้เท่าไหร่",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 21,
+            "rawSha256": "256c45174c2b0526755a5bbe56491a5608dee547d03f92f2209e6755cf3b2d6c"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "K006-A",
+    "role": "OWNER",
+    "intent": "package_limit",
+    "tier": "STARTER_249",
+    "messageText": "อยากให้ระบบทำภงดสามให้ได้ไหม",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "ขอให้ระบบรองรับการทำ ภ.ง.ด.3 ได้ไหม",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 28,
+            "rawSha256": "98fb1e015b27c76bb0fc2f214767cebedff8674b9dc8b3087b0f80ba5293a4dd"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "U003-A",
+    "role": "OWNER",
+    "intent": "unsold",
+    "tier": "STARTER_249",
+    "messageText": "ทำ PO ได้ไหม",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "ถามว่าสามารถทำใบสั่งซื้อ (PO) ได้ไหม",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 12,
+            "rawSha256": "c2bba42f3725b696115f6c5491324be1dfe25fa67976c6c550bc972a293096b7"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "U009-A",
+    "role": "OWNER",
+    "intent": "unsold",
+    "tier": "STARTER_249",
+    "messageText": "ขอ GL เดือนนี้",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "read",
+        "goal": "ขอ GL (General Ledger) เดือนนี้",
+        "requiredEvidence": [],
+        "requestedFilters": {
+          "fromDate": "2026-10-01",
+          "toDate": "2026-10-17"
+        },
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 14,
+            "rawSha256": "d4cf46580839d259b80d2e6086545e9cacc4067e919d8a5beaea16ea21dbebe8"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "U007-A",
+    "role": "OWNER",
+    "intent": "unsold",
+    "tier": "STARTER_249",
+    "messageText": "มี CRM ให้ track ลูกค้าไหม",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "ระบบมีฟีเจอร์ CRM สำหรับ track ลูกค้าไหม",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 26,
+            "rawSha256": "f32aa25618787d560a2bf0a3ce51e97927bd6031da9eb490c8d1b79bd1653931"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H036-A",
+    "role": "OWNER",
+    "intent": "howto",
+    "tier": "STARTER_249",
+    "messageText": "ทำ payment voucher ยังไง",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "อธิบายวิธีทำใบสำคัญจ่าย (payment voucher)",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 24,
+            "rawSha256": "2dd46f281b60581ccc9d04e3f0728512b917a35dd1b66f5c37b27294b018b3ff"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H038-A",
+    "role": "OWNER",
+    "intent": "howto",
+    "tier": "STARTER_249",
+    "messageText": "เพิ่มคู่ค้าใหม่ยังไง",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "วิธีเพิ่มคู่ค้าใหม่ในระบบ",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 20,
+            "rawSha256": "ab8a9cf45c87fce6658fe3122ee399ef4b40e9f5d02291775026caa877b03b6e"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H040-A",
+    "role": "OWNER",
+    "intent": "howto",
+    "tier": "STARTER_249",
+    "messageText": "เพิ่มพนักงานเข้าระบบยังไง",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "วิธีเพิ่มพนักงานเข้าระบบ",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 25,
+            "rawSha256": "0d55a2d4d53f11448b8d56c134932776b3d419cdb0fe34e93d40e4c30ce4a0be"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "H054-A",
+    "role": "OWNER",
+    "intent": "howto",
+    "tier": "STARTER_249",
+    "messageText": "ซื้อแพ็กเกจยังไง",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "help",
+        "goal": "วิธีซื้อหรือเปลี่ยนแพ็กเกจ MangmeePlus",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "toolHint": "billing.get_package_usage",
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 16,
+            "rawSha256": "36501b97e8d1f518eb06523541c1bc16801a9cac49f8df54c9507c13e95d49c1"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "V055-A",
+    "role": "OWNER",
+    "intent": "advisor",
+    "tier": "STARTER_249",
+    "messageText": "จ่ายดอกเบี้ยให้คนธรรมดาใช้ ภ.ง.ด.3 ไหม",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "การจ่ายดอกเบี้ยให้บุคคลธรรมดาต้องหัก ณ ที่จ่าย ภ.ง.ด.3 ไหม",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 38,
+            "rawSha256": "973dd4b876b7440b3e21bca1de93d836561a4a583e57ae8376b9364c43787797"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "C013-A",
+    "role": "OWNER",
+    "intent": "chitchat",
+    "tier": "STARTER_249",
+    "messageText": "555",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "ตอบสนองการหัวเราะ/แสดงความสนุกสนาน",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 3,
+            "rawSha256": "91a73fd806ab2c005c13b4dc19130a884e909dea3f72d46e30266fe1a1f588d8"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "O008-A",
+    "role": "OWNER",
+    "intent": "out_of_scope",
+    "tier": "STARTER_249",
+    "messageText": "เล่าเรื่องตลกให้ฟังหน่อยดิ",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "general",
+        "goal": "ผู้ใช้ขอฟังเรื่องตลก",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 26,
+            "rawSha256": "4daf1399a4dde7cca50173722eda198982a6ea8b8bfa6de6ddce2a75d4229804"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "R020-A",
+    "role": "MANAGER",
+    "intent": "permission",
+    "tier": "STARTER_249",
+    "messageText": "Add a new supplier: Siam Ice Co.",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "write",
+        "goal": "Create new supplier/counterparty: Siam Ice Co.",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 32,
+            "rawSha256": "b12540801b85c34b9e2ee08be04de5a3e964e337fecd068e2461e22987639bab"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "R023-B",
+    "role": "MANAGER",
+    "intent": "permission",
+    "tier": "PRO_999",
+    "messageText": "เพิ่มสาขาใหม่ชื่อสาขาบางนา",
+    "semanticSubrequests": [
+      {
+        "index": 0,
+        "kind": "write",
+        "goal": "เพิ่มสาขาใหม่ชื่อสาขาบางนา",
+        "requiredEvidence": [],
+        "requestedFilters": {},
+        "dependsOn": [],
+        "evidenceRefs": [
+          {
+            "partId": "part-0",
+            "startUtf16": 0,
+            "endUtf16": 26,
+            "rawSha256": "ae21498aedc975d080acc6a3f1f0ad6d1491c0bce3651bdebcbf7848a879c4e2"
+          }
+        ]
+      }
+    ]
+  }
+]

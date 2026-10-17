@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "68699e0ed2d9db591772f8e095917862d24b0336",
-  "checkoutBranch": "claude/advisor-fx28-20261016",
+  "sourceRevision": "ecade1c189922a9393008c2c924b781fdaf4ce75",
+  "checkoutBranch": "claude/advisor-xd-20261017",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -17,7 +17,7 @@
     },
     {
       "path": "apps/api/src/modules/auth/presentation/line-webhook.controller.ts",
-      "sha256": "ab504761d2d165b508cf758dd8987230cd841b22eb607a3ba4a11773a6362549"
+      "sha256": "5fbebb0bd41813c52e3389f3d53fbe5b05dcb46f4a2855b7f7f80764075f5f6c"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-conversation-context.service.ts",
@@ -25,7 +25,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-counterparty.service.ts",
-      "sha256": "a7ea4891a72520be3fb5c1660e2b9d55e323b960a5d21bea371767f85a32632e"
+      "sha256": "2fb5e9d9fbc8cafdf7c58933953cb0469a13e0d5f1ebbc60a2a323d9256d2411"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-document-qa.service.ts",
@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "d4ffd3209ef8cb7cec7041c75ddc4de708660b3d3f4a541f9c30d5e7f7836a81"
+      "sha256": "d65aa4bcf0a957bb40fffdd5f6d25507b3e4ca76da3d74eb2a6783c4704ac52f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -57,7 +57,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
-      "sha256": "73b9f35e4ac56fbc85c5e7eddcd0ba8cee0f15a793e725eae300b0c519d6dfb3"
+      "sha256": "43a6bf5ee05c327f25d9ddb4f912c41a6c4de251d4ca186202f268979c1e7f6c"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
@@ -105,7 +105,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.ts",
-      "sha256": "f31b1d9a891eafeaa70b004f81f77caa141f71a642f925a3b94b0982a3f057c6"
+      "sha256": "7d3b346f8046b6f8f345eb32cd15f5eff3e1215654ed4f1f01a7ac0148fbf4bd"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-report-tools.use-case.ts",
@@ -137,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "7d8e01a620499629796b1698f8175885221b631a34c136b340854d2ad0458e91"
+      "sha256": "1277d5b871d397d0b6a73361faa0513dd1ed75b773c7797fc319593f6a47670e"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -209,7 +209,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "58746d736acbe464af0bec12fd1d7da115b929f0ac04e3c0ed85bbcbc61d49fb"
+      "sha256": "a35734598dea406109743281638830a0a13d48fe91161b9dcf21e927fd6ed17e"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -217,7 +217,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "2d567c60081c96545282ce2411a39662a3201bd70b07cb090d27cdcc339355f2"
+      "sha256": "10e6f71d437baa60a1a02184a6653ff6855b80c97e4b37145d630e3740c44595"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -6139,15 +6139,21 @@
       "inputSchemaVersion": "LINE_TOOL_REGISTRY/v1 (no explicit registry schema version declared)",
       "supportedFields": {
         "required": [],
-        "optional": [],
-        "allowed": []
+        "optional": [
+          "approver"
+        ],
+        "allowed": [
+          "approver"
+        ]
       },
       "permissionPolicyRef": "LINE_TOOL_REGISTRY ToolMeta; InternalToolsController.invoke re-resolves actor access",
       "authorization": {
-        "requiredPermissionsAllOf": [
-          "reimbursement.approve"
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [
+          "reimbursement.read",
+          "reimbursement.read_own",
+          "reimbursement.read_related"
         ],
-        "anyOfPermissions": [],
         "requiredRoles": [],
         "roleRestrictions": "not declared per operation; roles are re-resolved with permissions and caller-supplied roles are ignored",
         "featureKeys": [],
@@ -10125,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-16T16:31:42.677Z",
-  "manifestDigest": "7f10dccb9007d6f559c2e2de4ccc1c44aed518aaf2eb71c421c9d231243a8566"
+  "generatedAt": "2026-10-17T07:43:36.415Z",
+  "manifestDigest": "bf7bcff79d6ab2b46eeec82e8bf70713b9a2191408dd99f93e591ce0b1a6e96c"
 }

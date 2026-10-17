@@ -1234,3 +1234,25 @@ describe('P2: day ranges are one period (owner 2026-10-05)', () => {
     checkPeriodRows([p1Row('1-15 ก.ย.', '2026-09-01', '2026-09-15'), p1Row('1 ถึง 15 กันยายน', '2026-09-01', '2026-09-15')]);
   });
 });
+
+describe('expense and claim relative day words (Bangkok civil date)', () => {
+  const day = '2026-01-01';
+  for (const [word, expected] of [
+    ['เมื่อกลางวัน', day], ['เมื่อเช้า', day], ['ตะกี้', day], ['เมื่อกี้', day], ['เมื่อเย็น', day],
+    ['วันนี้', day], ['วันนี่', day], ['วันนี้ตอนเย็น', day], ['คืนนี้', day],
+    ['today', day], ['this morning', day], ['this afternoon', day], ['this evening', day], ['just now', day],
+    ['เมื่อคืน', '2025-12-31'], ['เมื่อคืนนี้', '2025-12-31'], ['เมื่อวาน', '2025-12-31'],
+    ['เมื่อวานตอนเช้า', '2025-12-31'], ['yesterday', '2025-12-31'], ['yesterday morning', '2025-12-31'], ['last night', '2025-12-31'],
+    ['วานซืน', '2025-12-30'], ['เมื่อวานซืน', '2025-12-30'], ['day before yesterday', '2025-12-30'],
+  ]) it(`${word} resolves once, including month/year rollover`, () => {
+    const result = extractValueCandidates(`ค่าเดินทาง 275 บาท ${word}`, day);
+    assert.deepEqual(result.periods?.map(value => [value.kind, value.fromDate, value.toDate]), [['day', expected, expected]]);
+    assert.ok(result.periods?.[0]?.span.includes(word));
+    assert.deepEqual(result.amounts.map(value => value.value), ['275']);
+  });
+  it('does not collapse two conflicting days or assume a day when none was given', () => {
+    assert.equal(extractValueCandidates('ค่าเดินทาง 275 บาท เมื่อวาน วันนี้', day).periods?.length, 2);
+    assert.deepEqual(extractValueCandidates('ค่าเดินทาง 275 บาท', day).periods ?? [], []);
+    assert.deepEqual(extractValueCandidates('ค่าเดินทาง 275 บาท พรุ่งนี้เช้า', day).periods ?? [], []);
+  });
+});

@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { createLineAiInputEvidence, verifyLineAiInputEvidence, LINE_AI_INPUT_EVIDENCE_LIMITS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
@@ -60,6 +61,7 @@ export type LineBufferIncomingItem =
       webhookEventId: string;
       replyToken: string;
       text: string;
+      language?: 'th' | 'en';
       /** Exact preview id from a validated confirm/cancel postback; synthetic command text stays unchanged. */
       packagePurchaseControl?: import('./line-package-purchase.service').PackagePurchaseControl;
       quotedMessageId?: string;
@@ -78,6 +80,7 @@ export type LineBufferIncomingItem =
     }
   | {
       kind: 'media';
+      language?: 'th' | 'en';
       webhookEventId: string;
       replyToken: string;
       lineMessageId: string;
@@ -115,6 +118,7 @@ type BatchLoading = { promise: Promise<boolean>; webhookEventId: string; consume
 type PendingMeta = { firstAcceptedAt: number; flushedAt: number; loading: BatchLoading | null };
 
 type ChatState = {
+  language?: 'th' | 'en';
   reliabilityV2: boolean;
   chatId: string;
   lineUserId: string;
@@ -191,6 +195,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): the orphan sweep is replaying a message this system
      *  already accepted, so its turn may pass the AI credit cap. Never set for a LINE webhook. */
     orphanReplay = false): Promise<void> {
+    const previousLanguage = this.chats.get(`${envelope.messagingChannelId}:${envelope.chatId}:${envelope.lineUserId}`)?.language;
+    envelope.item.language ??= envelope.item.kind === 'text' ? lineReplyLanguage(envelope.item.text, previousLanguage) : previousLanguage;
     // The legal gate must run before acceptEvent: its recoverable payload contains raw chat
     // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
     // employee message never crosses the durable-payload boundary.
@@ -440,6 +446,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
               && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)
             : envelope.messagingChannelId === this.config.lineMessagingChannelId
               && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2PublicChannelIds, envelope.messagingChannelId)),
+        language: envelope.item.language,
         chatId: envelope.chatId,
         lineUserId: envelope.lineUserId,
         messagingChannelId: envelope.messagingChannelId,
@@ -460,6 +467,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       };
       this.chats.set(key, state);
     }
+    state.language = envelope.item.language ?? state.language;
     state.messagingChannelId = envelope.messagingChannelId;
 
     const incoming = envelope.item;
@@ -675,7 +683,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       state.overflowNotified = true;
       const last = dropped[dropped.length - 1];
       void this.lineReply
-        .sendReply(last.replyToken, [this.lineReply.buildTextMessage(inputTooLarge ? 'ข้อความชุดนี้ยาวเกินขอบเขตที่รับได้ค่ะ ยังไม่ได้ดำเนินการ กรุณาแบ่งคำขอเป็นชุดเล็กลง' : RATE_LIMIT_REPLY)])
+        .sendReply(last.replyToken, [this.lineReply.buildTextMessage((last.language ?? state.language) === 'en' ? inputTooLarge ? 'This request is too long; please split it into smaller requests.' : 'A previous request is still processing; please wait a moment.' : inputTooLarge ? 'ข้อความชุดนี้ยาวเกินขอบเขตที่รับได้ค่ะ ยังไม่ได้ดำเนินการ กรุณาแบ่งคำขอเป็นชุดเล็กลง' : RATE_LIMIT_REPLY)])
         .catch(() => {});
     }
   }
@@ -810,7 +818,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     try {
       if (group.mediaItems.some((item) => item.assistantPausedAtAcceptance)
         || await this.processWebhook.assistantPaused(state.lineUserId)) return async () => {};
-      return await this.startWaitFeedback(state, [lineMediaGroupAckStage(group.mediaItems.map((item) => item.messageType))], suppressLoading);
+      return await this.startWaitFeedback(state, [lineMediaGroupAckStage(group.mediaItems.map((item) => item.messageType), lineReplyLanguage(group.textItems.map(item => item.text).join('\n'), state.language))], suppressLoading);
     } catch {
       return async () => {};
     }
@@ -898,7 +906,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
     if (claimedIds.length === 0) return;
 
-    const messages = [this.lineReply.buildTextMessage(DISPATCH_ERROR_REPLY)];
+    const messages = [this.lineReply.buildTextMessage((source.language ?? state.language) === 'en' ? 'This request could not be processed; please try again.' : DISPATCH_ERROR_REPLY)];
     let result: LineDeliveryResult = await this.lineReply
       .sendReply(source.replyToken, messages)
       .catch(() => 'failed_other' as const);
@@ -1017,7 +1025,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // disabled. Either way ONE slow-turn status lands before the 60 s spinner window lapses.
     await this.withWaitFeedback(
       state,
-      lineWaitStages({
+      lineWaitStages({ language: 'language' in last ? last.language : undefined,
         kind: 'text', messageText, seed: last.webhookEventId,
         loadingEnabled: this.config.lineAiLoadingAnimationEnabled,
         latestAcceptedAt, now: Date.now(),
@@ -1047,6 +1055,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
           ...(last.counterpartyControl ? { counterpartyControl: last.counterpartyControl } : {}),
           ...(last.packagePurchaseControl ? { packagePurchaseControl: last.packagePurchaseControl } : {}),
           ...(last.expenseActionControl ? { expenseActionControl: last.expenseActionControl } : {}),
+          ...(last.language ? { language: last.language } : {}),
           ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
           ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
           ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
@@ -1075,6 +1084,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       pushTargetId: state.chatId,
       ...(last.packagePurchaseControl ? { packagePurchaseControl: last.packagePurchaseControl } : {}),
       ...(last.expenseActionControl ? { expenseActionControl: last.expenseActionControl } : {}),
+          ...(last.language ? { language: last.language } : {}),
           ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
       ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
           ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
@@ -1093,6 +1103,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
       webhookEventId: media.webhookEventId,
       lineUserId: state.lineUserId,
       replyToken: media.replyToken,
+      language: media.language ?? state.language,
       lineMessageId: media.lineMessageId,
       messageType: media.messageType,
       fileName: media.fileName,

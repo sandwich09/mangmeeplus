@@ -1,3 +1,4 @@
+import { lineDisplayDate, lineControlData, lineUiLabel, type LineReplyLanguage } from './line-language.logic';
 import { lineMessagePreview } from './line-message-preview.logic';
 /**
  * The LINE surface of S-4 (draft-control spec §5.4, J3): one confirm card and the replies that
@@ -94,7 +95,8 @@ export function draftUpdateHeadline(preview: LineDraftUpdatePreview): string {
   return `จะแก้ ${formatRecordLabel(preview.record)} — ${changes}`;
 }
 
-export function draftUpdateCanonicalDiff(preview: LineDraftUpdatePreview): string {
+export function draftUpdateCanonicalDiff(preview: LineDraftUpdatePreview, language: LineReplyLanguage = 'th'): string {
+  if (language === 'en') { const card = buildDraftUpdatePreviewCard(preview, undefined, language); return card.type === 'flex' ? card.canonicalText! : ''; }
   return [`ยืนยันการแก้ไขรายการ ${formatRecordLabel(preview.record)}`,
     ...preview.diff.map(entry => `${entry.label}: ${diffValue(entry)}`),
     `ยอดรวมเดิม ${money(preview.totalsBefore.grandTotalAmount)} → ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)}`,
@@ -141,7 +143,28 @@ function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string | und
 const DESIGN_DIFF_ROWS = 10;
 const DESIGN_ROW_CHARS = 200;
 
-export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, webBaseUrl?: string): LineReplyMessage {
+function englishDiffLabel(entry: LineDraftUpdateDiffField): string {
+  const fields: Record<string, string> = { expenseDate: 'Document date', vendorName: 'Seller / payee', documentNumber: 'Document number', note: 'Add note', vatMode: 'VAT mode', vatRate: 'VAT rate' };
+  const line = /^line\.(\d+)\.(.+)$/u.exec(entry.field);
+  if (line) return `Item ${line[1]} ${({ category: 'category', description: 'description', amount: 'amount', quantity: 'quantity', discount: 'discount to clear', vatTreatment: 'VAT treatment', chargeKind: 'additional charge' } as Record<string, string>)[line[2]!] ?? 'change'}`;
+  if (entry.field.startsWith('charge.')) return lineUiLabel(entry.label, 'en');
+  return fields[entry.field] ?? lineUiLabel(entry.label, 'en');
+}
+
+export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, webBaseUrl?: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') {
+    const value = (value: string | null, kind: LineDraftUpdateDiffField['kind']) => value === null ? 'Not provided' : kind === 'date'
+      ? lineDisplayDate(value, language) : kind === 'money' ? money(value) : kind === 'plain' ? lineUiLabel(cell(value, kind), language) : cell(value, kind);
+    const changes = preview.diff.map(entry => `${englishDiffLabel(entry)}: ${value(entry.before, entry.kind)} → ${value(entry.after, entry.kind)}`);
+    const lines = [`Review expense changes for ${scrubRecordText(preview.record.vendorName, 40) || 'this seller'}.`,
+      `Date: ${lineDisplayDate(preview.record.expenseDate, language)}`, `Status: ${lineUiLabel(preview.record.statusLabel, language)}`, ...changes,
+      `Previous total: ${money(preview.totalsBefore.grandTotalAmount)} → New total: ${money(preview.totalsAfter.grandTotalAmount)}`,
+      ...preview.warnings.map(warning => lineUiLabel(scrubRecordText(warning, 1000), language)), 'Nothing has been changed; review the details before confirming.'];
+    return { type: 'flex', altText: lineMessagePreview(lines.join(' '), 400), canonicalText: lines.join('\n'), contents: { type: 'bubble',
+      body: { type: 'box', layout: 'vertical', contents: lines.map(text => ({ type: 'text', text, wrap: true })) },
+      footer: { type: 'box', layout: 'horizontal', contents: [['draft-update-confirm', 'Confirm changes'], ['draft-update-cancel', 'Cancel changes']].map(([action, label]) => ({
+        type: 'button', action: { type: 'postback', label, data: lineControlData(new URLSearchParams({ action: action!, previewId: preview.previewId }).toString(), language) } })) } } };
+  }
   const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
   const designed = preview.diff.length <= DESIGN_DIFF_ROWS && preview.warnings.length <= 3
     && preview.diff.every((entry) => entry.label.trim() && Array.from(entry.label).length <= 40 && Array.from(diffValue(entry)).length <= DESIGN_ROW_CHARS)
@@ -252,7 +275,13 @@ export function draftUpdateAppliedReply(
   expenseId: string,
   preview: LineDraftUpdatePreview,
   vendorAutoSave?: VendorCounterpartyAutoSaveResult,
+  language: LineReplyLanguage = 'th',
 ): string {
+  if (language === 'en') return [`Changes saved: ${preview.diff.map(entry => `${englishDiffLabel(entry)} ${entry.after === null ? 'Not provided' : entry.kind === 'date' ? lineDisplayDate(entry.after, language) : entry.kind === 'plain' ? lineUiLabel(cell(entry.after, entry.kind), language) : cell(entry.after, entry.kind)}`).join(' · ')} · Total ${money(preview.totalsAfter.grandTotalAmount)}`,
+    `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`)}`,
+    ...(vendorAutoSave?.linkFailed ? ['The supplier was saved, but could not be linked; please review the expense on the web.']
+      : vendorAutoSave?.failed || vendorAutoSave?.case === 'FAILED' ? ['The expense was saved; supplier registration failed and can be retried on the supplier page.']
+        : vendorAutoSave?.case === 'CREATE' ? [`Supplier registered: ${scrubRecordText(vendorAutoSave.displayName, 60) || 'this seller'}.`] : [])].join('\n');
   const changes = preview.diff.slice(0, MAX_DIFF_ROWS)
     .map((entry) => `${entry.label} ${cell(entry.after, entry.kind)}`)
     .join(' · ');
@@ -322,8 +351,18 @@ export function draftUpdateBlockedReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId?: string,
+  language: LineReplyLanguage = 'th',
 ): string {
   const listLink = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses`);
+  if (language === 'en') {
+    const replies: Record<string, string> = {
+      mutation_blocked: 'This change must be made in the web app.', forbidden: 'Ask the shop owner or an authorized editor to change this expense.',
+      no_recent_record: 'No recent editable expense was found in this chat.', ambiguous_record: 'Which expense would you like to change?',
+      ambiguous_line: 'Which item in this expense would you like to change?', ungrounded_value: 'Nothing has been changed; please provide the exact value.',
+      rate_limited: 'Please wait a moment before requesting another change.',
+    };
+    return `${replies[reason] ?? 'This change is unavailable in LINE; please use the web app.'}\nView expenses: ${listLink}`;
+  }
   switch (reason) {
     case 'mutation_blocked':
       return draftUpdateMutationBlockedReply(webBaseUrl, companyId, expenseId);

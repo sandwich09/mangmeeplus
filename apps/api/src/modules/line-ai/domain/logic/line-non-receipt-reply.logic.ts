@@ -1,3 +1,4 @@
+import { lineUiLabel, lineDisplayDate, type LineReplyLanguage } from './line-language.logic';
 import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH, EXPENSE_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, scrubRecordIdentifier } from '@watchdog-bms/contracts';
 import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
 import type { LineExpenseDraftCardFacts } from './line-business-card.logic';
@@ -89,6 +90,7 @@ export const NON_RECEIPT_PERSISTING_CASES: readonly LineNonReceiptCase[] = ['NR0
 export function nonReceiptReply(
   nr: LineNonReceiptCase,
   input: {
+    language?: LineReplyLanguage;
     classification?: BusinessDocumentClassification | null;
     /** Only when the server verified it; §18.4 forbids an unverified amount in NR04. */
     amountLabel?: string;
@@ -98,6 +100,19 @@ export function nonReceiptReply(
     capturedDraft?: boolean;
   } = {},
 ): string {
+  if (input.language === 'en') {
+    const replies: Record<LineNonReceiptCase, string> = {
+      NR01: `This is a parcel label without evidence of shipping payment; send the shipping receipt.${input.capturedDraft ? '' : ' No expense was created.'}`,
+      NR02: 'This confirms parcel acceptance, but not shipping payment; send the shipping receipt.',
+      NR03: 'This commercial document has insufficient expense details; send its invoice or receipt.',
+      NR04: `This is an invoice${input.amountLabel ? ` for ${input.amountLabel} THB` : ''}; payment evidence is missing, so review it before saving.`,
+      NR05_SLIP: 'This is a transfer slip; check what was paid and to whom.', NR05_ORDER: 'This is order evidence; check its items and payment status.',
+      NR06: 'This shows the amount due, but does not confirm payment; have you paid?',
+      NR07: 'This image is not an expense document; no expense was created, so please send the intended document.',
+      NR08: 'The document type is unclear; please review it.',
+    };
+    return replies[nr] + (input.captureLink ? `\n${input.capturedDraft ? 'Review draft' : 'Continue on web'}: ${input.captureLink}` : '');
+  }
   const tail = continueTail(input.captureLink, input.capturedDraft);
   switch (nr) {
     case 'NR01':
@@ -152,13 +167,16 @@ export function capturePausedReasonTh(reason: string | null | undefined): string
 }
 
 /** §17.6 exactly: "เก็บไฟล์ไว้แล้ว" is claimed only by a caller that has the persisted identity. */
-export const CAPTURE_READ_FAILED_REPLY = (link: string): string =>
+export const CAPTURE_READ_FAILED_REPLY = (link: string, language: LineReplyLanguage = 'th'): string =>
+  language === 'en' ? `The file is stored, but could not be read; review and enter its details on the web: ${link}` :
   `${EXPENSE_READ_FAILED_HELP_TH}\n${link}`;
 
-export const CAPTURE_READ_PARTIAL_REPLY = (link: string): string =>
+export const CAPTURE_READ_PARTIAL_REPLY = (link: string, language: LineReplyLanguage = 'th'): string =>
+  language === 'en' ? `The file is stored, but its reading is incomplete; review and complete the details on the web: ${link}` :
   `${EXPENSE_READ_PARTIAL_HELP_TH}\n${link}`;
 
-export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | null | undefined): string =>
+export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | null | undefined, language: LineReplyLanguage = 'th'): string =>
+  language === 'en' ? `The file is stored, but reading is paused; review and enter its details on the web: ${link}` :
   `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (${capturePausedReasonTh(pausedReason)}) `
   + `${EXPENSE_MANUAL_EDIT_HELP_TH}\n${link}`;
 
@@ -170,11 +188,13 @@ export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | n
  * issuers, a classified non-receipt, blockers — keeps the group link here.
  */
 export function formatCaptureReadFinishedReply(input: {
+  language?: LineReplyLanguage;
   link: string;
   documentCount: number;
   issuerName?: string | null;
   documentTotal?: string | null;
 }): string {
+  if (input.language === 'en') return `Document reading finished: ${input.documentCount} document${input.documentCount === 1 ? '' : 's'}${input.issuerName?.trim() ? ` · ${input.issuerName.trim()}` : ''}${input.documentTotal?.trim() ? ` · Total ${input.documentTotal.trim()}` : ''}; review before creating expenses on the web: ${input.link}`;
   if (input.documentCount > 1) {
     return `📄 อ่านเอกสารแล้วค่ะ พบ ${input.documentCount} ฉบับ กรุณาตรวจการจัดกลุ่มในเว็บ: ${input.link}`;
   }
@@ -191,9 +211,11 @@ export function formatCaptureReadFinishedReply(input: {
  * send the customer to.
  */
 export function formatCaptureSplitReply(input: {
+  language?: LineReplyLanguage;
   documentCount: number;
   links: readonly string[];
 }): string {
+  if (input.language === 'en') return [`${input.documentCount} documents were read and expense drafts created; review them before confirming.`, ...input.links.map(link => `Review expense: ${link}`)].join('\n');
   return [
     `📄 อ่านเอกสารแล้วค่ะ พบเอกสาร ${input.documentCount} ใบ สร้างรายการให้แล้ว`,
     ...input.links.map((link, index) => `${index + 1}) ${link}`),
@@ -221,6 +243,7 @@ const CAPTURE_DATE_FORMATTER = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asi
  * rather than printed as a placeholder that reads like a fact.
  */
 type CaptureAutoHandoffReplyInput = {
+  language?: LineReplyLanguage;
   link: string;
   vendorName?: string | null;
   amount?: string | number | null;
@@ -238,6 +261,22 @@ type CaptureAutoHandoffReplyInput = {
 /** One reading for the file notice and the locked review card. Optional rows carry saved facts only;
  *  the text remains the original notice, including its link, for exact canonical fallback. */
 export function formatCaptureAutoHandoffReply(input: CaptureAutoHandoffReplyInput): { text: string; draft?: LineExpenseDraftCardFacts } {
+  if (input.language === 'en') {
+    const total = input.amount != null && Number.isFinite(Number(input.amount)) ? `${CAPTURE_MONEY_FORMATTER.format(Number(input.amount))} ${input.currency ?? 'THB'}` : undefined;
+    const date = input.expenseDate ? lineDisplayDate(input.expenseDate instanceof Date ? input.expenseDate.toISOString() : input.expenseDate, 'en') : undefined;
+    const document = input.documentTypeLabel ? lineUiLabel(input.documentTypeLabel, 'en') : undefined;
+    const note = 'This expense is a draft awaiting your confirmation.';
+    const text = ['Document read and expense draft saved.', input.vendorName ? `Seller: ${input.vendorName}` : undefined,
+      `Total: ${total ?? 'Not yet read'}`, `Date: ${date ?? 'Not provided; please enter the document date'}`, document ? `Document: ${document}` : undefined,
+      note, `Review expense: ${input.link}`].filter(Boolean).join('\n');
+    if (!input.expenseId || !['DRAFT', 'NEEDS_REVIEW'].includes(input.status ?? '')) return { text };
+    const row = (label: string, value: string | null | undefined, extra = {}) => value ? [{ label, value, ...extra }] : [];
+    return { text, draft: { expenseId: input.expenseId, subject: 'Document details', rows: [
+      ...row('Seller / shop', input.vendorName), ...row('Document date', date), ...row('Document number', scrubRecordIdentifier(input.documentNumber ?? null, 40)),
+      ...row('Document type', document), ...row('Expense category', input.categoryName), ...row('Total', total, { total: true }),
+      ...(input.vatMode !== 'NO_VAT' && input.vatMode !== 'EXEMPT' && input.vatAmount && Number(input.vatAmount) > 0 ? row('VAT', `${CAPTURE_MONEY_FORMATTER.format(Number(input.vatAmount))} THB`) : []),
+      { label: 'Document status', value: input.status === 'DRAFT' ? 'Draft' : 'Needs review', pill: 'pending' }], notes: [note, ...(!date ? ['Please enter the document date.'] : [])] } };
+  }
   const amount = input.amount === null || input.amount === undefined || !Number.isFinite(Number(input.amount))
     ? null : Number(input.amount);
   const date = input.expenseDate ? new Date(input.expenseDate) : null;

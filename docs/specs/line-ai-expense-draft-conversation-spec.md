@@ -396,9 +396,9 @@ A committed answer is not rolled back merely because the LINE response fails. In
 
 Given a message mentioning paper and a laptop, the draft contains two stable item references even if the paper has no quantity or price.
 
-### AC-02 — All gaps are asked together
+### AC-02 — One question at a time, every gap kept
 
-The first reply contains document-level gaps and gaps for both items. It does not ask only one missing field.
+The draft keeps every document-level and item gap in its question list, but a reply asks only the next truly required one (2026-10-17, exam round: several questions in one reply read as an interrogation). Optional facts such as a cash-note vendor never block, and a total-only item takes quantity `1` per AC-04.
 
 ### AC-03 — Partial answers are cumulative
 
