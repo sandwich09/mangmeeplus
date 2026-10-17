@@ -14,7 +14,7 @@ import type {
   RequestContext, LineIntakeCaptureHints, LineIntakeClarificationField, CreateExpenseCategoryInput,
   UpdateExpenseCategoryInput, ExpenseCategorySummary,
 } from '@watchdog-bms/contracts';
-import { extractValueCandidates, todayCivilDate } from '@watchdog-bms/contracts';
+import { extractValueCandidates, todayCivilDate, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { refreshExpenseSourceDraft } from '../../domain/logic/expense-source-draft.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { resolveNameCandidate } from '../../../line-ai/domain/logic/business-read-source.logic';
@@ -135,7 +135,7 @@ export class CaptureLineExpenseNoteUseCase {
       const replyTexts = draftConversationEnabled && existing.status === 'DRAFT' && state
         && state.userId === ctx.userId && state.companyId === ctx.companyId && state.expenseId === existing.id
         && (!cmd.chatKeyHash || state.chatKeyHash === cmd.chatKeyHash)
-        ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state: refreshExpenseSourceDraft(state, existing, categories), categories, label: existing.expenseNumber ?? existing.id }))
+        ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ language: lineReplyLanguage(cmd.messageText), state: refreshExpenseSourceDraft(state, existing, categories), categories, label: existing.expenseNumber ?? existing.id }))
         : [];
       return {
         expense: existing,
@@ -372,7 +372,7 @@ export class CaptureLineExpenseNoteUseCase {
       ? activeCategories.find((c) => c.id === suggestedCategoryId)?.name ?? null
       : null;
     const replyTexts = state
-      ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state, categories: activeCategories, label: updated.expenseNumber ?? updated.id }))
+      ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ language: lineReplyLanguage(cmd.messageText), state, categories: activeCategories, label: updated.expenseNumber ?? updated.id }))
       : [];
     return {
       expense: updated,

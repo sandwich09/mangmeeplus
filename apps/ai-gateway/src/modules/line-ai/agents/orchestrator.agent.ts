@@ -1351,6 +1351,7 @@ export class OrchestratorAgent {
     // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must
     // reach the explain tool even when the model router returned no tool at all.
     let plan = preferExplainRecordPlan(access.plan, req);
+    if (req.language) plan = { ...plan, language: req.language };
     const featureDisabledTools = [...access.featureDisabledTools];
     // A joke request the router refused as out-of-scope is a misroute, not a refusal to honour: the
     // composer owns a curated bank for exactly this turn (Owner decision 2026-08-29/30), and prompt
@@ -1848,7 +1849,7 @@ export class OrchestratorAgent {
     // subject compatibility no longer holds, fall back.
     const intent = plan.intentPlan.intents[0];
     const singlePlan: AgentIntentPlan = {
-      status: 'ROUTABLE', language: plan.intentPlan.language, intents: [intent], refusals: [], requiresHumanReview: false,
+      status: 'ROUTABLE', language: req.language ?? plan.intentPlan.language, intents: [intent], refusals: [], requiresHumanReview: false,
     };
     const access = normalizePlanToolAccess(singlePlan, req.messageText, req.userContext);
     const normIntent = access.plan.intents[0];

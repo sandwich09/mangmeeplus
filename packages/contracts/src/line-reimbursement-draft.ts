@@ -42,7 +42,7 @@ export type LineReimbursementFieldProofV1 =
   | { kind: 'RECORD'; recordRef: string; revision: string; fieldPath: string }
   | { kind: 'ATTACHMENT'; attachmentRef: string; revision: string; page: number; extractionRef: string; fieldPath: string }
   | { kind: 'USER_CHOICE'; choiceId: string; choiceRevision: string }
-  | { kind: 'SERVER_DEFAULT'; key: 'ACTOR_AS_REQUESTER' | 'COMPANY_CURRENCY' };
+  | { kind: 'SERVER_DEFAULT'; key: 'ACTOR_AS_REQUESTER' | 'COMPANY_CURRENCY' | 'CLAIM_DATE_TODAY' };
 
 export type LineReimbursementProposedValueV1<T> = { value: T; proof: LineReimbursementFieldProofV1 };
 
@@ -242,7 +242,7 @@ function parseProof(value: unknown, context: ParseContext, fieldPath: string, pr
     return value as LineReimbursementFieldProofV1;
   }
   if (value['kind'] === 'SERVER_DEFAULT') {
-    if (!exact(value, ['kind', 'key']) || !['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY'].includes(String(value['key']))) return undefined;
+    if (!exact(value, ['kind', 'key']) || !['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY', 'CLAIM_DATE_TODAY'].includes(String(value['key']))) return undefined;
     return value as LineReimbursementFieldProofV1;
   }
   return undefined;
@@ -393,5 +393,5 @@ function structuralFieldProof(value: unknown): value is LineReimbursementFieldPr
   if (value['kind'] === 'USER_CHOICE') return exact(value, ['kind', 'choiceId', 'choiceRevision'])
     && bounded(value['choiceId'], 200, false) && bounded(value['choiceRevision'], 200, false);
   return value['kind'] === 'SERVER_DEFAULT' && exact(value, ['kind', 'key'])
-    && ['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY'].includes(String(value['key']));
+    && ['ACTOR_AS_REQUESTER', 'COMPANY_CURRENCY', 'CLAIM_DATE_TODAY'].includes(String(value['key']));
 }

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EXPENSE_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
-import { buildLineDeliveryPlan, lineDeliveryPlanId, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
-import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
+import { validateLineDeliveryPlan, buildLineDeliveryPlan, lineDeliveryPlanId, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
+import { buildLineAssistantTextCardMessage, asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
 import { receiptProgress } from './line-receipt-status.logic';
 import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard, draftUpdateCanonicalDiff } from './line-draft-update-card.logic';
 import { isLineSystemCard, readLineSystemBubble } from './line-system-card.fixture';
@@ -454,10 +454,11 @@ test('reply surface × th/en/mixed: primary and fallback delivered payloads foll
       const draft = { previewId: '550e8400-e29b-41d4-a716-446655440000', recordType: 'expense' as const, expenseId: 'expense', record: { vendorName: 'ABC', expenseDate: '2026-09-27', statusLabel: 'ร่าง' }, tool: 'expense.draft.set_header', diff: [{ field: 'vendorName', label: 'ผู้ขาย', kind: 'text' as const, before: 'ABC', after: 'DEF' }], totalsBefore: { grandTotalAmount: '120' }, totalsAfter: { grandTotalAmount: '120' }, warnings: [], expiresAt } as any;
       const claim = { schemaVersion: 1, actionId: 'claim-action', operation: 'CREATE', previewRevision: 1, confirmationDigest: 'a'.repeat(64), expiresAt, warnings: [], diff: [],
         after: { requesterUserId: 'user', requesterDisplayName: 'Jane', currency: 'THB', reason: 'Travel', amount: '120.0000', incurredDate: '2026-09-27', categoryKey: 'travel', receiptRequirementStatus: 'REQUIRED', status: 'DRAFT', signatureImpact: 'NONE',
-          lines: [{ lineRef: 'line', lineNo: 1, incurredDate: '2026-09-27', description: 'Taxi', amount: '120.0000', categoryKey: 'travel' }] } } as any;
+          lines: [{ lineRef: 'line', lineNo: 1, incurredDate: '2026-09-27', description: 'Taxi', amount: '120.0000', categoryKey: 'travel', categoryLabel: 'ค่าเดินทาง' }] } } as any;
       const staff = await import('./line-staff-menu.logic');
       const substitute = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case');
       const fileStatus = await import('./line-file-attempt-answer.logic');
+      const preferences = await import('./line-preference-command.logic');
       const progress = await import('./line-receipt-status.logic');
       const file = { ref: 'file', messageType: 'file' as const, fileNameSanitized: 'bill.pdf', stage: 'READ' as const, reasonCode: 'reading', outcome: 'STORED_READ_FAILED' as const, declaredFileSize: 200, measuredByteSize: 200, capability: {}, createdAt: new Date(createdAt) };
       const candidate = { id: 'expense', label: 'ใบเสร็จรับเงิน · 27 ก.ย. 2569 · 120.00', sourceDocumentType: 'RECEIPT', expenseDate: '2026-09-27', amount: '120.00', createdAt } as const;
@@ -505,6 +506,8 @@ test('reply surface × th/en/mixed: primary and fallback delivered payloads foll
         ['substitute-media', [{ type: 'text', text: substitute.substituteMediaQuestion(['PAYMENT_EVIDENCE', 'NO_RECORD'], language) }]],
         ['assistant', [cards.buildLineAssistantTextCardMessage(text, context.webBaseUrl, 'company', undefined, undefined, language)]],
         ['business', [cards.buildLineBusinessAnswerMessage({ requestId: 'r', replyText: text, sourceRefs: [{ module: 'expenses', entityType: 'expense', label: 'ค่าใช้จ่าย', permissionChecked: true, webPath: '/companies/company/expenses' }], sourceLabels: ['ค่าใช้จ่าย'], webLinks: [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company/expenses' }], toolsInvoked: [], intent: 'unknown', agent: 'general', refused: false, durationMs: 1 }, text, context.webBaseUrl, 'company', question, language)]],
+        ['preferences-list', [{ type: 'text', text: preferences.formatLinePreferences({ language: 'en', detail: 'short' }, language) }]],
+        ['preferences-set', [{ type: 'text', text: preferences.linePreferenceChangedText({ kind: 'set', values: { language: 'en' } }, {}, language) }]],
         ['permission', [{ type: 'text', text: formatRefusal('forbidden', undefined, language) }]],
         ['timeout', [{ type: 'text', text: formatRefusal('ai_timeout', undefined, language) }]],
         ['ask-back', [cards.buildReimbursementPayerClarificationMessage(language)]],
@@ -523,7 +526,7 @@ test('reply surface × th/en/mixed: primary and fallback delivered payloads foll
         ['claim-missing', buildReimbursementDraftMessages({ status: 'needs_fields', fieldPaths: ['reason', 'lines.0.amount'] } as any, context.webBaseUrl, 'company', [], undefined, language)],
         ['expense-first-question', [{ type: 'text', text: draftQuestion }]],
         ['claim-photo-after-save', claimPhoto],
-        ['claim-photo-category', buildReimbursementOptionsMessages({ choices: [{ kind: 'CATEGORY', label: 'Travel', choiceId: 'travel' }], pages: {}, awaitingPhoto: true, collection: { lineChosen: true, receiptChosen: true, categoryChosen: false }, control: { actionId: 'claim-action', revision: '1' } }, context.webBaseUrl, language)],
+        ['claim-photo-category', buildReimbursementOptionsMessages({ choices: [{ kind: 'CATEGORY', label: 'ค่าเดินทาง', choiceId: 'travel' }], pages: {}, awaitingPhoto: true, collection: { lineChosen: true, receiptChosen: true, categoryChosen: false }, control: { actionId: 'claim-action', revision: '1' } }, context.webBaseUrl, language)],
         ['claim-no-receipt-reason', buildReimbursementOptionsMessages({ choices: [], pages: {}, reasonQuestion: 'ไม่มีใบเสร็จเพราะอะไรคะ', collection: { lineChosen: true, receiptChosen: true, categoryChosen: true } }, context.webBaseUrl, language)],
         ['limit-owner', [{ type: 'text', text: scope.permissionLimitReplyText(language, en ? 'approve claims' : 'อนุมัติใบเบิก', ['expense.read_own']) }]],
         ['limit-package', [{ type: 'text', text: scope.featureLimitReplyText('wht_pnd53', language) }]],
@@ -582,6 +585,32 @@ test('legacy package ask-backs, holds and refusals use the current language', as
         { aiGatewayInternalSecret: 'test-secret' } as any);
       const result = await service.prepare({ companyId: 'company', userId: 'user', membershipId: 'member' } as any, 'chat', question, language);
       if (expected === 'en') assert.doesNotMatch(result.reply, /[\u0E00-\u0E7F]/u, scenario); else assert.match(result.reply, /[\u0E00-\u0E7F]/u, scenario);
+    }
+  }
+});
+
+test('Exam G2: formatter, primary and fallback never print record ids; URI and signed-control targets remain exact', async () => {
+  const { lineCustomerText } = await import('./line-language.logic');
+  const { lineMessagePreview } = await import('./line-message-preview.logic');
+  const cuid = 'cmvc8kuzi05m0uqk1sw21svk5', uuid = '550e8400-e29b-41d4-a716-446655440000';
+  const uri = `https://app.example.com/companies/${cuid}/expenses/${uuid}`;
+  for (const language of ['th', 'en'] as const) {
+    const text = `${language === 'en' ? 'Review this expense' : 'ตรวจรายการนี้ค่ะ'} ${cuid} ${uuid}\n${uri}`;
+    assert.doesNotMatch(lineCustomerText(text), new RegExp(`${cuid}|${uuid}`));
+    assert.doesNotMatch(lineMessagePreview(text), new RegExp(`${cuid}|${uuid}`));
+    const card = buildLineAssistantTextCardMessage(text, 'https://app.example.com', cuid, undefined, undefined, language);
+    const p = plan([text], [card]);
+    validateLineDeliveryPlan(p);
+    for (const frozen of [p.batches[0]!.primary, p.batches[0]!.fallback]) {
+      assert.ok(frozen);
+      const visible: string[] = [], targets: string[] = [];
+      const visit = (value: any): void => { if (!value || typeof value !== 'object') return; for (const [key, child] of Object.entries(value)) {
+        if (typeof child === 'string' && ['text', 'altText', 'label', 'displayText'].includes(key)) visible.push(child);
+        else if (key === 'uri' && typeof child === 'string') targets.push(child); else if (typeof child === 'object') visit(child);
+      } };
+      visit(frozen.messages);
+      assert.doesNotMatch(visible.join('\n'), new RegExp(`${cuid}|${uuid}`));
+      assert.ok(targets.some(target => target.includes(cuid) && target.includes(uuid)), 'both representations keep the functional record link behind its label');
     }
   }
 });
