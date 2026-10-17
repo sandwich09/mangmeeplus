@@ -1,3 +1,4 @@
+import { lineCustomerText } from './line-language.logic';
 /**
  * The ONE native Flex presentation of the locked System OA card design
  * (docs/specs/line-system-oa-card-design-lock-spec-th.md, approved preview 2026-10-04).
@@ -113,7 +114,7 @@ export type LineSystemCard = {
 };
 
 function text(value: string, size: number, color: string, extra: Flex = {}): Flex {
-  return { type: 'text', text: value, size: px(size), color, ...extra };
+  return { type: 'text', text: lineCustomerText(value), size: px(size), color, ...extra };
 }
 
 function wrapped(value: string, size: number, lineHeight: number, color: string, extra: Flex = {}): Flex {

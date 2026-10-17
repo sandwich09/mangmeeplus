@@ -464,3 +464,22 @@ it('Fix-up 22B: voucher free-text names reject commands at both the answer and p
   for (const text of ['บริษัท ป้ายสวย จำกัด', 'บริษัท สร้างสุข จำกัด', 'ร้านวัสดุดี', 'สมชาย ใจดี', 'บริษัท เอ บี ซี (ประเทศไทย) จำกัด', 'John Smith', "O’Connor & Sons Co., Ltd."])
     assert.equal(isVoucherPayeeName(text), true, text);
 });
+
+it('Exam G3: every server-worded document summary follows th/en before card delivery', async () => {
+  const { lineReplyLanguage } = await import('../../domain/logic/line-language.logic');
+  for (const question of ['ขอสรุปเอกสารค่ะ', 'Show my document summary']) {
+    const language = lineReplyLanguage(question), en = language === 'en';
+    const context: any = { companyId: 'company', userId: 'user', membershipId: 'member', permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read'], locale: en ? 'en-GB' : 'th-TH', groundingText: question };
+    const vouchers: any = { list: async () => ({ total: 1, data: [{ id: 'v', documentNumber: 'PV-1', status: 'PAID', payeeName: 'Jane', totalAmount: '120', paidDate: '2026-10-01', lineCount: 1 }] }),
+      get: async () => ({ header: { id: 'v', documentNumber: 'PV-1', status: 'PAID', payeeName: 'Jane', totalAmount: '120', paidDate: '2026-10-01' }, lines: [{ expenseNumber: 'EXP-1', amount: '120' }] }) };
+    const messages = [
+      await new VoucherListRecentTool(vouchers).execute(context),
+      await new VoucherGetDetailTool(vouchers).execute(context, { voucherId: 'v' }),
+      await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, { findPeriod: async () => null } as any).execute(context, { periodKey: '2026-10' }),
+    ].map(result => String((result.data as any).message));
+    for (const message of messages) {
+      if (en) assert.doesNotMatch(message, /[\u0E00-\u0E7F]/u); else assert.match(message, /[\u0E00-\u0E7F]/u);
+      assert.doesNotMatch(message, /2026-10-01|\n\d+[.)]/);
+    }
+  }
+});

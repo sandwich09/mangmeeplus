@@ -548,7 +548,7 @@ const MULTI_DOCUMENT_CLARIFY_REPLY = { th: [
   MEDIA_REVIEW_CHOICE,
 ].join('\n'), en: "This image contains several documents; please send each document separately." };
 function mediaChoiceQuickReply(text: string, language: 'th' | 'en' = 'th'): LineReplyMessage['quickReply'] | undefined {
-  if (language === 'en') { return lineChoiceQuickReply([{ label: 'Record receipt', text: 'Record receipt' }, { label: 'Question only', text: 'Question only; do not record' }, { label: 'Several documents', text: 'Summarize several documents' }]); }
+  if (language === 'en' && text.includes(MEDIA_CLARIFY_REPLY.en)) { return lineChoiceQuickReply([{ label: 'Record receipt', text: 'Record receipt' }, { label: 'Question only', text: 'Question only; do not record' }, { label: 'Several documents', text: 'Summarize several documents' }]); }
 
   if (text.includes(MEDIA_CLARIFY_REPLY['th'])) return lineChoiceQuickReply([
     { label: 'บันทึกใบเสร็จ', text: 'บันทึกใบเสร็จ' }, { label: 'ภาพประกอบคำถาม', text: 'ภาพประกอบคำถาม' }, { label: 'สรุปหลายรายการ', text: 'สรุปหลายรายการ' },
@@ -1801,7 +1801,7 @@ return [ 'Details from the latest expense in this chat:', `Seller: ${fields.vend
     'สถานะในระบบตอนนี้:',
     `• ประเภทเอกสาร – ${sourceType}`,
     `• ยอดรายการปัจจุบัน – ${amount} ${expense.currency}`,
-    `• หมวดค่าใช้จ่าย – ${categoryName ?? expense.expenseCategoryId ?? expense.accountHintKey ?? 'ยังไม่ระบุ'}`,
+    `• หมวดค่าใช้จ่าย – ${categoryName ?? 'ยังไม่ระบุ'}`,
     `• สถานะหลักฐานภาษี – ${expense.taxEvidenceStatus}`,
     ...(missingFields.length ? ['', `ยังต้องตรวจ: ${missingFields.join(', ')}`] : []),
     '',
@@ -4331,15 +4331,15 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     try {
       const current = await this.contextV2.listPreferences(bound.owner);
       if (!current || current.epoch !== bound.epoch) throw new Error('STALE_PREFERENCE_OWNER');
-      if (command.kind === 'list') reply = formatLinePreferences(current.values) + '\n' + LINE_PREFERENCE_NOTICE;
-      else if (linePreferenceForgetsNothing(command, current.values)) reply = LINE_PREFERENCE_NOTHING_TO_FORGET;
+      if (command.kind === 'list') reply = formatLinePreferences(current.values, replyLanguage(event)) + '\n' + lineUiLabel(LINE_PREFERENCE_NOTICE, replyLanguage(event));
+      else if (linePreferenceForgetsNothing(command, current.values)) reply = lineUiLabel(LINE_PREFERENCE_NOTHING_TO_FORGET, replyLanguage(event));
       else {
         const applied = await this.contextV2.changePreferences(bound.owner, { requestId: event.webhookEventId, expectedVersion: current.version, epoch: bound.epoch,
           ...(command.kind === 'set' ? { set: command.values } : { delete: command.keys }) });
         if (applied !== 'applied') throw new Error('STALE_PREFERENCE_VERSION');
         await this.audit.log({ companyId: bound.owner.companyId, actorUserId: bound.owner.userId, action: 'ai.line.preference.changed', targetType: 'AiConversation', targetId: bound.id,
           requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { operation: command.kind, fields: command.kind === 'set' ? Object.keys(command.values) : command.keys } });
-        reply = linePreferenceChangedText(command, current.values);
+        reply = linePreferenceChangedText(command, current.values, replyLanguage(event));
       }
     } catch { reply = (replyLanguage(event) === 'en' ? "I could not verify or update saved preferences; I cannot confirm that anything was remembered or deleted." : 'ตอนนี้ตรวจสอบหรือบันทึกความจำไม่ได้ค่ะ ยังยืนยันไม่ได้ว่าระบบจำหรือลบให้แล้ว'); status = 'preference_unavailable'; }
     await this.deliverReply(event, reply); await this.updateEventLog(event.webhookEventId, status, undefined, bound.owner.companyId);
@@ -4390,6 +4390,23 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       ...(event.admitOverCap ? { admitOverCap: true } : {}) });
     if (!grant) throw new HttpException({ code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 429);
     this.budgetGrantsV2.set(event, grant); return grant;
+  }
+
+  private async deliverStructuralCapacityLimit(event: LineTextEvent, route: GovernedLineIntakeRoutePlan, ctx: RequestContext,
+    access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>): Promise<boolean> {
+    if (route.status !== 'ROUTED' || route.semanticSubrequests?.length !== 1 || !['help', 'write'].includes(route.semanticSubrequests[0]!.kind)) return false;
+    const namedAction = route.howToActionId === 'branch' ? 'BRANCH_CREATE' : route.howToActionId === 'team_member' ? 'EMPLOYEE_CREATE' : undefined;
+    // The noun right after the verb names the action: "เพิ่มพนักงาน … สาขาสำนักงานใหญ่" adds an employee, not a branch.
+    const verbNoun = /(?:เพิ่ม|สร้าง|\badd\b|\bcreate\b)\s*(?:(?:a|an|new|another|one more)\s+)*(สาขา|branch|พนักงาน|employee|staff member)/iu.exec(event.messageText)?.[1];
+    const action = namedAction ?? (!verbNoun ? undefined : /^(?:สาขา|branch)$/iu.test(verbNoun) ? 'BRANCH_CREATE' : 'EMPLOYEE_CREATE');
+    if (!action || !access.permissions.includes(action === 'BRANCH_CREATE' ? 'company.branch.manage' : 'access.employee.create')) return false;
+    const limit = await this.expenseActions?.teamCapacityReply?.(ctx, action, replyLanguage(event));
+    if (!limit) return false;
+    const card = buildLineAssistantTextCardMessage(limit, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
+    card.quickReply = lineChoiceQuickReply([{ label: replyLanguage(event) === 'en' ? 'Compare packages' : 'เปรียบเทียบแพ็กเกจ', text: replyLanguage(event) === 'en' ? 'Compare packages' : 'ดูแพ็กเกจ' }]);
+    await this.deliverCompletedReply(event, limit, ctx.companyId, access, undefined, card);
+    await this.updateEventLog(event.webhookEventId, 'package_capacity_limit', undefined, ctx.companyId);
+    return true;
   }
 
   /** Already classified from full input, without reading expense/context repositories. */
@@ -6926,6 +6943,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         await this.handlePaymentEvidenceText(event, expenseDraftCtx); return;
       }
       if (await this.handleRoutedPreference(event, requestId, semanticRoutePlan)) return;
+      if (await this.deliverStructuralCapacityLimit(event, semanticRoutePlan, expenseDraftCtx, resolvedAccess)) return;
       if (await this.resumeDocumentQuestionV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (await this.draftCurrentDocumentV2(event, requestId, semanticRoutePlan, resolvedAccess)) return;
       if (!open.openClarifications?.length && !/^(?:ช่วย)?แก้(?:ไข)?ข้อมูล(?:ให้)?(?:หน่อย)?(?:ค่ะ|คะ|ครับ)?[?？]?$/u.test(event.messageText.replace(/\s+/gu, ''))
@@ -7702,6 +7720,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
       return;
     }
 
+    if (await this.deliverStructuralCapacityLimit(event, routePlan, expenseDraftCtx, resolvedAccess)) return;
     const mixedBusiness = !!initialGrantV2 && await this.prepareMixedBusinessQuestions(event, requestId, routePlan, resolvedAccess, entitledFeatureKeys, valueCandidates);
     if (mixedBusiness && multipleExistingBusinessWrites && !this.mixedBusinessQuestions.get(event)?.orderedWrites) {
       const delivery = await this.deliverMixedBusinessWriteSelection(event, typedWrites!);

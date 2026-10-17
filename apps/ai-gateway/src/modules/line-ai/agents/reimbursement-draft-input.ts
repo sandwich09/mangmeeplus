@@ -56,8 +56,10 @@ function candidateValue(key: string, raw: unknown, req: LineAiTurnRequest): unkn
   const matches = key === 'amount' ? req.valueCandidates.amounts.filter(item => item.value === value)
     : [...req.valueCandidates.dates.filter(item => item.isoDate === value),
       ...req.valueCandidates.periods.filter(item => item.kind === 'day' && item.fromDate === value && item.toDate === value)];
-  const candidate = matches.length === 1 ? matches[0] : undefined;
-  return candidate ? { value, proof: { kind: 'USER_TEXT', candidateId: candidate.candidateId, refs: [candidate.source] } } : raw;
+  const dates = key === 'incurredDate' ? [...req.valueCandidates.dates, ...req.valueCandidates.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate)] : [];
+  const candidate = matches.length === 1 ? matches[0] : dates.length === 1 ? dates[0] : undefined;
+  const selectedValue = key === 'incurredDate' && candidate ? ('isoDate' in candidate ? candidate.isoDate : 'fromDate' in candidate ? candidate.fromDate : value) : value;
+  return candidate ? { value: selectedValue, proof: { kind: 'USER_TEXT', candidateId: candidate.candidateId, refs: [candidate.source] } } : raw;
 }
 
 /**
@@ -89,6 +91,12 @@ export function completeReimbursementDraftInput(toolName: string, input: unknown
     ? { ...change, values: Object.fromEntries(Object.entries(change['values']).filter(([key]) => key !== 'proposedValue').map(([key, value]) =>
       [key, ['amount', 'incurredDate'].includes(key) ? candidateValue(key, value, req) : LINE_TEXT_FIELDS.includes(key) && value !== null && value !== undefined ? userText(value, req.inputEvidence, key === 'description') : value])) }
     : change) : undefined;
+  if (lineChanges?.length === 1 && object(lineChanges[0]) && object(lineChanges[0]['values'])) {
+    const values = lineChanges[0]['values'];
+    if (typeof values['incurredDate'] === 'string') delete values['incurredDate'];
+    if (!values['categoryChoiceId'] && typeof input['suggestedCategoryChoiceId'] === 'string') values['categoryChoiceId'] = input['suggestedCategoryChoiceId'];
+  }
+  if (typeof fields['missingReceiptReason'] === 'string') delete fields['missingReceiptReason'];
   return { ...input,
     // The action is the API's own locator and nothing else: a key the planner added (round 10: the options
     // `revision`) made the API's exact-key parser refuse the whole preview.

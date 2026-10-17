@@ -1,3 +1,4 @@
+import { lineUiLabel, type LineReplyLanguage } from './line-language.logic';
 import type { LineAiResponsePreferenceCommand } from '@watchdog-bms/contracts';
 import type { LinePreferenceValues } from '../../application/line-conversation-context.service';
 /** One shape for the exact command words below and for a router-named request (NAT11 2026-09-30). */
@@ -22,11 +23,16 @@ export function parseLinePreferenceCommand(raw: string): LinePreferenceCommand |
   return values[remember] ? { kind: 'set', values: values[remember]! } : null;
 }
 const PREFERENCE_LABELS: Record<string, string> = { th: 'ภาษาไทย', en: 'ภาษาอังกฤษ', short: 'สั้น', normal: 'ปกติ', detailed: 'ละเอียด', prose: 'ย่อหน้า', bullets: 'หัวข้อ', table: 'ตาราง', steps: 'ขั้นตอน' };
-export function formatLinePreferences(values: LinePreferenceValues): string {
+export function formatLinePreferences(values: LinePreferenceValues, language: LineReplyLanguage = 'th'): string {
+  if (language === 'en') return Object.keys(values).length ? ['Saved answer preferences:', ...Object.values(values).map(value => `• ${lineUiLabel(PREFERENCE_LABELS[value]!, language)}`)].join('\n') : 'No answer preferences are saved.';
   return Object.keys(values).length ? ['รูปแบบคำตอบที่จำไว้:', ...Object.values(values).map(value => `• ${PREFERENCE_LABELS[value]}`)].join('\n') : 'ยังไม่มีรูปแบบคำตอบที่จำไว้ค่ะ';
 }
 /** The stored result in words (NAT11: say what was remembered or forgotten, never only "done"). */
-export function linePreferenceChangedText(command: Exclude<LinePreferenceCommand, { kind: 'list' }>, before: LinePreferenceValues): string {
+export function linePreferenceChangedText(command: Exclude<LinePreferenceCommand, { kind: 'list' }>, before: LinePreferenceValues, language: LineReplyLanguage = 'th'): string {
+  if (language === 'en') {
+    if (command.kind === 'set') return `Saved your answer preferences: ${Object.values(command.values).map(value => lineUiLabel(PREFERENCE_LABELS[value!]!, language)).join(' · ')}.\n${lineUiLabel(LINE_PREFERENCE_NOTICE, language)}`;
+    return command.keys === 'all' ? 'All saved answer preferences were deleted.' : `Deleted these answer preferences: ${command.keys.flatMap(key => before[key] ? [lineUiLabel(PREFERENCE_LABELS[before[key]!]!, language)] : []).join(' · ')}.`;
+  }
   if (command.kind === 'set') return `จำไว้แล้วค่ะ ต่อไปจะตอบแบบ${Object.values(command.values).map(value => PREFERENCE_LABELS[value!]).join(' · ')}\n${LINE_PREFERENCE_NOTICE}`;
   if (command.keys === 'all') return 'ลืมรูปแบบคำตอบที่จำไว้ทั้งหมดแล้วค่ะ ต่อไปจะตอบตามปกติ';
   const forgotten = command.keys.flatMap(key => before[key] ? [PREFERENCE_LABELS[before[key]!]] : []);

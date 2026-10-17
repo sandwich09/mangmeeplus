@@ -120,7 +120,7 @@ export function normalizeNameQuery(raw: string): string {
 /** Leading words a category query commonly carries ("หมวดหมู่อาหาร", "หมวดเดินทาง") that are never
  *  part of the category's own stored name. Longest first: "หมวดหมู่" starts with "หมวด", so the
  *  more specific word must be tried before the shorter one that is its own prefix. */
-export const CATEGORY_NAME_STRIP_PREFIXES = ['หมวดหมู่', 'หมวด'] as const;
+export const CATEGORY_NAME_STRIP_PREFIXES = ['หมวดหมู่', 'หมวด', 'category'] as const;
 
 /** Leading words a vendor query commonly carries ("ร้านสมใจ", "บริษัทเอบีซี") that are never part
  *  of the counterparty's own stored display name. */
@@ -210,10 +210,13 @@ export function resolveNameCandidate(
   candidates: readonly NameCandidate[],
   stripPrefixes: readonly string[] = [],
 ): NameResolution {
+  const aliases: Record<string, string> = { travel: 'ค่าเดินทาง', fuel: 'ค่าน้ำมัน', service: 'ค่าบริการ', office: 'ค่าออฟฟิศ', other: 'ค่าใช้จ่ายอื่นๆ' };
+  const categoryQuery = rawQuery.trim().replace(/^category\s+/iu, '').toLowerCase();
   const query = normalizeNameQuery(rawQuery);
   const scored = candidates.map((candidate) => ({ candidate, norm: normalizeNameQuery(candidate.name) }));
 
   let pool = exactThenContains(query, scored);
+  if (!pool.length && stripPrefixes.includes('หมวด') && aliases[categoryQuery]) pool = exactThenContains(normalizeNameQuery(aliases[categoryQuery]!), scored);
 
   if (pool.length === 0) {
     const stripped = stripLeadingWord(query, stripPrefixes);
@@ -246,7 +249,7 @@ export type BranchResolution =
  *  ("สาขา 2" vs "สาขา2") or case ("BR2" vs "br2") far more often than category/vendor names do, so
  *  this is its own normalizer rather than `normalizeNameQuery` above (which only trims the ends). */
 function normalizeBranchText(raw: string): string {
-  return raw.normalize('NFC').toLowerCase().replace(/\s+/gu, '');
+  return raw.normalize('NFC').toLowerCase().replace(/[_\s-]+/gu, '').replace(/^(?:headoffice|hq)$/u, 'สำนักงานใหญ่').replace(/^branch(?=\d)/u, 'สาขา').replace(/^สาขา(หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ)$/u, (_match, word: string) => `สาขา${['หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า', 'สิบ'].indexOf(word) + 1}`);
 }
 
 /** The trailing run of digits in a normalized name, if any — lets a bare "2" resolve "สาขา 2"

@@ -1344,7 +1344,7 @@ function formatReimbursementPendingApprovalsList(output: SpecialistOutput, ctx: 
   const listYear = civilYear(output.asOf);
   const itemLines = shown.map((row, index) => {
     const dateLabel = row.date ? thaiAbbrDate(row.date, english, listYear) ?? row.date : undefined;
-    return `\n${index + 1}. ${row.requester}${dateLabel ? ` (${dateLabel})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}${row.waitingOn ? ` · ${english ? 'waiting for' : 'รอ'} ${row.waitingOn}` : ''}`;
+    return `\n• ${row.requester}${dateLabel ? ` (${dateLabel})` : ''}: ${moneyWithCurrency(row.amount, row.currency)}${row.waitingOn ? ` · ${english ? 'waiting for' : 'รอ'} ${row.waitingOn}` : ''}`;
   }).join('');
   const moreText = total > shown.length
     ? (english ? `\nShowing ${shown.length} of ${plural(total, 'request')}` : `\nแสดง ${shown.length} จาก ${groupThousands(String(total))} รายการ`)

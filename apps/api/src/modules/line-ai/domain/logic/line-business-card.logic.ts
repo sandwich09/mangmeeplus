@@ -1,4 +1,4 @@
-import { lineReplyLanguage, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
+import { lineReplyLanguage, lineCustomerText, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
 import { AI_BUDGET_REFUSAL_CODES, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
@@ -168,7 +168,7 @@ function bubble(
         ...(badge ? [{ type: 'text', text: badge, color: THEME.brandDark, weight: 'bold', size: 'sm', wrap: true }] : []),
         // A row-only card passes no prose; LINE rejects an empty text element, so the row is omitted
         // rather than sent blank. Every prose caller passes non-empty text, so their bytes are unchanged.
-        ...(text ? [{ type: 'text', text, color: THEME.text, size: 'md', wrap: true }] : []),
+        ...(text ? [{ type: 'text', text: lineCustomerText(text), color: THEME.text, size: 'md', wrap: true }] : []),
         ...(rows ?? []).map(({ label, value }) => ({
           type: 'box', layout: 'horizontal', spacing: 'sm',
           contents: [

@@ -1256,3 +1256,10 @@ describe('expense and claim relative day words (Bangkok civil date)', () => {
     assert.deepEqual(extractValueCandidates('ค่าเดินทาง 275 บาท พรุ่งนี้เช้า', day).periods ?? [], []);
   });
 });
+
+it('Exam G4: abbreviated and continuing month words produce current deterministic periods', () => {
+  for (const [text, month] of [['fuel ด.นี้', '2026-10'], ['แล้ว ด.ก่อน', '2026-09'], ['the month before', '2026-09'], ['the previous month', '2026-09']] as const) {
+    const result = extractValueCandidates(text, '2026-10-17');
+    assert.ok(result.periods?.some(period => period.monthKey === month), text);
+  }
+});

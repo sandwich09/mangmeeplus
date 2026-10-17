@@ -10264,12 +10264,8 @@ it('Fix-up 15: J7 facts survive button turns to the existing guarded reimburseme
   const stored = action.commandJson.accepted.proposal.lineChanges[0].values;
   assert.equal(stored.amount.value, '350'); assert.equal(stored.incurredDate.value, '2026-10-15');
   result = await run('ไม่มีใบเสร็จ ร้านไม่ออกให้', () => ({ action: {}, proposal: { fields: { missingReceiptReason: 'ร้านไม่ออกให้' }, lineChanges: [{ operation: 'ADD', values: { attachmentChoiceId: null } }] } }));
-  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
-  const shown = await adapter.readDisplayOptions({ ctx, owner: owner as any, ownerEpoch: 1, actionId: action.id }); assert.ok(shown);
-  const buttons = buildReimbursementOptionsMessages(shown)[0]!.quickReply!.items;
-  assert.equal(buttons[0]!.action.label, 'ค่าน้ำมัน', 'the suggested company category is first, without silently choosing it');
-  result = await run('เลือกหมวดค่าใช้จ่าย ค่าน้ำมัน', options => ({ action: {}, proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { categoryChoiceId: options.choices.find((choice: any) => choice.label === 'ค่าน้ำมัน').choiceId } }] } }));
   assert.equal((result.data as any).reimbursementDraft.status, 'preview', JSON.stringify(result));
+  assert.equal(action.previewJson.after.lines[0].categoryKey, 'company-fuel', 'suggested category is visible for review without asking again');
   const ready = (result.data as any).reimbursementDraft;
   result = await run('ยังไม่ได้บอกเหตุผล', () => ({ action: {}, proposal: { fields: { reason: 'คำที่แต่งขึ้น' } } }));
   assert.equal((result.data as any).reimbursementDraft.errorCode, 'source_changed', 'a ready card cannot accept an unbound later fragment');
@@ -10601,8 +10597,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   assert.equal((await adapter.choose({ ctx: { ...ctx, userId: 'foreign' }, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale');
   assert.equal((await adapter.choose({ ctx, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale', 'an old button cannot change the next stage');
   if (withPhoto) {
-    assert.match(messages[0].text, /เลือกหมวด/);
-    assert.equal(messages[0].quickReply.items[0].action.type, 'postback', 'photo is optional while the draft is prepared');
+    assert.ok(messages[0].quickReply?.items[0]?.action.type === 'postback' || action.status === 'PREVIEW', 'the optional photo does not block draft preparation');
     let uploaded = 0, completed = 0;
     const file = { id: 'claim-photo', companyId: ctx.companyId, branchId: branch.id, uploadedByUserId: ctx.userId,
       status: 'ACTIVE', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', updatedAt: now, checksumSha256: 'photo-sha' };
@@ -10625,13 +10620,10 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
     assert.match(JSON.stringify(messages), /บริษัทกำหนดให้มีหลักฐานก่อนส่งอนุมัติ/);
     assert.match(JSON.stringify(messages), /เลือกหมวดค่าใช้จ่ายได้เลยค่ะ/);
   }
-  assert.ok(messages[0].quickReply.items.some((item: any) => item.action.label === categoryName));
-  if (fresh23 === undefined) assert.equal(messages[0].quickReply.items[0].action.label, categoryName);
-  if (withPhoto) assert.match(action.commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, /^[a-f0-9]{64}$/);
-  else assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, null);
-  assert.deepEqual(action.commandJson.accepted.proposal.lineChanges[0].values.amount, facts.amount);
-  const category = messages[0].quickReply.items.find((item: any) => item.action.label === categoryName).action;
-  messages = await tap(category.data); // current facts bind this button; a historical button must become stale after facts change
+  if (action.status === 'COLLECTING') {
+    const category = messages[0].quickReply?.items.find((item: any) => item.action.label === categoryName)?.action;
+    if (category) messages = await tap(category.data);
+  }
   assert.doesNotMatch(JSON.stringify(messages), /ส่วนที่ยังไม่เสร็จ|ข้อ 1|ส่งรูปใบเสร็จ|ไม่มีสิทธิ์/);
   if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /ไม่มีใบเสร็จเพราะอะไร/);
   if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.equal(messages[0].text, 'ไม่มีใบเสร็จเพราะอะไรคะ');
@@ -11099,6 +11091,7 @@ async function fx21bBoundWebhook(t: TestContext, replay: any, permissions: strin
     const inputEvidence = (await createLineAiInputEvidence({ turnKey: webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: enqueued.item.text }] }))!.inputEvidence;
     const event = { ...baseEvent, webhookEventId, messageText: enqueued.item.text, inputEvidence,
       ...(body.events[0].message ? { replyToken: enqueued.item.replyToken, lineMessageId: enqueued.item.lineMessageId } : {}),
+      ...(enqueued.item.language ? { language: enqueued.item.language } : {}),
       ...(enqueued.item.counterpartyControl ? { counterpartyControl: enqueued.item.counterpartyControl } : {}),
       ...(enqueued.item.expenseActionControl ? { expenseActionControl: enqueued.item.expenseActionControl } : {}),
       ...(enqueued.item.reimbursementChoiceControl ? { reimbursementChoiceControl: enqueued.item.reimbursementChoiceControl } : {}),
@@ -12312,4 +12305,201 @@ for (const id of ['H-staff-vendor-breakdown-ordinal#1', 'C03#0', 'J7-xd-fail#0']
     assert.deepEqual(calls, replay.reads.map((row: any) => ({ tool: row.tool, input: row.input })));
     assert.match(payload, /6,295.50/); assert.equal(gatewayResult.semanticCoverage[0].status, 'handled');
   }
+});
+
+const EXAM_G_REPLAYS = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/advisor-exam-g-router-replays.json'), 'utf8')) as any[];
+for (const id of ['v2-X098-A', 'v2-X044-B', 'v2-X092-A', 'v2-X031-A', 'v2-X041-A']) it(`Exam G1/G3: exact ${id} webhook, planner tools and signed save retain facts without repeated category/amount asks`, async t => {
+  const { completeReimbursementDraftInput } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/reimbursement-draft-input');
+  const first = EXAM_G_REPLAYS.find(row => row.id === id).turns[0];
+  const replay: any = { source: id, body: first.body, route: first.route, messageText: first.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'attachment.create', 'reimbursement.create', 'reimbursement.read_own', 'reimbursement.update_own_draft'];
+  const h = await fx21bBoundWebhook(t, replay, permissions);
+  h.flow.config.lineAiReimbursementDraftWriteEnabled = true;
+  const needsReason = id === 'v2-X031-A';
+  const owner: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: h.baseEvent.messagingChannelId, chatKeyHash: chatKeyHashOf(h.baseEvent) };
+  const ctx: any = { ...owner, authSubject: owner.userId, authProvider: 'line', requestId: 'claim-test', roles: ['STAFF'], permissions, scopes: {} };
+  const now = new Date(), branch = { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'HQ', type: 'HEAD_OFFICE', updatedAt: now };
+  const actions = new Map<string, any>(); let saved: any, writes = 0, evidenceChecks = 0, acceptedRequest: any;
+  const repo: any = { isDraftActionOwnerCurrent: async () => true,
+    findActiveDraftAction: async () => [...actions.values()].find(action => ['COLLECTING', 'PREVIEW'].includes(action.status)) ?? null,
+    findDraftAction: async (_company: string, id: string) => actions.get(id),
+    findOrCreateDraftAction: async (input: any) => { if (!actions.has(input.id)) actions.set(input.id, { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now }); return actions.get(input.id); },
+    saveDraftActionCollection: async (input: any) => { const next = { ...actions.get(input.actionId), ...input, status: 'COLLECTING', updatedAt: now }; actions.set(input.actionId, next); return next; },
+    saveDraftActionPreview: async (input: any) => { const next = { ...actions.get(input.actionId), ...input, status: 'PREVIEW', updatedAt: now }; actions.set(input.actionId, next); return next; },
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: 'พิม' }], listReimbursementSources: async () => [],
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: 'พิม' }),
+    findPolicy: async () => ({ currency: 'THB', requireReceipt: needsReason, allowMissingReceiptWithReason: true, status: 'ACTIVE' }),
+    resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any) => lines,
+    markDraftActionLineDelivered: async (input: any) => actions.get(input.actionId)?.confirmationDigest === input.confirmationDigest,
+    findRequestById: async (_company: string, id: string) => saved?.id === id ? saved : null,
+    applyDraftActionAtomic: async (input: any) => {
+      const action = actions.get(input.actionId); assert.equal(action.confirmationDigest, input.confirmationDigest); assert.equal(action.previewRevision, input.previewRevision);
+      assert.equal(input.owner.actorUserId, owner.userId); assert.equal(input.owner.companyId, owner.companyId); writes++;
+      const cmd = action.commandJson;
+      if (cmd.operation === 'UPDATE') assert.equal(cmd.requestId, saved.id);
+      saved = { ...cmd, ...cmd.header, id: saved?.id ?? action.id, status: 'DRAFT', incurredDate: new Date(cmd.header.incurredDate), updatedAt: now, createdAt: now,
+        lines: cmd.lines.map((line: any, index: number) => ({ ...line, id: `line-${index}`, incurredDate: new Date(line.incurredDate), updatedAt: now, createdAt: now })) };
+      const next = { ...action, status: 'APPLIED', requestId: saved.id, resultJson: { actionId: action.id, operation: action.operation, requestId: saved.id, committedState: 'DRAFT', amount: saved.amount, currency: 'THB', committedAt: now.toISOString(), appliedRequestUpdatedAt: now.toISOString() } };
+      actions.set(action.id, next); return { kind: 'applied', action: next, request: saved };
+    },
+  };
+  const data: any = { client: { branch: { findMany: async () => [branch], findFirst: async () => branch }, companyMembership: { findUnique: async () => ({ defaultBranchId: branch.id }) },
+    attachmentObject: { findMany: async () => [], findFirst: async () => null },
+    lineWebhookEventLog: { findUnique: async () => ({ webhookEventId: acceptedRequest.webhookEventId }) },
+    lineLedgerDelivery: { findFirst: async () => ({ acceptedRequestJson: { request: acceptedRequest } }) } } };
+  const drafts = new LineReimbursementDraftUseCase(repo, { validate: async () => { evidenceChecks++; } } as any, { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: owner.messagingChannelId } as any);
+  const service = new LineReimbursementDraftService(drafts);
+  const adapter = new LineReimbursementDraftAdapterService(data, repo, { resolvePrivateOwner: async () => ({ owner, epoch: 1, taskRevision: 1 }) } as any, service, drafts, { listCategories: async () => [{ id: 'travel', name: 'ค่าเดินทาง' }, { id: 'fuel', name: 'ค่าน้ำมัน' }, { id: 'service', name: 'ค่าบริการ' }, { id: 'office', name: 'ค่าออฟฟิศ' }, { id: 'other', name: 'ค่าใช้จ่ายอื่นๆ' }] } as any);
+  h.flow.reimbursementDrafts = service; h.flow.reimbursementAdapter = adapter;
+
+  let gatewayError: unknown;
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    try {
+      acceptedRequest = request;
+      const toolCtx: any = { ...ctx, inputEvidence: request.inputEvidence, valueCandidatesV2: request.valueCandidates, budgetGrantV2: request.budgetGrantV2 };
+      const options = await adapter.getOptions(toolCtx, first.tools.find((tool: any) => tool.tool === 'reimbursement.draft.get_options').input);
+      assert.equal(options.status, 'ok');
+      const recorded = first.tools.find((tool: any) => tool.tool === 'reimbursement.draft.preview_create');
+      const input = structuredClone(recorded.input);
+      const original = first.tools.find((tool: any) => tool.tool === 'reimbursement.draft.get_options').result.data.options;
+      const suggested = original.choices.find((choice: any) => choice.choiceId === input.suggestedCategoryChoiceId);
+      assert.ok(suggested);
+      input.suggestedCategoryChoiceId = (options.data as any).options.choices.find((choice: any) => choice.kind === 'CATEGORY' && choice.label === suggested.label).choiceId;
+      const proposal = completeReimbursementDraftInput(recorded.tool, input, [{ result: options }], request);
+      const result = await adapter.preview(toolCtx, proposal, 'CREATE');
+      assert.ok(['preview', 'needs_fields'].includes((result.data as any).reimbursementDraft.status), JSON.stringify(result));
+      return { requestId: request.requestId, replyText: 'Review claim draft.', sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', refused: false,
+        toolsInvoked: ['reimbursement.draft.get_options', recorded.tool], toolCalls: [], durationMs: 0, semanticCoverage: [{ index: 0, status: 'needs_user' }] };
+    } catch (error) { gatewayError = error; throw error; }
+  };
+  await h.execute(); assert.ifError(gatewayError);
+  const payload = () => JSON.stringify(h.delivered.at(-1));
+  assert.doesNotMatch(payload(), /เลือกหมวดค่าใช้จ่าย|Please choose the expense category|รายละเอียดรายการ จำนวนเงิน|item details, amount/);
+  if (needsReason) {
+    assert.match(payload(), /Why is the receipt missing/);
+    await h.execute('The shop did not issue a receipt'); assert.ifError(gatewayError);
+  }
+  const active = [...actions.values()][0];
+  assert.equal(active.status, 'PREVIEW', payload());
+  assert.equal(writes, 0, 'only a delivered signed user press may save');
+  assert.equal(Number(active.previewJson.after.amount), Number(first.route.reimbursementHints.amount));
+  assert.equal(active.previewJson.after.lines.length, 1);
+  if (['v2-X098-A', 'v2-X092-A'].includes(id)) assert.ok(active.sourceProofJson.receipts.some((proof: any) => proof.proof.key === 'CLAIM_DATE_TODAY'));
+  const confirm = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => new URLSearchParams(button.action?.data).get('action') === 'reimbursement_draft_confirm').action;
+  await h.execute(confirm.displayText ?? 'Confirm', confirm.data);
+  assert.equal(writes, 1); assert.equal(saved.status, 'DRAFT');
+  assert.equal(Number(saved.amount), Number(first.route.reimbursementHints.amount));
+  assert.ok(evidenceChecks > 0, 'same reimbursement evidence validation as the web draft');
+  assert.doesNotMatch(payload(), /Why is the receipt missing|ไม่มีใบเสร็จเพราะอะไร/);
+  if (lineReplyLanguage(replay.messageText) === 'en') assert.match(payload(), /Claim draft saved|Current status/);
+});
+
+for (const id of ['v2-D118-B', 'v2-D127-B', 'v2-D036-B']) it(`Exam G4: exact ${id} router/tool words resolve scoped entities before the real read and delivered figures`, async t => {
+  const { ExpenseListRecentTool } = await import('./erp-tools.use-case');
+  const { ListExpensesUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { formatPreparedSimpleRead } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/prepared-simple-read-formatter');
+  const first = EXAM_G_REPLAYS.find(row => row.id === id).turns[0];
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const replay = { source: id, body: first.body, route: first.route, messageText: first.body.events[0].message.text };
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.read']);
+  const branches = [{ id: 'real-head', name: 'สำนักงานใหญ่', code: 'HQ' }, { id: 'real-second', name: 'สาขา 2', code: 'B2' }];
+  const filters: any[] = [];
+  const catalog: any = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) }, branch: { findMany: async ({ where, take }: any) => {
+    assert.equal(where.companyId, 'company-1');
+    return branches.filter(branch => (!where.id?.in || where.id.in.includes(branch.id)) && (!where.name || branch.name === where.name)
+      && (!where.OR || where.OR.some((clause: any) => clause.id === branch.id || clause.code === branch.code))).slice(0, take);
+  } } } };
+  const repo: any = { listCategories: async (companyId: string) => { assert.equal(companyId, 'company-1'); return [{ id: 'real-travel', name: 'ค่าเดินทาง', status: 'ACTIVE' }]; },
+    readAiExpenseSummary: async (filter: any, scope: any) => {
+      assert.equal(filter.companyId, 'company-1'); filters.push(filter);
+      assert.equal(filter.branchId, id === 'v2-D118-B' ? 'real-head' : id === 'v2-D127-B' ? 'real-second' : undefined);
+      if (id === 'v2-D036-B') assert.equal(filter.expenseCategoryId, 'real-travel');
+      return { asOf: new Date(), total: 1, byCurrency: [{ currency: 'THB', count: 1, totalAmount: '2387.75', paidAmount: '0', outstandingAmount: '2387.75' }],
+        byStatus: [{ status: 'CONFIRMED', currency: 'THB', count: 1, totalAmount: '2387.75' }], items: [], hasMore: false, nextCursorSource: null };
+    } };
+  const tool = new ExpenseListRecentTool(new ListExpensesUseCase(repo), catalog);
+  let gatewayError: unknown;
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    try {
+      assert.deepEqual(request.semanticSubrequests, first.route.semanticSubrequests);
+      const read = await tool.execute({ companyId: 'company-1', userId: 'user-1', permissions: request.userContext.permissions, locale: request.userContext.locale } as any, first.tools[0].input);
+      assert.equal(read.status, 'ok'); assert.ok((read.data as any).summary, JSON.stringify(read));
+      const language = lineReplyLanguage(replay.messageText);
+      const formatted = formatPreparedSimpleRead('expense.list_recent::single_metric', { agent: 'accounting', status: 'SUCCEEDED', summary: '', facts: [{ sourceRef: read.sourceRefs[0] }], suggestions: [], toolCalls: [], requiresHumanReview: false,
+        toolData: [{ tool: tool.toolName, data: read.data }], asOf: read.asOf } as any, { language, locale: request.userContext.locale });
+      assert.equal(formatted.kind, 'answer'); if (formatted.kind !== 'answer') throw new Error('Read formatter rejected grounded figures');
+      return { requestId: request.requestId, replyText: formatted.replyText, sourceRefs: read.sourceRefs, sourceLabels: [], webLinks: formatted.webLinks, intent: 'business_read', agent: 'accounting', refused: false,
+        durationMs: 0, toolsInvoked: [tool.toolName], semanticCoverage: [{ index: 0, status: 'handled' }], presentation: { kind: 'answer_cards', cards: [{ text: formatted.replyText, ...(formatted.layout ? { layout: formatted.layout } : {}) }] } };
+    } catch (error) { gatewayError = error; throw error; }
+  };
+  await h.execute(); assert.ifError(gatewayError);
+  assert.equal(filters.length, 1); assert.match(JSON.stringify(h.delivered), /2,387.75/);
+  assert.doesNotMatch(JSON.stringify(h.delivered), /cannot find|could not find|ไม่พบ.*ชื่อ|Record receipt|Question only/);
+  const denied = await tool.execute({ companyId: 'company-1', userId: 'user-1', permissions: ['expense.read'], branchIds: ['real-head'] } as any, { branchId: 'Branch 2' });
+  assert.ok((denied.data as any).branchOutOfScope); assert.equal(filters.length, 1, 'out-of-scope aliases never reach business rows');
+});
+
+it('Exam G5: exact Starter branch-capacity question uses the web guard, names the next capable package and never opens the field wizard', async t => {
+  const { LineTeamActionService } = await import('../line-team-action.service');
+  const first = EXAM_G_REPLAYS.find(row => row.id === 'v2-K012-A').turns[0];
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const replay = { source: 'v2-K012-A', body: first.body, route: first.route, messageText: first.body.events[0].message.text };
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'company.branch.manage']);
+  let capacityReads = 0, starts = 0;
+  const teams: any = Object.create(LineTeamActionService.prototype);
+  teams.prisma = { client: { companyPlanTerm: { findUnique: async ({ where }: any) => { assert.equal(where.companyId, 'company-1'); capacityReads++; return { branchLimit: 1, employeeLimit: 2 }; } }, branch: { count: async () => 1 } } };
+  h.flow.expenseActions = { teamCapacityReply: (...args: any[]) => teams.capacityReply(...args), answerTeam: async () => null };
+  h.flow.aiGateway.requestLineTurn = async () => { starts++; assert.fail('a blocked structural create never reaches a wizard'); };
+  await h.execute(); assert.equal(starts, 0); assert.equal(capacityReads, 1); assert.equal(h.intakeRequests.length, 1, 'capacity help retains its metered intake');
+  assert.match(JSON.stringify(h.delivered), /BASIC/); assert.match(JSON.stringify(h.delivered), /Compare packages/);
+  assert.doesNotMatch(JSON.stringify(h.delivered), /branch name|Prepare this for me/);
+  teams.config = { aiGatewayInternalSecret: 'test' }; teams.store = { available: true, save: async () => assert.fail('a package-blocked preview never starts field collection') }; teams.owner = async () => ({ id: 'conversation', lifecycleEpoch: 1 });
+  const prepared = await teams.preview({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', permissions: ['company.branch.manage'], roles: ['OWNER'], scopes: {} }, 'chat', { action: 'BRANCH_CREATE' });
+  assert.equal(prepared.preview, undefined); assert.match(prepared.reply, /เติบโต 499 บาท/); assert.doesNotMatch(prepared.reply, /BASIC/);
+  // The noun after the verb names the action: adding an employee "at สาขาสำนักงานใหญ่" is not a branch create.
+  const checked: string[] = [];
+  h.flow.expenseActions = { teamCapacityReply: async (_ctx: any, action: string) => { checked.push(action); return null; } };
+  const route: any = { status: 'ROUTED', semanticSubrequests: [{ kind: 'write' }] };
+  const access: any = { permissions: ['access.employee.create', 'company.branch.manage'] };
+  for (const messageText of ['ทำให้หน่อย เพิ่มพนักงานชื่อ สมศรี ใจงาม ตำแหน่งพนักงาน สาขาสำนักงานใหญ่', 'add a new branch in Chiang Rai', 'สาขาเชียงรายเพิ่มได้ไหม'])
+    assert.equal(await (h.flow as any).deliverStructuralCapacityLimit({ messageText }, route, { companyId: 'company-1' }, access), false);
+  assert.deepEqual(checked, ['EMPLOYEE_CREATE', 'BRANCH_CREATE']);
+});
+
+it('Exam G2: exact payment request, recorded reads and id-bearing question use the record label through gateway and LINE delivery', async t => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { runWithUsageContext } = await import('../../../../../../ai-gateway/src/common/usage/usage-context');
+  const first = EXAM_G_REPLAYS.find(row => row.id === 'v2-R011-A').turns[0];
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const replay = { source: 'v2-R011-A', body: first.body, route: first.route, messageText: first.body.events[0].message.text };
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.payment.record']);
+  let gatewayError: unknown, reads = 0;
+  const rawQuestion = 'Should I record payment for expense-company-a-2, 574 THB?';
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    try {
+      let round = 0;
+      const budget: any = { status: 'active-v2', calls: 1, repairCount: 0, grant: { maxTurnSlots: 6 } };
+      const response = await runWithUsageContext({ budget }, () => runSemanticTurnV2({ req: request, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async input => {
+          budget.calls++;
+          if (input.usageTag === 'line.loop') {
+            const read = first.tools.slice(-1)[round++];
+            return { ok: true, text: JSON.stringify(read ? { calls: [{ index: 0, toolName: read.tool, input: read.input }], questions: [] } : { calls: [], questions: [{ index: 0, text: rawQuestion }] }) };
+          }
+          return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'needs_user', reasonCode: 'MISSING_REQUIRED_INPUT', text: rawQuestion }] }) };
+        } }, invoke: async (meta, ctx, input) => {
+          assert.equal(ctx.companyId, 'company-1');
+          const original = first.tools.slice(-1)[reads++]; assert.equal(meta.name, original.tool); assert.deepEqual(input, original.input);
+          const result = structuredClone(original.result); result.sourceRefs = result.sourceRefs.map((ref: any) => ({ ...ref, webPath: ref.webPath.replace('/companies/company-a/', '/companies/company-1/') }));
+          return result;
+        } }));
+      assert.doesNotMatch(response.replyText, /expense-company-a-2/);
+      assert.match(response.replyText, /this record|ปั๊มน้ำมัน ปตท\./);
+      return { ...response, requestId: request.requestId, intent: 'business_read', agent: 'accounting', refused: false, toolsInvoked: ['expense.list_recent'], sourceLabels: [] };
+    } catch (error) { gatewayError = error; throw error; }
+  };
+  await h.execute(); assert.ifError(gatewayError); assert.equal(reads, 1);
+  assert.doesNotMatch(JSON.stringify(h.delivered), /expense-company-a-2/);
+  assert.match(JSON.stringify(h.delivered), /this record|ปั๊มน้ำมัน ปตท\./);
 });

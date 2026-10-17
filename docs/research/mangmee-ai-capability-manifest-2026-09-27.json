@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "ecade1c189922a9393008c2c924b781fdaf4ce75",
-  "checkoutBranch": "claude/advisor-xd-20261017",
+  "sourceRevision": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
+  "checkoutBranch": "claude/advisor-xg2-20261018",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "d65aa4bcf0a957bb40fffdd5f6d25507b3e4ca76da3d74eb2a6783c4704ac52f"
+      "sha256": "1c69121939dd7b924b3bd2afa20ecb51e7dedc6644dab9e7f758ffdaab1dd53a"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -53,7 +53,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-team-action.service.ts",
-      "sha256": "eadbe388af4a3ec64238a13ccf5074ad3d5cbe6dd550a59b7516bc7357914833"
+      "sha256": "aef0561feea5c9acb28d2a0dce10dc8c4e090c3c801d0e46ddb01e4dd7fa312f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
@@ -61,7 +61,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
-      "sha256": "983082abbbaf66d01a660fc0745836cc435955ec4f1ae0e36da965e4b2739004"
+      "sha256": "5cd2ccb87f7416873b8543e286a700fe82ef7202bb481b2d2487f7b2f4705331"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -137,11 +137,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "1277d5b871d397d0b6a73361faa0513dd1ed75b773c7797fc319593f6a47670e"
+      "sha256": "439245e4cbea096ad4c9a76b2aae29c0a542f11305ab07d5ab9ca395c1109179"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
-      "sha256": "d902dfad84c4655c68614d829de17ebfd5ff79156140eb08f5d57669a7dfdc36"
+      "sha256": "13a2ea51b280800152b189418dcb10d11c0886d73dc50112a864b5836a1379de"
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-17T07:43:36.415Z",
-  "manifestDigest": "bf7bcff79d6ab2b46eeec82e8bf70713b9a2191408dd99f93e591ce0b1a6e96c"
+  "generatedAt": "2026-10-17T21:21:03.696Z",
+  "manifestDigest": "4278fee40ba382fcefdb3876931e1a8f12a3c26d467a096e6ba3ab166bfe8846"
 }
