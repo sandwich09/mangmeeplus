@@ -59,14 +59,14 @@ test('a routed answer-preference request runs through the owner-bound commands',
   assert.equal(await remember.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general,
     responsePreference: { kind: 'set', values: { detail: 'short' } } }), true);
   assert.deepEqual(remember.changes.map(change => change.set), [{ detail: 'short' }]);
-  assert.match(remember.delivered[0]!, /^จำไว้แล้วค่ะ ต่อไปจะตอบแบบสั้น/u);
+  assert.match(remember.delivered[0]!, /^Saved your answer preferences: Short\./u);
   const list = setup({ detail: 'short' });
   assert.equal(await list.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general, responsePreference: { kind: 'list' } }), true);
-  assert.equal(list.changes.length, 0); assert.match(list.delivered[0]!, /• สั้น/u);
+  assert.equal(list.changes.length, 0); assert.match(list.delivered[0]!, /• Short/u);
   const forgetNothing = setup({});
   assert.equal(await forgetNothing.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: general,
     responsePreference: { kind: 'delete', keys: ['detail'] } }), true);
-  assert.equal(forgetNothing.changes.length, 0); assert.equal(forgetNothing.delivered[0], LINE_PREFERENCE_NOTHING_TO_FORGET);
+  assert.equal(forgetNothing.changes.length, 0); assert.equal(forgetNothing.delivered[0], 'No matching answer preference was saved, so nothing was deleted.');
   // A one-off style beside a business question, an invalid shape, or an unbound chat stores nothing and keeps the normal turn.
   const mixed = setup({});
   assert.equal(await mixed.flow.handleRoutedPreference(event, 'request', { status: 'ROUTED', semanticSubrequests: [...general, { index: 1, kind: 'read', goal: 'why' }],

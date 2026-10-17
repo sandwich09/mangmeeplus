@@ -1491,8 +1491,8 @@ describe('R-L4 F10 reimbursement.list_pending_approvals::list — เบิก�
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /^เบิกจ่ายรออนุมัติ: 2 รายการ รวม 4,000\.00 บาท/);
     // C6 (batch 5c): a short list-item date, year-free within the tool's own as-of year.
-    assert.match(r.replyText, /\n1\. สมชาย \(5 ส\.ค\.\): 1,500\.00 บาท/);
-    assert.match(r.replyText, /\n2\. สมหญิง \(6 ส\.ค\.\): 2,500\.00 บาท/);
+    assert.match(r.replyText, /\n• สมชาย \(5 ส\.ค\.\): 1,500\.00 บาท/);
+    assert.match(r.replyText, /\n• สมหญิง \(6 ส\.ค\.\): 2,500\.00 บาท/);
     assert.doesNotMatch(r.replyText, /ที่มา:|Source:/);
     assert.deepEqual(r.webLinks, [{ label: 'รายการเบิกจ่ายรออนุมัติ', path: '/companies/c1/reimbursements' }]);
   });

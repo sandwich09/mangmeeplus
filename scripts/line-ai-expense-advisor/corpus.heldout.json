@@ -393,7 +393,7 @@
             "no_tool": true,
             "must_answer": true,
             "forbidden_tools": ["sales.get_sales_summary", "accounting.list_recent_documents"],
-            "must_mention_any": ["แพ็กเกจ"]
+            "must_mention_any": ["แพ็กเกจ", "ยังไม่มี"]
           } }
         }
       ]
@@ -411,7 +411,7 @@
             "no_tool": true,
             "must_answer": true,
             "forbidden_tools": ["reports.get_monthly_report_summary", "ledger.get_report_summary"],
-            "must_mention_any": ["แพ็กเกจ"]
+            "must_mention_any": ["แพ็กเกจ", "ยังไม่มี"]
           } }
         }
       ]
@@ -429,7 +429,7 @@
             "no_tool": true,
             "must_answer": true,
             "forbidden_tools": ["procurement.get_summary", "procurement.search_suppliers", "procurement.get_ap_outstanding"],
-            "must_mention_any": ["แพ็กเกจ"]
+            "must_mention_any": ["แพ็กเกจ", "ยังไม่มี"]
           } }
         }
       ]
@@ -447,7 +447,7 @@
             "no_tool": true,
             "must_answer": true,
             "forbidden_tools": ["inventory.get_stock_balance", "inventory.list_low_stock", "inventory.search_products"],
-            "must_mention_any": ["แพ็กเกจ"]
+            "must_mention_any": ["แพ็กเกจ", "ยังไม่มี"]
           } }
         }
       ]

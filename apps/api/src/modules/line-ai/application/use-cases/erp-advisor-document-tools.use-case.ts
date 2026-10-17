@@ -1,3 +1,4 @@
+import { lineReplyLanguage, lineDisplayDate, lineUiLabel } from '../../domain/logic/line-language.logic';
 /** Sold-pack document reads. No preparation, issuance, filing or payment. */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -32,10 +33,11 @@ export class VoucherListRecentTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: { q?: string; branchId?: string } = {}): Promise<ToolResult> {
     if (!ctx.permissions.includes('expense.disbursement.read')) return denied(this.toolName);
     const page = await this.vouchers.list(requestContext(ctx), { q: input.q, branchId: input.branchId, page: 1, pageSize: 10 });
+    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
     const items = page.data.map(({ id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate, lineCount }) =>
       ({ id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate, lineCount }));
-    return result(ctx, this.toolName, { total: page.total, items, message: page.total
-      ? `พบใบเตรียมจ่าย/ใบสำคัญจ่าย ${page.total} ใบค่ะ\n${items.map((v, i) => `${i + 1}) ${v.documentNumber ?? 'ฉบับร่าง'} · ${v.payeeName} · ${money(v.totalAmount)} บาท · ${DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ'}`).join('\n')}${page.total > items.length ? '\nแสดง 10 ใบล่าสุดค่ะ' : ''}`
+    return result(ctx, this.toolName, { total: page.total, items, message: language === 'en' ? (page.total ? `${page.total} payment vouchers.\n${items.map(v => `• ${v.documentNumber ?? 'Draft'} · ${v.payeeName} · ${money(v.totalAmount)} THB · ${lineUiLabel(DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ', language)}`).join('\n')}` : 'No payment vouchers are available within your access.') : page.total
+      ? `พบใบเตรียมจ่าย/ใบสำคัญจ่าย ${page.total} ใบค่ะ\n${items.map((v, i) => `• ${v.documentNumber ?? 'ฉบับร่าง'} · ${v.payeeName} · ${money(v.totalAmount)} บาท · ${DISBURSEMENT_VOUCHER_STATUS_LABELS[v.status] ?? 'รอตรวจสอบ'}`).join('\n')}${page.total > items.length ? '\nแสดง 10 ใบล่าสุดค่ะ' : ''}`
       : 'ยังไม่มีใบเตรียมจ่าย/ใบสำคัญจ่ายที่คุณมีสิทธิ์ดูค่ะ' }, 'expenses/disbursement-vouchers', 'ใบเตรียมจ่าย/ใบสำคัญจ่าย');
   }
 }
@@ -47,11 +49,12 @@ export class VoucherGetDetailTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: { voucherId?: string }): Promise<ToolResult> {
     if (!ctx.permissions.includes('expense.disbursement.read')) return denied(this.toolName);
     if (typeof input.voucherId !== 'string' || !input.voucherId.trim() || input.voucherId.length > 128) throw new BadRequestException('กรุณาเลือกใบที่ต้องการดูค่ะ');
+    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
     const v = await this.vouchers.get(requestContext(ctx), input.voucherId);
     const { id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate } = v.header;
     return result(ctx, this.toolName, { id, documentNumber, status, payeeName, totalAmount, paidDate, plannedPayDate,
       lines: v.lines.map(({ expenseNumber, amount }) => ({ expenseNumber, amount })),
-      message: `${documentNumber ?? 'ฉบับร่าง'} ของ ${payeeName} ยอด ${money(totalAmount)} บาท สถานะ${DISBURSEMENT_VOUCHER_STATUS_LABELS[status]}${paidDate ? ` วันที่จ่าย ${paidDate}` : ''}ค่ะ\n${v.lines.map((line, i) => `${i + 1}) ${line.expenseNumber ?? 'รายจ่าย'} ${money(line.amount)} บาท`).join('\n')}` },
+      message: language === 'en' ? `${documentNumber ?? 'Draft'} · ${payeeName} · ${money(totalAmount)} THB · ${lineUiLabel(DISBURSEMENT_VOUCHER_STATUS_LABELS[status], language)}${paidDate ? ` · paid ${lineDisplayDate(paidDate, language)}` : ''}\n${v.lines.map(line => `• ${line.expenseNumber ?? 'Expense'} ${money(line.amount)} THB`).join('\n')}` : `${documentNumber ?? 'ฉบับร่าง'} ของ ${payeeName} ยอด ${money(totalAmount)} บาท สถานะ${DISBURSEMENT_VOUCHER_STATUS_LABELS[status]}${paidDate ? ` วันที่จ่าย ${lineDisplayDate(paidDate, language)}` : ''}ค่ะ\n${v.lines.map((line, i) => `• ${line.expenseNumber ?? 'รายจ่าย'} ${money(line.amount)} บาท`).join('\n')}` },
     `expenses/disbursement-vouchers/${id}`, 'รายละเอียดใบเตรียมจ่าย/ใบสำคัญจ่าย');
   }
 }
@@ -92,9 +95,16 @@ export class WhtGetMonthSummaryTool implements ErpReadToolPort {
     const remittance = period ? { totalWithheld: sum(events.map(e => e.taxAmount)), eventCount: events.length, status: period.status,
       dueDate: pnd53PaperDueDay(periodKey, period.dueDate), dueDateBasis: period.dueDate ? 'configured_period' : 'paper_filing_rule' } : null;
     const totalPaid = sum(byIncomeType.map(g => g.totalPaid)), totalWithheld = sum(byIncomeType.map(g => g.totalWithheld));
-    const monthLabel = new Date(`${periodKey}-01T00:00:00.000Z`).toLocaleDateString('th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
-    const dueDateLabel = remittance && new Date(`${remittance.dueDate}T00:00:00.000Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' });
-    const message = [`งวด ${monthLabel} เฉพาะข้อมูลที่คุณมีสิทธิ์ดูค่ะ`,
+    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
+    const monthLabel = new Date(`${periodKey}-01T00:00:00Z`).toLocaleDateString(language === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+    const dueDateLabel = remittance && lineDisplayDate(remittance.dueDate, language);
+    const message = language === 'en' ? [`${monthLabel}: records within your access.`,
+      ...(certificatesReadable ? [`${issued.length} withholding certificates from ${rows.length} payments; gross ${totalPaid} THB, withheld ${totalWithheld} THB.`,
+        ...byIncomeType.map(g => `${g.incomeCategoryName}: gross ${g.totalPaid} THB, withheld ${g.totalWithheld} THB`),
+        ...issued.slice(0, 10).map(row => `${row.currentCertificate?.number ?? row.externalCertificateNumber ?? row.certificateNumber ?? 'No document number'} · ${(row.currentCertificate?.payee ?? row.prefill.payeeSnapshot).name} · withheld ${money((row.currentCertificate ?? row.prefill).withheldAmount)} THB`)] : []),
+      pnd53Readable ? remittance ? `PND53 for this period: ${remittance.totalWithheld} THB, due ${dueDateLabel}.`
+        : 'No PND53 period exists, so its remittance and due date are not yet confirmed.' : 'Your access does not include PND53 remittances.',
+      'Payment withholding and period totals may differ before synchronization; a period total is not an unpaid balance.'].join('\n') : [`งวด ${monthLabel} เฉพาะข้อมูลที่คุณมีสิทธิ์ดูค่ะ`,
       ...(certificatesReadable ? [`ออกหรือบันทึก 50 ทวิแล้ว ${issued.length} ใบ จากการจ่าย ${rows.length} รายการ ฐานเงินได้ ${totalPaid} บาท หักไว้ ${totalWithheld} บาทค่ะ`,
         ...byIncomeType.map(g => `${g.incomeCategoryName}: ฐาน ${g.totalPaid} บาท หัก ${g.totalWithheld} บาท`),
         ...issued.slice(0, 10).map(row => `${row.currentCertificate?.number ?? row.externalCertificateNumber ?? row.certificateNumber ?? 'ยังไม่มีเลขเอกสาร'} · ${(row.currentCertificate?.payee ?? row.prefill.payeeSnapshot).name} · หัก ${money((row.currentCertificate ?? row.prefill).withheldAmount)} บาท`),

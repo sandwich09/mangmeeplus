@@ -1253,9 +1253,9 @@ const PERIOD_RULES: PeriodRule[] = [
     pattern: /(\d{1,2})\s*months?\s*ago/gi,
     build: (m, today) => monthsAgo(periodCount(m[1]), today, `${periodCount(m[1])} เดือนที่แล้ว`),
   },
-  { pattern: /เดือน(?:ที่แล้ว|ก่อน)/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
-  { pattern: /(?:last|previous)\s*month/gi, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
-  { pattern: /เดือนนี้/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(0, today, 'เดือนนี้') },
+  { pattern: /(?:เดือน|ด\.\s*)(?:ที่แล้ว|ก่อน)/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
+  { pattern: /(?:last|previous)\s*month|\b(?:the\s+)?month\s+before\b/gi, build: (_m, today) => monthsAgo(1, today, 'เดือนที่แล้ว') },
+  { pattern: /(?:เดือน|ด\.\s*)นี้/gu, fuzzyGuard: true, build: (_m, today) => monthsAgo(0, today, 'เดือนนี้') },
   { pattern: /this\s*month/gi, build: (_m, today) => monthsAgo(0, today, 'เดือนนี้') },
   {
     pattern: /(?:เดือน|\bmonth\b)\s*(\d{1,2}(?:(?:\s*,\s*|\s*(?:และ|and)\s*|\s+)\d{1,2})+)(?!\d)(?:\s*(?:ปี|year)\s*['’]?(\d{2,4})|\s+(\d{4}))?(?=$|\s|[),/.!?])/giu,

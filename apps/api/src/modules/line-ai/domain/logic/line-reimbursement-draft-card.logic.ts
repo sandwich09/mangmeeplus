@@ -96,7 +96,7 @@ export function reimbursementPreviewText(preview: LineReimbursementDraftPreview,
       `Status: ${lineUiLabel(CLAIM_STATE_TEXT[claim.status] ?? '', language)}`, `Title: ${claim.title ?? '-'}`,
       `Reason: ${claim.reason}`, `Missing receipt reason: ${claim.missingReceiptReason ?? '-'}`,
       ...claim.lines.flatMap(line => [`Item: ${line.description}`, `Date: ${lineDisplayDate(line.incurredDate, language)}`,
-        `Category: ${line.categoryLabel?.trim() || 'Not selected'}`, `Purpose: ${line.purpose ?? '-'}`,
+        `Category: ${lineUiLabel(line.categoryLabel?.trim() || 'Not selected', language)}`, `Purpose: ${line.purpose ?? '-'}`,
         `Amount: ${formatClaimMoney(line.amount, claim.currency, language)}`,
         `Evidence: ${line.attachmentId ? 'Attachment included' : line.linkedExpenseId ? 'Receipt from source expense' : 'No attachment'}`,
         ...(line.linkedExpenseId ? (() => { const source = line.sourceExpenseSnapshot as Partial<ReimbursementSourceSnapshot> | undefined;
@@ -310,7 +310,7 @@ function reimbursementOptionsEnglish(options: Parameters<typeof buildReimburseme
   if (!options.collection?.categoryChosen) {
     const categories = options.choices.filter(entry => entry.kind === 'CATEGORY');
     if (categories.length) return [{ type: 'text', text: 'Please choose the expense category.', quickReply: { items: categories.slice(0, 12).map(entry => ({ type: 'action',
-      action: choice(entry.label, entry.choiceId ?? '', `Choose expense category: ${entry.label}`) })) } }];
+      action: choice(lineUiLabel(entry.label, 'en'), entry.choiceId ?? '', `Choose expense category: ${entry.label}`) })) } }];
   }
   return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion === 'ไม่มีใบเสร็จเพราะอะไรคะ' ? 'Why is the receipt missing?' : 'What was the business purpose of this claim?' }] : [];
 }

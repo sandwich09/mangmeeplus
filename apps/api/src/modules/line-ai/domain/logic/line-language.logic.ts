@@ -1,4 +1,9 @@
 import { lineReplyLanguage, lineChatAction } from '@watchdog-bms/contracts';
+export function lineCustomerText(value: string): string {
+  const ids = /\bc[a-z0-9]{24}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/iu;
+  return value.replace(/https?:\/\/[^\s]*\/companies\/[^\s]+/gu, uri => ids.test(uri) ? '' : uri)
+    .replace(new RegExp(ids.source, 'giu'), '—');
+}
 export type LineReplyLanguage = 'th' | 'en';
 export { lineReplyLanguage };
 /** Presentation metadata only; strip it before passing a control to its strict domain parser. */
@@ -18,6 +23,10 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 }
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
+  'ค่าเดินทาง': 'Travel', 'ค่าน้ำมัน': 'Fuel', 'ค่าออฟฟิศ': 'Office', 'ค่าใช้จ่ายอื่นๆ': 'Other expenses',
+  'ภาษาไทย': 'Thai', 'ภาษาอังกฤษ': 'English', 'สั้น': 'Short', 'ปกติ': 'Normal', 'ละเอียด': 'Detailed', 'ย่อหน้า': 'Paragraphs', 'หัวข้อ': 'Bullets', 'ตาราง': 'Table', 'ขั้นตอน': 'Steps',
+  'ไม่พบรูปแบบคำตอบนี้ที่จำไว้ค่ะ จึงไม่ได้ลบอะไร': 'No matching answer preference was saved, so nothing was deleted.',
+  'จำเฉพาะรูปแบบคำตอบในแชตส่วนตัวของคุณกับบริษัทนี้นาน 90 วัน อ่านค่าได้ด้วย “จำอะไรไว้บ้าง” และลบได้ด้วย “ลืมรูปแบบคำตอบทั้งหมด” ไม่เก็บข้อมูลการเงินหรือข้อมูลส่วนตัวอื่นเป็นความจำ': 'Only answer styles are saved for this private shop chat for 90 days; ask to list or forget your answer preferences at any time.',
   'งาน': 'service', 'ผู้ยื่น': 'Requester', 'ผู้มีสิทธิ์อนุมัติ': 'Authorized approver', 'ฝ่ายการเงิน': 'Finance',
   'ผู้มีสิทธิ์บันทึกจ่าย': 'Authorized payer', 'ระบบ': 'System',
   'เพิ่มพนักงาน': 'Add employee', 'แก้ไขพนักงาน': 'Edit employee', 'ปิดใช้งาน': 'Disable', 'เปิดใช้งาน': 'Enable', 'เพิ่มสาขา': 'Add branch', 'แก้ไขสาขา': 'Edit branch',

@@ -764,3 +764,20 @@ describe('resolveBranchCandidate (branch matching helper)', () => {
     });
   });
 });
+
+describe('Exam G4: bilingual entity words resolve only against the company catalog', () => {
+  it('resolves head office and branch numbers in either language without weakening ambiguity', () => {
+    const catalog = [{ id: 'head', name: 'สำนักงานใหญ่', code: 'MAIN' }, { id: 'two', name: 'สาขา 2', code: 'B2' }];
+    for (const query of ['head office', 'HEAD_OFFICE', 'สำนักงานใหญ่', 'HQ']) assert.equal((resolveBranchCandidate(query, catalog) as any).id, 'head', query);
+    for (const query of ['Branch 2', 'สาขา 2', 'สาขาสอง']) assert.equal((resolveBranchCandidate(query, catalog) as any).id, 'two', query);
+    assert.equal(resolveBranchCandidate('head office', [...catalog, { id: 'other-head', name: 'สำนักงานใหญ่', code: 'OTHER' }]).kind, 'ambiguous');
+    assert.equal(resolveBranchCandidate('Branch 3', catalog).kind, 'not_found');
+  });
+  it('maps bilingual category vocabulary after exact catalog matches, never vendor names', () => {
+    const catalog = [{ id: 'fuel', name: 'ค่าน้ำมัน' }, { id: 'travel', name: 'ค่าเดินทาง' }];
+    for (const query of ['fuel', 'category fuel', 'ค่าน้ำมัน']) assert.equal((resolveNameCandidate(query, catalog, CATEGORY_NAME_STRIP_PREFIXES) as any).id, 'fuel', query);
+    for (const query of ['travel', 'category travel', 'ค่าเดินทาง']) assert.equal((resolveNameCandidate(query, catalog, CATEGORY_NAME_STRIP_PREFIXES) as any).id, 'travel', query);
+    assert.equal((resolveNameCandidate('Travel', [...catalog, { id: 'english', name: 'Travel' }], CATEGORY_NAME_STRIP_PREFIXES) as any).id, 'english');
+    assert.equal(resolveNameCandidate('fuel', catalog, VENDOR_NAME_STRIP_PREFIXES).kind, 'not_found');
+  });
+});
