@@ -453,3 +453,14 @@ describe('AgentCoreRuntimeClient', () => {
     }
   });
 });
+
+it('preserves presentation language across runtime validation and the synthetic continuation request', async () => {
+  const { validatePayload, payloadToTurnRequest } = await import('../../../../agentcore/runtime');
+  const payload = validatePayload({ turnId: 'language-continuation', companyId: 'company', userId: 'user',
+    messageText: 'ตรวจผลรายการค่าใช้จ่าย', locale: 'th-TH', language: 'en', permissions: [] });
+  assert.ok(payload);
+  assert.equal(payload.language, 'en');
+  assert.equal(payloadToTurnRequest(payload).language, 'en');
+  const english = validatePayload({ turnId: 'english', companyId: 'company', userId: 'user', messageText: 'Please check my expenses', locale: 'th-TH', permissions: [] });
+  assert.equal(payloadToTurnRequest(english!).language, 'en');
+});

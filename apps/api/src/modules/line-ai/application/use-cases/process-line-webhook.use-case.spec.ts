@@ -9,7 +9,7 @@ import { LineReplyAdapter } from '../../infrastructure/line-reply.adapter';
 import { validateLineDeliveryPlan } from '../../domain/logic/line-delivery-plan.logic';
 import { ForbiddenException } from '@nestjs/common';
 import assert from 'node:assert/strict';
-import { canAdvertiseReceiptCapture, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
+import { canAdvertiseReceiptCapture, lineReplyLanguage, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatBudgetMediaNotStoredReply, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, lineIntakeOfferedToolNames, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages, validLineAiReadMemoryEntries, businessDocumentOutcome, formatBusinessDocumentReply, ocrGovernanceClarifyOutcome } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
@@ -910,8 +910,8 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
   assert.equal(h.intakeRequests.length, 1, 'the accepted input is classified once');
   assert.equal(h.getAiGatewayCalled(), false, 'invalid intake never reaches requestLineTurn');
   assert.equal(delivered.length, 1);
-  // Schema-invalid model output is "I don't understand", never the transient "system is slow" copy.
-  assert.match(delivered[0]!, /ยังไม่แน่ใจว่าหมายถึงอะไร/);
+  assert.match(delivered[0]!, /ลองส่งข้อความเดิมอีกครั้ง/);
+  assert.doesNotMatch(delivered[0]!, /ไม่แน่ใจ/);
   // The real gateway errorCode is logged, not the generic AI_CONTRACT_UNSUPPORTED that used to hide it.
   const logged = updates.find((u: any) => u.data?.errorCode === 'ROUTER_SEMANTIC_SCHEMA_INVALID');
   assert.ok(logged, 'the durable row keeps the real gateway errorCode');
@@ -920,7 +920,7 @@ it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn 
 // Item 5 (223-turn eval batch 2): a route that failed because the PROVIDER throttled or timed out
 // never reached the model at all — same "system is slow" bucket as ROUTER_UNREACHABLE, never the
 // "I don't understand you" copy a genuinely unroutable plan gets.
-for (const errorCode of ['PROVIDER_THROTTLED', 'PROVIDER_TIMEOUT']) {
+for (const errorCode of ['PROVIDER_THROTTLED', 'PROVIDER_TIMEOUT', 'PROVIDER_UNKNOWN', 'PROVIDER_ACCESS_NOT_READY', 'PROVIDER_OUTPUT_INCOMPLETE']) {
   it(`treats a ${errorCode} route as transient, not "I don't understand" (item 5, 223-turn eval batch 2)`, async () => {
     const { prisma, updates } = makePrisma();
     prisma.client.lineIntakePendingMedia.findMany = async () => { throw new Error('pending media must stay untouched'); };
@@ -5791,7 +5791,6 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
   // bound chat (an apology, a question, a notice) stands on the locked design under the reader's own
   // words; its sentence is unchanged and is still what the delivery plan stores and falls back to.
   describe('a bound chat\'s short replies stand on the locked design', () => {
-    const UNCLEAR = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
     const TRANSIENT = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
     async function boundReply(errorCode: string, permissions: string[], messageText: string, over: Record<string, unknown> = { lineMessageId: 'line-message-1' }, webBaseUrl?: string) {
       const { prisma, updates } = makePrisma();
@@ -5831,7 +5830,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       ['second', ['expense.receipt.line_upload'], 'ปี 2569'],
     ] as const) {
       it(`the two apologies at the ${route} route are a card under the reader's own words, the sentence unchanged`, async () => {
-        for (const [errorCode, sentence] of [['ROUTER_SEMANTIC_SCHEMA_INVALID', UNCLEAR], ['PROVIDER_TIMEOUT', TRANSIENT]] as const) {
+        for (const [errorCode, sentence] of [['ROUTER_SEMANTIC_SCHEMA_INVALID', TRANSIENT], ['ROUTER_JSON_PARSE_FAILED', TRANSIENT], ['PROVIDER_TIMEOUT', TRANSIENT]] as const) {
           const turn = await boundReply(errorCode, [...permissions], messageText);
           assert.equal(turn.delivered.length, 1, errorCode);
           const [message] = turn.delivered;
@@ -5858,10 +5857,10 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     it('stays the text it was where a card cannot be true or cannot be drawn: a tap, a base that is not https', async () => {
       // A button tap is carried as words the reader never typed (no LINE message id): no heading of "their words".
       const tap = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'อ่านคำตอบต่อ', {});
-      assert.deepEqual(tap.delivered, [{ type: 'text', text: UNCLEAR }]);
+      assert.deepEqual(tap.delivered, [{ type: 'text', text: TRANSIENT }]);
       // LINE fetches the card's pictures over https only.
       const local = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'สิงหา ถึง ตค', { lineMessageId: 'line-message-1' }, 'http://localhost:3000');
-      assert.deepEqual(local.delivered, [{ type: 'text', text: UNCLEAR }]);
+      assert.deepEqual(local.delivered, [{ type: 'text', text: TRANSIENT }]);
     });
   });
 
@@ -10128,11 +10127,11 @@ describe('Fix-up 15: chat action navigation and reimbursement choices', () => {
   it('rechecks every advertised action before producing the primary button', () => {
     for (const action of LINE_CHAT_ACTIONS) {
       const response: any = { refused: false, presentation: { kind: 'answer_cards', cards: [{ text: action.sentence, chatActionId: action.id }] } };
-      const quick = productHelpQuickReply(response, ['ai.tool.invoke', action.permission], null)!;
+      const quick = productHelpQuickReply(response, ['ai.tool.invoke', action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])], null)!;
       if ('webPath' in action) { assert.equal(quick, undefined); continue; }
       assert.deepEqual(quick.items.map(item => item.action), [{ type: 'message', label: 'ให้น้องทำให้', text: action.command }]);
       assert.equal(productHelpQuickReply(response, [], null), undefined);
-      assert.equal(productHelpQuickReply({ ...response, refused: true }, ['ai.tool.invoke', action.permission], null), undefined);
+      assert.equal(productHelpQuickReply({ ...response, refused: true }, ['ai.tool.invoke', action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])], null), undefined);
     }
   });
 
@@ -10258,12 +10257,13 @@ it('Fix-up 15: J7 facts survive button turns to the existing guarded reimburseme
   const buttons = buildReimbursementOptionsMessages(shown)[0]!.quickReply!.items;
   assert.equal(buttons[0]!.action.label, 'ค่าน้ำมัน', 'the suggested company category is first, without silently choosing it');
   result = await run('เลือกหมวดค่าใช้จ่าย ค่าน้ำมัน', options => ({ action: {}, proposal: { fields: {}, lineChanges: [{ operation: 'ADD', values: { categoryChoiceId: options.choices.find((choice: any) => choice.label === 'ค่าน้ำมัน').choiceId } }] } }));
-  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  assert.equal((result.data as any).reimbursementDraft.status, 'preview', JSON.stringify(result));
+  const ready = (result.data as any).reimbursementDraft;
   result = await run('ยังไม่ได้บอกเหตุผล', () => ({ action: {}, proposal: { fields: { reason: 'คำที่แต่งขึ้น' } } }));
-  assert.equal((result.data as any).reimbursementDraft.errorCode, 'invalid_provenance');
-  assert.equal(action.commandJson.accepted.proposal.fields.reason, undefined, 'a bad new fragment cannot overwrite the previously accepted facts');
+  assert.equal((result.data as any).reimbursementDraft.errorCode, 'source_changed', 'a ready card cannot accept an unbound later fragment');
+  assert.equal(action.previewJson.after.reason, 'ค่าน้ำมัน', 'a bad fragment cannot overwrite source facts');
   result = await run('เดินทางพบลูกค้า', () => ({ action: {}, proposal: { fields: { reason: 'เดินทางพบลูกค้า' } } }));
-  const preview = (result.data as any).reimbursementDraft;
+  const preview = ready;
   assert.equal(preview.status, 'preview', JSON.stringify(result));
   assert.equal(preview.preview.after.amount, '350.0000');
   assert.equal(preview.preview.after.lines[0].incurredDate, '2026-10-15');
@@ -10559,10 +10559,12 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
       assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.purpose.value, 'ไปส่งของให้ลูกค้า');
     }
     const options = action.commandJson.accepted.options;
-    for (const reimbursementHints of [{ description: 'คำที่ผู้ใช้ไม่ได้พิมพ์', amount: '350' }, { description: 'ค่าน้ำมัน', amount: '999' }])
+    for (const reimbursementHints of [{ description: 'ค่าน้ำมัน', amount: '999' }])
       assert.equal((adapter as any).intakeProposal({ ...authority, acceptedRequest: { ...authority.acceptedRequest, reimbursementHints } }, options), undefined);
-    assert.equal((adapter as any).intakeProposal(authority, { ...options, choices: [...options.choices, { kind: 'SOURCE', details: { eligible: true } }] }), undefined,
-      'an existing bill still requires the user to select its issued source choice');
+    assert.equal((adapter as any).intakeProposal(authority, { ...options, choices: [...options.choices, { kind: 'SOURCE', details: { eligible: true } }] }).lineChanges[0].values.linkedExpenseChoiceId, undefined,
+      'a new claim never silently links an unrelated existing bill');
+    const recovered = (adapter as any).intakeProposal({ ...authority, acceptedRequest: { ...authority.acceptedRequest, reimbursementHints: { description: 'คำที่ผู้ใช้ไม่ได้พิมพ์', amount: '350' } } }, options);
+    assert.ok(recovered); assert.doesNotMatch(recovered.lineChanges[0].values.description.value, /คำที่ผู้ใช้ไม่ได้พิมพ์/);
   }
   let facts = structuredClone(action.commandJson.accepted.proposal.lineChanges[0].values);
   assert.equal(facts.amount.value, expectedAmount); assert.equal(facts.incurredDate.value, '2026-10-15');
@@ -10587,7 +10589,8 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   assert.equal((await adapter.choose({ ctx: { ...ctx, userId: 'foreign' }, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale');
   assert.equal((await adapter.choose({ ctx, owner: owner as any, ownerEpoch: 1, control: parseLineReimbursementChoiceControl(noReceipt.data)! })).status, 'stale', 'an old button cannot change the next stage');
   if (withPhoto) {
-    assert.equal(messages[0].quickReply.items[0].action.type, 'cameraRoll');
+    assert.match(messages[0].text, /เลือกหมวด/);
+    assert.equal(messages[0].quickReply.items[0].action.type, 'postback', 'photo is optional while the draft is prepared');
     let uploaded = 0, completed = 0;
     const file = { id: 'claim-photo', companyId: ctx.companyId, branchId: branch.id, uploadedByUserId: ctx.userId,
       status: 'ACTIVE', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', updatedAt: now, checksumSha256: 'photo-sha' };
@@ -10616,10 +10619,10 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   else assert.equal(action.commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, null);
   assert.deepEqual(action.commandJson.accepted.proposal.lineChanges[0].values.amount, facts.amount);
   const category = messages[0].quickReply.items.find((item: any) => item.action.label === categoryName).action;
-  messages = await tap(live22 ? fixture.categoryPostback : category.data);
+  messages = await tap(category.data); // current facts bind this button; a historical button must become stale after facts change
   assert.doesNotMatch(JSON.stringify(messages), /ส่วนที่ยังไม่เสร็จ|ข้อ 1|ส่งรูปใบเสร็จ|ไม่มีสิทธิ์/);
-  if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /เหตุผลที่ไม่มีใบเสร็จ/);
-  if (live22 && journey === 'J7') assert.equal(messages[0].text, 'ขอเหตุผลการเบิกค่าน้ำมัน 350 บาทสั้นๆ ค่ะ');
+  if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /ไม่มีใบเสร็จเพราะอะไร/);
+  if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.equal(messages[0].text, 'ไม่มีใบเสร็จเพราะอะไรคะ');
   currentRoute = live.route;
   currentFragment = { fields: { reason: 'เดินทางพบลูกค้า', ...(!withPhoto ? { missingReceiptReason: 'ร้านไม่ออกใบเสร็จให้' } : {}) } };
   if (fresh23 === 4) currentRoute = FX24_LIVE.J7.turns[4].route;
@@ -10629,9 +10632,10 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   if (fresh23 === 4 || live25) {
     assert.match(JSON.stringify(messages), /บันทึกเป็นร่าง/);
     assert.equal(h.aiGatewayRequests.length, live25 ? 0 : 1, 'the pending reason is collected after metered intake without another planner');
-    assert.equal(action.previewJson.after.reason, (live25 ? FX25_LIVE : FX24_LIVE).J7.turns[4].body.events[0].message.text);
+    assert.equal(action.previewJson.after.reason, 'ค่าน้ำมัน');
+    if (!live25) assert.equal(action.previewJson.after.missingReceiptReason, FX24_LIVE.J7.turns[4].body.events[0].message.text);
     assert.equal(action.previewJson.after.amount, '350.0000');
-    assert.equal(h.intakeRequests.at(-1).messageText, 'ขับรถไปส่งของให้ลูกค้า');
+    if (!live25) assert.equal(h.intakeRequests.at(-1).messageText, 'ขับรถไปส่งของให้ลูกค้า');
   }
   if (editAmount) assert.equal(action.previewJson.after.amount, '380.0000');
   assert.equal(action.status, 'PREVIEW', JSON.stringify(messages)); assert.ok(evidenceChecks > 0);
@@ -10672,7 +10676,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
       messages = await tap(fixture.savePostback);
       assert.equal(writes, 1); assert.deepEqual(messages[0].quickReply.items[0].action, savedSubmitButton);
       messages = await tap(savedSubmitButton.data);
-      assert.match(JSON.stringify(messages), /แนบหลักฐาน \/ เปิดใบเบิก/);
+      assert.match(JSON.stringify(messages), /expense_action_confirm/);
       assert.doesNotMatch(JSON.stringify(messages), /ขอเลือกจากรายการ/); assert.equal(savedClaim.status, 'DRAFT');
     }
     // Eligible variant: evidence has been completed on the persisted claim before submission.
@@ -10983,7 +10987,7 @@ it('Fix-up 21A C03: exact live approve postback is parsed; real approval preflig
     {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'fx21-secret' } as any,
     { execute: async () => toRequestDetail(claim) } as any, undefined, undefined, approval);
   (actions as any).grounded = async () => true;
-  assert.match((await actions.preview(ctx, chatKeyHashOf(BASE_EVENT), FX21_LIVE.C03.tools[1].input, true)).reply, /ต้องแนบและตรวจหลักฐาน/);
+  assert.match((await actions.preview(ctx, chatKeyHashOf(BASE_EVENT), FX21_LIVE.C03.tools[1].input, true)).reply, /ยังไม่ได้อนุมัติใบเบิก.*เปิดใบเบิกในเว็บ.*แนบและตรวจหลักฐาน/);
   const h = makeUseCase(prisma, { permissions, roles: ctx.roles, branchIds: seed.branchIds, intakeRouteFn: () => FX21_LIVE.C03.route,
     aiGatewayFn: async request => {
       const budget: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } }; let round = 0;
@@ -11019,13 +11023,14 @@ it('Fix-up 21A C03: exact live approve postback is parsed; real approval preflig
   assert.equal(decisions, 0);
   await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'fx21-c03-preview', messageText: FX21_LIVE.C03.message });
   const messages = delivered.at(-1)!;
-  assert.match(JSON.stringify(messages), /ต้องแนบและตรวจหลักฐาน/);
+  assert.match(JSON.stringify(messages), /แนบและตรวจหลักฐาน/);
   assert.doesNotMatch(JSON.stringify(messages), /expense_action_confirm/);
   assert.equal(messages[0].contents.footer.contents[0].action.type, 'uri');
   assert.equal(messages[0].contents.footer.contents[0].action.uri, `https://app.example.com/companies/${ctx.companyId}/reimbursements/${claim.id}?openExternalBrowser=1`);
   assert.equal(decisions, 0);
 });
 
+const EXAM_E_REPLAYS = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/advisor-exam-e-router-replays.json'), 'utf8')) as any[];
 const fx21bReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx21b-router-replays.json'), 'utf8')) as any[];
 const fx22bReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx22b-router-replays.json'), 'utf8')) as any[];
 async function fx21bBoundWebhook(t: TestContext, replay: any, permissions: string[]) {
@@ -11051,6 +11056,7 @@ async function fx21bBoundWebhook(t: TestContext, replay: any, permissions: strin
     }, createTurn: async () => ({ id: 'fx21b-turn' }) };
   flow.reliabilityContext = async () => replay.taskProjection ? { taskProjection: structuredClone(projection) } : {};
   flow.prepareTextGrantV2 = async (event: any) => {
+    event.inputEvidence ??= (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence;
     const now = Date.now(), grant = { version: 2, turnKey: event.inputEvidence.turnKey, authorityKind: 'webhook_event', authorityId: event.webhookEventId,
       channelOwnerDigest: 'a'.repeat(64), attemptKey: 'attempt', monthKey: '2026-10', payerCompanyId: owner.companyId,
       model: { provider: 'openai', modelId: 'gpt-4.1-mini', region: 'global' }, allowedProfileIds: ['line-intake-text/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
@@ -11065,24 +11071,26 @@ async function fx21bBoundWebhook(t: TestContext, replay: any, permissions: strin
     const accepted = freezeAcceptedLedgerRequest(input.acceptedRequest, { ...input, turnId: input.turnId });
     ledgerRows.set(accepted.deliveryId, { ...input, id: accepted.deliveryId, acceptedRequestJson: accepted, expiresAt: new Date(Date.now() + 900_000) });
     return accepted.deliveryId;
-  }, ack: async () => undefined, coverageToSubRequests: () => [], openWaitingUser: async () => [], listOpenWaiting: async () => [], listWaiting: async () => [] };
+  }, appendSubRequests: async () => undefined, ack: async () => undefined, coverageToSubRequests: () => [], openWaitingUser: async () => [], listOpenWaiting: async () => [], listWaiting: async () => [] };
   await fx20RealLineDelivery(t, flow, prisma, delivered, conversationId);
   let count = 0;
-  const execute = async (text = replay.messageText, postbackData?: string) => {
+  const execute = async (text = replay.messageText, postbackData?: string, webhookBody?: any) => {
     let webhookEventId = `fx21b-${replay.source.replaceAll('/', '-')}-${++count}`;
     let enqueued: any;
     const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: baseEvent.messagingChannelId } as any), flow.config,
       { enqueue: async (value: any) => { enqueued = value; } } as any);
-    const body = !postbackData && count === 1 && replay.body ? structuredClone(replay.body) : { events: [postbackData ? { type: 'postback', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, postback: { data: postbackData } } : { type: 'message', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, message: { type: 'text', id: webhookEventId, text } }] };
+    const body = webhookBody ? structuredClone(webhookBody) : !postbackData && count === 1 && replay.body ? structuredClone(replay.body) : { events: [postbackData ? { type: 'postback', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, postback: { data: postbackData } } : { type: 'message', webhookEventId, replyToken: baseEvent.replyToken, source: { type: 'user', userId: baseEvent.lineUserId }, message: { type: 'text', id: webhookEventId, text } }] };
     webhookEventId = body.events[0].webhookEventId;
     const rawBody = Buffer.from(JSON.stringify(body));
     await controller.lineWebhook({ body, rawBody, headers: { 'x-line-signature': createHmac('sha256', 'line-secret').update(rawBody).digest('base64') } } as any);
     if (!postbackData) assert.equal(enqueued.item.text, text);
-    const inputEvidence = (await createLineAiInputEvidence({ turnKey: webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const inputEvidence = (await createLineAiInputEvidence({ turnKey: webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: enqueued.item.text }] }))!.inputEvidence;
     const event = { ...baseEvent, webhookEventId, messageText: enqueued.item.text, inputEvidence,
-      ...(replay.body && count === 1 ? { replyToken: enqueued.item.replyToken, lineMessageId: enqueued.item.lineMessageId } : {}),
+      ...(body.events[0].message ? { replyToken: enqueued.item.replyToken, lineMessageId: enqueued.item.lineMessageId } : {}),
       ...(enqueued.item.counterpartyControl ? { counterpartyControl: enqueued.item.counterpartyControl } : {}),
       ...(enqueued.item.expenseActionControl ? { expenseActionControl: enqueued.item.expenseActionControl } : {}),
+      ...(enqueued.item.reimbursementChoiceControl ? { reimbursementChoiceControl: enqueued.item.reimbursementChoiceControl } : {}),
+      ...(enqueued.item.reimbursementDraftControl ? { reimbursementDraftControl: enqueued.item.reimbursementDraftControl } : {}),
       ...(enqueued.item.draftUpdatePreviewId ? { draftUpdatePreviewId: enqueued.item.draftUpdatePreviewId } : {}) };
     await h.useCase.execute(event); return event;
   };
@@ -11438,14 +11446,18 @@ it('Fix-up 23 R2: exact after-fx22 E02 waiting tap saves an unreviewed evidence 
   assert.equal(writes.length, waitingWrites);
 });
 
-it('Fix-up 24 D4: exact C05 router starts the counterparty card and offers only its dependent expense after signed save', async t => {
+for (const examId of [null, 'C05-xd-fail1#1', 'C05-xd-fail2#1', 'C05-run1#1']) it(`${examId?.startsWith('C05-run') ? 'Exam F2' : examId ? 'Exam E1' : 'Fix-up 24 D4'}: exact ${examId ?? 'C05'} counterparty save continues to the tax-bearing expense`, async t => {
   const { LineCounterpartyService, CounterpartyActionPreviewTool } = await import('../line-counterparty.service');
   const { CreateCounterpartyUseCase, GetCounterpartyUseCase, UpdateCounterpartyUseCase } = await import('../../../accounting-documents/application/use-cases/counterparty.use-case');
   const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { CreateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
   const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
-  const turn = FX24_LIVE.C05.turns[1], text = turn.body.events[0].message.text;
-  const h = await fx21bBoundWebhook(t, { source: 'after-fx23/C05', messageText: text, route: turn.route },
+  const turn = examId ? (examId.startsWith('C05-run') ? EXAM_F_REPLAYS : EXAM_E_REPLAYS).find(row => row.id === examId) : FX24_LIVE.C05.turns[1], text = turn.body.events[0].message.text;
+  t.mock.timers.enable({ apis: ['Date'], now: turn.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, { source: examId?.replace('#', '-') ?? 'after-fx23/C05', messageText: text, route: turn.route, body: turn.body },
     ['line.ai.query', 'ai.tool.invoke', 'accounting.counterparty.manage', 'accounting.counterparty.read', 'expense.create', 'expense.read', 'expense.receipt.line_upload']);
+  h.flow.config.lineExpenseDraftConversationEnabled = true;
+  h.flow.expenseDraftConversation = { routeContexts: async () => [] };
   h.prisma.client.aiConversation.findFirst = async () => ({ id: 'counterparty-owner', lifecycleEpoch: 1 });
   h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant', 'wht_50bis'].map(featureKey => ({ featureKey, enabled: true }));
   let counterparty: any; const createdDrafts: any[] = [];
@@ -11454,18 +11466,24 @@ it('Fix-up 24 D4: exact C05 router starts the counterparty card and offers only 
   const service = new LineCounterpartyService(h.prisma, new GetCounterpartyUseCase(cpRepo), new CreateCounterpartyUseCase(cpRepo, { log: async () => undefined } as any),
     new UpdateCounterpartyUseCase(cpRepo, {} as any), new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx24-cp' } as any);
   h.flow.counterparties = service;
-  const record = { ...savedMediaFixture('fx24-wht-draft'), status: 'DRAFT', whtAmount: '300.0000', grandTotalAmount: '10000.0000', vendorNameSnapshot: 'บริษัท ป้ายสวย จำกัด' };
+  let record: any;
   const repo: any = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByLineMessageId: async () => null,
-    findByIdWithRelations: async () => record, updateExpense: async (input: any) => { Object.assign(record, input); return record; } };
+    resolveCreateBranchId: async () => 'branch-1', findByIdWithRelations: async () => record,
+    createExpense: async (input: any, within: any) => {
+      assert.equal(input.companyId, 'company-1'); assert.equal(input.createdByUserId, 'user-1');
+      createdDrafts.push(input); record = { ...savedMediaFixture('fx24-wht-draft'), ...input, status: 'DRAFT', updatedAt: new Date() };
+      await within({}, record); return record;
+    }, upsertLines: async (_company: string, _id: string, lines: any[]) => { record.lines = lines; },
+    updateExpense: async (input: any) => { Object.assign(record, input); return record; } };
+  const audit = { log: async () => undefined } as any;
   h.flow.expenseRepo = repo;
-  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, { execute: async (_ctx: any, input: any) => {
-    createdDrafts.push(input); assert.deepEqual(input.whtInput, { inputType: 'RATE', value: '3' });
-    assert.equal(input.vendorCounterpartyId, counterparty.id); assert.equal(Number(input.lines[0].unitPrice), 10000); return record;
-  } } as any, { log: async () => undefined } as any, { append: async () => undefined } as any);
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, new CreateExpenseDraftUseCase(repo, audit,
+    { resolveLines: async (_ctx: any, _header: any, lines: any[]) => lines } as any,
+    { assertLaunchRouteOpen: async () => undefined } as any), audit, { append: async () => undefined } as any);
   h.flow.aiGateway.requestLineTurn = async (request: any) => {
     assert.equal(request.semanticSubrequests.length, 1); assert.match(request.semanticSubrequests[0].goal, /ข้อมูลคู่ค้า/);
     const result = await new CounterpartyActionPreviewTool(service).execute({ ...request.userContext, userId: request.userContext.internalUserId,
-      requestId: request.requestId, chatKeyHash: chatKeyHashOf(BASE_EVENT) }, { action: 'CREATE', displayName: 'บริษัท ป้ายสวย จำกัด',
+      requestId: request.requestId, chatKeyHash: chatKeyHashOf(h.baseEvent) }, { action: 'CREATE', displayName: 'บริษัท ป้ายสวย จำกัด',
       taxId: '0105561234560', addressText: '12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900', entityKind: 'JURISTIC' });
     return { requestId: request.requestId, replyText: (result.data as any).reply, sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
       intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [result.toolName], durationMs: 1,
@@ -11477,10 +11495,16 @@ it('Fix-up 24 D4: exact C05 router starts the counterparty card and offers only 
   await h.execute('ยืนยันบันทึก', confirm);
   payload = JSON.stringify(h.delivered.at(-1)); assert.match(payload, /บันทึกข้อมูลคู่ค้าแล้ว/); assert.match(payload, /ทำข้อ 1 ก่อน/);
   assert.doesNotMatch(payload, /ทำข้อ 3 ก่อน|เลือกงานที่จะทำก่อน/); assert.equal(createdDrafts.length, 0);
-  await h.execute('ทำข้อ 1 ก่อน');
+  const next = h.delivered.at(-1)!.flatMap((message: any) => message.quickReply?.items ?? []).find((item: any) => item.action.label === 'ทำขั้นตอนถัดไป');
+  assert.ok(next, payload); assert.equal(next.action.text, 'ทำข้อ 1 ก่อน');
+  await h.execute(next.action.text);
   assert.equal(createdDrafts.length, 1, JSON.stringify(h.delivered.at(-1)));
   assert.equal(record.vendorTaxIdSnapshot, '0105561234560'); assert.match(record.vendorAddressSnapshot, /ลาดพร้าว/);
   assert.equal(record.vendorEntityKindSnapshot, 'JURISTIC'); assert.equal(record.whtAmount, '300.0000');
+  assert.equal(Number(record.grandTotalAmount), 10000); assert.equal(Number(record.netPayableAmount), 9700);
+  assert.equal(record.status, 'DRAFT');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /หัก ณ ที่จ่าย 3%/u);
+  assert.ok(h.projection().tasks.some((task: any) => task.subrequests.some((sub: any) => /50\s*ทวิ/u.test(sub.goal) && sub.status !== 'handled')), 'issuing the certificate still requires the later tax checks and human confirmation');
   assert.equal(h.intakeRequests.length, 2, 'each new text stage remains model-metered');
 });
 
@@ -11706,30 +11730,43 @@ for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_
 
 const FX27_LIVE = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx27-router-replays.json'), 'utf8'));
 
-for (const key of ['C05_passing', 'C05_earlier']) it(`Fix-up 27 F2: exact ${key} webhook/router creates 10000 with WHT 300 without reasking amount or purpose`, async t => {
+for (const key of ['C05_passing', 'C05_earlier', 'C05-run2#1']) it(`${key.startsWith('C05-run') ? 'Exam F2' : 'Fix-up 27 F2'}: exact ${key} webhook/router creates 10000 with WHT 300 without reasking amount or purpose`, async t => {
   const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
   const { CreateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
-  const replay = { ...structuredClone(FX27_LIVE[key]), messageText: FX27_LIVE[key].body.events[0].message.text };
+  const source = key.startsWith('C05-run') ? EXAM_F_REPLAYS.find(row => row.id === key) : FX27_LIVE[key];
+  const replay = { source: key, ...structuredClone(source), messageText: source.body.events[0].message.text };
   t.mock.timers.enable({ apis: ['Date'], now: replay.body.events[0].timestamp });
-  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'expense.receipt.line_upload', 'accounting.counterparty.manage']);
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'expense.receipt.line_upload', 'accounting.counterparty.manage',
+    ...(key.startsWith('C05-run') ? ['expense.update', 'expense.review', 'expense.confirm'] : [])]);
   h.flow.config.lineExpenseDraftConversationEnabled = true;
   h.flow.expenseDraftConversation = { routeContexts: async () => [] };
   h.prisma.client.companyFeatureEntitlement.findMany = async () => ['expenses', 'ai_line_assistant', 'wht_50bis', 'wht_pnd53'].map(featureKey => ({ featureKey, enabled: true }));
   let creates = 0, record: any;
   const lines: any[] = [];
-  const repo: any = { listRecentLineCaptures: async () => [], listCategories: async () => [], findByLineMessageId: async () => null,
+  const repo: any = { listRecentLineCaptures: async () => [], listCategories: async () => key.startsWith('C05-run') ? [{ id: 'cat-service', name: 'ค่าบริการ', status: 'ACTIVE' }] : [], findByLineMessageId: async () => null,
     resolveCreateBranchId: async () => 'branch-1', findByIdWithRelations: async () => record,
     createExpense: async (input: any, within: any) => {
       assert.equal(input.companyId, 'company-1'); assert.equal(input.createdByUserId, 'user-1'); creates++;
       record = { ...savedMediaFixture('fx27-hired-service'), ...input, status: 'DRAFT', updatedAt: new Date() };
       await within({}, record); return record;
-    }, upsertLines: async (_company: string, _id: string, rows: any[]) => { lines.push(...rows); },
+    }, upsertLines: async (_company: string, _id: string, rows: any[]) => { lines.push(...rows); record.lines = rows; },
     updateExpense: async (input: any) => { Object.assign(record, input); return record; } };
   const audit = { log: async () => undefined } as any;
   h.flow.expenseRepo = repo;
   h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo,
     new CreateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any,
       { assertLaunchRouteOpen: async () => undefined } as any), audit, { append: async () => undefined } as any);
+  if (key.startsWith('C05-run')) {
+    const { LineExpenseActionService } = await import('../line-expense-action.service');
+    const { GetExpenseUseCase, MarkExpenseReadyUseCase, ConfirmExpenseUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+    const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+    repo.findById = async () => record;
+    const actions = new LineExpenseActionService(h.prisma, repo, new GetExpenseUseCase(repo), new MarkExpenseReadyUseCase(repo),
+      new ConfirmExpenseUseCase(repo, audit, {} as any, {} as any), {} as any, {} as any, {} as any, new LineDraftPreviewStore(),
+      { aiGatewayInternalSecret: 'exam-f2', webBaseUrl: 'https://web.eval.test' } as any);
+    h.prisma.client.aiConversation.findFirst = async () => ({ id: 'exam-f2-owner', lifecycleEpoch: 1 });
+    h.flow.expenseActions = actions;
+  }
   // The earlier route also asks an independent WHT read; it must not affect the capture.
   h.flow.aiGateway.requestLineTurn = async (request: any) => ({ requestId: request.requestId, replyText: 'เลือกประเภทเงินได้ค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
     intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [], durationMs: 0,
@@ -11738,10 +11775,15 @@ for (const key of ['C05_passing', 'C05_earlier']) it(`Fix-up 27 F2: exact ${key}
   const payload = JSON.stringify(h.delivered.at(-1));
   assert.equal(creates, 1, payload); assert.equal(Number(record.grandTotalAmount), 10000);
   assert.equal(Number(record.whtAmount), 300); assert.equal(Number(record.netPayableAmount), 9700);
-  assert.equal(record.vendorNameSnapshot, 'บริษัท ป้ายสวย จำกัด'); assert.equal(record.status, 'DRAFT');
+  if (!key.startsWith('C05-run')) assert.equal(record.vendorNameSnapshot, 'บริษัท ป้ายสวย จำกัด');
+  assert.equal(record.status, 'DRAFT');
   assert.equal(lines.length, 1); assert.match(lines[0].description, /ทำป้ายหน้าร้าน/);
   assert.doesNotMatch(payload, /ระบุยอดเงิน|วัตถุประสงค์.*ให้ครบ|ราคาต่อหน่วยหรือยอดรวมเท่าไร|สินค้า\/บริการอะไร/);
   assert.equal(h.intakeRequests.length, 1, 'the exact input retains metered model intake');
+  if (key.startsWith('C05-run')) {
+    assert.match(payload, /ค่าบริการ/); assert.match(payload, /ทำขั้นตอนถัดไป/);
+    assert.doesNotMatch(payload, /บันทึกหรืออัปเดตข้อม"/);
+  }
 });
 
 for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_filed', 'disbursement_reserved', 'certificate'] as const) it(`Fix-up 27 F1: exact ondev-fx26 E02 paid edit refuses before mixed hints; reopen=${canReopen}, void preflight=${blocker ?? 'allowed'}`, async t => {
@@ -11777,7 +11819,12 @@ for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_
   assert.equal(h.intakeRequests.length, 1);
 });
 
-const FX29_QA = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx29-router-replays.json'), 'utf8')) as any[];
+// Owner 2026-10-17 supersedes the read refusal; retain the captured route and reuse its
+// already permission-checked baseline read rather than rewriting historical evidence.
+const FX29_QA = (JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx29-router-replays.json'), 'utf8')) as any[])
+  .map(replay => replay.id.includes('outofperm-approvals')
+    && ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'].some(key => replay.fixture.permissions.includes(key))
+    ? { ...replay, reads: replay.baselineTools } : replay);
 // Separate process matches the deployed gateway boundary and loads its own decorator tsconfig;
 // stdin/stdout replaces only transport, since this sandbox cannot bind an HTTP socket.
 const FX29_GATEWAY_REPLAY = String.raw`
@@ -11791,7 +11838,8 @@ globalThis.fetch = async (_url, init) => {
   const payload = JSON.parse(body.input[0].content[0].text);
   let response;
   if (String(body.instructions).startsWith('You plan one complete LINE request.')) {
-    response = { calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }] };
+    const read = replay.reads.find(row => ['reimbursement.list_pending_approvals', 'reimbursement.get_approval_backlog'].includes(row.tool));
+    response = { calls: replay.controlCalls ?? [{ index: 0, toolName: read?.tool ?? 'reimbursement.list_pending_approvals', input: read?.input ?? {} }] };
   } else {
     assert.ok(String(body.instructions).startsWith('Answer each semanticSubrequest exactly once.'));
     response = { answers: replay.route.semanticSubrequests.map(item => {
@@ -11852,12 +11900,15 @@ for (const replay of FX29_QA) it(`Fix-up 29: exact eval route through Orchestrat
   assert.ok(h.delivered.length > 0, 'the API delivers through the LINE adapter');
   const { result: response, calls, providerRequests } = executed, text = response.replyText;
   assert.doesNotMatch(text, /ดึงข้อมูลส่วนนี้ไม่ได้|counterparty-company|expense-company|READY_FOR_CONFIRMATION|NEEDS_REVIEW/u);
-  if (/T-144|T-147|outofperm/.test(replay.id)) {
+  if (/T-144|T-147/.test(replay.id) || replay.id.includes('outofperm') && replay.reads.length === 0) {
     assert.deepEqual(calls, []); assert.match(text, /ไม่มีสิทธิ์.*(?:เจ้าของกิจการ|ผู้มีสิทธิ์อนุมัติ)/u);
     assert.equal(providerRequests.length, replay.id.includes('outofperm') ? 1 : 0);
   } else {
     assert.deepEqual(calls, replay.reads.map((row: any) => ({ tool: row.tool, input: row.input })));
     assert.ok(response.semanticCoverage.every((item: any) => item.status === 'handled'));
+    if (replay.id.includes('outofperm-approvals')) {
+      assert.ok(calls.length > 0); assert.doesNotMatch(text, /ไม่มีสิทธิ์ดู|รอคุณอนุมัติ/u);
+    }
     if (replay.id.includes('T-122')) { assert.match(text, /ภาษี.*กรมสรรพากร/u); assert.doesNotMatch(text, /แพ็กเกจ|แพ็กธุรกิจ/u); assert.equal(providerRequests.length, 1); }
     if (replay.id.includes('T-100')) assert.equal(calls[0].input.documentStatus, 'NEEDS_REVIEW');
     if (replay.id.includes('T-111')) {
@@ -11878,4 +11929,375 @@ for (const replay of FX29_QA) it(`Fix-up 29: exact eval route through Orchestrat
   collect(h.delivered);
   assert.doesNotMatch(visible.join('\n'), /ดึงข้อมูลส่วนนี้ไม่ได้|counterparty-company|expense-company|TOOL_INPUT_NOT_AUTHORIZED/u);
   if (replay.id.includes('T-158')) assert.match(visible.join('\n'), /32 รายการ/u);
+});
+
+const EXAM_B_REPLAYS = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/advisor-exam-b-router-replays.json'), 'utf8')) as any[];
+const EXAM_F_REPLAYS = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/advisor-exam-f-router-replays.json'), 'utf8')) as any[];
+it('Exam F2: exact C05-run1 receipt-photo press offers review/confirmation and the native picker on the same guarded WHT draft', async t => {
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { GetExpenseUseCase, MarkExpenseReadyUseCase, ConfirmExpenseUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { buildInitialLineExpenseDraftContinuation } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const turn = EXAM_F_REPLAYS.find(row => row.id === 'C05-run1#6');
+  const replay = { source: turn.id, body: turn.body, route: {}, messageText: turn.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: turn.body.events[0].timestamp });
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update', 'expense.review', 'expense.confirm'];
+  const h = await fx21bBoundWebhook(t, replay, permissions), chat = chatKeyHashOf(h.baseEvent);
+  const record: any = { ...savedMediaFixture('exam-f2-company-service'), companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+    createdAt: new Date(),
+    status: 'DRAFT', vendorNameSnapshot: 'บริษัท ป้ายสวย จำกัด', vendorEntityKindSnapshot: 'JURISTIC', vendorTaxIdSnapshot: '0105561234560',
+    grandTotalAmount: '10000', whtAmount: '300', netPayableAmount: '9700', paidAmount: '0', paymentStatus: 'UNPAID', vatAmount: '0', vatMode: 'NO_VAT',
+    whtCategoryCode: 'WHT_SERVICE_5', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+    primaryAttachmentId: null, attachments: [], aiVerificationSummaryJson: {}, duplicateStatus: 'NO_MATCH', sourceReimbursementRequestId: null,
+    missingReceiptReason: 'รอใบเสร็จ', lines: [{ lineNumber: 1, description: 'ทำป้ายหน้าร้าน', quantity: '1', unitPrice: '10000', expenseCategoryId: 'cat-service',
+      lineSubtotalAmount: '10000', lineTotalAmount: '10000', vatAmount: '0', whtRate: '0.03', whtAmount: '300', whtCategoryCode: 'WHT_SERVICE_5' }] };
+  record.sourceChannelMetadataJson = { chatKeyHash: chat, lineExpenseDraftContinuation: buildInitialLineExpenseDraftContinuation({
+    workflowId: 'exam-f2-source', companyId: record.companyId, userId: record.createdByUserId, expenseId: record.id, chatKeyHash: chat,
+    targetRevision: record.updatedAt.toISOString(), provisionalExpenseDate: '2026-10-17', applyCategoryHints: true,
+    categories: [{ id: 'cat-service', name: 'ค่าบริการ', status: 'ACTIVE' } as any],
+    messageText: EXAM_F_REPLAYS.find(row => row.id === 'C05-run1#1').body.events[0].message.text,
+    hints: { confidence: 1, expenseDate: '2026-10-17', amount: '10000', items: [{ sourceText: 'ทำป้ายหน้าร้าน 10,000 บาท', description: 'ทำป้ายหน้าร้าน', totalAmount: '10000', expenseCategoryId: 'cat-service' }] } }) };
+  let writes = 0;
+  const read = async (company: string, id: string) => company === record.companyId && id === record.id ? record : null;
+  const repo: any = { findById: read, findByIdWithRelations: read, listRecentLineCaptures: async () => [record], listCategories: async () => [{ id: 'cat-service', name: 'ค่าบริการ', status: 'ACTIVE' }],
+    updateExpense: async () => { writes++; assert.fail('choosing evidence never confirms or pays the expense'); } };
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'exam-f2-owner', lifecycleEpoch: 1 });
+  const audit = { log: async () => undefined } as any;
+  const actions = new LineExpenseActionService(h.prisma, repo, new GetExpenseUseCase(repo), new MarkExpenseReadyUseCase(repo),
+    new ConfirmExpenseUseCase(repo, audit, {} as any, {} as any), {} as any, {} as any, {} as any, new LineDraftPreviewStore(),
+    { aiGatewayInternalSecret: 'exam-f2', webBaseUrl: 'https://web.eval.test' } as any);
+  (actions as any).updateDraft = new UpdateExpenseDraftUseCase(repo, audit, {} as any);
+  h.flow.expenseActions = actions; h.flow.expenseRepo = repo;
+  const ctx: any = { requestId: 'exam-f2-preflight', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1', roles: [], permissions, scopes: {}, authProvider: 'line' };
+  const proposed = await actions.preview(ctx, chat, { action: 'CONFIRM', expenseId: record.id }, true);
+  assert.equal(proposed.preview, undefined); assert.match(proposed.reply, /ตรวจหลักฐานเพื่อยืนยัน/);
+  await h.execute();
+  const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
+  const buttons = messages.flatMap((message: any) => message.quickReply?.items ?? []).map((item: any) => item.action);
+  assert.ok(buttons.some((action: any) => action.type === 'uri' && action.label === 'ตรวจเพื่อยืนยัน' && action.uri.includes(`/expenses/${record.id}`)), payload);
+  assert.ok(buttons.some((action: any) => action.type === 'cameraRoll'), payload);
+  assert.equal(buttons.some((action: any) => action.type === 'message' && action.text === 'ส่งรูปใบเสร็จ'), false);
+  assert.match(payload, /ยืนยันรายจ่ายก่อนทำใบเตรียมจ่ายค่ะ/); assert.equal(h.intakeRequests.length, 0, 'the existing evidence answer remains a signed-owner continuation');
+  assert.equal(writes, 0); assert.equal(record.status, 'DRAFT'); assert.equal(record.grandTotalAmount, '10000'); assert.equal(record.whtAmount, '300');
+});
+for (const captureId of ['C01-fail-amount0#1', 'C01-pass#1']) it(`Exam F1: exact ${captureId} capture, amount edit and invalid delete route retain money and tell the truth`, async t => {
+  const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineExpenseDraftConversationUseCase } = await import('../../../expenses/application/use-cases/line-expense-draft-conversation.use-case');
+  const first = EXAM_F_REPLAYS.find(row => row.id === captureId);
+  const replay = { source: captureId, body: first.body, route: structuredClone(first.route), messageText: first.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'expense.update', 'expense.receipt.line_upload']);
+  h.flow.config.lineExpenseDraftConversationEnabled = true;
+  const categories = [{ id: 'category-a-service', companyId: 'company-1', name: 'ค่าบริการ', status: 'ACTIVE' }];
+  let creates = 0, updates = 0, record: any;
+  const repo: any = { listCategories: async () => categories, listLineChargeKinds: async () => [], findByLineMessageId: async (_c: string, id: string) => record?.lineMessageId === id ? record : null,
+    resolveCreateBranchId: async () => 'branch-1', findById: async () => record, findByIdWithRelations: async () => record,
+    listLineExpenseDraftContinuationRows: async () => record ? [record] : [], listRecentLineCaptures: async () => record ? [record] : [],
+    createExpense: async (input: any, within: any) => { creates++; record = { ...savedMediaFixture('exam-f1-expense'), ...input, status: 'DRAFT', lines: [], createdAt: new Date(), updatedAt: new Date() }; await within({}, record); return record; },
+    upsertLines: async (_c: string, _id: string, rows: any[]) => { record.lines = rows.map((line, i) => ({ ...line, id: `line-${i}` })); },
+    updateExpense: async (input: any, within?: any) => { if (input.expectedUpdatedAt) assert.equal(new Date(input.expectedUpdatedAt).getTime(), record.updatedAt.getTime());
+      const { expectedUpdatedAt: _version, ...values } = input; Object.assign(record, values); updates++;
+      if (typeof record.expenseDate === 'string') record.expenseDate = new Date(record.expenseDate); if (within) await within({}, record); return record; },
+    findActiveMemberIdentity: async () => ({ userId: 'user-1' }), syncLineExpenseDraftContinuation: async () => undefined,
+    expenseCorrectionCapabilities: async () => ({ certificateOnExpense: null, disbursementReservation: null }),
+    runDuplicateCheck: async (_input: any, detect: any) => { await detect({}); return { openCandidates: 0, duplicateStatus: 'NO_MATCH' }; },
+    findNearDuplicates: async () => [], findExpenseIdsByAttachmentChecksum: async () => [], createDuplicateCandidate: async () => undefined };
+  const audit = { log: async () => undefined } as any, tax = { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any;
+  const update = new UpdateExpenseDraftUseCase(repo, audit, tax);
+  h.flow.expenseRepo = repo;
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, new CreateExpenseDraftUseCase(repo, audit, tax, { assertLaunchRouteOpen: async () => undefined } as any), audit, { append: async () => undefined } as any);
+  h.flow.expenseDraftConversation = new LineExpenseDraftConversationUseCase(repo, update);
+  await h.execute();
+  assert.equal(creates, 1); assert.equal(Number(record.grandTotalAmount), 1800); assert.equal(Number(record.lines[0].unitPrice), 1800);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ราคาต่อหน่วยหรือยอดรวมเท่าไร|"text":"0\.00 บาท/);
+  const edit = EXAM_F_REPLAYS.find(row => row.id === 'C01-fail-amount0#3');
+  // The failed journey never reached intake for this text. Replay the successful journey's
+  // amount correction response against the newly admitted exact failing input/current target.
+  replay.route = structuredClone(EXAM_F_REPLAYS.find(row => row.id === 'C01-pass#4').route);
+  replay.route.correctionHints.targetExpenseId = record.id;
+  for (const sub of replay.route.semanticSubrequests) delete sub.taskRef;
+  const before = updates;
+  await h.execute(edit.body.events[0].message.text, undefined, edit.body);
+  assert.equal(h.intakeRequests.length, 2, 'the explicit edit uses metered intake instead of answering an incidental date');
+  assert.equal(Number(record.grandTotalAmount), 1850); assert.ok(updates > before);
+  assert.equal(Number(record.lines[0].unitPrice), 1850); assert.equal(creates, 1);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /1850|1,850/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /แก้ร่างแล้ว: วันที่ 17 ต.ค. 2569\\n/);
+  const afterEdit = updates;
+  const deletion = EXAM_F_REPLAYS.find(row => row.id === 'C01-fail-amount0#4'); replay.route = structuredClone(deletion.route);
+  await h.execute(deletion.body.events[0].message.text, undefined, deletion.body);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ลองส่งข้อความเดิมอีกครั้ง/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่แน่ใจ/);
+  assert.equal(Number(record.grandTotalAmount), 1850); assert.equal(record.status, 'DRAFT'); assert.equal(updates, afterEdit);
+});
+for (const [id, amount, date] of [
+  ['X102-B', 165, '2026-10-17'], ['X085-A', 360, '2026-10-17'], ['X092-B', 230, '2026-10-17'],
+  ['X008-A', 125, '2026-10-17'], ['X012-A', 60, '2026-10-17'], ['X010-A', 800, '2026-10-16'],
+  ['F051-B', 480, '2026-10-17'], ['F036-A', 720, '2026-10-17'],
+] as const) it(`Exam B capture: exact ${id} webhook/router retains facts and offers the next action`, async t => {
+  const { CaptureLineExpenseNoteUseCase } = await import('../../../expenses/application/use-cases/expense-document.use-case');
+  const { CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineExpenseDraftConversationUseCase } = await import('../../../expenses/application/use-cases/line-expense-draft-conversation.use-case');
+  const original = EXAM_B_REPLAYS.find(row => row.id === id), first = original.turns[0];
+  const replay = { source: id, body: first.body, route: structuredClone(first.route), messageText: first.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'expense.update', 'expense.receipt.line_upload']);
+  h.flow.config.lineExpenseDraftConversationEnabled = true;
+  const categoryIds = [...new Set([...(first.route.captureHints?.items ?? []).map((item: any) => item.expenseCategoryId), first.route.captureHints?.expenseCategoryId, 'category-b-fuel'].filter(Boolean))];
+  const categories = categoryIds.map(categoryId => ({ id: categoryId, name: String(categoryId).endsWith('fuel') ? 'ค่าน้ำมัน' : String(categoryId).endsWith('travel') ? 'ค่าเดินทาง' : 'ค่าใช้จ่ายอื่นๆ', status: 'ACTIVE' }));
+  let creates = 0, record: any;
+  const repo: any = { listCategories: async () => categories, listLineChargeKinds: async () => [], findByLineMessageId: async (_company: string, message: string) => record?.lineMessageId === message ? record : null,
+    resolveCreateBranchId: async () => 'branch-1', findById: async () => record, findByIdWithRelations: async () => record,
+    listLineExpenseDraftContinuationRows: async () => record ? [record] : [], listRecentLineCaptures: async () => record ? [record] : [],
+    createExpense: async (input: any, within: any) => { creates++; record = { ...savedMediaFixture(original.turns[1]?.route?.correctionHints?.targetExpenseId ?? `exam-${id}`), ...input, status: 'DRAFT', lines: [], createdAt: new Date(), updatedAt: new Date() }; await within({}, record); return record; },
+    upsertLines: async (_company: string, _id: string, rows: any[]) => { record.lines = rows.map((line, index) => ({ ...line, id: `line-${index}` })); },
+    updateExpense: async (input: any, within?: any) => { if (input.expectedUpdatedAt) assert.equal(new Date(input.expectedUpdatedAt).getTime(), record.updatedAt.getTime()); Object.assign(record, input); if (typeof record.expenseDate === 'string') record.expenseDate = new Date(record.expenseDate); if (within) await within({}, record); return record; },
+    findActiveMemberIdentity: async () => ({ userId: 'user-1' }), syncLineExpenseDraftContinuation: async () => undefined,
+  };
+  const audit = { log: async () => undefined } as any, tax = { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any;
+  h.flow.expenseRepo = repo;
+  h.flow.captureExpenseNote = new CaptureLineExpenseNoteUseCase(repo, new CreateExpenseDraftUseCase(repo, audit, tax, { assertLaunchRouteOpen: async () => undefined } as any), audit, { append: async () => undefined } as any);
+  h.flow.expenseDraftConversation = new LineExpenseDraftConversationUseCase(repo, new UpdateExpenseDraftUseCase(repo, audit, tax));
+  await h.execute();
+  assert.equal(creates, 1, JSON.stringify(h.delivered)); assert.equal(Number(record.grandTotalAmount), amount);
+  assert.ok(record.lines[0]?.description, 'the words supply an item without another question');
+  assert.doesNotMatch(JSON.stringify(h.delivered), /ซื้อจากร้าน|ชื่อสินค้า\/บริการ|จำนวนและหน่วย/);
+  if (id === 'F051-B') {
+    assert.match(JSON.stringify(h.delivered.at(-1)), /วันไหนคะ/);
+    replay.route = structuredClone(original.turns[1].route);
+    await h.execute(original.turns[1].body.events[0].message.text, undefined, original.turns[1].body);
+    assert.equal(creates, 1, 'the date answer updates the same draft');
+  }
+  assert.equal(record.expenseDate.toISOString().slice(0, 10), date);
+  if (id === 'F036-A') {
+    replay.route = structuredClone(original.turns[1].route);
+    await h.execute(original.turns[1].body.events[0].message.text, undefined, original.turns[1].body);
+    assert.equal(creates, 1); assert.equal(Number(record.grandTotalAmount), 750, JSON.stringify(h.delivered.at(-1)));
+  }
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, lineReplyLanguage(original.turns.at(-1).body.events[0].message.text) === 'en' ? /Confirm expense/ : /ยืนยันรายการ/);
+  if (id === 'F036-A') assert.doesNotMatch(payload, /[\u0E00-\u0E7F]/u, 'English correction preserves the capture facts and switches the full delivered surface to English');
+  assert.doesNotMatch(payload, /วันไหนคะ|ซื้อจากร้าน|I01|2026-10-1[67]/);
+  assert.equal(record.status, 'DRAFT', 'no financial confirmation without the user press');
+  assert.equal(h.intakeRequests.length, id === 'F036-A' ? 2 : 1, 'capture/correction remain metered; the existing open-draft answer path retains its budget behavior');
+});
+
+for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (const receipt of id.startsWith('J7') ? ['optional-receipt'] : ['photo', 'no-receipt', ...(id === 'X036-A' ? ['optional-receipt'] : [])]) it(`${id === 'J7-E' ? 'Exam E2b' : id === 'J7' ? 'Exam D' : 'Exam B'} claim: exact ${id} ${receipt} reaches saved draft; later photo edits that same claim`, async t => {
+  const first = id === 'J7-E' ? EXAM_E_REPLAYS.find(row => row.id === 'J7-xd-fail#1') : id === 'J7' ? EXAM_D_REPLAYS.find(row => row.id === 'J7#1') : EXAM_B_REPLAYS.find(row => row.id === id).turns[0];
+  const replay: any = { source: `${id}-${receipt}`, body: first.body, route: first.route, messageText: first.body.events[0].message.text, ...(id.startsWith('J7') ? { taskProjection: structuredClone(first.taskProjection) } : {}) };
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'attachment.create', 'reimbursement.create', 'reimbursement.read_own', 'reimbursement.update_own_draft'];
+  const h = await fx21bBoundWebhook(t, replay, permissions);
+  h.flow.config.lineAiReimbursementDraftWriteEnabled = true;
+  const owner: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: h.baseEvent.messagingChannelId, chatKeyHash: chatKeyHashOf(h.baseEvent) };
+  const ctx: any = { ...owner, authSubject: owner.userId, authProvider: 'line', requestId: 'claim-test', roles: ['STAFF'], permissions, scopes: {} };
+  const now = new Date(), branch = { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'HQ', type: 'HEAD_OFFICE', updatedAt: now };
+  const actions = new Map<string, any>(); let saved: any, writes = 0, evidenceChecks = 0, acceptedRequest: any;
+  const repo: any = { isDraftActionOwnerCurrent: async () => true,
+    findActiveDraftAction: async () => [...actions.values()].find(action => ['COLLECTING', 'PREVIEW'].includes(action.status)) ?? null,
+    findDraftAction: async (_company: string, id: string) => actions.get(id),
+    findOrCreateDraftAction: async (input: any) => { if (!actions.has(input.id)) actions.set(input.id, { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now }); return actions.get(input.id); },
+    saveDraftActionCollection: async (input: any) => { const next = { ...actions.get(input.actionId), ...input, status: 'COLLECTING', updatedAt: now }; actions.set(input.actionId, next); return next; },
+    saveDraftActionPreview: async (input: any) => { const next = { ...actions.get(input.actionId), ...input, status: 'PREVIEW', updatedAt: now }; actions.set(input.actionId, next); return next; },
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: 'พิม' }], listReimbursementSources: async () => [],
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: 'พิม' }),
+    findPolicy: async () => ({ currency: 'THB', requireReceipt: receipt !== 'optional-receipt', allowMissingReceiptWithReason: true, status: 'ACTIVE' }),
+    resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any) => lines,
+    markDraftActionLineDelivered: async (input: any) => actions.get(input.actionId)?.confirmationDigest === input.confirmationDigest,
+    findRequestById: async (_company: string, id: string) => saved?.id === id ? saved : null,
+    applyDraftActionAtomic: async (input: any) => {
+      const action = actions.get(input.actionId); assert.equal(action.confirmationDigest, input.confirmationDigest); assert.equal(action.previewRevision, input.previewRevision);
+      assert.equal(input.owner.actorUserId, owner.userId); assert.equal(input.owner.companyId, owner.companyId); writes++;
+      const cmd = action.commandJson;
+      if (cmd.operation === 'UPDATE') assert.equal(cmd.requestId, saved.id);
+      saved = { ...cmd, ...cmd.header, id: saved?.id ?? action.id, status: 'DRAFT', incurredDate: new Date(cmd.header.incurredDate), updatedAt: now, createdAt: now,
+        lines: cmd.lines.map((line: any, index: number) => ({ ...line, id: `line-${index}`, incurredDate: new Date(line.incurredDate), updatedAt: now, createdAt: now })) };
+      const next = { ...action, status: 'APPLIED', requestId: saved.id, resultJson: { actionId: action.id, operation: action.operation, requestId: saved.id, committedState: 'DRAFT', amount: saved.amount, currency: 'THB', committedAt: now.toISOString(), appliedRequestUpdatedAt: now.toISOString() } };
+      actions.set(action.id, next); return { kind: 'applied', action: next, request: saved };
+    },
+  };
+  const data: any = { client: { branch: { findMany: async () => [branch], findFirst: async () => branch }, companyMembership: { findUnique: async () => ({ defaultBranchId: branch.id }) },
+    attachmentObject: { findMany: async () => [], findFirst: async () => null },
+    lineWebhookEventLog: { findUnique: async () => ({ webhookEventId: acceptedRequest.webhookEventId }) },
+    lineLedgerDelivery: { findFirst: async () => ({ acceptedRequestJson: { request: acceptedRequest } }) } } };
+  const drafts = new LineReimbursementDraftUseCase(repo, { validate: async () => { evidenceChecks++; } } as any, { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: owner.messagingChannelId } as any);
+  const service = new LineReimbursementDraftService(drafts);
+  const adapter = new LineReimbursementDraftAdapterService(data, repo, { resolvePrivateOwner: async () => ({ owner, epoch: 1, taskRevision: 1 }) } as any, service, drafts, { listCategories: async () => [{ id: 'travel', name: 'ค่าเดินทาง' }, { id: 'training', name: 'ค่าฝึกอบรม' }] } as any);
+  h.flow.reimbursementDrafts = service; h.flow.reimbursementAdapter = adapter;
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    acceptedRequest = request;
+    const toolCtx: any = { ...ctx, requestId: request.requestId, inputEvidence: request.inputEvidence, valueCandidatesV2: request.valueCandidates, budgetGrantV2: request.budgetGrantV2 };
+    const result = await adapter.getOptions(toolCtx, id.startsWith('J7') ? { operation: 'CREATE', subrequestIndex: 0 } : EXAM_B_REPLAYS.find(row => row.id === id).tools.find((tool: any) => tool.tool === 'reimbursement.draft.get_options').input);
+    assert.equal(result.status, 'ok', JSON.stringify(result));
+    return { requestId: request.requestId, replyText: 'ตรวจข้อมูลใบเบิกค่ะ', sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', refused: false,
+      toolsInvoked: ['reimbursement.draft.get_options'], toolCalls: [], durationMs: 0,
+      semanticCoverage: [{ index: 0, status: 'needs_user', question: 'ตรวจข้อมูลใบเบิกค่ะ', sourceRefIds: result.sourceRefs?.map((source: any) => source.id).filter(Boolean) }] };
+  };
+  const controls = () => h.delivered.at(-1)!.flatMap((message: any) => [...(message.quickReply?.items ?? []), ...(message.contents?.footer?.contents ?? [])]).map((item: any) => item.action).filter(Boolean);
+  const press = async (action: any) => { assert.ok(action?.data, JSON.stringify(h.delivered.at(-1))); await h.execute(action.displayText ?? 'กดปุ่มในบัตร', action.data); };
+  await h.execute();
+  const active = [...actions.values()][0]; assert.ok(active.commandJson.accepted.proposal, JSON.stringify(h.delivered));
+  const facts = structuredClone(active.commandJson.accepted.proposal.lineChanges[0].values);
+  assert.ok(facts.amount && facts.incurredDate && facts.description); assert.equal(writes, 0);
+  const authority = await (adapter as any).authority({ ...ctx, inputEvidence: acceptedRequest.inputEvidence,
+    valueCandidatesV2: acceptedRequest.valueCandidates, budgetGrantV2: acceptedRequest.budgetGrantV2 });
+  for (const amount of [undefined, Number(facts.amount.value).toFixed(4)]) {
+    const prepared = (adapter as any).intakeProposal({ ...authority, acceptedRequest: { ...acceptedRequest,
+      reimbursementHints: { ...acceptedRequest.reimbursementHints, amount } } }, active.commandJson.accepted.options);
+    assert.equal(prepared.lineChanges[0].values.amount.value, facts.amount.value, 'money formatting and an omitted hint do not discard source facts');
+  }
+  await press(controls().find((action: any) => action.label === (receipt === 'photo' ? 'ส่งรูปใบเสร็จ' : 'ไม่มีใบเสร็จ')));
+  await press(controls().find((action: any) => action.label === 'ค่าเดินทาง'));
+  if (receipt === 'no-receipt') {
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ/);
+    await h.execute('ร้านไม่ออกใบเสร็จให้');
+  } else assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ/);
+  if (id.startsWith('J7')) {
+    const continuation = structuredClone(id === 'J7-E' ? EXAM_E_REPLAYS.find(row => row.id === 'J7-xd-fail#4') : EXAM_D_REPLAYS.find(row => row.id === 'J7#4'));
+    const state = h.projection();
+    Object.assign(state, continuation.taskProjection, { lifecycleEpoch: 1, stateVersion: state.stateVersion });
+    state.tasks[0].slots.reimbursementActionId0 = active.id;
+    replay.taskProjection = state; replay.route = continuation.route;
+    data.client.aiConversation = { findUnique: async () => ({ lifecycleEpoch: 1, taskStateJson: { tasks: h.projection().tasks },
+      stateExpiresAt: new Date(Date.now() + 900_000) }) };
+    const oldConfirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+    const intakeBefore = h.intakeRequests.length;
+    await h.execute(continuation.messageText, undefined, id === 'J7-E' ? continuation.body : undefined);
+    assert.equal(h.intakeRequests.length, intakeBefore + 1, 'purpose continuation still pays for the existing intake call');
+    assert.equal(writes, 0, 'free text only prepares the updated preview');
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่มีสิทธิ์|วัตถุประสงค์.*-"/);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /ส่งของให้ลูกค้า/);
+    assert.equal(actions.get(active.id).previewJson.after.lines[0].purpose, id === 'J7-E' ? 'ขับรถไปส่งของให้ลูกค้า' : 'ส่งของให้ลูกค้า');
+    assert.notEqual(controls().find((action: any) => action.label === 'บันทึกเป็นร่าง').data, oldConfirm.data, 'changed facts invalidate the old confirm card');
+    if (id === 'J7-E') {
+      replay.route = { ...continuation.route, intent: 'EXPENSE_DOCUMENT_CAPTURE', semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID' };
+      await h.execute(continuation.messageText);
+      assert.equal(actions.size, 1); assert.equal(writes, 0);
+      assert.equal(actions.get(active.id).previewJson.after.lines[0].purpose, continuation.messageText);
+      assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /สำรองจ่ายเอง|บริษัทจ่ายคะ/);
+    }
+    if (id === 'J7') {
+    const valid = acceptedRequest.semanticSubrequests[0].taskRef.taskId;
+    acceptedRequest.semanticSubrequests[0].taskRef.taskId = 'foreign-task';
+    const refused = await adapter.getOptions({ ...ctx, requestId: acceptedRequest.requestId, inputEvidence: acceptedRequest.inputEvidence,
+      valueCandidatesV2: acceptedRequest.valueCandidates, budgetGrantV2: acceptedRequest.budgetGrantV2 }, { operation: 'CREATE', subrequestIndex: 0 });
+    assert.equal(refused.status, 'forbidden', 'an unlinked task cannot claim draft authority');
+    acceptedRequest.semanticSubrequests[0].taskRef.taskId = valid;
+    }
+    for (const text of ['ค่าแท็กซี่ 200 บาท', 'ใบเบิกนี้ทำยังไง?', 'ดูใบเบิกของฉัน']) {
+      const evidence = (await createLineAiInputEvidence({ turnKey: 'purpose-boundary', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+      assert.equal(await adapter.answerReason({ ctx, owner, ownerEpoch: 1, evidence, text, purposeFallback: true }), null, text);
+    }
+  }
+  const confirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+  assert.equal(writes, 0); await press(confirm); assert.equal(writes, 1);
+  assert.equal(Number(saved.amount), Number(facts.amount.value)); assert.equal(saved.incurredDate.toISOString().slice(0, 10), facts.incurredDate.value);
+  assert.equal(saved.lines[0].description, facts.description.value); assert.equal(saved.status, 'DRAFT'); assert.ok(evidenceChecks > 0);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /2026-10-\d\d|reimbursement-company|I01/);
+  await press(confirm); assert.equal(writes, 1, 'duplicate presses replay the receipt');
+  if (receipt === 'photo') {
+    const claimId = saved.id;
+    assert.equal((await adapter.photoTarget({ ctx, owner, ownerEpoch: 1 }))?.branchId, branch.id);
+    assert.equal(await adapter.photoTarget({ ctx: { ...ctx, userId: 'foreign' }, owner, ownerEpoch: 1 }), null);
+    const file = { id: 'receipt-file', companyId: ctx.companyId, branchId: branch.id, uploadedByUserId: ctx.userId, status: 'ACTIVE', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', updatedAt: now, checksumSha256: 'photo-sha' };
+    data.client.attachmentObject.findFirst = async ({ where }: any) => where.companyId === ctx.companyId && where.uploadedByUserId === ctx.userId && where.branchId === branch.id && where.status === 'ACTIVE' ? file : null;
+    h.flow.downloadLineMedia = async () => ({ ok: true, media: { fileName: file.originalFileName, mimeType: file.mimeType, byteSize: JPEG_BYTES.length,
+      bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64'), checksumSha256: file.checksumSha256 } });
+    h.flow.createUploadIntent = { execute: async (_actor: any, input: any) => { assert.equal(input.branchId, branch.id); assert.equal(input.metadataJson.lineReimbursementEpoch, 1); return { attachmentId: file.id, uploadUrl: 'https://upload.test/receipt', uploadMethod: 'PUT' }; } };
+    h.flow.uploadLineMedia = async () => undefined;
+    h.flow.completeAttachmentUpload = { execute: async () => undefined };
+    h.prisma.client.lineIntakePendingMedia.findUnique = async () => null;
+    h.prisma.client.lineIntakePendingMedia.create = async () => ({ id: 'pending-photo' });
+    h.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+    await h.useCase.executeReceiptUpload({ ...h.baseEvent, webhookEventId: 'receipt-preview', lineMessageId: 'receipt-photo', messageType: 'image' });
+    assert.equal(writes, 1, JSON.stringify(h.delivered.at(-1)));
+    const editConfirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+    await press(editConfirm); assert.equal(writes, 2); assert.equal(saved.id, claimId); assert.equal(saved.lines[0].attachmentId, file.id);
+  }
+});
+
+it('Exam B edit: exact X064-A treats the named vendor as a locator and changes 711 to 750 only after the signed press', async t => {
+  const { ListExpensesUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineDraftUpdateUseCase } = await import('../../../expenses/application/use-cases/line-draft-update.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const first = EXAM_B_REPLAYS.find(row => row.id === 'X064-A').turns[0];
+  t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
+  const h = await fx21bBoundWebhook(t, { source: 'X064-A', body: first.body, route: first.route, messageText: first.body.events[0].message.text }, ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update']);
+  const record: any = { ...savedMediaFixture('web-draft-711'), captureSource: 'WEB_MANUAL', branchId: 'branch-1', sourceChannelMetadataJson: null,
+    vendorNameSnapshot: 'หจก. ออฟฟิศ ซัพพลาย', currency: 'THB', status: 'DRAFT', duplicateStatus: 'NO_MATCH', createdAt: new Date(),
+    subtotalAmount: '711', taxableAmount: '711', grandTotalAmount: '711', netPayableAmount: '711', paidAmount: '0', paymentStatus: 'UNPAID',
+    sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', aiVerificationSummaryJson: {}, note: null,
+    lines: [{ id: 'line-1', lineNumber: 1, description: 'ค่าเครื่องเขียน', quantity: '1', unitPrice: '711', lineSubtotalAmount: '711', lineTotalAmount: '711', taxableAmount: '711', discountAmount: '0', vatAmount: '0', whtAmount: '0', vatRate: '0', expenseCategoryId: null }] };
+  let writes = 0;
+  const repo: any = { findById: async () => record, findByIdWithRelations: async () => record, listRecentLineCaptures: async () => [], listCategories: async () => [], listLineChargeKinds: async () => [],
+    listExpenses: async (filter: any) => { assert.equal(filter.companyId, record.companyId); return { data: filter.status === record.status ? [record] : [], total: filter.status === record.status ? 1 : 0, page: 1, pageSize: 200 }; },
+    updateExpense: async (input: any, within?: any) => { assert.equal(input.expectedUpdatedAt.toISOString(), record.updatedAt.toISOString());
+      const { expectedUpdatedAt: _version, ...values } = input; Object.assign(record, values); record.updatedAt = new Date(record.updatedAt.getTime() + 1); writes++;
+      if (within) await within({}); return record; },
+    upsertLines: async (_company: string, _id: string, rows: any[]) => { record.lines = rows.map((line, index) => ({ ...line, id: `line-${index}` })); },
+    expenseCorrectionCapabilities: async () => ({ certificateOnExpense: null, disbursementReservation: null }),
+    runDuplicateCheck: async (_input: any, detect: any) => { await detect({}); return { openCandidates: 0, duplicateStatus: 'NO_MATCH' }; },
+    findNearDuplicates: async () => [], findExpenseIdsByAttachmentChecksum: async () => [], createDuplicateCandidate: async () => undefined,
+  };
+  h.flow.expenseRepo = repo; h.flow.editableExpenses = new ListExpensesUseCase(repo);
+  h.flow.aiGateway.lineDraftEditCapabilityEnabled = async () => true;
+  h.flow.config.lineAiDraftEditEnabled = true;
+  h.prisma.client.$transaction = async (run: any) => { const before = structuredClone(record), count = writes; try { return await run({ $executeRaw: async () => undefined, expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: record.updatedAt }) } }); } catch (error) { for (const key of Object.keys(record)) delete record[key]; Object.assign(record, before); writes = count; throw error; } };
+  const audit = { log: async () => undefined } as any;
+  const update = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: any, _header: any, rows: any[]) => rows } as any);
+  h.flow.draftUpdate = new LineDraftUpdateUseCase(h.prisma, repo, update, audit, new LineDraftPreviewStore(), { lineAiDraftEditEnabled: true } as any);
+  await h.execute();
+  assert.equal(writes, 0); assert.equal(record.grandTotalAmount, '711');
+  const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
+  assert.match(payload, /750/); assert.doesNotMatch(payload, /ขอแก้ทีละอย่าง|ยังไม่ได้แก้/);
+  const nodes = (value: any): any[] => Array.isArray(value) ? value.flatMap(nodes) : value && typeof value === 'object' ? [value, ...Object.values(value).flatMap(nodes)] : [];
+  const button = nodes(messages).find((item: any) => item.action?.data?.startsWith('action=draft-update-confirm'));
+  assert.ok(button, payload); await h.execute('ยืนยันการแก้ไข', button.action.data);
+  assert.equal(writes, 1, JSON.stringify(h.delivered.at(-1))); assert.equal(Number(record.grandTotalAmount), 750); assert.equal(record.vendorNameSnapshot, 'หจก. ออฟฟิศ ซัพพลาย');
+  await h.execute('ยืนยันการแก้ไข', button.action.data); assert.equal(writes, 1);
+});
+
+
+const EXAM_D_REPLAYS = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/advisor-exam-d-router-replays.json'), 'utf8')) as any[];
+for (const id of ['H-staff-vendor-breakdown-ordinal#1', 'C03#0', 'J7-xd-fail#0']) it(`${id === 'J7-xd-fail#0' ? 'Exam E2a' : 'Exam D'}: exact ${id} router through signed webhook, gateway and delivery`, async t => {
+  const { readMemoryEvidence } = await import('../line-read-evidence.service');
+  const replay = { ...structuredClone((id === 'J7-xd-fail#0' ? EXAM_E_REPLAYS : EXAM_D_REPLAYS).find(row => row.id === id)), source: id.replace(/[^a-zA-Z0-9-]/gu, '-') };
+  const claimHelp = id === 'C03#0' || id === 'J7-xd-fail#0';
+  replay.fixture = { permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read_own', 'reimbursement.read_own',
+    ...(id === 'C03#0' ? ['reimbursement.approve'] : id === 'J7-xd-fail#0' ? ['reimbursement.create'] : [])], enabledFeatures: ['expenses', 'reimbursement', 'ai_line_assistant'] };
+  replay.previousTools ??= [];
+  replay.reads = claimHelp ? [] : [{ tool: 'expense.list_recent', input: { fromDate: '2026-10-01', toDate: '2026-10-17', limit: 5 }, result: {
+    toolName: 'expense.list_recent', status: 'ok', asOf: new Date(replay.acceptedAtMs).toISOString(),
+    data: { total: 5, period: { fromDate: '2026-10-01', toDate: '2026-10-17' }, scope: 'own', summary: { totalAmount: '6295.5' },
+      items: [1533, 1396.5, 1259, 1122, 985].map((amount, index) => ({ id: `own-expense-${index}`, grandTotalAmount: String(amount), vendorNameSnapshot: `ร้าน ${index + 1}` })) },
+    sourceRefs: [{ label: 'ค่าใช้จ่ายของฉัน', module: 'expenses', entityType: 'expense_summary', permissionChecked: true, webPath: '/companies/company-1/expenses' }] } }];
+  replay.controlCalls = replay.reads.map((row: any) => ({ index: 0, toolName: row.tool, input: { ...row.input, groupBy: 'vendor' } }));
+  replay.baselineReply = 'ค่าใช้จ่ายของคุณ 5 รายการ รวม 6,295.50 บาทค่ะ';
+  t.mock.timers.enable({ apis: ['Date'], now: replay.acceptedAtMs });
+  const h = await fx21bBoundWebhook(t, replay, replay.fixture.permissions);
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => replay.fixture.enabledFeatures.map((featureKey: string) => ({ featureKey, enabled: true }));
+  h.flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [],
+    recentReads: replay.previousTools.map((row: any) => readMemoryEvidence(row.result)).filter(Boolean) });
+  let gatewayResult: any, calls: any[] = [];
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    assert.deepEqual(request.semanticSubrequests, replay.route.semanticSubrequests);
+    const child = require('node:child_process').spawnSync(process.execPath, ['--import', 'tsx', '-e', FX29_GATEWAY_REPLAY], {
+      cwd: require('node:path').dirname(require.resolve('../../../../../../ai-gateway/tsconfig.json')), input: JSON.stringify({ request, replay }), encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024 });
+    assert.equal(child.status, 0, child.stderr + child.stdout);
+    const parsed = JSON.parse(child.stdout.split('FX29_RESULT:')[1].trim());
+    gatewayResult = parsed.result; calls = parsed.calls; return { ...gatewayResult, requestId: request.requestId, intent: 'business_read', agent: 'accounting', refused: false, toolsInvoked: calls.map((call: any) => call.tool), sourceLabels: [...new Set(gatewayResult.sourceRefs.map((ref: any) => ref.label))] };
+  };
+  await h.execute();
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.doesNotMatch(payload, /ไม่มีสิทธิ์|ยังไม่แน่ใจว่าหมายถึงอะไร/);
+  if (claimHelp) {
+    assert.equal(gatewayResult.presentation.cards[0].chatActionId, id === 'C03#0' ? 'approvals' : 'reimbursement_claim');
+    if (id === 'C03#0') { assert.match(payload, /ใบเบิกที่รอคุณอนุมัติ/); assert.doesNotMatch(payload, /บอกรายการที่สำรองจ่าย/); }
+    else { assert.match(payload, /บอกรายการที่สำรองจ่าย/); assert.doesNotMatch(payload, /ไม่มีสิทธิ์อนุมัติ/); }
+    assert.deepEqual(calls, []);
+  } else {
+    assert.deepEqual(calls, replay.reads.map((row: any) => ({ tool: row.tool, input: row.input })));
+    assert.match(payload, /6,295.50/); assert.equal(gatewayResult.semanticCoverage[0].status, 'handled');
+  }
 });

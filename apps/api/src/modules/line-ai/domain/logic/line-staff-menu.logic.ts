@@ -1,9 +1,10 @@
+import { lineControlData, type LineReplyLanguage } from './line-language.logic';
 import { linePaymentEvidencePostbackCommand } from './line-payment-evidence-reply.logic';
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard } from './line-system-card-limits.logic';
-import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText, lineChatAction } from '@watchdog-bms/contracts';
 
 /**
  * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
@@ -51,6 +52,7 @@ export const PROFILE_GUARD_LATER_COMMAND = 'ไว้ก่อน';
 export const LINE_FOLLOW_EVENT_TEXT = 'เพิ่มเพื่อนใหม่';
 
 export type StaffMenuContext = {
+  language?: LineReplyLanguage;
   displayName: string;
   roleLabel: string;
   branchScopeLabel: string;
@@ -163,27 +165,38 @@ const messageAction = (label: string, text = label) => ({ type: 'action' as cons
 
 export function buildStaffCompletionQuickReply(
   context: Pick<StaffMenuContext, 'permissions' | 'entitledFeatureKeys' | 'isOwner'>,
+  language: LineReplyLanguage = 'th',
 ): NonNullable<LineReplyMessage['quickReply']> {
   const permissions = new Set(context.permissions);
   const entitled = context.entitledFeatureKeys;
   const items: LineQuickReplyItem[] = QUERY_ACTIONS
     .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(entitled, features))
-    .map(([label, text]) => messageAction(label, text));
-  items.push(messageAction('📊 ถามข้อมูล', 'ถามข้อมูล'));
-  if (context.isOwner) items.push(messageAction('🏢 บริษัทของฉัน', '/companies'));
+    .map(([label, text], index) => {
+      if (language === 'th') return messageAction(label, text);
+      const english: Record<string, [string, string]> = {
+        'ยอดขายวันนี้': ['Today’s sales', 'Show today’s sales'], 'คิว/นัดวันนี้': ['Today’s bookings', 'Show today’s bookings'],
+        'แชทค้างตอบ': ['Unanswered chats', 'Show unanswered chats'], 'ค่าใช้จ่ายเดือนนี้': ['Monthly expenses', 'Show this month’s expenses'],
+        'รายงานการเงิน': ['Financial reports', 'Show financial reports'], 'ใบสั่งซื้อ (PO)': ['Purchase orders', 'Show purchase orders'],
+      };
+      const translated = english[label]!;
+      return messageAction(...translated);
+    });
+  items.push(language === 'en' ? { type: 'action', action: { type: 'postback', label: 'Ask about records', data: lineControlData('action=query-menu', language) } } : messageAction('📊 ถามข้อมูล', 'ถามข้อมูล'));
+  if (context.isOwner) items.push(messageAction(language === 'en' ? 'My shops' : '🏢 บริษัทของฉัน', '/companies'));
   // Offered only when the approval card behind it can render at least one real queue, so the
   // button and the card it opens can never disagree about what this company runs.
   if (availableApprovalSurfaces(permissions, entitled).length > 0) {
-    items.push(messageAction('✅ รายการรออนุมัติ', 'รายการรออนุมัติ'));
+    items.push(language === 'en' ? { type: 'action', action: { type: 'postback', label: 'Awaiting approval', data: lineControlData('action=approvals', language) } } : messageAction('✅ รายการรออนุมัติ', 'รายการรออนุมัติ'));
   }
   if (hasAny(permissions, ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'])
     && hasFeature(entitled, ['expenses.upload'])) {
-    items.push({ type: 'action', action: { type: 'camera', label: '📷 ถ่ายใบเสร็จ' } } as const);
+    items.push({ type: 'action', action: { type: 'camera', label: language === 'en' ? 'Take receipt photo' : '📷 ถ่ายใบเสร็จ' } } as const);
   }
   return { items: items.slice(0, 13) };
 }
 
 export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage {
+  if (context.language === 'en') return { type: 'text', text: `Hello ${context.displayName}; choose an available task below.`, quickReply: buildStaffCompletionQuickReply(context, 'en') };
   const quickReply = buildStaffCompletionQuickReply(context);
   const items = quickReply.items;
   const displayName = boundedLabel(context.displayName, 'พนักงาน');
@@ -225,7 +238,9 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
 
 const boundedLabel = (value: string, fallback: string) => (value.trim() || fallback).slice(0, 80);
 
-export function buildCompanyContextMessage(context: CompanyContextCard): LineReplyMessage {
+export function buildCompanyContextMessage(context: CompanyContextCard, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') { return { type: 'text', text: [`My shop: ${context.companyName}`, `Signed in as ${context.displayName}.`, ...(context.pendingSignupName !== undefined ? [`The new-shop application for ${context.pendingSignupName || 'your shop'} is awaiting staff review.`] : [])].join('\n'), quickReply: { items: [ ...(context.openWebUrl ? [{ type: 'action' as const, action: { type: 'uri' as const, label: 'Open shop on web', uri: context.openWebUrl } }] : []), ...(context.isOwner && context.newShopSignupUrl && context.pendingSignupName === undefined ? [{ type: 'action' as const, action: { type: 'uri' as const, label: 'Open another shop', uri: context.newShopSignupUrl } }] : []) ] } }; }
+
   const companyName = boundedLabel(context.companyName, 'ไม่ระบุบริษัท');
   const displayName = boundedLabel(context.displayName, 'ผู้ใช้งาน');
   const roleLabel = boundedLabel(context.roleLabels.filter(Boolean).join(' · '), 'พนักงาน');
@@ -284,7 +299,10 @@ const serviceBubble = (labels: string[], index: number, total: number): Record<s
   ] },
 });
 
-export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | null): LineReplyMessage {
+export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | null, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') { const labels: Record<string, string> = { expenses: 'Expenses and receipts', reimbursement: 'Claims', hr: 'Team', reports: 'Reports', sales_documents: 'Sales', procurement: 'Purchasing', inventory: 'Stock', crm: 'Customers', double_entry_ledger: 'Accounting', tax: 'Tax' };
+return { type: 'text', text: ['Services available for your shop:', ...FEATURE_CATALOG.filter(feature => feature.sellable && (entitled === null || entitled.has(feature.key))).map(feature => `• ${labels[feature.key] ?? feature.key.split(/[._]/u).map(word => word[0]!.toUpperCase()+word.slice(1)).join(' ')}`)].join('\n') }; }
+
   const labels = FEATURE_CATALOG
     .filter((feature) => feature.sellable && (entitled === null || entitled.has(feature.key)))
     .map((feature) => feature.labelTh);
@@ -321,7 +339,9 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
  */
 const PACKAGE_POSTER_PATH = '/assets/line/package-poster-20260930.png';
 
-export function buildPackagePosterMessage(webBaseUrl: string | undefined): LineReplyMessage | undefined {
+export function buildPackagePosterMessage(webBaseUrl: string | undefined, language: LineReplyLanguage = 'th'): LineReplyMessage | undefined {
+  if (language === 'en') { return undefined; }
+
   if (!webBaseUrl || !URL.canParse(PACKAGE_POSTER_PATH, webBaseUrl)) return undefined;
   const url = new URL(PACKAGE_POSTER_PATH, webBaseUrl);
   // 1080×1350 PNG under LINE's 1 MB preview limit, so one file serves both fields.
@@ -339,7 +359,9 @@ export function buildPackagePosterMessage(webBaseUrl: string | undefined): LineR
  * choosing the package belongs to the shop owner — the same rule the package-change reply states.
  * An absent `url` simply drops that button, the fail-open every card here uses for an unusable URL.
  */
-export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', url?: string): LineReplyMessage {
+export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', url?: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') { return { type: 'text', text: 'Choose and pay for a package in the app; monthly packages start at 249 THB, with the business package at 1,999 THB including supported tax documents.', quickReply: { items: [ ...(url ? [{ type: 'action' as const, action: { type: 'uri' as const, label: audience === 'stranger' ? 'Open new shop' : 'Choose package', uri: url } }] : []), { type: 'action', action: { type: 'uri', label: 'Package details', uri: 'https://official.mangmeeplus.com/' } }, { type: 'action', action: { type: 'uri', label: 'Contact staff', uri: STAFF_OA_URL } } ] } }; }
+
   const stranger = audience === 'stranger';
   return {
     type: 'flex',
@@ -368,7 +390,9 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
  * a raw URL in the chat. `url` is the lane's one-tap `/l/<token>` or the plain package page; the
  * reply exit adds the external-browser escape to the button as to any other link.
  */
-export function buildPackageReviewCard(shopName: string, url: string): LineReplyMessage {
+export function buildPackageReviewCard(shopName: string, url: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') { return { type: 'text', text: `Review packages, payment details and receipts for ${shopName} on the web before paying.`, quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'Review packages', uri: url } }] } }; }
+
   const title = `📦 ${boundedLabel(shopName, 'ร้านของคุณ')}`;
   const note = 'เลือกแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่หน้าแพ็กเกจ (เปิดในเบราว์เซอร์ให้อัตโนมัติ) '
     + 'ตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินนะคะ';
@@ -419,7 +443,8 @@ const TEACH_REQUEST = /สอน(?:(?:การ|วิธี|วิธีกา�
 const TUTORING_EXPENSE = /\d|ค่าเรียน|(?:ค่า|บิล|ใบเสร็จ|จ้าง)สอน/;
 
 /** The six REAL functions, matching rich menu v2 ver2 — nothing aspirational belongs here. */
-export function buildCapabilityCard(): LineReplyMessage {
+export function buildCapabilityCard(language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') return { type: 'text', text: 'Nong Mangmee can help prepare receipt drafts, check permitted shop records, and explain business or tax topics.' };
   return {
     type: 'flex',
     altText: 'น้องมั่งมีช่วยอะไรได้บ้าง',
@@ -439,7 +464,10 @@ export function buildCapabilityCard(): LineReplyMessage {
   };
 }
 
-export function buildContactCard(): LineReplyMessage {
+export function buildContactCard(language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') return { type: 'text', text: 'Contact MangmeePlus: contact@mangmeeplus.com · 098-256-5628', quickReply: { items: [
+    { type: 'action', action: { type: 'uri', label: 'Contact team', uri: STAFF_OA_URL } },
+    { type: 'action', action: { type: 'uri', label: 'Official website', uri: 'https://official.mangmeeplus.com/' } }] } };
   return {
     type: 'flex',
     altText: 'ติดต่อมั่งมี Plus: contact@mangmeeplus.com โทร 098-256-5628',
@@ -516,7 +544,11 @@ export function companyPickerPage<T extends CompanyPickerItem>(
   return { visible: ordered.slice((page - 1) * pageSize, page * pageSize), page, pageCount };
 }
 
-export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1): LineReplyMessage {
+export function buildCompanyPickerMessage(companies: CompanyPickerItem[], currentCompanyId?: string, requestedPage = 1, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  if (language === 'en') { if (!companies.length) return { type: 'text', text: 'No accessible shops are available right now.' };
+const { visible, page, pageCount } = companyPickerPage(companies, currentCompanyId, requestedPage);
+return { type: 'text', text: `Choose a shop · page ${page}/${pageCount}.`, quickReply: { items: [ ...visible.map(company => ({ type: 'action' as const, action: { type: 'postback' as const, label: scrubRecordText(company.companyName, 20), data: lineControlData(new URLSearchParams({ action: 'company-select', companyId: company.companyId }).toString(), language) } })), ...(page > 1 ? [{ type: 'action' as const, action: { type: 'postback' as const, label: 'Previous page', data: lineControlData(`action=company-page&page=${page-1}`, language) } }] : []), ...(page < pageCount ? [{ type: 'action' as const, action: { type: 'postback' as const, label: 'Next page', data: lineControlData(`action=company-page&page=${page+1}`, language) } }] : []) ] } }; }
+
   if (companies.length === 0) return { type: 'text', text: 'ไม่พบบริษัทที่ใช้งานได้ในขณะนี้' };
 
   const { visible, page, pageCount } = companyPickerPage(companies, currentCompanyId, requestedPage);
@@ -541,6 +573,7 @@ export function buildCompanyPickerMessage(companies: CompanyPickerItem[], curren
 }
 
 export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage {
+  if (context.language === 'en') return { type: 'text', text: 'Which shop records would you like to check?', quickReply: buildStaffCompletionQuickReply(context, 'en') };
   const permissions = new Set(context.permissions);
   const items = QUERY_ACTIONS
     .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(context.entitledFeatureKeys, features))
@@ -554,6 +587,8 @@ export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage
 }
 
 export function buildReceiptCapturePrompt(_context: StaffMenuContext): LineReplyMessage {
+  if (_context.language === 'en') return { type: 'text', text: 'Send a clear receipt photo to prepare an expense draft for review; nothing is approved or paid automatically.', quickReply: { items: [
+    { type: 'action', action: { type: 'cameraRoll', label: 'Attach receipt' } }, { type: 'action', action: { type: 'camera', label: 'Open camera' } }] } };
   const title = 'แนบรูปใบเสร็จเข้าระบบ';
   const text = 'กด “แนบรูปใบเสร็จ” หรือ “เปิดกล้อง” ด้านล่าง แล้วส่งภาพให้เห็นข้อมูลครบทั้งใบค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ';
   return {
@@ -709,6 +744,18 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
   const altText = counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`;
 
+  if (context.language === 'en') {
+    const labels: Record<string, string> = { reimbursement: 'Claims', procurement: 'Purchasing' };
+    const lines = ['Items awaiting your approval:', ...surfaces.flatMap(surface => {
+      const queue = pending[surface.key];
+      return [`${labels[surface.key]}: ${queue ? queue.total + ' pending' : 'could not be read; check the web'}`, ...(queue?.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map(item => `• ${item.title}${item.detail ? ' · ' + item.detail : ''}`) ?? [])];
+    })];
+    if (!surfaces.length) lines.push('No approval queue is available with your current access; review your role on the web.');
+    const actionable = surfaces.some(surface => surface.key === 'reimbursement') ? pending.reimbursement?.items.filter(item => item.buttons?.length) ?? [] : [];
+    const links = surfaces.flatMap(surface => base ? [{ type: 'action' as const, action: { type: 'uri' as const, label: `Review ${labels[surface.key]}`, uri: `${base}${companySegment}${surface.path}` } }] : []);
+    if (!actionable.length) return { type: 'text', text: lines.join('\n'), quickReply: { items: links } };
+    return { type: 'flex', altText: lines[0]!, canonicalText: lines.join('\n'), contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [ { type: 'text', text: lines[0]!, wrap: true }, ...actionable.map(item => ({ type: 'box', layout: 'vertical', contents: [{ type: 'text', text: [item.title, item.detail].filter(Boolean).join(' · '), wrap: true }, ...item.buttons!] })) ] } } };
+  }
   const actionable = surfaces.some(surface => surface.key === 'reimbursement') ? pending.reimbursement?.items.filter(item => item.buttons?.length) ?? [] : [];
   if (actionable.length) {
     const others = surfaces.filter(surface => surface.key !== 'reimbursement');
@@ -848,6 +895,8 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
  * requires an opaque previewId to keep an old card from acting on a newer proposal.
  */
 const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
+  'staff-contact': STAFF_CONTACT_COMMAND, 'view-packages': VIEW_PACKAGES_COMMAND, 'employee-door': EMPLOYEE_DOOR_COMMAND,
+  'query-menu': 'ถามข้อมูล', 'approvals': 'รายการรออนุมัติ',
   'line-rich-talk': RESUME_AI_COMMAND,
   'package-change': PACKAGE_CHANGE_COMMAND,
   'package-callback': PACKAGE_CALLBACK_COMMAND,
@@ -887,6 +936,10 @@ export function linePostbackCommandText(data: string | undefined, draftEditEnabl
     return null;
   }
   if (!action) return null;
+  const params = new URLSearchParams(data);
+  if (action === 'company-select' && [...params.keys()].length === 2 && /^[A-Za-z0-9_-]{1,128}$/u.test(params.get('companyId') ?? '')) return `/company ${params.get('companyId')}`;
+  if (action === 'company-page' && [...params.keys()].length === 2 && /^[1-9][0-9]{0,2}$/u.test(params.get('page') ?? '')) return `/companies page ${params.get('page')}`;
+  if (action === 'chat-action') return lineChatAction(new URLSearchParams(data).get('id') ?? '')?.command ?? null;
   if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
   return POSTBACK_ACTIONS[action] ?? null;
 }

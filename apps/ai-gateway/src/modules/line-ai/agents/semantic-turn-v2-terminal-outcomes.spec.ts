@@ -293,10 +293,10 @@ describe('reimbursement.list_pending_approvals forbidden outcome: a terminal per
       semanticSubrequests: [{ index: 0, kind: 'read', goal: 'เบิกจ่ายที่รออนุมัติ', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
         requestedFilters: {} }],
       // The gateway-level tool eligibility check (hasToolPermissions) also requires
-      // reimbursement.approve; this fixture exercises the ERP tool's own deeper, authoritative
+      // a claim-read permission; this fixture exercises the ERP tool's own deeper, authoritative
       // check (erp-reimbursement-tools.use-case.ts), which this caller's live grant can still fail —
       // see that use case's spec for the real permission check this reply text renders.
-      userContext: baseUserContext(['reimbursement.approve']),
+      userContext: baseUserContext(['reimbursement.read']),
     };
   }
 
@@ -317,8 +317,9 @@ describe('reimbursement.list_pending_approvals forbidden outcome: a terminal per
     assert.equal(coverage?.status, 'handled');
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED');
-    assert.ok(result.replyText.startsWith('บทบาทของคุณยังไม่มีสิทธิ์ดูหรืออนุมัติใบเบิกของคนอื่นค่ะ'), result.replyText);
-    assert.ok(result.replyText.includes('ใบเบิกของฉันถึงไหนแล้ว'), result.replyText);
+    assert.ok(result.replyText.startsWith('คุณยังไม่มีสิทธิ์ดูใบเบิก'), result.replyText);
+    assert.ok(result.replyText.includes('ดูแพ็กเกจ'), result.replyText);
+    assert.ok(result.webLinks.some(link => link.path.includes('/billing')));
     assert.ok(!result.replyText.includes('ยังดึงข้อมูลส่วนนี้ไม่ได้'), result.replyText);
   });
 });
@@ -528,9 +529,9 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'unsupported');
     assert.equal(coverage?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.startsWith('แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง'), result.replyText);
+    assert.ok(result.replyText.startsWith('Mangmee Plus วันนี้ยังไม่มี'), result.replyText);
     assert.ok(result.replyText.includes('ยอดขาย') || result.replyText.includes('รายได้'), result.replyText);
-    assert.ok(result.replyText.includes('รายจ่ายและใบเบิก'), result.replyText);
+    assert.ok(result.replyText.includes('รายจ่าย หลักฐานใบเสร็จ และใบเบิก'), result.replyText);
   });
 
   it('P&L/profit: no tool call, even via reimbursement.get_summary (eval T-136)', async () => {
@@ -698,7 +699,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     assert.deepEqual(invoked, ['expense.list_recent'], 'only the expense clause ever reaches a tool call');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
     assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
-    assert.ok(result.replyText.includes('แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่อง'), result.replyText);
+    assert.ok(result.replyText.includes('Mangmee Plus วันนี้ยังไม่มี'), result.replyText);
     assert.ok(result.replyText.includes('1,000'), result.replyText);
   });
 
@@ -842,7 +843,7 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'READONLY_ROLE_CANNOT_CREATE');
     // F4 (tuning-6b, T-145-a): readOnlyCaptureReplyText's copy changed to name "อ่านอย่างเดียว"/"ไม่มีสิทธิ์"
     // and a next step — see line-ai-scope-policy.logic.ts.
-    assert.ok(result.replyText.startsWith('บัญชีของคุณเป็นสิทธิ์แบบอ่านอย่างเดียวค่ะ'), result.replyText);
+    assert.ok(result.replyText.startsWith('คุณไม่มีสิทธิ์บันทึกหรือส่งใบเสร็จเข้าระบบ'), result.replyText);
   });
 
   it('the same request is NOT blocked for a role that can create expenses', async () => {
@@ -1107,7 +1108,7 @@ describe('H3: one call failing to bind never sinks an index a sibling call alrea
 // message. Each case is one the real model produced in that run.
 describe('advisor S0: general answers are shaped in code, and a stock clause is answered before any planning', () => {
   const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
-  const FIXED_STOCK = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+  const FIXED_STOCK = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ แต่น้องช่วยเรื่องรายจ่าย หลักฐานใบเสร็จ และใบเบิกได้ค่ะ';
 
   function recording(responses: string[]) {
     const queue = [...responses];

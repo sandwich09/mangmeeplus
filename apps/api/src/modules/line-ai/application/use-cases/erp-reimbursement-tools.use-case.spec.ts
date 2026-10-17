@@ -1,9 +1,12 @@
+import { hasToolPermissions, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ReimbursementGetApprovalBacklogTool, ReimbursementListPendingApprovalsTool } from './erp-reimbursement-tools.use-case';
-import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+import { ROLE_GRANTS } from '../../../auth/permission-registry';
+import { ListReimbursementsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
+import { pendingApprovalActions, ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { GetReimbursementApprovalBacklogUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 
 const baseCtx = {
@@ -11,7 +14,7 @@ const baseCtx = {
   userId: 'approver-1',
   membershipId: 'mem-1',
   roles: ['MANAGER'],
-  permissions: ['reimbursement.approve'],
+  permissions: ['reimbursement.approve', 'reimbursement.read'],
   branchIds: ['branch-1'],
   locale: 'th-TH',
 } as any;
@@ -36,7 +39,7 @@ describe('ReimbursementListPendingApprovalsTool', () => {
   it('returns a bounded redacted summary with source references', async () => {
     const queue = { execute: async () => Array.from({ length: 12 }, (_, i) => queueItem(i)) } as any;
 
-    const result = await new ReimbursementListPendingApprovalsTool(queue).execute(baseCtx);
+    const result = await new ReimbursementListPendingApprovalsTool(queue, {} as any).execute(baseCtx, { approver: 'me' });
     const data = result.data as any;
 
     assert.equal(result.status, 'ok');
@@ -56,22 +59,16 @@ describe('ReimbursementListPendingApprovalsTool', () => {
     assert.equal(result.sourceRefs[0]?.webPath, '/companies/co-1/reimbursements');
   });
 
-  // The web queue requires `reimbursement.approve`; gating this tool on `reimbursement.read` let a
-  // reader list a queue they cannot see on the web.
-  it('fails closed for a reader without reimbursement.approve', async () => {
+  // Read refusal is reserved for callers without any claim-read grant.
+  it('fails closed only without any reimbursement read permission', async () => {
     let called = false;
     const queue = { execute: async () => { called = true; return []; } } as any;
 
-    const result = await new ReimbursementListPendingApprovalsTool(queue)
-      .execute({ ...baseCtx, permissions: ['reimbursement.read'] });
+    const result = await new ReimbursementListPendingApprovalsTool(queue, {} as any)
+      .execute({ ...baseCtx, permissions: [] });
 
     assert.equal(result.status, 'forbidden');
     assert.equal(called, false);
-    // Item 3 (T-143): a bare 'forbidden' gave the gateway nothing to render, so a STAFF user asking
-    // for the approval queue could end up shown their own claims summary instead with no statement
-    // that they cannot see the queue. A typed errorCode survives enforceSourceHonesty (the gateway's
-    // non-'ok' passthrough keeps only toolName/status/sourceRefs/asOf/errorCode/errorMessage) so it
-    // can render an honest denial instead of any answer shaped like the approval queue.
     assert.equal(result.errorCode, 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED');
     assert.deepEqual(result.sourceRefs, []);
     assert.equal(result.data, undefined);
@@ -83,12 +80,12 @@ describe('ReimbursementListPendingApprovalsTool', () => {
     let captured: any;
     const queue = { execute: async (ctx: any) => { captured = ctx; return []; } } as any;
 
-    await new ReimbursementListPendingApprovalsTool(queue).execute(baseCtx, { companyId: 'other-company' } as any);
+    await new ReimbursementListPendingApprovalsTool(queue, {} as any).execute(baseCtx, { approver: 'me', companyId: 'other-company' } as any);
 
     assert.equal(captured.companyId, 'co-1');
     assert.equal(captured.userId, 'approver-1');
     assert.deepEqual(captured.roles, ['MANAGER']);
-    assert.deepEqual(captured.permissions, ['reimbursement.approve']);
+    assert.deepEqual(captured.permissions, ['reimbursement.approve', 'reimbursement.read']);
     assert.deepEqual(captured.scopes, { branchIds: ['branch-1'], locationIds: undefined });
   });
 
@@ -98,7 +95,7 @@ describe('ReimbursementListPendingApprovalsTool', () => {
       ...queueItem(0), payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint',
       payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', accountNumber: '0123456789' },
     };
-    const result = await new ReimbursementListPendingApprovalsTool({ execute: async () => [leaky] } as any).execute(baseCtx);
+    const result = await new ReimbursementListPendingApprovalsTool({ execute: async () => [leaky] } as any, {} as any).execute(baseCtx, { approver: 'me' });
 
     assert.deepEqual(Object.keys((result.data as any).items[0]).sort(),
       ['amount', 'branch', 'currency', 'documentNumber', 'id', 'requesterDisplayName', 'status', 'submittedAt']);
@@ -116,9 +113,9 @@ describe('ReimbursementListPendingApprovalsTool', () => {
   it('returns an empty summary when no approvals are pending', async () => {
     const queue = { execute: async () => [] } as any;
 
-    const result = await new ReimbursementListPendingApprovalsTool(queue).execute(baseCtx);
+    const result = await new ReimbursementListPendingApprovalsTool(queue, {} as any).execute(baseCtx, { approver: 'me' });
 
-    assert.deepEqual(result.data, { total: 0, items: [] });
+    assert.deepEqual(result.data, { accessScope: 'approver', total: 0, items: [] });
     assert.equal(result.sourceRefs.length, 1);
   });
 });
@@ -198,12 +195,12 @@ describe('a claim whose payout account is being corrected, as the assistant read
 
   it('says it waits for its requester to correct the payout account, counts it for no approver, and lists it for approval once the account is given', async () => {
     // The approver's own queue: nothing to decide while the claim is with its requester, the claim again once the account is given.
-    const queue = await new ReimbursementListPendingApprovalsTool(new ListApprovalQueueUseCase(repo)).execute(approver);
+    const queue = await new ReimbursementListPendingApprovalsTool(new ListApprovalQueueUseCase(repo), {} as any).execute(approver, { approver: 'me' });
     assert.deepEqual(queue.data, {
-      total: 1,
+      accessScope: 'approver', total: 1,
       items: [{
         id: '000002', documentNumber: 'RB-202609-000002', requesterDisplayName: 'สมชาย', amount: '580.5000', currency: 'THB',
-        submittedAt: '2026-09-20T03:00:00.000Z', status: 'PENDING_APPROVAL', branch: 'branch-1',
+        submittedAt: '2026-09-20T03:00:00.000Z', status: 'PENDING_APPROVAL', branch: 'branch-1', waitingOn: 'สมศรี',
       }],
     });
     assert.doesNotMatch(JSON.stringify(queue), /payout|account|ffff/i);
@@ -291,5 +288,51 @@ describe('a claim whose payout account is being corrected, as the assistant read
     assert.deepEqual([data.total, data.awaitingApprovalCount, data.byApprover.map((group: any) => group.count), result.completeness?.groups.returned], [4, 1, [1], 4]);
     // Where each claim stands and nothing of an account, a method, a reason code or who sent it back.
     assert.doesNotMatch(JSON.stringify(result.data), /payout|account|ffff|cash|NO_ACCOUNT|payer-1|AWAITING_/i);
+  });
+});
+
+
+describe('Owner 2026-10-17: ROLE_GRANTS × pending claim visibility and approval', () => {
+  for (const [role, permissions] of [...Object.entries(ROLE_GRANTS), ['NO_GRANTS', []] as [string, string[]]]) {
+    it(`${role}: reads only the web list scope, approval remains separately granted`, async () => {
+      const calls: any[] = [];
+      const repo = {
+        findPolicy: async () => null,
+        listRequestPage: async (input: any) => { calls.push(input); return { rows: [], groups: [], duplicateBlockedCount: 0 }; },
+        findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}),
+      } as any;
+      const queue = { execute: async () => { throw new Error('generic claim read must not use actionable queue'); } } as any;
+      const tool = new ReimbursementListPendingApprovalsTool(queue, new ListReimbursementsUseCase(repo));
+      const result = await tool.execute({ ...baseCtx, roles: [role], permissions }, { companyId: 'foreign', branchId: 'foreign', scope: 'all' });
+      const canRead = ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'].some(key => permissions.includes(key));
+      assert.equal(result.status, canRead ? 'ok' : 'forbidden');
+      for (const name of ['reimbursement.list_pending_approvals', 'reimbursement.get_approval_backlog']) {
+        assert.equal(hasToolPermissions(LINE_TOOL_REGISTRY.find(tool => tool.name === name)!, permissions), canRead, name);
+      }
+      assert.equal(calls.length, canRead ? 1 : 0);
+      if (canRead) {
+        assert.equal(calls[0].companyId, baseCtx.companyId);
+        assert.deepEqual(calls[0].scopes.branchIds, baseCtx.branchIds);
+        assert.equal(calls[0].status, 'PENDING_APPROVAL');
+        assert.equal(calls[0].take, 10);
+        assert.equal(calls[0].relatedUserId, !permissions.includes('reimbursement.read') && permissions.includes('reimbursement.read_related') ? baseCtx.userId : undefined);
+        assert.equal(calls[0].requesterUserId, !permissions.includes('reimbursement.read') && !permissions.includes('reimbursement.read_related') ? baseCtx.userId : undefined);
+      } else assert.equal(result.errorCode, 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED');
+      const step = { status: 'PENDING', sequenceNo: 1, approverRoleSnapshot: role };
+      const claim = { status: 'PENDING_APPROVAL', branchId: 'branch-1', requesterUserId: 'another-person', approvalSteps: [step] } as any;
+      const actions = pendingApprovalActions({ ...baseCtx, roles: [role], permissions, scopes: { branchIds: baseCtx.branchIds } } as any, claim, new Set(), false);
+      assert.equal(actions.canApprove, permissions.includes('reimbursement.approve'));
+      assert.equal(actions.canReject, permissions.includes('reimbursement.reject'));
+      assert.equal(pendingApprovalActions({ ...baseCtx, roles: [role], permissions, scopes: { branchIds: ['other'] } } as any, claim, new Set(), false).canApprove, false);
+    });
+  }
+  it('a read-only caller asking for their approval queue still receives only readable claims', async () => {
+    const claims = { execute: async () => ({ total: 12, items: [{ ...queueItem(0), currentDesk: { kind: 'APPROVER', names: ['สมศรี'] } }] }) } as any;
+    const tool = new ReimbursementListPendingApprovalsTool({ execute: async () => { throw new Error('no approval access'); } } as any, claims);
+    const result = await tool.execute({ ...baseCtx, permissions: ROLE_GRANTS.ACCOUNTANT! }, { approver: 'me' });
+    assert.equal(result.status, 'ok');
+    assert.equal((result.data as any).accessScope, 'company');
+    assert.equal((result.data as any).total, 12);
+    assert.equal((result.data as any).items[0].waitingOn, 'สมศรี');
   });
 });

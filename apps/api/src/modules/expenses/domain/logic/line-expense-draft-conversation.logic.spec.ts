@@ -95,7 +95,7 @@ describe('LINE expense draft conversation logic', () => {
     assert.equal(answer.state.items[0]!.quantity, '1');
     assert.ok(!answer.state.unresolvedQuestions.some(question => question.id.endsWith('-QTY')));
   });
-  it('preserves every item and asks every document/item gap together without inventing paper numbers', () => {
+  it('preserves every item and asks only the next required gap without inventing paper numbers', () => {
     const state = initial();
     assert.equal(state.items.length, 2);
     assert.equal(state.items[0]?.description, 'กระดาษ A4');
@@ -109,11 +109,11 @@ describe('LINE expense draft conversation logic', () => {
     assert.ok(state.provenance['I02-QTY']);
     assert.ok(state.provenance['I02-PRICE']);
     assert.deepEqual(state.unresolvedQuestions.map((question) => question.id), [
-      'D-DATE', 'D-VENDOR', 'I01-QTY', 'I01-PRICE', 'I01-CATEGORY', 'I02-CATEGORY',
+      'D-DATE', 'I01-PRICE', 'I01-CATEGORY', 'I02-CATEGORY',
     ]);
     const reply = formatLineExpenseDraftReply({ state, categories });
-    assert.match(reply, /กระดาษ A4: จำนวนและหน่วย และ ราคาต่อหน่วยหรือยอดรวม และ หมวดค่าใช้จ่าย/u);
-    assert.match(reply, /โน้ตบุ๊ก: หมวดค่าใช้จ่าย/u);
+    assert.match(reply, /วันไหนคะ/u);
+    assert.doesNotMatch(reply, /ซื้อจากร้าน|จำนวนและหน่วย|หมวดค่าใช้จ่าย/u);
     assert.doesNotMatch(reply, /D-[A-Z]|I\d{2}-|expense\.|asset\./u);
   });
 
@@ -290,8 +290,8 @@ describe('LINE expense draft conversation logic', () => {
       ['I01', 'กระดาษ A4'],
       ['I02', 'โน้ตบุ๊ก'],
     ]);
-    assert.ok(answer.state.unresolvedQuestions.some((question) => question.id === 'I01-QTY'));
-    assert.ok(answer.state.unresolvedQuestions.some((question) => question.id === 'I02-QTY'));
+    assert.ok(answer.state.unresolvedQuestions.some((question) => question.id === 'I01-PRICE'));
+    assert.ok(answer.state.unresolvedQuestions.some((question) => question.id === 'I02-PRICE'));
   });
 
   it('only opens an incomplete draft from a high-confidence expense statement', () => {
@@ -386,4 +386,10 @@ it('R10 Q5a: accepted date edits print the Thai date and unknown dates stay empt
   assert.match(reply, /แก้ร่างแล้ว: วันที่ 10 ต\.ค\. 2569/); assert.doesNotMatch(reply, /2026-10-10/);
   delete state.header.expenseDate;
   assert.match(formatLineExpenseDraftReply({ state, categories }), /วันที่: ยังไม่มีวันที่/);
+});
+
+it('accepts English equivalents of the existing draft continuation controls', async () => {
+  const { lineExpenseDraftControl } = await import('./line-expense-draft-conversation.logic');
+  for (const [text, control] of [['pause', 'pause'], ['save for later', 'pause'], ['continue', 'resume'], ['resume', 'resume'], ['done', 'end'], ['no more', 'end'], ['cancel', 'cancel']] as const)
+    assert.equal(lineExpenseDraftControl(text), control, text);
 });

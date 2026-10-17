@@ -1190,7 +1190,7 @@ const PERIOD_RULES: PeriodRule[] = [
   ...EVERYDAY_PERIOD_RULES,
   ...SINCE_RULES,
   // ── single days ───────────────────────────────────────────────────────────
-  { pattern: /เมื่อวานซืน/gu, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
+  { pattern: /(?:เมื่อ)?วานซืน/gu, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
   { pattern: /day\s*before\s*yesterday/gi, build: (_m, today) => singleDay(shiftDays(today, -2), 'เมื่อวานซืน') },
   // ── N last days (before the N-days-ago day rule: "3 วันที่ผ่านมา" is a window, not one day) ──
   {
@@ -1216,16 +1216,17 @@ const PERIOD_RULES: PeriodRule[] = [
       return n >= 1 && n <= MAX_RELATIVE_DAYS ? singleDay(shiftDays(today, -n), `${n} วันก่อน`) : [];
     },
   },
-  { pattern: /เมื่อวานนี้|เมื่อวาน/gu, build: (_m, today) => singleDay(shiftDays(today, -1), 'เมื่อวาน') },
-  { pattern: /yesterday/gi, build: (_m, today) => singleDay(shiftDays(today, -1), 'เมื่อวาน') },
+  { pattern: /เมื่อวาน(?:นี้)?(?:ตอน|ช่วง)?(?:เช้า|กลางวัน|บ่าย|เย็น|ค่ำ|คืน)?|เมื่อคืน(?:นี้)?/gu, build: (_m, today) => singleDay(shiftDays(today, -1), 'เมื่อวาน') },
+  { pattern: /\byesterday(?:\s+(?:morning|afternoon|evening|night))?\b|\blast\s+night\b/gi, build: (_m, today) => singleDay(shiftDays(today, -1), 'เมื่อวาน') },
   // Owner list 2026-09-18: "วันก่อน" must be interpreted, and yesterday is the only reading a read
   // can act on — recorded as an assumption so an answer can say it was read, not stated.
   {
     pattern: /วันก่อน/gu,
     build: (_m, today) => singleDay(shiftDays(today, -1), 'วันก่อน', [PERIOD_ASSUMPTIONS.dayBeforeReadAsYesterday]),
   },
-  { pattern: /วันนี้/gu, fuzzyGuard: true, build: (_m, today) => singleDay(today, 'วันนี้') },
+  { pattern: /วัน(?:นี้|นี่)(?:ตอน|ช่วง)?(?:เช้า|กลางวัน|บ่าย|เย็น|ค่ำ|คืน)?|เมื่อ(?:เช้า|กลางวัน|บ่าย|เย็น|ค่ำ)|ตะกี้|เมื่อกี้|คืนนี้/gu, fuzzyGuard: true, build: (_m, today) => singleDay(today, 'วันนี้') },
   { pattern: /\btoday\b/gi, build: (_m, today) => singleDay(today, 'วันนี้') },
+  { pattern: /\bthis\s+(?:morning|afternoon|evening)\b|\bjust\s+now\b|\btonight\b/gi, build: (_m, today) => singleDay(today, 'วันนี้') },
   // ── weeks (Monday–Sunday) ────────────────────────────────────────────────
   {
     pattern: new RegExp(`(${PERIOD_COUNT_PATTERN})\\s*(?:สัปดาห์|อาทิตย์|วีค)(?:ที่แล้ว|ก่อน)`, 'gu'),

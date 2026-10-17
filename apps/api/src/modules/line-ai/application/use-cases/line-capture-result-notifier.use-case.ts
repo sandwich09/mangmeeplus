@@ -1,3 +1,4 @@
+import type { LineReplyLanguage } from '../../domain/logic/line-language.logic';
 import { LinkLinePaymentEvidenceUseCase } from '../../../expenses/application/use-cases/link-line-payment-evidence.use-case';
 import { linePaymentEvidenceReply } from '../../domain/logic/line-payment-evidence-reply.logic';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
@@ -46,7 +47,7 @@ const MAX_BATCH = 25;
 
 type NotificationOutcome = { kind: 'accepted' } | { kind: 'terminalSkip'; reason: 'NOT_LINE_SOURCE' | 'NO_NOTIFYABLE_RESULT' | 'NO_RECIPIENT_ACCESS' | 'GROUP_PRIVATE_DELIVERY_BLOCKED' | 'SOURCE_GONE' } | { kind: 'retryable' | 'unknown' | 'permanent'; code: string };
 const skipped = (reason: Extract<NotificationOutcome, { kind: 'terminalSkip' }>['reason'] = 'NO_NOTIFYABLE_RESULT'): NotificationOutcome => ({ kind: 'terminalSkip', reason });
-type CapturePreparation = { event: OutboxEventRecord; owner: LineConversationOwner; epoch: number; accessFingerprint: string; lineUserId: string; context: RequestContext };
+type CapturePreparation = { language?: LineReplyLanguage; event: OutboxEventRecord; owner: LineConversationOwner; epoch: number; accessFingerprint: string; lineUserId: string; context: RequestContext };
 const deliveryOutcome = (result: LineDeliveryResult): NotificationOutcome => result === 'ok' ? { kind: 'accepted' } : result === 'failed_permanent' || result === 'failed_flex' ? { kind: 'permanent', code: 'LINE_PROVIDER_REJECTED' } : { kind: result === 'failed_other' ? 'unknown' : 'retryable', code: 'LINE_DELIVERY_NOT_ACCEPTED' };
 
 export type LineCaptureResultDrainResult = {
@@ -230,6 +231,8 @@ export class LineCaptureResultNotifierUseCase {
     const snapshot = await this.captureLine.readFinishedExpenseSnapshot(companyId, expenseId);
     // LINE-only: a WEB upload's result belongs to the page the customer is already looking at.
     if (!snapshot || snapshot.expense.captureSource !== 'LINE_UPLOAD') return skipped();
+    const language = snapshot.expense.language ?? 'th';
+    const prepared = this.prepared.get(payload); if (prepared) prepared.language = language;
 
     const access = await this.resolveRecipient(companyId, {
       createdByUserId: snapshot.expense.createdByUserId,
@@ -251,7 +254,7 @@ export class LineCaptureResultNotifierUseCase {
         .catch(() => false);
       // Not removed = no longer empty: someone already filled the draft in, so it is their record
       // now and "จึงไม่ได้สร้างรายการ" would be false. Say what is true, and link it.
-      if (!removed) composed = { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+      if (!removed) composed = { text: CAPTURE_READ_PARTIAL_REPLY(link, language), nr: null };
       else if (this.prepared.has(payload)) composed = { text: 'ภาพนี้ไม่ใช่เอกสารธุรกิจ จึงยกเลิกร่างว่างที่เปิดไว้แล้วค่ะ', nr: 'NR07' };
     }
 
@@ -262,7 +265,7 @@ export class LineCaptureResultNotifierUseCase {
         authSubject: snapshot.expense.createdByUserId, userId: snapshot.expense.createdByUserId, companyId,
         membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' },
         snapshot.expense.lineChatKeyHash, expenseId);
-      const message = linePaymentEvidenceReply(pairing);
+      const message = linePaymentEvidenceReply(pairing, 0, language);
       if (message) {
         composed = { text: message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText! : '', nr: null, message: message.type === 'flex' ? asCompleteLineCard(message) : message };
         evidenceRecordIds = pairing.kind === 'LINKED' ? [pairing.slipId, pairing.receiptId]
@@ -275,15 +278,15 @@ export class LineCaptureResultNotifierUseCase {
       let confirmation: ExpenseActionPreview | undefined;
       if (!evidenceRecordIds.length && composed.message?.type === 'flex' && JSON.stringify(composed.message.contents).includes('ยืนยันรายการนี้')) {
         try {
-          const offered = await this.expenseActions?.preview(preparation.context, preparation.owner.chatKeyHash, { action: 'CONFIRM', expenseId }, true);
+          const offered = await this.expenseActions?.preview(preparation.context, preparation.owner.chatKeyHash, { action: 'CONFIRM', expenseId }, true, undefined, language);
           if (offered?.preview) {
             const receipt = this.receiptReply(companyId, expenseId, snapshot.expense, offered.preview);
             if (receipt.message) { composed = { ...receipt, nr: null }; confirmation = offered.preview; }
           }
         } catch (error) {
           this.logger.warn({ msg: 'line.capture_result.confirm_preview_error', expenseId, errorCode: (error as Error)?.name });
-          composed = { text: `${composed.text}\nเปิดตรวจรายการในเว็บค่ะ ${link}`, nr: null,
-            message: this.lineReply.buildTextMessage(`${composed.text}\nเปิดตรวจรายการในเว็บค่ะ ${link}`) };
+          composed = { text: `${composed.text}\n${language === 'en' ? 'Review expense on web' : 'เปิดตรวจรายการในเว็บค่ะ'}: ${link}`, nr: null,
+            message: this.lineReply.buildTextMessage(`${composed.text}\n${language === 'en' ? 'Review expense on web' : 'เปิดตรวจรายการในเว็บค่ะ'}: ${link}`) };
         }
       }
       const result = await this.saveCapturePlan(preparation, payload, composed.text, composed.nr === 'NR07' ? 'EMPTY_DRAFT_DELETED' : 'NONE', composed.message, evidenceRecordIds, confirmation);
@@ -297,7 +300,7 @@ export class LineCaptureResultNotifierUseCase {
         permissions: access.permissions,
         entitledFeatureKeys: access.entitledFeatureKeys,
         isOwner: access.roles.includes('OWNER'),
-      }),
+      }, language),
     });
     const outgoing = this.handoffLinks
       ? await this.handoffLinks.wrapOutgoingLineContent(
@@ -329,7 +332,7 @@ export class LineCaptureResultNotifierUseCase {
     if (!proof) return { kind: 'permanent', code: 'CAPTURE_SOURCE_CHANGED' };
     const createdAt = preparation.event.createdAt, now = new Date(), expiresAt = new Date(Math.min(createdAt.getTime() + 60 * 60_000, confirmation ? Date.parse(confirmation.expiresAt) : Infinity)).toISOString();
     const record = proof.records.find(row => row.id === expenseId)!;
-    const plan = buildLineDeliveryPlan({ producerKind: 'CAPTURE_OUTBOX', producerId: preparation.event.id, createdAt: createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
+    const plan = buildLineDeliveryPlan({ language: preparation.language, producerKind: 'CAPTURE_OUTBOX', producerId: preparation.event.id, createdAt: createdAt.toISOString(), readyAt: now.toISOString(), expiresAt,
       firstDispatchDeadlineAt: expiresAt, control: confirmation ? { kind: 'EXPENSE_ACTION_CONFIRM', token: confirmation.token,
         expiresAt: confirmation.expiresAt, requiredItemIds: [`${lineDeliveryPlanId('CAPTURE_OUTBOX', preparation.event.id)}:item:0`] } : null,
       authorization: { v: 2, kind: 'PRIVATE', issuedAt: now.toISOString(), expiresAt, actor: { userId: preparation.owner.userId, companyId: preparation.owner.companyId,
@@ -406,17 +409,18 @@ export class LineCaptureResultNotifierUseCase {
     payload: Record<string, unknown>,
     link: string,
   ): { text: string; nr: LineNonReceiptCase | null; message?: LineReplyMessage } | null {
+    const language = snapshot.expense.language ?? 'th';
     const status = readString(payload, 'status') ?? snapshot.jobs[0]?.status ?? null;
     if (!status) return null;
     if (status === 'FAILED') {
-      const text = CAPTURE_READ_FAILED_REPLY(link);
-      return { text, nr: null, message: buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId) };
+      const text = CAPTURE_READ_FAILED_REPLY(link, language);
+      return { text, nr: null, message: buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, undefined, undefined, language) };
     }
-    if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+    if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link, language), nr: null };
     if (status === 'PAUSED') {
       const paused = snapshot.jobs.find((job) => job.status === 'PAUSED')?.pausedReason
         ?? readString(payload, 'pausedReason') ?? null;
-      return { text: CAPTURE_READ_PAUSED_REPLY(link, paused), nr: null };
+      return { text: CAPTURE_READ_PAUSED_REPLY(link, paused, language), nr: null };
     }
     if (status !== 'DONE') return null;
 
@@ -427,7 +431,7 @@ export class LineCaptureResultNotifierUseCase {
     if (nr && nr !== 'NR06') {
       return {
         nr,
-        text: nonReceiptReply(nr, {
+        text: nonReceiptReply(nr, { language,
           classification,
           ...(readString(payload, 'documentTotal') ? { amountLabel: readString(payload, 'documentTotal')! } : {}),
           ...(NON_RECEIPT_PERSISTING_CASES.includes(nr) ? { captureLink: link, capturedDraft: true } : {}),
@@ -442,12 +446,12 @@ export class LineCaptureResultNotifierUseCase {
       // DONE, but NOT written onto the draft (a stale fence, or facts the eligibility gate refused):
       // the record is exactly as it was, so today's receipt card would print a zero total the
       // document never showed. §17.6's partial sentence is the truthful one — file kept, fill in.
-      return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null };
+      return { text: CAPTURE_READ_PARTIAL_REPLY(link, language), nr: null };
     }
     if (splitIds.length > 0) {
       return {
         nr: null,
-        text: formatCaptureSplitReply({
+        text: formatCaptureSplitReply({ language,
           documentCount: readNumber(payload, 'documentCount') ?? splitIds.length + 1,
           links: [link, ...splitIds.map((id) => absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${id}`))],
         }),
@@ -458,8 +462,9 @@ export class LineCaptureResultNotifierUseCase {
   }
 
   private receiptReply(companyId: string, expenseId: string, expense: Partial<Pick<NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedExpenseSnapshot']>>>['expense'],
-    'status' | 'vendorNameSnapshot' | 'grandTotalAmount' | 'currency' | 'sourceDocumentType' | 'expenseDate' | 'vendorDocumentNumber' | 'categoryName' | 'vatAmount' | 'vatMode'>>, confirmation?: ExpenseActionPreview): { text: string; message?: LineReplyMessage } {
-    const result = formatCaptureAutoHandoffReply({
+    'status' | 'vendorNameSnapshot' | 'grandTotalAmount' | 'currency' | 'sourceDocumentType' | 'expenseDate' | 'vendorDocumentNumber' | 'categoryName' | 'vatAmount' | 'vatMode' | 'language'>>, confirmation?: ExpenseActionPreview): { text: string; message?: LineReplyMessage } {
+    const language = expense.language ?? 'th';
+    const result = formatCaptureAutoHandoffReply({ language,
       expenseId, status: expense.status,
       link: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`),
       vendorName: expense.vendorNameSnapshot, amount: expense.grandTotalAmount, currency: expense.currency,
@@ -467,7 +472,7 @@ export class LineCaptureResultNotifierUseCase {
       expenseDate: expense.expenseDate, documentNumber: expense.vendorDocumentNumber,
       categoryName: expense.categoryName, vatAmount: expense.vatAmount, vatMode: expense.vatMode,
     });
-    const message = result.draft && buildExpenseDraftReviewCard(result.text, result.draft, this.config.webBaseUrl, companyId, confirmation);
+    const message = result.draft && buildExpenseDraftReviewCard(result.text, result.draft, this.config.webBaseUrl, companyId, confirmation, undefined, language);
     return { text: message?.type === 'flex' ? message.canonicalText! : result.text, message };
   }
 

@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 /**
  * AgentCore Runtime entry point – item 10B Phase 8.
  * Exposes GET /ping and POST /invocations per AgentCore HTTP protocol.
@@ -72,6 +73,7 @@ export type RuntimePayload = {
   locationIds?: string[];
   roles?: string[];
   messageText: string;
+  language?: 'th' | 'en';
   locale?: string;
   permissions?: string[];
   entitlementDeniedPermissions?: Record<string, string>;
@@ -427,6 +429,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       roles: Array.isArray(p['roles']) ? (p['roles'] as string[]) : undefined,
       messageText: prompt,
       locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
+      ...(p['language'] === 'th' || p['language'] === 'en' ? { language: p['language'] } : {}),
       permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
       entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
       entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
@@ -466,6 +469,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     roles: Array.isArray(p['roles']) ? (p['roles'] as string[]) : undefined,
     messageText,
     locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
+      ...(p['language'] === 'th' || p['language'] === 'en' ? { language: p['language'] } : {}),
     permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
     entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
     entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
@@ -489,6 +493,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     requestId: p.turnId,
     webhookEventId: p.turnId,
     messageText: p.messageText,
+    language: p.language ?? lineReplyLanguage(p.messageText),
     messagePreviewHash: '',
     actorDelegations: p.actorDelegations,
     modelPolicy: p.modelPolicy,

@@ -9,6 +9,7 @@ export const MANGMEE_PERSONA_LINES = [
   'Your spoken persona is น้องมั่งมี (Nong Mangmee), a warm, capable female Thai coworker assistant for linked employees: friendly and natural, concise, never childish, overly sweet, or salesy.',
   // Owner 2026-09-06: her name is the only self-reference — no หนู, ผม, ดิฉัน, no generic product-bot label.
   'Refer to yourself as น้องมั่งมี or มั่งมี (Nong Mangmee in English), only when natural or when asked — never as หนู, ผม, or ดิฉัน, and never as WatchDog, MangmeePlus AI, or a generic "AI Assistant".',
+  'Reply in the current user message language: English input gets polite, concise English without Thai particles; any Thai, including Thai-English mixed input, gets Thai. Account locale and saved style never override this. A supplied language preserves the language of a synthetic button turn.',
   'When replying in Thai, use feminine polite particles (ค่ะ/คะ/นะคะ) naturally and never the male ครับ; do not force a particle onto every line.',
   'Never claim a body, a personal life, or that you are human.',
   'Never claim that you saved, created, stored, submitted, approved or paid anything in model-written text (บันทึก/สร้าง/เก็บ…แล้ว). Only the server may acknowledge a successful write in this turn; asking for missing input must never start with a save acknowledgement.',
@@ -18,7 +19,7 @@ export const MANGMEE_PERSONA_LINES = [
   // tuning-3 (T-130/T-131/T-133): the model named the internal English term instead of the Thai
   // word a customer actually reads on the site — never system/module jargon such as "Sales/AR",
   // "Expense", or "Reimbursement"; say ค่าใช้จ่าย, การเบิกจ่าย, ขายและลูกหนี้ instead.
-  'Never use English business/system jargon such as "Sales/AR", "Expense", or "Reimbursement" in a customer-facing reply — use the Thai word a customer sees on the site instead (ค่าใช้จ่าย, การเบิกจ่าย, ขายและลูกหนี้).',
+  'In Thai replies, never use English business/system jargon such as "Sales/AR", "Expense", or "Reimbursement" in a customer-facing reply — use the Thai word a customer sees on the site instead (ค่าใช้จ่าย, การเบิกจ่าย, ขายและลูกหนี้).',
   // tuning-4 (batch5 A5; run 4: T-009-a's markdown table, T-052-a's markdown table): LINE renders
   // plain text only — Markdown syntax shows as literal asterisks, hashes and pipes to the customer.
   // tuning-6a (E2, run 5: 24/77 compose calls answered in plain prose instead of the required
@@ -28,9 +29,9 @@ export const MANGMEE_PERSONA_LINES = [
   // scope the rule to the text inside it, so it can never be read as "skip the JSON."
   'Inside the customer-visible text you write (never the JSON wrapper around it): plain LINE text, no Markdown (no **bold**, no # headings, no tables, no code blocks); use short lines and "• " bullets for a list.',
   // tuning-4 (T-013-a: "ค่าใช้จ่ายที่จ่ายแล้ว (สถานะ PAID)"): the model quoted an internal status key.
-  'Never show internal or English status keys or glosses (PAID, UNPAID, NEEDS_REVIEW, "Draft", "Needs Review", "Confirmed"…) — use the Thai labels: จ่ายแล้ว, ยังไม่จ่าย, จ่ายบางส่วน, ร่าง, รอตรวจสอบ, ยืนยันแล้ว, ถูกปฏิเสธ, ยกเลิก.',
+  'Never show internal status keys; in English use plain English status words. In Thai never show English status glosses (PAID, UNPAID, NEEDS_REVIEW, "Draft", "Needs Review", "Confirmed"…) — use the Thai labels: จ่ายแล้ว, ยังไม่จ่าย, จ่ายบางส่วน, ร่าง, รอตรวจสอบ, ยืนยันแล้ว, ถูกปฏิเสธ, ยกเลิก.',
   // tuning-4 (T-009-a/T-052-a/T-107-b): the model wrote ISO dates and a CE year in Thai prose.
-  'Write dates in Thai style with the Buddhist-era year (28 ก.ย. 2569, เดือนกันยายน 2569) — never an ISO date and never a CE year in Thai text.',
+  'In English use day, short English month and CE year. In Thai write dates in Thai style with the Buddhist-era year (28 ก.ย. 2569, เดือนกันยายน 2569) — never an ISO date and never a CE year in Thai text.',
   // tuning-4 (run 4: knowledge answers averaged ~1,000 characters; 4 compose calls hit the 15s
   // timeout): a long answer is slower and reads worse in a chat bubble than a short direct one.
   // tuning-6a (E2, run 5): same JSON-wrapper confusion as the Markdown line above — "keep the whole
@@ -156,7 +157,7 @@ export function thaiForEnglishBusinessWords(text: string, turnWords: string): st
   return result;
 }
 
-export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true, turnWords?: string): string {
+export function sanitizeMangmeeComposedText(text: string, bareSelfReference = true, turnWords?: string, language: 'th' | 'en' = 'th'): string {
   let result = sanitizeMangmeePersonaText(text, bareSelfReference)
     .replace(/```[a-zA-Z]*\n?/gu, '').replace(/```/gu, '')
     .replace(/^[ \t]*#{1,6}[ \t]*/gmu, '')
@@ -167,15 +168,15 @@ export function sanitizeMangmeeComposedText(text: string, bareSelfReference = tr
     .map((line) => (isTableRow(line) ? tableRowToBullet(line) : line))
     .join('\n');
   result = result
-    .replace(STATUS_GLOSS_PATTERN, '')
+    .replace(STATUS_GLOSS_PATTERN, language === 'en' ? '$&' : '')
     .replace(FIELD_GLOSS_PATTERN, '')
-    .replace(STATUS_ENUM_PATTERN, (token) => STATUS_ENUM_TH[token]!)
+    .replace(STATUS_ENUM_PATTERN, (token) => language === 'en' ? token.toLowerCase().replace(/_/gu, ' ') : STATUS_ENUM_TH[token]!)
     .replace(CE_YEAR_AFTER_THAI_MONTH, (_match, month: string, spacing: string, year: string) => `${month}${spacing}${Number(year) + 543}`)
     .replace(APP_MARKDOWN_LINK, '$1')
-    .replace(APP_PATH, (_match, page?: string, subpage?: string) => APP_PAGE_TH[`${page}/${subpage}`] ?? APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท')
+    .replace(APP_PATH, (_match, page?: string, subpage?: string) => language === 'en' ? 'the company web app' : APP_PAGE_TH[`${page}/${subpage}`] ?? APP_PAGE_TH[page ?? ''] ?? 'หน้าเว็บของบริษัท')
     .replace(DATA_FIELD_PARENTHETICAL, '');
   result = result.split('\n').map((line) => line.replace(/[ \t]{2,}/gu, ' ').trim()).join('\n').trim();
-  return turnWords === undefined ? result : thaiForEnglishBusinessWords(result, turnWords);
+  return turnWords === undefined || language === 'en' ? result : thaiForEnglishBusinessWords(result, turnWords);
 }
 
 // ─── Advisor S0 (R1 integrated G run 2026-10-01): the shape of a "general" answer, held in code ──────────────────

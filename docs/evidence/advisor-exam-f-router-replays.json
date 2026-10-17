@@ -1,0 +1,1106 @@
+[
+  {
+    "id": "C01-fail-amount0#0",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2hjbn-0-6cf7f8c5",
+          "replyToken": "rt-d48d0a35-e0d6-4a8c-9152-08f47edadf5d",
+          "message": {
+            "type": "text",
+            "id": "m17922216340671",
+            "text": "บันทึกค่าใช้จ่ายทำยังไง",
+            "quoteToken": "18a18355f5de9030"
+          },
+          "timestamp": 1792221634067,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีบันทึกค่าใช้จ่ายในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "a70d43c0b26e4d928a10ba3be2402c513edba1b9cd3f3d97bf6895b8b7e486c8"
+            }
+          ]
+        }
+      ],
+      "selectedKnowledgeCardIds": [
+        "expense.start"
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3703,
+          "outputTokens": 126,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 4255,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#28f2d000629ef27f0212aea72fd561fd5b3a3f48cfb7d453866c6ee8c8f564e1#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-fail-amount0#1",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2hq5s-1-c3fa2fab",
+          "replyToken": "rt-9c47b557-2d31-469e-b80f-81254b118972",
+          "message": {
+            "type": "text",
+            "id": "m17922216429282",
+            "text": "ทำให้หน่อย ค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้ จ่ายเงินสดไปแล้ว",
+            "quoteToken": "1e926631ea758448"
+          },
+          "timestamp": 1792221642928,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.97,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ร้านเย็นฉ่ำแอร์",
+        "description": "ค่าซ่อมแอร์หน้าร้าน",
+        "expenseDate": "2026-10-17",
+        "amount": "1800",
+        "expenseCategoryId": "category-a-service",
+        "items": [
+          {
+            "sourceText": "ค่าซ่อมแอร์หน้าร้าน",
+            "description": "ค่าซ่อมแอร์หน้าร้าน",
+            "quantity": "1",
+            "unit": "งาน",
+            "unitPrice": "1800",
+            "totalAmount": "1800",
+            "expenseCategoryId": "category-a-service",
+            "taxTreatment": "no VAT stated — needs review",
+            "accountingClass": "OPEX",
+            "itemBehavior": "SERVICE",
+            "confidence": 0.9,
+            "missingFields": []
+          }
+        ],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.95,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 80,
+              "rawSha256": "43dda9003d44609bbdecc232a247c9c111bf9010f95155e672e770c461db8ff6"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4208,
+          "outputTokens": 396,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 8655,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#2179ac3f83eba0b9a9201135447169a0549a5bb3c8b3ac88a489da1ffbe23437#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-fail-amount0#4",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2i720-4-f8e29bb9",
+          "replyToken": "rt-690f2144-2728-43ec-a7b2-88428b501055",
+          "message": {
+            "type": "text",
+            "id": "m17922216648245",
+            "text": "ลบรายการค่าซ่อมแอร์นี้ทิ้งเลย บันทึกผิด",
+            "quoteToken": "97e6ef2517f7ad14"
+          },
+          "timestamp": 1792221664825,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "UNAVAILABLE",
+      "intent": "UNSUPPORTED",
+      "language": "th",
+      "confidence": 0,
+      "errorCode": "ROUTER_SEMANTIC_SCHEMA_INVALID",
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4998,
+          "outputTokens": 485,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 10575,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#b764571c36140ab2e26f7e6f54c9e74535df1ea1f9f1bce809bee9ecd01bcd28#provider-v2#0"
+        },
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 5063,
+          "outputTokens": 392,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 7673,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#b764571c36140ab2e26f7e6f54c9e74535df1ea1f9f1bce809bee9ecd01bcd28#provider-v2#1"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-fail-amount0#2",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2i0et-2-15b98f78",
+          "replyToken": "rt-74a98c74-13d0-4a29-8950-3132e1214ca5",
+          "message": {
+            "type": "text",
+            "id": "m17922216562133",
+            "text": "ยืนยันรายการนี้ แล้วบันทึกว่าจ่ายเงินสดแล้ววันนี้",
+            "quoteToken": "d5e9fe81ea766821"
+          },
+          "timestamp": 1792221656213,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-fail-amount0#3",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2i3q8-3-1eb98fa6",
+          "replyToken": "rt-dc199eb0-2c6c-4580-bbda-66c5d297aa7b",
+          "message": {
+            "type": "text",
+            "id": "m17922216605124",
+            "text": "แก้ยอดรายการค่าซ่อมแอร์เมื่อกี้เป็น 1,850 บาท",
+            "quoteToken": "6d6813fa8919f407"
+          },
+          "timestamp": 1792221660512,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-pass#0",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2pc0b-0-c86d0785",
+          "replyToken": "rt-c67a8993-fdcd-49db-bf2f-53febafd4c2d",
+          "message": {
+            "type": "text",
+            "id": "m17922219978351",
+            "text": "บันทึกค่าใช้จ่ายทำยังไง",
+            "quoteToken": "316b0eecbae446d6"
+          },
+          "timestamp": 1792221997835,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีบันทึกค่าใช้จ่ายในระบบ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 23,
+              "rawSha256": "a70d43c0b26e4d928a10ba3be2402c513edba1b9cd3f3d97bf6895b8b7e486c8"
+            }
+          ]
+        }
+      ],
+      "selectedKnowledgeCardIds": [
+        "expense.start"
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3703,
+          "outputTokens": 126,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 4865,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#73061c00a320ec302921684110e7ff3b72948ee8f41c7ec35b13fdc8470fbd0c#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-pass#1",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2pj8i-1-7aa3e9a4",
+          "replyToken": "rt-cbe92905-02bd-419f-a89c-b4b7bd39665f",
+          "message": {
+            "type": "text",
+            "id": "m17922220072022",
+            "text": "ทำให้หน่อย ค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้ จ่ายเงินสดไปแล้ว",
+            "quoteToken": "6cba70a5b93fc341"
+          },
+          "timestamp": 1792222007202,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.97,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "ร้านเย็นฉ่ำแอร์",
+        "description": "ค่าซ่อมแอร์หน้าร้าน",
+        "expenseDate": "2026-10-17",
+        "amount": "1800",
+        "items": [
+          {
+            "sourceText": "ค่าซ่อมแอร์หน้าร้าน 1,800 บาท",
+            "description": "ค่าซ่อมแอร์หน้าร้าน",
+            "quantity": "1",
+            "unit": "งาน",
+            "unitPrice": "1800",
+            "totalAmount": "1800",
+            "taxTreatment": "ตรวจสอบ VAT และภาษีหัก ณ ที่จ่าย",
+            "accountingClass": "OPEX",
+            "itemBehavior": "SERVICE",
+            "confidence": 0.9,
+            "missingFields": []
+          }
+        ],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.95,
+        "missingFields": []
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้ จ่ายเงินสดแล้ว",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 80,
+              "rawSha256": "43dda9003d44609bbdecc232a247c9c111bf9010f95155e672e770c461db8ff6"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4208,
+          "outputTokens": 431,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 9597,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#8815c1cf18680b258c9226b7abb9dbff5160d38b61d47fc9e8a2d256473ace9b#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-pass#3",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2pxeu-3-1531ceb1",
+          "replyToken": "rt-bab835dc-3fe8-404d-b43e-8eeb7d592abe",
+          "message": {
+            "type": "text",
+            "id": "m17922220255754",
+            "text": "ยืนยันรายการนี้"
+          },
+          "timestamp": 1792222025575,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "ยืนยันรายการค่าซ่อมแอร์หน้าร้าน ร้านเย็นฉ่ำแอร์ 1,800 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 15,
+              "rawSha256": "6f5e4449bb2182f0a9671e52bf67032b0baed8c6dde9c0a5bc9e44875f0914f0"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4832,
+          "outputTokens": 149,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5679,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#2f548ad6e62b3e7a797f609c9f5ca76f93c83dc03a01901f4e0cf756764ddb53#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-pass#4",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2q7fv-4-b14d4a97",
+          "replyToken": "rt-eeb9bdd1-38c1-4f01-824a-2b86126ec4b4",
+          "message": {
+            "type": "text",
+            "id": "m17922220385725",
+            "text": "แก้ยอดรายการค่าซ่อมแอร์เมื่อกี้เป็น 1,850 บาท",
+            "quoteToken": "733a913a3a748d60"
+          },
+          "timestamp": 1792222038572,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_CAPTURE_CORRECTION",
+      "language": "th",
+      "confidence": 0.97,
+      "correctionHints": {
+        "targetExpenseId": "cmvc2prnf002kvfk1dn7kk2wt",
+        "amount": {
+          "to": "1850",
+          "from": "1800"
+        },
+        "confidence": 0.97
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "แก้ยอดค่าซ่อมแอร์ ร้านเย็นฉ่ำแอร์ จาก 1,800 เป็น 1,850 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "9a3fd8e464f677a5e7aea3e2ef6d262c328b8e941c3a6d7bc507ceab2e5e9639",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 45,
+              "rawSha256": "96d7a8980e2f819a884929325ffe97aee9a241f281a03a82810fb973f73581e5"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 5038,
+          "outputTokens": 269,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 5285,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#0a1e943dc3a980ebef77de90620037fd6c75ddce336c03d442c45650d4f6274e#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C01-pass#6",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2qhim-6-7d6efa9a",
+          "replyToken": "rt-cccae897-478f-4688-aa71-7471b4642d84",
+          "message": {
+            "type": "text",
+            "id": "m17922220516307",
+            "text": "ลบรายการค่าซ่อมแอร์นี้ทิ้งเลย บันทึกผิด",
+            "quoteToken": "8fa907561c868e55"
+          },
+          "timestamp": 1792222051630,
+          "source": {
+            "type": "user",
+            "userId": "U0d7e9e5d93b4ac3f48672a30b576dc66"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "ลบรายการค่าซ่อมแอร์ที่บันทึกผิด (cmvc2prnf002kvfk1dn7kk2wt)",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "expenseId": "cmvc2prnf002kvfk1dn7kk2wt"
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "a001d28cab70dab3191f9bdad1ff3974178735d88617252e7eb6d2b474ece3aa"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 5310,
+          "outputTokens": 167,
+          "cacheReadInputTokens": 23558,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 4528,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-a#9a9d175b518fda0cd936b30b280a91d2715798b2ba050cc19285467227e9aee5#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run1#0",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2e76u-0-8e5859fb",
+          "replyToken": "rt-676698e9-eef8-428b-b5d4-c713bfd66467",
+          "message": {
+            "type": "text",
+            "id": "m17922214783741",
+            "text": "ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ ทำยังไง",
+            "quoteToken": "e49845e0cbf5423d"
+          },
+          "timestamp": 1792221478374,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 44,
+              "rawSha256": "d38b51c0ec6c3df99174d66321b1f9aebaa3d7a14647d2f03ee163d1869c7fa4"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3907,
+          "outputTokens": 142,
+          "cacheReadInputTokens": 16553,
+          "cacheWriteInputTokens": 7350,
+          "durationMs": 5158,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#5a723825281dc1f4e98c2b138c1ac8238a297afe8db9e30050ff8b2271cb40ea#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run1#1",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2enk2-1-39a57bcd",
+          "replyToken": "rt-55ba9181-c149-4769-a850-0cf65d95ce97",
+          "message": {
+            "type": "text",
+            "id": "m17922214995862",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "d53ac71ee5d8f97e"
+          },
+          "timestamp": 1792221499586,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% โอนจ่ายวันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า ป้ายสวย จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 99,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "write",
+          "goal": "ออกใบรับรองหัก ณ ที่จ่าย 50 ทวิ สำหรับการจ้างบริษัท ป้ายสวย จำกัด 3%",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 62,
+              "endUtf16": 78,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4958,
+          "outputTokens": 462,
+          "cacheReadInputTokens": 23903,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 10673,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#8897abbf9a13f22b7a94006f4deac59e0210688ca40014b94cb2808a048c41cb#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run1#3",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2f6lc-3-0e851dce",
+          "replyToken": "rt-1e843d1e-1be4-4db0-a10b-9c3b0077a73a",
+          "message": {
+            "type": "text",
+            "id": "m17922215242564",
+            "text": "ทำข้อ 1 ก่อน"
+          },
+          "timestamp": 1792221524256,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.97,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "sourceDocumentLanguage": "th",
+        "vendorName": "บริษัท ป้ายสวย จำกัด",
+        "businessPurpose": "ทำป้ายหน้าร้าน",
+        "expenseDate": "2026-10-17",
+        "amount": "10000",
+        "items": [],
+        "vatMode": "NEEDS_REVIEW",
+        "confidence": 0.97,
+        "missingFields": [
+          "description"
+        ]
+      },
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% โอนจ่ายวันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "b28bdc508ec19b0ea428944b1702b8b502f0ea910a4b27862ea93c19fa0b5cf9",
+            "taskRevision": 4,
+            "subrequestIndex": 0
+          },
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 12,
+              "rawSha256": "1489c30f0cbfe466880829acde10155871615534097faa3c7d698ea5b3a1a6c6"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 5911,
+          "outputTokens": 499,
+          "cacheReadInputTokens": 0,
+          "cacheWriteInputTokens": 24090,
+          "durationMs": 8702,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#300bd9e4817bb8387829682beb82cd5bbac1871456c26dc5d935a094b318a5cb#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run2#0",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2mvbs-0-26fb1567",
+          "replyToken": "rt-3a8ceac8-09a3-4b1b-bce5-a358c5e930a2",
+          "message": {
+            "type": "text",
+            "id": "m17922218829041",
+            "text": "ออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ ทำยังไง",
+            "quoteToken": "bc6bcc8ec9a62aaf"
+          },
+          "timestamp": 1792221882904,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีออกหนังสือรับรองหัก ณ ที่จ่าย 50 ทวิ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "wht.calculate_withholding",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 44,
+              "rawSha256": "d38b51c0ec6c3df99174d66321b1f9aebaa3d7a14647d2f03ee163d1869c7fa4"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 3907,
+          "outputTokens": 145,
+          "cacheReadInputTokens": 16553,
+          "cacheWriteInputTokens": 7350,
+          "durationMs": 7519,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#af77c463b58c8294229f79eb705c66c0d4a01557c33a97083e6a2b3be19e1181#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run2#1",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2necz-1-5979996e",
+          "replyToken": "rt-ce7bff46-ed77-4ba1-ae83-554de222fc39",
+          "message": {
+            "type": "text",
+            "id": "m17922219075712",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "39aaf72866aa8be4"
+          },
+          "timestamp": 1792221907571,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างทำป้ายหน้าร้าน 10,000 บาท พร้อมหัก ณ ที่จ่าย 3% และข้อมูลผู้รับเงิน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ],
+      "usage": [
+        {
+          "tag": "line.intake-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 4958,
+          "outputTokens": 265,
+          "cacheReadInputTokens": 23903,
+          "cacheWriteInputTokens": 0,
+          "durationMs": 7292,
+          "usageBasis": "PROVIDER_REPORTED",
+          "invocationKey": "company-b#6c1f1c94eea9293f1868105c6323c3258185e7d9a7bbd34078677893e26d2b9f#provider-v2#0"
+        }
+      ]
+    }
+  },
+  {
+    "id": "C05-run1#6",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc2fmlx-6-636363cb",
+          "replyToken": "rt-4f3a850e-263c-4736-bff7-b5c1115034c5",
+          "message": {
+            "type": "text",
+            "id": "m17922215450147",
+            "text": "ส่งรูปใบเสร็จ"
+          },
+          "timestamp": 1792221545014,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    }
+  }
+]

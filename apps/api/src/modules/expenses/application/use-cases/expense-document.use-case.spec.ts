@@ -1,5 +1,5 @@
 import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
-import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
+import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError, lineDraftIdempotencyKey } from './expense-document.use-case';
@@ -51,13 +51,13 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(isLineExpenseDraftStartEligible('อินฟลู 500 บาท', hints, false), false);
     assert.equal(isLineExpenseDraftStartEligible('อินฟลู 600 บาท', hints, true), false);
     assert.equal(isLineExpenseDraftStartEligible('รับเงินจากลูกค้า 500 บาท', hints, true), false);
-    for (const [description, expected] of [['ค่าใช้จ่าย อินฟลู', 'ค่าใช้จ่าย อินฟลู'], ['อินฟลู ค่าใช้จ่าย', undefined], ['ค่าใช้จ่าย ไม่มีในข้อความ', undefined]] as const) {
+    for (const [description, expected] of [['ค่าใช้จ่าย อินฟลู', 'ค่าใช้จ่าย อินฟลู'], ['อินฟลู ค่าใช้จ่าย', 'อินฟลู'], ['ค่าใช้จ่าย ไม่มีในข้อความ', 'อินฟลู']] as const) {
       const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf', companyId: 'c', userId: 'u', expenseId: 'e',
         chatKeyHash: 'chat', targetRevision: 'rev', provisionalExpenseDate: '2026-10-15', categories: [],
         messageText: 'สร้างค่าใช้จ่ายให้ อินฟลู 500 บาท วันที่ 10 ตุลา 2569',
         hints: { confidence: 0.9, description, amount: '600', expenseDate: '2026-10-11' } });
       assert.equal(state.items[0]?.description, expected);
-      assert.equal(state.items[0]?.totalAmount, undefined);
+      assert.equal(state.items[0]?.totalAmount, '500', 'recover only the stated money, never the invented 600');
       assert.equal(state.header.expenseDate, '2026-10-10', 'date falls back only to the extracted source date');
     }
   });
@@ -192,8 +192,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
 
     assert.equal(creates.length, 1);
     assert.equal(creates[0].lines.length, 1, 'the incomplete paper item is preserved in metadata, not fabricated as a line');
-    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
-    assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
+    assert.match(result.replyTexts.join('\n'), /วันไหนคะ/u);
+    assert.doesNotMatch(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย|ซื้อจากร้าน/u, 'ask only for the first missing field');
     assert.equal(updates.at(-1).status, 'DRAFT');
   });
 
@@ -210,7 +210,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(result.insertedAmount, '65.0000', 'a grounded total-only note uses quantity one (A2)');
     assert.equal(result.categoryId, null, 'no category is invented when the router names none');
     assert.doesNotMatch(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
-    assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
+    assert.doesNotMatch(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย|ซื้อจากร้าน/u, 'ask only for the first missing field');
     const update = updates.at(-1);
     assert.equal(update.sourceDocumentType, 'EXPENSE_NOTE_TEXT');
     assert.equal(update.taxEvidenceStatus, 'SUPPORTING_ONLY');
@@ -537,7 +537,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     });
     assert.equal(result.insertedAmount, null);
     assert.equal(result.categoryId, null);
-    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
+    assert.match(result.replyTexts.join('\n'), /วันไหนคะ/u);
   });
 
   it('is idempotent by LINE message id', async () => {
@@ -1470,3 +1470,53 @@ it('G3: exact second live router history hints do not answer the current message
   assert.deepEqual(expense.sourceChannelMetadataJson, before);
   assert.equal(updates.length, 0);
 });
+
+describe('cash-note questions stay separate from receipt completeness', () => {
+  it('Exam F1: explicit edits reach intake and an incidental date never stands in for an amount edit', async () => {
+    const context = ctx(['expense.receipt.line_upload'], 'line');
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'f1', companyId: context.companyId, userId: context.userId, expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-10-17T00:00:00Z', provisionalExpenseDate: '2026-10-17', categories: [],
+      messageText: 'ค่าซ่อมแอร์หน้าร้าน 1,800 บาท วันนี้', hints: { confidence: 1, amount: '1800', description: 'ค่าซ่อมแอร์หน้าร้าน' } });
+    const expense = { id: state.expenseId, companyId: context.companyId, createdByUserId: context.userId, captureSource: 'LINE_UPLOAD', status: 'DRAFT',
+      updatedAt: new Date(state.targetRevision), sourceChannelMetadataJson: { lineExpenseDraftContinuation: state }, lines: [] };
+    let updates = 0;
+    const repo: any = { listLineExpenseDraftContinuationRows: async () => [expense], findByIdWithRelations: async () => expense, listCategories: async () => [] };
+    const useCase = new LineExpenseDraftConversationUseCase(repo, { execute: async () => { updates++; } } as any);
+    for (const text of ['แก้ยอดรายการค่าซ่อมแอร์เมื่อกี้เป็น 1,850 บาท', 'ยืนยันรายการนี้ แล้วบันทึกว่าจ่ายเงินสดแล้ววันนี้', 'ลบรายการค่าซ่อมแอร์นี้ทิ้งเลย บันทึกผิด']) {
+      assert.equal(await useCase.answersOpenDraft(context, 'chat', text), false, text);
+    }
+    const result = await useCase.execute(context, { chatKeyHash: 'chat', messageText: 'แก้ยอดรายการค่าซ่อมแอร์เมื่อกี้เป็น 1,850 บาท', captureHints: { expenseDate: '2026-10-17' } });
+    assert.deepEqual(result.acceptedFields, []); assert.match(result.replyTexts.join('\n'), /ยังไม่ได้แก้ยอดเงินค่ะ/);
+    assert.doesNotMatch(result.replyTexts.join('\n'), /แก้ร่างแล้ว: วันที่/); assert.equal(updates, 0);
+  });
+  it('asks once for the missing amount on a note and preserves receipt seller/quantity guards', () => {
+    const input = { workflowId: 'wf', companyId: 'company', userId: 'user', expenseId: 'expense', chatKeyHash: 'chat',
+      targetRevision: '2026-10-17T00:00:00Z', provisionalExpenseDate: '2026-10-17', messageText: 'ค่าเดินทาง วันนี้', categories: [],
+      hints: { description: 'ค่าเดินทาง', confidence: 1 } };
+    const note = buildInitialLineExpenseDraftContinuation(input);
+    assert.equal(note.header.expenseDate, '2026-10-17');
+    assert.ok(!note.unresolvedQuestions.some(question => ['vendorName', 'quantity'].includes(question.field)));
+    const receipt = buildInitialLineExpenseDraftContinuation({ ...input, itemSource: 'LINE_MEDIA_OCR' });
+    assert.ok(receipt.unresolvedQuestions.some(question => question.field === 'vendorName'));
+    assert.ok(receipt.unresolvedQuestions.some(question => question.field === 'quantity'));
+    delete receipt.itemSource;
+    for (const entry of Object.values(receipt.provenance)) entry.source = 'LINE_MEDIA_OCR';
+    assert.ok(collectLineExpenseDraftQuestions(receipt, []).some(question => question.field === 'vendorName'), 'legacy OCR drafts retain their evidence guards');
+  });
+});
+
+  it('Exam F1: a one-item note retains stated money when the model bounds the item to its name', () => {
+    const messageText = 'ทำให้หน่อย ค่าซ่อมแอร์หน้าร้าน 1,800 บาท ร้านเย็นฉ่ำแอร์ วันนี้ จ่ายเงินสดไปแล้ว';
+    for (const amount of ['1800', undefined]) {
+      const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'f1', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+        targetRevision: '2026-10-17T00:00:00Z', provisionalExpenseDate: '2026-10-17', messageText, categories: [],
+        hints: { confidence: 1, amount, items: [{ sourceText: 'ค่าซ่อมแอร์หน้าร้าน', description: 'ค่าซ่อมแอร์หน้าร้าน', totalAmount: '1800', unitPrice: '1800' }] } });
+      assert.equal(state.items[0]!.totalAmount, '1800');
+      assert.equal(materializedLineExpenseDraftItems(state)[0]!.unitPrice, '1800');
+      assert.equal(state.unresolvedQuestions.some(question => question.field === 'price'), false);
+    }
+    const multi = buildInitialLineExpenseDraftContinuation({ workflowId: 'f1', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
+      targetRevision: '2026-10-17T00:00:00Z', provisionalExpenseDate: '2026-10-17', messageText: 'ค่าซ่อมแอร์กับค่าล้างแอร์ รวม 1,800 บาท', categories: [],
+      hints: { confidence: 1, amount: '1800', items: [{ sourceText: 'ค่าซ่อมแอร์', description: 'ค่าซ่อมแอร์' }, { sourceText: 'ค่าล้างแอร์', description: 'ค่าล้างแอร์' }] } });
+    assert.equal(materializedLineExpenseDraftItems(multi).length, 0, 'a document total never becomes each of two item totals');
+  });

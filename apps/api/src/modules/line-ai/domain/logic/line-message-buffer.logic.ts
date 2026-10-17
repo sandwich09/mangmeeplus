@@ -1,3 +1,4 @@
+import { lineReplyLanguage, type LineReplyLanguage } from './line-language.logic';
 /**
  * Pure buffering/segmentation logic for LINE AI multi-bubble utterances.
  * No NestJS, Prisma, HTTP, or timer imports — the caller passes time in.
@@ -14,6 +15,7 @@ export type LineBufferTextItem = {
   webhookEventId: string;
   replyToken: string;
   text: string;
+  language?: 'th' | 'en';
   /** Exact draft preview targeted by a validated LINE postback. */
   quotedMessageId?: string;
   counterpartyControl?: import('../../application/line-counterparty.service').CounterpartyControl;
@@ -38,6 +40,7 @@ export type LineBufferTextItem = {
 };
 
 export type LineBufferMediaItem = {
+  language?: 'th' | 'en';
   kind: 'media';
   webhookEventId: string;
   replyToken: string;
@@ -126,7 +129,8 @@ function stableStatusVariant(variants: string[], seed: string): string {
 }
 
 /** One truthful, varied waiting line selected from the request; no model call needed. */
-export function lineWaitStatusText(messageText: string, turnSeed = messageText): string {
+export function lineWaitStatusText(messageText: string, turnSeed = messageText, language: LineReplyLanguage = lineReplyLanguage(messageText)): string {
+  if (language === 'en') return stableStatusVariant(['I’m checking that for you; thank you for waiting.', 'I’m preparing your answer; please wait a moment.'], turnSeed);
   const normalized = messageText.trim().toLowerCase();
   const variants = LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
     ?? LINE_GENERIC_WAIT_STATUSES;
@@ -135,7 +139,8 @@ export function lineWaitStatusText(messageText: string, turnSeed = messageText):
 
 /** The header of a waiting card. `ข้อมูลที่คุณขอ` only when the message asked for something the rules
  *  above recognise as data; any other message is simply being answered. */
-export function lineWaitCardHeader(messageText: string): readonly [string, string] {
+export function lineWaitCardHeader(messageText: string, language: LineReplyLanguage = lineReplyLanguage(messageText)): readonly [string, string] {
+  if (language === 'en') return ['Your request', 'Checking the details'];
   const normalized = messageText.trim().toLowerCase();
   return LINE_WAIT_STATUS_RULES.some(([pattern]) => pattern.test(normalized)) ? ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'] : ['ข้อความของคุณ', 'กำลังหาคำตอบ'];
 }
@@ -150,7 +155,8 @@ export type LineWaitStage = { delayMs: number; text: string; card?: Pick<LineSys
  * unanswered until the first was done). One photo or one file keeps its sentence; a burst names its
  * count and promises every answer in order — without the one-minute figure a queue of reads cannot keep.
  */
-export function lineMediaGroupAckText(mediaTypes: ReadonlyArray<'image' | 'file'>): string {
+export function lineMediaGroupAckText(mediaTypes: ReadonlyArray<'image' | 'file'>, language: LineReplyLanguage = 'th'): string {
+  if (language === 'en') return 'Document received; I’ll send the reading results here when ready.';
   const photos = mediaTypes.filter((type) => type === 'image').length;
   const files = mediaTypes.length - photos;
   if (mediaTypes.length <= 1) return files ? LINE_FILE_RECEIVED_TEXT : LINE_MEDIA_RECEIVED_TEXT;
@@ -164,7 +170,8 @@ export function lineMediaGroupAckText(mediaTypes: ReadonlyArray<'image' | 'file'
  * where the result will come. A file is never called a picture, a burst names its count, and nothing
  * here says how far the read is or when it ends — the server knows neither.
  */
-export function lineMediaGroupAckStage(mediaTypes: ReadonlyArray<'image' | 'file'>): LineWaitStage {
+export function lineMediaGroupAckStage(mediaTypes: ReadonlyArray<'image' | 'file'>, language: LineReplyLanguage = 'th'): LineWaitStage {
+  if (language === 'en') { const text = lineMediaGroupAckText(mediaTypes, language); return { delayMs: 0, text, card: { mascot: 'scanning', header: { lines: ['Your document', 'Reading document'] }, text } }; }
   const photos = mediaTypes.filter((type) => type === 'image').length;
   const files = mediaTypes.length - photos;
   const what = mediaTypes.length <= 1 ? (files ? 'ไฟล์' : 'รูป')
@@ -199,6 +206,7 @@ export function lineWaitStageMessage(stage: LineWaitStage, webBaseUrl: string | 
  */
 export function lineWaitStages(input: {
   kind: 'text' | 'media';
+  language?: LineReplyLanguage;
   /** A file's read is async and finishes with its own push, so a file turn has no slow nudge. */
   mediaType?: 'image' | 'file';
   messageText: string;
@@ -207,6 +215,13 @@ export function lineWaitStages(input: {
   latestAcceptedAt: number;
   now: number;
 }): LineWaitStage[] {
+  const language = input.language ?? lineReplyLanguage(input.messageText);
+  if (language === 'en') {
+    if (input.kind === 'media' && input.mediaType === 'file') return [];
+    const stage = (delayMs: number, text: string): LineWaitStage => ({ delayMs: Math.max(0, input.latestAcceptedAt + delayMs - input.now), text, card: { mascot: 'general', header: { lines: ['Your request', input.kind === 'media' ? 'Reading document' : 'Checking the details'] }, text } });
+    const slow = stage(LINE_WAIT_STATUS_SLOW_DELAY_MS, input.kind === 'media' ? 'I’m still reading the document; please wait a little longer.' : 'I’m still checking your question; please wait a little longer.');
+    return input.loadingEnabled || input.kind === 'media' ? [slow] : [stage(LINE_WAIT_STATUS_DELAY_MS, lineWaitStatusText(input.messageText, input.seed, language)), slow];
+  }
   if (input.kind === 'media') {
     // The slow-turn nudge is written for a photo the customer is watching for; for a file it would be
     // a second promise nobody is waiting on.

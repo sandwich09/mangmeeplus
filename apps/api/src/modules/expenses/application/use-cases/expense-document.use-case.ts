@@ -14,15 +14,17 @@ import type {
   RequestContext, LineIntakeCaptureHints, LineIntakeClarificationField, CreateExpenseCategoryInput,
   UpdateExpenseCategoryInput, ExpenseCategorySummary,
 } from '@watchdog-bms/contracts';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { extractValueCandidates, todayCivilDate } from '@watchdog-bms/contracts';
 import { refreshExpenseSourceDraft } from '../../domain/logic/expense-source-draft.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { resolveNameCandidate } from '../../../line-ai/domain/logic/business-read-source.logic';
 import {
   buildInitialLineExpenseDraftContinuation,
   formatLineExpenseDraftReply,
   isClearlyNonExpenseDirection,
   isLineExpenseDraftStartEligible,
   materializedLineExpenseDraftItems,
+  lineExpenseNoteDescription,
   parseLineExpenseDraftContinuation,
   splitLineExpenseDraftReply,
 } from '../../domain/logic/line-expense-draft-conversation.logic';
@@ -108,6 +110,16 @@ export class CaptureLineExpenseNoteUseCase {
       throw new ForbiddenException('Missing permission: expense.receipt.line_upload');
     }
     const draftConversationEnabled = cmd.draftConversationEnabled === true;
+    if (cmd.semanticBusinessExpenseConfirmed) {
+      const candidates = extractValueCandidates(cmd.messageText, todayCivilDate('Asia/Bangkok'));
+      const monetary = candidates.amounts.filter(value => value.currencyToken);
+      const amounts = [...new Set((monetary.length ? monetary : candidates.amounts).map(value => value.value))];
+      // Intake already admitted the action; recover omitted slots from its exact source, never a new route.
+      cmd = { ...cmd, captureHints: { ...cmd.captureHints,
+        ...(!cmd.captureHints?.amount && amounts.length === 1 ? { amount: amounts[0] } : {}),
+        ...(!cmd.captureHints?.description ? { description: lineExpenseNoteDescription(cmd.messageText) } : {}),
+      } };
+    }
 
     // Idempotency by LINE message id: retried webhooks return the existing draft.
     const duplicate = await this.repo.findByLineMessageId(ctx.companyId, cmd.lineMessageId);
@@ -137,6 +149,11 @@ export class CaptureLineExpenseNoteUseCase {
     }
 
     const activeCategories = await this.repo.listCategories(ctx.companyId);
+    if (cmd.semanticBusinessExpenseConfirmed && !cmd.captureHints?.expenseCategoryId) {
+      const description = lineExpenseNoteDescription(cmd.messageText);
+      const category = description && resolveNameCandidate(description, activeCategories);
+      if (category && category.kind === 'resolved') cmd = { ...cmd, captureHints: { ...cmd.captureHints, expenseCategoryId: category.id } };
+    }
     const assessment = assessLineTextExpenseCapture(
       cmd.messageText,
       cmd.captureHints ?? {},

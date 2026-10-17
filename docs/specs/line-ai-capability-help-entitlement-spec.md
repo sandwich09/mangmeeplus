@@ -154,7 +154,7 @@ Owner report, UAT 2026-09-06 (build f2bd38ed, new auto-approved company, its OWN
 [1) ถ่ายรูปใบเสร็จหรือสลิป แล้วส่งมาในแชทนี้ได้เลย                                   — receipt predicate only]
 [2) น้องมั่งมีอ่านให้แล้วทำร่างค่าใช้จ่าย คุณแค่ตรวจยอดกับวันที่แล้วกดยืนยัน           — receipt predicate only]
 <one numbered line per usable group, §6.1 order: "อยาก… พิมพ์ว่า “<that group's §8 example question>”">
-[<one numbered role line: ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” … กดอนุมัติจริงทำในเว็บค่ะ — only when reimbursement.list_pending_approvals passes both gates>]
+[<one numbered role line: ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” … กดอนุมัติจริงทำในเว็บค่ะ — only when reimbursement.approve is granted and reimbursement.list_pending_approvals passes both gates>]
 อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ
 ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ
 ```
@@ -163,7 +163,7 @@ Rules:
 
 - **T1** Same derivation, same gates: the group lines come from `usableCapabilityGroupIds(permissions, entitled)` and the two photo steps from `canAdvertiseReceiptCapture` — R1–R5 and R7 apply unchanged. A hidden group never appears, and a caller without an upload permission never sees the photo steps.
 - **T2** The phrase each line teaches is that group's §8 `CAPABILITY_COPY` example question, so the walkthrough can never teach a question the card would not suggest (R2 by construction).
-- **T3** The role line is derived from the tool registry (`reimbursement.list_pending_approvals`: requires `reimbursement.approve`, no feature gate), never from a role name; nothing else role-specific is claimed, and the line says the approval itself happens in the web app.
+- **T3** The role line is derived from the tool registry (`reimbursement.list_pending_approvals`: claim-read permission, no feature gate) plus the action’s `reimbursement.approve` permission (owner amendment 2026-10-17), never from a role name; nothing else role-specific is claimed, and the line says the approval itself happens in the web app.
 - **T4** Numbering is sequential over the rendered steps; the reply mentions the `เมนูหลัก` quick-reply tile once and always ends with the §8 closing sentence. Bound: ≤ 15 lines with every group and the role line on (a typical company renders 6–8).
 - **T5** Zero usable groups → the §8 R4 `none` reply, teaching or not. Receipt-only access keeps the §8 receipt+closing reply.
 - **T6** The API recognises a "ยังไง"/"how" follow-up after the walkthrough exactly as after the card: both intros start with a prefix listed in `LINE_CAPABILITY_REPLY_PREFIXES` (`packages/contracts/src/ai-tools.ts`), which `isDeliveredCapabilityFollowUp` reads and a gateway spec pins against the rendered copy.

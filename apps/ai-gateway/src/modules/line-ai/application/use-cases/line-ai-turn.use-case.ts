@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 /**
  * LINE AI Turn Use Case – AI Gateway orchestration.
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=false → item 07 deterministic path.
@@ -231,6 +232,7 @@ export class LineAiTurnUseCase {
       : await verifyLineAiRetainedTaskSource(req.retainedTaskSource);
     const bounded: LineAiTurnRequest = {
       ...req,
+      language: req.language === 'en' || req.language === 'th' ? req.language : lineReplyLanguage(req.messageText),
       preparedPlan: parseLineAiPreparedPlan(req.preparedPlan, req.inputEvidence ? { inputEvidence: req.inputEvidence } : undefined),
       intakeIntent: asIntakeRouteIntent(req.intakeIntent),
       taskProjection,
@@ -314,6 +316,7 @@ export class LineAiTurnUseCase {
         ...(req.contractCapabilities ? { contractCapabilities: req.contractCapabilities } : {}),
         ...(req.budgetGrantV2 ? { budgetGrantV2: req.budgetGrantV2 } : {}),
         ...(req.approvedKnowledge ? { approvedKnowledge: true } : {}),
+        language: req.language ?? lineReplyLanguage(req.messageText),
         ...(req.howToActionId ? { howToActionId: req.howToActionId } : {}),
         ...(req.selectedKnowledgeCardIds ? { selectedKnowledgeCardIds: req.selectedKnowledgeCardIds } : {}),
         ...(req.taskProjection ? { taskProjection: req.taskProjection } : {}),
@@ -463,7 +466,7 @@ export class LineAiTurnUseCase {
       if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
       return {
         ...this.baseResponse(req, 'read_summary', 'accounting', startMs),
-        replyText: 'ยังระบุเงื่อนไขรายการค่าใช้จ่ายที่ต้องการรวมออกไม่ได้ค่ะ ต้องการรวมหรือตัดรายการแบบใดออกคะ',
+        replyText: ((req.language ?? lineReplyLanguage(req.messageText)) === 'en' ? 'Which expenses should I include or exclude from this summary?' : 'ยังระบุเงื่อนไขรายการค่าใช้จ่ายที่ต้องการรวมออกไม่ได้ค่ะ ต้องการรวมหรือตัดรายการแบบใดออกคะ'),
       };
     }
     if (noAttachments && mentionsExpense && !mentionsOtherBusinessTopic && asksExpenseDetail) {
@@ -589,7 +592,7 @@ export class LineAiTurnUseCase {
     if (topTools.some(tool => tool.name === 'expense.list_recent') && !currentExpenseRequestValidated) {
       if (unsupportedExpenseFilter(req.messageText, hasPriorExpenseContext)) {
         return { ...this.baseResponse(req, intent, agent, startMs), refused: false,
-          replyText: 'ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ' };
+          replyText: ((req.language ?? lineReplyLanguage(req.messageText)) === 'en' ? 'I cannot verify the expense total for these filters in LINE; please check the matching total on the web.' : 'ตอนนี้ LINE ยังยืนยันยอดค่าใช้จ่ายตามเงื่อนไขนี้ไม่ได้ค่ะ กรุณาตรวจสอบในเว็บเพื่อดูยอดตามเกณฑ์ที่ต้องการ') };
       }
       const inherited = req.conversationContext?.deliveredExpenseSummary?.ranges ?? [];
       const explicitPeriod = (req.valueCandidates?.periods?.length ?? 0) > 0 || (req.valueCandidates?.dates?.length ?? 0) > 0;
@@ -652,7 +655,7 @@ export class LineAiTurnUseCase {
           && period?.['defaultedToCurrentMonth'] === true
           && (!req.conversationContext?.deliveredExpenseSummary || currentExpenseRequestValidated);
       } else {
-        replyText = 'ยังไม่สามารถยืนยันสรุปค่าใช้จ่ายช่วงนี้ได้ค่ะ กรุณาลองใหม่อีกครั้งหรือเปิดเว็บเพื่อตรวจสอบ';
+        replyText = ((req.language ?? lineReplyLanguage(req.messageText)) === 'en' ? 'I could not verify this expense summary; please try again or check it on the web.' : 'ยังไม่สามารถยืนยันสรุปค่าใช้จ่ายช่วงนี้ได้ค่ะ กรุณาลองใหม่อีกครั้งหรือเปิดเว็บเพื่อตรวจสอบ');
       }
     }
     const allSourceRefs = results.flatMap((r) => r.sourceRefs ?? []);
@@ -704,6 +707,14 @@ export class LineAiTurnUseCase {
   }
 
   private buildRefusedResponse(req: LineAiTurnRequest, refusalReason: any, replyText: string, startMs: number, intent: any = 'unknown', agent: any = 'general'): LineAiTurnResponse {
+    if ((req.language ?? lineReplyLanguage(req.messageText)) === 'en') {
+      const copy: Record<string, string> = { forbidden: 'You do not have access; ask the shop owner or an authorized administrator.',
+        mutation_blocked: 'Please complete this action in the web app.', unsupported_module: 'This feature is unavailable in LINE; please use the web app.',
+        unsupported_yet: 'This task is available in the web app.', feature_disabled: 'This feature is not enabled for your shop.',
+        tool_unavailable: 'The information is temporarily unavailable; please try again shortly.', ai_timeout: 'This request timed out; please send your question again.' };
+      // Only the built-in refusal copy is selected here; already-English specific explanations remain intact.
+      if (/[\u0E00-\u0E7F]/u.test(replyText)) replyText = copy[refusalReason] ?? 'This request is unavailable; please try again or use the web app.';
+    }
     return { ...this.baseResponse(req, intent, agent, startMs), replyText, refused: true, refusalReason, toolsInvoked: [] };
   }
 

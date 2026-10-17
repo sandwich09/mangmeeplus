@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BusinessDocumentClassification, ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, ReceiptOcrFieldResult, RequestContext, SubstituteReceiptCashEvidencePolicy, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
@@ -268,14 +269,14 @@ export function checkBillPaymentChoice(text: string): 'PAID_NO_RECEIPT' | 'UNPAI
   return undefined;
 }
 
-function checkBillPaymentReply(expenseId: string, webBaseUrl: string | undefined, companyId: string): string {
-  return formatStandalone({
+function checkBillPaymentReply(expenseId: string, webBaseUrl: string | undefined, companyId: string, language: 'th' | 'en' = 'th'): string {
+  return formatStandalone({ language,
     headline: [
-      '🧾 เอกสารนี้ยังไม่ใช่ใบเสร็จค่ะ',
-      'เห็นยอดที่ต้องจ่าย แต่ยังไม่เห็นหลักฐานว่าร้านรับเงินแล้ว ระบบจึงเก็บไว้เป็นร่างและยังไม่ยืนยันค่าใช้จ่าย',
+      (language === 'en' ? 'This document is not a receipt yet.' : '🧾 เอกสารนี้ยังไม่ใช่ใบเสร็จค่ะ'),
+      (language === 'en' ? 'The bill shows an amount due without proof of payment, so it remains an unconfirmed draft.' : 'เห็นยอดที่ต้องจ่าย แต่ยังไม่เห็นหลักฐานว่าร้านรับเงินแล้ว ระบบจึงเก็บไว้เป็นร่างและยังไม่ยืนยันค่าใช้จ่าย'),
     ].join('\n'),
-    choices: CHECK_BILL_PAYMENT_CHOICES,
-    question: CHECK_BILL_PAYMENT_QUESTION,
+    choices: language === 'en' ? ['Paid, no final receipt', 'Not paid yet', 'A final receipt is available'] : CHECK_BILL_PAYMENT_CHOICES,
+    question: language === 'en' ? 'Has this bill been paid, and is a final receipt available?' : CHECK_BILL_PAYMENT_QUESTION,
     webPath: absoluteLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`),
   });
 }
@@ -286,16 +287,16 @@ function bounded(value: string | undefined, max = MAX_VALUE_LENGTH): string | un
 }
 
 const LABELS = {
-  missingReceiptReason: 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ',
-  businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ',
-  payeeName: 'ผู้รับเงิน|ผู้ขาย|ร้านค้า',
-  paymentMethod: 'วิธีชำระ(?:เงิน)?|วิธีจ่าย|ชำระด้วย|จ่ายด้วย|จ่ายโดย',
-  paymentDate: 'วันที่จ่าย|วันที่ชำระ|ชำระเมื่อ|จ่ายเมื่อ|วันที่',
-  payer: '(?:ฉัน|ผม|ดิฉัน|หนู)เป็นผู้จ่าย|ผู้จ่าย(?:เงิน)?',
+  missingReceiptReason: 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ|(?:reason|missing receipt reason)(?=\\s*:)',
+  businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ|(?:purpose|business purpose)(?=\\s*:)',
+  payeeName: 'ผู้รับเงิน|ผู้ขาย|ร้านค้า|(?:payee|seller)(?=\\s*:)',
+  paymentMethod: 'วิธีชำระ(?:เงิน)?|วิธีจ่าย|ชำระด้วย|จ่ายด้วย|จ่ายโดย|(?:payment method|paid by)(?=\\s*:)',
+  paymentDate: 'วันที่จ่าย|วันที่ชำระ|ชำระเมื่อ|จ่ายเมื่อ|วันที่|(?:payment date|paid on)(?=\\s*:)',
+  payer: '(?:ฉัน|ผม|ดิฉัน|หนู)เป็นผู้จ่าย|ผู้จ่าย(?:เงิน)?|(?:payer)(?=\\s*:)',
   funding: 'บริษัทจ่าย(?:เต็ม(?:จำนวน)?)?|พนักงานสำรองจ่ายเต็ม(?:จำนวน)?',
-  itemDescription: 'รายการ|รายละเอียดรายการ',
-  amount: 'ยอด(?:รวม)?|จำนวนเงิน',
-  expenseCategoryId: 'หมวด(?:ค่าใช้จ่าย)?',
+  itemDescription: 'รายการ|รายละเอียดรายการ|(?:item|description)(?=\\s*:)',
+  amount: 'ยอด(?:รวม)?|จำนวนเงิน|(?:amount|total)(?=\\s*:)',
+  expenseCategoryId: 'หมวด(?:ค่าใช้จ่าย)?|(?:category|expense category)(?=\\s*:)',
 } as const;
 const ANY_LABEL = Object.values(LABELS).join('|');
 const LABEL_END = '(?=\\s|[:：]|$)';
@@ -339,7 +340,7 @@ function nonQuestionLines(text: string): string {
 function reasonCodeOf(text: string): SubstituteReceiptReasonCode | undefined {
   if (/(ผู้ขาย|ผู้รับเงิน|ร้าน).*(?:ไม่ออก|ไม่ให้|ออก.*ไม่ได้|ให้.*ไม่ได้)|ไม่สามารถออก/u.test(text)) return 'PAYEE_CANNOT_ISSUE';
   if (/(ชำรุด|ไม่ครบ|ข้อมูลไม่ครบ|อ่านไม่ออก)/u.test(text)) return 'RECEIPT_MATERIALLY_INCOMPLETE';
-  if (/(ไม่มีใบเสร็จ|ใบเสร็จหาย|ไม่ได้รับใบเสร็จ|หาใบเสร็จไม่เจอ)/u.test(text)) return 'RECEIPT_UNAVAILABLE';
+  if (/no receipt|receipt (?:is )?(?:lost|unavailable)|lost receipt/iu.test(text) || /(ไม่มีใบเสร็จ|ใบเสร็จหาย|ไม่ได้รับใบเสร็จ|หาใบเสร็จไม่เจอ)/u.test(text)) return 'RECEIPT_UNAVAILABLE';
   return undefined;
 }
 
@@ -418,9 +419,9 @@ function extractValues(
   const declarative = nonQuestionLines(text).replace(/ไม่มีใบเสร็จเพราะ\s*/gu, 'เหตุผล: ');
   const payerLabel = labeled(declarative, LABELS.payer);
   const companyFull = /บริษัทจ่าย(?:เต็ม(?:จำนวน)?)?/u.test(declarative)
-    || payerLabel === 'บริษัท' || payerLabel === 'บริษัทจ่าย';
-  const personalFull = /(?:พนักงาน|ฉัน|ผม|ดิฉัน|หนู)(?:ใช้เงินส่วนตัว)?(?:สำรอง)?จ่ายเต็ม(?:จำนวน)?/u.test(declarative);
-  const unsupportedFunding = /บางส่วน|ทยอย|แบ่งจ่าย|หารจ่าย|เงินผสม/u.test(declarative) || (companyFull && personalFull);
+    || /(?:shop|company) paid (?:the )?full(?: amount)?/iu.test(declarative) || payerLabel === 'บริษัท' || payerLabel === 'บริษัทจ่าย';
+  const personalFull = /(?:personal|employee) advance(?:d)? (?:the )?full(?: amount)?/iu.test(declarative) || /(?:พนักงาน|ฉัน|ผม|ดิฉัน|หนู)(?:ใช้เงินส่วนตัว)?(?:สำรอง)?จ่ายเต็ม(?:จำนวน)?/u.test(declarative);
+  const unsupportedFunding = /part(?:ly|ial)|split payment/iu.test(declarative) || /บางส่วน|ทยอย|แบ่งจ่าย|หารจ่าย|เงินผสม/u.test(declarative) || (companyFull && personalFull);
   if (!unsupportedFunding && companyFull) { values.fundingSource = 'COMPANY'; values.paidInFullAcknowledged = true; }
   if (!unsupportedFunding && personalFull) { values.fundingSource = 'PERSONAL_ADVANCE'; values.paidInFullAcknowledged = true; }
   if (unsupportedFunding) values.paidInFullAcknowledged = false;
@@ -432,12 +433,12 @@ function extractValues(
     values.reasonCode ??= reasonCodeOf(text) ?? 'OTHER';
   }
   for (const field of ['missingReceiptReason', 'businessPurpose', 'payeeName', 'itemDescription'] as const) {
-    if (new RegExp(`(?:^\\s*(?:${LABELS[field]})(?=\\s|[:：]|คือ|เป็น|$)|[\\s,;](?:${LABELS[field]})${LABEL_END})`, 'mu').test(declarative)) {
+    if (new RegExp(`(?:^\\s*(?:${LABELS[field]})(?=\\s|[:：]|คือ|เป็น|$)|[\\s,;](?:${LABELS[field]})${LABEL_END})`, 'imu').test(declarative)) {
       // Empty strings survive JSON storage and block fallback to an old expense fact.
       values[field] = freeTextOf(labeled(declarative, LABELS[field])) ?? '';
     }
   }
-  if (/(ฉัน|ผม|ดิฉัน|หนู).*(เป็น|คือ).*(ผู้จ่าย|คนจ่าย)|ผู้จ่าย(?:เงิน)?\s*(?:คือ|เป็น)?\s*(ฉัน|ผม|ดิฉัน|หนู)/u.test(declarative)) {
+  if (/\bI am the payer\b|\bpayer\s*:\s*me\b/iu.test(declarative) || /(ฉัน|ผม|ดิฉัน|หนู).*(เป็น|คือ).*(ผู้จ่าย|คนจ่าย)|ผู้จ่าย(?:เงิน)?\s*(?:คือ|เป็น)?\s*(ฉัน|ผม|ดิฉัน|หนู)/u.test(declarative)) {
     values.payerUserId = currentUserId;
   }
   const labeledPayment = labeled(declarative, LABELS.paymentMethod);
@@ -471,7 +472,7 @@ function extractValues(
   // “ไม่มีใบเสร็จ” is a reason code, never a statement that no file exists. The natural answer to
   // “มีสลิปไหม” is a bare “ไม่มี”, so that short form counts too — but only while it is the question.
   if ((pendingField === 'evidenceNone' || missingFields.includes('evidenceNone'))
-    && (/(ไม่มีหลักฐาน|ไม่มีสลิป|ไม่มีรูป|ไม่มีไฟล์)/u.test(declarative)
+    && (/^no (?:evidence|supporting evidence|file|photo|slip)[.!]?$/iu.test(declarative.trim()) || /(ไม่มีหลักฐาน|ไม่มีสลิป|ไม่มีรูป|ไม่มีไฟล์)/u.test(declarative)
       || /^ไม่มี\S{0,4}$/u.test(normalizedText(declarative)))) {
     values.evidenceNone = true;
   }
@@ -498,7 +499,8 @@ function extractValues(
   return values;
 }
 
-function groundedSideAnswer(expense: ExpenseRecordWithRelations, text: string): string | undefined {
+function groundedSideAnswer(expense: ExpenseRecordWithRelations, text: string, language: 'th' | 'en' = 'th'): string | undefined {
+  if (language === 'en' && /vat|tax/iu.test(text) && /[?？]|can|does|what|how/iu.test(text)) return 'A substitute receipt is internal evidence, not a seller tax invoice, and does not make input VAT claimable; attach a valid tax invoice for review on the web.';
   if (/(vat|ภาษีมูลค่าเพิ่ม|ภาษีซื้อ|เคลมภาษี|เครดิตภาษี)/iu.test(text)
     && /[?？]|ไหม|ได้หรือไม่|อย่างไร|ยังไง/u.test(text)) {
     return [
@@ -609,11 +611,24 @@ const QUESTIONS: Record<string, string> = {
   supporting_evidence_required: 'มีสลิปหรือรูปถ่ายประกอบไหมคะ? ถ้ามี ส่งรูปเข้ามาในแชทนี้ หรือแนบในเว็บ ถ้าไม่มี ตอบ “ไม่มีหลักฐาน” ได้เลย',
 };
 
-function collectionQuestion(blockers: LineSubstituteReceiptBlocker[], categories: Array<{ id: string; name: string }>): string | undefined {
-  const questions = blockers.filter(item => item.collectableInLine && questionFor(item.code, categories));
-  if (questions.length > 1) return `ตอบข้อมูลที่ยังขาดรวมในข้อความเดียวได้เลยค่ะ\n${questions.map(item => `• ${questionFor(item.code, categories)}`).join('\n')}`;
-  return questions.length ? questionFor(questions[0]!.code, categories)
-    : blockers.some(item => item.code === 'payment_evidence_required') ? QUESTIONS.payment_evidence_required : undefined;
+const EN_QUESTIONS: Record<string, string> = {
+  "funding_source_required": "Was the full amount paid by the shop or advanced personally by an employee?",
+  "reason_code_required": "Was the receipt lost, unavailable from the seller, or incomplete?",
+  "missing_receipt_reason_required": "Why is there no usable receipt?",
+  "business_purpose_required": "What business purpose was this expense for?",
+  "payer_required": "Choose the payer below; that person must sign in with their own account.",
+  "payee_required": "What is the payee or seller’s name?",
+  "payment_method_required": "Was payment made by cash, bank transfer, card, or cheque?",
+  "payment_date_required": "What date was the payment made?",
+  "payment_evidence_required": "Please send a photo or file proving payment for this expense.",
+  "supporting_evidence_required": "Please send supporting evidence here or attach it on the web; if none exists, say “no evidence”."
+};
+
+function collectionQuestion(blockers: LineSubstituteReceiptBlocker[], categories: Array<{ id: string; name: string }>, language: 'th' | 'en' = 'th'): string | undefined {
+  const questions = blockers.filter(item => item.collectableInLine && questionFor(item.code, categories, language));
+  if (questions.length > 1) return `${language === 'en' ? 'You can provide the missing details in one message.' : 'ตอบข้อมูลที่ยังขาดรวมในข้อความเดียวได้เลยค่ะ'}\n${questions.map(item => `• ${questionFor(item.code, categories, language)}`).join('\n')}`;
+  return questions.length ? questionFor(questions[0]!.code, categories, language)
+    : blockers.some(item => item.code === 'payment_evidence_required') ? (language === 'en' ? EN_QUESTIONS : QUESTIONS).payment_evidence_required : undefined;
 }
 
 /** `listCategories` returns the company's own rows AND the global defaults, so the same name can
@@ -635,17 +650,17 @@ function offeredCategories(
 /** The only question whose text depends on the company, so it is built per turn instead of sitting in
  *  QUESTIONS. Numbered because a one-digit reply is the fastest correct answer on a phone; the name
  *  works too, and `resolveCategoryId` reads this exact list back. */
-function categoryQuestion(categories: Array<{ id: string; name: string }>): string {
+function categoryQuestion(categories: Array<{ id: string; name: string }>, language: 'th' | 'en' = 'th'): string {
   return categories.length
     ? [
-      'ค่าใช้จ่ายนี้อยู่หมวดไหนคะ? ตอบเลขข้อหรือพิมพ์ชื่อหมวดได้เลย',
-      ...categories.map((item, index) => `${index + 1}) ${item.name}`),
+      (language === 'en' ? 'Which expense category applies? Reply with its name.' : 'ค่าใช้จ่ายนี้อยู่หมวดไหนคะ? ตอบเลขข้อหรือพิมพ์ชื่อหมวดได้เลย'),
+      ...categories.map((item, index) => `• ${item.name}`),
     ].join('\n')
-    : 'บริษัทนี้ยังไม่มีหมวดค่าใช้จ่ายที่เปิดใช้งานค่ะ ตั้งหมวดค่าใช้จ่ายในเว็บก่อนได้ไหมคะ?';
+    : (language === 'en' ? 'No expense categories are active; please set them up on the web first.' : 'บริษัทนี้ยังไม่มีหมวดค่าใช้จ่ายที่เปิดใช้งานค่ะ ตั้งหมวดค่าใช้จ่ายในเว็บก่อนได้ไหมคะ?');
 }
 
-function questionFor(code: string, categories: Array<{ id: string; name: string }>): string | undefined {
-  return code === CATEGORY_BLOCKER ? categoryQuestion(categories) : QUESTIONS[code];
+function questionFor(code: string, categories: Array<{ id: string; name: string }>, language: 'th' | 'en' = 'th'): string | undefined {
+  return code === CATEGORY_BLOCKER ? categoryQuestion(categories, language) : (language === 'en' ? EN_QUESTIONS : QUESTIONS)[code];
 }
 
 /** M3: the fields a message can actually change once everything is answered, each with the shape of an
@@ -690,7 +705,8 @@ const ISSUE_DECISION_QUESTION = 'ให้ออกเอกสารเลย�
  *  silently redefine what “2” means. Every position here is takeable — `expense.review` is required to
  *  reach this question at all and is itself a SIGNATURE_OWNER_PERMISSION, so “send a signature photo”
  *  is always open to whoever is being asked. */
-function issueDecisionChoices(hasReusableSignature: boolean): string[] {
+function issueDecisionChoices(hasReusableSignature: boolean, language: 'th' | 'en' = 'th'): string[] {
+  if (language === 'en') return [hasReusableSignature ? 'Prepare with your saved signature' : 'Prepare after providing your signature photo', 'Get a form to sign on paper', 'Edit the details first'];
   return [
     hasReusableSignature
       ? 'ออกเอกสาร (ใช้ลายเซ็นที่บันทึกไว้)'
@@ -760,6 +776,10 @@ function issueDecisionChoice(text: string): 'ISSUE' | 'FORM' | 'EDIT' | 'DECLINE
   if (DECISION_QUESTION.test(value)) return undefined;
   const numbered = /^([123])[.)]?$/u.exec(value)?.[1];
   if (numbered) return numbered === '1' ? 'ISSUE' : numbered === '2' ? 'FORM' : 'EDIT';
+  if (/^(?:prepare (?:the )?document|prepare with (?:my|your) saved signature)$/iu.test(value)) return 'ISSUE';
+  if (/^(?:get a form to sign on paper|paper form)$/iu.test(value)) return 'FORM';
+  if (/^(?:edit (?:the )?details(?: first)?|edit)$/iu.test(value)) return 'EDIT';
+  if (/^(?:not now|decline|no)$/iu.test(value)) return 'DECLINE';
   const declined = DECISION_DECLINE.test(value);
   const wanted = DECISION_WORDS.find(([, words]) => words.some((word) => value.includes(word)))?.[0];
   if (wanted) return declined ? 'DECLINE' : wanted;
@@ -783,11 +803,12 @@ const PAYEE_COULD_SIGN = /(?:ผู้รับเงิน|ผู้ขาย|�
 const PAYEE_REFUSED = /ไม่|มิได้|ปฏิเสธ/u;
 const PAYEE_COULD_SIGN_QUESTION = 'จะทำใบรับรองแทนใบเสร็จรับเงินต่อไหมคะ';
 
-function payeeCouldSignHeadline(text: string): string | undefined {
+function payeeCouldSignHeadline(text: string, language: 'th' | 'en' = 'th'): string | undefined {
   const normalized = text.normalize('NFC');
   const match = PAYEE_COULD_SIGN.exec(normalized);
   if (!match) return undefined;
   if (PAYEE_REFUSED.test(normalized.slice(Math.max(0, match.index - 6), match.index + match[0].length))) return undefined;
+  if (language === 'en') return 'If the payee can sign, a payee-signed payment receipt is stronger evidence; issuing that document is not supported here, so continue the substitute receipt or pause this work.';
   return [
     '📌 ถ้าผู้รับเงินลงนามให้ได้ เอกสารที่ตรงกับกรณีนี้คือ “ใบสำคัญรับเงิน” ซึ่งผู้รับเงินเป็นผู้ลงนามเอง มักแนบสำเนาบัตรประชาชนของผู้รับเงิน และเป็นหลักฐานที่หนักแน่นกว่า “ใบรับรองแทนใบเสร็จรับเงิน” ที่พนักงานผู้จ่ายรับรองตัวเอง',
     'ระบบยังไม่รองรับการออกใบสำคัญรับเงินค่ะ',
@@ -923,26 +944,30 @@ export function classifySubstituteMedia(
 
 /** D9: name the document back and ask for a yes. No OCR, no QR — the number is printed large on
  *  the form, so the answer takes one glance. */
-export function substituteScanConfirmQuestion(scan: { documentNumber: string; amountLabel: string }): string {
+export function substituteScanConfirmQuestion(scan: { documentNumber: string; amountLabel: string }, language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') return `Is this the signed form for ${scan.documentNumber}, amount ${scan.amountLabel}? Reply “yes” or “no”.`;
   return [
     `ได้รับรูปเข้ามาค่ะ — ใบนี้คือฟอร์ม ${scan.documentNumber} ยอด ${scan.amountLabel} ที่เซ็นแล้วใช่ไหมคะ`,
-    '1) ใช่',
-    '2) ไม่ใช่ เป็นหลักฐานอื่น',
+    '• ใช่',
+    '• ไม่ใช่ เป็นหลักฐานอื่น',
   ].join('\n');
 }
 
 export function substituteScanConfirmAnswer(text: string): 'YES' | 'NO' | undefined {
   const value = normalizedText(text);
+  if (/^yes[.!]?$/iu.test(value)) return 'YES';
+  if (/^no[.!]?$/iu.test(value)) return 'NO';
   if (/^1[.)]?$/u.test(value) || /^(ใช่|ใช่ค่ะ|ใช่ครับ|ถูกต้อง)$/u.test(value)) return 'YES';
   if (/^2[.)]?$/u.test(value) || /^ไม่ใช่/u.test(value)) return 'NO';
   return undefined;
 }
 
 /** §15: “ไม่ใช่ ใบอื่น” lists the other forms awaiting a scan instead of dropping the photo. */
-export function substituteScanPickQuestion(scans: LineSubstituteMediaScan[]): string {
+export function substituteScanPickQuestion(scans: LineSubstituteMediaScan[], language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') return ['Which signed form is this? Reply with its position or document number.', ...scans.map(scan => `• ${scan.documentNumber} · ${scan.amountLabel}`)].join('\n');
   return [
     'ได้ค่ะ แล้วเป็นฟอร์มใบไหนคะ ตอบเลขข้อได้เลย',
-    ...scans.map((scan, index) => `${index + 1}) ${scan.documentNumber} ยอด ${scan.amountLabel}`),
+    ...scans.map((scan, index) => `• ${scan.documentNumber} ยอด ${scan.amountLabel}`),
   ].join('\n');
 }
 
@@ -972,10 +997,14 @@ export function substituteMediaChoices(context: LineSubstituteMediaContext): Lin
   ];
 }
 
-export function substituteMediaQuestion(choices: LineSubstituteMediaChoice[]): string {
+export function substituteMediaQuestion(choices: LineSubstituteMediaChoice[], language: 'th' | 'en' = 'th'): string {
+  if (language === 'en') {
+    const labels: Record<LineSubstituteMediaChoice, string> = { WET_SIGNED_SCAN: 'Signed form', SIGNATURE: 'My reusable signature', PAYMENT_EVIDENCE: 'Payment evidence for this expense', SUPPORTING_EVIDENCE: 'Supporting evidence for this expense', NEW_EXPENSE: 'New expense', NO_RECORD: 'Question only; do not record' };
+    return ['What is this photo for? Reply with the option name or position.', ...choices.map(choice => `• ${labels[choice]}`)].join('\n');
+  }
   return [
     'ได้รับรูปเข้ามาค่ะ ยังไม่แน่ใจว่าเป็นอะไร ตอบเลขข้อได้เลยนะคะ',
-    ...choices.map((choice, index) => `${index + 1}) ${MEDIA_CHOICE_LABELS[choice]}`),
+    ...choices.map((choice, index) => `• ${MEDIA_CHOICE_LABELS[choice]}`),
   ].join('\n');
 }
 
@@ -1046,29 +1075,42 @@ const REASON_CODE_LABELS: Record<SubstituteReceiptReasonCode, string> = {
 /** The 2-decimal + บาท form every other LINE reply uses, so “200.00 บาท” matches the printed form
  *  D9 asks the sender to confirm against — never the stored decimal's “200.0000 THB”. Non-finite or
  *  non-THB degrades to the raw pair rather than mislabelling another currency as บาท. */
-function bahtAmount(expense: { grandTotalAmount: string; currency: string }): string {
+function bahtAmount(expense: { grandTotalAmount: string; currency: string }, language: 'th' | 'en' = 'th'): string {
   const amount = Number(expense.grandTotalAmount);
   return Number.isFinite(amount) && expense.currency === 'THB'
-    ? `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
+    ? `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${language === 'en' ? 'THB' : 'บาท'}`
     : `${expense.grandTotalAmount} ${expense.currency}`;
 }
 
 /** M4: a LINE-captured draft has no `expenseNumber` yet, and a cuid tells the sender nothing they can
  *  match against the web list. Name it the way a person would — date · payee · amount — and keep the
  *  id out of the chat entirely; the card already carries the web link for anything more precise. */
-function expenseLabel(expense: ExpenseRecordWithRelations): string {
+function expenseLabel(expense: ExpenseRecordWithRelations, language: 'th' | 'en' = 'th'): string {
   if (expense.expenseNumber) return expense.expenseNumber;
   const date = expense.expenseDate instanceof Date
-    ? expense.expenseDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    ? expense.expenseDate.toLocaleDateString(language === 'en' ? 'en-GB' : 'th-TH', { day: 'numeric', month: 'short', timeZone: 'UTC' })
     : undefined;
   const state = expense.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation as LineSubstituteReceiptContinuation | undefined;
   const payeeName = expense.substituteReceiptEvidence?.status !== 'SUPERSEDED' && expense.substituteReceiptEvidence?.payeeName
     || state?.acceptedValues.payeeName || expense.vendorNameSnapshot;
-  return [date, payeeName ?? undefined, bahtAmount(expense)].filter(Boolean).join(' · ');
+  return [date, payeeName ?? undefined, bahtAmount(expense, language)].filter(Boolean).join(' · ');
 }
 
 /** Every echoed bullet shows a value the sender can recognise: no ids, no enum codes, no ISO dates. */
-export function substituteReceiptFactLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }> = []): string[] {
+export function substituteReceiptFactLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }> = [], language: 'th' | 'en' = 'th'): string[] {
+  if (language === 'en') {
+    const labels: Record<string, string> = { fundingSource: 'Funding', paidInFullAcknowledged: 'Paid in full', reasonCode: 'Missing receipt reason', missingReceiptReason: 'Missing receipt details', businessPurpose: 'Purpose', payerUserId: 'Payer', payeeName: 'Payee', paymentDate: 'Payment date', paymentMethod: 'Payment method', itemDescription: 'Item', amount: 'Amount', expenseCategoryId: 'Expense category', evidenceNone: 'Evidence' };
+    return Object.entries(values).filter(([, value]) => value != null && value !== '').map(([field, value]) => {
+      const shown = field === 'fundingSource' ? value === 'COMPANY' ? 'Shop funds, paid in full' : 'Personal advance, paid in full'
+        : field === 'paidInFullAcknowledged' ? value === true ? 'Acknowledged' : 'Not acknowledged'
+          : field === 'payerUserId' ? 'You, the message sender' : field === 'evidenceNone' ? 'No supporting file'
+            : field === 'expenseCategoryId' ? categories.find(item => item.id === value)?.name ?? 'Not selected'
+              : field === 'paymentMethod' ? ({ CASH: 'Cash', BANK_TRANSFER: 'Bank transfer', CARD: 'Card', CHEQUE: 'Cheque', OTHER: 'Other' } as Record<string, string>)[String(value)] ?? 'Not specified'
+                : field === 'reasonCode' ? 'No receipt available; review the stated reason on the web'
+                  : field === 'paymentDate' ? new Date(`${value}T00:00:00Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' }) : String(value);
+      return `${labels[field] ?? 'Detail'}: ${shown}`;
+    });
+  }
   return Object.entries(values).filter(([, value]) => value != null && value !== '').map(([field, value]) => {
     const shown = field === 'reasonCode' ? REASON_CODE_LABELS[value as SubstituteReceiptReasonCode]
       : field === 'fundingSource' ? (value === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')
@@ -1112,7 +1154,17 @@ export function substituteReceiptBadge(input: {
   evidenceStatus?: string;
   /** R10: a PREPARED evidence whose chat asked for a printable sheet is waiting for ink, not a click. */
   awaitingPaperSignature?: boolean;
+  language?: 'th' | 'en';
 }): string | undefined {
+  if (input.language === 'en') {
+    if (input.status === 'FORBIDDEN') return 'Access required';
+    if (input.status === 'INELIGIBLE') return 'Not eligible';
+    if (['ISSUED', 'SUPERSEDED'].includes(input.evidenceStatus ?? '')) return 'Issued';
+    if (input.evidenceStatus === 'PREPARED') return input.awaitingPaperSignature ? 'Awaiting signature' : 'Awaiting confirmation';
+    if (input.evidenceStatus === 'PAYER_CERTIFIED') return 'Awaiting confirmation';
+    if (['PAUSED', 'CANCELLED', 'STALE', 'TARGET_REQUIRED'].includes(input.status)) return undefined;
+    return input.blockers?.length ? 'More information needed' : 'Ready to prepare';
+  }
   if (input.status === 'FORBIDDEN') return SUBSTITUTE_BADGES.forbidden;
   if (input.status === 'INELIGIBLE') return SUBSTITUTE_BADGES.ineligible;
   if (input.evidenceStatus === 'ISSUED' || input.evidenceStatus === 'SUPERSEDED') return SUBSTITUTE_BADGES.issued;
@@ -1133,6 +1185,7 @@ export function substituteReceiptBadge(input: {
 /** Replies emitted before a target exists (or without permission) keep formatResult's shape:
  *  what is understood → what is missing → boundary → VAT caveat → link → exactly one question. */
 function formatStandalone(input: {
+  language?: 'th' | 'en';
   echoed?: LineSubstituteReceiptValues;
   categories?: Array<{ id: string; name: string }>;
   headline: string;
@@ -1142,26 +1195,27 @@ function formatStandalone(input: {
   /** After a LINE prepare the default line is no longer true: LINE did prepare — and only prepare. */
   boundary?: string;
 }): string {
-  const lines = ['📄 ใบรับรองแทนใบเสร็จรับเงิน'];
-  const echo = substituteReceiptFactLines(input.echoed ?? {}, input.categories ?? []);
-  if (echo.length) lines.push('รับทราบจากข้อความนี้ (ยังไม่บันทึก):', ...echo);
+  const language = input.language ?? 'th';
+  const lines = [language === 'en' ? 'Substitute receipt' : '📄 ใบรับรองแทนใบเสร็จรับเงิน'];
+  const echo = substituteReceiptFactLines(input.echoed ?? {}, input.categories ?? [], language);
+  if (echo.length) lines.push(language === 'en' ? 'From your message (not saved yet):' : 'รับทราบจากข้อความนี้ (ยังไม่บันทึก):', ...echo);
   lines.push(input.headline);
-  (input.choices ?? []).forEach((choice, index) => lines.push(`${index + 1}) ${choice}`));
-  lines.push(input.boundary ?? 'ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้');
-  lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
-  if (input.webPath) lines.push(`เปิดในเว็บ: ${webLink(input.webPath)}`);
-  lines.push('', `ทำต่อ: ${input.question}`);
+  (input.choices ?? []).forEach((choice, index) => lines.push(`• ${choice}`));
+  lines.push(input.boundary ?? (language === 'en' ? 'Sign and approve on the web; I will provide the link once the document is prepared.' : 'ลงนามและอนุมัติทำในเว็บค่ะ เตรียมใบรับรองเสร็จแล้วน้องจะส่งลิงก์ให้'));
+  lines.push((language === 'en' ? 'This internal document is not a tax invoice and does not make input VAT claimable.' : 'เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้'));
+  if (input.webPath) lines.push(`${language === 'en' ? 'Open on web' : 'เปิดในเว็บ'}: ${webLink(input.webPath)}`);
+  lines.push('', `${language === 'en' ? 'Next' : 'ทำต่อ'}: ${input.question}`);
   return lines.join('\n');
 }
 
 /** The target exists but is not readable under the current permissions/branch scope: no workflow link,
  *  no pending question (nothing here is answerable in chat), just the expense list to check scope. */
-function targetOutOfScope(companyId: string, webBaseUrl: string | undefined, headline: string): LineSubstituteReceiptContinuationResult {
+function targetOutOfScope(companyId: string, webBaseUrl: string | undefined, headline: string, language: 'th' | 'en' = 'th'): LineSubstituteReceiptContinuationResult {
   return {
     handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
-    replyText: formatStandalone({
+    replyText: formatStandalone({ language,
       headline,
-      question: 'เปิดรายการค่าใช้จ่ายในเว็บเพื่อตรวจสอบสิทธิ์และสาขาก่อนได้ไหมคะ?',
+      question: (language === 'en' ? 'Please open the expense list on the web to check your access and branch.' : 'เปิดรายการค่าใช้จ่ายในเว็บเพื่อตรวจสอบสิทธิ์และสาขาก่อนได้ไหมคะ?'),
       webPath: absoluteLink(webBaseUrl, `/companies/${companyId}/expenses`),
     }),
   };
@@ -1172,7 +1226,9 @@ function resumeCapsule(
   state: LineSubstituteReceiptContinuation,
   acceptedFields: string[],
   webPath?: string,
+  language: 'th' | 'en' = 'th',
 ): string {
+  if (language === 'en') return [`Your substitute receipt for ${expenseLabel(expense, language)} is still open.`, ...(acceptedFields.length ? ['The details already collected are retained.'] : []), ...(webPath ? [`Open on web: ${webLink(webPath)}`] : [])].join('\n');
   const lines = [`↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ ${expenseLabel(expense)} ยังอยู่`];
   if (acceptedFields.length) lines.push(`รับเพิ่มแล้ว: ${acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (state.pendingQuestion) lines.push(`ทำต่อ: ${state.pendingQuestion}`);
@@ -1182,6 +1238,7 @@ function resumeCapsule(
 }
 
 function formatResult(input: {
+  language?: 'th' | 'en';
   status: LineSubstituteReceiptContinuationResult['status'];
   expense: ExpenseRecordWithRelations;
   state: LineSubstituteReceiptContinuation;
@@ -1197,6 +1254,7 @@ function formatResult(input: {
   hasReusableSignature?: boolean;
 }): string {
   const categories = input.categories ?? [];
+  if (input.language === 'en') return formatEnglishResult(input);
   const lines = [
     '📄 ใบรับรองแทนใบเสร็จรับเงิน',
     `รายการ: ${expenseLabel(input.expense)}`,
@@ -1243,11 +1301,50 @@ function formatResult(input: {
   // never an action already taken.
   else if (input.state.pendingDecision === 'ISSUE_CONFIRM') {
     lines.push('', `ทำต่อ: ${ISSUE_DECISION_QUESTION}`,
-      ...issueDecisionChoices(input.hasReusableSignature === true).map((choice, index) => `${index + 1}) ${choice}`));
+      ...issueDecisionChoices(input.hasReusableSignature === true).map((choice, index) => `• ${choice}`));
   }
   if (input.sideAnswer && input.state.status === 'OPEN') {
     lines.push(`กลับมาทำรายการ ${expenseLabel(input.expense)} ต่อได้เลย งานเดิมยังอยู่และยังขาด ${input.state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้`);
   }
+  return lines.join('\n');
+}
+
+
+function formatEnglishResult(input: Parameters<typeof formatResult>[0]): string {
+  const lines = [`Substitute receipt: ${expenseLabel(input.expense, 'en')} · ${bahtAmount(input.expense, 'en')}`];
+  if (input.acceptedFields.length) lines.push(input.acceptedFields.includes('expenseCategoryId')
+    ? 'The expense category was saved; other details are held in the document draft.'
+    : 'Your details are held in the document draft; the expense itself has not been changed.');
+  lines.push(...substituteReceiptFactLines(input.state.acceptedValues, input.categories ?? [], 'en'));
+  if (input.sideAnswer) lines.push(input.sideAnswer);
+  if (input.status === 'PAUSED') lines.push('This work is paused and the collected details are retained; say “resume substitute receipt” to continue.');
+  else if (input.status === 'CANCELLED') lines.push('This conversation step was cancelled; your expense, files and collected details are retained.');
+  else if (input.status === 'STALE') lines.push('The expense changed; your latest message was not applied over the newer details.');
+  else {
+    const descriptions: Record<string, string> = {
+      expense_review_forbidden: 'Ask an authorized expense reviewer to continue.',
+      expense_status_ineligible: 'This expense status does not allow a substitute receipt.',
+      source_type_ineligible: 'This document type needs a different evidence route.',
+      valid_receipt_normal_path: 'Use the existing valid receipt instead.',
+      classification_ineligible: 'Review the source document classification on the web.',
+      document_kind_ineligible: 'This document cannot use the substitute-receipt route.',
+      currency_not_supported: 'This currency is not supported for substitute receipts.',
+      active_substitute_evidence_exists: 'An active substitute receipt already exists.',
+      payer_not_active_in_branch: 'The payer must be an active member of the expense branch.',
+      designated_approver_not_ready: 'Set up an eligible approver for this branch on the web.',
+      owner_self_approver_not_ready: 'An authorized expense approver is required for this branch.',
+      substitute_prepare_failed: 'The document could not be prepared; review it on the web before trying again.',
+      reusable_signature_required: 'Please send your signature photo here.',
+    };
+    for (const item of input.blockers) lines.push(questionFor(item.code, input.categories ?? [], 'en')
+      ?? descriptions[item.code] ?? 'Review this expense and its evidence on the web before preparing the document.');
+    if (!input.blockers.length) lines.push('The required details are complete; the document has not been issued.');
+    if (input.policy) lines.push(`Approval: ${input.policy.approvalMode === 'OWNER_SELF' ? 'owner approval' : 'designated approvers'} · ${input.policy.ready ? 'ready' : 'setup required'}.`);
+    if (!input.blockers.length && input.state.pendingDecision === 'ISSUE_CONFIRM')
+      lines.push('Would you like to prepare the document now?', ...issueDecisionChoices(input.hasReusableSignature === true, 'en').map(choice => `• ${choice}`));
+    lines.push('Sign and approve on the web; this internal document is not a tax invoice and does not make input VAT claimable.');
+  }
+  if (input.webPath) lines.push(`Open on web: ${webLink(input.webPath)}`);
   return lines.join('\n');
 }
 
@@ -1290,15 +1387,18 @@ export class LineSubstituteReceiptContinuationUseCase {
     expenseId: string;
     chatKeyHash: string;
     webBaseUrl?: string;
+    language?: 'th' | 'en';
   }): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
     if (!expense) throw new NotFoundException('Check-bill expense not found.');
     if (!ctx.permissions.includes('expense.review')) {
       return {
         handled: true, status: 'FORBIDDEN', expenseId: expense.id, acceptedFields: [], blockers: [],
-        replyText: formatStandalone({
-          headline: '🧾 บันทึกเช็กบิลไว้เป็นร่างแล้ว แต่บัญชีนี้ยังไม่มีสิทธิ์จัดทำใบรับรองแทนใบเสร็จค่ะ',
-          question: 'ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือให้ฝ่ายบัญชีเปิดรายการนี้เพื่อตรวจต่อได้เลยค่ะ',
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'The bill was saved as a draft; ask an authorized expense reviewer to prepare a substitute receipt.' : '🧾 บันทึกเช็กบิลไว้เป็นร่างแล้ว แต่บัญชีนี้ยังไม่มีสิทธิ์จัดทำใบรับรองแทนใบเสร็จค่ะ'),
+          question: (language === 'en' ? 'Please send the final receipt, or ask accounting to review this expense on the web.' : 'ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือให้ฝ่ายบัญชีเปิดรายการนี้เพื่อตรวจต่อได้เลยค่ะ'),
           webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
         }),
       };
@@ -1312,7 +1412,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       expenseId: expense.id, chatKeyHash: input.chatKeyHash, status: 'OPEN', routeCheckBill: true,
       acceptedValues: {}, provenance: {}, resolvedFields: [], missingFields: [],
       attachmentRefs: expense.attachments.filter((item) => item.status === 'ACTIVE').map((item) => item.id).slice(0, 20),
-      pendingQuestion: CHECK_BILL_PAYMENT_QUESTION, pendingDecision: 'CHECK_BILL_PAYMENT',
+      pendingQuestion: (language === 'en' ? 'Has this bill been paid, and is a final receipt available?' : CHECK_BILL_PAYMENT_QUESTION), pendingDecision: 'CHECK_BILL_PAYMENT',
       targetRevision: expense.updatedAt.toISOString(), lastActivityAt: now,
     };
     const saved = await this.repo.saveLineSubstituteContinuation({
@@ -1322,15 +1422,15 @@ export class LineSubstituteReceiptContinuationUseCase {
     const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
     return {
       handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
-      acceptedFields: [], blockers: [], pendingQuestion: CHECK_BILL_PAYMENT_QUESTION,
+      acceptedFields: [], blockers: [], pendingQuestion: (language === 'en' ? 'Has this bill been paid, and is a final receipt available?' : CHECK_BILL_PAYMENT_QUESTION),
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
-      replyText: checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId),
+      replyText: checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId, language),
     };
   }
 
   /** R14/§11: the open substitute work an arriving photo could belong to. `undefined` means this
    *  chat has none, and the media turn must behave exactly as it did before this existed. */
-  async loadOpenMediaContext(ctx: RequestContext, chatKeyHash: string): Promise<LineSubstituteMediaContext | undefined> {
+  async loadOpenMediaContext(ctx: RequestContext, chatKeyHash: string, language: 'th' | 'en' = 'th'): Promise<LineSubstituteMediaContext | undefined> {
     if (!ctx.permissions.includes('expense.review')) return undefined;
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
@@ -1351,7 +1451,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         expenseId: expense.id,
         evidenceId: evidence.id,
         documentNumber: evidence.documentNumber,
-        amountLabel: bahtAmount(expense),
+        amountLabel: bahtAmount(expense, language),
         preparedAt: evidence.preparedAt,
       });
     }
@@ -1387,7 +1487,10 @@ export class LineSubstituteReceiptContinuationUseCase {
   async completeCheckBillFinalReceipt(ctx: RequestContext, input: {
     expenseId: string;
     webBaseUrl?: string;
+    language?: 'th' | 'en';
   }): Promise<{ replyText: string }> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, input.expenseId, undefined, ctx.scopes ?? {});
     const state = expense && stateFromMetadata(expense.sourceChannelMetadataJson);
     if (!expense || !state || state.pendingDecision !== 'CHECK_BILL_FINAL_RECEIPT'
@@ -1402,9 +1505,9 @@ export class LineSubstituteReceiptContinuationUseCase {
       } as unknown as Record<string, unknown>,
     });
     return {
-      replyText: formatStandalone({
-        headline: '✅ รับใบเสร็จฉบับสุดท้ายไว้ในรายการเดิมแล้วค่ะ ไม่ได้สร้างรายการซ้ำ',
-        question: 'เปิดตรวจข้อมูลที่ระบบอ่านได้ แล้วกดยืนยันเมื่อข้อมูลถูกต้องค่ะ',
+      replyText: formatStandalone({ language,
+        headline: (language === 'en' ? 'The final receipt was attached to the existing expense without creating a duplicate.' : '✅ รับใบเสร็จฉบับสุดท้ายไว้ในรายการเดิมแล้วค่ะ ไม่ได้สร้างรายการซ้ำ'),
+        question: (language === 'en' ? 'Please review the extracted details on the web and confirm when correct.' : 'เปิดตรวจข้อมูลที่ระบบอ่านได้ แล้วกดยืนยันเมื่อข้อมูลถูกต้องค่ะ'),
         webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
       }),
     };
@@ -1433,7 +1536,10 @@ export class LineSubstituteReceiptContinuationUseCase {
     attachmentId: string;
     purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
     webBaseUrl?: string;
+    language?: 'th' | 'en';
   }): Promise<{ replyText: string; badge?: string }> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     if (!ctx.permissions.includes('expense.receipt.upload')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
     }
@@ -1451,12 +1557,12 @@ export class LineSubstituteReceiptContinuationUseCase {
     });
     const payment = input.purpose === 'expense.payment.evidence';
     return {
-      replyText: formatStandalone({
+      replyText: formatStandalone({ language,
         headline: payment
-          ? '📎 แนบเป็นหลักฐานการจ่ายเงินของรายการนี้แล้วค่ะ'
-          : '📎 แนบเป็นหลักฐานประกอบของรายการนี้แล้วค่ะ',
-        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
-        question: 'พิมพ์ “ทำใบรับรองต่อ” เพื่อดูสถานะงานล่าสุดได้เลยค่ะ',
+          ? (language === 'en' ? 'The file was attached as payment evidence for this expense.' : '📎 แนบเป็นหลักฐานการจ่ายเงินของรายการนี้แล้วค่ะ')
+          : (language === 'en' ? 'The file was attached as supporting evidence for this expense.' : '📎 แนบเป็นหลักฐานประกอบของรายการนี้แล้วค่ะ'),
+        boundary: (language === 'en' ? 'No signature, approval or document issuance was performed in LINE.' : 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร'),
+        question: (language === 'en' ? 'Say “resume substitute receipt” to check the current progress.' : 'พิมพ์ “ทำใบรับรองต่อ” เพื่อดูสถานะงานล่าสุดได้เลยค่ะ'),
         webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${input.expenseId}`),
       }),
     };
@@ -1471,7 +1577,10 @@ export class LineSubstituteReceiptContinuationUseCase {
     attachmentId: string;
     checksumSha256: string;
     webBaseUrl?: string;
+    language?: 'th' | 'en';
   }): Promise<{ replyText: string; badge?: string }> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     if (!ctx.permissions.includes('expense.review')) {
       throw new ForbiddenException('Missing permission: expense.review');
     }
@@ -1507,14 +1616,14 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
     const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${input.evidenceId}`);
     return {
-      badge: SUBSTITUTE_BADGES.awaitingConfirmation,
-      replyText: formatStandalone({
+      badge: language === 'en' ? 'Awaiting confirmation' : SUBSTITUTE_BADGES.awaitingConfirmation,
+      replyText: formatStandalone({ language,
         headline: [
-          `🔵 รอยืนยัน — รับฟอร์มที่เซ็นแล้วของเลขที่ ${linked.documentNumber} ไว้เป็นต้นฉบับลายเซ็นสดแล้วค่ะ`,
-          'รูปนี้ยังไม่ทำให้เอกสารออกค่ะ ต้องรับรองและอนุมัติในเว็บ และเก็บต้นฉบับกระดาษไว้',
+          (language === 'en' ? `The signed form for ${linked.documentNumber} was attached as the paper original.` : `🔵 รอยืนยัน — รับฟอร์มที่เซ็นแล้วของเลขที่ ${linked.documentNumber} ไว้เป็นต้นฉบับลายเซ็นสดแล้วค่ะ`),
+          (language === 'en' ? 'This photo does not issue the document; certify and approve on the web, and retain the original paper.' : 'รูปนี้ยังไม่ทำให้เอกสารออกค่ะ ต้องรับรองและอนุมัติในเว็บ และเก็บต้นฉบับกระดาษไว้'),
         ].join('\n'),
-        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
-        question: 'เปิดลิงก์ด้านบนเพื่อรับรองและอนุมัติในเว็บได้เลยค่ะ',
+        boundary: (language === 'en' ? 'No signature, approval or document issuance was performed in LINE.' : 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร'),
+        question: (language === 'en' ? 'Open the link above to certify and approve on the web.' : 'เปิดลิงก์ด้านบนเพื่อรับรองและอนุมัติในเว็บได้เลยค่ะ'),
         webPath,
       }),
     };
@@ -1573,6 +1682,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     /** Original ordered shortlist from a source-verified waiting question. */
     boundCandidateExpenseIds?: string[];
     webBaseUrl?: string;
+    language?: 'th' | 'en';
     /** The PRIMARY semantic dispatcher sets this so a FRESH start driven by the model's route ALONE (a
      *  paraphrase matching none of the deterministic entry phrases) asks ONE bounded confirmation before it
      *  creates anything. Deterministic entries (canonical / vocabulary) and the OFF/legacy path leave it
@@ -1582,15 +1692,17 @@ export class LineSubstituteReceiptContinuationUseCase {
      *  clarification, so a paraphrase-started workflow may now be created without the canonical phrase. */
     confirmedStart?: boolean;
   }): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     // R3: the permission a link needs is checked before any target is discovered, so no link is offered.
     if (!ctx.permissions.includes('expense.review')) {
       return {
         handled: true, status: 'FORBIDDEN', acceptedFields: [],
-        badge: substituteReceiptBadge({ status: 'FORBIDDEN' }),
+        badge: substituteReceiptBadge({ language, status: 'FORBIDDEN' }),
         blockers: [blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน')],
-        replyText: formatStandalone({
-          headline: 'จัดทำใบรับรองแทนใบเสร็จรับเงินต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
-          question: 'ขอสิทธิ์ตรวจทานค่าใช้จ่ายจากผู้ดูแลบริษัทก่อนได้ไหมคะ?',
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'Ask an authorized expense reviewer to prepare the substitute receipt.' : 'จัดทำใบรับรองแทนใบเสร็จรับเงินต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ'),
+          question: (language === 'en' ? 'Please ask your shop administrator for expense-review access.' : 'ขอสิทธิ์ตรวจทานค่าใช้จ่ายจากผู้ดูแลบริษัทก่อนได้ไหมคะ?'),
         }),
       };
     }
@@ -1605,7 +1717,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const boundIds = input.boundCandidateExpenseIds;
     if (boundIds && (boundIds.length === 0 || boundIds.length > 5 || new Set(boundIds).size !== boundIds.length
       || JSON.stringify(boundIds) !== JSON.stringify(input.recentCandidates.map(item => item.id)))) {
-      return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เคยให้เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
+      return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'The offered expenses changed; please check the current list on the web.' : 'รายการที่เคยให้เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ'), language);
     }
     const chosenId = boundIds?.[selection ?? (boundIds.length === 1 ? 0 : -1)];
     let selected = boundIds ? states.find(item => item.state.expenseId === chosenId)
@@ -1617,16 +1729,16 @@ export class LineSubstituteReceiptContinuationUseCase {
     if (!selected && states.length > 1 && !boundIds) {
       // The question is pending so the dispatcher keeps the clarification open and routes “1” back here.
       // candidateExpenseIds pins the offered shortlist so the ordinal binds to the SAME id next turn.
-      const question = 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)';
+      const question = (language === 'en' ? 'Which pending expense would you like to continue? Reply with its position or name.' : 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)');
       const choices = await Promise.all(states.map(item => this.repo.findByIdWithRelations(ctx.companyId, item.state.expenseId, undefined, ctx.scopes ?? {})));
-      if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการงานที่ค้างเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
+      if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'The pending work changed; please check it on the web.' : 'รายการงานที่ค้างเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ'), language);
       return {
         handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [], pendingQuestion: question,
         candidateExpenseIds: states.map((item) => item.state.expenseId),
         source: { records: choices.flatMap(item => substituteReplySource(item!).records) },
-        replyText: formatStandalone({
-          headline: 'มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ ยังไม่ทราบว่าจะทำงานไหนต่อค่ะ',
-          choices: choices.map(item => `${expenseLabel(item!)}${item!.expenseNumber ? ` · ${bahtAmount(item!)}` : ''}`),
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'More than one substitute receipt is pending; please choose the expense to continue.' : 'มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ ยังไม่ทราบว่าจะทำงานไหนต่อค่ะ'),
+          choices: choices.map(item => `${expenseLabel(item!, language)}${item!.expenseNumber ? ` · ${bahtAmount(item!, language)}` : ''}`),
           question,
         }),
       };
@@ -1640,23 +1752,23 @@ export class LineSubstituteReceiptContinuationUseCase {
         // one turn, so the expense fact they type NEXT becomes the target. The web link on the card
         // below stays the other exit.
         const question = hasChoices
-          ? 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)'
-          : 'พิมพ์ยอดและรายละเอียดค่าใช้จ่ายในแชทนี้ได้เลยค่ะ เช่น “ค่าวินมอไซค์ 50 บาท”';
+          ? (language === 'en' ? 'Which expense would you like? Reply with its position or name.' : 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)')
+          : (language === 'en' ? 'Please send the amount and expense details here, for example “taxi fare 50 baht”.' : 'พิมพ์ยอดและรายละเอียดค่าใช้จ่ายในแชทนี้ได้เลยค่ะ เช่น “ค่าวินมอไซค์ 50 บาท”');
         const categories = offeredCategories(await this.repo.listCategories(ctx.companyId));
         const choices = await Promise.all(input.recentCandidates.map(item => this.repo.findByIdWithRelations(ctx.companyId, item.id, undefined, ctx.scopes ?? {})));
-        if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
+        if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'The selected expense changed; please check it on the web.' : 'รายการที่เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ'), language);
         return {
           handled: true,
           status: 'TARGET_REQUIRED',
           source: { records: choices.flatMap(item => substituteReplySource(item!).records), categoriesHash: sourceHash(categories) },
           // Nothing is persisted without a target, so the values are echoed back instead of dropped.
-          replyText: formatStandalone({
+          replyText: formatStandalone({ language,
             echoed: extractValues(input.messageText, null, ctx.userId, categories),
             categories,
             headline: hasChoices
-              ? 'ยังไม่ทราบว่าจะทำใบรับรองให้รายการค่าใช้จ่ายไหนค่ะ'
-              : 'ยังไม่พบรายการค่าใช้จ่ายในแชทนี้ที่จะทำใบรับรองให้ค่ะ',
-            choices: choices.map(item => `${expenseLabel(item!)}${item!.expenseNumber ? ` · ${bahtAmount(item!)}` : ''}`),
+              ? (language === 'en' ? 'Please choose the expense for the substitute receipt.' : 'ยังไม่ทราบว่าจะทำใบรับรองให้รายการค่าใช้จ่ายไหนค่ะ')
+              : (language === 'en' ? 'There is no matching expense in this chat yet; please send its amount and details.' : 'ยังไม่พบรายการค่าใช้จ่ายในแชทนี้ที่จะทำใบรับรองให้ค่ะ'),
+            choices: choices.map(item => `${expenseLabel(item!, language)}${item!.expenseNumber ? ` · ${bahtAmount(item!, language)}` : ''}`),
             question,
             webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/new`),
           }),
@@ -1669,7 +1781,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       }
       const expenseId = input.recentCandidates[candidateIndex].id;
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
-      if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เลือกไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณค่ะ');
+      if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'The selected expense is outside your current access or branch.' : 'รายการที่เลือกไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณค่ะ'), language);
       // A prepared expense has a document number, a status and a page of its own; minting a fresh
       // OPEN state over it would wipe the provenance the consumed continuation still holds and ask
       // three questions that are already answered. Report the document instead, and write nothing.
@@ -1704,7 +1816,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
 
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, selected.state.expenseId, undefined, ctx.scopes ?? {});
-    if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการของงานนี้ไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณแล้วค่ะ');
+    if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'This expense is no longer within your current access or branch.' : 'รายการของงานนี้ไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณแล้วค่ะ'), language);
     const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, selected.state.workflowId);
     // A brand-new workflow (none → OPEN) may be CREATED only by an EXPLICIT start: a canonical command, a
     // DETERMINISTIC entry phrase develop's vocabulary already recognises (isSubstituteReceiptConversationText
@@ -1724,7 +1836,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     // a legacy candidate is a real start and must persist, not be re-asked forever.
     const startConfirmed = explicitStart || input.requireStartConfirmation !== true;
     if (startedNew && !startConfirmed) {
-      const confirmQuestion = 'จะเริ่มทำใบรับรองแทนใบเสร็จรับเงินสำหรับรายการนี้ใช่ไหมคะ พิมพ์ “ใช่” เพื่อเริ่ม หรือ “ไม่” เพื่อยกเลิกค่ะ';
+      const confirmQuestion = (language === 'en' ? 'Start preparing a substitute receipt for this expense? Reply “yes” to start or “no” to cancel.' : 'จะเริ่มทำใบรับรองแทนใบเสร็จรับเงินสำหรับรายการนี้ใช่ไหมคะ พิมพ์ “ใช่” เพื่อเริ่ม หรือ “ไม่” เพื่อยกเลิกค่ะ');
       return {
         handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
         replyText: confirmQuestion, pendingQuestion: confirmQuestion,
@@ -1748,7 +1860,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         return {
           handled: true, status: 'INELIGIBLE', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
           acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath,
-          replyText: formatResult({ status: 'INELIGIBLE', expense, state: selected.state, acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath }),
+          replyText: formatResult({ language, status: 'INELIGIBLE', expense, state: selected.state, acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath }),
         };
       }
       // Clear the decision: otherwise a paused “ready” workflow keeps pendingDecision, the taught resume
@@ -1766,12 +1878,12 @@ export class LineSubstituteReceiptContinuationUseCase {
       const state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       const status = pause ? 'PAUSED' as const : 'CANCELLED' as const;
       return { handled: true, status, expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense, saved.updatedAt), acceptedFields: [], blockers: [], webPath,
-        replyText: formatResult({ status, expense, state, acceptedFields: [], blockers: [], webPath }) };
+        replyText: formatResult({ language, status, expense, state, acceptedFields: [], blockers: [], webPath }) };
     }
     if (selected.state.targetRevision !== expense.updatedAt.toISOString()) {
       return {
         handled: true, status: 'STALE', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
-        replyText: formatResult({ status: 'STALE', expense, state: selected.state, acceptedFields: [], blockers: [], webPath }),
+        replyText: formatResult({ language, status: 'STALE', expense, state: selected.state, acceptedFields: [], blockers: [], webPath }),
         acceptedFields: [], blockers: [], webPath,
       };
     }
@@ -1781,13 +1893,13 @@ export class LineSubstituteReceiptContinuationUseCase {
     // the stored state is left exactly as it was. The reply is the explanation and its one question;
     // “ทำต่อ” resumes with whatever was already pending, “ไม่ทำต่อ” pauses through the branch above.
     // It never reaches FORBIDDEN, PAUSED, CANCELLED or STALE turns — those all returned already.
-    const wrongDocument = payeeCouldSignHeadline(input.messageText);
+    const wrongDocument = payeeCouldSignHeadline(input.messageText, language);
     if (wrongDocument) {
       return {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
-        acceptedFields: [], blockers: [], webPath, pendingQuestion: PAYEE_COULD_SIGN_QUESTION,
-        resumeCapsule: resumeCapsule(expense, selected.state, [], webPath),
-        replyText: formatStandalone({ headline: wrongDocument, question: PAYEE_COULD_SIGN_QUESTION, webPath }),
+        acceptedFields: [], blockers: [], webPath, pendingQuestion: (language === 'en' ? 'Continue preparing the substitute receipt, or pause this work?' : PAYEE_COULD_SIGN_QUESTION),
+        resumeCapsule: resumeCapsule(expense, selected.state, [], webPath, language),
+        replyText: formatStandalone({ language, headline: wrongDocument, question: (language === 'en' ? 'Continue preparing the substitute receipt, or pause this work?' : PAYEE_COULD_SIGN_QUESTION), webPath }),
       };
     }
 
@@ -1808,7 +1920,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
     const pendingField = selected.state.missingFields[0] ?? null;
     const acceptedNow = extractValues(input.messageText, pendingField, ctx.userId, categories, selected.state.missingFields);
-    const sideAnswer = groundedSideAnswer(expense, input.messageText);
+    const sideAnswer = groundedSideAnswer(expense, input.messageText, language);
     const acceptedValues = { ...selected.state.acceptedValues, ...acceptedNow };
     for (const field of ['missingReceiptReason', 'businessPurpose', 'payeeName', 'itemDescription'] as const) {
       if (acceptedValues[field]) acceptedValues[field] = freeTextOf(acceptedValues[field]) ?? '';
@@ -1855,7 +1967,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       resolvedFields: Object.keys(acceptedValues).filter(field => acceptedValues[field as keyof LineSubstituteReceiptValues] != null && acceptedValues[field as keyof LineSubstituteReceiptValues] !== '').sort(),
       missingFields,
       attachmentRefs: expense.attachments.filter((item) => item.status === 'ACTIVE').map((item) => item.id).slice(0, 20),
-      pendingQuestion: collectionQuestion(blockers, categories) ?? (blockers.length ? null : ISSUE_DECISION_QUESTION),
+      pendingQuestion: collectionQuestion(blockers, categories, language) ?? (blockers.length ? null : (language === 'en' ? 'Would you like to prepare the document now?' : ISSUE_DECISION_QUESTION)),
       // Set only while the preflight is clean: a value the user changes later reopens a blocker and
       // takes the decision back off the table until everything is answered again.
       pendingDecision: blockers.length ? undefined : 'ISSUE_CONFIRM',
@@ -1896,7 +2008,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       : ineligible
         ? absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`)
         : workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
-    const badge = substituteReceiptBadge({ status, blockers });
+    const badge = substituteReceiptBadge({ language, status, blockers });
     // Only when the decision is about to be printed: choice 1 has to say whether it is one step or
     // two, and a blocked turn never shows the choices, so it pays for no lookup.
     const hasReusableSignature = state.pendingDecision === 'ISSUE_CONFIRM'
@@ -1911,9 +2023,9 @@ export class LineSubstituteReceiptContinuationUseCase {
       ...(badge ? { badge } : {}),
       policy: policyFacts,
       sideQuestionAnswered: Boolean(sideAnswer),
-      resumeCapsule: resumeCapsule(expense, state, acceptedFields, targetPath),
+      resumeCapsule: resumeCapsule(expense, state, acceptedFields, targetPath, language),
       ...(state.pendingQuestion ? { pendingQuestion: state.pendingQuestion } : {}),
-      replyText: formatResult({ status, expense, state, acceptedFields, blockers, webPath: targetPath, policy: policyFacts, sideAnswer, categories, hasReusableSignature }),
+      replyText: formatResult({ language, status, expense, state, acceptedFields, blockers, webPath: targetPath, policy: policyFacts, sideAnswer, categories, hasReusableSignature }),
     };
   }
 
@@ -1925,10 +2037,12 @@ export class LineSubstituteReceiptContinuationUseCase {
    */
   private async existingEvidenceCard(
     ctx: RequestContext,
-    input: { webBaseUrl?: string },
+    input: { webBaseUrl?: string; language?: 'th' | 'en' },
     expense: ExpenseRecordWithRelations,
     evidence: { id: string; documentNumber: string; status: string; signatureMode: 'DIGITAL' | 'PAPER'; wetSignedScanAttachmentId: string | null },
   ): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
     const issued = evidence.status === 'ISSUED';
     // R10/§16: a PREPARED paper-route form with no signed scan yet is waiting for INK, not a web
@@ -1942,28 +2056,28 @@ export class LineSubstituteReceiptContinuationUseCase {
     const awaitingPaperSignature = evidence.status === 'PREPARED'
       && !evidence.wetSignedScanAttachmentId
       && (evidence.signatureMode === 'PAPER' || stateFromMetadata(expense.sourceChannelMetadataJson)?.formRequested === true);
-    const badge = substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature });
-    const amount = bahtAmount(expense);
+    const badge = substituteReceiptBadge({ language, status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature });
+    const amount = bahtAmount(expense, language);
     const headline = [
-      `${issued ? '✅ ออกเอกสารแล้ว' : awaitingPaperSignature ? '🖊️ รอลงนาม' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
-      `รายการ ${expenseLabel(expense)} · ยอด ${amount}`,
+      `${language === 'en' ? (issued ? 'Issued' : awaitingPaperSignature ? 'Awaiting signature' : 'Awaiting confirmation') : issued ? '✅ ออกเอกสารแล้ว' : awaitingPaperSignature ? '🖊️ รอลงนาม' : '🔵 รอยืนยัน'} — ${evidence.documentNumber}`,
+      `${language === 'en' ? 'Expense' : 'รายการ'} ${expenseLabel(expense, language)} · ${language === 'en' ? 'Amount' : 'ยอด'} ${amount}`,
       issued
-        ? 'เอกสารออกเรียบร้อยแล้ว'
+        ? (language === 'en' ? 'The document has been issued.' : 'เอกสารออกเรียบร้อยแล้ว')
         : awaitingPaperSignature
-          ? 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED — พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้'
-          : 'เตรียมและจองเลขที่ไว้แล้วค่ะ เหลือลงนามรับรองและอนุมัติในเว็บ',
+          ? (language === 'en' ? 'The unsigned form has a watermark; print and sign it, then send a photo here.' : 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED — พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้')
+          : (language === 'en' ? 'The document has been prepared and numbered; certification and approval remain on the web.' : 'เตรียมและจองเลขที่ไว้แล้วค่ะ เหลือลงนามรับรองและอนุมัติในเว็บ'),
     ];
     return {
       handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath, source: substituteReplySource(expense),
       ...(badge ? { badge } : {}),
-      replyText: formatStandalone({
+      replyText: formatStandalone({ language,
         headline: headline.join('\n'),
-        boundary: issued ? 'เอกสารออกเรียบร้อยแล้วค่ะ' : 'ยังรอลงนามและอนุมัติค่ะ',
+        boundary: issued ? (language === 'en' ? 'The document has been issued.' : 'เอกสารออกเรียบร้อยแล้วค่ะ') : (language === 'en' ? 'Signature and approval are still required on the web.' : 'ยังรอลงนามและอนุมัติค่ะ'),
         question: issued
-          ? 'เปิดหน้าเว็บด้านบนเพื่อดาวน์โหลดเอกสารที่ออกแล้วได้เลยค่ะ'
+          ? (language === 'en' ? 'Open the link above to download the issued document.' : 'เปิดหน้าเว็บด้านบนเพื่อดาวน์โหลดเอกสารที่ออกแล้วได้เลยค่ะ')
           : awaitingPaperSignature
-            ? 'เปิดหน้าเว็บด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้ได้เลยค่ะ'
-            : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ',
+            ? (language === 'en' ? 'Open the link above to download the unsigned form, print and sign it, then send a photo here.' : 'เปิดหน้าเว็บด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้ได้เลยค่ะ')
+            : (language === 'en' ? 'Open the link above to sign, certify and approve on the web.' : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ'),
         webPath,
       }),
     };
@@ -1976,12 +2090,15 @@ export class LineSubstituteReceiptContinuationUseCase {
       chatKeyHash: string;
       recentCandidates: Array<{ id: string; label: string }>;
       webBaseUrl?: string;
+    language?: 'th' | 'en';
       requireStartConfirmation?: boolean;
       confirmedStart?: boolean;
     },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
   ): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     const choice = checkBillPaymentChoice(input.messageText);
     const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
     if (!choice) {
@@ -1989,15 +2106,15 @@ export class LineSubstituteReceiptContinuationUseCase {
       return {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),
         acceptedFields: [], blockers: [],
-        pendingQuestion: waitingForPhoto ? 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ' : CHECK_BILL_PAYMENT_QUESTION,
+        pendingQuestion: waitingForPhoto ? (language === 'en' ? 'Please send the final receipt photo here.' : 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ') : (language === 'en' ? 'Has this bill been paid, and is a final receipt available?' : CHECK_BILL_PAYMENT_QUESTION),
         webPath,
         replyText: waitingForPhoto
-          ? formatStandalone({
-              headline: '📷 รอรูปใบเสร็จฉบับสุดท้ายของรายการนี้อยู่ค่ะ',
-              question: 'ส่งรูปเข้ามาได้เลย หรือถ้าไม่มีใบเสร็จแล้ว ตอบ 1 เพื่อทำใบรับรองแทนใบเสร็จค่ะ',
+          ? formatStandalone({ language,
+              headline: (language === 'en' ? 'I am waiting for the final receipt photo for this expense.' : '📷 รอรูปใบเสร็จฉบับสุดท้ายของรายการนี้อยู่ค่ะ'),
+              question: (language === 'en' ? 'Send the photo here, or reply “1” to prepare a substitute receipt if no receipt is available.' : 'ส่งรูปเข้ามาได้เลย หรือถ้าไม่มีใบเสร็จแล้ว ตอบ 1 เพื่อทำใบรับรองแทนใบเสร็จค่ะ'),
               webPath,
             })
-          : checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId),
+          : checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId, language),
       };
     }
     if (choice === 'UNPAID') {
@@ -2011,9 +2128,9 @@ export class LineSubstituteReceiptContinuationUseCase {
       return {
         handled: true, status: 'PAUSED', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [],
-        replyText: formatStandalone({
-          headline: '⏸️ เก็บรายการนี้เป็นฉบับร่างไว้แล้วค่ะ ยังไม่บันทึกว่าเป็นค่าใช้จ่ายที่จ่ายแล้ว',
-          question: 'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือเปิดรายการนี้แล้วเลือก “จ่ายแล้ว” ได้ค่ะ',
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'The expense remains a draft and has not been marked paid.' : '⏸️ เก็บรายการนี้เป็นฉบับร่างไว้แล้วค่ะ ยังไม่บันทึกว่าเป็นค่าใช้จ่ายที่จ่ายแล้ว'),
+          question: (language === 'en' ? 'After payment, send the final receipt or mark the expense paid on the web.' : 'หลังจ่ายเงิน ส่งใบเสร็จฉบับสุดท้ายเข้ามา หรือเปิดรายการนี้แล้วเลือก “จ่ายแล้ว” ได้ค่ะ'),
           webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`),
         }),
       };
@@ -2024,16 +2141,16 @@ export class LineSubstituteReceiptContinuationUseCase {
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
         continuation: {
           ...state, status: 'OPEN', pendingDecision: 'CHECK_BILL_FINAL_RECEIPT',
-          pendingQuestion: 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ',
+          pendingQuestion: (language === 'en' ? 'Please send the final receipt photo here.' : 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ'),
         } as unknown as Record<string, unknown>,
       });
       const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       return {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: next.pendingQuestion ?? undefined, webPath,
-        replyText: formatStandalone({
-          headline: '📷 ได้เลยค่ะ ระบบจะใช้ใบเสร็จฉบับสุดท้ายแทนหลักฐานหลักในรายการเดิม',
-          question: 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ',
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'The final receipt will replace the primary evidence on the existing expense.' : '📷 ได้เลยค่ะ ระบบจะใช้ใบเสร็จฉบับสุดท้ายแทนหลักฐานหลักในรายการเดิม'),
+          question: (language === 'en' ? 'Please send the final receipt photo here.' : 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ'),
           webPath,
         }),
       };
@@ -2042,7 +2159,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const acceptedValues: LineSubstituteReceiptValues = {
       ...state.acceptedValues,
       reasonCode: 'RECEIPT_UNAVAILABLE',
-      missingReceiptReason: 'ชำระแล้วแต่ร้านไม่ออกใบเสร็จฉบับสุดท้าย',
+      missingReceiptReason: (language === 'en' ? 'Paid, but the seller did not provide a final receipt' : 'ชำระแล้วแต่ร้านไม่ออกใบเสร็จฉบับสุดท้าย'),
     };
     await this.repo.saveLineSubstituteContinuation({
       companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
@@ -2071,11 +2188,12 @@ export class LineSubstituteReceiptContinuationUseCase {
    *  values" — the normal collect-and-re-ask path owns those, so a correction is never lost. */
   private async answerIssueDecision(
     ctx: RequestContext,
-    input: { messageText: string; webBaseUrl?: string },
+    input: { messageText: string; webBaseUrl?: string; language?: 'th' | 'en' },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
     categories: Array<{ id: string; name: string }>,
   ): Promise<LineSubstituteReceiptContinuationResult | undefined> {
+    const language = input.language ?? lineReplyLanguage(input.messageText);
     // A message carrying values is a correction, not a decision — even when it also contains an
     // action word (“แก้วัตถุประสงค์: ไปพบลูกค้า” names both). Read first so the collect path owns it
     // and nothing the sender typed is dropped for the sake of a word match.
@@ -2086,7 +2204,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       // §15: a question asked while the decision is open is still answered from source state, and the
       // capsule reminds the sender what is waiting — otherwise the dispatcher deflects to a general
       // AI turn and this work drops out of the conversation.
-      const sideAnswer = groundedSideAnswer(expense, input.messageText);
+      const sideAnswer = groundedSideAnswer(expense, input.messageText, language);
       // No word list covers every way a person says yes, so the unmatched case has to be USEFUL: show
       // the three choices again — re-derived from the CURRENT state, never a fixed list — and ask for
       // a number. That, not a longer list, is what keeps an unexpected phrasing from dead-ending.
@@ -2094,21 +2212,21 @@ export class LineSubstituteReceiptContinuationUseCase {
       return {
         handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
         source: { ...substituteReplySource(expense), signatureAvailable: Boolean(signature) },
-        acceptedFields: [], blockers: [], pendingQuestion: ISSUE_DECISION_QUESTION, webPath,
+        acceptedFields: [], blockers: [], pendingQuestion: (language === 'en' ? 'Would you like to prepare the document now?' : ISSUE_DECISION_QUESTION), webPath,
         ...(sideAnswer ? { sideQuestionAnswered: true } : {}),
         // S1: nothing in this message answers the open decision. The dispatcher needs that fact —
         // an open decision must not swallow the sender's next unrelated sentence.
         decisionUnread: true,
-        resumeCapsule: resumeCapsule(expense, state, [], webPath),
-        replyText: formatStandalone({
+        resumeCapsule: resumeCapsule(expense, state, [], webPath, language),
+        replyText: formatStandalone({ language,
           headline: sideAnswer
-            ? `${sideAnswer}\n\nข้อมูลครบแล้ว รอเลือกว่าจะทำอะไรต่อค่ะ`
+            ? `${sideAnswer}\n\n${language === 'en' ? 'The details are complete; choose the next step.' : 'ข้อมูลครบแล้ว รอเลือกว่าจะทำอะไรต่อค่ะ'}`
             // The pause escape is repeated here, not only in the first decline reply: this is the
             // reply a sender sees over and over when their phrasing keeps missing the word list, and
             // "how do I stop being asked" must be answerable from the message doing the asking.
-            : 'ยังไม่แน่ใจว่าจะให้ทำอะไรต่อค่ะ เลือกจาก 3 ข้อนี้ ตอบเลขข้อได้เลย หรือพิมพ์ “พัก” เพื่อพักงานนี้ไว้',
-          choices: issueDecisionChoices(Boolean(signature)),
-          question: ISSUE_DECISION_QUESTION,
+            : (language === 'en' ? 'Choose an option below, or say “pause” to pause this work.' : 'ยังไม่แน่ใจว่าจะให้ทำอะไรต่อค่ะ เลือกจาก 3 ข้อนี้ ตอบเลขข้อได้เลย หรือพิมพ์ “พัก” เพื่อพักงานนี้ไว้'),
+          choices: issueDecisionChoices(Boolean(signature), language),
+          question: (language === 'en' ? 'Would you like to prepare the document now?' : ISSUE_DECISION_QUESTION),
         }),
       };
     }
@@ -2116,7 +2234,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       // M5: “บอกได้ตลอดเมื่อพร้อม” is only true while the next “ออกเอกสารเลย” is still heard, so the
       // decision stays pending — it reserves nothing — and the invitation IS the pending question,
       // which is what keeps this chat's clarification open for that answer to land in.
-      const question = 'พร้อมเมื่อไหร่ พิมพ์ “ออกเอกสารเลย” ได้ตลอดค่ะ หรือพิมพ์ “พัก” เพื่อพักงานนี้ไว้';
+      const question = (language === 'en' ? 'Say “prepare the document” when ready, or “pause” to pause this work.' : 'พร้อมเมื่อไหร่ พิมพ์ “ออกเอกสารเลย” ได้ตลอดค่ะ หรือพิมพ์ “พัก” เพื่อพักงานนี้ไว้');
       const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
@@ -2127,9 +2245,9 @@ export class LineSubstituteReceiptContinuationUseCase {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: question,
         webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
-        resumeCapsule: resumeCapsule(expense, next, [], workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId)),
-        replyText: formatStandalone({
-          headline: 'รับทราบค่ะ ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่ งานนี้ยังเปิดอยู่ ข้อมูลที่รับไว้ยังอยู่ครบ',
+        resumeCapsule: resumeCapsule(expense, next, [], workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId), language),
+        replyText: formatStandalone({ language,
+          headline: (language === 'en' ? 'The document has not been issued or numbered; your work remains open and the collected details are retained.' : 'รับทราบค่ะ ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่ งานนี้ยังเปิดอยู่ ข้อมูลที่รับไว้ยังอยู่ครบ'),
           question,
           webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
         }),
@@ -2141,7 +2259,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       // naming it), so the labels are listed plainly and the example shows the shape of an answer.
       // The decision deliberately stays pending: 1/2/3 keep working as the way out, and a labelled
       // value still reaches the collect path through the values-first check above.
-      const question = 'จะแก้ช่องไหนคะ? พิมพ์ชื่อช่องแล้วตามด้วยค่าใหม่ เช่น “วัตถุประสงค์: ไปพบลูกค้า”';
+      const question = (language === 'en' ? 'Which detail would you like to change? Send its label and new value, such as “purpose: customer visit”.' : 'จะแก้ช่องไหนคะ? พิมพ์ชื่อช่องแล้วตามด้วยค่าใหม่ เช่น “วัตถุประสงค์: ไปพบลูกค้า”');
       const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
@@ -2152,8 +2270,8 @@ export class LineSubstituteReceiptContinuationUseCase {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: question,
         webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
-        replyText: formatStandalone({
-          headline: [
+        replyText: formatStandalone({ language,
+          headline: language === 'en' ? 'Send the field label and new value for the funding source, receipt reason, purpose, payer, payee, payment method, payment date or category.' : [
             'แก้ได้เลยค่ะ ช่องที่แก้ผ่าน LINE ได้:',
             ...EDITABLE_FIELD_HINTS.map(([field, hint]) => `• ${VALUE_LABELS[field] ?? field} — เช่น “${hint}”`),
             'ถ้าเปลี่ยนใจ ตอบ 1 เพื่อออกเอกสาร หรือ 2 เพื่อขอฟอร์มไปเซ็นเองได้เลย',
@@ -2179,10 +2297,12 @@ export class LineSubstituteReceiptContinuationUseCase {
    */
   private async askForSignature(
     ctx: RequestContext,
-    input: { webBaseUrl?: string },
+    input: { webBaseUrl?: string; language?: 'th' | 'en' },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
   ): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     // A3: written once, so the photo that arrives next has a numbered choice that can become a
     // signature. Best-effort by design — a stale-revision refusal here must not swallow the ask
     // itself, and `loadOpenMediaContext` re-checks the live signature anyway.
@@ -2199,22 +2319,22 @@ export class LineSubstituteReceiptContinuationUseCase {
         // Left unrecorded: the sender still gets the ask, and the caption route still works.
       }
     }
-    const question = 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ';
+    const question = (language === 'en' ? 'Please send your signature photo here.' : 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
     const signatureBlocker = blocker('reusable_signature_required', 'ยังไม่มีลายเซ็นที่บันทึกไว้', true);
     return {
       handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
       source: { ...substituteReplySource(expense, producedRevision), signatureAvailable: false },
       acceptedFields: [],
-      badge: substituteReceiptBadge({ status: 'BLOCKED', blockers: [signatureBlocker] }),
+      badge: substituteReceiptBadge({ language, status: 'BLOCKED', blockers: [signatureBlocker] }),
       blockers: [signatureBlocker],
       // The decision stays pending and nothing is written, so “1” after the photo lands here again.
       pendingQuestion: question,
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId),
-      replyText: formatStandalone({
+      replyText: formatStandalone({ language,
         headline: [
-          'ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ',
-          'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้',
-          'ระบบจะเก็บเป็นลายเซ็นประจำตัว ใช้ได้ทันทีและใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก',
+          (language === 'en' ? 'No saved signature is available yet.' : 'ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ'),
+          (language === 'en' ? 'Sign on white paper and send a clear photo of the whole signature here.' : 'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้'),
+          (language === 'en' ? 'Your signature can be saved for reuse without uploading it for every document.' : 'ระบบจะเก็บเป็นลายเซ็นประจำตัว ใช้ได้ทันทีและใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก'),
         ].join('\n'),
         question,
       }),
@@ -2225,11 +2345,13 @@ export class LineSubstituteReceiptContinuationUseCase {
    *  work to the one web page where certification and approval happen. */
   private async prepareFromLine(
     ctx: RequestContext,
-    input: { webBaseUrl?: string },
+    input: { webBaseUrl?: string; language?: 'th' | 'en' },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
     choice: 'ISSUE' | 'FORM',
   ): Promise<LineSubstituteReceiptContinuationResult> {
+    const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
+    input = { ...input, language };
     const values = state.acceptedValues;
     const active = expense.attachments.filter((item) => item.status === 'ACTIVE');
     const paymentEvidenceAttachmentIds = active.filter((item) => item.purpose === 'expense.payment.evidence').map((item) => item.id);
@@ -2293,13 +2415,13 @@ export class LineSubstituteReceiptContinuationUseCase {
         ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
-      const amount = bahtAmount(expense);
+      const amount = bahtAmount(expense, language);
       const formLines = [
-        `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
-        `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
-        'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว',
+        (language === 'en' ? `Prepared as ${evidence.documentNumber}; awaiting signature.` : `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`),
+        `${language === 'en' ? 'Amount' : 'ยอด'} ${amount} · ${language === 'en' ? 'Payer' : 'ผู้จ่าย'} ${evidence.payerName}`,
+        (language === 'en' ? 'The watermarked unsigned form is not an issued document.' : 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว'),
       ];
-      const badge = substituteReceiptBadge({
+      const badge = substituteReceiptBadge({ language,
         status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature: choice === 'FORM',
       });
       return {
@@ -2307,18 +2429,18 @@ export class LineSubstituteReceiptContinuationUseCase {
         source: substituteReplySource({ ...expense, substituteReceiptEvidence: evidence }, new Date(evidence.expenseUpdatedAtAtPreparation)),
         acceptedFields: [], blockers: [], webPath,
         ...(badge ? { badge } : {}),
-        replyText: formatStandalone({
+        replyText: formatStandalone({ language,
           headline: choice === 'ISSUE'
             ? [
-              `🔵 รอยืนยัน — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
-              `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
-              'ขั้นต่อไปทำในเว็บค่ะ ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ',
+              (language === 'en' ? `Prepared as ${evidence.documentNumber}; awaiting certification and approval.` : `🔵 รอยืนยัน — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`),
+              `${language === 'en' ? 'Amount' : 'ยอด'} ${amount} · ${language === 'en' ? 'Payer' : 'ผู้จ่าย'} ${evidence.payerName}`,
+              (language === 'en' ? 'Continue on the web: the payer signs and certifies, then an authorized approver approves.' : 'ขั้นต่อไปทำในเว็บค่ะ ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ'),
             ].join('\n')
             : formLines.join('\n'),
-          boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+          boundary: (language === 'en' ? 'No signature, approval or document issuance was performed in LINE.' : 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร'),
           question: choice === 'ISSUE'
-            ? 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ'
-            : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ',
+            ? (language === 'en' ? 'Open the link above to sign, certify and approve on the web.' : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ')
+            : (language === 'en' ? 'Open the link above to download the unsigned form, then print and sign it.' : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ'),
           webPath,
         }),
       };
@@ -2329,7 +2451,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         return {
           handled: true, status: 'STALE', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),
           acceptedFields: [], blockers: [], webPath,
-          replyText: formatResult({ status: 'STALE', expense, state, acceptedFields: [], blockers: [], webPath }),
+          replyText: formatResult({ language, status: 'STALE', expense, state, acceptedFields: [], blockers: [], webPath }),
         };
       }
       // Generic Thai only — the raw API error is often English and never belongs in a customer chat.
@@ -2339,7 +2461,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         acceptedFields: [], blockers, webPath,
         // A structural failure means the same “1) ออกเอกสาร” would fail again, so the decision is
         // cleared for this reply rather than re-offered as a one-tap retry; the web page is the way on.
-        replyText: formatResult({ status: 'BLOCKED', expense, state: { ...state, pendingDecision: undefined }, acceptedFields: [], blockers, webPath }),
+        replyText: formatResult({ language, status: 'BLOCKED', expense, state: { ...state, pendingDecision: undefined }, acceptedFields: [], blockers, webPath }),
       };
     }
   }

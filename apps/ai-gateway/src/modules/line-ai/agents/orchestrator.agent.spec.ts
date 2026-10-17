@@ -1,6 +1,6 @@
 import '../domain/logic/line-ai-scope-policy.logic.spec';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
-import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
+import { scopePolicyOverride, featureLimitReplyText, permissionAlternative } from '../domain/logic/line-ai-scope-policy.logic';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
@@ -2171,7 +2171,7 @@ describe('round 5A document advisor orchestrator', () => {
     req.budgetGrantV2 = {} as any;
     const result = await new OrchestratorAgent({ invoke: async () => { calls++; throw new Error('must not read'); } } as any, makeConfig()).run(req);
     assert.equal(calls, 0); assert.equal(modelCalls, 1);
-    assert.equal(result.replyText, `${explanation}\n50 ทวิ อยู่ในแพ็กธุรกิจ 1,999 บาทค่ะ`);
+    assert.equal(result.replyText, `${explanation}\nแพ็กเกจของร้านยังไม่มีฟีเจอร์นี้ ซึ่งอยู่ในแพ็กเกจธุรกิจ (ENTERPRISE) ราคา 1,999 บาทต่อเดือนค่ะ`);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
   });
 });
@@ -2282,7 +2282,7 @@ describe('U2 document explanations precede a package limit and keep the general 
     assert.deepEqual(calls.map(call => call.usageTag), ['line.compose']);
     assert.match(JSON.stringify(calls[0]), /one or two sentences of general knowledge/);
     assert.equal(result.replyText.split('\n')[0], explanation);
-    assert.match(result.replyText, /แพ็กธุรกิจ 1,999 บาทค่ะ$/);
+    assert.match(result.replyText, /แพ็กเกจ.*ราคา [0-9,]+ บาทต่อเดือนค่ะ$/);
     assert.deepEqual(result.sourceRefs, []);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
     assert.equal(result.semanticCoverage?.[0].status, 'handled');
@@ -2313,7 +2313,7 @@ describe('Fix-up 17B: uncovered how-to answers select a checked action in the ex
       const messageText = recorded?.messageText ?? `${action.title}ทำยังไง`;
       const req = makeReq(messageText);
       req.semanticSubrequests = recorded?.route.semanticSubrequests ?? [{ index: 0, kind: 'help', goal: messageText, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }];
-      req.userContext.permissions = ['ai.tool.invoke', ...(access === 'permission-denied' ? [] : [action.permission])];
+      req.userContext.permissions = ['ai.tool.invoke', ...(access === 'permission-denied' ? [] : [action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])])];
       req.entitledFeatureKeys = access === 'feature-denied' ? [] : [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'];
       req.userContext.entitledFeatureKeys = ['expenses']; // top-level entitlement is authoritative
       let calls = 0;
@@ -2329,15 +2329,15 @@ describe('Fix-up 17B: uncovered how-to answers select a checked action in the ex
       // Feature-denied WHT is answered by the existing entitlement guard before composition.
       assert.equal(calls, 1);
       const allowed = access !== 'permission-denied' && (access !== 'feature-denied' || ['reimbursement_claim', 'payout_account', 'team_member', 'branch', 'branch_edit', 'package_purchase', 'approvals', 'team'].includes(action.id));
-      assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : 'denied');
+      assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : result.semanticCoverage?.[0]?.reasonCode === 'PACKAGE_FEATURE_NOT_ENABLED' ? 'unsupported' : 'denied');
       assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|ความสามารถปัจจุบัน|\n|^\d[.)]/);
       assert.match(result.replyText, /ค่ะ$/);
       if (allowed && 'webPath' in action) {
         assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
         assert.equal(result.presentation?.cards[0]?.webLink?.path, '/companies/company-1/reimbursements/payout-account');
       } else assert.equal(result.presentation?.cards[0]?.chatActionId, allowed ? action.id : undefined);
-      if (!allowed) assert.match(result.replyText, /ผู้มีสิทธิ์|ผู้อนุมัติ|แพ็กเกจ/);
-      if (!allowed && access === 'feature-denied') assert.match(result.replyText, /แพ็กเกจ/);
+      if (!allowed) assert.match(result.replyText, /เจ้าของกิจการ|แพ็กเกจ|Mangmee Plus วันนี้ยังไม่มี/);
+      if (!allowed && access === 'feature-denied') assert.match(result.replyText, /แพ็กเกจ|Mangmee Plus วันนี้ยังไม่มี/);
     });
   }
   it('C11 bank details continuing personal payout setup go straight to the web page without asking purpose', async () => {
@@ -2406,7 +2406,7 @@ describe('Fix-up 15: one-sentence how-to action bridge', () => {
   for (const action of LINE_CHAT_ACTIONS) for (const permitted of [true, false]) it(`${action.group}/${action.id}, permitted=${permitted}`, async () => {
     const request = { ...makeReq(`ทำ${action.title}ยังไง`), howToActionId: action.id,
       entitledFeatureKeys: [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'],
-      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(permitted ? [action.permission] : [])] },
+      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(permitted ? [action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])] : [])] },
       semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: action.title, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
     const result = await runSemanticTurnV2({ req: request, provider: { generateText: async () => { throw new Error('help must not plan a mutation'); } },
       draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
@@ -2415,7 +2415,7 @@ describe('Fix-up 15: one-sentence how-to action bridge', () => {
     assert.match(result.replyText, /ค่ะ$/);
     assert.equal(result.semanticCoverage?.[0]?.status, permitted ? 'handled' : 'denied');
     assert.equal(result.presentation?.cards[0]?.chatActionId, permitted && !('webPath' in action) ? action.id : undefined);
-    if (!permitted) assert.ok(result.replyText.includes(action.responsible));
+    if (!permitted) assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ/u);
   });
   it('bridges the exact J7 approved-help selection and preserves reviewed secondary links', async () => {
     const req = { ...makeReq('สร้างใบเบิกยังไง'), approvedKnowledge: true, selectedKnowledgeCardIds: ['reimbursement.meaning', 'reimbursement.roles'],
@@ -2533,14 +2533,14 @@ describe('Fix-up 20B: every missing-router action × allowed/denied composer sel
   for (const action of LINE_CHAT_ACTIONS) for (const allowed of [true, false]) it(`${action.id}/allowed=${allowed}`, async () => {
     const req = { ...makeReq(`ทำ${action.title}ยังไง`),
       entitledFeatureKeys: [...LINE_CAPABILITY_GROUPS.flatMap(group => [...group.featureKeys]), 'expenses.upload'],
-      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(allowed ? [action.permission] : [])] },
+      userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', ...(allowed ? [action.permission, ...(action.id === 'approvals' ? ['reimbursement.read'] : [])] : [])] },
       semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: action.title, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
     const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: action.id }] }) }) },
       invoke: async () => assert.fail('navigation never calls a mutation') });
-    assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : 'denied');
+    assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : result.semanticCoverage?.[0]?.reasonCode === 'PACKAGE_FEATURE_NOT_ENABLED' ? 'unsupported' : 'denied');
     assert.equal(result.presentation?.cards[0]?.chatActionId, allowed && !('webPath' in action) ? action.id : undefined);
-    assert.equal(Boolean(result.presentation?.cards[0]?.webLink), allowed && 'webPath' in action);
+    assert.equal(Boolean(result.presentation?.cards[0]?.webLink || result.webLinks.length), !allowed || 'webPath' in action);
     assert.equal(result.replyText.split('\n').length, 1);
   });
 });
@@ -2571,7 +2571,7 @@ describe('Fix-up 29: forbidden tools always name the permission owner without le
       } }, invoke: async meta => ({ toolName: meta.name, status: 'forbidden', errorCode: 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED',
         sourceRefs: [], asOf: new Date().toISOString() }) });
     assert.equal(result.semanticCoverage?.[0]?.status, 'denied');
-    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*ผู้มีสิทธิ์อนุมัติ/u);
+    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*ผู้จัดการ/u);
     assert.doesNotMatch(result.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/u);
   });
   it('repairs only the ambiguous expense status and keeps explicit drafts, confirmed records and other tool enums', async () => {
@@ -2592,7 +2592,7 @@ describe('Fix-up 29: forbidden tools always name the permission owner without le
         provider: { generateText: async () => assert.fail('a forbidden read cannot be composed into a business answer') },
         invoke: async meta => ({ toolName: meta.name, status, errorCode, asOf: new Date().toISOString(), sourceRefs: [], data: { private: 'secret-record', total: 987654321 } }) });
       assert.equal(result.semanticCoverage?.[0]?.status, 'denied');
-      assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*ผู้มีสิทธิ์/u);
+      assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ/u);
       assert.doesNotMatch(result.replyText, /ดึงข้อมูลไม่ได้|secret-record|987654321/u);
       assert.deepEqual(result.sourceRefs, []);
       const { preparedTerminalReply } = await import('./prepared-simple-read-formatter');
@@ -2611,6 +2611,266 @@ describe('Fix-up 29: forbidden tools always name the permission owner without le
       provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'expense.get_detail', input: { expenseId: 'counterparty-id' } }] }) }) },
       invoke: async () => assert.fail('a group id is not an expense reference') });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
-    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ/u);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
+    assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์/u);
+    assert.match(result.replyText, /ลองส่งข้อความเดิมอีกครั้งค่ะ/u);
   });
+});
+
+
+// Lane C verifies the real registry/catalog rather than the exam's role/package assumptions.
+import { ROLE_GRANTS } from '../../../../../api/src/modules/auth/permission-registry';
+import { BILLING_PAID_TIERS, billingOffer, TIER_FEATURE_PRESETS, LINE_RECEIPT_CAPTURE_PERMISSIONS, toolFeatureKeys } from '@watchdog-bms/contracts';
+import { ADVISOR_TAX_GUIDANCE, ADVISOR_CONVERSATION_GUIDANCE } from './advisor-domain-guidance';
+
+const examCReplays = JSON.parse(readFileSync(require.resolve('../../../../../../docs/evidence/advisor-exam-c-router-replays.json'), 'utf8')) as Array<{
+  id: string; role: string; intent: string; tier: typeof BILLING_PAID_TIERS[number]; messageText: string;
+  semanticSubrequests: NonNullable<LineAiTurnRequest['semanticSubrequests']>; howToActionId?: LineAiTurnRequest['howToActionId'];
+}>;
+
+describe('Exam C1: canonical role × every chat action', () => {
+  for (const role of ['OWNER', 'MANAGER', 'FINANCE', 'ACCOUNTANT', 'STAFF', 'AUDITOR_READONLY']) for (const action of LINE_CHAT_ACTIONS) {
+    it(`${role}/${action.id} offers only a permitted action, otherwise names the owner and links permitted work`, () => {
+      const permissions = ROLE_GRANTS[role]!;
+      const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
+      const mayUseTool = !tool || tool.requiredPermissions.every(key => permissions.includes(key))
+        && (!tool.anyOfPermissions?.length || tool.anyOfPermissions.some(key => permissions.includes(key)));
+      const expected = action.id === 'expense_capture' ? LINE_RECEIPT_CAPTURE_PERMISSIONS.some(key => permissions.includes(key))
+        : (action.id === 'expense_search' || permissions.includes(action.permission)) && mayUseTool;
+      const result = productHelpAction({ actionId: action.id, permissions, featureKeys: null, companyId: 'shop' })!;
+      assert.equal(result.allowed, expected);
+      assert.equal(result.presentation.cards[0]?.chatActionId, expected && !('webPath' in action) ? action.id : undefined);
+      assert.doesNotMatch(result.replyText, /\n|^\d+[.)]|บันทึกแล้ว|อนุมัติแล้ว/u);
+      if (!expected) {
+        assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ$/u);
+        assert.ok(ROLE_GRANTS.OWNER!.includes(action.permission), 'the named owner really holds the operation permission');
+        const alternate = permissionAlternative(permissions, 'th');
+        assert.ok(result.presentation.cards[0]?.webLink?.path.includes(alternate.page === 'packages' ? '/billing' : `/${alternate.page}`));
+      }
+    });
+  }
+  it('staff may read own expenses and the existing use-case decides ownership when deleting a draft', () => {
+    const permissions = ROLE_GRANTS.STAFF!;
+    assert.ok(permissions.includes('expense.read_own'));
+    assert.equal(scopePolicyOverride('ดูรายจ่ายของฉันหน่อย', 'read', permissions, [...TIER_FEATURE_PRESETS.STARTER_249], 'th', 'expense.list_recent'), undefined);
+    assert.equal(scopePolicyOverride('ช่วยลบร่างค่าใช้จ่ายของฉัน', 'write', permissions, [...TIER_FEATURE_PRESETS.STARTER_249], 'th'), undefined);
+  });
+});
+
+describe('Exam C2/C3: every sold pack × feature, from the real billing catalog', () => {
+  for (const tier of BILLING_PAID_TIERS) for (const [feature, question, hint] of [
+    ['wht_50bis', 'ขอออก 50 ทวิให้ผู้รับเงิน', 'expense.action.preview'],
+    ['wht_pnd53', 'ภ.ง.ด.3 เดือนนี้มียอดเท่าไหร่', 'wht.get_month_summary'],
+    ['inventory', 'ดูสินค้าคงเหลือ', 'inventory.list_low_stock'],
+    ['procurement', 'ขอใบสั่งซื้อของเดือนก่อน', 'procurement.get_summary'],
+    ['double_entry_ledger', 'ขอดูบัญชีแยกประเภท', 'ledger.get_financial_summary'],
+    ['crm', 'มี CRM ให้ใช้ไหม', 'crm.search_customers'],
+    ['reports', 'ขอรายงานกำไรขาดทุน', 'ledger.get_financial_summary'],
+  ] as const) it(`${tier}/${feature}`, () => {
+    const pack = billingOffer(tier, 'month');
+    const override = scopePolicyOverride(question, 'read', ROLE_GRANTS.OWNER!, pack.featureKeys, 'th', hint);
+    if (pack.featureKeys.includes(feature)) assert.equal(override, undefined);
+    else {
+      assert.equal(override?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+      const containing = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(offer => offer.featureKeys.includes(feature));
+      if (containing) {
+        assert.ok(override!.text.includes(containing.label));
+        assert.ok(override!.text.includes((containing.priceSatang / 100).toLocaleString('en-US')));
+        assert.equal(override!.webPage, 'packages');
+        assert.doesNotMatch(override!.text, /ไม่มีสิทธิ์/u);
+      } else {
+        assert.match(override!.text, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย.*ใบเบิก/u);
+        assert.doesNotMatch(override!.text, /บาท|อัปเกรด|เร็ว.*นี้|บนเว็บ/u);
+      }
+    }
+  });
+  it('definitions are available to every pack and role', () => {
+    for (const tier of BILLING_PAID_TIERS) for (const role of ['OWNER', 'STAFF', 'AUDITOR_READONLY']) for (const text of [
+      'ภ.ง.ด.3 ต่างกันกับ ภ.ง.ด.53 อย่างไร', 'What is a 50 Tawi certificate?', 'VAT คืออะไร', 'ใบรับรองแทนใบเสร็จใช้ตอนไหน',
+      'ช่วยอธิบายหลักการหัก ณ ที่จ่ายให้หน่อยค่ะ', 'Please explain the purpose of a 50 Tawi certificate',
+    ]) assert.equal(scopePolicyOverride(text, 'help', ROLE_GRANTS[role]!, [...TIER_FEATURE_PRESETS[tier]], 'th'), undefined, `${tier}/${role}/${text}`);
+  });
+});
+
+describe('Exam C: independent exam router conversation replays', () => {
+  const actions: Record<string, string> = { 'H036-A': 'payment_voucher', 'H038-A': 'counterparty', 'H040-A': 'team_member', 'H054-A': 'package_purchase' };
+  for (const replay of examCReplays) it(`${replay.id}/${replay.intent}`, async () => {
+    const req = makeReq(replay.messageText);
+    req.semanticSubrequests = structuredClone(replay.semanticSubrequests);
+    // Same original spans; only the new turn's server evidence hashes change.
+    const evidence = (await createLineAiInputEvidence({ turnKey: `exam-c-${replay.id}`, parts: [{ partId: 'part-0', rawText: replay.messageText, eventIdHash: 'c'.repeat(64), acceptedAtMs: Date.now() }] }))!.inputEvidence;
+    req.inputEvidence = evidence;
+    for (const item of req.semanticSubrequests) for (const ref of item.evidenceRefs ?? []) ref.rawSha256 = evidence.parts[0]!.rawSha256;
+    req.userContext.permissions = ROLE_GRANTS[replay.role]!;
+    req.userContext.roles = [replay.role];
+    req.entitledFeatureKeys = [...TIER_FEATURE_PRESETS[replay.tier]];
+    req.howToActionId = replay.howToActionId;
+    let modelCalls = 0;
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async input => {
+        modelCalls++; assert.equal(input.usageTag, 'line.compose');
+        const payload = JSON.parse(input.messages[0]!.text);
+        assert.equal(payload.conversationGuidance, ADVISOR_CONVERSATION_GUIDANCE);
+        if (replay.id === 'V055-A') {
+          assert.equal(payload.taxGuidance, ADVISOR_TAX_GUIDANCE);
+          assert.match(payload.taxGuidance, /interest and dividends belong to ภ.ง.ด.2.*NOT PND3/);
+        }
+        const text = replay.id === 'V055-A' ? 'ดอกเบี้ยที่จ่ายให้บุคคลธรรมดาใช้ ภ.ง.ด.2 ให้ผู้ทำบัญชีจัดทำแยกค่ะ'
+          : replay.id === 'C013-A' ? 'ยิ้มด้วยเลยค่ะ ถ้ามีรายจ่ายหรือใบเบิกให้น้องช่วยก็บอกได้เลยค่ะ'
+            : 'น้องช่วยเรื่องรายจ่ายหรือใบเบิกต่อได้ค่ะ';
+        return { ok: true, text: JSON.stringify({ helpActions: actions[replay.id] ? [{ index: 0, actionId: actions[replay.id] }] : [],
+          answers: [{ index: 0, status: 'handled', text, topic: replay.intent === 'chitchat' ? 'social' : replay.intent === 'out_of_scope' ? 'other' : 'business' }] }) };
+      } }, invoke: async () => assert.fail('a limit, how-to or conceptual reply must not read/mutate ERP') });
+    assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|ข้อความของคุณ|^\d+[.)]|บันทึกแล้ว|อนุมัติแล้ว/u);
+    if (replay.intent === 'permission') {
+      assert.match(result.replyText, /[ก-๙]/u.test(replay.messageText) ? /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ/u : /cannot.*shop owner.*you can/); assert.ok(result.webLinks.length);
+    } else if (replay.intent === 'package_limit') {
+      assert.match(result.replyText, /ENTERPRISE.*1,999.*บาท/u); assert.ok(result.webLinks.some(link => link.path.includes('/billing')));
+    } else if (replay.intent === 'unsold') {
+      assert.match(result.replyText, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย/u); assert.doesNotMatch(result.replyText, /อัปเกรด/u);
+    } else if (actions[replay.id]) {
+      assert.equal(result.presentation?.cards[0]?.chatActionId, actions[replay.id]); assert.equal(modelCalls, 1);
+    } else if (replay.id === 'V055-A') {
+      assert.match(result.replyText, /ภ.ง.ด.2.*จัดทำแยก/); assert.equal(modelCalls, 1);
+    } else if (replay.intent === 'chitchat') {
+      assert.doesNotMatch(result.replyText, /555|\n|ไหม|มั้ย/u); assert.equal(modelCalls, 1);
+    }
+  });
+});
+
+it('Exam C4: tax guidance agrees with active service categories and the later exceptional-income correction', () => {
+  const read = (name: string) => readFileSync(require.resolve(`../../../../../api/prisma/migrations/${name}/migration.sql`), 'utf8');
+  const original = read('20261004120000_open_wht_income_categories');
+  for (const [code, form, rate] of [['WHT_SERVICE_3', 'PND3', '3'], ['WHT_SERVICE_5', 'PND53', '3'], ['WHT_RENT_IND', 'PND3', '5'], ['WHT_TRANSPORT_IND', 'PND3', '1']]) {
+    assert.match(original.split('\n').find(line => line.includes(`'${code}'`))!, new RegExp(`'${form}', ${rate}\\.0000, 'ACTIVE'`));
+  }
+  const corrected = read('20261013120100_wht_income_routes_catalog');
+  for (const code of ['WHT_INTEREST', 'WHT_DIVIDEND_IND']) assert.match(corrected.split('\n').find(line => line.includes(`'${code}'`))!, /'PND2', 'SEPARATE_PND2'.*'DRAFT'/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /PAYEE, not the payer/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /base BEFORE VAT/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /does NOT submit e-filing/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /WEB only/);
+});
+
+it('Exam C2/C4: a polite explanation cannot become action help even when both model selectors propose an action', async () => {
+  const req = makeReq('ช่วยอธิบายว่า 50 ทวิใช้ทำอะไรให้หน่อยค่ะ');
+  req.howToActionId = 'wht_certificate';
+  req.entitledFeatureKeys = [...TIER_FEATURE_PRESETS.STARTER_249];
+  req.userContext.permissions = ROLE_GRANTS.OWNER!;
+  req.semanticSubrequests = [{ index: 0, kind: 'help', goal: 'explain withholding certificate purpose', requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+  let calls = 0;
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => { calls++; return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: 'wht_certificate' }],
+      answers: [{ index: 0, status: 'handled', text: '50 ทวิรับรองยอดที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินใช้เป็นหลักฐานค่ะ' }] }) }; } },
+    invoke: async () => assert.fail('a concept must not invoke ERP or start an action') });
+  assert.equal(calls, 1);
+  assert.match(result.replyText, /^50 ทวิรับรอง.*หลักฐานค่ะ/u);
+  assert.match(result.replyText, /ENTERPRISE.*1,999/u);
+  assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+  assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+});
+
+
+describe('Owner 2026-10-17: differently worded pending-claim reads stay reads for every shop role', () => {
+  for (const role of ['OWNER', 'MANAGER', 'FINANCE', 'ACCOUNTANT', 'STAFF', 'AUDITOR_READONLY']) {
+    for (const messageText of [
+      'ช่วยเช็กใบเบิกที่ค้างอนุมัติให้ทีค่ะ', 'ขอดูใบเบิกที่รอการอนุมัติหน่อย',
+      'ช่วยสรุปใบเบิกที่ยังไม่ได้อนุมัติให้หน่อยค่ะ', 'ใบเบิกที่ยังไม่ถูกอนุมัติมีอะไรบ้าง',
+      'ช่วยดูใบเบิกที่รอผู้อนุมัติคนไหนอยู่ค่ะ', 'สรุปใบเบิกที่ค้างอยู่แยกตามผู้อนุมัติหน่อย',
+      'ใบเบิกของร้านรออนุมัติกี่ใบ', 'ใบเบิกที่รออนุมัติอยู่ที่ใครคะ',
+    ]) it(`${role}: ${messageText}`, async () => {
+      const permissions = ROLE_GRANTS[role]!;
+      const req = makeReq(messageText);
+      req.userContext.permissions = permissions;
+      req.userContext.roles = [role];
+      req.semanticSubrequests = [{ index: 0, kind: 'read', goal: messageText, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }];
+      let reads = 0;
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        provider: { generateText: async input => ({ ok: true, text: JSON.stringify(input.usageTag === 'line.loop'
+          ? { calls: [{ index: 0, toolName: 'reimbursement.list_pending_approvals', input: {} }] }
+          : { answers: [{ index: 0, status: 'handled', text: 'มีใบเบิกของร้านรอคุณอนุมัติ 1 ใบค่ะ', sourceRefIds: ['pending'] }] }) }) },
+        invoke: async meta => { reads++;
+          return { toolName: meta.name, status: 'ok', asOf: '2026-10-17T03:00:00.000Z',
+            sourceRefs: [{ id: 'pending', module: 'reimbursements', entityType: 'requests', label: 'ใบเบิกที่รออนุมัติ', permissionChecked: true }],
+            data: { accessScope: permissions.includes('reimbursement.read') ? 'company' : permissions.includes('reimbursement.read_related') ? 'related' : 'own', total: 1,
+              items: [{ id: 'claim', requesterDisplayName: 'สมหญิง', amount: '100.00', currency: 'THB', waitingOn: 'สมศรี' }] } };
+        },
+      });
+      assert.equal(reads, 1);
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์ดู|รอคุณอนุมัติ/);
+    });
+  }
+});
+
+it('Exam D2: each expense and claim operation overrides a broad create guide with its own help button', async () => {
+  const examples = [
+    ['อนุมัติใบเบิกของพนักงานทำยังไง', 'approvals'], ['ไม่อนุมัติใบเบิกทำยังไง', 'reimbursement_reject'],
+    ['จ่ายคืนใบเบิกทำยังไง', 'reimbursement_pay'], ['ส่งใบเบิกอนุมัติทำยังไง', 'reimbursement_submit'],
+    ['ยกเลิกใบเบิกทำยังไง', 'reimbursement_cancel'], ['ส่งตรวจค่าใช้จ่ายทำยังไง', 'expense_submit'],
+    ['ยืนยันค่าใช้จ่ายทำยังไง', 'expense_confirm'], ['ลบร่างค่าใช้จ่ายทำยังไง', 'expense_delete'],
+    ['ยกเลิกค่าใช้จ่ายทำยังไง', 'expense_void'], ['บันทึกจ่ายค่าใช้จ่ายทำยังไง', 'expense_pay'],
+  ] as const;
+  for (const [messageText, actionId] of examples) {
+    const action = LINE_CHAT_ACTIONS.find(row => row.id === actionId)!;
+    const req = { ...makeReq(messageText), howToActionId: 'reimbursement_claim' as const,
+      selectedKnowledgeCardIds: ['reimbursement.meaning', 'reimbursement.roles'],
+      userContext: { ...makeReq('').userContext, permissions: [action.permission, 'reimbursement.read_own'] },
+      entitledFeatureKeys: ['expenses', 'reimbursement'],
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: messageText, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false,
+      approvedKnowledgeEnabled: true, provider: { generateText: async () => assert.fail('the existing action guide needs no further model call') },
+      invoke: async () => assert.fail('a guide cannot execute an action') });
+    assert.equal(result.presentation?.cards[0]?.chatActionId, actionId, messageText);
+    assert.equal(result.replyText, action.sentence);
+  }
+});
+
+for (const role of ['STAFF', 'MANAGER', 'ACCOUNTANT']) for (const [text, actionId] of [
+  ['สร้างใบเบิกยังไง', 'reimbursement_claim'],
+  ['ช่วยสร้างใบเบิกค่าใช้จ่ายทำยังไง', 'reimbursement_claim'],
+  ['ส่งใบเบิกอนุมัติทำยังไง', 'reimbursement_submit'],
+  ['ช่วยส่งใบเบิกอนุมัติทำยังไง', 'reimbursement_submit'],
+  ['ยกเลิกใบเบิกทำยังไง', 'reimbursement_cancel'],
+  ['อนุมัติใบเบิกทำยังไง', 'approvals'],
+  ['ไม่อนุมัติใบเบิกทำยังไง', 'reimbursement_reject'],
+  ['จ่ายคืนใบเบิกทำยังไง', 'reimbursement_pay'],
+] as const) it(`Exam E2a: ${role} ${actionId} help follows the user's verb despite a wrong approval hint`, async () => {
+  const action = LINE_CHAT_ACTIONS.find(row => row.id === actionId)!;
+  const req = { ...makeReq(text), howToActionId: 'approvals' as const,
+    selectedKnowledgeCardIds: ['reimbursement.meaning'],
+    userContext: { ...makeReq('').userContext, permissions: ROLE_GRANTS[role]! },
+    entitledFeatureKeys: ['expenses', 'reimbursement'],
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: text, toolHint: 'reimbursement.list_pending_approvals',
+      requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: true,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('existing how-to guide needs no extra model call') },
+    invoke: async () => assert.fail('help never executes an operation') });
+  if (ROLE_GRANTS[role]!.includes(action.permission)) {
+    assert.equal(result.presentation?.cards[0]?.chatActionId, actionId, result.replyText);
+    assert.equal(result.replyText, action.sentence);
+    assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์/);
+  } else {
+    assert.match(result.replyText, new RegExp(`ไม่มีสิทธิ์${actionId === 'reimbursement_reject' ? '(?:ปฏิเสธ|ไม่อนุมัติ)ใบเบิก' : action.title}`));
+    assert.ok(!result.presentation?.cards.some(card => card.chatActionId));
+  }
+});
+
+it('Exam E2a: multiple how-to answers cannot replace create/submit with the composer approval selection', async () => {
+  const texts = ['สร้างใบเบิกยังไง', 'ส่งใบเบิกอนุมัติทำยังไง'];
+  const messageText = texts.join('\n');
+  const built = (await createLineAiInputEvidence({ turnKey: 'exam-e-help', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64),
+    acceptedAtMs: Date.now(), rawText: messageText }] }))!.inputEvidence;
+  const req = { ...makeReq(messageText), inputEvidence: built,
+    userContext: { ...makeReq('').userContext, permissions: ROLE_GRANTS.STAFF! }, entitledFeatureKeys: ['expenses', 'reimbursement'],
+    semanticSubrequests: texts.map((text, index) => ({ index, kind: 'help' as const, goal: text, toolHint: 'reimbursement.list_pending_approvals',
+      requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [{ partId: 'p', rawSha256: built.parts[0]!.rawSha256,
+        startUtf16: messageText.indexOf(text), endUtf16: messageText.indexOf(text) + text.length }] })) };
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: true,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ helpActions: texts.map((_text, index) => ({ index, actionId: 'approvals' })) }) }) },
+    invoke: async () => assert.fail('how-to cannot execute an operation') });
+  assert.deepEqual(result.presentation?.cards.map(card => card.chatActionId), ['reimbursement_claim', 'reimbursement_submit']);
+  assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์/);
 });

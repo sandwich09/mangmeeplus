@@ -11,7 +11,7 @@ import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastru
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 
 const TODAY = '2026-09-30';
-const APPROVER = ['expense.read', 'expense.read_own', 'expense.confirm', 'reimbursement.approve'];
+const APPROVER = ['expense.read', 'expense.read_own', 'expense.confirm', 'reimbursement.read', 'reimbursement.approve'];
 const STAFF = ['expense.read_related', 'expense.read_own'];
 
 async function turn(messageText: string, permissions: string[], plannedTools: string[], split = false, filters: Record<number, Record<string, string | number | boolean | null>> = {},
@@ -34,8 +34,9 @@ async function turn(messageText: string, permissions: string[], plannedTools: st
       : JSON.stringify({ answers: [{ index: 0, status: 'handled', text: composed?.text ?? 'สรุปงานที่รอคุณแล้วค่ะ', sourceRefIds: [`expenses:${invoked[0]}:summary`] }] }) };
   } };
   const result = await runSemanticTurnV2({ req: request, provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
-    async invoke(meta): Promise<ToolResult> {
+    async invoke(meta, _ctx, input): Promise<ToolResult> {
       invoked.push(meta.name);
+      if (meta.name === 'reimbursement.list_pending_approvals') assert.equal(input.approver, 'me');
       return { toolName: meta.name, status: 'ok', asOf: `${TODAY}T02:00:00.000Z`, data: composed?.data ?? { total: 0 },
         sourceRefs: [{ id: `expenses:${meta.name}:summary`, label: meta.name, module: 'expenses', entityType: meta.name, permissionChecked: true }] };
     } });

@@ -1,0 +1,511 @@
+[
+  {
+    "id": "J7#1",
+    "body": {
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "exam-d-J7-1",
+          "replyToken": "reply-test",
+          "message": {
+            "type": "text",
+            "id": "m17922155531882",
+            "text": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+            "quoteToken": "9f69682d83aecf29"
+          },
+          "timestamp": 1792215553188,
+          "source": {
+            "type": "user",
+            "userId": "line-test-user"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.92,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "purpose",
+          "reason",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+            }
+          ]
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792216454333,
+      "tasks": []
+    },
+    "messageText": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+    "acceptedAtMs": 1792215553188
+  },
+  {
+    "id": "J7#4",
+    "body": {
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "exam-d-J7-4",
+          "replyToken": "reply-test",
+          "message": {
+            "type": "text",
+            "id": "m17922155932945",
+            "text": "ขับรถไปส่งของให้ลูกค้า",
+            "quoteToken": "6f5885b74a1f8aac"
+          },
+          "timestamp": 1792215593294,
+          "source": {
+            "type": "user",
+            "userId": "line-test-user"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DRAFT_CONTINUATION",
+      "language": "th",
+      "confidence": 0.82,
+      "captureHints": {
+        "sourceDocumentType": "EXPENSE_NOTE_TEXT",
+        "description": "ขับรถไปส่งของให้ลูกค้า",
+        "businessPurpose": "ส่งของให้ลูกค้า",
+        "confidence": 0.78,
+        "missingFields": [
+          "amount",
+          "expenseDate",
+          "vendorName"
+        ]
+      },
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เพิ่มข้อมูลวัตถุประสงค์การเดินทางให้ใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "taskRef": {
+            "taskId": "14425bc7a3e7e523987ca7c039dae6ea2b94774de85f6db08b2d54bfab55e1ba",
+            "taskRevision": 1,
+            "subrequestIndex": 0
+          },
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 22,
+              "rawSha256": "9b0a64d4f655aeb02940c4698375876cb4b3d37fa073cc5a5742057bd369736c"
+            }
+          ]
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 2,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792216471226,
+      "tasks": [
+        {
+          "kind": "write",
+          "slots": {
+            "reimbursementActionId0": "9387477e-0e63-5b6d-8531-21734e838eac"
+          },
+          "state": "waiting_user",
+          "taskId": "14425bc7a3e7e523987ca7c039dae6ea2b94774de85f6db08b2d54bfab55e1ba",
+          "revision": 1,
+          "userGoal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "subrequests": [
+            {
+              "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+              "kind": "write",
+              "index": 0,
+              "status": "needs_user"
+            }
+          ],
+          "deliveredQuestionRefs": [
+            "077f6f32b4c530f1c322c914993c61b96df109bc7db33a259e2fe98ecb4d612c"
+          ]
+        }
+      ]
+    },
+    "messageText": "ขับรถไปส่งของให้ลูกค้า",
+    "acceptedAtMs": 1792215593294
+  },
+  {
+    "id": "C03#0",
+    "body": {
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "exam-d-C03-0",
+          "replyToken": "reply-test",
+          "message": {
+            "type": "text",
+            "id": "m17922165812941",
+            "text": "อนุมัติใบเบิกของพนักงานทำยังไง",
+            "quoteToken": "b3aa849d7333a32b"
+          },
+          "timestamp": 1792216581294,
+          "source": {
+            "type": "user",
+            "userId": "line-test-user"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "วิธีอนุมัติใบเบิกของพนักงาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "reimbursement.list_pending_approvals",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 30,
+              "rawSha256": "55c6de213911790c523f1498f9b66f876eb1022cceaefb19156f8d95d526fb7d"
+            }
+          ]
+        }
+      ],
+      "selectedKnowledgeCardIds": [
+        "reimbursement.meaning",
+        "reimbursement.roles"
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792217482517,
+      "tasks": []
+    },
+    "messageText": "อนุมัติใบเบิกของพนักงานทำยังไง",
+    "acceptedAtMs": 1792216581294
+  },
+  {
+    "id": "H-staff-vendor-breakdown-ordinal#1",
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "read",
+          "goal": "ดูรายการค่าใช้จ่ายเดือนนี้แยกตามร้าน 5 อันดับแรก",
+          "requiredEvidence": [],
+          "requestedFilters": {
+            "fromDate": "2026-10-01",
+            "toDate": "2026-10-17",
+            "groupBy": "vendor",
+            "limit": 5
+          },
+          "toolHint": "expense.list_recent",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 46,
+              "rawSha256": "dcab63a3fc94cce0fd985cac79b8b211d5a78a263812e49aadb380b6a124a1bc"
+            }
+          ]
+        }
+      ]
+    },
+    "messageText": "งั้นขอดูเป็นรายการเรียงเลยได้ไหมคะ 5 อันดับแรก",
+    "acceptedAtMs": 1792213805809,
+    "previousTools": [
+      {
+        "tool": "expense.get_breakdown",
+        "input": {
+          "fromDate": "2026-10-01",
+          "toDate": "2026-10-17",
+          "groupBy": "vendor"
+        },
+        "startedAtMs": 1792213804152,
+        "completedAtMs": 1792213804185,
+        "result": {
+          "toolName": "expense.get_breakdown",
+          "status": "ok",
+          "data": {
+            "period": {
+              "fromDate": "2026-10-01",
+              "toDate": "2026-10-17",
+              "defaultedToCurrentMonth": false
+            },
+            "totalCount": 5,
+            "totalAmount": "6295.5",
+            "currency": "THB",
+            "totalsByCurrency": [
+              {
+                "currency": "THB",
+                "count": 5,
+                "totalAmount": "6295.5"
+              }
+            ],
+            "mixedCurrency": false,
+            "byCategory": [
+              {
+                "categoryId": "category-b-other",
+                "category": "ค่าใช้จ่ายอื่นๆ",
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1533"
+              },
+              {
+                "categoryId": "category-b-service",
+                "category": "ค่าบริการ",
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1396.5"
+              },
+              {
+                "categoryId": "category-b-travel",
+                "category": "ค่าเดินทาง",
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1259"
+              },
+              {
+                "categoryId": "category-b-office",
+                "category": "ค่าออฟฟิศ",
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1122"
+              },
+              {
+                "categoryId": "category-b-fuel",
+                "category": "ค่าน้ำมัน",
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "985"
+              }
+            ],
+            "byBranch": [
+              {
+                "branchId": "branch-b-2",
+                "branch": "สาขา 2",
+                "currency": "THB",
+                "count": 3,
+                "totalAmount": "3777"
+              },
+              {
+                "branchId": "branch-b-1",
+                "branch": "สำนักงานใหญ่",
+                "currency": "THB",
+                "count": 2,
+                "totalAmount": "2518.5"
+              }
+            ],
+            "byVendor": [
+              {
+                "vendorId": "counterparty-company-b-2",
+                "vendor": "ปั๊มน้ำมัน ปตท.",
+                "linked": true,
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1533.0000"
+              },
+              {
+                "vendorId": "counterparty-company-b-1",
+                "vendor": "ร้านสมใจการค้า",
+                "linked": true,
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1396.5000"
+              },
+              {
+                "vendorId": "counterparty-company-b-0",
+                "vendor": "ร้านสมใจ",
+                "linked": true,
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1259.0000"
+              },
+              {
+                "vendorId": null,
+                "vendor": "ไม่ระบุร้าน",
+                "linked": false,
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "1122.0000"
+              },
+              {
+                "vendorId": "counterparty-company-b-5",
+                "vendor": "Grab",
+                "linked": true,
+                "currency": "THB",
+                "count": 1,
+                "totalAmount": "985.0000"
+              }
+            ],
+            "vendorHasMore": false,
+            "queryApplied": {
+              "timezone": "Asia/Bangkok",
+              "period": {
+                "startDate": "2026-10-01",
+                "endDate": "2026-10-17",
+                "timezone": "Asia/Bangkok",
+                "defaulted": false
+              },
+              "branch": {
+                "mode": "all_authorized",
+                "branchId": null
+              },
+              "dateBasis": "expense_incurred_date",
+              "statusBasis": "exclude_rejected_voided",
+              "dataset": "operational_expense_records",
+              "accessScope": "related",
+              "filters": {
+                "groupBy": "vendor"
+              }
+            },
+            "completeness": {
+              "aggregate": "complete",
+              "rows": {
+                "returned": 0,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "groups": {
+                "returned": 12,
+                "hasMore": false,
+                "nextCursor": null
+              },
+              "businessRecording": "unknown"
+            }
+          },
+          "sourceRefs": [
+            {
+              "label": "สรุปค่าใช้จ่ายแยกกลุ่ม",
+              "module": "expenses",
+              "entityType": "expense_breakdown",
+              "asOf": "2026-10-17T05:10:04.163Z",
+              "permissionChecked": true,
+              "webPath": "/companies/company-b/expenses"
+            }
+          ],
+          "asOf": "2026-10-17T05:10:04.163Z",
+          "queryApplied": {
+            "timezone": "Asia/Bangkok",
+            "period": {
+              "startDate": "2026-10-01",
+              "endDate": "2026-10-17",
+              "timezone": "Asia/Bangkok",
+              "defaulted": false
+            },
+            "branch": {
+              "mode": "all_authorized",
+              "branchId": null
+            },
+            "dateBasis": "expense_incurred_date",
+            "statusBasis": "exclude_rejected_voided",
+            "dataset": "operational_expense_records",
+            "accessScope": "related",
+            "filters": {
+              "groupBy": "vendor"
+            }
+          },
+          "basisVersion": "mangmee-business-read-v2",
+          "facts": [
+            {
+              "id": "expense.breakdown.total.THB",
+              "metric": "expense_total",
+              "value": "6295.5",
+              "unit": "money",
+              "currency": "THB",
+              "period": {
+                "startDate": "2026-10-01",
+                "endDate": "2026-10-17",
+                "timezone": "Asia/Bangkok",
+                "defaulted": false
+              },
+              "dateBasis": "expense_incurred_date",
+              "statusBasis": "exclude_rejected_voided",
+              "sourceRefIds": [
+                "expenses:expense_breakdown:summary"
+              ],
+              "asOf": "2026-10-17T05:10:04.163Z",
+              "state": "known"
+            }
+          ],
+          "completeness": {
+            "aggregate": "complete",
+            "rows": {
+              "returned": 0,
+              "hasMore": false,
+              "nextCursor": null
+            },
+            "groups": {
+              "returned": 12,
+              "hasMore": false,
+              "nextCursor": null
+            },
+            "businessRecording": "unknown"
+          }
+        }
+      }
+    ]
+  }
+]
