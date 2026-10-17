@@ -99,7 +99,7 @@ describe('item 3: a chosen tool that cannot express the requested window keeps i
       messagePreviewHash: 'b'.repeat(16), valueCandidates,
       semanticSubrequests: [{ index: 0, kind: 'read', goal: 'นับใบเบิกรออนุมัติเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
         requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28' } }],
-      userContext: baseUserContext(['reimbursement.approve']),
+      userContext: baseUserContext(['reimbursement.read', 'reimbursement.approve']),
     };
     const toolResult: ToolResult = { toolName: 'reimbursement.list_pending_approvals', status: 'ok', asOf: '2026-09-28T01:59:00.000Z',
       sourceRefs: [{ id: 'reimbursements:pending:summary', label: 'รายการเบิกจ่ายรออนุมัติ', module: 'reimbursements', entityType: 'pending', permissionChecked: true, asOf: '2026-09-28T01:59:00.000Z' }],
@@ -158,7 +158,8 @@ describe('item 3: whatever still cannot be bound stays honest, never a permissio
     assert.equal(coverage?.status, 'unsupported');
     assert.notEqual(coverage?.status, 'needs_user');
     assert.equal(coverage?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
-    assert.match(result.replyText, /ไม่มีสิทธิ์.*เจ้าของกิจการ/u);
+    assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์|เจ้าของกิจการ/u);
+    assert.match(result.replyText, /ลองส่งข้อความเดิมอีกครั้งค่ะ/u);
     assert.doesNotMatch(result.replyText, /ดึงข้อมูลส่วนนี้ไม่ได้/u);
   });
 });

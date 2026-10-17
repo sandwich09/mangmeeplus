@@ -154,7 +154,7 @@ describe('payment evidence replies and postbacks', () => {
     assert.ok(message.canonicalText?.startsWith('สลิปนี้เป็นหลักฐานการจ่ายของรายการไหนคะ'));
     const buttons = (message.contents.body as any).contents.filter((item: any) => item.type === 'button');
     assert.equal(buttons.length, 3);
-    assert.match(buttons[0].action.label, /ร้านอาหาร 500.80 13\/10\/2026/);
+    assert.match(buttons[0].action.label, /ร้านอาหาร 500.80 13 ต.ค. 2569/);
     assert.equal(buttons[2].action.label, 'เป็นรายการใหม่');
     assert.deepEqual(parseLinePaymentEvidenceControl(linePostbackCommandText(buttons[1].action.data)!), { operation: 'link', slipId: 'slip', receiptId: 'second' });
   });

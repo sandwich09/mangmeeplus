@@ -56,7 +56,7 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
     assert.ok(ALLOWED_TOOLS.has(TOOL));
     const offered = effectiveIntakeToolNames([TOOL, 'reimbursement.list_pending_approvals'], ROUTER_ENABLED_TOOLS,
       ['ai.tool.invoke', 'reimbursement.read_own'], ['reimbursement']);
-    assert.deepEqual([...offered], [TOOL]);
+    assert.deepEqual([...offered], [TOOL, 'reimbursement.list_pending_approvals']);
   });
 
   it('routes who/where questions to the backlog, "me" only for the user\'s own claims, and never as a simple read', () => {

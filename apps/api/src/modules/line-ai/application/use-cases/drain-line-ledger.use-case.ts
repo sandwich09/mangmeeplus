@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 /**
  * Drains the LINE AI turn ledger (item 10F): XAUTOCLAIMs open entries past the min-idle
  * window, re-resolves identity/permissions AT EXECUTION TIME (a stored entry is never
@@ -90,12 +91,13 @@ const isStaticRefusalReason = (value: unknown): value is StaticRefusalReason =>
 
 /** The ONE place that says what a stored static refusal must contain, so the producer above and the
  *  pre-send integrity check below can never disagree about its exact text. */
-const staticRefusalText = (reason: StaticRefusalReason): string => {
+const staticRefusalText = (reason: StaticRefusalReason, language: 'th' | 'en' = 'th'): string => {
+  if (reason === 'original_answer_unavailable' && language === 'en') return 'The earlier answer did not finish in time; ask again for information, or check the existing record’s status before repeating a create or edit request.';
   if (reason === 'original_answer_unavailable') return 'คำตอบก่อนหน้ายังไม่สำเร็จภายในเวลาที่กำหนดค่ะ จึงยังยืนยันผลให้ไม่ได้ หากเป็นคำถามให้ถามใหม่ได้เลย หากขอสร้างหรือแก้รายการไว้ กรุณาตรวจสถานะรายการเดิมก่อนส่งซ้ำค่ะ';
-  if (reason === 'feature_disabled' || reason === 'forbidden') return formatRefusal(reason);
+  if (reason === 'feature_disabled' || reason === 'forbidden') return formatRefusal(reason, undefined, language);
   return typeof reason === 'string'
-    ? formatAiBudgetRefusalNotice(reason)
-    : formatAiBudgetRefusalNotice(reason.code, reason.budgetScope, reason.canManagePlan !== false);
+    ? formatAiBudgetRefusalNotice(reason, undefined, true, language)
+    : formatAiBudgetRefusalNotice(reason.code, reason.budgetScope, reason.canManagePlan !== false, language);
 };
 
 @Injectable()
@@ -310,7 +312,7 @@ export class DrainLineLedgerUseCase {
     const text = formatLineReply(response, this.config.webBaseUrl);
     // P12-3b: the identity was just re-resolved above (`userContext`), so a drained answer carries
     // the same handoff a live reply would. `chatKey` is the LINE recipient this push targets.
-    const answer = [buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId, turnRequest.messageText)];
+    const answer = [buildLineBusinessAnswerMessage(response, text, this.config.webBaseUrl, entry.companyId, turnRequest.messageText, turnRequest.language ?? lineReplyLanguage(turnRequest.messageText))];
     const outgoing = this.handoffLinks
       ? await this.handoffLinks.wrapOutgoingLineContent(
         { userId: entry.userId, companyId: entry.companyId, lineUserId: entry.chatKey, surface: 'line_ai_ledger_drain' },
@@ -434,7 +436,9 @@ export class DrainLineLedgerUseCase {
   }
 
   private async sendStaticRefusal(entry: LedgerEntry, claim: LineLedgerClaim, deliveryCount: number, reason: StaticRefusalReason): Promise<'followedUp' | 'refused' | 'parked'> {
-    const text = staticRefusalText(reason);
+    const storedLanguage = (claim.row.acceptedRequestJson as { request?: { language?: unknown } } | null)?.request?.language;
+    const language = storedLanguage === 'en' || storedLanguage === 'th' ? storedLanguage : lineReplyLanguage(entry.text);
+    const text = staticRefusalText(reason, language);
     const budget = typeof reason === 'string'
       ? (isAiBudgetRefusalCode(reason) ? { code: reason } : null)
       : isBudgetStaticRefusal(reason) ? reason : null;
@@ -450,7 +454,7 @@ export class DrainLineLedgerUseCase {
       reason: budget ? budget.code : reason === 'feature_disabled' || reason === 'original_answer_unavailable' ? reason : 'identity_or_permission_revoked',
       ...(budget?.budgetScope ? { budgetScope: budget.budgetScope } : {}),
     };
-    if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
+    if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason, ...(language === 'en' ? { language } : {}) }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
     return this.sendSavedDelivery(entry, claim, deliveryCount);
   }
 
@@ -469,7 +473,7 @@ export class DrainLineLedgerUseCase {
     const messages = parseOutcomeMessages(claim.row.messagesJson);
     const marker = (claim.row.authorizationJson as { staticRefusal?: unknown } | null)?.staticRefusal;
     const staticRefusal = isStaticRefusalReason(marker) && messages?.length === 1
-      && messages[0].type === 'text' && messages[0].text === staticRefusalText(marker) && !messages[0].quickReply;
+      && messages[0].type === 'text' && messages[0].text === staticRefusalText(marker, (claim.row.authorizationJson as { language?: unknown } | null)?.language === 'en' ? 'en' : 'th') && !messages[0].quickReply;
     const current = messages && (freshlyVerified || staticRefusal || await this.readEvidence.verifyDelivery(claim.row.authorizationJson, {
       webhookEventId: entry.webhookEventId || entry.id, lineUserId: entry.chatKey, chatId: entry.chatKey,
       channelId: entry.messagingChannelId ?? this.config.lineMessagingChannelId ?? '',

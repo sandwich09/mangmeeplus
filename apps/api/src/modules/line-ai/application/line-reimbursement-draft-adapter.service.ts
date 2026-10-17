@@ -1,5 +1,5 @@
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -17,9 +17,11 @@ import {
   type ToolResult,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { LineDraftPreviewStore } from '../../expenses/application/services/line-draft-preview.store';
+import { lineExpenseNoteDescription } from '../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import type { ReimbursementDraftActionRecord, ReimbursementLineRecord, ReimbursementRequestRecord } from '../../reimbursements/domain/models/reimbursement.model';
 import { isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
-import { payoutCorrectionPhase } from '../../reimbursements/domain/logic/reimbursement.logic';
+import { normalizeReimbursementAmount, payoutCorrectionPhase } from '../../reimbursements/domain/logic/reimbursement.logic';
 import { loadReimbursementPolicy } from '../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
@@ -74,6 +76,8 @@ type Accepted = {
   awaitingPhoto?: boolean;
   admission?: { requestId: string; subrequestIndex: number; taskId?: string; taskSubrequestIndex?: number };
 };
+type ClaimPhotoIntent = { previewId: string; companyId: string; chatKeyHash: string; userId: string; membershipId: string;
+  ownerEpoch: number; taskId: string; actionOrdinal: number };
 type Authority = {
   ctx: RequestContext;
   owner: Awaited<ReturnType<LineAiBudgetAuthorityService['resolvePrivateOwner']>> & object;
@@ -118,6 +122,7 @@ export class LineReimbursementDraftAdapterService {
     private readonly draftService: LineReimbursementDraftService,
     private readonly drafts: LineReimbursementDraftUseCase,
     private readonly expenses: PrismaExpenseRepository = new PrismaExpenseRepository(prisma),
+    @Optional() @Inject(LineDraftPreviewStore) private readonly photoIntents: LineDraftPreviewStore<ClaimPhotoIntent> = new LineDraftPreviewStore(),
   ) {}
 
   /** Read-only delivery view; only options still authorized for the same current owner can be printed. */
@@ -143,7 +148,9 @@ export class LineReimbursementDraftAdapterService {
       const receiptNotice = policy?.requireReceipt ? policy.allowMissingReceiptWithReason
         ? 'หากไม่มีใบเสร็จ ต้องระบุเหตุผลในใบเบิกก่อนส่งอนุมัติค่ะ'
         : 'บริษัทกำหนดให้มีหลักฐานก่อนส่งอนุมัติค่ะ แนบใบเสร็จหรือจัดทำใบรับรองแทนใบเสร็จในเว็บให้ครบก่อนนะคะ' : undefined;
+      const missingReceiptReason = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths?.includes('fields.missingReceiptReason');
       return { ...this.publicOptions(shown, accepted.proposal, accepted.awaitingPhoto), ...(receiptNotice ? { receiptNotice } : {}),
+        ...(missingReceiptReason ? { reasonQuestion: 'ไม่มีใบเสร็จเพราะอะไรคะ' } : {}),
         control: { actionId: active.id, revision: digest([options, accepted.proposal ?? null, accepted.awaitingPhoto ?? false]) } };
     } catch { return null; }
   }
@@ -163,42 +170,93 @@ export class LineReimbursementDraftAdapterService {
     if (lines?.length !== 1) return { status: 'blocked', errorCode: 'invalid_field' };
     const line = lines[0]!;
     try {
-      if (input.control.choice === 'no-receipt') line.values.attachmentChoiceId = null;
+      if (input.control.choice === 'no-receipt' || input.control.choice === 'photo') line.values.attachmentChoiceId = null;
       else if (input.control.choice !== 'photo') {
         await this.currentChoice(input.ctx, this.findChoice(accepted.options, input.control.choice, 'CATEGORY'), accepted.options);
         line.values.categoryChoiceId = input.control.choice;
       }
-      return await this.proposeCollected(input, active, { ...accepted, proposal, awaitingPhoto: input.control.choice === 'photo' });
+      if (input.control.choice === 'photo' && !await this.photoIntents.save({ previewId: active.id, companyId: input.ctx.companyId,
+        chatKeyHash: `claim-photo:${input.owner.chatKeyHash}`, userId: input.ctx.userId, membershipId: input.ctx.membershipId!,
+        ownerEpoch: input.ownerEpoch, taskId: active.taskId, actionOrdinal: active.actionOrdinal })) return { status: 'blocked', errorCode: 'store_unavailable' };
+      if (input.control.choice === 'no-receipt') await this.photoIntents.discard(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
+      return await this.proposeCollected(input, active, { ...accepted, proposal,
+        awaitingPhoto: input.control.choice === 'photo' || input.control.choice !== 'no-receipt' && accepted.awaitingPhoto });
     } catch { return { status: 'stale', actionId: active.id, errorCode: 'source_changed' }; }
   }
 
   /** Only the field the current claim collection is asking owns this plain answer. */
   async answerReason(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
-    evidence: LineAiInputEvidenceV2; text: string }): Promise<LineReimbursementDraftResult | null> {
+    evidence: LineAiInputEvidenceV2; text: string; purposeFallback?: boolean }): Promise<LineReimbursementDraftResult | null> {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
+    // The persisted preview owns a plain answer even when intake omitted its continuation hint.
+    const value = input.text.trim();
+    if (input.purposeFallback && active?.status === 'PREVIEW' && value && value.length <= 2000 && !/[?？\n]/u.test(value)
+      && !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ)/u.test(value)
+      && (await extractValueCandidatesV2(input.evidence, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })))?.amounts.length === 0)
+      return this.answerPurpose(input, active, value);
     const accepted = active && this.accepted(active);
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
       || Date.parse(accepted.options.expiresAt) <= Date.now() || accepted.awaitingPhoto) return null;
+    const missingReceiptReason = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths?.includes('fields.missingReceiptReason');
     const view = this.publicOptions(accepted.options, accepted.proposal);
-    if (!view.reasonQuestion || !view.collection.receiptChosen || !view.collection.categoryChosen) return null;
+    if ((!view.reasonQuestion && !missingReceiptReason) || !view.collection.receiptChosen || !view.collection.categoryChosen) return null;
     const part = input.evidence.parts.length === 1 ? input.evidence.parts[0] : undefined;
-    const value = input.text.trim();
     if (!part || part.rawText.trim() !== value || !value || value.length > 2000 || /[?？\n]/u.test(value)
       || /^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ)/u.test(value)) return null;
     const start = part.rawText.indexOf(value);
+    const field = missingReceiptReason ? 'missingReceiptReason' : 'reason';
     const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId,
-      taskRevision: accepted.options.taskRevision, operation: 'CREATE', fields: { reason: { value,
+      taskRevision: accepted.options.taskRevision, operation: 'CREATE', fields: { [field]: { value,
         proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + value.length }] } } } },
       { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
-    if (!fragment?.fields.reason) return null;
+    if (!fragment?.fields[field]) return null;
     const proposal = clone(accepted.proposal);
-    proposal.fields.reason = fragment.fields.reason;
+    if (field === 'missingReceiptReason') proposal.fields.missingReceiptReason = fragment.fields.missingReceiptReason;
+    else proposal.fields.reason = fragment.fields.reason;
     return this.proposeCollected(input, active, { ...accepted, proposal });
   }
 
-  async photoTarget(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number }) {
+  private async answerPurpose(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
+    evidence: LineAiInputEvidenceV2 }, active: ReimbursementDraftActionRecord, purpose: string): Promise<LineReimbursementDraftResult | null> {
+    if (active.status !== 'PREVIEW' || active.operation !== 'CREATE') return null;
+    const result = await this.draftService.get({ ctx: input.ctx, owner: input.owner, ownerEpoch: input.ownerEpoch, actionId: active.id });
+    if (result.status !== 'preview' || result.preview.after.lines.length !== 1) return null;
+    const refs = input.evidence.parts.flatMap(part => {
+      const start = part.rawText.indexOf(purpose);
+      return purpose && start >= 0 && part.rawText.indexOf(purpose, start + 1) < 0
+        ? [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + purpose.length }] : [];
+    });
+    const fragment = refs.length === 1 && parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId,
+      taskRevision: this.accepted(active)?.options.taskRevision ?? 0, operation: 'CREATE', fields: {},
+      lineChanges: [{ operation: 'ADD', values: { purpose: { value: purpose, proof: { kind: 'USER_TEXT', refs } } } }] },
+    { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
+    if (fragment) {
+      const after = result.preview.after;
+      const updated = await this.draftService.propose({ ctx: input.ctx, owner: input.owner, ownerEpoch: input.ownerEpoch,
+        proposal: { key: { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation }, status: 'ready', operation: 'CREATE', request: { requesterUserId: after.requesterUserId,
+          branchId: after.branchId, title: after.title, reason: after.reason, missingReceiptReason: after.missingReceiptReason,
+          lines: after.lines.map(line => ({ ...line, purpose })) }, sourceProof: { schemaVersion: 1, receipts: [
+          ...(object(active.sourceProofJson) && Array.isArray(active.sourceProofJson['receipts']) ? active.sourceProofJson['receipts'] : [])
+            .filter(receipt => !object(receipt) || receipt['fieldPath'] !== 'lineChanges.0.purpose'),
+          ...this.proposalReceipts(fragment),
+        ] } } });
+      return updated;
+    }
+    return null;
+  }
+
+  async photoTarget(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number }): Promise<{ actionId: string; branchId: string } | null> {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);
+    const pending = await this.pendingPhoto(input);
+    if (pending && (!active || active.id === pending.previewId)) {
+      const result = await this.draftService.get({ ...input, actionId: pending.previewId });
+      if (result.status === 'preview') return { actionId: pending.previewId, branchId: result.preview.after.branchId };
+      if (result.status === 'applied') {
+        const request = await this.repo.findRequestById(input.ctx.companyId, String(result.receipt.requestId), true);
+        if (request?.status === 'DRAFT' && this.canUpdate(input.ctx, request)) return { actionId: pending.previewId, branchId: request.branchId! };
+      }
+    }
     if (!active || active.status !== 'COLLECTING' || !accepted?.awaitingPhoto || Date.parse(accepted.options.expiresAt) <= Date.now()) return null;
     const choice = accepted.options.choices.find(item => item.choiceId === accepted.options.selected.branchChoiceId && item.kind === 'BRANCH');
     if (!choice) return null;
@@ -206,10 +264,10 @@ export class LineReimbursementDraftAdapterService {
     catch { return null; }
   }
 
-  async attachPhoto(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; attachmentId: string }) {
+  async attachPhoto(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; attachmentId: string }): Promise<LineReimbursementDraftResult | null> {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);
-    if (!active || active.status !== 'COLLECTING' || !accepted?.awaitingPhoto || !accepted.proposal) return null;
+    if (!active || active.status !== 'COLLECTING' || !accepted?.awaitingPhoto || !accepted.proposal) return this.attachPreparedPhoto(input);
     const line = accepted.proposal.lineChanges?.filter(line => line.operation === 'ADD');
     if (line?.length !== 1) return null;
     const branch = accepted.options.choices.find(choice => choice.choiceId === accepted.options.selected.branchChoiceId);
@@ -222,7 +280,48 @@ export class LineReimbursementDraftAdapterService {
     next.options.choices = [...next.options.choices.filter(item => item.choiceId !== choice.choiceId), choice];
     next.proposal!.lineChanges!.filter(item => item.operation === 'ADD')[0]!.values.attachmentChoiceId = choice.choiceId;
     next.awaitingPhoto = false;
+    await this.photoIntents.discard(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
     return this.proposeCollected(input, active, next);
+  }
+
+  private async pendingPhoto(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number }): Promise<ClaimPhotoIntent | null> {
+    const pending = await this.photoIntents.load(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
+    return pending?.userId === input.ctx.userId && pending.membershipId === input.ctx.membershipId
+      && pending.ownerEpoch === input.ownerEpoch ? pending : null;
+  }
+
+  /** A receipt arriving after the first save edits that exact draft through the ordinary preview/CAS path. */
+  private async attachPreparedPhoto(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; attachmentId: string }): Promise<LineReimbursementDraftResult | null> {
+    const target = await this.photoTarget(input), pending = target && await this.pendingPhoto(input);
+    if (!pending || !target) return null;
+    const file = await this.prisma.client.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.ctx.companyId,
+      uploadedByUserId: input.ctx.userId, branchId: target.branchId, status: 'ACTIVE' } });
+    if (!file) return null;
+    const prior = await this.draftService.get({ ...input, actionId: pending.previewId });
+    const request = prior.status === 'applied' ? await this.repo.findRequestById(input.ctx.companyId, String(prior.receipt.requestId), true) : null;
+    const after = prior.status === 'preview' ? prior.preview.after : request;
+    if (!after || after.lines?.length !== 1 || request && (request.status !== 'DRAFT' || !this.canUpdate(input.ctx, request))) return null;
+    const lines: ReimbursementLineInput[] = request ? request.lines!.map(line => this.lineInput(line)) : (prior as Extract<LineReimbursementDraftResult, { status: 'preview' }>).preview.after.lines
+      .map(line => ({ ...line, attachmentId: line.attachmentId ?? null, linkedExpenseId: line.linkedExpenseId ?? null }));
+    lines[0]!.attachmentId = file.id;
+    const action = await this.repo.findDraftAction(input.ctx.companyId, pending.previewId);
+    const sourceProof = { schemaVersion: 1, receipts: [
+      ...(!request && object(action?.sourceProofJson) && Array.isArray(action.sourceProofJson['receipts']) ? action.sourceProofJson['receipts'] : []),
+      ...(request ? [{ fieldPath: 'lines', valueDigest: digest(request.lines), validatedAt: new Date().toISOString(),
+        proof: { kind: 'RECORD', recordRef: request.id, revision: request.updatedAt.toISOString(), fieldPath: 'lines' } }] : []),
+      { fieldPath: 'lineChanges.0.attachmentId', valueDigest: digest(file.id), validatedAt: new Date().toISOString(),
+        proof: { kind: 'USER_CHOICE', choiceId: digest([pending.previewId, file.id]), choiceRevision: file.updatedAt.toISOString() } },
+    ] };
+    const key: LineReimbursementActionKey = request
+      ? { actionId: stableUuid([pending.previewId, file.id]), taskId: pending.taskId, actionOrdinal: pending.actionOrdinal + 1, operation: 'UPDATE' }
+      : { actionId: pending.previewId, taskId: pending.taskId, actionOrdinal: pending.actionOrdinal, operation: 'CREATE' };
+    const result = await this.draftService.propose({ ...input, proposal: request
+      ? { key, status: 'ready', operation: 'UPDATE', requestId: request.id, expectedRequestUpdatedAt: request.updatedAt.toISOString(),
+        request: { title: request.title, reason: request.reason, missingReceiptReason: request.missingReceiptReason, lines }, sourceProof }
+      : { key, status: 'ready', operation: 'CREATE', request: { requesterUserId: after.requesterUserId, branchId: target.branchId,
+        title: after.title, reason: after.reason, lines }, sourceProof } });
+    if (result.status === 'preview') await this.photoIntents.discard(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
+    return result;
   }
 
   private async proposeCollected(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number },
@@ -230,12 +329,12 @@ export class LineReimbursementDraftAdapterService {
     const proposal = accepted.proposal!, key: LineReimbursementActionKey = { actionId: active.id, taskId: active.taskId,
       actionOrdinal: active.actionOrdinal, operation: active.operation };
     await this.validateProposalProofs(input.ctx, accepted.options, proposal);
-    const hydrated = await this.hydrateCreate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal));
+    const hydrated = await this.hydrateCreate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal), accepted.awaitingPhoto);
     const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
     if (!sourceProof) return { status: 'blocked', errorCode: 'invalid_provenance' };
-    return this.draftService.propose({ ...input, proposal: hydrated.missing.length || accepted.awaitingPhoto
+    return this.draftService.propose({ ...input, proposal: hydrated.missing.length
       ? { key, status: 'needs_fields', accepted: { ...accepted, receipts: hydrated.receipts }, sourceProof,
-          fieldPaths: accepted.awaitingPhoto ? ['lineChanges.0.values.attachmentChoiceId'] : hydrated.missing }
+          fieldPaths: hydrated.missing }
       : { key, status: 'ready', operation: 'CREATE', request: hydrated.request!, sourceProof } });
   }
 
@@ -249,6 +348,8 @@ export class LineReimbursementDraftAdapterService {
     const owner = authority.owner.owner;
     const actionOwner = this.actionOwner(owner, authority.owner.epoch);
     let active = await this.drafts.active(authority.ctx, actionOwner);
+    if (authority.continuedActionId && active?.id !== authority.continuedActionId)
+      return this.denied('reimbursement.draft.get_options', 'UNKNOWN_REIMBURSEMENT_ACTION');
     let key: LineReimbursementActionKey;
     if (active) {
       if (authority.retainedTaskRef && active.taskId !== stableUuid(['reimbursement-draft-task', owner, authority.retainedTaskRef]))
@@ -264,6 +365,15 @@ export class LineReimbursementDraftAdapterService {
       }
       if (active.status === 'PREVIEW') {
         const result = await this.draftService.get({ ctx: authority.ctx, owner, ownerEpoch: authority.owner.epoch, actionId: active.id });
+        if (authority.continuedActionId === active.id) {
+          const hints = authority.acceptedRequest['reimbursementHints'];
+          const purpose = object(hints) ? hints['businessPurpose'] : undefined;
+          if (typeof purpose === 'string') {
+            const updated = await this.answerPurpose({ ctx: authority.ctx, owner, ownerEpoch: authority.owner.epoch,
+              evidence: authority.evidence }, active, purpose);
+            if (updated) return this.domainResult('reimbursement.draft.get_options', key, updated);
+          }
+        }
         return this.domainResult('reimbursement.draft.get_options', key, result);
       }
     } else {
@@ -374,7 +484,7 @@ export class LineReimbursementDraftAdapterService {
       const receipts = this.proposalReceipts(proposal);
       let result: LineReimbursementDraftResult;
       if (operation === 'CREATE') {
-        const hydrated = await this.hydrateCreate(authority.ctx, options, proposal, receipts);
+        const hydrated = await this.hydrateCreate(authority.ctx, options, proposal, receipts, accepted.awaitingPhoto);
         const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
         if (!sourceProof) return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
         result = hydrated.missing.length
@@ -411,7 +521,6 @@ export class LineReimbursementDraftAdapterService {
   private intakeProposal(authority: Authority, options: StoredOptions): LineReimbursementDraftProposalV1 | undefined {
     const hints = authority.acceptedRequest['reimbursementHints'];
     if (options.operation !== 'CREATE' || authority.retainedTaskRef || authority.candidates.completeness !== 'complete'
-      || options.choices.some(choice => choice.kind === 'SOURCE' && choice.details?.['eligible'] !== false)
       || authority.acceptedRequest['intakeIntent'] !== 'REIMBURSEMENT_REQUEST_START' || !object(hints)
       || typeof hints['description'] !== 'string' || !hints['description']) return undefined;
     const text = (value: unknown) => {
@@ -423,12 +532,14 @@ export class LineReimbursementDraftAdapterService {
       });
       return refs.length === 1 ? { value, proof: { kind: 'USER_TEXT' as const, refs } } : undefined;
     };
-    const description = text(hints['description']), purpose = text(hints['businessPurpose']), reason = text(hints['reason']) ?? purpose;
+    const description = text(hints['description']) ?? authority.evidence.parts.map(part => text(lineExpenseNoteDescription(part.rawText))).find(Boolean);
+    const purpose = text(hints['businessPurpose']), reason = text(hints['reason']) ?? purpose ?? description;
     const amount = authority.candidates.amounts.length === 1 ? authority.candidates.amounts[0] : undefined;
     const dates = [...authority.candidates.dates.map(item => ({ ...item, value: item.isoDate })),
       ...authority.candidates.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => ({ ...item, value: item.fromDate }))];
     const date = dates.length === 1 ? dates[0] : undefined;
-    if (!description || !amount || amount.value !== hints['amount'] || !date) return undefined;
+    if (!description || !amount || !date || hints['amount'] !== undefined && (typeof hints['amount'] !== 'string'
+      || normalizeReimbursementAmount(hints['amount'].replace(/,/gu, '')) !== normalizeReimbursementAmount(amount.value))) return undefined;
     const values = { [amount.candidateId]: amount.value, [date.candidateId]: date.value };
     return parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: options.taskId, taskRevision: options.taskRevision,
       operation: 'CREATE', fields: { ...(reason ? { reason } : {}) }, lineChanges: [{ operation: 'ADD', values: {
@@ -456,7 +567,7 @@ export class LineReimbursementDraftAdapterService {
     if (!Array.isArray(semantic)) return null;
     // UPDATE still needs a persisted admitted write; its classifier label does not grant or deny draft ownership.
     const writeIndexes = semantic.filter((item) => object(item) && item['kind'] === 'write' && Number.isSafeInteger(item['index'])
-      && (item['writeIntent'] === 'REIMBURSEMENT_REQUEST_START' || (request['intakeIntent'] === 'REIMBURSEMENT_REQUEST_START' || update) && item['writeIntent'] === undefined))
+      && (item['writeIntent'] === 'REIMBURSEMENT_REQUEST_START' || (request['intakeIntent'] === 'REIMBURSEMENT_REQUEST_START' || update || object(item['taskRef'])) && item['writeIntent'] === undefined))
       .map((item) => Number((item as Record<string, unknown>)['index']));
     if (!writeIndexes.length) return null;
     let sourceEvidence = evidence, sourceCandidates = candidates;
@@ -506,6 +617,8 @@ export class LineReimbursementDraftAdapterService {
       const slot = object(task?.['slots']) ? task!['slots'][`reimbursementActionId${String(ref['subrequestIndex'])}`] : undefined;
       if (typeof slot === 'string' && UUID.test(slot)) continuedActionId = slot;
     }
+    if (!update && request['intakeIntent'] !== 'REIMBURSEMENT_REQUEST_START' && !retainedTaskRef && !continuedActionId
+      && semantic.some(item => object(item) && writeIndexes.includes(Number(item['index'])) && item['writeIntent'] === undefined)) return null;
     return { evidence: sourceEvidence, candidates: sourceCandidates, owner, acceptedRequest: request, writeIndexes, allowedSourceRefs, retainedTaskRef, continuedActionId,
       ctx: { requestId: ctx.requestId ?? grant.turnKey, authSubject: ctx.userId, userId: ctx.userId,
         companyId: ctx.companyId, membershipId: ctx.membershipId, roles: ctx.roles ?? [], permissions: ctx.permissions,
@@ -917,7 +1030,7 @@ export class LineReimbursementDraftAdapterService {
   }
 
   private async hydrateCreate(ctx: RequestContext, options: StoredOptions, proposal: LineReimbursementDraftProposalV1,
-    receipts: LineReimbursementValidatedFieldReceiptV1[]) {
+    receipts: LineReimbursementValidatedFieldReceiptV1[], awaitingPhoto = false) {
     const missing: string[] = [];
     const branchId = proposal.branchChoiceId ?? options.selected.branchChoiceId;
     const requesterId = proposal.requesterChoiceId ?? options.selected.requesterChoiceId;
@@ -927,12 +1040,26 @@ export class LineReimbursementDraftAdapterService {
     if (branch && requester && requester.raw['branchId'] !== branch.raw['id']) throw new Error('REIMBURSEMENT_CHOICE_STALE');
     if (!proposal.fields.reason) missing.push('fields.reason');
     const changes = (proposal.lineChanges ?? []).filter(change => change.operation === 'ADD');
+    if (!proposal.fields.reason && changes.length === 1 && changes[0]!.operation === 'ADD') {
+      const reason = changes[0]!.values.purpose ?? changes[0]!.values.description;
+      if (reason) {
+        proposal.fields.reason = reason;
+        receipts = this.mergeReceipts(receipts, [{ fieldPath: 'fields.reason', valueDigest: digest(reason.value),
+          proof: reason.proof, validatedAt: new Date().toISOString() }]);
+        missing.splice(missing.indexOf('fields.reason'), 1);
+      }
+    }
     if (!changes.length) missing.push('lineChanges');
     const lines: ReimbursementLineInput[] = [];
     for (const [index, change] of changes.entries()) {
       if (change.operation !== 'ADD') continue;
       const line = await this.hydrateLine(ctx, options, change.values, undefined, index, missing);
       if (line) lines.push({ ...line, lineNo: lines.length + 1 });
+    }
+    const noReceipt = !awaitingPhoto && changes.some(change => change.operation === 'ADD' && change.values.attachmentChoiceId === null);
+    if (noReceipt && !proposal.fields.missingReceiptReason?.value) {
+      const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
+      if (policy.requireReceipt && policy.allowMissingReceiptWithReason) missing.push('fields.missingReceiptReason');
     }
     // Drafts may keep missing evidence, as on the web; the submit use-case enforces receipt policy.
     const now = new Date().toISOString();

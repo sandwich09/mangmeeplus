@@ -3943,7 +3943,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     assert.equal(result.outcome, 'done');
     assert.match(h.replies[0] ?? '', /SUB-202608-00007/);
     assert.match(h.replies[0] ?? '', /50\.0000 THB/);
-    assert.match(h.replies[0] ?? '', /1\) ใช่/);
+    assert.match(h.replies[0] ?? '', /• ใช่/);
     assert.equal(pendingMediaRows.length, 1, 'the bytes wait for the answer');
     assert.equal(pendingMediaRows[0].status, 'PENDING');
     // FIX-1: the row remembers WHICH question it was asked, and in which chat.
@@ -3952,7 +3952,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     assert.equal(h.linkScanCalls.length, 0, '§16: a photo alone links nothing');
   });
 
-  it('asks one numbered question without the signed-form choice when a caption names nothing and nothing awaits a scan', async () => {
+  it('asks one question with choices without the signed-form choice when a caption names nothing and nothing awaits a scan', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     const h = makeHarness({
       permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
@@ -3962,8 +3962,8 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'อันนี้นะ');
 
     assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
-    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
-    assert.match(h.replies[0] ?? '', /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);
+    assert.match(h.replies[0] ?? '', /• สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.match(h.replies[0] ?? '', /• ภาพประกอบคำถาม ไม่ต้องบันทึก/);
     assert.deepEqual(
       pendingMediaRows[0].askedQuestionJson,
       askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']),
@@ -4000,7 +4000,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'สลิปโอนค่ะ');
 
     assert.deepEqual(h.attachMediaCalls, [{
-      expenseId: 'expense-1', attachmentId: 'pending-att-1',
+      language: 'th', expenseId: 'expense-1', attachmentId: 'pending-att-1',
       purpose: 'expense.payment.evidence', webBaseUrl: 'https://app.example.com',
     }]);
     assert.equal(h.initCalls.length, 0, 'no second expense is created for a slip of the open one');
@@ -4137,7 +4137,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-confirm-1', messageText: 'ใช่' });
 
     assert.deepEqual(h.linkScanCalls, [{
-      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'pending-att-1',
+      language: 'th', expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'pending-att-1',
       checksumSha256: 'scan-checksum', webBaseUrl: 'https://app.example.com',
     }]);
     assert.match(h.replies[0] ?? '', /รอยืนยัน/);
@@ -4163,7 +4163,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-not-this-one', messageText: 'ไม่ใช่' });
 
     assert.equal(h.linkScanCalls.length, 0);
-    assert.match(h.replies[0] ?? '', /1\) SUB-202608-00009 ยอด 99\.0000 THB/);
+    assert.match(h.replies[0] ?? '', /• SUB-202608-00009 ยอด 99\.0000 THB/);
     assert.equal(pendingMediaRows[0].status, 'PENDING', 'the bytes are still waiting');
     assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
       { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash: CHAT_KEY_HASH, evidenceIds: ['evidence-2'] });
@@ -4173,7 +4173,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
   });
 
-  it('falls back to the plain numbered question on ไม่ใช่ when no other form awaits a scan (§15)', async () => {
+  it('falls back to the plain question with choices on ไม่ใช่ when no other form awaits a scan (§15)', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
     const h = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING });
@@ -4182,7 +4182,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
 
     assert.equal(h.linkScanCalls.length, 0);
     assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
-    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.match(h.replies[0] ?? '', /• สลิป\/หลักฐานการจ่ายของรายการนี้/);
     assert.equal(pendingMediaRows[0].status, 'PENDING');
     assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
       askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']));

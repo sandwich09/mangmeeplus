@@ -118,13 +118,13 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     id: 'expense-draft-all-items-and-questions',
     fixture: 'repository',
     assertions: {
-      outcome: 'every_named_item_is_preserved_and_all_document_and_item_gaps_are_returned_together',
+      outcome: 'every_named_item_is_preserved_all_gaps_kept_and_only_the_next_required_gap_is_asked',
       tool: 'bounded_ai_candidates_then_deterministic_api_validation',
       mutation: 'draft_source_facts_only_zero_review_or_final_mutation',
       delivery: 'full_current_snapshot_and_every_remaining_question_after_each_answer',
     },
     evidence: [
-      ['apps/api/src/modules/expenses/domain/logic/line-expense-draft-conversation.logic.spec.ts', 'preserves every item and asks every document/item gap together without inventing paper numbers'],
+      ['apps/api/src/modules/expenses/domain/logic/line-expense-draft-conversation.logic.spec.ts', 'preserves every item and asks only the next required gap without inventing paper numbers'],
       ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'routes text spend note to a persistent draft and returns its complete question snapshot'],
     ],
   },

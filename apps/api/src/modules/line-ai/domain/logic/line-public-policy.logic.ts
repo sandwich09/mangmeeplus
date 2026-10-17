@@ -113,3 +113,21 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
   // A paid-plan follow-up must never inherit the unpaid-trial assurance.
   return answer(['trial', 'trial_limits', 'card'].includes(previous) ? 'trial' : 'paid_renewal');
 }
+
+/** English copy of the same published policy; topic selection and account checks are unchanged. */
+export function publicPolicyAnswerLanguage(answer: PublicPolicyAnswer, language: 'th' | 'en'): PublicPolicyAnswer {
+  if (language === 'th') return answer;
+  const copy: Record<PublicPolicyTopic, { title: string; text: string }> = {
+    trial: { title: 'Getting started and renewal', text: 'Registration opens a shop without forcing an immediate purchase; choose and pay for a package to use the service, from 249 THB per month by card or PromptPay, and existing trial access lasts until its original expiry.' },
+    trial_limits: { title: 'Available services', text: 'Before payment, shop/account setup and the package page remain available; the 249, 499 and 999 THB packages share core LINE AI, dashboard, expenses, claims, team and notification menus with different allowances, while the 1,999 THB business package adds supported PND53 and withholding certificates.' },
+    card: { title: 'Start using your shop', text: 'Choose Open new shop in LINE, enter the shop details, then choose and pay for a package on the web; no payment card is needed just to register.' },
+    data: { title: 'Data without an active package', text: 'Business access pauses without an active package, but data is not immediately deleted; a deletion request requires email and staff identity verification, and this chat has not deleted data or opened such a request.' },
+    paid_renewal: { title: 'Paid package renewal', text: 'A purchased package may renew and charge monthly or yearly under the terms you accepted; a shop without a purchased package is not charged automatically, and staff can check your actual renewal settings.' },
+    buy_early: { title: 'Buying before current access ends', text: 'A package bought before the existing access period ends starts its service and payment cycle immediately; review the terms before confirming purchase.' },
+    quota: { title: 'Receipt-reading allowance', text: 'An allowance is used when AI reading and result storage succeed; failed reads or storage return the reserved allowance, manual edits and repeated replies are not new reads, and annual packages provide the full twelve-month allowance at the start.' },
+    plan_change: { title: 'Renewing or changing packages', text: 'Buying the same package adds reading allowance immediately and extends the existing expiry, or starts from payment if expired; upgrades apply after paying the difference without changing the original expiry, while downgrades start after the current paid period.' },
+    cancellation: { title: 'Cancellation and refunds', text: 'Cancel renewal to stop future charges; payments are generally non-refundable except where law requires otherwise or staff approve a case, and this policy answer has not cancelled a package or submitted a refund request.' },
+    payment_failure: { title: 'Failed renewal payment', text: 'The standard paid-package policy allows a seven-day grace period after a failed renewal payment without adding unpaid reading allowance; this is not an extra free trial, and staff should verify shop-specific conditions and current status.' },
+  };
+  return { topic: answer.topic, ...copy[answer.topic], text: `${copy[answer.topic].text} Contact staff for further help.` };
+}

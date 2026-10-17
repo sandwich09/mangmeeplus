@@ -1,3 +1,4 @@
+import { isLineNavigationPostback, type LineReplyLanguage } from './line-language.logic';
 import { linePaymentEvidencePostbackCommand, parseLinePaymentEvidenceControl } from './line-payment-evidence-reply.logic';
 import { createHash } from 'node:crypto';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
@@ -110,6 +111,7 @@ function authorizedInlineActions(message: LineReplyMessage, authorization: Deliv
       ? proof.records.flatMap(row => row && typeof row === 'object' && typeof row.id === 'string' ? [row.id] : []) : []));
   return actions.every(action => {
     const params = new URLSearchParams(action.data);
+    params.delete('language');
     if (params.get('action') === 'reimbursement_choice') return [...params.keys()].length === 4
       && ['action', 'actionId', 'revision', 'choice'].every(key => params.getAll(key).length === 1)
       && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_OPTIONS'
@@ -119,7 +121,7 @@ function authorizedInlineActions(message: LineReplyMessage, authorization: Deliv
       && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_DRAFT' && proof.status === 'applied' && proof.submitToken === params.get('token'));
     if (['expense_action_payment', 'expense_action_wht', 'expense_action_next'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
       && authorization.proofs.some(proof => proof.kind === 'EXPENSE_ACTION_PREVIEW' && proof.applied === true && proof.token === params.get('token'));
-    const command = linePaymentEvidencePostbackCommand(action.data);
+    const command = linePaymentEvidencePostbackCommand(params.toString());
     const control = command ? parseLinePaymentEvidenceControl(command) : null;
     return !!control && ids.has(control.slipId) && (!control.receiptId || ids.has(control.receiptId));
   });
@@ -139,8 +141,9 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
   answer: Omit<DeliveryPlanV2['answer'], 'items'> & { items: Array<Omit<DeliveryItem, 'id'>> };
   preferredMessages?: Array<LineReplyMessage | null>;
   controlMessage?: LineReplyMessage;
+  language?: LineReplyLanguage;
 }): DeliveryPlanV2 {
-  const { controlMessage, preferredMessages, ...base } = input;
+  const { controlMessage, preferredMessages, language = 'th', ...base } = input;
   const planId = lineDeliveryPlanId(input.producerKind, input.producerId);
   // R-B1: escape web links in the ITEM text so span coverage (validateLineDeliveryPlan) still
   // rebuilds each item from its frozen parts. Uncapped per item (splitLineDeliveryText keeps every part
@@ -160,12 +163,13 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
     const matches = preferred?.type === 'text' ? escape(preferred.text) === item.text
       : preferred?.type === 'flex' ? preferred.canonicalText !== undefined && escape(preferred.canonicalText) === item.text : false;
     const evidenceActions = preferred && authorizedInlineActions(preferred, input.authorization);
+    const navigationActions = preferred && controlActions(preferred).length > 0 && controlActions(preferred).every(action => isLineNavigationPostback(action.data));
     // Completion menus cannot replace the card's authorized actions in its text fallback.
-    const quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || isControl)
-      ? ((isControl || evidenceActions) && controlActions(preferred).length <= 13
+    const quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
+      ? ((isControl || evidenceActions || navigationActions) && controlActions(preferred).length <= 13
         ? { items: controlActions(preferred).map(action => ({ type: 'action' as const, action })) } : preferred.quickReply) : undefined;
     if (preferred?.type === 'flex' && matches && (isControl || isCompleteLineBusinessAnswerPresentation(preferred))
-      && parts.length === 1 && (controlActions(preferred).length === 0 || evidenceActions || isControl)
+      && parts.length === 1 && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
       && parseOutcomeMessages(lineDeliveryWireMessages([preferred]))) {
       const part = parts[0]!;
       // Ordinary cards keep their reviewed preview; controls must describe the exact action being confirmed.
@@ -184,7 +188,7 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
   }
   if (!!input.control !== !!controlMessage) fail('PLAN_CONTROL_MISSING');
   if (coveredControl) all.push(coveredControl);
-  else if (controlMessage) all.push({ primary: controlMessage, fallback: { type: 'text', text: 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน',
+  else if (controlMessage) all.push({ primary: controlMessage, fallback: { type: 'text', text: language === 'en' ? 'Review all the details above before confirming.' : 'ตรวจสอบรายละเอียดทั้งหมดด้านบนก่อนยืนยัน',
     quickReply: { items: controlActions(controlMessage).map(action => ({ type: 'action' as const, action })) } } });
   if (!all.length || all.length > 15) fail('PLAN_TOO_LARGE');
   const batches: DeliveryPlanV2['batches'] = [];
@@ -193,7 +197,7 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
     const messages = part.map(p => p.primary);
     const fallbackMessages = part.some(p => p.fallback) ? part.map(p => p.fallback ?? p.primary) : null;
     if (all.length > 10 && index === 1) {
-      const quickReply = { items: [{ type: 'action' as const, action: { type: 'postback' as const, label: 'ยังมีคำตอบต่อ · อ่านต่อ', data: `action=line_answer_continue&plan=${planId}&next=2` } }] };
+      const quickReply = { items: [{ type: 'action' as const, action: { type: 'postback' as const, label: language === 'en' ? 'Read more' : 'ยังมีคำตอบต่อ · อ่านต่อ', data: `action=line_answer_continue&plan=${planId}&next=2${language === 'en' ? '&language=en' : ''}` } }] };
       messages[messages.length - 1] = { ...messages[messages.length - 1]!, quickReply };
       if (fallbackMessages) fallbackMessages[fallbackMessages.length - 1] = { ...fallbackMessages[fallbackMessages.length - 1]!, quickReply };
     }

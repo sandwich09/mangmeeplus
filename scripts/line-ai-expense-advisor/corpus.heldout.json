@@ -343,9 +343,9 @@
       "turns": [
         {
           "user": "ช่วยดูให้หน่อยว่ามีใบเบิกของพนักงานรออนุมัติกี่ใบคะ",
-          "category": "18",
+          "category": "10",
           "language": ["th"],
-          "expect": { "tags": { "forbidden_tools": ["reimbursement.list_pending_approvals"], "must_answer": true } }
+          "expect": { "calls": [{ "tool": "reimbursement.list_pending_approvals", "input": {}, "alternatives": [{ "tool": "reimbursement.get_summary", "input": {} }, { "tool": "reimbursement.get_approval_backlog", "input": {} }] }], "tags": { "must_answer": true, "must_not_claim": ["ไม่มีสิทธิ์ดู", "รอคุณอนุมัติ"] } }
         }
       ]
     },
@@ -356,9 +356,9 @@
       "turns": [
         {
           "user": "ตอนนี้มีใบเบิกค้างอนุมัติกี่รายการคะ",
-          "category": "18",
+          "category": "10",
           "language": ["th"],
-          "expect": { "tags": { "forbidden_tools": ["reimbursement.list_pending_approvals"], "must_answer": true } }
+          "expect": { "calls": [{ "tool": "reimbursement.list_pending_approvals", "input": {}, "alternatives": [{ "tool": "reimbursement.get_summary", "input": {} }, { "tool": "reimbursement.get_approval_backlog", "input": {} }] }], "tags": { "must_answer": true, "must_not_claim": ["ไม่มีสิทธิ์ดู", "รอคุณอนุมัติ"] } }
         }
       ]
     },

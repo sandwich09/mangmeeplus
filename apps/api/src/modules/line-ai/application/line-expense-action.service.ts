@@ -1,3 +1,5 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
+import { lineUiLabel, lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
 import { RecordReimbursementPaymentUseCase } from '../../reimbursements/application/use-cases/reimbursement-finance.use-case';
 import { InitPaymentSlipUploadUseCase, CompletePaymentSlipUploadUseCase } from '../../reimbursements/application/use-cases/reimbursement-payment-slip.use-case';
@@ -43,6 +45,7 @@ export type ExpenseAction = typeof EXPENSE_ACTIONS[number] | TeamAction;
 export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งใบเบิก', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
 export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next'; token: string };
 export type ExpenseActionPreview = {
+  language?: LineReplyLanguage;
   previewId: string; token: string; action: ExpenseAction; reason?: string; details?: string[]; payment?: RecordExpensePaymentInput; expiresAt: string; summary: string;
   certificates?: { number: string; uri: string }[]; offerWht?: boolean; offerPayment?: boolean; offerNext?: VoucherAction; evidenceReview?: boolean;
   record: { vendorName: string; amount: string; currency: string; date: string; status: string; nextStatus: string };
@@ -59,11 +62,13 @@ type StoredAction = {
   review?: { assessment: ExpenseEvidenceAssessment; fingerprint: string; filesHash: string };
 };
 type StoredEvidenceChoice = {
+  language?: LineReplyLanguage;
   previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; expenseId: string; revision: string; digest: string; requestId: string;
   stage: 'choice' | 'photo' | 'reason' | 'waiting'; paymentIntent?: Record<string, unknown>;
 };
 type StoredRepair = {
+  language?: LineReplyLanguage;
   previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; expenseId: string; revision: string; requestId: string;
   action: ExpenseAction; reply: string; categories: Array<ActionCategory>; offset: number;
@@ -320,7 +325,15 @@ export class LineExpenseActionService {
   }
   private isClaim(action: ExpenseAction | string) { return typeof action === 'string' && action.startsWith('REIMBURSEMENT_'); }
   private isVoucher(action: string): action is VoucherAction { return (VOUCHER_ACTIONS as readonly string[]).includes(action); }
-  private question(entry: StoredAction) { return entry.awaitingField === 'payeeName' ? 'ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ' : entry.awaitingField === 'claimSlip' ? 'ส่งสลิปโอนมาได้เลยค่ะ น้องจะเตรียมการ์ดบันทึกจ่ายคืน' : entry.preview.action === 'VOID' ? 'ยกเลิกรายการนี้เพราะอะไรคะ' : entry.awaitingField === 'paymentMethod' ? 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ' : entry.awaitingField === 'payeeAddress' ? 'ขอที่อยู่ผู้รับเงินที่จะพิมพ์บน 50 ทวิค่ะ' : entry.preview.action === 'VOUCHER_RETURN' ? 'ส่งใบเตรียมจ่ายนี้กลับแก้ไขเพราะอะไรคะ' : entry.preview.action === 'VOUCHER_CANCEL' ? 'ยกเลิกใบเตรียมจ่ายนี้เพราะอะไรคะ' : 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ'; }
+  private question(entry: StoredAction, language: LineReplyLanguage = entry.preview.language ?? 'th') {
+    if (language === 'en') return entry.awaitingField === 'payeeName' ? 'Who is the payee for this voucher?'
+      : entry.awaitingField === 'claimSlip' ? 'Please send the transfer slip to prepare reimbursement confirmation.'
+        : entry.awaitingField === 'paymentMethod' ? 'Was payment by cash, bank transfer, card or cheque?'
+          : entry.awaitingField === 'payeeAddress' ? 'What payee address should appear on the tax certificate?'
+            : entry.preview.action === 'VOID' ? 'Why are you voiding this expense?'
+              : entry.preview.action === 'VOUCHER_RETURN' ? 'Why are you returning this voucher for correction?'
+                : entry.preview.action === 'VOUCHER_CANCEL' ? 'Why are you cancelling this voucher?' : 'Why are you rejecting this claim?';
+    return entry.awaitingField === 'payeeName' ? 'ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ' : entry.awaitingField === 'claimSlip' ? 'ส่งสลิปโอนมาได้เลยค่ะ น้องจะเตรียมการ์ดบันทึกจ่ายคืน' : entry.preview.action === 'VOID' ? 'ยกเลิกรายการนี้เพราะอะไรคะ' : entry.awaitingField === 'paymentMethod' ? 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ' : entry.awaitingField === 'payeeAddress' ? 'ขอที่อยู่ผู้รับเงินที่จะพิมพ์บน 50 ทวิค่ะ' : entry.preview.action === 'VOUCHER_RETURN' ? 'ส่งใบเตรียมจ่ายนี้กลับแก้ไขเพราะอะไรคะ' : entry.preview.action === 'VOUCHER_CANCEL' ? 'ยกเลิกใบเตรียมจ่ายนี้เพราะอะไรคะ' : 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ'; }
   private async read(ctx: RequestContext, id: string, action: ExpenseAction, voucher?: VoucherActionPayload) {
     if (voucher) return this.vouchers!.read(ctx, voucher);
     if (!this.isClaim(action)) {
@@ -367,28 +380,29 @@ export class LineExpenseActionService {
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
-    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string }> {
+    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string }> {
+    const en = language === 'en';
     let action = input.action as ExpenseAction;
     const id = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
-    if (!EXPENSE_ACTIONS.some(value => value === action) || typeof id !== 'string' || !id || id.length > 200) return { reply: 'ต้องการทำอะไรกับรายการไหนคะ' };
-    if (!chat || !ctx.membershipId || !this.config.aiGatewayInternalSecret || !await this.owner(ctx, chat)) return { reply: 'กรุณาทำรายการในแชตส่วนตัวค่ะ' };
+    if (!EXPENSE_ACTIONS.some(value => value === action) || typeof id !== 'string' || !id || id.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
+    if (!chat || !ctx.membershipId || !this.config.aiGatewayInternalSecret || !await this.owner(ctx, chat)) return { reply: (en ? 'Please use a private chat.' : 'กรุณาทำรายการในแชตส่วนตัวค่ะ') };
     const ids = action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
-    if (ids.length > 20 || ids.some(id => !id || id.length > 200)) return { reply: 'ขอเลือกรายจ่ายไม่เกินยี่สิบรายการค่ะ' };
-    if (!opened && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ' };
+    if (ids.length > 20 || ids.some(id => !id || id.length > 200)) return { reply: (en ? 'Please select up to twenty expenses.' : 'ขอเลือกรายจ่ายไม่เกินยี่สิบรายการค่ะ') };
+    if (!opened && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: (en ? 'Please select a record already shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ') };
     let approvers: string[] | undefined;
     try {
-      const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input) : undefined;
+      const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input, language) : undefined;
       if (voucher) action = voucher.payload.action;
       const record = voucher?.record ?? await this.read(ctx, id, action);
       if (action === 'RECORD_PAYMENT') {
-        if (!ctx.permissions.includes('expense.payment.record')) return { reply: PERMISSION.RECORD_PAYMENT };
+        if (!ctx.permissions.includes('expense.payment.record')) return { reply: (en ? 'Ask the owner or an authorized payment recorder to do this.' : PERMISSION.RECORD_PAYMENT) };
         const expense = await this.getExpense.execute(ctx, id);
         const paidReply = paidExpenseReply(expense);
         if (paidReply) return { reply: paidReply };
         const state = expense.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation as { status?: string } | undefined;
         if (state?.status === 'OPEN' || state?.status === 'PAUSED'
           || ['PREPARED', 'PAYER_CERTIFIED'].includes(expense.substituteReceiptEvidence?.status ?? '')) {
-          return { reply: 'กำลังจัดทำใบรับรองแทนใบเสร็จอยู่ค่ะ กดทำใบรับรองต่อเพื่อทำขั้นตอนที่เหลือ' };
+          return { reply: (en ? 'A substitute receipt is in progress; select Continue substitute receipt.' : 'กำลังจัดทำใบรับรองแทนใบเสร็จอยู่ค่ะ กดทำใบรับรองต่อเพื่อทำขั้นตอนที่เหลือ') };
         }
       }
       if (action === 'RECORD_PAYMENT' && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(record.status)) {
@@ -398,10 +412,10 @@ export class LineExpenseActionService {
       }
       const paymentIntent = action === 'CONFIRM' && input.recordPaymentAfterConfirm === true
         ? { paidAt: input.paidAt ?? todayCivilDate('Asia/Bangkok'), ...(input.paymentMethod ? { paymentMethod: input.paymentMethod } : {}), ...(input.paidAmount ? { paidAmount: input.paidAmount } : {}) } : undefined;
-      if (paymentIntent && !ctx.permissions.includes('expense.payment.record')) return { reply: PERMISSION.RECORD_PAYMENT };
+      if (paymentIntent && !ctx.permissions.includes('expense.payment.record')) return { reply: (en ? 'Ask the owner or an authorized payment recorder to do this.' : PERMISSION.RECORD_PAYMENT) };
       approvers = record.claim?.currentDesk?.kind === 'APPROVER' ? record.claim.currentDesk.names : undefined;
       const reason = typeof input.reason === 'string' ? input.reason.trim() : undefined;
-      if (reason && reason.length > 1000) return { reply: 'ขอเหตุผลสั้นลงอีกหน่อยค่ะ' };
+      if (reason && reason.length > 1000) return { reply: (en ? 'Please shorten the reason.' : 'ขอเหตุผลสั้นลงอีกหน่อยค่ะ') };
       let nextStatus = action === 'CONFIRM' ? 'CONFIRMED' : action === 'VOID' ? 'VOIDED' : 'DELETED';
       if (action === 'MARK_READY') nextStatus = (await this.ready.previewLineAction(ctx, record.id)).target;
       let review: StoredAction['review'];
@@ -412,7 +426,7 @@ export class LineExpenseActionService {
         catch (error) {
           const response = error instanceof HttpException ? error.getResponse() : null;
           if (!response || typeof response !== 'object' || (response as any).code !== 'EXPENSE_EVIDENCE_REVIEW_REQUIRED') throw error;
-          if (!ctx.permissions.includes('expense.review')) return { reply: 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์ตรวจรายจ่ายตรวจหลักฐานก่อนยืนยันค่ะ' };
+          if (!ctx.permissions.includes('expense.review')) return { reply: (en ? 'Ask the owner or an expense reviewer to review the evidence before confirming.' : 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์ตรวจรายจ่ายตรวจหลักฐานก่อนยืนยันค่ะ') };
           if (!this.updateDraft) throw error;
           const current = await this.getExpense.execute(ctx, id);
           if (current.updatedAt.getTime() !== record.updatedAt.getTime() || expenseTaxSourceChecksum(current) !== record.digest) throw new ConflictException('expense_source_version_changed');
@@ -423,10 +437,12 @@ export class LineExpenseActionService {
           if (expenseEvidenceInputError(assessment, expense, true)) {
             if (preparedCategory) throw error;
             const owner = (await this.owner(ctx, chat))!;
-            if (!await this.evidenceChoices.save({ previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
+            if (!await this.evidenceChoices.save({ language, previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
               chatKeyHash: `expense-action-evidence:${chat}`, conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: id,
               revision: expense.updatedAt.toISOString(), digest: expenseTaxSourceChecksum(expense), requestId: ctx.requestId, stage: 'choice', paymentIntent })) throw error;
-            return { reply: 'เลือกหลักฐานที่ใช้กับรายการนี้ได้เลยค่ะ' };
+            return { reply: new Decimal(expense.whtAmount).gt(0)
+              ? (en ? 'Review the evidence to confirm this expense before preparing its payment voucher and withholding certificate.' : 'ตรวจหลักฐานเพื่อยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่ายและออกหนังสือรับรอง 50 ทวิค่ะ')
+              : (en ? 'Please choose the evidence for this expense.' : 'เลือกหลักฐานที่ใช้กับรายการนี้ได้เลยค่ะ') };
           }
           // All confirmation validators must pass; evidence review must be the only remaining blocker.
           await this.confirm.previewLineAction(ctx, record.id, assessment, markReady, preparedCategory?.source);
@@ -442,11 +458,11 @@ export class LineExpenseActionService {
       let claimPayment: RecordReimbursementPaymentInput | undefined;
       const awaitingClaimSlip = action === 'REIMBURSEMENT_RECORD_PAYMENT' && typeof input.slipAttachmentId !== 'string';
       if (action === 'REIMBURSEMENT_RECORD_PAYMENT') {
-        if (!ctx.permissions.includes('reimbursement.payment.record')) return { reply: PERMISSION.REIMBURSEMENT_RECORD_PAYMENT };
+        if (!ctx.permissions.includes('reimbursement.payment.record')) return { reply: (en ? 'Ask an authorized finance user to record reimbursement.' : PERMISSION.REIMBURSEMENT_RECORD_PAYMENT) };
         const claim = record.claim!;
-        if (!['APPROVED', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'].includes(claim.status)) return { reply: 'ใบเบิกนี้ยังไม่พร้อมบันทึกจ่ายคืนค่ะ' };
+        if (!['APPROVED', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'].includes(claim.status)) return { reply: (en ? 'This claim is not ready to record reimbursement.' : 'ใบเบิกนี้ยังไม่พร้อมบันทึกจ่ายคืนค่ะ') };
         const destination = claim.payout?.version ? claim.payout : claim.legacyPayoutDefault;
-        if (!destination || claim.payout?.payoutMethod === 'CASH') return { reply: 'เปิดใบเบิกเพื่อตรวจบัญชีรับเงินและวิธีจ่ายก่อนบันทึกจ่ายคืนค่ะ',
+        if (!destination || claim.payout?.payoutMethod === 'CASH') return { reply: (en ? 'Open the claim on the web to review the payout account and payment method.' : 'เปิดใบเบิกเพื่อตรวจบัญชีรับเงินและวิธีจ่ายก่อนบันทึกจ่ายคืนค่ะ'),
           webPath: `/companies/${ctx.companyId}/reimbursements/${id}` };
         claimPayment = { paidAmount: typeof input.paidAmount === 'string' ? input.paidAmount : new Decimal(claim.outstandingAmount).toFixed(2),
           paidAt: typeof input.paidAt === 'string' ? input.paidAt : todayCivilDate('Asia/Bangkok'), paymentMethod: 'BANK_TRANSFER', currency: claim.currency,
@@ -458,7 +474,7 @@ export class LineExpenseActionService {
 
       let paymentChange: { status: string; nextStatus: string } | undefined;
       if (action === 'RECORD_PAYMENT') {
-        if (['paidAmount', 'paidAt', 'paymentMethod'].some(key => input[key] !== undefined && typeof input[key] !== 'string')) return { reply: 'ขอจำนวนเงินและวันที่จ่ายให้ชัดเจนค่ะ' };
+        if (['paidAmount', 'paidAt', 'paymentMethod'].some(key => input[key] !== undefined && typeof input[key] !== 'string')) return { reply: (en ? 'Please provide the payment amount and date.' : 'ขอจำนวนเงินและวันที่จ่ายให้ชัดเจนค่ะ') };
         const expense = await this.getExpense.execute(ctx, id);
         evidence = await this.recentSlip(ctx, chat, id);
         if (evidence) await this.checkSlip(ctx, chat, evidence);
@@ -470,7 +486,7 @@ export class LineExpenseActionService {
         paymentChange = { status: PAYMENT_LABELS[derivePaymentStatus(expense.netPayableAmount, expense.paidAmount)],
           nextStatus: PAYMENT_LABELS[derivePaymentStatus(expense.netPayableAmount, new Decimal(expense.paidAmount).plus(payment.paidAmount).toString())] };
         if (evidence) {
-          if (!ctx.permissions.includes('attachment.create') && !await this.prisma.client.attachmentLink.findFirst({ where: { companyId: ctx.companyId, targetType: 'expense.record', targetId: id, attachmentId: evidence.attachmentId, purpose: 'expense.payment.evidence' } })) return { reply: 'ต้องมีสิทธิ์แนบหลักฐานก่อนบันทึกจ่ายพร้อมสลิปค่ะ' };
+          if (!ctx.permissions.includes('attachment.create') && !await this.prisma.client.attachmentLink.findFirst({ where: { companyId: ctx.companyId, targetType: 'expense.record', targetId: id, attachmentId: evidence.attachmentId, purpose: 'expense.payment.evidence' } })) return { reply: (en ? 'You need permission to attach evidence before recording payment with this slip.' : 'ต้องมีสิทธิ์แนบหลักฐานก่อนบันทึกจ่ายพร้อมสลิปค่ะ') };
         }
         nextStatus = 'CONFIRMED';
       }
@@ -478,41 +494,41 @@ export class LineExpenseActionService {
       if (action === 'VOUCHER_PAY') { evidence = await this.recentSlip(ctx, chat, id); if (evidence) await this.checkSlip(ctx, chat, evidence); }
       if (record.claim) nextStatus = action === 'REIMBURSEMENT_RECORD_PAYMENT' ? 'PAID' : action === 'REIMBURSEMENT_REJECT' ? 'REJECTED' : action === 'REIMBURSEMENT_CANCEL' ? 'CANCELLED' : action === 'REIMBURSEMENT_SUBMIT' ? 'PENDING_APPROVAL' : 'APPROVED';
       // A fresh, explicit preview cannot claim an already completed action is pending.
-      if (!voucher && action !== 'RECORD_PAYMENT' && record.status === nextStatus) return { reply: 'รายการนี้ดำเนินการแล้วค่ะ' };
+      if (!voucher && action !== 'RECORD_PAYMENT' && record.status === nextStatus) return { reply: (en ? 'This action has already been completed.' : 'รายการนี้ดำเนินการแล้วค่ะ') };
       const owner = (await this.owner(ctx, chat))!;
-      const preview: ExpenseActionPreview = { previewId: randomUUID(), token: '', action, ...(reason ? { reason } : {}),
+      const preview: ExpenseActionPreview = { language, previewId: randomUUID(), token: '', action, ...(reason ? { reason } : {}),
         ...(review && reviewSource ? { evidenceReview: true, details: [
-          `VAT: ${reviewSource.vatAmount} ${reviewSource.currency === 'THB' ? 'บาท' : reviewSource.currency} · ${EXPENSE_VAT_MODE_LABELS[reviewSource.vatMode]}`,
-          `เอกสาร: ${SOURCE_DOCUMENT_TYPE_LABELS[reviewSource.sourceDocumentType]} · ${TAX_EVIDENCE_STATUS_LABELS[reviewSource.taxEvidenceStatus]}`,
-          `ไฟล์แนบ ${new Set(reviewSource.attachments.filter(isExpenseEvidenceFile).map(file => file.id)).size} ไฟล์${reviewSource.attachments.some(file => isExpenseEvidenceFile(file) && file.purpose === 'expense.payment.evidence') ? ' รวมสลิปจ่ายเงิน' : ''}`,
-          ...(review.assessment.reason ? [`เหตุผลใช้หลักฐาน: ${scrubRecordText(review.assessment.reason, 200)}`] : []),
-          'กดเพื่อตรวจรับรองข้อมูลและหลักฐานที่แสดง แล้วจึงยืนยันรายการค่ะ',
+          `VAT: ${reviewSource.vatAmount} ${reviewSource.currency === 'THB' ? en ? 'THB' : 'บาท' : reviewSource.currency} · ${lineUiLabel(EXPENSE_VAT_MODE_LABELS[reviewSource.vatMode], language)}`,
+          `${en ? 'Document' : 'เอกสาร'}: ${lineUiLabel(SOURCE_DOCUMENT_TYPE_LABELS[reviewSource.sourceDocumentType], language)} · ${lineUiLabel(TAX_EVIDENCE_STATUS_LABELS[reviewSource.taxEvidenceStatus], language)}`,
+          `${en ? 'Attachments' : 'ไฟล์แนบ'} ${new Set(reviewSource.attachments.filter(isExpenseEvidenceFile).map(file => file.id)).size} ${en ? 'files' : 'ไฟล์'}${reviewSource.attachments.some(file => isExpenseEvidenceFile(file) && file.purpose === 'expense.payment.evidence') ? en ? ' including the payment slip' : ' รวมสลิปจ่ายเงิน' : ''}`,
+          ...(review.assessment.reason ? [`${en ? 'Evidence reason' : 'เหตุผลใช้หลักฐาน'}: ${scrubRecordText(review.assessment.reason, 200)}`] : []),
+          en ? 'Confirm your review of these details and evidence, then confirm the expense.' : 'กดเพื่อตรวจรับรองข้อมูลและหลักฐานที่แสดง แล้วจึงยืนยันรายการค่ะ',
         ] } : {}),
         ...(payment ? { payment } : {}),
-        ...(record.claim?.payout ? { details: [record.claim.payout.payoutMethod === 'CASH' ? 'รับเงินสด' : `บัญชีรับเงิน: ${scrubRecordText(record.claim.payout.bankName ?? '', 60)} ${scrubRecordText(record.claim.payout.accountName ?? '', 80)} ลงท้าย ${(/^\d{4}$/u.test(record.claim.payout.accountLast4 ?? '') ? record.claim.payout.accountLast4 : 'ไม่ระบุ')}` , ...(action === 'REIMBURSEMENT_APPROVE' && record.claim.payout.payoutMethod === 'BANK_TRANSFER' ? ['กดอนุมัติเพื่อรับรองว่าตรวจบัญชีนี้แล้วค่ะ', ...(record.claim.payout.holderType === 'THIRD_PARTY' ? ['ยอมรับการโอนเข้าบัญชีบุคคลอื่นตามที่ระบุค่ะ'] : [])] : [])] } : {}),
-        ...(payment ? { details: [`จ่าย ${payment.paidAmount} ${record.currency === 'THB' ? 'บาท' : record.currency} วันที่ ${formatThaiDate(payment.paidAt ?? '')}`, ...(payment.paymentMethod ? [`วิธีจ่าย: ${payment.paymentMethod === 'CASH' ? 'เงินสด' : payment.paymentMethod === 'BANK_TRANSFER' ? 'โอนเงิน' : payment.paymentMethod === 'CARD' ? 'บัตร' : payment.paymentMethod === 'CHEQUE' ? 'เช็ค' : 'วิธีอื่น'}`] : []), ...(evidence ? ['แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายค่ะ'] : [])] } : {}),
-        ...(claimPayment ? { details: [`จ่ายคืน ${claimPayment.paidAmount} ${record.currency === 'THB' ? 'บาท' : record.currency} วันที่ ${formatThaiDate(claimPayment.paidAt)}`,
-          `บัญชีรับเงิน: ${scrubRecordText(record.claim?.payout?.bankName ?? record.claim?.legacyPayoutDefault?.bankName ?? '', 60)} ${scrubRecordText(record.claim?.payout?.accountName ?? record.claim?.legacyPayoutDefault?.accountName ?? '', 80)} ลงท้าย ${scrubRecordText(record.claim?.payout?.accountLast4 ?? record.claim?.legacyPayoutDefault?.accountLast4 ?? '', 4)}`,
-          'กดยืนยันเพื่อรับรองว่าโอนเข้าบัญชีนี้และชื่อผู้รับตรงกับใบเบิกค่ะ', 'แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายคืนค่ะ'] } : {}),
-        ...(voucher ? { details: [...voucher.details, ...(evidence ? ['แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายค่ะ'] : [])] } : {}),
+        ...(record.claim?.payout ? { details: [record.claim.payout.payoutMethod === 'CASH' ? (en ? 'Cash payout' : 'รับเงินสด') : `${en ? 'Payout account' : 'บัญชีรับเงิน'}: ${scrubRecordText(record.claim.payout.bankName ?? '', 60)} ${scrubRecordText(record.claim.payout.accountName ?? '', 80)} ${en ? 'ending' : 'ลงท้าย'} ${(/^\d{4}$/u.test(record.claim.payout.accountLast4 ?? '') ? record.claim.payout.accountLast4 : 'ไม่ระบุ')}` , ...(action === 'REIMBURSEMENT_APPROVE' && record.claim.payout.payoutMethod === 'BANK_TRANSFER' ? [(en ? 'Approve to attest that you reviewed this account.' : 'กดอนุมัติเพื่อรับรองว่าตรวจบัญชีนี้แล้วค่ะ'), ...(record.claim.payout.holderType === 'THIRD_PARTY' ? [(en ? 'Accept the specified transfer to a third-party account.' : 'ยอมรับการโอนเข้าบัญชีบุคคลอื่นตามที่ระบุค่ะ')] : [])] : [])] } : {}),
+        ...(payment ? { details: [`${en ? 'Payment' : 'จ่าย'} ${payment.paidAmount} ${record.currency === 'THB' ? en ? 'THB' : 'บาท' : record.currency} ${en ? 'on' : 'วันที่'} ${lineDisplayDate(payment.paidAt ?? '', language)}`, ...(payment.paymentMethod ? [`${en ? 'Payment method' : 'วิธีจ่าย'}: ${payment.paymentMethod === 'CASH' ? (en ? 'Cash' : 'เงินสด') : payment.paymentMethod === 'BANK_TRANSFER' ? (en ? 'Bank transfer' : 'โอนเงิน') : payment.paymentMethod === 'CARD' ? (en ? 'Card' : 'บัตร') : payment.paymentMethod === 'CHEQUE' ? (en ? 'Cheque' : 'เช็ค') : (en ? 'Other' : 'วิธีอื่น')}`] : []), ...(evidence ? [(en ? 'Attach the slip from this chat as payment evidence.' : 'แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายค่ะ')] : [])] } : {}),
+        ...(claimPayment ? { details: [`${en ? 'Reimbursement' : 'จ่ายคืน'} ${claimPayment.paidAmount} ${record.currency === 'THB' ? en ? 'THB' : 'บาท' : record.currency} ${en ? 'on' : 'วันที่'} ${lineDisplayDate(claimPayment.paidAt, language)}`,
+          `${en ? 'Payout account' : 'บัญชีรับเงิน'}: ${scrubRecordText(record.claim?.payout?.bankName ?? record.claim?.legacyPayoutDefault?.bankName ?? '', 60)} ${scrubRecordText(record.claim?.payout?.accountName ?? record.claim?.legacyPayoutDefault?.accountName ?? '', 80)} ${en ? 'ending' : 'ลงท้าย'} ${scrubRecordText(record.claim?.payout?.accountLast4 ?? record.claim?.legacyPayoutDefault?.accountLast4 ?? '', 4)}`,
+          (en ? 'Confirm that the transfer went to this account and the recipient matches the claim.' : 'กดยืนยันเพื่อรับรองว่าโอนเข้าบัญชีนี้และชื่อผู้รับตรงกับใบเบิกค่ะ'), (en ? 'Attach the slip from this chat as reimbursement evidence.' : 'แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายคืนค่ะ')] } : {}),
+        ...(voucher ? { details: [...voucher.details, ...(evidence ? [(en ? 'Attach the slip from this chat as payment evidence.' : 'แนบสลิปที่ส่งในแชตนี้เป็นหลักฐานจ่ายค่ะ')] : [])] } : {}),
         expiresAt: new Date(Date.now() + LINE_DRAFT_PREVIEW_TTL_SECONDS * 1000).toISOString(),
-        summary: `กรุณาตรวจรายละเอียดแล้วกด${EXPENSE_ACTION_LABELS[action]}ค่ะ`,
+        summary: en ? `Please review the details, then select ${lineUiLabel(EXPENSE_ACTION_LABELS[action], language)}.` : `กรุณาตรวจรายละเอียดแล้วกด${EXPENSE_ACTION_LABELS[action]}ค่ะ`,
         record: { vendorName: scrubRecordText(record.vendorNameSnapshot, 80) || 'ไม่ระบุผู้ขาย', amount: record.grandTotalAmount,
-          currency: record.currency, date: record.expenseDate.toISOString().slice(0, 10), status: this.status(action, record.status),
-          nextStatus: record.claim ? record.claim.payoutCorrection && action === 'REIMBURSEMENT_REJECT' ? 'รอผู้เบิกแก้บัญชี' : `${EXPENSE_ACTION_LABELS[action]}แล้ว` : nextStatus === 'DELETED' ? 'ลบแล้ว' : this.status(action, nextStatus) } };
+          currency: record.currency, date: record.expenseDate.toISOString().slice(0, 10), status: lineUiLabel(this.status(action, record.status), language),
+          nextStatus: record.claim ? record.claim.payoutCorrection && action === 'REIMBURSEMENT_REJECT' ? (en ? 'Awaiting payout correction' : 'รอผู้เบิกแก้บัญชี') : en ? lineUiLabel(EXPENSE_ACTION_LABELS[action], language) : `${EXPENSE_ACTION_LABELS[action]}แล้ว` : nextStatus === 'DELETED' ? (en ? 'Deleted' : 'ลบแล้ว') : lineUiLabel(this.status(action, nextStatus), language) } };
       if (paymentChange) Object.assign(preview.record, paymentChange);
-      if (paymentIntent) preview.details = [...(preview.details ?? []), `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
+      if (paymentIntent) preview.details = [...(preview.details ?? []), en ? `After confirming, record payment for ${lineDisplayDate(String(paymentIntent.paidAt), language)}.` : `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
       const entry: StoredAction = { previewId: preview.previewId, companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
         branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, awaitingField: awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
         ...(record.claim ? { claim: { ...(claimPayment ? { payment: claimPayment } : {}), payoutSubmitToken: record.claim.payout?.submitToken, hash: record.claim.approvalSnapshotHash, payoutVersion: record.claim.payout?.version, thirdParty: record.claim.payout?.holderType === 'THIRD_PARTY' } } : {}) };
       if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'ประเภทเงินได้' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
       preview.token = `${entry.previewId}.${this.sign(entry)}`;
-      if (!await this.store.save(entry)) return { reply: 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง' };
+      if (!await this.store.save(entry)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
       if (awaitingReason || entry.awaitingField) return { reply: this.question(entry) };
       return { preview, reply: preview.summary };
     } catch (error) {
-      const reply = this.refusal(error, action, approvers);
+      const reply = this.refusal(error, action, approvers, language);
       if (action === 'CONFIRM' || action === 'MARK_READY') {
         const fields = missingActionFields(error);
         if (fields.length && (ctx.permissions.includes('expense.update') || ctx.permissions.includes('expense.review'))) {
@@ -528,15 +544,15 @@ export class LineExpenseActionService {
             const categoryMissing = fields.some(field => field === 'category' || field === 'expenseCategoryId');
             const categories = whtMissing ? (await new ListWhtIncomeCategoriesUseCase(this.prisma).execute(ctx)).map(row => ({ id: row.code, name: row.nameTh, kind: 'wht' as const })) : categoryMissing ? (await this.repo.listCategories(ctx.companyId)).filter(category => category.status === 'ACTIVE')
               .sort((a, b) => Number(suggested.has(b.id)) - Number(suggested.has(a.id))).map(({ id, name }) => ({ id, name })) : [];
-            if (whtMissing && !categories.length) return { reply: 'ยังไม่มีประเภทเงินได้ที่เปิดใช้งานค่ะ ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐานก่อน', webPath: '/system/wht-income-categories' };
-            if (categoryMissing && !categories.length) return { reply: `${reply.replace(/ค่ะ$/u, '')} ให้ผู้ดูแลเพิ่มหมวดที่ใช้งานก่อนค่ะ` };
-            if (await this.repairs.save({ previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
+            if (whtMissing && !categories.length) return { reply: (en ? 'Ask the system administrator to enable income categories first.' : 'ยังไม่มีประเภทเงินได้ที่เปิดใช้งานค่ะ ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐานก่อน'), webPath: '/system/wht-income-categories' };
+            if (categoryMissing && !categories.length) return { reply: language === 'en' ? 'Ask the shop administrator to add an active expense category first.' : `${reply.replace(/ค่ะ$/u, '')} ให้ผู้ดูแลเพิ่มหมวดที่ใช้งานก่อนค่ะ` };
+            if (await this.repairs.save({ language, previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
               chatKeyHash: `expense-action-repair:${chat}`, conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,
               expenseId: id, revision: record.updatedAt.toISOString(), requestId: ctx.requestId, action, reply, categories, offset: 0,
               priorCategory: preparedCategory?.category, evidenceAssessment: input.evidenceAssessment as ExpenseEvidenceAssessment | undefined,
               paymentIntent: action === 'CONFIRM' && input.recordPaymentAfterConfirm ? { paidAt: input.paidAt, paymentMethod: input.paymentMethod, paidAmount: input.paidAmount } : undefined,
               categoryOnly: fields.every(field => ['category', 'expenseCategoryId', 'review', 'whtCategoryCode'].includes(field)) })) {
-              return { reply: whtMissing ? 'เลือกประเภทเงินได้สำหรับหัก ณ ที่จ่ายนี้ค่ะ' : categoryMissing ? `${reply.replace(/ค่ะ$/u, '')} เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ` : reply };
+              return { reply: whtMissing ? (en ? 'Please choose the withholding income category.' : 'เลือกประเภทเงินได้สำหรับหัก ณ ที่จ่ายนี้ค่ะ') : categoryMissing ? `${reply.replace(/ค่ะ$/u, '')} เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ` : reply };
             }
           }
         }
@@ -552,21 +568,25 @@ export class LineExpenseActionService {
     if (!owner || owner.id !== repair.conversationId || owner.lifecycleEpoch !== repair.ownerEpoch) return null;
     return repair;
   }
-  async repairChoices(ctx: RequestContext, chat: string, requestId?: string) {
+  async repairChoices(ctx: RequestContext, chat: string, requestId?: string, language: LineReplyLanguage = 'th') {
     const pending = await this.store.load(ctx.companyId, this.key(chat));
     if (pending?.awaitingField === 'payeeName' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
-      return this.vouchers!.payeeChoices(ctx);
+      return this.vouchers!.payeeChoices(ctx, language);
     if (pending?.awaitingField === 'claimSlip' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
-      return [{ label: 'ส่งสลิปโอน', text: 'ส่งสลิปโอนสำหรับใบเบิกนี้' }];
+      return [{ label: (language === 'en' ? 'Send transfer slip' : 'ส่งสลิปโอน'), text: (language === 'en' ? 'Send transfer slip for this claim' : 'ส่งสลิปโอนสำหรับใบเบิกนี้') }];
     const evidence = await this.evidenceChoice(ctx, chat, requestId);
     if (evidence) {
-      const choices = [{ label: 'ส่งรูปใบเสร็จ', text: 'ส่งรูปใบเสร็จ' }, { label: 'รอใบเสร็จ', text: 'รอใบเสร็จ' }];
-      if (evidence.entry.stage === 'waiting') return choices.slice(0, 1);
+      const choices: Array<{ label: string; text: string; uri?: string; cameraRoll?: boolean }> = [{ label: (language === 'en' ? 'Send receipt photo' : 'ส่งรูปใบเสร็จ'), text: (language === 'en' ? 'Send receipt photo' : 'ส่งรูปใบเสร็จ') }, { label: (language === 'en' ? 'Wait for receipt' : 'รอใบเสร็จ'), text: (language === 'en' ? 'Wait for receipt' : 'รอใบเสร็จ') }];
+      const reviewUri = this.config.webBaseUrl ? `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${ctx.companyId}/expenses/${evidence.expense.id}` : '';
+      const next = new Decimal(evidence.expense.whtAmount).gt(0) && ctx.permissions.includes('expense.confirm') && reviewUri.startsWith('https://')
+        ? [{ label: language === 'en' ? 'Review and confirm' : 'ตรวจเพื่อยืนยัน', text: language === 'en' ? 'Confirm this expense' : 'ยืนยันรายการนี้', uri: reviewUri }] : [];
+      if (evidence.entry.stage === 'photo') return [...next, { ...choices[0]!, cameraRoll: true }];
+      if (evidence.entry.stage === 'waiting') return [...next, ...choices.slice(0, 1)];
       const source = evidence.expense;
       if (!expenseEvidenceInputError({ route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' }, source, true))
-        choices.push({ label: 'ใบรับรองแทนใบเสร็จ', text: 'จัดทำใบรับรองแทนใบเสร็จ' });
-      if (!expenseEvidenceInputError({ route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [...new Set(source.attachments.filter(isExpenseEvidenceFile).map(file => file.id))], reason: 'รอเหตุผลจากผู้ใช้' }, source, true)) choices.push({ label: 'ใช้หลักฐานอื่นที่มี', text: 'ใช้หลักฐานอื่นที่มี' });
-      return choices;
+        choices.push({ label: (language === 'en' ? 'Substitute receipt' : 'ใบรับรองแทนใบเสร็จ'), text: (language === 'en' ? 'Prepare substitute receipt' : 'จัดทำใบรับรองแทนใบเสร็จ') });
+      if (!expenseEvidenceInputError({ route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [...new Set(source.attachments.filter(isExpenseEvidenceFile).map(file => file.id))], reason: 'รอเหตุผลจากผู้ใช้' }, source, true)) choices.push({ label: (language === 'en' ? 'Use other evidence' : 'ใช้หลักฐานอื่นที่มี'), text: (language === 'en' ? 'Use other evidence' : 'ใช้หลักฐานอื่นที่มี') });
+      return [...next, ...choices];
     }
     const repair = await this.repair(ctx, chat, requestId);
     if (!repair || repair.editPreviewId || !repair.categories.length) return null;
@@ -577,7 +597,7 @@ export class LineExpenseActionService {
       : await this.repo.listCategories(ctx.companyId);
     return repair.categories.filter(category => active.some(current => current.status === 'ACTIVE' && current.id === category.id && current.name === category.name))
       .slice(repair.offset, repair.offset + 4).map(category => ({ label: scrubRecordText(category.name, 20), text: category.name }))
-      .concat([{ label: 'อื่นๆ', text: 'เลือกหมวดอื่น' }]);
+      .concat([{ label: (language === 'en' ? 'More categories' : 'อื่นๆ'), text: (language === 'en' ? 'Choose another category' : 'เลือกหมวดอื่น') }]);
   }
   private async evidenceChoice(ctx: RequestContext, chat: string, requestId?: string) {
     const entry = await this.evidenceChoices.load(ctx.companyId, `expense-action-evidence:${chat}`);
@@ -589,16 +609,17 @@ export class LineExpenseActionService {
     if (!expense || expense.updatedAt.toISOString() !== entry.revision || expenseTaxSourceChecksum(expense) !== entry.digest) return null;
     return { entry, expense };
   }
-  async answerEvidence(ctx: RequestContext, chat: string, text: string) {
+  async answerEvidence(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
+    text = ({ 'Send receipt photo': 'ส่งรูปใบเสร็จ', 'Wait for receipt': 'รอใบเสร็จ', 'Prepare substitute receipt': 'จัดทำใบรับรองแทนใบเสร็จ', 'Use other evidence': 'ใช้หลักฐานอื่นที่มี', cancel: 'ยกเลิก' } as Record<string, string>)[text.trim()] ?? text;
     const evidence = await this.evidenceChoice(ctx, chat);
     if (!evidence) return null;
     const { entry, expense } = evidence;
     if (['ไม่ทำ', 'ยกเลิก'].includes(text.trim())) {
       await this.evidenceChoices.discard(ctx.companyId, entry.chatKeyHash);
-      return { reply: 'เก็บร่างไว้ให้ค่ะ' };
+      return { reply: (language === 'en' ? 'The existing draft is retained.' : 'เก็บร่างไว้ให้ค่ะ') };
     }
     if (text.trim() === 'รอใบเสร็จ') {
-      if (!this.updateDraft) return { reply: EXPENSE_ACTION_CHANGED };
+      if (!this.updateDraft) return { reply: language === 'en' ? 'This expense changed; review its current state before continuing.' : EXPENSE_ACTION_CHANGED };
       try {
         const assessment = expenseEvidenceAssessment(expense) ?? { route: 'ALTERNATIVE_EVIDENCE' as const,
           receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: [], reason: '' };
@@ -606,57 +627,59 @@ export class LineExpenseActionService {
         const saved = await this.getExpense.execute(ctx, expense.id);
         entry.revision = saved.updatedAt.toISOString(); entry.digest = expenseTaxSourceChecksum(saved);
         entry.stage = 'waiting'; await this.evidenceChoices.save(entry);
-        return { reply: 'เก็บร่างไว้รอใบเสร็จแล้วค่ะ' };
-      } catch (error) { return { reply: this.refusal(error, 'CONFIRM') }; }
+        return { reply: (language === 'en' ? 'The draft is retained while waiting for the receipt.' : 'เก็บร่างไว้รอใบเสร็จแล้วค่ะ') };
+      } catch (error) { return { reply: this.refusal(error, 'CONFIRM', undefined, language) }; }
     }
     if (text.trim() === 'ส่งรูปใบเสร็จ') {
       entry.stage = 'photo'; await this.evidenceChoices.save(entry);
-      return { reply: 'ส่งรูปใบเสร็จมาได้เลยค่ะ น้องจะแนบกับร่างนี้' };
+      return { reply: new Decimal(expense.whtAmount).gt(0)
+        ? (language === 'en' ? 'Attach the receipt or review and confirm this expense before preparing its payment voucher.' : 'แนบรูปใบเสร็จหรือกดตรวจเพื่อยืนยันรายจ่ายก่อนทำใบเตรียมจ่ายค่ะ')
+        : (language === 'en' ? 'Please send the receipt photo to attach it to this draft.' : 'ส่งรูปใบเสร็จมาได้เลยค่ะ น้องจะแนบกับร่างนี้') };
     }
-    const choices = await this.repairChoices(ctx, chat);
-    if (text.trim() === 'จัดทำใบรับรองแทนใบเสร็จ' && choices?.some(choice => choice.text === text.trim())) {
+    if (text.trim() === 'จัดทำใบรับรองแทนใบเสร็จ'
+      && !expenseEvidenceInputError({ route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' }, expense, true)) {
       await this.evidenceChoices.discard(ctx.companyId, entry.chatKeyHash);
-      return { substituteExpenseId: expense.id, reply: 'เปิดหน้ารายการเพื่อจัดทำใบรับรองแทนใบเสร็จค่ะ' };
+      return { substituteExpenseId: expense.id, reply: (language === 'en' ? 'Open the expense to prepare its substitute receipt.' : 'เปิดหน้ารายการเพื่อจัดทำใบรับรองแทนใบเสร็จค่ะ') };
     }
     if (text.trim() === 'ใช้หลักฐานอื่นที่มี' && expense.attachments.some(isExpenseEvidenceFile)) {
       entry.stage = 'reason'; await this.evidenceChoices.save(entry);
-      return { reply: 'ใช้หลักฐานนี้แทนใบเสร็จเพราะอะไรคะ' };
+      return { reply: (language === 'en' ? 'Why should this evidence be used instead of a receipt?' : 'ใช้หลักฐานนี้แทนใบเสร็จเพราะอะไรคะ') };
     }
     if (entry.stage !== 'reason') return null;
     const assessment: ExpenseEvidenceAssessment = { route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE',
       attachmentIds: [...new Set(expense.attachments.filter(isExpenseEvidenceFile).map(file => file.id))], reason: text.trim() };
     const error = expenseEvidenceInputError(assessment, expense, true);
-    if (error) return { reply: `${error}ค่ะ` };
-    const result = await this.preview(ctx, chat, { ...entry.paymentIntent, recordPaymentAfterConfirm: !!entry.paymentIntent, action: 'CONFIRM', expenseId: expense.id, evidenceAssessment: assessment }, true);
+    if (error) return { reply: language === 'en' ? 'This evidence needs review on the web before it can replace the receipt.' : `${error}ค่ะ` };
+    const result = await this.preview(ctx, chat, { ...entry.paymentIntent, recordPaymentAfterConfirm: !!entry.paymentIntent, action: 'CONFIRM', expenseId: expense.id, evidenceAssessment: assessment }, true, undefined, language);
     if (result.preview) await this.evidenceChoices.discard(ctx.companyId, entry.chatKeyHash);
     return result;
   }
-  async evidencePhotoTarget(ctx: RequestContext, chat: string) {
+  async evidencePhotoTarget(ctx: RequestContext, chat: string, language: LineReplyLanguage = 'th') {
     const evidence = await this.evidenceChoice(ctx, chat);
     if (evidence?.entry.stage === 'photo') return { expenseId: evidence.expense.id, revision: evidence.entry.revision,
       primaryAttachmentId: evidence.expense.primaryAttachmentId, branchId: evidence.expense.branchId };
     const pending = await this.evidenceChoices.load(ctx.companyId, `expense-action-evidence:${chat}`);
     return pending?.stage === 'photo' && pending.userId === ctx.userId && pending.membershipId === ctx.membershipId
-      ? { reply: EXPENSE_ACTION_CHANGED } : null;
+      ? { reply: language === 'en' ? 'This expense changed; review its current state before continuing.' : EXPENSE_ACTION_CHANGED } : null;
   }
-  async afterEvidencePhoto(ctx: RequestContext, chat: string, expenseId: string) {
+  async afterEvidencePhoto(ctx: RequestContext, chat: string, expenseId: string, language: LineReplyLanguage = 'th') {
     const expense = await this.getExpense.execute(ctx, expenseId);
     if (!EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === expense.sourceDocumentType)) {
       await this.updateDraft!.execute(ctx, expenseId, { expectedUpdatedAt: expense.updatedAt.toISOString(), sourceDocumentType: 'RECEIPT' }, { requireExpectedUpdatedAt: true });
     }
     const pending = await this.evidenceChoices.load(ctx.companyId, `expense-action-evidence:${chat}`);
     await this.evidenceChoices.discard(ctx.companyId, `expense-action-evidence:${chat}`);
-    return this.preview(ctx, chat, { ...pending?.paymentIntent, recordPaymentAfterConfirm: !!pending?.paymentIntent, expenseId, action: 'CONFIRM' }, true);
+    return this.preview(ctx, chat, { ...pending?.paymentIntent, recordPaymentAfterConfirm: !!pending?.paymentIntent, expenseId, action: 'CONFIRM' }, true, undefined, language);
   }
-  async answerCategory(ctx: RequestContext, chat: string, text: string) {
+  async answerCategory(ctx: RequestContext, chat: string, text: string, language: LineReplyLanguage = 'th') {
     const repair = await this.repair(ctx, chat);
     if (!repair || repair.editPreviewId) return null;
-    const choices = await this.repairChoices(ctx, chat);
+    const choices = await this.repairChoices(ctx, chat, undefined, language);
     if (!choices) return null;
-    if (text.trim() === 'เลือกหมวดอื่น') {
+    if (text.trim() === 'เลือกหมวดอื่น' || text.trim() === 'Choose another category') {
       repair.offset = repair.offset + 4 < repair.categories.length ? repair.offset + 4 : 0;
       await this.repairs.save(repair);
-      return { reply: 'เลือกหมวดหรือพิมพ์ชื่อหมวดที่ต้องการได้เลยค่ะ' };
+      return { reply: (language === 'en' ? 'Choose an expense category or send its name.' : 'เลือกหมวดหรือพิมพ์ชื่อหมวดที่ต้องการได้เลยค่ะ') };
     }
     const category = repair.categories.find(category => text.trim() === category.name || text.trim() === `หมวด ${category.name}`);
     if (!category) return null;
@@ -674,7 +697,7 @@ export class LineExpenseActionService {
         });
       } catch (error) {
         if (error instanceof CategoryPreviewRollback) {
-          const result = await this.preview(ctx, chat, { ...repair.paymentIntent, recordPaymentAfterConfirm: !!repair.paymentIntent, ...(repair.evidenceAssessment ? { evidenceAssessment: repair.evidenceAssessment } : {}), expenseId: expense.id, action: 'CONFIRM' }, true, { category: selectedCategory, source: error.source });
+          const result = await this.preview(ctx, chat, { ...repair.paymentIntent, recordPaymentAfterConfirm: !!repair.paymentIntent, ...(repair.evidenceAssessment ? { evidenceAssessment: repair.evidenceAssessment } : {}), expenseId: expense.id, action: 'CONFIRM' }, true, { category: selectedCategory, source: error.source }, language);
           if (result.preview) { await this.repairs.discard(ctx.companyId, repair.chatKeyHash); return result; }
           // A dependent income-category picker replaces this repair; missing evidence still needs the category edit first.
           if (selectedCategory.kind === 'wht' || selectedCategory.other || (await this.repair(ctx, chat))?.previewId !== repair.previewId) return result;
@@ -712,6 +735,7 @@ export class LineExpenseActionService {
     if (team) return team;
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!entry || entry.awaitingReason || entry.awaitingField || requestId && entry.requestId !== requestId || !await this.bound(ctx, chat, entry)) return null;
+    const language = entry.preview.language ?? 'th';
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     return record?.updatedAt.toISOString() === entry.revision && record.digest === entry.digest ? entry.preview : null;
   }
@@ -728,63 +752,64 @@ export class LineExpenseActionService {
     const entry = await this.store.loadApplied(ctx.companyId, this.key(chat));
     if (!entry?.applied || !await this.bound(ctx, chat, entry, token) || !await this.permitted(ctx, entry)) return null;
     if (entry.applied.revision) {
-      const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
+      const language = entry.preview.language ?? 'th';
+    const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
       if (!record || record.updatedAt.toISOString() !== entry.applied.revision || entry.applied.digest && record.digest !== entry.applied.digest) return null;
     }
     return entry.applied.preview;
   }
-  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl): Promise<ExpenseActionResult> {
-    if (control.token.startsWith('team_')) return this.teams?.apply(ctx, chat, control) ?? { status: 'blocked', reply: EXPIRED };
+  async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<ExpenseActionResult> {
+    if (control.token.startsWith('team_')) return this.teams?.apply(ctx, chat, control) ?? { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     if (control.action === 'expense_action_approve' || control.action === 'expense_action_reject' || control.action === 'expense_action_submit') {
-      if (!verifyReimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId, control.token, control.action)) return { status: 'blocked', reply: EXPIRED };
-      const result = await this.preview(ctx, chat, { reimbursementId: control.token.split('.')[0], action: control.action === 'expense_action_submit' ? 'REIMBURSEMENT_SUBMIT' : control.action === 'expense_action_approve' ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT' }, true);
+      if (!verifyReimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId, control.token, control.action)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+      const result = await this.preview(ctx, chat, { reimbursementId: control.token.split('.')[0], action: control.action === 'expense_action_submit' ? 'REIMBURSEMENT_SUBMIT' : control.action === 'expense_action_approve' ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT' }, true, undefined, language);
       return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', reply: result.reply };
     }
     const id = control.token.split('.')[0]!;
     const applied = await this.store.loadApplied(ctx.companyId, this.key(chat));
     if (applied?.previewId === id && applied.applied && await this.bound(ctx, chat, applied, control.token)) {
-      if (applied.voucher) { try { await this.vouchers!.authorize(ctx, applied.voucher.action); } catch (error) { return { status: 'blocked', reply: this.refusal(error, applied.preview.action) }; } }
+      if (applied.voucher) { try { await this.vouchers!.authorize(ctx, applied.voucher.action); } catch (error) { return { status: 'blocked', reply: this.refusal(error, applied.preview.action, undefined, language) }; } }
       const permission = await this.permitted(ctx, applied);
-      if (!permission) return { status: 'blocked', reply: PERMISSION[applied.preview.action] };
+      if (!permission) return { status: 'blocked', reply: language === 'en' ? 'Ask the owner or an authorized user to perform this action.' : PERMISSION[applied.preview.action] };
       if (applied.applied.revision) {
         const current = await this.read(ctx, applied.expenseId, applied.preview.action, applied.voucher).catch(() => null);
-        if (!current || current.updatedAt.toISOString() !== applied.applied.revision || applied.applied.digest && current.digest !== applied.applied.digest) return { status: 'blocked', reply: EXPENSE_ACTION_CHANGED };
+        if (!current || current.updatedAt.toISOString() !== applied.applied.revision || applied.applied.digest && current.digest !== applied.applied.digest) return { status: 'blocked', reply: language === 'en' ? 'The record changed; please request a new card.' : EXPENSE_ACTION_CHANGED };
       }
       if (control.action === 'expense_action_next') {
         const action = applied.applied.preview.offerNext;
-        if (!action) return { status: 'blocked', reply: EXPIRED };
+        if (!action) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
         const next = await this.preview(ctx, chat, { action,
           ...(action === 'VOUCHER_CREATE' ? { expenseId: applied.expenseId } : { voucherId: applied.applied.nextVoucherId }),
-          ...applied.paymentIntent }, true);
+          ...applied.paymentIntent }, true, undefined, language);
         return next.preview ? { status: 'prepared', ...next, preview: next.preview } : { status: 'blocked', reply: next.reply };
       }
       if (control.action === 'expense_action_payment') {
-        if (!applied.applied.preview.offerPayment) return { status: 'blocked', reply: EXPIRED };
-        const next = await this.preview(ctx, chat, { ...applied.paymentIntent, action: 'RECORD_PAYMENT', expenseId: applied.expenseId }, true);
+        if (!applied.applied.preview.offerPayment) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+        const next = await this.preview(ctx, chat, { ...applied.paymentIntent, action: 'RECORD_PAYMENT', expenseId: applied.expenseId }, true, undefined, language);
         return next.preview ? { status: 'prepared', ...next, preview: next.preview } : { status: 'blocked', reply: next.reply };
       }
       if (control.action === 'expense_action_wht') {
-        if (!applied.applied.preview.offerWht || !applied.voucher) return { status: 'blocked', reply: EXPIRED };
-        const next = await this.preview(ctx, chat, { action: 'WHT_CERTIFICATE_ISSUE', voucherId: applied.voucher.id }, true);
+        if (!applied.applied.preview.offerWht || !applied.voucher) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+        const next = await this.preview(ctx, chat, { action: 'WHT_CERTIFICATE_ISSUE', voucherId: applied.voucher.id }, true, undefined, language);
         return next.preview ? { status: 'prepared', ...next, preview: next.preview } : { status: 'blocked', reply: next.reply };
       }
-      return { status: 'replayed', reply: 'รายการนี้ดำเนินการแล้วค่ะ', preview: applied.applied.preview, expenseIds: applied.voucher?.expenseIds ?? [applied.expenseId] };
+      return { status: 'replayed', reply: language === 'en' ? 'This action has already been completed.' : 'รายการนี้ดำเนินการแล้วค่ะ', preview: applied.applied.preview, expenseIds: applied.voucher?.expenseIds ?? [applied.expenseId] };
     }
-    if (control.action === 'expense_action_wht' || control.action === 'expense_action_payment' || control.action === 'expense_action_next') return { status: 'blocked', reply: EXPIRED };
+    if (control.action === 'expense_action_wht' || control.action === 'expense_action_payment' || control.action === 'expense_action_next') return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), id);
-    if (!claim) return { status: 'blocked', reply: EXPIRED };
+    if (!claim) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     const entry = claim.entry;
     let reviewSaved = false;
     let step = entry.preview.action;
     try {
-      if (!await this.bound(ctx, chat, entry, control.token)) return { status: 'blocked', reply: EXPIRED };
+      if (!await this.bound(ctx, chat, entry, control.token)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
       if (control.action === 'expense_action_cancel') {
         await this.store.discard(ctx.companyId, this.key(chat));
-        return { status: 'cancelled', reply: 'ไม่ทำรายการนี้ค่ะ' };
+        return { status: 'cancelled', reply: language === 'en' ? 'Action cancelled; no change was made.' : 'ไม่ทำรายการนี้ค่ะ' };
       }
-      if (entry.awaitingReason || entry.awaitingField) return { status: 'blocked', reply: this.question(entry) };
+      if (entry.awaitingReason || entry.awaitingField) return { status: 'blocked', reply: this.question(entry, language) };
       const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher);
-      if (record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return { status: 'blocked', reply: EXPENSE_ACTION_CHANGED };
+      if (record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return { status: 'blocked', reply: language === 'en' ? 'The record changed; please request a new card.' : EXPENSE_ACTION_CHANGED };
       if (entry.evidence) await this.checkSlip(ctx, chat, entry.evidence);
       const revision = new Date(entry.revision);
       let result;
@@ -794,7 +819,7 @@ export class LineExpenseActionService {
         case 'MARK_READY': result = await this.ready.execute(ctx, entry.expenseId, undefined, revision); break;
         case 'CONFIRM': {
           if (!await this.permitted(ctx, entry)) return { status: 'blocked', reply: PERMISSION.CONFIRM };
-          if (entry.review && !ctx.permissions.includes('expense.review')) return { status: 'blocked', reply: 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์ตรวจรายจ่ายตรวจหลักฐานก่อนยืนยันค่ะ' };
+          if (entry.review && !ctx.permissions.includes('expense.review')) return { status: 'blocked', reply: language === 'en' ? 'Ask an authorized expense reviewer to review the evidence before confirming.' : 'ให้เจ้าของกิจการหรือผู้มีสิทธิ์ตรวจรายจ่ายตรวจหลักฐานก่อนยืนยันค่ะ' };
           let confirmRevision = revision;
           if (entry.category) {
             const expense = await this.getExpense.execute(ctx, entry.expenseId);
@@ -811,7 +836,7 @@ export class LineExpenseActionService {
             const expense = await this.getExpense.execute(ctx, entry.expenseId);
             if (expense.updatedAt.getTime() !== confirmRevision.getTime()
               || expenseEvidenceFingerprint(expense, entry.review.assessment) !== entry.review.fingerprint
-              || deliveryHash([...expense.attachments].sort((a, b) => a.id.localeCompare(b.id) || a.purpose.localeCompare(b.purpose))) !== entry.review.filesHash) return { status: 'blocked', reply: EXPENSE_ACTION_CHANGED };
+              || deliveryHash([...expense.attachments].sort((a, b) => a.id.localeCompare(b.id) || a.purpose.localeCompare(b.purpose))) !== entry.review.filesHash) return { status: 'blocked', reply: language === 'en' ? 'The record changed; please request a new card.' : EXPENSE_ACTION_CHANGED };
             const saved = await this.updateDraft!.execute(ctx, entry.expenseId, { expectedUpdatedAt: confirmRevision.toISOString(),
               sourceDocumentType: expense.sourceDocumentType, taxEvidenceStatus: expense.taxEvidenceStatus,
               evidenceAssessment: entry.review.assessment, documentReviewAcknowledged: true }, { requireExpectedUpdatedAt: true });
@@ -843,11 +868,11 @@ export class LineExpenseActionService {
       await this.store.discard(ctx.companyId, this.key(chat));
       if (offerPayment && entry.paymentIntent) {
         await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token);
-        const next = await this.preview(ctx, chat, { ...entry.paymentIntent, action: 'RECORD_PAYMENT', expenseId: entry.expenseId }, true);
+        const next = await this.preview(ctx, chat, { ...entry.paymentIntent, action: 'RECORD_PAYMENT', expenseId: entry.expenseId }, true, undefined, language);
         if (next.preview) return { status: 'prepared', preview: next.preview, reply: next.reply };
       }
-      return { status: 'applied', expenseIds: entry.voucher?.expenseIds ?? [entry.expenseId], reply: confirmedPaid ? 'ยืนยันและบันทึกจ่ายแล้วค่ะ' : certificates?.length ? `ออก 50 ทวิ เลขที่ ${certificates.map(cert => cert.number).join(' และ ')} แล้วค่ะ` : `${EXPENSE_ACTION_LABELS[entry.preview.action]}แล้วค่ะ`, preview };
-    } catch (error) { return { status: 'blocked', reply: `${reviewSaved ? 'บันทึกการตรวจหลักฐานแล้ว แต่ยังยืนยันไม่สำเร็จค่ะ ' : ''}${this.refusal(error, step)}` }; }
+      return { status: 'applied', expenseIds: entry.voucher?.expenseIds ?? [entry.expenseId], reply: language === 'en' ? confirmedPaid ? 'Expense confirmed and payment recorded.' : certificates?.length ? `Tax certificate issued: ${certificates.map(cert => cert.number).join(', ')}.` : `Completed: ${lineUiLabel(EXPENSE_ACTION_LABELS[entry.preview.action], language)}.` : confirmedPaid ? 'ยืนยันและบันทึกจ่ายแล้วค่ะ' : certificates?.length ? `ออก 50 ทวิ เลขที่ ${certificates.map(cert => cert.number).join(' และ ')} แล้วค่ะ` : `${EXPENSE_ACTION_LABELS[entry.preview.action]}แล้วค่ะ`, preview };
+    } catch (error) { return { status: 'blocked', reply: `${reviewSaved ? language === 'en' ? 'Evidence review was saved, but confirmation failed. ' : 'บันทึกการตรวจหลักฐานแล้ว แต่ยังยืนยันไม่สำเร็จค่ะ ' : ''}${this.refusal(error, step, undefined, language)}` }; }
     finally { await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token); }
   }
   async awaitingClaimSlip(ctx: RequestContext, chat: string): Promise<boolean> {
@@ -855,30 +880,31 @@ export class LineExpenseActionService {
     return entry?.awaitingField === 'claimSlip' && entry.userId === ctx.userId && entry.membershipId === ctx.membershipId;
   }
   async captureClaimSlip(ctx: RequestContext, chat: string, media: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string },
-    upload: (intent: Awaited<ReturnType<InitPaymentSlipUploadUseCase['execute']>>) => Promise<void>) {
+    upload: (intent: Awaited<ReturnType<InitPaymentSlipUploadUseCase['execute']>>) => Promise<void>, language: LineReplyLanguage = 'th') {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (entry?.awaitingField !== 'claimSlip') return null;
-    if (!await this.bound(ctx, chat, entry) || !await this.permitted(ctx, entry)) return { reply: EXPENSE_ACTION_CHANGED };
+    if (!await this.bound(ctx, chat, entry) || !await this.permitted(ctx, entry)) return { reply: language === 'en' ? 'This expense changed; please review its current state.' : EXPENSE_ACTION_CHANGED };
     const record = await this.read(ctx, entry.expenseId, entry.preview.action);
-    if (record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return { reply: EXPENSE_ACTION_CHANGED };
+    if (record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) return { reply: language === 'en' ? 'This expense changed; please review its current state.' : EXPENSE_ACTION_CHANGED };
     try {
       const intent = await this.initClaimSlip!.execute(ctx, entry.expenseId, { originalFileName: media.fileName, mimeType: media.mimeType, byteSize: media.byteSize });
       await upload(intent);
       await this.completeClaimSlip!.execute(ctx, entry.expenseId, intent.attachmentId, { checksumSha256: media.checksumSha256, byteSize: media.byteSize });
       return this.preview(ctx, chat, { action: 'REIMBURSEMENT_RECORD_PAYMENT', reimbursementId: entry.expenseId,
-        paidAmount: entry.claim!.payment!.paidAmount, paidAt: entry.claim!.payment!.paidAt, slipAttachmentId: intent.attachmentId }, true);
-    } catch (error) { return { reply: this.refusal(error, 'REIMBURSEMENT_RECORD_PAYMENT'), webPath: `/companies/${ctx.companyId}/reimbursements/${entry.expenseId}` }; }
+        paidAmount: entry.claim!.payment!.paidAmount, paidAt: entry.claim!.payment!.paidAt, slipAttachmentId: intent.attachmentId }, true, undefined, language);
+    } catch (error) { return { reply: this.refusal(error, 'REIMBURSEMENT_RECORD_PAYMENT', undefined, language), webPath: `/companies/${ctx.companyId}/reimbursements/${entry.expenseId}` }; }
   }
   async answerReason(ctx: RequestContext, chat: string, reason: string): Promise<{ preview?: ExpenseActionPreview; reply: string } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
+    const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     if (!record || record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) {
-      await this.store.discard(ctx.companyId, this.key(chat)); return { reply: EXPENSE_ACTION_CHANGED };
+      await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'This expense changed; please review its current state.' : EXPENSE_ACTION_CHANGED };
     }
-    if (/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim())) { await this.store.discard(ctx.companyId, this.key(chat)); return { reply: 'ไม่ทำรายการนี้ค่ะ' }; }
+    if (/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim())) { await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'Action cancelled.' : 'ไม่ทำรายการนี้ค่ะ' }; }
     if (entry.awaitingField === 'payeeName') {
-      if (reason.trim() === 'พิมพ์ชื่อเอง') return { reply: this.question(entry) };
+      if (reason.trim() === 'พิมพ์ชื่อเอง' || reason.trim() === 'Type payee name') return { reply: this.question(entry) };
       if (!isVoucherPayeeName(reason)) { await this.store.discard(ctx.companyId, this.key(chat)); return null; }
     }
     if (entry.awaitingField === 'claimSlip') return { reply: this.question(entry) };
@@ -886,7 +912,7 @@ export class LineExpenseActionService {
     if (entry.awaitingField === 'paymentMethod' && !paymentMethod) return { reply: this.question(entry) };
     return this.preview(ctx, chat, { action: entry.preview.action, expenseId: entry.expenseId, reimbursementId: entry.expenseId, voucherId: entry.voucher?.id, handoffId: entry.voucher?.handoffs?.[0]?.id,
       ...(entry.voucher?.expenseIds ? { expenseIds: entry.voucher.expenseIds.join(',') } : {}),
-      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAt: entry.voucher?.payment?.paidDate } : { reason }) }, true);
+      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAt: entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th');
   }
   private async permitted(ctx: RequestContext, entry: StoredAction): Promise<boolean> {
     if (entry.voucher) { try { await this.vouchers!.authorize(ctx, entry.voucher.action); return true; } catch (error) { if (error instanceof HttpException) return false; throw error; } }
@@ -905,9 +931,21 @@ export class LineExpenseActionService {
       : entry.preview.action === 'MARK_READY' ? ctx.permissions.includes('expense.review') || entry.createdByUserId === ctx.userId && ctx.permissions.includes('expense.update')
       : ctx.permissions.includes(entry.preview.action === 'CONFIRM' ? 'expense.confirm' : 'expense.void');
   }
-  private refusal(error: unknown, action: ExpenseAction, approvers?: string[]): string {
+  private refusal(error: unknown, action: ExpenseAction, approvers?: string[], language: LineReplyLanguage = 'th'): string {
     if (!(error instanceof HttpException)) throw error;
     const response = error.getResponse(), code = typeof response === 'object' ? String((response as any).code ?? error.message) : response;
+    if (language === 'en') {
+      if (code === 'feature_not_enabled') return 'Your package does not include this feature.';
+      if (error instanceof ForbiddenException) return approvers?.length ? `This claim awaits approval by ${approvers.map(name => scrubRecordText(name, 60)).join(' or ')}.` : 'Ask the shop owner or an authorized user to perform this action.';
+      const missing = missingActionFields(error);
+      if (missing.length) return `Please add ${missing.map(field => ({ category: 'expense category', expenseCategoryId: 'expense category', expenseDate: 'expense date', branchId: 'branch', evidenceReview: 'evidence review', documentReview: 'document review', amount: 'amount' } as Record<string, string>)[field] ?? 'the missing record details').join(', ')} before continuing.`;
+      if (/changed|stale|CONFLICT|VERSION|RELOAD/u.test(code)) return 'The record has changed; please review a new confirmation card.';
+      if (/period.*locked|PERIOD.*LOCKED/iu.test(code)) return 'This period is locked; ask an authorized accountant to review it on the web.';
+      if (/receipt attachment|missing receipt|Evidence review|evidence.*review/iu.test(error.message) && action === 'REIMBURSEMENT_APPROVE') return 'The claim has not been approved. Open it on the web to attach and review the required evidence.';
+      if (/receipt|evidence|review|VAT|tax/iu.test(code)) return 'Please review the required evidence and tax details on the web before confirming.';
+      if (/reason/iu.test(code)) return 'Please provide the reason for this action.';
+      return 'Please review the record details and evidence on the web before continuing.';
+    }
     if (code === 'feature_not_enabled') return 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องนี้ค่ะ';
     if (error instanceof ForbiddenException) return this.isClaim(action) && /APPROVE|REJECT/u.test(action) && approvers?.length ? `ใบเบิกนี้รอ${approvers.map(name => scrubRecordText(name, 60)).join(' หรือ ')}อนุมัติค่ะ` : PERMISSION[action];
     const missing = missingActionFields(error);
@@ -958,7 +996,9 @@ export class LineExpenseActionService {
     if (/RETENTION|LINKED_DATA/iu.test(code)) return 'รายการนี้มีหลักฐานหรือข้อมูลผูกอยู่ค่ะ ต้องจัดการข้อมูลที่ผูกอยู่ก่อน';
     if (message.includes('VOIDED')) return 'รายการนี้ยกเลิกแล้วค่ะ ทำรายการต่อไม่ได้';
     if (/Cannot.*(transition|confirm)/iu.test(message)) return action === 'CONFIRM' ? 'รายการนี้ยังยืนยันไม่ได้ค่ะ ต้องส่งตรวจให้พร้อมยืนยันก่อน' : 'สถานะนี้ยังส่งตรวจไม่ได้ค่ะ';
-    if (/receipt attachment|missing receipt|Evidence review|evidence.*review/iu.test(message)) return 'ต้องแนบและตรวจหลักฐานให้ครบก่อนยืนยันค่ะ';
+    if (/receipt attachment|missing receipt|Evidence review|evidence.*review/iu.test(message)) return action === 'REIMBURSEMENT_APPROVE'
+      ? 'ยังไม่ได้อนุมัติใบเบิกค่ะ เปิดใบเบิกในเว็บเพื่อแนบและตรวจหลักฐานให้ครบก่อน'
+      : 'ต้องแนบและตรวจหลักฐานให้ครบก่อนยืนยันค่ะ';
     if (error instanceof ConflictException || error instanceof BadRequestException) return 'ต้องตรวจข้อมูลและหลักฐานของรายการให้ครบก่อนค่ะ';
     return 'ไม่พบรายการที่คุณเข้าถึงได้ค่ะ';
   }
@@ -971,7 +1011,7 @@ export class ExpenseActionPreviewTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> {
     const result = await this.actions.preview({ requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId,
       companyId: ctx.companyId, membershipId: ctx.membershipId ?? '', roles: ctx.roles ?? [], permissions: ctx.permissions,
-      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input);
+      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th');
     return { toolName: this.toolName, status: 'ok', data: result, sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, ...(result.webPath ? { webPath: result.webPath } : {}) }], asOf: new Date().toISOString() };
   }
 }

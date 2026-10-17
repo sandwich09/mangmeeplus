@@ -1,3 +1,4 @@
+import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { documentAdvisorOutputText } from './document-advisor-read';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 /**
@@ -9,7 +10,7 @@ import { runSemanticTurnV2 } from './semantic-turn-v2';
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiPeriodCandidate, LineAiPreparedPlan, LineAiReadMemory, LineAiValueCandidates, LineAiAnswerCardLayout, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta, PublicLookupResult } from '@watchdog-bms/contracts';
-import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName } from '@watchdog-bms/contracts';
+import { LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, isBusinessIntakeIntent, mapThaiDigits, parseLineAiPreparedPlan, parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, resolvePeriodCandidates, unresolvedMonthName, toolFeatureKeys } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -32,7 +33,7 @@ import { createProvider } from '../infrastructure/provider/provider.factory';
 import { currentBudgetGrantV2 } from '../../../common/usage/usage-context';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
 import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, isExpenseReadReference, misroutedReadTool, nameFilterGroundedInText, resolveExpenseReadReferences } from './read-tool-input';
-import { documentExplanationTopic, scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
+import { documentExplanationTopic, featurePackageOffer, permissionAlternative, scopePolicyOverride, scopePolicyStatus, scopePolicyWebLinks } from '../domain/logic/line-ai-scope-policy.logic';
 
 // Spec item 2(b): same grounding rule as the fast lane's isGroundedFilterValue — a categoryName/
 // vendorName the model proposes in the classic tool loop must also trace back to this turn's text.
@@ -1161,20 +1162,16 @@ export class OrchestratorAgent {
     const policyCheckStartedMs = Date.now();
     const soleItem = req.semanticSubrequests?.length === 1 ? req.semanticSubrequests[0] : undefined;
     if (soleItem) {
-      const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
+      const language = req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
       const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
       const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
         req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint);
       if (override) {
         // Advisor S1: "sign it on the web" comes with the page to sign on (spec §2.6).
-        const webLinks = override.webPage && req.userContext.companyId
-          ? [override.webPage === 'approval-settings'
-            ? { label: language === 'en' ? 'Approval settings' : 'ตั้งค่าการอนุมัติ', path: `/companies/${req.userContext.companyId}/reimbursements?tab=policy` }
-            : { label: language === 'en' ? 'Substitute receipts' : 'ใบรับรองแทนใบเสร็จ', path: `/companies/${req.userContext.companyId}/expenses/${override.webPage}` }]
-          : [];
+        const webLinks = scopePolicyWebLinks(override, req.userContext.permissions, req.userContext.companyId, language);
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
           outputs: [], replyText: override.text, sourceRefs: [], webLinks, durationMs: Date.now() - policyCheckStartedMs,
-          semanticCoverage: [{ index: soleItem.index, status: override.reasonCode === 'LINE_ACTION_NOT_SUPPORTED' && !override.webPage ? 'denied' : 'unsupported', reasonCode: override.reasonCode }] };
+          semanticCoverage: [{ index: soleItem.index, status: scopePolicyStatus(override), reasonCode: override.reasonCode }] };
       }
     }
     if (req.inputEvidence && req.budgetGrantV2 && req.semanticSubrequests?.length) {
@@ -1210,7 +1207,7 @@ export class OrchestratorAgent {
       }
       // Never widen an issued grant or execute a partial control call that leaves no answer slot.
       if (req.budgetGrantV2.maxTurnSlots === 2 && inventory.some(subrequest => !['general', 'help'].includes(subrequest.kind))) {
-        const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
+        const language = req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
         // Spec R-L2/§8: a fast-lane give-up BEFORE any tool call is the same honest system outcome as
         // the post-call READ_SOURCE_UNAVAILABLE case below — `unsupported`, not a question, no "try again".
         const replyText = language === 'en'
@@ -1533,6 +1530,7 @@ export class OrchestratorAgent {
     const composer = new ResponseComposerAgent();
     const composed = composer.compose(plan, outputsForComposer, req.messageText, req.userContext.locale, {
       featureDisabledTools,
+      permissions: req.userContext.permissions,
       // So the `unsupported_yet` copy can point at the workspace it says the answer lives in. The
       // API turns a `/companies/…` path into a one-time auto-login handoff link on delivery.
       companyId: req.userContext.companyId,
@@ -1621,7 +1619,7 @@ export class OrchestratorAgent {
       const knowledgeAnswer = knowledgeEnabled
         ? renderApprovedKnowledge(PRODUCT_HELP_PACK, knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
           knowledgeAccess(plan.language), req.userContext.companyId) : null;
-      const actionHelp = productHelpAction({ actionId: req.howToActionId,
+      const actionHelp = productHelpAction({ actionId: req.howToActionId, text: req.messageText, language: plan.language === 'en' ? 'en' : 'th', companyId: req.userContext.companyId,
         selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
         permissions: req.userContext.permissions, featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null });
       if (actionHelp) {
@@ -1690,6 +1688,10 @@ export class OrchestratorAgent {
     const displayWebLinks = monthReply ? finalWebLinks.map((link) => ({
       ...link, label: plan.language.startsWith('en') ? 'Choose a month in the expense list' : 'เลือกเดือนในรายการค่าใช้จ่าย',
     })) : finalWebLinks;
+    if (featureDisabledTools.some(name => {
+      const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === name);
+      return tool && toolFeatureKeys(tool).some(key => featurePackageOffer(key));
+    })) displayWebLinks.push(...scopePolicyWebLinks({ reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: '', webPage: 'packages' }, req.userContext.permissions, req.userContext.companyId, plan.language.startsWith('en') ? 'en' : 'th'));
     let presentation = terminalExpenseResult ? undefined : monthReply
       ? { kind: 'answer_cards' as const, cards: [{
         text: replyText,
@@ -1946,14 +1948,16 @@ export class OrchestratorAgent {
   private buildPreparedHonestTerminal(plan: AgentIntentPlan, output: SpecialistOutput, req: LineAiTurnRequest, startMs: number): AgentRunResult {
     // Authoritative deterministic honest terminal — NO ResponseComposer/router/critic/model, no re-
     // invocation, no fabricated facts/source/completion, no card. Just an honest outcome line.
-    const ctx = { language: plan.language, locale: req.userContext.locale };
+    const ctx = { language: plan.language, locale: req.userContext.locale, permissions: req.userContext.permissions };
     const replyText = preparedTerminalReply(output, ctx);
     // The copy above points at the Expenses page only on a real read failure — never on denial, and
     // (C4, batch 5c) never on a name-resolution reply, matching the classic path's
     // `expenseBranchResolutionReply` terminal shape (empty sourceRefs/webLinks): that reply already
     // lists the real catalog and asks the customer to type a name, so a generic web link adds nothing.
-    const webLinks = output.status === 'PERMISSION_DENIED' || expenseNameResolutionIssue([output])
-      ? [] : expensesWebLink(req.userContext.companyId, isEnglish(ctx));
+    const denied = output.status === 'PERMISSION_DENIED' || output.toolCalls.some(call => call.errorCode === 'TOOL_INPUT_NOT_AUTHORIZED');
+    const language = isEnglish(ctx) ? 'en' : 'th';
+    const webLinks = denied ? scopePolicyWebLinks({ reasonCode: 'ROLE_PERMISSION_REQUIRED', text: '', webPage: output.toolCalls.some(call => call.errorCode === 'REIMBURSEMENT_APPROVAL_NOT_PERMITTED') ? 'packages' : permissionAlternative(req.userContext.permissions, language).page }, req.userContext.permissions, req.userContext.companyId, language)
+      : expenseNameResolutionIssue([output]) ? [] : expensesWebLink(req.userContext.companyId, isEnglish(ctx));
     return {
       plan, outputs: [output], replyText,
       sourceRefs: [], webLinks,

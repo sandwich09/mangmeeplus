@@ -109,7 +109,7 @@ describe('LineExpenseDraftConversationUseCase', () => {
     const { useCase } = harness();
     const contexts = await useCase.routeContexts(ctx, 'chat');
     assert.equal(contexts.length, 1);
-    assert.ok(contexts[0]?.questions.some((question) => question.id === 'I01-QTY'));
+    assert.ok(contexts[0]?.questions.some((question) => question.id === 'I01-PRICE'));
   });
 
   it('keeps passive uploads out of unrelated chat even when a model proposes their id; explicit edits still work', async () => {
@@ -230,7 +230,8 @@ describe('LineExpenseDraftConversationUseCase', () => {
 
     const missing = h.updates[0].options.lineDraftCollection.aiVerificationSummaryJson.missingFields;
     assert.ok(missing.includes('receipt_evidence'));
-    assert.ok(missing.includes('quantity'));
+    assert.ok(!missing.includes('quantity'));
+    assert.ok(missing.includes('price'));
   });
 
   it('keeps pause and end-input distinct and never requests a final financial mutation', async () => {

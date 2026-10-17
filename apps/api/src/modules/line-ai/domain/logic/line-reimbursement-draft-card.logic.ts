@@ -1,3 +1,4 @@
+import { lineDisplayDate, lineControlData, lineUiLabel, type LineReplyLanguage } from './line-language.logic';
 import type { ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import type { LineReimbursementDraftResult, LineReimbursementDraftPreview, LineReimbursementDraftSnapshot } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { normalizeReimbursementAmount } from '../../../reimbursements/domain/logic/reimbursement.logic';
@@ -18,7 +19,7 @@ function formatClaimAmount(value: unknown): string {
   return `${whole!.replace(/\B(?=(\d{3})+(?!\d))/gu, ',')}.${fraction!.slice(0, 2)}`;
 }
 const unit = (currency: unknown) => !currency || currency === 'THB' ? 'บาท' : String(currency);
-export const formatClaimMoney = (value: unknown, currency: unknown) => `${formatClaimAmount(value)} ${unit(currency)}`;
+export const formatClaimMoney = (value: unknown, currency: unknown, language: LineReplyLanguage = 'th') => `${formatClaimAmount(value)} ${language === 'en' && (!currency || currency === 'THB') ? 'THB' : unit(currency)}`;
 
 const CLAIM_STATE_TEXT: Record<string, string> = { DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'อนุมัติแล้ว', REJECTED: 'ถูกส่งกลับให้แก้',
   CANCELLED: 'ยกเลิก', FINANCE_REVIEW: 'รอตรวจสอบการเงิน', READY_FOR_PAYMENT: 'พร้อมจ่าย', PARTIALLY_PAID: 'จ่ายบางส่วน', PAID: 'จ่ายแล้ว', VOIDED: 'เพิกถอน' };
@@ -87,8 +88,31 @@ function lineText(line: ClaimLine, currency: string): string {
 }
 
 /** Every resulting line, the complete change list and warnings, from the authorized domain snapshots — in words. */
-export function reimbursementPreviewText(preview: LineReimbursementDraftPreview): string {
+export function reimbursementPreviewText(preview: LineReimbursementDraftPreview, language: LineReplyLanguage = 'th'): string {
   const after = preview.after;
+  if (language === 'en') {
+    const snapshot = (claim: ClaimSnapshot) => [
+      `Requester: ${claim.requesterDisplayName}`, ...(claim.branchName ? [`Branch: ${claim.branchName}`] : []),
+      `Status: ${lineUiLabel(CLAIM_STATE_TEXT[claim.status] ?? '', language)}`, `Title: ${claim.title ?? '-'}`,
+      `Reason: ${claim.reason}`, `Missing receipt reason: ${claim.missingReceiptReason ?? '-'}`,
+      ...claim.lines.flatMap(line => [`Item: ${line.description}`, `Date: ${lineDisplayDate(line.incurredDate, language)}`,
+        `Category: ${line.categoryLabel?.trim() || 'Not selected'}`, `Purpose: ${line.purpose ?? '-'}`,
+        `Amount: ${formatClaimMoney(line.amount, claim.currency, language)}`,
+        `Evidence: ${line.attachmentId ? 'Attachment included' : line.linkedExpenseId ? 'Receipt from source expense' : 'No attachment'}`,
+        ...(line.linkedExpenseId ? (() => { const source = line.sourceExpenseSnapshot as Partial<ReimbursementSourceSnapshot> | undefined;
+          return [`Source expense: ${[source?.certificate?.documentNumber ?? source?.seller?.documentNumber, source?.seller?.name,
+            source?.expenseDate ? lineDisplayDate(source.expenseDate, language) : undefined].filter(Boolean).join(' · ') || 'Selected expense'}`]; })() : [])]),
+      `Calculated total: ${formatClaimMoney(claim.amount, claim.currency, language)}`,
+      `Evidence status: ${{ REQUIRED: 'Some receipts are missing', ATTACHED: 'All items have evidence',
+        MISSING_WITH_REASON: 'Missing receipts have reasons recorded', WAIVED_BY_POLICY: 'Receipts waived by company policy' }[claim.receiptRequirementStatus] ?? 'Review evidence on the web'}`,
+    ];
+    return [preview.operation === 'CREATE' ? 'Review new claim draft; it has not been saved.' : 'Review claim draft changes; they have not been saved.',
+      ...(preview.before ? ['Before:', ...snapshot(preview.before), 'After:'] : []), ...snapshot(after),
+      ...preview.warnings.flatMap(warning => warning === 'signatures_invalidated' ? [] : [warning === 'missing_receipt'
+        ? 'You can save a draft; attach the missing receipts before submitting.' : 'Review the details and evidence before confirming.']),
+      ...(after.signatureImpact === 'INVALIDATED' ? ['Existing signatures will be invalidated; sign again on the web.'] : []),
+      'This button saves a draft only; it does not submit, approve, pay or post it.'].join('\n');
+  }
   return [preview.operation === 'CREATE' ? 'ตรวจร่างใบเบิกใหม่ (ยังไม่ได้บันทึก)' : 'ตรวจการแก้ร่างใบเบิก (ยังไม่ได้บันทึก)',
     `ผู้เบิก: ${after.requesterDisplayName}`, ...(after.branchName ? [`สาขา: ${after.branchName}`] : []), `สถานะหลังบันทึก: ${CLAIM_STATE_TEXT[after.status]}`,
     `หัวเรื่อง: ${after.title ?? '-'}`, `เหตุผล: ${after.reason}`, `เหตุผลที่ไม่มีใบเสร็จ: ${after.missingReceiptReason ?? '-'}`,
@@ -128,30 +152,63 @@ function blockedText(result: Extract<LineReimbursementDraftResult, { status: 'bl
   return BLOCKED_TEXT[result.errorCode] ?? 'ยังทำรายการใบเบิกนี้ไม่ได้ กรุณาลองใหม่อีกครั้ง หรือทำรายการในเว็บค่ะ';
 }
 
-export function buildReimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string): LineReplyMessage[] {
+export function buildReimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string, language: LineReplyLanguage = 'th'): LineReplyMessage[] {
+  const en = language === 'en';
   if (result.status === 'preview') {
-    const preview = result.preview, text = reimbursementPreviewText(preview);
+    const preview = result.preview, text = reimbursementPreviewText(preview, language);
     const parts = splitLineDeliveryText(text, 4500);
     const web = `${webBaseUrl.replace(/\/$/u, '')}/companies/${encodeURIComponent(companyId)}/reimbursements/draft-actions/${encodeURIComponent(preview.actionId)}`;
-    if (parts.length > 4) return [{ type: 'text', text: `รายละเอียดร่างยาวเกินปุ่มยืนยัน LINE กรุณาตรวจทั้งหมดและยืนยันในเว็บ\n${web}` }];
+    if (parts.length > 4) return [{ type: 'text', text: en ? `Please review and confirm this long draft on the web.\n${web}` : `รายละเอียดร่างยาวเกินปุ่มยืนยัน LINE กรุณาตรวจทั้งหมดและยืนยันในเว็บ\n${web}` }];
     const data = (action: string) => new URLSearchParams({ action, actionId: preview.actionId,
-      previewRevision: String(preview.previewRevision), confirmationDigest: preview.confirmationDigest }).toString();
-    return [...parts.map(part => ({ type: 'text' as const, text: part.text })), { type: 'flex', altText: 'ยืนยันบันทึกร่างใบเบิก', canonicalText: 'ยืนยันบันทึกเฉพาะร่างใบเบิก หรือยกเลิกร่างที่กำลังตรวจ',
-      contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: 'ตรวจครบแล้วจึงยืนยัน', wrap: true }] },
+      previewRevision: String(preview.previewRevision), confirmationDigest: preview.confirmationDigest, ...(en ? { language } : {}) }).toString();
+    return [...parts.map(part => ({ type: 'text' as const, text: part.text })), { type: 'flex', altText: (en ? 'Confirm claim draft' : 'ยืนยันบันทึกร่างใบเบิก'), canonicalText: (en ? 'Save this claim as a draft, or cancel this proposal.' : 'ยืนยันบันทึกเฉพาะร่างใบเบิก หรือยกเลิกร่างที่กำลังตรวจ'),
+      contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: (en ? 'Review all details before confirming.' : 'ตรวจครบแล้วจึงยืนยัน'), wrap: true }] },
         footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', action: { type: 'postback', label: 'บันทึกเป็นร่าง', data: data('reimbursement_draft_confirm') } },
-          { type: 'button', action: { type: 'postback', label: 'ยกเลิกร่างนี้', data: data('reimbursement_draft_cancel') } },
+          { type: 'button', action: { type: 'postback', label: (en ? 'Save draft' : 'บันทึกเป็นร่าง'), data: data('reimbursement_draft_confirm') } },
+          { type: 'button', action: { type: 'postback', label: (en ? 'Cancel proposal' : 'ยกเลิกร่างนี้'), data: data('reimbursement_draft_cancel') } },
         ] } } }];
   }
   if (result.status === 'applied') {
     // The claim's own document number once it has one; its internal id is never printed.
     const r = result.receipt, requestNo = typeof r.requestNo === 'string' ? r.requestNo : '';
+    if (en) return [{ type: 'text', text: ['Claim draft saved.', ...(requestNo ? [`Claim number: ${requestNo}`] : []),
+      `Total: ${formatClaimMoney(r.amount, r.currency, language)}`,
+      `Current status: ${lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'Check the latest status on the web', language)}`,
+      'This action did not submit, approve or pay the claim.'].join('\n'),
+      ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT'
+        ? { quickReply: { items: [{ type: 'action', action: { type: 'postback', label: 'Submit for approval',
+          data: lineControlData(new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString(), language) } }] } } : {}) }];
     return [{ type: 'text', text: ['บันทึกร่างใบเบิกแล้ว', ...(requestNo ? [`เลขที่ใบเบิก: ${requestNo}`] : []),
       `ยอด: ${formatClaimMoney(r.amount, r.currency)}`,
       `สถานะปัจจุบัน: ${CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'ตรวจสถานะล่าสุดได้ในเว็บ'}`,
       'ยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้'].join('\n'),
       ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT' ? { quickReply: { items: [{ type: 'action' as const,
         action: { type: 'postback' as const, label: 'ส่งอนุมัติ', data: new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString() } }] } } : {}) }];
+  }
+  if (en) {
+    const fieldNames: Array<[RegExp, string]> = [[/missingReceiptReason/u, 'missing receipt reason'], [/reason/u, 'claim reason'],
+      [/title/u, 'title'], [/amount/u, 'amount'], [/incurredDate/u, 'payment date'], [/description/u, 'description'], [/purpose/u, 'purpose'],
+      [/category/u, 'category'], [/attachment/u, 'evidence attachment'], [/linkedExpense/u, 'source expense'], [/branchChoiceId/u, 'branch'],
+      [/requesterChoiceId/u, 'requester'], [/targetRef/u, 'claim to edit'], [/currency/u, 'currency'], [/lineChanges|lines/u, 'claim items']];
+    const fields = 'fieldPaths' in result ? [...new Set((result.fieldPaths ?? []).flatMap(path => fieldNames.find(([pattern]) => pattern.test(path))?.[1] ?? []))] : [];
+    const blocked: Record<string, string> = {
+      forbidden: 'You cannot change this claim; ask the shop owner or an authorized administrator.',
+      feature_disabled: 'Claim drafts are currently unavailable in LINE; please use the web app.',
+      unsupported_channel: 'Please prepare claims in a private chat.', write_quiesced: 'Claims are temporarily unavailable; please try again shortly.',
+      invalid_provenance: 'Some details could not be verified; please send the claim details again.',
+      evidence_overflow: 'Please split the claim details into smaller requests.',
+      field_too_long: 'Please shorten the claim details and send them again.', invalid_field: 'Please check the claim details and send them again.',
+      rate_limited: 'Please wait a moment before requesting the draft again.', store_unavailable: 'The claim draft is unavailable; please try again.',
+      schema_unsupported: 'This draft can no longer be continued; please start a new request.',
+    };
+    const text = result.status === 'needs_fields' ? `Nothing has been saved; please add ${fields.join(', ') || 'the missing claim details'}.`
+      : result.status === 'needs_target' ? 'Please choose the claim to edit.'
+        : result.status === 'cancelled' ? 'Draft collection or confirmation cancelled; any saved claim is kept.'
+          : result.status === 'expired' ? 'This proposal has expired; please send a new request.'
+            : result.status === 'stale' ? 'The claim has changed; please review its current draft again.'
+              : result.status === 'result_unknown' ? 'The save result is unconfirmed; check the existing claim on the web before creating another.'
+                : blocked[result.errorCode] ?? 'This claim action is unavailable; please try again or use the web app.';
+    return [{ type: 'text', text }];
   }
   const text = result.status === 'needs_fields' ? reimbursementMissingText(result.fieldPaths)
     : result.status === 'needs_target' ? 'กรุณาเลือกใบเบิกที่ต้องการแก้ ระบบยังไม่ได้เลือกใบล่าสุดให้อัตโนมัติ'
@@ -182,7 +239,8 @@ function reimbursementMissingText(fieldPaths: string[]): string {
 export function buildReimbursementOptionsMessages(options: { choices: Array<{ choiceId?: string; kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
   pages: Partial<Record<string, { hasMore: boolean }>>; selected?: { branchChoiceId?: string; requesterChoiceId?: string; targetRef?: string };
   control?: { actionId: string; revision: string }; awaitingPhoto?: boolean;
-  nonEditableTargets?: Array<{ label: string; webPath: string; canReopen: boolean; pending: boolean }>; reasonQuestion?: string; receiptNotice?: string; collection?: { lineChosen: boolean; receiptChosen: boolean; categoryChosen: boolean } }, webBaseUrl = ''): LineReplyMessage[] {
+  nonEditableTargets?: Array<{ label: string; webPath: string; canReopen: boolean; pending: boolean }>; reasonQuestion?: string; receiptNotice?: string; collection?: { lineChosen: boolean; receiptChosen: boolean; categoryChosen: boolean } }, webBaseUrl = '', language: LineReplyLanguage = 'th'): LineReplyMessage[] {
+  if (language === 'en') return reimbursementOptionsEnglish(options, webBaseUrl);
   if (options.nonEditableTargets?.length) return options.nonEditableTargets.slice(0, 5).map(target => ({ type: 'text',
     text: target.canReopen ? target.pending
       ? 'ใบเบิกส่งอนุมัติแล้ว จึงต้องถอนกลับเป็นร่างในเว็บก่อนแก้ยอดค่ะ'
@@ -213,8 +271,6 @@ export function buildReimbursementOptionsMessages(options: { choices: Array<{ ch
     }), { label: 'รายการใหม่', text: 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ' },
   ]);
   if (!options.collection?.lineChosen) return [{ type: 'text', text: 'ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่ายเพื่อทำใบเบิกต่อค่ะ' }];
-  if (options.awaitingPhoto) return [{ type: 'text', text: 'ส่งรูปใบเสร็จมาได้เลยค่ะ น้องจะแนบกับใบเบิกนี้',
-    quickReply: { items: [{ type: 'action', action: { type: 'cameraRoll', label: 'ส่งรูปใบเสร็จ' } }] } }];
   if (!options.collection?.receiptChosen) return [{ type: 'text', text: 'ส่งรูปใบเสร็จ หรือเลือกไม่มีใบเสร็จเพื่อทำรายการต่อได้ค่ะ',
     quickReply: { items: [{ type: 'action', action: choiceAction('ส่งรูปใบเสร็จ', 'photo', 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้') },
       { type: 'action', action: choiceAction('ไม่มีใบเสร็จ', 'no-receipt', 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้') }] } }];
@@ -225,4 +281,36 @@ export function buildReimbursementOptionsMessages(options: { choices: Array<{ ch
         categories.length > 12 || options.pages.category?.hasMore ? [{ type: 'action', action: { type: 'message', label: 'ค้นหาหมวดเพิ่มเติม', text: 'ขอค้นหาหมวดค่าใช้จ่ายเพิ่มเติม' } }] : []) } }];
   }
   return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion }] : [];
+}
+
+function reimbursementOptionsEnglish(options: Parameters<typeof buildReimbursementOptionsMessages>[0], webBaseUrl: string): LineReplyMessage[] {
+  const buttons = (text: string, choices: Array<{ label: string; text: string }>): LineReplyMessage[] => [{ type: 'text', text, quickReply: lineChoiceQuickReply(choices) }];
+  const choice = (label: string, value: string, text: string) => options.control
+    ? { type: 'postback' as const, label: Array.from(label).slice(0, 20).join(''), displayText: text,
+      data: lineControlData(new URLSearchParams({ action: 'reimbursement_choice', ...options.control, choice: value }).toString(), 'en') }
+    : { type: 'message' as const, label, text };
+  if (options.nonEditableTargets?.length) return options.nonEditableTargets.slice(0, 5).map(target => ({ type: 'text',
+    text: target.canReopen ? 'Open this claim on the web and return it to draft before editing.' : 'This claim is no longer a draft; open it on the web for the next step.',
+    quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'Open claim', uri: `${webBaseUrl.replace(/\/$/u, '')}${target.webPath}` } }] } }));
+  for (const [kind, selected, label] of [['BRANCH', options.selected?.branchChoiceId, 'branch'], ['REQUESTER', options.selected?.requesterChoiceId, 'requester'],
+    ['TARGET', options.selected?.targetRef, 'claim to edit']] as const) {
+    const choices = options.choices.filter(entry => entry.kind === kind);
+    if (!selected && choices.length) return buttons(`Please choose the ${label}.`, choices.slice(0, 12).map(entry => ({ label: entry.label, text: `Choose ${label}: ${entry.label}` }))
+      .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'Search more', text: `Find more ${label} choices` }] : []));
+  }
+  if (!options.collection?.lineChosen) {
+    const bills = options.choices.filter(entry => entry.kind === 'SOURCE' && entry.details?.eligible !== false);
+    return bills.length ? buttons('Choose an expense to claim, or start a new item.', [...bills.slice(0, 4).map(entry => ({ label: entry.label, text: `Claim expense: ${entry.label}` })),
+      { label: 'New item', text: 'Start a new claim item without an existing expense' }])
+      : [{ type: 'text', text: 'Please provide the item details, amount and date you paid.' }];
+  }
+  if (!options.collection?.receiptChosen) return [{ type: 'text', text: 'Send a receipt photo or choose no receipt to continue.', quickReply: { items: [
+    { type: 'action', action: choice('Send receipt', 'photo', 'Send a receipt photo for this claim') },
+    { type: 'action', action: choice('No receipt', 'no-receipt', 'No receipt for this new claim item') }] } }];
+  if (!options.collection?.categoryChosen) {
+    const categories = options.choices.filter(entry => entry.kind === 'CATEGORY');
+    if (categories.length) return [{ type: 'text', text: 'Please choose the expense category.', quickReply: { items: categories.slice(0, 12).map(entry => ({ type: 'action',
+      action: choice(entry.label, entry.choiceId ?? '', `Choose expense category: ${entry.label}`) })) } }];
+  }
+  return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion === 'ไม่มีใบเสร็จเพราะอะไรคะ' ? 'Why is the receipt missing?' : 'What was the business purpose of this claim?' }] : [];
 }

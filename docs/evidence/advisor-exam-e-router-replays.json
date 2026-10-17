@@ -1,0 +1,427 @@
+[
+  {
+    "id": "C05-xd-fail1#1",
+    "source": "xe/C05-xd-fail1#1",
+    "acceptedAtMs": 1792219714893,
+    "messageText": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc1ceh8-1-97272fd9",
+          "replyToken": "rt-55d1cb55-1394-4fc1-a0e8-fd4901c237c5",
+          "message": {
+            "type": "text",
+            "id": "m17922197148932",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "4f92b6715de7c4d1"
+          },
+          "timestamp": 1792219714893,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.82,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างทำป้ายหน้าร้าน 10,000 บาท พร้อมหัก ณ ที่จ่าย 3% จ่ายโอนแล้ววันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึกหรืออัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด พร้อมเลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "write",
+          "goal": "ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) สำหรับการจ่ายค่าจ้างนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792220616048,
+      "tasks": []
+    }
+  },
+  {
+    "id": "C05-xd-fail2#1",
+    "source": "xe/C05-xd-fail2#1",
+    "acceptedAtMs": 1792219877056,
+    "messageText": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+    "body": {
+      "destination": "channel-b",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc1fvls-1-9e88ee61",
+          "replyToken": "rt-0c22d415-1480-478a-bd41-a5ff60b2000a",
+          "message": {
+            "type": "text",
+            "id": "m17922198770562",
+            "text": "ทำให้หน่อย จ้างบริษัท ป้ายสวย จำกัด ทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% จ่ายโอนไปแล้ววันนี้ เลขผู้เสียภาษี 0105561234560 ที่อยู่ 12 ถนนลาดพร้าว แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900",
+            "quoteToken": "fab551b767e40690"
+          },
+          "timestamp": 1792219877056,
+          "source": {
+            "type": "user",
+            "userId": "U934d37230d738f94d66cc71c8988e972"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.91,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าจ้างทำป้ายหน้าร้าน 10,000 บาท หัก ณ ที่จ่าย 3% และบันทึกจ่ายโอนวันนี้",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "kind": "write",
+          "goal": "บันทึก/อัปเดตข้อมูลคู่ค้า บริษัท ป้ายสวย จำกัด เลขผู้เสียภาษีและที่อยู่",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "kind": "write",
+          "goal": "ออกใบรับรองหัก ณ ที่จ่าย 50 ทวิ สำหรับบริษัท ป้ายสวย จำกัด",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 186,
+              "rawSha256": "53fa7327626ef7defaf11bdf0618ede0f0a1620eaca877b8bfbdc24ffc6f7e8e"
+            }
+          ]
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792220778216,
+      "tasks": []
+    }
+  },
+  {
+    "id": "J7-xd-fail#0",
+    "source": "xe/J7-xd-fail#0",
+    "acceptedAtMs": 1792219325570,
+    "messageText": "สร้างใบเบิกยังไง",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc1422q-0-cc235607",
+          "replyToken": "rt-61bb7613-f6e1-45e7-91cb-aa02bb5026a5",
+          "message": {
+            "type": "text",
+            "id": "m17922193255701",
+            "text": "สร้างใบเบิกยังไง",
+            "quoteToken": "117d1833fef7bc63"
+          },
+          "timestamp": 1792219325570,
+          "source": {
+            "type": "user",
+            "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "BUSINESS_READ_QUESTION",
+      "language": "th",
+      "confidence": 0.97,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "help",
+          "goal": "สร้างใบเบิกยังไง",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "toolHint": "reimbursement.list_pending_approvals",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 16,
+              "rawSha256": "954c01c2de0e7448638ea41298000aac9e3acb1d074b081e751cfaf74a3cb356"
+            }
+          ]
+        }
+      ],
+      "selectedKnowledgeCardIds": [
+        "reimbursement.meaning"
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792220226740,
+      "tasks": []
+    }
+  },
+  {
+    "id": "J7-xd-fail#1",
+    "source": "xe/J7-xd-fail#1",
+    "acceptedAtMs": 1792219335254,
+    "messageText": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc149jq-1-8fbbdee9",
+          "replyToken": "rt-b8ef0c1e-0401-47ad-bc70-2e31f576b4ff",
+          "message": {
+            "type": "text",
+            "id": "m17922193352542",
+            "text": "เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย",
+            "quoteToken": "eb5021e9cd6c7f23"
+          },
+          "timestamp": 1792219335254,
+          "source": {
+            "type": "user",
+            "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.93,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "reimbursementHints": {
+        "description": "ค่าน้ำมัน",
+        "amount": "350",
+        "confidence": 0.88,
+        "missingFields": [
+          "fundingSource",
+          "purpose",
+          "incurredDate"
+        ]
+      },
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 39,
+              "rawSha256": "d38af8e7125f5bc43ea10fc52c31b5d3e40b1456e0db373d5ffefd7c9986ccb0"
+            }
+          ]
+        }
+      ]
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 0,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792220236397,
+      "tasks": []
+    }
+  },
+  {
+    "id": "J7-xd-fail#4",
+    "source": "xe/J7-xd-fail#4",
+    "acceptedAtMs": 1792219380611,
+    "messageText": "ขับรถไปส่งของให้ลูกค้า",
+    "body": {
+      "destination": "channel-a",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "harness-mvc158jn-4-7a6374ad",
+          "replyToken": "rt-7cd735ca-5edb-4881-9750-4cecb387b878",
+          "message": {
+            "type": "text",
+            "id": "m17922193806115",
+            "text": "ขับรถไปส่งของให้ลูกค้า",
+            "quoteToken": "b66b143f6dbd641c"
+          },
+          "timestamp": 1792219380611,
+          "source": {
+            "type": "user",
+            "userId": "U804b04bac8338e906dd2da7b7d8f3c5d"
+          },
+          "mode": "active",
+          "deliveryContext": {
+            "isRedelivery": false
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "CLARIFY",
+      "language": "th",
+      "confidence": 0.72,
+      "semanticOutcome": "AMBIGUOUS",
+      "fundingSource": "UNKNOWN",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "บันทึกค่าใช้จ่ายขับรถไปส่งของให้ลูกค้า",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 22,
+              "rawSha256": "9b0a64d4f655aeb02940c4698375876cb4b3d37fa073cc5a5742057bd369736c"
+            }
+          ]
+        }
+      ],
+      "clarifyQuestion": "รายการนี้คุณสำรองจ่ายเองเพื่อขอเบิกคืน หรือเป็นค่าใช้จ่ายที่บริษัทจ่ายคะ",
+      "clarifyForIntent": "EXPENSE_DOCUMENT_CAPTURE"
+    },
+    "taskProjection": {
+      "version": 2,
+      "stateVersion": 2,
+      "lifecycleEpoch": 0,
+      "expiresAtMs": 1792220258290,
+      "tasks": [
+        {
+          "kind": "write",
+          "slots": {
+            "reimbursementActionId0": "f6b41d55-d1ac-520e-b720-b668e6fd8055"
+          },
+          "state": "waiting_user",
+          "taskId": "6995b13d5375dd71a934919fd9f652e2313bc70a1ecc07456099d4dd8aa377d6",
+          "revision": 1,
+          "userGoal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+          "subrequests": [
+            {
+              "goal": "สร้างใบเบิกค่าน้ำมัน 350 บาท เมื่อวาน",
+              "kind": "write",
+              "index": 0,
+              "status": "needs_user"
+            }
+          ],
+          "deliveredQuestionRefs": [
+            "6074a4d08cca83175a93f86d8fbb9bfd6df2be1bff7e9e0e663052bb92b76fce"
+          ]
+        }
+      ]
+    }
+  }
+]

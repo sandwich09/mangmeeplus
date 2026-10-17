@@ -267,7 +267,7 @@ describe('lineWaitStages', () => {
     }
     // Small talk asked for no data: the card must not say data is being checked.
     for (const said of ['วันนี้เหนื่อยจัง', 'สวัสดีค่ะ', 'hello']) {
-      assert.deepEqual(lineWaitCardHeader(said), ['ข้อความของคุณ', 'กำลังหาคำตอบ'], said);
+      assert.deepEqual(lineWaitCardHeader(said), said === 'hello' ? ['Your request', 'Checking the details'] : ['ข้อความของคุณ', 'กำลังหาคำตอบ'], said);
     }
     const [stage] = lineWaitStages({ ...base, messageText: 'วันนี้เหนื่อยจัง', kind: 'text', loadingEnabled: true });
     assert.deepEqual(stage!.card?.header, { lines: ['ข้อความของคุณ', 'กำลังหาคำตอบ'] });

@@ -99,7 +99,7 @@ describe('LINE business answer card renderer', () => {
     assert.equal(message.type, 'flex');
     assert.match(JSON.stringify(message), /fallback/);
     assert.doesNotMatch(JSON.stringify(message), /plain fallback/);
-    assert.equal((message.contents as any).header.contents[0].text, 'น้องมั่งมีสรุปค่าใช้จ่ายให้นะคะ');
+    assert.equal((message.contents as any).header.contents[0].text, 'Nong Mangmee’s answer');
   });
 
   it('keeps full cardless reply, source basis and only a safe tenant link', () => {

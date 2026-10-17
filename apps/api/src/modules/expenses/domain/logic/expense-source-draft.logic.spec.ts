@@ -26,19 +26,20 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     for (const summary of [null, {}, { dateStatus: 'verified' }, { dateStatus: 'assumed' }]) assert.doesNotThrow(() =>
       assertExpenseSourceDraftComplete(null, { captureSource: 'WEB_UPLOAD', aiVerificationSummaryJson: summary } as any));
   });
-  it('retains all40 items and all missing questions within five LINE messages;41 is explicit rejection', () => {
+  it('retains all40 items and gaps while asking one question;41 is explicit rejection', () => {
     const items = Array.from({ length: 40 }, (_, index) => ({ sourceText: `สินค้า${index + 1}${'ก'.repeat(110)}`, description: `สินค้า${index + 1}${'ก'.repeat(110)}` }));
     const state = buildInitialLineExpenseDraftContinuation({ ...base, messageText: items.map((item) => item.sourceText).join(' '), hints: { items } });
     assert.equal(state.items.length, 40);
-    assert.equal(state.unresolvedQuestions.length, 122);
+    assert.equal(state.unresolvedQuestions.length, 81);
     assert.equal(parseLineExpenseDraftContinuation(JSON.parse(JSON.stringify(state)))?.items.length, 40);
     const text = formatLineExpenseDraftReply({ state, categories });
     const messages = splitLineExpenseDraftReply(text);
     assert.ok(messages.length <= 5, `${messages.length} messages`);
     assert.equal(messages.join(''), text);
-    for (const item of state.items) assert.ok(text.includes(item.description!.slice(0, 60)), item.description);
+    assert.equal(state.items.filter(item => item.description).length, 40);
     assert.doesNotMatch(text, /D-[A-Z]|I\d{2}-/u);
-    assert.match(text, /ตอบรวมในข้อความเดียว/u);
+    assert.match(text, /วันไหนคะ/u);
+    assert.doesNotMatch(text, /ตอบรวมในข้อความเดียว|ซื้อจากร้าน/u);
     assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'x', hints: { items: [...items, items[0]!] } }), /at most 40/);
   });
 

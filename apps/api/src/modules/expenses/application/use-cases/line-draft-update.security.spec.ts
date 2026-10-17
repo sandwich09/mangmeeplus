@@ -2239,6 +2239,28 @@ it('Y2: a text-only draft offers only contract-valid evidence routes and pins ph
   assert.equal(h.reviews.length, 0); assert.equal(h.state.writes.length, 0);
 });
 
+it('Exam F2: WHT evidence offers a real review-and-confirm destination, then a native photo picker without a message loop', async () => {
+  const { lineChoiceQuickReply } = await import('../../../line-ai/domain/logic/line-business-card.logic');
+  const h = evidenceReviewActionHarness();
+  Object.assign((h.actions as any).config, { webBaseUrl: 'https://app.example.test' });
+  Object.assign(h.record, { status: 'DRAFT', sourceDocumentType: 'EXPENSE_NOTE_TEXT', primaryAttachmentId: null, attachments: [],
+    grandTotalAmount: '10000', whtAmount: '300', netPayableAmount: '9700', whtCategoryCode: 'WHT_SERVICE_5', vendorEntityKindSnapshot: 'JURISTIC' });
+  const proposed = await h.preview();
+  assert.equal(proposed.preview, undefined); assert.match(proposed.reply, /ยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่าย.*50 ทวิค่ะ/);
+  let choices = await h.actions.repairChoices(h.ctx, 'private-action');
+  let quick = lineChoiceQuickReply(choices!);
+  assert.deepEqual(quick.items[0]!.action, { type: 'uri', label: 'ตรวจเพื่อยืนยัน', uri: `https://app.example.test/companies/${h.ctx.companyId}/expenses/${h.record.id}` });
+  assert.ok(choices!.some(choice => choice.text === 'ส่งรูปใบเสร็จ'));
+  await h.actions.answerEvidence(h.ctx, 'private-action', 'ส่งรูปใบเสร็จ');
+  choices = await h.actions.repairChoices(h.ctx, 'private-action'); quick = lineChoiceQuickReply(choices!);
+  assert.deepEqual(quick.items.map(item => item.action.type), ['uri', 'cameraRoll']);
+  assert.equal(quick.items.some(item => item.action.type === 'message' && item.action.text === 'ส่งรูปใบเสร็จ'), false);
+  assert.equal((await h.actions.evidencePhotoTarget(h.ctx, 'private-action'))?.expenseId, h.record.id);
+  assert.equal(h.reviews.length, 0); assert.equal(h.state.writes.length, 0); assert.equal(h.record.status, 'DRAFT');
+  const denied = { ...h.ctx, permissions: h.ctx.permissions.filter(key => key !== 'expense.confirm') };
+  assert.equal((await h.actions.repairChoices(denied, 'private-action'))?.some(choice => 'uri' in choice), false);
+});
+
 it('Fix-up 23 R2: waiting saves the web evidence draft without reviewing/confirming, then offers upload for the same record', async () => {
   const h = evidenceReviewActionHarness();
   Object.assign(h.record, { status: 'DRAFT', sourceDocumentType: 'EXPENSE_NOTE_TEXT', primaryAttachmentId: null, attachments: [] });

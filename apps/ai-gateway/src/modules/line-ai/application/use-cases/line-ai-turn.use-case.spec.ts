@@ -773,11 +773,11 @@ describe('LineAiTurnUseCase – company feature switched off', () => {
     makeAgentcoreRuntime(),
   );
 
-  it('names the feature switch instead of reporting no data or a missing permission', async () => {
+  it('names an unsold feature and nearby supported work without blaming permissions', async () => {
     const resp = await useCaseReturning({ status: 'unsupported_module', errorCode: 'FEATURE_NOT_ENABLED' }).execute(validReq);
 
     assert.equal(resp.refused, true);
-    assert.match(resp.replyText, /ยังไม่ได้เปิดใช้งาน/);
+    assert.match(resp.replyText, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย.*ใบเบิก/);
     assert.equal(resp.replyText.includes('ไม่พบข้อมูล'), false, 'a disabled feature is not an empty result');
     assert.equal(resp.replyText.includes('ไม่มีสิทธิ์'), false, 'a disabled feature is not a permission problem');
     // The refusal must not disclose anything beyond what this user asked about.

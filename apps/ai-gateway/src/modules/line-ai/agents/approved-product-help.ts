@@ -1,6 +1,7 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
-import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
+import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
   'tax': { file: 'tax-guide.content.ts', hash: '4aef264e52fed9bd845e83909d9883b3f020f975e390644e680f9f875dc36e06' },
@@ -90,23 +91,79 @@ export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
 };
 PRODUCT_HELP_DRAFT_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_DRAFT_PACK);
 
+const ACTION_HELP_EN: Record<(typeof LINE_CHAT_ACTIONS)[number]["id"], string> = {
+  "reimbursement_submit": "Choose the claim to submit, review it and press submit.",
+  "reimbursement_cancel": "Choose the claim to cancel, review it and confirm cancellation.",
+  "reimbursement_reject": "Choose the claim and give the rejection reason, then review and press reject.",
+  "reimbursement_pay": "Choose an approved claim and send payment evidence, then review and confirm payment.",
+  "expense_submit": "Choose the expense, review it and press send for review.",
+  "expense_confirm": "Choose the expense and check its evidence before confirming the document.",
+  "expense_delete": "Choose the expense draft, review it and confirm deletion.",
+  "expense_void": "Choose the expense and give a reason, then review and confirm cancellation.",
+  "expense_pay": "Choose the expense and send payment evidence, then review and confirm payment.",
+  "expense_capture": "Send a receipt or describe the expense so I can prepare it for your review.",
+  "reimbursement_claim": "Tell me what you paid for so I can prepare a reimbursement claim for your review.",
+  "payment_voucher": "Choose confirmed expenses for the same payee, then review and confirm the payment voucher I prepare.",
+  "wht_certificate": "Choose an expense with withholding tax and check the payee name, tax number and address before reviewing and confirming the tax certificate.",
+  "pnd53": "Tell me the period so I can summarize its PND53 withholding tax for your review.",
+  "payout_account": "Add your reimbursement bank account on the payout account page on the web.",
+  "counterparty": "Tell me the supplier or payee name and available details, then review and confirm the record I prepare.",
+  "team_member": "Tell me the employee name and role, then review and confirm their access.",
+  "branch": "Tell me the branch name and available details, then review and confirm the branch I prepare.",
+  "branch_edit": "Tell me the branch name and what to change so I can prepare the update for your review.",
+  "package_purchase": "Choose a package so I can prepare the purchase request for your review.",
+  "approvals": "Choose a claim assigned to you for approval, then review its details before confirming.",
+  "expense_search": "Tell me the expense or period to search within your access.",
+  "sales": "Tell me the period so I can look up sales within your access.",
+  "finance": "Tell me the period so I can look up financial reports within your access.",
+  "tax": "Tell me the period so I can look up upcoming tax obligations within your access.",
+  "inventory": "Tell me the product name to search within your access.",
+  "customers": "Tell me the customer name to search within your access.",
+  "bookings": "Tell me the period so I can look up bookings within your access.",
+  "procurement": "Tell me the period so I can look up purchasing within your access.",
+  "alerts": "I can look up the open alerts you have access to.",
+  "team": "Tell me the team details to search within your access."
+};
+
 /** The semantic selector names a registry entry; neither its prose nor a guide can grant action access. */
-export function productHelpAction(input: { actionId?: unknown; selectedKnowledgeCardIds?: readonly string[];
-  permissions: readonly string[]; featureKeys: readonly string[] | null; availableToolNames?: readonly string[]; companyId?: string }) {
+export function productHelpAction(input: { actionId?: unknown; text?: string; toolHint?: string; selectedKnowledgeCardIds?: readonly string[];
+  permissions: readonly string[]; featureKeys: readonly string[] | null; availableToolNames?: readonly string[]; companyId?: string; language?: ScopePolicyLanguage }) {
   const mapped = LINE_CHAT_ACTIONS.filter(action => action.helpTopics.some(topic => input.selectedKnowledgeCardIds?.includes(topic)));
-  const action = lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
-  if (!action) return null;
+  const text = input.text ?? '';
+  const claim = /ใบเบิก|เบิกเงิน|reimbursement|claim/iu.test(text);
+  const expense = /ค่าใช้จ่าย|รายจ่าย|expense|บิล/iu.test(text);
+  // Specific operation beats broad creation guides selected for the same document family.
+  const operation = claim
+    ? /ไม่อนุมัติ|ปฏิเสธ|reject/iu.test(text) ? 'reimbursement_reject'
+      : /จ่ายคืน|จ่ายเงิน|จ่ายใบเบิก|โอน|บันทึกจ่าย|\bpay/iu.test(text) ? 'reimbursement_pay'
+        : /ยกเลิก|cancel/iu.test(text) ? 'reimbursement_cancel'
+          : /ส่ง.*อนุมัติ|submit/iu.test(text) ? 'reimbursement_submit'
+            : /อนุมัติ|approve/iu.test(text) ? 'approvals'
+              : /สร้าง|ทำ|create/iu.test(text) ? 'reimbursement_claim' : undefined
+    : expense ? /ลบ|delete/iu.test(text) ? 'expense_delete'
+      : /ยกเลิก|void|cancel/iu.test(text) ? 'expense_void'
+        : /บันทึกจ่าย|ชำระ|จ่ายเงิน|จ่าย(?:ค่าใช้จ่าย|รายจ่าย|บิล)|\bpay/iu.test(text) ? 'expense_pay'
+          : /ส่งตรวจ|ส่ง.*ตรวจ|submit/iu.test(text) ? 'expense_submit'
+            : /ยืนยัน|confirm/iu.test(text) ? 'expense_confirm' : undefined : undefined;
+  const action = lineChatAction(input.actionId || mapped.length || input.toolHint === 'reimbursement.list_pending_approvals' ? operation : undefined)
+    ?? lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
+  if (!action || action.id === 'approvals' && text && operation !== 'approvals') return null;
   const allowed = canUseLineChatAction(action.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
     && (!action.tool || !input.availableToolNames || input.availableToolNames.includes(action.tool));
   const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
   const entitled = input.featureKeys === null ? null : new Set(input.featureKeys);
-  const featureMissing = action.id === 'expense_capture' && entitled !== null && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY)
-    || tool && !hasToolFeature(tool, entitled)
-    || entitled !== null && (action.id === 'wht_certificate' && !entitled.has('wht_50bis') || action.id === 'pnd53' && !entitled.has('wht_pnd53'));
-  const replyText = allowed ? action.sentence : featureMissing
-    ? 'ให้ผู้มีสิทธิ์จัดการแพ็กเกจตรวจเมนูที่ร้านเปิดใช้สำหรับงานนี้ค่ะ'
-    : `ให้${action.responsible}ดำเนินการ หรือให้ผู้ดูแลตรวจสิทธิ์ของคุณค่ะ`;
+  const language = input.language ?? 'th';
+  const missingFeature = entitled === null ? undefined
+    : action.id === 'expense_capture' && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY) ? LINE_RECEIPT_CAPTURE_FEATURE_KEY
+      : action.id === 'wht_certificate' && !entitled.has('wht_50bis') ? 'wht_50bis'
+        : action.id === 'pnd53' && !entitled.has('wht_pnd53') ? 'wht_pnd53'
+          : tool && !hasToolFeature(tool, entitled) ? (tool.featureKeys ?? TOOL_MODULE_FEATURE_KEYS[tool.sourceModule])?.find(key => !entitled.has(key)) : undefined;
+  const alternative = permissionAlternative(input.permissions, language);
+  const replyText = allowed ? language === 'en' ? ACTION_HELP_EN[action.id] : action.sentence : missingFeature ? featureLimitReplyText(missingFeature, language)
+    : permissionLimitReplyText(language, language === 'en' ? 'perform this action' : action.title, input.permissions);
+  const limitLink = !allowed && input.companyId ? scopePolicyWebLinks({ reasonCode: missingFeature ? 'PACKAGE_FEATURE_NOT_ENABLED' : 'ROLE_PERMISSION_REQUIRED', text: replyText,
+    webPage: missingFeature && featurePackageOffer(missingFeature) ? 'packages' : alternative.page }, input.permissions, input.companyId, language)[0] : undefined;
   const presentation: LineAiAnswerPresentation = { kind: 'answer_cards', cards: [{ text: replyText,
-    ...(allowed ? 'webPath' in action ? { webLink: { label: 'บัญชีรับเงินคืนของฉัน', path: action.webPath.replace('{companyId}', input.companyId ?? '') } } : { chatActionId: action.id } : {}) }] };
+    ...(allowed ? 'webPath' in action ? { webLink: { label: language === 'en' ? 'My payout account' : 'บัญชีรับเงินคืนของฉัน', path: action.webPath.replace('{companyId}', input.companyId ?? '') } } : { chatActionId: action.id } : limitLink ? { webLink: limitLink } : {}) }] };
   return { replyText, presentation, allowed };
 }
