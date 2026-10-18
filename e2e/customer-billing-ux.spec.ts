@@ -10,13 +10,13 @@ for (const width of [1280, 390]) {
     await gotoCompany(page, companyId, '/settings/branches');
     if (width < 768) await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
     await page.locator('aside a[href$="/billing"]').click();
-    const title = page.getByRole('heading', { name: 'แพ็กเกจและการจ่ายเงิน', exact: true });
+    const title = page.getByRole('heading', { name: 'แพ็กเกจ', exact: true });
     await expect(title).toBeVisible();
     await expect(page.locator('aside')).toHaveCount(1);
     await expect(page.getByRole('link', { name: /กลับไปหน้าแรก|กลับไปใช้งาน/ })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกบริษัทอื่น', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน' })).toHaveCount(0);
-    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('ใบเสร็จคงเหลือ');
+    await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).getByRole('heading', { name: 'ยังไม่มีแพ็กเกจ', exact: true })).toBeVisible();
     const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
     await expect(emailPanel).toHaveCount(0);
     await expect(emailPanel.locator('.mangmee-card')).toHaveCount(0);
@@ -75,23 +75,23 @@ test('BILLING-UX recipient panel offers the verified account email only when it 
   await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toBeVisible();
   // RV05: buying never waits on the account email, so the package page does not read it.
   expect(accountReads).toBe(0);
-  await page.getByRole('button', { name: 'การต่ออายุและจ่ายเงิน', exact: true }).click();
+  await page.locator('#billing-payment').scrollIntoViewIfNeeded();
   const recipient = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
   await expect(recipient).toContainText('accounts@example.com');
-  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  await recipient.getByRole('button', { name: 'แก้', exact: true }).click();
   const accountOption = recipient.getByRole('radio', { name: /ใช้อีเมลบัญชีที่ยืนยันแล้ว/ });
   await expect(accountOption).toHaveAccessibleName(/owner@example\.com/);
   await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
   // An unreadable account email is simply not offered; the code path stays open.
   failRead = true;
   await recipient.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
-  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  await recipient.getByRole('button', { name: 'แก้', exact: true }).click();
   await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
   await expect(accountOption).toHaveCount(0);
   await expect(page.getByRole('alert').filter({ hasText: 'ยังตรวจสอบอีเมลบัญชีไม่ได้' })).toHaveCount(0);
   failRead = false; requirement = 'CHANGE_PENDING';
   await recipient.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
-  await recipient.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true }).click();
+  await recipient.getByRole('button', { name: 'แก้', exact: true }).click();
   await expect(recipient.getByRole('radio', { name: 'ใช้อีเมลอื่น', exact: true })).toBeVisible();
   await expect(accountOption).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true })).toHaveCount(0);
@@ -125,14 +125,39 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
   await expect(page.locator('aside')).toHaveCount(1);
 
   const invoiceId = '00000000-0000-4000-8000-000000000001';
-  await page.route(`**/api/v1/companies/${companyId}/billing/invoices/${invoiceId}/adjustments/refunds`, route => route.fulfill({ json: {
-    mode: 'TEST', invoiceNumber: 'TEST-INVOICE', canOpenDocuments: false, observedAt: new Date().toISOString(), kind: 'refunds', items: [], nextCursor: null,
+  const paidInvoice = { id: invoiceId, number: 'TEST-INVOICE', currency: 'THB', amountSatang: 49900, refundedSatang: 0, disputed: false, financialObservedAt: null,
+      offer: { key: 'BASIC_499', label: 'เติบโต', interval: 'month' }, method: 'CARD', paymentState: 'paid', applyState: 'APPLIED',
+      periodStart: '2026-10-01T00:00:00Z', periodEnd: '2026-11-01T00:00:00Z', paidAt: '2026-10-01T00:00:00Z', createdAt: '2026-10-01T00:00:00Z', hasDocuments: true };
+  const documentKinds: string[] = [];
+  await page.route(`**/api/v1/companies/${companyId}/billing/invoices/${invoiceId}/adjustments/*`, route => route.fulfill({ json: {
+    mode: 'TEST', invoiceNumber: 'TEST-INVOICE', canOpenDocuments: true, observedAt: new Date().toISOString(), kind: 'refunds', items: [], nextCursor: null,
+    invoice: paidInvoice,
   } }));
-  await page.goto(`/companies/${companyId}/billing/invoices/${invoiceId}`);
-  await expect(page.getByRole('heading', { name: 'เอกสารการจ่ายเงิน', exact: true })).toBeVisible();
-  await page.getByRole('link', { name: 'กลับไปประวัติการจ่ายเงิน', exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/billing#billing-history$`));
-  await expect(page.getByRole('region', { name: 'ประวัติการจ่ายเงิน', exact: true })).toBeVisible();
+  await page.route(`**/api/v1/companies/${companyId}/billing/documents/${invoiceId}/open`, route => {
+    const kind = route.request().postDataJSON().kind;
+    documentKinds.push(kind);
+    return route.fulfill({ json: { url: `https://invoice.stripe.com/pay-menu-${kind}` } });
+  });
+  await page.route('https://invoice.stripe.com/pay-menu-*', route => route.fulfill({ contentType: 'text/html', body: '<p>เอกสารตัวอย่าง</p>' }));
+  await page.route(`**/api/v1/companies/${companyId}/billing/history*`, route => route.fulfill({ json: { items: [paidInvoice], nextCursor: null } }));
+  await page.goto(`/companies/${companyId}/billing#billing-history`);
+  // A hash-only move scrolls the existing page; reload to read the newly installed history fixture.
+  await page.reload();
+  await page.locator('#billing-history').getByRole('link', { name: 'เปิดรายการจ่ายเงิน TEST-INVOICE', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/billing/invoices/${invoiceId}$`));
+  await expect(page.getByRole('heading', { name: 'เติบโต · 1 ต.ค. 2569', exact: true })).toBeVisible();
+  await expect(page.getByText('499.00', { exact: false })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'คืนเงินและเอกสารปรับยอด', exact: true })).toHaveCount(0);
+  for (const [label, kind] of [['ใบเสร็จรับเงิน', 'receipt'], ['ใบแจ้งหนี้', 'pdf']]) {
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await expect(page).toHaveURL(`https://invoice.stripe.com/pay-menu-${kind}`);
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'เติบโต · 1 ต.ค. 2569', exact: true })).toBeVisible();
+  }
+  expect(documentKinds).toEqual(['receipt', 'pdf']);
+  await page.getByRole('link', { name: 'กลับไปแพ็กเกจ', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/billing$`));
+  await expect(page.getByRole('region', { name: 'ประวัติการจ่ายเงิน', exact: true })).toBeInViewport();
 });
 
 test('BILLING-UX recovery never mounts business reads and picker rejects an unowned return company', async ({ authedPage: page, companyId }) => {
@@ -145,7 +170,7 @@ test('BILLING-UX recovery never mounts business reads and picker rejects an unow
   await page.goto(`/companies/${companyId}/billing`);
   await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
   await expect(page.locator('aside')).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'กลับหน้าเลือกบริษัท', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'กลับไปเลือกร้าน', exact: true })).toBeVisible();
   expect(businessReads).toEqual([]);
   await page.goto(`/account/email?company=${companyId}&interval=year`);
   await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();

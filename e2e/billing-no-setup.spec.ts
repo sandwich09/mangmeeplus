@@ -1,6 +1,6 @@
 import { test, expect } from './harness/fixtures';
 import { expectNoClientError } from './harness/auth';
-import { ATTEMPT, defaultState, installNoSetupRoutes } from './billing-no-setup.fixture';
+import { ATTEMPT, defaultState, installNoSetupRoutes, chooseBillingMethod } from './billing-no-setup.fixture';
 import type { Page } from '@playwright/test';
 
 const fits = async (page: Page, width: number) => expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -14,38 +14,41 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole('heading', { name: 'ยังไม่มีแพ็กเกจ', exact: true })).toBeVisible();
     // F22/F20: one header (the shell's), no recovery link that loops back to /renew, the locked sidebar.
     await expect(page.locator('header')).toHaveCount(1);
-    await expect(page.getByRole('link', { name: 'กลับหน้าเลือกบริษัท' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'กลับไปเลือกร้าน' })).toHaveCount(0);
     await expect(page.locator(`aside a[href$="/companies/${companyId}/billing"]`)).toHaveCount(1);
     await expect(page.locator(`aside a[href$="/companies/${companyId}/settings"]`)).toHaveCount(1);
     await expect(page.getByText('ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้')).toBeVisible();
     // RV05/R-A9: nothing to set up first — no email gate, no company-profile popup or warning box.
     for (const gate of ['ยืนยันอีเมลบัญชีก่อนซื้อแพ็กเกจ', 'ตั้งค่าข้อมูลบริษัทก่อนซื้อแพ็กเกจ', 'กรอกข้อมูลบริษัทก่อนซื้อแพ็กเกจ']) await expect(page.getByText(gate)).toHaveCount(0);
-    await expect(page.getByRole('note').filter({ hasText: 'เอกสารจะออกในชื่อ' })).toContainText('ที่อยู่กรอกได้ที่หน้าชำระเงิน');
+    await expect(page.getByRole('note').filter({ hasText: 'เอกสารจะออกในชื่อ' })).toContainText('ที่อยู่กรอกได้ที่หน้าจ่ายเงิน');
 
     await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).click();
     const plans = page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true });
-    // G24: card auto-renew on top; the other ways to pay wait under "วิธีชำระอื่น".
-    await expect(plans.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ' })).toBeChecked();
-    const otherModes = plans.getByRole('button', { name: 'วิธีชำระอื่น' });
-    await expect(otherModes).toHaveAttribute('aria-expanded', 'false');
-    await expect(plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' })).toBeHidden();
-    await otherModes.click();
-    await expect(plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' })).toBeVisible();
-    await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
-    await expect(plans).toContainText('เฉลี่ยเดือนละ');
+    // PAY-1: package first, both payment questions unanswered on step 2.
+    await expect(plans.locator('input[name="paymentChoice"]')).toHaveCount(0);
+    await plans.getByRole('button', { name: 'รายปี · ฟรี 2 เดือน', exact: true }).click();
+    await expect(plans).toContainText('2,490 บาท / ปี');
     await plans.getByRole('button', { name: 'รายเดือน', exact: true }).click();
-    const starter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });
-    await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
+    const starter = plans.locator('label').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น', exact: true }) });
+    await starter.getByRole('radio', { name: 'เลือก เริ่มต้น', exact: true }).check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    const methods = page.getByRole('region', { name: 'วิธีจ่าย', exact: true });
+    for (const name of ['ต่ออายุอัตโนมัติ', 'จ่ายครั้งเดียว', 'QR พร้อมเพย์', 'บัตร']) {
+      await expect(methods.getByRole('radio', { name, exact: true })).toBeVisible();
+      await expect(methods.getByRole('radio', { name, exact: true })).not.toBeChecked();
+    }
+    await chooseBillingMethod(page, 'PROMPTPAY_ONCE');
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
 
     // R-A11: what the documents will carry; the blanks are filled at Stripe Checkout.
-    const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
+    const review = page.getByRole('region', { name: 'ตรวจก่อนจ่าย', exact: true });
     const documents = review.getByLabel('ข้อมูลออกเอกสาร', { exact: true });
-    await expect(documents.getByText('จะกรอกที่หน้าชำระเงิน', { exact: true })).toHaveCount(2);
+    await expect(documents.getByText('จะกรอกที่หน้าจ่ายเงิน', { exact: true })).toHaveCount(2);
     expect(s.log.quotes[0]).not.toHaveProperty('billingEmail');
     await expect(documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน' })).toHaveAttribute('href', /returnTo=billing/);
     await expect(documents.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' })).toHaveCount(0);
-    await review.getByRole('checkbox').check();
-    await review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true }).click();
+    await expect(review.getByRole('checkbox')).toHaveCount(0);
+    await page.getByRole('button', { name: /^จ่าย [\d,]+\.\d{2} บาท$/, exact: true }).click();
     await page.waitForURL(/checkout\.stripe\.com/);
     await expect(page.getByRole('heading', { name: 'Stripe (จำลอง)' })).toBeVisible();
 
@@ -54,42 +57,42 @@ for (const width of [1280, 390]) {
     // redo the payment, and the locked banner has no "เลือกแพ็กเกจ" of its own.
     await page.locator('#pay').click();
     await page.waitForURL(new RegExp(`/billing/return\\?attempt=${ATTEMPT}$`));
-    const waiting = page.getByText('กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', { exact: true });
+    const waiting = page.getByText('กำลังรอผลการจ่ายเงิน', { exact: true });
     await expect(waiting).toBeVisible();
     const readsBefore = s.log.attempts;
     await expect.poll(() => s.log.attempts - readsBefore, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
     await expect(waiting).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', exact: true })).toBeVisible();
-    for (const name of ['ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'ชำระเงินต่อ', 'ยกเลิกรายการนี้', 'เลือกแพ็กเกจ'])
+    await expect(page.getByRole('heading', { name: 'กำลังรอผลการจ่ายเงิน', exact: true })).toBeVisible();
+    for (const name of ['ยกเลิกรายการนี้', 'จ่ายต่อ', 'ยกเลิกรายการนี้', 'เลือกแพ็กเกจ'])
       await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     await expect(page.getByText('เลือกแพ็กเกจเพื่อเริ่มใช้งาน', { exact: true })).toHaveCount(0);
     await fits(page, width);
 
     s.stage = 'paid';
-    await expect(page.getByRole('heading', { name: 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ได้รับเงินแล้ว กำลังเปิดแพ็กเกจ', exact: true })).toBeVisible();
     await expect(waiting).toHaveCount(0);
-    // R-A8: said from PAID; the recipient column is written at apply, so Checkout's email stands in until then.
-    const recipientLine = page.getByLabel('อีเมลรับเอกสาร', { exact: true });
-    await expect(recipientLine).toContainText('อีเมลที่กรอกไว้ที่หน้าชำระเงิน');
-    await expect(recipientLine.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' })).toBeDisabled();
+    // PAY-2: while opening the package there is no dead email-edit button.
+    await expect(page.getByRole('button', { name: 'แก้อีเมลรับเอกสาร', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true }).getByRole('button', { name: 'แก้', exact: true })).toHaveCount(0);
 
     // RV30: the shell unlocks in place when the payment applies — no page load.
     let loads = 0;
     page.on('load', () => { loads++; });
     s.stage = 'applied';
-    await expect(page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /^จ่าย [\d,]+\.\d{2} บาทแล้ว$/, exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('aside a[href$="/dashboard"]').first()).toBeAttached();
     await expect(page.getByText('ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้')).toHaveCount(0);
     await expect(page.locator('header')).toHaveCount(1);
     expect(loads).toBe(0);
-    await expect(recipientLine).toContainText('ส่งเอกสารไปที่ buyer@example.test');
+    const recipientLine = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
+    await expect(recipientLine).toContainText('buyer@example.test');
     await fits(page, width);
     await page.screenshot({ path: info.outputPath(`no-setup-return-${width}.png`), fullPage: true });
 
     // R-A8/R-D2: a new mailbox proven by a code, then the latest documents go there.
-    await recipientLine.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' }).click();
-    await expect(page.getByRole('button', { name: 'การต่ออายุและชำระเงิน', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await recipientLine.getByRole('button', { name: 'แก้', exact: true }).click();
+    await expect(page.locator('#billing-recipient')).toBeVisible();
     const panel = page.getByRole('region', { name: 'ผู้รับเอกสารของร้าน', exact: true });
     await expect(panel).toBeVisible();
     await panel.getByRole('radio', { name: 'ใช้อีเมลอื่น' }).check();
@@ -110,7 +113,7 @@ for (const width of [1280, 390]) {
     await expect(panel.getByRole('status').filter({ hasText: 'ส่งเอกสารไปที่ new@example.test แล้ว' })).toContainText('วันนี้ส่งซ้ำได้อีก');
     s.resendsLeft = 0;
     await panel.getByRole('button', { name: 'ส่งเอกสารล่าสุดไปอีเมลใหม่', exact: true }).click();
-    await expect(panel.getByRole('alert')).toContainText('วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว');
+    await expect(panel.getByRole('alert')).toContainText('ส่งเอกสารใบนี้ซ้ำครบจำนวนแล้ว รอแล้วลองอีกครั้งหรือเปิดเอกสารจากประวัติแทน');
     expect(s.log.checkouts).toHaveLength(1);
     await fits(page, width);
     await page.screenshot({ path: info.outputPath(`no-setup-recipient-${width}.png`), fullPage: true });
@@ -124,20 +127,23 @@ for (const width of [1280, 390]) {
     await page.goto(`/companies/${companyId}/billing`);
     await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).click();
     const plans = page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true });
-    await plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) })
-      .getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
-    const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
-    await review.getByRole('checkbox').check();
-    await review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true }).click();
+    await plans.getByRole('radio', { name: 'เลือก เริ่มต้น', exact: true }).check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await chooseBillingMethod(page, 'CARD_AUTO');
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    const review = page.getByRole('region', { name: 'ตรวจก่อนจ่าย', exact: true });
+    await page.getByRole('region', { name: 'วิธีจ่าย', exact: true }).getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await page.getByRole('button', { name: /^จ่าย [\d,]+\.\d{2} บาท$/, exact: true }).click();
     await page.waitForURL(/checkout\.stripe\.com/);
     await page.locator('#back').click();
     await page.waitForURL(/checkout=canceled/);
 
     // G12/F09/F10: back without paying — said plainly, and one tap ends that Checkout for a new choice.
-    await expect(page.getByRole('heading', { name: 'มีรายการชำระเงินที่ยังไม่เสร็จ', exact: true })).toBeVisible();
-    const newChoice = page.getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true });
+    await expect(page.getByRole('heading', { name: 'มีรายการจ่ายเงินที่ยังไม่เสร็จ', exact: true })).toBeVisible();
+    const newChoice = page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true });
     await expect(newChoice).toBeVisible();
-    await expect(page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true })).toHaveCount(1);
     await fits(page, width);
     await page.screenshot({ path: info.outputPath(`no-setup-canceled-${width}.png`), fullPage: true });
     await newChoice.click();
@@ -148,17 +154,17 @@ for (const width of [1280, 390]) {
     // The old Checkout turns out paid: no second purchase is offered.
     s.stage = 'checkout'; s.cancelResult = 'COMPLETED';
     await page.goto(`/companies/${companyId}/billing/return?attempt=${ATTEMPT}&checkout=canceled`);
-    await page.getByRole('button', { name: 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'รายการเดิมชำระสำเร็จแล้ว' })).toBeVisible();
+    await page.getByRole('button', { name: 'ยกเลิกรายการนี้', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'รายการเดิมจ่ายสำเร็จแล้ว' })).toBeVisible();
     await expect(plans).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ได้รับเงินแล้ว กำลังเปิดแพ็กเกจ', exact: true })).toBeVisible();
 
     // The package page offers the same one tap (F09); Stripe still deciding keeps the chooser closed.
     s.stage = 'checkout'; s.cancelResult = 'PENDING';
     await page.goto(`/companies/${companyId}/billing`);
     await expect(newChoice).toBeVisible();
     await newChoice.click();
-    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับชำระเงิน' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับเงิน' })).toBeVisible();
     await expect(plans).toHaveCount(0);
     expect(s.log.cancels).toBe(3);
     await expectNoClientError(page);
@@ -172,39 +178,42 @@ for (const width of [1280, 390]) {
     await page.goto(`/companies/${companyId}/billing`);
     await page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true }).click();
     const plans = page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true });
-    const starter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });
-    await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();
-    await plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' }).check();
-    await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
-    const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
-    const checkout = review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true });
+    const starter = plans.locator('label').filter({ has: page.getByRole('heading') }).filter({ has: page.getByRole('heading', { name: 'เริ่มต้น', exact: true }) });
+    await starter.getByRole('radio', { name: 'เลือก เริ่มต้น', exact: true }).check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await chooseBillingMethod(page, 'PROMPTPAY_ONCE');
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    const review = page.getByRole('region', { name: 'ตรวจก่อนจ่าย', exact: true });
+    const checkout = page.getByRole('button', { name: /^จ่าย [\d,]+\.\d{2} บาท$/, exact: true });
 
     // G10/F16: an expired price says so, and re-quotes the same choice in one tap.
     await expect(review.getByRole('status').filter({ hasText: 'ราคานี้หมดอายุแล้ว กดตรวจสอบราคาใหม่' })).toBeVisible();
     await expect(checkout).toHaveCount(0);
     s.quoteTtlMs = 600_000;
-    await review.getByRole('button', { name: 'ตรวจสอบราคาใหม่', exact: true }).click();
+    await page.getByRole('button', { name: 'ตรวจสอบราคาใหม่', exact: true }).click();
     await expect(checkout).toBeVisible();
     expect(s.log.quotes[1]).toMatchObject({ offerKey: 'STARTER_249', interval: 'month', purchaseMode: 'PROMPTPAY_ONCE' });
 
     // G11/F17: Checkout refused (the quote is spent) → back to the chooser with a reason.
     s.checkoutResult = 'FAILED';
-    await review.getByRole('checkbox').check();
+    await expect(review.getByRole('checkbox')).toHaveCount(0);
     await checkout.click();
-    await expect(page.getByRole('alert').filter({ hasText: 'ยังเปิดหน้าชำระเงินไม่ได้' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'ยังเปิดหน้าจ่ายเงินไม่ได้' })).toBeVisible();
     await expect(plans).toBeVisible();
     expect(s.log.checkouts).toHaveLength(1);
 
     // Outcome unknown → never a second attempt from here, only a look at the first.
-    await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
+    await starter.getByRole('radio', { name: 'เลือก เริ่มต้น', exact: true }).check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     s.checkoutResult = 'UNKNOWN';
-    await review.getByRole('checkbox').check();
+    await expect(review.getByRole('checkbox')).toHaveCount(0);
     await checkout.click();
-    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจกับผู้ให้บริการรับชำระเงิน' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจกับผู้ให้บริการรับเงิน' })).toBeVisible();
     await expect(checkout).toHaveCount(0);
     await page.waitForTimeout(2500);
     expect(s.log.checkouts).toHaveLength(2);
-    await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงิน', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toBeVisible();
     await fits(page, width);
     await expectNoClientError(page);
   });
@@ -215,11 +224,14 @@ for (const width of [1280, 390]) {
     s.stage = 'failed';
     await installNoSetupRoutes(page, companyId, s);
     await page.goto(`/companies/${companyId}/billing/return?attempt=${ATTEMPT}`);
-    await expect(page.getByRole('heading', { name: 'รายการชำระเงินนี้ไม่สำเร็จ', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ยังไม่ได้รับเงิน', exact: true })).toBeVisible();
     // A shop that never had a package is not told its old package is unchanged.
-    await expect(page.getByText('ไม่มีการเรียกเก็บเงินจากรายการนี้')).toBeVisible();
+    await expect(page.getByText('ไม่มีการเรียกเก็บเงินจากรายการนี้')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'ยังไม่ได้รับเงิน', exact: true })).toContainText('การจ่ายเงินรายการนี้ไม่เสร็จ');
+    await expect(page.getByRole('region', { name: 'ยังไม่ได้รับเงิน', exact: true }).getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toHaveCount(0);
     await expect(page.getByText('สิทธิ์แพ็กเกจเดิม')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'เลือกแพ็กเกจ', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'เปลี่ยนวิธีจ่าย', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'จ่ายอีกครั้ง', exact: true })).toBeVisible();
     // G13: a FAILED answer ends the polling.
     const reads = s.log.attempts;
     await page.waitForTimeout(3000);

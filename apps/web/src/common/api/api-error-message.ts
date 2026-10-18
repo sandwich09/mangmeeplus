@@ -120,18 +120,18 @@ const CODE_LABELS: Record<string, string> = {
   EMAIL_VERIFICATION_REQUIRED: 'ยืนยันอีเมลของบัญชีก่อน จึงจะเปิดใช้การเข้าสู่ระบบด้วยอีเมลได้',
   external_signup_disabled: 'ตอนนี้ยังไม่เปิดรับสมัครใหม่ ติดต่อทีมงาน',
 
-  BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่',
-  BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจผู้รับเอกสารและสรุปรายการใหม่',
+  BILLING_RECIPIENT_UPDATE_REQUIRED: 'ผู้รับเอกสารยังต้องยืนยัน เปิดอีเมลรับเอกสารแล้วตรวจและยืนยันก่อนตรวจยอดอีกครั้ง',
+  BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว ตรวจอีเมลรับเอกสารและรายการจ่ายเงินอีกครั้ง',
   // Purchase without setup (pr-d §3.3): only the recipient panel's "use my account email" path still asks for it.
-  BILLING_EMAIL_VERIFICATION_REQUIRED: 'การเปลี่ยนผู้รับเอกสารด้วยอีเมลบัญชีต้องยืนยันอีเมลบัญชีก่อน หรือเลือก "ใช้อีเมลอื่น" เพื่อยืนยันด้วยรหัสที่ส่งไปอีเมลนั้น',
-  BILLING_EMAIL_UPDATE_PENDING: 'มีคำขอเปลี่ยนอีเมลรับเอกสารค้างอยู่ กรุณายืนยันหรือยกเลิกคำขอในแท็บการต่ออายุและชำระเงินก่อนเริ่มรายการใหม่',
+  BILLING_EMAIL_VERIFICATION_REQUIRED: 'อีเมลบัญชียังไม่ยืนยัน ยืนยันอีเมลบัญชีหรือเลือกใช้อีเมลอื่นก่อนแก้ผู้รับเอกสาร',
+  BILLING_EMAIL_UPDATE_PENDING: 'มีรายการแก้อีเมลรับเอกสารค้างอยู่ เปิดอีเมลรับเอกสารแล้วยืนยันหรือยกเลิกรายการเดิมก่อน',
   // Purchase without setup (pr-c §2.4, wording pr-d §2.3 ค): document recipient and resend.
-  BILLING_RESEND_LIMIT: 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที',
-  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารใบนี้ซ้ำไม่ได้ ตรวจว่าตั้งอีเมลรับเอกสารแล้ว และรายการชำระเสร็จแล้ว',
-  BILLING_RECIPIENT_UNAVAILABLE: 'ตั้งอีเมลรับเอกสารได้ตั้งแต่เริ่มซื้อแพ็กเกจ ไม่ต้องรอชำระเงินเสร็จ',
-  BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารปัจจุบันอยู่แล้ว ไม่ต้องเปลี่ยน',
-  BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว กรุณาขอรหัสยืนยันใหม่',
-  BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารปัจจุบันส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน แล้วจึงส่งเอกสารซ้ำ',
+  BILLING_RESEND_LIMIT: 'ส่งเอกสารใบนี้ซ้ำครบจำนวนแล้ว รอแล้วลองอีกครั้งหรือเปิดเอกสารจากประวัติแทน',
+  BILLING_RESEND_UNAVAILABLE: 'ยังส่งเอกสารซ้ำไม่ได้ ตรวจอีเมลรับเอกสารและสถานะรายการแล้วลองอีกครั้ง',
+  BILLING_RECIPIENT_UNAVAILABLE: 'ยังตั้งอีเมลรับเอกสารในส่วนนี้ไม่ได้ เลือกแพ็กเกจแล้วกรอกอีเมลที่หน้าจ่ายเงิน',
+  BILLING_RECIPIENT_UNCHANGED: 'อีเมลนี้เป็นอีเมลรับเอกสารอยู่แล้ว ปิดส่วนแก้อีเมลเพื่อกลับไปดูรายการ',
+  BILLING_RECIPIENT_PROOF_INVALID: 'การยืนยันอีเมลนี้หมดอายุหรือถูกใช้แล้ว ขอรหัสยืนยันใหม่',
+  BILLING_RECIPIENT_BOUNCED: 'ส่งเอกสารไปอีเมลนี้ไม่ถึง แก้อีเมลรับเอกสารก่อนส่งอีกครั้ง',
   // Purchase without setup PR E (2026-09-27): admin document tools.
   BILLING_RECIPIENT_BUSY: 'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อน',
   BILLING_RECIPIENT_NO_CUSTOMER: 'บริษัทนี้ยังไม่มีบัญชีลูกค้ากับผู้ให้บริการรับชำระเงิน จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน',
@@ -207,8 +207,8 @@ const CODE_LABELS: Record<string, string> = {
   LINE_TOKEN_CHECK_UNAVAILABLE: 'ยังตรวจ Token กับ LINE ไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
   LINE_TOKEN_REJECTED: 'LINE ไม่ยอมรับ Token นี้ กรุณาใช้ short-lived หรือ long-lived token ของ Channel ปัจจุบันจาก LINE Developers',
   EMPLOYEE_BRANCH_SCOPE_UNAVAILABLE: 'แก้สาขาที่พนักงานมีสิทธิ์และสาขาเริ่มต้นให้ใช้งานได้ก่อน แล้วเปิดสิทธิ์อีกครั้ง',
-  BILLING_RATE_LIMIT: 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
-  BILLING_NOT_CONFIGURED: 'ระบบรับชำระเงินยังไม่พร้อม กรุณาติดต่อทีมงานเพื่อตรวจการตั้งค่าก่อนลองใหม่',
+  BILLING_RATE_LIMIT: 'ทำรายการถี่เกินไป รอสักครู่แล้วลองรายการเดิมอีกครั้ง',
+  BILLING_NOT_CONFIGURED: 'ระบบรับเงินยังไม่พร้อม ติดต่อทีมงาน',
   CONTROL_ACTION_NOT_SUPPORTED: 'เปลี่ยนแพ็กเกจผ่านหน้ามั่งมี โดยใช้ตัวเลือกซื้อซ้ำและเปลี่ยนแพ็กเกจ',
   CONTROL_POLICY_NOT_READY: 'การตั้งค่ายังไม่ครบ บันทึกฉบับร่างแล้วเติมข้อมูลก่อนตรวจผลกระทบอีกครั้ง',
   CONTROL_IMPACT_NOT_READY: 'ตรวจผลกระทบจากฉบับร่างก่อนเปิดรายชื่อรายการที่เกี่ยวข้อง',
@@ -224,54 +224,54 @@ const CODE_LABELS: Record<string, string> = {
   CONTROL_SCHEDULE_REVIEW: 'ยังใช้ค่าตามกำหนดไม่ได้ ตรวจข้อมูลล่าสุดและสร้างฉบับร่างจากคำขอเดิมเพื่อขออนุมัติใหม่',
   CONTROL_REAUTH_REQUIRED: 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง',
   CONTROL_REAUTH_FAILED: 'ยืนยันรหัสผ่านไม่ได้ ตรวจสอบรหัสผ่านหรือใช้หน้ากู้บัญชี',
-  BILLING_PLAN_CHANGE_REQUIRED: 'เลือกแพ็กเกจและรอบชำระจากหน้าจัดการแพ็กเกจ แล้วตรวจผลกระทบก่อนยืนยัน',
+  BILLING_PLAN_CHANGE_REQUIRED: 'ยังซื้อหรือเปลี่ยนแพ็กเกจด้วยรายการนี้ไม่ได้ ตรวจการต่ออายุก่อนเลือกแพ็กเกจอีกครั้ง',
   CONTROL_SALES_COMPANY_INVALID: 'มีบริษัทที่ไม่พบแล้ว กรุณาเลือกบริษัทใหม่และตรวจผลกระทบอีกครั้ง',
-  BILLING_COMPANY_SALES_CLOSED: 'ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบรายการเดิมได้',
-  BILLING_SALES_CLOSED: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
-  BILLING_QUOTE_STALE: 'รายการหมดอายุหรือข้อมูลเปลี่ยน กรุณาเลือกราคาและยืนยันใหม่',
-  BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาเลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
+  BILLING_COMPANY_SALES_CLOSED: 'ร้านนี้ยังซื้อหรือเปลี่ยนแพ็กเกจผ่านเว็บไม่ได้ ติดต่อทีมงาน',
+  BILLING_SALES_CLOSED: 'ยังไม่เปิดรับเงินใหม่ ติดต่อทีมงาน',
+  BILLING_QUOTE_STALE: 'รายการหมดอายุหรือข้อมูลเปลี่ยน เลือกแพ็กเกจแล้วตรวจยอดอีกครั้ง',
+  BILLING_CAP_SELECTION_REQUIRED: 'สิทธิ์สาขาหรือผู้ใช้ยังไม่ตรงกับแพ็กเกจ เลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
   // Purchase without setup (pr-d §2.3 ก, RV28): every `billingError('X')` has Thai here, so the package
   // page falls through to this map (billing-error-text.ts) instead of keeping a second copy.
-  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดอัปเดตข้อมูล',
-  BILLING_PURCHASE_PENDING: 'มีรายการชำระเงินเดิมที่ระบบกำลังตรวจอยู่ กรุณารอสักครู่แล้วลองใหม่',
-  BILLING_COLLECTION_PENDING: 'มีคำสั่งเรื่องการต่ออายุที่ยังไม่เสร็จ กรุณาตรวจในแท็บการต่ออายุและชำระเงินให้เสร็จก่อนซื้อเพิ่ม',
-  BILLING_COLLECTION_CLOSED: 'ยังจัดการการต่ออายุผ่านเว็บไม่ได้ในตอนนี้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_COLLECTION_REVIEW: 'ข้อมูลการต่ออายุเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วเริ่มคำสั่งใหม่ หากยังไม่ได้ให้ติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_CONSENT_REQUIRED: 'กรุณาติ๊กยอมรับเงื่อนไขก่อนไปชำระเงิน',
-  BILLING_DOCUMENT_BINDING: 'ข้อมูลรายการนี้ยังยืนยันกับผู้ให้บริการรับชำระเงินไม่ได้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_EXISTING_SUBSCRIPTION: 'มีรายการชำระเงินเดิมที่ยังไม่จบ กรุณาตรวจสถานะรายการเดิมก่อนเริ่มรายการใหม่',
-  BILLING_IDEMPOTENCY_CONFLICT: 'รายการนี้ถูกส่งซ้ำด้วยข้อมูลที่ต่างจากเดิม กรุณาโหลดหน้าใหม่แล้วเริ่มรายการอีกครั้ง',
-  BILLING_IDEMPOTENCY_REQUIRED: 'ส่งรายการไม่ครบ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการจ่ายเงินเดิม รอสักครู่แล้วตรวจสถานะล่าสุด',
+  BILLING_PURCHASE_PENDING: 'มีรายการจ่ายเงินเดิมที่ระบบกำลังตรวจอยู่ รอสักครู่แล้วลองอีกครั้ง',
+  BILLING_COLLECTION_PENDING: 'มีรายการเกี่ยวกับการต่ออายุที่ยังไม่เสร็จ ตรวจการต่ออายุให้เสร็จก่อนซื้อเพิ่ม',
+  BILLING_COLLECTION_CLOSED: 'ยังจัดการการต่ออายุผ่านเว็บไม่ได้ ติดต่อทีมงาน',
+  BILLING_COLLECTION_REVIEW: 'ข้อมูลการต่ออายุยังใช้ทำรายการนี้ไม่ได้ ตรวจสถานะล่าสุดหรือติดต่อทีมงาน',
+  BILLING_CONSENT_REQUIRED: 'ยังไม่ได้ยอมรับเงื่อนไข ติ๊กยอมรับเงื่อนไขก่อนจ่ายเงิน',
+  BILLING_DOCUMENT_BINDING: 'ยังตรวจยืนยันข้อมูลเอกสารของรายการนี้ไม่ได้ ติดต่อทีมงาน',
+  BILLING_EXISTING_SUBSCRIPTION: 'มีรายการจ่ายเงินเดิมที่ยังไม่จบ ตรวจสถานะรายการเดิมก่อนเริ่มรายการใหม่',
+  BILLING_IDEMPOTENCY_CONFLICT: 'รายการนี้ถูกส่งซ้ำด้วยข้อมูลที่ต่างจากเดิม เปิดหน้านี้ใหม่แล้วเริ่มรายการอีกครั้ง',
+  BILLING_IDEMPOTENCY_REQUIRED: 'ส่งข้อมูลรายการไม่ครบ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   // Not renewal-only any more: a first purchase can throw this too (item 11, 2026-09-29 review).
-  BILLING_MAPPING_MISMATCH: 'ข้อมูลการชำระเงินของร้านไม่ตรงกับผู้ให้บริการรับชำระเงิน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_MODE_CHANGE_PENDING: 'เปลี่ยนวิธีชำระเงินได้เมื่อแพ็กเกจปัจจุบันสิ้นสุด ตอนนี้เลือกวิธีชำระแบบเดิม หรือรอให้ครบกำหนดก่อน',
-  BILLING_OFFER_UNAVAILABLE: 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน กรุณาเลือกแพ็กเกจอื่น',
-  BILLING_PACKAGE_STATE_INVALID: 'ข้อมูลแพ็กเกจเดิมของบริษัทต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_PLAN_CHANGE_PENDING: 'มีแพ็กเกจที่ชำระล่วงหน้ารอเริ่มใช้งานอยู่ กรุณาตรวจรายการเดิมในแท็บการต่ออายุและชำระเงิน',
-  BILLING_PRICE_MISMATCH: 'ราคาในระบบไม่ตรงกับผู้ให้บริการรับชำระเงิน กรุณาลองใหม่ภายหลัง หากยังไม่ได้ให้ติดต่อทีมงาน',
-  BILLING_REPEAT_REVIEW: 'รายการซื้อซ้ำต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
-  BILLING_TAX_MISMATCH: 'การตั้งค่าภาษีของระบบยังไม่พร้อม กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน',
-  BILLING_UPGRADE_BOUNDARY: 'ใกล้วันเปลี่ยนรอบแล้ว กรุณาตรวจสถานะใหม่หลังเปลี่ยนรอบ หรือติดต่อทีมงาน',
-  BILLING_UPGRADE_GIFT_ONLY: 'เวลาที่เหลือของแพ็กเกจเป็นวันที่ทีมงานให้ไว้ กรุณาซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น',
-  BILLING_UPGRADE_REVIEW: 'ข้อมูลส่วนต่างของแพ็กเกจต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_MAPPING_MISMATCH: 'ข้อมูลการจ่ายเงินยังตรวจยืนยันไม่ได้ ติดต่อทีมงาน',
+  BILLING_MODE_CHANGE_PENDING: 'ยังเปลี่ยนวิธีจ่ายไม่ได้ ตรวจการต่ออายุและรายการเดิมก่อนเลือกวิธีจ่ายอีกครั้ง',
+  BILLING_OFFER_UNAVAILABLE: 'แพ็กเกจนี้ยังซื้อไม่ได้ เลือกแพ็กเกจอื่น',
+  BILLING_PACKAGE_STATE_INVALID: 'ข้อมูลแพ็กเกจเดิมยังใช้ทำรายการนี้ไม่ได้ ติดต่อทีมงาน',
+  BILLING_PLAN_CHANGE_PENDING: 'มีแพ็กเกจที่จ่ายล่วงหน้ารอเริ่มใช้งานอยู่ ตรวจรายการเดิมในการต่ออายุ',
+  BILLING_PRICE_MISMATCH: 'ยังยืนยันราคาแพ็กเกจไม่ได้ ลองอีกครั้งภายหลังหรือติดต่อทีมงาน',
+  BILLING_REPEAT_REVIEW: 'รายการซื้อซ้ำยังต้องตรวจสอบ ติดต่อทีมงาน',
+  BILLING_TAX_MISMATCH: 'ยังยืนยันข้อมูลภาษีของการจ่ายเงินไม่ได้ ลองอีกครั้งภายหลังหรือติดต่อทีมงาน',
+  BILLING_UPGRADE_BOUNDARY: 'ใกล้วันเปลี่ยนรอบแล้ว ตรวจสถานะหลังเปลี่ยนรอบหรือติดต่อทีมงาน',
+  BILLING_UPGRADE_GIFT_ONLY: 'เวลาที่เหลือของแพ็กเกจเป็นวันที่ทีมงานให้ไว้ ซื้อแพ็กเกจเดิมเพิ่มก่อนเลือกแพ็กเกจที่สูงขึ้น',
+  BILLING_UPGRADE_REVIEW: 'ยังคำนวณส่วนต่างของแพ็กเกจนี้ไม่ได้ ติดต่อทีมงาน',
   PROMOTION_UNAVAILABLE: 'โปรโมชั่นนี้ใช้ไม่ได้แล้ว กรุณาตรวจสอบรายการใหม่',
-  BILLING_CHECKOUT_NOT_STARTED: 'รายการชำระเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่',
+  BILLING_CHECKOUT_NOT_STARTED: 'รายการจ่ายเงินนี้ยังไม่ได้เริ่ม กลับไปเลือกแพ็กเกจเพื่อเริ่มรายการใหม่',
   PROMOTION_UPGRADE_DEFERRED: 'แพ็กเกจนี้อยู่ในช่วงสิทธิ์โปรโมชั่น อัปเกรดได้หลังสิทธิ์ที่ซื้อไว้สิ้นสุด',
-  BILLING_CHECKOUT_INVOICE_MISMATCH: 'หลักฐานการชำระเงินของรายการนี้ต้องให้ทีมงานตรวจก่อนเปิดสิทธิ์ กรุณาดูสถานะรายการเดิม',
-  BILLING_INVOICE_MISMATCH: 'หลักฐานใบแจ้งหนี้ของรายการนี้ต้องให้ทีมงานตรวจก่อนเปิดสิทธิ์ กรุณาดูสถานะรายการเดิม',
+  BILLING_CHECKOUT_INVOICE_MISMATCH: 'หลักฐานการจ่ายเงินยังต้องตรวจสอบก่อนเปิดสิทธิ์ ติดต่อทีมงาน',
+  BILLING_INVOICE_MISMATCH: 'หลักฐานใบแจ้งหนี้ยังต้องตรวจสอบก่อนเปิดสิทธิ์ ติดต่อทีมงาน',
   SPECIAL_PRICE_RETURN_REVIEW: 'ราคาพิเศษของร้านยังปรับกลับเป็นราคาปกติไม่ได้ ทีมงานกำลังตรวจสอบ',
   // These had Thai only on the package page; the shared map carries them now, same wording.
-  BILLING_CADENCE_PENDING_CHANGE: 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นในแท็บการต่ออายุและชำระเงิน ก่อนซื้อรายปี',
-  BILLING_REPEAT_NOT_READY: 'การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน หรือรอให้แพ็กเกจปัจจุบันสิ้นสุดแล้วซื้อใหม่',
-  BILLING_RESTART_REVIEW: 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท',
-  BILLING_DOCUMENT_PENDING: 'ผู้ให้บริการรับชำระเงินกำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง',
-  BILLING_PORTAL_UNAVAILABLE: 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
-  BILLING_PORTAL_CONFIG_MISMATCH: 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมงาน',
-  BILLING_COMPANY_HELD: 'ร้านนี้ถูกพักใช้งานโดยผู้ดูแล กรุณาติดต่อทีมงาน',
-  BILLING_SOURCE_REVIEW_REQUIRED: 'ข้อมูลการชำระเงินเดิมของบริษัทนี้ยังไม่ตรงกัน กรุณาติดต่อทีมงานก่อนเริ่มรายการใหม่',
-  BILLING_ENTITLEMENT_REVIEW_REQUIRED: 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม กรุณาติดต่อทีมงานก่อนชำระเงิน',
-  BILLING_REFUND_PENDING: 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมงาน',
-  BILLING_NOT_READY: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
+  BILLING_CADENCE_PENDING_CHANGE: 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป ตรวจและยกเลิกรายการนั้นในการต่ออายุก่อนซื้อรายปี',
+  BILLING_REPEAT_NOT_READY: 'ยังซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบไม่ได้ ติดต่อทีมงาน',
+  BILLING_RESTART_REVIEW: 'ยังเริ่มแพ็กเกจใหม่ไม่ได้เพราะต้องตรวจรายการเดิม ติดต่อทีมงาน',
+  BILLING_DOCUMENT_PENDING: 'เอกสารของรายการนี้ยังไม่พร้อมเปิด ลองอีกครั้งภายหลัง',
+  BILLING_PORTAL_UNAVAILABLE: 'ยังเปิดหน้าแก้บัตรไม่ได้ ตรวจสถานะล่าสุดแล้วลองอีกครั้ง',
+  BILLING_PORTAL_CONFIG_MISMATCH: 'หน้าแก้บัตรยังไม่พร้อมใช้งาน ติดต่อทีมงาน',
+  BILLING_COMPANY_HELD: 'ร้านนี้ถูกพักใช้งาน ติดต่อทีมงาน',
+  BILLING_SOURCE_REVIEW_REQUIRED: 'ข้อมูลการจ่ายเงินเดิมยังตรวจยืนยันไม่ได้ ติดต่อทีมงาน',
+  BILLING_ENTITLEMENT_REVIEW_REQUIRED: 'ข้อมูลสิทธิ์เมนูเดิมยังไม่พร้อม ติดต่อทีมงาน',
+  BILLING_REFUND_PENDING: 'มีรายการคืนเงินที่ยังตรวจไม่เสร็จ ตรวจสถานะล่าสุดหรือติดต่อทีมงาน',
+  BILLING_NOT_READY: 'ยังไม่เปิดรับเงินใหม่ ติดต่อทีมงาน',
   // Operator copy (pr-d §2.3 จ): System Admin screens read these through apiErrorMessage.
   // Add-on plan PR B: adding or taking back add-on units (เพิ่มยอดให้ลูกค้า).
   CONTROL_ADDON_NOT_READY: 'ร้านนี้ยังรับยอดเพิ่มเติมชนิดนี้ไม่ได้ ร้านต้องมีแพ็กเกจที่ชำระแล้วก่อน',
@@ -296,13 +296,16 @@ const CODE_LABELS: Record<string, string> = {
   CONTROL_PROMOTION_CAP_BELOW_USED: 'ลดจำนวนสิทธิ์ต่ำกว่าที่มีผู้จองหรือใช้ไปแล้วไม่ได้',
   CONTROL_PROMOTION_CATALOG_STALE: 'ราคาหรือโควตาของแพ็กเกจเปลี่ยนแล้ว กรุณาตรวจสอบตัวอย่างและเผยแพร่แคมเปญใหม่',
   CONTROL_PROVIDER_DISABLED: 'ยังไม่ได้ตั้งค่าบัญชีผู้ให้บริการ ติดต่อผู้ดูแลการเชื่อมต่อ',
-  // Mirrors CONTROL_REFUND_AGED_UNKNOWN below, same 23h-unconfirmed rule for a recipient-email change.
+  // The former 23h-unconfirmed rule of a recipient-email change. No longer raised by the API (2026-10-10, now CONTROL_RECIPIENT_NOT_CHANGED); kept for requests and audit rows that already carry it.
   CONTROL_RECIPIENT_AGED_UNKNOWN: 'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
+  CONTROL_RECIPIENT_NOT_CHANGED: 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ไม่ใช่อีเมลใหม่ตามคำขอนี้ ถ้ายังต้องการเปลี่ยน ให้สร้างคำขอใหม่',
   CONTROL_REFUNDS_CLOSED: 'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',
+  // No longer raised by the API (2026-10-10); kept for requests and audit rows that already carry it.
   CONTROL_REFUND_AGED_UNKNOWN: 'ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ',
   CONTROL_REFUND_CONFIG_REQUIRED: 'กำหนดวงเงินคืนเงินและขออนุมัตินโยบายก่อนเปิดการคืนเงิน',
   CONTROL_REFUND_LIMIT: 'ยอดนี้เกินวงเงินต่อคำขอ กรุณาติดต่อผู้ดูแลวงเงิน',
-  CONTROL_REFUND_PROVIDER_REJECTED: 'ผู้ให้บริการรับชำระเงินไม่รับคำขอคืนเงินนี้ ยังไม่มีการคืนเงินเกิดขึ้น ตรวจเหตุผลแล้วสร้างคำขอใหม่ได้',
+  CONTROL_REFUND_NOT_CREATED: 'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ คำขอนี้จึงไม่ได้คืนเงิน ถ้ายังต้องการคืน ให้สร้างคำขอใหม่',
+  CONTROL_REFUND_PROVIDER_REJECTED: 'ผู้ให้บริการรับชำระเงินไม่รับคำขอคืนเงินนี้ คำขอนี้จึงไม่ได้คืนเงิน ตรวจเหตุผลแล้วสร้างคำขอใหม่ได้',
   CONTROL_REFUND_SOURCE_CHANGED: 'หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ กรุณาตรวจรายการเดิมอีกครั้ง',
   CONTROL_SCAN_BUSY: 'มีงานตรวจที่ยังไม่จบ กรุณาเปิดงานเดิมก่อน',
   CONTROL_SCOPE_TARGET_INVALID: 'เลือกเจ้าหน้าที่ที่มีบทบาทระดับระบบสำหรับงานการเงินอยู่แล้ว ผู้ดูแลระบบมีขอบเขตทั้งหมดอยู่แล้ว',
@@ -1080,11 +1083,11 @@ const CODE_LABELS: Record<string, string> = {
 
   // ---- ข้อเสนอพิเศษ on the customer's package page (spec §19.2, Phase 3) ----
   // The shop owner reads these, so each one says what happens next, never why the rule refused.
-  BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว กรุณาติดต่อทีมขายเพื่อขอข้อเสนอใหม่ คุณยังเลือกแพ็กเกจปกติได้',
-  BILLING_DEAL_NOT_FOUND: 'ไม่พบข้อเสนอพิเศษนี้แล้ว กรุณาโหลดหน้านี้ใหม่ หรือติดต่อทีมขาย',
-  BILLING_DEAL_SNAPSHOT_MISMATCH: 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว กรุณาโหลดหน้านี้ใหม่เพื่อดูข้อเสนอล่าสุดก่อนชำระเงิน',
+  BILLING_DEAL_EXPIRED: 'ข้อเสนอพิเศษนี้หมดอายุแล้ว เลือกแพ็กเกจปกติหรือติดต่อทีมงาน',
+  BILLING_DEAL_NOT_FOUND: 'ไม่พบข้อเสนอพิเศษนี้ เปิดหน้านี้ใหม่หรือติดต่อทีมงาน',
+  BILLING_DEAL_SNAPSHOT_MISMATCH: 'ข้อเสนอพิเศษนี้เปลี่ยนแล้ว เปิดหน้านี้ใหม่แล้วตรวจข้อเสนอก่อนจ่ายเงิน',
   CONTROL_DEAL_SUBSCRIPTION_REVIEW: 'ร้านนี้มีสมาชิกที่ยังใช้งานอยู่ ทีมงานจะติดต่อกลับเพื่อเปลี่ยนให้ สิทธิ์เดิมยังใช้ได้ตามปกติ',
-  BILLING_MODE_NOT_READY: 'ยังไม่เปิดวิธีชำระเงินที่เลือก กรุณาเลือกวิธีอื่น หรือติดต่อทีมงาน',
+  BILLING_MODE_NOT_READY: 'วิธีจ่ายที่เลือกยังใช้ไม่ได้ เลือกวิธีอื่นหรือติดต่อทีมงาน',
   // Q7/S34: the deal is already applied and the old subscription is being cancelled in the
   // background. Nothing for the shop to do, so the line says so rather than naming a failure.
   DEAL_SUBSCRIPTION_CANCEL_PENDING: 'กำลังยกเลิกสมาชิกเดิมให้ร้านคุณ แพ็กเกจใหม่ใช้งานได้แล้ว ไม่ต้องดำเนินการอะไรเพิ่ม',
@@ -1284,8 +1287,8 @@ const CODE_LABELS: Record<string, string> = {
   AI_GATEWAY_TIMEOUT: 'บริการ AI ใช้เวลานานเกินกำหนด กรุณาลองใหม่ภายหลังหรือทำรายการด้วยตนเอง',
 
   // ---- การชำระเงิน ----
-  BILLING_COMPANY_PROFILE_REQUIRED: 'กรุณากรอกข้อมูลบริษัทให้ครบก่อนซื้อแพ็กเกจ',
-  BILLING_INPUT_INVALID: 'ข้อมูลรายการชำระเงินไม่ถูกต้อง กรุณาตรวจรายการแล้วลองใหม่',
+  BILLING_COMPANY_PROFILE_REQUIRED: 'ข้อมูลร้านยังไม่ครบ เปิดข้อมูลร้านแล้วกรอกส่วนที่ขาดก่อนเลือกแพ็กเกจอีกครั้ง',
+  BILLING_INPUT_INVALID: 'ข้อมูลรายการจ่ายเงินไม่ถูกต้อง ตรวจรายการแล้วลองอีกครั้ง',
 };
 
 // Several upload rejections differ only in which check caught the file; the user's next move is
@@ -1714,11 +1717,11 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     }
   }
   // A short, bounded wait is worth naming; a long one (a resend limit resets tomorrow) is not —
-  // BILLING_RESEND_LIMIT's own text already says "ลองใหม่ได้พรุ่งนี้", so it never takes this branch.
+  // BILLING_RESEND_LIMIT keeps its own instruction to open the document while waiting.
   if (code === 'BILLING_RATE_LIMIT' || code === 'EMAIL_OTP_RATE_LIMITED') {
     const seconds = details?.retryAfterSeconds ?? error?.retryAfterSeconds;
     if (typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300) {
-      return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
+      return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป รอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
         : `${CODE_LABELS[code]} (ลองใหม่ได้ใน ${seconds} วินาที)`;
     }
   }

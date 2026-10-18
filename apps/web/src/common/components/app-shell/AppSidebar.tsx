@@ -22,6 +22,7 @@ export type NavItem = {
   label: string;
   icon: React.ReactNode;
   href?: string;
+  trailing?: { label: string; warning: boolean };
   /** `badgeLabel`: a short word on the row that needs the person, e.g. "ยังไม่ครบ" on the shop details row. */
   subItems?: { key: string; label: string; href: string; icon?: React.ReactNode; tone?: MangmeeTone; badgeCount?: number; badgeLabel?: string }[];
   disabled?: boolean;
@@ -425,6 +426,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                             >
                               <MenuIcon icon={nav.icon} tone={tone} menuKey={nav.key} active={active} />
                               {sidebarVisible && <span className="menu-item-text">{nav.label}</span>}
+                              {sidebarVisible && nav.trailing && <span className={`ml-auto shrink-0 whitespace-nowrap text-xs ${nav.trailing.warning ? 'text-warning-700' : 'text-gray-500'}`}>{nav.trailing.label}</span>}
                               {nav.attention && <AttentionDot />}
                             </Link>
                           )

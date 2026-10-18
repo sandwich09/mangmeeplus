@@ -543,7 +543,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await ensureBrowserLegalAcceptance(context, rig.companyId);
       const page = await context.newPage();
       await page.goto(`/companies/${rig.companyId}/billing`);
-      await expect(page.getByRole('heading', { name: 'แพ็กเกจและการจ่ายเงิน' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'แพ็กเกจ', exact: true })).toBeVisible();
       await page.goto(`/companies/${rig.companyId}/settings/profile`);
       await expect(page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible();
       const businessType = page.getByRole('combobox', { name: 'ประเภทธุรกิจ' });

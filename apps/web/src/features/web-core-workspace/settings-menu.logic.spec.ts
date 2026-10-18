@@ -1,12 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LOCKED_ACCOUNT_CARD,
-  PACKAGE_CARD,
+  PACKAGE_MENU,
   filterSettingsMenuItems,
   filterSettingsSidebarItems,
   showsLockedAccountCard,
-  showsPackageCard,
   SETTINGS_MENU_ITEMS,
 } from './settings-menu.logic';
 import { canAccessWorkspacePath } from './web-core-workspace.logic';
@@ -38,10 +38,8 @@ describe('settings menu', () => {
     assert.deepEqual(SETTINGS_MENU_ITEMS.filter((item) => item.hash).map((item) => [item.key, item.hash]), [['my-account', '#account']]);
     // The 50 ทวิ signature is an ordinary card: it used to be the only row of a "การตั้งค่าขั้นสูง" block in a sold shop.
     assert.equal(SETTINGS_MENU_ITEMS.find((item) => item.key === 'tax-signature')?.section, undefined);
-    // The package page has no settings route: its card follows the company grant alone, under the menu's own name.
-    assert.deepEqual([PACKAGE_CARD.title, PACKAGE_CARD.href], ['แพ็กเกจ', '/billing']);
-    assert.equal(showsPackageCard(['company.plan.manage']), true);
-    assert.equal(showsPackageCard(['company.setup.manage']), false);
+    // The package page has no settings route: its one top-level entry follows the company grant alone.
+    assert.deepEqual([PACKAGE_MENU.title, PACKAGE_MENU.href], ['แพ็กเกจ', '/billing']);
   });
 
   it('shows all ten cards to a fully permitted user', () => {
@@ -177,4 +175,10 @@ it('settings view-only and manage-only both list profile and branches without gr
     assert.ok(!keys.includes('tax-signature'));
     assert.ok(!keys.includes('accounting-tax-setup'));
   }
+});
+
+it('the overview has no second package entry', () => {
+  const source = readFileSync(new URL('./SettingsMenu.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /PACKAGE_CARD|PACKAGE_MENU|packageCard|showsPackageCard/);
+  assert.equal(filterSettingsMenuItems(['company.plan.manage']).length, 0);
 });

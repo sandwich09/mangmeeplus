@@ -18,7 +18,7 @@ function fixture(expired = false, promptPayRenew = false, advanceCardTrial = fal
     payment_settings: promptPayRenew ? { payment_method_types: ['promptpay'] } : undefined, cancel_at_period_end: false,
     items: { data: [{ price: 'price_ProYear', quantity: 1, current_period_start: Math.floor(end.getTime() / 1000) - 365 * 86400, current_period_end: end.getTime() / 1000 }] } };
   const policy = { ...BILLING_DRAFT_POLICY, priceIds: { 'PRO_999:year': 'price_ProYear' } };
-  let operation: Record<string, any>, companyHeld = false, gateOpen = true, lost = false, writes = 0;
+  let operation: Record<string, any>, companyHeld = false, gateOpen = true, lost = false, writes = 0, cases = 0;
   const tx = {
     $queryRaw: async () => [], company: { findUnique: async () => ({ status: companyHeld ? 'DISABLED' : 'ACTIVE', planTerm: null }) },
     billingSubscriptionContract: { findFirst: async () => ({ snapshotJson: { policy, priceId: 'price_ProYear',
@@ -37,7 +37,7 @@ function fixture(expired = false, promptPayRenew = false, advanceCardTrial = fal
       findUniqueOrThrow: async () => account,
       update: async ({ data }: any) => { Object.assign(account, { ...data, version: account.version + 1 }); return account; },
     },
-    billingIssue: { updateMany: async () => ({ count: 1 }) }, auditLog: { create: async () => ({}) },
+    billingIssue: { updateMany: async () => { cases--; return { count: 1 }; } }, auditLog: { create: async () => ({}) },
   };
   const service = new BillingCollection({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as unknown as ConstructorParameters<typeof BillingCollection>[0],
     { accountId: 'acct_test', livemode: false, assertAccount: async () => {}, list: async () => [sub],
@@ -53,8 +53,9 @@ function fixture(expired = false, promptPayRenew = false, advanceCardTrial = fal
         return structuredClone(sub);
       } } as unknown as ConstructorParameters<typeof BillingCollection>[1],
     { assertOwner: async () => {}, account: async () => account, settings: async () => ({ gates: { portal_cancel_subscription: gateOpen } }),
-      issue: async () => {}, assertTaxSettings: async () => {} } as unknown as ConstructorParameters<typeof BillingCollection>[2]);
-  return { service, sub, account, operation: () => operation!, writes: () => writes,
+      issue: async () => { cases++; }, assertTaxSettings: async () => {} } as unknown as ConstructorParameters<typeof BillingCollection>[2]);
+  // `cases`: review cases opened minus cases closed.
+  return { service, sub, account, operation: () => operation!, writes: () => writes, cases: () => cases,
     hold: () => { companyHeld = true; }, close: () => { gateOpen = false; }, lose: () => { lost = true; },
     queue: async () => {
       await service.preview({ companyId: 'company', userId: 'owner' } as RequestContext, 'CANCEL_RENEWAL');
@@ -136,14 +137,32 @@ for (const promptPay of [false, true]) test(`promotion ${promptPay ? 'PROMPTPAY_
 test('old ambiguous command never posts again without an observed result', async () => {
   const f = fixture(); await f.queue();
   f.operation().resultJson = { startedAt: new Date(Date.now() - 24 * 3600000).toISOString() };
-  await f.service.advance(f.account, 'lease'); assert.equal(f.operation().state, 'UNKNOWN'); assert.equal(f.writes(), 0);
-  assert.equal(f.account.activeCollectionOperationId, 'operation');
+  // 2026-10-10: started but never sent, and too old to send: over, and the shop is no longer held.
+  await f.service.advance(f.account, 'lease'); assert.equal(f.writes(), 0);
+  assert.deepEqual([f.operation().state, f.operation().errorCode, f.account.activeCollectionOperationId], ['FAILED', 'BILLING_COLLECTION_NOT_SENT', null]);
+});
+
+test('a sent command keeps waiting, and nothing is sent again, while the provider read cannot rule it out', async () => {
+  const at = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
+  // Inside the quiet margin; our id there without the change; a source somebody else changed.
+  for (const [minutes, change] of [[65, (_: any) => {}], [120, (sub: any) => { sub.metadata.mangmeeCollectionOperation = 'operation'; }],
+    [120, (sub: any) => { sub.cancel_at_period_end = true; }]] as const) {
+    const f = fixture(); await f.queue();
+    f.operation().state = 'UNKNOWN'; f.operation().resultJson = { startedAt: at(minutes), updateStartedAt: at(minutes) }; change(f.sub);
+    await f.service.advance(f.account, 'lease');
+    assert.deepEqual([f.writes(), f.operation().state, f.account.activeCollectionOperationId], [0, 'UNKNOWN', 'operation']);
+  }
+  // Inside the first hour the same command is sent again, as before.
+  const f = fixture(); await f.queue(); f.operation().state = 'UNKNOWN'; f.operation().resultJson = { startedAt: at(30), updateStartedAt: at(30) };
+  await f.service.advance(f.account, 'lease'); assert.deepEqual([f.writes(), f.operation().state], [1, 'SUCCEEDED']);
 });
 
 test('a hold or closed action gate appearing after confirmation prevents external mutation', async () => {
   for (const gate of [false, true]) {
     const f = fixture(); await f.queue(); if (gate) f.close(); else f.hold();
-    await f.service.advance(f.account, 'lease'); assert.equal(f.operation().state, 'BLOCKED'); assert.equal(f.writes(), 0);
+    // 2026-10-10: nothing was sent and no pass retries it, so it is over at once instead of holding the shop until "ยกเลิก".
+    await f.service.advance(f.account, 'lease'); assert.equal(f.writes(), 0);
+    assert.deepEqual([f.operation().state, f.operation().errorCode, f.account.activeCollectionOperationId], ['FAILED', 'BILLING_COLLECTION_NOT_SENT', null]);
     assert.equal(f.operation().resultJson.startedAt, undefined);
   }
 });
@@ -181,4 +200,65 @@ test('a paid prepaid plan change shows its real start date and cannot be withdra
   assert.equal(view.effectiveAt, effectiveAt); assert.deepEqual(view.allowedActions, []);
   await assert.rejects(f.service.withdraw(context, row.id, operation.version));
   assert.equal(operation.state, 'BLOCKED');
+});
+
+// AUDIT 2026-10-10 (lane B, proof only — these assert the correct behaviour and fail on the unchanged code).
+test('AUDIT: a sent renewal command the provider shows was never applied stops holding the shop once it can no longer be sent', async () => {
+  const f = fixture(); await f.queue();
+  const sent = new Date(Date.now() - 25 * 3600000).toISOString();
+  f.operation().state = 'UNKNOWN'; f.operation().resultJson = { startedAt: sent, updateStartedAt: sent };
+  await f.service.advance(f.account, 'lease');
+  assert.equal(f.writes(), 0); assert.equal(f.sub.metadata.mangmeeCollectionOperation, undefined, 'the provider read proves the command never applied');
+  assert.deepEqual([f.operation().state, f.operation().errorCode, f.cases()], ['FAILED', 'BILLING_COLLECTION_NOT_APPLIED', 1], 'sent and not there: staff keep a review case');
+  assert.equal(f.account.activeCollectionOperationId, null, 'the shop is held for ever by a command the provider never applied');
+});
+
+test('AUDIT: a renewal command that was started but never sent ends at once and stops holding the shop', async () => {
+  const f = fixture(); await f.queue();
+  f.operation().state = 'RUNNING'; f.operation().resultJson = { startedAt: new Date(Date.now() - 60000).toISOString() };
+  f.close(); await f.service.advance(f.account, 'lease');
+  assert.equal(f.writes(), 0); assert.equal(f.operation().resultJson.updateStartedAt, undefined, 'nothing was ever sent');
+  assert.deepEqual([f.operation().state, f.operation().errorCode, f.account.activeCollectionOperationId], ['FAILED', 'BILLING_COLLECTION_NOT_SENT', null],
+    'never sent and no later pass sends it: over at once');
+  assert.equal(f.cases(), -1, 'nothing reached the provider: no review case is opened, and one left by an older pass is closed');
+});
+
+test('AUDIT: an overdue stop (DELETE) the provider never applied stops holding the shop once it can no longer be sent', async () => {
+  const f = fixture(true); await f.queue(); assert.equal(f.operation().proposedJson.method, 'DELETE');
+  const sent = new Date(Date.now() - 25 * 3600000).toISOString();
+  f.operation().state = 'UNKNOWN'; f.operation().resultJson = { startedAt: sent, updateStartedAt: sent };
+  await f.service.advance(f.account, 'lease');
+  assert.deepEqual([f.writes(), f.sub.status], [0, 'past_due'], 'the provider read proves the subscription was never cancelled');
+  assert.equal(f.account.activeCollectionOperationId, null);
+});
+
+test('AUDIT: a downgrade whose schedule was never created at the provider stops holding the shop once it can no longer be sent', async () => {
+  const f = fixture(); await f.queue();
+  const sent = new Date(Date.now() - 25 * 3600000).toISOString(), p = f.operation().proposedJson;
+  Object.assign(f.operation(), { type: 'CUSTOMER_SCHEDULE_DOWNGRADE', state: 'UNKNOWN', resultJson: { startedAt: sent, createStartedAt: sent },
+    proposedJson: { ...p, action: 'SCHEDULE_DOWNGRADE', path: '/subscription_schedules', originalScheduleId: null,
+      params: { end_behavior: 'release', proration_behavior: 'none', phases: [{}, {}] }, change: { previousId: null, currentSnapshot: p.snapshot } } });
+  await f.service.advance(f.account, 'lease');
+  assert.deepEqual([f.writes(), f.sub.schedule ?? null], [0, null], 'the provider read shows no schedule and an unchanged subscription');
+  assert.equal(f.account.activeCollectionOperationId, null);
+});
+
+test('AUDIT: a staff pause the provider never applied stops holding the shop one hour after it could last be sent', async () => {
+  const { BillingAdminCollection } = await import('./billing-admin-collection'), { collectionSourceHash } = await import('./billing-collection');
+  const sub: any = { id: 'sub', object: 'subscription', customer: 'cus', livemode: false, metadata: { billingAccountId: 'account' }, status: 'active',
+    collection_method: 'charge_automatically', items: { data: [] } };
+  const account: any = { id: 'account', companyId: 'company', customerId: 'cus', baseSubscriptionId: 'sub', livemode: false, stripeAccountId: 'acct',
+    activeCollectionOperationId: 'op', leaseToken: 'lease', leaseUntil: new Date(Date.now() + 60000), version: 1 };
+  const row: any = { id: 'op', state: 'UNKNOWN', version: 1, expiresAt: new Date(Date.now() - 3600000), approverUserId: 'approver', initiatorUserId: 'staff', reason: 'r',
+    resultJson: { collectionControl: { dispatchedAt: new Date(Date.now() - 4200000).toISOString() } },
+    proposedJson: { accountId: 'account', collectionChange: { action: 'PAUSE', subscriptionId: 'sub', before: null,
+      after: { behavior: 'keep_as_draft', resumesAt: new Date(Math.floor(Date.now() / 1000) * 1000 + 30 * 86400000).toISOString() }, providerHash: collectionSourceHash(sub, null) } } };
+  let writes = 0;
+  const tx: any = { $queryRaw: async () => [], billingAccount: { findUniqueOrThrow: async () => account, update: async ({ data }: any) => Object.assign(account, data) },
+    company: { findUniqueOrThrow: async () => ({ status: 'ACTIVE', planTerm: null }) }, auditLog: { create: async () => ({}) },
+    billingOperation: { update: async ({ data }: any) => Object.assign(row, data, { version: row.version + 1 }) } };
+  const stripe = { assertAccount: async () => {}, list: async () => [sub], request: async (method: string) => { if (method !== 'GET') writes++; return structuredClone(sub); } };
+  await new BillingAdminCollection({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any, { stripe, issue: async () => {} } as any).advance(account, row, 'lease', async () => {});
+  assert.deepEqual([writes, sub.metadata.mangmeeCollectionControl ?? null], [0, null], 'the provider read proves the pause never applied');
+  assert.equal(account.activeCollectionOperationId, null, `held for ever, state ${row.state}`);
 });

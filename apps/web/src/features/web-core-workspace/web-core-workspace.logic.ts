@@ -1,9 +1,11 @@
+import type { PlanTermNotice } from '@/features/plan-term/plan-term.api';
+import { planTermView } from '@/features/plan-term/plan-term.logic';
 import type React from 'react';
 import { COMPANY_PROFILE_ACCOUNT_HASH, COMPANY_PROFILE_SETTINGS_PATH, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
 import type { WorkspaceModule, NavItemGroup, NavItem } from './web-core-workspace.model';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { filterSettingsSidebarItems, PACKAGE_CARD } from './settings-menu.logic';
+import { filterSettingsSidebarItems, PACKAGE_MENU } from './settings-menu.logic';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { ACCOUNTING_UI_HIDDEN, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import { OWN_SIGNATURE_PERMISSIONS } from '@/features/company-profile/company-profile.logic';
@@ -379,15 +381,8 @@ export function buildNavItems(
 
   // Package management is independent of paid feature access and follows an explicit company grant.
   if (userPermissions.includes('company.plan.manage')) {
-    let settings = moduleItems.find(item => item.key === 'settings');
-    if (!settings) {
-      settings = { key: 'settings', label: t('module.settings', locale), icon: iconMap.SettingsIcon ?? null, group: 'admin', subItems: [] };
-      moduleItems.push(settings);
-    }
-    settings.subItems = [...(settings.subItems ?? []), {
-      key: 'settings.billing', label: PACKAGE_CARD.title, href: `/companies/${companyId}${PACKAGE_CARD.href}`,
-      icon: iconMap.BoxIcon ?? null, tone: 'slate',
-    }];
+    moduleItems.push({ key: 'billing', label: PACKAGE_MENU.title, href: `/companies/${companyId}${PACKAGE_MENU.href}`,
+      icon: iconMap.BoxIcon ?? null, group: 'admin' });
   }
   return [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
 }
@@ -414,9 +409,9 @@ export function buildLockedNavItems(
   if (permissions.includes('company.plan.manage')) {
     items.push({
       key: 'billing',
-      label: PACKAGE_CARD.title,
+      label: PACKAGE_MENU.title,
       icon: iconMap.BoxIcon ?? null,
-      href: `/companies/${companyId}${PACKAGE_CARD.href}`,
+      href: `/companies/${companyId}${PACKAGE_MENU.href}`,
       group: 'admin',
     });
   }
@@ -481,4 +476,8 @@ export function groupNavItems(
   return groupOrder
     .map((group) => ({ group, items: items.filter((item) => item.group === group) }))
     .filter((g) => g.items.length > 0);
+}
+
+export function packageMenuTrailing(notice: PlanTermNotice | null, cardRenewal = false): NavItem['trailing'] {
+  return notice?.termEndsAt ? { label: `เหลือ ${Math.max(0, notice.daysLeft)} วัน`, warning: planTermView(notice) === 'warning-banner' && !cardRenewal } : undefined;
 }

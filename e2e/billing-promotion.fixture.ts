@@ -238,7 +238,7 @@ function planNotice(w: CustomerWorld) {
 }
 
 export function invoiceItem(over: Partial<BillingInvoiceItem> = {}): BillingInvoiceItem {
-  return { id: INVOICE_ID, number: 'PROMO-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false, financialObservedAt: FIXED_NOW,
+  return { offer: { key: 'STARTER_249', label: 'เริ่มต้น', interval: 'month' }, method: 'CARD', id: INVOICE_ID, number: 'PROMO-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false, financialObservedAt: FIXED_NOW,
     paymentState: 'PAID', applyState: 'APPLIED', periodStart: FIXED_NOW, periodEnd: addMonths(FIXED_NOW, 1), createdAt: FIXED_NOW, hasDocuments: true, documentActions: { canResend: true }, ...over };
 }
 

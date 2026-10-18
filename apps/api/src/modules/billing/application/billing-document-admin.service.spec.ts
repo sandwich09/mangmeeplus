@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, HttpException, NotFoundException } from '@nestjs/common';
+import { configurationHash } from '../domain/billing-policy';
 import { BillingDocumentAdminService } from './billing-document-admin.service';
 
 const MANAGE = 'system.billing.override.manage';
@@ -46,7 +47,7 @@ function makeStore(overrides: {
     auditLog: { create: async ({ data }: any) => { auditLogs.push(data); return data; } },
     emailSendAttempt: { create: async ({ data }: any) => { emailAttempts.push(data); return data; } },
     outboxEvent: { upsert: async ({ create }: any) => { outboxEvents.push(create); return create; } },
-    // Only what detectBillingIssue's no-prior-issue path touches (item 4's aged-unknown test):
+    // Only what detectBillingIssue's no-prior-issue path touches (the dispatched-request tests):
     // no SLA policy configured, and a plain create so the row it returns has an episode to log.
     billingSettings: { findUnique: async () => null },
     userCredential: { findUnique: async ({ where }: any) => ({ userId: where.userId, status: 'ACTIVE', mustChangePassword: false, expiresAt: null, updatedAt: new Date('2026-01-01T00:00:00.000Z') }) },
@@ -59,6 +60,7 @@ function makeStore(overrides: {
   function matches(row: any, where: any): boolean {
     if (!where) return true;
     return Object.entries(where).every(([key, value]) => {
+      if (key === 'AND' || key === 'OR') return true; // lease/schedule windows: the drain tests queue rows that are due and unleased
       if (key === 'proposedJson' && value && typeof value === 'object' && 'path' in (value as any)) {
         const path = (value as any).path as string[], equals = (value as any).equals;
         let cursor: any = row.proposedJson; for (const segment of path) cursor = cursor?.[segment];
@@ -295,42 +297,111 @@ describe('BillingDocumentAdminService.resend — R-D1 for admins (DQ10)', () => 
   });
 });
 
-describe('BillingDocumentAdminService.run — aged UNKNOWN (item 4, mirrors billing-refunds.service CONTROL_REFUND_AGED_UNKNOWN)', () => {
-  it('blocks a recipient change with CONTROL_RECIPIENT_AGED_UNKNOWN once 23h pass with no confirmed Stripe readback', async () => {
-    const { service, client, operations } = makeStore();
-    const op = await client.billingOperation.create({ data: {
+describe('BillingDocumentAdminService.run — a dispatched recipient change finishes only on a readback of the target e-mail', () => {
+  const HOUR = 3_600_000;
+  /** A dispatched `UNKNOWN` row whose approval is still valid, and a provider fake that holds `held` and records every POST. */
+  async function dispatched(input: { held?: string; expiresAt?: Date; dispatchedAgoMs?: number; post?: 'applies' | 'fails' } = {}) {
+    const posts: Array<{ body: unknown; key: unknown }> = [];
+    let held = input.held ?? 'old@example.com';
+    const store = makeStore({ stripeRequest: async (...args: unknown[]) => {
+      const [method, path, body, key] = args as [string, string, { email: string }, string];
+      if (method === 'POST') { posts.push({ body, key }); if (input.post !== 'applies') throw new Error('provider timeout'); held = body.email; }
+      return path.includes('/customers/') ? { id: 'cus_1', object: 'customer', livemode: false, email: held, metadata: { billingAccountId: 'acct-1' } } : {};
+    } });
+    const a = store.account, credentialVersion = '2026-01-01T00:00:00.000Z';
+    const op = await store.client.billingOperation.create({ data: {
       type: 'UPDATE_BILLING_EMAIL', state: 'UNKNOWN', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
-      referenceId: 'inv-1', initiatorUserId: 'admin-1', sourceVersion: 3, reason: 'ลูกค้าโทรแจ้งเปลี่ยนอีเมล',
-      requestHash: 'hash-1', expiresAt: new Date(Date.now() + 600_000),
+      referenceId: 'inv-1', initiatorUserId: 'admin-1', approverUserId: 'admin-2', sourceVersion: 3, reason: 'ลูกค้าโทรแจ้งเปลี่ยนอีเมล',
+      requestHash: 'hash-1', expiresAt: input.expiresAt ?? new Date(Date.now() + 540_000),
       proposedJson: { accountId: 'acct-1', customerId: 'cus_1', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
         invoiceId: 'inv-1', invoiceNumber: 'INV-0001', membershipId: 'mem-1', actorCompanyId: 'sys-co',
-        previousEmail: 'old@example.com', target: { email: 'new@example.com', source: 'ADMIN' }, localHash: 'hash-x' },
-      // Dispatched 24h ago; Stripe still reads back the old email (makeStore's default customer fake).
-      resultJson: { dispatchedAt: new Date(Date.now() - 24 * 3_600_000).toISOString(), providerKey: 'billing-recipient-admin-prior' },
+        previousEmail: 'old@example.com', target: { email: 'new@example.com', source: 'ADMIN' },
+        // The service's own `localHash(account, previousEmail)`, so `current()` accepts the row as it would a real one.
+        localHash: configurationHash([a.id, a.companyId, a.stripeAccountId, a.livemode, a.customerId, a.version, a.activeAttemptId,
+          a.activeCollectionOperationId, a.activeEmailOperationId, a.recipientEmail, a.recipientSource, 'old@example.com']) },
+      resultJson: { submittedCredentialVersion: credentialVersion, approval: { membershipId: 'mem-2', companyId: 'sys-co', credentialVersion, approvedAt: new Date().toISOString() },
+        dispatchedAt: new Date(Date.now() - (input.dispatchedAgoMs ?? 60_000)).toISOString(), providerKey: 'billing-recipient-admin-op-1' },
     } });
-    const result = await service.run(CONTEXT, op.id, op.version);
-    assert.equal(result.state, 'BLOCKED');
-    assert.equal(result.errorCode, 'CONTROL_RECIPIENT_AGED_UNKNOWN');
-    assert.equal(operations[0].leaseToken, null, 'lease released');
+    // The fake store keeps no review cases; keep the one this run opens so a test can see whether it was closed.
+    const cases: any[] = [], issues = store.client.billingIssue;
+    issues.create = async ({ data }: any) => { cases.push({ id: 'iss-1', version: 0, episode: 1, state: 'OPEN', ...data }); return cases[0]; };
+    issues.findUnique = async () => cases[0] ?? null;
+    issues.update = async ({ data }: any) => Object.assign(cases[0], data);
+    return { ...store, op, posts, cases, run: () => store.service.run(CONTEXT, op.id, op.version) };
+  }
+
+  it('sends again with the same key when the provider still holds the previous e-mail, and succeeds once it reads back the target', async () => {
+    const { run, posts, account, auditLogs } = await dispatched({ post: 'applies' });
+    const result = await run();
+    assert.deepEqual(posts, [{ body: { email: 'new@example.com' }, key: 'billing-recipient-admin-op-1' }]);
+    assert.equal(result.state, 'SUCCEEDED');
+    assert.equal(account.recipientEmail, 'new@example.com');
+    assert.equal(auditLogs.some((entry) => entry.action === 'billing.recipient_admin.redispatch'), true);
   });
 
-  it('still just leaves it UNKNOWN under 23h old (unaged) so the reconciler keeps polling', async () => {
-    // A readback that matches neither the old nor the new email (not the aged case: still needs
-    // review, same as before this change) — CONTROL_PREVIEW_STALE with dispatchedAt set stays
-    // CONTROL_RECIPIENT_REVIEW/UNKNOWN, unlike the aged branch above.
-    const { service, client } = makeStore({ stripeRequest: async (_method: string, path: string) =>
-      path.includes('/customers/') ? { id: 'cus_1', object: 'customer', livemode: false, email: 'someone-else@example.com', metadata: { billingAccountId: 'acct-1' } } : {} });
-    const op = await client.billingOperation.create({ data: {
-      type: 'UPDATE_BILLING_EMAIL', state: 'UNKNOWN', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
-      referenceId: 'inv-1', initiatorUserId: 'admin-1', sourceVersion: 3, reason: 'ลูกค้าโทรแจ้งเปลี่ยนอีเมล',
-      requestHash: 'hash-1', expiresAt: new Date(Date.now() + 600_000),
-      proposedJson: { accountId: 'acct-1', customerId: 'cus_1', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
-        invoiceId: 'inv-1', invoiceNumber: 'INV-0001', membershipId: 'mem-1', actorCompanyId: 'sys-co',
-        previousEmail: 'old@example.com', target: { email: 'new@example.com', source: 'ADMIN' }, localHash: 'hash-x' },
-      resultJson: { dispatchedAt: new Date(Date.now() - 60_000).toISOString(), providerKey: 'billing-recipient-admin-prior' },
-    } });
-    const result = await service.run(CONTEXT, op.id, op.version);
-    assert.equal(result.state, 'UNKNOWN');
-    assert.equal(result.errorCode, 'CONTROL_RECIPIENT_REVIEW');
+  it('stays UNKNOWN with the recipient unchanged when the second send fails too (never a success without the readback)', async () => {
+    const { run, posts, account, outboxEvents } = await dispatched({ post: 'fails' });
+    const result = await run();
+    assert.deepEqual([result.state, result.errorCode, posts.length], ['UNKNOWN', 'CONTROL_RECIPIENT_REVIEW', 1]);
+    assert.equal(account.recipientEmail, 'old@example.com');
+    assert.equal(outboxEvents.length, 0, 'no "changed" notice');
+  });
+
+  it('sends nothing once the request has expired, and stays UNKNOWN for the first hour after expiry', async () => {
+    const { run, posts, account } = await dispatched({ expiresAt: new Date(Date.now() - HOUR + 60_000) });
+    const result = await run();
+    assert.deepEqual([result.state, result.errorCode, posts.length], ['UNKNOWN', 'CONTROL_RECIPIENT_REVIEW', 0]);
+    assert.equal(account.recipientEmail, 'old@example.com');
+    assert.equal(result.allowedActions.includes('run'), true);
+  });
+
+  for (const held of ['old@example.com', 'someone-else@example.com']) {
+    it(`ends as FAILED / CONTROL_RECIPIENT_NOT_CHANGED an hour after expiry when the provider holds ${held}`, async () => {
+      const { run, posts, account, cases, auditLogs, outboxEvents, operations } = await dispatched({ held, expiresAt: new Date(Date.now() - HOUR), dispatchedAgoMs: 24 * HOUR });
+      const result = await run();
+      assert.deepEqual([result.state, result.errorCode, posts.length], ['FAILED', 'CONTROL_RECIPIENT_NOT_CHANGED', 0]);
+      assert.equal(account.recipientEmail, 'old@example.com');
+      assert.equal(outboxEvents.length, 0, 'no "changed" notice');
+      assert.equal(result.allowedActions.includes('run'), false);
+      assert.deepEqual(cases.map((row) => row.state), ['OPEN'], 'review case kept open');
+      assert.equal(auditLogs.some((entry) => entry.action === 'billing.recipient_admin.not_changed'), true);
+      assert.equal(operations[0].leaseToken, null, 'lease released');
+    });
+  }
+
+  it('leaves a third address UNKNOWN, with nothing sent, while the request is not yet an hour past its expiry', async () => {
+    const { run, posts } = await dispatched({ held: 'someone-else@example.com' });
+    const result = await run();
+    assert.deepEqual([result.state, result.errorCode, posts.length], ['UNKNOWN', 'CONTROL_RECIPIENT_REVIEW', 0]);
+  });
+
+  it('succeeds on a readback of the target however old the request is', async () => {
+    const { run, posts, account } = await dispatched({ held: 'new@example.com', expiresAt: new Date(Date.now() - 48 * HOUR), dispatchedAgoMs: 49 * HOUR });
+    const result = await run();
+    assert.deepEqual([result.state, posts.length, account.recipientEmail], ['SUCCEEDED', 0, 'new@example.com']);
+  });
+});
+
+describe('BillingDocumentAdminService.drain — the profile sync waits for a recipient change in flight', () => {
+  /** A `CUSTOMER_PROFILE_SYNC` row due now, and a provider fake that records every POST. */
+  async function queued(hold: 'none' | 'shop' | 'admin') {
+    const posts: any[] = [];
+    const store = makeStore({ stripeRequest: async (...args: unknown[]) => { if (args[0] === 'POST') posts.push(args[2]); throw new Error('provider timeout'); } });
+    store.client.company = { findUniqueOrThrow: async () => ({ id: 'co-1', name: 'ร้านทดสอบ' }) };
+    if (hold === 'shop') store.account.activeEmailOperationId = 'op-shop';
+    if (hold === 'admin') store.client.$queryRaw = async () => [{ id: 'op-admin' }];
+    const op = await store.client.billingOperation.create({ data: { type: 'CUSTOMER_PROFILE_SYNC', state: 'QUEUED', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false,
+      proposedJson: { accountId: 'acct-1', customerId: 'cus_1' }, scheduledFor: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 86_400_000) } });
+    await store.service.drain();
+    return { op, posts };
+  }
+  it('sends the stored address when nothing holds the recipient', async () => {
+    const { posts } = await queued('none');
+    assert.deepEqual(posts.map(body => body.email), ['old@example.com']);
+  });
+  for (const hold of ['shop', 'admin'] as const) it(`sends nothing and stays queued for its next pass while a ${hold} recipient change is in flight`, async () => {
+    const { op, posts } = await queued(hold);
+    assert.deepEqual([posts.length, op.state], [0, 'QUEUED']);
+    assert.ok(op.scheduledFor > new Date() && op.scheduledFor.getTime() <= Date.now() + 300_000);
   });
 });

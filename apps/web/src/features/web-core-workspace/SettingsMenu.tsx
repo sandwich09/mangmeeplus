@@ -7,7 +7,7 @@ import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { secondaryButtonClass } from '@/common/components/button/button-classes';
 import { MangmeeCard, MangmeeIconFrame } from '@/common/components/mangmee';
 import { useLockedShell } from '@/features/plan-term/LockedShellScope';
-import { LOCKED_ACCOUNT_CARD, PACKAGE_CARD, filterSettingsMenuItems, showsLockedAccountCard, showsPackageCard } from './settings-menu.logic';
+import { LOCKED_ACCOUNT_CARD, filterSettingsMenuItems, showsLockedAccountCard } from './settings-menu.logic';
 
 /**
  * One card of the hub: the name of the place, one plain line, and an arrow that says it opens. No picture: a padlock
@@ -48,7 +48,6 @@ export function SettingsMenu({ companyId, permissions, profileBadge }: {
   const primary = items.find((item) => item.section === 'primary');
   const advanced = items.filter((item) => item.section === 'advanced');
   const general = items.filter((item) => !item.section);
-  const packageCard = showsPackageCard(permissions);
 
   return (
     <>
@@ -85,13 +84,12 @@ export function SettingsMenu({ companyId, permissions, profileBadge }: {
         </MangmeeCard>
       )}
 
-      {(general.length > 0 || packageCard) && (
+      {general.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {general.map((item) => (
             <SettingsCard key={item.key} href={`/companies/${companyId}${item.href}${item.hash ?? ''}`} title={item.title} desc={item.desc}
               badge={item.key === 'company-profile' ? profileBadge : undefined} />
           ))}
-          {packageCard && <SettingsCard key="package" href={`/companies/${companyId}${PACKAGE_CARD.href}`} title={PACKAGE_CARD.title} desc={PACKAGE_CARD.desc} />}
         </div>
       )}
 

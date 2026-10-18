@@ -4,6 +4,7 @@ import { invoiceServiceEnd } from '../domain/billing-package';
 import { billingError } from '../domain/billing-policy';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { promotionForInvoice } from './billing-promotion';
+import { unrepairableBinding } from './billing-refund-source';
 import { promotionReceiptSourceKey } from './billing-receipt-grants';
 
 const TEXT = {
@@ -35,15 +36,17 @@ export const renewalIsLive = (account: Pick<Account, 'renewalMode' | 'baseSubscr
  * (plan R2: a promotion purchase serves until `benefitEnd`, past its paid `periodEnd`).
  */
 export function endPackageBlock(company: { status: string; planTerm: Term | null }, account: Account, invoice: Invoice,
-  requireFullRefund: boolean, now = new Date()): EndPackageBlock | null {
+  requireFullRefund: boolean, now = new Date(), unrepairable = false): EndPackageBlock | null {
   const term = company.planTerm;
   if (!term || term.billingReceiptAccountId !== account.id || company.status !== 'ACTIVE' || term.termDisabledAt || term.termEndsAt <= now ||
     !account.paidThrough || account.paidThrough <= now || invoice.billingAccountId !== account.id || invoice.providerStatus !== 'paid' ||
     invoice.applyStatus !== 'APPLIED' || !invoice.appliedAt || invoice.periodStart > now || invoiceServiceEnd(invoice).getTime() !== account.paidThrough.getTime() ||
     termProjectionHash(term) !== account.termProjectionHash) return 'BILLING_END_PACKAGE_NOT_CURRENT';
   // ponytail: never touches Stripe; staff cancel the renewal first.
-  if (renewalIsLive(account)) return 'BILLING_END_PACKAGE_AUTO_RENEW';
-  if (account.activeAttemptId || account.activeCollectionOperationId || account.pendingPlanChangeId) return 'BILLING_END_PACKAGE_PENDING';
+  // `unrepairable` (`unrepairableBinding`): this invoice's own purchase holds the slot and its renewal was never made and cannot be —
+  // no subscription exists to cancel first, and the purchase being refunded is not a pending one to wait for.
+  if (!unrepairable && renewalIsLive(account)) return 'BILLING_END_PACKAGE_AUTO_RENEW';
+  if ((account.activeAttemptId && !unrepairable) || account.activeCollectionOperationId || account.pendingPlanChangeId) return 'BILLING_END_PACKAGE_PENDING';
   if (requireFullRefund && invoice.refundedSatang < invoice.paidSatang) return 'BILLING_END_PACKAGE_NOT_REFUNDED';
   return null;
 }
@@ -91,7 +94,7 @@ export async function endPaidPackage(tx: Prisma.TransactionClient, lifecycle: Pi
   const company = await tx.company.findUniqueOrThrow({ where: { id: input.companyId }, include: { planTerm: true } });
   const account = await tx.billingAccount.findFirstOrThrow({ where: { id: input.accountId, companyId: input.companyId } });
   const invoice = await tx.billingInvoice.findFirstOrThrow({ where: { id: input.invoiceId, billingAccountId: account.id } });
-  const block = endPackageBlock(company, account, invoice, input.requireFullRefund, now);
+  const block = endPackageBlock(company, account, invoice, input.requireFullRefund, now, !!await unrepairableBinding(tx, account, invoice));
   if (block) return block;
   // Machine actor, like the sweep: a human requester would clear termDisabledAt and turn this into a manual hold.
   await lifecycle.execute({ companyId: company.id, targetStatus: 'DISABLED', reason: 'refund_package_ended', requestingAdminUserId: null, requestId: input.requestId }, tx);

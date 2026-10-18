@@ -14,7 +14,7 @@ export type Stage = 'locked' | 'checkout' | 'paid' | 'applied' | 'failed' | 'unk
 export type NoSetupState = {
   stage: Stage; cancelResult: 'EXPIRED' | 'COMPLETED' | 'PENDING'; quoteTtlMs: number; checkoutResult: 'open' | 'FAILED' | 'UNKNOWN';
   recipientEmail: string; resendsLeft: number;
-  log: { quotes: Record<string, unknown>[]; checkouts: string[]; cancels: number; otp: string[]; resends: number; attempts: number };
+  log: { quotes: Record<string, unknown>[]; checkouts: string[]; checkoutBodies: Record<string, unknown>[]; cancels: number; otp: string[]; resends: number; attempts: number };
 };
 export const ATTEMPT = '11111111-1111-4111-8111-111111111111', INVOICE = '22222222-2222-4222-8222-222222222222';
 const CHALLENGE = '33333333-3333-4333-8333-333333333333', PROOF = '44444444-4444-4444-8444-444444444444', OPERATION = '55555555-5555-4555-8555-555555555555';
@@ -24,7 +24,7 @@ const days = (n: number) => at(n * 86_400_000);
 
 export function defaultState(): NoSetupState {
   return { stage: 'locked', cancelResult: 'EXPIRED', quoteTtlMs: 600_000, checkoutResult: 'open', recipientEmail: 'buyer@example.test', resendsLeft: 2,
-    log: { quotes: [], checkouts: [], cancels: 0, otp: [], resends: 0, attempts: 0 } };
+    log: { quotes: [], checkouts: [], checkoutBodies: [], cancels: 0, otp: [], resends: 0, attempts: 0 } };
 }
 
 const PROFILE = { name: 'ร้านใหม่ไม่มีอีเมล', nameSource: 'SHOP' as const, missingFields: ['line1', 'subdistrict', 'district', 'province', 'postalCode'] as ('line1' | 'subdistrict' | 'district' | 'province' | 'postalCode')[],
@@ -32,21 +32,24 @@ const PROFILE = { name: 'ร้านใหม่ไม่มีอีเมล'
 
 export function noSetupStatus(companyId: string, s: NoSetupState): BillingStatus {
   const applied = s.stage === 'applied', paid = applied || s.stage === 'paid';
+  const mode = (s.log.quotes.at(-1)?.purchaseMode as BillingPurchaseMode | undefined) ?? 'CARD_AUTO';
+  const renewing = mode === 'CARD_AUTO' || mode === 'PROMPTPAY_RENEW';
+  const units = billingOffer('STARTER_249', 'month').receiptAllowance;
   return {
     companyId, companyName: 'ร้านใหม่ไม่มีอีเมล', mode: 'TEST', policyRevision: 'policy-nosetup', billingProfile: PROFILE,
     paymentState: s.stage === 'locked' ? 'NONE' : s.stage === 'checkout' ? 'PENDING' : s.stage === 'failed' ? 'FAILED' : s.stage === 'unknown' ? 'UNKNOWN' : 'PAID',
     applyState: applied ? 'APPLIED' : s.stage === 'paid' ? 'PENDING' : 'NONE',
-    purchaseEligibility: 'ELIGIBLE', purchaseSource: 'TRIAL', renewalMode: applied ? 'CARD_AUTO' : 'NONE',
+    purchaseEligibility: 'ELIGIBLE', purchaseSource: 'TRIAL', renewalMode: applied ? mode : 'NONE',
     enabledPurchaseModes: MODES, availablePurchaseModes: MODES,
     accessState: applied ? 'ACTIVE' : 'EXPIRED', ...(applied ? {} : { lockReason: 'no_package' as const }),
-    subscriptionState: applied ? 'active' : 'NONE', documentState: 'NONE',
+    subscriptionState: applied && renewing ? 'active' : 'NONE', documentState: 'NONE',
     attemptId: s.stage === 'locked' ? null : ATTEMPT, reference: null, observedAt: null,
     canCancelCheckout: s.stage === 'checkout' || s.stage === 'unknown',
     tierKey: applied ? 'STARTER_249' : 'FREE_TRIAL_15', interval: applied ? 'month' : null,
-    termEndsAt: applied ? days(30) : days(0), paidThrough: applied ? days(30) : null, nextChargeAt: applied ? days(30) : null,
+    termEndsAt: applied ? days(30) : days(0), paidThrough: applied ? days(30) : null, nextChargeAt: applied && renewing ? days(30) : null,
     cancelAtPeriodEnd: false, graceEndsAt: null,
     allowedActions: applied ? ['new_sales', 'portal_cancel_subscription', 'plan_changes', 'portal_payment_method'] : s.stage === 'locked' || s.stage === 'failed' ? ['new_sales'] : [],
-    usage: applied ? { used: 0, limit: 360, remaining: 360, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: days(30) }
+    usage: applied ? { used: 0, limit: units, remaining: units, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: days(30) }
       : { used: 0, limit: 15, remaining: 15, cadence: 'LEGACY_MONTH', resetsAt: days(30), expiresAt: null },
     issues: [],
     // PR C writes the recipient when the payment applies: between PAID and APPLIED it is still empty.
@@ -64,12 +67,12 @@ export function noSetupNotice(s: NoSetupState) {
 const offers = (): BillingOffer[] => BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ ...billingOffer(tier, interval), availability: 'AVAILABLE' as const, reason: null })));
 const catalog = (): BillingCatalog => ({ schemaVersion: 1, mode: 'TEST', policyRevision: 'policy-nosetup', catalogRevision: 'catalog-nosetup',
   generatedAt: at(), validUntil: at(3_600_000), taxTreatment: 'NOT_VAT_REGISTERED', offers: offers(), aiMonthlyBudgetSatang: 80_000 });
-const invoice = (): BillingInvoiceItem => ({ id: INVOICE, number: 'NOSETUP-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false,
-  financialObservedAt: at(), paymentState: 'PAID', applyState: 'APPLIED', periodStart: at(), periodEnd: days(30), createdAt: at(), hasDocuments: true,
+const invoice = (s: NoSetupState): BillingInvoiceItem => ({ offer: { key: 'STARTER_249', label: 'เริ่มต้น', interval: 'month' }, method: String(s.log.quotes.at(-1)?.purchaseMode ?? 'CARD_AUTO').startsWith('CARD') ? 'CARD' : 'PROMPTPAY', id: INVOICE, number: 'NOSETUP-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false,
+  financialObservedAt: at(), paymentState: 'PAID', applyState: 'APPLIED', periodStart: at(), periodEnd: days(30), paidAt: at(), createdAt: at(), hasDocuments: true,
   documentActions: { canResend: true } });
 const attempt = (s: NoSetupState): BillingAttemptView => ({ attemptId: ATTEMPT, state: s.stage === 'locked' ? 'EXPIRED' : 'OPEN', errorCode: null, observedAt: at(),
   paymentState: s.stage === 'paid' || s.stage === 'applied' ? 'PAID' : s.stage === 'failed' || s.stage === 'locked' ? 'FAILED' : 'PENDING',
-  applyState: s.stage === 'applied' ? 'APPLIED' : s.stage === 'paid' ? 'PENDING' : 'NONE', invoiceReference: s.stage === 'applied' ? 'NOSETUP-0001' : null });
+  applyState: s.stage === 'applied' ? 'APPLIED' : s.stage === 'paid' ? 'PENDING' : 'NONE', invoiceReference: s.stage === 'applied' || s.stage === 'paid' ? INVOICE : null });
 
 export async function installNoSetupRoutes(page: Page, companyId: string, s: NoSetupState): Promise<void> {
   const base = `/api/v1/companies/${encodeURIComponent(companyId)}/billing`;
@@ -85,7 +88,8 @@ export async function installNoSetupRoutes(page: Page, companyId: string, s: NoS
       if (path === '/api/v1/plan-term/notice') return json(noSetupNotice(s));
       if (path === '/api/v1/billing/catalog') return json(catalog());
       if (path === base) return json(noSetupStatus(companyId, s));
-      if (path === `${base}/history`) return json({ items: s.stage === 'applied' ? [invoice()] : [], nextCursor: null });
+      if (path.startsWith(`${base}/invoices/${INVOICE}/adjustments/`)) return json({ invoice: invoice(s), invoiceId: INVOICE, invoiceNumber: 'NOSETUP-0001', kind: path.endsWith('/refunds') ? 'refunds' : 'credit-notes', mode: 'TEST', items: [], nextCursor: null, canOpenDocuments: true, observedAt: at(), recipientEmail: s.recipientEmail, documentActions: { canResend: true } });
+      if (path === `${base}/history`) return json({ items: s.stage === 'applied' ? [invoice(s)] : [], nextCursor: null });
       if (path === `${base}/attempts/${ATTEMPT}`) { s.log.attempts++; return json(attempt(s)); }
       if (path === `${base}/recipient`) {
         const recipient: BillingEmailRecipient = s.stage === 'paid' || s.stage === 'applied'
@@ -103,11 +107,12 @@ export async function installNoSetupRoutes(page: Page, companyId: string, s: NoS
           subtotalSatang: offer.priceSatang, taxSatang: 0, totalSatang: offer.priceSatang, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'billing-v2',
           paidStart: 'IMMEDIATE', billingEmail: null, trialEndsAt: null, usage: noSetupStatus(companyId, s).usage, billingProfile: PROFILE,
           previousSource: 'NO_TERM', previousTermEndsAt: null,
-          purchase: { kind: 'INITIAL', previousPaidThrough: null, projectedPaidThrough: days(30), receiptUnitsAdded: offer.receiptAllowance, projectedRemainingReceipts: offer.receiptAllowance } };
+          purchase: { kind: 'INITIAL', previousPaidThrough: null, projectedPaidThrough: days(offer.interval === 'year' ? 365 : 30), receiptUnitsAdded: offer.receiptAllowance, projectedRemainingReceipts: offer.receiptAllowance } };
         return json(quote);
       }
       if (path === `${base}/checkout`) {
         s.log.checkouts.push(request.headers()['idempotency-key'] ?? '');
+        s.log.checkoutBodies.push(body);
         if (s.checkoutResult === 'FAILED') return json({ attemptId: ATTEMPT, state: 'FAILED', checkoutUrl: null });
         if (s.checkoutResult === 'UNKNOWN') { s.stage = 'unknown'; return json({ attemptId: ATTEMPT, state: 'UNKNOWN', checkoutUrl: null }); }
         s.stage = 'checkout';
@@ -145,4 +150,11 @@ export async function installNoSetupRoutes(page: Page, companyId: string, s: NoS
     }
     return route.continue();
   });
+}
+
+/** PAY-1: exercise the two customer questions instead of a hidden purchase-mode value. */
+export async function chooseBillingMethod(page: Page, mode: BillingPurchaseMode) {
+  const methods = page.getByRole('region', { name: 'วิธีจ่าย', exact: true });
+  await methods.getByRole('radio', { name: mode.endsWith('_ONCE') ? 'จ่ายครั้งเดียว' : 'ต่ออายุอัตโนมัติ', exact: true }).check();
+  await methods.getByRole('radio', { name: mode.startsWith('CARD') ? 'บัตร' : 'QR พร้อมเพย์', exact: true }).check();
 }

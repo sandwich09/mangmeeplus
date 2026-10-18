@@ -10,6 +10,18 @@ export const refundPaymentMethodLines = (method: 'card' | 'promptpay' | null | u
   'แจ้งลูกค้าให้รอรับอีเมลนั้นและกรอกบัญชีให้เสร็จ ระหว่างรอลูกค้า คำขอนี้จะอยู่ในสถานะรอผล',
 ];
 
+/**
+ * 2026-10-10: this purchase still holds the shop and the system cannot set up its next round (`unrepairedBinding` on the refund review),
+ * so the refund is the way out. RENEWAL (QR bills every period, prepaid card): only the cumulative full refund releases the shop — the
+ * partial line shows once a smaller amount is typed; the shop is otherwise released when the paid period ends. ADVANCE_DEAL: the deal
+ * is cancelled as soon as any refund of it is seen, so the partial line would be false there and is never shown.
+ */
+export const refundBindingLines = (binding: 'RENEWAL' | 'ADVANCE_DEAL' | null | undefined, c: Pick<RefundPromotionCase, 'paidSatang' | 'refundedSatang' | 'amountSatang'>): string[] => !binding ? [] : [
+  'การตั้งรอบถัดไปของการซื้อนี้ไม่สำเร็จและระบบแก้เองไม่ได้ คืนเงินเต็มจำนวนเพื่อปิดรายการและปลดล็อกร้าน',
+  ...(binding === 'RENEWAL' && c.refundedSatang + c.amountSatang < c.paidSatang
+    ? ['คืนเงินบางส่วนไม่ปลดล็อกร้าน ร้านจะซื้อหรือเปลี่ยนแพ็กเกจไม่ได้จนกว่าจะคืนเต็มจำนวน หรือจนครบรอบที่จ่ายไว้'] : []),
+];
+
 /** `amountSatang` NaN = nothing valid typed yet. `packageEnded`: the saved request's result (null/absent = not decided yet). */
 export type RefundPromotionCase = { paidSatang: number; refundedSatang: number; amountSatang: number; endPackage: boolean; packageEnded?: boolean | null };
 
