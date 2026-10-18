@@ -11,6 +11,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { NotFoundException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingBenefitChoice, type BillingPolicy, type BillingPromotionCampaign,
   type BillingPurchaseMode, type BillingQuote } from '@watchdog-bms/contracts';
@@ -58,6 +59,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
         return { id, metadata: { billingAccountId: account.id }, ...customers.get(id) };
       }
       const id = path.split('/').at(-1)!;
+      if (method === 'GET' && (path === '/refunds' || path === '/credit_notes')) return { object: 'list', data: [], has_more: false };
       if (path.startsWith('/payment_intents/')) return paid.intents.get(id);
       if (path.startsWith('/charges/')) return paid.charges.get(id);
       if (method === 'GET' && path.startsWith('/invoices/')) return paid.invoices.get(id);
@@ -174,13 +176,15 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
   async function pay(attemptId: string) {
     const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: attemptId } }), snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
     const current = await client.billingAccount.findUniqueOrThrow({ where: { id: attempt.billingAccountId } });
+    const session = sessions.find(item => item.session.id === attempt.checkoutSessionId)!;
+    assert.equal(session.mode, 'payment', 'pay() models a paid payment-mode Checkout, not a subscription-mode Checkout');
     const n = `${run}${sequence += 1}`, amount = snapshot.quote.offer.priceSatang, created = Math.floor(Date.now() / 1000) - 60;
     const customerId = current.customerId!, meta = { billingAttemptId: attempt.id, billingAccountId: current.id }, card = !snapshot.quote.purchaseMode!.startsWith('PROMPTPAY');
     const charge = { id: `ch_${n}`, livemode: false, status: 'succeeded', paid: true, captured: true, currency: 'thb', amount, customer: customerId,
       payment_intent: `pi_${n}`, payment_method_details: { type: card ? 'card' : 'promptpay' }, amount_refunded: 0, disputed: false, balance_transaction: null };
     paid.charges.set(charge.id, charge);
     paid.intents.set(`pi_${n}`, { id: `pi_${n}`, livemode: false, status: 'succeeded', currency: 'thb', amount_received: amount, customer: customerId, latest_charge: charge,
-      payment_method: card ? `pm_${n}` : null, setup_future_usage: sessions.find(item => item.session.id === attempt.checkoutSessionId)!.payment_intent_data.setup_future_usage ?? null });
+      payment_method: card ? `pm_${n}` : null, setup_future_usage: session.payment_intent_data?.setup_future_usage ?? null });
     paid.payments.set(`in_${n}`, [{ object: 'invoice_payment', livemode: false, status: 'paid', invoice: `in_${n}`, payment: { type: 'payment_intent', payment_intent: `pi_${n}` }, amount_paid: amount, currency: 'thb' }]);
     paid.lines.set(attempt.checkoutSessionId!, [{ quantity: 1, currency: 'thb', amount_total: amount, amount_tax: 0, amount_discount: 0,
       price: { id: `price_inline${n}`, product: 'prod_Synthetic', type: 'one_time', active: false, recurring: null, livemode: false, currency: 'thb', unit_amount: amount } }]);
@@ -189,7 +193,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     paid.invoices.set(`in_${n}`, { id: `in_${n}`, object: 'invoice', livemode: false, customer: customerId, metadata: meta, status: 'paid', billing_reason: 'manual',
       collection_method: 'send_invoice', parent: null, currency: 'thb', total: amount, amount_paid: amount, amount_remaining: 0, starting_balance: 0,
       status_transitions: { paid_at: created + 3 }, number: `PR-${n}` });
-    Object.assign(sessions.find(item => item.session.id === attempt.checkoutSessionId)!.session, { status: 'complete', payment_status: 'paid', subscription: null,
+    Object.assign(session.session, { status: 'complete', payment_status: 'paid', subscription: null,
       invoice: `in_${n}`, payment_intent: `pi_${n}`, invoice_creation: { enabled: true }, currency: 'thb', amount_total: amount,
       total_details: { amount_tax: 0, amount_discount: 0, amount_shipping: 0 }, created, customer_details: { email: `${owner}@example.test` } });
     return new Date((created + 3) * 1000);
@@ -202,6 +206,80 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     assert.equal(row.applyStatus, 'APPLIED');
     return row;
   }
+
+  it('PAY-MENU history carries the purchased Thai package label, interval and recorded card or PromptPay method', async () => {
+    const autoOffer = billingOffer('PRO_999', 'month', policy);
+    await publish([campaign({ rules: [{ offerKey: autoOffer.offerKey, interval: autoOffer.interval, bonusMonths: 1,
+      bonusReceiptUnits: autoOffer.receiptAllowance, offerSignature: promotionOfferSignature(autoOffer, tax) }] })]);
+    for (const [offerKey, interval, purchaseMode, label, method] of [
+      ['BASIC_499', 'month', 'CARD_ONCE', 'เติบโต', 'CARD'],
+      ['STARTER_249', 'year', 'PROMPTPAY_ONCE', 'เริ่มต้น', 'PROMPTPAY'],
+      ['PRO_999', 'month', 'CARD_AUTO', 'มืออาชีพ', 'CARD'],
+      ['ENTERPRISE_1999', 'year', 'PROMPTPAY_RENEW', 'ธุรกิจ', 'PROMPTPAY'],
+    ] as const) {
+      const s = await shop(), opened = await checkout(s, await quote(s, purchaseMode === 'CARD_AUTO' ? 'PROMOTION' : 'NORMAL', { offerKey, interval, purchaseMode }));
+      const invoice = await applyPaid(opened.attemptId);
+      const history = await service.history(ctx(s), { limit: 10 });
+      assert.equal(history.items.length, 1);
+      assert.equal(history.items[0]!.id, invoice.id);
+      assert.deepEqual(history.items[0]!.offer, { key: offerKey, label, interval });
+      assert.equal(history.items[0]!.method, method);
+    }
+  });
+
+  it('PAY-MENU history leaves the method null when its source attempt has no known purchase mode', async () => {
+    await publish([]);
+    const s = await shop(), opened = await checkout(s, await quote(s, 'NORMAL'));
+    const invoice = await applyPaid(opened.attemptId);
+    const attempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: opened.attemptId } });
+    const snapshot = attempt.quoteSnapshot as unknown as BillingSnapshot;
+    const { purchaseMode: _mode, ...withoutMode } = snapshot.quote;
+    for (const storedQuote of [withoutMode, { ...withoutMode, purchaseMode: 'UNKNOWN_MODE' }]) {
+      await client.billingAttempt.update({ where: { id: attempt.id }, data: {
+        quoteSnapshot: { ...snapshot, quote: storedQuote } as unknown as Prisma.InputJsonValue } });
+      const item = (await service.history(ctx(s), { limit: 10 })).items[0]!;
+      assert.deepEqual(item.offer, { key: 'STARTER_249', label: 'เริ่มต้น', interval: 'month' });
+      assert.equal(item.method, null, 'never infer card from the charge or current account mode');
+    }
+    await client.billingInvoice.update({ where: { id: invoice.id }, data: { sourceAttemptId: null } });
+    assert.equal((await service.history(ctx(s), { limit: 10 })).items[0]!.method, null, 'no source attempt is also unknown');
+  });
+
+  it('PAY-MENU adjustments carry the invoice facts and verified paidAt, never its local creation date', async () => {
+    await publish([]);
+    const s = await shop(), opened = await checkout(s, await quote(s, 'NORMAL', { offerKey: 'BASIC_499', purchaseMode: 'PROMPTPAY_ONCE' }));
+    const invoice = await applyPaid(opened.attemptId), provider = paid.invoices.get(invoice.providerInvoiceId)!;
+    await client.billingInvoice.update({ where: { id: invoice.id }, data: { createdAt: new Date('2026-01-01T00:00:00Z') } });
+    for (const kind of ['refunds', 'credit-notes'] as const) {
+      const result = await service.adjustments(ctx(s), invoice.id, kind);
+      assert.equal(result.invoice.id, invoice.id);
+      assert.deepEqual(result.invoice.offer, { key: 'BASIC_499', label: 'เติบโต', interval: 'month' });
+      assert.equal(result.invoice.method, 'PROMPTPAY');
+      assert.equal(result.invoice.amountSatang, invoice.totalSatang);
+      assert.equal(result.invoice.periodStart, invoice.periodStart.toISOString());
+      assert.equal(result.invoice.periodEnd, invoice.periodEnd.toISOString());
+      assert.equal(result.invoice.paidAt, new Date(provider.status_transitions.paid_at * 1000).toISOString());
+      assert.notEqual(result.invoice.paidAt, result.invoice.createdAt);
+    }
+    const paidAt = provider.status_transitions.paid_at;
+    try {
+      delete provider.status_transitions.paid_at;
+      assert.equal((await service.adjustments(ctx(s), invoice.id, 'refunds')).invoice.paidAt, null, 'missing payment time stays unknown');
+    } finally { provider.status_transitions.paid_at = paidAt; }
+  });
+
+  it('PAY-MENU adjustments refuse another shop invoice before reading its provider data', async () => {
+    await publish([]);
+    const s = await shop(), other = await shop(), opened = await checkout(s, await quote(s, 'NORMAL'));
+    const invoice = await applyPaid(opened.attemptId);
+    assert.deepEqual((await service.history(ctx(other), { limit: 10 })).items, []);
+    probe = async () => { assert.fail('another shop invoice must be refused before calling Stripe'); };
+    try {
+      for (const kind of ['refunds', 'credit-notes'] as const) {
+        await assert.rejects(service.adjustments(ctx(other), invoice.id, kind), NotFoundException);
+      }
+    } finally { probe = null; }
+  });
 
   it('quotes 2 and 13 months with 60 and 390 receipts for a new shop, refuses another tier, and never changes a quote that names no benefit (A01)', async () => {
     const live = campaign();

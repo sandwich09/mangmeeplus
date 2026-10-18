@@ -1,7 +1,7 @@
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { errorText } from './billing-error-text';
 import type {MouseEvent} from 'react';
-import type {BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode, BillingStatus} from '@watchdog-bms/contracts';
+import type {BillingInvoiceItem, BillingReceiptUsage, BillingApprovalMode, BillingPurchaseMode, BillingStatus} from '@watchdog-bms/contracts';
 export { billingLabel, billingPlanLabel, billingOfferLabel, billingPermissionLabel, billingEventLabel, billingDeliveryLabel, billingIssueLabel, billingTimelineLabel } from '@watchdog-bms/contracts';
 
 export const billingControl = 'inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold bg-white text-gray-700 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
@@ -11,6 +11,13 @@ export const billingLink = 'inline-flex min-h-11 items-center rounded-lg px-2 te
 export const billingBackControl = 'inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-medium text-gray-600 no-underline transition hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
 
 export const billingPrimaryControl = `${billingControl} !border-brand-700 !bg-brand-700 !text-white hover:!bg-brand-800`;
+
+export function billingHistoryStatus(invoice: Pick<BillingInvoiceItem, 'paymentState' | 'applyState' | 'refundedSatang' | 'amountSatang' | 'disputed'>): string {
+  if (invoice.disputed) return 'มีข้อโต้แย้ง';
+  if (invoice.refundedSatang > 0) return invoice.refundedSatang >= invoice.amountSatang ? 'คืนเงินแล้ว' : 'คืนบางส่วน';
+  // Receiving money and opening the package are separate facts.
+  return invoice.paymentState.toLowerCase() === 'paid' ? 'จ่ายแล้ว' : 'รอผล';
+}
 
 export function billingMonthlyAllowanceText(usage:Pick<BillingReceiptUsage,'monthlyAllowance'>):string|null {
   const monthly=usage.monthlyAllowance;if(!monthly)return null;

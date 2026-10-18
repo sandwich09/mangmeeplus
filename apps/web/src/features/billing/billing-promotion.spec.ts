@@ -239,7 +239,7 @@ test('the quote review: paid period, free time, end, receipts, next round — fr
     { label: 'ช่วงที่จ่าย', value: '5 ต.ค. 2569 – 5 พ.ย. 2569' },
     { label: 'ช่วงแถมฟรี', value: '5 พ.ย. 2569 – 5 ธ.ค. 2569' },
     { label: 'ใช้ได้ถึง', value: '5 ธ.ค. 2569' },
-    { label: 'ใบเสร็จ', value: '30 + แถม 30 = 60 ใบ' }]);
+    { label: 'อ่านใบเสร็จได้', value: '30 + แถม 30 = 60 ใบ' }]);
   assert.equal(review.next, 'รอบถัดไปเรียกเก็บวันที่ 5 ธ.ค. 2569 ราคาปกติ 249 บาท (ตัดบัตรอัตโนมัติ)');
   assert.equal(review.estimate, 'วันที่ทั้งหมดเป็นการประมาณ ระบบจะยืนยันวันจริงเมื่อจ่ายสำเร็จ');
   assert.equal(review.summary, 'เมื่อจ่ายสำเร็จ ใช้งานได้ 2 เดือน (จ่าย 1 เดือน แถมฟรี 1 เดือน)');
@@ -352,12 +352,12 @@ test('Q5 status: a running, paid shop that cannot buy another package gets one q
   const running = { accessState: 'ACTIVE', paymentState: 'PAID', applyState: 'APPLIED', attemptId: null, packageChangesEnabled: true, upgradeDeferredUntil: UNTIL } as const;
   const quiet = (over: Record<string, unknown>) => purchaseBlockQuiet({ ...running, ...over } as Parameters<typeof purchaseBlockQuiet>[0], now);
   const DATE_LINE = 'ซื้อหรือเปลี่ยนแพ็กเกจได้หลังวันที่ 5 ธ.ค. 2569 เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด';
-  const REPEAT = errorText({ code: 'BILLING_REPEAT_NOT_READY' }), QR = errorText({ code: 'BILLING_PLAN_CHANGE_REQUIRED' });
+  const REPEAT = errorText({ code: 'BILLING_REPEAT_NOT_READY' }), QR = errorText({ code: 'BILLING_PLAN_CHANGE_REQUIRED' }).replaceAll('แท็บการต่ออายุและจ่ายเงิน', 'การต่ออายุด้านล่าง');
   // the two codes, in the state of the live API after a successful promotion purchase
   assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY' }), DATE_LINE, 'a card shop with promotion time left: the date, in Bangkok');
   assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED' }), QR, 'a QR-bill shop: the sentence it always had');
   assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED', upgradeDeferredUntil: undefined }), QR, 'a QR-bill shop with no promotion');
-  assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED' }), errorText({ code: 'BILLING_PLAN_CHANGE_REQUIRED' }), 'the QR sentence is not reworded by the promotion date');
+  assert.equal(quiet({ purchaseBlockCode: 'BILLING_PLAN_CHANGE_REQUIRED' }), QR, 'the QR sentence is not reworded by the promotion date');
   // the date is told only while it lies ahead and the platform gate is open; otherwise the code's own sentence, still quiet
   assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: undefined }), REPEAT, 'no date');
   assert.equal(quiet({ purchaseBlockCode: 'BILLING_REPEAT_NOT_READY', upgradeDeferredUntil: '2026-10-09T05:00:00.000Z' }), REPEAT, 'the instant itself: no date left to wait for');
@@ -385,18 +385,18 @@ test('Q5 status: a running, paid shop that cannot buy another package gets one q
 });
 
 test('Q5 status wiring: the alert gives way to the line only through the pure decision, and the line sits in the package card, a note, with no support reference and no check button', () => {
-  const alert = page.slice(page.indexOf('{status.purchaseBlockCode && !quietBlock'), page.indexOf('{status.mode === \'TEST\''));
+  const alert = page.slice(page.indexOf('{purchaseBlockText && !quietBlock'), page.indexOf('{status.mode === \'TEST\''));
   assert.match(page, /const quietBlock = status \? purchaseBlockQuiet\(status\) : null;/);
-  assert.match(page, /\{status\.purchaseBlockCode && !quietBlock && !\(pending\?\.kind === 'FAILED' && purchaseSalesClosed\) && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
+  assert.match(page, /\{purchaseBlockText && !quietBlock && !applyReview && !heldShop && !\(pending\?\.kind === 'FAILED' && purchaseSalesClosed\) && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
   assert.match(alert, /เลขอ้างอิงสำหรับแจ้งทีมงาน/, 'the alert still carries its reference and its button for every other case');
   assert.match(alert, />ตรวจสถานะล่าสุด<\/button>/);
   const card = page.slice(page.indexOf('<section aria-label="สถานะแพ็กเกจ"'), page.indexOf("<div hidden={section !== 'payment'}"));
-  const line = /\{quietBlock && <p role="note" className="break-words text-sm leading-7 text-gray-600">\{quietBlock\}<\/p>\}/.exec(card);
+  const line = /\{!returnFocused && quietBlock && <div><p role="note" className="break-words text-sm leading-7 text-gray-600">\{quietBlock\}<\/p>\{quietBlock\.includes\('ติดต่อทีมงาน'\) && contactLinks\}<\/div>\}/.exec(card);
   assert.ok(line, 'the quiet line is a note inside the package card');
-  assert.equal((page.match(/\{quietBlock && </g) ?? []).length, 1, 'drawn once');
+  assert.equal((page.match(/\{!returnFocused && quietBlock && </g) ?? []).length, 1, 'drawn once');
   assert.doesNotMatch(card.slice(line!.index, line!.index + 200), /เลขอ้างอิง|ตรวจสถานะล่าสุด|role="alert"/);
   // it comes after the buttons of the card and before the collapsed reference, which stays the very last thing
-  assert.ok(card.indexOf("{status.allowedActions.includes('new_sales') && !pending?.inFlight && !status.renewalInvoiceUrl && <ActionGroup") < line!.index && line!.index < card.indexOf('{supportReference && !confirmed && !applyHeld && <details'));
+  assert.ok(card.indexOf("{!returnFocused && status.allowedActions.includes('new_sales') && !pending?.inFlight && !status.renewalInvoiceUrl && pending?.kind !== 'FAILED' && <ActionGroup") < line!.index && line!.index < card.indexOf('{supportReference && !confirmed && <details'));
 });
 
 // The page is a client component behind effects, so — like BillingPage.qa.spec.ts — its wiring is pinned from source.
@@ -444,27 +444,20 @@ test('the note under the choice is true in every cell: pick x held discount x ca
   assert.equal(promotionOffered([row({ available: false, reason: 'ALREADY_USED' })], 'month', true).PROMOTION, false, 'a promotion that cannot be used falls back to the discount-only box');
 });
 
-test('the annual card keeps its per-month average on the paid price and the paid 12 months for a normal purchase, whatever a promotion adds', () => {
-  assert.match(page, /\{interval === 'year' && plain && <p className="text-sm text-gray-600">เฉลี่ยเดือนละ \{money\(Math\.round\(offer\.priceSatang \/ 12\)\)\}<\/p>\}/);
-  assert.doesNotMatch(page, /priceSatang\s*\/\s*(?:13|[\w.?]*[Mm]onths)/, 'never divided by the months a promotion adds');
-  assert.doesNotMatch(logic, /\/\s*(?:12|13)\b|เฉลี่ย/, 'the promotion text carries no average of its own');
-  // The card's own price and the row's own months are what the promotion line is built from.
+test('PAY-1 annual cards show the actual annual price and promise two free months only for ten-month prices', () => {
+  assert.match(page, /annualOffers\.every\(annual => data\?\.catalog\.offers\.some\(monthly => monthly\.offerKey === annual\.offerKey && monthly\.interval === 'month' && annual\.priceSatang === monthly\.priceSatang \* 10\)\)/);
+  assert.doesNotMatch(page, /เฉลี่ยเดือนละ|ใช้งาน 12 เดือน/);
+  assert.doesNotMatch(logic, /\/\s*(?:12|13)\b|เฉลี่ย/);
   assert.match(logic, /eventDiscountBaht\(offer\.priceSatang\)\} บาท ได้ \$\{row\.totalMonths\} เดือน/);
 });
 
-test('a card that takes the promotion says its months and receipts once, in the promotion block; a card that does not keeps the plain lines', () => {
+test('PAY-1 compact cards keep promotion terms once and monthly capacity distinct from the grant', () => {
   assert.equal(promotionCardShowsPlainFacts('PROMOTION'), false);
   for (const benefit of ['NORMAL', 'EVENT_DISCOUNT'] as const) assert.equal(promotionCardShowsPlainFacts(benefit), true, benefit);
-  // The same benefit that colours the block as picked is the one that removes the plain lines — they can never both speak.
   assert.match(page, /\$\{cardBenefit === 'PROMOTION' \? 'border-brand-300 bg-brand-50'/);
-  assert.match(page, /const plain = promotionCardShowsPlainFacts\(cardBenefit\);/);
-  // "ใช้งาน 12 เดือน · ประหยัด", "360 ใบ ได้ทันที" and the average all sit behind that guard; the first chooser already names the monthly cadence above the grid; existing-package cards keep their label.
-  assert.match(page, /\{\(!firstPurchase \|\| interval === 'year'\) && \(plain \|\| interval === 'month'\) && <p className="text-sm text-brand-700">\{interval === 'year' \? `ใช้งาน 12 เดือน/);
-  assert.match(page, /\{plain && <p>\{offer\.receiptAllowance\.toLocaleString\('th-TH'\)\} ใบ ได้ทันทีเมื่อจ่ายสำเร็จ<\/p>\}/);
-  const card = page.slice(page.indexOf('const plain = promotionCardShowsPlainFacts'), page.indexOf("offer.offerKey === 'ENTERPRISE_1999'"));
-  assert.equal((card.match(/offer\.receiptAllowance/g) ?? []).length, 1, 'the card prints the plain receipt count in one place, behind the guard');
-  assert.equal((card.match(/ใช้งาน 12 เดือน/g) ?? []).length, 1);
-  // What the promotion block itself says, for a month and for a year: its own months and receipts, ready on payment.
+  assert.match(page, /promoCard\.lines\.map/);
+  assert.match(page, /offer\.monthlySlipLimit\.toLocaleString\('th-TH'\)\} ใบต่อเดือน/);
+  assert.doesNotMatch(page, /offer\.receiptAllowance\.toLocaleString\('th-TH'\)\} ใบ ได้ทันที/);
   const year = promotionCard(yearRow(), { priceSatang: 249000 });
   assert.deepEqual([year.headline, ...year.lines.slice(0, 2)], ['2,490 บาท ได้ 13 เดือน', 'จ่าย 12 เดือน แถมฟรี 1 เดือน', 'ใบเสร็จ 390 ใบ (รวมแถม 30 ใบ) ได้ทันทีเมื่อจ่ายสำเร็จ']);
 });
@@ -482,8 +475,9 @@ test('the quote review counts the bonus once: the projected totals and the packa
   }
   // The two sentences and the list read their figures from it; the raw projected figure is left where no promotion can exist (upgrades).
   assert.match(page, /หลังซื้อคงเหลือประมาณ \{promotionReceipts\(quote\)\.projected\.toLocaleString\('th-TH'\)\} ใบ รวมจำนวนใบเสร็จเดิมที่ยังไม่หมดอายุ/);
-  assert.match(page, /<dt>จำนวนใบเสร็จแพ็กเกจ\{promoReview && ` \(รวมแถม \$\{promotionReceipts\(quote\)\.bonus\.toLocaleString\('th-TH'\)\} ใบ\)`\}<\/dt><dd>\{promotionReceipts\(quote\)\.packageUnits\.toLocaleString\('th-TH'\)\} ใบ<\/dd>/);
-  assert.match(page, /<dt>รวมหลังจ่ายสำเร็จโดยประมาณ<\/dt><dd>\{promotionReceipts\(quote\)\.projected\.toLocaleString\('th-TH'\)\} ใบ<\/dd>/);
+  assert.match(page, /อ่านใบเสร็จได้ประมาณ \{promotionReceipts\(quote\)\.projected\.toLocaleString\('th-TH'\)\} ใบ \(\{promotionReceipts\(quote\)\.packageUnits\.toLocaleString\('th-TH'\)\} ใบของแพ็กเกจ/);
+  assert.match(page, /promoReview && ` รวมแถม \$\{promotionReceipts\(quote\)\.bonus\.toLocaleString\('th-TH'\)\} ใบ`/);
+  assert.match(page, /ใบที่เหลือจากช่วงทดลอง\{quote\.purchase\.projectedRemainingReceipts > quote\.offer\.receiptAllowance \+ quote\.purchase\.trialCarryover\.receiptUnits/);
   assert.doesNotMatch(page, /หลังซื้อคงเหลือประมาณ \{quote\.purchase\.projectedRemainingReceipts/);
   assert.doesNotMatch(page, /<dt>จำนวนใบเสร็จแพ็กเกจ<\/dt>/);
   assert.doesNotMatch(page, /<dd>\{quote\.purchase\.projectedRemainingReceipts\.toLocaleString/);
@@ -510,7 +504,10 @@ test('the history row of a promotion purchase says the free time and the bonus r
   assert.equal(promotionInvoiceLine({ ...promotion, bonusReceiptUnits: 0 }), 'โปรโมชั่น ซื้อ 1 แถม 1 · แถมฟรี 5 พ.ย. 2569 – 5 ธ.ค. 2569');
   assert.equal(promotionInvoiceLine({ ...promotion, paidEnd: '2026-11-04T18:30:00.000Z' }).includes('แถมฟรี 5 พ.ย. 2569 –'), true, 'Thai dates');
   assert.doesNotMatch(promotionInvoiceLine(promotion), MACHINE);
-  assert.match(page, /<p>\{invoice\.number \?\? 'รายการจ่ายเงิน'\} · \{money\(invoice\.amountSatang\)\} · \{date\(invoice\.createdAt\)\}<\/p>\s*\{invoice\.promotion && <p className="break-words text-sm text-gray-600">\{promotionInvoiceLine\(invoice\.promotion\)\}<\/p>\}/);
+  assert.equal((page.match(/promotionInvoiceLine\(invoice\.promotion\)/g) ?? []).length, 2, 'table and phone cards retain the same promotion facts');
+  assert.match(page, /money\(invoice\.amountSatang\)/);
+  assert.match(page, /date\(invoice\.paidAt \?\? invoice\.createdAt\)/);
+  assert.doesNotMatch(page, /invoice\.amountSatang\s*[+*-]|invoice\.periodEnd\s*=/);
 });
 
 test('the page re-reads its status when a promotion on offer ends by the clock, as it does at a term deadline', () => {
@@ -534,11 +531,11 @@ test('the page sends the benefit through promotionQuoteFields, routes PROMOTION_
   assert.match(page, /api\.quote\(offerKey, selectedInterval, billingEmail, selection, mode, dealId, purchaseIntent, fields\.eventDiscountChoice, fields\.eventDiscountTicketSerial, fields\.benefitChoice, fields\.promotionCampaignId\)/);
   assert.match(page, /const fields: QuoteFields = dealId \? \{\} : promotionQuoteFields\(/, 'a deal never carries a benefit');
   assert.match(page, /promotions: paid\?\.promotions/, 'decided from the rows the buyer saw, not the ones read a moment ago');
-  assert.match(page, /const lost = promotionLostNotice\(e\);\s*if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setAccepted\(false\);/);
+  assert.match(page, /const lost = promotionLostNotice\(e\);\s*if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setBuyingStep\(0\); setAccepted\(false\);/);
   assert.match(page, /else \{\s*setError\(errorText\(e\)\); setErrorCode\(apiErrorCode\(e\)\);/);
   assert.match(page, /promotionQuoteBenefit\(quote\)\);/, 'asking again keeps the benefit of the quote');
   // An unavailable promotion never touches the card's buy button: its disabled list gains only the upgrade note.
-  assert.match(page, /disabled=\{!!packageChangeUnavailable \|\| !!upgradeNote \|\| modeUnavailable \|\| busy \|\| catalogUnavailable \|\| Date\.parse\(data\.catalog\.validUntil\) <= Date\.now\(\) \|\| offer\.availability !== 'AVAILABLE'\}/);
+  assert.match(page, /disabled=\{!!packageChangeUnavailable \|\| !!upgradeNote \|\| offer\.availability !== 'AVAILABLE' \|\| busy\}/);
   assert.doesNotMatch(page, /promo\??\.available[^;\n]{0,80}disabled|disabled=\{[^}]*promo/);
   // The renewal being set up reuses the page's own "check again" control.
   assert.match(page, /\|\| promotionBlock\?\.checking\) && \(status\.paymentState !== 'NONE'/);
@@ -551,11 +548,11 @@ test('FXE-D2: the lost-promotion notice is brought into view under the sticky he
   const effect = /useEffect\(\(\) => \{ if \(promotionLost\) \{ lostNotice\.current\?\.scrollIntoView\(\{ block: 'start' \}\); lostNotice\.current\?\.focus\(\{ preventScroll: true \}\); \} \}, \[promotionLost\]\);/;
   assert.match(page, effect);
   // A refused checkout drops the quote, which runs the effect that scrolls to the chooser heading below the notice; this one must come after it so the notice is the last scroll.
-  const heading = page.indexOf("useEffect(() => { if (quote || choosing) { if (!quote || !quoteHeading.current) window.scrollTo({ top: 0 }); else backNavigation.current?.scrollIntoView({ block: 'start' });");
+  const heading = page.indexOf("useEffect(() => { if (quote || choosing) {");
   assert.ok(heading > 0, 'the chooser-heading effect is still there');
   assert.ok(page.search(effect) > heading, 'the notice effect is declared after the chooser-heading effect');
   // The two causes that set the notice are the refused quote and the refused checkout; both go through `action`, which sets it together with dropping the quote.
-  assert.match(page, /if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setAccepted\(false\);/);
+  assert.match(page, /if \(lost\) \{ setPromotionLost\(lost\); setQuote\(null\); setBuyingStep\(0\); setAccepted\(false\);/);
   // Same pattern as the cadence notice, which this page already scrolls to and focuses.
   assert.match(page, /<div ref=\{cadenceNoticeRef\} tabIndex=\{-1\} role="status" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\]/);
 });
@@ -572,7 +569,7 @@ test('FXE-D6: a promotion review leads with its benefit before the flat facts an
   // The chosen benefit first: the promotion block is above the discount section it can be swapped for.
   assert.ok(promo < page.indexOf('{discountBox(quote)}{documentBox(quote, status)}'));
   // The blocks are the same JSX as before, now called with the quote: nothing but their position changed.
-  assert.match(page, /const documentBox = \(quote: BillingQuote, status: BillingStatus\) => <div className=\{flatReview \? "space-y-2" : "rounded-xl border border-gray-200 p-4"\} aria-label="ข้อมูลออกเอกสาร">/);
+  assert.match(page, /const documentBox = \(quote: BillingQuote, status: BillingStatus\) => <div className="space-y-2" aria-label="ข้อมูลออกเอกสาร">/);
   assert.match(page, /const discountBox = \(quote: BillingQuote\) => quote\.eventDiscount && <section aria-label="ส่วนลดจากงาน"/);
   assert.match(page, /\}\}>\{promotionSwitchLabel\(quote\)\}<\/button>\s*<\/section>;/, 'the switch that says what replaces what is still in the discount section');
 });

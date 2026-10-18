@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
-import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildAccountLinks, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, employeePageMenuKey, resolveMenuKey } from './web-core-workspace.logic';
+import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildAccountLinks, packageMenuTrailing, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, employeePageMenuKey, resolveMenuKey } from './web-core-workspace.logic';
 import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER, SIDEBAR_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
@@ -697,7 +697,7 @@ describe('buildNavItems', () => {
     assert.deepEqual(rows(['expense.read']).filter((row) => row.endsWith('/settings/substitute-receipt')), []);
   });
 
-  it('gives the shop details, the 50 ทวิ signature and the package page a row under ตั้งค่าร้าน, with one name for the package', () => {
+  it('keeps shop settings inside ตั้งค่าร้าน and gives แพ็กเกจ its own permission-checked row', () => {
     const permissions = ['company.settings.view', 'company.setup.read', 'company.setup.manage', 'company.branch.read', 'company.tax_signature.manage', 'company.plan.manage'];
     const settings = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'co', 'th', {}, permissions)
       .find((nav) => nav.key === 'settings');
@@ -707,13 +707,18 @@ describe('buildNavItems', () => {
       ['settings.branches', 'สาขา', '/companies/co/settings/branches'],
       ['settings.substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ', '/companies/co/settings/substitute-receipt'],
       ['settings.tax-signature', 'ลายเซ็นบน 50 ทวิ', '/companies/co/settings/tax-signature'],
-      ['settings.billing', 'แพ็กเกจ', '/companies/co/billing'],
     ]);
     assert.equal(buildLockedNavItems('co', {}, ['company.plan.manage']).find((item) => item.key === 'billing')?.label, 'แพ็กเกจ');
+    const nav = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'co', 'th', {}, permissions);
+    const billing = nav.find(item => item.key === 'billing');
+    assert.deepEqual(billing, { key: 'billing', label: 'แพ็กเกจ', href: '/companies/co/billing', icon: null, group: 'admin' });
+    assert.ok(!buildNavItems([], 'co', 'th', {}, ['company.setup.manage']).some(item => item.key === 'billing'));
+    assert.equal(buildNavItems([], 'co', 'th', {}, ['company.plan.manage']).some(item => item.key === 'settings'), false);
+    for (const path of ['/billing', '/billing/return', '/billing/invoices/one']) assert.equal(resolveMenuKey(`/companies/co${path}`, collectMenuTargets(nav)), 'billing');
     // Each settings page lights its own row and never the overview with it (the sidebar's own rule).
     const rows = settings!.subItems!;
     for (const [path, key] of [['/settings', 'settings.overview'], ['/settings/profile', 'settings.company-profile'], ['/settings/branches', 'settings.branches'],
-      ['/settings/substitute-receipt', 'settings.substitute-receipt'], ['/settings/tax-signature', 'settings.tax-signature'], ['/billing', 'settings.billing']] as const) {
+      ['/settings/substitute-receipt', 'settings.substitute-receipt'], ['/settings/tax-signature', 'settings.tax-signature']] as const) {
       const pathname = `/companies/co${path}`;
       const activeKey = getActiveModuleKey(WORKSPACE_MODULES, 'co', pathname) ?? undefined;
       assert.deepEqual(rows.filter((row) => isActiveNavSubItem(pathname, activeKey, row, rows)).map((row) => row.key), [key], path);
@@ -1102,18 +1107,19 @@ describe('resolveMenuKey', () => {
 
 
 describe('package management navigation', () => {
-  it('places one billing entry under company settings for the assigned permission', () => {
-    const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, [...ALL_MODULE_PERMISSIONS, 'company.plan.manage']);
-    const settings = items.find(item => item.key === 'settings')!;
-    assert.equal(settings.subItems?.filter(item => item.href === '/companies/co/billing').length, 1);
-    assert.equal(items.filter(item => item.href === '/companies/co/billing').length, 0);
+  it('places one billing entry at top level for the assigned permission', () => {
+    const permissions = ['company.setup.read', 'company.plan.manage'];
+    const items = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'co', 'th', {}, permissions);
+    assert.equal(items.filter(item => item.href === '/companies/co/billing').length, 1);
+    assert.equal(items.find(item => item.key === 'billing')?.group, 'admin');
+    assert.ok(!items.flatMap(item => item.subItems ?? []).some(item => item.href === '/companies/co/billing'));
   });
   it('keeps billing available without granting business settings when all feature modules are absent', () => {
     const items = buildNavItems([], 'co', 'th', {}, ['company.plan.manage']);
-    const settings = items.find(item => item.key === 'settings')!;
-    assert.equal(settings.href, undefined);
-    assert.deepEqual(settings.subItems?.map(item => item.href), ['/companies/co/billing']);
+    assert.equal(items.find(item => item.key === 'billing')?.href, '/companies/co/billing');
+    assert.equal(items.find(item => item.key === 'settings'), undefined);
   });
+
   it('does not add billing without the dedicated permission, regardless of role name', () => {
     const items = buildNavItems(WORKSPACE_MODULES, 'co', 'th', {}, ALL_MODULE_PERMISSIONS, ['CEO']);
     assert.equal(collectMenuTargets(items).some(item => item.href.endsWith('/billing')), false);
@@ -1167,4 +1173,15 @@ it('settings view-only and legacy manage-only each open the hub and their readab
     assert.equal(canSeeRoute('/settings/profile', permissions), true);
   }
   assert.equal(canSeeRoute('/settings/profile', ['company.branch.read']), false);
+});
+
+it('package menu days use the notice warning window and suppress orange while card renewal runs', () => {
+  const notice = { derivedState: 'WARNING' as const, daysLeft: 7, termEndsAt: '2026-10-25', isOwner: true };
+  assert.deepEqual(packageMenuTrailing(notice), { label: 'เหลือ 7 วัน', warning: true });
+  assert.deepEqual(packageMenuTrailing(notice, true), { label: 'เหลือ 7 วัน', warning: false });
+  assert.deepEqual(packageMenuTrailing({ ...notice, derivedState: 'ACTIVE' }), { label: 'เหลือ 7 วัน', warning: false });
+  assert.deepEqual(packageMenuTrailing({ ...notice, isOwner: false }), { label: 'เหลือ 7 วัน', warning: false });
+  assert.deepEqual(packageMenuTrailing({ ...notice, daysLeft: -2, derivedState: 'EXPIRED' }), { label: 'เหลือ 0 วัน', warning: false });
+  assert.equal(packageMenuTrailing(null), undefined);
+  assert.equal(packageMenuTrailing({ ...notice, termEndsAt: '' }), undefined);
 });

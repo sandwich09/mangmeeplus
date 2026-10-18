@@ -95,3 +95,14 @@ test('D1 only the two one-time modes accept by purchase button', async () => {
   for (const mode of ['CARD_ONCE', 'PROMPTPAY_ONCE'] as const) assert.equal(billingOneTimePurchase(mode), true);
   for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW', undefined] as const) assert.equal(billingOneTimePurchase(mode), false);
 });
+
+test('PAY-2 history separates received money, access, refunds and disputes without exposing provider states', async () => {
+  const { billingHistoryStatus } = await import('./billing-display');
+  const invoice = { paymentState: 'paid', applyState: 'APPLIED', amountSatang: 49900, refundedSatang: 0, disputed: false };
+  assert.equal(billingHistoryStatus(invoice), 'จ่ายแล้ว');
+  for (const applyState of ['PENDING', 'HELD', 'FAILED']) assert.equal(billingHistoryStatus({ ...invoice, applyState }), 'จ่ายแล้ว');
+  assert.equal(billingHistoryStatus({ ...invoice, paymentState: 'open', applyState: 'APPLIED' }), 'รอผล');
+  assert.equal(billingHistoryStatus({ ...invoice, refundedSatang: 100 }), 'คืนบางส่วน');
+  assert.equal(billingHistoryStatus({ ...invoice, refundedSatang: 49900 }), 'คืนเงินแล้ว');
+  assert.equal(billingHistoryStatus({ ...invoice, refundedSatang: 49900, disputed: true }), 'มีข้อโต้แย้ง');
+});

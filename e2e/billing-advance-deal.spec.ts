@@ -1,4 +1,5 @@
 import { test, expect } from './harness/fixtures';
+import { chooseBillingMethod } from './billing-no-setup.fixture';
 
 const startsAt = '2030-03-05T12:00:00.000Z';
 const firstCycleEndsAt = '2030-04-05T12:00:00.000Z';
@@ -89,21 +90,24 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
 
     await page.goto(`/companies/${companyId}/billing`);
     await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ' })).toContainText('เติบโต');
-    await page.getByRole('button', { name: 'ดูข้อเสนอพิเศษสำหรับร้านคุณ', exact: true }).click();
+    await page.getByRole('button', { name: 'เปลี่ยนแพ็กเกจ', exact: true }).click();
     const dealCard = page.getByRole('region', { name: 'ข้อเสนอพิเศษสำหรับร้านคุณ', exact: true });
     await expect(dealCard).toBeVisible();
-    await expect(dealCard.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ', exact: true })).toBeVisible();
-    if (purchaseMode === 'PROMPTPAY_RENEW') await dealCard.getByRole('radio', { name: 'พร้อมเพย์ QR · สแกนบิลทุกงวด', exact: true }).check();
     await dealCard.getByRole('button', { name: 'เลือกข้อเสนอนี้', exact: true }).click();
+    await chooseBillingMethod(page, purchaseMode);
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'รายการหมดอายุหรือข้อมูลเปลี่ยน' })).toBeVisible();
-    await dealCard.getByRole('button', { name: 'เลือกข้อเสนอนี้', exact: true }).click();
-    const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    const methods = page.getByRole('region', { name: 'วิธีจ่าย', exact: true });
+    await methods.getByRole('checkbox', { name: purchaseMode === 'CARD_AUTO' ? 'ยอมรับการตัดบัตรอัตโนมัติทุกเดือน' : 'ยอมรับการออกบิลพร้อมเพย์ทุกเดือน', exact: true }).check();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    const review = page.getByRole('region', { name: 'ตรวจก่อนจ่าย', exact: true });
     await expect(review.getByRole('region', { name: 'กำหนดการเริ่มดีลล่วงหน้า', exact: true })).toBeVisible();
     // R-A11: the quote names the address the documents already go to.
     await expect(review.getByLabel('ข้อมูลออกเอกสาร')).toContainText('owner@example.test');
     const shownStart = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }), startsAt);
     const shownEnd = await page.evaluate(value => new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }), firstCycleEndsAt);
-    await expect(review).toContainText(`สิทธิ์ดีลตั้งแต่ ${shownStart}`);
+    await expect(review).toContainText(`จ่ายดีลงวดแรกวันนี้ · สิทธิ์แพ็กเกจปัจจุบันยังใช้ได้ถึง ${shownStart}`);
     await expect(review).toContainText(shownEnd);
     await expect(review).toContainText(purchaseMode === 'PROMPTPAY_RENEW' ? 'ออกบิล QR รอบถัดไป' : 'เก็บเงินรอบถัดไป');
     await expect(review).toContainText('สิทธิ์และจำนวนใบเสร็จของดีลจะเริ่มในวันเริ่มสิทธิ์ดีล');
@@ -113,8 +117,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
       { dealId: 'deal-advance-1', purchaseMode },
     ]);
 
-    await page.getByRole('checkbox', { name: purchaseMode === 'CARD_AUTO' ? 'ยอมรับการตัดบัตรอัตโนมัติทุกเดือน' : 'ยอมรับการออกบิลพร้อมเพย์ทุกเดือน', exact: true }).check();
-    const checkout = page.getByRole('button', { name: 'ยืนยันซื้อและไปจ่ายเงิน', exact: true });
+    const checkout = page.getByRole('button', { name: 'จ่าย 599.00 บาท', exact: true });
     await checkout.click();
     await expect(page.getByRole('alert').filter({ hasText: 'บริการที่จำเป็นยังไม่พร้อมใช้งาน' })).toBeVisible();
     await expect(checkout).toBeEnabled();
@@ -146,7 +149,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     await page.reload();
     await expect(page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true })).toContainText('มืออาชีพ');
     await expect(page.getByRole('status', { name: 'สถานะดีลล่วงหน้า', exact: true })).toHaveCount(0);
-    await expect(page.getByText(purchaseMode === 'PROMPTPAY_RENEW' ? `ระบบจะออกบิล QR วันที่ ${shownEnd}` : `ต่ออายุอัตโนมัติวันที่ ${shownEnd}`, { exact: true })).toHaveCount(1);
+    await expect(page.getByText(purchaseMode === 'PROMPTPAY_RENEW' ? `ระบบจะออกบิล QR วันที่ ${shownEnd}` : `ตัดบัตรอัตโนมัติ ${shownEnd}`, { exact: true })).toHaveCount(1);
     expect(checkoutKeys).toHaveLength(2); // page refreshes only read the paid attempt; they never submit it again
   });
 }

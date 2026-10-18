@@ -67,12 +67,12 @@ export function noSetupNotice(s: NoSetupState) {
 const offers = (): BillingOffer[] => BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ ...billingOffer(tier, interval), availability: 'AVAILABLE' as const, reason: null })));
 const catalog = (): BillingCatalog => ({ schemaVersion: 1, mode: 'TEST', policyRevision: 'policy-nosetup', catalogRevision: 'catalog-nosetup',
   generatedAt: at(), validUntil: at(3_600_000), taxTreatment: 'NOT_VAT_REGISTERED', offers: offers(), aiMonthlyBudgetSatang: 80_000 });
-const invoice = (): BillingInvoiceItem => ({ id: INVOICE, number: 'NOSETUP-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false,
-  financialObservedAt: at(), paymentState: 'PAID', applyState: 'APPLIED', periodStart: at(), periodEnd: days(30), createdAt: at(), hasDocuments: true,
+const invoice = (s: NoSetupState): BillingInvoiceItem => ({ offer: { key: 'STARTER_249', label: 'เริ่มต้น', interval: 'month' }, method: String(s.log.quotes.at(-1)?.purchaseMode ?? 'CARD_AUTO').startsWith('CARD') ? 'CARD' : 'PROMPTPAY', id: INVOICE, number: 'NOSETUP-0001', currency: 'THB', amountSatang: 24900, refundedSatang: 0, disputed: false,
+  financialObservedAt: at(), paymentState: 'PAID', applyState: 'APPLIED', periodStart: at(), periodEnd: days(30), paidAt: at(), createdAt: at(), hasDocuments: true,
   documentActions: { canResend: true } });
 const attempt = (s: NoSetupState): BillingAttemptView => ({ attemptId: ATTEMPT, state: s.stage === 'locked' ? 'EXPIRED' : 'OPEN', errorCode: null, observedAt: at(),
   paymentState: s.stage === 'paid' || s.stage === 'applied' ? 'PAID' : s.stage === 'failed' || s.stage === 'locked' ? 'FAILED' : 'PENDING',
-  applyState: s.stage === 'applied' ? 'APPLIED' : s.stage === 'paid' ? 'PENDING' : 'NONE', invoiceReference: s.stage === 'applied' ? 'NOSETUP-0001' : null });
+  applyState: s.stage === 'applied' ? 'APPLIED' : s.stage === 'paid' ? 'PENDING' : 'NONE', invoiceReference: s.stage === 'applied' || s.stage === 'paid' ? INVOICE : null });
 
 export async function installNoSetupRoutes(page: Page, companyId: string, s: NoSetupState): Promise<void> {
   const base = `/api/v1/companies/${encodeURIComponent(companyId)}/billing`;
@@ -88,7 +88,8 @@ export async function installNoSetupRoutes(page: Page, companyId: string, s: NoS
       if (path === '/api/v1/plan-term/notice') return json(noSetupNotice(s));
       if (path === '/api/v1/billing/catalog') return json(catalog());
       if (path === base) return json(noSetupStatus(companyId, s));
-      if (path === `${base}/history`) return json({ items: s.stage === 'applied' ? [invoice()] : [], nextCursor: null });
+      if (path.startsWith(`${base}/invoices/${INVOICE}/adjustments/`)) return json({ invoice: invoice(s), invoiceId: INVOICE, invoiceNumber: 'NOSETUP-0001', kind: path.endsWith('/refunds') ? 'refunds' : 'credit-notes', mode: 'TEST', items: [], nextCursor: null, canOpenDocuments: true, observedAt: at(), recipientEmail: s.recipientEmail, documentActions: { canResend: true } });
+      if (path === `${base}/history`) return json({ items: s.stage === 'applied' ? [invoice(s)] : [], nextCursor: null });
       if (path === `${base}/attempts/${ATTEMPT}`) { s.log.attempts++; return json(attempt(s)); }
       if (path === `${base}/recipient`) {
         const recipient: BillingEmailRecipient = s.stage === 'paid' || s.stage === 'applied'
@@ -149,4 +150,11 @@ export async function installNoSetupRoutes(page: Page, companyId: string, s: NoS
     }
     return route.continue();
   });
+}
+
+/** PAY-1: exercise the two customer questions instead of a hidden purchase-mode value. */
+export async function chooseBillingMethod(page: Page, mode: BillingPurchaseMode) {
+  const methods = page.getByRole('region', { name: 'วิธีจ่าย', exact: true });
+  await methods.getByRole('radio', { name: mode.endsWith('_ONCE') ? 'จ่ายครั้งเดียว' : 'ต่ออายุอัตโนมัติ', exact: true }).check();
+  await methods.getByRole('radio', { name: mode.startsWith('CARD') ? 'บัตร' : 'QR พร้อมเพย์', exact: true }).check();
 }

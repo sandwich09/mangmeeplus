@@ -157,7 +157,7 @@ export function promotionReview(quote: Pick<BillingQuote, 'promotion' | 'offer' 
       { label: 'ช่วงที่จ่าย', value: `${day(p.paidStart)} – ${day(p.paidEnd)}` },
       { label: 'ช่วงแถมฟรี', value: `${day(p.paidEnd)} – ${day(p.benefitEnd)}` },
       { label: 'ใช้ได้ถึง', value: day(p.benefitEnd) },
-      { label: 'ใบเสร็จ', value: `${base} + แถม ${p.bonusReceiptUnits} = ${p.totalReceiptUnits} ใบ` },
+      { label: 'อ่านใบเสร็จได้', value: `${base} + แถม ${p.bonusReceiptUnits} = ${p.totalReceiptUnits} ใบ` },
     ],
     // A one-time mode has no next charge (`expectedNextChargeAt` null); the page already says "จ่ายครั้งเดียว".
     next: p.expectedNextChargeAt ? `รอบถัดไปเรียกเก็บวันที่ ${day(p.expectedNextChargeAt)} ราคาปกติ ${money(quote.totalSatang)}${
@@ -274,5 +274,5 @@ export function purchaseBlockQuiet(status: Pick<BillingStatus, 'purchaseBlockCod
   if (!code || !QUIET_BLOCK_CODES.includes(code) || status.accessState !== 'ACTIVE' || status.paymentState !== 'PAID' || status.applyState !== 'APPLIED' || status.attemptId) return null;
   const until = status.upgradeDeferredUntil;
   return code === 'BILLING_REPEAT_NOT_READY' && until && Date.parse(until) > now && status.packageChangesEnabled !== false
-    ? `ซื้อหรือเปลี่ยนแพ็กเกจได้หลังวันที่ ${day(until)} เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด` : errorText({ code });
+    ? `ซื้อหรือเปลี่ยนแพ็กเกจได้หลังวันที่ ${day(until)} เพราะแพ็กเกจปัจจุบันยังมีเวลาโปรโมชั่นที่ใช้ไม่หมด` : errorText({ code }).replaceAll('แท็บการต่ออายุและจ่ายเงิน', 'การต่ออายุด้านล่าง');
 }

@@ -1,8 +1,11 @@
 'use client';
 import Link from 'next/link';
 import BillingCustomerFrame from './BillingCustomerFrame';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { MetricGrid } from '@/common/components/mangmee/MetricGrid';
+import { secondaryButtonClass, quietButtonClass } from '@/common/components/button/button-classes';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import { billingControl, billingField, billingLabel, billingLink, billingSupportReference } from './billing-display';
 import { useEffect, useRef, useState } from 'react';
 import type { BillingAdjustmentKind, BillingAdjustments, BillingDocumentResendResult, BillingEndPackageReview, BillingRecipientAdminReview } from '@watchdog-bms/contracts';
@@ -14,7 +17,9 @@ import { billingApi } from './billing.api';
 import { billingResendText } from './billing-error-text';
 
 const button=billingControl;
+const amount=(n:number)=>new Intl.NumberFormat('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n/100);
 const money=(n:number)=>new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(n/100);
+const baht=(n:number)=>`${amount(n)} บาท`;
 const time=formatThaiDateTime;
 const documentError=(cause:unknown)=>{
   const status=(cause as {status?:number})?.status,code=apiErrorCode(cause);
@@ -28,9 +33,10 @@ const documentError=(cause:unknown)=>{
 const labels={pending:'รอดำเนินการคืนเงิน',requires_action:'ต้องทำขั้นตอนเพิ่มเติม',succeeded:'ผู้ให้บริการรับชำระเงินดำเนินการคืนเงินสำเร็จ',failed:'คืนเงินไม่สำเร็จ',canceled:'ยกเลิกการคืนเงิน',unknown:'ยังยืนยันสถานะคืนเงินไม่ได้',issued:'ออกเอกสารแล้ว',void:'เอกสารถูกยกเลิก'};
 export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,preview}:{companyId:string;invoiceId:string;admin?:boolean;preview?: { read: (kind: BillingAdjustmentKind) => Promise<BillingAdjustments>; open: (kind: string) => void; back: () => void; resend?: () => Promise<BillingDocumentResendResult> }}) {
   const base=admin?`/system/billing/companies/${encodeURIComponent(companyId)}`:`/companies/${encodeURIComponent(companyId)}/billing`;
-  const back=admin?`${base}?view=payments`:`/companies/${encodeURIComponent(companyId)}/billing#billing-history`;
+  const back=admin?`${base}?view=payments`:`/companies/${encodeURIComponent(companyId)}/billing`;
   const [kind,setKind]=useState<BillingAdjustmentKind>('refunds'),[cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0);
   const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<ReturnType<typeof documentError>|null>(null),[opening,setOpening]=useState(false);
+  const [otherAdjustments,setOtherAdjustments]=useState<BillingAdjustments|null>(null);
   const [adjustmentsOpen,setAdjustmentsOpen]=useState(!admin);
   const [resend,setResend]=useState<{busy:boolean;result:BillingDocumentResendResult|null;error:string}>({busy:false,result:null,error:''});
   const [endReview,setEndReview]=useState<BillingEndPackageReview|null>(null),[endReviewError,setEndReviewError]=useState(false),[endOpen,setEndOpen]=useState(false),[endReason,setEndReason]=useState(''),[endPassword,setEndPassword]=useState(''),[endBusy,setEndBusy]=useState(false),[endMessage,setEndMessage]=useState('');
@@ -72,9 +78,13 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   }
   useEffect(()=>{
     let active=true;setData(null);setOpening(false);setLoading(true);setError(null);
-    void (preview ? preview.read(kind) : authedApiFetch<BillingAdjustments>(`${base}/invoices/${encodeURIComponent(invoiceId)}/adjustments/${kind}${cursor?`?cursor=${encodeURIComponent(cursor)}`:''}`,{
+    const read = (selected: BillingAdjustmentKind, next?: string | null) => preview ? preview.read(selected) : authedApiFetch<BillingAdjustments>(`${base}/invoices/${encodeURIComponent(invoiceId)}/adjustments/${selected}${next?`?cursor=${encodeURIComponent(next)}`:''}`,{
       cache:'no-store',suppressErrorToast:true,...!admin?{headers:{'X-Company-Id':companyId}}:{}
-    })).then(value=>{if(active)setData(value);}).catch(cause=>{if(active)setError(documentError(cause));}).finally(()=>{if(active)setLoading(false);});
+    });
+    setOtherAdjustments(null);
+    void Promise.all([read(kind,cursor), admin ? Promise.resolve(null) : read(kind==='refunds'?'credit-notes':'refunds')])
+      .then(([value,other])=>{if(active){setData(value);setOtherAdjustments(other);}})
+      .catch(cause=>{if(active)setError(documentError(cause));}).finally(()=>{if(active)setLoading(false);});
     return()=>{active=false;generation.current+=1;};
   },[base,invoiceId,kind,cursor,reload,admin,companyId,preview]);
   async function open(kind:'invoice'|'receipt'|'pdf'|'credit-note',creditNoteId?:string) {
@@ -87,7 +97,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
       const url=new URL(result.url);
       if(url.protocol!=='https:'||url.username||url.password||url.port||!['invoice.stripe.com','pay.stripe.com','payments.stripe.com'].includes(url.hostname))throw new Error('Unsafe document');
       window.location.assign(url.href);
-    } catch(cause) {if(started===generation.current){setData(null);setError(documentError(cause));}}
+    } catch(cause) {if(started===generation.current){if(admin)setData(null);setError(documentError(cause));}}
     finally{if(started===generation.current)setOpening(false);}
   }
   // R-D1: the customer sends this invoice (and, when the email changed, its receipt) to the recipient again.
@@ -96,6 +106,55 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     try { setResend({busy:false,result:await (preview?.resend ? preview.resend() : billingApi(companyId).resendDocument(invoiceId)),error:''}); }
     catch(cause) { setResend({busy:false,result:null,error:apiErrorMessage(cause)}); }
   }
+  const invoice=data?.invoice;
+  const paid=invoice?.paymentState.toLowerCase()==='paid';
+  const status=invoice && invoice.refundedSatang>0 ? invoice.refundedSatang>=invoice.amountSatang?'คืนเงินแล้ว':'คืนบางส่วน' : paid?'จ่ายแล้ว':'รอผล';
+  const title=invoice?.offer && paid && invoice.paidAt ? `${invoice.offer.label} · ${formatThaiDate(invoice.paidAt)}` : `การจ่ายเงิน ${data?.invoiceNumber??''}`.trim();
+  const hasAdjustments=!!invoice?.refundedSatang || !!data?.items.length || !!otherAdjustments?.items.length;
+  const customerContent=<>
+    {loading&&<p role="status">กำลังอ่านข้อมูล…</p>}
+    {error&&<section role="alert" className="space-y-3"><p>{error.kind==='access'?'บัญชีนี้เปิดเอกสารไม่ได้ กลับไปแพ็กเกจเพื่อเลือกรายการที่ดูได้':error.kind==='missing'?'ไม่พบรายการนี้ กลับไปแพ็กเกจเพื่อเลือกรายการอีกครั้ง':'อ่านข้อมูลการจ่ายเงินไม่ได้ ลองอีกครั้งหรือติดต่อทีมงานมั่งมี'}</p>
+      <ActionGroup align="start"><a className={secondaryButtonClass} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงานมั่งมี</a><button className={secondaryButtonClass} disabled={loading||opening} aria-busy={loading||opening} onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></ActionGroup></section>}
+    {data&&<>
+      {invoice&&<section aria-label="การจ่ายเงินนี้" className="mangmee-card space-y-5 p-5 sm:p-6">
+        <MetricGrid items={[{key:'paid',label:'ยอดที่จ่าย',value:amount(invoice.amountSatang),unit:'บาท',note:status,dot:'bg-brand-600'}]} />
+        <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd>{invoice.offer?.label??'ไม่มีข้อมูลแพ็กเกจ'}</dd></div>
+          <div><dt className="text-sm text-gray-500">ใช้ได้</dt><dd><span className="whitespace-nowrap">{formatThaiDate(invoice.periodStart)}</span> – <span className="whitespace-nowrap">{formatThaiDate(invoice.promotion?.benefitEnd??invoice.periodEnd)}</span>
+            {invoice.promotion&&<p className="text-sm text-gray-600">{invoice.promotion.displayName} · แถมหลัง {formatThaiDate(invoice.promotion.paidEnd)}</p>}</dd></div>
+          <div><dt className="text-sm text-gray-500">วันที่จ่าย</dt><dd>{paid?formatThaiDate(invoice.paidAt,'ไม่ทราบวันที่จ่าย'):'ยังไม่จ่าย'}</dd></div>
+          {invoice.method&&<div><dt className="text-sm text-gray-500">จ่ายด้วย</dt><dd>{invoice.method==='CARD'?'บัตร':'พร้อมเพย์'}</dd></div>}
+          <div><dt className="text-sm text-gray-500">เลขที่</dt><dd className="whitespace-nowrap">{invoice.number??'ยังไม่มีเลขที่'}</dd></div>
+        </dl>
+      </section>}
+      <section aria-label="เอกสารการจ่ายเงิน" className="mangmee-card space-y-4 p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold text-gray-900">เอกสาร</h2>
+          <button className={quietButtonClass} disabled={loading||opening} aria-busy={loading||opening} onClick={()=>setReload(n=>n+1)}>อัปเดตข้อมูล</button></div>
+        {data.canOpenDocuments?<>
+          <ActionGroup align="start">
+            <button className={secondaryButtonClass} disabled={opening} aria-busy={opening} onClick={()=>void open('receipt')}>ใบเสร็จรับเงิน</button>
+            <button className={secondaryButtonClass} disabled={opening} aria-busy={opening} onClick={()=>void open('pdf')}>ใบแจ้งหนี้</button>
+            {data.documentActions?.canResend&&<button className={secondaryButtonClass} disabled={resend.busy||opening} aria-busy={resend.busy||opening} onClick={()=>void resendDocument()}>ส่งอีเมลอีกครั้ง</button>}
+          </ActionGroup>
+          {data.documentActions?.canResend&&<div className="flex flex-wrap items-center justify-between gap-3"><p className="break-words text-sm text-gray-600">ส่งไปที่ {data.recipientEmail??'อีเมลรับเอกสารของร้าน'}</p><a className={quietButtonClass} href={`${back}#billing-recipient`}>แก้อีเมลรับเอกสาร</a></div>}
+        </>:<p>บัญชีนี้เปิดเอกสารไม่ได้ กลับไปแพ็กเกจเพื่อเลือกรายการที่ดูได้</p>}
+        {resend.result&&<p role="status" className="break-words">{billingResendText(resend.result)}</p>}
+        {resend.error&&<p role="alert">{resend.error}</p>}
+      </section>
+      {hasAdjustments&&<section aria-label="คืนเงินและเอกสารปรับยอด" className="mangmee-card space-y-3 p-5 sm:p-6">
+        <p>{invoice?.refundedSatang?`คืนเงินแล้ว ${baht(invoice.refundedSatang)}`:'รายการคืนเงินและเอกสารปรับยอดของการจ่ายเงินนี้'}</p>
+        <label className="block">รายการที่ต้องการดู<ThemedSelect aria-label="รายการที่ต้องการดู" value={kind} disabled={opening||loading} onChange={e=>{setKind(e.target.value as BillingAdjustmentKind);setCursor(null);}}><option value="refunds">รายการคืนเงิน</option><option value="credit-notes">เอกสารปรับยอด</option></ThemedSelect></label>
+        {!data.items.length&&<p>{kind==='refunds'?'ยังไม่มีรายการคืนเงิน':'ยังไม่มีเอกสารปรับยอด'}</p>}
+        {data.items.map(item=><article key={item.id} className="space-y-2 border-t border-gray-100 py-3">
+          <p>{item.number??(kind==='refunds'?'รายการคืนเงิน':'เอกสารปรับยอด')} · <span className="whitespace-nowrap">{baht(item.amountSatang)}</span> · {{pending:'รอผลคืนเงิน',requires_action:'ตรวจอีเมลเพื่อรับเงินคืน',succeeded:'คืนเงินแล้ว',failed:'คืนเงินไม่ได้ ติดต่อทีมงานมั่งมี',canceled:'ยกเลิกคืนเงินแล้ว',unknown:'ยังไม่ทราบผล ติดต่อทีมงานมั่งมี',issued:'ออกเอกสารแล้ว',void:'ยกเลิกเอกสารแล้ว'}[item.status]}</p>
+          <p className="text-sm text-gray-500">{formatThaiDate(item.createdAt)}</p>
+          {['requires_action','failed','unknown'].includes(item.status)&&<a className={quietButtonClass} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงานมั่งมี</a>}
+          {kind==='credit-notes'&&data.canOpenDocuments&&<button className={secondaryButtonClass} disabled={opening} aria-busy={opening} onClick={()=>void open('credit-note',item.id)}>เปิดเอกสารปรับยอด</button>}
+        </article>)}
+        <ActionGroup align="start">{cursor&&<button className={secondaryButtonClass} disabled={opening||loading} aria-busy={opening||loading} onClick={()=>setCursor(null)}>กลับไปหน้าแรก</button>}{data.nextCursor&&<button className={secondaryButtonClass} disabled={opening||loading} aria-busy={opening||loading} onClick={()=>setCursor(data.nextCursor)}>รายการหน้าถัดไป</button>}</ActionGroup>
+      </section>}
+    </>}
+  </>;
   const content = <>
     {admin && <><Link className={billingLink} href={back}>กลับไปประวัติการชำระเงิน</Link>
     <header><h1 className="text-2xl font-semibold text-gray-900">ใบแจ้งหนี้และใบเสร็จ</h1><p className="mt-2 text-gray-600">เปิดเอกสารจากผู้ให้บริการรับชำระเงินสำหรับรายการชำระเงินนี้</p></header></>}
@@ -159,5 +218,5 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
     <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">{admin?'ข้อมูลอ้างอิงสำหรับตรวจสอบ':'เลขอ้างอิงสำหรับแจ้งทีมงาน'}</summary><p className="break-all">{admin?`รหัสรายการ ใช้ค้นประวัติในระบบ: ${invoiceId}`:billingSupportReference(invoiceId)}</p></details>
   </>;
   return admin ? <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">{content}</main>
-    : <BillingCustomerFrame title="เอกสารการจ่ายเงิน" description="เปิดเอกสารจากผู้ให้บริการรับเงินสำหรับรายการจ่ายเงินนี้" backHref={back} backLabel="กลับไปประวัติการจ่ายเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
+    : <div className="mangmee-flat bg-white [&>div]:bg-white"><BillingCustomerFrame title={title} eyebrow="" description="" backHref={back} backLabel="กลับไปแพ็กเกจ" onBack={preview?.back} showBackInWorkspace>{customerContent}</BillingCustomerFrame></div>;
 }
