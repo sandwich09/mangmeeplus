@@ -42,19 +42,19 @@ test('the future-payment-date code displays the shared Thai refusal', () => {
 
 test('billing rate limit displays only the bounded wait and preserves a route to retry', () => {
   const error = (seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code: 'BILLING_RATE_LIMIT', details: { retryAfterSeconds: seconds } });
-  assert.equal(apiErrorMessage(error(31)), 'ทำรายการถี่เกินไป กรุณารอ 31 วินาที แล้วลองรายการเดิมอีกครั้ง');
-  for (const invalid of ['secret', 0, -1, 301, NaN, 1.5]) assert.equal(apiErrorMessage(error(invalid)), 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง');
+  assert.equal(apiErrorMessage(error(31)), 'ทำรายการถี่เกินไป รอ 31 วินาที แล้วลองรายการเดิมอีกครั้ง');
+  for (const invalid of ['secret', 0, -1, 301, NaN, 1.5]) assert.equal(apiErrorMessage(error(invalid)), 'ทำรายการถี่เกินไป รอสักครู่แล้วลองรายการเดิมอีกครั้ง');
   assert.match(apiErrorMessage({ code: 'CONTROL_ACTION_NOT_SUPPORTED' }), /หน้ามั่งมี/);
 });
 
 test('resend and recipient-code limits keep their own sentence and add only a short wait', () => {
   const error = (code: string, seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code, details: { code, retryAfterSeconds: seconds } });
   assert.equal(apiErrorMessage(error('EMAIL_OTP_RATE_LIMITED', 60)), 'ขอรหัสหรือกรอกรหัสผิดบ่อยเกินไป รอก่อนแล้วลองอีกครั้ง (ลองใหม่ได้ใน 60 วินาที)');
-  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 3600)), 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที');
+  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 3600)), 'ส่งเอกสารใบนี้ซ้ำครบจำนวนแล้ว รอแล้วลองอีกครั้งหรือเปิดเอกสารจากประวัติแทน');
   assert.doesNotMatch(apiErrorMessage(error('BILLING_RESEND_LIMIT', 'soon')), /วินาที/);
   // item 12: a seconds count in the "worth naming" range (1-300) must still never grow the
-  // "(ลองใหม่ได้ใน N วินาที)" suffix onto BILLING_RESEND_LIMIT — it would contradict "ลองใหม่ได้พรุ่งนี้".
-  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 60)), 'วันนี้ส่งเอกสารใบนี้ซ้ำครบจำนวนที่กำหนดแล้ว ลองใหม่ได้พรุ่งนี้ หรือเปิดเอกสารจากหน้านี้ได้ทันที');
+  // "(ลองใหม่ได้ใน N วินาที)" suffix onto BILLING_RESEND_LIMIT — the resend limit keeps its own document-opening guidance.
+  assert.equal(apiErrorMessage(error('BILLING_RESEND_LIMIT', 60)), 'ส่งเอกสารใบนี้ซ้ำครบจำนวนแล้ว รอแล้วลองอีกครั้งหรือเปิดเอกสารจากประวัติแทน');
 });
 
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
@@ -208,7 +208,7 @@ test('uses specific business guidance for confirmed system-wide gaps', () => {
     ['period_closed', /งวดบัญชี.*เปิดงวด/],
     ['transaction_tax_needs_review', /ตรวจภาษี/],
     ['NOTIFICATION_RETRY_REVIEW_REQUIRED', /ตรวจรายการเดิม/],
-    ['BILLING_NOT_CONFIGURED', /ระบบรับชำระเงินยังไม่พร้อม/],
+    ['BILLING_NOT_CONFIGURED', /ระบบรับเงินยังไม่พร้อม/],
   ] as const;
   for (const [code, expected] of cases) {
     const message = apiErrorMessage(apiError('internal diagnostic', { status: 422, code }));

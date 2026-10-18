@@ -25,6 +25,7 @@ const errors:Record<string,string>={
   CONTROL_RECIPIENT_PROVIDER_REJECTED:'Stripe ปฏิเสธการเปลี่ยนอีเมล ต้องให้เจ้าหน้าที่ตรวจ',
   CONTROL_RECIPIENT_REVIEW:'ต้องตรวจรายการนี้กับ Stripe อีกครั้งก่อนดำเนินการต่อ',
   CONTROL_RECIPIENT_AGED_UNKNOWN:'ยังยืนยันผลกับ Stripe ไม่ได้เกิน 23 ชั่วโมง ให้ตรวจที่ Stripe ก่อนทำรายการต่อ',
+  CONTROL_RECIPIENT_NOT_CHANGED:'ตรวจกับผู้ให้บริการรับชำระเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ไม่ใช่อีเมลใหม่ตามคำขอนี้ ถ้ายังต้องการเปลี่ยน ให้สร้างคำขอใหม่',
   CONTROL_REAUTH_REQUIRED:'กรุณายืนยันรหัสผ่านปัจจุบันก่อน',
   CONTROL_REAUTH_FAILED:'ยืนยันไม่ได้ กรุณาตรวจรหัสผ่านหรือใช้หน้ากู้บัญชี',
 };

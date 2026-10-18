@@ -32,7 +32,6 @@ const settingsEntries = [
   { label: 'พนักงานและสิทธิ์', href: '/settings/access-overview', title: 'รายชื่อพนักงาน', landing: '/settings/access-overview' },
   { label: 'ตั้งค่าใบรับรองแทนใบเสร็จ', href: '/settings/substitute-receipt', title: 'ตั้งค่าใบรับรองแทนใบเสร็จ', landing: '/settings/substitute-receipt' },
   { label: 'ลายเซ็นบน 50 ทวิ', href: '/settings/tax-signature', title: 'ลายเซ็นบน 50 ทวิ', landing: '/settings/tax-signature' },
-  { label: 'แพ็กเกจ', href: '/billing', title: 'แพ็กเกจและการจ่ายเงิน', landing: '/billing' },
 ] as const;
 
 test('@journey owner adds and renames a category, fills a counterparty address, visits shop settings and packages, restores a receipt setting and reads all three guides', async ({ authedPage: page, api }) => {
@@ -141,6 +140,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       // Already on the overview after the first round: pressing the page you are on leaves the phone menu open.
       if (!new URL(page.url()).pathname.endsWith('/settings')) await pressMenu(page, 'ภาพรวมการตั้งค่า', 'ตั้งค่าร้าน');
       await expect(heading(page, 'ตั้งค่า')).toBeVisible(FIRST_SIGHT);
+      await expect(main.locator(`a[href="${base}/billing"]`)).toHaveCount(0);
       for (const entry of settingsEntries) {
         const link = main.locator(`a[href="${base}${entry.href}"]`);
         await expect(link).toContainText(entry.label);
@@ -193,20 +193,20 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
     }
   });
 
-  // The seeded shop has no package term (a live shop always has one): the page must still open and name what it knows.
+  // The seeded legacy shop has no package data; compare the sentence with the real server below.
   await test.step('แพ็กเกจ: the page opens on the real server and names the package of the shop, at both widths', async () => {
-    await pressMenu(page, 'แพ็กเกจ', 'ตั้งค่าร้าน');
-    await expect(heading(page, 'แพ็กเกจและการจ่ายเงิน')).toBeVisible(FIRST_SIGHT);
+    await pressMenu(page, 'แพ็กเกจ');
+    await expect(heading(page, 'แพ็กเกจ')).toBeVisible(FIRST_SIGHT);
     const status = main.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true });
-    const plan = status.locator('dl > div').filter({ has: page.locator('dt').filter({ hasText: whole('แพ็กเกจ') }) });
+    const noPackage = status.getByRole('heading', { name: 'ยังไม่มีแพ็กเกจ', exact: true });
     for (const viewport of [WIDE, PHONE]) {
       await resize(page, viewport);
-      await expect(plan.locator('dd')).toBeVisible(AFTER_PRESS);
-      // These current-package facts are counts/dates, not the price cards.
-      await expect(status.locator('dl')).not.toContainText('฿');
+      await expect(noPackage).toBeVisible(AFTER_PRESS);
+      await expect(status.locator('.mangmee-unit')).toHaveCount(0);
+      await expect(status).not.toContainText('฿');
       await expectNoClientError(page);
     }
-    packageName = (await plan.locator('dd').innerText()).trim();
+    packageName = (await noPackage.innerText()).trim();
   });
 
   await test.step('คู่มือการใช้งานระบบ: open each guide, expand its contents, and read without sideways scrolling on phone', async () => {
@@ -263,7 +263,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
     const policy = await json<{ cashEvidencePolicy: string }>(await api.get(`${apiBase}/expense-settings/substitute-receipt`, { headers: { 'X-Company-Id': MAIN_SHOP } }));
     expect(policy.cashEvidencePolicy).toBe(originalCashPolicy);
     const billing = await json<BillingStatus>(await api.get(`${apiBase}/billing`, { headers: { 'X-Company-Id': MAIN_SHOP } }));
-    expect(packageName).toBe(billing.tierKey ? shopPlanTierLabel(billing.tierKey as PlanTierKey) : 'ยังไม่มีข้อมูลแพ็กเกจ');
+    expect(packageName).toBe(billing.tierKey ? shopPlanTierLabel(billing.tierKey as PlanTierKey) : 'ยังไม่มีแพ็กเกจ');
   });
 });
 
@@ -279,7 +279,7 @@ test('@journey phone owner opens the three-line sidebar and finds every top-leve
   const nav = page.locator('aside nav');
   await expect(nav).toBeVisible();
   const topLevel = nav.locator('ul').first().locator(':scope > li > a, :scope > li > button');
-  for (const label of ['หน้าแรก', 'ค่าใช้จ่ายและใบเสร็จ', 'คู่ค้า', 'การเบิกจ่าย', 'พนักงานและสิทธิ์', 'ตั้งค่าร้าน', 'คู่มือการใช้งานระบบ']) {
+  for (const label of ['หน้าแรก', 'ค่าใช้จ่ายและใบเสร็จ', 'คู่ค้า', 'การเบิกจ่าย', 'แพ็กเกจ', 'พนักงานและสิทธิ์', 'ตั้งค่าร้าน', 'คู่มือการใช้งานระบบ']) {
     const entry = topLevel.filter({ hasText: new RegExp(`^${label}`) });
     await expect(entry).toHaveCount(1);
     await entry.scrollIntoViewIfNeeded();

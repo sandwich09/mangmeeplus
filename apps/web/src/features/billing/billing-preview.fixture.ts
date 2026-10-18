@@ -1,3 +1,4 @@
+import { shopPlanTierLabel } from '@watchdog-bms/contracts';
 import { BILLING_PAID_TIERS, billingOffer, type SalesDealCadence, type BillingCatalog, type BillingStatus, type BillingQuote, type BillingOffer, type BillingCollectionOperation, type BillingEmailRecipientOperation, type BillingPurchaseMode } from '@watchdog-bms/contracts';
 import type { billingApi } from './billing.api';
 import { companyBillingProfile } from '@watchdog-bms/contracts';
@@ -24,9 +25,9 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   const prepaidChange = scenario === 'one-time-pending' || scenario === 'one-time-capacity';
   const currentPaidThrough = extend(date(), currentOffer.interval);
   const paidThrough = prepaidChange ? extend(currentPaidThrough, 'month') : selected?.purchase?.projectedPaidThrough ?? currentPaidThrough;
-  const paid = ['success', 'upgrade', 'one-time', 'one-time-pending', 'one-time-capacity', 'activating', 'scheduled-change'].includes(scenario);
+  const paid = ['success', 'upgrade', 'one-time', 'one-time-pending', 'one-time-capacity', 'activating', 'scheduled-change', 'held'].includes(scenario);
   // R-A4: the recipient and the Checkout address are written when the payment applies, not when it is paid.
-  const applied = paid && scenario !== 'activating';
+  const applied = paid && scenario !== 'activating' && scenario !== 'held';
   const attempted = ['success', 'pending', 'activating', 'failed', 'held'].includes(scenario);
   const currentMode = scenario === 'one-time' || prepaidChange ? 'CARD_ONCE' : selected?.purchaseMode ?? 'CARD_AUTO';
   const currentOneTime = currentMode === 'CARD_ONCE' || currentMode === 'PROMPTPAY_ONCE';
@@ -46,12 +47,12 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     purchaseEligibility: 'ELIGIBLE', subscriptionState: paid && !currentOneTime ? 'active' : 'NONE', documentState: paid ? 'READY' : 'NONE',
     renewalMode: paid ? currentMode : 'NONE', enabledPurchaseModes: ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
     availablePurchaseModes: prepaidChange ? [] : scenario === 'upgrade' ? ['CARD_AUTO'] : scenario === 'one-time' ? ['CARD_ONCE', 'PROMPTPAY_ONCE'] : ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'],
-    attemptId: attempted ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid,
+    attemptId: attempted && scenario !== 'failed' ? 'preview-attempt' : null, reference: attempted ? 'PREVIEW-0001' : null, observedAt: date(), canCancelCheckout: attempted && !paid && scenario !== 'failed',
     tierKey: paid || scenario === 'expired' ? currentOffer.offerKey : scenario === 'manual' ? 'PRO_999' : 'FREE_TRIAL_15', interval: paid || scenario === 'expired' ? currentOffer.interval : null,
     purchaseSource: scenario === 'manual' ? 'ADMIN_MANUAL' : paid ? 'PAID_CURRENT_MODE' : 'TRIAL',
     termEndsAt: scenario === 'expired' ? date(-1) : paidThrough, paidThrough: paid ? paidThrough : scenario === 'expired' ? date(-1) : null,
     nextChargeAt: paid && !currentOneTime ? paidThrough : null, cancelAtPeriodEnd: false, graceEndsAt: null,
-    allowedActions: prepaidChange || attempted && !paid ? [] : paid ? currentOneTime ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(currentMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
+    allowedActions: scenario === 'failed' ? ['new_sales'] : prepaidChange || attempted && !paid || scenario === 'held' ? [] : paid ? currentOneTime ? ['new_sales'] : ['new_sales', 'portal_cancel_subscription', 'plan_changes', ...(currentMode === 'PROMPTPAY_RENEW' ? [] : ['portal_payment_method' as const])] : ['new_sales'],
     usage: { used: selected ? 0 : 6, limit: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance : 15, remaining: paid ? selected?.purchase?.projectedRemainingReceipts ?? currentOffer.receiptAllowance - 6 : 9,
       cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: prepaidChange ? currentPaidThrough : paidThrough }, issues: [],
     ...(applied ? { recipient: { email: 'preview@example.com', source: 'STRIPE_CHECKOUT' as const, bouncedAt: null, canChange: true },
@@ -100,15 +101,15 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
   const api: ReturnType<typeof billingApi> = {
     status: async () => ({ ...status }), catalog: async () => catalog(),
     eventDiscount: async () => ({ path: null, tickets: [] }),
-    history: async () => ({ items: paid ? [{ id: 'preview-invoice', number: 'PREVIEW-0001', currency: 'THB', amountSatang: currentOffer.priceSatang,
+    history: async () => ({ items: paid ? [{ id: 'preview-invoice', number: 'PREVIEW-0001', offer: { key: currentOffer.offerKey, label: shopPlanTierLabel(currentOffer.offerKey), interval: currentOffer.interval }, method: selected?.purchaseMode?.startsWith('PROMPTPAY') ? 'PROMPTPAY' : 'CARD', currency: 'THB', amountSatang: selected?.totalSatang ?? currentOffer.priceSatang,
       refundedSatang: 0, disputed: false, financialObservedAt: date(), paymentState: 'PAID', applyState: status.applyState,
-      periodStart: date(), periodEnd: paidThrough, createdAt: date(), hasDocuments: true, documentActions: { canResend: applied } }] : [], nextCursor: null }),
-    attempt: async () => ({ attemptId: 'preview-attempt', state: status.applyState, errorCode: null, observedAt: date(),
-      paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'PREVIEW-0001' : null,
+      periodStart: date(), periodEnd: paidThrough, paidAt: date(), createdAt: date(), hasDocuments: true, documentActions: { canResend: applied } }] : [], nextCursor: null }),
+    attempt: async () => ({ attemptId: 'preview-attempt', state: scenario === 'failed' ? 'FAILED' : status.applyState, errorCode: null, observedAt: date(),
+      paymentState: status.paymentState === 'PAID' ? 'PAID' : status.paymentState === 'FAILED' ? 'FAILED' : 'PENDING', applyState: status.applyState, invoiceReference: paid ? 'preview-invoice' : null,
       // The attempt is what tells the return page a deal paid for this term.
       ...(selected?.deal ? { deal: { dealId: previewDeal.dealId, baseLabel: previewDeal.baseLabel, months: previewDeal.months } } : {}) }),
     quote: async (offerKey, interval, _billingEmail, capacity, purchaseMode, dealId, purchaseIntent) => {
-      const billingEmail = applied ? 'preview@example.com' : null;
+      const billingEmail = status.recipient?.email ?? null;
       if (quoteFailures-- > 0) throw Object.assign(new Error('ราคาเปลี่ยนแล้ว'), { code: 'BILLING_QUOTE_STALE' });
       if (dealId) {
         // Priced from the deal snapshot, never from the catalog row (S36): N months in one
@@ -160,7 +161,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
         ...(isUpgrade && !fullPackageUpgrade ? { upgrade: { prorationAt: date(), nextRenewalTotalSatang: offer.priceSatang,
           segments: [{ start: date(), end: paidThrough, amountSatang: total, receiptUnitsAdded: added }] } } : {}),
         ...(capacity ? { capacity: { retainedBranches: capacity.branchIds.map(id => id === 'ho' ? 'สำนักงานใหญ่' : 'สาขาตัวอย่าง'), suspendedBranches: ['สาขาที่ไม่เลือก'],
-          retainedMembers: ['เจ้าของร้าน', ...capacity.memberships.slice(1).map(() => 'พนักงานตัวอย่าง')], suspendedMembers: ['พนักงานที่ไม่เลือก'], defaults: [] } } : {}),
+          retainedMembers: ['เจ้าของกิจการ', ...capacity.memberships.slice(1).map(() => 'พนักงานตัวอย่าง')], suspendedMembers: ['พนักงานที่ไม่เลือก'], defaults: [] } } : {}),
       };
       return quote;
     },
@@ -168,7 +169,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       const offer = offers.find(item => item.offerKey === offerKey && item.interval === interval)!;
       return { companyId, offerKey, interval: offer.interval, sourceHash: `preview-capacity-${offerKey}-${interval}`, branchLimit: offer.branchLimit, employeeLimit: offer.employeeLimit,
         overCapacity: true, branches: Array.from({ length: offer.branchLimit + 1 }, (_, i) => ({ id: i ? `branch-${i}` : 'ho', name: i ? `สาขาตัวอย่าง ${i}` : 'สำนักงานใหญ่', headOffice: !i, required: !i || (scenario === 'capacity-work' && i === 1), openReimbursements: scenario === 'capacity-work' && i === 1 ? 1 : 0 })),
-        memberships: Array.from({ length: offer.employeeLimit + 1 }, (_, i) => ({ id: i ? `member-${i}` : 'owner', name: i ? `พนักงานตัวอย่าง ${i}` : 'เจ้าของร้าน', owner: !i, required: !i || (scenario === 'capacity-work' && i === 1), allBranches: true, branchIds: ['ho'], defaultBranchId: 'ho' })) };
+        memberships: Array.from({ length: offer.employeeLimit + 1 }, (_, i) => ({ id: i ? `member-${i}` : 'owner', name: i ? `พนักงานตัวอย่าง ${i}` : 'เจ้าของกิจการ', owner: !i, required: !i || (scenario === 'capacity-work' && i === 1), allBranches: true, branchIds: ['ho'], defaultBranchId: 'ho' })) };
     },
     checkout: async () => { onCheckout(requiredQuote()); return { attemptId: 'preview-attempt', state: 'PENDING', checkoutUrl: null }; },
     resume: async () => { onCheckout(quote ?? { offer: currentOffer, totalSatang: currentOffer.priceSatang, purchaseMode: 'CARD_AUTO' }); return { attemptId: 'preview-attempt', state: 'PENDING', checkoutUrl: null }; },
@@ -184,7 +185,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
         expiresAt: date(1), observedAt: date(), errorCode: null, allowedActions: ['submit', 'withdraw'],
         ...(target ? { targetOffer: offers.find(offer => offer.offerKey === target.offerKey && offer.interval === target.interval)!,
           capacity: { retainedBranches: target.capacity.branchIds.map(id => id === 'ho' ? 'สำนักงานใหญ่' : `สาขาตัวอย่าง ${id.split('-')[1]}`),
-            suspendedBranches: ['สาขาที่ไม่เลือก'], retainedMembers: target.capacity.memberships.map(member => member.id === 'owner' ? 'เจ้าของร้าน' : `พนักงานตัวอย่าง ${member.id.split('-')[1]}`), suspendedMembers: ['พนักงานที่ไม่เลือก'], defaults: [] } } : {}) };
+            suspendedBranches: ['สาขาที่ไม่เลือก'], retainedMembers: target.capacity.memberships.map(member => member.id === 'owner' ? 'เจ้าของกิจการ' : `พนักงานตัวอย่าง ${member.id.split('-')[1]}`), suspendedMembers: ['พนักงานที่ไม่เลือก'], defaults: [] } } : {}) };
       return collection;
     },
     collectionSubmit: async operation => {
@@ -201,14 +202,14 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     recipientOperation: async () => recipient!,
     recipientPreview: async proofId => {
       recipient = { id: 'preview-recipient-op', state: 'PREVIEW', version: 1, previewHash: 'preview-hash', expiresAt: date(1),
-        previousEmail: 'preview@example.com', newEmail: proofId ? otpEmail : 'preview@example.com', canSubmit: true, canCancel: true };
+        previousEmail: 'preview@example.com', newEmail: proofId ? otpEmail : 'preview@example.com', source: proofId ? 'CUSTOMER_OTP' : 'ACCOUNT_EMAIL', canSubmit: true, canCancel: true };
       return recipient;
     },
     recipientOtpRequest: async email => { otpEmail = email; return { challengeId: 'preview-challenge', email, expiresAt: date(1),
       retryAt: new Date(Date.now() + 60_000).toISOString(), attemptsRemaining: 5, deliveryStatus: 'ACCEPTED', delivered: true }; },
     recipientOtpConfirm: async () => ({ recipientProofId: 'preview-proof', email: otpEmail, expiresAt: date(1) }),
     resendDocument: async () => ({ invoiceSent: true, receiptUpdated: true, recipientEmail: recipient?.state === 'COMPLETED' ? recipient.newEmail : 'preview@example.com', remainingToday: 2 }),
-    recipientSubmit: async operation => { recipient = { ...operation, state: 'COMPLETED', canSubmit: false }; return recipient; },
+    recipientSubmit: async operation => { recipient = { ...operation, state: 'COMPLETED', canSubmit: false }; status.recipient = { email: operation.newEmail, source: operation.source ?? 'CUSTOMER_OTP', bouncedAt: null, canChange: true }; return recipient; },
     recipientCancel: async operation => { recipient = { ...operation, state: 'CANCELLED', canSubmit: false }; return recipient; },
   };
   return api;

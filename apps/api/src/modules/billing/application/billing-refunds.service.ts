@@ -15,7 +15,7 @@ import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import { recordBillingFinancials } from './billing-financial';
-import { invoicePaymentMethod, pendingRefund, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
+import { invoicePaymentMethod, pendingRefund, unrepairableBinding, refundSource, refundParams, refundPreview, observedRefund, refundReviewRequired } from './billing-refund-source';
 import { endPackageBlock, endPackageError, endPaidPackage, refundEndsPackage, renewalIsLive, stampSpentPromotion } from './billing-end-package';
 import { promotionForInvoice } from './billing-promotion';
 
@@ -30,8 +30,10 @@ type Journal={submittedCredentialVersion?:string;approval?:{membershipId:string;
   providerError?:{outcome:string;code:string|null;type:string|null;at:string}};
 const stale=()=>billingError('CONTROL_PREVIEW_STALE','รายการเปลี่ยนหรือหมดอายุ กรุณาโหลดข้อมูลล่าสุดแล้วตรวจใหม่');
 const json=(value:unknown)=>value as Prisma.InputJsonValue;
-const localHash=(a:BillingAccount,i:BillingInvoice)=>configurationHash([a.id,a.companyId,a.stripeAccountId,a.livemode,a.customerId,
-  a.activeAttemptId,a.activeCollectionOperationId,i.id,i.version,i.providerInvoiceId,i.providerChargeId,i.totalSatang,i.paidSatang,i.taxSatang,i.subscriptionId,i.providerStatus,i.refundedSatang,i.disputed]);
+/** `binding`: the pin of `unrepairableBinding` (absent for every other refund, so their hashes are unchanged): a proposal previewed against a binding
+ *  the system cannot repair goes stale when the marker goes, a subscription binds or the slot moves. */
+export const refundLocalHash=(a:BillingAccount,i:BillingInvoice,binding?:string|null)=>configurationHash([a.id,a.companyId,a.stripeAccountId,a.livemode,a.customerId,
+  a.activeAttemptId,a.activeCollectionOperationId,i.id,i.version,i.providerInvoiceId,i.providerChargeId,i.totalSatang,i.paidSatang,i.taxSatang,i.subscriptionId,i.providerStatus,i.refundedSatang,i.disputed,...binding?[binding]:[]]);
 
 @Injectable()
 export class BillingRefundsService {
@@ -46,7 +48,8 @@ export class BillingRefundsService {
   }
   private async packageBlock(tx:Prisma.TransactionClient,account:BillingAccount,invoiceId:string,requireFullRefund=false){
     const company=await tx.company.findUniqueOrThrow({where:{id:account.companyId},include:{planTerm:true}});
-    return endPackageBlock(company,account,await this.invoice(account,invoiceId,tx),requireFullRefund);
+    const invoice=await this.invoice(account,invoiceId,tx);
+    return endPackageBlock(company,account,invoice,requireFullRefund,new Date(),!!await unrepairableBinding(tx,account,invoice));
   }
   /**
    * Spec Q6, decided at preview and pinned in the proposal. A refund that brings a promotion purchase to its full paid amount (cumulative,
@@ -66,7 +69,8 @@ export class BillingRefundsService {
   private async refundBlock(tx:Prisma.TransactionClient,account:BillingAccount,invoiceId:string,p:Pick<Proposed,'endPackage'|'promotionRedemptionId'>){
     const block=p.endPackage?await this.packageBlock(tx,account,invoiceId):null;
     if(block!=='BILLING_END_PACKAGE_NOT_CURRENT'||!p.promotionRedemptionId)return block;
-    return renewalIsLive(account)&&invoiceServiceEnd(await this.invoice(account,invoiceId,tx))>new Date()?'BILLING_END_PACKAGE_AUTO_RENEW' as const:null;
+    const invoice=await this.invoice(account,invoiceId,tx);
+    return renewalIsLive(account)&&invoiceServiceEnd(invoice)>new Date()&&!await unrepairableBinding(tx,account,invoice)?'BILLING_END_PACKAGE_AUTO_RENEW' as const:null;
   }
   /** What the refund screens tell about the promotion this invoice was bought with, or nothing: named by the invoice's own snapshot, sized by its redemption. */
   private async promotion(invoice:Pick<BillingInvoice,'id'|'contractSnapshot'|'benefitEnd'>|null):Promise<{promotion?:BillingRefundPromotion}>{
@@ -103,21 +107,22 @@ export class BillingRefundsService {
   }
   private async source(context:RequestContext,companyId:string,invoiceId:string){
     const {account,company,access}=await this.access(context,companyId),row=await this.invoice(account,invoiceId),state=await this.billing.settings();
+    const binding=await unrepairableBinding(this.prisma.client,account,row);
     const source=await refundSource(this.billing.stripe,account,row),current=await this.access(context,companyId),latest=await this.invoice(current.account,invoiceId);
-    if(localHash(account,row)!==localHash(current.account,latest))throw stale();
-    const sourceHash=configurationHash([localHash(account,row),source.sourceHash,state.settings.version,state.revision?.id??null]);
-    return {account,company:current.company,access:current.access,row,state,source,sourceHash};
+    if(refundLocalHash(account,row,binding?.pin)!==refundLocalHash(current.account,latest,(await unrepairableBinding(this.prisma.client,current.account,latest))?.pin))throw stale();
+    const sourceHash=configurationHash([refundLocalHash(account,row,binding?.pin),source.sourceHash,state.settings.version,state.revision?.id??null]);
+    return {account,company:current.company,access:current.access,row,state,source,sourceHash,binding};
   }
   async review(context:RequestContext,companyId:string,invoiceId:string):Promise<BillingRefundReview>{
     const s=await this.source(context,companyId,invoiceId),limit=s.state.policy?.refundLimitSatang??null;
-    const pending=await pendingRefund(this.prisma.client,s.account);
+    const pending=await pendingRefund(this.prisma.client,s.account),binding=await unrepairableBinding(this.prisma.client,s.account,s.row);
     const blocked=!s.access.capabilities.includes('system.billing.refund.manage')?'CONTROL_PERMISSION_CHANGED':!s.state.gates.refunds||!limit?'CONTROL_REFUNDS_CLOSED':
-      s.account.activeAttemptId||s.account.activeCollectionOperationId||pending?'BILLING_REFUND_PENDING':s.source.charge.disputed?'CONTROL_REFUND_DISPUTED':
+      (s.account.activeAttemptId&&!binding)||s.account.activeCollectionOperationId||pending?'BILLING_REFUND_PENDING':s.source.charge.disputed?'CONTROL_REFUND_DISPUTED':
         s.source.refunds.some(r=>!['succeeded','failed','canceled'].includes(r.status))?'CONTROL_REFUND_PENDING':
           s.source.charge.amount_refunded>=s.row.paidSatang||s.source.invoice.post_payment_credit_notes_amount>=s.row.paidSatang?'CONTROL_REFUND_FULL':null;
     return {companyId,companyName:s.company.name,invoiceId,invoiceNumber:s.row.providerNumber,mode:s.account.livemode?'LIVE':'TEST',
       paidSatang:s.row.paidSatang,refundedSatang:s.source.charge.amount_refunded,disputed:s.source.charge.disputed,refundLimitSatang:limit,
-      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments,paymentMethod:invoicePaymentMethod(s.row),...await this.promotion(s.row)};
+      canCreate:blocked===null,blockedReason:blocked,sourceHash:s.sourceHash,observedAt:new Date().toISOString(),usage:await this.billing.usage(companyId),adjustments:s.source.adjustments,paymentMethod:invoicePaymentMethod(s.row),...binding&&blocked===null?{unrepairedBinding:binding.kind}:{},...await this.promotion(s.row)};
   }
   async preview(context:RequestContext,companyId:string,invoiceId:string,input:BillingRefundInput){
     assertKeys(input,['amountSatang','reason','memo','notifyCustomer','sourceHash','endPackage']);
@@ -128,13 +133,14 @@ export class BillingRefundsService {
     const end=await this.refundEnd(invoiceId,s.row.paidSatang,s.source.charge.amount_refunded,input);
     const id=randomUUID(),memo=input.memo.trim(),params=await refundParams(this.billing.stripe,s.account,s.row,s.source,id,input.amountSatang,memo,input.notifyCustomer);
     const projection=await refundPreview(this.billing.stripe,s.account,s.row,s.source,params),usage=await this.billing.usage(companyId);
-    const p:Proposed={accountId:s.account.id,customerId:s.account.customerId!,chargeId:s.row.providerChargeId!,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:s.sourceHash,localHash:localHash(s.account,s.row),
+    const p:Proposed={accountId:s.account.id,customerId:s.account.customerId!,chargeId:s.row.providerChargeId!,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:s.sourceHash,localHash:refundLocalHash(s.account,s.row,s.binding?.pin),
       providerSourceHash:s.source.sourceHash,settingsVersion:state.settings.version,policyRevisionId:state.revision!.id,amountSatang:input.amountSatang,memo,notifyCustomer:input.notifyCustomer,
       invoiceNumber:s.row.providerNumber,paidSatang:s.row.paidSatang,previousRefundedSatang:s.source.charge.amount_refunded,usage,projection,params,...end};
     const row=await this.prisma.client.$transaction(async tx=>{
       await lockPlanTermCompany(tx,companyId);const {account}=await this.access(context,companyId,'system.billing.refund.manage',tx);
-      if(localHash(account,await this.invoice(account,invoiceId,tx))!==p.localHash||(await this.policy(p.amountSatang,tx)).settings.version!==p.settingsVersion)throw stale();
-      if(account.activeAttemptId||account.activeCollectionOperationId||await pendingRefund(tx,account))throw billingError('BILLING_REFUND_PENDING','ตรวจคำสั่งเดิมให้เสร็จก่อนเริ่มคำขอคืนเงิน');
+      const invoice=await this.invoice(account,invoiceId,tx),binding=await unrepairableBinding(tx,account,invoice);
+      if(refundLocalHash(account,invoice,binding?.pin)!==p.localHash||(await this.policy(p.amountSatang,tx)).settings.version!==p.settingsVersion)throw stale();
+      if((account.activeAttemptId&&!binding)||account.activeCollectionOperationId||await pendingRefund(tx,account))throw billingError('BILLING_REFUND_PENDING','ตรวจคำสั่งเดิมให้เสร็จก่อนเริ่มคำขอคืนเงิน');
       const block=await this.refundBlock(tx,account,invoiceId,p);if(block)throw endPackageError(block);
       return tx.billingOperation.create({data:{id,companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,type:'REFUND',referenceId:invoiceId,
         sourceVersion:s.row.version,proposedJson:json(p),reason:input.reason.trim(),initiatorUserId:context.userId,
@@ -153,8 +159,8 @@ export class BillingRefundsService {
       amountSatang:p.amountSatang,taxSatang:p.projection.taxSatang,memo:p.memo,notifyCustomer:p.notifyCustomer,paidSatang:p.paidSatang,previousRefundedSatang:p.previousRefundedSatang,usage:p.usage,
       allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(canApproveBillingChange(access,row.initiatorUserId,context.userId,'system.billing.refund.manage')&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(!j.dispatchedAt&&['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)&&(manage||approve)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['cancel' as const]:[]),
-        // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one.
-        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&row.errorCode!=='CONTROL_REFUND_PROVIDER_REJECTED'&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
+        // A rejected create is over: running it again would only send the same request the provider already refused, so staff start a new one. The same goes for a create the provider never made.
+        ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&!['CONTROL_REFUND_PROVIDER_REJECTED','CONTROL_REFUND_NOT_CREATED'].includes(row.errorCode??'')&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
       dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,providerErrorCode:providerError?.code??null,providerErrorType:providerError?.type??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false,endPackage:p.endPackage===true,packageEnded:j.packageEnded??null,
       ...invoice?{paymentMethod:invoicePaymentMethod(invoice)}:{},...p.promotionRedemptionId?await this.promotion(invoice):{}};
   }
@@ -172,9 +178,10 @@ export class BillingRefundsService {
   private async current(row:BillingOperation,tx:Prisma.TransactionClient){
     if(row.expiresAt<=new Date())throw stale();
     const p=row.proposedJson as unknown as Proposed,account=await this.billing.account(row.companyId!,tx);if(!account||account.id!==p.accountId)throw stale();
-    if(localHash(account,await this.invoice(account,row.referenceId!,tx))!==p.localHash)throw stale();
+    const invoice=await this.invoice(account,row.referenceId!,tx),binding=await unrepairableBinding(tx,account,invoice);
+    if(refundLocalHash(account,invoice,binding?.pin)!==p.localHash)throw stale();
     const state=await this.policy(p.amountSatang,tx);if(state.settings.version!==p.settingsVersion||state.revision?.id!==p.policyRevisionId)throw stale();
-    if(account.activeAttemptId||account.activeCollectionOperationId||await pendingRefund(tx,account,row.id))throw billingError('BILLING_REFUND_PENDING','ยังมีคำสั่งเดิมที่ต้องตรวจสอบ');
+    if((account.activeAttemptId&&!binding)||account.activeCollectionOperationId||await pendingRefund(tx,account,row.id))throw billingError('BILLING_REFUND_PENDING','ยังมีคำสั่งเดิมที่ต้องตรวจสอบ');
     if(!await this.pinned(tx,row.referenceId!,p))throw stale();
     // Submit, approve and dispatch all re-check, so money never moves on a package this refund cannot end.
     const block=await this.refundBlock(tx,account,row.referenceId!,p);if(block)throw endPackageError(block);return account;
@@ -249,7 +256,10 @@ export class BillingRefundsService {
       let source=await refundSource(this.billing.stripe,account!,invoice),journal=(claim.resultJson??{}) as Journal;
       let observed=journal.dispatchedAt?await observedRefund(this.billing.stripe,account!,invoice,source,claim.id,p.providerSourceHash,p.amountSatang,p.memo,configurationHash(p.projection),journal.creditNoteId):null;
       if(!observed){
-        if(journal.dispatchedAt&&Date.now()-Date.parse(journal.dispatchedAt)>=23*3600000)throw billingError('CONTROL_REFUND_AGED_UNKNOWN','ยังยืนยันรายการเดิมไม่ได้ ให้เจ้าหน้าที่ตรวจ Stripe ก่อนดำเนินการต่อ');
+        // Never created: `current` refuses every send once expiresAt has passed, so the last send of this request left at or before expiresAt (plus the 120 s lease at most). An hour later nothing is in flight
+        // and nothing will be sent again, and the read above listed every credit note of the invoice (completeList) with none carrying this operation's id; a create that did land is found by observedRefund
+        // and never comes here. So the request ends without a refund, in the catch below, and stops holding the company's other refunds. (This is always earlier than the former 23-hour ceiling on a resend.)
+        if(journal.dispatchedAt&&Date.now()-claim.expiresAt.getTime()>=3600000)throw billingError('CONTROL_REFUND_NOT_CREATED','ตรวจกับผู้ให้บริการรับชำระเงินแล้ว ไม่พบการคืนเงินของคำขอนี้ คำขอนี้จึงไม่ได้คืนเงิน ถ้ายังต้องการคืน ให้สร้างคำขอใหม่');
         if(source.sourceHash!==p.providerSourceHash||configurationHash(await refundPreview(this.billing.stripe,account!,invoice,source,p.params))!==configurationHash(p.projection))throw refundReviewRequired();
         journal=await this.prisma.client.$transaction(async tx=>{
           const {row}=await this.fence(tx,claim.id,lease);this.valid(row,row.version,row.requestHash);await this.actors(row,tx);await this.current(row,tx);
@@ -287,8 +297,10 @@ export class BillingRefundsService {
         const {row}=await this.fence(tx,claim.id,lease),j=(row.resultJson??{}) as Journal;
         const code=rejected?'CONTROL_REFUND_PROVIDER_REJECTED':error instanceof ForbiddenException?'CONTROL_PERMISSION_CHANGED':error instanceof StripeRequestError?'CONTROL_REFUND_PROVIDER_UNAVAILABLE':
           (error as {getResponse?:()=>{code?:string}}).getResponse?.()?.code??'CONTROL_REFUND_REVIEW';
-        const saved=await this.writeLeased(tx,row,lease,{state:rejected?'FAILED':j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError?{resultJson:json({...j,providerError,...rejected?{mutationResolved:true}:{}})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
-        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,rejected?'rejected':'review');
+        // Two ways a dispatched request ends with no refund: the provider refused the create, or (the check in the try) it never made one.
+        const notCreated=code==='CONTROL_REFUND_NOT_CREATED',ended=rejected||notCreated;
+        const saved=await this.writeLeased(tx,row,lease,{state:ended?'FAILED':j.dispatchedAt?'UNKNOWN':'BLOCKED',errorCode:code,...providerError||ended?{resultJson:json({...j,...providerError?{providerError}:{},...ended?{mutationResolved:true}:{}})}:{},scheduledFor:new Date(Date.now()+300000),leaseToken:null,leaseUntil:null,version:{increment:1}});
+        await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});await this.audit(tx,saved,rejected?'rejected':notCreated?'not_created':'review');
       });
     }finally{await this.prisma.client.billingAccount.updateMany({where:{id:p.accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null,nextReconcileAt:new Date()}});}
   }

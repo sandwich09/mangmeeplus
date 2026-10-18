@@ -8,7 +8,7 @@ import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
 import { BillingAdminCollection } from './billing-admin-collection';
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { assertNoPendingRefund, pendingRefund } from './billing-refund-source';
-import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
+import { invoiceHistoryItem, readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -52,7 +52,7 @@ import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseMo
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
 import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
-import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
+import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountRenewalState, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 import { paymentCheckoutMode, paymentCheckoutSnapshot, prepaidCardAuto } from '../domain/billing-checkout-mode';
 import type { BillingBenefitChoice, BillingPromotionSnapshot, BillingPromotionUse } from '@watchdog-bms/contracts';
 import { parsePromotionCampaignsLenient, promotionCampaignStatus, promotionSignatures, promotionUnavailable, promotionUnsupportedPurchase } from '../domain/billing-promotion';
@@ -291,7 +291,7 @@ export class BillingService {
     const source = await this.purchaseSource({ planTerm: company?.planTerm ?? null }, account);
     // Read as status() reads it (a subscription under a NONE column is a card charged by itself), so LINE and the package page say the same of how this shop renews.
     const renewalMode = (account?.renewalMode !== 'NONE' ? account?.renewalMode : account?.baseSubscriptionId ? 'CARD_AUTO' : 'NONE') as BillingStatus['renewalMode'];
-    return { path: eventDiscountPath(source, renewalMode), renewalMode, tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
+    return { path: eventDiscountPath(source, renewalMode), renewalMode, renewalState: eventDiscountRenewalState(account), tickets: await holderEventDiscountTickets(this.prisma.client, context.userId, new Date()) };
   }
 
   /** LINE "ฉันมีส่วนลดไหม" (sales-event spec §8.1): the same owner-only read, plus why this shop may not take the discount
@@ -1277,17 +1277,12 @@ export class BillingService {
       ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: input.limit + 1 });
     const page = rows.slice(0, input.limit);
-    // A promotion purchase: the financial period above stays the paid one; the free time and the bonus are told beside it.
-    const promotionOf = (row: typeof page[number]) => {
-      const accepted = row.benefitEnd ? (row.contractSnapshot as unknown as BillingSnapshot | null)?.promotion : undefined;
-      return accepted ? { promotion: { displayName: accepted.displayName, paidEnd: row.periodEnd.toISOString(), benefitEnd: row.benefitEnd!.toISOString(),
-        bonusReceiptUnits: accepted.bonusReceiptUnits } } : {};
-    };
-    return { items: page.map((row) => ({ id: row.id, number: row.providerNumber, currency: 'THB', amountSatang: row.totalSatang,
-      refundedSatang: row.refundedSatang, disputed: row.disputed, financialObservedAt: row.financialObservedAt?.toISOString() ?? null,
-      paymentState: row.providerStatus, applyState: row.applyStatus, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(),
-      createdAt: row.createdAt.toISOString(), hasDocuments: row.providerStatus === 'paid',
-      documentActions: { canResend: canResendDocuments(row, account) }, ...promotionOf(row) })), nextCursor: rows.length > input.limit ? page.at(-1)!.id : null };
+    const attempts = page.some(row => row.sourceAttemptId) ? await this.prisma.client.billingAttempt.findMany({
+      where: { billingAccountId: account.id, id: { in: page.flatMap(row => row.sourceAttemptId ? [row.sourceAttemptId] : []) } },
+      select: { id: true, quoteSnapshot: true } }) : [];
+    const snapshots = new Map(attempts.map(attempt => [attempt.id, attempt.quoteSnapshot]));
+    return { items: page.map(row => ({ ...invoiceHistoryItem(row, snapshots.get(row.sourceAttemptId ?? '') ?? null),
+      documentActions: { canResend: canResendDocuments(row, account) } })), nextCursor: rows.length > input.limit ? page.at(-1)!.id : null };
   }
 
   private async ownedInvoice(context: RequestContext, id: string) {
@@ -1302,7 +1297,9 @@ export class BillingService {
     const {account,row}=await this.ownedInvoice(context,id);
     const result=await readInvoiceAdjustments(this.stripe,account,row,kind,cursor);
     const current=await this.ownedInvoice(context,id);sameInvoiceSource(account,row,current.account,current.row);
-    return {...result,canOpenDocuments:true,documentActions:{canResend:canResendDocuments(current.row,current.account)},recipientEmail:current.account.recipientEmail??null};
+    const attempt = current.row.sourceAttemptId ? await this.prisma.client.billingAttempt.findFirst({
+      where: { id: current.row.sourceAttemptId, billingAccountId: current.account.id }, select: { quoteSnapshot: true } }) : null;
+    return {...result,invoice:{...invoiceHistoryItem(current.row,attempt?.quoteSnapshot??null),paidAt:result.paidAt},canOpenDocuments:true,documentActions:{canResend:canResendDocuments(current.row,current.account)},recipientEmail:current.account.recipientEmail??null};
   }
   async document(context: RequestContext, id: string, kind: 'invoice'|'receipt'|'pdf'|'credit-note', creditNoteId?: string): Promise<{url:string}> {
     const {account,row}=await this.ownedInvoice(context,id);

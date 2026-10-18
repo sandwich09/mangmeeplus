@@ -20,6 +20,7 @@ import {
   filterModulesByPermissions,
   buildAccountLinks,
   buildLockedNavItems,
+  packageMenuTrailing,
   buildNavItems,
   collectMenuTargets,
   employeePageMenuKey,
@@ -33,7 +34,7 @@ import { PlanTermBanner } from '@/features/plan-term/PlanTermBanner';
 import { LockedShellProvider } from '@/features/plan-term/LockedShellScope';
 import { PlanTermSidebarCard } from '@/features/plan-term/PlanTermSidebarCard';
 import { fetchPlanTermNotice, PLAN_TERM_CHANGED_EVENT, type PlanTermNotice } from '@/features/plan-term/plan-term.api';
-import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
+import { cardRenewalRunning, isLockedShellPath, planTermView } from '@/features/plan-term/plan-term.logic';
 import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
 import { canSeeRoute } from './route-permissions';
@@ -74,6 +75,7 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'tax',
   'pnd53',
   'reports',
+  'billing',
   'roles',
   'settings',
   'guide',
@@ -97,7 +99,7 @@ function WorkspaceLayoutContent({ children, companyId, session }: Props) {
   }, [companyId, router]);
   // The shell's single plan-term read (spec §12): the locked two-menu sidebar, its banner and the
   // renewal redirect all answer from this one notice, so no page pays for a second call.
-  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
+  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null; cardRenewal: boolean } | null>(null);
   const [revision, setRevision] = useState(0);
   const lockedRef = useRef(false);
   const settled = loaded?.companyId === companyId;
@@ -105,7 +107,7 @@ function WorkspaceLayoutContent({ children, companyId, session }: Props) {
 
   useEffect(() => {
     let active = true;
-    void fetchPlanTermNotice(companyId).then((result) => {
+    void fetchPlanTermNotice(companyId).then(async (result) => {
       if (!active) return;
       // A failed re-read (null) while locked keeps the shell locked: an outage is not an unlock.
       // The first read still fails open (lockedRef starts false), as the note further down says.
@@ -113,7 +115,10 @@ function WorkspaceLayoutContent({ children, companyId, session }: Props) {
       // RV30: leaving EXPIRED means the server layout's session/permissions are stale too
       // (billing-reconciler.service apply) — refresh them; the shell below switches by itself.
       const unlocked = result !== null && lockedRef.current && result.derivedState !== 'EXPIRED'; // result null = endpoint ล่ม ไม่ใช่ปลดล็อก
-      setLoaded({ companyId, notice: result });
+      const status = result && planTermView(result) === 'warning-banner'
+        ? await billingApi(companyId).status().catch(() => null) : null;
+      if (!active) return;
+      setLoaded({ companyId, notice: result, cardRenewal: !!status && cardRenewalRunning(status) });
       if (unlocked) router.refresh();
     });
     return () => { active = false; };
@@ -158,8 +163,8 @@ function WorkspaceLayoutContent({ children, companyId, session }: Props) {
     && canSeeRoute(COMPANY_PROFILE_SETTINGS_PATH, session.permissions);
   if (isBillingCustomerRecoveryPath(pathname, companyId) || onOwnProfilePage)
     return <BillingWorkspaceLayout companyId={companyId} session={session}
-      shellWhenBillingRefused={onOwnProfilePage && !session.permissions.includes('company.plan.manage')}>{children}</BillingWorkspaceLayout>;
-  return <BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</BusinessWorkspaceLayout>;
+      notice={notice} cardRenewal={loaded?.cardRenewal} shellWhenBillingRefused={onOwnProfilePage && !session.permissions.includes('company.plan.manage')}>{children}</BillingWorkspaceLayout>;
+  return <BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice} cardRenewal={loaded?.cardRenewal}>{children}</BusinessWorkspaceLayout>;
 }
 
 /**
@@ -173,8 +178,8 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
   const displayName = useAccountDisplayName(session.displayName ?? null);
   const pathname = usePathname() ?? '';
   const navItems = useMemo(
-    () => buildLockedNavItems(companyId, ICON_MAP, session.permissions),
-    [companyId, session.permissions],
+    () => buildLockedNavItems(companyId, ICON_MAP, session.permissions).map(item => item.key === 'billing' ? { ...item, trailing: packageMenuTrailing(notice) } : item),
+    [companyId, session.permissions, notice],
   );
 
   return (
@@ -211,7 +216,7 @@ function LockedWorkspaceLayout({ children, companyId, session, notice }: Props &
  * refused with 403 because of the missing right, not because the shop is locked. They get the business shell, as on
  * every other page they open, instead of a page with no menu and no way back. Every other outcome is as before.
  */
-function BillingWorkspaceLayout({ children, companyId, session, shellWhenBillingRefused = false }: Props & { shellWhenBillingRefused?: boolean }) {
+function BillingWorkspaceLayout({ children, companyId, session, notice, cardRenewal, shellWhenBillingRefused = false }: Props & { notice?: PlanTermNotice | null; cardRenewal?: boolean; shellWhenBillingRefused?: boolean }) {
   const [view, setView] = useState<'loading' | 'workspace' | 'recovery'>('loading');
   useEffect(() => {
     let active = true;
@@ -228,10 +233,10 @@ function BillingWorkspaceLayout({ children, companyId, session, shellWhenBilling
   // The same line as the shell's first read: this layout also frames the shop details page, which is not the package page.
   if (view === 'loading') return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้า…</p>;
   if (view === 'recovery') return <>{children}</>;
-  return <BillingWorkspaceContext.Provider value={true}><BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout></BillingWorkspaceContext.Provider>;
+  return <BillingWorkspaceContext.Provider value={true}><BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice} cardRenewal={cardRenewal}>{children}</BusinessWorkspaceLayout></BillingWorkspaceContext.Provider>;
 }
 
-function BusinessWorkspaceLayout({ children, companyId, session, notice = null }: Props & { notice?: PlanTermNotice | null }) {
+function BusinessWorkspaceLayout({ children, companyId, session, notice = null, cardRenewal = false }: Props & { notice?: PlanTermNotice | null; cardRenewal?: boolean }) {
   const displayName = useAccountDisplayName(session.displayName ?? null);
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
@@ -308,8 +313,8 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
         ...item,
         attention: true,
         subItems: item.subItems?.map((sub) => (sub.key === 'settings.company-profile' && shopDetailsIncomplete ? { ...sub, badgeLabel: 'ยังไม่ครบ' } : sub)),
-      } : item)),
-    [allNavItems, setupIncomplete, shopDetailsIncomplete],
+      } : item.key === 'billing' ? { ...item, trailing: packageMenuTrailing(notice, cardRenewal) } : item)),
+    [allNavItems, setupIncomplete, shopDetailsIncomplete, notice, cardRenewal],
   );
 
   // Resolved from the full menu list, not the design-handoff subset above: a menu the sidebar
@@ -326,7 +331,7 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
     return target ? { href: target.buildHref(companyId), label: t(target.labelKey as Parameters<typeof t>[0], locale) } : null;
   }, [filteredModules, session.permissions, companyId, locale]);
 
-  const activeKey = getActiveModuleKey(filteredModules, companyId, pathname) ?? employeePageMenuKey(companyId, pathname, navItems);
+  const activeKey = getActiveModuleKey(filteredModules, companyId, pathname) ?? employeePageMenuKey(companyId, pathname, navItems) ?? resolveMenuKey(pathname, collectMenuTargets(navItems));
 
   return (
     <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>

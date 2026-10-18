@@ -38,8 +38,9 @@ export async function checkBillingCollection(input: {
   input.subscription.items.data[0].tax_rates = ['txr_Unexpected'];
   try { await input.drain(); } finally { input.subscription.items.data[0].tax_rates = oldTaxes; }
   const blocked = (await get(drift.body)).body;
-  assert.equal(blocked.state, 'BLOCKED'); assert.equal(input.fixture.calls.get('collection') ?? 0, calls);
-  assert.equal((await request(`${base}/collection/${blocked.id}/withdraw`, 'POST', { expectedVersion: blocked.version })).body.state, 'CANCELLED');
+  // 2026-10-10: nothing was sent and no pass retries it, so it is over at once and holds nothing; the shop need not press "ยกเลิก".
+  assert.deepEqual([blocked.state, blocked.errorCode, blocked.allowedActions], ['FAILED', 'BILLING_COLLECTION_NOT_SENT', []]); assert.equal(input.fixture.calls.get('collection') ?? 0, calls);
+  assert.equal((await client.billingAccount.findFirstOrThrow({ where: { companyId } })).activeCollectionOperationId, null, 'an ended command no longer holds the shop');
   const first = await preview('CANCEL_RENEWAL'); assert.equal(first.status, 200, JSON.stringify(first.body));
   const other = await preview('CANCEL_RENEWAL'); assert.equal(other.status, 200);
   assert.equal((await request(`/v1/companies/${input.otherCompanyId}/billing/collection/${first.body.id}`)).status, 404);

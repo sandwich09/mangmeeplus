@@ -17,21 +17,20 @@ const shown = (block: PendingPayment | null) => block && ({ kind: block.kind, he
   steps: block.steps.map(step => [step.key, step.emphasis, step.label, ...step.caption]) });
 
 const PROMO = 'โปรแถมเดือน Starter';
-const RESERVED = `จองสิทธิ์โปรโมชั่น ${PROMO} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อชำระเงินสำเร็จ`;
+const RESERVED = `จองสิทธิ์โปรโมชั่น ${PROMO} ไว้ให้รายการนี้แล้ว สิทธิ์เริ่มใช้เมื่อจ่ายเงินสำเร็จ`;
 const RIGHT_BACK = 'สิทธิ์โปรโมชั่นที่จองไว้จะถูกคืน เลือกใช้ใหม่ได้ถ้าโปรโมชั่นยังเปิดอยู่';
-const UNPAID_PAGE = 'เปิดหน้าชำระเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการชำระเงิน';
-const OPEN = 'มีรายการชำระเงินที่ยังไม่เสร็จ', WAITING = 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', CHECKING = 'กำลังตรวจสอบรายการชำระเงิน', RECEIVED_TITLE = 'ระบบได้รับเงินแล้ว ไม่ต้องชำระซ้ำ', LAST = 'ผลการชำระเงินล่าสุด';
-const AUTO = 'ระบบตรวจผลให้อัตโนมัติ ไม่ต้องชำระซ้ำ', CONTACT = 'ถ้าตรวจแล้วยังไม่ชัดเจน ให้ติดต่อทีมงานพร้อมเลขอ้างอิง';
-const ASKING = 'ระบบถามผู้ให้บริการรับชำระเงินอยู่ ยังไม่ต้องเริ่มรายการใหม่';
-const CONTINUE = ['continue', 'primary', 'ชำระเงินต่อ'];
-const CANCEL_NEW = ['cancel', 'quiet', 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่', 'รายการเดิมจะถูกยกเลิก'];
+const UNPAID_PAGE = 'เปิดหน้าจ่ายเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการจ่ายเงิน';
+const OPEN = 'มีรายการจ่ายเงินที่ยังไม่เสร็จ', WAITING = 'กำลังรอผลการจ่ายเงิน', CHECKING = 'กำลังตรวจสอบรายการจ่ายเงิน', RECEIVED_TITLE = 'ได้รับเงินแล้ว กำลังเปิดแพ็กเกจ', LAST = 'ผลการจ่ายเงินล่าสุด';
+const AUTO = 'ระบบตรวจให้อัตโนมัติ ไม่ต้องจ่ายซ้ำ', CONTACT = 'ถ้าตรวจแล้วยังไม่ชัดเจน ให้ติดต่อทีมงานพร้อมเลขอ้างอิง';
+const ASKING = 'ระบบถามผู้ให้บริการรับเงินอยู่ ยังไม่ต้องเริ่มรายการใหม่';
+const CONTINUE = ['continue', 'primary', 'จ่ายต่อ'];
+const CANCEL_NEW = ['cancel', 'quiet', 'ยกเลิกรายการนี้'];
 const KEPT = 'แพ็กเกจที่ใช้อยู่ไม่เปลี่ยน';
-const CHECK_CAUTION = 'ระบบยังยืนยันผลจากผู้ให้บริการรับชำระเงินไม่ได้ กดตรวจก่อนชำระใหม่ เพื่อไม่ให้ชำระซ้ำ';
-const CONTINUE_CAUTION = 'ใช้เมื่อแน่ใจว่ายังไม่ได้ชำระ เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ';
-const CANCEL_TWO_STEP = ['cancel', 'quiet', 'ยกเลิกรายการนี้', 'ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน จึงเลือกแพ็กเกจใหม่ได้'];
-const CHECK_NOW = ['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเมื่ออยากให้ตรวจผลทันที'];
-const CHECK_LATEST = ['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเมื่ออยากตรวจผลล่าสุด'];
-const CHECK_AGAIN = ['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้ว เพื่อตรวจผลล่าสุดอีกครั้ง'];
+const CONTINUE_CAUTION = 'ใช้เมื่อแน่ใจว่ายังไม่ได้จ่าย เปิดหน้าจ่ายเงินเดิมเพื่อจ่ายให้เสร็จ';
+const CANCEL_TWO_STEP = ['cancel', 'quiet', 'ยกเลิกรายการนี้'];
+const CHECK_NOW = ['check', 'primary', 'ตรวจผลการจ่ายเงิน'];
+const CHECK_LATEST = ['check', 'primary', 'ตรวจผลการจ่ายเงิน'];
+const CHECK_AGAIN = ['check', 'secondary', 'ตรวจผลการจ่ายเงิน'];
 
 // Every state the page's own flags can put the package page in, and exactly what the buyer is shown there. `heading` is the card's own heading while the payment leads the card (null = the
 // page's heading about the package stands), `title` the block's own title where the heading is about something else; the payment's words are said once, in one of the two.
@@ -41,53 +40,53 @@ const TABLE: { name: string; input: PendingPaymentInput; expect: ReturnType<type
 
   { name: 'open unpaid page, no package, no promotion (the owner\'s screenshot, without the reserved box)', input: input({ paymentState: 'PENDING', hasAttempt: true, canEnd: true, canCheck: true }),
     expect: { kind: 'OPEN', heading: OPEN, title: null, intro: [UNPAID_PAGE], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'],
-      ['check', 'secondary', 'ชำระแล้ว ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+      [...CONTINUE],
+      ['check', 'secondary', 'จ่ายแล้ว ตรวจผลการจ่ายเงิน'],
       CANCEL_NEW] } },
   { name: 'open unpaid page with a promotion right reserved: said in the block, and given back on cancel', input: input({ paymentState: 'PENDING', hasAttempt: true, canEnd: true, canCheck: true, reservedPromotion: PROMO }),
     expect: { kind: 'OPEN', heading: OPEN, title: null, intro: [UNPAID_PAGE, RESERVED], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'],
-      ['check', 'secondary', 'ชำระแล้ว ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+      [...CONTINUE],
+      ['check', 'secondary', 'จ่ายแล้ว ตรวจผลการจ่ายเงิน'],
       [...CANCEL_NEW, RIGHT_BACK]] } },
   { name: 'open unpaid page of a shop with a running package: it is told its package does not change', input: input({ paymentState: 'PENDING', hasAttempt: true, canEnd: true, canCheck: true, hasPackage: true }),
     expect: { kind: 'OPEN', heading: OPEN, title: null, intro: [UNPAID_PAGE], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'],
-      ['check', 'secondary', 'ชำระแล้ว ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+      [...CONTINUE],
+      ['check', 'secondary', 'จ่ายแล้ว ตรวจผลการจ่ายเงิน'],
       [...CANCEL_NEW, KEPT]] } },
   { name: 'open unpaid page, running package and a reserved right', input: input({ paymentState: 'PENDING', hasAttempt: true, canEnd: true, canCheck: true, hasPackage: true, reservedPromotion: PROMO }),
     expect: { kind: 'OPEN', heading: OPEN, title: null, intro: [UNPAID_PAGE, RESERVED], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อจ่ายให้เสร็จ'],
-      ['check', 'secondary', 'ชำระแล้ว ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+      [...CONTINUE],
+      ['check', 'secondary', 'จ่ายแล้ว ตรวจผลการจ่ายเงิน'],
       [...CANCEL_NEW, RIGHT_BACK, KEPT]] } },
 
   { name: 'outcome UNKNOWN: check the result first, paying again only when sure; ending keeps its confirmation', input: input({ paymentState: 'UNKNOWN', hasAttempt: true, canEnd: true, canCheck: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['ระบบยังยืนยันผลการชำระเงินรายการนี้ไม่ได้'], inFlight: true, steps: [
-      ['check', 'primary', 'ตรวจผลการชำระเงิน', CHECK_CAUTION],
-      ['continue', 'secondary', 'ชำระเงินต่อ', CONTINUE_CAUTION],
+    expect: { kind: 'OPEN', heading: 'ยังไม่ทราบผลการจ่ายเงิน', title: null, intro: ['ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ'], inFlight: true, steps: [
+      ['check', 'primary', 'ตรวจผลการจ่ายเงิน'],
+      ['continue', 'secondary', 'จ่ายต่อ', CONTINUE_CAUTION],
       CANCEL_TWO_STEP] } },
   { name: 'outcome UNKNOWN with a reserved right: it is returned only if nothing was paid', input: input({ paymentState: 'UNKNOWN', hasAttempt: true, canEnd: true, canCheck: true, reservedPromotion: PROMO, hasPackage: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['ระบบยังยืนยันผลการชำระเงินรายการนี้ไม่ได้', RESERVED], inFlight: true, steps: [
-      ['check', 'primary', 'ตรวจผลการชำระเงิน', CHECK_CAUTION],
-      ['continue', 'secondary', 'ชำระเงินต่อ', CONTINUE_CAUTION],
-      [...CANCEL_TWO_STEP, `ถ้ายังไม่ได้ชำระ ${RIGHT_BACK}`, KEPT]] } },
+    expect: { kind: 'OPEN', heading: 'ยังไม่ทราบผลการจ่ายเงิน', title: null, intro: ['ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ', RESERVED], inFlight: true, steps: [
+      ['check', 'primary', 'ตรวจผลการจ่ายเงิน'],
+      ['continue', 'secondary', 'จ่ายต่อ', CONTINUE_CAUTION],
+      [...CANCEL_TWO_STEP, `ถ้ายังไม่ได้จ่าย ${RIGHT_BACK}`, KEPT]] } },
   { name: 'ACTION_REQUIRED: continue at the payment page first', input: input({ paymentState: 'ACTION_REQUIRED', hasAttempt: true, canEnd: true, canCheck: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['การชำระเงินรายการนี้ยังต้องทำขั้นตอนเพิ่มที่หน้าชำระเงิน'], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อทำขั้นตอนที่เหลือให้เสร็จ'],
-      ['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเมื่อทำขั้นตอนที่หน้าชำระเงินเสร็จแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['การจ่ายเงินรายการนี้ยังต้องทำขั้นตอนเพิ่มที่หน้าจ่ายเงิน'], inFlight: true, steps: [
+      [...CONTINUE],
+      ['check', 'secondary', 'ตรวจผลการจ่ายเงิน'],
       CANCEL_TWO_STEP] } },
   { name: 'FAILED with the page still open (a charge failed): try again at the payment page first', input: input({ paymentState: 'FAILED', hasAttempt: true, canEnd: true, canCheck: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['ระบบแจ้งว่าการเก็บเงินครั้งล่าสุดไม่สำเร็จ และหน้าชำระเงินนี้ยังเปิดค้างอยู่'], inFlight: true, steps: [
-      [...CONTINUE, 'เปิดหน้าชำระเงินเดิมเพื่อลองชำระอีกครั้ง'],
-      ['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเมื่อจ่ายเงินแล้วแต่หน้านี้ยังไม่เปลี่ยน'],
+    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['เปิดหน้าจ่ายเงินไว้แล้ว แต่ระบบยังไม่ได้รับผลการจ่ายเงิน'], inFlight: true, steps: [
+      [...CONTINUE],
+      ['check', 'secondary', 'ตรวจผลการจ่ายเงิน'],
       CANCEL_TWO_STEP] } },
   { name: 'back from the payment page after finishing there, no answer (the wait gave up): check first, the buyer may well have paid, and the team is the way out when checking does not settle it',
     input: input({ paymentState: 'PENDING', hasAttempt: true, canEnd: true, canCheck: true, unconfirmed: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: [`กลับจากหน้าชำระเงินแล้ว แต่ระบบยังยืนยันผลการชำระเงินไม่ได้ ${CONTACT}`], inFlight: true, steps: [
-      ['check', 'primary', 'ตรวจผลการชำระเงิน', CHECK_CAUTION],
-      ['continue', 'secondary', 'ชำระเงินต่อ', CONTINUE_CAUTION],
-      CANCEL_NEW] } },
+    expect: { kind: 'OPEN', heading: 'ยังไม่ทราบผลการจ่ายเงิน', title: null, intro: ['ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ', CONTACT], inFlight: true, steps: [
+      ['check', 'primary', 'ตรวจผลการจ่ายเงิน'],
+      ['continue', 'secondary', 'จ่ายต่อ', CONTINUE_CAUTION],
+      CANCEL_TWO_STEP] } },
   { name: 'an open page the buyer can only end (no result to check, nothing to resume)', input: input({ paymentState: 'NONE', hasAttempt: true, canEnd: true }),
-    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['มีหน้าชำระเงินที่เปิดค้างอยู่'], inFlight: true, steps: [CANCEL_TWO_STEP] } },
+    expect: { kind: 'OPEN', heading: OPEN, title: null, intro: ['มีหน้าจ่ายเงินที่เปิดค้างอยู่'], inFlight: true, steps: [CANCEL_TWO_STEP] } },
 
   { name: 'waiting for the first answer after the payment page, no package: the heading says it, the block adds that the page checks by itself', input: input({ paymentState: 'PENDING', hasAttempt: true, awaiting: true, canCheck: true }),
     expect: { kind: 'WAITING', heading: WAITING, title: null, intro: [AUTO], inFlight: true, steps: [CHECK_NOW] } },
@@ -99,26 +98,26 @@ const TABLE: { name: string; input: PendingPaymentInput; expect: ReturnType<type
     expect: { kind: 'WAITING', heading: WAITING, title: null, intro: [AUTO], inFlight: true, steps: [] } },
 
   { name: 'paid and being applied: the check alone, and never a way to pay again', input: input({ paymentState: 'PAID', hasAttempt: true, moneyReceived: true, canCheck: true }),
-    expect: { kind: 'RECEIVED', heading: null, title: RECEIVED_TITLE, intro: [], inFlight: true, steps: [CHECK_LATEST] } },
-  { name: 'a renewal still being set up after the payment (a running package): the promotion\'s own box already says "ชำระแล้ว … ไม่ต้องชำระซ้ำ", so the block has no title', input: input({ paymentState: 'PAID', renewalSetup: true, canCheck: true, hasPackage: true }),
+    expect: { kind: 'RECEIVED', heading: RECEIVED_TITLE, title: null, intro: ['ไม่ต้องจ่ายซ้ำ'], inFlight: true, steps: [CHECK_LATEST] } },
+  { name: 'a renewal still being set up after the payment (a running package): the promotion\'s own box already says "จ่ายแล้ว … ไม่ต้องจ่ายซ้ำ", so the block has no title', input: input({ paymentState: 'PAID', renewalSetup: true, canCheck: true, hasPackage: true }),
     expect: { kind: 'RECEIVED', heading: null, title: null, intro: [], inFlight: true, steps: [CHECK_LATEST] } },
   { name: 'received money AND a renewal being set up: the money decides, so the title stays', input: input({ paymentState: 'PAID', hasAttempt: true, moneyReceived: true, renewalSetup: true, canCheck: true, hasPackage: true }),
-    expect: { kind: 'RECEIVED', heading: null, title: RECEIVED_TITLE, intro: [], inFlight: true, steps: [CHECK_LATEST] } },
+    expect: { kind: 'RECEIVED', heading: RECEIVED_TITLE, title: null, intro: ['ไม่ต้องจ่ายซ้ำ'], inFlight: true, steps: [CHECK_LATEST] } },
 
   { name: 'a past-due or unpaid subscription (the last charge failed, no payment page open): the heading says it, the check alone; a new purchase stays reachable', input: input({ paymentState: 'FAILED', canCheck: true, hasPackage: true }),
-    expect: { kind: 'FAILED', heading: null, title: LAST, intro: [], inFlight: false, steps: [CHECK_AGAIN] } },
+    expect: { kind: 'RECHECK', heading: null, title: LAST, intro: [], inFlight: false, steps: [['check', 'secondary', 'ตรวจผลการจ่ายเงิน']] } },
   { name: 'the return page of an attempt that failed (the attempt is over, the status names none): the check alone, and the way to a new purchase stays', input: input({ paymentState: 'NONE', failed: true, canCheck: true }),
-    expect: { kind: 'FAILED', heading: null, title: LAST, intro: [], inFlight: false, steps: [CHECK_AGAIN] } },
+    expect: { kind: 'FAILED', heading: 'จ่ายเงินไม่สำเร็จ', title: null, intro: [], inFlight: false, steps: [CHECK_AGAIN] } },
   { name: 'the same page while a newer attempt of the shop is in flight (another tab): the payment in flight decides, nothing new is started', input: input({ paymentState: 'PENDING', hasAttempt: true, failed: true, canCheck: true }),
-    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [ASKING], inFlight: true, steps: [['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเพื่อให้ระบบตรวจผลล่าสุดกับผู้ให้บริการรับชำระเงิน']] } },
+    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [ASKING], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการจ่ายเงิน']] } },
   { name: 'an attempt being checked, no page to resume or end: wait, do not start another', input: input({ paymentState: 'PENDING', hasAttempt: true, canCheck: true }),
-    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [ASKING], inFlight: true, steps: [['check', 'secondary', 'ตรวจผลการชำระเงิน', 'กดเพื่อให้ระบบตรวจผลล่าสุดกับผู้ให้บริการรับชำระเงิน']] } },
+    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [ASKING], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการจ่ายเงิน']] } },
   { name: 'an attempt whose outcome is unknown and has no page: the check leads', input: input({ paymentState: 'UNKNOWN', hasAttempt: true, canCheck: true, reservedPromotion: PROMO }),
-    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [ASKING, RESERVED], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการชำระเงิน', 'ระบบยังยืนยันผลไม่ได้ กดตรวจก่อนชำระใหม่ เพื่อไม่ให้ชำระซ้ำ']] } },
+    expect: { kind: 'CHECKING', heading: 'ยังไม่ทราบผลการจ่ายเงิน', title: null, intro: ['ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ', RESERVED], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการจ่ายเงิน']] } },
   { name: 'back from the payment page, an attempt with no page to resume, the answer never came: the way out is the team, said once, in the block', input: input({ paymentState: 'PENDING', hasAttempt: true, canCheck: true, unconfirmed: true }),
-    expect: { kind: 'CHECKING', heading: CHECKING, title: null, intro: [`${ASKING} ${CONTACT}`], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการชำระเงิน', 'ระบบยังยืนยันผลไม่ได้ กดตรวจก่อนชำระใหม่ เพื่อไม่ให้ชำระซ้ำ']] } },
+    expect: { kind: 'CHECKING', heading: 'ยังไม่ทราบผลการจ่ายเงิน', title: null, intro: ['ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ', CONTACT], inFlight: true, steps: [['check', 'primary', 'ตรวจผลการจ่ายเงิน']] } },
   { name: 'an old paid record on a shop whose package ran out: the check stays, with a sentence true whatever happened before', input: input({ paymentState: 'PAID', canCheck: true }),
-    expect: { kind: 'RECHECK', heading: null, title: LAST, intro: [], inFlight: false, steps: [['check', 'secondary', 'ตรวจผลการชำระเงิน', 'ให้ระบบถามผู้ให้บริการรับชำระเงินอีกครั้งว่ามีผลล่าสุดหรือไม่']] } },
+    expect: { kind: 'RECHECK', heading: null, title: LAST, intro: [], inFlight: false, steps: [['check', 'secondary', 'ตรวจผลการจ่ายเงิน']] } },
 ];
 
 test('the state table: heading or title, what is waiting, the choices in order with their purpose and emphasis, and what gives way', () => {
@@ -128,11 +127,12 @@ test('the state table: heading or title, what is waiting, the choices in order w
 
 test('the names of the controls: the old four labels are gone and the new ones say what they do', () => {
   const labels = new Set<string>(TABLE.flatMap(row => (pendingPayment(row.input)?.steps ?? []).map(step => step.label)));
-  assert.deepEqual([...labels].sort(), ['ชำระเงินต่อ', 'ชำระแล้ว ตรวจผลการชำระเงิน', 'ตรวจผลการชำระเงิน', 'ยกเลิกรายการนี้', 'ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่'].sort());
-  for (const old of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ตรวจผลการชำระเงินอีกครั้ง', 'ยุติรายการที่ยังไม่ชำระ']) assert.ok(!labels.has(old), old);
+  assert.deepEqual([...labels].sort(), ['จ่ายต่อ', 'จ่ายแล้ว ตรวจผลการจ่ายเงิน', 'ตรวจผลการจ่ายเงิน', 'ยกเลิกรายการนี้'].sort());
+  for (const old of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ตรวจผลการจ่ายเงินอีกครั้ง', 'ยุติรายการที่ยังไม่จ่าย']) assert.ok(!labels.has(old), old);
   // The confirmation of the two-step end keeps the caution that the provider is asked first.
-  assert.match(PENDING_TEXT.confirmEnd, /ระบบจะตรวจผลกับผู้ให้บริการรับชำระเงินก่อน/);
-  assert.deepEqual([PENDING_TEXT.confirmYes, PENDING_TEXT.confirmNo], ['ยืนยันยกเลิกรายการนี้', 'ยังไม่ยกเลิก']);
+  assert.equal(PENDING_TEXT.confirmEnd, 'ยกเลิกรายการจ่ายนี้?');
+  assert.equal(PENDING_TEXT.confirmDetail, 'ระบบตรวจผลรายการเดิมก่อน จึงเริ่มรายการใหม่ได้');
+  assert.deepEqual([PENDING_TEXT.confirmYes, PENDING_TEXT.confirmNo], ['ยกเลิกรายการนี้', 'ไม่ยกเลิก']);
 });
 
 // ---- invariants over every combination of the page's flags ----
@@ -154,15 +154,15 @@ function everyCombination(): PendingPaymentInput[] {
     }
   return all;
 }
-/** A sentence that says money was received. "หน้าชำระเงินแล้ว" (… the payment page) is not one; "จ่ายเงินแล้ว" is the buyer's own claim and appears only as a condition. */
-const CLAIMS_PAID = /ได้รับเงินแล้ว|(?<!หน้า)ชำระเงินแล้ว|(?<!หน้า)ชำระแล้ว|จ่ายเงินแล้ว/;
+/** A sentence that says money was received. "หน้าจ่ายเงินแล้ว" (… the payment page) is not one; "จ่ายเงินแล้ว" is the buyer's own claim and appears only as a condition. */
+const CLAIMS_PAID = /ได้รับเงินแล้ว|(?<!หน้า)จ่ายเงินแล้ว|(?<!หน้า)จ่ายแล้ว|จ่ายเงินแล้ว/;
 /** What the block says in its own words, the heading included; captions belong to a choice and are listed apart. */
 const statements = (block: PendingPayment) => [...(block.heading ? [block.heading] : []), ...(block.title ? [block.title] : []), ...block.intro];
 const words = (block: PendingPayment) => [...statements(block), ...block.steps.flatMap(step => step.caption)];
 const label = (name: string, flags: PendingPaymentInput) => `${name} :: ${JSON.stringify(flags)}`;
 const IN_FLIGHT: PendingKind[] = ['OPEN', 'WAITING', 'RECEIVED', 'CHECKING'], LEADS: PendingKind[] = ['OPEN', 'WAITING', 'CHECKING'];
 /** The button names a sentence may tell the buyer to press ("กด…"), and the label that has to be on the screen for the sentence to be true. */
-const PRESSES: [string, string][] = [['กดลองใหม่', 'ลองใหม่'], ['กดอัปเดตข้อมูล', 'อัปเดตข้อมูล'], ['กดตรวจสถานะล่าสุด', 'ตรวจสถานะล่าสุด'], ['กดตรวจผลการชำระเงิน', PENDING_TEXT.labelCheck], ['กดชำระเงินต่อ', PENDING_TEXT.labelContinue]];
+const PRESSES: [string, string][] = [['กดลองใหม่', 'ลองใหม่'], ['กดอัปเดตข้อมูล', 'อัปเดตข้อมูล'], ['กดตรวจสถานะล่าสุด', 'ตรวจสถานะล่าสุด'], ['กดตรวจผลการจ่ายเงิน', PENDING_TEXT.labelCheck], ['กดจ่ายต่อ', PENDING_TEXT.labelContinue]];
 /** What the block offers: its choices, and the "อัปเดตข้อมูล" that comes with the answer of the check. */
 const offered = (block: PendingPayment) => [...block.steps.map(step => step.label), ...(block.steps.some(step => step.key === 'check') ? ['อัปเดตข้อมูล'] : [])];
 
@@ -186,11 +186,11 @@ test('invariants over every combination: one green button at most, ending is nev
     for (const step of block.steps) {
       if (step.key === 'cancel') { assert.equal(step.emphasis, 'quiet', at('ending is quiet')); assert.equal(step, block.steps.at(-1), at('ending is last')); assert.ok(flags.canEnd, at('ending only when the payment can be ended')); }
       else assert.notEqual(step.emphasis, 'quiet', at('only ending is quiet'));
-      assert.ok(step.label.length > 0 && step.caption.length > 0 && step.caption.every(line => line.length > 0), at('every choice says what it does'));
+      assert.ok(step.label.length > 0 && step.caption.every(line => line.length > 0), at('every choice says what it does'));
     }
     // the payment's words are said once: in the card's heading (while the payment leads) or in the block's title, never both, and the kinds say it the same way every time
     assert.ok(!(block.heading && block.title), at('a heading and a title are never both'));
-    assert.equal(block.heading !== null, LEADS.includes(block.kind), at('the block leads the card exactly while the payment waits for the buyer or the provider'));
+    assert.equal(block.heading !== null, LEADS.includes(block.kind) || (block.kind === 'RECEIVED' && flags.moneyReceived) || block.kind === 'FAILED', at('the block leads the card exactly while the payment waits for the buyer or the provider'));
     if (block.title === null && block.heading === null) assert.equal(block.kind, 'RECEIVED', at('only a renewal being set up has no words of its own: the promotion box says them'));
     assert.equal(block.inFlight, IN_FLIGHT.includes(block.kind), at('the generic button, the invitation, the amber alert and an empty box give way exactly while a payment is open or in flight'));
     if (flags.canCheck) assert.ok(keys.includes('check'), at('the check control is never lost'));
@@ -202,7 +202,7 @@ test('invariants over every combination: one green button at most, ending is nev
     // money: "paid" and "no need to pay again" are said only when money was received (the wait after the payment page may say the second)
     for (const text of statements(block)) {
       if (CLAIMS_PAID.test(text)) assert.ok(received, at(`"paid" in ${text}`));
-      if (/ไม่ต้องชำระซ้ำ/.test(text)) assert.ok(received || flags.awaiting, at(`"no need to pay again" in ${text}`));
+      if (/ไม่ต้องจ่ายซ้ำ/.test(text)) assert.ok(received || flags.awaiting, at(`"no need to pay again" in ${text}`));
     }
     for (const text of block.steps.flatMap(step => step.caption)) if (CLAIMS_PAID.test(text)) assert.match(text, /^(กดเมื่อ|ใช้เมื่อ|ถ้า)/, at(`a caption names payment only as a condition: ${text}`));
     // the buyer's own claim is a label, and only on the second choice of an unpaid page
@@ -211,7 +211,7 @@ test('invariants over every combination: one green button at most, ending is nev
     const noPaying = received || flags.paymentState === 'PAID' || flags.awaiting;
     if (noPaying) {
       assert.ok(!keys.includes('continue'), at('no way back to the payment page'));
-      for (const text of [...words(block), ...block.steps.map(step => step.label)]) assert.doesNotMatch(text, /ชำระเงินต่อ|ชำระใหม่|ลองชำระ|เปิดหน้าชำระเงินเดิม/, at(`no invitation to pay in ${text}`));
+      for (const text of [...words(block), ...block.steps.map(step => step.label)]) assert.doesNotMatch(text, /จ่ายต่อ|จ่ายใหม่|ลองจ่าย|เปิดหน้าจ่ายเงินเดิม/, at(`no invitation to pay in ${text}`));
     }
     if (keys.includes('continue')) assert.ok(flags.canResume, at('continue only when the page can be resumed'));
     // "เดิม" as the old package, and the package that stays, only for a shop that has one
@@ -260,7 +260,7 @@ test('every kind is reachable and its first choice is what the state asks for', 
 // ---- round 4: what the card shows AROUND the block, kind by kind ----
 // The page draws the card from these flags only (the page pins below tie each to its place in BillingPage.tsx). Top to bottom on a phone, for a shop with no package:
 //   OPEN / WAITING / CHECKING  heading (the block's) · badge · block (leading) · [expired shop only: the date its package ended] · reference
-//   RECEIVED                   heading (the page's: "ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์" …) · badge · block (title + check) · reference
+//   RECEIVED                   heading (the page's: "จ่ายแล้ว กำลังตรวจสอบการเปิดสิทธิ์" …) · badge · block (title + check) · reference
 //   FAILED / RECHECK           heading (the page's) · badge · package box with its invitation · block · the generic button · reference
 // and for a shop whose package runs: the same, with the package's facts and notes AFTER a leading block, and before any other block, as they always were.
 const AROUND: Record<PendingKind, { headingFrom: 'block' | 'page'; blockLeads: boolean; gaveWay: string[] }> = {
@@ -268,7 +268,7 @@ const AROUND: Record<PendingKind, { headingFrom: 'block' | 'page'; blockLeads: b
   WAITING: { headingFrom: 'block', blockLeads: true, gaveWay: ['the generic button', 'the invitation', 'the amber alert', 'a box with only the badge\'s words'] },
   CHECKING: { headingFrom: 'block', blockLeads: true, gaveWay: ['the generic button', 'the invitation', 'the amber alert', 'a box with only the badge\'s words'] },
   RECEIVED: { headingFrom: 'page', blockLeads: false, gaveWay: ['the generic button', 'the invitation', 'the amber alert', 'a box with only the badge\'s words'] },
-  FAILED: { headingFrom: 'page', blockLeads: false, gaveWay: [] },
+  FAILED: { headingFrom: 'block', blockLeads: true, gaveWay: [] },
   RECHECK: { headingFrom: 'page', blockLeads: false, gaveWay: [] },
 };
 const around = (block: PendingPayment) => ({ headingFrom: block.heading ? 'block' : 'page', blockLeads: block.heading !== null,
@@ -276,96 +276,91 @@ const around = (block: PendingPayment) => ({ headingFrom: block.heading ? 'block
 
 test('what the card shows around the block, per kind: who owns the heading, where the block sits, what gave way', () => {
   const seen = new Set<string>();
-  for (const flags of everyCombination()) { const block = pendingPayment(flags); if (!block) continue; seen.add(block.kind); assert.deepEqual(around(block), AROUND[block.kind], label(block.kind, flags)); }
+  for (const flags of everyCombination()) { const block = pendingPayment(flags); if (!block) continue; seen.add(block.kind); assert.deepEqual(around(block), block.kind === 'RECEIVED' && flags.moneyReceived ? { ...AROUND.RECEIVED, headingFrom: 'block', blockLeads: true } : AROUND[block.kind], label(block.kind, flags)); }
   assert.deepEqual([...seen].sort(), Object.keys(AROUND).sort());
   // the heading the card gets while the payment leads is the one asserted by the browser: true for the state, and nothing else says it
   assert.deepEqual([OPEN, WAITING, CHECKING], [PENDING_TEXT.titleOpen, PENDING_TEXT.headingWaiting, PENDING_TEXT.headingChecking]);
-  assert.equal(PENDING_TEXT.headingChecking, 'กำลังตรวจสอบรายการชำระเงิน', 'the words the card already used while a payment was being checked');
-  assert.equal(PENDING_TEXT.headingWaiting, 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', 'the line of the gray waiting box, now the heading');
+  assert.equal(PENDING_TEXT.headingChecking, 'กำลังตรวจสอบรายการจ่ายเงิน', 'the words the card already used while a payment was being checked');
+  assert.equal(PENDING_TEXT.headingWaiting, 'กำลังรอผลการจ่ายเงิน', 'the line of the gray waiting box, now the heading');
   // an open unpaid page is no longer headed "checking": the system waits for the buyer, and the heading says so
   assert.doesNotMatch(PENDING_TEXT.titleOpen, /ตรวจ/);
 });
 
 test('the amber alert that is left (no block says it) names the button it really has, and the red banner keeps its own retry', () => {
-  assert.equal(PENDING_TEXT.alertCheckoutPending, 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดตรวจสถานะล่าสุด');
+  assert.equal(PENDING_TEXT.alertCheckoutPending, 'ระบบกำลังตรวจรายการจ่ายเงินเดิมกับผู้ให้บริการรับเงิน กรุณารอสักครู่แล้วกดตรวจสถานะล่าสุด');
   assert.ok(PENDING_TEXT.alertCheckoutPending.includes('กดตรวจสถานะล่าสุด'));
   assert.ok(!PENDING_TEXT.alertCheckoutPending.includes('ลองใหม่'));
-  // the shared text keeps saying "ลองใหม่": the red banner that carries it has that button
-  assert.match(errorText({ code: 'BILLING_CHECKOUT_PENDING' }), /กดลองใหม่$/);
+  // The red banner names its actual retry button.
+  assert.match(errorText({ code: 'BILLING_CHECKOUT_PENDING' }), /กดลองอีกครั้ง$/);
 });
 
 // ---- the page draws what the logic returns, and does what it always did ----
 const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
 const display = readFileSync(new URL('./billing-display.ts', import.meta.url), 'utf8');
-const pendingSection = page.slice(page.indexOf('const pendingSection = ('), page.indexOf('  return <BillingCustomerFrame'));
+const pendingSection = page.slice(page.indexOf('const pendingSection = ('), page.indexOf('  return <div className="mangmee-flat'));
 const at = (text: string) => { const index = page.indexOf(text); assert.ok(index > 0, text); return index; };
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 test('the card: the block leads under its own heading, the package area follows, the other block comes after the notes, the generic button and the repeats give way, the reference is the last thing', () => {
-  const heading = at('<h2 className="text-lg font-bold">{pending?.heading ?? (returnFailed'), lead = at('{pending && pendingLeads && pendingSection(status, pending)}'), box = at('{noPackage ? (pending?.inFlight && !(lockReason === \'trial_ended\' && status.termEndsAt) ? null : <dl'),
-    later = at('{pending && pendingShown && !pendingLeads && pendingSection(status, pending)}'), generic = at("{status.allowedActions.includes('new_sales') && !pending?.inFlight && <button"),
-    reference = at('{supportReference && !confirmed && !applyHeld && <details'), cardEnd = at("<div hidden={section !== 'payment'}");
+  const heading = at('<h2 className="text-lg font-bold">{returnHeading ?? pending?.heading ?? (returnFailed'), lead = at('{pending && pendingLeads && !heldShop && pendingSection(status, pending)}'), box = at('{noPackageFacts ? null : noPackage ? (pendingShown && !(lockReason === \'trial_ended\' && status.termEndsAt) ? null : <dl'),
+    later = at('{pending && pendingShown && !pendingLeads && !heldShop && pendingSection(status, pending)}'), generic = at("status.allowedActions.includes('new_sales') && !pending?.inFlight && !status.renewalInvoiceUrl && pending?.kind !== 'FAILED' && <ActionGroup"),
+    reference = at('{supportReference && !confirmed && <details'), cardEnd = at('id="billing-history"');
   assert.ok(heading < lead && lead < box && box < later && later < generic && generic < reference && reference < cardEnd, 'heading, the leading block, the package area, the other block, the generic button, then the reference');
   assert.equal(count(page, 'เลขอ้างอิงสำหรับแจ้งทีมงาน</summary>'), 1, 'the collapsed reference exists once');
   // the heading chain is the page's own, untouched, behind the block's heading
-  assert.match(page, /\{pending\?\.heading \?\? \(returnFailed \? 'รายการชำระเงินนี้ไม่สำเร็จ' : status\.pendingDeal \?/);
-  assert.match(page, /: status\.attemptId \? 'กำลังตรวจสอบรายการชำระเงิน' : packageHeading\)\}<\/h2>/);
+  assert.match(page, /\{returnHeading \?\? pending\?\.heading \?\? \(returnFailed \? 'ยังไม่ได้รับเงิน' : status\.pendingDeal \?/);
+  assert.match(page, /: status\.attemptId \? 'กำลังตรวจสอบรายการจ่ายเงิน' : packageHeading\)\}<\/h2>/);
   // what is derived, once
   assert.match(page, /const pendingShown = !!pending && !!\(pending\.heading \|\| pending\.title \|\| pending\.intro\.length > 0 \|\| pending\.steps\.length > 0\);/);
   assert.match(page, /const pendingLeads = pendingShown && !!pending\?\.heading;/);
   // the invitation gives way (no pointer stands in its place: the block says it), the reserved right is said in the block, and the amber alert goes for every kind that is in flight
   assert.match(page, /const purchaseHint = pending\?\.inFlight \? null : canBuy \|\| oneTapCancel \?/);
   assert.match(page, /\{promotionBlock && !pending\?\.showsReservedPromotion && <section role="status" aria-label="สถานะโปรโมชั่น"/);
-  assert.match(page, /\{status\.purchaseBlockCode && !quietBlock && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
-  assert.match(page, /<p>\{status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' \? PENDING_TEXT\.alertCheckoutPending : errorText\(\{ code: status\.purchaseBlockCode \}\)\}<\/p>/);
+  assert.match(page, /\{purchaseBlockText && !quietBlock && !applyReview && !heldShop && !\(pending\?\.kind === 'FAILED' && purchaseSalesClosed\) && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
+  assert.match(page, /<p>\{purchaseBlockText\}<\/p>/);
   assert.match(page, />ตรวจสถานะล่าสุด<\/button>/, 'the button the alert\'s sentence names');
   // what is gone: the gray waiting box, the pointer, the old paragraph, and every field of the block that existed only for them
-  for (const gone of ['noPackage && awaitingStripe', 'ระบบตรวจผลให้อัตโนมัติ', 'กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', 'ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่', 'pending.pointer', 'hidePurchaseHint', 'hideChoosePackage', 'timedOut && !status.pendingDeal'])
+  for (const gone of ['noPackage && awaitingStripe', 'ระบบตรวจผลให้อัตโนมัติ', 'กำลังรอผลการจ่ายเงิน', 'ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนจ่ายใหม่', 'pending.pointer', 'hidePurchaseHint', 'hideChoosePackage', 'timedOut && !status.pendingDeal'])
     assert.equal(count(page, gone), 0, gone);
   // the flags the logic is given are the page's own, unchanged
-  assert.match(page, /pendingPayment\(\{ paymentState: status\.paymentState, hasAttempt: !!status\.attemptId, awaiting: awaitingStripe, unconfirmed: returning && !checkoutCanceled && !awaitingStripe,/);
-  assert.match(page, /canEnd: canEndCheckout, canResume: canResumePayment, oneTap: oneTapCancel, canCheck: !!hasPaymentToCheck, moneyReceived: paidNotApplied, renewalSetup: !!promotionBlock\?\.checking,/);
+  assert.match(page, /pendingPayment\(\{ paymentState: attemptPaymentState, hasAttempt: !!status\.attemptId \|\| !!returnAttemptId, awaiting: awaitingStripe, unconfirmed: unresolvedReturn,/);
+  assert.match(page, /canEnd: canEndCheckout, canResume: canResumePayment, oneTap: oneTapCancel, canCheck: !!hasPaymentToCheck, moneyReceived: paidNotApplied, held: applyHeld, deferred: !!status\.pendingDeal, renewalSetup: !!promotionBlock\?\.checking,/);
   assert.match(page, /failed: returnFailed, hasPackage: !noPackage, reservedPromotion: promotionReservedName\(promotionUse\) \}\) : null;/);
   // the three derived flags keep their old definitions (the block decides wording only)
-  assert.match(page, /const canEndCheckout = !awaitingStripe && Boolean\(status\?\.canCancelCheckout && status\.attemptId\);/);
-  assert.match(page, /const canResumePayment = canEndCheckout && \['PENDING', 'FAILED', 'UNKNOWN', 'ACTION_REQUIRED'\]\.includes\(status!\.paymentState\);/);
-  assert.match(page, /const oneTapCancel = canEndCheckout && status!\.paymentState === 'PENDING';/);
+  assert.match(page, /const canEndCheckout = !awaitingStripe && !paidNotApplied && !\(currentReturn && returnComplete\) && !returnFailed && Boolean\(status\?\.canCancelCheckout && status\.attemptId\);/);
+  assert.match(page, /const canResumePayment = canEndCheckout && \['PENDING', 'FAILED', 'UNKNOWN', 'ACTION_REQUIRED'\]\.includes\(attemptPaymentState\);/);
+  assert.match(page, /const oneTapCancel = canEndCheckout && attemptPaymentState === 'PENDING' && !unresolvedReturn;/);
 });
 
-test('the markup: a region named by its heading, an ordered list, a control and its purpose tied together, 44px controls that fill a phone', () => {
-  assert.match(pendingSection, /<section aria-label=\{block\.heading \?\? block\.title \?\? PENDING_TEXT\.regionName\} className=\{`space-y-4 rounded-xl border p-4 \$\{PENDING_TONE\[block\.tone\]\}`\}>/);
-  assert.match(pendingSection, /\{block\.title && <h3 className="text-lg font-bold text-gray-900">\{block\.title\}<\/h3>\}/);
-  assert.match(pendingSection, /<ol className="space-y-4">/);
-  assert.match(pendingSection, /<li key=\{step\.key\} className="space-y-2">/);
-  assert.match(pendingSection, /<button type="button" className=\{STEP_CLASS\[step\.emphasis\]\} disabled=\{busy\} aria-busy=\{busy\} aria-describedby=\{ids\.join\(' '\)\} onClick=\{run\[step\.key\]\}>\{step\.label\}<\/button>/);
-  assert.match(pendingSection, /\{step\.caption\.map\(\(line, index\) => <p key=\{line\} id=\{ids\[index\]\} className="break-words text-sm leading-6 text-gray-600">\{line\}<\/p>\)\}/);
-  assert.match(pendingSection, /const ids = step\.caption\.map\(\(_, index\) => `\$\{pendingId\}-\$\{step\.key\}-\$\{index\}`\);/);
-  // each control is at least 44px and full width until sm; only the first is green (the page's own primary class), and only giving up is quiet
-  assert.match(page, /primary: `\$\{billingPrimaryControl\} w-full sm:w-auto`,\s*secondary: `\$\{billingControl\} w-full sm:w-auto`,\s*quiet: 'inline-flex min-h-11 w-full items-center justify-start rounded-xl /);
-  assert.match(display, /export const billingControl = 'inline-flex min-h-11 /);
-  assert.match(display, /export const billingPrimaryControl = `\$\{billingControl\} /);
-  // brand classes only: no raw palette outside the page's existing ones, and nothing that would push past 390px
-  const classes = [...pendingSection.matchAll(/className="([^"]+)"/g)].map(match => match[1]!).join(' ') + ' ' + page.slice(at('const STEP_CLASS'), at('const enterpriseMenuSummary'));
-  assert.doesNotMatch(classes, /\bw-\[\d|\bmin-w-|\bwhitespace-nowrap|\boverflow-x-/, 'no fixed widths or non-wrapping text in the block');
-  assert.doesNotMatch(classes, /\b(bg|text|border)-(?:blue|green|indigo|purple|pink|orange|yellow)-/, 'brand and the page\'s neutral and alert colours only');
-  // the confirmation of the two-step end stays inside the choice it belongs to, with both its buttons
-  assert.match(pendingSection, /const confirming = step\.key === 'cancel' && !oneTapCancel && confirmCheckoutCancel;/);
-  assert.match(pendingSection, /<p>\{PENDING_TEXT\.confirmEnd\}<\/p>/);
-  assert.match(pendingSection, /\}>\{PENDING_TEXT\.confirmYes\}<\/button><button className=\{STEP_CLASS\.secondary\} disabled=\{busy\} onClick=\{\(\) => setConfirmCheckoutCancel\(false\)\}>\{PENDING_TEXT\.confirmNo\}<\/button>/);
-  // the follow-up of a check ("update the information") stays attached to the check choice, inside the one status that is the answer
-  assert.match(pendingSection, /\{step\.key === 'check' && refreshNotice && <div ref=\{refreshAnswer\} tabIndex=\{-1\} role="status" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\] space-y-2">\s*<p className="text-sm leading-6 text-gray-700">\{refreshNotice\}<\/p>/);
-  assert.match(pendingSection, /className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto" disabled=\{busy\} onClick=\{\(\) => setReload\(value => value \+ 1\)\}>อัปเดตข้อมูล<\/button>/);
-  assert.equal(count(pendingSection, 'role="status"'), 1, 'one status, not two nested');
+test('the markup: one shared equal-size group, main first, with only necessary linked captions', () => {
+  assert.match(pendingSection, /<section aria-label=\{block\.heading \?\? block\.title \?\? PENDING_TEXT\.regionName\} className="space-y-4">/);
+  assert.match(pendingSection, /<ActionGroup align="start" className=\{block\.kind === 'FAILED' \? undefined : '!flex-col'\}>/);
+  assert.doesNotMatch(pendingSection, /<ol|<li|rounded-xl border/);
+  assert.match(pendingSection, /className=\{STEP_CLASS\[paidSummary && step\.key === 'check' \? 'secondary' : step\.emphasis\]\} disabled=\{busy\} aria-busy=\{busy\}/);
+  assert.match(pendingSection, /aria-describedby=\{step\.caption\.length \? `\$\{pendingId\}-\$\{step\.key\}` : undefined\}/);
+  assert.match(pendingSection, /id=\{`\$\{pendingId\}-\$\{step\.key\}`\}/);
+  assert.match(pendingSection, /onClick=\{run\[step\.key\]\}/);
+  assert.match(page, /secondaryButtonClass as billingControl/);
+  assert.match(page, /primaryButtonClass as billingPrimaryControl/);
+  assert.match(page, /quiet: quietButtonClass/);
+  assert.match(pendingSection, /confirmCheckoutCancel && !oneTapCancel && block\.steps\.some\(step => step\.key === 'cancel'\)/);
+  assert.match(pendingSection, /<h3 className="font-semibold">\{PENDING_TEXT\.confirmEnd\}<\/h3>/);
+  assert.match(pendingSection, /<p>\{PENDING_TEXT\.confirmDetail\}<\/p>/);
+  assert.ok(pendingSection.indexOf('{PENDING_TEXT.confirmNo}') < pendingSection.indexOf('{PENDING_TEXT.confirmYes}'));
+  assert.match(pendingSection, /className=\{dangerButtonClass\} disabled=\{busy\} aria-busy=\{busy\}/);
+  assert.equal(count(pendingSection, 'role="status"'), 1);
+  assert.match(pendingSection, /\{refreshNotice\}<\/p>/);
+  assert.match(pendingSection, /disabled=\{busy\} aria-busy=\{busy\} onClick=\{\(\) => setReload\(value => value \+ 1\)\}>อัปเดตข้อมูล/);
 });
 
-test('item 5: the quiet choice starts where its captions start and wraps balanced', () => {
-  const quiet = /quiet: '([^']+)'/.exec(page)![1]!.split(/\s+/);
-  for (const needed of ['min-h-11', 'w-full', 'sm:w-auto', 'justify-start', 'text-left', '[text-wrap:balance]', 'underline']) assert.ok(quiet.includes(needed), needed);
-  // no inset from the side (it was `px-4`: 16px right of the captions from sm up), and not centered (it was centered at 390 while the captions are left-aligned)
-  assert.ok(!quiet.some(name => /^(sm:)?px-/.test(name)), 'no horizontal padding');
-  assert.ok(!quiet.includes('justify-center') && !quiet.includes('text-center'));
-  // the captions under it are left-aligned text with no inset either
-  assert.match(pendingSection, /className="break-words text-sm leading-6 text-gray-600"/);
+test('captions add only a payment caution or retained rights, never repeat the check intro', () => {
+  for (const row of TABLE) {
+    const block = pendingPayment(row.input);
+    if (!block) continue;
+    assert.doesNotMatch([...block.intro, ...block.steps.flatMap(step => step.caption)].join(' '), /หรือไม่/);
+    assert.ok([...block.intro, ...block.steps.flatMap(step => step.caption)].filter(line => line.includes('เพื่อไม่ให้จ่ายซ้ำ')).length <= 1);
+    for (const step of block.steps) if (step.key === 'check') assert.deepEqual(step.caption, []);
+  }
 });
 
 test('every handler does what the loose button of the same job did, and the four old labels are gone from the page', () => {
@@ -376,16 +371,16 @@ test('every handler does what the loose button of the same job did, and the four
   assert.equal(count(page, 'api.resume('), 1);
   assert.equal(count(page, 'api.cancelCheckout('), 2);
   // the notices the handlers set are the ones the e2e specs and the buyers already know
-  for (const notice of ['หน้าชำระเงินเดิมเปิดต่อไม่ได้แล้ว ระบบกำลังตรวจผลรายการเดิม กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย',
-    'รายการเดิมชำระสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้',
-    'กำลังตรวจผลรายการเดิม กรุณากดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', 'ส่งคำขอตรวจสอบแล้ว ยังไม่ใช่ผลยืนยันการชำระเงิน กดอัปเดตข้อมูลเพื่อดูผลภายหลัง', 'ยังไม่มีรายการที่ต้องตรวจสอบกับผู้ให้บริการ'])
+  for (const notice of ['หน้าจ่ายเงินเดิมเปิดต่อไม่ได้แล้ว ระบบกำลังตรวจผลรายการเดิม รอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย',
+    'รายการเดิมจ่ายสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับเงิน รอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้',
+    'กำลังตรวจผลรายการเดิม กดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', 'ส่งคำขอตรวจสอบแล้ว กดอัปเดตข้อมูลเพื่อดูผลล่าสุด', 'ยังไม่มีรายการที่ต้องตรวจสอบกับผู้ให้บริการ'])
     assert.equal(count(pendingSection, notice), 1, notice);
   // an unpaid page is ended in one tap and the chooser reopens; every other open payment asks first
   assert.match(pendingSection, /if \(result\.state === 'EXPIRED'\) \{ reopenChooser\.current = true; setCheckoutCancelNotice/);
   assert.match(pendingSection, /cancel: oneTapCancel \? \(\) => action\(async \(\) => \{/);
   assert.match(pendingSection, /\}\) : \(\) => setConfirmCheckoutCancel\(true\),/);
   // the old controls: gone as buttons, kept nowhere as a label
-  for (const old of ['>เลือกแพ็กเกจใหม่</button>', '>กลับไปยังรายการเดิม</button>', '>ตรวจผลการชำระเงินอีกครั้ง</button>', '>ยุติรายการที่ยังไม่ชำระ</button>', '>ยืนยันยุติหน้าชำระเงิน</button>', '>ยังไม่ยุติ</button>', 'ยุติหน้าชำระเงินรายการนี้ใช่ไหม'])
+  for (const old of ['>เลือกแพ็กเกจใหม่</button>', '>กลับไปยังรายการเดิม</button>', '>ตรวจผลการจ่ายเงินอีกครั้ง</button>', '>ยุติรายการที่ยังไม่จ่าย</button>', '>ยืนยันยุติหน้าจ่ายเงิน</button>', '>ยังไม่ยุติ</button>', 'ยุติหน้าจ่ายเงินรายการนี้ใช่ไหม'])
     assert.equal(count(page, old), 0, old);
   assert.equal(count(page, '{canResumePayment && <button'), 0);
   assert.equal(count(page, '{oneTapCancel && <button'), 0);
@@ -403,7 +398,7 @@ test('D9 logic: answers that say the payment on screen is over make the page rea
   for (const status of [400, 401, 403, 429, 500, 503]) assert.equal(paymentIsOver(answer(undefined, status)), false, String(status));
   for (const nothing of [null, undefined, 'BILLING_CHECKOUT_NOT_STARTED', 404, {}]) assert.equal(paymentIsOver(nothing), false, String(nothing));
   // The banner the buyer is shown for it is plain Thai and not the generic sentence.
-  assert.equal(errorText(answer('BILLING_CHECKOUT_NOT_STARTED', 409)), 'รายการชำระเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่');
+  assert.equal(errorText(answer('BILLING_CHECKOUT_NOT_STARTED', 409)), 'รายการจ่ายเงินนี้ยังไม่ได้เริ่ม กลับไปเลือกแพ็กเกจเพื่อเริ่มรายการใหม่');
   assert.match(errorText(answer('CONTROL_PREVIEW_STALE', 409)), /^[ก-๙ ]+$/u);
 });
 
@@ -422,7 +417,7 @@ test('D9 wiring: the banner is set first, then the status is read in place; a ba
   // the read is guarded like the quote request's, so an older answer cannot overwrite a newer one
   assert.match(page, /statusRead = useRef\(0\)/);
   // the Checkout the page was drawn from is the only thing that depends on that read: the block is derived from the status each render
-  assert.match(page, /const pending = status \? pendingPayment\(/);
+  assert.match(page, /const pendingState = status \? pendingPayment\(/);
 });
 
 // ---- D10: the red banner is seen on a phone ----
@@ -433,11 +428,11 @@ test('D10 wiring: the banner takes a ref, focus and a header-aware scroll margin
   // the same for the notice after ending or resuming a payment (not stealing the scroll when it is already in view)
   assert.match(page, /\{checkoutCancelNotice && <div ref=\{checkoutNotice\} tabIndex=\{-1\} role="status" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\] /);
   // the recipient errors still go to the email panel
-  assert.match(page, /useEffect\(\(\) => \{ if \(error && RECIPIENT_ERROR_CODES\.includes\(errorCode \?\? ''\)\) \{ setSection\('payment'\); emailSettings\.current\?\.scrollIntoView\(\{ block: 'start' \}\); \} \}, \[error, errorCode\]\);/);
+  assert.match(page, /useEffect\(\(\) => \{ if \(error && RECIPIENT_ERROR_CODES\.includes\(errorCode \?\? ''\)\) \{ setSection\('payment'\); setRecipientOpen\(value => value \+ 1\); emailSettings\.current\?\.scrollIntoView\(\{ block: 'start' \}\); \} \}, \[error, errorCode\]\);/);
 });
 
 // ---- D12: the answer of the check is seen where the button was pressed ----
-test('D12 wiring: the answer of "ตรวจผลการชำระเงิน" takes a ref, focus and the header scroll margin, and is brought into view only when it is not already visible', () => {
+test('D12 wiring: the answer of "ตรวจผลการจ่ายเงิน" takes a ref, focus and the header scroll margin, and is brought into view only when it is not already visible', () => {
   assert.match(page, /useEffect\(\(\) => \{ if \(refreshNotice\) \{ refreshAnswer\.current\?\.scrollIntoView\(\{ block: 'nearest' \}\); refreshAnswer\.current\?\.focus\(\{ preventScroll: true \}\); \} \}, \[refreshNotice\]\);/);
   assert.equal(count(page, 'ref={refreshAnswer}'), 1);
   assert.equal(count(page, 'refreshAnswer.current'), 2);
@@ -450,7 +445,7 @@ test('D12 wiring: the answer of "ตรวจผลการชำระเง�
 const scrollEffects = page.split('\n').flatMap(line => {
   const found = /^\s*useEffect\(\(\) => \{(.+)\}, \[([^\]]*)\]\);\s*$/.exec(line);
   if (!found || !found[1]!.includes('scrollIntoView')) return [];
-  const target = /(\w+)\.current\?\.scrollIntoView/.exec(found[1]!)![1]!;
+  const target = found[2]!.includes('buyingStep') ? 'backNavigation' : /(\w+)\.current\?\.scrollIntoView/.exec(found[1]!)![1]!;
   return [{ target: found[1]!.includes('RECIPIENT_ERROR_CODES.includes') && !found[1]!.includes('!RECIPIENT_ERROR_CODES') ? 'recipient error' : target, deps: found[2]!.split(',').map(dep => dep.trim()).filter(Boolean) }];
 });
 /** What runs, in order, in a commit where these states changed. The recipient destination is left out: it scrolls for its own four codes only, which the banner effect refuses (pinned in D10). */
@@ -458,7 +453,7 @@ const ran = (...changed: string[]) => scrollEffects.filter(effect => effect.targ
 
 test('D13: the effect order — cadence notice, chooser heading, lost-promotion notice, banner, cancel notice, the answer of the check, then the recipient destinations', () => {
   assert.deepEqual(scrollEffects.map(effect => effect.target), ['cadenceNoticeRef', 'backNavigation', 'lostNotice', 'errorBanner', 'checkoutNotice', 'refreshAnswer', 'recipient error', 'emailSettings']);
-  assert.deepEqual(scrollEffects.map(effect => effect.deps), [['cadenceNotice'], ['quote', 'choosing'], ['promotionLost'], ['error', 'errorCode'], ['checkoutCancelNotice', 'noticeAgain'], ['refreshNotice'], ['error', 'errorCode'], ['recipientOpen']]);
+  assert.deepEqual(scrollEffects.map(effect => effect.deps), [['cadenceNotice'], ['quote', 'choosing', 'buyingStep'], ['promotionLost'], ['error', 'errorCode'], ['checkoutCancelNotice', 'noticeAgain'], ['refreshNotice'], ['error', 'errorCode'], ['recipientOpen']]);
 });
 
 test('D13: in every commit where a notice is set together with a chooser change, the notice is the last to scroll — and an old notice never pulls the page back', () => {
@@ -480,7 +475,7 @@ test('D13: in every commit where a notice is set together with a chooser change,
   assert.deepEqual(ran('refreshNotice'), ['refreshAnswer']);
   assert.deepEqual(ran('cadenceNotice'), ['cadenceNoticeRef']);
   // the chooser opens in the same commit as the counter, in the same batch, and nowhere else bumps it
-  assert.match(page, /if \(reopenChooser\.current && status\.allowedActions\.includes\('new_sales'\) && !status\.attemptId\) \{ reopenChooser\.current = false; setChoosing\(true\); setSection\('package'\); setNoticeAgain\(value => value \+ 1\); \}/);
+  assert.match(page, /if \(reopenChooser\.current && status\.allowedActions\.includes\('new_sales'\) && !status\.attemptId\) \{ reopenChooser\.current = false; setChoosing\(true\); setBuyingStep\(0\); setSection\('package'\); setNoticeAgain\(value => value \+ 1\); \}/);
   assert.equal(count(page, 'setNoticeAgain('), 1);
   assert.match(page, /const \[noticeAgain, setNoticeAgain\] = useState\(0\);/);
   // the banner's recipient guard: a recipient error has its own destination, the banner leaves it alone
@@ -488,7 +483,7 @@ test('D13: in every commit where a notice is set together with a chooser change,
 });
 
 // ---- UAT 2026-10-10: ending a payment never leaves its block beside the notice that says it is ended ----
-// After "ยกเลิกรายการนี้ แล้วเลือกแพ็กเกจใหม่" succeeded, the notice "ยกเลิกรายการเดิมแล้ว …" sat for 3-5 seconds above the old block ("มีรายการชำระเงินที่ยังไม่เสร็จ", the reserved right, the three
+// After "ยกเลิกรายการนี้" succeeded, the notice "ยกเลิกรายการเดิมแล้ว …" sat for 3-5 seconds above the old block ("มีรายการจ่ายเงินที่ยังไม่เสร็จ", the reserved right, the three
 // choices) until the read that follows the cancel landed. The status on screen is stale the moment the cancel call succeeds, so the page keeps that status object and draws its loading line
 // instead of the card until a status that is not that object arrives. The surface x state table (the browser lane runs it with the read held back):
 //   cancel answer           | notice shown                         | old block | what stands in its place until the read lands | after the read
@@ -517,15 +512,61 @@ test('ending a payment: the stale status is dropped from the screen the moment t
 });
 
 test('ending a payment: while the status is the stale one the page draws the loading line and none of the card, so the notice and the block of choices are never on screen together', () => {
-  const loading = at('{(!data || settling) && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}'), body = at('{data && status && !settling && <>'), notice = at('{checkoutCancelNotice && <div ref={checkoutNotice}');
+  const loading = at('{(!data || settling) && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการจ่ายเงิน…</p>}'), body = at('{data && status && !settling && <>'), notice = at('{checkoutCancelNotice && <div ref={checkoutNotice}');
   assert.ok(notice < loading && loading < body, 'the notice is outside the part that gives way, and the loading line comes right where the card was');
   // every place that draws the block, or an alert about the payment, is inside the part that gives way
   const calls = [...page.matchAll(/pendingSection\(status, pending\)/g)].map(match => match.index!);
   assert.equal(calls.length, 2, 'the block is drawn in two places (leading the card, or after the notes)');
   for (const index of calls) assert.ok(index > body, 'inside the part that gives way');
-  assert.ok(at('{status.purchaseBlockCode && !quietBlock') > body, 'and so is the amber alert for the payment');
+  assert.ok(at('{purchaseBlockText && !quietBlock') > body, 'and so is the amber alert for the payment');
   // the loading line is the one the first load shows, said the same way
-  assert.equal(count(page, 'กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…'), 1);
+  assert.equal(count(page, 'กำลังตรวจสอบสิทธิ์และรายการจ่ายเงิน…'), 1);
   // a read that fails is not hidden behind it: the error banner is outside, and the line is not drawn beside an error
   assert.ok(at('{error && <div ref={errorBanner}') < notice);
+});
+
+test('D5 unknown is distinct from a definite attempt failure and paid states never collect again', () => {
+  const unknown = pendingPayment(input({ paymentState: 'UNKNOWN', hasAttempt: true, canCheck: true, canEnd: true }))!;
+  assert.equal(unknown.heading, 'ยังไม่ทราบผลการจ่ายเงิน');
+  assert.ok(unknown.intro.includes('ตรวจผลรายการเดิมก่อน เพื่อไม่ให้จ่ายซ้ำ'));
+  const failedCharge = pendingPayment(input({ paymentState: 'FAILED', canCheck: true }))!;
+  assert.notEqual(failedCharge.kind, 'FAILED', 'a subscription failure is not a failed purchase');
+  const declined = pendingPayment(input({ paymentState: 'FAILED', failed: true, canCheck: true }))!;
+  assert.equal(declined.heading, 'จ่ายเงินไม่สำเร็จ');
+  for (const held of [false, true]) {
+    const paid = pendingPayment(input({ paymentState: 'PAID', moneyReceived: true, canCheck: true, canEnd: true, held } as Partial<PendingPaymentInput>))!;
+    assert.equal(paid.heading, held ? 'ได้รับเงินแล้ว ทีมงานกำลังตรวจสอบ' : 'ได้รับเงินแล้ว กำลังเปิดแพ็กเกจ');
+    assert.deepEqual(paid.steps.map(step => step.key), ['check']);
+    assert.equal(paid.inFlight, true);
+  }
+});
+
+
+test('DQ3 definite failed return does not invent a retry or cancellation for an attempt the read cannot end', () => {
+  const block = pendingPayment(input({ paymentState: 'FAILED', failed: true, hasAttempt: true, canCheck: true, canEnd: false }))!;
+  assert.equal(block.kind, 'FAILED');
+  assert.equal(block.heading, 'จ่ายเงินไม่สำเร็จ');
+  assert.deepEqual(block.steps.map(({ key, emphasis }) => ({ key, emphasis })), [{ key: 'check', emphasis: 'secondary' }]);
+  // A new purchase is gated by BillingStatus.allowedActions in the page, never inferred from a failed charge.
+});
+
+
+test('DQ4b a failed purchase that may buy again invites the chooser without a redundant check', () => {
+  const result = pendingPayment(input({ failed: true, paymentState: 'FAILED', canCheck: true, canPurchase: true }))!;
+  assert.equal(result.kind, 'FAILED');
+  assert.deepEqual(result.intro, ['เลือกแพ็กเกจแล้วจ่ายอีกครั้งได้']);
+  assert.deepEqual(result.steps, []);
+  for (const state of ['UNKNOWN', 'PENDING'] as const) {
+    const pending = pendingPayment(input({ paymentState: state, hasAttempt: true, canCheck: true, canPurchase: true }))!;
+    assert.deepEqual(pending.steps.map(step => step.key), ['check']);
+    assert.doesNotMatch(pending.intro.join(' '), /เลือกแพ็กเกจแล้วจ่ายอีกครั้งได้/);
+  }
+});
+
+test('DQ4b a blocked failed purchase says sales are closed only when known, and keeps its check', () => {
+  for (const salesClosed of [true, false]) {
+    const result = pendingPayment(input({ failed: true, paymentState: 'FAILED', canCheck: true, canPurchase: false, salesClosed }))!;
+    assert.deepEqual(result.intro, salesClosed ? ['ยังไม่เปิดรับการจ่ายเงินใหม่ ลองอีกครั้งภายหลัง'] : []);
+    assert.deepEqual(result.steps.map(step => step.key), ['check']);
+  }
 });

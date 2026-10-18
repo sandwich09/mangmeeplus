@@ -31,11 +31,20 @@ test('a failed re-read (null) while locked leaves the shell locked instead of st
   // any notice outage. The early return must sit before `setLoaded`, or the guard above is moot.
   const guard = source.indexOf('if (result === null && lockedRef.current) return;');
   assert.ok(guard > 0, 'the null-while-locked guard exists');
-  assert.ok(guard < source.indexOf('setLoaded({ companyId, notice: result })'), 'and runs before the notice is stored');
+  assert.ok(guard < source.indexOf('setLoaded({ companyId, notice: result, cardRenewal:'), 'and runs before the notice is stored');
 });
 
 test('the re-read is driven by a revision counter, not by re-subscribing on every notice change', () => {
   assert.match(source, /const \[revision, setRevision\] = useState\(0\)/);
   assert.match(source, /const bump = \(\) => setRevision\(\(n\) => n \+ 1\)/);
   assert.match(source, /\}, \[companyId, revision, router\]\);/);
+});
+
+test('the package row uses the shell notice once, keeps it on billing paths, and sits before people and settings', () => {
+  assert.equal((source.match(/fetchPlanTermNotice\(companyId\)/g) ?? []).length, 1);
+  assert.match(source, /cardRenewal: !!status && cardRenewalRunning\(status\)/);
+  assert.match(source, /notice=\{notice\} cardRenewal=\{loaded\?\.cardRenewal\}/);
+  assert.match(source, /packageMenuTrailing\(notice, cardRenewal\)/);
+  assert.match(source, /'billing',\s*'roles',\s*'settings'/);
+  assert.match(source, /employeePageMenuKey\(companyId, pathname, navItems\) \?\? resolveMenuKey\(pathname, collectMenuTargets\(navItems\)\)/);
 });
