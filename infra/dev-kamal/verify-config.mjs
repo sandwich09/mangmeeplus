@@ -18,7 +18,10 @@ else {
   try { schemas.validateProductionConfig(parsed.data); }
   catch (error) { errors.push(...error.message.split('\n').filter(x => x.startsWith('  - ')).map(x => x.slice(4))); }
 }
-const keys = Object.keys(schema.shape).sort();
+// A refined schema (.superRefine) wraps the object: parse with the refined one, list keys from the object inside.
+let objectSchema = schema;
+while (!objectSchema.shape && objectSchema._def?.schema) objectSchema = objectSchema._def.schema;
+const keys = Object.keys(objectSchema.shape).sort();
 const configured = Object.keys(input.environment).sort();
 console.log(JSON.stringify({
   service: input.service, sourceCommit: input.sourceCommit, schema: name,
