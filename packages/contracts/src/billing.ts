@@ -320,7 +320,12 @@ export type BillingAttemptView = {
   /** The promotion right this Checkout reserved (RESERVED) or used once paid (CONSUMED); dates are null until applied. */
   promotion?: BillingPromotionUse;
 };
-export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
+export type BillingInvoiceItem = {
+  offer: { key: string; label: string; interval: 'month' | 'year' } | null;
+  method: 'CARD' | 'PROMPTPAY' | null;
+  /** Verified provider payment time when supplied by the document read; never the local row creation time. */
+  paidAt?: string | null;
+  id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
   paymentState: string; applyState: string; periodStart: string; periodEnd: string; createdAt: string; hasDocuments: boolean;
   documentActions?: { canResend: boolean };
@@ -337,7 +342,7 @@ export type BillingAdjustmentItem = { id: string; number: string | null; amountS
   status: 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'canceled' | 'unknown' | 'issued' | 'void' };
 export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | null; kind: BillingAdjustmentKind; mode: BillingMode;
   items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean;
-  documentActions?: { canResend: boolean }; recipientEmail?: string | null };
+  documentActions?: { canResend: boolean }; recipientEmail?: string | null; invoice?: BillingInvoiceItem };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   /**

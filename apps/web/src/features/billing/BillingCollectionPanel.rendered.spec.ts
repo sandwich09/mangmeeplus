@@ -30,7 +30,7 @@ for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) test(`D4 ${mode}: 
   const render = () => { cursor = 0; buttons = []; return renderToStaticMarkup(React.createElement(BillingCollectionPanel, { companyId: 'shop', status, apiOverride: api, onChange: () => {} })); };
   const press = async (name: string) => { const button = buttons.find(b => b.name === name); assert.ok(button, name); button.props.onClick(); await new Promise(resolve => setImmediate(resolve)); return render(); };
   try {
-    render(); const entry = mode === 'CARD_AUTO' ? 'หยุดต่ออายุอัตโนมัติ' : 'หยุดออกบิล';
+    render(); const entry = 'หยุดต่ออายุอัตโนมัติ';
     const html = await press(entry);
     assert.match(html, new RegExp(mode === 'CARD_AUTO' ? 'หยุดต่ออายุอัตโนมัติ\\?' : 'หยุดออกบิลพร้อมเพย์ทุกงวด\\?'));
     assert.ok(html.replace(/<[^>]+>/g, '').includes(`ใช้แพ็กเกจที่จ่ายไว้ได้ถึง ${formatThaiDate(status.paidThrough!)} การหยุดต่ออายุไม่คืนเงิน`));
@@ -53,4 +53,12 @@ for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) test(`D4 ${mode}: 
     status.planCapacityRepair = { operationId: 'repair', version: 1, offerKey: 'STARTER_249', interval: 'month' };
     assert.match(render(), /รับเงินรอบใหม่แล้ว เลือกสาขาและผู้ใช้ก่อนเปิดแพ็กเกจใหม่/);
   } finally { Reflect.set(runtime, 'useState', originalState); Reflect.set(runtime, 'createElement', originalCreate); }
+});
+
+test('PAY-2 renewal state stays visible when stopping is unavailable, without offering the action', async () => {
+  const api = createBillingPreview('shop', 'success', null, () => {});
+  const status = { ...await api.status(), allowedActions: [] };
+  const html = renderToStaticMarkup(React.createElement(BillingCollectionPanel, { companyId: 'shop', status, apiOverride: api, onChange: () => {} }));
+  assert.match(html, /ต่ออายุอัตโนมัติเปิดอยู่/);
+  assert.doesNotMatch(html, />หยุดต่ออายุอัตโนมัติ<|>เปิดต่ออายุอัตโนมัติ</);
 });

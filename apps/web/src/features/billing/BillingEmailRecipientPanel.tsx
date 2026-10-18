@@ -5,6 +5,8 @@ import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { getAccountEmailOtp, type AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { billingApi } from './billing.api';
 import { BILLING_RECIPIENT_WAIT_TEXT, billingRecipientLocked, billingSupportReference } from './billing-display';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { billingResendText } from './billing-error-text';
 
 const button = 'mangmee-btn mangmee-btn-secondary min-h-11';
@@ -15,16 +17,16 @@ type Step = 'idle' | 'choose' | 'code_sent' | 'previewed' | 'op_pending' | 'done
 // An ended request says why from its own code; the provider read only knows the current address, so the text claims no more than that.
 const opText = (state: string, errorCode?: string | null) => state === 'FAILED' && errorCode === 'provider_email_not_target'
   ? 'ตรวจกับผู้ให้บริการรับเงินแล้ว อีเมลผู้รับเอกสารตอนนี้ยังไม่ใช่อีเมลใหม่ที่ขอไว้ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
-  : state === 'FAILED' && errorCode === 'email_authorization_changed' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุก่อนเริ่มดำเนินการ คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
-  : state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่'
+  : state === 'FAILED' && errorCode === 'email_authorization_changed' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุก่อนเริ่มเปลี่ยนอีเมล คำขอนี้จบแล้ว ถ้ายังต้องการเปลี่ยน ให้ทำรายการใหม่'
+  : state === 'BLOCKED' ? 'ยังเปลี่ยนอีเมลไม่ได้ ยกเลิกคำขอแล้วตรวจอีกครั้ง'
   : state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมงานพร้อมเลขอ้างอิงด้านล่าง'
-    : state === 'CANCELLED' ? 'ยกเลิกคำขอแล้ว' : state === 'FAILED' ? 'ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วเริ่มคำขอใหม่' : 'กำลังดำเนินการ';
+    : state === 'CANCELLED' ? 'ยกเลิกคำขอแล้ว' : state === 'FAILED' ? 'เปลี่ยนอีเมลไม่ได้ ตรวจข้อมูลแล้วเริ่มคำขอใหม่' : 'กำลังเปลี่ยนอีเมลผู้รับเอกสาร';
 
 /** R-A8/R-D2: change who receives the company's billing documents — the verified account email, or any
  *  mailbox proven with a code sent to it — then resend the latest documents there. */
-export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, openRequest = 0, onChanged, apiOverride }: {
+export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, openRequest = 0, hideEdit = false, onChanged, apiOverride }: {
   companyId: string; status: BillingStatus; latestInvoice?: BillingInvoiceItem | null; openRequest?: number; onChanged?: () => void;
-  apiOverride?: ReturnType<typeof billingApi>;
+  apiOverride?: ReturnType<typeof billingApi>; hideEdit?: boolean;
 }) {
   const api = useMemo(() => apiOverride ?? billingApi(companyId), [companyId, apiOverride]);
   const id = useId(), changed = useRef(onChanged); changed.current = onChanged;
@@ -80,7 +82,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
       // The shared text for EMAIL_REAUTH_REQUIRED sends people to a password/LINE re-login step this
       // panel has no UI for (it confirms in the same session that requested the code, R-A8). Confirming
       // from another session/browser is the only way this panel hits that code.
-      setError(code === 'EMAIL_REAUTH_REQUIRED' ? 'กรุณายืนยันรหัสในเบราว์เซอร์เดียวกับที่ขอรหัส หรือกดขอรหัสใหม่' : apiErrorMessage(e));
+      setError(code === 'EMAIL_REAUTH_REQUIRED' ? 'ยืนยันรหัสในเบราว์เซอร์เดียวกับที่ขอรหัส หรือกดขอรหัสใหม่' : apiErrorMessage(e));
       setErrorCode(code);
       const seconds = (e as { details?: { retryAfterSeconds?: unknown } } | null)?.details?.retryAfterSeconds;
       if (code === 'EMAIL_OTP_RATE_LIMITED' && typeof seconds === 'number' && seconds > 0) setRateLimitUntil(Date.now() + seconds * 1000);
@@ -126,19 +128,22 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
   // PR E: a change the team started holds the account without an operation of this customer's own.
   const adminChangeInFlight = Boolean(current?.busy && !current.operation);
   const canEdit = Boolean(current?.hasCustomer) && !current?.busy && !blockedByPurchase;
-  const view = !canEdit && (step === 'choose' || step === 'code_sent') ? 'idle' : step;
+  const view = (!canEdit || hideEdit) && (step === 'choose' || step === 'code_sent') ? 'idle' : step;
   const accountOption = account?.emailRequirement === 'READY' && account.email && account.email !== current?.email ? account.email : null;
   const retrySeconds = Math.max(0, Math.ceil((Math.max(rateLimitUntil, challenge ? Date.parse(challenge.retryAt) : 0) - now) / 1000));
   const accountHref = status.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/settings/profile#account`
     : `/account/email?company=${encodeURIComponent(companyId)}`;
   return <section aria-label="ผู้รับเอกสารของร้าน" className="mangmee-card space-y-4 p-5 sm:p-6">
-    <h2 className="text-base font-semibold">อีเมลรับเอกสารของร้าน</h2>
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="min-w-0 space-y-1"><h2 className="text-base font-semibold">อีเมลรับเอกสาร</h2>
+        {current && <p className="break-all">{current.stored?.email ?? current.email ?? 'ยังไม่ระบุ'}</p>}
+      </div>
+      {view === 'idle' && canEdit && !hideEdit && <button className={`${button} w-full sm:w-56`} onClick={open}>แก้</button>}
+    </div>
     {error && <div role="alert" className="space-y-1 rounded-xl bg-red-50 p-3"><p className="break-words">{error}</p>
       {errorCode === 'BILLING_EMAIL_VERIFICATION_REQUIRED' && <a className="inline-flex min-h-11 items-center text-brand-700 underline" href={accountHref}>ไปที่บัญชีของฉัน</a>}</div>}
     {/* Documents, notices and bounce tracking all read the stored column, not the live Stripe value. */}
-    {current && <p className="break-all">ผู้รับปัจจุบัน: <strong>{current.stored?.email ?? current.email ?? 'ยังไม่ระบุ'}</strong></p>}
     {view === 'idle' && <div className="space-y-2">
-      <button className={button} disabled={!canEdit} onClick={open}>แก้อีเมลรับเอกสาร</button>
       {current?.hasCustomer && blockedByPurchase && <p className="text-sm text-gray-600">{BILLING_RECIPIENT_WAIT_TEXT}</p>}
       {adminChangeInFlight && <p className="text-sm text-gray-600">ทีมงานกำลังเปลี่ยนอีเมลรับเอกสารให้ แก้ได้อีกครั้งเมื่อรายการนั้นเสร็จ</p>}
     </div>}
@@ -148,47 +153,49 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
           <span className="min-w-0 break-all">ใช้อีเมลบัญชีที่ยืนยันแล้ว ({accountOption})</span></label>}
         <label className="flex min-h-11 items-center gap-3"><input type="radio" name={`${id}-recipient`} checked={choice === 'other' || !accountOption} disabled={busy} onChange={() => setChoice('other')} />ใช้อีเมลอื่น</label>
       </fieldset>
-      {choice === 'account' && accountOption ? <div className="flex flex-wrap gap-3">
+      {choice === 'account' && accountOption ? <FormActionBar><ActionGroup>
+        <button className={button} disabled={busy} aria-busy={busy} onClick={clear}>ยกเลิก</button>
         <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void chooseAccountEmail()}>ใช้อีเมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต</button>
-        <button className={button} disabled={busy} onClick={clear}>ยกเลิก</button>
-      </div> : <form className="space-y-3" onSubmit={event => { event.preventDefault(); void requestCode(newEmail); }}>
+      </ActionGroup></FormActionBar> : <form className="space-y-3" onSubmit={event => { event.preventDefault(); void requestCode(newEmail); }}>
         <label className="block">อีเมลรับเอกสารใหม่<input className={field} type="email" inputMode="email" autoComplete="email" required maxLength={254}
           value={newEmail} disabled={busy} onChange={event => setNewEmail(event.target.value)} /></label>
-        <div className="flex flex-wrap gap-3"><button type="submit" className={primary} disabled={busy || !newEmail.trim() || retrySeconds > 0} aria-busy={busy}>{retrySeconds > 0 ? `ขอรหัสยืนยันได้ใน ${retrySeconds} วินาที` : 'ขอรหัสยืนยัน'}</button>
-          <button type="button" className={button} disabled={busy} onClick={clear}>ยกเลิก</button></div>
+        <FormActionBar><ActionGroup>
+          <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={clear}>ยกเลิก</button>
+          <button type="submit" className={primary} disabled={busy || !newEmail.trim() || retrySeconds > 0} aria-busy={busy}>{retrySeconds > 0 ? `ขอรหัสยืนยันได้ใน ${retrySeconds} วินาที` : 'ขอรหัสยืนยัน'}</button>
+        </ActionGroup></FormActionBar>
       </form>}
     </div>}
     {view === 'code_sent' && challenge && <form className="space-y-3" onSubmit={event => { event.preventDefault(); void confirmCode(); }}>
       <p className="break-all">รหัสยืนยัน 6 หลักสำหรับ <strong>{challenge.email}</strong> · กรอกได้อีก {challenge.attemptsRemaining} ครั้ง</p>
       {/* Same delivery-status mapping as the account-email panel (AccountEmailOtpPanel.tsx): a failed
           send says so, instead of the code always reading as sent. */}
-      <p role="status">{challenge.delivered ? 'ระบบส่งถึงเซิร์ฟเวอร์อีเมลแล้ว ตรวจกล่องจดหมายและโฟลเดอร์สแปม' : challenge.deliveryStatus === 'ACCEPTED' ? 'ผู้ให้บริการรับคำขอส่งแล้ว กรุณาตรวจกล่องจดหมายและสแปม' : ['READY', 'SENDING', 'UNKNOWN'].includes(challenge.deliveryStatus) ? 'ยังยืนยันผลการส่งไม่ได้ หากได้รับรหัสสามารถกรอกได้ หรือรอขอรหัสใหม่' : 'ส่งรหัสไม่สำเร็จ กรุณาตรวจอีเมลและขอรหัสใหม่ หรือยกเลิกคำขอนี้'}</p>
+      <p role="status">{challenge.delivered ? 'ระบบส่งถึงเซิร์ฟเวอร์อีเมลแล้ว ตรวจกล่องจดหมายและอีเมลขยะ' : challenge.deliveryStatus === 'ACCEPTED' ? 'ผู้ให้บริการรับคำขอส่งแล้ว ตรวจกล่องจดหมายและอีเมลขยะ' : ['READY', 'SENDING', 'UNKNOWN'].includes(challenge.deliveryStatus) ? 'ยังยืนยันผลการส่งไม่ได้ หากได้รับรหัสสามารถกรอกได้ หรือรอขอรหัสใหม่' : 'ส่งรหัสไม่สำเร็จ ตรวจอีเมลและขอรหัสใหม่ หรือยกเลิกคำขอนี้'}</p>
       <label className="block">รหัสยืนยัน 6 หลัก<input className={field} inputMode="numeric" autoComplete="one-time-code" required maxLength={6}
         value={code} disabled={busy} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label>
-      <div className="flex flex-wrap gap-3">
-        <button type="submit" className={primary} disabled={busy || code.length !== 6} aria-busy={busy}>ยืนยันรหัส</button>
+      <FormActionBar><ActionGroup>
+        <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={() => { setStep('choose'); setChallenge(null); setProof(null); setCode(''); }}>ยกเลิก</button>
         <button type="button" className={button} disabled={busy || retrySeconds > 0} aria-busy={busy} onClick={() => void requestCode(challenge.email)}>{retrySeconds > 0 ? `ขอรหัสใหม่ได้ใน ${retrySeconds} วินาที` : 'ขอรหัสใหม่'}</button>
-        <button type="button" className={button} disabled={busy} onClick={() => { setStep('choose'); setChallenge(null); setProof(null); setCode(''); }}>ยกเลิก</button>
-      </div>
+        <button type="submit" className={primary} disabled={busy || code.length !== 6} aria-busy={busy}>ยืนยันรหัส</button>
+      </ActionGroup></FormActionBar>
     </form>}
     {(view === 'previewed' || view === 'op_pending') && operation && <div className="space-y-3 rounded-xl bg-gray-50 p-3">
       <p className="break-all">จาก {operation.previousEmail ?? 'ยังไม่ระบุ'} เป็น <strong>{operation.newEmail}</strong>{view === 'previewed' && ' · มีผลกับเอกสารใหม่ของร้านนี้'}</p>
       {view === 'op_pending' && <p role="status">{opText(operation.state, operation.errorCode)}</p>}
       {view === 'op_pending' && operation.state === 'RECONCILING' && <details className="text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงสำหรับแจ้งทีมงาน</summary><p className="break-all">{billingSupportReference(operation.id)}</p></details>}
-      <div className="flex flex-wrap gap-3">
-        {view === 'previewed' && operation.canSubmit && <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void submit()}>ยืนยันเปลี่ยนผู้รับเอกสาร</button>}
+      <FormActionBar><ActionGroup>
         {operation.canCancel && <button className={button} disabled={busy} aria-busy={busy} onClick={() => void cancelOperation()}>ยกเลิกคำขอ</button>}
+        {view === 'op_pending' && ['FAILED', 'CANCELLED'].includes(operation.state) && <button className={button} disabled={busy} aria-busy={busy} onClick={clear}>ปิด</button>}
         {view === 'op_pending' && (IN_FLIGHT.includes(operation.state) || operation.state === 'BLOCKED') && <button className={button} disabled={busy} aria-busy={busy} onClick={() => void refreshState()}>ตรวจสถานะผู้รับเอกสาร</button>}
-        {view === 'op_pending' && ['FAILED', 'CANCELLED'].includes(operation.state) && <button className={button} disabled={busy} onClick={clear}>ปิด</button>}
-      </div>
+        {view === 'previewed' && operation.canSubmit && <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void submit()}>ยืนยันเปลี่ยนผู้รับเอกสาร</button>}
+      </ActionGroup></FormActionBar>
     </div>}
     {view === 'done' && operation && <div className="space-y-3 rounded-xl bg-green-50 p-3">
       <p role="status" className="break-all">เปลี่ยนผู้รับเอกสารเป็น <strong>{operation.newEmail}</strong> แล้ว เอกสารใหม่จะส่งไปที่อีเมลนี้</p>
       {resent && <p role="status" className="break-all">{billingResendText(resent, 'recipient')}</p>}
-      <div className="flex flex-wrap gap-3">
+      <FormActionBar><ActionGroup>
+        <button className={button} disabled={busy} aria-busy={busy} onClick={clear}>ปิด</button>
         {latestInvoice?.documentActions?.canResend && <button className={primary} disabled={busy} aria-busy={busy} onClick={() => void resend()}>ส่งเอกสารล่าสุดไปอีเมลใหม่</button>}
-        <button className={button} disabled={busy} onClick={clear}>ปิด</button>
-      </div>
+      </ActionGroup></FormActionBar>
     </div>}
   </section>;
 }

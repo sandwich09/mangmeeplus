@@ -1,3 +1,4 @@
+import { invoiceHistoryItem } from './billing-invoice-details';
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
@@ -270,10 +271,12 @@ export class BillingAdminService {
       const rows = account ? await this.prisma.client.billingInvoice.findMany({ where: { billingAccountId: account.id,
         ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}) },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 26 }) : [];
-      financial = { invoices: rows.slice(0, 25).map(r => ({ id: r.id, number: r.providerNumber, currency: 'THB', amountSatang: r.totalSatang,
-        refundedSatang: r.refundedSatang, disputed: r.disputed, financialObservedAt: r.financialObservedAt?.toISOString() ?? null,
-        paymentState: r.providerStatus, applyState: r.applyStatus, periodStart: r.periodStart.toISOString(), periodEnd: r.periodEnd.toISOString(),
-        createdAt: r.createdAt.toISOString(), hasDocuments: r.providerStatus === 'paid' })), nextCursor: rows.length > 25 ? rows[24]!.id : null };
+      const attempts = account && rows.some(row => row.sourceAttemptId) ? await this.prisma.client.billingAttempt.findMany({
+        where: { billingAccountId: account.id, id: { in: rows.slice(0, 25).flatMap(row => row.sourceAttemptId ? [row.sourceAttemptId] : []) } },
+        select: { id: true, quoteSnapshot: true } }) : [];
+      const snapshots = new Map(attempts.map(attempt => [attempt.id, attempt.quoteSnapshot]));
+      financial = { invoices: rows.slice(0, 25).map(row => invoiceHistoryItem(row, snapshots.get(row.sourceAttemptId ?? '') ?? null)),
+        nextCursor: rows.length > 25 ? rows[24]!.id : null };
     } else if (invoiceCursor) throw new ForbiddenException();
     // SD-E20: the shop's sales-event discounts. The amount and the bill are money, so they follow `financial`.
     const tickets = await this.prisma.client.salesEventTicket.findMany({ where: { companyId }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 25,

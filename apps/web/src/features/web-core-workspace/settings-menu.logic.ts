@@ -146,15 +146,8 @@ export function filterSettingsMenuItems(userPermissions: readonly string[], lock
     && canSeeRoute(item.href, userPermissions));
 }
 
-/**
- * The package page is not a settings route (no rule in the registry; it follows the company grant alone), so its card
- * stands beside the list. One name everywhere: the menu row, the locked shell's row and this card all say แพ็กเกจ.
- */
-export const PACKAGE_CARD = { title: 'แพ็กเกจ', desc: 'แพ็กเกจที่ใช้อยู่และการชำระเงิน', href: '/billing' } as const;
-
-export function showsPackageCard(userPermissions: readonly string[]): boolean {
-  return userPermissions.includes('company.plan.manage');
-}
+/** Package management has one top-level entry, separate from the settings overview. */
+export const PACKAGE_MENU = { title: 'แพ็กเกจ', href: '/billing' } as const;
 
 /**
  * ข้อมูลร้าน and บัญชีของฉัน need `company.setup.read`, which staff do not have — so in the locked

@@ -1,5 +1,5 @@
-import type { BillingAdjustmentItem, BillingAdjustmentKind } from '@watchdog-bms/contracts';
-import type { BillingAccount, BillingInvoice } from '../../../generated/prisma/client';
+import { PLAN_TIER_PRESETS, shopPlanTierLabel, type PlanTierKey, type BillingInvoiceItem, type BillingAdjustmentItem, type BillingAdjustmentKind } from '@watchdog-bms/contracts';
+import type { BillingAccount, BillingInvoice, Prisma } from '../../../generated/prisma/client';
 import { billingError } from '../domain/billing-policy';
 import { safeStripeUrl, stripeId, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
 import { assertMappedCharge } from './billing-financial';
@@ -38,7 +38,7 @@ export function adjustment(value: StripeObject, kind: BillingAdjustmentKind, acc
     createdAt:new Date(value.created*1000).toISOString(), status:value.status??'unknown' };
 }
 export async function readInvoiceAdjustments(stripe: StripeClient, account: BillingAccount, row: BillingInvoice, kind: BillingAdjustmentKind, cursor?: string) {
-  await originalInvoice(stripe,account,row);
+  const invoice = await originalInvoice(stripe,account,row);
   if (kind === 'refunds') {
     if (!row.providerChargeId) throw billingError('BILLING_DOCUMENT_PENDING','กำลังตรวจหลักฐานการชำระเงิน กรุณาลองใหม่');
     assertMappedCharge(await stripe.request('GET',`/charges/${row.providerChargeId}`),account,row);
@@ -54,7 +54,9 @@ export async function readInvoiceAdjustments(stripe: StripeClient, account: Bill
   if (page.object!=='list'||!Array.isArray(page.data)||page.data.length>25||typeof page.has_more!=='boolean'||(page.has_more&&page.data.length===0)) throw mismatch();
   const items=page.data.map((value:StripeObject)=>adjustment(value,kind,account,row));
   if (new Set(items.map(i=>i.id)).size!==items.length||items.some(i=>i.id===cursor)) throw mismatch();
-  return {invoiceId:row.id,invoiceNumber:row.providerNumber,kind,mode:account.livemode?'LIVE' as const:'TEST' as const,items,
+  const paidAt = invoice.status_transitions?.paid_at;
+  return {paidAt: Number.isSafeInteger(paidAt) && paidAt > 0 && paidAt <= Math.floor(Date.now()/1000) ? new Date(paidAt*1000).toISOString() : null,
+    invoiceId:row.id,invoiceNumber:row.providerNumber,kind,mode:account.livemode?'LIVE' as const:'TEST' as const,items,
     nextCursor:page.has_more?items.at(-1)!.id:null,observedAt:new Date().toISOString()};
 }
 export async function readInvoiceDocument(stripe: StripeClient, account: BillingAccount, row: BillingInvoice,
@@ -74,4 +76,22 @@ export async function readInvoiceDocument(stripe: StripeClient, account: Billing
   const url=safeStripeUrl(value,'document');
   if (!url) throw billingError('BILLING_DOCUMENT_PENDING','กำลังเตรียมเอกสาร กรุณาลองใหม่');
   return {url};
+}
+
+/** Customer history and a single payment read use the same stored facts; missing evidence stays unknown. */
+export function invoiceHistoryItem(row: BillingInvoice, attemptSnapshot: Prisma.JsonValue | null): BillingInvoiceItem {
+  const offer = row.offerSnapshot as { offerKey?: string; interval?: string; label?: string } | null;
+  const key = offer?.offerKey;
+  const interval = offer?.interval;
+  const label = key && (row.productKind ?? 'PACKAGE') === 'PACKAGE' && Object.hasOwn(PLAN_TIER_PRESETS, key)
+    ? shopPlanTierLabel(key as PlanTierKey) : null;
+  const mode = (attemptSnapshot as { quote?: { purchaseMode?: string } } | null)?.quote?.purchaseMode;
+  const accepted = row.benefitEnd ? (row.contractSnapshot as { promotion?: { displayName: string; bonusReceiptUnits: number } } | null)?.promotion : null;
+  return { id: row.id, number: row.providerNumber, currency: 'THB', amountSatang: row.totalSatang,
+    offer: key && label && (interval === 'month' || interval === 'year') ? { key, label, interval } : null,
+    method: mode === 'CARD_AUTO' || mode === 'CARD_ONCE' ? 'CARD' : mode === 'PROMPTPAY_ONCE' || mode === 'PROMPTPAY_RENEW' ? 'PROMPTPAY' : null,
+    refundedSatang: row.refundedSatang, disputed: row.disputed, financialObservedAt: row.financialObservedAt?.toISOString() ?? null,
+    paymentState: row.providerStatus, applyState: row.applyStatus, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(),
+    createdAt: row.createdAt.toISOString(), hasDocuments: row.providerStatus === 'paid',
+    ...(accepted ? { promotion: { displayName: accepted.displayName, paidEnd: row.periodEnd.toISOString(), benefitEnd: row.benefitEnd!.toISOString(), bonusReceiptUnits: accepted.bonusReceiptUnits } } : {}) };
 }

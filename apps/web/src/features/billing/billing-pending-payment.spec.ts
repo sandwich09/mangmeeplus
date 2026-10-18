@@ -297,18 +297,18 @@ test('the amber alert that is left (no block says it) names the button it really
 // ---- the page draws what the logic returns, and does what it always did ----
 const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
 const display = readFileSync(new URL('./billing-display.ts', import.meta.url), 'utf8');
-const pendingSection = page.slice(page.indexOf('const pendingSection = ('), page.indexOf('  return <BillingCustomerFrame'));
+const pendingSection = page.slice(page.indexOf('const pendingSection = ('), page.indexOf('  return <div className="mangmee-flat'));
 const at = (text: string) => { const index = page.indexOf(text); assert.ok(index > 0, text); return index; };
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 test('the card: the block leads under its own heading, the package area follows, the other block comes after the notes, the generic button and the repeats give way, the reference is the last thing', () => {
-  const heading = at('<h2 className="text-lg font-bold">{pending?.heading ?? (returnFailed'), lead = at('{pending && pendingLeads && pendingSection(status, pending)}'), box = at('{noPackage ? (pendingShown && !(lockReason === \'trial_ended\' && status.termEndsAt) ? null : <dl'),
-    later = at('{pending && pendingShown && !pendingLeads && pendingSection(status, pending)}'), generic = at("status.allowedActions.includes('new_sales') && !pending?.inFlight && !status.renewalInvoiceUrl && pending?.kind !== 'FAILED' && <ActionGroup"),
-    reference = at('{supportReference && !confirmed && !applyHeld && <details'), cardEnd = at("<div hidden={section !== 'payment'}");
+  const heading = at('<h2 className="text-lg font-bold">{returnHeading ?? pending?.heading ?? (returnFailed'), lead = at('{pending && pendingLeads && !heldShop && pendingSection(status, pending)}'), box = at('{noPackageFacts ? null : noPackage ? (pendingShown && !(lockReason === \'trial_ended\' && status.termEndsAt) ? null : <dl'),
+    later = at('{pending && pendingShown && !pendingLeads && !heldShop && pendingSection(status, pending)}'), generic = at("status.allowedActions.includes('new_sales') && !pending?.inFlight && !status.renewalInvoiceUrl && pending?.kind !== 'FAILED' && <ActionGroup"),
+    reference = at('{supportReference && !confirmed && <details'), cardEnd = at('id="billing-history"');
   assert.ok(heading < lead && lead < box && box < later && later < generic && generic < reference && reference < cardEnd, 'heading, the leading block, the package area, the other block, the generic button, then the reference');
   assert.equal(count(page, 'เลขอ้างอิงสำหรับแจ้งทีมงาน</summary>'), 1, 'the collapsed reference exists once');
   // the heading chain is the page's own, untouched, behind the block's heading
-  assert.match(page, /\{pending\?\.heading \?\? \(returnFailed \? 'จ่ายเงินไม่สำเร็จ' : status\.pendingDeal \?/);
+  assert.match(page, /\{returnHeading \?\? pending\?\.heading \?\? \(returnFailed \? 'ยังไม่ได้รับเงิน' : status\.pendingDeal \?/);
   assert.match(page, /: status\.attemptId \? 'กำลังตรวจสอบรายการจ่ายเงิน' : packageHeading\)\}<\/h2>/);
   // what is derived, once
   assert.match(page, /const pendingShown = !!pending && !!\(pending\.heading \|\| pending\.title \|\| pending\.intro\.length > 0 \|\| pending\.steps\.length > 0\);/);
@@ -316,8 +316,8 @@ test('the card: the block leads under its own heading, the package area follows,
   // the invitation gives way (no pointer stands in its place: the block says it), the reserved right is said in the block, and the amber alert goes for every kind that is in flight
   assert.match(page, /const purchaseHint = pending\?\.inFlight \? null : canBuy \|\| oneTapCancel \?/);
   assert.match(page, /\{promotionBlock && !pending\?\.showsReservedPromotion && <section role="status" aria-label="สถานะโปรโมชั่น"/);
-  assert.match(page, /\{status\.purchaseBlockCode && !quietBlock && !\(pending\?\.kind === 'FAILED' && purchaseSalesClosed\) && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
-  assert.match(page, /<p>\{status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' \? PENDING_TEXT\.alertCheckoutPending : errorText\(\{ code: status\.purchaseBlockCode \}\)\}<\/p>/);
+  assert.match(page, /\{purchaseBlockText && !quietBlock && !applyReview && !heldShop && !\(pending\?\.kind === 'FAILED' && purchaseSalesClosed\) && !\(status\.purchaseBlockCode === 'BILLING_CHECKOUT_PENDING' && pendingShown && pending\?\.inFlight\) && <div role="alert"/);
+  assert.match(page, /<p>\{purchaseBlockText\}<\/p>/);
   assert.match(page, />ตรวจสถานะล่าสุด<\/button>/, 'the button the alert\'s sentence names');
   // what is gone: the gray waiting box, the pointer, the old paragraph, and every field of the block that existed only for them
   for (const gone of ['noPackage && awaitingStripe', 'ระบบตรวจผลให้อัตโนมัติ', 'กำลังรอผลการจ่ายเงิน', 'ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนจ่ายใหม่', 'pending.pointer', 'hidePurchaseHint', 'hideChoosePackage', 'timedOut && !status.pendingDeal'])
@@ -334,9 +334,9 @@ test('the card: the block leads under its own heading, the package area follows,
 
 test('the markup: one shared equal-size group, main first, with only necessary linked captions', () => {
   assert.match(pendingSection, /<section aria-label=\{block\.heading \?\? block\.title \?\? PENDING_TEXT\.regionName\} className="space-y-4">/);
-  assert.match(pendingSection, /<ActionGroup align="start" className="!flex-col">/);
+  assert.match(pendingSection, /<ActionGroup align="start" className=\{block\.kind === 'FAILED' \? undefined : '!flex-col'\}>/);
   assert.doesNotMatch(pendingSection, /<ol|<li|rounded-xl border/);
-  assert.match(pendingSection, /className=\{STEP_CLASS\[step\.emphasis\]\} disabled=\{busy\} aria-busy=\{busy\}/);
+  assert.match(pendingSection, /className=\{STEP_CLASS\[paidSummary && step\.key === 'check' \? 'secondary' : step\.emphasis\]\} disabled=\{busy\} aria-busy=\{busy\}/);
   assert.match(pendingSection, /aria-describedby=\{step\.caption\.length \? `\$\{pendingId\}-\$\{step\.key\}` : undefined\}/);
   assert.match(pendingSection, /id=\{`\$\{pendingId\}-\$\{step\.key\}`\}/);
   assert.match(pendingSection, /onClick=\{run\[step\.key\]\}/);
@@ -371,9 +371,9 @@ test('every handler does what the loose button of the same job did, and the four
   assert.equal(count(page, 'api.resume('), 1);
   assert.equal(count(page, 'api.cancelCheckout('), 2);
   // the notices the handlers set are the ones the e2e specs and the buyers already know
-  for (const notice of ['หน้าจ่ายเงินเดิมเปิดต่อไม่ได้แล้ว ระบบกำลังตรวจผลรายการเดิม กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย',
-    'รายการเดิมจ่ายสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับเงิน กรุณารอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้',
-    'กำลังตรวจผลรายการเดิม กรุณากดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', 'ส่งคำขอตรวจสอบแล้ว กดอัปเดตข้อมูลเพื่อดูผลล่าสุด', 'ยังไม่มีรายการที่ต้องตรวจสอบกับผู้ให้บริการ'])
+  for (const notice of ['หน้าจ่ายเงินเดิมเปิดต่อไม่ได้แล้ว ระบบกำลังตรวจผลรายการเดิม รอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย',
+    'รายการเดิมจ่ายสำเร็จแล้ว ระบบกำลังเปิดสิทธิ์ให้ ไม่ต้องซื้อใหม่', 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับเงิน รอสักครู่แล้วกดอัปเดตข้อมูล', 'ยกเลิกรายการแล้ว เลือกแพ็กเกจใหม่ได้',
+    'กำลังตรวจผลรายการเดิม กดอัปเดตข้อมูลก่อนเริ่มรายการใหม่', 'ส่งคำขอตรวจสอบแล้ว กดอัปเดตข้อมูลเพื่อดูผลล่าสุด', 'ยังไม่มีรายการที่ต้องตรวจสอบกับผู้ให้บริการ'])
     assert.equal(count(pendingSection, notice), 1, notice);
   // an unpaid page is ended in one tap and the chooser reopens; every other open payment asks first
   assert.match(pendingSection, /if \(result\.state === 'EXPIRED'\) \{ reopenChooser\.current = true; setCheckoutCancelNotice/);
@@ -398,7 +398,7 @@ test('D9 logic: answers that say the payment on screen is over make the page rea
   for (const status of [400, 401, 403, 429, 500, 503]) assert.equal(paymentIsOver(answer(undefined, status)), false, String(status));
   for (const nothing of [null, undefined, 'BILLING_CHECKOUT_NOT_STARTED', 404, {}]) assert.equal(paymentIsOver(nothing), false, String(nothing));
   // The banner the buyer is shown for it is plain Thai and not the generic sentence.
-  assert.equal(errorText(answer('BILLING_CHECKOUT_NOT_STARTED', 409)), 'รายการจ่ายเงินนี้ยังไม่ได้เริ่ม ระบบยกเลิกให้แล้ว กรุณาเริ่มรายการใหม่');
+  assert.equal(errorText(answer('BILLING_CHECKOUT_NOT_STARTED', 409)), 'รายการจ่ายเงินนี้ยังไม่ได้เริ่ม กลับไปเลือกแพ็กเกจเพื่อเริ่มรายการใหม่');
   assert.match(errorText(answer('CONTROL_PREVIEW_STALE', 409)), /^[ก-๙ ]+$/u);
 });
 
@@ -417,7 +417,7 @@ test('D9 wiring: the banner is set first, then the status is read in place; a ba
   // the read is guarded like the quote request's, so an older answer cannot overwrite a newer one
   assert.match(page, /statusRead = useRef\(0\)/);
   // the Checkout the page was drawn from is the only thing that depends on that read: the block is derived from the status each render
-  assert.match(page, /const pending = status \? pendingPayment\(/);
+  assert.match(page, /const pendingState = status \? pendingPayment\(/);
 });
 
 // ---- D10: the red banner is seen on a phone ----
@@ -428,7 +428,7 @@ test('D10 wiring: the banner takes a ref, focus and a header-aware scroll margin
   // the same for the notice after ending or resuming a payment (not stealing the scroll when it is already in view)
   assert.match(page, /\{checkoutCancelNotice && <div ref=\{checkoutNotice\} tabIndex=\{-1\} role="status" className="scroll-mt-\[calc\(var\(--app-header-h,0px\)\+1\.5rem\)\] /);
   // the recipient errors still go to the email panel
-  assert.match(page, /useEffect\(\(\) => \{ if \(error && RECIPIENT_ERROR_CODES\.includes\(errorCode \?\? ''\)\) \{ setSection\('payment'\); emailSettings\.current\?\.scrollIntoView\(\{ block: 'start' \}\); \} \}, \[error, errorCode\]\);/);
+  assert.match(page, /useEffect\(\(\) => \{ if \(error && RECIPIENT_ERROR_CODES\.includes\(errorCode \?\? ''\)\) \{ setSection\('payment'\); setRecipientOpen\(value => value \+ 1\); emailSettings\.current\?\.scrollIntoView\(\{ block: 'start' \}\); \} \}, \[error, errorCode\]\);/);
 });
 
 // ---- D12: the answer of the check is seen where the button was pressed ----
@@ -445,7 +445,7 @@ test('D12 wiring: the answer of "ตรวจผลการจ่ายเง�
 const scrollEffects = page.split('\n').flatMap(line => {
   const found = /^\s*useEffect\(\(\) => \{(.+)\}, \[([^\]]*)\]\);\s*$/.exec(line);
   if (!found || !found[1]!.includes('scrollIntoView')) return [];
-  const target = /(\w+)\.current\?\.scrollIntoView/.exec(found[1]!)![1]!;
+  const target = found[2]!.includes('buyingStep') ? 'backNavigation' : /(\w+)\.current\?\.scrollIntoView/.exec(found[1]!)![1]!;
   return [{ target: found[1]!.includes('RECIPIENT_ERROR_CODES.includes') && !found[1]!.includes('!RECIPIENT_ERROR_CODES') ? 'recipient error' : target, deps: found[2]!.split(',').map(dep => dep.trim()).filter(Boolean) }];
 });
 /** What runs, in order, in a commit where these states changed. The recipient destination is left out: it scrolls for its own four codes only, which the banner effect refuses (pinned in D10). */
@@ -453,7 +453,7 @@ const ran = (...changed: string[]) => scrollEffects.filter(effect => effect.targ
 
 test('D13: the effect order — cadence notice, chooser heading, lost-promotion notice, banner, cancel notice, the answer of the check, then the recipient destinations', () => {
   assert.deepEqual(scrollEffects.map(effect => effect.target), ['cadenceNoticeRef', 'backNavigation', 'lostNotice', 'errorBanner', 'checkoutNotice', 'refreshAnswer', 'recipient error', 'emailSettings']);
-  assert.deepEqual(scrollEffects.map(effect => effect.deps), [['cadenceNotice'], ['quote', 'choosing'], ['promotionLost'], ['error', 'errorCode'], ['checkoutCancelNotice', 'noticeAgain'], ['refreshNotice'], ['error', 'errorCode'], ['recipientOpen']]);
+  assert.deepEqual(scrollEffects.map(effect => effect.deps), [['cadenceNotice'], ['quote', 'choosing', 'buyingStep'], ['promotionLost'], ['error', 'errorCode'], ['checkoutCancelNotice', 'noticeAgain'], ['refreshNotice'], ['error', 'errorCode'], ['recipientOpen']]);
 });
 
 test('D13: in every commit where a notice is set together with a chooser change, the notice is the last to scroll — and an old notice never pulls the page back', () => {
@@ -475,7 +475,7 @@ test('D13: in every commit where a notice is set together with a chooser change,
   assert.deepEqual(ran('refreshNotice'), ['refreshAnswer']);
   assert.deepEqual(ran('cadenceNotice'), ['cadenceNoticeRef']);
   // the chooser opens in the same commit as the counter, in the same batch, and nowhere else bumps it
-  assert.match(page, /if \(reopenChooser\.current && status\.allowedActions\.includes\('new_sales'\) && !status\.attemptId\) \{ reopenChooser\.current = false; setChoosing\(true\); setSection\('package'\); setNoticeAgain\(value => value \+ 1\); \}/);
+  assert.match(page, /if \(reopenChooser\.current && status\.allowedActions\.includes\('new_sales'\) && !status\.attemptId\) \{ reopenChooser\.current = false; setChoosing\(true\); setBuyingStep\(0\); setSection\('package'\); setNoticeAgain\(value => value \+ 1\); \}/);
   assert.equal(count(page, 'setNoticeAgain('), 1);
   assert.match(page, /const \[noticeAgain, setNoticeAgain\] = useState\(0\);/);
   // the banner's recipient guard: a recipient error has its own destination, the banner leaves it alone
@@ -518,7 +518,7 @@ test('ending a payment: while the status is the stale one the page draws the loa
   const calls = [...page.matchAll(/pendingSection\(status, pending\)/g)].map(match => match.index!);
   assert.equal(calls.length, 2, 'the block is drawn in two places (leading the card, or after the notes)');
   for (const index of calls) assert.ok(index > body, 'inside the part that gives way');
-  assert.ok(at('{status.purchaseBlockCode && !quietBlock') > body, 'and so is the amber alert for the payment');
+  assert.ok(at('{purchaseBlockText && !quietBlock') > body, 'and so is the amber alert for the payment');
   // the loading line is the one the first load shows, said the same way
   assert.equal(count(page, 'กำลังตรวจสอบสิทธิ์และรายการจ่ายเงิน…'), 1);
   // a read that fails is not hidden behind it: the error banner is outside, and the line is not drawn beside an error

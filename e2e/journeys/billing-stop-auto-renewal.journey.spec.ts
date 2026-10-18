@@ -52,9 +52,9 @@ for (const width of [390, 1556]) for (const mode of ['CARD_AUTO', 'PROMPTPAY_REN
     await page.goto(`/companies/${companyId}/billing`);
     await expect(page.getByRole('heading', { name: 'แพ็กเกจปัจจุบัน', exact: true })).toBeVisible(FIRST_SIGHT);
     const before = await read();
-    await page.getByRole('button', { name: 'การต่ออายุและจ่ายเงิน', exact: true }).click();
+    await page.locator('#billing-payment').scrollIntoViewIfNeeded();
     const panel = page.getByRole('region', { name: 'จัดการการต่ออายุ', exact: true });
-    const entry = mode === 'CARD_AUTO' ? 'หยุดต่ออายุอัตโนมัติ' : 'หยุดออกบิล';
+    const entry = 'หยุดต่ออายุอัตโนมัติ';
     await panel.getByRole('button', { name: entry, exact: true }).click();
     const question = panel.getByRole('status').filter({ hasText: mode === 'CARD_AUTO' ? 'หยุดต่ออายุอัตโนมัติ?' : 'หยุดออกบิลพร้อมเพย์ทุกงวด?' });
     await expect(question).toBeVisible(AFTER_PRESS);

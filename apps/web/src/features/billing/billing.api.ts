@@ -23,7 +23,12 @@ export function billingApi(companyId: string) {
     // Sales-event spec §7.1 (SD-B): the signed-in holder's own ส่วนลดจากงาน and which way this shop could use one. Owner-only.
     eventDiscount: () => get<BillingEventDiscountView>(`${base}/event-discount`),
     attempt: (attemptId: string) => get<BillingAttemptView>(`${base}/attempts/${encodeURIComponent(attemptId)}`),
-    history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    history: (cursor?: string, limit?: number) => {
+      const query = new URLSearchParams();
+      if (cursor) query.set('cursor', cursor);
+      if (limit !== undefined) query.set('limit', String(limit));
+      return get<BillingHistory>(`${base}/history${query.size ? `?${query}` : ''}`);
+    },
     // `dealId` still sends the deal's base tier and 'month' — the API prices the offer from the
     // approved snapshot, never from this body (S36). No recipient yet = no key: Checkout asks (RV05).
     // Sales-event spec §7.2: `eventDiscountChoice` is sent only while the page offers the discount.

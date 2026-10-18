@@ -25,6 +25,7 @@ export type NavItem = {
   label: string;
   icon: React.ReactNode;
   href?: string;
+  trailing?: { label: string; warning: boolean };
   /** `badgeLabel`: a short word on the row that needs the person, e.g. "ยังไม่ครบ" on the shop details row. */
   subItems?: { key: string; label: string; href: string; icon?: React.ReactNode; tone?: MangmeeTone; badgeCount?: number; badgeLabel?: string }[];
   disabled?: boolean;

@@ -54,7 +54,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
     } catch (cause) { setError(apiErrorMessage(cause)); }
     finally { setBusy(false); }
   }
-  if (!operation && !id && !status.collectionPause && !status.pendingPlanChange && !status.planCapacityRepair && !status.allowedActions.includes('portal_cancel_subscription')) return null;
+  if (!operation && !id && !status.collectionPause && !status.pendingPlanChange && !status.planCapacityRepair && !status.allowedActions.includes('portal_cancel_subscription') && status.renewalMode !== 'CARD_AUTO' && status.renewalMode !== 'PROMPTPAY_RENEW') return null;
   const confirming = !!operation && !['SUCCEEDED', 'APPLIED', 'CANCELLED', 'FAILED'].includes(operation.state);
   const prepaidChange = operation?.action === 'PREPAID_PLAN_CHANGE';
   const changingPlan = operation?.action === 'SCHEDULE_DOWNGRADE' || prepaidChange;
@@ -77,7 +77,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
   const actionLabel = (value: BillingCollectionOperation['action']) => ({ ADMIN_PAUSE_COLLECTION:'พักเก็บเงิน', ADMIN_RESUME_COLLECTION:'กลับมาเก็บเงิน', EXTEND_TERM: 'เพิ่มวันใช้งานและเลื่อนวันเก็บเงิน', CANCEL_RENEWAL: 'หยุดต่ออายุ', RESUME_RENEWAL: 'กลับมาต่ออายุ', SCHEDULE_DOWNGRADE: 'เปลี่ยนแพ็กเกจรอบถัดไป', CANCEL_DOWNGRADE: 'ยกเลิกการเปลี่ยนแพ็กเกจ', PREPAID_PLAN_CHANGE: 'ซื้อแพ็กเกจรอบถัดไป' })[value];
   const showReviewHeader = !!operationId && !selection;
   const renewalLine = stopping ? null : refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : billingRenewalLine(status);
-  const panelHeading = <h2 ref={heading} tabIndex={-1} className={showReviewHeader ? 'text-xl font-bold text-gray-900 sm:text-2xl' : 'text-lg font-bold'}>{changingPlan ? 'การเปลี่ยนแพ็กเกจ' : 'การต่ออายุแพ็กเกจ'}</h2>;
+  const panelHeading = <h2 ref={heading} tabIndex={-1} className={showReviewHeader ? 'text-xl font-bold text-gray-900 sm:text-2xl' : 'text-base font-semibold'}>{changingPlan ? 'การเปลี่ยนแพ็กเกจ' : 'ต่ออายุอัตโนมัติ'}</h2>;
   return <div className="space-y-6">
     {showReviewHeader && <div ref={backNavigation} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-1">{canEdit ? <button type="button" className={billingBackControl} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void editSelection()}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปเลือกสาขาและผู้ใช้</button> : onBack ? <button type="button" className={billingBackControl} disabled={busy} aria-busy={Boolean(busy)} onClick={onBack}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปแพ็กเกจปัจจุบัน</button> : <Link className={billingBackControl} href={`/companies/${encodeURIComponent(companyId)}/billing`}><span className="text-base leading-none" aria-hidden="true">←</span>กลับไปแพ็กเกจปัจจุบัน</Link>}{panelHeading}</div>}
     <section className="mangmee-card space-y-5 p-5 sm:p-6" aria-label="จัดการการต่ออายุ">
@@ -87,8 +87,8 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         {!changingPlan && renewalLine && <p className="text-sm text-gray-500">{renewalLine}</p>}
         {!stopping && status.cancelAtPeriodEnd && status.paidThrough && <p>ใช้แพ็กเกจที่จ่ายไว้ได้ถึง <span className="whitespace-nowrap">{formatThaiDate(status.paidThrough)}</span></p>}
       </div>
-      {!confirming && !selection && !operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
-        {status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'เปิดการออกบิล QR ทุกงวด' : 'เปิดต่ออายุอัตโนมัติ' : status.renewalMode === 'PROMPTPAY_RENEW' ? 'หยุดออกบิล' : 'หยุดต่ออายุอัตโนมัติ'}</button>}
+      {!confirming && !selection && !operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={`${button} w-full sm:w-56`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
+        {status.cancelAtPeriodEnd ? status.renewalMode === 'PROMPTPAY_RENEW' ? 'เปิดการออกบิล QR ทุกงวด' : 'เปิดต่ออายุอัตโนมัติ' : 'หยุดต่ออายุอัตโนมัติ'}</button>}
     </div>}
     {status.collectionPause && <div className="rounded-xl bg-amber-50 p-4"><p>พักเก็บเงินอยู่ตามสถานะที่ตรวจล่าสุด</p><p>{status.collectionPause.resumesAt?`กำหนดกลับมาเก็บเงิน ${formatThaiDateTime(status.collectionPause.resumesAt)}`:'ยังไม่กำหนดวันกลับมาเก็บเงิน'}</p><p>วันใช้งานและใบเสร็จคงเดิม บิลที่ออกไว้ก่อนพักอาจยังถูกเรียกเก็บ ติดต่อทีมงานหากต้องการปรับการต่ออายุ</p></div>}
     {notice && <p role="status">{notice}</p>}
@@ -102,15 +102,15 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         <div><dt className="text-sm text-gray-500">แพ็กเกจ</dt><dd className="mt-1 font-semibold text-gray-900">{status.pendingPlanChange.targetOffer ? shopPlanTierLabel(status.pendingPlanChange.targetOffer.offerKey) : 'แพ็กเกจที่เลือกไว้'}{status.pendingPlanChange.targetOffer && <span className="mt-1 block text-sm font-normal text-gray-500">{status.pendingPlanChange.targetOffer.interval === 'year' ? 'รายปี' : 'รายเดือน'}</span>}</dd></div>
         <div><dt className="text-sm text-gray-500">วันที่เปลี่ยนแพ็กเกจ</dt><dd className="mt-1 font-semibold text-gray-900">{formatThaiDate(status.pendingPlanChange.effectiveAt)}</dd></div>
         {status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE' && <div><dt className="text-sm text-gray-500">แพ็กเกจใหม่ใช้ได้ถึง</dt><dd className="mt-1 font-semibold text-gray-900">{formatThaiDate(status.pendingPlanChange.expiresAt)}</dd></div>}
-        <div><dt className="text-sm text-gray-500">{status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE' ? 'ยอดที่จ่ายแล้ว' : 'ยอดจ่ายรอบถัดไป'}</dt><dd className="mt-1 font-semibold text-gray-900">{new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(status.pendingPlanChange.nextRenewalTotalSatang / 100)}</dd></div>
+        <div><dt className="text-sm text-gray-500">{status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE' ? 'ยอดที่จ่ายแล้ว' : 'ยอดจ่ายรอบถัดไป'}</dt><dd className="mt-1 font-semibold text-gray-900">{`${(status.pendingPlanChange.nextRenewalTotalSatang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`}</dd></div>
       </dl>
       <p className="text-sm text-gray-500">ใช้แพ็กเกจเดิมได้ถึงวันที่ระบุ {status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE'
         ? status.pendingPlanChange.state === 'BLOCKED' ? 'แพ็กเกจใหม่จ่ายแล้ว กรุณาเลือกสาขาและผู้ใช้ล่าสุดก่อนเริ่มสิทธิ์ใหม่' : 'แพ็กเกจใหม่จ่ายแล้วและจะเริ่มอัตโนมัติในวันดังกล่าว'
         : 'แพ็กเกจใหม่เริ่มเมื่อจ่ายรอบถัดไปสำเร็จ'}</p>
-      {!confirming && !selection && <div className="flex flex-wrap items-center gap-3">
-        {apiOverride ? <button className={button} disabled={busy} onClick={() => setOperation(status.pendingPlanChange!)}>ดูรายการเปลี่ยนแพ็กเกจ</button> : <Link className={button} href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${status.pendingPlanChange.id}`}>ดูรายการเปลี่ยนแพ็กเกจ</Link>}
+      {!confirming && !selection && <ActionGroup>
+        {apiOverride ? <button className={button} disabled={busy} aria-busy={busy} onClick={() => setOperation(status.pendingPlanChange!)}>ดูรายการเปลี่ยนแพ็กเกจ</button> : <Link className={button} href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${status.pendingPlanChange.id}`}>ดูรายการเปลี่ยนแพ็กเกจ</Link>}
         {status.allowedActions.includes('plan_changes') && <button className={`${button} !border-transparent !bg-transparent !text-gray-500 hover:!bg-gray-100`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('cancel-downgrade')}>ยกเลิกการเปลี่ยนแพ็กเกจ</button>}
-      </div>}
+      </ActionGroup>}
     </section>}    {status.planCapacityRepair && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รับเงินรอบใหม่แล้ว เลือกสาขาและผู้ใช้ก่อนเปิดแพ็กเกจใหม่</p>
       <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { setBusy(true); const repair = status.planCapacityRepair!;
         void api.capacity(repair.offerKey, repair.interval).then(options => setSelection({ options, repair, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false)); }}>เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว</button></div>}
@@ -129,7 +129,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
       {!completed && <>
       {changingPlan && <p className="rounded-xl bg-brand-50 p-4 font-semibold text-brand-800">{prepaidChange ? 'จ่ายแพ็กเกจรอบถัดไปแล้ว' : 'วันนี้ยังไม่เรียกเก็บเงิน'} ใช้แพ็กเกจเดิมได้จนถึงวันที่ {formatThaiDate(operation.effectiveAt)}</p>}
       {!changingPlan && !stopping && <p>{operation.action==='ADMIN_PAUSE_COLLECTION'?'กำหนดกลับมาเก็บเงิน':operation.action==='ADMIN_RESUME_COLLECTION'?'วันที่ขอกลับมาเก็บเงิน':operation.action==='EXTEND_TERM'?'วันที่ขอขยายการใช้งานถึง':'สิทธิ์ที่ซื้อไว้ถึง'} {formatThaiDateTime(operation.effectiveAt)}</p>}
-      {operation.action !== 'CANCEL_RENEWAL' && operation.action !== 'EXTEND_TERM' && !operation.action.startsWith('ADMIN_') && <p>{prepaidChange ? 'ยอดที่จ่ายแล้ว' : 'ยอดต่ออายุถัดไป'} {new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(operation.nextRenewalTotalSatang / 100)}{changingPlan && ` / ${operation.targetOffer?.interval === 'year' ? 'ปี' : 'เดือน'}`}</p>}
+      {operation.action !== 'CANCEL_RENEWAL' && operation.action !== 'EXTEND_TERM' && !operation.action.startsWith('ADMIN_') && <p>{prepaidChange ? 'ยอดที่จ่ายแล้ว' : 'ยอดต่ออายุถัดไป'} {`${(operation.nextRenewalTotalSatang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`}{changingPlan && ` / ${operation.targetOffer?.interval === 'year' ? 'ปี' : 'เดือน'}`}</p>}
       {operation.targetOffer && <p>{prepaidChange ? 'แพ็กเกจรอบถัดไป' : 'เมื่อจ่ายรอบใหม่สำเร็จ'}: {shopPlanTierLabel(operation.targetOffer.offerKey)} · {operation.targetOffer.branchLimit} สาขา · {operation.targetOffer.employeeLimit} ผู้ใช้ · {operation.targetOffer.receiptAllowance} ใบ</p>}
       {/* Phase 7: a package change moves the menu set on the day it starts; only a package that
           really takes a menu away warns, the same way the purchase screen reads. */}
