@@ -1921,3 +1921,13 @@ it('credit P2 recalibration scales upward, preserves the existing margin, and re
   assert.ok(scaleIntakeCalibration(old, grown) / grown >= old.tokenBound / old.bytes);
   assert.throws(() => scaleIntakeCalibration(old, Math.ceil(old.bytes * 1.11)), /Live measurement required/);
 });
+
+it('Z2 claim submit uses reimbursement.submit without treating receipt or reason uploads as submission', async () => {
+  const { lineActionRuleFor, lineActionBoundaryReplyText } = await import('../domain/logic/line-ai-scope-policy.logic');
+  for (const text of ['ส่งใบเบิกนี้', 'ส่งอนุมัติใบเบิกนี้', 'ขอส่งอนุมัติใบเบิกที่เพิ่งบันทึก', 'ยื่นใบเบิกนี้']) {
+    assert.equal(lineActionRuleFor(text)?.permission, 'reimbursement.submit');
+    assert.equal(lineActionBoundaryReplyText(text, ['reimbursement.submit'], 'th'), undefined);
+    assert.match(lineActionBoundaryReplyText(text, ['reimbursement.read_own'], 'th') ?? '', /สิทธิ์|ผู้ดูแล|เจ้าของ/);
+  }
+  for (const text of ['ส่งรูปใบเสร็จสำหรับใบเบิกนี้', 'ส่งเหตุผลใบเบิก', 'ใบเบิกส่งอนุมัติหรือยัง']) assert.equal(lineActionRuleFor(text), undefined);
+});

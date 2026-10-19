@@ -3083,9 +3083,9 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     const card = readLineSystemCard(reply);
     assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
     assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
-    assert.equal(card.actions.length, 2);
-    assert.deepEqual(card.actions[0], { type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' });
-    assert.match(card.actions[1]!.uri ?? '', /expense-1/u, 'the draft link remains secondary to chat confirmation');
+    assert.equal(card.actions.length, 1, 'capture-only permission keeps only the record web link');
+    assert.equal(card.actions[0]!.type, 'uri');
+    assert.match(card.actions[0]!.uri ?? '', /expense-1/u, 'the saved draft remains accessible without a financial confirmation control');
     assert.match(reply.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)[\s\S]*\/companies\/company-1\/expenses\/expense-1$/u,
       'the reply that was sent before is the card\'s canonical text and its fallback');
   });

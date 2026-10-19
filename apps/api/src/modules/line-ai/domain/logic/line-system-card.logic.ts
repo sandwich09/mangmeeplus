@@ -173,7 +173,10 @@ function banner(tone: keyof typeof BANNER, value: string, webBaseUrl: string): F
 }
 
 /** `label : value` with the colon in its own column, so every colon of a card stands in one line. */
+export const lineSystemCardRowValue = (value: string): string => value.replace(/[\s·•|]+$/gu, '').trim();
+
 function row(entry: LineSystemCardRow): Flex {
+  entry = { ...entry, value: lineSystemCardRowValue(entry.value) };
   const pill = entry.pill ? PILL[entry.pill] : undefined;
   const size = entry.total ? 17 : 13;
   // The label starts where the preview puts it: 3 px lower beside the large figure, and at the top of

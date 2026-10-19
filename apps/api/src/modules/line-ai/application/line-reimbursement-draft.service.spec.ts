@@ -123,3 +123,25 @@ describe('LineReimbursementDraftAdapterService staged LINE photos', () => {
       links: { none: {} }, captureFiles: { none: {} } });
   });
 });
+
+it('Z4 exact bill picker text leaves the reason empty; only a real user reason is retained', async () => {
+  const revision = new Date().toISOString(), choiceId = 'c'.repeat(64);
+  const source = { expenseId: 'starbucks-bill', eligible: true, updatedAt: revision, incurredDate: '2026-10-05', amount: '170.0000',
+    description: 'V.COLD BREW', categoryKey: 'meals', categoryLabel: 'ค่าอาหารและเครื่องดื่ม', purpose: '' };
+  const repo = { listReimbursementSources: async (company: string, branch: string, user: string, _query: string, id: string) => {
+    assert.deepEqual([company, branch, user, id], ['c1', 'branch', 'u1', source.expenseId]); return [source];
+  } };
+  const adapter: any = new LineReimbursementDraftAdapterService({} as any, repo as any, {} as any, {} as any, {} as any);
+  const options = { selected: {}, operation: 'CREATE', choices: [{ choiceId, kind: 'SOURCE', label: '261005-08-00190 · Starbucks Coffee', revision,
+    raw: { expenseId: source.expenseId, branchId: 'branch', requesterUserId: 'u1' } }] };
+  for (const reason of ['261005-08-00190 · Starbucks Coffee ·', 'เบิกบิล 261005-08-00190 · Starbucks Coffee', 'เบิกบิล 261005-08-00190 · Starbucks Coffee · 5 ต.ค. 2569 · 170.00 บาท', undefined, 'เลี้ยงลูกค้าหลังประชุม']) {
+    const proposal: any = { schemaVersion: 1, taskId: actionId, taskRevision: 1, operation: 'CREATE', fields: reason ? { reason: { value: reason, proof: { kind: 'USER_TEXT', refs: [] } } } : {},
+      lineChanges: [{ operation: 'ADD', values: { linkedExpenseChoiceId: choiceId, description: { value: '261005-08-00190 · Starbucks Coffee ·', proof: { kind: 'USER_TEXT', refs: [] } } } }] };
+    const result = await adapter.hydrateCreate(ctx, options, proposal, adapter.proposalReceipts(proposal));
+    assert.equal(proposal.fields.reason?.value, reason === 'เลี้ยงลูกค้าหลังประชุม' ? reason : undefined);
+    assert.equal(result.missing.includes('fields.reason'), reason !== 'เลี้ยงลูกค้าหลังประชุม');
+    if (reason !== 'เลี้ยงลูกค้าหลังประชุม') assert.equal(result.receipts.some((item: any) => item.fieldPath === 'fields.reason'), false);
+  }
+  source.updatedAt = 'changed';
+  await assert.rejects(adapter.hydrateCreate(ctx, options, { fields: {}, lineChanges: [{ operation: 'ADD', values: { linkedExpenseChoiceId: choiceId } }] }, []), /STALE/);
+});
