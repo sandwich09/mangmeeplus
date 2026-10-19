@@ -19,7 +19,7 @@ const counts = { DRAFT: 1, PENDING_APPROVAL: 2, APPROVED: 3, PAID: 0, CANCELLED:
 const row = { id: 'draft', documentNumber: null, status: 'DRAFT', origin: 'PREPARED', payeeName: 'ร้านทดสอบ', plannedPayDate: null, paidDate: null,
   createdAt: '2026-10-14T18:00:00Z', totalAmount: '1250.50', lineCount: 1, preparerName: 'สมใจ', primaryAction: 'submit', canDelete: true };
 const result = { data: [row], counts, sums: { DRAFT: '1250.50', PENDING_APPROVAL: '2300.25', APPROVED: '4500.75', PAID: '0.00', CANCELLED: '0.00' }, total: 1, page: 1, pageSize: 10 };
-function harness(initial: Record<string, any> = {}, permissions = ['expense.disbursement.read', 'expense.disbursement.prepare'], query = '') {
+function harness(initial: Record<string, any> = {}, permissions = ['expense.disbursement.read', 'expense.disbursement.prepare'], query = '', entryOpen = true) {
   const runtime = require('react');
   const names = [...readFileSync(new URL('./DisbursementVoucherListPage.tsx', import.meta.url), 'utf8').matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(m => m[1]);
   const state: any = { result, loading: false, ...initial }; const nodes: any[] = []; const routes: string[] = []; const effects: any[] = [];
@@ -31,7 +31,7 @@ function harness(initial: Record<string, any> = {}, permissions = ['expense.disb
       if (!(name in state)) state[name] = pair[0]; return [state[name], (next: any) => { state[name] = typeof next === 'function' ? next(state[name]) : next; }]; };
     runtime.createElement = (tag: any, props: any, ...children: any[]) => { nodes.push({ tag: typeof tag === 'string' ? tag : tag?.name, props: { ...props, children } }); return realCreate(tag, props, ...children); };
     try { return renderToStaticMarkup(React.createElement(AppRouterContext.Provider, { value: { push: (url: string) => routes.push(url), replace() {}, prefetch() {} } as any },
-      React.createElement(SearchParamsContext.Provider, { value: new URLSearchParams(query) }, React.createElement(DisbursementVoucherListPage, { companyId: 'shop', permissions, entryOpen: true })))); }
+      React.createElement(SearchParamsContext.Provider, { value: new URLSearchParams(query) }, React.createElement(DisbursementVoucherListPage, { companyId: 'shop', permissions, entryOpen })))); }
     finally { runtime.useState = realState; runtime.createElement = realCreate; runtime.useEffect = realEffect; }
   }
   return { render, state, nodes, routes, effects, setQuery: (value: string) => { query = value; } };
@@ -127,5 +127,46 @@ test('VOUCH-LIST2 date sort is reachable on phone and wide, preserves filters, r
     assert.deepEqual(calls, [{ status: 'APPROVED', q: 'PV', page: 1, pageSize: 10, order: 'oldest' }]);
     screen.nodes.find(n => n.props['aria-label'] === 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า').props.onClick();
     assert.equal(new URL(screen.routes[1], 'https://local').searchParams.get('order'), null);
+  } finally { read.mock.restore(); }
+});
+
+
+test('VOUCHER-CLOSED reads existing vouchers, keeps document links and hides create and delete on phone and wide', async () => {
+  const calls: unknown[] = [];
+  const read = mock.method(api, 'listDisbursementVouchers', async (_company: string, query: unknown) => { calls.push(query); return result; });
+  try {
+    const page = harness({}, undefined, '', false);
+    const html = page.render();
+    assert.match(html, /ปิดการทำใบเตรียมจ่ายใหม่แล้ว ดูใบเดิมได้/);
+    assert.match(html, /ร้านทดสอบ/);
+    assert.doesNotMatch(html, /สร้างใบเตรียมจ่าย|ลบร่างใบเตรียมจ่ายนี้|หน้านี้ยังไม่ได้เปิดใช้/);
+    assert.equal(page.nodes.some(n => n.tag === 'IconBtn'), false);
+    assert.equal(page.nodes.find(n => n.tag === 'DisbursementVoucherCard').props.row.canDelete, false);
+    assert.match(html, /href="\/companies\/shop\/expenses\/disbursement-vouchers\/draft"/);
+    const cleanup = page.effects[2](); await new Promise(resolve => setImmediate(resolve)); cleanup?.();
+    assert.equal(calls.length, 1, 'entry closure does not suppress the read');
+  } finally { read.mock.restore(); }
+});
+
+test('VOUCHER-CLOSED shows the existing closed empty state only after all counts are zero', () => {
+  const empty = { ...result, data: [], total: 0, counts: Object.fromEntries(Object.keys(counts).map(key => [key, 0])) };
+  const html = harness({ result: empty }, undefined, '', false).render();
+  assert.match(html, /หน้านี้ยังไม่ได้เปิดใช้สำหรับร้านของคุณ/);
+  assert.match(html, /href="\/companies\/shop\/expenses"/);
+  assert.doesNotMatch(html, /ปิดการทำใบเตรียมจ่ายใหม่แล้ว|สร้างใบเตรียมจ่าย/);
+  const open = harness().render();
+  assert.match(open, /สร้างใบเตรียมจ่าย|ลบร่างใบเตรียมจ่ายนี้/);
+  assert.doesNotMatch(open, /ปิดการทำใบเตรียมจ่ายใหม่แล้ว/);
+});
+
+test('VOUCHER-CLOSED a search with zero matches still shows the existing-record list and clear-search action', async () => {
+  const read = mock.method(api, 'listDisbursementVouchers', async (_company: string, query: any) => query.q
+    ? { ...result, data: [], total: 0, counts: Object.fromEntries(Object.keys(counts).map(key => [key, 0])) } : result);
+  try {
+    const page = harness({}, undefined, 'q=missing', false);
+    page.render(); page.effects[2](); await new Promise(resolve => setImmediate(resolve));
+    const html = page.render();
+    assert.match(html, /ไม่พบใบตามคำค้นนี้/);
+    assert.doesNotMatch(html, /หน้านี้ยังไม่ได้เปิดใช้สำหรับร้านของคุณ/);
   } finally { read.mock.restore(); }
 });

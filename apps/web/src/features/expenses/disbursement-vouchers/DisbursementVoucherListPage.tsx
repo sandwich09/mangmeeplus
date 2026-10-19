@@ -54,8 +54,9 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
   const searchParams = useSearchParams();
   const { filter, page, q, order } = disbursementVoucherListQuery(new URLSearchParams(searchParams.toString()));
   const canRead = permissions.includes('expense.disbursement.read');
-  const canPrepare = canPrepareDisbursementVoucher(permissions);
+  const canPrepare = entryOpen && canPrepareDisbursementVoucher(permissions);
   const [result, setResult] = useState<ListResult | null>(null);
+  const [unfilteredCount, setUnfilteredCount] = useState<number | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
@@ -65,7 +66,7 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
   const [deleteError, setDeleteError] = useState<unknown>(null);
   const deleteTarget = useRef<string | null>(null);
   const openDelete = async (id: string) => {
-    if (deleteLoadingId) return;
+    if (!entryOpen || deleteLoadingId) return;
     deleteTarget.current = id; setDeleteLoadingId(id); setDeleteError(null);
     try { setDeleteDetail(await getDisbursementVoucher(companyId, id, { suppressErrorToast: true })); }
     catch (failure) { setDeleteError(failure); }
@@ -88,11 +89,16 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
   }, [searchText, q, searchParams, router, listHref]);
 
   useEffect(() => {
-    if (!canRead || !entryOpen) return;
+    if (!canRead) return;
     let active = true;
     setLoading(true); setError(null);
     void listDisbursementVouchers(companyId, { status: filter === 'all' ? undefined : filter, q: q || undefined, page, pageSize: DISBURSEMENT_VOUCHER_PAGE_SIZE, order })
-      .then((data) => { if (active) setResult(data); })
+      .then(async (data) => {
+        // Search counts describe its matches, so check the unfiltered list before saying no old records exist.
+        const all = !entryOpen && q && Object.values(data.counts).every(count => count === 0)
+          ? await listDisbursementVouchers(companyId, { page: 1, pageSize: 1 }) : data;
+        if (active) { setResult(data); setUnfilteredCount(Object.values(all.counts).reduce((sum, count) => sum + count, 0)); }
+      })
       .catch((failure: unknown) => { if (active) setError(failure); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -107,7 +113,9 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
   };
 
   if (!canRead) return <ForbiddenState titleAs="h1" />;
-  if (!entryOpen) return (
+  const counts = result?.counts;
+  const allCount = counts ? Object.values(counts).reduce((sum, count) => sum + count, 0) : 0;
+  if (!entryOpen && !loading && !error && result && (unfilteredCount ?? allCount) === 0) return (
     <MangmeePage title={DISBURSEMENT_VOUCHER_WORDS.title} className={cx(styles.page, 'mangmee-flat')}>
       <MangmeeCard className={styles.section}>
         <EmptyState title={t('expenses.disbursement.hidden', 'th')} description={t('expenses.disbursement.hidden_help', 'th')}
@@ -115,14 +123,13 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
       </MangmeeCard>
     </MangmeePage>
   );
-  const counts = result?.counts;
-  const allCount = counts ? Object.values(counts).reduce((sum, count) => sum + count, 0) : 0;
   const filterName = (value: DisbursementVoucherFilter) => value === 'all' ? t('expenses.disbursement.all', 'th') : disbursementVoucherBadge(value).label;
 
   return (
     <MangmeePage title={DISBURSEMENT_VOUCHER_WORDS.title} description={t('expenses.disbursement.description', 'th')}
       actions={canPrepare ? create : undefined} className={cx(styles.page, 'mangmee-flat')}>
       <div className={styles.stack}>
+        {!entryOpen && <p role="status" className="text-sm text-gray-600">ปิดการทำใบเตรียมจ่ายใหม่แล้ว ดูใบเดิมได้</p>}
         {!loading && !error && result && <MangmeeCard className={styles.section}>
           <MetricGrid columns={2} items={[
             { key: 'approval', label: 'รออนุมัติ', value: result.sums?.PENDING_APPROVAL == null ? '—' : amountText(result.sums.PENDING_APPROVAL), unit: 'บาท', note: `${result.counts.PENDING_APPROVAL} ใบ`, dot: 'bg-amber-400' },
@@ -161,7 +168,7 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
                   เรียง: {order === 'newest' ? 'ใหม่ไปเก่า ↓' : 'เก่าไปใหม่ ↑'}
                 </button></div>
                 <div className={styles.cards} data-testid="disbursement-voucher-card-list">
-                  {result.data.map((row) => <DisbursementVoucherCard key={row.id} companyId={companyId} row={row} onDelete={() => openDelete(row.id)} deleting={deleteLoadingId === row.id} />)}
+                  {result.data.map((row) => <DisbursementVoucherCard key={row.id} companyId={companyId} row={{ ...row, canDelete: entryOpen && row.canDelete }} onDelete={() => openDelete(row.id)} deleting={deleteLoadingId === row.id} />)}
                 </div>
                 <div className={styles.table} data-testid="disbursement-voucher-table">
                   <div className="min-w-[900px]">
@@ -181,7 +188,7 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
                         <div><span className="mangmee-unit text-xs text-gray-500">{disbursementVoucherDateLine(row)}</span></div><div className="text-right text-[15px] font-bold tabular-nums text-gray-900"><span className="mangmee-unit">{amountText(row.amountInEffect ?? row.totalAmount)}</span>
                           {row.amountInEffect != null && <p className={styles.muted}>{t('expenses.disbursement.cancelled_amount_note', 'th')}</p>}</div>
                         <div className="flex justify-end"><DisbursementVoucherStatusBadge status={row.status} /></div>
-                        <div className="flex items-center justify-end gap-1.5">{row.canDelete && <IconBtn title="ลบร่างใบเตรียมจ่ายนี้" tone="danger" loading={deleteLoadingId === row.id}
+                        <div className="flex items-center justify-end gap-1.5">{entryOpen && row.canDelete && <IconBtn title="ลบร่างใบเตรียมจ่ายนี้" tone="danger" loading={deleteLoadingId === row.id}
                           onClick={event => { event.stopPropagation(); void openDelete(row.id); }}>{ICON.trash}</IconBtn>}</div>
                       </div>
                     ))}
@@ -196,7 +203,7 @@ export function DisbursementVoucherListPage({ companyId, permissions, entryOpen 
           </div>
         )}
       </div>
-      {deleteDetail && <DisbursementVoucherCommandDialog companyId={companyId} detail={deleteDetail} kind="delete"
+      {entryOpen && deleteDetail && <DisbursementVoucherCommandDialog companyId={companyId} detail={deleteDetail} kind="delete"
         onClose={() => setDeleteDetail(null)} onReload={async () => { setDeleteDetail(await getDisbursementVoucher(companyId, deleteDetail.header.id, { suppressErrorToast: true })); setRetry(value => value + 1); }}
         onDeleted={() => { setDeleteDetail(null); if (result?.data.length === 1 && page > 1) navigate(filter, page - 1); else setRetry(value => value + 1); }} />}
     </MangmeePage>

@@ -26,7 +26,7 @@ import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import {
-  amountText, baht, dateShort, ErrorBanner, InfoBanner, inputClass, btnClass, ghostClass, dangerClass,
+  amountText, dateShort, ErrorBanner, InfoBanner, inputClass, btnClass, ghostClass, dangerClass,
 } from '../expenses/ExpensesUi';
 import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
 import {
@@ -62,9 +62,9 @@ import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
  * are not the status alone: a claim the system holds reads "รอระบบปรับสถานะ" (its `currentDesk`), and a claim sent back
  * from its pay step reads what it waits for, by what it holds and what was answered (`claimStatusBadge`).
  */
-/** Claim screens use the expense list's baht formatter; other currencies retain their label. */
+/** Claim screens share their baht formatter; other currencies retain their label. */
 export function formatClaimMoney(value: unknown, currency = 'THB'): string {
-  return currency === 'THB' ? baht(String(value ?? 0)) : fallbackMoney(value, currency);
+  return fallbackMoney(value, currency);
 }
 export function formatClaimDetailMoney(value: unknown, currency = 'THB'): string {
   return fallbackMoney(value, currency);
@@ -275,12 +275,12 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
                 <dd className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
                   <span className="text-gray-500">เดิม</span>
                   <span className="min-w-0 break-words text-gray-600">
-                    <span className={row.key === 'amount' ? 'mangmee-unit' : undefined}>{row.key === 'payout' ? accountText(row.before, beforePayout) : row.key === 'amount' ? row.before.replace(/^฿(.+)$/, '$1 บาท') : row.before === '—' ? 'ยังไม่ระบุ' : row.before}</span>
+                    <span className={row.key === 'amount' ? 'mangmee-unit' : undefined}>{row.key === 'payout' ? accountText(row.before, beforePayout) : row.before === '—' ? 'ยังไม่ระบุ' : row.before}</span>
                     {row.key === 'payout' && <PayoutHolderNotice account={beforePayout} />}
                   </span>
                   <span className="text-gray-500">ใหม่</span>
                   <span className="min-w-0 break-words font-semibold text-gray-900">
-                    <span className={row.key === 'amount' ? 'mangmee-unit' : undefined}>{row.key === 'payout' ? accountText(row.after, payout) : row.key === 'amount' ? row.after.replace(/^฿(.+)$/, '$1 บาท') : row.after === '—' ? 'ยังไม่ระบุ' : row.after}</span>
+                    <span className={row.key === 'amount' ? 'mangmee-unit' : undefined}>{row.key === 'payout' ? accountText(row.after, payout) : row.after === '—' ? 'ยังไม่ระบุ' : row.after}</span>
                     {row.key === 'payout' && <PayoutHolderNotice account={payout} />}
                   </span>
                 </dd>

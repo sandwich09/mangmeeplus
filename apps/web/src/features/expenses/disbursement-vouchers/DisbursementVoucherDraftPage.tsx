@@ -87,7 +87,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
   const validSelection = selectedRows.length > 0 && selectedRows.length <= 20 && selectedRows.length === Object.keys(amounts).length
     && selectedRows.every(row => row.selectable && !amountError(amounts[row.expenseId]!, row.outstandingAmount))
     && (rule !== 'confirm' || fields.payeeConfirmed);
-  const canSave = canPrepare && (entryOpen || Boolean(draftId)) && validSelection && Boolean(fields.payeeName.trim()) && (!['', 'BANK_TRANSFER'].includes(fields.plannedMethod) || !disbursementAccountError(fields)) && !stale && !bootLoading && !sourceLoading;
+  const canSave = canPrepare && entryOpen && validSelection && Boolean(fields.payeeName.trim()) && (!['', 'BANK_TRANSFER'].includes(fields.plannedMethod) || !disbursementAccountError(fields)) && !stale && !bootLoading && !sourceLoading;
   const summary = disbursementVoucherSummary({ header: { totalAmount: total }, lines: selectedRows });
   // One document holds one branch (the server refuses a mix at save): say so on the row, before the details step.
   const lockedBranch = selectedRows.find(row => row.branchId)?.branchId ?? null;
@@ -101,7 +101,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
   const changeFields = (patch: Partial<Fields>) => { changed(); setFields(previous => ({ ...previous, ...patch })); };
 
   useEffect(() => {
-    if (!canPrepare || !entryOpen && !draftId) return;
+    if (!canPrepare || !entryOpen) return;
     const context = JSON.stringify([companyId, draftId, expenseId, reload]);
     if (loadedContext.current === context) return;
     let active = true;
@@ -115,7 +115,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
       const detail = draftId ? await getDisbursementVoucher(companyId, draftId) : null;
       if (!active) return;
       if (detail && (detail.header.status !== 'DRAFT' || !detail.actions.edit)) {
-        setBlocked(!entryOpen ? t('expenses.disbursement.hidden', 'th') : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_not_draft); return;
+        setBlocked(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_not_draft); return;
       }
       const available = await listDisbursementPayableExpenses(companyId, {});
       if (!active) return;
@@ -281,8 +281,12 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
   const navigation = useUnsavedNavigation({ dirty, canSave, saving, error: saveError, onSave: () => save(false), description: draftId ? t('expenses.disbursement.leave_edit', 'th') : undefined, title: draftId ? t('expenses.disbursement.leave_edit_title', 'th') : undefined });
   const back = <Link href={listHref} className="mangmee-btn mangmee-btn-secondary !min-h-9 !py-1.5">กลับไปรายการ</Link>;
   const backAction = <Link href={listHref} className={ghostClass}>{t('expenses.disbursement.back_list', 'th')}</Link>;
+  if (!entryOpen && draftId && permissions.includes('expense.disbursement.read')) return <MangmeePage title={t('expenses.disbursement.edit_title', 'th')}>
+    <MangmeeCard className={styles.section}><EmptyState title="ปิดการทำใบเตรียมจ่ายแล้ว ร่างนี้ทำต่อไม่ได้" description="" action={backAction} /></MangmeeCard>
+    {navigation.dialog}
+  </MangmeePage>;
   if (!canPrepare) return <><ForbiddenState titleAs="h1" />{navigation.dialog}</>;
-  if (!entryOpen && !draftId || blocked === t('expenses.disbursement.hidden', 'th')) return <MangmeePage title={DISBURSEMENT_VOUCHER_WORDS.title}>
+  if (!entryOpen && !draftId) return <MangmeePage title={DISBURSEMENT_VOUCHER_WORDS.title}>
     <MangmeeCard className={styles.section}><EmptyState title={t('expenses.disbursement.hidden', 'th')} description={t('expenses.disbursement.hidden_help', 'th')}
       action={<Link href={`/companies/${companyId}/expenses`} className={ghostClass}>{t('expenses.disbursement.back_expenses', 'th')}</Link>} /></MangmeeCard>
     {navigation.dialog}

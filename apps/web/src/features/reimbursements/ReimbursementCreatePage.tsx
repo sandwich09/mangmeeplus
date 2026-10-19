@@ -578,7 +578,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                     )}
                   </div>
 
-                  <div className={cx('mt-3 grid gap-3 lg:grid-cols-3', form.lines.length > 1 && collapsedLines[i] && 'hidden')}>
+                  <div className={cx('mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3 [&>*]:min-w-0', form.lines.length > 1 && collapsedLines[i] && 'hidden')}>
                     {/* The receipt first: it is what the person holds, and the rest is read off it. */}
                     <div className="lg:col-span-3 scroll-mt-[calc(var(--app-header-h)+1rem)]" tabIndex={-1} aria-invalid={Boolean(lineProblems?.receipt)}>
                       <label className={labelClass}>ใบเสร็จ</label>
