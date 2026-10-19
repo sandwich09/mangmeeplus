@@ -177,3 +177,107 @@ describe('v2 rendered invocation pricing and pinned settlement', () => {
       + billed.pricingSnapshot.externalToolCostSatang, billed.costSatang);
   });
 });
+
+// Registered package-test home for the owner-approved reservation/settlement regression checks.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { priceRenderedAiInvocationV2 } from './ai-model-pricing';
+import { splitPrisma } from './company-ai-budget-prisma.fixture';
+import { consumeAiCreditHold } from './ai-credit-ledger';
+import { decideAiBudgetStep, reserveAiBudgetStep, settleAiBudgetStep } from './company-ai-budget-reservation';
+const decideCredit = (over: Partial<Parameters<typeof decideAiBudgetStep>[0]> = {}) => decideAiBudgetStep({
+  bucket: 'CHAT', boundSatang: 100, totalSatang: 10_000, capSatang: 3_000,
+  spent: { total: 0, bucket: 0 }, reserved: { total: 0, bucket: 0 }, override: false, ...over,
+});
+
+describe('owner 2026-10-19: successful overruns are alerted without customer lockout', () => {
+  for (const remaining of [300, 1200]) it(`settles actual, charges at most ${remaining} available satang and preserves competing holds`, async () => {
+    const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+    const price = priceRenderedAiInvocationV2({ version: 'test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+      usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, 4096, 2048)!;
+    const ownHold = price.upperBoundSatang, competing = 100;
+    const lot = { id: 'cycle-lot', sourceKind: 'INCLUDED_CYCLE', units: remaining + competing,
+      availableAt: new Date('2026-10-01'), expiresAt: new Date('2026-11-01') };
+    const debits: any[] = [], locks: string[] = [];
+    const fixture = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 }, {
+      $executeRaw: async (_sql: unknown, key: string) => { locks.push(key); return 0; },
+      aiCreditGrant: { findMany: async ({ where }: any) => { assert.equal(where.companyId, 'co'); return [lot]; } },
+      aiCreditEntry: {
+        findMany: async () => [{ grantId: lot.id, units: -ownHold, grant: lot }],
+        groupBy: async ({ where }: any) => where.kind === 'RESERVE'
+          ? [{ grantId: lot.id, _sum: { units: -ownHold - competing } }] : [],
+        createMany: async ({ data }: any) => { debits.push(...data); return { count: data.length }; },
+      },
+    });
+    fixture.prisma.client.aiBudgetReservation.findMany = async () => [{ id: 'hold' }, { id: 'competing' }];
+    // If admission still asks for breach count this fake forces the old lockout, making the test fail.
+    fixture.prisma.client.aiBudgetReservation.count = async () => 1;
+    const key = 'co#overrun#provider-v2#0';
+    fixture.reservations.set('hold', { id: 'hold', companyId: 'co', monthKey: '2026-10', bucket: 'CHAT', stepKind: 'provider-v2',
+      invocationKey: key, status: 'DISPATCHED', upperBoundSatang: ownHold,
+      pricingSnapshot: { ...price.snapshot, aiCredit: { cycleKey: 'cycle', asOf: '2026-10-19T00:00:00Z' } } });
+    const input = { invocationKey: key, meta: { sourceRoute: 'line-ai-v2' },
+      entry: { tag: 'line.loop', modelId, ok: true, inputTokens: 1_000_000, outputTokens: 0,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, usageBasis: 'PROVIDER_REPORTED' as const } };
+    assert.equal(await settleAiBudgetStep(fixture.prisma, input), 'settled');
+    assert.deepEqual(locks.slice(0, 2), ['partner-ocr-config:co', 'ai-budget:co:2026-10']);
+    const hold = fixture.reservations.get('hold'), actual = hold.settledCostSatang;
+    const charged = -debits.reduce((sum, row) => sum + row.units, 0);
+    assert.ok(actual > ownHold);
+    assert.equal(charged, Math.min(actual, remaining));
+    assert.ok(charged <= actual && charged <= remaining);
+    assert.equal(hold.status, 'SETTLED');
+    assert.equal(hold.breach, true, 'unacknowledged operator alert survives');
+    assert.equal(hold.evidenceJson.customerChargedSatang, charged);
+    assert.equal(hold.evidenceJson.companyAbsorbedSatang, actual - charged);
+    assert.equal(fixture.events.get(key).costSatang, actual, 'complete provider cost evidence');
+    assert.equal(await settleAiBudgetStep(fixture.prisma, input), 'duplicate');
+    assert.equal(debits.length, 1, 'settle replay cannot debit twice');
+    const next = await reserveAiBudgetStep(fixture.prisma, { aiMonthlyBudgetSatang: 10000 } as never, {
+      companyId: 'co', monthKey: '2026-10', bucket: 'CHAT', stepKind: 'crm-intake', attemptKey: 'after-overrun', ordinal: 0,
+      sourceRoute: 'crm-intake', modelId, thbPerUsd: 33, thbPerUsdSource: 'test' });
+    assert.equal(next.ok, true, 'a breach never creates an acknowledgement lockout');
+  });
+
+  it('can fund the overrun from another eligible lot while preserving expiry and spend order', async () => {
+    const at = new Date('2026-10-19');
+    const cycle = { id: 'cycle', sourceKind: 'INCLUDED_CYCLE', units: 100, availableAt: at, expiresAt: new Date('2026-11-01') };
+    const added = { id: 'added', sourceKind: 'ADD_ON_PAID', units: 70, availableAt: at, expiresAt: new Date('2027-01-01') };
+    const writes: any[] = [];
+    const tx = {
+      aiCreditGrant: { findMany: async () => [cycle, added] },
+      aiBudgetReservation: { findMany: async () => [{ id: 'r' }] },
+      aiCreditEntry: { findMany: async () => [{ grantId: 'cycle', units: -50, grant: cycle }],
+        groupBy: async ({ where }: any) => where.kind === 'RESERVE' ? [{ grantId: 'cycle', _sum: { units: -50 } }] : [],
+        createMany: async ({ data }: any) => { writes.push(...data); return { count: data.length }; } },
+    };
+    assert.equal(await consumeAiCreditHold(tx, { companyId: 'co', reservationId: 'r', costSatang: 150, overrun: { cycleKey: 'c', asOf: at } }), 150);
+    assert.deepEqual(writes.map(row => [row.grantId, row.units]), [['cycle', -100], ['added', -50]]);
+  });
+});
+
+it('credit X1: real-builder hold table uses pinned pricing and a typical three-call claim admits with ten baht left', () => {
+  const report = JSON.parse(readFileSync(join(__dirname, '../../../../../..', 'docs/evidence/line-ai-credit-levers-20261019-measurements.json'), 'utf8'));
+  for (const row of report.rows) {
+    const publicLookup = row.model === 'gpt-4.1-mini';
+    const tariff = { version: 'table:1', provider: publicLookup ? 'openai' as const : 'bedrock' as const, modelId: row.model,
+      region: publicLookup ? 'US' : 'ap-southeast-1', thbPerUsd: 33,
+      usdPerMTok: publicLookup ? { input: .4, output: 1.6, cacheRead: .1, cacheWrite: .4 } : { input: 3, output: 15, cacheRead: .3, cacheWrite: 3.75 },
+      ...(publicLookup ? { externalUsdPerUnit: .01, searchContentInputTokensPerUnit: 8000 } : {}) };
+    for (const side of ['Before', 'After']) {
+      assert.equal(priceRenderedAiInvocationV2(tariff, row[`bound${side}`], row.output, publicLookup ? 2 : 0)?.upperBoundSatang,
+        Math.round(row[`hold${side}Thb`] * 100), `${row.name}/${side}`);
+    }
+  }
+  const intake = report.rows.find((r: any) => r.name === 'intake text 4 turns pending task');
+  assert.equal(intake.holdBeforeThb, 14.45);
+  assert.equal(intake.holdAfterThb, 7.86);
+  let spent = 0;
+  for (const [name, actual] of [[intake.name, 92], ['claim control', 50], ['line.compose', 50]] as const) {
+    const row = report.rows.find((r: any) => r.name === name);
+    assert.deepEqual(decideCredit({ totalSatang: 1000, capSatang: 1000, boundSatang: Math.round(row.holdAfterThb * 100),
+      spent: { total: spent, bucket: spent } }), { ok: true }, name);
+    spent += actual;
+  }
+  assert.ok(spent < 1000, 'representative warm usage, not a guarantee for arbitrary cold or long turns');
+});

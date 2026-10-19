@@ -61,7 +61,7 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     return { input, grant, owner, context };
   }
   const invocation = (grant: AiBudgetGrantV2, ordinal = grant.nextOrdinal ?? 0, profileId: AiBudgetProfileIdV2 = 'line-control/2'): AiBudgetInvocationV2 => ({
-    grant, ordinal, profileId, inputTokenBound: 1024, requestedOutputTokens: 100, estimatorVersion: 'utf8-v2', promptVersion: 'fixture:1', payloadDigest: hash, schemaDigest: hash, inputDigest: hash,
+    grant, ordinal, profileId, inputTokenBound: 1024, requestedOutputTokens: 100, estimatorVersion: 'utf8-split-prefix-v4', promptVersion: 'fixture:1', payloadDigest: hash, schemaDigest: hash, inputDigest: hash,
   });
   async function settle(key: string) {
     return settleAiBudgetStep(prisma, { invocationKey: key, meta: { sourceRoute: 'line-ai-v2' }, entry: { modelId: model, tag: 'fixture', ok: true,

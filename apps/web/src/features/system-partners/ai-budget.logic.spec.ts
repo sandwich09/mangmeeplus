@@ -499,11 +499,12 @@ describe('held credit that needs an operator decision (hold spec §4.1–4.2)', 
     assert.match(text.message, /เหตุผล: ผลไม่กลับมา/);
   });
 
-  it('says an ACKNOWLEDGEMENT moves no money and reopens the scope, with the real actual', () => {
+  it('says an ACKNOWLEDGEMENT clears only the alert and moves no money', () => {
     const text = aiCreditHoldConsequence('acknowledge_breach', hold({ settledCostSatang: 6_000 }), 'ตรวจแล้ว');
     assert.equal(text.confirmLabel, AI_CREDIT_HOLD_ACTION_LABELS.acknowledge_breach);
     assert.match(text.message, /ใช้จริง ฿60\.00 จากที่กันไว้ ฿47\.00/);
-    assert.match(text.message, /เปิดรับงาน AI ของส่วนนี้อีกครั้ง/);
+    assert.match(text.message, /ปิดการแจ้งเตือน/);
+    assert.doesNotMatch(text.message, /เปิดรับงาน|หยุดรับงาน/);
     assert.match(text.message, /ไม่มีการคืนเครดิต/);
     // A breach row with no settled figure still reads as money, never as an empty string.
     assert.match(aiCreditHoldConsequence('acknowledge_breach', hold(), 'r').message, /ใช้จริง ฿47\.00/);
@@ -688,3 +689,11 @@ it('labels company-absorbed model cost separately from shop credit', () => {
   assert.equal(aiUsageBasisNote([{ usageBasis: 'COMPANY_ABSORBED', costSatang: 123, calls: 2 }]),
     'บริษัทแบก ฿1.23 จาก 2 ครั้ง ไม่หักเครดิตร้านค่ะ');
 });
+
+ it('owner credit X1: an overrun is an operator warning, never a stopped-work status', () => {
+  const usage = usageFixture();
+  usage.budget.position.breach = true;
+  const alert = aiTabStatusRows(usage, value => value).find(row => row.key === 'breach');
+  assert.equal(alert?.tone, 'warn');
+  assert.doesNotMatch(alert?.value ?? '', /หยุดรับงาน|เปิดรับงาน/);
+ });

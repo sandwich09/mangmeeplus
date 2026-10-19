@@ -2,6 +2,8 @@
 
 > ส่วนเพิ่มจาก [สเปก add-on](chat-credit-and-receipt-addons-spec-th.md) 2026-09-29: หน้าลูกค้าไม่แสดงยอดกันไว้ และรวมยอดทีมงาน+ยอดซื้อเป็น “ยอดเพิ่มเติม” (§17). การจอง/กู้รายการและมุมมอง operator ในเอกสารนี้ยังทำงานตามเดิม; ห้ามคืนยอดที่จองเพียงเพื่อซ่อนตัวเลข หรือใช้ projection ของลูกค้าแทนข้อมูลที่ operator ต้องตรวจ. สำหรับร้านที่ย้ายแล้ว hold ของ LINE v2 ใน SHARED ผูก funding ของเครดิต AI (แพ็กเกจ → ทีมงาน → ซื้อ, add-on §5.3/T-04) — **implement แล้วใน add-on PR C (2026-09-29)**: entry `RESERVE` ของ lot นับเป็นยอดกันไว้เฉพาะขณะ reservation ยัง live (RESERVED/DISPATCHED/UNRESOLVED) จึงให้ operator release, cancel และ sweep คืนเครดิตด้วยสถานะ reservation ที่เขียนอยู่แล้วโดยไม่ต้องเขียน entry เพิ่ม; settle และ charge-at-bound เขียน `CONSUME` ของ lot เดิมไม่เกินยอดที่กันไว้ (lock เดือนเดิม); หลักฐานที่มาช้าหลัง release บันทึกต้นทุนเต็มแต่ไม่ตัดเครดิตซ้ำ (ผู้ให้บริการรับ) และไม่หยิบ lot ใหม่; หน้า operator ค้น hold ได้ทุกเดือนแบบแบ่งหน้า (sweep ทุกเดือนที่ยังมีแถว RESERVED/DISPATCHED ก่อนอ่าน)
 
+Owner amendment 2026-10-19: breach remains an operator alert and audit history; it no longer closes customer admission. Acknowledgement clears the alert only. Successful v2 overruns charge at most actual and available customer credit, with shortfall absorbed by the company; failed/time-out calls charge zero. This supersedes closure/reopening descriptions below; see [credit levers spec](line-ai-credit-levers-20261019.md).
+
 ## 1. สถานะและขอบเขต
 
 - วันที่: 2026-09-18
