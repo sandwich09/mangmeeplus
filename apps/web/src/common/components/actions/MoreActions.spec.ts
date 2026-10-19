@@ -73,3 +73,22 @@ test('closeOnPress closes an action menu before its dialog; ordinary menu keeps 
     assert.equal(currentTarget.open, !closeOnPress); assert.equal(focused, closeOnPress);
   }
 });
+
+test('MOBILE-1 opening a menu clamps either edge on a 375px phone, including up and icon end menus', () => {
+  const globals = globalThis as any;
+  const previousWindow = globals.window;
+  globals.window = { innerWidth: 375 };
+  try {
+    for (const props of [{}, { opens: 'up' }, { variant: 'icon', align: 'end' }] as const) {
+      const node = MoreActions({ label: 'เพิ่มเติม', children: entry, ...props });
+      for (const [left, width, expected] of [[260, 208, '-101px'], [-30, 208, '38px'], [16, 208, '0px']]) {
+        const values: Record<string, string> = {};
+        const panel = { style: { setProperty: (key: string, value: string) => { values[key] = value; } },
+          getBoundingClientRect: () => ({ left, width }) };
+        node.props.onToggle({ currentTarget: { open: true, querySelector: () => panel } });
+        assert.equal(values['--panel-shift-x'], expected);
+      }
+    }
+    assert.match(css, /\.panel \{[^}]*translate: var\(--panel-shift-x, 0px\) 0;/);
+  } finally { globals.window = previousWindow; }
+});

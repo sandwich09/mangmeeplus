@@ -21,6 +21,8 @@ type Props = {
   panelRef: RefObject<HTMLDivElement | null>;
   /** Wanted height: caps the panel and decides whether it opens downwards or flips above. */
   height: number;
+  /** Keep an entire calendar visible even when it has to overlap its trigger. */
+  keepWhole?: boolean;
   /** Floor, not a cap: the panel starts at the anchor's width and grows to fit long
    *  option labels (capped by maxWidth below) instead of cutting them off. */
   minAnchorWidth?: boolean;
@@ -33,7 +35,7 @@ type Props = {
 // Measurable (laid out, capped like the placed panel) but not yet visible.
 const UNPLACED: CSSProperties = { position: 'fixed', top: 0, left: 0, maxWidth: 'calc(100vw - 16px)', visibility: 'hidden' };
 
-export function PopoverPanel({ open, onClose, anchorRef, panelRef, height, minAnchorWidth = false, matchAnchorWidth = false, className, children, ...rest }: Props) {
+export function PopoverPanel({ open, onClose, anchorRef, panelRef, height, keepWhole = false, minAnchorWidth = false, matchAnchorWidth = false, className, children, ...rest }: Props) {
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   const [style, setStyle] = useState<CSSProperties | null>(null);
@@ -47,7 +49,7 @@ export function PopoverPanel({ open, onClose, anchorRef, panelRef, height, minAn
       const rect = anchorRef.current?.getBoundingClientRect();
       if (!rect) return;
       const panelWidth = matchAnchorWidth ? rect.width : Math.max(panelRef.current?.getBoundingClientRect().width ?? 0, minAnchorWidth ? rect.width : 0);
-      const placement = anchorRef.current && !anchorIsClipped(anchorRef.current) ? placeAnchoredPanel(rect, readOverlayBounds(anchorRef.current, panelRef.current), height, panelWidth) : null;
+      const placement = anchorRef.current && !anchorIsClipped(anchorRef.current) ? placeAnchoredPanel(rect, readOverlayBounds(anchorRef.current, panelRef.current), height, panelWidth, keepWhole) : null;
       if (!placement) { setStyle(null); closeRef.current(); return; }
       setStyle({
         position: 'fixed',
@@ -76,7 +78,7 @@ export function PopoverPanel({ open, onClose, anchorRef, panelRef, height, minAn
       window.visualViewport?.removeEventListener('resize', schedule);
       window.visualViewport?.removeEventListener('scroll', schedule);
     };
-  }, [open, height, minAnchorWidth, matchAnchorWidth, anchorRef, panelRef]);
+  }, [open, height, keepWhole, minAnchorWidth, matchAnchorWidth, anchorRef, panelRef]);
 
   // Mounted invisible until placed, never withheld: `place` reads the panel's own
   // width to keep it inside the viewport, and a panel that is not in the DOM yet
