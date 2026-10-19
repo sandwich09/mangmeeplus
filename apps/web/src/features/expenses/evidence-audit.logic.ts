@@ -1,4 +1,4 @@
-import { hasExpenseCategory } from '@watchdog-bms/contracts';
+import { hasExpenseCategory, expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
 import type { SharedEvidenceRow, TaxEvidenceStatus } from './expenses.model';
 
@@ -30,12 +30,13 @@ export const TAX_EVIDENCE_TONE: Record<TaxEvidenceStatus, MangmeeTone> = {
   NEEDS_REVIEW: 'amber',
 };
 
-export type EvidenceAuditFacts = Pick<SharedEvidenceRow, 'sourceEvidenceUnavailable' | 'sourceReimbursementRequestId' | 'missingReceiptReason' | 'taxEvidenceStatus' | 'vendorNameSnapshot' | 'categoryName' | 'expenseNumber'> & { expenseCategoryId?: string | null; lines?: Array<{ expenseCategoryId?: string | null; chargeKind?: string | null }>; attachments: Array<{ isHistorical?: boolean }> };
+export type EvidenceAuditFacts = Pick<SharedEvidenceRow, 'sourceEvidenceUnavailable' | 'sourceReimbursementRequestId' | 'missingReceiptReason' | 'taxEvidenceStatus' | 'vendorNameSnapshot' | 'categoryName' | 'expenseNumber'> & { expenseCategoryId?: string | null; lines?: Array<{ expenseCategoryId?: string | null; chargeKind?: string | null }>; aiVerificationSummaryJson?: Record<string, unknown> | null; attachments: Array<{ id?: string; status?: string; purpose?: string; isHistorical?: boolean }> };
 
 export function deriveEvidenceRowFlags(row: EvidenceAuditFacts): EvidenceFlag[] {
   const flags: EvidenceFlag[] = [];
   if (row.sourceEvidenceUnavailable) flags.push({ key: 'SOURCE_UNAVAILABLE', severity: 'warn', label: 'ตรวจหลักฐานต้นทางที่ไม่พร้อมใช้งาน' });
-  if (!row.attachments.some(file => !file.isHistorical)) {
+  if (expenseEvidenceImageMissing(row)) flags.push({ key: 'NO_FILE', severity: 'warn', label: EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL });
+  else if (!row.attachments.some(file => !file.isHistorical)) {
     // A receipt-less claim line is evidenced by its signed ใบเบิก — nothing on the (immutable,
     // confirmed) projection can or should be attached, so a red flag here would be a dead end.
     if (row.sourceReimbursementRequestId && row.missingReceiptReason) {

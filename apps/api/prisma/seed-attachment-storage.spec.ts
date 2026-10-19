@@ -243,6 +243,42 @@ it('the input VAT journey shop grants review through starter, has four QA people
   assert.match(readFileSync(new URL('../../../scripts/local-proof/proof-journeys.sh', import.meta.url), 'utf8'), /seed-local-input-vat-shop/);
 });
 
+it('the fresh input VAT journey shop offers claimable tax codes and their rules without changing its VAT answer or entitlements', async () => {
+  let company: any = null;
+  const accounts: any[] = [], definitions: any[] = [], accountRules: any[] = [], reportRules: any[] = [], entitlements: any[] = [];
+  const create = async () => ({ id: 'seed-row' });
+  const tx = {
+    user: { findUniqueOrThrow: async () => ({ id: 'owner' }) },
+    company: { findUnique: async () => company, create: async ({ data }: any) => (company = data), update: create },
+    branch: { create }, role: { findUniqueOrThrow: create }, companyMembership: { create }, membershipRole: { create },
+    employeeAccessProfile: { findUniqueOrThrow: async () => ({}), create },
+    chartOfAccount: {
+      count: async () => accounts.length,
+      createMany: async ({ data }: any) => { accounts.push(...data.map((row: any) => ({ id: row.code, ...row }))); return { count: data.length }; },
+      findMany: async ({ where }: any) => accounts.filter(row => row.companyId === where.companyId && (!where.code?.in || where.code.in.includes(row.code))),
+    },
+    expenseCategory: { createMany: create },
+    companyTaxCodeProfile: { count: async () => 0, create: async ({ data }: any) => ({ id: 'profile', ...data }) },
+    taxCodeDefinition: { create: async ({ data }: any) => { const row = { id: data.externalCode, ...data }; definitions.push(row); return row; } },
+    taxAccountDeterminationRule: { createMany: async ({ data }: any) => { accountRules.push(...data); } },
+    taxReportMappingRule: { createMany: async ({ data }: any) => { reportRules.push(...data); } },
+    companyFeatureEntitlement: { createMany: async ({ data }: any) => { entitlements.push(...data); } },
+    companyEntitlementSet: { create }, companyEntitlementNormalization: { create }, companyWebEntrySetting: { create },
+  };
+  const prisma = { user: { findUniqueOrThrow: async () => ({ id: 'owner' }) }, $transaction: async (run: any) => run(tx) };
+  const put = mock.method(CompanyVatRegistrationUseCase.prototype, 'put', async () => { throw new Error('Must not answer VAT'); });
+  try {
+    await seedPlainShop(prisma as any, INPUT_VAT_SHOP);
+    assert.deepEqual(definitions.map(row => [row.externalCode, row.status]), [['V7', 'ACTIVE'], ['ND', 'ACTIVE']]);
+    assert.ok(accountRules.some(row => row.accountRole === 'INPUT_VAT_CLAIMABLE'));
+    assert.ok(reportRules.some(row => row.boxKey === 'box_7_input_tax'));
+    assert.deepEqual(entitlements, plainShopEntitlements(INPUT_VAT_SHOP.id));
+    await seedPlainShop(prisma as any, INPUT_VAT_SHOP);
+    assert.equal(definitions.length, 2, 're-seeding keeps the existing tax configuration');
+    assert.equal(put.mock.callCount(), 0);
+  } finally { put.mock.restore(); }
+});
+
 it('the package journey shop starts on the 999 menus with its owner only, and the journeys warm it', async () => {
   assert.equal(PACKAGE_SHOP.id, 'seed-local-package-shop');
   assert.deepEqual(PACKAGE_SHOP.roleKeys, ['OWNER']);

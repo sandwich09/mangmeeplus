@@ -34,6 +34,24 @@ const nonVatExpense = {
 };
 
 describe('accountant index is independent of expense capture mode', () => {
+  it('EVID-1 exports missing-image text and the evidence note without inventing where the original is kept', () => {
+    for (const note of ['', 'อยู่กับผู้ทำบัญชี']) {
+      const assessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note };
+      const source = { ...nonVatExpense, sourceDocumentType: 'TAX_INVOICE' as const, taxEvidenceStatus: 'USABLE_FOR_TAX' as const, inputVatClaimStatus: 'CLAIMABLE' as const,
+        aiVerificationSummaryJson: { documentEvidenceDraft: assessment } };
+      const row = buildAccountantIndexRow(source);
+      assert.equal(row.notes, ['ยังไม่มีรูปเอกสาร', note ? `หมายเหตุ: ${note}` : ''].filter(Boolean).join(' · '));
+      assert.equal(row.input_vat_right, 'CLAIMABLE');
+      assert.doesNotMatch(buildAccountantIndexCsv([row]), /ตัวจริงอยู่ที่ร้าน/);
+      for (const columns of ['summary', 'full'] as const) {
+        const xml = exportedSheet(buildAccountantIndexXlsx([row], columns));
+        assert.ok(xml.includes('ยังไม่มีรูปเอกสาร')); if (note) assert.ok(xml.includes(`หมายเหตุ: ${note}`));
+        const paymentXml = exportedSheet(buildAccountantIndexXlsx([], columns, [row]), 'xl/worksheets/sheet2.xml');
+        assert.ok(paymentXml.includes('ยังไม่มีรูปเอกสาร')); if (note) assert.ok(paymentXml.includes(`หมายเหตุ: ${note}`));
+      }
+    }
+  });
+
   it('keeps every tax column for an expense with no VAT', () => {
     const row = buildAccountantIndexRow(nonVatExpense);
 

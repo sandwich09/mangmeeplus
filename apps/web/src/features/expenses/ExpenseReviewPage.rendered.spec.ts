@@ -1303,3 +1303,17 @@ test('UAT-T1 issued receipt payee and purpose remain visible as read-only facts 
   assert.equal(seller.value, 'แม่ค้าผักทดสอบ'); assert.equal(seller.readOnly, true);
   assert.equal(purpose.value, 'ทดสอบระบบ'); assert.equal(purpose.readOnly, true);
 });
+
+test('EVID-1 confirmed original-paper expense shows the image to-do until its later file is selected', () => {
+  const detail = expense({ sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE', categoryName: 'สำนักงาน' });
+  detail.attachments = []; detail.primaryAttachmentId = null;
+  const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [] as string[], reason: '', originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' };
+  const review = () => { detail.aiVerificationSummaryJson = { documentEvidenceDraft: assessment, documentReview: { version: 2, assessment, reviewedAt: detail.updatedAt, reviewedByUserId: 'owner', fingerprint: expenseEvidenceFingerprint(detail, assessment) } }; };
+  review();
+  const before = harness({ detail }).render();
+  assert.match(before, /ยังไม่มีรูปเอกสาร/); assert.match(before, /เพิ่มไฟล์หลักฐาน/); assert.match(before, /อยู่กับผู้ทำบัญชี/);
+  detail.attachments = [{ id: 'later', status: 'ACTIVE', purpose: 'expense.receipt.primary', originalFileName: 'ใบกำกับ.png', mimeType: 'image/png' }];
+  assert.match(harness({ detail }).render(), /ยังไม่มีรูปเอกสาร/);
+  assessment.attachmentIds = ['later']; review();
+  assert.doesNotMatch(harness({ detail }).render(), /ยังไม่มีรูปเอกสาร/);
+});
