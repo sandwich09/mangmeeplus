@@ -1438,7 +1438,7 @@ export class ConfirmExpenseUseCase {
     });
     if (validationErr) throw new BadRequestException(validationErr);
 
-    const taxEvidenceErr = validateDomesticInputVatEvidence({ sourceDocumentType: r.sourceDocumentType,
+    const taxEvidenceErr = validateDomesticInputVatEvidence({ aiVerificationSummaryJson: r.aiVerificationSummaryJson, sourceDocumentType: r.sourceDocumentType,
       taxEvidenceStatus: r.taxEvidenceStatus, inputVatClaimStatus: r.inputVatClaimStatus,
       ...(r.inputVatClaimStatus === 'CLAIMABLE' && { vatStatus: r.expenseDate ? (await this.vatRegistration.get(ctx.companyId, utcDateToCivilDate(r.expenseDate))).status : 'UNKNOWN' as const }),
       primaryAttachmentId: reviewedAttachmentId, vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,

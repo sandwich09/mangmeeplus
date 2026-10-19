@@ -1,3 +1,4 @@
+import * as evidence from './expense-evidence.js';
 import { expenseEvidenceAssessment } from './expense-evidence.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -111,4 +112,33 @@ test('a VAT decision does not invalidate document evidence review, including its
     documentReview: { ...review, fingerprint: JSON.stringify(legacy) } } };
   assert(hasCurrentExpenseEvidenceReview(old));
   assert(!hasCurrentExpenseEvidenceReview({ ...old, vendorNameSnapshot: 'ร้านอื่น' }));
+});
+
+test('EVID-1 accepts an original paper without an image, keeps VAT answers and clears the image reminder only for selected active files', () => {
+  const paper = { ...receipt, attachmentIds: [], originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' };
+  const invoice = { ...source, sourceDocumentType: 'TAX_INVOICE' as const, taxEvidenceStatus: 'USABLE_FOR_TAX' as const, inputVatClaimStatus: 'CLAIMABLE', attachments: [] };
+  assert.equal(expenseEvidenceInputError(paper, invoice, true), null);
+  assert.equal(expenseEvidenceConfirmationError(reviewed(invoice, paper)), null);
+  assert.equal(evidence.expenseEvidenceImageMissing(reviewed(invoice, paper)), true);
+  assert(expenseEvidenceInputError({ ...paper, originalDocumentAvailable: false }, invoice, true));
+  assert(expenseEvidenceInputError(paper, { ...invoice, sourceDocumentType: 'NEEDS_REVIEW' }, true));
+  assert(expenseEvidenceInputError(paper, { ...invoice, taxEvidenceStatus: 'NEEDS_REVIEW' }, true));
+  const withFile = { ...invoice, attachments: source.attachments };
+  assert.equal(evidence.expenseEvidenceImageMissing(reviewed(withFile, paper)), true);
+  const selected = { ...paper, attachmentIds: ['receipt'] };
+  assert.equal(expenseEvidenceInputError(selected, withFile, true), null);
+  assert.equal(evidence.expenseEvidenceImageMissing(reviewed(withFile, selected)), false);
+  assert(expenseEvidenceInputError({ ...selected, attachmentIds: ['foreign'] }, withFile, true));
+  assert(expenseEvidenceInputError(selected, { ...invoice, attachments: [{ id: 'receipt', status: 'DELETED' }] }, true));
+});
+test('EVID-1 strictly validates the original-paper flag and 500-character note without bypassing other evidence routes', () => {
+  const paper = { ...receipt, attachmentIds: [], originalDocumentAvailable: true, note: 'ก'.repeat(500) };
+  assert.equal(expenseEvidenceInputError(paper, source, true), null);
+  for (const bad of [{ ...paper, note: 'ก'.repeat(501) }, { ...paper, note: null }, { ...paper, originalDocumentAvailable: 'true' }, { ...paper, location: 'ร้าน' },
+    { ...paper, route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'LOST' }, { ...paper, route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE' }]) assert(expenseEvidenceInputError(bad, source));
+  const old = reviewed(source);
+  assert(hasCurrentExpenseEvidenceReview(old), 'existing fingerprints remain valid');
+  const saved = reviewed({ ...source, attachments: [] }, paper);
+  assert(hasCurrentExpenseEvidenceReview(saved));
+  assert(!hasCurrentExpenseEvidenceReview({ ...saved, aiVerificationSummaryJson: { ...saved.aiVerificationSummaryJson, documentEvidenceDraft: { ...paper, note: 'เปลี่ยนที่เก็บ' } } }));
 });

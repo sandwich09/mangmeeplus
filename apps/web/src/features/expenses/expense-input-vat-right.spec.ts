@@ -219,3 +219,11 @@ it('UX8 shop identity fixes use the identity permission, independently of the VA
     }
   } finally { chooser.mock.restore(); }
 });
+
+it('EVID-1 names an acknowledged paper original without claiming that an image was attached', () => {
+  const chooser = plainChooser();
+  const detail = { ...fixture, inputVatClaimStatus: 'CLAIMABLE', inputVatRight: { ...fixture.inputVatRight, conditions: fixture.inputVatRight.conditions.map((condition: any) => condition.code === 'PAPER_ATTACHED' ? { ...condition, source: 'REVIEWER', fact: { attachmentIds: [], originalDocumentAvailable: true } } : condition) } };
+  const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail, canReview: true, saveRef: { current: null } }));
+  try { const html = view.render(); assert.match(html, /✓ มีเอกสารตัวจริง/); assert.doesNotMatch(html, /แนบเอกสารแล้ว/); }
+  finally { view.cleanup(); chooser.mock.restore(); }
+});

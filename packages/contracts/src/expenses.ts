@@ -1864,7 +1864,7 @@ export const ACCOUNTANT_INDEX_SUMMARY_COLUMNS: readonly AccountantIndexColumn[] 
   'vat_amount',
   'expense_status',
   'web_url',
-  'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names',
+  'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names', 'notes',
 ];
 
 export type AccountantIndexColumnSet = 'summary' | 'full';

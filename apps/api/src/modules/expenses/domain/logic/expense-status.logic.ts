@@ -1,6 +1,6 @@
 import { CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES } from './expense-document.logic';
 import {
-  isNonExpenseClassificationBlocking,
+  isNonExpenseClassificationBlocking, expenseEvidenceAssessment,
   type ExpenseStatus,
   type DuplicateStatus,
   type ExpensePostingStatus,
@@ -131,6 +131,7 @@ type ExpenseTaxLineFacts = {
 };
 
 export type DomesticInputVatEvidenceFacts = {
+  aiVerificationSummaryJson?: Record<string, unknown> | null;
   sourceDocumentType: string;
   taxEvidenceStatus: string;
   inputVatClaimStatus: string;
@@ -223,7 +224,7 @@ export function validateDomesticInputVatEvidence(input: DomesticInputVatEvidence
   if (!CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES.includes(input.sourceDocumentType) || input.taxEvidenceStatus !== 'USABLE_FOR_TAX') {
     return 'Domestic input VAT requires a reviewed TAX_INVOICE with usable tax evidence.';
   }
-  if (!input.primaryAttachmentId || !input.vendorTaxIdSnapshot?.trim() || !input.vendorDocumentNumber?.trim()) {
+  if ((!input.primaryAttachmentId && !expenseEvidenceAssessment(input)?.originalDocumentAvailable) || !input.vendorTaxIdSnapshot?.trim() || !input.vendorDocumentNumber?.trim()) {
     return 'Domestic input VAT requires an attached tax invoice, supplier tax ID, and tax invoice number.';
   }
   return null;
