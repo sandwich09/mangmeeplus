@@ -2224,7 +2224,7 @@ it('Y2: a text-only draft offers only contract-valid evidence routes and pins ph
   const h = evidenceReviewActionHarness(); h.record.status = 'DRAFT'; h.record.primaryAttachmentId = null; h.record.attachments = [];
   const proposed = await h.preview(); assert.equal(proposed.preview, undefined); assert.match(proposed.reply, /เลือกหลักฐาน/u);
   const choices = await h.actions.repairChoices(h.ctx, 'private-action');
-  assert.deepEqual(choices?.map(choice => choice.text), ['ส่งรูปใบเสร็จ', 'รอใบเสร็จ', 'จัดทำใบรับรองแทนใบเสร็จ']);
+  assert.deepEqual(choices?.map(choice => choice.text), ['ส่งรูปใบเสร็จ', 'รอใบเสร็จ', 'มีตัวจริง ยังไม่ได้แนบรูป', 'จัดทำใบรับรองแทนใบเสร็จ']);
   assert.doesNotMatch(JSON.stringify(choices), /ไม่มีหลักฐาน.*ยืนยัน|ใช้หลักฐานอื่น/u);
   assert.equal(h.reviews.length, 0); assert.equal(h.state.writes.length, 0);
   assert.match((await h.actions.answerEvidence(h.ctx, 'private-action', 'ส่งรูปใบเสร็จ'))!.reply, /แนบกับร่างนี้/u);
@@ -2605,4 +2605,80 @@ it('Fix-up 24 D4: an empty income catalog keeps confirmation blocked and supplie
   const result = await h.preview(); assert.equal(result.preview, undefined);
   assert.equal(result.webPath, '/system/wht-income-categories'); assert.match(result.reply, /ผู้ดูแลระบบ/);
   assert.equal(h.state.writes.length, 0); assert.equal(h.reviews.length, 0);
+});
+
+for (const language of ['th', 'en'] as const) for (const evidence of ['image-missing', 'missing', 'attached'] as const) {
+  it(`EVID-1 ${language} ${evidence}: the card and next step use the shared evidence contract`, async () => {
+    const h = evidenceReviewActionHarness();
+    (h.actions as any).config.webBaseUrl = 'https://web.eval.test';
+    if (evidence !== 'attached') { h.record.primaryAttachmentId = null; h.record.attachments = []; }
+    if (evidence === 'image-missing') h.record.aiVerificationSummaryJson = { documentEvidenceDraft: {
+      route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true,
+      note: 'เก็บตัวจริงที่ร้าน https://unsafe.example ' + 'รายละเอียด'.repeat(45),
+    } };
+    const proposed = await h.actions.preview(h.ctx, 'private-action', h.input, false, undefined, language);
+    if (evidence === 'missing') {
+      assert.equal(proposed.preview, undefined);
+      const choices = await h.actions.repairChoices(h.ctx, 'private-action', undefined, language);
+      assert.ok(choices?.some(choice => /รอใบเสร็จ|Wait for receipt/u.test(choice.label)));
+      return;
+    }
+    assert.ok(proposed.preview, proposed.reply);
+    const card = buildExpenseActionCard(proposed.preview);
+    const draftCard = buildExpenseDraftReviewCard('ตรวจรายการค่ะ', { expenseId: h.record.id, subject: 'ข้อมูลเอกสาร',
+      rows: [{ label: 'ยอดรวม', value: '100 บาท' }], notes: [] }, 'https://web.eval.test', h.ctx.companyId, proposed.preview, undefined, language);
+    assert.ok(draftCard);
+    const payload = JSON.stringify([card, draftCard]);
+    if (evidence === 'image-missing') {
+      assert.match(payload, language === 'en' ? /Document image not attached/ : /ยังไม่มีรูปเอกสาร/u);
+      assert.match(payload, language === 'en' ? /Send document photo/ : /ส่งรูปเอกสาร/u);
+      assert.match(payload, language === 'en' ? /Note: เก็บตัวจริงที่ร้าน/ : /หมายเหตุ: เก็บตัวจริงที่ร้าน/u);
+      assert.doesNotMatch(payload, /unsafe\.example|รอใบเสร็จ|Wait for receipt|Substitute receipt/u);
+      assert.ok(proposed.preview.details!.find(note => /^(?:Note|หมายเหตุ):/u.test(note))!.length <= 210);
+    } else assert.doesNotMatch(payload, /ยังไม่มีรูปเอกสาร|Document image not attached|ส่งรูปเอกสาร|Send document photo/u);
+    assert.equal(h.state.writes.length, 0);
+    const applied = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: proposed.preview.token }, language);
+    assert.equal(applied.status, 'applied', applied.reply);
+    assert.equal(h.record.status, 'CONFIRMED');
+    assert.equal(h.reviews.length, 1);
+    if (evidence === 'image-missing') assert.equal(h.reviews[0][2].evidenceAssessment.originalDocumentAvailable, true);
+  });
+}
+
+for (const language of ['th', 'en'] as const) it(`EVID-1 ${language}: a classified receipt offers original-in-hand through the existing signed web review use-case`, async () => {
+  const h = evidenceReviewActionHarness(); h.record.primaryAttachmentId = null; h.record.attachments = [];
+  (h.actions as any).config.webBaseUrl = 'https://web.eval.test';
+  h.record.aiVerificationSummaryJson = { documentEvidenceDraft: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', note: 'เก็บตัวจริงที่ร้าน' } };
+  await h.preview();
+  const choices = await h.actions.repairChoices(h.ctx, 'private-action', undefined, language);
+  const original = choices?.find(choice => /มีตัวจริง|Original in hand/u.test(choice.label)); assert.ok(original);
+  assert.equal(await h.actions.answerEvidence({ ...h.ctx, permissions: ['expense.read', 'expense.confirm'] }, 'private-action', original.text, language), null);
+  const proposed = await h.actions.answerEvidence(h.ctx, 'private-action', original.text, language);
+  assert.ok(proposed && 'preview' in proposed && proposed.preview, JSON.stringify(proposed));
+  assert.equal(h.reviews.length, 0); assert.equal(h.state.writes.length, 0);
+  assert.match(JSON.stringify(buildExpenseActionCard(proposed.preview)), language === 'en' ? /Document image not attached/ : /ยังไม่มีรูปเอกสาร/u);
+  const applied = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: proposed.preview.token }, language);
+  assert.equal(applied.status, 'applied', applied.reply); assert.equal(h.record.status, 'CONFIRMED');
+  assert.equal(h.reviews.length, 1); assert.equal(h.reviews[0][2].documentReviewAcknowledged, true);
+  assert.equal(h.record.aiVerificationSummaryJson.documentReview.assessment.originalDocumentAvailable, true);
+  assert.equal(h.record.aiVerificationSummaryJson.documentReview.assessment.note, 'เก็บตัวจริงที่ร้าน');
+});
+
+it('EVID-1: LINE never infers source-document classification to set original-in-hand', async () => {
+  const h = evidenceReviewActionHarness(); h.record.sourceDocumentType = 'EXPENSE_NOTE_TEXT'; h.record.primaryAttachmentId = null; h.record.attachments = [];
+  await h.preview();
+  assert.equal((await h.actions.repairChoices(h.ctx, 'private-action'))?.some(choice => choice.text === 'มีตัวจริง ยังไม่ได้แนบรูป'), false);
+  const refused = await h.actions.answerEvidence(h.ctx, 'private-action', 'มีตัวจริง ยังไม่ได้แนบรูป');
+  assert.match(refused!.reply, /ตรวจประเภทเอกสารในเว็บ/); assert.equal(h.reviews.length, 0); assert.equal(h.state.writes.length, 0);
+});
+
+it('EVID-1: a web-reviewed original confirms without attachment or an additional expense.review permission', async () => {
+  const h = actionHarness('CONFIRM'); h.record.primaryAttachmentId = null; h.record.attachments = [];
+  const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [], reason: '', originalDocumentAvailable: true };
+  h.record.aiVerificationSummaryJson = { documentReview: { version: 2, reviewedAt: h.record.updatedAt.toISOString(), reviewedByUserId: 'web-reviewer',
+    assessment, fingerprint: expenseEvidenceFingerprint(h.record, assessment) } };
+  const proposed = await h.preview(); assert.ok(proposed.preview, proposed.reply); assert.equal(proposed.preview.evidenceReview, undefined);
+  assert.match(proposed.preview.details!.join(' '), /ยังไม่มีรูปเอกสาร/u);
+  const applied = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: proposed.preview.token });
+  assert.equal(applied.status, 'applied', applied.reply); assert.equal(h.state.writes.length, 1); assert.equal(h.record.status, 'CONFIRMED');
 });

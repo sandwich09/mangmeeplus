@@ -769,14 +769,14 @@ function makeDailyClosingPrisma(branches: Array<{ id: string; name: string; code
     [{ currency: 'USD', _count: { _all: 1 }, _sum: { outstandingAmount: '30.0000' } }],
     [{ status: 'REJECTED', _count: { _all: 1 } }, { status: 'VOIDED', _count: { _all: 1 } }],
   ];
-  const countResults = [4, 3, 2, 1];
+  const countResults = [4, 3, 1];
   const findResults = [
     [dailyClosingDetail(), dailyClosingDetail({ id: 'e2', currency: 'USD', grandTotalAmount: '10.0000', paidAmount: '0', outstandingAmount: '10.0000', paymentStatus: 'UNPAID' })],
     [dailyClosingDetail()],
     [dailyClosingDetail({ id: 'overdue-1', dueDate: new Date('2026-08-15T00:00:00.000Z'), outstandingAmount: '10.0000' })],
     [dailyClosingDetail({ id: 'no-due-1', dueDate: null, currency: 'USD', outstandingAmount: '30.0000' })],
     [dailyClosingDetail({ id: 'pending-1' })],
-    [dailyClosingDetail({ id: 'evidence-1', primaryAttachmentId: null, taxEvidenceStatus: 'NEEDS_REVIEW' })],
+    [dailyClosingDetail({ id: 'evidence-1', primaryAttachmentId: null, taxEvidenceStatus: 'NEEDS_REVIEW' }), dailyClosingDetail({ id: 'evidence-2', primaryAttachmentId: null })],
     [dailyClosingDetail({ id: 'duplicate-1', duplicateStatus: 'POSSIBLE_DUPLICATE' })],
   ];
   const calls = { groupBy: [] as any[], count: [] as any[], findMany: [] as any[], isolationLevel: '' };
@@ -784,6 +784,7 @@ function makeDailyClosingPrisma(branches: Array<{ id: string; name: string; code
   let countIndex = 0;
   let findIndex = 0;
   const db = {
+    attachmentLink: { findMany: async () => [] },
     expenseRecord: {
       groupBy: async (args: unknown) => { calls.groupBy.push(args); return groupResults[groupIndex++] ?? []; },
       count: async (args: unknown) => { calls.count.push(args); return countResults[countIndex++] ?? 0; },
@@ -804,7 +805,7 @@ function makeDailyClosingPrisma(branches: Array<{ id: string; name: string; code
       },
     },
   };
-  return { prisma: prisma as any, calls };
+  return { prisma: prisma as any, calls, findResults };
 }
 
 describe('ExpenseGetDailyClosingTool', () => {
@@ -867,7 +868,7 @@ describe('ExpenseGetDailyClosingTool', () => {
     assert.equal(result.status, 'ok');
     const data = result.data as any;
     assert.equal(calls.isolationLevel, 'RepeatableRead');
-    assert.equal(calls.groupBy.length + calls.count.length + calls.findMany.length, 16);
+    assert.equal(calls.groupBy.length + calls.count.length + calls.findMany.length, 15);
     assert.deepEqual(data.occurredToday.totals, [
       { currency: 'THB', count: 2, total: '300.0000' },
       { currency: 'USD', count: 1, total: '10.0000' },
@@ -908,7 +909,7 @@ describe('ExpenseGetDailyClosingTool', () => {
       const { prisma, calls } = makeDailyClosingPrisma();
       await new ExpenseGetDailyClosingTool(prisma).execute({ ...dailyClosingCtx, permissions }, { date: '2026-08-16' });
       const queries = [...calls.groupBy, ...calls.count, ...calls.findMany].map((query) => JSON.stringify(query));
-      assert.equal(queries.length, 16);
+      assert.equal(queries.length, 15);
       for (const query of queries) {
         assert.match(query, /"companyId":"c1"/);
         assert.match(query, /"branchId":\{"in":\["b1"\]\}/);
@@ -972,4 +973,24 @@ describe('Round 7 B company.get_roles', () => {
     const result = await h.tool.execute(h.ctx, { permissionKey: 'reimbursement.approve' });
     assert.equal((result.data as any).employees.length, 1); assert.match(JSON.stringify(result.data), /Approve reimbursement requests/u); assert.doesNotMatch(JSON.stringify(result.data), /Manage products/u);
   });
+});
+
+for (const locale of ['th-TH', 'en-US']) it(`EVID-1 ${locale}: daily-closing to-do separates an image to add from missing evidence before limiting`, async () => {
+  const h = makeDailyClosingPrisma();
+  const original = dailyClosingDetail({ id: 'original', primaryAttachmentId: null, aiVerificationSummaryJson: { documentEvidenceDraft: {
+    route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note: 'เก็บตัวจริงที่ร้าน',
+  } } });
+  const missing = dailyClosingDetail({ id: 'missing', primaryAttachmentId: null });
+  h.findResults[0] = [original];
+  h.findResults[4] = [original];
+  h.findResults[5] = [original, missing];
+  const result = await new ExpenseGetDailyClosingTool(h.prisma).execute({ ...dailyClosingCtx, locale }, { date: '2026-08-16', detailLimit: 1 });
+  const data = result.data as any;
+  assert.equal(data.evidenceBlockers.count, 1);
+  assert.equal(data.evidenceBlockers.items.items[0].id, 'missing');
+  assert.equal(data.documentImagesToAdd.count, 1);
+  assert.equal(data.documentImagesToAdd.items.items[0].id, 'original');
+  assert.equal(data.pendingReview.items.items[0].evidenceAttention, false);
+  assert.deepEqual(data.pendingReview.items.items[0].evidenceNotes, locale.startsWith('en')
+    ? ['Document image not attached', 'Note: เก็บตัวจริงที่ร้าน'] : ['ยังไม่มีรูปเอกสาร', 'หมายเหตุ: เก็บตัวจริงที่ร้าน']);
 });

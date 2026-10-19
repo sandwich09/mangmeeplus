@@ -12630,3 +12630,61 @@ it('Exam G2: exact payment request, recorded reads and id-bearing question use t
   assert.doesNotMatch(JSON.stringify(h.delivered), /expense-company-a-2/);
   assert.match(JSON.stringify(h.delivered), /this record|ปั๊มน้ำมัน ปตท\./);
 });
+
+it('EVID-1: exact Exam F2 receipt-photo webhook on an original-in-hand WHT expense confirms and offers its voucher next step', async t => {
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { GetExpenseUseCase, MarkExpenseReadyUseCase, ConfirmExpenseUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { buildInitialLineExpenseDraftContinuation } = await import('../../../expenses/domain/logic/line-expense-draft-conversation.logic');
+  const turn = EXAM_F_REPLAYS.find(row => row.id === 'C05-run1#6');
+  const replay = { source: turn.id, body: turn.body, route: {}, messageText: turn.body.events[0].message.text };
+  t.mock.timers.enable({ apis: ['Date'], now: turn.body.events[0].timestamp });
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.update', 'expense.review', 'expense.confirm', 'expense.disbursement.prepare'];
+  const h = await fx21bBoundWebhook(t, replay, permissions), chat = chatKeyHashOf(h.baseEvent);
+  const record: any = { ...savedMediaFixture('exam-f2-company-service'), companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+    createdAt: new Date(),
+    status: 'DRAFT', vendorNameSnapshot: 'บริษัท ป้ายสวย จำกัด', vendorEntityKindSnapshot: 'JURISTIC', vendorTaxIdSnapshot: '0105561234560',
+    grandTotalAmount: '10000', whtAmount: '300', netPayableAmount: '9700', paidAmount: '0', paymentStatus: 'UNPAID', vatAmount: '0', vatMode: 'NO_VAT',
+    whtCategoryCode: 'WHT_SERVICE_5', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+    primaryAttachmentId: null, attachments: [], aiVerificationSummaryJson: {}, duplicateStatus: 'NO_MATCH', sourceReimbursementRequestId: null,
+    missingReceiptReason: null, lines: [{ lineNumber: 1, description: 'ทำป้ายหน้าร้าน', quantity: '1', unitPrice: '10000', expenseCategoryId: 'cat-service',
+      lineSubtotalAmount: '10000', lineTotalAmount: '10000', vatAmount: '0', whtRate: '0.03', whtAmount: '300', whtCategoryCode: 'WHT_SERVICE_5' }] };
+  record.sourceChannelMetadataJson = { chatKeyHash: chat, lineExpenseDraftContinuation: buildInitialLineExpenseDraftContinuation({
+    workflowId: 'exam-f2-source', companyId: record.companyId, userId: record.createdByUserId, expenseId: record.id, chatKeyHash: chat,
+    targetRevision: record.updatedAt.toISOString(), provisionalExpenseDate: '2026-10-17', applyCategoryHints: true,
+    categories: [{ id: 'cat-service', name: 'ค่าบริการ', status: 'ACTIVE' } as any],
+    messageText: EXAM_F_REPLAYS.find(row => row.id === 'C05-run1#1').body.events[0].message.text,
+    hints: { confidence: 1, expenseDate: '2026-10-17', amount: '10000', items: [{ sourceText: 'ทำป้ายหน้าร้าน 10,000 บาท', description: 'ทำป้ายหน้าร้าน', totalAmount: '10000', expenseCategoryId: 'cat-service' }] } }) };
+  let writes = 0;
+  const read = async (company: string, id: string) => company === record.companyId && id === record.id ? record : null;
+  const repo: any = { findById: read, findByIdWithRelations: read, listRecentLineCaptures: async () => [record], listCategories: async () => [{ id: 'cat-service', name: 'ค่าบริการ', status: 'ACTIVE' }],
+    updateExpense: async (input: any, withinTx: any) => { const { expectedUpdatedAt, ...fields } = input; Object.assign(record, fields); if (!input.updatedAt) record.updatedAt = new Date(record.updatedAt.getTime() + 1000); if (withinTx) await withinTx({}); return { ...record }; },
+    finalizeAndConfirmExpenseCas: async (input: any) => { assert.equal(input.companyId, record.companyId); writes++; record.status = 'CONFIRMED'; record.updatedAt = new Date(record.updatedAt.getTime() + 1000); return { expense: { ...record }, finalized: [] }; } };
+  h.prisma.client.aiConversation.findFirst = async () => ({ id: 'exam-f2-owner', lifecycleEpoch: 1 });
+  const audit = { log: async () => undefined } as any;
+  const store = new LineDraftPreviewStore<any>();
+  const actions = new LineExpenseActionService(h.prisma, repo, new GetExpenseUseCase(repo), new MarkExpenseReadyUseCase(repo),
+    new ConfirmExpenseUseCase(repo, audit, { resolveLines: async () => [] } as any, { get: async () => ({ status: 'UNKNOWN' }) } as any), {} as any, {} as any, {} as any, store,
+    { aiGatewayInternalSecret: 'exam-f2', webBaseUrl: 'https://web.eval.test' } as any);
+  (actions as any).updateDraft = new UpdateExpenseDraftUseCase(repo, audit, {} as any);
+
+  h.flow.expenseActions = actions; h.flow.expenseRepo = repo;
+  const ctx: any = { requestId: 'exam-f2-preflight', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1', roles: [], permissions, scopes: {}, authProvider: 'line' };
+  record.aiVerificationSummaryJson = { documentEvidenceDraft: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note: 'เก็บตัวจริงที่ร้าน' } };
+  const { expenseTaxSourceChecksum } = await import('../../../expenses/domain/logic/expense-status.logic');
+  await store.save({ previewId: 'evid1-choice', companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
+    chatKeyHash: `expense-action-evidence:${chat}`, conversationId: 'exam-f2-owner', ownerEpoch: 1, expenseId: record.id,
+    revision: record.updatedAt.toISOString(), digest: expenseTaxSourceChecksum(record), requestId: ctx.requestId, stage: 'choice' });
+  await h.execute();
+  let payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, /ยังไม่มีรูปเอกสาร/); assert.match(payload, /หมายเหตุ: เก็บตัวจริงที่ร้าน/); assert.match(payload, /ส่งรูปเอกสาร/);
+  assert.doesNotMatch(payload, /รอใบเสร็จ|ใบรับรองแทนใบเสร็จ|ส่งรูปใบเสร็จ/);
+  const buttons = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []);
+  const confirmButton = buttons.find((button: any) => button.action?.data?.includes('expense_action_confirm'));
+  assert.ok(confirmButton, payload); assert.equal(writes, 0);
+  await h.execute('ตรวจแล้ว ยืนยัน', confirmButton.action.data);
+  payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, /สร้างใบเตรียมจ่าย/); assert.equal(writes, 1); assert.equal(record.status, 'CONFIRMED');
+  assert.equal(record.aiVerificationSummaryJson.documentReview.assessment.originalDocumentAvailable, true);
+  assert.equal(record.attachments.length, 0); assert.equal(record.whtAmount, '300');
+});

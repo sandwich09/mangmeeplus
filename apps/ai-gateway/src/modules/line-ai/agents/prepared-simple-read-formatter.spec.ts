@@ -2534,3 +2534,22 @@ it('Owner 2026-10-17: composed reader wording never assigns approval to the read
   }
   assert.equal(reimbursementReadScopeWording('รอคุณอนุมัติค่ะ', { accessScope: 'approver' }), 'รอคุณอนุมัติค่ะ');
 });
+
+for (const [context, label] of [[TH, 'ยังไม่มีรูปเอกสาร'], [EN, 'Document image not attached']] as const) {
+  it(`EVID-1: ${label} stays a soft note in detail, daily closing and to-do answers`, () => {
+    const notes = [label, context === EN ? 'Note: เก็บตัวจริงที่ร้าน' : 'หมายเหตุ: เก็บตัวจริงที่ร้าน'];
+    const detail = formatPreparedSimpleRead(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({ attachmentCount: 0, documentImageMissing: true, evidenceNotes: notes })), context);
+    assert.equal(detail.kind, 'answer');
+    if (detail.kind === 'answer') { assert.ok(detail.replyText.includes(label)); assert.ok(detail.replyText.includes(notes[1]!)); assert.equal(detail.webLinks[0]?.label, context === EN ? 'Send document photo' : 'ส่งรูปเอกสาร'); }
+    const daily = dailyData({ evidenceBlockers: { count: 0, items: bounded(0) }, documentImagesToAdd: { count: 1, items: bounded(1) } });
+    const answer = formatPreparedSimpleRead(DAILY, dailyOutput(daily), context);
+    assert.equal(answer.kind, 'answer');
+    if (answer.kind === 'answer') {
+      assert.ok(answer.replyText.includes(label));
+      assert.doesNotMatch(answer.replyText, /รอตรวจหลักฐาน|Awaiting evidence review|ไม่มีใบเสร็จ|missing receipt/u);
+    }
+    const backlog = backlogCardLayout([{ toolName: 'expense.get_daily_closing', data: daily, asOf: '2026-08-26T10:00:00Z' }]);
+    assert.match(JSON.stringify(backlog), /ยังไม่มีรูปเอกสาร/u);
+    assert.doesNotMatch(JSON.stringify(backlog), /รอตรวจหลักฐาน/u);
+  });
+}

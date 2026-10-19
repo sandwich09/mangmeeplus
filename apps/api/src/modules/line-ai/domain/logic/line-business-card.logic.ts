@@ -589,7 +589,7 @@ export function buildExpenseDraftReviewCard(
     choice: [nextAction ? { type: 'message', ...nextAction } : confirmation ? { type: 'postback', label: lineUiLabel(confirmation.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
       data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString(), language) }
       : { type: 'message', label: lineUiLabel('ยืนยันรายการ', language), text: language === 'en' ? 'Confirm this expense' : 'ยืนยันรายการนี้' },
-      { type: 'uri', label: lineUiLabel('เปิดดูในเว็บ', language), uri: actionUrl }],
+      { type: 'uri', label: lineUiLabel(confirmation?.documentImageUrl ? 'ส่งรูปเอกสาร' : 'เปิดดูในเว็บ', language), uri: actionUrl }],
   }, webBaseUrl);
   return contents && asCompleteLineCard({
     type: 'flex',
