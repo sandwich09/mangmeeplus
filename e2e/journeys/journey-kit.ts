@@ -8,7 +8,8 @@
 import { randomBytes } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import type { Download, Locator, Page } from '@playwright/test';
-import { expect } from '../harness/fixtures';
+import { expect, test } from '../harness/fixtures';
+import { expectFitsScreen as checkScreenFit } from '../harness/screen-fit';
 import { chooseThemedOption, json } from '../harness/e2e-utils';
 
 /** First sight of a page: the development server compiles a route on its first visit. */
@@ -71,6 +72,28 @@ export function picture(name: string) {
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+export async function expectFitsScreen(page: Page) {
+  await checkScreenFit(page, test.info().project.name);
+}
+
+/** The same branch facts and actions, in a table row or a phone card. */
+export function branchEntry(page: Page, name: string) {
+  return page.getByTestId('branch-entry').filter({ hasText: name }).filter({ visible: true });
+}
+
+/** Account actions live in the navigation drawer on a phone. */
+export async function openUserMenu(page: Page) {
+  const menu = page.getByRole('button', { name: /^เมนูผู้ใช้/ });
+  await expect(async () => {
+    if (!await menu.isVisible()) await page.locator('header').getByRole('button', { name: 'สลับเมนู', exact: true }).click();
+    await expect(menu).toBeVisible({ timeout: 3_000 });
+  }).toPass(FIRST_SIGHT);
+  if (await menu.getAttribute('aria-expanded') !== 'true') await menu.click();
+  await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  await expectFitsScreen(page);
+  return menu;
+}
+
 /**
  * The whole text of one element, whatever it is built from. `getByText(text, { exact: true })` only
  * reads an element's own text nodes, and the screens put every amount in a span of its own
@@ -107,6 +130,7 @@ export async function pressMenu(page: Page, label: string, parent?: string) {
   }).toPass(FIRST_SIGHT);
   if (!parent) {
     await nav.getByRole('link', { name: label, exact: true }).and(realRow).click();
+    await expectFitsScreen(page);
     return;
   }
   // The group's button may carry a badge in its name ("ตั้งค่าร้าน ตั้งค่ายังไม่ครบ").
@@ -117,6 +141,7 @@ export async function pressMenu(page: Page, label: string, parent?: string) {
   if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click();
   await expect(button).toHaveAttribute('aria-expanded', 'true');
   await group.getByRole('link', { name: new RegExp(`^${escapeRegExp(label)}`) }).and(realRow).first().click();
+  await expectFitsScreen(page);
 }
 
 /**

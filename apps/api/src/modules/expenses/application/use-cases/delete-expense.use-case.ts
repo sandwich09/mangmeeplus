@@ -6,7 +6,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { isExpenseDeletableState } from '@watchdog-bms/contracts';
 import { branchScopeWhere, isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { claimOwnsExpenseError, findLiveClaimOf, type ExpenseClaimOwner } from '../../infrastructure/expense-void-blocker';
+import { claimOwnsExpenseError, findLiveClaimOf, lockExpenseCorrection, type ExpenseClaimOwner } from '../../infrastructure/expense-void-blocker';
 
 type DeleteExpenseOutcome =
   | { kind: 'DELETED' }
@@ -19,6 +19,7 @@ type DeleteExpenseOutcome =
 
 type ExpenseLinkedDataBlocker =
   | 'PAYMENT'
+  | 'DISBURSEMENT_VOUCHER'
   | 'TAX_EVENT'
   | 'TAX_REVIEW_ISSUE'
   | 'TAX_RECONCILIATION_LINE'
@@ -181,6 +182,7 @@ export class DeleteExpenseUseCase {
     let outcome: DeleteExpenseOutcome;
     try {
       outcome = await this.prisma.client.$transaction(async (tx): Promise<DeleteExpenseOutcome> => {
+        await lockExpenseCorrection(tx, ctx.companyId, expenseId);
         const expense = await tx.expenseRecord.findFirst({
           where: { id: expenseId, companyId: ctx.companyId },
           select: {
@@ -197,7 +199,7 @@ export class DeleteExpenseUseCase {
             createdByUserId: true,
             sourceReimbursementRequestId: true,
             updatedAt: true,
-            _count: { select: { lines: true } },
+            _count: { select: { lines: true, payments: true, disbursementVoucherLines: true } },
           },
         });
         if (!expense) return { kind: 'NOT_FOUND' };
@@ -250,8 +252,9 @@ export class DeleteExpenseUseCase {
           return { kind: 'RETENTION_LOCKED' };
         }
 
-        const linkedDataBlocker = expense.paymentStatus !== 'UNPAID' || expense.paidAmount.gt(0)
+        const linkedDataBlocker = expense._count.payments > 0 || expense.paymentStatus !== 'UNPAID' || expense.paidAmount.gt(0)
           ? 'PAYMENT'
+          : expense._count.disbursementVoucherLines > 0 ? 'DISBURSEMENT_VOUCHER'
           : await findLinkedDataBlocker(tx, ctx.companyId, expenseId);
         if (linkedDataBlocker) {
           await deny('EXPENSE_HAS_LINKED_DATA', { blocker: linkedDataBlocker });
@@ -335,6 +338,16 @@ export class DeleteExpenseUseCase {
         return { kind: 'DELETED' };
       });
     } catch (error) {
+      // A legacy writer may not share the lifecycle lock. Its FK still protects
+      // history; roll back the entire delete and return the same clean refusal.
+      const dbError = error as { code?: string; cause?: { originalCode?: string }; meta?: { driverAdapterError?: { cause?: { originalCode?: string } } } } | null;
+      const sqlState = dbError?.meta?.driverAdapterError?.cause?.originalCode ?? dbError?.cause?.originalCode;
+      if (dbError?.code === 'P2003' || sqlState === '23503' || sqlState === '23001') {
+        await this.prisma.client.$transaction(auditTx => this.audit.log(
+          deniedEntry('EXPENSE_HAS_LINKED_DATA', { blocker: 'HISTORY' }), auditTx,
+        ));
+        throw new ConflictException({ code: 'EXPENSE_HAS_LINKED_DATA', blocker: 'HISTORY', message: 'Expense has retained history and cannot be deleted.' });
+      }
       if (!isRetentionLocked(error)) throw error;
       await this.prisma.client.$transaction((auditTx) => this.audit.log(
         deniedEntry('SUBSTITUTE_EVIDENCE_RETENTION_LOCKED', { source: 'attachment' }),

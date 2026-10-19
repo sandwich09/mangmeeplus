@@ -52,7 +52,7 @@ const { loginViaDevBff, ensureBrowserLegalAcceptance } = require('./e2e/harness/
 JS
 RC=$?
 if [ "$RC" -eq 0 ]; then
-  corepack pnpm exec playwright test e2e/journeys --project=chromium --workers=1 --retries=0 --output="$LP_RESULTS/$TAG" "$@" >> "$LOG" 2>&1; RC=$?
+  corepack pnpm exec playwright test e2e/journeys --project="${JOURNEY_PROJECT:-chromium}" --workers=1 --retries=0 --output="$LP_RESULTS/$TAG" "$@" >> "$LOG" 2>&1; RC=$?
 fi
 bash "$LOCAL_PROOF_DIR/result.sh" journeys "$RC" "$LOG" > "$OUT"
 cat "$OUT"

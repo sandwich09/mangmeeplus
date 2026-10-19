@@ -635,9 +635,10 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   expect(listUrl.searchParams.get('uploadedFromDate')).toBeNull();
   expect(listUrl.searchParams.get('uploadedToDate')).toBeNull();
 
-  const row = authedPage.getByTestId('expenses-row').filter({ hasText: vendor });
-  await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).toBeVisible();
-  await expect(row).toHaveCount(0);
+  const allRows = authedPage.getByTestId('expenses-row').filter({ hasText: vendor });
+  const row = allRows.filter({ visible: true });
+  await expect(authedPage.getByTestId('expenses-row').filter({ visible: true }).filter({ hasText: sameMonthVendor })).toBeVisible();
+  await expect(allRows).toHaveCount(0);
 
   const documentMonth = documentDate.slice(0, 7);
   const [documentYear, documentMonthNumber] = documentMonth.split('-').map(Number);
@@ -677,7 +678,7 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   expect(exportPayload.toDate).toBe(`${documentMonth}-${String(documentLastDay).padStart(2, '0')}`);
 
   await authedPage.setViewportSize({ width: 390, height: 844 });
-  const card = authedPage.getByTestId('expenses-card').filter({ hasText: vendor });
+  const card = authedPage.getByTestId('expenses-row').filter({ visible: true }).filter({ hasText: vendor });
   await expect(card).toBeVisible();
   await expect(card).not.toContainText('วันที่เอกสาร');
   await expect(card).toContainText(new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(documentDate)));
@@ -696,7 +697,7 @@ test('EXP-26 @p1 groups a backdated document by document month and labels both d
   });
   await gotoCompany(authedPage, companyId, `/expenses?highlight=${created.id}`);
   await highlightedRequestPromise;
-  await expect(authedPage.getByTestId('expenses-card').filter({ hasText: vendor }))
+  await expect(authedPage.getByTestId('expenses-row').filter({ visible: true }).filter({ hasText: vendor }))
     .toHaveAttribute('data-highlighted', 'true');
 });
 
@@ -1162,13 +1163,13 @@ test.describe('expense list filter retention', () => {
 
       const listQuery = new URL(authedPage.url()).searchParams;
       // Into the detail route by clicking a row, and back out via the กลับ link — both client-side.
-      await authedPage.getByTestId('expenses-row').first().click();
+      await authedPage.getByTestId('expenses-row').filter({ visible: true }).first().click();
       await authedPage.waitForURL(/\/expenses\/[^/?]+\?back=/);
       await authedPage.getByRole('link', { name: 'กลับไปรายการ', exact: true }).click();
       await authedPage.waitForURL(/\/expenses\?.*highlight=/);
       const returned = new URL(authedPage.url()).searchParams;
       for (const key of ['month', 'chip', 'query', 'dateOrder', 'page']) expect(returned.get(key)).toBe(listQuery.get(key));
-      await expect(authedPage.locator('[data-testid="expenses-row"][data-highlighted]')).toBeVisible();
+      await expect(authedPage.locator('[data-testid="expenses-row"][data-highlighted]').filter({ visible: true })).toBeVisible();
 
       await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
       await expect(columns(authedPage)).toHaveText(FULL);
