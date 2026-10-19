@@ -699,13 +699,6 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             {lineLeadLane ? qrEntry : null}
           </div>
 
-          <p className="mt-5 text-center text-sm text-gray-600">
-            {t('auth.login.no_account', locale)}{' '}
-            <Link href="/signup" className="inline-flex min-h-11 items-center font-semibold text-brand-700 underline underline-offset-4 hover:text-brand-800">
-              {t('auth.login.open_shop', locale)}
-            </Link>
-          </p>
-
           {SHOW_DEV_LOGIN ? (
             <button
               type="button"
