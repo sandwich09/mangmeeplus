@@ -516,7 +516,10 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
           </label>}
         </div>
       )}
-      {forSelf && <Link href={payoutAccountHref} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-brand-700 underline underline-offset-4">จัดการบัญชีรับเงินคืนของฉัน</Link>}
+      {forSelf && <div className="mt-3">
+        <Link href={payoutAccountHref} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-sm font-semibold text-brand-700 underline underline-offset-4">จัดการบัญชีรับเงินคืนของฉัน</Link>
+        <p className="mt-1 text-sm text-gray-500">เปิดแท็บใหม่ ข้อมูลใบเบิกที่กรอกยังอยู่ในแท็บนี้</p>
+      </div>}
     </MangmeeCard>
   );
 }

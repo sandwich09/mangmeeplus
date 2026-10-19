@@ -7,14 +7,15 @@ const scaled = (value: string) => {
   return BigInt(whole) * 10000n + BigInt(fraction.padEnd(4, '0'));
 };
 export function initialAmount(outstanding: string): string {
-  const cents = scaled(outstanding) / 100n;
+  const rounded = (scaled(outstanding) + 50n) / 100n;
+  const cents = rounded > 9999999999999999n ? 9999999999999999n : rounded;
   return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
 }
 /** Two sentences, each true in its own case: the typing is not an amount, or the amount is outside what is still owed. */
 export function amountError(amount: string, outstanding: string): string | null {
   const words = workspaceDictionary.th;
   if (!MONEY.test(amount)) return words['expenses.disbursement.amount_format'];
-  if (scaled(amount) > 0n && scaled(amount) <= scaled(outstanding)) return null;
+  if (scaled(amount) > 0n && scaled(amount) <= scaled(initialAmount(outstanding))) return null;
   const owed = Number(initialAmount(outstanding)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return words['expenses.disbursement.amount_range'].replace('{outstanding}', `฿${owed}`);
 }

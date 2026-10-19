@@ -30,9 +30,10 @@ export function ReceiptUploadResult({ companyId, expenseIds, userId, caps, onSen
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationShown, setValidationShown] = useState(false);
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const load = async () => {
     setError(null);
-    try { setDetails(await Promise.all(expenseIds.map(id => getExpense(companyId, id)))); }
+    try { setDetails(await Promise.all(expenseIds.filter(id => !deletedIds.includes(id)).map(id => getExpense(companyId, id)))); }
     catch (cause) { setError(err(cause, locale)); }
   };
   useEffect(() => { void load(); }, [companyId, expenseIds]);
@@ -59,7 +60,7 @@ export function ReceiptUploadResult({ companyId, expenseIds, userId, caps, onSen
   const remove = async (detail: ExpenseDetail) => {
     if (busy || !await confirm({ title: `ลบร่างใบเสร็จ ${expenseDeleteTargetLabel(detail) ?? ''}`.trim(), message: 'รูปและข้อมูลของรายการนี้จะถูกลบ', confirmLabel: 'ลบร่างใบเสร็จ', cancelLabel: 'ไม่ลบ', variant: 'danger' })) return;
     setBusy(true); setError(null);
-    try { await deleteExpense(companyId, detail.id); setDetails(rows => rows!.filter(row => row.id !== detail.id)); }
+    try { await deleteExpense(companyId, detail.id); setDeletedIds(ids => [...ids, detail.id]); setDetails(rows => rows!.filter(row => row.id !== detail.id)); }
     catch (cause) { setError(expenseDeleteErrorMessage(cause, locale)); }
     finally { setBusy(false); }
   };

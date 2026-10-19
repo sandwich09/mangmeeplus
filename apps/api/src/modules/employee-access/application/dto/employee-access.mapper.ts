@@ -7,6 +7,7 @@ export const EMPLOYEE_PROFILE_INCLUDE = {
   user: {
     select: {
       email: true,
+      _count: { select: { memberships: true } },
       displayName: true,
       credential: { select: { mustChangePassword: true } },
       externalIdentities: { select: { status: true } },
@@ -51,6 +52,7 @@ type EmployeeProfileRow = {
   createdAt: Date;
   updatedAt: Date;
   user: {
+    _count?: { memberships: number };
     displayName?: string;
     email?: string | null;
     credential: { mustChangePassword: boolean } | null;
@@ -65,6 +67,7 @@ type EmployeeProfileRow = {
 };
 
 export function toEmployeeSummary(row: EmployeeProfileRow): EmployeeSummary {
+  const sharedAccount = (row.user._count?.memberships ?? 1) > 1;
   return {
     id: row.id,
     userId: row.userId,
@@ -76,7 +79,8 @@ export function toEmployeeSummary(row: EmployeeProfileRow): EmployeeSummary {
     titlePrefix: (row.titlePrefix ?? undefined) as EmployeeSummary['titlePrefix'],
     jobTitle: row.jobTitle ?? undefined,
     legalName: row.legalName ?? undefined,
-    email: row.email ?? row.user.email ?? undefined,
+    email: row.email ?? (sharedAccount ? undefined : row.user.email ?? undefined),
+    sharedAccount,
     firstName: row.firstName ?? undefined,
     lastName: row.lastName ?? undefined,
     nickname: row.nickname ?? undefined,

@@ -1132,7 +1132,7 @@ describe('locked shell navigation', () => {
   it('gives a permission holder ตั้งค่า and แพ็กเกจ, and nothing else', () => {
     const items = buildLockedNavItems('co', {}, ['company.plan.manage']);
     assert.deepEqual(items.map((item) => [item.label, item.href]), [
-      ['ตั้งค่า', '/companies/co/settings'],
+      ['ตั้งค่าร้าน', '/companies/co/settings'],
       ['แพ็กเกจ', '/companies/co/billing'],
     ]);
   });
@@ -1184,4 +1184,10 @@ it('package menu days use the notice warning window and suppress orange while ca
   assert.deepEqual(packageMenuTrailing({ ...notice, daysLeft: -2, derivedState: 'EXPIRED' }), { label: 'เหลือ 0 วัน', warning: false });
   assert.equal(packageMenuTrailing(null), undefined);
   assert.equal(packageMenuTrailing({ ...notice, termEndsAt: '' }), undefined);
+});
+
+it('FIX-Q2 settings hub and locked sidebar share the shop-settings name', () => {
+  const source = readFileSync(new URL('../../../app/(workspace)/companies/[companyId]/settings/page.tsx', import.meta.url), 'utf8');
+  assert.match(source, /title="ตั้งค่าร้าน"/);
+  assert.equal(buildLockedNavItems('co', {})[0].label, 'ตั้งค่าร้าน');
 });

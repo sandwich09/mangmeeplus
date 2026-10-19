@@ -226,11 +226,11 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(branchOne).toBeDisabled();
   await branchTwo.uncheck();
   // Preserve explicit repair when the selected default branch is no longer retained.
-  await expect(ownerBranch).toContainText('สาขาเดิมไม่ได้คงไว้ กรุณาเลือกใหม่');
+  await expect(ownerBranch).toContainText('สาขาเดิมไม่ได้คงไว้ เลือกสาขาอีกครั้ง');
   await picker.getByLabel('ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', { exact: true }).check();
   await expect(picker.getByRole('button', { name: 'ใช้การเลือกนี้และตรวจสอบราคา', exact: true })).toBeDisabled();
   await ownerBranch.click();
-  await expect(page.getByRole('option', { name: 'สาขาเดิมไม่ได้คงไว้ กรุณาเลือกใหม่', exact: true })).toBeDisabled();
+  await expect(page.getByRole('option', { name: 'สาขาเดิมไม่ได้คงไว้ เลือกสาขาอีกครั้ง', exact: true })).toBeDisabled();
   await page.getByRole('option', { name: 'สำนักงานใหญ่', exact: true }).click();
   await expect(ownerBranch).toHaveCount(0);
   await expect(picker.getByLabel('ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', { exact: true })).not.toBeChecked();
@@ -289,7 +289,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(repeatReview).toContainText('จ่ายส่วนต่างและเริ่ม มืออาชีพ เมื่อยืนยันการจ่ายสำเร็จ');
   await expect(repeatReview).toContainText('ราคาเต็มเมื่อซื้อรอบใหม่ 999.00 บาท');
   await repeatReview.getByRole('button', { name: /ดูทางเลือกซื้อ มืออาชีพ เต็มแพ็ก/ }).click();
-  await expect(repeatReview).toContainText('จ่ายราคาเต็ม 999.00 บาท');
+  await expect(repeatReview).toContainText('จ่าย 999.00 บาท ไม่หักค่าแพ็กเดิม');
   await expect(repeatReview).toContainText('เพิ่มจำนวนใบเสร็จเต็ม 100 ใบ');
   await repeatReview.getByRole('button', { name: 'กลับไปดูราคาอัปเกรดจ่ายส่วนต่าง' }).click();
   await expect(repeatReview).toContainText('จ่ายส่วนต่างและเริ่ม มืออาชีพ');
@@ -528,7 +528,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await page.locator('#billing-payment').scrollIntoViewIfNeeded();
   const capacityRepair = page.getByRole('region', { name: 'แพ็กเกจรอบถัดไป', exact: true });
   await expect(capacityRepair).toContainText('ต้องเลือกสิทธิ์ใหม่');
-  await expect(capacityRepair).toContainText('กรุณาเลือกสาขาและผู้ใช้ล่าสุด');
+  await expect(capacityRepair).toContainText('แพ็กเกจใหม่จ่ายแล้ว เลือกสาขาและผู้ใช้ล่าสุดก่อนเริ่มสิทธิ์ใหม่');
   await page.getByRole('button', { name: 'เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ', exact: true })).toBeVisible();
   // 'pending' is a return from Checkout whose attempt is still open: since 9217e6227 the page waits for

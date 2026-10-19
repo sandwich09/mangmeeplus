@@ -206,6 +206,16 @@ test('@journey a payment document is prepared by finance, approved by the manage
     await expect(main.getByText('จ่ายเงินให้ผู้รับเงิน แล้วกลับมาบันทึกว่าจ่ายแล้ว', { exact: true })).toHaveCount(0);
     await expect(main.getByRole('combobox', { name: 'วิธีจ่าย', exact: true })).toHaveText('โอนเงิน');
     await expect(main.getByRole('combobox', { name: 'วันที่จ่ายจริง', exact: true })).toHaveText(today);
+    await main.getByRole('combobox', { name: 'วันที่จ่ายจริง', exact: true }).click();
+    await finance.getByRole('button', { name: 'ล้าง', exact: true }).click();
+    await expect(main.getByText('เลือกวันที่จ่ายจริงก่อนบันทึก', { exact: true })).toBeVisible();
+    const payButton = main.getByRole('button', { name: 'บันทึกว่าจ่ายแล้ว', exact: true });
+    await expect(payButton).toBeEnabled();
+    await payButton.click();
+    await expect(finance.getByRole('dialog', { name: 'บันทึกว่าจ่ายแล้ว', exact: true })).toHaveCount(0);
+    await main.getByRole('combobox', { name: 'วันที่จ่ายจริง', exact: true }).click();
+    await finance.getByRole('button', { name: 'วันนี้', exact: true }).click();
+    await expect(main.getByText('เลือกวันที่จ่ายจริงก่อนบันทึก', { exact: true })).toHaveCount(0);
     await expect(main.getByText(`ใบนี้ไม่มีบัญชีผู้รับ ถามผู้จัดทำ ${FINANCE} ก่อนโอน`, { exact: true })).toHaveCount(0);
     const bankAccount = main.getByRole('region', { name: 'โอนเข้าบัญชี', exact: true });
     await expect(bankAccount).toContainText(new RegExp(`${seller}.*ธนาคารกสิกรไทย.*ชื่อบัญชี${seller}.*xxx-7890`));

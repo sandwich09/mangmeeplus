@@ -104,8 +104,9 @@ function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; c
 
     const afterDiscount = quantity * unitPrice - discount;
     const totals = calculateManualExpenseTotals({
-      quantity: '1',
-      unitPrice: Math.abs(afterDiscount),
+      quantity: line.quantity,
+      unitPrice: Math.abs(unitPrice),
+      discountAmount: line.discountAmount,
       vatRate: line.vatRate,
       vatMode: values.vatMode,
     });

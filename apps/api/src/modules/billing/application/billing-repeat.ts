@@ -7,7 +7,7 @@ import type { PartnerLifecycleTransitionUseCase } from '../../system-partner-man
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { StripeClient, StripeRequestError, stripeId, safeStripeUrl, type StripeObject } from '../infrastructure/stripe.client';
 import { assertCompanyCanBuy, assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
-import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
+import { appendPackageInterval, packageAnchorDay, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { resolveAppliedInvoiceIssues, detectBillingIssue } from './billing-issues';
 import { termProjectionHash } from '../domain/paid-invoice';
@@ -88,7 +88,7 @@ export class BillingRepeat {
       .filter(row => row.accountId === account.id && row.dayExtension?.subscriptionId === account.baseSubscriptionId)
       .map(row => Date.parse(row.dayExtension.after)).filter(at => Number.isSafeInteger(at) && at <= account.paidThrough!.getTime()).sort((a,b) => b-a)[0];
     // Changing the zero-price cadence can reset Stripe's anchor; preserve the purchased anniversary.
-    const anchorDay = giftBoundary ? new Date(giftBoundary).getUTCDate() : accepted.repeat?.anchorDay ?? new Date(subscription.billing_cycle_anchor*1000).getUTCDate();
+    const anchorDay = giftBoundary ? packageAnchorDay(new Date(giftBoundary)) : accepted.repeat?.anchorDay ?? packageAnchorDay(new Date(subscription.billing_cycle_anchor*1000));
     const source = { subscriptionId: account.baseSubscriptionId, paidThrough: account.paidThrough.toISOString(), productId, zeroPriceId,
       currentPriceId: stripeId(subscription.items.data[0].price)!, currentPeriodStart: subscription.items.data[0].current_period_start,
       sourcePriceId: future.priceId, sourceInterval: future.quote.offer.interval, sourceTaxRateId: future.policy.taxRateId, sourceTotal: future.quote.totalSatang,

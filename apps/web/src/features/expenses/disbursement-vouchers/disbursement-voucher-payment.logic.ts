@@ -20,6 +20,7 @@ export function initialDisbursementPayment(header: Pick<DisbursementVoucherDetai
   return { paidDate: todayCivilDate('Asia/Bangkok', now), paymentMethod: header.plannedMethod ?? 'BANK_TRANSFER', paidFromRef: '' };
 }
 export function disbursementPaymentDateError(date: string, now = new Date()): string | undefined {
+  if (!date) return 'เลือกวันที่จ่ายจริงก่อนบันทึก';
   return date > todayCivilDate('Asia/Bangkok', now) ? workspaceDictionary.th['expenses.disbursement.future_paid_date'] : undefined;
 }
 export function disbursementPaymentMethodError(method: DisbursementPaymentFields['paymentMethod']): string | undefined {

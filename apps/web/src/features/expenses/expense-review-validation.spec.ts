@@ -29,6 +29,12 @@ const validate = (values: ExpenseDraftReviewValues, aiGrandTotal?: string) =>
   validateExpenseReview(values, { today: '2026-07-31', aiGrandTotal });
 
 describe('validateExpenseReview', () => {
+  it('keeps product and discount separate when checking the same server-rounded total', () => {
+    const values = validValues();
+    values.vatMode = 'VAT_EXCLUDED';
+    Object.assign(values.lines[0]!, { unitPrice: '100.074', discountAmount: '0.015', vatRate: '0.07' });
+    assert.equal(validate(values, '100').find(issue => issue.field === 'total')?.params?.computed, '107.05');
+  });
   it('accepts clean values', () => {
     assert.deepEqual(validate(validValues()), []);
   });

@@ -58,6 +58,8 @@ export type EmployeeSummary = {
   jobTitle?: string;
   legalName?: string;
   email?: string;
+  /** The login is shared with another shop; its password and login email belong to the account holder. */
+  sharedAccount?: boolean;
   firstName?: string;
   lastName?: string;
   nickname?: string;
@@ -175,6 +177,8 @@ export type RoleSummary = {
   permissionKeys: string[];
   /** Permissions still usable after this company's feature entitlements — matches the access matrix. */
   effectivePermissionCount?: number;
+  /** ACTIVE/INVITED assignments that must be moved before disabling this custom role. */
+  activeEmployeeCount?: number;
   /**
    * The requesting user may assign this role right now — the server's own grant decision
    * (`roleGrantViolation`), so pickers never re-implement the permission math. Absent on

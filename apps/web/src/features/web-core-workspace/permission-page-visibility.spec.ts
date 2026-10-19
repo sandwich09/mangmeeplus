@@ -21,13 +21,17 @@ if (previousSvgLoader) require.extensions['.svg'] = previousSvgLoader;
 else delete require.extensions['.svg'];
 
 describe('permission page visibility regression', () => {
-  it('opens the expenses certificate child only with issue permission without widening the expenses group', () => {
+  it('opens the expenses certificate child with the API read permissions without widening the expenses group', () => {
     const path = '/companies/company-1/expenses/wht-certificates';
     const items = (permissions: string[]) => buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, permissions), 'company-1', 'th', {}, permissions)
       .find(item => item.key === 'expenses')?.subItems ?? [];
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'company-1', path), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['wht.certificate.issue'], 'company-1', path), true);
-    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['wht.certificate.read'], 'company-1', path), false);
+    for (const permission of ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link']) {
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'company-1', path), true);
+      assert.equal(requireRoutePermission({ permissions: [permission] }, '/expenses/wht-certificates'), null);
+      assert.ok(items(['expense.read', permission]).some(item => item.key === 'expenses.wht_certificates'));
+    }
     assert.equal(items(['expense.read']).some(item => item.key === 'expenses.wht_certificates'), false);
     const child = items(['expense.read', 'wht.certificate.issue']).find(item => item.key === 'expenses.wht_certificates');
     // The row says whatever the certificates page calls itself (one key, no second literal).

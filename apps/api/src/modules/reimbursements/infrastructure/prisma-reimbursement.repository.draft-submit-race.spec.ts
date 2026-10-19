@@ -160,8 +160,9 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
 
-  async function createDraft(suffix: string, attachmentId?: string, amount = '100.0000') {
-    const request = await repos[0]!.createRequest({
+  async function createDraft(suffix: string, attachmentId?: string, amount = '100.0000', id?: string, repo = repos[0]!) {
+    const request = await repo.createRequest({
+      ...(id && { id }),
       companyId,
       branchId,
       requesterUserId: `${TAG}-user`,
@@ -319,6 +320,15 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       },
     };
   }
+
+  it('FIX-R1 concurrent retries of the same create keep one draft and one set of lines', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const id = `rb_${randomUUID()}`;
+    const results = await Promise.all(repos.map(repo => createDraft('same create', undefined, '100.0000', id, repo)));
+    assert.deepEqual(results.map(row => row.id), [id, id]);
+    assert.equal(await clients[0]!.reimbursementRequest.count({ where: { companyId, id } }), 1);
+    assert.equal(await clients[0]!.reimbursementLine.count({ where: { companyId, reimbursementRequestId: id } }), 1);
+  });
 
   it('deletes a never-sent draft and its links atomically, rolling back when the audit fails', async (t) => {
     if (!reachable) return t.skip('no database reachable');

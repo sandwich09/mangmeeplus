@@ -12,6 +12,41 @@ const { ManualExpensePanel } = require('./ExpensesPages');
 const { ExpenseReviewRequestDialog } = require('./ExpenseReviewRequestDialog');
 const noop = () => {};
 
+test('manual form previews the server rounding order without combining price and discount first', () => {
+  const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
+  const view = certificateHarness(() => h(ManualExpensePanel, { companyId: 'co', branchId: 'b1', canAttachReceipt: false, entryClosed: false, permissions: [], onSuccess: noop }),
+    [{ name: '' }, '2026-10-13', [{ description: 'กาแฟ', quantity: '1', unitPrice: '100.074', discountAmount: '0.015' }], '', '', '', undefined, '0.07', 'VAT_EXCLUDED']);
+  try {
+    const html = view.render();
+    assert.match(html, /฿107\.05/); assert.match(html, /฿100\.05/); assert.match(html, /฿7\.00/);
+  } finally { capture.mock.restore(); }
+});
+
+for (const status of [400, 422, 503]) test(`manual retry after ${status} ${status === 503 ? 'retains the uncertain command' : 'sends edited fields'}`, async () => {
+  const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
+  const bodies: any[] = [];
+  const created = mock.method(api, 'createExpenseDraft', async (_company: string, body: any) => {
+    bodies.push(body); if (bodies.length === 1) throw { status }; return { id: 'saved' };
+  });
+  const view = certificateHarness(() => h(ManualExpensePanel, { companyId: 'co', branchId: 'b1', canAttachReceipt: false, entryClosed: false, permissions: [], onSuccess: noop }),
+    [{ name: '' }, '2026-10-13', [{ description: 'กาแฟ', quantity: '1', unitPrice: '120', discountAmount: '0' }]]);
+  const refs: any[] = [];
+  const render = () => {
+    let index = 0;
+    const ref = mock.method(require('react'), 'useRef', (initial: unknown) => refs[index++] ??= { current: initial });
+    try { return view.render(); } finally { ref.mock.restore(); }
+  };
+  try {
+    render(); await view.find('form').onSubmit({ preventDefault: noop });
+    view.state[2] = [{ description: 'ชา', quantity: '1', unitPrice: '130', discountAmount: '0' }];
+    render(); await view.find('form').onSubmit({ preventDefault: noop });
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[1].lines[0].unitPrice, status === 503 ? '120' : '130');
+    assert.equal(bodies[1].lines[0].description, status === 503 ? 'กาแฟ' : 'ชา');
+    assert.equal(bodies[1].idempotencyKey, bodies[0].idempotencyKey);
+  } finally { capture.mock.restore(); created.mock.restore(); }
+});
+
 test('manual payee suggestions reuse counterparty search only with its read right and selecting one links the draft', async () => {
   const oldWindow = (globalThis as any).window;
   (globalThis as any).window = { setTimeout: (fn: any) => { fn(); return 1; }, clearTimeout: noop };

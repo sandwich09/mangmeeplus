@@ -1,4 +1,5 @@
 import { reimbursementNeedsCorrection } from '@watchdog-bms/contracts';
+import { createHash } from 'node:crypto';
 import { withholdingPeriodLockedMessage, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, reimbursementCertificateCancellationMessage, expenseDisbursementReservationMessage } from '@watchdog-bms/contracts';
 import { reimbursementDuplicateSubmitNotice, REIMBURSEMENT_DUPLICATE_REASON_TEXT } from '@watchdog-bms/contracts';
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
@@ -141,11 +142,22 @@ export class CreateReimbursementDraftUseCase {
     private readonly payouts: MemberPayoutAccountUseCase,
   ) {}
 
-  async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
+  async execute(ctx: RequestContext, input: CreateReimbursementRequestInput, key?: string): Promise<ReimbursementRequestSummary> {
     if (!ctx.permissions.includes('reimbursement.create')) throw new ForbiddenException('Missing permission: reimbursement.create');
     // The same source-branch rule as receipt upload; never default to the first of many branches.
     assertReimbursementBranchInScope(ctx, input.branchId);
     const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, input.branchId);
+
+    if (key !== undefined && (typeof key !== 'string' || !key.trim() || key.length > 200)) throw new BadRequestException('Invalid idempotency key');
+    // The existing primary key stores the create identity; the company lock serializes concurrent retries.
+    const id = key === undefined ? undefined : `rb_${createHash('sha256').update(JSON.stringify([ctx.companyId, ctx.userId, key])).digest('base64url')}`;
+    if (id) {
+      const previous = await this.repo.findRequestById(ctx.companyId, id);
+      if (previous) {
+        assertReimbursementBranchInScope(ctx, previous.branchId);
+        return toRequestSummary(previous);
+      }
+    }
 
     const errors = validateRequestFields(input);
     if (errors.length > 0) throw new BadRequestException(errors.join(','));
@@ -168,6 +180,7 @@ export class CreateReimbursementDraftUseCase {
     const payout = input.payout ? await this.payouts.draftPayoutChange(ctx, requesterUserId, input.payout) : undefined;
 
     const created = await this.repo.createRequest({
+      ...(id && { id }),
       companyId: ctx.companyId,
       branchId: branchId ?? undefined,
       requesterUserId,
@@ -459,7 +472,7 @@ export class ReimbursementInternalNotesUseCase {
 }
 
 /** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
-export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplicateBlockedCount = 0): ReimbursementHubSummary {
+export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplicateBlockedCount = 0, duplicateBlockedAmount = '0'): ReimbursementHubSummary {
   const counts = { all: 0, draft: 0, correction: 0, review: 0, payment: 0, duplicate_blocked: duplicateBlockedCount, paid: 0, closed: 0 };
   let totalAmount = d('0');
   const metrics = { pendingApproval: { count: 0, amount: '0.0000' }, pendingPayment: { count: 0, amount: '0.0000' } };
@@ -475,6 +488,8 @@ export function hubSummary(groups: readonly ReimbursementRequestGroup[], duplica
     if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
   }
   counts.payment -= duplicateBlockedCount;
+  metrics.pendingPayment.count -= duplicateBlockedCount;
+  metrics.pendingPayment.amount = decStr(d(metrics.pendingPayment.amount).sub(d(duplicateBlockedAmount)));
   return { counts, totalAmount: decStr(totalAmount), blockedDraftCount, metrics };
 }
 
@@ -524,7 +539,7 @@ export class ListReimbursementsUseCase {
     // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
     // list of N claims read N rows per page: N²/100 rows for all of it.
     const policy = await loadReimbursementPolicy(this.repo, ctx.companyId);
-    const { rows: items, groups, duplicateBlockedCount } = await this.repo.listRequestPage({
+    const { rows: items, groups, duplicateBlockedCount, duplicateBlockedAmount } = await this.repo.listRequestPage({
       order: filter.order,
       correctionUserId: ctx.userId,
       companyId: ctx.companyId,
@@ -540,7 +555,7 @@ export class ListReimbursementsUseCase {
       take: pageSize,
     }, policy);
     // The total is read off the same groups the cards print, so a card can never count a different list.
-    const hub = hubSummary(groups, duplicateBlockedCount);
+    const hub = hubSummary(groups, duplicateBlockedCount, duplicateBlockedAmount);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).

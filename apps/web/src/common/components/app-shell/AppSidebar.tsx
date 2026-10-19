@@ -15,6 +15,7 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { getAccountSecurityState, type AccountSecurityState } from '@/features/auth/auth.api';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
+import { useDialogFocus } from '@/common/hooks/use-dialog-focus';
 import { useIsDesktop, useMediaQuery } from '@/common/hooks/use-media-query';
 
 export type NavItem = {
@@ -135,6 +136,10 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const [accountSecurity, setAccountSecurity] = useState<AccountSecurityState | null>(null);
+  const [accountSecurityFailed, setAccountSecurityFailed] = useState(false);
+  const [accountSecurityReload, setAccountSecurityReload] = useState(0);
+  const sidebarRef = useRef<HTMLElement>(null);
+  useDialogFocus(isMobileOpen, sidebarRef);
   const activeItemRef = useRef<HTMLElement | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -183,10 +188,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   useEffect(() => {
     if (!userMenuOpen) return;
     let current = true;
-    setAccountSecurity(null);
-    void getAccountSecurityState().then(state => { if (current) setAccountSecurity(state); }).catch(() => undefined);
+    setAccountSecurity(null); setAccountSecurityFailed(false);
+    void getAccountSecurityState().then(state => { if (current) setAccountSecurity(state); })
+      .catch(() => { if (current) setAccountSecurityFailed(true); });
     return () => { current = false; };
-  }, [userMenuOpen]);
+  }, [userMenuOpen, accountSecurityReload]);
 
   const isActive = (path: string) => path === pathname;
   const isActiveItem = (nav: NavItem) => {
@@ -298,6 +304,24 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
 
   return (
     <aside
+      ref={sidebarRef}
+      role={isMobileOpen ? 'dialog' : undefined}
+      aria-modal={isMobileOpen ? true : undefined}
+      aria-label={isMobileOpen ? 'เมนูหลัก' : undefined}
+      tabIndex={isMobileOpen ? -1 : undefined}
+      onClick={event => {
+        if (isMobileOpen && (event.target as Element).closest('a[href]')) closeMobileSidebar();
+      }}
+      onKeyDown={event => {
+        if (!isMobileOpen || event.key !== 'Tab') return;
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+          .filter(node => node.getClientRects().length > 0 && !node.closest('[inert]'));
+        const first = controls[0], last = controls[controls.length - 1];
+        if (!first) { event.preventDefault(); event.currentTarget.focus(); return; }
+        const outside = !controls.includes(document.activeElement as HTMLElement);
+        if (event.shiftKey && (document.activeElement === first || outside)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || outside)) { event.preventDefault(); first.focus(); }
+      }}
       className={`fixed top-0 left-0 z-50 mt-[var(--app-header-h)] flex h-[calc(100dvh-var(--app-header-h))] flex-col border-r border-gray-200 bg-white px-5 text-gray-900 transition-all duration-300 ease-in-out lg:mt-0 lg:h-dvh
         ${isExpanded || isMobileOpen || isHovered ? 'w-[min(289px,85vw)] lg:w-[289px]' : 'w-[86px]'}
         ${isMobileOpen ? 'visible translate-x-0' : 'invisible -translate-x-full'}
@@ -307,20 +331,21 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
       onMouseEnter={(event) => {
         if (!isPointerArrival(event.nativeEvent.relatedTarget as Node | null, closedUnderPointerRef.current)) return;
         closedUnderPointerRef.current = false;
-        if (supportsHover && !isExpanded) setIsHovered(true);
+        if (isDesktop && supportsHover && !isExpanded) setIsHovered(true);
       }}
       onMouseLeave={() => {
         closedUnderPointerRef.current = false;
         if (supportsHover) setIsHovered(false);
       }}
     >
-      <div className={`py-6 flex items-center ${!isExpanded && !isHovered ? 'lg:flex-col lg:justify-center lg:gap-3' : 'justify-between'}`}>
+      <div className={`py-6 flex items-center justify-between ${!isExpanded && !isHovered ? 'lg:flex-col lg:justify-center lg:gap-3' : ''}`}>
         <Link href="/" className="flex items-center gap-2.5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-brand-500 to-brand-900">
             <MangmeeLogo size={24} />
           </span>
           {sidebarVisible && <span className="text-lg font-extrabold text-gray-900">มั่ง<span className="text-brand-700">มี</span></span>}
         </Link>
+        {isMobileOpen && <button type="button" className="mangmee-btn mangmee-btn-quiet lg:hidden" onClick={closeMobileSidebar}>ปิดเมนู</button>}
         {/* On the rail the button is kept only where hovering cannot open the menu: with a mouse the menu opens under
             the pointer and the button would jump away from it. */}
         {(sidebarVisible || !supportsHover) && (
@@ -434,6 +459,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                         {nav.subItems && sidebarVisible && (
                           <div
                             ref={(el) => { subMenuRefs.current[nav.key] = el; }}
+                            inert={openSubmenu !== nav.key ? true : undefined}
                             className="overflow-hidden transition-all duration-300"
                             style={{ height: openSubmenu === nav.key ? `${subMenuHeight[nav.key]}px` : '0px' }}
                           >
@@ -509,6 +535,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
               <button
                 type="button"
                 disabled={lineLinkRow.disabled}
+                aria-busy={!accountSecurity && !accountSecurityFailed}
                 onClick={lineLinkRow.disabled ? undefined : () => {
                   setUserMenuOpen(false);
                   window.location.assign(withLineExternalBrowser(`/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`, navigator.userAgent));
@@ -528,6 +555,10 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                   </span>
                 )}
               </button>
+              {accountSecurityFailed && <div className="space-y-2 px-4 pb-3">
+                <p role="alert" className="text-sm text-red-700">โหลดสถานะบัญชีไม่ได้ กดลองอีกครั้ง</p>
+                <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setAccountSecurityReload(value => value + 1)}>ลองอีกครั้ง</button>
+              </div>}
               {accountSecurity?.lineLinked && accountSecurity.lineMessagingReady === false && (
                 <p className="px-4 pb-3 text-sm text-amber-800">LINE ยังรับข้อความไม่ได้ แจ้งผู้ดูแลให้ออก QR ใหม่</p>
               )}

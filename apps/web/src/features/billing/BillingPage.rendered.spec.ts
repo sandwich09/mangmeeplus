@@ -4,7 +4,7 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { createBillingPreview, type PreviewScenario } from './billing-preview.fixture';
-import type { BillingInvoiceItem, BillingAttemptView, BillingPurchaseMode, BillingQuote, BillingStatus } from '@watchdog-bms/contracts';
+import type { BillingEventDiscountView, BillingInvoiceItem, BillingAttemptView, BillingPurchaseMode, BillingQuote, BillingStatus } from '@watchdog-bms/contracts';
 
 (globalThis as any).React = React;
 const svg = require.extensions['.svg'];
@@ -15,7 +15,7 @@ if (svg) require.extensions['.svg'] = svg; else delete require.extensions['.svg'
 const runtime = require('react') as typeof React;
 const words = (node: any): string => Array.isArray(node) ? node.map(words).join('') : React.isValidElement(node) ? (node.props as any)['aria-hidden'] ? '' : words((node.props as any).children) : node == null || typeof node === 'boolean' ? '' : String(node);
 
-async function withBuyer(run: (ui: { render: () => string; button: (name: string) => any; input: (name: string, value?: string) => any; calls: any[]; quoteCalls: number; flushRecipient: () => Promise<void>; replayInitialLoad: () => Promise<void>; capacityPicker: () => any; changeRecipient: (email: string) => void; next: () => Promise<string>; method: (mode: BillingPurchaseMode) => void; pay: () => any; packageStep: () => void; row: (name: string) => any; latestRecipientInvoice: () => BillingInvoiceItem | null; documentsOpened: () => number }) => Promise<void>, unavailable = false, customize?: { returning?: boolean; attempt?: BillingAttemptView; timedOut?: boolean; checkoutCanceled?: boolean; startWithPlans?: boolean; quote?: (quote: BillingQuote) => BillingQuote; status?: (status: BillingStatus) => void; annualMismatch?: boolean; scenario?: PreviewScenario; captureCapacity?: boolean; history?: (cursor?: string, limit?: number) => Promise<{ items: BillingInvoiceItem[]; nextCursor: string | null }>; retrySelection?: { offer: string; interval: 'month' | 'year'; purchaseMode: BillingPurchaseMode } }) {
+async function withBuyer(run: (ui: { render: () => string; button: (name: string) => any; input: (name: string, value?: string) => any; calls: any[]; quoteCalls: number; flushRecipient: () => Promise<void>; replayInitialLoad: () => Promise<void>; capacityPicker: () => any; changeRecipient: (email: string) => void; next: () => Promise<string>; method: (mode: BillingPurchaseMode) => void; pay: () => any; packageStep: () => void; row: (name: string) => any; latestRecipientInvoice: () => BillingInvoiceItem | null; documentsOpened: () => number }) => Promise<void>, unavailable = false, customize?: { returning?: boolean; attempt?: BillingAttemptView; heldView?: BillingEventDiscountView; timedOut?: boolean; checkoutCanceled?: boolean; startWithPlans?: boolean; quote?: (quote: BillingQuote) => BillingQuote; status?: (status: BillingStatus) => void; annualMismatch?: boolean; scenario?: PreviewScenario; captureCapacity?: boolean; history?: (cursor?: string, limit?: number) => Promise<{ items: BillingInvoiceItem[]; nextCursor: string | null }>; retrySelection?: { offer: string; interval: 'month' | 'year'; purchaseMode: BillingPurchaseMode } }) {
   const api = createBillingPreview('shop', customize?.scenario ?? 'start', null, () => {});
   if (customize?.history) api.history = customize.history;
   const originalQuote = api.quote;
@@ -38,7 +38,7 @@ async function withBuyer(run: (ui: { render: () => string; button: (name: string
   let cursor = 0, refCursor = 0, elements: { type: string; props: any; children: any[] }[] = [];
   Reflect.set(runtime, 'useState', (initial: any) => {
     const index = cursor++; const [value] = (originalState as any)(initial);
-    if (!(index in states)) states[index] = index === 2 ? data : index === 30 && customize?.timedOut ? true : index === 32 && customize?.attempt ? customize.attempt : index === 36 && customize?.checkoutCanceled ? true : value;
+    if (!(index in states)) states[index] = index === 2 ? data : index === 27 && customize?.heldView ? customize.heldView : index === 30 && customize?.timedOut ? true : index === 32 && customize?.attempt ? customize.attempt : index === 36 && customize?.checkoutCanceled ? true : value;
     return [states[index], (next: any) => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];
   });
   Reflect.set(runtime, 'useRef', (initial: any) => { const index = refCursor++; const ref = originalRef(initial); return refs[index] ?? (refs[index] = ref); });
@@ -216,7 +216,7 @@ test('PAY-1 an incompatible previous method is not silently replaced', async () 
 
 test('PAY-1 issued QR bill is the main action and does not create a second purchase', async () => {
   await withBuyer(async ({ render, button, calls }) => {
-    const html = render(); assert.match(html, /มีบิลต่ออายุรอจ่าย/); assert.equal(button('จ่ายบิลงวดนี้').disabled, false); assert.match(button('เปิดบิลพร้อมเพย์').className, /secondary/);
+    const html = render(); assert.match(html, /มีบิลต่ออายุรอจ่าย/); assert.equal(button('เปิดบิลพร้อมเพย์').disabled, false); assert.match(button('เปิดบิลพร้อมเพย์').className, /primary/); assert.doesNotMatch(html, />จ่ายบิลงวดนี้</);
     assert.doesNotMatch(html, />ต่ออายุ [^<]*บาท<|>เลือกแพ็กเกจ<|>เปลี่ยนแพ็กเกจ</); assert.equal(calls.length, 0);
   }, false, { startWithPlans: false, status: status => Object.assign(status, { paidThrough: '2099-01-01', tierKey: 'STARTER_249', interval: 'month', renewalMode: 'PROMPTPAY_RENEW', renewalInvoiceUrl: 'https://invoice.stripe.com/i/original' }) });
 });
@@ -323,6 +323,47 @@ test('D5 unknown actions are equal shared controls; ending is its own destructiv
     assert.doesNotMatch(question, />จ่ายต่อ<|>ตรวจผลการจ่ายเงิน<|mangmee-btn-primary/);
     button('ไม่ยกเลิก').onClick(); render(); assert.equal(button('ตรวจผลการจ่ายเงิน').disabled, false);
   }, false, { startWithPlans: false, status: status => Object.assign(status, { paymentState: 'UNKNOWN', attemptId: 'original', canCancelCheckout: true, allowedActions: ['new_sales'] }) });
+});
+
+const heldEventDiscount = (state: 'AVAILABLE' | 'USED' = 'AVAILABLE'): BillingEventDiscountView => ({
+  path: 'CREDIT', renewalMode: 'CARD_AUTO', renewalState: 'RUNNING', tickets: [{
+    serial: 'remaining-ticket', eventName: 'event4', discountSatang: 1000, chatCreditUnits: 0, receiptImageUnits: 0,
+    expiresAt: '2026-10-30T16:59:59.000Z', state, batchSuspended: false,
+  }],
+});
+
+for (const mode of ['PROMPTPAY_ONCE', 'CARD_AUTO'] as const) for (const returning of [true, false]) {
+  test(`PAY-4 applied ${mode}, ${returning ? 'return' : 'later visit'}: no last-result block or recheck after settlement`, async () => {
+    const discounted = mode === 'CARD_AUTO', amountSatang = discounted ? 198900 : 12900;
+    const invoice = (await createBillingPreview('shop', 'success', null, () => {}).history()).items[0];
+    await withBuyer(async ({ render, button }) => {
+      const html = render(), text = html.replace(/<[^>]+>/g, '');
+      assert.doesNotMatch(html, /ผลการจ่ายเงินล่าสุด|>ตรวจผลการจ่ายเงิน</);
+      assert.match(text, /อ่านใบเสร็จได้อีก/);
+      if (returning) {
+        assert.ok(text.includes(`จ่าย ${discounted ? '1,989.00' : '129.00'} บาทแล้ว`));
+        assert.ok(button('ดูใบเสร็จรับเงิน'));
+        if (discounted) {
+          assert.match(text, /ใช้ส่วนลดจากงานแล้ว · −10.00 บาท/);
+          assert.doesNotMatch(html, /คุณมีส่วนลดจากงาน|ส่วนลดจากงานยังใช้กับรอบตัดเงินอัตโนมัติไม่ได้/);
+        }
+      } else if (discounted) {
+        assert.match(text, /คุณมีส่วนลดจากงาน event4 ลด 10 บาท/);
+        assert.doesNotMatch(html, /ใช้ส่วนลดจากงานแล้ว/);
+      }
+    }, false, { scenario: 'success', startWithPlans: false, returning,
+      attempt: returnView('PAID', 'APPLIED', discounted ? { eventDiscount: { state: 'USED', shownDiscountSatang: 1000 } } : {}),
+      heldView: discounted ? heldEventDiscount() : undefined,
+      status: status => { status.renewalMode = mode; status.attemptId = null; },
+      history: async () => ({ items: [{ ...invoice, amountSatang }], nextCursor: null }),
+    });
+  });
+}
+
+test('PAY-4 a later visit never offers a used event ticket as held', async () => {
+  await withBuyer(async ({ render }) => {
+    assert.doesNotMatch(render(), /คุณมีส่วนลดจากงาน|ใช้ส่วนลดจากงานแล้ว|ผลการจ่ายเงินล่าสุด|>ตรวจผลการจ่ายเงิน</);
+  }, false, { scenario: 'success', startWithPlans: false, heldView: heldEventDiscount('USED') });
 });
 
 for (const applyState of ['PENDING', 'HELD'] as const) test(`D5 refresh of paid ${applyState} never retracts the received money`, async () => {
@@ -438,6 +479,19 @@ test('PAY-2 paid return uses its invoice amount and package, with receipt and ho
     button('ดูใบเสร็จรับเงิน').onClick(); assert.equal(documentsOpened(), 1);
     assert.doesNotMatch(html, /จ่ายแล้ว เปิดแพ็กเกจแล้ว|>เลือกแพ็กเกจ<|>ต่ออายุ [^<]*บาท</);
   }, false, { scenario: 'success', startWithPlans: false, returning: true, attempt: returnView('PAID', 'APPLIED') });
+});
+
+test('PAY-4 an applied payment stays settled after its package expires and a new purchase stays available', async () => {
+  await withBuyer(async ({ render, button }) => {
+    const html = render();
+    assert.match(html, /แพ็กเกจหมดอายุแล้ว/);
+    assert.doesNotMatch(html, /ผลการจ่ายเงินล่าสุด|>ตรวจผลการจ่ายเงิน</);
+    assert.ok(button('เลือกแพ็กเกจ'));
+  }, false, { scenario: 'success', startWithPlans: false, status: status => {
+    status.accessState = 'EXPIRED'; status.lockReason = 'trial_ended';
+    status.termEndsAt = status.paidThrough = new Date(Date.now() - 86_400_000).toISOString();
+    status.subscriptionState = 'canceled'; status.nextChargeAt = null; status.allowedActions = ['new_sales'];
+  } });
 });
 
 for (const applyState of ['PENDING', 'HELD'] as const) test(`PAY-2 received ${applyState} hides email editing and retry; held reference is disclosed`, async () => {
@@ -697,4 +751,64 @@ for (const state of [
     paidThrough: '2099-11-18T00:00:00Z', termEndsAt: '2099-11-18T00:00:00Z', purchaseSource: 'PAID_CURRENT_MODE', renewalMode: 'CARD_ONCE',
     attemptId: 'return-attempt', canCancelCheckout: false, allowedActions: [], usage: { ...status.usage, remaining: 20 },
   }) });
+});
+
+for (const discounted of [false, true]) test(`FIX-Q1 full-package review states the payable amount, discount=${discounted}`, async () => {
+  await withBuyer(async ({ render, input, method, next, pay, calls }) => {
+    render(); input('offer', 'PRO_999').onChange(); render(); method('CARD_ONCE');
+    const html = await next();
+    assert.match(html, /ยอดที่จ่ายวันนี้[^]*899\.00[^]*บาท/);
+    assert.match(html, /เต็มแพ็กเพิ่มจากแพ็กเดิม จ่าย 899\.00 บาท ไม่หักค่าแพ็กเดิม/);
+    assert.doesNotMatch(html, /จ่ายราคาเต็ม/);
+    await pay().onClick();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.quoteId, 'preview-quote');
+  }, false, { scenario: 'one-time', quote: quote => ({ ...quote, totalSatang: discounted ? 99900 : 89900,
+    purchase: { ...quote.purchase!, kind: 'FULL_PACKAGE_UPGRADE' },
+    ...(discounted ? { eventDiscount: { choice: 'USE', ticketSerial: 'ticket', eventName: 'ส่วนลด', expiresAt: quote.expiresAt,
+      discountSatang: 10000, shownDiscountSatang: 10000,
+      applied: { unitAmountSatang: 89900, subtotalSatang: 89900, taxSatang: 0, totalSatang: 89900 } } } : {}),
+  }) });
+});
+
+for (const scenario of ['deal', 'deal-auto'] as const) test(`FIX-Q1 ${scenario} review names the purchased term`, async () => {
+  await withBuyer(async ({ render, button, input, next }) => {
+    render(); button('เลือกข้อเสนอนี้').onClick(); render(); await next();
+    if (scenario === 'deal-auto') { input('checkbox').onChange({ target: { checked: true } }); render(); await next(); }
+    const html = render();
+    assert.match(html, scenario === 'deal' ? /มืออาชีพ · 12 เดือน/ : /มืออาชีพ · รายเดือน/);
+    if (scenario === 'deal') assert.doesNotMatch(html, /มืออาชีพ · รายเดือน/);
+  }, false, { scenario });
+});
+
+test('FIX-Q2 billing overview has one bounce warning and one control for the current QR bill', async () => {
+  await withBuyer(async ({ render }) => {
+    const html = render();
+    assert.equal((html.match(/อีเมลรับเอกสารส่งไม่ถึง แก้ไขได้ที่นี่/g) ?? []).length, 1);
+    assert.equal((html.match(/>เปิดบิลพร้อมเพย์<|>จ่ายบิลงวดนี้</g) ?? []).length, 1);
+    assert.match(html, />เปิดบิลพร้อมเพย์</);
+  }, false, { startWithPlans: false, scenario: 'success', status: status => {
+    status.renewalMode = 'PROMPTPAY_RENEW'; status.renewalInvoiceUrl = 'https://invoice.stripe.com/test';
+    status.recipient = { email: 'owner@example.com', bouncedAt: '2026-10-18T00:00:00.000Z', source: 'STRIPE_CHECKOUT', canChange: true };
+  } });
+});
+
+test('FIX-Q2 paid result keeps its receipt as primary and the QR bill secondary', async () => {
+  await withBuyer(async ({ render, button }) => {
+    render();
+    assert.match(button('ดูใบเสร็จรับเงิน').className, /primary/);
+    assert.match(button('เปิดบิลพร้อมเพย์').className, /secondary/);
+  }, false, { returning: true, attempt: returnView('PAID', 'APPLIED'), startWithPlans: false, scenario: 'success', status: status => {
+    status.renewalMode = 'PROMPTPAY_RENEW'; status.renewalInvoiceUrl = 'https://invoice.stripe.com/test';
+  } });
+});
+
+test('MONEY-Q1 below-minimum upgrade keeps contact links beside its specific refusal', async () => {
+  await withBuyer(async ({ render, input, method, next, calls }) => {
+    render(); input('offer', 'BASIC_499').onChange(); render(); method('CARD_ONCE');
+    const html = await next(), alert = html.match(/role="alert"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '';
+    assert.match(alert, /ส่วนต่างต่ำกว่า 10\.00 บาท/);
+    assert.match(alert, /href="tel:/); assert.match(alert, /href="mailto:/);
+    assert.equal(calls.length, 0);
+  }, false, { quote: () => { throw { code: 'BILLING_UPGRADE_BELOW_MINIMUM', status: 409 }; } });
 });

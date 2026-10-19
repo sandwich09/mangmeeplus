@@ -240,6 +240,16 @@ function makePrisma(opts: {
 }
 
 describe('ListRolesUseCase', () => {
+  it('FIX-R2 custom-role usage counts the exact assignments that block disabling', async () => {
+    const prisma = { client: {
+      role: { findMany: async (query: any) => {
+        assert.deepEqual(query.include._count.select.memberships.where, { membership: { status: { in: ['ACTIVE', 'INVITED'] } } });
+        return [{ id: 'custom', key: 'CUSTOM', name: 'ผู้ช่วย', scopeKey: COMPANY_ID, isSystem: false, status: 'ACTIVE', permissions: [], _count: { memberships: 2 } }];
+      } }, companyFeatureEntitlement: { findMany: async () => [] },
+    } } as any;
+    const [role] = await new ListRolesUseCase(prisma).execute(COMPANY_ID);
+    assert.equal((role as any).activeEmployeeCount, 2);
+  });
   it('keeps raw permissions while counting only company-entitled permissions', async () => {
     const prisma = {
       client: {

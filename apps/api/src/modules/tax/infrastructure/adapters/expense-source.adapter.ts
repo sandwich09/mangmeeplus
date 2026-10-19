@@ -2,24 +2,11 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { Injectable } from '@nestjs/common';
 import { civilDate, civilDateToUtcDate } from '@watchdog-bms/contracts';
 import { allocateExpenseWithholding } from '../../domain/logic/expense-payment-withholding.logic';
+import { expenseWhtHeaderRate, expenseWhtIncomeBase } from '../../../expenses/domain/logic/expense-wht-input.logic';
 import type { ExpenseWhtCapture } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { counterpartyAddressText } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import type { ExpenseSourceRow, ExpenseWhtSourceRow, TransactionTaxSourceLineRow } from '../../domain/ports/source-reader.port';
-
-/** Expense line rates are fractions; reporting rates are percentages. Explicit whole-bill
- * capture keeps its selected base, including lines whose tax rounds to zero. */
-function whtLineFacts(lines: Array<{ whtRate: unknown; taxableAmount: unknown }> | undefined, headerBase: string, input?: ExpenseWhtCapture | null) {
-  // Explicit source is whole-bill even when a small line's WHT rounds to zero and the query
-  // excludes that line. Legacy input still uses only the lines the user originally withheld on.
-  if (input) return { whtRate: input.inputType === 'RATE' ? Number(input.value).toFixed(4) : null, grossAmount: input.baseAmount ?? headerBase };
-  const rates = new Set((lines ?? []).map(l => (l.whtRate === null || l.whtRate === undefined ? '' : String(l.whtRate))).filter(Boolean));
-  const lineBase = (lines ?? []).reduce((sum, l) => sum + (Number(l.taxableAmount) || 0), 0);
-  return {
-    whtRate: rates.size === 1 ? (Number([...rates][0]) * 100).toFixed(4) : null,
-    grossAmount: lineBase > 0 ? lineBase.toFixed(4) : headerBase,
-  };
-}
 
 @Injectable()
 export class ExpenseSourceAdapter {
@@ -109,7 +96,9 @@ export class ExpenseSourceAdapter {
     }
     const company = await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { timezone: true } });
     return rows.flatMap(r => {
-      const facts = whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null);
+      const input = r.whtInputJson as ExpenseWhtCapture | null;
+      const rate = expenseWhtHeaderRate(input, r.lines, r.whtRate);
+      const facts = { whtRate: rate === null ? null : new Prisma.Decimal(rate).toFixed(4), grossAmount: expenseWhtIncomeBase({ ...r, whtInputJson: input }) };
       // Whole-bill capture remains one line. Independently classified/rated legacy lines keep
       // their own base, rate and satang remainder instead of collapsing to an unknown rate.
       const split = !r.whtInputJson && (r.lines?.length ?? 0) > 1;

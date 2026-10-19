@@ -78,6 +78,8 @@ for (const width of [390, 1556]) for (const [mode, label, consent, explanation] 
     await expect(page.getByRole('heading', { name: 'ได้รับเงินแล้ว กำลังเปิดแพ็กเกจ', exact: true })).toBeVisible(AFTER_PRESS);
     let reloads = 0; page.on('load', () => { reloads++; }); state.stage = 'applied';
     await expect(page.getByRole('heading', { name: /^จ่าย [\d,]+\.\d{2} บาทแล้ว$/, exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(page.getByText('ผลการจ่ายเงินล่าสุด', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toHaveCount(0);
     expect(reloads).toBe(0); await fits(); await expectNoClientError(page);
     const status = await page.evaluate(async id => (await fetch(`/api/v1/companies/${id}/billing`)).json(), companyId);
     expect(status).toMatchObject({ paymentState: 'PAID', applyState: 'APPLIED', accessState: 'ACTIVE', renewalMode: 'CARD_AUTO', subscriptionState: 'active', usage: { remaining: 30 } });

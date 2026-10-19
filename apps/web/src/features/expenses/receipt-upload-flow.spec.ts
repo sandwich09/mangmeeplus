@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
 import { certificateHarness, h, mutable } from './expense-certificate-test-harness';
-import { expenseCapabilities, receiptDraftMissingFields } from './expenses.model';
+import { expenseCapabilities, receiptDraftMissingFields, type ExpenseDetail } from './expenses.model';
 require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
 require.extensions['.svg'] = (module: any) => { module.exports = () => null; };
 const api = mutable('./expenses.api');
@@ -11,6 +11,7 @@ const confirmation = mutable('@/common/components/modal/use-confirm');
 const toast = mutable('@/common/components/toast/use-toast');
 const successNotices: string[] = [];
 mock.method(toast, 'useToast', () => ({ success: (message: string) => successNotices.push(message), error: noop, warning: noop }));
+const dates = mutable('@/common/components/field/ThemedDate');
 const resultModule = mutable('./ReceiptUploadResult');
 const { UploadPanel, DocumentReviewSection } = require('./ExpensesPages');
 const { ReceiptUploadResult } = require('./ReceiptUploadResult');
@@ -77,6 +78,30 @@ test('device files wait for the send button', async () => {
     assert.deepEqual(stubs.calls, ['init', 'bytes', 'complete', 'read']);
   } finally { stubs.cleanup(); }
 });
+for (const lostStep of ['bytes', 'complete', 'complete-unsaved']) test(`retry resumes the same receipt intent after a lost ${lostStep} answer`, async () => {
+  const stubs = uploadStubs(); const view = uploadView();
+  let attempts = 0;
+  const lost = mock.method(api, lostStep === 'bytes' ? 'uploadReceiptFile' : 'completeReceiptUpload', async (...args: any[]) => {
+    stubs.calls.push(lostStep === 'bytes' ? 'bytes' : 'complete');
+    if (lostStep !== 'bytes') assert.deepEqual(args, ['co', 'e1', 'a1', { byteSize: photo.size }]);
+    if (++attempts === 1) throw new Error('คำตอบหาย');
+  });
+  const read = mock.method(api, 'getExpense', async (companyId: string, expenseId: string) => {
+    assert.deepEqual([companyId, expenseId], ['co', 'e1']); stubs.calls.push('recover');
+    return lostStep === 'complete' ? detail : { ...detail, primaryAttachmentId: null, attachments: [] };
+  });
+  try {
+    view.render(); view.find('input', p => p.multiple).onChange({ target: { files: [photo] } });
+    await view.settle(); view.render();
+    await view.find('button', p => Boolean(p['data-loading-indicator'])).onClick(); await view.settle(); view.render();
+    assert.match(view.render(), /คำตอบหาย/);
+    await view.find('button', p => p.children.includes('ส่งไฟล์นี้อีกครั้ง')).onClick(); await view.settle(); view.render();
+    assert.deepEqual(stubs.calls, lostStep === 'bytes' ? ['init', 'bytes', 'bytes', 'complete', 'read']
+      : lostStep === 'complete' ? ['init', 'bytes', 'complete', 'recover', 'read']
+        : ['init', 'bytes', 'complete', 'recover', 'complete', 'read']);
+    assert.deepEqual(view.find('ReceiptUploadResult').expenseIds, ['e1']);
+  } finally { lost.mock.restore(); read.mock.restore(); view.cleanup(); stubs.cleanup(); }
+});
 test('picking a camera photo without a branch stays neutral and waits for Send', async () => {
   const stubs = uploadStubs(); let branchId = '';
   const view = uploadHarness(() => h(UploadPanel, { companyId: 'co', branchId, canManagePlan: false, userId: 'sender', caps: senderCaps,
@@ -128,8 +153,22 @@ test('sender without draft update has no fill or delete action; known fields sta
   try { assert.doesNotMatch(view.render(), /เติมข้อมูล|ลบร่างใบเสร็จ/); assert.equal(receiptDraftMissingFields(detail, 'sender', { canUpdate: false }), null); }
   finally { confirm.mock.restore(); }
 });
-test('document type changes keep the server evidence answer; there is no browser preset', async () => {
+test('document type presets unanswered evidence and keeps existing server or person answers', async () => {
   const category = mock.method(api, 'listExpenseCategories', async () => []);
+  try {
+    for (const [type, expected] of [['TAX_INVOICE', 'USABLE_FOR_TAX'], ['RECEIPT', 'SUPPORTING_ONLY'], ['ABBREVIATED_TAX_INVOICE', 'SUPPORTING_ONLY'], ['TRANSFER_SLIP', 'SUPPORTING_ONLY']]) {
+      const blank = certificateHarness(() => h(DocumentReviewSection, { companyId: 'co', detail: { ...detail, taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: null }, isMutable: true, canReview: true, onSaved: async () => {} }));
+      blank.render(); blank.find('ThemedSelect', p => p['aria-label'] === 'ประเภทเอกสาร').onChange({ target: { value: type } }); blank.render();
+      assert.equal(blank.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, expected);
+      blank.find('ThemedSelect', p => p['aria-label'] === 'ประเภทเอกสาร').onChange({ target: { value: type === 'TAX_INVOICE' ? 'RECEIPT' : 'TAX_INVOICE' } }); blank.render();
+      assert.equal(blank.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, expected, 'an existing preset is kept too');
+    }
+    for (const reason of ['UNREADABLE_OR_LOW_CONFIDENCE', 'MANUAL_OVERRIDE']) {
+      const answered = certificateHarness(() => h(DocumentReviewSection, { companyId: 'co', detail: { ...detail, taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: reason }, isMutable: true, canReview: true, onSaved: async () => {} }));
+      answered.render(); answered.find('ThemedSelect', p => p['aria-label'] === 'ประเภทเอกสาร').onChange({ target: { value: 'TAX_INVOICE' } }); answered.render();
+      assert.equal(answered.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, 'NEEDS_REVIEW');
+    }
+  } catch (cause) { category.mock.restore(); throw cause; }
   const view = certificateHarness(() => h(DocumentReviewSection, { companyId: 'co', detail: { ...detail, sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY' }, isMutable: true, canReview: true, onSaved: async () => {} }));
   try {
     view.render(); assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, 'SUPPORTING_ONLY');
@@ -140,7 +179,33 @@ test('document type changes keep the server evidence answer; there is no browser
     assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, 'NOT_TAX_EVIDENCE');
   } finally { category.mock.restore(); }
 });
-test('Next save rejects missing document fields inline, then saves and refreshes the same review call', async () => {
+test('an explicit person answer of รอตรวจ is kept when the document type changes', () => {
+  const view = certificateHarness(() => h(DocumentReviewSection, { companyId: 'co', detail: { ...detail, taxEvidenceReasonCode: null }, isMutable: true, canReview: true, onSaved: async () => {} }));
+  view.render(); view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').onChange({ target: { value: 'NEEDS_REVIEW' } }); view.render();
+  view.find('ThemedSelect', p => p['aria-label'] === 'ประเภทเอกสาร').onChange({ target: { value: 'TAX_INVOICE' } }); view.render();
+  assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, 'NEEDS_REVIEW');
+});
+test('deleting one receipt removes it from every later fill reload', async () => {
+  const date = mock.method(dates, 'ThemedDate', function ThemedDate(props: any) { return h('input', { ...props, type: 'date' }); });
+  const confirm = mock.method(confirmation, 'useConfirm', () => ({ confirm: async () => true, confirmDialog: null }));
+  const removed = mock.method(api, 'deleteExpense', async () => {});
+  const updated = mock.method(api, 'updateExpenseDraft', async () => {});
+  const reads: string[] = [];
+  const read = mock.method(api, 'getExpense', async (_company: string, id: string) => {
+    reads.push(id); if (id === 'e1') throw new Error('not found'); return { ...detail, id, vendorNameSnapshot: 'ร้านใหม่' };
+  });
+  const view = certificateHarness(() => h(ReceiptUploadResult, { companyId: 'co', expenseIds: ['e1', 'e2'], userId: 'sender', caps: senderCaps, onSendAnother: noop }),
+    [[detail, { ...detail, id: 'e2' }], null, { vendor: '', date: '', amount: '' }, false, null, false]);
+  try {
+    view.render(); await view.find('button', p => p.children.includes('ลบร่างใบเสร็จ')).onClick(); await view.settle(); view.render();
+    view.find('button', p => p.children.includes('เติมข้อมูล')).onClick(); view.render();
+    view.find('input', p => p.inputMode !== 'decimal').onChange({ target: { value: 'ร้านใหม่' } }); view.render();
+    await view.find('form').onSubmit({ preventDefault: noop }); await view.settle();
+    const html = view.render(); assert.deepEqual(reads, ['e2']); assert.doesNotMatch(html, /not found/);
+    assert.equal((view.state[0] as ExpenseDetail[])[0]?.vendorNameSnapshot, 'ร้านใหม่');
+  } finally { date.mock.restore(); confirm.mock.restore(); removed.mock.restore(); updated.mock.restore(); read.mock.restore(); }
+});
+test('Next save rejects missing fields, then saves the evidence preset and a person override', async () => {
   const category = mock.method(api, 'listExpenseCategories', async () => []);
   let saves = 0, refreshed = 0;
   const save = mock.method(api, 'updateExpenseReviewFields', async (_co: string, _id: string, body: any) => { saves++; assert.equal(body.documentReviewAcknowledged, true); });
@@ -155,9 +220,11 @@ test('Next save rejects missing document fields inline, then saves and refreshes
     assert.equal(await saveRef.current!(), false);
     const invalid = view.render(); assert.match(invalid, /เลือกประเภทเอกสาร/); assert.match(invalid, /ใช้เป็นหลักฐานรายจ่ายได้ไหม: เลือกคำตอบ/); assert.equal(saves, 0);
     view.find('ThemedSelect', p => p['aria-label'] === 'ประเภทเอกสาร').onChange({ target: { value: 'RECEIPT' } });
-    view.render(true); assert.equal(await saveRef.current!(), false);
+    view.render(true);
+    assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').value, 'SUPPORTING_ONLY');
+    assert.equal(await saveRef.current!(), true); assert.equal(saves, 1); assert.equal(refreshed, 1);
     view.find('ThemedSelect', p => p['aria-label'] === 'ใช้เป็นหลักฐานรายจ่ายได้ไหม').onChange({ target: { value: 'USABLE_FOR_TAX' } });
-    view.render(true); assert.equal(await saveRef.current!(), true); assert.equal(saves, 1); assert.equal(refreshed, 1);
+    view.render(true); assert.equal(await saveRef.current!(), true); assert.equal(saves, 2); assert.equal(refreshed, 2);
   } finally { view.cleanup(); (globalThis as any).window = oldWindow; (globalThis as any).document = oldDocument; save.mock.restore(); category.mock.restore(); }
 });
 

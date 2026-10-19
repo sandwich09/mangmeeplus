@@ -64,6 +64,7 @@ function ShellInner({
     <div className="mangmee-shell">
       <a
         href="#workspace-main"
+        inert={isMobileOpen ? true : undefined}
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100000] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-gray-900 focus:shadow-lg"
       >
         {t('shell.skip_to_content', locale)}
@@ -80,7 +81,7 @@ function ShellInner({
         footerExtras={sidebarFooter}
       />
       <Backdrop />
-      <div className={`flex min-h-dvh min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin} ${contentLeftVariable}`}>
+      <div inert={isMobileOpen ? true : undefined} className={`flex min-h-dvh min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin} ${contentLeftVariable}`}>
         <AppHeader
           companyName={companyName}
           companyArea={companyArea}

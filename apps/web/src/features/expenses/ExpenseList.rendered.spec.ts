@@ -13,6 +13,7 @@ const svg = require.extensions['.svg'];
 require.extensions['.svg'] = (module) => { module.exports = () => null; };
 const filters = mutable('../web-core-workspace/MenuFilterScope');
 const capture = mutable('./expense-capture-policy');
+const api = mutable('./expenses.api');
 const { ExpenseListPage } = require('./ExpensesPages');
 if (svg) require.extensions['.svg'] = svg; else delete require.extensions['.svg'];
 const runtime = require('react');
@@ -21,6 +22,22 @@ const list = source.slice(source.indexOf('function ExpenseListPage('), source.in
 const names = [...list.matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(match => match[1]!);
 const h = React.createElement;
 const noop = () => {};
+test('table and evidence exports use the same past date range rather than the month in state', async () => {
+  let bundle: any, exportTable: (() => Promise<void>) | undefined, table: any;
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'EvidenceBundleDownload') bundle = props.request;
+    if (tag?.name === 'Modal' && props.open) exportTable = props.footer?.props.onClick;
+    return realCreate(tag, props, ...children);
+  });
+  const request = mock.method(api, 'createAccountantPackage', async (_company: string, body: any) => { table = body; return { rowCount: 0 }; });
+  try {
+    render([], { exportOpen: true }, 'view=confirmed&fromDate=2025-02-03&toDate=2025-03-04');
+    assert.ok(exportTable); await exportTable();
+    assert.equal(table.fromDate, '2025-02-03'); assert.equal(table.toDate, '2025-03-04');
+    assert.deepEqual(bundle, { dateField: table.dateField, fromDate: table.fromDate, toDate: table.toDate });
+  } finally { create.mock.restore(); request.mock.restore(); }
+});
 function row(index: number, overrides = {}) {
   return { id: `e${index}`, status: 'CONFIRMED', paymentStatus: 'UNPAID', expenseNumber: `EXP-${index}`, vendorNameSnapshot: `ร้าน ${index}`,
     expenseDate: '2026-09-30', uploadedAt: '2026-10-03T01:00:00Z', dueDate: '2020-01-01', dateStatus: 'verified',
@@ -92,4 +109,29 @@ test('DETAIL-2b a restored list renders its page and each row carries the curren
     assert.equal(back.pathname, '/companies/co/expenses');
     assert.deepEqual(Object.fromEntries(back.searchParams), { month: '2026-09', chip: 'confirmed', query: 'ร้าน', dateOrder: 'oldest', page: '3' });
   } finally { create.mock.restore(); }
+});
+
+test('failed expense reads show retry without zero metrics, empty states or stale rows', async () => {
+  const message = 'เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง';
+  let retry: (() => void) | undefined;
+  const calls: any[] = [];
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'ErrorState') retry = props.onRetry;
+    return realCreate(tag, props, ...children);
+  });
+  const request = mock.method(api, 'listExpenses', async (company: string, filter: any) => { calls.push({ company, filter }); return { data: [], total: 0 }; });
+  try {
+    for (const rows of [[], [row(1)]]) {
+      const html = render(rows, { error: message, categoryNamesLoading: true }, 'month=2026-09&query=ใบเดิม&chip=pending');
+      assert.match(html, /โหลดไม่สำเร็จ/);
+      assert.match(html, /ลองอีกครั้ง/);
+      assert.ok(!html.includes('data-testid="expenses-summary"'));
+      for (const hidden of ['ยังไม่มีรายจ่าย', 'ไม่พบ “', 'ไม่มีรายการในกลุ่มนี้', 'data-testid="expenses-row"', 'data-testid="expenses-card"', 'กำลังโหลด...']) assert.ok(!html.includes(hidden), hidden);
+      assert.match(html, /value="ใบเดิม"/);
+      assert.match(html, /ก.ย. 2569/);
+    }
+    assert.ok(retry); retry(); await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [{ company: 'co', filter: { fromDate: '2026-09-01', toDate: '2026-09-30', page: 1, pageSize: 200 } }]);
+  } finally { create.mock.restore(); request.mock.restore(); }
 });

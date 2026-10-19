@@ -4,11 +4,11 @@ import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type P
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
-  'tax': { file: 'tax-guide.content.ts', hash: '4aef264e52fed9bd845e83909d9883b3f020f975e390644e680f9f875dc36e06' },
+  'tax': { file: 'tax-guide.content.ts', hash: 'cba0f41bf7aaadc1ee208df558c584fdc1a2929db1eb568b154e93e8b1c9feb4' },
   'disbursement-vouchers': { file: 'disbursement-voucher-guide.content.ts', hash: 'def3bfcd017f1fb2558621a1f015434659455fde63bfd95bca42c46c35e91b8a' },
 
   expenses: { file: 'expenses-guide.content.ts', hash: 'c1a24890df297c863e56dddf0d59b0cac2f177183f27ef6c0d11d96a940fc14e' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'b3cae0e6877401a50fb03e5a977e42d893563abafa9a2f0bdacd33a45d4185cf' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '5cda41267fb2238794ef41e56d985516c9c016fd240ae9f684931ffe222b198f' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '4562fee709affca22cb072ad21c57c46985797a1db05b026bf9dfc411ae1d096' },
   reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;

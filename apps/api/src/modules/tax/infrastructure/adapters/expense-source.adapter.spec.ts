@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ExpenseSourceAdapter } from './expense-source.adapter.js';
+import Decimal from 'decimal.js';
 
 const paidFixture = (row: any) => ({ ...row, netPayableAmount: row.netPayableAmount ?? '100',
   payments: row.payments ?? [{ id: 'payment', amount: row.netPayableAmount ?? '100', paidAt: row.expenseDate, paidAtConfirmed: true, status: 'RECORDED', createdAt: row.expenseDate }],
@@ -37,12 +38,13 @@ describe('ExpenseSourceAdapter VAT evidence', () => {
 });
 
 describe('ExpenseSourceAdapter WHT source facts', () => {
-  type WhtLine = { whtRate: string | null; taxableAmount: string };
+  type WhtLine = { whtRate: string | null; taxableAmount: string; whtAmount?: string };
   const whtRow = (lines: WhtLine[], entityKind: string | null) => ({
     id: 'expense-1', companyId: 'company-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
     whtAmount: '30', taxableAmount: '1500', taxCategory: 'SERVICE_FEE', whtCategoryCode: 'WHT_SERVICE_5',
     vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '0100000000000', vendorBranchCodeSnapshot: '00003',
-    vendorEntityKindSnapshot: entityKind, currency: 'THB', updatedAt: new Date(), lines,
+    vendorEntityKindSnapshot: entityKind, currency: 'THB', updatedAt: new Date(),
+    lines: lines.map(line => ({ ...line, whtAmount: line.whtAmount ?? new Decimal(line.taxableAmount).mul(line.whtRate ?? '0').toFixed(4) })),
   });
   const queries: any[] = [];
   const adapter = (row: unknown) => new ExpenseSourceAdapter({
@@ -53,20 +55,20 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     const [source] = await adapter(whtRow([], 'JURISTIC')).findConfirmedWithWhtByCompany('company-1');
     assert.equal(source.incomeCategoryCode, 'WHT_SERVICE_5');
   });
-  it('retains whole-bill base and no fabricated rate for explicit amount-only WHT', async () => {
-    const row = { ...whtRow([{ whtRate: null, taxableAmount: '1000' }], 'JURISTIC'),
+  it('uses the certificate withheld-line base and no fabricated rate for explicit amount-only WHT', async () => {
+    const row = { ...whtRow([{ whtRate: null, taxableAmount: '1000', whtAmount: '0.01' }], 'JURISTIC'),
       whtInputJson: { inputType: 'AMOUNT', value: '0.01', origin: 'REVIEWER' }, whtAmount: '0.01' };
     const [source] = await adapter(row).findConfirmedWithWhtByCompany('company-1');
-    assert.equal(source?.grossAmount, '1500', 'zero-satang allocated lines still belong to the whole-bill base');
+    assert.equal(source?.grossAmount, '1000', 'the same rows supply certificate and filing income');
     assert.equal(source?.whtRate, null);
     assert.equal(source?.whtAmount, '0.01');
   });
 
-  it('keeps the entire explicit RATE base even when small lines withhold zero satang', async () => {
+  it('uses the certificate income when a tiny line withholds zero satang', async () => {
     const row = { ...whtRow([{ whtRate: '0.0300', taxableAmount: '100' }], 'JURISTIC'),
       taxableAmount: '100.10', whtInputJson: { inputType: 'RATE', value: '3', origin: 'REVIEWER' }, whtAmount: '3' };
     const [source] = await adapter(row).findConfirmedWithWhtByCompany('company-1');
-    assert.equal(source?.grossAmount, '100.1');
+    assert.equal(source?.grossAmount, '100');
     assert.equal(source?.whtRate, '3.0000');
     assert.equal(source?.whtAmount, '3');
   });

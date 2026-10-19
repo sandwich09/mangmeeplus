@@ -651,9 +651,14 @@ export function mergeDraftLineEvidence(
       };
 }
 
-/** รวมเป็นเงิน of the rows being typed (display only — the server owns the real rollup). */
-export function sumLineAmounts(lines: readonly { amount: string }[]): number {
-  return lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+/** Round each line to satang before adding, as computeClaimTotal does, without a float rollup. */
+export function sumLineAmounts(lines: readonly { amount: string }[]): string {
+  const total = lines.reduce((sum, line) => {
+    const amount = typedAmount(line.amount);
+    return sum + (Number.isFinite(Number(amount)) ? BigInt(satang.format(amount as `${number}`).replace(/[,.]/g, '')) : 0n);
+  }, 0n);
+  const digits = (total < 0n ? -total : total).toString().padStart(3, '0');
+  return `${total < 0n ? '-' : ''}${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }
 
 export type QueueSummary = { count: number; totalAmount: number; outstandingAmount: number; flagged: number };
@@ -1626,8 +1631,8 @@ export function approverPaymentWarning(
 }
 
 export function formatMoney(v: unknown, currency?: string): string {
-  const amount = Number(v ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return !currency || currency === 'THB' ? `฿${amount}` : currency ? `${amount} ${currency}` : amount;
+  const amount = satang.format(typedAmount(String(v ?? 0)) as `${number}`);
+  return `${amount} ${currencyWord(currency)}`;
 }
 
 /* Owner rule 2026-09-27/29: plain Thai, no id, enum key, code or ISO date on screen, and the same words as

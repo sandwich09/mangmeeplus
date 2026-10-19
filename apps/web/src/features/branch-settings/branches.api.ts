@@ -19,8 +19,12 @@ export type Branch = {
 };
 
 export async function listBranches(companyId: string): Promise<Branch[]> {
-  const body = await apiFetch<{ items: Branch[] }>(`/v1/companies/${companyId}/branches?pageSize=100`);
-  return body.items;
+  const branches: Branch[] = [];
+  for (let page = 1; ; page++) {
+    const body = await apiFetch<{ items: Branch[]; total: number; page: number; pageSize: number }>(`/v1/companies/${companyId}/branches?pageSize=100&page=${page}`);
+    branches.push(...body.items);
+    if (body.page * body.pageSize >= body.total) return branches;
+  }
 }
 
 export type CreateBranchInput = {

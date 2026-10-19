@@ -5,6 +5,7 @@ import {
   attachReimbursementPaymentSlip,
   cancelReimbursementDraftAction,
   cancelReimbursement,
+  createReimbursement,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
   getReimbursementFinanceStep,
@@ -20,6 +21,18 @@ import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus'
 
 const originalFetch = globalThis.fetch;
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+
+it('FIX-R1 create retries carry the same idempotency header after a lost response', async () => {
+  const keys: (string | null)[] = [];
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    keys.push(new Headers(init?.headers).get('Idempotency-Key'));
+    if (keys.length === 1) throw new Error('lost answer');
+    return Response.json({ id: 'draft' });
+  }) as typeof fetch;
+  await assert.rejects(() => createReimbursement('co', { reason: 'เดินทาง' }, 'one-create'));
+  assert.deepEqual(await createReimbursement('co', { reason: 'เดินทาง' }, 'one-create'), { id: 'draft' });
+  assert.deepEqual(keys, ['one-create', 'one-create']);
+});
 
 afterEach(() => {
   globalThis.fetch = originalFetch;

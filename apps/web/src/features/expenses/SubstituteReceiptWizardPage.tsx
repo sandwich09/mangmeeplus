@@ -488,7 +488,8 @@ export function SubstituteReceiptWizardPage({
   const isCancelled = receiptEvidence?.status === 'SUPERSEDED';
   // Spec §10/AC08: the done step's "สร้างใบเบิกจากใบนี้" entry point — a navigational link, not
   // an edit of this wizard, so it is not gated behind viewOnly like canReview/canConfirm/canCreate.
-  const canClaimReimbursement = canClaimReimbursementFromSubstituteReceipt(receiptEvidence, permissions.includes('reimbursement.create'));
+  const canClaimReimbursement = canClaimReimbursementFromSubstituteReceipt(receiptEvidence, permissions.includes('reimbursement.create')
+    && (receiptEvidence?.payerUserId === userId || permissions.includes('reimbursement.finance_review')));
   const [history, setHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
   const [policy, setPolicy] = useState<(SubstituteReceiptRuntimePolicy & { canCertifyAndApprove?: boolean }) | null>(null);
   const [activeStep, setActiveStep] = useState<WizardStep>('expense');
@@ -1816,8 +1817,8 @@ export function SubstituteReceiptWizardPage({
                     {fieldError('unitPrice') && <span id={errorId('unitPrice')} role="alert" className={errorLineClass}>{fieldError('unitPrice')}</span>}
                   </label>
                 </div>
-                {/* The line's total is a new number only when the quantity is not 1. */}
-                {Number(line.quantity) !== 1 && manualLineAmount(line) > 0 && (
+                {/* Show a new amount from quantity or satang rounding; do not repeat an unchanged price. */}
+                {(Number(line.quantity) !== 1 || manualLineAmount(line) !== Number(line.unitPrice)) && manualLineAmount(line) > 0 && (
                   <p className="mt-3 flex items-center justify-between gap-2 text-sm text-gray-700">
                     <span>{t('expenses.substitute_wizard.line_total', locale)}</span>
                     <span className="mangmee-unit font-semibold text-gray-900">{`${amountText(manualLineAmount(line))} บาท`}</span>
@@ -2303,6 +2304,7 @@ export function SubstituteReceiptWizardPage({
     {signingMethod === 'PAPER' && fundingSource === 'PERSONAL_ADVANCE' && (
       <Notice tone="warning">ใบที่เซ็นบนกระดาษใช้ทำใบเบิกในระบบไม่ได้ ถ้าจะเบิกคืน เลือกเซ็นออนไลน์และเลือกพนักงานที่สำรองจ่าย</Notice>
     )}
+    {signingMethod === 'PAPER' && !canReview && <Notice tone="info">คุณพิมพ์และส่งฉบับที่เซ็นแล้วไม่ได้ ให้ผู้ตรวจค่าใช้จ่ายเปิดใบนี้ทำต่อ</Notice>}
     {/* This press gives the certificate its number. What goes on it is shown right above the button, and the button says what it does. */}
     <div className="space-y-3 border-t border-gray-100 pt-4">
       <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
@@ -2316,7 +2318,7 @@ export function SubstituteReceiptWizardPage({
       {actionBar(<ActionGroup>
         <button type="button" className={ghostClass} disabled={busy} onClick={() => { setInfo(null); setError(null); setActiveStep('evidence'); }}>{t('expenses.substitute_wizard.back', locale)}</button>
         <button type="button" className={btnClass} disabled={busy || methodBlockers.length > 0 || (signingMethod === 'DIGITAL' && payersLoading)} aria-busy={Boolean(busy)} onClick={() => void run(prepare)}>
-          {signingMethod === 'PAPER' ? 'สร้างใบรับรองและไปพิมพ์' : 'สร้างใบรับรองและไปเซ็น'}
+          {signingMethod === 'PAPER' ? canReview ? 'สร้างใบรับรองและไปพิมพ์' : 'สร้างใบรับรองให้ผู้ตรวจทำต่อ' : 'สร้างใบรับรองและไปเซ็น'}
         </button>
       </ActionGroup>)}
     </div>
@@ -2523,10 +2525,12 @@ export function SubstituteReceiptWizardPage({
           {personalAdvance && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
               <p className="min-w-0 flex-1 text-sm text-gray-700">{canClaimReimbursement
-                ? 'ใบรับรองระบุว่าคุณจ่ายเต็มจำนวนด้วยเงินส่วนตัว ทำใบเบิกต่อได้เลย ยอดและใบรับรองจะติดไปด้วย'
+                ? receiptEvidence.payerUserId === userId
+                  ? 'ใบรับรองระบุว่าคุณจ่ายเต็มจำนวนด้วยเงินส่วนตัว ทำใบเบิกต่อได้เลย ยอดและใบรับรองจะติดไปด้วย'
+                  : `ใบรับรองระบุว่า ${receiptEvidence.payerName} จ่ายเต็มจำนวนด้วยเงินส่วนตัว ทำใบเบิกให้ผู้จ่ายได้ ยอดและใบรับรองจะติดไปด้วย`
                 : 'ใบรับรองระบุว่าพนักงานจ่ายเต็มจำนวนแล้ว การออกใบรับรองยังไม่ถือว่าร้านจ่ายคืนให้พนักงาน'}</p>
               {canClaimReimbursement && (
-                <Link className={ghostClass} href={`/companies/${companyId}/reimbursements/new?expenseId=${encodeURIComponent(detail.id)}`}>
+                <Link className={ghostClass} href={`/companies/${companyId}/reimbursements/new?expenseId=${encodeURIComponent(detail.id)}&requesterUserId=${encodeURIComponent(receiptEvidence.payerUserId!)}`}>
                   สร้างใบเบิกจากใบนี้
                 </Link>
               )}

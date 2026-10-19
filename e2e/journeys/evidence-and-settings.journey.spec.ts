@@ -30,7 +30,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
   await owner.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
 
   await test.step('owner: a confirmed receipt of this journey, so the files do not depend on another journey', () => recordExpenseByHand(owner, {
-    branch: 'Head Office (สำนักงานใหญ่)', item: unique('อาหารประชุม'), price: '125', total: '฿125.00', seller: vendor, toPay: '฿125.00',
+    branch: 'Head Office (สำนักงานใหญ่)', item: unique('อาหารประชุม'), price: '1.005', total: '฿1.01', seller: vendor, toPay: '฿1.01',
   }));
 
   await test.step('หลักฐานทางบัญชี: this month → fix a row, return to its filters, and download the accountant bundle', async () => {
@@ -97,7 +97,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await expect(main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true })).toBeVisible();
     const recent = main.locator('section').filter({ has: owner.getByRole('heading', { name: 'ใบล่าสุด', exact: true }) });
     const expense = recent.getByRole('link').filter({ hasText: 'EXP-' }).first();
-    await expect(expense).toContainText('125.00 บาท');
+    await expect(expense).toContainText('1.01 บาท');
     await expect(recent).not.toContainText('฿');
     await expense.click();
     await owner.waitForURL(url => url.pathname.includes('/expenses/'));
@@ -121,6 +121,17 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await row.getByRole('button', { name: `แก้ไขสาขา ${branchName}`, exact: true }).click();
     const edit = owner.getByRole('dialog');
     await expect(edit.getByRole('textbox', { name: 'ชื่อสาขา', exact: true })).toHaveValue(branchName);
+    const phone = edit.getByRole('textbox', { name: 'โทรศัพท์', exact: true });
+    await phone.fill('0812345678');
+    await edit.getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(edit).toHaveCount(0, AFTER_PRESS);
+    await row.getByRole('button', { name: `แก้ไขสาขา ${branchName}`, exact: true }).click();
+    await expect(phone).toHaveValue('0812345678', AFTER_PRESS);
+    await phone.fill('');
+    await edit.getByRole('button', { name: 'บันทึก', exact: true }).click();
+    await expect(edit).toHaveCount(0, AFTER_PRESS);
+    await row.getByRole('button', { name: `แก้ไขสาขา ${branchName}`, exact: true }).click();
+    await expect(phone).toHaveValue('', AFTER_PRESS);
     await chooseThemedOption(owner, edit.getByRole('combobox', { name: 'สถานะ', exact: true }), 'ปิดใช้งาน');
     await expect(edit.getByText('ปิดใช้งานแล้วจะเพิ่มรายการในสาขานี้ไม่ได้ รายการเดิมยังอยู่', { exact: true })).toBeVisible();
     await edit.getByRole('button', { name: 'บันทึก', exact: true }).click();
@@ -154,6 +165,10 @@ test('@journey an owner downloads the accounting files, switches a branch off an
       await userMenu.click();
       await staff.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
       await expect(staffMain.getByRole('heading', { level: 1, name: 'บัญชีของฉัน', exact: true })).toBeVisible(FIRST_SIGHT);
+      const phone = staffMain.locator('details').filter({ has: staff.getByText('เบอร์มือถือ', { exact: true }) });
+      await phone.locator('summary').click();
+      await expect(phone.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกเบอร์มือถือ', exact: true })).toBeVisible();
+      await phone.locator('summary').click();
       await expect(nameBox).toHaveValue(STAFF, AFTER_PRESS);
       await nameBox.fill(newName);
       const answer = staff.waitForResponse(isNameSave, { timeout: 10_000 });
@@ -286,4 +301,60 @@ test('@journey a shared browser remembers the upload branch for the staff member
   expect(current.userId).not.toBe(staff.userId);
   const branches = await json<Branches>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
   expect(branches.items.some(branch => branch.name === 'Head Office')).toBe(true);
+});
+
+test('@journey expense reads fail visibly, keep filters and recover through ลองอีกครั้ง on all four screens', async ({ pageAs, companyId }) => {
+  test.setTimeout(300_000);
+  const page = await pageAs('OWNER');
+  page.setDefaultTimeout(30_000);
+  const main = page.locator('main');
+  await page.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
+  const screens = [
+    ['รายการค่าใช้จ่าย', 'expenses'],
+    ['หลักฐานทางบัญชี', 'expenses/shared-evidence'],
+    ['หมวดหมู่', 'expense-categories/manage'],
+    ['ลายเซ็นของฉัน', 'expense-signatures'],
+  ] as const;
+  for (const [title, endpoint] of screens) await test.step(`${title}: failed read → ลองอีกครั้ง → real data`, async () => {
+    const path = `/api/v1/companies/${companyId}/${endpoint}`;
+    const matches = (url: URL) => url.pathname === path;
+    let fail = true, failedUrl = '';
+    await page.route(matches, async route => {
+      if (route.request().method() !== 'GET' || !fail) return route.continue();
+      failedUrl = route.request().url();
+      await route.fulfill({ status: 503, json: { message: 'Service unavailable' } });
+    });
+    try {
+      if (title === 'ลายเซ็นของฉัน') {
+        await page.getByRole('button', { name: /^เมนูผู้ใช้/ }).click();
+        await page.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
+        await main.getByRole('link', { name: 'จัดการลายเซ็น', exact: true }).click();
+      } else await pressMenu(page, title, 'ค่าใช้จ่ายและใบเสร็จ');
+      await expect(main.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible(FIRST_SIGHT);
+      await expect(main.getByText('โหลดไม่สำเร็จ', { exact: true })).toBeVisible(AFTER_PRESS);
+      const retry = main.getByRole('button', { name: 'ลองอีกครั้ง', exact: true });
+      await expect(retry).toBeVisible();
+      await expect(main.getByText('ยังไม่มีรายจ่ายในช่วงที่เลือก', { exact: true })).toHaveCount(0);
+      await expect(main.getByText('ไม่มีรายการที่ตรงกับตัวกรอง', { exact: true })).toHaveCount(0);
+      if (title === 'รายการค่าใช้จ่าย') {
+        await expect(main.getByTestId('expenses-summary')).toHaveCount(0);
+        await expect(main.getByRole('combobox', { name: 'วันที่เอกสาร', exact: true })).toBeVisible();
+        await expect(main.getByRole('searchbox', { name: 'ค้นหาผู้ขายหรือเลขที่', exact: true })).toBeVisible();
+      }
+      if (title === 'หลักฐานทางบัญชี') {
+        await expect(main.getByRole('combobox', { name: 'เดือน', exact: true })).toBeVisible();
+        await expect(main.getByRole('button', { name: 'วันที่ส่งเข้า', exact: true })).toBeVisible();
+        await expect(main.getByRole('group', { name: 'ความครบของหลักฐาน', exact: true })).toBeVisible();
+      }
+      const response = page.waitForResponse(result => new URL(result.url()).pathname === path && result.request().method() === 'GET' && result.ok());
+      fail = false;
+      await retry.click();
+      expect((await response).url()).toBe(failedUrl);
+      await expect(main.getByText('โหลดไม่สำเร็จ', { exact: true })).toHaveCount(0, AFTER_PRESS);
+      if (title === 'รายการค่าใช้จ่าย') await expect(main.getByTestId('expenses-summary')).toBeVisible(AFTER_PRESS);
+      if (title === 'หลักฐานทางบัญชี') await expect(main.getByTestId('evidence-card-list')).toBeAttached(AFTER_PRESS);
+      if (title === 'หมวดหมู่') await expect(main.locator('[data-category-rows]')).toBeAttached(AFTER_PRESS);
+      if (title === 'ลายเซ็นของฉัน') await expect(main.getByRole('button', { name: /^(เพิ่มลายเซ็น|เปลี่ยนลายเซ็น)$/ })).toBeVisible(AFTER_PRESS);
+    } finally { await page.unroute(matches); }
+  });
 });

@@ -2,6 +2,7 @@
 // The API speaks satang and stable status keys; the เซลล์ on a phone thinks in baht and Thai, so
 // every conversion, guardrail and label lives here where a unit test can hold it.
 import {
+  billingOffer,
   MENU_ENTITLEMENT_BINDINGS,
   parentFeatureKey,
   PLAN_TIER_PRESETS,
@@ -417,6 +418,11 @@ export function toggleMenuSelection(
 
 // ── warnings (never blocks; D1 says the price is free and Q5 says a running shop is allowed) ──
 
+/** Whole catalog years use the annual offer price, with monthly offers for the remainder. */
+export function dealCatalogPriceSatang(base: SalesDealBaseTier, months: number): number {
+  return Math.floor(months / 12) * billingOffer(base, 'year').priceSatang + (months % 12) * billingOffer(base, 'month').priceSatang;
+}
+
 export type DealWarningInput = {
   priceSatang: number | null;
   catalogPriceSatang: number | null;
@@ -443,7 +449,7 @@ export function dealWarnings(input: DealWarningInput): string[] {
   const warnings: string[] = [];
   if (input.priceSatang !== null && input.catalogPriceSatang !== null
     && input.catalogPriceSatang > 0 && input.priceSatang > input.catalogPriceSatang) {
-    warnings.push(`ราคานี้สูงกว่าราคาปกติของแพ็กเกจฐานตามจำนวนเดือนเดียวกัน (${formatBaht(input.catalogPriceSatang)}) กรุณาตรวจอีกครั้งก่อนส่งอนุมัติ`);
+    warnings.push(`ราคานี้สูงกว่าราคาปกติของแพ็กเกจฐานในช่วงเวลาเดียวกัน (${formatBaht(input.catalogPriceSatang)}) ตรวจราคาอีกครั้งก่อนส่งอนุมัติ`);
   }
   // Q5: days left on the current package do NOT carry over, so the shop must be told before it buys.
   if (input.accessState === 'TRIAL' || input.accessState === 'ACTIVE') {
