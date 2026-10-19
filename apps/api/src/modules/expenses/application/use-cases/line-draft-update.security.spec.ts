@@ -706,7 +706,7 @@ function actionHarness(action: ExpenseAction = 'MARK_READY', permissions?: strin
     findPostedGeneratedJournalId: async () => null, findPostedExpensePaymentJournals: async () => [],
     voidExpenseTrueReversal: async (...args: any[]) => ({ expense: change('void', args), paymentReversalEntryIds: [], cancelledDisbursementVoucherIds: [] }),
   };
-  const tx: any = { expenseRecord: { findFirst: async () => ({ ...record, grandTotalAmount: new Decimal(record.grandTotalAmount), paidAmount: new Decimal(record.paidAmount), _count: { lines: 0 } }),
+  const tx: any = { $executeRaw: async () => 0, expenseRecord: { findFirst: async () => ({ ...record, grandTotalAmount: new Decimal(record.grandTotalAmount), paidAmount: new Decimal(record.paidAmount), _count: { lines: 0 } }),
     deleteMany: async (input: any) => { state.writes.push({ kind: 'delete', input }); state.present = false; return { count: 1 }; } },
     attachmentLink: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     expenseDuplicateCandidate: { findMany: async () => [] },

@@ -140,7 +140,9 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
     await ownerMain.getByRole('searchbox', { name: 'ค้นหาผู้ขายหรือเลขที่', exact: true }).fill(vendor);
     const row = ownerMain.getByTestId('expenses-row').filter({ hasText: vendor }).filter({ visible: true });
     // The expense number sits under the seller's name, between it and the date.
-    await expect(row).toContainText(inOrder(today, '85.00', 'รอตรวจ'), AFTER_PRESS);
+    await expect(row).toContainText(test.info().project.use.isMobile
+      ? new RegExp(`${inOrder(vendor, '85.00').source}\\s*EXP-\\d{6}-\\d{5}\\s*·\\s*${inOrder(today, 'รอตรวจ').source}`)
+      : inOrder(today, '85.00', 'รอตรวจ'), AFTER_PRESS);
     await expect(row).not.toContainText('อัปโหลดเว็บ');
     await row.getByText(vendor, { exact: true }).filter({ visible: true }).first().click();
     await expect(ownerMain.getByRole('heading', { level: 1, name: vendor, exact: true })).toBeVisible(FIRST_SIGHT);

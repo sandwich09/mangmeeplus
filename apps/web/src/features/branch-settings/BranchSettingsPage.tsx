@@ -194,7 +194,7 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
           <div className="mangmee-table-scroll hidden md:block">
             <table className="mangmee-table">
               <thead><tr><th>ชื่อสาขา</th><th>รหัสสาขา</th><th>ประเภท</th><th>รหัสสาขาภาษี</th><th>สถานะ</th>{canManage && <th><span className="sr-only">จัดการ</span></th>}</tr></thead>
-              <tbody>{branches.map(b => <tr key={b.id}>
+              <tbody>{branches.map(b => <tr key={b.id} data-testid="branch-entry">
                 <td className="font-semibold text-gray-900">{b.name}{b.phone && <span className="mangmee-unit block text-sm font-normal text-gray-500">{b.phone}</span>}</td>
                 <td>{b.code}</td>
                 <td>{TYPE_LABELS[b.type] ?? 'ไม่ทราบประเภท'}</td>
@@ -204,7 +204,7 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
               </tr>)}</tbody>
             </table>
           </div>
-          <div className="divide-y divide-gray-100 md:hidden">{branches.map(b => <div key={b.id} className="space-y-4 p-5">
+          <div className="divide-y divide-gray-100 md:hidden">{branches.map(b => <div key={b.id} data-testid="branch-entry" className="space-y-4 p-5">
             <div className="flex items-start justify-between gap-3"><h2 className="min-w-0 break-words font-semibold text-gray-900">{b.name}</h2><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? 'ไม่ทราบสถานะ'}</MangmeeBadge></div>
             <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-gray-500">รหัสสาขา</dt><dd className="mt-1 break-words text-gray-900">{b.code}</dd></div><div><dt className="text-gray-500">ประเภท</dt><dd className="mt-1 text-gray-900">{TYPE_LABELS[b.type] ?? 'ไม่ทราบประเภท'}</dd></div><div><dt className="text-gray-500">รหัสสาขาภาษี</dt><dd className="mt-1 text-gray-900">{b.taxBranchCode ?? 'ยังไม่ระบุ'}</dd></div>{b.phone && <div><dt className="text-gray-500">โทรศัพท์</dt><dd className="mangmee-unit mt-1 text-gray-900">{b.phone}</dd></div>}</dl>
             {canManage && <button type="button" className="mangmee-btn mangmee-btn-secondary w-full" aria-label={`แก้ไขสาขา ${b.name}`} onClick={() => openEdit(b)}>แก้ไข</button>}

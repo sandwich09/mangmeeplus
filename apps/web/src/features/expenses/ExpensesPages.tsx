@@ -14,6 +14,7 @@ import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputE
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
+import { CloseIcon } from '@/common/icons';
 import type { CreateExpenseDraftInput } from '@watchdog-bms/contracts';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { readExpenseListState, expenseListUrl, expenseDetailUrl, scrollExpenseListRow } from './expense-list-navigation.logic';
@@ -41,7 +42,7 @@ import {
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, expenseSubstituteReceiptStatus, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
-  calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
+  calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, canCancelExpenseInsteadOfDelete, expenseDeleteErrorMessage,
   expenseListStatus, expenseListMonth, expenseDeleteTargetLabel, firstFilled, isExpensePendingReview, expenseReimbursementProgressLabel, summarizeExpenseKpis,
   isBlockedCheckBillClassification, lateDocumentDays, EXPENSE_DATE_STATUS_LABELS, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
@@ -2900,7 +2901,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
       toast.success(confirmLabel ? `ลบรายจ่าย ${confirmLabel} แล้ว` : 'ลบรายจ่ายแล้ว');
     } catch (e) {
       setDeleteError(expenseDeleteErrorMessage(e, locale, confirmTarget.status));
-      setDeleteRetentionLocked(apiErrorCode(e) === 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED');
+      setDeleteRetentionLocked(['SUBSTITUTE_EVIDENCE_RETENTION_LOCKED', 'EXPENSE_HAS_LINKED_DATA'].includes(apiErrorCode(e) ?? ''));
     }
     finally { setDeleting(false); }
   };
@@ -3054,6 +3055,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                         <div className="flex flex-col items-end gap-1">{statusBadges(e)}</div>
                         {/* A press on the row opens it; the only control of its own is the one that does something else. */}
                         <div className="flex items-center justify-end gap-1.5">
+                          {canCancelExpenseInsteadOfDelete(e, caps) && <IconBtn title="ยกเลิกรายการ" tone="danger" onClick={(event) => { event.stopPropagation(); openListRow(e.id); }}><CloseIcon aria-hidden="true" className="h-4 w-4" /></IconBtn>}
                           {canDeleteExpense(e, userId, caps) && (
                             <IconBtn title="ลบ" tone="danger" onClick={(event) => { event.stopPropagation(); openDelete(e.id); }}>{ICON.trash}</IconBtn>
                           )}
@@ -3070,7 +3072,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                   type="button"
                   className="block min-h-11 w-full p-4 text-left"
                   onClick={() => openListRow(e.id)}
-                  data-testid="expenses-card"
+                  data-testid="expenses-row"
                   {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                 >
                   <span className="flex items-start justify-between gap-3">
@@ -3088,6 +3090,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                     <DocumentDateBadge expense={e} />
                   </span>
                 </button>
+                {canCancelExpenseInsteadOfDelete(e, caps) && <div className="flex justify-end border-t border-gray-100 px-2 py-1"><button type="button" className={quietButtonClass} onClick={() => openListRow(e.id)}>ยกเลิกรายการ</button></div>}
                 {/* On a phone the bin of the wide table does not exist; a draft the person may delete says so here. */}
                 {canDeleteExpense(e, userId, caps) && (
                   <div className="flex justify-end border-t border-gray-100 px-2 py-1">

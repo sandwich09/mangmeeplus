@@ -23,7 +23,7 @@ for (const width of [390, 1280]) {
     await expect(page.getByRole('main').getByRole('link', { name: 'บันทึกด้วยมือ', exact: true })).toHaveCount(0);
     await expect(page).toHaveURL(/view=pending/);
     if (width === 390 && metric.value > 0) {
-      const first = page.getByTestId('expenses-card').first();
+      const first = page.getByTestId('expenses-row').filter({ visible: true }).first();
       await expect(first).toBeVisible();
       expect((await first.boundingBox())!.y).toBeLessThan(1000);
     }

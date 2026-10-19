@@ -9,7 +9,7 @@ import type { Page, Response } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { loginAs, QA_ACCOUNTS } from '../harness/roles';
-import { AFTER_PRESS, FIRST_SIGHT, picture, pressForDownload, pressMenu, recordExpenseByHand, thaiMonth } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, branchEntry, openUserMenu, picture, pressForDownload, pressMenu, recordExpenseByHand, thaiMonth } from './journey-kit';
 
 type Branches = { items: Array<{ id: string; code: string; name: string; status: string }> };
 type NameHistory = { displayName: string; history: Array<{ oldName: string; newName: string; changedByName: string | null }> };
@@ -114,9 +114,9 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await create.getByRole('textbox', { name: /^รหัสสาขา ชื่อย่อ/ }).fill(branchCode);
     await create.getByRole('button', { name: 'เพิ่มสาขา', exact: true }).click();
     await expect(toast(owner, `เพิ่มสาขา ${branchName} แล้ว`)).toBeVisible(AFTER_PRESS);
-    const row = main.getByRole('row').filter({ hasText: branchName });
-    await expect(row.getByRole('cell', { name: branchCode, exact: true })).toBeVisible();
-    await expect(row.getByRole('cell', { name: 'ใช้งาน', exact: true })).toBeVisible();
+    const row = branchEntry(owner, branchName);
+    await expect(row.getByText(branchCode, { exact: true })).toBeVisible();
+    await expect(row.getByText('ใช้งาน', { exact: true })).toBeVisible();
 
     await row.getByRole('button', { name: `แก้ไขสาขา ${branchName}`, exact: true }).click();
     const edit = owner.getByRole('dialog');
@@ -136,7 +136,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await expect(edit.getByText('ปิดใช้งานแล้วจะเพิ่มรายการในสาขานี้ไม่ได้ รายการเดิมยังอยู่', { exact: true })).toBeVisible();
     await edit.getByRole('button', { name: 'บันทึก', exact: true }).click();
     await expect(toast(owner, `ปิดใช้งานสาขา ${branchName} แล้ว`)).toBeVisible(AFTER_PRESS);
-    await expect(row.getByRole('cell', { name: 'ปิดใช้งาน', exact: true })).toBeVisible();
+    await expect(row.getByText('ปิดใช้งาน', { exact: true })).toBeVisible();
   });
 
   await test.step('อัปโหลดใบเสร็จ: the branch chooser no longer offers it', async () => {
@@ -160,9 +160,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
   try {
     await test.step('staff: user menu → บัญชีของฉัน → changes her display name', async () => {
       await staff.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
-      const userMenu = staff.getByRole('button', { name: /^เมนูผู้ใช้/ });
-      await expect(userMenu).toBeVisible(FIRST_SIGHT);
-      await userMenu.click();
+      await openUserMenu(staff);
       await staff.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
       await expect(staffMain.getByRole('heading', { level: 1, name: 'บัญชีของฉัน', exact: true })).toBeVisible(FIRST_SIGHT);
       const phone = staffMain.locator('details').filter({ has: staff.getByText('เบอร์มือถือ', { exact: true }) });
@@ -178,10 +176,10 @@ test('@journey an owner downloads the accounting files, switches a branch off an
         changed = true;
         await expect(toast(staff, 'บันทึกชื่อแล้ว')).toBeVisible(AFTER_PRESS);
         await expect(nameBox).toHaveValue(newName);
-        await expect(userMenu).toContainText(newName);
+        await expect(await openUserMenu(staff)).toContainText(newName);
         await pressMenu(staff, 'หน้าแรก');
         await expect(staffMain.getByRole('heading', { level: 1 })).toContainText(newName.split(' ')[0]!);
-        await userMenu.click();
+        await openUserMenu(staff);
         await staff.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
         await expect(nameBox).toHaveValue(newName);
       }
@@ -207,7 +205,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     // The seeded name is put back through the same screen, also when an assertion above failed.
     if (changed) {
       if (!(await nameBox.isVisible())) {
-        await staff.getByRole('button', { name: /^เมนูผู้ใช้/ }).click();
+        await openUserMenu(staff);
         await staff.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
         await expect(nameBox).toBeVisible(AFTER_PRESS);
       }
@@ -218,7 +216,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
         limited = (await answer).status() === 429;
         if (!limited) {
           await expect(nameBox).toHaveValue(STAFF);
-          await expect(staff.getByRole('button', { name: /^เมนูผู้ใช้/ })).toContainText(STAFF);
+          await expect(await openUserMenu(staff)).toContainText(STAFF);
         }
       }
       expect(limited, `${LIMIT} The seeded name was NOT put back.`).toBe(false);
@@ -275,7 +273,10 @@ test('@journey a shared browser remembers the upload branch for the staff member
     // Keep localStorage and the same page: only the cookie session changes through the real BFF login.
     await loginAs(context, 'OWNER');
     await page.reload(FIRST_SIGHT);
-    await expect(page.getByRole('button', { name: /^เมนูผู้ใช้/ })).toContainText(QA_ACCOUNTS.OWNER.displayName, FIRST_SIGHT);
+    await expect(await openUserMenu(page)).toContainText(QA_ACCOUNTS.OWNER.displayName, FIRST_SIGHT);
+    await page.getByRole('button', { name: /^เมนูผู้ใช้/ }).click();
+    const closeDrawer = page.getByRole('button', { name: 'ปิดเมนู', exact: true });
+    if (await closeDrawer.isVisible()) await closeDrawer.click();
     await allBranches();
     await openUpload();
     await expect(branch).toHaveText('เลือกสาขา', AFTER_PRESS);
@@ -326,7 +327,7 @@ test('@journey expense reads fail visibly, keep filters and recover through ล�
     });
     try {
       if (title === 'ลายเซ็นของฉัน') {
-        await page.getByRole('button', { name: /^เมนูผู้ใช้/ }).click();
+        await openUserMenu(page);
         await page.getByRole('link', { name: 'บัญชีของฉัน', exact: true }).click();
         await main.getByRole('link', { name: 'จัดการลายเซ็น', exact: true }).click();
       } else await pressMenu(page, title, 'ค่าใช้จ่ายและใบเสร็จ');

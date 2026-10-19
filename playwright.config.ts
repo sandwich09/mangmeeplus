@@ -103,6 +103,11 @@ export default defineConfig({
       testMatch: /(responsive|evidence)\.spec\.ts/,
       use: { ...devices['Pixel 7'] },
     },
+    {
+      name: 'journeys-mobile',
+      testMatch: /journeys\/.*\.journey\.spec\.ts$/,
+      use: { ...devices['Pixel 7'], viewport: { width: 375, height: 667 } },
+    },
     // ── evidence matrix (spec section 12.5) ────────────────────────────────
     // Rows 1-4 prove the mobile work; rows 5-7 answer "does anything fall off the edge on a
     // computer screen", which nothing in this repo asked before (responsive.spec.ts skips

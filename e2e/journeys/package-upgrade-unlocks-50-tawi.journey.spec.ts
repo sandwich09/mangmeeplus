@@ -9,6 +9,7 @@ import type { Browser, Page } from '@playwright/test';
  * and a local stack cannot take a real payment. NEEDS A FRESHLY RESET DATABASE (the shop starts on 999).
  */
 import { test, expect } from '../harness/fixtures';
+import { watchScreenFit } from '../harness/screen-fit';
 import { ensureBrowserLegalAcceptance, expectNoClientError, SEED_USERS } from '../harness/auth';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { AFTER_PRESS, FIRST_SIGHT, inOrder, pressForDownload, pressMenu, recordExpenseByHand } from './journey-kit';
@@ -19,6 +20,7 @@ type ExpenseDetail = { status: string; paymentStatus: string; whtAmount: string 
 
 async function adminPage(browser: Browser) {
   const context = await browser.newContext({ viewport: { width: 1556, height: 960 } });
+  const finishScreenFit = watchScreenFit(context, test.info());
   const page = await context.newPage();
   await page.goto('/login', FIRST_SIGHT);
   await page.locator('#login-identifier').fill(SEED_USERS.systemAdmin.username);
@@ -26,7 +28,7 @@ async function adminPage(browser: Browser) {
   await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
   await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/|system\/)/, FIRST_SIGHT);
   await ensureBrowserLegalAcceptance(context);
-  return page;
+  return { page, finishScreenFit };
 }
 
 async function openPackages(admin: Page) {
@@ -44,7 +46,7 @@ test('@journey a 999 shop records a withheld payment; after the package becomes 
   const nav = page.locator('aside nav');
   const certificateCard = main.locator('.mangmee-card').filter({ has: page.locator('h2#wht-certificate') });
   const payee = `${unique('บริษัท ซ่อมบำรุงทดลอง')} จำกัด`;
-  const admin = await adminPage(browser);
+  const { page: admin, finishScreenFit } = await adminPage(browser);
 
   await test.step('system admin: the shop is on the 999 menus (ชุด เริ่มต้น)', async () => {
     await openPackages(admin);
@@ -147,5 +149,5 @@ test('@journey a 999 shop records a withheld payment; after the package becomes 
     expect(saved.paymentStatus).toBe('PAID');
     expect(Number(saved.whtAmount)).toBe(60);
   });
-  await admin.context().close();
+  try { await finishScreenFit(); } finally { await admin.context().close(); }
 });

@@ -50,7 +50,7 @@ const PRIORITY_ROUTES = [
 const CARD_LISTS = [
   { route: '/expenses/wht-certificates', listTestId: 'wht-certificate-card-list', cardTestId: 'wht-certificate-card' },
   { route: '/reimbursements', listTestId: 'reimbursements-mine-card-list', cardTestId: 'reimbursements-mine-card' },
-  { route: '/expenses', listTestId: 'expenses-card-list', cardTestId: 'expenses-card' },
+  { route: '/expenses', listTestId: 'expenses-card-list', cardTestId: 'expenses-row' },
   { route: '/accounting', listTestId: 'accounting-documents-card-list', cardTestId: 'accounting-document-card' },
   // Added in M4a. Two queues, not the three the plan named: the พนักงาน list in S2-F lives in
   // MatrixView, which has zero consumers — every employee-access route renders a *Prototype*
@@ -200,7 +200,7 @@ test.describe('INV-11 evidence', () => {
         return;
       }
 
-      const cards = authedPage.getByTestId(cardList.cardTestId);
+      const cards = authedPage.getByTestId(cardList.listTestId).getByTestId(cardList.cardTestId);
       if (cardList.route === '/expenses/substitute-receipts') {
         await expect(list.getByRole('button', { name: /^ดูเอกสาร/ })).toHaveCount(0);
         await expect(list.locator('a')).toHaveCount(0);

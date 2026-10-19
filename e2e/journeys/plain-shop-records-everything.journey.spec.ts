@@ -160,7 +160,7 @@ for (const { id: SHOP, name: SHOP_NAME, vatStatus, vatLabel } of [
   { id: 'seed-local-plain-shop', name: 'ร้านทั่วไป (ไม่จด VAT)', vatStatus: 'NOT_REGISTERED', vatLabel: 'ยังไม่ได้จดทะเบียน VAT' },
   { id: 'seed-local-plain-shop-unanswered', name: 'ร้านทั่วไป (ยังไม่ตอบเรื่อง VAT)', vatStatus: 'UNKNOWN', vatLabel: 'ยังไม่ได้ตอบ' },
 ]) {
-test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a substitute receipt and a paid staff claim`, async ({ pageAs, apiAs }) => {
+test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a substitute receipt and a paid staff claim`, async ({ pageAs, apiAs }, info) => {
   test.setTimeout(300_000);
   const owner = await pageAs('OWNER');
   const staff = await pageAs('STAFF');
@@ -347,7 +347,7 @@ test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a s
     const mm = manager.locator('main');
     await pressMenu(manager, 'การเบิกจ่าย');
     await expect(mm.getByRole('heading', { level: 1, name: 'การเบิกจ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
-    const waiting = mm.locator('tr[role="link"]').filter({ hasText: number });
+    const waiting = mm.getByRole('link', { name: /^เปิดใบเบิก / }).filter({ hasText: number });
     await expect(waiting).toContainText(reason, AFTER_PRESS);
     await waiting.getByRole('button', { name: 'ตรวจบัญชีและอนุมัติ', exact: true }).click();
     await expect(mm.getByRole('heading', { level: 1, name: `ใบเบิก ${number}`, exact: true })).toBeVisible(FIRST_SIGHT);
@@ -361,8 +361,10 @@ test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a s
     const fm = finance.locator('main');
     await pressMenu(finance, 'การเบิกจ่าย');
     await expect(fm.getByRole('heading', { level: 1, name: 'การเบิกจ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
-    await fm.locator('tr[role="link"]').filter({ hasText: number }).getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
-    const dialog = finance.getByRole('dialog', { name: `บันทึกจ่าย ${number}` });
+    await fm.getByRole('link', { name: /^เปิดใบเบิก / }).filter({ hasText: number }).getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
+    const dialog = info.project.use.isMobile
+      ? fm.getByRole('region', { name: 'จ่ายเงินคืน', exact: true })
+      : finance.getByRole('dialog', { name: `บันทึกจ่าย ${number}` });
     await expect(dialog.getByRole('combobox', { name: 'วิธีจ่าย', exact: true })).toHaveText('โอนเงิน');
     const slip = picture(`${unique('สลิปคืนค่าถุง')}.png`);
     await dialog.getByLabel('หลักฐานการจ่าย', { exact: true }).setInputFiles(slip);
@@ -375,7 +377,7 @@ test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a s
     await expect(sm.getByRole('heading', { level: 1, name: 'การเบิกจ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
     await sm.getByRole('combobox', { name: 'สถานะ', exact: true }).click();
     await staff.getByRole('option', { name: /^จ่ายแล้ว \([1-9]\d*\)$/ }).click();
-    const paid = sm.locator('tr[role="link"]').filter({ hasText: number });
+    const paid = sm.getByRole('link', { name: /^เปิดใบเบิก / }).filter({ hasText: number });
     await expect(paid).toContainText('รอเซ็นใบเบิก', AFTER_PRESS);
     await expect(paid).not.toContainText('ยังไม่ได้เซ็นใบเบิก');
     await expect(paid.getByRole('link')).toHaveCount(0);
