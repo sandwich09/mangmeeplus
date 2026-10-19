@@ -220,8 +220,8 @@ export class LineLedgerDeliveryService {
       if (!states) throw new Error('LINE_PLAN_CHECKPOINT_CORRUPT');
       const index = states.findIndex(s => s.status !== 'ACCEPTED'), state = states[index];
       if (!state || state.status === 'REFUSED' || state.status === 'CANCELLED') return null;
-      // A reply has no retry-key equivalence to a push: ambiguous reply acceptance must remain parked.
-      if (state.status === 'UNKNOWN' && state.transport === 'REPLY') return null;
+      // UAT 2026-10-19 (silent reply): a rare duplicate if the reply actually landed beats silence;
+      // the frozen push retry key dedupes every recovery of this uncertain batch.
       if (transport === 'REPLY' && (state.replyAttempted || index !== 0)) return null;
       if (transport === 'PUSH' && state.pushAttempts >= 5) {
         await tx.lineDeliveryPlan.update({ where: { id: row.id }, data: { status: 'REFUSED', cancelReason: 'ATTEMPTS_EXHAUSTED', leaseToken: null, leaseExpiresAt: null } }); return null;
@@ -229,7 +229,7 @@ export class LineLedgerDeliveryService {
       const firstDispatch = !states.some(s => s.firstAttemptAt);
       const remaining = Math.min(row.expiresAt.getTime(), row.leaseExpiresAt!.getTime(), firstDispatch ? Date.parse(claim.plan.firstDispatchDeadlineAt) : Infinity) - now.getTime();
       if (remaining < 500) return null;
-      const timeoutMs = Math.min(5_000, remaining);
+      const timeoutMs = Math.min(transport === 'REPLY' ? 8_000 : 5_000, remaining);
       states[index] = { ...state, status: 'UNKNOWN', transport, replyAttempted: state.replyAttempted || transport === 'REPLY', pushAttempts: state.pushAttempts + Number(transport === 'PUSH'), firstAttemptAt: state.firstAttemptAt ?? now.toISOString(), lastAttemptAt: now.toISOString(), lastErrorCode: null };
       await tx.lineDeliveryPlan.update({ where: { id: row.id }, data: { status: 'UNKNOWN', batchStateJson: states as unknown as Prisma.InputJsonValue } });
       claim.states = states;
@@ -258,7 +258,7 @@ export class LineLedgerDeliveryService {
         else { states[index] = { ...state, status: 'REFUSED', lastErrorCode: result.code }; if (!terminal) status = 'REFUSED'; }
       } else { states[index] = { ...state, lastErrorCode: state.transport === 'REPLY' ? 'REPLY_ACCEPTANCE_UNKNOWN' : result.code }; }
       // A rejected reply token is not a transport fault to back off from: its push goes out now (E4).
-      const tokenFallback = result.kind === 'rejected' && result.rejection === 'TOKEN' && state.transport === 'REPLY';
+      const tokenFallback = state.transport === 'REPLY' && (result.kind === 'unknown' || result.kind === 'rejected' && result.rejection === 'TOKEN');
       const delay = result.kind === 'accepted' || tokenFallback ? 0 : Math.min(30_000, 2_000 * 2 ** Math.max(0, state.pushAttempts - 1));
       await tx.lineDeliveryPlan.update({ where: { id: row.id }, data: { status, batchStateJson: states as unknown as Prisma.InputJsonValue,
         ...(status === 'ACCEPTED' ? { acceptedAt: now } : {}), cancelReason: reason, nextAttemptAt: new Date(now.getTime() + delay), leaseToken: null, leaseExpiresAt: null } });

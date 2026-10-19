@@ -167,7 +167,7 @@ export class LineReplyAdapter {
       const response = await fetch(push ? this.LINE_PUSH_URL : this.LINE_REPLY_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}`, ...(push ? { 'X-Line-Retry-Key': input.pushRetryKey } : {}) },
         body: canonicalJson({ [push ? 'to' : 'replyToken']: input.target, messages: input.messages }),
-        signal: AbortSignal.timeout(Math.min(5_000, Math.trunc(input.timeoutMs))),
+        signal: AbortSignal.timeout(Math.min(push ? 5_000 : 8_000, Math.trunc(input.timeoutMs))),
       });
       const requestId = (response.headers.get('x-line-accepted-request-id') ?? response.headers.get('x-line-request-id'))?.slice(0, 200);
       if (response.ok || (push && response.status === 409 && response.headers.get('x-line-accepted-request-id'))) {

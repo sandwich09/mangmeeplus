@@ -3,7 +3,7 @@ import { AI_BUDGET_REFUSAL_CODES, canUseLineChatAction, lineChatAction, parseLin
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
-import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
+import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardAction, type LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
 import type { ReceiptProgress } from './line-receipt-status.logic';
 import {
@@ -455,6 +455,7 @@ export function buildLineSystemTextCardMessage(input: {
   /** What a button says when the reply's own line did not name its link. */
   linkLabel?: string;
   footnotes?: readonly string[];
+  action?: LineSystemCardAction;
 }): LineReplyMessage | undefined {
   if (!lineSystemCardAvailable(input.webBaseUrl)) return undefined;
   const language = input.language ?? lineReplyLanguage(input.text);
@@ -464,11 +465,13 @@ export function buildLineSystemTextCardMessage(input: {
     action: { type: 'uri' as const, label: bounded(link.label ?? input.linkLabel ?? lineUiLabel(UNNAMED_LINK_LABEL, language), MAX_BUTTON_LABEL), uri: link.uri },
     icon: input.icon ?? 'receipt' as const,
   }));
+  if (input.action && buttons.length !== 1) return undefined;
   const contents = drawLineSystemCard({
     mascot: 'general', header: { ...input.header, lines: input.header.lines.map(line => lineUiLabel(line, language)) as [string, string] }, text: body, textStyle: input.textStyle ?? 'result',
     ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
     // One link is the design's one button; several stand under one another, each with its own name.
-    ...(buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
+    ...(input.action ? { choice: [input.action, buttons[0]!.action] as const }
+      : buttons.length === 1 ? { button: buttons[0]! } : buttons.length ? { buttons } : {}),
   }, input.webBaseUrl);
   return contents && asCompleteLineCard({ type: 'flex', altText: preview(body, 400), canonicalText: input.text, contents });
 }
@@ -584,12 +587,12 @@ export function buildExpenseDraftReviewCard(
   const rows = facts.rows.filter((row) => row.value.trim()).map(row => ({ ...row, label: lineUiLabel(row.label, language), value: ['สถานะเอกสาร', 'ประเภทเอกสาร'].includes(row.label) ? lineUiLabel(row.value, language) : row.value }));
   const notes = [...facts.notes.map(note => lineUiLabel(note, language)), ...(confirmation ? [[confirmation.summary, ...(confirmation.details ?? [])].join('\n')] : [])].filter((note) => note.trim());
   if (!actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
+  const open = { type: 'uri' as const, label: lineUiLabel(confirmation?.documentImageUrl ? 'ส่งรูปเอกสาร' : 'เปิดดูในเว็บ', language), uri: actionUrl };
   const contents = drawLineSystemCard({
     mascot: 'review', header: { lines: [lineUiLabel(facts.subject, language), lineUiLabel('รอตรวจสอบ', language)] }, rows, notes,
-    choice: [nextAction ? { type: 'message', ...nextAction } : confirmation ? { type: 'postback', label: lineUiLabel(confirmation.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
-      data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString(), language) }
-      : { type: 'message', label: lineUiLabel('ยืนยันรายการ', language), text: language === 'en' ? 'Confirm this expense' : 'ยืนยันรายการนี้' },
-      { type: 'uri', label: lineUiLabel(confirmation?.documentImageUrl ? 'ส่งรูปเอกสาร' : 'เปิดดูในเว็บ', language), uri: actionUrl }],
+    ...(nextAction || confirmation ? { choice: [nextAction ? { type: 'message', ...nextAction } : { type: 'postback', label: lineUiLabel(confirmation!.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
+      data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation!.token }).toString(), language) }, open] as const }
+      : { button: { icon: 'file' as const, action: open } }),
   }, webBaseUrl);
   return contents && asCompleteLineCard({
     type: 'flex',

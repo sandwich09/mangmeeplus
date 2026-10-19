@@ -3713,11 +3713,10 @@ export class ProcessLineWebhookUseCase {
     const choices = await this.expenseActions.repairChoices?.(ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
     let nextCard: LineReplyMessage | undefined;
     const nextItems = lineChoiceQuickReply(choices).items;
-    if (result.status === 'blocked' && control.action === 'expense_action_submit' && /หลักฐานใบเบิก|เหตุผลที่ไม่มีใบเสร็จ/u.test(result.reply)) {
-      const claimId = control.token.split('.')[0]!;
-      const uri = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/reimbursements/${claimId}`);
+    if (result.status === 'blocked' && result.webPath && result.webLabel) {
+      const uri = absoluteWebLink(this.config.webBaseUrl, result.webPath);
       if (uri.startsWith('https://')) nextCard = { type: 'text', text: result.reply,
-        quickReply: { items: [{ type: 'action', action: { type: 'uri', label: (replyLanguage(event) === 'en' ? "Attach proof / view claim" : 'แนบหลักฐาน / เปิดใบเบิก'), uri } }] } };
+        quickReply: { items: [{ type: 'action', action: { type: 'uri', label: result.webLabel, uri } }] } };
     }
     if (result.status === 'blocked' && !nextItems.length && !nextCard) {
       const records = await this.expenseActions.quoteRecords?.(ctx, chatKeyHashOf(event), control.token);
@@ -3765,6 +3764,30 @@ export class ProcessLineWebhookUseCase {
     const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), ctx.requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
     await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event), this.config?.webBaseUrl) : { type: 'text', text: result.reply,
       ...(choices.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
+    await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
+    return true;
+  }
+
+  /** Short follow-ups bind to server-proved chat locators after the existing metered intake. */
+  private async handleClaimSubmitText(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null,
+    conversation?: LineAiConversationContext): Promise<boolean> {
+    if (!/^(?:ส่งอนุมัติ|ส่งเลย|ยื่นเลย|ส่งใบเบิกนี้|submit\s+it)(?:\s*(?:ค่ะ|คะ|ครับ|ให้หน่อย))*[.!]?$/iu.test(event.messageText.trim())) return false;
+    const tools = ['reimbursement.get_summary', 'reimbursement.get_detail', 'reimbursement.list_pending_approvals', 'reimbursement.get_approval_backlog'];
+    const quoted = conversation?.quotedRecords;
+    const latest = conversation?.recentReads?.[0];
+    const targets = quoted?.length ? quoted.filter(record => tools.includes(record.tool))
+      : latest && tools.includes(latest.tool) ? latest.shownItems ?? [] : [];
+    if (!targets.length) return false;
+    const language = replyLanguage(event), en = language === 'en';
+    if (features && !features.has('expenses')) { await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY[language]); return true; }
+    const ids = [...new Set(targets.map(record => record.id))];
+    const result = ids.length === 1 ? await this.expenseActions.preview(ctx, chatKeyHashOf(event),
+      { action: 'REIMBURSEMENT_SUBMIT', reimbursementId: ids[0] }, true, undefined, language)
+      : { reply: en ? 'Which claim would you like to submit?' : 'ต้องการส่งอนุมัติใบเบิกไหนคะ' };
+    if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
+    const web = ids.length === 1 ? absoluteWebLink(this.config.webBaseUrl, result.webPath ?? `/companies/${ctx.companyId}/reimbursements/${ids[0]}`) : undefined;
+    await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview, undefined, language, this.config.webBaseUrl)
+      : { type: 'text', text: result.reply, ...(web?.startsWith('https://') ? { quickReply: { items: [{ type: 'action', action: { type: 'uri', label: result.webLabel ?? (en ? 'Open claim' : 'เปิดใบเบิก'), uri: web } }] } } : {}) }]);
     await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
     return true;
   }
@@ -3829,7 +3852,13 @@ export class ProcessLineWebhookUseCase {
     }
     const repaired = outcome.status === 'applied'
       ? await this.expenseActions?.afterRepairEdit?.(ctx, chatKeyHash, outcome.preview.previewId, outcome.expenseId) : null;
-    if (repaired?.preview) {
+    if (!repaired && outcome.status === 'applied') {
+      const confirmation = await this.expenseActions?.preview(ctx, chatKeyHash, { action: 'CONFIRM', expenseId: outcome.expenseId }, true, undefined, replyLanguage(event));
+      if (confirmation?.preview) {
+        this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHash, requestId: ctx.requestId, preview: confirmation.preview });
+        await this.deliverRequiredMessages(event, [buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId, confirmation.preview) ?? { type: 'text', text: reply }]);
+      } else await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined, buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
+    } else if (repaired?.preview) {
       this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHash, requestId: ctx.requestId, preview: repaired.preview });
       const outcomeCard = buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId);
       await this.deliverRequiredMessages(event, [outcomeCard ?? { type: 'text', text: reply }, buildExpenseActionCard(repaired.preview, undefined, replyLanguage(event), this.config?.webBaseUrl)]);
@@ -4027,12 +4056,16 @@ ${language === 'en' ? 'View record' : 'เปิดดูรายการ'}: $
     }
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
       const terminal = texts[texts.length - 1]!;
+      const confirmation = expenseDraft && source && this.boundConversations.has(event)
+        ? await this.expenseActions?.preview(source.context, chatKeyHashOf(event), { action: 'CONFIRM', expenseId: expenseDraft.expenseId }, true, undefined, replyLanguage(event)) : undefined;
+      if (confirmation?.preview) this.deliveryExpenseActions.set(event, { context: source!.context, chat: chatKeyHashOf(event), requestId: source!.context.requestId, preview: confirmation.preview });
       // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED review card; the
       // generic card stays the render for every terminal with no such draft behind it. No switch
       // decides this (owner 2026-09-29): what keeps a reply whole is the rule below — a card is the
       // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft
-        ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId, replyLanguage(event))
+        ? buildExpenseDraftReviewCard(text, expenseDraft, this.config.webBaseUrl, companyId, confirmation?.preview, undefined, replyLanguage(event))
+          ?? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId, replyLanguage(event))
         : this.boundReplyCard(event, text, undefined, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, undefined, undefined, replyLanguage(event));
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
@@ -5281,9 +5314,9 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       const result = await this.lineReply.sendFrozenV2({ channelId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.channelId : plan.authorization.destination.channelId, transport, target: transport === 'REPLY' ? event.replyToken : event.pushTargetId ?? event.lineUserId, messages: frozen.messages, pushRetryKey: frozen.pushRetryKey, timeoutMs: dispatch.timeoutMs });
       if (result.kind === 'accepted') this.rememberDelivery(event, 'ok');
       if (!await this.deliveryPlans.finishPlanBatch(claim, dispatch.index, result)) return 'failed_other';
-      // E4 (production's reply path): a reply token LINE no longer accepts is answered by pushing the
-      // same frozen batch now, instead of leaving the customer to wait for the recovery sweep.
-      if (result.kind === 'rejected' && result.rejection === 'TOKEN' && transport === 'REPLY') { attempts += 1; continue; }
+      // UAT 2026-10-19 (silent reply): a rare duplicate when an uncertain reply landed beats silence.
+      // Push the same frozen batch now; its stable key also dedupes crash/recovery retries.
+      if (transport === 'REPLY' && (result.kind === 'unknown' || result.kind === 'rejected' && result.rejection === 'TOKEN')) { attempts += 1; continue; }
       if (result.kind !== 'accepted') return result.rejection === 'PERMANENT' ? 'failed_permanent' : 'failed_other';
       if (claim.states.every(s => s.status === 'ACCEPTED')) {
         await this.prisma.client.lineTurnOutcome.updateMany({ where: { id: row.outcomeId, deliveredAt: null }, data: { deliveredAt: new Date() } });
@@ -5296,16 +5329,16 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
   private async reimbursementDraftMessages(result: LineReimbursementDraftResult, ctx: RequestContext, event: object): Promise<LineReplyMessage[]> {
     const id = result.status === 'applied' ? result.receipt.requestId : undefined;
     const secret = this.config.aiGatewayInternalSecret;
-    const token = typeof id === 'string' && secret
-      ? reimbursementApprovalOpenToken(secret, ctx.companyId, ctx.userId, id, 'expense_action_submit') : undefined;
     const language = replyLanguage(event);
-    const messages = buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId, ctx.permissions, token, language);
+    const readiness = typeof id === 'string' ? await this.expenseActions?.claimSubmitReadiness?.(ctx, id, language) : undefined;
+    const token = typeof id === 'string' && secret && readiness?.ready
+      ? reimbursementApprovalOpenToken(secret, ctx.companyId, ctx.userId, id, 'expense_action_submit') : undefined;
+    const messages = buildReimbursementDraftMessages(result, this.config.webBaseUrl ?? '', ctx.companyId, ctx.permissions, token, language, readiness?.ready === false ? readiness : undefined);
     const bound = this.boundConversations.get(event);
     if (result.status === 'applied' && bound && await this.reimbursementAdapter?.photoTarget?.({ ctx, owner: bound.owner, ownerEpoch: bound.epoch })
       && messages[0]) {
-      const photoText = language === 'en' ? 'Claim draft saved. Send the receipt photo to attach to this claim.' : 'บันทึกร่างใบเบิกแล้วค่ะ ส่งรูปใบเสร็จมาแนบใบนี้ได้เลย';
-      messages[0] = { ...buildLineAssistantTextCardMessage(photoText, this.config.webBaseUrl, ctx.companyId, undefined, undefined, language),
-        quickReply: { items: [{ type: 'action', action: { type: 'cameraRoll', label: language === 'en' ? 'Attach receipt' : 'แนบใบเสร็จ' } }] } };
+      messages[0] = inheritCompleteLineBusinessAnswerPresentation(messages[0], { ...messages[0],
+        quickReply: { items: [{ type: 'action', action: { type: 'cameraRoll', label: language === 'en' ? 'Attach receipt' : 'แนบใบเสร็จ' } }] } });
     }
     return messages;
   }
@@ -6981,6 +7014,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
           ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_TRANSIENT_REPLY) : (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_UNCLEAR_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY));
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
+      if (await this.handleClaimSubmitText(event, expenseDraftCtx, entitledFeatureKeys, conversationContext)) return;
       if (await this.continueReimbursementQuestion(event, expenseDraftCtx, semanticRoutePlan, candidates)) return;
       if (this.paymentEvidence && (semanticRoutePlan.intent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'
         || semanticRoutePlan.semanticSubrequests?.some(item => item.writeIntent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'))) {
@@ -7624,6 +7658,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
+    if (!semanticRoutePlan && routePlan.status === 'ROUTED' && await this.handleClaimSubmitText(event, expenseDraftCtx, entitledFeatureKeys, conversationContext)) return;
     if (!semanticRoutePlan && await this.continueReimbursementQuestion(event, expenseDraftCtx, routePlan, valueCandidates)) return;
     // A history-only continuation must not survive as a semantic write in the gateway either.
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION'
