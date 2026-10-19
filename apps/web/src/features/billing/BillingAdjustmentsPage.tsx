@@ -35,7 +35,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   const base=admin?`/system/billing/companies/${encodeURIComponent(companyId)}`:`/companies/${encodeURIComponent(companyId)}/billing`;
   const back=admin?`${base}?view=payments`:`/companies/${encodeURIComponent(companyId)}/billing`;
   const [kind,setKind]=useState<BillingAdjustmentKind>('refunds'),[cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0);
-  const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<ReturnType<typeof documentError>|null>(null),[opening,setOpening]=useState(false);
+  const [data,setData]=useState<BillingAdjustments|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<(ReturnType<typeof documentError>&{retry?:()=>void})|null>(null),[opening,setOpening]=useState(false);
   const [otherAdjustments,setOtherAdjustments]=useState<BillingAdjustments|null>(null);
   const [adjustmentsOpen,setAdjustmentsOpen]=useState(!admin);
   const [resend,setResend]=useState<{busy:boolean;result:BillingDocumentResendResult|null;error:string}>({busy:false,result:null,error:''});
@@ -95,7 +95,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
       if(!admin){
         // Reserve during the press, before awaiting the URL; Stripe must never get an opener.
         documentTab=window.open('about:blank','_blank');
-        if(!documentTab){setError({title:'เปิดเอกสารไม่ได้',detail:'เปิดแท็บเอกสารไม่ได้ อนุญาตหน้าต่างใหม่แล้วกดเอกสารอีกครั้ง',kind:'popup'});return;}
+        if(!documentTab){setError({title:'เปิดเอกสารไม่ได้',detail:'เปิดแท็บเอกสารไม่ได้ อนุญาตหน้าต่างใหม่แล้วกดเอกสารอีกครั้ง',kind:'popup',retry:()=>void open(kind,creditNoteId)});return;}
         documentTab.opener=null;
       }
       const result=await authedApiFetch<{url:string}>(`${base}/documents/${encodeURIComponent(invoiceId)}/open`,{method:'POST',suppressErrorToast:true,
@@ -121,7 +121,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   const customerContent=<>
     {loading&&<p role="status">กำลังอ่านข้อมูล…</p>}
     {error&&<section role="alert" className="space-y-3"><p>{error.kind==='access'?'บัญชีนี้เปิดเอกสารไม่ได้ กลับไปแพ็กเกจเพื่อเลือกรายการที่ดูได้':error.kind==='missing'?'ไม่พบรายการนี้ กลับไปแพ็กเกจเพื่อเลือกรายการอีกครั้ง':error.kind==='popup'?error.detail:'อ่านข้อมูลการจ่ายเงินไม่ได้ ลองอีกครั้งหรือติดต่อทีมงานมั่งมี'}</p>
-      <ActionGroup align="start"><a className={secondaryButtonClass} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงานมั่งมี</a><button className={secondaryButtonClass} disabled={loading||opening} aria-busy={loading||opening} onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></ActionGroup></section>}
+      <ActionGroup align="start">{error.kind!=='popup'&&<a className={secondaryButtonClass} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงานมั่งมี</a>}<button className={secondaryButtonClass} disabled={loading||opening} aria-busy={loading||opening} onClick={error.retry??(()=>setReload(n=>n+1))}>ลองอีกครั้ง</button></ActionGroup></section>}
     {data&&<>
       {invoice&&<section aria-label="การจ่ายเงินนี้" className="mangmee-card space-y-5 p-5 sm:p-6">
         <MetricGrid items={[{key:'paid',label:'ยอดที่จ่าย',value:amount(invoice.amountSatang),unit:'บาท',note:status,dot:'bg-brand-600'}]} />
