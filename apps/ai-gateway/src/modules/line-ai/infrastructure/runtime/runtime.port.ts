@@ -17,6 +17,7 @@ export type AgentCoreInvokeInput = {
   entitlementDeniedPermissions?: Record<string, string>;
   /** Company feature entitlements; absent or `null` = legacy fail-open (see LineAiTurnRequest). */
   entitledFeatureKeys?: string[] | null;
+  packageOffers?: LineAiTurnRequest['packageOffers'];
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: AiModelPolicy;
   qualifier?: string;

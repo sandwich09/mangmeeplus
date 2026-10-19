@@ -5722,7 +5722,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
   // อีกครั้ง" and the row said provider_unavailable — an invitation to resend against a refusal that cannot
   // change this month. The same card and the same budget status, at both places a bound turn is routed.
   describe('in a bound chat', () => {
-    async function boundTextTurn(code: string, permissions: string[], messageText: string) {
+    async function boundTextTurn(code: string, permissions: string[], messageText: string, body = false) {
       const { prisma, updates } = makePrisma();
       prisma.client.lineIntakePendingMedia.findMany = async () => [];
       prisma.client.lineLedgerDelivery = { findMany: async () => [] };
@@ -5730,7 +5730,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
         permissions,
         config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
           lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
-        intakeRouteFn: () => { throw budgetError(code, 'TOTAL'); },
+        intakeRouteFn: () => { if (body) return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: code, budgetScope: 'TOTAL' }; throw budgetError(code, 'TOTAL'); },
       });
       const event: any = { ...BASE_EVENT, webhookEventId: `evt-bound-${code}-${permissions.join('+')}`, messageText };
       const evidence = await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0',
@@ -5751,6 +5751,14 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       assert.equal(h.getAiGatewayCalled(), false, 'B-02: the gate is not asked a second time');
       return { delivered, final: (updates.at(-1) as any).data };
     }
+    it('U1 claim-picker body refusal says insufficient credit with a way out, never slowness', async () => {
+      const turn = await boundTextTurn('AI_BUDGET_INSUFFICIENT', ['line.ai.query', 'company.plan.manage', 'reimbursement.create'], 'เบิกบิล … 1,388.00 บาท', true);
+      assert.match(JSON.stringify(turn.delivered), /เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/);
+      assert.match(JSON.stringify(turn.delivered), /ดูแพ็กเกจ/);
+      assert.doesNotMatch(JSON.stringify(turn.delivered), /ตอบช้า|ลองส่งข้อความเดิม|ลองอีกครั้ง/);
+      assert.equal(turn.final.status, 'ai_budget_insufficient');
+      assert.equal(turn.final.errorCode, 'AI_BUDGET_INSUFFICIENT');
+    });
     for (const [route, permissions, messageText] of [
       ['first', ['line.ai.query'], 'เดือนนี้จ่ายไปเท่าไหร่แล้วคะ'],
       // A sender who may only capture expenses is not routed first; the second route is theirs.
@@ -6098,6 +6106,16 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     assert.equal(h.getAiGatewayCalled(), true, 'busy keeps the legacy fall-through');
     assert.equal((updates.at(-1) as any).data.status, 'rate_limited');
     assert.equal(JSON.stringify(h.sentMessages).includes('ครบแล้ว'), false, 'busy must never read as "out of quota"');
+  });
+
+  it('U1 captioned image body refusal keeps its credit reason and never retries OCR', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = mediaHarness(prisma, 'AI_BUDGET_INSUFFICIENT', { intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }) });
+    await h.useCase.executeReceiptUpload({ webhookEventId: 'u1-body-photo', lineUserId: 'line-user-secret', replyToken: 'reply',
+      lineMessageId: 'u1-body-photo-message', messageType: 'image', messagingChannelId: 'msg-channel-1' }, 'สร้างใบเบิกให้หน่อย');
+    assert.equal(h.getOcrCalls(), 0); assert.equal(h.getExpenseDrafts(), 0);
+    assert.equal((updates.at(-1) as any).data.errorCode, 'AI_BUDGET_INSUFFICIENT');
+    assert.doesNotMatch(JSON.stringify(h.sentMessages), /ตอบช้า|ลองส่งข้อความเดิม/);
   });
 
   it('keeps the picture, says why, and reads nothing (B-02/B-04)', async () => {
@@ -11189,7 +11207,7 @@ it('Fix-up 21B C10: exact live unavailable package request offers AVAILABLE butt
     quote: async () => { quotes++; assert.fail('an unavailable request cannot create a quote or payment'); } };
   h.flow.packagePurchases = new LinePackagePurchaseService(h.prisma, billing, new LineDraftPreviewStore(), { aiGatewayInternalSecret: 'fx21b-purchase' } as any);
   await h.execute(); const payload = JSON.stringify(h.delivered);
-  assert.match(payload, /ธุรกิจ ยังไม่เปิดขายค่ะ/); assert.match(payload, /เลือกแพ็กเกจที่เปิดขาย/);
+  assert.match(payload, /ธุรกิจ 1,999 บาท ยังไม่เปิดขายค่ะ/); assert.match(payload, /เลือกแพ็กเกจที่เปิดขาย/);
   const choices = h.delivered.flat().flatMap((item: any) => item.quickReply?.items ?? []).map((item: any) => item.action);
   assert.ok(choices.some((choice: any) => /249/.test(choice.label)), payload); assert.ok(choices.some((choice: any) => /499/.test(choice.label)), payload);
   assert.ok(choices.every((choice: any) => !/1,?999|ธุรกิจ/.test(choice.text)), payload); assert.equal(quotes, 0);
@@ -11391,7 +11409,7 @@ for (const prefix of ['ทำให้หน่อย ', '']) it(`Fix-up 22B C10
     { aiGatewayInternalSecret: 'fx22b-package', webBaseUrl: 'https://app.example.com' } as any);
   await h.execute();
   const payload = JSON.stringify(h.delivered);
-  assert.match(payload, /ธุรกิจ ยังไม่เปิดขายค่ะ/); assert.match(payload, /ดูแพ็กเกจอื่น/);
+  assert.match(payload, /ธุรกิจ 1,999 บาท ยังไม่เปิดขายค่ะ/); assert.match(payload, /ดูแพ็กเกจอื่น/);
   assert.doesNotMatch(payload, /เลือกแพ็กเกจที่เปิดขาย/);
   const choices = h.delivered.flat().flatMap((m: any) => m.quickReply?.items ?? []).map((c: any) => c.action);
   assert.ok(choices.some((c: any) => /249/.test(c.label) && c.type === 'uri' && /offer=STARTER_249/.test(c.uri)), payload);
@@ -12441,6 +12459,7 @@ for (const id of ['v2-D118-B', 'v2-D127-B', 'v2-D036-B']) it(`Exam G4: exact ${i
 });
 
 it('Exam G5: exact Starter branch-capacity question uses the web guard, names the next capable package and never opens the field wizard', async t => {
+  const { billingOffer } = await import('@watchdog-bms/contracts');
   const { LineTeamActionService } = await import('../line-team-action.service');
   const first = EXAM_G_REPLAYS.find(row => row.id === 'v2-K012-A').turns[0];
   t.mock.timers.enable({ apis: ['Date'], now: first.body.events[0].timestamp });
@@ -12448,15 +12467,19 @@ it('Exam G5: exact Starter branch-capacity question uses the web guard, names th
   const h = await fx21bBoundWebhook(t, replay, ['line.ai.query', 'ai.tool.invoke', 'company.branch.manage']);
   let capacityReads = 0, starts = 0;
   const teams: any = Object.create(LineTeamActionService.prototype);
+  teams.billing = { catalog: async () => ({ offers: [billingOffer('BASIC_499', 'month')] }) };
   teams.prisma = { client: { companyPlanTerm: { findUnique: async ({ where }: any) => { assert.equal(where.companyId, 'company-1'); capacityReads++; return { branchLimit: 1, employeeLimit: 2 }; } }, branch: { count: async () => 1 } } };
   h.flow.expenseActions = { teamCapacityReply: (...args: any[]) => teams.capacityReply(...args), answerTeam: async () => null };
   h.flow.aiGateway.requestLineTurn = async () => { starts++; assert.fail('a blocked structural create never reaches a wizard'); };
   await h.execute(); assert.equal(starts, 0); assert.equal(capacityReads, 1); assert.equal(h.intakeRequests.length, 1, 'capacity help retains its metered intake');
-  assert.match(JSON.stringify(h.delivered), /BASIC/); assert.match(JSON.stringify(h.delivered), /Compare packages/);
+  assert.match(JSON.stringify(h.delivered), /Basic/); assert.match(JSON.stringify(h.delivered), /Compare packages/);
   assert.doesNotMatch(JSON.stringify(h.delivered), /branch name|Prepare this for me/);
   teams.config = { aiGatewayInternalSecret: 'test' }; teams.store = { available: true, save: async () => assert.fail('a package-blocked preview never starts field collection') }; teams.owner = async () => ({ id: 'conversation', lifecycleEpoch: 1 });
   const prepared = await teams.preview({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', permissions: ['company.branch.manage'], roles: ['OWNER'], scopes: {} }, 'chat', { action: 'BRANCH_CREATE' });
   assert.equal(prepared.preview, undefined); assert.match(prepared.reply, /เติบโต 499 บาท/); assert.doesNotMatch(prepared.reply, /BASIC/);
+  teams.billing = { catalog: async () => ({ offers: [{ ...billingOffer('BASIC_499', 'month'), priceSatang: 76543 }] }) };
+  assert.match(await teams.capacityReply({ companyId: 'company-1' }, 'BRANCH_CREATE'), /เติบโต 765.43 บาท/);
+  assert.match(await teams.capacityReply({ companyId: 'company-1' }, 'BRANCH_CREATE', 'en'), /Basic 765.43 THB/);
   // The noun after the verb names the action: adding an employee "at สาขาสำนักงานใหญ่" is not a branch create.
   const checked: string[] = [];
   h.flow.expenseActions = { teamCapacityReply: async (_ctx: any, action: string) => { checked.push(action); return null; } };

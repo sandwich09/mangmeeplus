@@ -702,6 +702,22 @@ describe('AiGatewayClient OCR governance', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+it('U1 image intake preserves a body credit refusal and releases the unused receipt admission', async () => {
+  __resetCompanyAiBudgetCache();
+  const state = readyOcrPrisma(), original = globalThis.fetch;
+  const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test', aiGatewayInternalSecret: 'secret', aiMonthlyBudgetSatang: 1_000_000, isProduction: false } as any,
+    { issue: () => 'signed' } as any, undefined, state.prisma);
+  globalThis.fetch = async () => new Response(JSON.stringify({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+    errorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL', usage: [] }), { status: 200 });
+  try {
+    await assert.rejects(client.requestLineIntakeRoute({ requestId: 'u1-image', companyId: 'company-1', userId: 'user-1', locale: 'th-TH',
+      messageText: 'สร้างใบเบิกให้หน่อย', permissions: [], activeCategories: [], attachments: [{ id: 'u1-photo', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }] }),
+      (error: any) => { assert.equal(error.getStatus(), 429); assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }); return true; });
+  } finally { globalThis.fetch = original; }
+  assert.equal(state.usedCount(), 0); assert.equal(state.events.length, 0);
+});
+
 });
 
 // ── monthly budget cap (spec §7.5 enforcement; criteria 5, 6 and 8) ────────────────
@@ -1013,7 +1029,7 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
     const fetchStub = captureFetch({ requestId: 'transport-1', errorCode: 'AI_BUDGET_UNAVAILABLE' });
     try {
-      await client.requestLineTurn(turnRequest());
+      await assert.rejects(client.requestLineTurn(turnRequest()), (error: any) => error.getStatus() === 429 && error.getResponse().code === 'AI_BUDGET_UNAVAILABLE');
     } finally { fetchStub.restore(); }
 
     const hold = [...reservations.values()][0];
@@ -1029,7 +1045,7 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     const client = new AiGatewayClient(splitConfig(), delegation, undefined, prisma);
     const fetchStub = captureFetch({ requestId: 'transport-1', errorCode: 'AI_BUDGET_INSUFFICIENT', usage: [usageRow] });
     try {
-      await client.requestLineTurn(turnRequest());
+      await assert.rejects(client.requestLineTurn(turnRequest()), (error: any) => error.getResponse().code === 'AI_BUDGET_INSUFFICIENT');
     } finally { fetchStub.restore(); }
 
     const hold = [...reservations.values()][0];
@@ -1330,4 +1346,76 @@ it('gives signed image intake enough time for a page and one timeout retry', asy
     if (requestKind === 'IMAGE') assert.ok(grant.workDeadlineAtMs - now.getTime() > 2 * 90000);
   }
   assert.equal(AI_BUDGET_PROFILES_V2['line-intake-image/2'].maxCalls, 2);
+});
+
+describe('U1b unreachable runtime never reserves or debits customer credit', () => {
+  for (const outcome of ['probe timeout', 'runtime unavailable', 'runtime not ready']) it(outcome, async () => {
+    const fixture = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 });
+    const before = structuredClone(fixture.monthUsage);
+    let issued = 0;
+    const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test', aiGatewayInternalSecret: 'secret', approvedAiModelIds: [SPLIT_FIXTURE_MODEL_ID], aiThbPerUsd: 33 } as any,
+      {} as any, undefined, fixture.prisma, { issue: async () => { issued++; assert.fail('no authority may be issued after a failed capability probe'); } } as any);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => {
+      if (outcome === 'probe timeout') throw Object.assign(new Error('startup crash'), { name: 'TimeoutError' });
+      return new Response(JSON.stringify({ ready: false, errorCode: 'ROUTER_UNREACHABLE' }), { status: outcome === 'runtime unavailable' ? 503 : 200 });
+    };
+    try {
+      const probe = client.issueLineReliabilityGrant('startup-failure', { owner: { owner: { companyId: 'co' } } } as any);
+      if (outcome === 'runtime not ready') assert.equal(await probe, null);
+      else await assert.rejects(probe, AiGatewayRequestError);
+    } finally { globalThis.fetch = original; }
+    assert.equal(issued, 0);
+    assert.equal(fixture.reservations.size, 0, 'there is no reservation to leave stranded or release');
+    assert.equal(fixture.events.size, 0);
+    assert.deepEqual(fixture.monthUsage, before);
+  });
+});
+
+
+describe('U1 authenticated body-borne refusal is the same 429 at every gateway response seam', () => {
+  for (const path of ['line-intake-route', 'line-turn', 'receipt-ocr']) it(path, async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ status: 'UNAVAILABLE', errorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' }), { status: 200 });
+    try {
+      const client: any = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test', aiGatewayInternalSecret: 'secret' } as any, {} as any, undefined, governedPrisma());
+      await assert.rejects(client.postInternal(`/internal/ai/${path}`, {}, 'u1-body', 3000), (error: any) => {
+        assert.equal(error.getStatus(), 429); assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'CHAT' }); return true;
+      });
+    } finally { globalThis.fetch = original; }
+  });
+});
+
+it('U6 the gateway receives the same active selling terms as the web catalog', async () => {
+  const { billingOffer } = await import('@watchdog-bms/contracts');
+  const offer = { ...billingOffer('ENTERPRISE_1999', 'month'), priceSatang: 234567 };
+  let calls = 0, payload: any;
+  const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test', aiGatewayInternalSecret: 'secret' } as any,
+    { issue: () => 'signed' } as any, undefined, governedPrisma(), undefined, { catalog: async () => { calls++; return { offers: [offer] }; } } as any);
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => { payload = JSON.parse(String(init?.body)); return new Response('{}', { status: 200 }); };
+  try { await client.requestLineTurn({ ...baseTurnRequest, packageOffers: [{ ...offer, priceSatang: 199900 }] }); }
+  finally { globalThis.fetch = original; }
+  assert.equal(calls, 1); assert.equal(payload.packageOffers[0].priceSatang, 234567, 'caller defaults cannot override the current catalog');
+});
+
+it('U1b runtime-unavailable and ROUTER_UNREACHABLE after a v2 grant still have zero debit or stranded hold', async () => {
+  const fixture = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 });
+  const before = structuredClone(fixture.monthUsage), now = Date.now();
+  const grant: any = { version: 2, turnKey: 'runtime-unavailable', authorityKind: 'webhook_event', authorityId: 'event-v2',
+    channelOwnerDigest: 'b'.repeat(64), attemptKey: 'attempt-v2', monthKey: '2026-10', payerCompanyId: 'co',
+    model: { provider: 'bedrock', modelId: SPLIT_FIXTURE_MODEL_ID, region: 'ap-southeast-1' }, allowedProfileIds: ['line-intake-text/2'],
+    profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, maxTurnSlots: 4, maxRepairs: 1, admittedAtMs: now, workDeadlineAtMs: now + 10000,
+    finalDeadlineAtMs: now + 20000, nonce: 'nonce-v2', issuerVersion: 'api-1', signature: 'c'.repeat(64) };
+  const client: any = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test', aiGatewayInternalSecret: 'secret', approvedAiModelIds: [SPLIT_FIXTURE_MODEL_ID] } as any,
+    { issue: () => 'signed' } as any, undefined, fixture.prisma);
+  client.validateLineV2 = async () => grant;
+  const original = globalThis.fetch;
+  try {
+    for (const errorCode of ['ROUTER_UNREACHABLE', 'AGENTCORE_INVOKE_FAILED', 'RUNTIME_UNAVAILABLE']) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ errorCode, usage: [] }), { status: 200 });
+      await client.requestLineTurn({ ...baseTurnRequest, budgetGrantV2: grant });
+      assert.equal(fixture.reservations.size, 0); assert.equal(fixture.events.size, 0); assert.deepEqual(fixture.monthUsage, before);
+    }
+  } finally { globalThis.fetch = original; }
 });

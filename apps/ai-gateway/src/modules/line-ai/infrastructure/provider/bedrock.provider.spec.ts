@@ -12,7 +12,7 @@ import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createProvider } from './provider.factory';
 import { AnthropicApiProvider, anthropicModelId } from './anthropic-api.provider';
 import {
-  AI_BUDGET_STEP_ATTEMPTS, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
+  AI_BUDGET_IMAGE_TOKEN_CEILING, AI_BUDGET_STEP_ATTEMPTS, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
 } from '@watchdog-bms/contracts';
 
 function makeProvider(timeoutMs = 10000) {
@@ -1256,6 +1256,152 @@ describe('AnthropicApiProvider (local eval)', () => {
 
 
 describe('internal timeout cost estimates (owner no-charge rule)', () => {
+  const width = 777, height = 513;
+  const png = Buffer.alloc(33);
+  Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').copy(png);
+  png.writeUInt32BE(width, 16); png.writeUInt32BE(height, 20);
+  png[24] = 8; png[25] = 2;
+  const gif = (version: string) => {
+    const bytes = Buffer.alloc(13);
+    bytes.write(version); bytes.writeUInt16LE(width, 6); bytes.writeUInt16LE(height, 8);
+    return bytes;
+  };
+  const segment = (marker: number, payload: Buffer) => {
+    const header = Buffer.from([0xff, marker, 0, 0]);
+    header.writeUInt16BE(payload.length + 2, 2);
+    return Buffer.concat([header, payload]);
+  };
+  const jpeg = (marker: number, prefix = Buffer.alloc(0)) => {
+    const frame = Buffer.from([8, 0, 0, 0, 0, 1, 1, 0x11, 0]);
+    frame.writeUInt16BE(height, 1); frame.writeUInt16BE(width, 3);
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), prefix, segment(marker, frame)]);
+  };
+  const chunk = (kind: string, payload: Buffer) => {
+    const header = Buffer.alloc(8);
+    header.write(kind); header.writeUInt32LE(payload.length, 4);
+    return Buffer.concat([header, payload, Buffer.alloc(payload.length % 2)]);
+  };
+  const webp = (...chunks: Buffer[]) => {
+    const header = Buffer.from('RIFF\0\0\0\0WEBP', 'ascii');
+    header.writeUInt32LE(4 + chunks.reduce((sum, part) => sum + part.length, 0), 4);
+    return Buffer.concat([header, ...chunks]);
+  };
+  const vp8 = Buffer.from([0x10, 0, 0, 0x9d, 0x01, 0x2a, 0, 0, 0, 0]);
+  vp8.writeUInt16LE(width | 0xc000, 6); vp8.writeUInt16LE(height | 0x8000, 8);
+  const vp8l = Buffer.alloc(5); vp8l[0] = 0x2f;
+  vp8l.writeUInt32LE((width - 1) | ((height - 1) << 14) | (1 << 28), 1);
+  const vp8x = Buffer.alloc(10);
+  vp8x.writeUIntLE(width - 1, 4, 3); vp8x.writeUIntLE(height - 1, 7, 3);
+  const headers = [
+    { name: 'PNG IHDR', bytes: png },
+    ...[0xc0, 0xc1, 0xc2].map((marker) => ({ name: `JPEG SOF${marker - 0xc0}`, bytes: jpeg(marker) })),
+    { name: 'JPEG skips APP0 and EXIF with misleading SOF bytes', bytes: jpeg(0xc2, Buffer.concat([
+      segment(0xe0, Buffer.from('JFIF\0')), segment(0xe1, Buffer.concat([Buffer.from('Exif\0\0'), jpeg(0xc0)])),
+    ])) },
+    { name: 'JPEG fill and standalone markers', bytes: jpeg(0xc0, Buffer.from([0xff, 0xff, 0x01, 0xff, 0xd0])) },
+    { name: 'GIF87a', bytes: gif('GIF87a') }, { name: 'GIF89a', bytes: gif('GIF89a') },
+    { name: 'WebP VP8 scale bits', bytes: webp(chunk('VP8 ', vp8)) },
+    { name: 'WebP VP8L alpha bit', bytes: webp(chunk('VP8L', vp8l)) },
+    { name: 'WebP VP8X', bytes: webp(chunk('VP8X', vp8x)) },
+    { name: 'WebP skips odd padded metadata', bytes: webp(chunk('JUNK', Buffer.from([1])), chunk('VP8 ', vp8)) },
+  ];
+  const imageUsage = (bytes: Buffer) => conservativeTimeoutUsage({ messages: [],
+    images: [{ mimeType: 'image/png', contentBase64: bytes.toString('base64') }] });
+  for (const { name, bytes } of headers) {
+    it(`reads synthetic ${name} dimensions without decoding pixels`, async () => {
+      const text = await conservativeTimeoutUsage({ messages: [] });
+      assert.equal((await imageUsage(bytes)).inputTokens, text.inputTokens! + Math.ceil(width * height / 750));
+    });
+    it(`uses the ceiling for every truncated ${name} header`, async () => {
+      const text = await conservativeTimeoutUsage({ messages: [] });
+      for (let length = 0; length < bytes.length; length++) {
+        assert.equal((await imageUsage(bytes.subarray(0, length))).inputTokens,
+          text.inputTokens! + AI_BUDGET_IMAGE_TOKEN_CEILING, `truncated at ${length}`);
+      }
+    });
+  }
+  const changed = (bytes: Buffer, offset: number, value: number) => {
+    const copy = Buffer.from(bytes); copy[offset] = value; return copy;
+  };
+  for (const { name, bytes } of [
+    { name: 'unknown format', bytes: Buffer.from('<svg width="777" height="513"/>') },
+    { name: 'bad PNG signature', bytes: changed(png, 0, 0) },
+    { name: 'bad PNG IHDR length', bytes: changed(png, 11, 12) },
+    { name: 'missing PNG IHDR', bytes: changed(png, 12, 0) },
+    { name: 'zero PNG width', bytes: Buffer.concat([png.subarray(0, 16), Buffer.alloc(4), png.subarray(20)]) },
+    { name: 'oversized PNG dimension', bytes: changed(png, 16, 0x80) },
+    { name: 'zero GIF height', bytes: Buffer.concat([gif('GIF89a').subarray(0, 8), Buffer.alloc(5)]) },
+    { name: 'bad GIF version', bytes: gif('GIF90a') },
+    ...[0, 1, 0xffff].map((length) => ({ name: `JPEG bad segment length ${length}`,
+      bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe1, length >>> 8, length & 0xff]) })),
+    { name: 'JPEG wrong component count', bytes: changed(jpeg(0xc0), 11, 2) },
+    { name: 'JPEG zero height', bytes: changed(changed(jpeg(0xc0), 7, 0), 8, 0) },
+    { name: 'JPEG unsupported SOF', bytes: jpeg(0xc3) },
+    ...[0x00, 0xd8, 0xd9, 0xda].map((marker) => ({ name: `JPEG stops at ${marker}`,
+      bytes: jpeg(0xc0, Buffer.from([0xff, marker])) })),
+    { name: 'JPEG unmarked bytes', bytes: jpeg(0xc0, Buffer.from([1, 2])) },
+    { name: 'JPEG bounded fill traversal', bytes: jpeg(0xc0, Buffer.alloc(2048, 0xff)) },
+    { name: 'JPEG bounded segment traversal', bytes: jpeg(0xc0, Buffer.concat(Array.from({ length: 1024 }, () => segment(0xe1, Buffer.alloc(0))))) },
+    { name: 'WebP oversized RIFF', bytes: changed(webp(chunk('VP8X', vp8x)), 7, 0x7f) },
+    { name: 'WebP undersized RIFF', bytes: changed(webp(chunk('VP8X', vp8x)), 4, 0) },
+    { name: 'WebP oversized chunk', bytes: webp(changed(chunk('VP8X', vp8x), 4, 100)) },
+    { name: 'WebP unknown chunk', bytes: webp(chunk('JUNK', Buffer.alloc(0))) },
+    { name: 'WebP short VP8', bytes: webp(chunk('VP8 ', vp8.subarray(0, 9))) },
+    { name: 'WebP interframe VP8', bytes: webp(chunk('VP8 ', changed(vp8, 0, 1))) },
+    { name: 'WebP bad VP8 signature', bytes: webp(chunk('VP8 ', changed(vp8, 3, 0))) },
+    { name: 'WebP zero VP8 width', bytes: webp(chunk('VP8 ', Buffer.concat([vp8.subarray(0, 6), Buffer.alloc(2), vp8.subarray(8)]))) },
+    { name: 'WebP bad VP8L signature', bytes: webp(chunk('VP8L', changed(vp8l, 0, 0))) },
+    { name: 'WebP bad VP8L version', bytes: webp(chunk('VP8L', changed(vp8l, 4, 0xe0))) },
+    { name: 'WebP wrong VP8X length', bytes: webp(chunk('VP8X', vp8x.subarray(0, 9))) },
+    { name: 'WebP reserved VP8X flag', bytes: webp(chunk('VP8X', changed(vp8x, 0, 1))) },
+    { name: 'WebP reserved VP8X byte', bytes: webp(chunk('VP8X', changed(vp8x, 1, 1))) },
+    { name: 'WebP bounded chunk traversal', bytes: webp(...Array.from({ length: 1024 }, () => chunk('JUNK', Buffer.alloc(0))), chunk('VP8 ', vp8)) },
+  ]) {
+    it(`uses the ceiling for ${name} without throwing`, async () => {
+      const text = await conservativeTimeoutUsage({ messages: [] });
+      assert.equal((await imageUsage(bytes)).inputTokens, text.inputTokens! + AI_BUDGET_IMAGE_TOKEN_CEILING);
+    });
+  }
+
+  for (const format of ['png', 'jpeg', 'webp', 'gif'] as const) {
+    it(`matches previous sharp metadata estimates for generated ${format} fixtures`, async () => {
+      const bytes = await sharp({ create: { width, height, channels: 3, background: 'white' } }).toFormat(format).toBuffer();
+      const metadata = await sharp(bytes).metadata();
+      const text = await conservativeTimeoutUsage({ messages: [] });
+      assert.equal((await imageUsage(bytes)).inputTokens, text.inputTokens! + Math.ceil(metadata.width! * metadata.height! / 750));
+    });
+  }
+  it('matches raw sharp metadata for EXIF-oriented JPEG and lossless/extended WebP', async () => {
+    for (const bytes of await Promise.all([
+      sharp({ create: { width, height, channels: 3, background: 'white' } }).withMetadata({ orientation: 6 }).jpeg().toBuffer(),
+      sharp({ create: { width, height, channels: 3, background: 'white' } }).webp({ lossless: true }).toBuffer(),
+      sharp({ create: { width, height, channels: 4, background: '#ffffff80' } }).withMetadata().webp().toBuffer(),
+    ])) {
+      const metadata = await sharp(bytes).metadata();
+      const text = await conservativeTimeoutUsage({ messages: [] });
+      assert.equal((await imageUsage(bytes)).inputTokens, text.inputTokens! + Math.ceil(metadata.width! * metadata.height! / 750));
+    }
+  });
+  it('estimates image usage when loading sharp is forbidden', () => {
+    const runner = `
+      const assert = require('node:assert/strict');
+      const Module = require('node:module'), load = Module._load;
+      Module._load = function (name, ...args) {
+        assert.ok(!name.includes('sharp'), 'native sharp must not be loaded');
+        return load.call(this, name, ...args);
+      };
+      const { conservativeTimeoutUsage } = require(process.argv[1]);
+      (async () => {
+        const text = await conservativeTimeoutUsage({ messages: [] });
+        const media = await conservativeTimeoutUsage({ messages: [], images: [{ mimeType: 'image/png', contentBase64: process.argv[2] }] });
+        assert.equal(media.inputTokens - text.inputTokens, ${Math.ceil(width * height / 750)});
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--eval', runner,
+      resolve(__dirname, 'provider-usage-estimate.ts'), png.toString('base64')], { encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+  });
+
   it('counts rendered UTF-8 system, context, messages and tool schemas without changing input', async () => {
     const input = { systemPrompt: 'อ่านเอกสารค่ะ', cacheableContext: 'บริบท',
       messages: [{ role: 'user' as const, text: 'ช่วยตรวจยอด' }],

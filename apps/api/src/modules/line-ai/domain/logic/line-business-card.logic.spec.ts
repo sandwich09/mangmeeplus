@@ -303,7 +303,7 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
 
   it('labels two links independently instead of numbering them เปิดลิงก์ 1/2', () => {
     const { body, buttons } = card([
-      '🔵 รอยืนยัน — เลขที่ SUB-202608-00007',
+      '🔵 รอยืนยัน เลขที่ SUB-202608-00007',
       `ดูเอกสาร: ${web2}`,
       `เปิดในเว็บ: ${web}`,
     ].join('\n'));
@@ -312,7 +312,7 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
       { label: 'ดูเอกสาร', uri: web2 },
       { label: 'เปิดในเว็บ', uri: web },
     ]);
-    assert.equal(body, '🔵 รอยืนยัน — เลขที่ SUB-202608-00007');
+    assert.equal(body, '🔵 รอยืนยัน เลขที่ SUB-202608-00007');
     assert.doesNotMatch(body, /:\s*$/m, 'no colon line is left behind');
   });
 
@@ -1468,4 +1468,38 @@ it('Fix-up 22B: quick choices preserve API-built web links alongside message but
   ]);
   assert.deepEqual(choices.items.map(item => item.action.type), ['uri', 'message']);
   assert.equal((choices.items[0]!.action as any).uri, 'https://app.example.com/system/wht-income-categories?openExternalBrowser=1');
+});
+
+
+it('U3 capability buttons name each permitted job within LINE limits and recheck current actor access', async () => {
+  const { productHelpQuickReply } = await import('./line-business-card.logic');
+  const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
+  const { ROLE_GRANTS } = await import('../../../auth/permission-registry');
+  for (const language of ['th', 'en'] as const) {
+    const reply: any = { refused: false, replyText: 'เลือกงานที่ทำได้ค่ะ', presentation: { kind: 'answer_cards', cards: [{ text: 'เลือกงานที่ทำได้ค่ะ', chatActionIds: LINE_CHAT_ACTIONS.map(action => action.id) }] } };
+    const all = productHelpQuickReply(reply, ROLE_GRANTS.OWNER!, null, language);
+    assert.ok(all?.items.length);
+    for (const item of all.items) { assert.ok(Array.from(item.action.label).length <= 20, item.action.label); assert.doesNotMatch(item.action.label, /—|STARTER|ENTERPRISE/); }
+    reply.presentation.cards[0].chatActionIds = ['expense_search', 'wht_certificate'];
+    const narrowed = productHelpQuickReply(reply, ['expense.read'], new Set(['expenses']), language);
+    assert.equal(narrowed?.items.length, 1);
+    assert.equal(narrowed.items[0]!.action.label, language === 'en' ? 'Find expenses' : 'ค้นหาค่าใช้จ่าย');
+    assert.equal(productHelpQuickReply(reply, [], new Set(), language), undefined);
+  }
+});
+
+
+it('U5 current package usage uses customer names in the requested language for every paid tier', async () => {
+  const { BillingGetPackageUsageTool } = await import('../../application/use-cases/erp-package-tools.use-case');
+  const { BILLING_PAID_TIERS } = await import('@watchdog-bms/contracts');
+  const english = ['Starter', 'Basic', 'Pro', 'Enterprise'];
+  for (const [index, tierKey] of BILLING_PAID_TIERS.entries()) {
+    const prisma: any = { client: { companyPlanTerm: { findUnique: async () => ({ tierKey, branchLimit: 5, employeeLimit: 10,
+      capacityOverride: null, billingReceiptAccountId: null, termEndsAt: new Date('2027-01-01'), termDisabledAt: null }) },
+      branch: { count: async () => 0 }, companyMembership: { count: async () => 0 }, billingReceiptGrant: { findMany: async () => [] } } };
+    const billing: any = { usage: async () => ({ used: 0, limit: 100, remaining: 100, cadence: 'PAID_GRANTS', resetsAt: null, expiresAt: null }) };
+    const data = (await new BillingGetPackageUsageTool(prisma, billing).execute({ companyId: 'company', userId: 'user',
+      permissions: ['company.plan.manage'], locale: 'en-GB' } as any)).data as any;
+    assert.equal(data.package.label, english[index]); assert.doesNotMatch(data.package.label, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+  }
 });

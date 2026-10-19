@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
-  "checkoutBranch": "claude/advisor-xg2-20261018",
+  "sourceRevision": "360908871545432de575fed87ac4d6272eeb2e39",
+  "checkoutBranch": "claude/line-uat-fixes-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -53,7 +53,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-team-action.service.ts",
-      "sha256": "aef0561feea5c9acb28d2a0dce10dc8c4e090c3c801d0e46ddb01e4dd7fa312f"
+      "sha256": "c4412752729136b6060cb9393e20c43df92811661e3aaf14ce9a03559d77e894"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
@@ -97,7 +97,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
-      "sha256": "8101359d1c8396a996a90ec271a9699acc8ca698a698bde15d0345cf26a47157"
+      "sha256": "540d326fa57212c75619bb095208bccd0617a6197b9f9c400dbdf37f40038f14"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -137,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "439245e4cbea096ad4c9a76b2aae29c0a542f11305ab07d5ab9ca395c1109179"
+      "sha256": "fed5355b8d2f3d0357957205d214e0f0898b9e4667ea015f25fc1bbf82d0394e"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -217,7 +217,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "10e6f71d437baa60a1a02184a6653ff6855b80c97e4b37145d630e3740c44595"
+      "sha256": "90439727063270022b8252cb9b179312391457bfc0f9515f8d18c95398ec12ef"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-17T21:21:03.696Z",
-  "manifestDigest": "4278fee40ba382fcefdb3876931e1a8f12a3c26d467a096e6ba3ab166bfe8846"
+  "generatedAt": "2026-10-19T06:43:19.965Z",
+  "manifestDigest": "7ee08767878e0d9dff3eaa70027039e5949bb1be3dab89e3bde27bdd175338f1"
 }

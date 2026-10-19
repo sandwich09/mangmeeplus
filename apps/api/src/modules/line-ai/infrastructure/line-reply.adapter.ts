@@ -1,3 +1,4 @@
+import { lineCustomerVisibleText } from '../domain/logic/line-language.logic';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 /**
  * LINE reply adapter – sends reply/push messages via Messaging API.
@@ -27,11 +28,11 @@ export type LineReplyMessage = {
  *  it, so the retry identity, the stored outcome and an orphan replay all keep the plain bytes;
  *  the rewrite is deterministic and idempotent, so first send and replay put identical bytes on the wire. */
 function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
-  return withLineExternalBrowserLinks(messages.map((message) => {
+  return withLineExternalBrowserLinks(lineCustomerVisibleText(messages.map((message) => {
     if (message.type !== 'flex') return message;
     const { canonicalText: _canonicalText, ...providerMessage } = message;
     return providerMessage;
-  }));
+  })));
 }
 
 /** `failed_token` = LINE rejected the request (400): expired/used reply token

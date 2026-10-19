@@ -49,7 +49,7 @@ describe('billing.get_package_usage (advisor spec §5.1)', () => {
     const result = await tool.execute(MANAGER);
     assert.equal(result.status, 'ok');
     assert.deepEqual(result.data, {
-      package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15' },
+      package: { label: 'มืออาชีพ', termEndsOn: '2026-10-15' },
       capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
       receipts: { used: 70, limit: 100, remaining: 30, cadence: 'ตามรอบที่ชำระ', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
         resetsOn: null, expiresOn: null, additional: null,
@@ -95,7 +95,7 @@ describe('billing.get_package_usage (advisor spec §5.1)', () => {
     const capacityOverride = { operationId: '0f8b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d', accountId: 'acct-1', tierKey: 'ENTERPRISE_1999', branchLimit: 10,
       employeeLimit: 30, effectiveAt: '2026-09-01T00:00:00.000Z', expiresAt: '2026-10-10T00:00:00.000Z' };
     const data = (await fakes({ term: { ...TERM, capacityOverride }, usage: PAID_USAGE, lots: [LOT] }).tool.execute(MANAGER)).data as any;
-    assert.equal(data.package.label, 'มืออาชีพ (PRO)');
+    assert.equal(data.package.label, 'มืออาชีพ');
     assert.deepEqual(data.capacity.branches, { used: 4, limit: 10, remaining: 6 });
   });
 
@@ -137,10 +137,10 @@ describe('billing.get_package_catalog (advisor spec §5.1a, owner 2026-09-30)', 
     assert.equal(result.status, 'ok');
     const data = result.data as any;
     assert.deepEqual(data.packages.map((item: any) => [item.name, item.monthly.price, item.yearly.price, item.branches, item.users, item.monthly.receiptReads]), [
-      ['เริ่มต้น (STARTER)', '249', '2,490', 1, 2, 30], ['เติบโต (BASIC)', '499', '4,990', 2, 5, 50],
-      ['มืออาชีพ (PRO)', '999', '9,990', 5, 10, 100], ['ธุรกิจ (ENTERPRISE)', '1,999', '19,990', 10, 30, 500]]);
+      ['เริ่มต้น 249 บาท', '249', '2,490', 1, 2, 30], ['เติบโต 499 บาท', '499', '4,990', 2, 5, 50],
+      ['มืออาชีพ 999 บาท', '999', '9,990', 5, 10, 100], ['ธุรกิจ 1,999 บาท', '1,999', '19,990', 10, 30, 500]]);
     assert.deepEqual(data.packages[0], {
-      name: 'เริ่มต้น (STARTER)', branches: 1, users: 2,
+      name: 'เริ่มต้น 249 บาท', branches: 1, users: 2,
       monthly: { price: '249', payable: '249', receiptReads: 30 },
       yearly: { price: '2,490', payable: '2,490', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
       menus: ['ผู้ช่วย AI ทาง LINE', 'หน้าแรก', 'ค่าใช้จ่ายและใบเสร็จ', 'การเบิกจ่าย', 'พนักงานและสิทธิ์', 'การแจ้งเตือน'],

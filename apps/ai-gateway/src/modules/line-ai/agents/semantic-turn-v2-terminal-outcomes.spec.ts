@@ -90,9 +90,9 @@ describe('current capability questions', () => {
           draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
           async invoke(): Promise<ToolResult> { throw new Error('capability help must not call a tool'); },
         });
-        assert.equal(result.replyText, buildCapabilityHelp(/[ก-๙]/u.test(messageText) ? 'th' : 'en',
-          { permissions: request.userContext.permissions, entitledFeatureKeys: [] }));
-        assert.deepEqual(result.semanticCoverage, [{ index: 0, status: 'handled' }]);
+        assert.match(result.replyText, /[ก-๙]/u.test(messageText) ? /เลือกงานที่ทำได้ตามแพ็กเกจและสิทธิ์/ : /current package and permissions/);
+        assert.deepEqual(result.presentation?.cards[0]?.chatActionIds, ['expense_search']);
+        assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
       });
     }
   }
@@ -127,7 +127,7 @@ it('answers a capability clause and still executes the independent monthly read'
   });
   assert.deepEqual(invoked, ['expense.list_recent']);
   assert.deepEqual(result.semanticCoverage?.map(item => item.status), ['handled', 'handled']);
-  assert.ok(result.replyText.includes(buildCapabilityHelp('th', { permissions: ['expense.read'], entitledFeatureKeys: [] })));
+  assert.match(result.replyText, /เลือกงานที่ทำได้ตามแพ็กเกจและสิทธิ์/);
   assert.match(result.replyText, /1,000/);
   assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|untrusted capability prose/);
 });
@@ -769,7 +769,8 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     });
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, undefined);
-    assert.equal(result.replyText, answer);
+    assert.match(result.replyText, /VAT คือภาษีมูลค่าเพิ่ม/);
+    assert.doesNotMatch(result.replyText, /ทำได้เลย/);
   });
 });
 
@@ -1108,7 +1109,7 @@ describe('H3: one call failing to bind never sinks an index a sibling call alrea
 // message. Each case is one the real model produced in that run.
 describe('advisor S0: general answers are shaped in code, and a stock clause is answered before any planning', () => {
   const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
-  const FIXED_STOCK = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ แต่น้องช่วยเรื่องรายจ่าย หลักฐานใบเสร็จ และใบเบิกได้ค่ะ';
+  const FIXED_STOCK = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ';
 
   function recording(responses: string[]) {
     const queue = [...responses];
@@ -1138,8 +1139,8 @@ describe('advisor S0: general answers are shaped in code, and a stock clause is 
   // G-06: five bullets for "แนะนำหนังสนุกๆ หน่อย"; G-15: a full recipe.
   it('a non-business answer stays two short lines and ends with the shop line from code', async () => {
     const films = await general('แนะนำหนังสนุกๆ หน่อย', 'UNSUPPORTED', { topic: 'other',
-      text: 'มั่งมีแนะนำหนังสนุกๆ ได้บ้างนะคะ 😊\n\n• Interstellar — ไซไฟอลังการ\n• Parasite — ระทึก พลิกโผ\n• Coco — อบอุ่นมากค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ' });
-    assert.equal(films.replyText, `Interstellar — ไซไฟอลังการ\nParasite — ระทึก พลิกโผ\n\n${STEER}`);
+      text: 'มั่งมีแนะนำหนังสนุกๆ ได้บ้างนะคะ 😊\n\n• Interstellar ไซไฟอลังการ\n• Parasite ระทึก พลิกโผ\n• Coco — อบอุ่นมากค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ' });
+    assert.equal(films.replyText, `Interstellar ไซไฟอลังการ\nParasite ระทึก พลิกโผ\n\n${STEER}`);
     // The router may file a food question under its social route; the composer's mark still decides.
     const recipe = await general('ขอสูตรต้มยำกุ้งหน่อย', 'ADVISOR_CONVERSATION', { topic: 'other', text: 'ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ' });
     assert.equal(recipe.replyText, `ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ\n\n${STEER}`);
