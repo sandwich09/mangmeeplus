@@ -1,4 +1,4 @@
-import { lineReplyLanguage, lineChatAction, lineCustomerWording } from '@watchdog-bms/contracts';
+import { lineReplyLanguage, lineChatAction, lineCustomerWording, expenseEvidenceImageMissing, expenseEvidenceAssessment, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, scrubRecordText, type ExpenseEvidenceSource } from '@watchdog-bms/contracts';
 export function lineCustomerText(value: string): string {
   const ids = /\bc[a-z0-9]{24}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/iu;
   return lineCustomerWording(value.replace(/https?:\/\/[^\s]*\/companies\/[^\s]+/gu, uri => ids.test(uri) ? '' : uri)
@@ -14,6 +14,12 @@ export function lineCustomerVisibleText<T>(value: T): T {
 }
 export type LineReplyLanguage = 'th' | 'en';
 export { lineReplyLanguage };
+
+export function lineExpenseEvidenceNotes(source: Pick<ExpenseEvidenceSource, 'aiVerificationSummaryJson' | 'attachments'>, language: LineReplyLanguage = 'th'): string[] {
+  if (!expenseEvidenceImageMissing(source)) return [];
+  const note = scrubRecordText(expenseEvidenceAssessment(source)?.note, 200);
+  return [lineUiLabel(EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, language), ...(note ? [`${language === 'en' ? 'Note' : 'หมายเหตุ'}: ${note}`] : [])];
+}
 /** Presentation metadata only; strip it before passing a control to its strict domain parser. */
 export function lineControlLanguage(data: string | undefined): { data: string | undefined; language?: LineReplyLanguage } {
   if (!data) return { data };
@@ -31,6 +37,7 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 }
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
+  [EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL]: 'Document image not attached', 'ส่งรูปเอกสาร': 'Send document photo',
   'บันทึกค่าใช้จ่าย': 'Record expense', 'สร้างใบเบิก': 'Create claim', 'ค้นหาค่าใช้จ่าย': 'Find expenses',
   'ดูใบเบิกรออนุมัติ': 'Review claims', 'เพิ่มคู่ค้า': 'Add counterparty', 'เลือกแพ็กเกจ': 'Choose package', 'ดูยอดขาย': 'View sales', 'ค้นหาสินค้า': 'Find products',
   'ค่าเดินทาง': 'Travel', 'ค่าน้ำมัน': 'Fuel', 'ค่าออฟฟิศ': 'Office', 'ค่าใช้จ่ายอื่นๆ': 'Other expenses',

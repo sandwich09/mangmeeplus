@@ -19,14 +19,16 @@ export function buildExpenseActionCard(preview: ExpenseActionPreview, reply?: st
       label: i === 0 ? preview.evidenceReview ? lineUiLabel('ตรวจแล้ว ยืนยัน', language) : actionLabel : lineUiLabel('ไม่ทำ', language),
       data: language === 'en' ? lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) : new URLSearchParams({ action, token: preview.token }).toString() },
   }));
+  const imageButton = preview.documentImageUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: lineUiLabel('ส่งรูปเอกสาร', language), uri: preview.documentImageUrl } }] : [];
   return asCompleteLineCard({ type: 'flex', altText: lines[0]!, canonicalText: lines.join('\n'), contents: { type: 'bubble',
     body: { type: 'box', layout: 'vertical', spacing: 'md', contents: lines.map((text, i) => ({ type: 'text', text, wrap: true, ...(i === 0 ? { weight: 'bold' } : {}) })) },
-    ...(reply && (preview.certificates?.length || preview.offerWht || preview.offerPayment || preview.offerNext) ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+    ...(reply && (preview.certificates?.length || preview.offerWht || preview.offerPayment || preview.offerNext || imageButton.length) ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       ...(preview.certificates ?? []).map(cert => ({ type: 'button', style: 'primary', action: { type: 'uri', label: lineUiLabel('ดู / ดาวน์โหลด 50 ทวิ', language), uri: cert.uri } })),
       ...(preview.offerNext ? [{ type: 'button', style: 'primary', action: { type: 'postback', label: lineUiLabel(EXPENSE_ACTION_LABELS[preview.offerNext], language), data: language === 'en' ? lineControlData(new URLSearchParams({ action: 'expense_action_next', token: preview.token }).toString(), language) : new URLSearchParams({ action: 'expense_action_next', token: preview.token }).toString() } }] : []),
       ...(preview.offerPayment ? [{ type: 'button', style: 'primary', action: { type: 'postback', label: lineUiLabel('บันทึกจ่าย', language), data: language === 'en' ? lineControlData(new URLSearchParams({ action: 'expense_action_payment', token: preview.token }).toString(), language) : new URLSearchParams({ action: 'expense_action_payment', token: preview.token }).toString() } }] : []),
       ...(preview.offerWht ? [{ type: 'button', style: 'primary', action: { type: 'postback', label: lineUiLabel('ออก 50 ทวิ', language), data: language === 'en' ? lineControlData(new URLSearchParams({ action: 'expense_action_wht', token: preview.token }).toString(), language) : new URLSearchParams({ action: 'expense_action_wht', token: preview.token }).toString() } }] : []),
+      ...imageButton,
     ] } } : {}),
-    ...(!reply ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: buttons } } : {}),
+    ...(!reply ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [...buttons, ...imageButton] } } : {}),
   } });
 }
