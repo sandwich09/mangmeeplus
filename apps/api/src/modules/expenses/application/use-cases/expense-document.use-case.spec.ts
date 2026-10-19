@@ -23,6 +23,16 @@ function ctx(permissions: string[], authProvider: 'watchdog' | 'line' = 'watchdo
 }
 
 describe('CaptureLineExpenseNoteUseCase', () => {
+  it('UAT2 W1: description-only text never creates a junk expense, even with invented money/date hints', async () => {
+    const { repo } = makeRepo();
+    const capture = new CaptureLineExpenseNoteUseCase(repo, { execute: async () => assert.fail('no new expense') } as any, audit, outbox);
+    for (const draftConversationEnabled of [true, false]) for (const messageText of ['ค่าอาหาร', 'ซื้อกระดาษมาใช้ที่ออฟฟิศ']) {
+      await assert.rejects(() => capture.execute(ctx(['expense.create'], 'line'), {
+        messageText, captureHints: { description: messageText, amount: '1388', expenseDate: '2026-10-17', confidence: 1 },
+        draftConversationEnabled, semanticBusinessExpenseConfirmed: true, lineMessageId: 'no-junk', lineEventId: 'no-junk',
+      }), LineTextExpenseCaptureIncompleteError);
+    }
+  });
   it('Fix-up 24 D4: exact C05 source reaches real draft creation with 300 baht WHT and rejects conflicting rates before creation', async () => {
     const { CreateExpenseDraftUseCase } = await import('./expense-draft.use-case');
     const { readFileSync } = await import('node:fs');
@@ -526,19 +536,16 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(calls.length, 0);
   });
 
-  it('allows an amount from the exact clarification request after the user supplies its purpose', async () => {
+  it('UAT2 W1: a purpose-only clarification cannot open a new expense from an earlier request amount', async () => {
     const { repo } = makeRepo();
-    const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
-    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async () => assert.fail('continue or clarify the task without creating a junk expense') } as any, audit, outbox);
+    await assert.rejects(() => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
       draftConversationEnabled: true,
       messageText: 'เป็นค่าเดินทาง',
       groundingTexts: ['ยอด 200 บาท'],
       captureHints: { confidence: 0.9, amount: '200', description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel' },
       lineMessageId: 'msg-follow-up', lineEventId: 'evt-follow-up',
-    });
-    assert.equal(result.insertedAmount, null);
-    assert.equal(result.categoryId, null);
-    assert.match(result.replyTexts.join('\n'), /วันไหนคะ/u);
+    }), LineTextExpenseCaptureIncompleteError);
   });
 
   it('is idempotent by LINE message id', async () => {
