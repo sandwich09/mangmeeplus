@@ -5307,6 +5307,37 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     return messages;
   }
 
+  /** The current claim question owns a plain answer after metered intake, including a mistaken general route. */
+  private async continueReimbursementQuestion(event: LineTextEvent, ctx: RequestContext, routePlan: GovernedLineIntakeRoutePlan,
+    candidates: Awaited<ReturnType<ProcessLineWebhookUseCase['textValueCandidates']>>): Promise<boolean> {
+    const text = event.messageText.trim();
+    const claimOwner = this.boundConversations.get(event);
+    if (claimOwner && !event.reimbursementChoiceControl && text !== 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้'
+      && this.budgetGrantsV2.has(event) && event.inputEvidence && routePlan.status === 'ROUTED'
+      && candidates?.amounts.length === 0 && (routePlan.semanticSubrequests?.length ?? 0) <= 1
+      && (routePlan.semanticSubrequests ?? []).every(item => ['write', 'general', 'help'].includes(item.kind))) {
+      if (/^ให้ทำใบเบิกไม่ใช่(?:หรอ|เหรอ|หรือ)(?:คะ|ค่ะ)?[?？]?$/u.test(text)) {
+        const active = await this.reimbursementDrafts?.active({ ctx, owner: claimOwner.owner, ownerEpoch: claimOwner.epoch });
+        if (active) {
+          const current = await this.reimbursementDrafts.get({ ctx, owner: claimOwner.owner,
+            ownerEpoch: claimOwner.epoch, actionId: active.id });
+          await this.deliverReimbursementCollection(event, ctx, current);
+          await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+          return true;
+        }
+      }
+      const answer = await this.reimbursementAdapter?.answerReason?.({ ctx, owner: claimOwner.owner,
+        ownerEpoch: claimOwner.epoch, evidence: event.inputEvidence, text,
+        purposeFallback: !routePlan.semanticSubrequests?.some(item => item.taskRef) });
+      if (answer) {
+        await this.deliverReimbursementCollection(event, ctx, answer);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** This handler is reached only after verified identity, current company/member/legal admission. */
   private async deliverReimbursementCollection(event: LineTextEvent | LineReceiptUploadEvent, ctx: RequestContext,
     result: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftResult) {
@@ -6947,6 +6978,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
           ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_TRANSIENT_REPLY) : (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_UNCLEAR_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY));
         await this.updateEventLog(event.webhookEventId, 'provider_unavailable', semanticRoutePlan.errorCode ?? 'AI_CONTRACT_UNSUPPORTED', companyId); return;
       }
+      if (await this.continueReimbursementQuestion(event, expenseDraftCtx, semanticRoutePlan, candidates)) return;
       if (this.paymentEvidence && (semanticRoutePlan.intent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'
         || semanticRoutePlan.semanticSubrequests?.some(item => item.writeIntent === 'EXPENSE_PAYMENT_EVIDENCE_LINK'))) {
         await this.handlePaymentEvidenceText(event, expenseDraftCtx); return;
@@ -7589,21 +7621,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
-    const claimOwner = this.boundConversations.get(event);
-    if (claimOwner && this.budgetGrantsV2.has(event) && event.inputEvidence && routePlan.status === 'ROUTED'
-      && (routePlan.semanticOutcome === 'REIMBURSEMENT_CLAIM' || routePlan.semanticOutcome === 'AMBIGUOUS'
-        || valueCandidates?.amounts.length === 0)
-      && ['EXPENSE_DRAFT_CONTINUATION', 'REIMBURSEMENT_REQUEST_START', 'CLARIFY', 'EXPENSE_DOCUMENT_CAPTURE'].includes(routePlan.intent)
-      && (routePlan.semanticSubrequests ?? []).every(item => item.kind === 'write')) {
-      const answer = await this.reimbursementAdapter?.answerReason?.({ ctx: expenseDraftCtx, owner: claimOwner.owner,
-        ownerEpoch: claimOwner.epoch, evidence: event.inputEvidence, text: normalizedText,
-        purposeFallback: !routePlan.semanticSubrequests?.some(item => item.taskRef) });
-      if (answer) {
-        await this.deliverReimbursementCollection(event, expenseDraftCtx, answer);
-        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
-        return;
-      }
-    }
+    if (!semanticRoutePlan && await this.continueReimbursementQuestion(event, expenseDraftCtx, routePlan, valueCandidates)) return;
     // A history-only continuation must not survive as a semantic write in the gateway either.
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION'
       && expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation?.answersOpenDraft

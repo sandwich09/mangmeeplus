@@ -307,6 +307,8 @@ export function collectLineExpenseDraftQuestions(
 export function isLineExpenseDraftStartEligible(messageText: string, hints?: LineIntakeCaptureHints, semanticBusinessExpenseConfirmed = false): boolean {
   if ((hints?.confidence ?? 0) < 0.6) return false;
   if (isClearlyNonExpenseDirection(messageText)) return false;
+  const source = extractValueCandidates(messageText, todayCivilDate('Asia/Bangkok'));
+  if (!source.amounts.length && !source.dates.length && !source.periods?.some(period => period.kind === 'day')) return false;
   if (semanticBusinessExpenseConfirmed && groundedNumber(messageText, hints?.amount, true)) return true;
   if (!/(ซื้อ|จ่าย|ชำระ|ค่า(?:ใช้จ่าย)?|บิล|ใบเสร็จ|expense|paid|purchase)/iu.test(messageText)) return false;
   return Boolean(hints?.items?.length

@@ -191,19 +191,28 @@ export class LineReimbursementDraftAdapterService {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     // The persisted preview owns a plain answer even when intake omitted its continuation hint.
     const value = input.text.trim();
-    if (input.purposeFallback && active?.status === 'PREVIEW' && value && value.length <= 2000 && !/[?？\n]/u.test(value)
-      && !/^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ)/u.test(value)
-      && (await extractValueCandidatesV2(input.evidence, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })))?.amounts.length === 0)
+    if (!value || value.length > 2000 || /[?？\n]/u.test(value)
+      || /^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ)/u.test(value)
+      // A Thai question rarely carries "?": a question to the bot is never the claim's reason.
+      || /(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value)
+      || (await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok')))?.amounts.length !== 0) return null;
+    if (input.purposeFallback && active?.status === 'PREVIEW')
       return this.answerPurpose(input, active, value);
     const accepted = active && this.accepted(active);
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
       || Date.parse(accepted.options.expiresAt) <= Date.now() || accepted.awaitingPhoto) return null;
-    const missingReceiptReason = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths?.includes('fields.missingReceiptReason');
+    const fields = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths ?? [];
+    const missingReceiptReason = fields.includes('fields.missingReceiptReason');
     const view = this.publicOptions(accepted.options, accepted.proposal);
-    if ((!view.reasonQuestion && !missingReceiptReason) || !view.collection.receiptChosen || !view.collection.categoryChosen) return null;
     const part = input.evidence.parts.length === 1 ? input.evidence.parts[0] : undefined;
-    if (!part || part.rawText.trim() !== value || !value || value.length > 2000 || /[?？\n]/u.test(value)
-      || /^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ)/u.test(value)) return null;
+    if (!part || part.rawText.trim() !== value) return null;
+    if (view.collection.receiptChosen && !view.collection.categoryChosen) {
+      const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === value.replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, ''));
+      return categories.length === 1 ? this.choose({ ...input, control: { action: 'reimbursement_choice',
+        ...view.control, choice: categories[0]!.choiceId } }) : this.draftService.get({ ...input, actionId: active.id });
+    }
+    if ((!view.reasonQuestion && !fields.includes('fields.reason') && !missingReceiptReason)
+      || !view.collection.receiptChosen || !view.collection.categoryChosen) return null;
     const start = part.rawText.indexOf(value);
     const field = missingReceiptReason ? 'missingReceiptReason' : 'reason';
     const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId,
@@ -879,8 +888,10 @@ export class LineReimbursementDraftAdapterService {
       revision: options.revision, selected: options.selected,
       ...(options.nonEditableTargets ? { nonEditableTargets: options.nonEditableTargets.map(({ requestId: _requestId, revision: _revision, ...target }) => target) } : {}),
       choices: options.choices.map(({ raw: _raw, ...choice }) => choice), pages: options.pages,
-      ...(proposal?.operation === 'CREATE' && !proposal.fields.reason && lines.length === 1 && lines[0]!.values.description && lines[0]!.values.amount
-        ? { reasonQuestion: `ขอเหตุผลการเบิก${lines[0]!.values.description.value.split('\n')[0]} ${formatClaimMoney(lines[0]!.values.amount.value, 'THB').replace(/\.00(?= บาท$)/u, '')}สั้นๆ ค่ะ` } : {}),
+      ...(proposal?.operation === 'CREATE' && !proposal.fields.reason && lines.length === 1
+        ? lines[0]!.values.linkedExpenseChoiceId ? { reasonQuestion: 'เหตุผลการเบิกบิลนี้คืออะไรคะ' }
+          : lines[0]!.values.description && lines[0]!.values.amount
+            ? { reasonQuestion: `ขอเหตุผลการเบิก${lines[0]!.values.description.value.split('\n')[0]} ${formatClaimMoney(lines[0]!.values.amount.value, 'THB').replace(/\.00(?= บาท$)/u, '')}สั้นๆ ค่ะ` } : {} : {}),
       collection: { lineChosen: lines.length > 0, receiptChosen: lines.length > 0 && lines.every(line =>
         !!line.values.linkedExpenseChoiceId || line.values.attachmentChoiceId !== undefined),
         categoryChosen: lines.length > 0 && lines.every(line => !!line.values.linkedExpenseChoiceId || !!line.values.categoryChoiceId) },

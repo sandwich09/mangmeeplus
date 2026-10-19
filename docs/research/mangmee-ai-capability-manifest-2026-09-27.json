@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "360908871545432de575fed87ac4d6272eeb2e39",
-  "checkoutBranch": "claude/line-uat-fixes-20261019",
+  "sourceRevision": "99986d82330eaed91ae91f6e6cbd830400e1c08b",
+  "checkoutBranch": "claude/line-uat2-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -137,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "fed5355b8d2f3d0357957205d214e0f0898b9e4667ea015f25fc1bbf82d0394e"
+      "sha256": "bde8fdfa9aeea40dda37e43f5e23bf9db1b868268d30ade18253346e30af1fe1"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T06:43:19.965Z",
-  "manifestDigest": "7ee08767878e0d9dff3eaa70027039e5949bb1be3dab89e3bde27bdd175338f1"
+  "generatedAt": "2026-10-19T08:42:07.180Z",
+  "manifestDigest": "f2623df6ae08ca4482050009d1efbf06499842fdd302d0b85c0f014f81210ec3"
 }

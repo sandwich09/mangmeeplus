@@ -1,0 +1,181 @@
+{
+  "origin": "Offline synthetic request, real IntentRouterAgent.routeIntake payload builder; no provider dispatched. Token usage is owner-supplied UAT range, bytes measured locally.",
+  "fxThbPerUsd": 33,
+  "scenarios": [
+    {
+      "recentTurnCount": 0,
+      "systemPromptBytes": 56222,
+      "cacheableContextBytes": 26077,
+      "dynamicPayloadBytes": 6532,
+      "dynamicPayloadUtf16Chars": 5410,
+      "dynamicFields": {
+        "messageText": 40,
+        "inputEvidenceParts": 299,
+        "locale": 13,
+        "attachments": 16,
+        "permissions": 2050,
+        "enabledFeatures": 380,
+        "activeCategories": 299,
+        "chatActions": 3151,
+        "valueCandidates": 274
+      },
+      "conversationFields": {},
+      "inputTokenBound": 97280,
+      "maxOutputTokens": 4096,
+      "renderedReservationThb": 14.07
+    },
+    {
+      "recentTurnCount": 4,
+      "systemPromptBytes": 56222,
+      "cacheableContextBytes": 26077,
+      "dynamicPayloadBytes": 9064,
+      "dynamicPayloadUtf16Chars": 7682,
+      "dynamicFields": {
+        "messageText": 40,
+        "inputEvidenceParts": 299,
+        "locale": 13,
+        "attachments": 16,
+        "permissions": 2050,
+        "enabledFeatures": 380,
+        "activeCategories": 299,
+        "chatActions": 3151,
+        "conversationContext": 1253,
+        "readContextCandidates": 452,
+        "taskProjection": 687,
+        "resumableTaskRefs": 136,
+        "valueCandidates": 274
+      },
+      "conversationFields": {
+        "windowMinutes": 2,
+        "maxTurns": 2,
+        "lastTurnAt": 24,
+        "recentTurns": 875,
+        "recentReads": 252
+      },
+      "inputTokenBound": 100352,
+      "maxOutputTokens": 4096,
+      "renderedReservationThb": 14.45
+    },
+    {
+      "recentTurnCount": 15,
+      "systemPromptBytes": 56222,
+      "cacheableContextBytes": 26077,
+      "dynamicPayloadBytes": 12742,
+      "dynamicPayloadUtf16Chars": 10995,
+      "dynamicFields": {
+        "messageText": 40,
+        "inputEvidenceParts": 299,
+        "locale": 13,
+        "attachments": 16,
+        "permissions": 2050,
+        "enabledFeatures": 380,
+        "activeCategories": 299,
+        "chatActions": 3151,
+        "conversationContext": 3650,
+        "readContextCandidates": 1733,
+        "taskProjection": 687,
+        "resumableTaskRefs": 136,
+        "valueCandidates": 274
+      },
+      "conversationFields": {
+        "windowMinutes": 2,
+        "maxTurns": 2,
+        "lastTurnAt": 24,
+        "recentTurns": 3272,
+        "recentReads": 252
+      },
+      "inputTokenBound": 104448,
+      "maxOutputTokens": 4096,
+      "renderedReservationThb": 14.96
+    }
+  ],
+  "v2Profiles": {
+    "line-intake-text/2": {
+      "maxInputTokens": 160000,
+      "maxOutputTokens": 4096,
+      "maxCalls": 2,
+      "sonnetPerCallThb": 21.83,
+      "haikuPerCallThb": 1.76
+    },
+    "line-intake-image/2": {
+      "maxInputTokens": 160000,
+      "maxOutputTokens": 8000,
+      "maxCalls": 2,
+      "sonnetPerCallThb": 23.76,
+      "haikuPerCallThb": 1.92
+    },
+    "line-control/2": {
+      "maxInputTokens": 160000,
+      "maxOutputTokens": 2048,
+      "maxCalls": 3,
+      "sonnetPerCallThb": 20.82,
+      "haikuPerCallThb": 1.67
+    },
+    "line-answer/2": {
+      "maxInputTokens": 160000,
+      "maxOutputTokens": 4096,
+      "maxCalls": 2,
+      "sonnetPerCallThb": 21.83,
+      "haikuPerCallThb": 1.76
+    },
+    "document-qa/2": {
+      "maxInputTokens": 160000,
+      "maxOutputTokens": 8192,
+      "maxCalls": 2,
+      "sonnetPerCallThb": 23.86,
+      "haikuPerCallThb": 1.93
+    },
+    "public-lookup/2": {
+      "maxInputTokens": 32000,
+      "maxOutputTokens": 4096,
+      "maxCalls": 1,
+      "hostedToolUnits": 2,
+      "sonnetPerCallThb": 5.99,
+      "haikuPerCallThb": 0.49
+    }
+  },
+  "legacyProfiles": {
+    "line-intake-text": {
+      "maxInputTokens": 20000,
+      "maxOutputTokens": 1500,
+      "maxCalls": 1,
+      "sonnetPerCallThb": 3.22,
+      "haikuPerCallThb": 0.26
+    },
+    "line-intake-image": {
+      "maxInputTokens": 30000,
+      "maxOutputTokens": 8000,
+      "maxCalls": 2,
+      "sonnetPerCallThb": 7.68,
+      "haikuPerCallThb": 0.63
+    },
+    "line-turn": {
+      "maxInputTokens": 40000,
+      "maxOutputTokens": 1024,
+      "maxCalls": 16,
+      "sonnetPerCallThb": 5.46,
+      "haikuPerCallThb": 0.44
+    },
+    "receipt-ocr": {
+      "maxInputTokens": 30000,
+      "maxOutputTokens": 8192,
+      "maxCalls": 8,
+      "sonnetPerCallThb": 7.77,
+      "haikuPerCallThb": 0.64
+    },
+    "receipt-capture-read": {
+      "maxInputTokens": 30000,
+      "maxOutputTokens": 8192,
+      "maxCalls": 1,
+      "sonnetPerCallThb": 7.77,
+      "haikuPerCallThb": 0.64
+    },
+    "receipt-capture-extract": {
+      "maxInputTokens": 30000,
+      "maxOutputTokens": 8192,
+      "maxCalls": 1,
+      "sonnetPerCallThb": 7.77,
+      "haikuPerCallThb": 0.64
+    }
+  }
+}
