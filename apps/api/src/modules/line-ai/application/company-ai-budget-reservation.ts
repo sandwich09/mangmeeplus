@@ -341,7 +341,7 @@ export async function reserveAiBudgetStep(
   const ownerToken = randomUUID();
 
   try {
-    return await prisma.client.$transaction(async (tx: any) => {
+    const result = await prisma.client.$transaction(async (tx: any) => {
       // Canonical lock order (spec §12.7): company config -> platform (only when this company
       // inherits the default, see `resolveBudgetUnderLock`) -> company-month budget. The config
       // lock is shared with the admin writer, so a cap change and an admission can never pass each
@@ -440,6 +440,16 @@ export async function reserveAiBudgetStep(
         },
       };
     });
+    if (result.ok) {
+      const snapshot = priced.snapshot as typeof priced.snapshot & Record<string, unknown>;
+      // The reserve contract carries a profile, not the provider tag; settlement logs the actual tag.
+      try {
+        logger.log({ msg: 'ai.budget.reserved', companyId: input.companyId, reservationId: result.reservation.id,
+          profileId: snapshot.profileId ?? null, usageTag: snapshot.usageTag ?? null, estimatorVersion: snapshot.estimatorVersion ?? null,
+          inputTokenBound: bounds.maxInputTokens, outputBound: bounds.maxOutputTokens, holdSatang: result.reservation.upperBoundSatang });
+      } catch { /* Observability cannot change a committed reservation. */ }
+    }
+    return result;
   } catch (err) {
     // Ids and counters only: this runs on the money path and must never log a prompt or a cap.
     logger.warn({ msg: 'ai.budget.reserve_failed', companyId: input.companyId, monthKey: input.monthKey,
@@ -820,6 +830,7 @@ export async function settleAiBudgetStep(
   // not non-negative safe integers must never reach pricing or an aggregate.
   if (!isMeterableEntry(input.entry)) return 'invalid-evidence';
   const now = input.now ?? new Date();
+  let settledLog: Record<string, unknown> | undefined;
   let breach: { companyId: string; monthKey: string; bucket: string; reservationId: string; boundSatang: number; actualSatang: number; customerChargedSatang: number; companyAbsorbedSatang: number } | undefined;
   let anomaly: { companyId: string; monthKey: string; bucket: string; reservationId: string; invariant: string } | undefined;
   try {
@@ -971,10 +982,17 @@ export async function settleAiBudgetStep(
         anomaly = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
           reservationId: reservation.id, invariant: `evidence_for_${String(reservation.status).toLowerCase()}_hold` };
       }
+      settledLog = { msg: 'ai.budget.settled', reservationId: reservation.id, usageTag: input.entry.tag, settledSatang: costSatang,
+        holdSatang: reservation.upperBoundSatang, inputTokens: input.entry.inputTokens,
+        cacheReadInputTokens: input.entry.cacheReadInputTokens, cacheWriteInputTokens: input.entry.cacheWriteInputTokens,
+        outputTokens: input.entry.outputTokens, overrun: breached, customerChargedSatang, companyAbsorbedSatang };
       return anomalous ? 'settled-anomaly' as const : 'settled' as const;
     });
     // Post-commit, the `admitCompanyOcr` precedent: an observability write must never abort a
     // settlement that already holds the money truthfully.
+    if (settledLog) {
+      try { logger.log(settledLog); } catch { /* Observability cannot change a committed settlement. */ }
+    }
     if (breach) emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', { ...breach, invariant: 'actual_above_reserved_bound' });
     if (anomaly) emitSecurityEvent(logger, SECURITY_EVENT.aiCompanyBudgetExceeded, 'HIGH', anomaly);
     return result;

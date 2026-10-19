@@ -113,7 +113,7 @@ export const draftUpdateBlockedState = lineDraftUpdateBlockedState;
 /** The proposal on the locked design: the record, every change, the new total in the cream row, and
  *  the two buttons side by side. Same facts, same order of meaning and same postbacks as before.
  *  `undefined` where the design cannot be drawn so that LINE accepts it; the card it had before is sent. */
-function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string | undefined): Record<string, unknown> | undefined {
+function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string | undefined, language: LineReplyLanguage = 'th'): Record<string, unknown> | undefined {
   const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
   const rows: LineSystemCardRow[] = [
     { label: 'ผู้ขาย', value: scrubRecordText(preview.record.vendorName, 40) || 'ไม่ระบุผู้ขาย' },
@@ -125,16 +125,26 @@ function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string | und
       ? [{ label: 'ยอดรวมใหม่', value: money(preview.totalsAfter.grandTotalAmount), total: true }, { label: 'ยอดรวมเดิม', value: money(preview.totalsBefore.grandTotalAmount) }]
       : [{ label: 'ยอดรวม', value: `${money(preview.totalsAfter.grandTotalAmount)} (ไม่เปลี่ยน)`, total: true }]),
   ];
+  const en = language === 'en';
+  if (en) {
+    rows.splice(0, rows.length,
+      ...(preview.record.vendorName?.trim() ? [{ label: 'Seller', value: scrubRecordText(preview.record.vendorName, 40) }] : []),
+      { label: 'Document date', value: lineDisplayDate(preview.record.expenseDate, language) },
+      { label: 'Status', value: lineUiLabel(preview.record.statusLabel, language) },
+      ...preview.diff.map(entry => ({ label: englishDiffLabel(entry), value: `${entry.before === null ? 'Not provided' : entry.kind === 'date' ? lineDisplayDate(entry.before, language) : entry.kind === 'money' ? money(entry.before) : lineUiLabel(cell(entry.before, entry.kind), language)} → ${entry.after === null ? 'Not provided' : entry.kind === 'date' ? lineDisplayDate(entry.after, language) : entry.kind === 'money' ? money(entry.after) : lineUiLabel(cell(entry.after, entry.kind), language)}` })),
+      { label: totalChanged ? 'New total' : 'Total', value: money(preview.totalsAfter.grandTotalAmount), total: true },
+      ...(totalChanged ? [{ label: 'Previous total', value: money(preview.totalsBefore.grandTotalAmount) }] : []));
+  }
   return drawLineSystemCard({
     // A record with no state or date on it has no such row; an empty cell is never drawn.
-    mascot: 'general', header: draftUpdateCardHeader('preview'), rows: rows.filter((row) => row.value.trim()),
-    notes: preview.warnings.map((warning) => `⚠️ ${scrubRecordText(warning, 160)}`),
-    footnotes: [LINE_DRAFT_UPDATE_CONFIRM_HINT],
+    mascot: 'general', header: en ? { lines: ['Expense changes', 'Review changes'] } : draftUpdateCardHeader('preview'), rows: rows.filter((row) => row.value.trim()),
+    notes: preview.warnings.map((warning) => `⚠️ ${lineUiLabel(scrubRecordText(warning, 160), language)}`),
+    footnotes: [en ? 'Nothing has been changed; review before confirming.' : LINE_DRAFT_UPDATE_CONFIRM_HINT],
     // SEC-04: the opaque id binds this button to this card; the server still rechecks the
     // current preview, user/chat binding, record revision, permissions and status.
     choice: [
-      { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
-      { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CANCEL_COMMAND },
+      { type: 'postback', label: en ? 'Confirm changes' : 'ยืนยัน', data: lineControlData('action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), language), displayText: en ? 'Confirm expense changes' : DRAFT_UPDATE_CONFIRM_COMMAND },
+      { type: 'postback', label: en ? 'Cancel changes' : 'ยกเลิก', data: lineControlData('action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), language), displayText: en ? 'Cancel expense changes' : DRAFT_UPDATE_CANCEL_COMMAND },
     ],
   }, webBaseUrl);
 }
@@ -152,6 +162,7 @@ function englishDiffLabel(entry: LineDraftUpdateDiffField): string {
 }
 
 export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, webBaseUrl?: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
+  const en = language === 'en';
   if (language === 'en') {
     const value = (value: string | null, kind: LineDraftUpdateDiffField['kind']) => value === null ? 'Not provided' : kind === 'date'
       ? lineDisplayDate(value, language) : kind === 'money' ? money(value) : kind === 'plain' ? lineUiLabel(cell(value, kind), language) : cell(value, kind);
@@ -160,6 +171,8 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, web
       `Date: ${lineDisplayDate(preview.record.expenseDate, language)}`, `Status: ${lineUiLabel(preview.record.statusLabel, language)}`, ...changes,
       `Previous total: ${money(preview.totalsBefore.grandTotalAmount)} → New total: ${money(preview.totalsAfter.grandTotalAmount)}`,
       ...preview.warnings.map(warning => lineUiLabel(scrubRecordText(warning, 1000), language)), 'Nothing has been changed; review the details before confirming.'];
+    const designed = previewBubble(preview, webBaseUrl, language);
+    if (designed) return { type: 'flex', altText: lineMessagePreview(lines.join(' '), 400), canonicalText: lines.join('\n'), contents: designed };
     return { type: 'flex', altText: lineMessagePreview(lines.join(' '), 400), canonicalText: lines.join('\n'), contents: { type: 'bubble',
       body: { type: 'box', layout: 'vertical', contents: lines.map(text => ({ type: 'text', text, wrap: true })) },
       footer: { type: 'box', layout: 'horizontal', contents: [['draft-update-confirm', 'Confirm changes'], ['draft-update-cancel', 'Cancel changes']].map(([action, label]) => ({
@@ -244,12 +257,12 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, web
             type: 'button',
             style: 'primary',
             color: '#22C55E',
-            action: { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
+            action: { type: 'postback', label: en ? 'Confirm changes' : 'ยืนยัน', data: lineControlData('action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), language), displayText: en ? 'Confirm expense changes' : DRAFT_UPDATE_CONFIRM_COMMAND },
           },
           {
             type: 'button',
             style: 'secondary',
-            action: { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CANCEL_COMMAND },
+            action: { type: 'postback', label: en ? 'Cancel changes' : 'ยกเลิก', data: lineControlData('action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), language), displayText: en ? 'Cancel expense changes' : DRAFT_UPDATE_CANCEL_COMMAND },
           },
         ],
       },

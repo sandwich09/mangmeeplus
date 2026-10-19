@@ -160,17 +160,17 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
     assert.match(closed, /วันทำการถัดไป/);
   });
 
-  it('names the trial only for the trial tier (G-05, §15.1)', () => {
+  it('keeps the monthly credit refusal concise for trial and paid shops (G-05)', () => {
     const trial = JSON.stringify(buildAiBudgetExceededMessage(true, undefined, true));
-    assert.match(trial, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
-    assert.match(trial, /ช่วงทดลอง/);
-    assert.match(trial, /ขอเปลี่ยนแพ็กเกจ/);
+    assert.match(trial, /เครดิต AI เดือนนี้หมดแล้ว/);
+    assert.doesNotMatch(trial, /ช่วงทดลอง/);
+    assert.match(trial, /เปลี่ยนแพ็กเกจ/);
     // The reply this replaces; sending it here is the bug G-05 names.
     assert.equal(trial.includes('กำลังประมวลผลข้อความก่อนหน้า'), false);
 
     const paid = JSON.stringify(buildAiBudgetExceededMessage(false, undefined, true));
     assert.equal(paid.includes('ช่วงทดลอง'), false, 'a paying shop is never told it is on a trial');
-    assert.match(paid, /ขอเปลี่ยนแพ็กเกจ/);
+    assert.match(paid, /เปลี่ยนแพ็กเกจ/);
   });
 
   it('maps only the monthly-budget 429 away from the congestion reply', () => {
