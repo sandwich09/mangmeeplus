@@ -16,7 +16,7 @@ describe('reimbursement self-service entry', () => {
     assert.match(source, /canCreate=\{canCreate\}/);
     // The page's one green button, full width on a phone through the shared button group.
     assert.match(source, /actions=\{<div className="grid w-full auto-cols-fr grid-flow-col gap-3/);
-    assert.match(source, /canCreate && tab === 'mine' && <Link[^>]*className=\{btnClass\}>\+ สร้างใบเบิก<\/Link>/);
+    assert.match(source, /canCreate && <Link[^>]*className=\{btnClass\}>\+ สร้างใบเบิก<\/Link>/);
     assert.match(source, /description=\{canCreate \? [^\n]+ : REIMBURSEMENT_CREATE_UNAVAILABLE\}/);
     // Said once above the lists, as advice and not as an error, whichever list is open.
     assert.match(source, /\{!canCreate && <Notice tone="info">\{REIMBURSEMENT_CREATE_UNAVAILABLE\}<\/Notice>\}/);

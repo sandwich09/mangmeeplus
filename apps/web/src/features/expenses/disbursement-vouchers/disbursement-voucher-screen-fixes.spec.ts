@@ -123,6 +123,14 @@ test('expense and invoice numbers stay whole while the neighbouring date can mov
   assert.match(css, /\.rowIdentity, \.rowDescription \{ flex-wrap: wrap/);
   assert.match(css, /\.rowIdentity strong \{ flex-shrink: 0/);
 });
+test('an unnumbered expense starts its identity with the date and no separator', () => {
+  for (const expenseNumber of [null, '', '   ']) {
+    const html = render(DisbursementVoucherExpenseRows, { rows: [{ expenseId: 'e', expenseNumber, description: 'ค่าของ', expenseDate: '2026-09-23', outstandingAmount: '12', whtAmount: '0', selectable: true }], amounts: {}, onToggle: () => {} });
+    const identity = html.slice(html.indexOf('data-line="identity"'), html.indexOf('</label>')).replace(/<[^>]+>/g, '').replace(/^data-line="identity">/, '').trim();
+    assert.equal(identity, '23 ก.ย. 2569');
+  }
+});
+
 test('document numbers and line links stay unbroken in headers, list cards and tables', () => {
   const detail = source('./DisbursementVoucherDocumentPage.tsx'), list = source('./DisbursementVoucherListPage.tsx');
   assert.match(detail, /className="mangmee-unit">\{paid[\s\S]*?header.documentNumber/);

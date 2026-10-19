@@ -898,13 +898,16 @@ describe('CLAIM-STEPS controls belong to the active step', () => {
     assert.doesNotMatch(records, /type="file"|เซ็นใบเบิก|แนบใบที่เซ็นแล้ว/);
   });
   for (const who of ['signer', 'reader', 'paper', 'digital'] as const) {
-    it(`document offers two ways for ${who}, with only records below`, () => {
+    it(`document offers the remaining signing work for ${who}, with only records below`, () => {
       const { card, records } = activeCard(claimPage({ ...cashClaim, status: 'PAID', outstandingAmount: '0',
         documentSignedVia: who === 'paper' ? 'PAPER' : who === 'digital' ? 'DIGITAL' : null,
         signedCopies: who === 'paper' ? [{ attachmentId: 'copy', fileName: 'signed.pdf', acknowledgedAt: '2026-10-10', uploadedAt: '2026-10-10' }] : [],
       }, { userId: who === 'reader' ? ids.reader : ids.requester, permissions: [] }));
-      for (const text of ['เลือกวิธีใดวิธีหนึ่ง', 'เซ็นในระบบ', 'เซ็นบนกระดาษ', 'ถ่ายรูปหรือสแกน แล้วแนบที่นี่']) assert.ok(card.includes(text), text);
-      assert.equal(card.includes('แนบใบที่เซ็นแล้ว'), who !== 'reader');
+      if (who === 'digital') {
+        assert.match(card, /เซ็นในระบบครบแล้ว/); assert.match(card, /พิมพ์ใบเบิก/);
+        assert.doesNotMatch(card, /เลือกวิธีใดวิธีหนึ่ง|เซ็นบนกระดาษ|ถ่ายรูปหรือสแกน แล้วแนบที่นี่|แนบใบที่เซ็นแล้ว|type="file"/);
+      } else for (const text of ['เลือกวิธีใดวิธีหนึ่ง', 'เซ็นในระบบ', 'เซ็นบนกระดาษ', 'ถ่ายรูปหรือสแกน แล้วแนบที่นี่']) assert.ok(card.includes(text), text);
+      assert.equal(card.includes('แนบใบที่เซ็นแล้ว'), who !== 'reader' && who !== 'digital');
       assert.equal(card.includes('>เซ็นใบเบิก<'), who === 'signer');
       if (who === 'digital') assert.match(card, /เซ็นในระบบครบแล้ว/);
       if (who === 'paper') assert.match(card, /เซ็นบนกระดาษ/);

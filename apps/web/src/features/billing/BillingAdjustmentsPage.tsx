@@ -90,14 +90,21 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   async function open(kind:'invoice'|'receipt'|'pdf'|'credit-note',creditNoteId?:string) {
     if(preview) { preview.open(kind); return; }
     if(opening)return;const started=generation.current;setOpening(true);setError(null);
+    let documentTab: Window|null=null;
     try {
+      if(!admin){
+        // Reserve during the press, before awaiting the URL; Stripe must never get an opener.
+        documentTab=window.open('about:blank','_blank');
+        if(!documentTab){setError({title:'เปิดเอกสารไม่ได้',detail:'เปิดแท็บเอกสารไม่ได้ อนุญาตหน้าต่างใหม่แล้วกดเอกสารอีกครั้ง',kind:'popup'});return;}
+        documentTab.opener=null;
+      }
       const result=await authedApiFetch<{url:string}>(`${base}/documents/${encodeURIComponent(invoiceId)}/open`,{method:'POST',suppressErrorToast:true,
         headers:{'Content-Type':'application/json',...!admin?{'X-Company-Id':companyId}:{}},body:JSON.stringify({kind,...creditNoteId?{creditNoteId}:{}})});
-      if(started!==generation.current)return;
+      if(started!==generation.current){documentTab?.close();return;}
       const url=new URL(result.url);
       if(url.protocol!=='https:'||url.username||url.password||url.port||!['invoice.stripe.com','pay.stripe.com','payments.stripe.com'].includes(url.hostname))throw new Error('Unsafe document');
-      window.location.assign(url.href);
-    } catch(cause) {if(started===generation.current){if(admin)setData(null);setError(documentError(cause));}}
+      if(documentTab)documentTab.location.replace(url.href);else window.location.assign(url.href);
+    } catch(cause) {documentTab?.close();if(started===generation.current){if(admin)setData(null);setError(documentError(cause));}}
     finally{if(started===generation.current)setOpening(false);}
   }
   // R-D1: the customer sends this invoice (and, when the email changed, its receipt) to the recipient again.
@@ -113,7 +120,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   const hasAdjustments=!!invoice?.refundedSatang || !!data?.items.length || !!otherAdjustments?.items.length;
   const customerContent=<>
     {loading&&<p role="status">กำลังอ่านข้อมูล…</p>}
-    {error&&<section role="alert" className="space-y-3"><p>{error.kind==='access'?'บัญชีนี้เปิดเอกสารไม่ได้ กลับไปแพ็กเกจเพื่อเลือกรายการที่ดูได้':error.kind==='missing'?'ไม่พบรายการนี้ กลับไปแพ็กเกจเพื่อเลือกรายการอีกครั้ง':'อ่านข้อมูลการจ่ายเงินไม่ได้ ลองอีกครั้งหรือติดต่อทีมงานมั่งมี'}</p>
+    {error&&<section role="alert" className="space-y-3"><p>{error.kind==='access'?'บัญชีนี้เปิดเอกสารไม่ได้ กลับไปแพ็กเกจเพื่อเลือกรายการที่ดูได้':error.kind==='missing'?'ไม่พบรายการนี้ กลับไปแพ็กเกจเพื่อเลือกรายการอีกครั้ง':error.kind==='popup'?error.detail:'อ่านข้อมูลการจ่ายเงินไม่ได้ ลองอีกครั้งหรือติดต่อทีมงานมั่งมี'}</p>
       <ActionGroup align="start"><a className={secondaryButtonClass} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงานมั่งมี</a><button className={secondaryButtonClass} disabled={loading||opening} aria-busy={loading||opening} onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></ActionGroup></section>}
     {data&&<>
       {invoice&&<section aria-label="การจ่ายเงินนี้" className="mangmee-card space-y-5 p-5 sm:p-6">

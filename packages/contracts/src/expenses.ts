@@ -21,6 +21,12 @@ import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
 
 export const EXPENSE_STATUSES = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED'] as const;
 export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+/** A document may categorise goods individually; charges do not need their own category. */
+export function hasExpenseCategory(expense: { expenseCategoryId?: string | null; categoryName?: string | null; lines?: readonly { expenseCategoryId?: string | null; chargeKind?: string | null }[] }): boolean {
+  if (expense.expenseCategoryId || expense.categoryName?.trim()) return true;
+  const goods = expense.lines?.filter(line => !line.chargeKind) ?? [];
+  return goods.length > 0 && goods.every(line => Boolean(line.expenseCategoryId));
+}
 export type ExtractionStatus = 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED';
 export type ExpenseExtractionResult = {
   status: 'ok' | 'not_expense_document' | 'not_configured' | 'unsupported' | 'no_attachment' | 'failed';

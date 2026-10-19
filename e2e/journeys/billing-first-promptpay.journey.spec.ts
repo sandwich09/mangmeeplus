@@ -28,7 +28,7 @@ for (const width of [390, 1556]) for (const [mode, label] of [
     await chooser.getByRole('radio', { name: 'เลือก เริ่มต้น', exact: true }).check();
     await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     const methods = page.getByRole('region', { name: 'วิธีจ่าย', exact: true });
-    for (const name of ['ต่ออายุอัตโนมัติ', 'จ่ายครั้งเดียว', 'QR พร้อมเพย์', 'บัตร']) { const radio = methods.getByRole('radio', { name, exact: true }); await expect(radio).toBeVisible(); await expect(radio).toBeEnabled(); await expect(radio).not.toBeChecked(); }
+    for (const name of ['ต่ออายุอัตโนมัติ', 'จ่ายครั้งเดียว', 'QR พร้อมเพย์', 'บัตร']) { const radio = methods.getByRole('radio', { name, exact: true }); await expect(radio).toBeVisible(); await expect(radio).toHaveAttribute('aria-label', name); await expect(radio).toBeEnabled(); await expect(radio).not.toBeChecked(); }
     await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(methods.getByRole('alert')).toHaveText('เลือกวิธีจ่ายก่อน');
     expect(state.log.quotes).toHaveLength(0); expect(state.log.checkoutBodies).toHaveLength(0);
@@ -76,9 +76,21 @@ for (const width of [390, 1556]) for (const [mode, label] of [
     await page.getByRole('button', { name: 'ดูใบเสร็จรับเงิน', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/billing/invoices/${INVOICE}$`));
     await expect(page.getByRole('heading', { name: /^เริ่มต้น · / })).toBeVisible(AFTER_PRESS);
+    await page.route(`**/api/v1/companies/${companyId}/billing/documents/${INVOICE}/open`, route =>
+      route.fulfill({ json: { url: `https://invoice.stripe.com/journey-${route.request().postDataJSON().kind}` } }));
+    await page.context().route('https://invoice.stripe.com/journey-*', route => route.fulfill({ contentType: 'text/html', body: '<p>เอกสารการจ่ายเงิน</p>' }));
+    for (const [name, kind] of [['ใบเสร็จรับเงิน', 'receipt'], ['ใบแจ้งหนี้', 'pdf']]) {
+      const opened = page.waitForEvent('popup');
+      await page.getByRole('button', { name, exact: true }).click();
+      const document = await opened;
+      await expect(document).toHaveURL(`https://invoice.stripe.com/journey-${kind}`);
+      expect(await document.evaluate(() => window.opener === null)).toBe(true);
+      await expect(page).toHaveURL(new RegExp(`/billing/invoices/${INVOICE}$`));
+      await document.close();
+    }
     await page.getByRole('link', { name: 'กลับไปแพ็กเกจ', exact: true }).click();
     await expectInSight(page.getByRole('heading', { name: 'ประวัติและเอกสารการจ่ายเงิน', exact: true }));
-    const paidRow = page.locator('#billing-history').getByRole('link', { name: /เปิดรายการจ่ายเงิน NOSETUP-0001|^เริ่มต้น · รายเดือน/ });
+    const paidRow = page.locator('#billing-history').getByRole('link', { name: /^เปิดรายการจ่ายเงิน NOSETUP-0001 · เริ่มต้น · รายเดือน · 249\.00 บาท · .+ · จ่ายแล้ว$/ });
     await expect(paidRow).toHaveCount(1);
     await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toHaveCount(0);
     await paidRow.focus(); await paidRow.press('Enter');

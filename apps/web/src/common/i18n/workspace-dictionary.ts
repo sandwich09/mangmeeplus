@@ -1517,7 +1517,7 @@ export const workspaceDictionary = {
     'expenses.step_evidence_helper': 'ตรวจเอกสารและหลักฐาน แล้วกด “ถัดไป”',
     'expenses.step_review_helper': 'ดูสรุปอีกครั้ง แล้วส่งให้ตรวจ',
     'expenses.back_to_list': 'กลับไปรายการค่าใช้จ่าย',
-    'expenses.ai_prefill_complete': 'ข้อมูลพร้อมตรวจแล้ว — ตรวจทานให้ตรงกับใบเสร็จ',
+    'expenses.ai_prefill_complete': 'ข้อมูลพร้อมตรวจแล้ว ตรวจทานให้ตรงกับใบเสร็จ',
     'expenses.ai_prefill_partial': 'AI อ่านได้ไม่ครบ — กรอกช่องที่ยังขาดให้ครบก่อนไปขั้นต่อไป',
     'expenses.ai_field_source': 'ค่านี้ AI อ่านจากใบเสร็จ ตรวจอีกครั้ง',
     'expenses.ai_field_missing': 'AI อ่านไม่ได้ กรอกเอง',

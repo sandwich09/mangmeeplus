@@ -25,7 +25,7 @@ import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
 import {billingLeavesPage, billingHistoryStatus, billingPurchaseChoices, billingOneTimePurchase, billingMonthlyAllowanceText, billingPurchaseModeLabel, billingSupportReference} from './billing-display';
 import { billingDeal, billingQuoteDeal, dealAiCreditText, dealConfirmText, dealMenuLabels } from './billing-deal';
-import { eventDiscountBlockedText, eventDiscountCard, eventDiscountCardText, eventDiscountChoiceLabel, eventDiscountChoices, eventDiscountFirstBillOnly, eventDiscountHeldNotice,
+import { eventDiscountBlockedText, eventDiscountCard, eventDiscountChoiceLabel, eventDiscountChoices, eventDiscountFirstBillOnly, eventDiscountHeldNotice,
   eventDiscountMode, eventDiscountNextRoundText, eventDiscountOneTimeOnlyText, eventDiscountSerial, eventDiscountUsable } from './billing-event-discount';
 import { PROMOTION_NOT_PICKED, promotionCard, promotionCardBenefit, promotionChoiceCopy, promotionChoiceLabel, promotionInvoiceLine, promotionLostNotice, promotionOffered,
   promotionPageBenefit, promotionQuoteBenefit, promotionQuoteFields, promotionReasonText, promotionReceipts, promotionReservedName, promotionReview, promotionRow, promotionStatus, promotionSwitchLabel,
@@ -35,6 +35,8 @@ import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog
 
 const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
 const date = formatThaiDate;
+const historyLinkLabel = (invoice: BillingHistory['items'][number]) =>
+  `เปิดรายการจ่ายเงิน ${invoice.number ? `${invoice.number} · ` : ''}${invoice.offer ? `${invoice.offer.label} · ${invoice.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}` : 'ยังไม่มีข้อมูลแพ็กเกจ'} · ${money(invoice.amountSatang)} · ${date(invoice.paidAt ?? invoice.createdAt)} · ${billingHistoryStatus(invoice)}`;
 const errorText = (error: unknown) => billingErrorText(error).replaceAll('แท็บการต่ออายุและจ่ายเงิน', 'การต่ออายุด้านล่าง');
 const button = billingControl;
 const STEP_CLASS = { primary: billingPrimaryControl, secondary: billingControl, quiet: quietButtonClass } as const;
@@ -1012,7 +1014,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             {cardBenefit !== 'PROMOTION' && <p className="text-sm font-semibold">{PROMOTION_NOT_PICKED}</p>}</section>}
           {/* A promotion that cannot be used says why, and never closes the normal purchase below. */}
           {promo && !promo.available && <p role="note" className="break-words text-sm text-gray-600">{promotionReasonText(promo.reason)}</p>}
-          {eventCard && <p className="text-sm font-semibold text-brand-700 [overflow-wrap:anywhere]">{eventDiscountCardText(eventCard.eventName, eventCard.shownDiscountSatang)}</p>}
+          {eventCard && <p className="text-sm font-semibold text-brand-700 [overflow-wrap:anywhere]">หลังส่วนลด {money(offer.priceSatang - eventCard.shownDiscountSatang)}</p>}
           {data.catalog.taxTreatment === 'EXCLUSIVE_VAT_7' && <p className="text-sm text-gray-600">ราคายังไม่รวม VAT 7%</p>}
           <p>{offer.branchLimit} สาขา · {offer.employeeLimit} คน · {offer.monthlySlipLimit.toLocaleString('th-TH')} ใบต่อเดือน</p>
           {menus.length > 0 && <p className="text-sm text-gray-600">{menus.join(' / ')}</p>}
@@ -1029,8 +1031,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       {buyingStep === 1 && !capacity && <section aria-label="วิธีจ่าย" className="space-y-5 pb-64 sm:pb-32">
         <fieldset ref={modeChoices} disabled={busy} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] min-w-0 space-y-4"><legend className="font-semibold">จ่ายแบบไหน</legend>
           {choiceError === 'mode' && <FieldError>เลือกวิธีจ่ายก่อน</FieldError>}
-          <div className="grid gap-3 sm:grid-cols-2">{(['auto', 'once'] as const).map(value => <label key={value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border-2 p-4 ${renewalKind === value ? 'border-brand-700' : 'border-gray-200'}`}><input type="radio" name="renewalChoice" value={value} checked={renewalKind === value} onChange={() => selectMethod(value, paymentKind)} />{value === 'auto' ? 'ต่ออายุอัตโนมัติ' : 'จ่ายครั้งเดียว'}</label>)}</div>
-          <fieldset className="min-w-0 space-y-3"><legend className="font-semibold">จ่ายด้วย</legend><div className="grid gap-3 sm:grid-cols-2">{(['qr', 'card'] as const).map(value => <label key={value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border-2 p-4 ${paymentKind === value ? 'border-brand-700' : 'border-gray-200'}`}><input type="radio" name="paymentChoice" value={value} checked={paymentKind === value} onChange={() => selectMethod(renewalKind, value)} />{value === 'qr' ? 'QR พร้อมเพย์' : 'บัตร'}</label>)}</div></fieldset>
+          <div className="grid gap-3 sm:grid-cols-2">{(['auto', 'once'] as const).map(value => <label key={value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border-2 p-4 ${renewalKind === value ? 'border-brand-700' : 'border-gray-200'}`}><input type="radio" name="renewalChoice" aria-label={value === 'auto' ? 'ต่ออายุอัตโนมัติ' : 'จ่ายครั้งเดียว'} value={value} checked={renewalKind === value} onChange={() => selectMethod(value, paymentKind)} />{value === 'auto' ? 'ต่ออายุอัตโนมัติ' : 'จ่ายครั้งเดียว'}</label>)}</div>
+          <fieldset className="min-w-0 space-y-3"><legend className="font-semibold">จ่ายด้วย</legend><div className="grid gap-3 sm:grid-cols-2">{(['qr', 'card'] as const).map(value => <label key={value} className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border-2 p-4 ${paymentKind === value ? 'border-brand-700' : 'border-gray-200'}`}><input type="radio" name="paymentChoice" aria-label={value === 'qr' ? 'QR พร้อมเพย์' : 'บัตร'} value={value} checked={paymentKind === value} onChange={() => selectMethod(renewalKind, value)} />{value === 'qr' ? 'QR พร้อมเพย์' : 'บัตร'}</label>)}</div></fieldset>
           {chosenMode === 'PROMPTPAY_RENEW' && <p className="text-sm text-gray-600">ส่งบิล QR ให้สแกนจ่ายทุก{interval === 'year' ? 'ปี' : 'เดือน'}</p>}
           {modeReason && <p role="status">{modeReason} <a className="text-brand-700 underline" href={`tel:${PLAN_TERM_RENEW_PHONE.replaceAll('-', '')}`}>ติดต่อทีมงานมั่งมี</a></p>}
           {consent}
@@ -1142,7 +1144,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {!historyLoading && !historyError && historyRows.length > 0 && <>
           <table className="hidden w-full text-sm sm:table">
             <thead><tr className="border-b border-gray-100 text-left text-sm text-gray-500"><th className="px-2 py-3">วันที่</th><th className="px-2 py-3">แพ็กเกจ</th><th className="px-2 py-3 text-right">ยอด (บาท)</th><th className="px-2 py-3 text-right">สถานะ</th></tr></thead>
-            <tbody>{historyRows.map(invoice => <tr key={invoice.id} role="link" tabIndex={0} aria-label={`เปิดรายการจ่ายเงิน ${invoice.number ?? date(invoice.createdAt)}`}
+            <tbody>{historyRows.map(invoice => <tr key={invoice.id} role="link" tabIndex={0} aria-label={historyLinkLabel(invoice)}
               className="cursor-pointer border-b border-gray-100 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-brand-700"
               onClick={() => openPayment(invoice.id)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); openPayment(invoice.id); } }}>
               <td className="px-2 py-4"><span className="whitespace-nowrap">{date(invoice.paidAt ?? invoice.createdAt)}</span></td>
@@ -1154,6 +1156,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             </tr>)}</tbody>
           </table>
           <div className="space-y-3 sm:hidden">{historyRows.map(invoice => <Link key={invoice.id} href={`/companies/${encodeURIComponent(companyId)}/billing/invoices/${encodeURIComponent(invoice.id)}`}
+            aria-label={historyLinkLabel(invoice)}
             className="block min-h-11 space-y-2 rounded-xl border border-gray-200 p-4 focus-visible:outline-2 focus-visible:outline-brand-700"
             onClick={event => { if (preview) { event.preventDefault(); openPayment(invoice.id); } else if (billingLeavesPage(event)) rememberHistory(); }}>
             <div className="flex flex-wrap items-start justify-between gap-2"><span className="font-semibold">{invoice.offer ? `${invoice.offer.label} · ${invoice.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}` : 'ยังไม่มีข้อมูลแพ็กเกจ'}</span><span className="whitespace-nowrap font-semibold tabular-nums">{money(invoice.amountSatang)}</span></div>

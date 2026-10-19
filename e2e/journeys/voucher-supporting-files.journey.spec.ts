@@ -7,7 +7,7 @@ test('@journey finance attaches payment instructions while preparing a voucher, 
   const page = await pageAs('FINANCE'), api = await apiAs('FINANCE');
   const main = page.locator('main'), seller = unique('ร้านเอกสารประกอบ');
   await page.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
-  await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('ค่าของ'), seller, price: '100', total: '฿100.00', toPay: '฿100.00' });
+  await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('ค่าของ'), seller, price: '100', total: '100.00 บาท', toPay: '100.00 บาท' });
   await page.goto(`/companies/${companyId}/expenses/disbursement-vouchers/new`, FIRST_SIGHT);
   await main.getByRole('searchbox', { name: 'ค้นชื่อผู้รับเงินหรือเลขผู้เสียภาษี', exact: true }).fill(seller);
   await main.getByRole('button', { name: new RegExp(`^${seller}`) }).click();

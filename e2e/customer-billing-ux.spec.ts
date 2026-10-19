@@ -138,20 +138,25 @@ test('BILLING-UX payment recheck tells the truth and documents return to history
     documentKinds.push(kind);
     return route.fulfill({ json: { url: `https://invoice.stripe.com/pay-menu-${kind}` } });
   });
-  await page.route('https://invoice.stripe.com/pay-menu-*', route => route.fulfill({ contentType: 'text/html', body: '<p>เอกสารตัวอย่าง</p>' }));
+  await page.context().route('https://invoice.stripe.com/pay-menu-*', route => route.fulfill({ contentType: 'text/html', body: '<p>เอกสารตัวอย่าง</p>' }));
   await page.route(`**/api/v1/companies/${companyId}/billing/history*`, route => route.fulfill({ json: { items: [paidInvoice], nextCursor: null } }));
   await page.goto(`/companies/${companyId}/billing#billing-history`);
   // A hash-only move scrolls the existing page; reload to read the newly installed history fixture.
   await page.reload();
-  await page.locator('#billing-history').getByRole('link', { name: 'เปิดรายการจ่ายเงิน TEST-INVOICE', exact: true }).click();
+  await page.locator('#billing-history').getByRole('link', { name: 'เปิดรายการจ่ายเงิน TEST-INVOICE · เติบโต · รายเดือน · 499.00 บาท · 1 ต.ค. 2569 · จ่ายแล้ว', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/billing/invoices/${invoiceId}$`));
   await expect(page.getByRole('heading', { name: 'เติบโต · 1 ต.ค. 2569', exact: true })).toBeVisible();
   await expect(page.getByText('499.00', { exact: false })).toBeVisible();
   await expect(page.getByRole('region', { name: 'คืนเงินและเอกสารปรับยอด', exact: true })).toHaveCount(0);
   for (const [label, kind] of [['ใบเสร็จรับเงิน', 'receipt'], ['ใบแจ้งหนี้', 'pdf']]) {
+    const opened = page.waitForEvent('popup');
     await page.getByRole('button', { name: label, exact: true }).click();
-    await expect(page).toHaveURL(`https://invoice.stripe.com/pay-menu-${kind}`);
-    await page.goBack();
+    const document = await opened;
+    await expect(document).toHaveURL(`https://invoice.stripe.com/pay-menu-${kind}`);
+    await expect(document.getByText('เอกสารตัวอย่าง', { exact: true })).toBeVisible();
+    expect(await document.evaluate(() => window.opener === null)).toBe(true);
+    await expect(page).toHaveURL(new RegExp(`/billing/invoices/${invoiceId}$`));
+    await document.close();
     await expect(page.getByRole('heading', { name: 'เติบโต · 1 ต.ค. 2569', exact: true })).toBeVisible();
   }
   expect(documentKinds).toEqual(['receipt', 'pdf']);

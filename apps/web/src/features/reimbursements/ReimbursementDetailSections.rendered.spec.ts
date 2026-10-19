@@ -141,13 +141,13 @@ it('CLAIM-DETAIL receiving account is label/value facts and keeps reveal', () =>
   assert.match(html, /<dt[^>]*>บัญชีรับเงินคืน<\/dt>/); assert.match(html, /แสดงเลขบัญชี/);
   assert.doesNotMatch(html, /฿|—/);
 });
-it('CLAIM-DETAIL money formatter keeps other currencies and leaves the hub formatter unchanged', () => {
+it('CLAIM-DETAIL money formatter keeps other currencies and the hub formatter also reads บาท', () => {
   assert.equal(ui.formatClaimDetailMoney('650'), '650.00 บาท');
   assert.equal(ui.formatClaimDetailMoney('12,500.00'), '12,500.00 บาท');
   assert.equal(ui.formatClaimDetailMoney('99999999999999.99'), '99,999,999,999,999.99 บาท');
   assert.equal(ui.formatClaimDetailMoney('650', ''), '650.00 บาท');
   assert.equal(ui.formatClaimDetailMoney('650', 'USD'), ui.formatClaimMoney('650', 'USD'));
-  assert.equal(ui.formatClaimMoney('650'), '฿650.00');
+  assert.equal(ui.formatClaimMoney('650'), '650.00 บาท');
   assert.doesNotMatch(read('./ReimbursementJourneyPage.tsx'), /formatClaimMoney as formatMoney/);
 });
 
@@ -197,4 +197,22 @@ it('CLAIM-STEPS document actions never appear before payment, even if a caller a
     const html = render(h(ui.ClaimDocuments, { ...props, mode: 'step', detail: { ...detail, status } }));
     assert.equal(html, '');
   }
+});
+
+
+it('UAT-R1 a digitally completed document keeps signed facts and print without paper signing or upload', () => {
+  for (const documentSignedVia of ['DIGITAL', 'BOTH']) {
+    const html = render(h(ui.ClaimDocuments, { ...props, mode: 'step', print: { onPress: noop, working: false },
+      detail: { ...detail, status: 'PAID', documentSignedVia, signatures: [
+        { role: 'REQUESTER', signedByName: 'สมใจ', signedAt: '2026-10-10' },
+        { role: 'APPROVER', signedByName: 'สมชาย', signedAt: '2026-10-10' },
+      ] } }));
+    assert.match(html, /เซ็นในระบบครบแล้ว/);
+    assert.match(html, /สมใจ/); assert.match(html, /สมชาย/);
+    assert.match(html, /พิมพ์ใบเบิก/);
+    assert.doesNotMatch(html, /เลือกวิธีใดวิธีหนึ่ง|เซ็นบนกระดาษ|แนบใบที่เซ็นแล้ว|type="file"/);
+  }
+  const partial = render(h(ui.ClaimDocuments, { ...props, mode: 'step', detail: { ...detail, status: 'PAID',
+    signatures: [{ role: 'REQUESTER', signedByName: 'สมใจ' }] } }));
+  assert.match(partial, /เลือกวิธีใดวิธีหนึ่ง/); assert.match(partial, /แนบใบที่เซ็นแล้ว/);
 });

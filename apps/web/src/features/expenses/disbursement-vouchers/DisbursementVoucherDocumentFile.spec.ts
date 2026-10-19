@@ -82,7 +82,7 @@ test('a successful pay answer with a pending file uses the exact pending toast a
   try {
     draw(); forms[0].onSubmit({ preventDefault: () => {} }); draw();
     assert.equal(requests, 0);
-    buttons.find(button => button.children.includes('ยืนยัน จ่ายแล้ว ฿100.00')).onClick(); await new Promise(resolve => setImmediate(resolve));
+    buttons.find(button => button.children.includes('ยืนยัน จ่ายแล้ว 100.00 บาท')).onClick(); await new Promise(resolve => setImmediate(resolve));
     assert.equal(requests, 1); assert.equal(reads, 1); assert.deepEqual(messages, ['บันทึกจ่ายแล้ว เอกสารกำลังจัดทำ']);
   } finally { pay.mock.restore(); }
 });

@@ -18,7 +18,20 @@ test('manual form previews the server rounding order without combining price and
     [{ name: '' }, '2026-10-13', [{ description: 'กาแฟ', quantity: '1', unitPrice: '100.074', discountAmount: '0.015' }], '', '', '', undefined, '0.07', 'VAT_EXCLUDED']);
   try {
     const html = view.render();
-    assert.match(html, /฿107\.05/); assert.match(html, /฿100\.05/); assert.match(html, /฿7\.00/);
+    assert.match(html, /107\.05 บาท/); assert.match(html, /100\.05 บาท/); assert.match(html, /7\.00 บาท/);
+  } finally { capture.mock.restore(); }
+});
+
+test('manual totals show zero and 99.51 in baht without a currency symbol', () => {
+  const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
+  try {
+    for (const price of ['0', '99.51']) {
+      const view = certificateHarness(() => h(ManualExpensePanel, { companyId: 'co', branchId: 'b1', canAttachReceipt: false, entryClosed: false, permissions: [], onSuccess: noop }),
+        [{ name: '' }, '2026-10-19', [{ description: 'กาแฟ', quantity: '1', unitPrice: price, discountAmount: '0' }]]);
+      const html = view.render();
+      assert.match(html, new RegExp(`ยอดรวม[\\s\\S]*?${Number(price).toFixed(2).replace('.', '\\.')} บาท`));
+      assert.doesNotMatch(html, /฿/);
+    }
   } finally { capture.mock.restore(); }
 });
 
@@ -100,4 +113,13 @@ test('review request with one candidate shows the name and one send button; many
     const many = certificateHarness(() => h(ExpenseReviewRequestDialog, { open: true, people: Array.from({ length: 7 }, (_, i) => ({ userId: String(i), displayName: `ผู้ตรวจ ${i}` })), selected: '6', busy: false, error: null, onChoose: noop, onSend: async () => {}, onClose: noop, onRetry: noop }));
     assert.match(many.render(), /ค้นชื่อ/); many.find('input', p => p.type === 'search').onChange({ target: { value: 'ไม่มี' } }); assert.match(many.render(), /ผู้ตรวจ 6/);
   } finally { transport.mock.restore(); }
+});
+
+
+test('UAT-T1 shared expense money formatter uses two decimal places and the baht word', () => {
+  const { baht, baht0 } = require('./ExpensesUi');
+  for (const value of [0, '1,040.00', '350']) {
+    assert.equal(baht(value), `${Number(String(value).replaceAll(',', '')).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`);
+    assert.equal(baht0(value), baht(value));
+  }
 });

@@ -14,7 +14,7 @@ const invoice: BillingInvoiceItem = { id: 'invoice', number: 'PAY-001', currency
   offer: { key: 'BASIC_499', label: 'เติบโต', interval: 'month' }, method: 'CARD', refundedSatang: 0, disputed: false,
   financialObservedAt: null, paymentState: 'paid', applyState: 'APPLIED', periodStart: '2026-10-01T00:00:00Z', periodEnd: '2026-11-01T00:00:00Z',
   paidAt: '2026-10-01T00:00:00Z', createdAt: '2026-10-01T00:00:00Z', hasDocuments: true };
-function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustments['items'] = [], other: BillingAdjustments['items'] = []) {
+function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustments['items'] = [], other: BillingAdjustments['items'] = [], onStateChange: (index: number, value: any) => void = () => {}) {
   const data: BillingAdjustments = { invoiceId: invoice.id, invoiceNumber: invoice.number, invoice: { ...invoice, ...patch }, kind: 'refunds', mode: 'TEST',
     items, nextCursor: null, observedAt: invoice.createdAt, canOpenDocuments: true, documentActions: { canResend: true }, recipientEmail: 'docs@example.com' };
   const original = runtime.useState, create = runtime.createElement;
@@ -22,7 +22,7 @@ function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustmen
   const buttons: any[] = [];
   Reflect.set(runtime, 'useState', (initial: any) => {
     const current = index++; const [value] = original(initial);
-    return [current === 3 ? data : current === 4 ? false : current === 7 ? { ...data, items: other } : value, () => {}];
+    return [current === 3 ? data : current === 4 ? false : current === 7 ? { ...data, items: other } : value, (next: any) => onStateChange(current, next)];
   });
   Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
     if (type === 'button') buttons.push({ ...props, children });
@@ -41,6 +41,44 @@ test('PAY-MENU payment facts, one equal document group and PDF invoice; no empty
   assert.equal(docs.length, 3); assert.equal(new Set(docs.map(b => b.className)).size, 1);
   assert.ok(docs.every(b => b.disabled === b['aria-busy']));
   assert.match(String(docs.find(b => b.children.join('') === 'ใบแจ้งหนี้').onClick), /open\(["']pdf["']\)/);
+});
+
+for (const scenario of ['receipt', 'pdf', 'unsafe', 'failed', 'blocked'] as const) test(`UAT-Q2 provider document opens in an isolated tab and keeps the payment page: ${scenario}`, async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window'), originalFetch = globalThis.fetch;
+  const events: string[] = [], navigated: string[] = [], updates: any[] = [];
+  const tab = { opener: {} as unknown, location: { replace: (url: string) => navigated.push(url) }, close: () => events.push('close') };
+  const providerUrl = scenario === 'unsafe' ? 'https://example.com/document' : `https://invoice.stripe.com/${scenario}`;
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    open: (url: string, target: string) => { assert.equal(url, 'about:blank'); assert.equal(target, '_blank'); events.push('open'); return scenario === 'blocked' ? null : tab; },
+    location: { assign: () => events.push('left-app') },
+  } });
+  let finish!: (response: Response) => void;
+  const response = new Promise<Response>(resolve => { finish = resolve; });
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    assert.equal(tab.opener, null, 'detach opener before reading the document URL');
+    events.push('read'); assert.equal(JSON.parse(init.body as string).kind, scenario === 'pdf' ? 'pdf' : 'receipt');
+    return response;
+  }) as typeof fetch;
+  try {
+    const { buttons } = render({}, [], [], (index, value) => { updates[index] = value; });
+    buttons.find(button => button.children.join('') === (scenario === 'pdf' ? 'ใบแจ้งหนี้' : 'ใบเสร็จรับเงิน')).onClick();
+    assert.deepEqual(events, scenario === 'blocked' ? ['open'] : ['open', 'read'], 'reserve the tab synchronously before awaiting the API');
+    assert.deepEqual(navigated, []);
+    finish(scenario === 'failed' ? Response.json({}, { status: 503 }) : Response.json({ url: providerUrl }));
+    await new Promise(resolve => setImmediate(resolve));
+    if (scenario === 'receipt' || scenario === 'pdf') {
+      assert.deepEqual(navigated, [providerUrl]); assert.ok(!events.includes('close'));
+    } else {
+      assert.deepEqual(navigated, []);
+      if (scenario === 'blocked') assert.equal(updates[5]?.kind, 'popup');
+      else assert.ok(events.includes('close'), 'do not leave a blank tab on an error or unsafe URL');
+    }
+    assert.ok(!events.includes('left-app'));
+    assert.equal(updates[6], false, 'the document buttons stop loading');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
 });
 test('PAY-MENU unknown offer and method stay unknown, and paid and refund states follow the item', () => {
   const unknown = render({ offer: null, method: null }).html;

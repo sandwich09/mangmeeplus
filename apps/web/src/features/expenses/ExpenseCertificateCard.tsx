@@ -1,5 +1,5 @@
 'use client';
-import { whtCertificateUnsupportedReason } from '@watchdog-bms/contracts';
+import { whtCertificateUnsupportedReason, civilDate } from '@watchdog-bms/contracts';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { isExpenseVoidReason, whtPayerIdentityMissingMessage, whtPayeeAddress, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_HANDOFF_MISSING_LABELS, WHT_HANDOFF_PAYEE_ADDRESS_MAX, isCivilDate, todayCivilDate, type WhtCertificateHandoffDto, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
@@ -92,7 +92,7 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
   const payeeAddress = whtPayeeAddress(row?.payeeAddress, row?.prefill.payeeSnapshot.address) || '';
   const canEditAddress = row?.status === 'REQUIRED' && permissions.some(p => ['wht.external_certificate.link', 'wht.certificate.issue'].includes(p));
   const openRecord = (change = false) => {
-    const start = change && row ? { number: row.externalCertificateNumber ?? '', date: row.externalIssuedDate?.slice(0, 10) ?? '', paymentDate: row.externalPaymentDate?.slice(0, 10) ?? '', reference: row.externalEvidenceRef ?? '', note: row.linkNote ?? '' } : { number: '', date: '', paymentDate: '', reference: '', note: '' };
+    const start = change && row ? { number: row.externalCertificateNumber ?? '', date: row.externalIssuedDate?.slice(0, 10) ?? '', paymentDate: row.externalPaymentDate?.slice(0, 10) ?? '', reference: row.externalEvidenceRef ?? '', note: row.linkNote ?? '' } : { number: '', date: '', paymentDate: payments?.length === 1 && payments[0]!.paidAtConfirmed ? civilDate(new Date(payments[0]!.paidAt)) : '', reference: '', note: '' };
     setValues(start); setOpened(JSON.stringify(start));
     setRefusal(null); setCommandId(crypto.randomUUID()); setDialog(change ? 'change-record' : 'record');
   };
@@ -213,9 +213,9 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
         </> : dialog === 'record' || dialog === 'change-record' ? <>
           {(['number', 'paymentDate', 'date', 'reference', 'note'] as const).map(field => <label key={field} className="block" htmlFor={`certificate-${field}-${expenseId}`}>
             <span className="block text-sm">{field === 'paymentDate' ? 'วันที่จ่ายตามหนังสือรับรองเดิม' : text(field)}</span>
-            {field === 'date' || field === 'paymentDate' ? <ThemedDate id={`certificate-${field}-${expenseId}`} className={inputClass} value={values[field]} required max={todayCivilDate('Asia/Bangkok')} allowClear={false} disabled={saving} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
-              : field === 'note' ? <textarea id={`certificate-${field}-${expenseId}`} className={inputClass} rows={3} maxLength={1000} disabled={saving} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
-              : <input id={`certificate-${field}-${expenseId}`} className={inputClass} type="text" required={field === 'number'} maxLength={field === 'number' ? 100 : field === 'reference' ? 500 : undefined} disabled={saving} aria-invalid={errorField === field || undefined} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />}
+            {field === 'date' || field === 'paymentDate' ? <ThemedDate id={`certificate-${field}-${expenseId}`} aria-label={field === 'paymentDate' ? 'วันที่จ่ายตามหนังสือรับรองเดิม' : text(field)} className={inputClass} value={values[field]} required max={todayCivilDate('Asia/Bangkok')} allowClear={false} disabled={saving} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
+              : field === 'note' ? <textarea id={`certificate-${field}-${expenseId}`} aria-label={text(field)} className={inputClass} rows={3} maxLength={1000} disabled={saving} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
+              : <input id={`certificate-${field}-${expenseId}`} aria-label={text(field)} className={inputClass} type="text" required={field === 'number'} maxLength={field === 'number' ? 100 : field === 'reference' ? 500 : undefined} disabled={saving} aria-invalid={errorField === field || undefined} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />}
             {errorField === field && <FieldError>{dialogError}</FieldError>}
           </label>)}
         </> : <label className="block" htmlFor={`certificate-address-${expenseId}`}><span className="block text-sm">{text('address')}</span><textarea id={`certificate-address-${expenseId}`} className={inputClass} rows={4} required maxLength={WHT_HANDOFF_PAYEE_ADDRESS_MAX} disabled={saving} aria-invalid={errorField === 'address' || undefined} placeholder={WHT_PAYEE_ADDRESS_EXAMPLE} value={address} onChange={event => { setAddress(event.target.value); setRefusal(null); }} />

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { placeAnchoredPanel, overlayEdges } from './overlay-geometry';
+import { placeAnchoredPanel, overlayEdges, readOverlayBounds } from './overlay-geometry';
 const viewport = { top: 0, bottom: 844, left: 0, right: 390 };
 const field = { top: 400, bottom: 444, left: 16, right: 374 };
 test('BEH-Q calendar prefers below, stays attached and cannot cover the top stack', () => {
@@ -49,4 +49,20 @@ test('JFIX-2Q phone chooser remains attached to the visible side of its field wi
   assert.equal(below.side, 'below'); assert.equal(below.edge, 150);
   assert.ok(below.edge + below.maxHeight <= bounds.bottom);
   assert.equal(placeAnchoredPanel({ ...field, top: 76, bottom: 120 }, bounds, 240, 358), null);
+});
+
+
+test('UAT-T1 a portaled calendar can open above a phone bottom sheet and show a whole month', () => {
+  const globals = globalThis as any;
+  const previous = { window: globals.window, document: globals.document };
+  const root = { querySelectorAll: () => [] };
+  const anchor = { getBoundingClientRect: () => ({ top: 650, bottom: 694, left: 16, right: 374 }),
+    closest: (selector: string) => selector === '[data-modal-body]' ? { getBoundingClientRect: () => ({ top: 500, bottom: 760 }) } : root };
+  try {
+    globals.window = { innerHeight: 844, innerWidth: 390 }; globals.document = { body: root };
+    const bounds = readOverlayBounds(anchor as any);
+    const placed = placeAnchoredPanel(anchor.getBoundingClientRect(), bounds, 400, 286)!;
+    assert.equal(placed.side, 'above'); assert.equal(placed.maxHeight, 400);
+    assert.ok(placed.edge - placed.maxHeight >= bounds.top);
+  } finally { globals.window = previous.window; globals.document = previous.document; }
 });

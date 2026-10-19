@@ -40,3 +40,20 @@ test('payee row always has a usable name and keeps the tax number', () => {
     const html = view.render(); assert.match(html, displayName.trim() ? /ร้าน ก/ : /ไม่มีชื่อผู้รับเงิน/); assert.match(html, /0123456789012/);
   }
 });
+
+test('payee step explains excluded bills with counts and a route to unpaid expenses', () => {
+  let search = '';
+  const result = { data: [row(1)], total: 1, page: 1, pageSize: 10, excludedExpenses: { reserved: 2, claim: 1, personal_advance: 1, missing_branch: 1, foreign_currency: 1 } };
+  const view = certificateHarness(() => h(DisbursementVoucherPayeePicker, { companyId: 'shop', search, onSearch() {}, onChoose() {} }),
+    [1, result, false]);
+  const html = view.render();
+  assert.match(html, /อีก 6 รายการ/);
+  for (const reason of ['อยู่ในใบเตรียมจ่าย 2', 'อยู่ในใบเบิก 1', 'ใช้เงินส่วนตัวจ่าย 1', 'ยังไม่ระบุสาขา 1', 'ใช้สกุลเงินอื่น 1']) assert.ok(html.includes(reason));
+  assert.match(html, /href="\/companies\/shop\/expenses\?view=unpaid"[^>]*>ดูที่หน้ารายจ่าย/);
+  view.state[1] = { ...result, data: [] };
+  const unavailable = view.render(); assert.match(unavailable, /ยังไม่มีรายจ่ายที่เลือกจ่ายได้/); assert.doesNotMatch(unavailable, /ไม่มีรายจ่ายที่ค้างจ่าย|รายจ่ายจะมาอยู่ที่นี่/);
+  search = 'ร้าน'; assert.doesNotMatch(view.render(), /อีก 6 รายการ/);
+  search = ''; view.state[2] = true; assert.doesNotMatch(view.render(), /อีก 6 รายการ/);
+  view.state[2] = false; view.state[3] = new Error('โหลดไม่ได้'); assert.doesNotMatch(view.render(), /อีก 6 รายการ/);
+  view.state[3] = null; view.state[1] = { data: [], total: 0, excludedExpenses: {} }; assert.doesNotMatch(view.render(), /อีก 0 รายการ/);
+});

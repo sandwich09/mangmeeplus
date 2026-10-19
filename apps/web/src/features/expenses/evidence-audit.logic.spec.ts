@@ -39,6 +39,11 @@ const flagsFor = (overrides: Partial<SharedEvidenceRow>) =>
   deriveEvidenceRowFlags({ ...cleanRow, ...overrides });
 
 describe('deriveEvidenceRowFlags', () => {
+  it('accepts categories on every goods line but warns about an uncategorised goods line', () => {
+    const row = { ...cleanRow, categoryName: null, expenseCategoryId: null, lines: [{ expenseCategoryId: 'food' }, { expenseCategoryId: null, chargeKind: 'ROUNDING' }] };
+    assert.equal(deriveEvidenceRowFlags(row).some(flag => flag.key === 'NO_CATEGORY'), false);
+    assert.equal(deriveEvidenceRowFlags({ ...row, lines: [...row.lines, { expenseCategoryId: null }] }).some(flag => flag.key === 'NO_CATEGORY'), true);
+  });
   it('treats a receipt-less claim projection as informational, not attention', () => {
     const flags = flagsFor({
       attachments: [],
@@ -64,7 +69,7 @@ describe('deriveEvidenceRowFlags', () => {
   });
 
   it('counts uncategorised rows as needing correction while retaining informational evidence notes', () => {
-    const flags = flagsFor({ taxEvidenceStatus: 'SUPPORTING_ONLY', categoryName: null, expenseNumber: null });
+    const flags = flagsFor({ taxEvidenceStatus: 'SUPPORTING_ONLY', categoryName: null, expenseCategoryId: null, expenseNumber: null });
     assert.deepEqual(flags.map((flag) => flag.key), ['SUPPORTING_ONLY', 'NO_CATEGORY', 'LEGACY_NO_NUMBER']);
     assert.equal(evidenceRowState(flags), 'attention');
   });
@@ -81,7 +86,7 @@ describe('summarizeEvidenceRows', () => {
     assert.deepEqual(summarizeEvidenceRows([
       cleanRow,
       { ...cleanRow, expenseId: 'exp-2', attachments: [] },
-      { ...cleanRow, expenseId: 'exp-3', categoryName: null },
+      { ...cleanRow, expenseId: 'exp-3', categoryName: null, expenseCategoryId: null },
     ]), { attention: 2, ok: 1 });
   });
 });
@@ -96,9 +101,9 @@ describe('summarizeEvidenceFlags', () => {
         attachments: [],
         taxEvidenceStatus: 'NEEDS_REVIEW',
         vendorNameSnapshot: null,
-        categoryName: null,
+        categoryName: null, expenseCategoryId: null,
       },
-      { ...cleanRow, expenseId: 'exp-3', attachments: [], categoryName: null },
+      { ...cleanRow, expenseId: 'exp-3', attachments: [], categoryName: null, expenseCategoryId: null },
     ]), [
       { key: 'NO_FILE', label: 'ไม่มีไฟล์', count: 2 },
       { key: 'TAX_NEEDS_REVIEW', label: 'หลักฐานรายจ่ายรอตรวจ', count: 1 },
@@ -118,7 +123,7 @@ describe('summarizeEvidenceFlags', () => {
 describe('filterRowsByFlag', () => {
   const rows = [
     cleanRow,
-    { ...cleanRow, expenseId: 'exp-2', categoryName: null, expenseNumber: null, taxEvidenceStatus: 'SUPPORTING_ONLY' as const },
+    { ...cleanRow, expenseId: 'exp-2', categoryName: null, expenseCategoryId: null, expenseNumber: null, taxEvidenceStatus: 'SUPPORTING_ONLY' as const },
     { ...cleanRow, expenseId: 'exp-3', attachments: [] },
     { ...cleanRow, expenseId: 'exp-4', taxEvidenceStatus: 'NOT_TAX_EVIDENCE' as const },
   ];
@@ -139,7 +144,7 @@ describe('accountant list status and state', () => {
   it('one badge covers every combination of failing checks; informational notes stay complete', () => {
     const conditions: Partial<SharedEvidenceRow>[] = [
       { sourceEvidenceUnavailable: true }, { attachments: [] }, { taxEvidenceStatus: 'NEEDS_REVIEW' },
-      { vendorNameSnapshot: null }, { categoryName: null },
+      { vendorNameSnapshot: null }, { categoryName: null, expenseCategoryId: null },
     ];
     for (let mask = 0; mask < 32; mask++) {
       const row = { ...cleanRow, ...Object.assign({}, ...conditions.filter((_, i) => mask & (1 << i))) };
@@ -148,7 +153,7 @@ describe('accountant list status and state', () => {
     }
     assert.equal(evidenceRowBadge({ ...cleanRow, taxEvidenceStatus: 'NOT_TAX_EVIDENCE' }), 'หลักฐานรายจ่ายใช้ไม่ได้');
     assert.equal(evidenceRowBadge({ ...cleanRow, taxEvidenceStatus: 'SUPPORTING_ONLY', expenseNumber: null }), 'ครบแล้ว');
-    assert.deepEqual(filterRowsByFlag([cleanRow, { ...cleanRow, categoryName: null }], 'ok'), [cleanRow]);
+    assert.deepEqual(filterRowsByFlag([cleanRow, { ...cleanRow, categoryName: null, expenseCategoryId: null }], 'ok'), [cleanRow]);
   });
   it('defaults to current document month, while all months and every URL filter survive a return', () => {
     assert.equal(readEvidenceListState(new URLSearchParams(), '2026-10').yearMonth, '2026-10');

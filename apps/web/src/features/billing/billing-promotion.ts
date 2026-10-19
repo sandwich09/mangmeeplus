@@ -3,7 +3,7 @@ import { BILLING_PAID_TIERS, type BillingBenefitChoice, type BillingInvoiceItem,
   type BillingPromotionUse, type BillingQuote, type BillingStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
 import { errorText } from './billing-error-text';
-import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountBaht, eventDiscountHelpText } from './billing-event-discount';
+import { eventDiscountBaht, eventDiscountHelpText } from './billing-event-discount';
 
 /**
  * Bonus-month promotion on the package page (promotion spec §3 and §7, plan §2 and §4). Plain Thai; no campaign id, enum key or
@@ -97,7 +97,7 @@ export function promotionChoiceCopy(on: { promotion: boolean; ticket: boolean; f
     ? { section: 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้', legend: 'เลือกสิ่งที่จะใช้ในการซื้อครั้งนี้', normal: 'ซื้อแบบปกติ',
       notes: [PROMOTION_ONE_PER_PURCHASE, ...(on.ticket ? [eventDiscountHelpText(on.firstBillOnly)] : [])] }
     : { section: 'ส่วนลดจากงาน', legend: 'ส่วนลดจากงาน', normal: 'ไม่ใช้ครั้งนี้',
-      notes: [EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText(on.firstBillOnly)] };
+      notes: [`ใช้ได้ครั้งละ 1 ส่วนลด ${eventDiscountHelpText(on.firstBillOnly)} ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้`] };
 }
 /** The promotion radio: its name, then one line per package it covers on this cadence. Null = nothing to pick. */
 export function promotionChoiceLabel(rows: readonly Row[] | undefined, offers: readonly Pick<BillingOffer, 'offerKey' | 'interval' | 'label' | 'priceSatang'>[], interval: string) {

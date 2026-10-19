@@ -146,16 +146,20 @@ test('tabs and debounced search persist in the URL, restore browser filters, and
   const timer = mock.method(globalThis, 'setTimeout', ((fn: () => void, delay: number) => { assert.equal(delay, 300); runTimer = fn; return 1; }) as any);
   const clear = mock.method(globalThis, 'clearTimeout', () => {});
   const view = setup();
+  const runtime = require('react'), originalRef = runtime.useRef, refs: any[] = []; let refIndex = 0;
+  const ref = mock.method(runtime, 'useRef', (initial: unknown) => { const value = originalRef(initial); return refs[refIndex++] ??= value; });
+  const render = (effects = false) => { refIndex = 0; return view.render(effects); };
   try {
-    view.render(); view.find('FilterTabs').onChange('system');
+    render(); view.find('FilterTabs').onChange('system');
     assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.get('tab'), 'system');
-    view.find('input', p => p.type === 'search').onChange({ target: { value: 'ชื่อ & เลข' } }); view.render(true);
+    view.find('input', p => p.type === 'search').onChange({ target: { value: 'ชื่อ & เลข' } }); render(true);
     assert.ok(runTimer); runTimer();
     assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.get('search'), 'ชื่อ & เลข');
+    assert.equal(new URL(view.replaced.at(-1)!, 'http://localhost').searchParams.get('tab'), 'system', 'typing before the tab URL commits must keep the chosen tab');
     view.query.set('search', 'จากลิงก์'); view.query.set('tab', 'cancelled'); view.query.set('page', '3');
-    view.render(true); assert.equal(view.state[0], 'จากลิงก์'); await view.settle();
+    render(true); assert.equal(view.state[0], 'จากลิงก์'); await view.settle();
     const url = new URL(view.replaced.at(-1)!, 'http://localhost'); assert.equal(url.searchParams.get('tab'), 'cancelled'); assert.equal(url.searchParams.has('page'), false);
-  } finally { view.cleanup(); for (const stub of [request, timer, clear]) stub.mock.restore(); }
+  } finally { view.cleanup(); for (const stub of [request, timer, clear, ref]) stub.mock.restore(); }
 });
 test('phone card and wide table share destinations; names and badges wrap separately and numeric columns align right', () => {
   const css = readFileSync(new URL('./WhtCertificatesPage.module.css', import.meta.url), 'utf8');

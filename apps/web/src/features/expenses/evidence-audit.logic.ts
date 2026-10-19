@@ -1,3 +1,4 @@
+import { hasExpenseCategory } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
 import type { SharedEvidenceRow, TaxEvidenceStatus } from './expenses.model';
 
@@ -29,7 +30,7 @@ export const TAX_EVIDENCE_TONE: Record<TaxEvidenceStatus, MangmeeTone> = {
   NEEDS_REVIEW: 'amber',
 };
 
-export type EvidenceAuditFacts = Pick<SharedEvidenceRow, 'sourceEvidenceUnavailable' | 'sourceReimbursementRequestId' | 'missingReceiptReason' | 'taxEvidenceStatus' | 'vendorNameSnapshot' | 'categoryName' | 'expenseNumber'> & { attachments: Array<{ isHistorical?: boolean }> };
+export type EvidenceAuditFacts = Pick<SharedEvidenceRow, 'sourceEvidenceUnavailable' | 'sourceReimbursementRequestId' | 'missingReceiptReason' | 'taxEvidenceStatus' | 'vendorNameSnapshot' | 'categoryName' | 'expenseNumber'> & { expenseCategoryId?: string | null; lines?: Array<{ expenseCategoryId?: string | null; chargeKind?: string | null }>; attachments: Array<{ isHistorical?: boolean }> };
 
 export function deriveEvidenceRowFlags(row: EvidenceAuditFacts): EvidenceFlag[] {
   const flags: EvidenceFlag[] = [];
@@ -47,7 +48,7 @@ export function deriveEvidenceRowFlags(row: EvidenceAuditFacts): EvidenceFlag[] 
   if (row.taxEvidenceStatus === 'NOT_TAX_EVIDENCE') flags.push({ key: 'NOT_TAX_EVIDENCE', severity: 'warn', label: 'หลักฐานรายจ่ายใช้ไม่ได้' });
   if (!row.vendorNameSnapshot?.trim()) flags.push({ key: 'NO_VENDOR', severity: 'warn', label: 'ไม่มีผู้ขาย' });
   if (row.taxEvidenceStatus === 'SUPPORTING_ONLY') flags.push({ key: 'SUPPORTING_ONLY', severity: 'info', label: 'เป็นหลักฐานประกอบ (ขอคืน VAT ไม่ได้)' });
-  if (!row.categoryName) flags.push({ key: 'NO_CATEGORY', severity: 'warn', label: 'ยังไม่จัดหมวด' });
+  if (!hasExpenseCategory(row)) flags.push({ key: 'NO_CATEGORY', severity: 'warn', label: 'ยังไม่จัดหมวด' });
   if (!row.expenseNumber) flags.push({ key: 'LEGACY_NO_NUMBER', severity: 'info', label: 'รายการเดิมไม่มีเลขที่เอกสาร' });
   return flags;
 }

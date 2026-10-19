@@ -11,9 +11,9 @@ const caps = { canReopen: true, reopenBlockers: [], canRecordPayment: true, reco
 test('payment prefills the outstanding satang and names recording the remainder; invalid fields explain the disabled action', () => {
   const form = (model as any).expensePaymentFormState;
   assert.equal(typeof form, 'function');
-  assert.equal(form('0.0100', '0.01', '2026-10-04').label, 'บันทึกจ่าย ฿0.01');
+  assert.equal(form('0.0100', '0.01', '2026-10-04').label, 'บันทึกจ่าย 0.01 บาท');
   assert.equal(form('0.0100', '0.01', '2026-10-04').prefill, '0.01');
-  assert.equal(form('100', '40', '2026-10-04').label, 'บันทึกจ่าย ฿40.00');
+  assert.equal(form('100', '40', '2026-10-04').label, 'บันทึกจ่าย 40.00 บาท');
   for (const [amount, date] of [['', '2026-10-04'], ['0', '2026-10-04'], ['100.01', '2026-10-04'], ['10', '2026-02-30']]) {
     assert.ok(form('100', amount, date).disabledReason); assert.doesNotMatch(form('100', amount, date).disabledReason, /[A-Za-z]/);
   }

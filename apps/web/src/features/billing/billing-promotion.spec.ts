@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
 import type { BillingBenefitChoice, BillingPromotionOfferView, BillingPromotionUnavailableReason, BillingPromotionUse, BillingRenewalSetupState } from '@watchdog-bms/contracts';
-import { EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText } from './billing-event-discount';
+import { eventDiscountHelpText } from './billing-event-discount';
 import { PROMOTION_NOT_PICKED, PROMOTION_ONCE, PROMOTION_ONE_PER_PURCHASE, promotionCard, promotionCardBenefit, promotionCardShowsPlainFacts, promotionChoiceCopy, promotionChoiceLabel,
   promotionHeadline, promotionInvoiceLine, promotionLostNotice, promotionOffered, promotionPageBenefit, promotionPick, promotionQuoteBenefit, promotionQuoteFields, promotionReasonText,
   promotionReceipts, promotionReview, promotionRow, promotionStatus, promotionSwitchLabel, promotionUpgradeNote, purchaseBlockQuiet, statusDeadlines } from './billing-promotion';
@@ -214,8 +214,9 @@ test('asking again keeps the benefit of the quote, and a promotion that left the
 
 test('the choice group reads as today without a promotion, and as three ways with one', () => {
   assert.deepEqual(promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: false }), { section: 'ส่วนลดจากงาน', legend: 'ส่วนลดจากงาน', normal: 'ไม่ใช้ครั้งนี้',
-    notes: [EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText(false)] });
-  assert.deepEqual(promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: true }).notes, [EVENT_DISCOUNT_ONE_PER_PAYMENT, eventDiscountHelpText(true)]);
+    notes: ['ใช้ได้ครั้งละ 1 ส่วนลด ลดเฉพาะการจ่ายครั้งนี้ งานเดียวกันใช้ได้ร้านละครั้ง ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้'] });
+  assert.deepEqual(promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: true }).notes,
+    ['ใช้ได้ครั้งละ 1 ส่วนลด ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม งานเดียวกันใช้ได้ร้านละครั้ง ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้']);
   assert.deepEqual(promotionChoiceCopy({ promotion: true, ticket: false, firstBillOnly: false }),
     { section: 'สิทธิ์ที่ใช้ในการซื้อครั้งนี้', legend: 'เลือกสิ่งที่จะใช้ในการซื้อครั้งนี้', normal: 'ซื้อแบบปกติ', notes: [PROMOTION_ONE_PER_PURCHASE] });
   assert.deepEqual(promotionChoiceCopy({ promotion: true, ticket: true, firstBillOnly: true }).notes, [PROMOTION_ONE_PER_PURCHASE, eventDiscountHelpText(true)]);
@@ -427,7 +428,7 @@ test('the note under the choice is true in every cell: pick x held discount x ca
     if (!hasPromotion) assert.notEqual(shown, 'PROMOTION', where);
   }
   assert.equal(cells, 2 * 3 * 4, 'every cell was checked');
-  // the sentence is the one of the three-way box, with and without a held discount, and the box without a promotion keeps its own older notes
+  // The three-way box keeps its promotion rule; discount-only instructions fit in one note.
   const withPromotion = [promotionChoiceCopy({ promotion: true, ticket: false, firstBillOnly: false }), promotionChoiceCopy({ promotion: true, ticket: true, firstBillOnly: true })];
   for (const copy of withPromotion) {
     assert.equal(copy.notes[0], PROMOTION_ONE_PER_PURCHASE);
@@ -435,7 +436,8 @@ test('the note under the choice is true in every cell: pick x held discount x ca
   }
   for (const copy of [promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: false }), promotionChoiceCopy({ promotion: false, ticket: true, firstBillOnly: true })]) {
     assert.doesNotMatch(copy.notes.join(' '), /แพ็กเกจที่แสดงโปรโมชั่น/);
-    assert.equal(copy.notes[0], EVENT_DISCOUNT_ONE_PER_PAYMENT, 'the chooser for a discount alone is untouched');
+    assert.equal(copy.notes.length, 1, 'the discount-only chooser explains the rules once');
+    assert.match(copy.notes[0], /^ใช้ได้ครั้งละ 1 ส่วนลด .*งานเดียวกันใช้ได้ร้านละครั้ง ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้$/);
   }
   assert.doesNotMatch(PROMOTION_ONE_PER_PURCHASE, MACHINE);
   // the box with a promotion is drawn only while one is on offer on this cadence, so "the packages that show it" is never an empty set
