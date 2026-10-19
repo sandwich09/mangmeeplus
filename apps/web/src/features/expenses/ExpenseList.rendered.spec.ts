@@ -22,6 +22,13 @@ const list = source.slice(source.indexOf('function ExpenseListPage('), source.in
 const names = [...list.matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(match => match[1]!);
 const h = React.createElement;
 const noop = () => {};
+test('DELETE-HISTORY list hides delete and offers opening the cancellation flow for a retained payment', () => {
+  const html = render([row(1, { status: 'DRAFT', hasDeletionBlockingHistory: true })], {}, 'month=2026-09', noop, { canDelete: true, canReject: true });
+  assert.doesNotMatch(html, /title="ลบ"|>ลบรายจ่ายนี้</);
+  assert.match(html, /ยกเลิกรายการ/);
+  const readOnly = render([row(1, { status: 'DRAFT', hasDeletionBlockingHistory: true })], {}, 'month=2026-09', noop, { canDelete: true, canReject: false, canVoid: false });
+  assert.doesNotMatch(readOnly, />ยกเลิกรายการ</);
+});
 test('LINE-ACT a retained-evidence delete refusal offers opening the expense for cancellation instead of retrying delete', () => {
   let footer: React.ReactNode;
   const realCreate = runtime.createElement;
@@ -58,7 +65,7 @@ function row(index: number, overrides = {}) {
     expenseCategoryId: 'cat', grandTotalAmount: '107', outstandingAmount: '107', vatAmount: '7', captureSource: 'WEB_UPLOAD',
     inputVatClaimStatus: 'NEEDS_REVIEW', inputVatRightVisible: true, ...overrides };
 }
-function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '', navigate: (url: string) => void = noop) {
+function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '', navigate: (url: string) => void = noop, caps = {}) {
   const state: Record<string, unknown> = { rows, catNames: { cat: 'หมวดทดสอบ' }, loading: false, categoryNamesLoading: false, ...stateOverrides };
   const realState = runtime.useState;
   let index = 0;
@@ -74,14 +81,14 @@ function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '',
     return renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: navigate, replace: noop, prefetch: noop } as any },
       h(SearchParamsContext.Provider, { value: new URLSearchParams(query) },
         h(ToastContext.Provider, { value: { success: noop, error: noop, warning: noop } },
-          h(ExpenseListPage, { companyId: 'co', caps: { canReview: true, canExportPackage: true, canUploadReceipts: true }, userId: 'owner', onSelect: noop })))));
+          h(ExpenseListPage, { companyId: 'co', caps: { canReview: true, canExportPackage: true, canUploadReceipts: true, ...caps }, userId: 'owner', onSelect: noop })))));
   } finally { hooks.forEach(hook => hook.mock.restore()); }
 }
 
 test('LIST-1 renders three metrics, 10 rows newest first, one work status and retained warnings in both layouts', () => {
   const html = render(Array.from({ length: 21 }, (_, index) => row(index)));
-  assert.equal((html.match(/data-testid="expenses-row"/g) ?? []).length, 10);
-  assert.equal((html.match(/data-testid="expenses-card"/g) ?? []).length, 10);
+  assert.equal((html.match(/data-testid="expenses-row"/g) ?? []).length, 20, 'ten entries in each layout share the journey locator');
+  assert.equal((html.match(/<button[^>]*data-testid="expenses-row"/g) ?? []).length, 10, 'phone entries remain actionable buttons');
   assert.equal((html.match(/>รอจ่าย</g) ?? []).length, 20);
   assert.equal((html.match(/>ภาษีซื้อรอตรวจสอบ</g) ?? []).length, 20);
   // Owner 2026-10-15: the seller cell shows the name and the expense number only.
@@ -141,7 +148,7 @@ test('failed expense reads show retry without zero metrics, empty states or stal
       assert.match(html, /โหลดไม่สำเร็จ/);
       assert.match(html, /ลองอีกครั้ง/);
       assert.ok(!html.includes('data-testid="expenses-summary"'));
-      for (const hidden of ['ยังไม่มีรายจ่าย', 'ไม่พบ “', 'ไม่มีรายการในกลุ่มนี้', 'data-testid="expenses-row"', 'data-testid="expenses-card"', 'กำลังโหลด...']) assert.ok(!html.includes(hidden), hidden);
+      for (const hidden of ['ยังไม่มีรายจ่าย', 'ไม่พบ “', 'ไม่มีรายการในกลุ่มนี้', 'data-testid="expenses-row"', 'data-testid="expenses-card-list"', 'กำลังโหลด...']) assert.ok(!html.includes(hidden), hidden);
       assert.match(html, /value="ใบเดิม"/);
       assert.match(html, /ก.ย. 2569/);
     }

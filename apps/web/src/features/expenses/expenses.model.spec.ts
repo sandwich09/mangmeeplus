@@ -52,6 +52,7 @@ import {
   expenseValueLabel,
   expenseCapabilities,
   canDeleteExpense,
+  canCancelExpenseInsteadOfDelete,
   canAccessExpenseTab,
   expenseDeleteErrorMessage,
   canCorrectWhtCertificate,
@@ -1004,6 +1005,19 @@ describe('expenseCapabilities', () => {
     }
   });
 
+  it('DELETE-HISTORY payment or voucher history prevents deletion without widening cancellation rights', () => {
+    const row = { status: 'DRAFT', grandTotalAmount: '10', paymentStatus: 'UNPAID', createdByUserId: 'user-1', hasDeletionBlockingHistory: true } as any;
+    assert.equal(canDeleteExpense(row, 'user-1', { canDelete: true, canUpdate: true }), false);
+    assert.equal(canDeleteExpense({ ...row, hasDeletionBlockingHistory: undefined, payments: [{ status: 'VOIDED' }] }, 'user-1', { canDelete: true, canUpdate: true }), false);
+    assert.equal(canCancelExpenseInsteadOfDelete(row, { canReject: true, canVoid: false }), true);
+    assert.equal(canCancelExpenseInsteadOfDelete(row, { canReject: false, canVoid: false }), false);
+    assert.equal(canCancelExpenseInsteadOfDelete({ ...row, status: 'REJECTED' }, { canReject: true, canVoid: true }), false);
+    assert.equal(canCancelExpenseInsteadOfDelete({ ...row, sourceReimbursementRequestId: 'claim-1' }, { canReject: true, canVoid: true }), false);
+    assert.match(expenseDeleteErrorMessage({ code: 'EXPENSE_HAS_LINKED_DATA', details: { blocker: 'PAYMENT' } }, 'th', 'DRAFT'), /เคยบันทึกการจ่ายไว้.*ยกเลิก/);
+    assert.match(expenseDeleteErrorMessage({ code: 'EXPENSE_HAS_LINKED_DATA', details: { blocker: 'DISBURSEMENT_VOUCHER' } }, 'th'), /ใบเตรียมจ่าย.*เปิดรายจ่าย/);
+    assert.match(expenseDeleteErrorMessage({ code: 'EXPENSE_HAS_LINKED_DATA', details: { blocker: 'HISTORY' } }, 'th', 'REJECTED'), /ยกเลิกแล้ว.*เลือกรายการอื่น/);
+  });
+
   it('names the delete target by the first field that is actually filled in', () => {
     const unnamed = { expenseNumber: null, vendorDocumentNumber: null, vendorNameSnapshot: null };
     assert.equal(expenseDeleteTargetLabel({ ...unnamed, expenseNumber: 'EXP-2026-0001' }), 'EXP-2026-0001');
@@ -1109,11 +1123,11 @@ describe('expenseDeleteErrorMessage', () => {
       });
       assert.equal(
         expenseDeleteErrorMessage(error, 'th'),
-        `ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: ${thaiLabel}`,
+        blocker === 'PAYMENT' ? 'ลบรายจ่ายนี้ไม่ได้ เพราะเคยบันทึกการจ่ายไว้ ใช้ยกเลิกรายการแทน' : `ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: ${thaiLabel}`,
       );
       assert.equal(
         expenseDeleteErrorMessage(error, 'en'),
-        `This expense cannot be deleted because it has linked data: ${englishLabel}.`,
+        blocker === 'PAYMENT' ? 'This expense has payment history. Cancel the expense instead, or choose another expense if already cancelled.' : `This expense cannot be deleted because it has linked data: ${englishLabel}.`,
       );
     }
   });

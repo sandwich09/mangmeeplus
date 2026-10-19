@@ -36,6 +36,7 @@ import { PrismaAccountingRepository } from '../../accounting-documents/infrastru
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { ReserveDocumentNumberUseCase } from '../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { DeleteExpenseUseCase } from '../application/use-cases/delete-expense.use-case';
 import type { WhtHandoffStatus } from '@watchdog-bms/contracts';
 import { CorrectWhtCertificateDto } from '../../tax/presentation/http/tax.dtos';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../common/pipes/validation-pipe.options';
@@ -756,6 +757,34 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-07-31T00:00:00Z'),
     netPayableAmount: '100', outstandingAmount: '100', postingStatus: 'posted',
   } });
+  it('DELETE-HISTORY a voided payment keeps its zero-paid draft and returns a clean delete refusal', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const expense = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId,
+      status: 'DRAFT', expenseDate: new Date('2026-07-31'), grandTotalAmount: '100', netPayableAmount: '100',
+      outstandingAmount: '100', paidAmount: '0', paymentStatus: 'UNPAID', postingStatus: 'not_required' } });
+    const payment = await client.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: '100',
+      paidAt: new Date('2026-07-31'), createdByUserId: userId, status: 'VOIDED', voidedAt: new Date(),
+      voidedByUserId: userId, postingStatus: 'not_required' } });
+    const prisma = { client } as any;
+    const audit = new AuditService(new PrismaAuditRepository(prisma), { error: () => undefined } as any);
+    const remove = new DeleteExpenseUseCase(prisma, new PrismaAttachmentRepository(prisma), audit);
+    try {
+      await assert.rejects(() => remove.execute({ ...context(), permissions: ['expense.delete'] }, expense.id), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.equal(error.getResponse().code, 'EXPENSE_HAS_LINKED_DATA');
+        assert.equal(error.getResponse().blocker, 'PAYMENT');
+        return true;
+      });
+      assert.ok(await client.expenseRecord.findUnique({ where: { id: expense.id } }));
+      assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: payment.id } })).status, 'VOIDED');
+      assert.equal((await new PrismaExpenseRepository(prisma).findByIdWithRelations(companyId, expense.id))?.hasDeletionBlockingHistory, true);
+    } finally {
+      await client.auditLog.deleteMany({ where: { companyId, targetId: expense.id } });
+      await client.expensePayment.deleteMany({ where: { id: payment.id } });
+      await client.expenseRecord.deleteMany({ where: { id: expense.id } });
+    }
+  });
   // Slice 5: a 50 ทวิ is issued for a recorded payment with a known date (a Bangkok day stored as its local midnight).
   const recordDatedPayment = (expenseId: string, day = '2026-07-31', company = companyId, amount = '100') => clients[0]!.expensePayment.create({ data: {
     companyId: company, expenseId, amount, paidAt: new Date(`${day}T00:00:00+07:00`), paidAtConfirmed: true, createdByUserId: userId,

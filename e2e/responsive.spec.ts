@@ -76,7 +76,7 @@ const CARD_VIEW_CASES = [
     route: '/expenses',
     tableTestId: 'expenses-grid',
     cardListTestId: 'expenses-card-list',
-    cardTestId: 'expenses-card',
+    cardTestId: 'expenses-row',
     url: /\/expenses\/[^/?#]+$/,
     // Named, not counted: a bare 5 could not say that the expense number had been given a column of its own, the first.
     // The last is the action column, whose heading only a screen reader reads.
@@ -820,7 +820,7 @@ test.describe('Mobile responsive invariants', () => {
 
       await expect(authedPage.getByTestId(cardView.tableTestId)).toBeHidden();
       await expect(authedPage.getByTestId(cardView.cardListTestId)).toBeVisible();
-      const card = authedPage.getByTestId(cardView.cardTestId).first();
+      const card = authedPage.getByTestId(cardView.cardListTestId).getByTestId(cardView.cardTestId).first();
       await expect(card).toBeVisible();
 
       const dimensions = await authedPage.evaluate(() => ({

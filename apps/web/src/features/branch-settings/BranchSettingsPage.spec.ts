@@ -4,6 +4,11 @@ import { test } from 'node:test';
 
 const source = readFileSync(new URL('./BranchSettingsPage.tsx', import.meta.url), 'utf8');
 
+test('JOURNEYS-MOBILE branch rows and phone cards share an entry test id', () => {
+  assert.match(source, /<tr key=\{b.id\} data-testid="branch-entry"/);
+  assert.match(source, /<div key=\{b.id\} data-testid="branch-entry" className="space-y-4 p-5"/);
+});
+
 test('expense-focused branch creation excludes warehouse without removing the other types or changing the default', () => {
   assert.match(source, /Object\.entries\(TYPE_LABELS\)\.filter\(\(\[type\]\) => type !== 'WAREHOUSE'\)\.map\(/);
   assert.match(source, /HEAD_OFFICE: 'สำนักงานใหญ่'/);

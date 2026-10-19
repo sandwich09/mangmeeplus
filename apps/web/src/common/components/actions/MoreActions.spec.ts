@@ -92,3 +92,30 @@ test('MOBILE-1 opening a menu clamps either edge on a 375px phone, including up 
     assert.match(css, /\.panel \{[^}]*translate: var\(--panel-shift-x, 0px\) 0;/);
   } finally { globals.window = previousWindow; }
 });
+
+test('MOBILE-2 the withholding menu reclamps when its measured width or phone placement changes', () => {
+  const globals = globalThis as any;
+  const previous = { window: globals.window, ResizeObserver: globals.ResizeObserver };
+  const listeners = new Map<string, () => void>();
+  let resized = () => {}, disconnected = false;
+  globals.window = { innerWidth: 375, addEventListener: (key: string, fn: () => void) => listeners.set(key, fn),
+    removeEventListener: (key: string) => listeners.delete(key) };
+  globals.ResizeObserver = class { constructor(fn: () => void) { resized = fn; } observe() {} disconnect() { disconnected = true; } };
+  try {
+    const node = MoreActions({ label: 'เพิ่มเติม', align: 'end', children: entry });
+    let left = 159, width = 208;
+    const values: Record<string, string> = {};
+    const panel: any = { style: { setProperty: (key: string, value: string) => { values[key] = value; } },
+      getBoundingClientRect: () => ({ left, width }) };
+    panel.parentElement = { open: true, querySelector: () => panel };
+    const cleanup = node.props.children[1].props.ref(panel);
+    resized(); assert.equal(values['--panel-shift-x'], '0px');
+    width = 243; resized(); // The reported placement: 159 + 243 = 402, viewport 375.
+    assert.equal(values['--panel-shift-x'], '-35px');
+    left = 260; listeners.get('resize')!();
+    assert.equal(values['--panel-shift-x'], '-136px');
+    panel.parentElement.open = false;
+    left = 0; resized(); assert.equal(values['--panel-shift-x'], '-136px');
+    cleanup(); assert.equal(disconnected, true); assert.equal(listeners.size, 0);
+  } finally { Object.assign(globals, previous); }
+});

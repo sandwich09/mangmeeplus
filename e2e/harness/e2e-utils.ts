@@ -11,8 +11,14 @@ export function unique(prefix: string) {
  * `selectOption()` — which needs a real <select> — cannot drive it. Open, then click the option.
  */
 export async function chooseThemedOption(page: Page, trigger: Locator, optionName: string) {
-  await trigger.click();
-  await page.getByRole('option', { name: optionName, exact: true }).click();
+  const option = page.getByRole('option', { name: optionName, exact: true });
+  // A late page read can remount the field or move its anchor while the portal is being placed.
+  await expect(async () => {
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true', { timeout: 1_000 });
+    await expect(option).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
+  await option.click();
 }
 
 /** Mirrors `branchDisplayName` (web-core-workspace/branch-scope-label.logic.ts) in Thai. */

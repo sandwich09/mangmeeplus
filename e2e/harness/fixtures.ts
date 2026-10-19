@@ -24,6 +24,7 @@ import {
   loginViaDevBff,
 } from './auth';
 import { getRoleToken, loginAs, type RoleKey } from './roles';
+import { watchScreenFit } from './screen-fit';
 
 type Fixtures = {
   companyId: string;
@@ -38,6 +39,11 @@ type Fixtures = {
 };
 
 export const test = base.extend<Fixtures>({
+  context: async ({ context }, use, info) => {
+    const finish = watchScreenFit(context, info);
+    await use(context);
+    await finish();
+  },
   companyId: async ({}, use) => {
     await use(COMPANY_ID);
   },
@@ -67,19 +73,24 @@ export const test = base.extend<Fixtures>({
 
   // Role-scoped browser sessions. A fresh context per role keeps cookies from colliding —
   // the auth cookies are chunked on one name, so two roles in one context overwrite each other.
-  pageAs: async ({ browser }, use) => {
+  pageAs: async ({ browser, viewport, isMobile, hasTouch, deviceScaleFactor, userAgent }, use, info) => {
     const opened: Page[] = [];
     const contexts: import('@playwright/test').BrowserContext[] = [];
+    const finish: Array<() => Promise<void>> = [];
     await use(async (role: RoleKey) => {
-      const context = await browser.newContext({ baseURL: WEB_BASE_URL });
+      const context = await browser.newContext({ baseURL: WEB_BASE_URL, viewport, isMobile, hasTouch, deviceScaleFactor, userAgent });
       contexts.push(context);
+      finish.push(watchScreenFit(context, info));
       await loginAs(context, role);
       const page = await context.newPage();
       opened.push(page);
       return page;
     });
-    for (const page of opened) await page.close().catch(() => {});
-    for (const context of contexts) await context.close().catch(() => {});
+    try { for (const check of finish) await check(); }
+    finally {
+      for (const page of opened) await page.close().catch(() => {});
+      for (const context of contexts) await context.close().catch(() => {});
+    }
   },
 
   apiAs: async ({ playwright, request }, use) => {

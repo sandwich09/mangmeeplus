@@ -864,6 +864,8 @@ export function expenseReimbursementProgressLabel(progress: ExpenseReimbursement
 }
 
 export type ExpenseSummary = {
+  /** Any payment (including voided) or voucher line prevents physical deletion. */
+  hasDeletionBlockingHistory?: boolean;
   /** Any retained certificate version, including SUPERSEDED, prevents physical deletion. */
   hasRetainedSubstituteReceiptEvidence?: boolean;
   cancelledCertificate?: { kind: 'SYSTEM' | 'EXTERNAL'; number: string | null };
