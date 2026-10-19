@@ -212,7 +212,8 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
         onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); closeCalendar(); } }}
         anchorRef={rootRef}
         panelRef={panelRef}
-        height={mode === 'month' ? 300 : 400}
+        height={mode === 'month' ? 300 : 500}
+        keepWhole
         className={`z-[100000] flex w-[286px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-[var(--shadow-theme-md)] ${panelClassName ?? ''}`}
       >
         <div className="mb-2 flex shrink-0 items-center justify-between">
