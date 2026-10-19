@@ -11,24 +11,28 @@ const units = (value: number): number => {
   if (!Number.isSafeInteger(value) || value < 0 || value > 2_147_483_647) throw invalid();
   return value;
 };
-const bangkokDay = (milliseconds: number) => Math.floor((milliseconds + 7 * 60 * 60 * 1000) / 86_400_000);
+const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000;
+const bangkokDay = (milliseconds: number) => Math.floor((milliseconds + BANGKOK_OFFSET_MS) / 86_400_000);
+/** Asia/Bangkok's calendar anniversary, shared by the interval and the stored renewal anchor. */
+export const packageAnchorDay = (instant: Date): number => new Date(time(instant) + BANGKOK_OFFSET_MS).getUTCDate();
 
 /**
- * Preserve the billing anniversary through February/short months, without assuming 30/365 days.
+ * Preserve the Asia/Bangkok billing anniversary through February/short months, without assuming 30/365 days.
  *
  * `count` is how many whole intervals to append at once — 1 for every catalog offer, N for a
  * sales deal sold as N months (spec §19.2/S35). Counting months once, rather than calling this N
  * times, is what keeps the anchor day: 31 Jan + 3 months is 30 Apr, not 30 Apr via 28 Feb.
  */
-export function appendPackageInterval(start: Date, interval: BillingInterval, anchorDay = start.getUTCDate(), count = 1): Date {
+export function appendPackageInterval(start: Date, interval: BillingInterval, anchorDay = packageAnchorDay(start), count = 1): Date {
   time(start);
   if (!['month', 'year'].includes(interval) || !Number.isInteger(anchorDay) || anchorDay < 1 || anchorDay > 31 ||
       !Number.isInteger(count) || count < 1 || count > 1200) throw invalid();
-  const end = new Date(start);
+  const end = new Date(time(start) + BANGKOK_OFFSET_MS);
   end.setUTCDate(1);
   end.setUTCMonth(end.getUTCMonth() + (interval === 'year' ? 12 : 1) * count);
   const lastDay = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() + 1, 0)).getUTCDate();
   end.setUTCDate(Math.min(anchorDay, lastDay));
+  end.setTime(end.getTime() - BANGKOK_OFFSET_MS);
   if (time(end) <= time(start)) throw invalid();
   return end;
 }

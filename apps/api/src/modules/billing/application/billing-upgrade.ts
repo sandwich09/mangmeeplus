@@ -97,7 +97,8 @@ export async function upgradeHistory(db: Prisma.TransactionClient, account: Bill
   if (!segments.length && gifts.length && cursor === account.paidThrough.getTime()) throw billingError('BILLING_UPGRADE_GIFT_ONLY', 'เวลาที่เหลือเป็นวันแถม ซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น');
   if (!segments.length || cursor !== account.paidThrough.getTime()) throw review();
   const amountSatang = segments.reduce((sum,s) => sum+s.amountSatang,0), receiptUnitsAdded = segments.reduce((sum,s) => sum+s.receiptUnitsAdded,0);
-  if (!Number.isSafeInteger(amountSatang) || amountSatang < 1000 || !Number.isSafeInteger(receiptUnitsAdded) || receiptUnitsAdded > 2147483647) throw review();
+  if (!Number.isSafeInteger(amountSatang) || !Number.isSafeInteger(receiptUnitsAdded) || receiptUnitsAdded > 2147483647) throw review();
+  if (amountSatang < 1000) throw billingError('BILLING_UPGRADE_BELOW_MINIMUM', 'ส่วนต่างต่ำกว่า 10.00 บาท เปลี่ยนแพ็กเกจเมื่อถึงรอบต่ออายุหรือติดต่อทีมงาน');
   return { prorationAt, segments, amountSatang, receiptUnitsAdded, sourceHash: hashBilling([account.id, account.baseSubscriptionId,
     account.paidThrough, gifts, segments, grants.map(g => [g.id,g.sourceHash,g.revokedAt]), invoices.sort((a,b)=>a.id.localeCompare(b.id)).map(i => [i.id,i.evidenceHash,i.refundedSatang,i.disputed])]) };
 }

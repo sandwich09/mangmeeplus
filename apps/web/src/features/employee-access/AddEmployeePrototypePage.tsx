@@ -12,15 +12,16 @@ import { LoadingState } from '@/common/components/state/LoadingState';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { BackLink } from '@/common/components/app-shell/BackLink';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { Notice } from '@/common/components/notice';
 import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { useUnsavedNavigation } from '@/common/components/unsaved-navigation/use-unsaved-navigation';
 import { useToast } from '@/common/components/toast';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
-import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
+import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, setEmployeeStatus, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
-import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, canChangeEmployeeStatus, employeeBranchIds, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -208,6 +209,7 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
   const selectedWorkspaceBranch = useRef(workspaceBranch?.branchId ?? '');
   selectedWorkspaceBranch.current = workspaceBranch?.branchId ?? '';
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [roleQuery, setRoleQuery] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -250,10 +252,13 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
   // What the server holds, as one string: the form is "changed" while it differs from this.
   const [savedForm, setSavedForm] = useState<string | null>(null);
   const isEditing = Boolean(editEmployeeId);
-  const employeeActive = draftActivated || editingEmployee?.status === 'ACTIVE';
   const canReadEmployees = viewerPermissions.includes('access.employee.read');
   const canCompleteDraft = viewerPermissions.includes('access.employee.create');
   const person = editingEmployee ?? createdEmployee;
+  const employeeActive = draftActivated || person?.status === 'ACTIVE';
+  const personIsDraft = !person || person.status === 'DRAFT';
+  const canActivatePerson = personIsDraft ? canCompleteDraft : canChangeEmployeeStatus(viewerPermissions, person, roles);
+  const sharedAccount = person?.sharedAccount ?? result?.reusedExistingAccount ?? confirmExistingUser;
   const personId = person?.id ?? result?.employeeId;
   const listHref = `/companies/${companyId}/settings/access-overview`;
 
@@ -305,7 +310,7 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
           const activeBranchIds = branchesResult.value.filter((branch) => branch.status === 'ACTIVE').map((branch) => branch.id);
           const selectedBranchIds = employee.branchScopeMode === 'ALL_BRANCHES'
             ? activeBranchIds
-            : employee.branchScopeBranchIds.filter((id) => activeBranchIds.includes(id));
+            : employeeBranchIds(employee).filter((id) => activeBranchIds.includes(id));
           setBranchIds(selectedBranchIds);
           setDefaultBranchId(
             employee.defaultBranchId && selectedBranchIds.includes(employee.defaultBranchId)
@@ -510,10 +515,12 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
   }
 
   async function activateEmployee(employeeId: string) {
+    if (!canActivatePerson || saving) return;
     setSaving(true);
     setActivationError('');
     try {
-      await completeEmployee(companyId, employeeId);
+      if (personIsDraft) await completeEmployee(companyId, employeeId);
+      else await setEmployeeStatus(companyId, employeeId, 'ACTIVE');
       setDraftActivated(true);
       toast.success(`เปิดใช้งาน ${personName} แล้ว`);
     } catch (e) {
@@ -624,7 +631,7 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
   const renderContact = () => (
     <div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errors['employee-email']} value={email} onChange={(event) => { setEmail(event.target.value); clearFieldError('employee-email'); }} />
+        <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label={sharedAccount ? 'อีเมลสำหรับร้านนี้' : 'อีเมล (ใช้เข้าสู่ระบบ)'} hint={sharedAccount ? 'ใช้ติดต่อในร้านนี้ ใช้เข้าสู่ระบบไม่ได้' : undefined} required error={errors['employee-email']} value={email} onChange={(event) => { setEmail(event.target.value); clearFieldError('employee-email'); }} />
         <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required hint="10 หลัก" error={errors['employee-phone']} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); clearFieldError('employee-phone'); }} inputMode="tel" maxLength={10} />
       </div>
       <details className="mt-3" open={addressOpen} onToggle={(event) => setAddressOpen(event.currentTarget.open)}>
@@ -637,9 +644,11 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
     </div>
   );
 
+  const shownRoles = roles.filter(role => role.name.toLowerCase().includes(roleQuery.trim().toLowerCase()));
+
   const renderRoleAndBranch = () => (
     <div className="grid gap-5">
-      <TextField id="employee-job-title" label="ตำแหน่งงาน" required maxLength={120} className="max-w-xl"
+      <TextField id="employee-job-title" label="ตำแหน่งงาน" required maxLength={120}
         hint="ชื่อหน้าที่ในร้าน ไม่เกี่ยวกับสิทธิ์" error={errors['employee-job-title']} value={jobTitle}
         onChange={(event) => { setJobTitle(event.target.value); clearFieldError('employee-job-title'); }}
         placeholder="เช่น พนักงานขาย หรือหัวหน้าคลัง" />
@@ -655,14 +664,16 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
           </>
         ) : (
           <>
-            <div className="grid gap-x-6 sm:grid-cols-2">
-              {roles.map((item) => (
+            {roles.length > 6 && <input type="search" className="mangmee-input mt-2" aria-label="ค้นหาบทบาทในฟอร์มพนักงาน" placeholder="ค้นหาบทบาท" value={roleQuery} onChange={event => setRoleQuery(event.target.value)} />}
+            <div className="grid max-h-64 gap-x-6 overflow-y-auto sm:grid-cols-2">
+              {shownRoles.map((item) => (
                 <ChoiceRow key={item.id} name="employee-role" value={item.id} label={item.name}
                   checked={roleIds.length === 1 && roleIds[0] === item.id}
                   onChange={() => { setRoleIds([item.id]); clearFieldError('employee-role'); }} />
               ))}
             </div>
             {roles.length === 0 && !loading && <p className="mt-1 text-sm text-gray-500">ยังไม่มีบทบาทให้เลือก</p>}
+            {roles.length > 0 && shownRoles.length === 0 && <p className="mt-1 text-sm text-gray-500">ไม่พบบทบาทที่ตรงกับคำค้น</p>}
             {errors['employee-role']
               ? <p role="alert" className={errorClass}>{errors['employee-role']}</p>
               : <p className={hintClass}>1 คนมี 1 บทบาท สิทธิ์ของแต่ละบทบาทอยู่ที่หน้าบทบาทและสิทธิ์</p>}
@@ -723,11 +734,11 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
       <Notice tone="warning">
         ชื่อผู้ใช้ {username.trim()} มีบัญชีอยู่แล้ว ถ้าเป็นคนเดียวกัน เพิ่มเข้าร้านนี้ด้วยบัญชีเดิมได้
       </Notice>
-      <ActionGroup className="mt-4">
+      <FormActionBar><ActionGroup>
         <button type="button" className={secondaryButtonClass} disabled={saving} aria-busy={saving}
           onClick={() => { setConfirmExistingUser(false); setStep(1); window.requestAnimationFrame(() => document.getElementById('employee-username')?.focus()); }}>แก้ชื่อผู้ใช้</button>
         <button type="button" className={primaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => void saveEmployee(true)}>เพิ่มด้วยบัญชีเดิม</button>
-      </ActionGroup>
+      </ActionGroup></FormActionBar>
     </div>
   );
 
@@ -766,14 +777,14 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
       {error && <Notice tone="error" className="mt-5">{error}</Notice>}
 
       {confirmExistingUser ? renderExistingUserQuestion() : isEditing ? (
-        <ActionGroup className="mt-6">{saveButton}</ActionGroup>
+        <FormActionBar><ActionGroup>{saveButton}</ActionGroup></FormActionBar>
       ) : (
-        <ActionGroup className="mt-6">
+        <FormActionBar><ActionGroup>
           {step > 1 && <button type="button" className={secondaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => goToStep((step - 1) as AddStep)}>กลับ</button>}
           {step < 3
             ? <button type="button" className={primaryButtonClass} disabled={loading} aria-busy={loading} onClick={() => goToStep((step + 1) as AddStep)}>ถัดไป</button>
             : saveButton}
-        </ActionGroup>
+        </ActionGroup></FormActionBar>
       )}
     </>
   );
@@ -788,6 +799,8 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
               ? `เปิดใช้งานพนักงานแล้ว ${personName} เข้าร้านนี้ได้ด้วยชื่อผู้ใช้และรหัสผ่านเดิม`
               : `เปิดใช้งานพนักงานแล้ว ส่งชื่อผู้ใช้และรหัสผ่านด้านล่างให้ ${personName}`}
         </Notice>
+      ) : !personIsDraft ? (
+        <Notice tone={activationError ? 'error' : 'success'}>บันทึกข้อมูลของ {personName} แล้ว {person?.status === 'INVITED' ? 'ยังไม่ได้เปิดใช้งาน' : 'ยังปิดใช้งานอยู่'}{activationError ? ` ${activationError}` : ''}</Notice>
       ) : activationError ? (
         <Notice tone="error">บันทึก {personName} เป็นร่างแล้ว แต่ยังเปิดใช้งานไม่ได้ {activationError}</Notice>
       ) : canCompleteDraft ? (
@@ -831,7 +844,7 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
       <ActionGroup className="mt-2">
         <button type="button" className={secondaryButtonClass} disabled={saving} onClick={() => { setActivationError(''); setStep(isEditing ? 1 : 3); }}>แก้ไขข้อมูล</button>
         {!isEditing && employeeActive && <button type="button" className={secondaryButtonClass} onClick={onAddAnother}>เพิ่มพนักงานอีกคน</button>}
-        {!employeeActive && canCompleteDraft && personId
+        {!employeeActive && canActivatePerson && personId
           ? <button type="button" className={primaryButtonClass} disabled={saving} aria-busy={saving} onClick={() => void activateEmployee(personId)}>{activationError ? 'เปิดใช้งานอีกครั้ง' : 'เปิดใช้งานพนักงาน'}</button>
           : <button type="button" className={primaryButtonClass} onClick={leavePage}>{canReadEmployees ? 'ไปรายชื่อพนักงาน' : 'ไปหน้าแรก'}</button>}
       </ActionGroup>

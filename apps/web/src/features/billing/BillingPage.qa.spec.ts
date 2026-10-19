@@ -156,7 +156,7 @@ test('billing review fixes use one customer document name, shared controls, and 
   assert.doesNotMatch(page, />ลองใหม่<|บิล พร้อมเพย์/);
   assert.match(page, /'FULL_PACKAGE'/);
   assert.match(page, /title="แพ็กเกจ" eyebrow="" description=""/);
-  assert.match(page, /className=\{billingPrimaryControl\} disabled=\{busy\} aria-busy=\{busy\} onClick=\{\(\) => action\(async navigate => navigate\(status\.renewalInvoiceUrl/);
+  assert.match(page, /className=\{returnFocused \? button : billingPrimaryControl\} disabled=\{busy\} aria-busy=\{busy\} onClick=\{\(\) => action\(async navigate => navigate\(status\.renewalInvoiceUrl/);
 });
 
 test('PAY-1 capacity selection uses the shared form bar and anchors stay scroll destinations without tabs', () => {
@@ -205,4 +205,11 @@ test('PAY-2 follow-up history sends the optional limit and safely encodes cursor
     assert.deepEqual(reads.map(read => read.url), ['/api/v1/companies/shop/billing/history', '/api/v1/companies/shop/billing/history?limit=10', '/api/v1/companies/shop/billing/history?cursor=invoice%2Fa%3Fb%3D1&limit=10', '/api/v1/companies/shop/billing/history?cursor=older']);
     for (const read of reads) { assert.equal(read.init?.cache, 'no-store'); assert.equal(read.init?.credentials, 'include'); assert.equal(new Headers(read.init?.headers).get('X-Company-Id'), 'shop'); }
   } finally { globalThis.fetch = original; }
+});
+
+test('FIX-Q2 capacity and renewal wording follows the Thai standard', () => {
+  for (const name of ['BillingCapacityPicker', 'BillingCollectionPanel']) {
+    const source = readFileSync(new URL(`./${name}.tsx`, import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /กรุณา|ลองใหม่|ดำเนินการ|ดังกล่าว/, name);
+  }
 });

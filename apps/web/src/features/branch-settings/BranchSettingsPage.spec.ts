@@ -79,3 +79,39 @@ test('view-only branch page renders facts and no add, edit or save controls', ()
     assert.doesNotMatch(html, /เพิ่มสาขา|แก้ไขสาขา|>บันทึก</);
   } finally { React.useState = original; }
 });
+
+for (const phone of ['', '   ', undefined, ' 0812345678 ']) test(`FIX-Q1 branch edit sends a persisted phone value for ${JSON.stringify(phone)}`, async () => {
+  const React = require('react');
+  (globalThis as any).React = React;
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const { ToastContext } = require('@/common/components/toast/use-toast');
+  const priorSvg = require.extensions['.svg'];
+  require.extensions['.svg'] = (module) => { module.exports = () => null; };
+  const Page = require('./BranchSettingsPage').default;
+  if (priorSvg) require.extensions['.svg'] = priorSvg; else delete require.extensions['.svg'];
+  const branch = { id: 'branch', code: 'HO', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', status: 'ACTIVE', phone: '0899999999' };
+  const states = [[branch], false, null, null, false, {}, { ...branch, phone }, false, false, null, null, '', false];
+  const originalState = React.useState, originalCreate = React.createElement, originalFetch = globalThis.fetch;
+  let cursor = 0, save: (() => Promise<void>) | undefined, sent: any;
+  React.useState = (initial: unknown) => {
+    const index = cursor++;
+    const state = originalState(initial);
+    return index < states.length ? [states[index], () => {}] : state;
+  };
+  React.createElement = (type: any, props: any, ...children: any[]) => {
+    if (type === 'button' && children.includes('บันทึก')) save = props.onClick;
+    return originalCreate(type, props, ...children);
+  };
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method === 'PATCH') sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ items: [], total: 0, page: 1, pageSize: 100 }));
+  };
+  try {
+    const noop = () => {};
+    renderToStaticMarkup(React.createElement(ToastContext.Provider, { value: { success: noop, warning: noop, error: noop } },
+      React.createElement(Page, { companyId: 'shop', permissions: ['company.branch.manage'] })));
+    assert.ok(save, 'the edit dialog offers save');
+    await save();
+    assert.equal(sent.phone, phone?.trim() ?? '');
+  } finally { React.useState = originalState; React.createElement = originalCreate; globalThis.fetch = originalFetch; }
+});

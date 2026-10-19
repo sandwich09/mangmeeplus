@@ -432,3 +432,13 @@ for (const mode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) scenario(`${mode}:
   await f.reconciler.reconcileAccount(f.account.id); // the renewal replayed
   assert.deepEqual([await f.client.billingInvoice.count({ where: { billingAccountId: f.account.id } }), (await f.read.lots()).length, f.issues, await f.read.review()], [2, 3, [], 0]);
 });
+
+scenario('MONEY-Q1 early Bangkok purchase persists local anchor 1 and service through the next local first', async shop => {
+  const f = await shop(), bought = await f.buy('CARD_ONCE', 'month', false);
+  const paid = await f.pay(bought.attemptId, bought.amount, 'card');
+  assert.equal(iso(paid.paidAt), '2027-02-28T20:00:00.000Z');
+  await f.reconcileOneTime(paid);
+  const account = await f.read.account(), invoice = await f.read.invoice(bought.attemptId);
+  assert.deepEqual([account.billingAnchorDay, iso(account.paidThrough), iso(invoice.periodEnd), iso((await f.read.term()).termEndsAt)],
+    [1, '2027-03-31T20:00:00.000Z', '2027-03-31T20:00:00.000Z', '2027-03-31T20:00:00.000Z']);
+}, '2027-02-28T20:00:57.000Z');

@@ -166,3 +166,10 @@ it('PAY-3 admin-only billing sentences stay unchanged', () => {
     ["BILLING_END_PACKAGE_NOT_REFUNDED", "รายการนี้ยังคืนเงินไม่ครบเต็มจำนวน ยุติแพ็กเกจได้หลังคืนเงินครบแล้ว"],
   ] as const) assert.equal(translateApiError(code), text, code);
 });
+
+it('MONEY-Q1 below-minimum upgrade explains the ten-baht limit and the way forward', () => {
+  const text = errorText({ code: 'BILLING_UPGRADE_BELOW_MINIMUM', status: 409 });
+  assert.match(text, /ส่วนต่างต่ำกว่า 10\.00 บาท/);
+  assert.match(text, /รอบต่ออายุ/);
+  assert.match(text, /ติดต่อทีมงาน/);
+});

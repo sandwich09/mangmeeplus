@@ -238,9 +238,14 @@ describe('validateRequestForm (multi-line claim)', () => {
 });
 
 describe('sumLineAmounts', () => {
+  it('rounds each line half up before adding, like the saved claim', () => {
+    assert.equal(String(sumLineAmounts([{ amount: '10.005' }, { amount: '10.005' }])), '20.02');
+    assert.equal(String(sumLineAmounts([{ amount: '1.005' }])), '1.01');
+  });
+
   it('adds the typed rows and tolerates blanks', () => {
-    assert.equal(sumLineAmounts([{ amount: '100.50' }, { amount: '49.5' }]), 150);
-    assert.equal(sumLineAmounts([{ amount: '' }, { amount: 'abc' }]), 0);
+    assert.equal(sumLineAmounts([{ amount: '100.50' }, { amount: '49.5' }]), '150.00');
+    assert.equal(sumLineAmounts([{ amount: '' }, { amount: 'abc' }]), '0.00');
   });
 });
 
@@ -645,9 +650,15 @@ describe('errorText', () => {
 });
 
 describe('formatMoney', () => {
+  it('reads thousands separators and names baht on the claim form', () => {
+    assert.equal(formatMoney('12,500.00'), '12,500.00 บาท');
+    assert.equal(formatMoney('1 200.50', 'THB'), '1,200.50 บาท');
+    assert.equal(formatMoney('99999999999999.99'), '99,999,999,999,999.99 บาท');
+  });
+
   it('formats to 2 decimals', () => {
-    assert.equal(formatMoney('500'), '฿500.00');
-    assert.equal(formatMoney('500', 'THB'), '฿500.00');
+    assert.equal(formatMoney('500'), '500.00 บาท');
+    assert.equal(formatMoney('500', 'THB'), '500.00 บาท');
     assert.equal(formatMoney('500', 'USD'), '500.00 USD');
   });
 });
@@ -1392,8 +1403,8 @@ describe('approverPaymentWarning', () => {
 describe('policyDecisionPreview', () => {
   it('reads the approver line with the owner fallback and goes straight to payment when finance review is off', () => {
     assert.deepEqual(policyDecisionPreview({ approvalRequiredFromAmount: '1', approverLabel: 'ผู้จัดการ', ownerRoute: false, financeReviewRequired: false }), [
-      { title: 'ยอดตั้งแต่ ฿1.00', path: 'ผู้จัดการ (ถ้าไม่มี เจ้าของกิจการ) → จ่ายเงินคืน' },
-      { title: 'ยอดต่ำกว่า ฿1.00', path: 'ไม่ต้องรอผู้อนุมัติ → จ่ายเงินคืน' },
+      { title: 'ยอดตั้งแต่ 1.00 บาท', path: 'ผู้จัดการ (ถ้าไม่มี เจ้าของกิจการ) → จ่ายเงินคืน' },
+      { title: 'ยอดต่ำกว่า 1.00 บาท', path: 'ไม่ต้องรอผู้อนุมัติ → จ่ายเงินคืน' },
     ]);
   });
 
@@ -1497,7 +1508,7 @@ it('drafts save without receipts or reasons while sending enforces the shop rule
  const input = { reason: 'เดินทาง', receiptPolicy: { requireReceipt: true, allowMissingReceiptWithReason: false }, lines: [{ description: 'รถ', amount: '85', incurredDate: '2026-10-01', categoryKey: 'travel', hasReceipt: false }] };
  assert.equal(requestFormProblems({ ...input, intent: 'draft' }, '2026-10-13').count, 0);
  assert.ok(requestFormProblems({ ...input, intent: 'send' }, '2026-10-13').lines[0]?.receipt);
- assert.equal(formatMoney('85', 'THB'), '฿85.00');
+ assert.equal(formatMoney('85', 'THB'), '85.00 บาท');
 });
 
 

@@ -128,7 +128,7 @@ export async function scheduleDealReturn(tx: Prisma.TransactionClient, input: { 
   deal: DealSource; periodStart: Date }) {
   const cadence = input.deal.cadence, cycles = input.deal.cycles ?? null;
   if (!cadence || !cycles) return;
-  const returnAt = dealReturnAt(input.periodStart, cadence, cycles, input.periodStart.getUTCDate());
+  const returnAt = dealReturnAt(input.periodStart, cadence, cycles);
   if (!returnAt) return;
   await tx.packageChangeRequest.updateMany({ where: { id: input.deal.requestId, companyId: input.companyId,
     kind: 'SALES_DEAL', returnAt: null }, data: { returnAt } });

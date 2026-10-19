@@ -1,3 +1,4 @@
+import { calculateManualExpenseTotals } from './expenses.model';
 import {
   isNonExpenseClassificationBlocking,
   isCheckBillClassification,
@@ -127,7 +128,7 @@ export function manualLineAmount(line: Pick<SubstituteManualLineDraft, 'quantity
   const quantity = Number(line.quantity);
   const unitPrice = Number(line.unitPrice);
   if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice) || quantity <= 0 || unitPrice <= 0) return 0;
-  const amount = Math.round(quantity * unitPrice * 100) / 100;
+  const amount = calculateManualExpenseTotals({ ...line, vatMode: 'NO_VAT' }).grandTotal;
   return Number.isFinite(amount) && amount >= 0.01 && amount <= MAX_DECIMAL_18_4 ? amount : 0;
 }
 

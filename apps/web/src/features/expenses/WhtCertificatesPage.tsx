@@ -79,7 +79,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
     next.set('page', '1'); router.replace(`${pathname}?${next}`, { scroll: false });
   }
   const branchId = useBranchFilter()?.branchId || undefined;
-  const canRead = permissions.includes('wht.certificate.issue');
+  const canRead = permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].includes(permission));
   const [searchInput, setSearchInput] = useState(search);
   const [data, setData] = useState<WhtCertificateHandoffPageDto | null>(null);
   const [loading, setLoading] = useState(true);

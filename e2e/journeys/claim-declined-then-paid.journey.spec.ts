@@ -45,7 +45,28 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
   await expect(main.getByRole('combobox', { name: 'หมวด', exact: true })).toHaveText('เลือกหมวด');
   await main.getByRole('textbox', { name: 'รายการ', exact: true }).fill(claim.reason);
   await expect(main.getByRole('combobox', { name: 'หมวด', exact: true })).toHaveText(claim.category);
+  // The preview rounds each typed line before adding, just as the saved claim does.
+  await main.getByRole('button', { name: '+ เพิ่มรายการ', exact: true }).click();
+  await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).nth(1).fill('10.005');
+  await expect(main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true })).toHaveCount(2);
+  await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).first().fill('10.005');
+  await expect(main.getByText('20.02 บาท', { exact: true })).toBeVisible();
+  await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).first().fill('12,500.00');
+  await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).nth(1).fill('0');
+  await expect(main.getByText('12,500.00 บาท', { exact: true })).toBeVisible();
+  await main.getByRole('button', { name: 'ลบรายการ', exact: true }).nth(1).click();
+  await expect(main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true })).toHaveCount(1);
   await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).fill(claim.amount);
+  // Account management must leave this form, including its picked receipt, mounted in the original tab.
+  const [accountPage] = await Promise.all([
+    page.waitForEvent('popup'),
+    main.getByRole('link', { name: 'จัดการบัญชีรับเงินคืนของฉัน', exact: true }).click(),
+  ]);
+  await expect(accountPage.getByRole('heading', { level: 1, name: 'บัญชีรับเงินคืนของฉัน', exact: true })).toBeVisible(FIRST_SIGHT);
+  await accountPage.close();
+  await expect(main.getByRole('textbox', { name: 'เหตุผล', exact: true })).toHaveValue(claim.reason);
+  await expect(main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true })).toHaveValue(claim.amount);
+  await expect(main.getByText(receipt.name).first()).toBeVisible();
   await chooseThemedOption(page, main.getByRole('combobox', { name: 'หมวด', exact: true }), claim.category);
   await expect(main.getByText('เลือกให้จากรายละเอียด เปลี่ยนได้', { exact: true })).toHaveCount(0);
 
@@ -240,8 +261,20 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await dialog.getByLabel('หลักฐานการจ่าย', { exact: true }).setInputFiles(slip);
     await expect(dialog.getByText(slip.name).first()).toBeVisible(AFTER_PRESS);
     await dialog.getByRole('checkbox', { name: /^โอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก/ }).check();
-    await dialog.getByRole('button', { name: `บันทึกจ่าย ${second.printed.replace('฿', '')} บาท`, exact: true }).click();
+    // Hold the actual payment request long enough to prove cancel and Escape cannot close its form.
+    let releasePayment: () => void = () => undefined;
+    const paymentHeld = new Promise<void>(resolve => { releasePayment = resolve; });
+    const paymentUrl = `**/api/v1/companies/${companyId}/reimbursements/${paid.id}/payments`;
+    await finance.route(paymentUrl, async route => { await paymentHeld; await route.continue(); });
+    try {
+      await dialog.getByRole('button', { name: `บันทึกจ่าย ${second.printed.replace('฿', '')} บาท`, exact: true }).click();
+      await expect(dialog.getByRole('button', { name: 'ยกเลิก', exact: true })).toBeDisabled();
+      await expect(dialog.getByRole('button', { name: 'ยกเลิก', exact: true })).toHaveAttribute('aria-busy', 'true');
+      await finance.keyboard.press('Escape');
+      await expect(dialog).toBeVisible();
+    } finally { releasePayment(); }
     await expect(toast(finance, `บันทึกจ่าย ${paid.number} ${second.printed.replace('฿', '')} บาท แล้ว`)).toBeVisible(AFTER_PRESS);
+    await finance.unroute(paymentUrl);
     await expect(financeMain.locator('tr[role="link"]').filter({ hasText: paid.number })).toHaveCount(0, AFTER_PRESS);
 
     await financeMain.getByRole('button', { name: /^ใบเบิกทั้งหมด\s*\d+$/ }).click();
@@ -295,6 +328,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await work.getByLabel('แนบใบที่เซ็นแล้ว', { exact: true }).setInputFiles(picture('ใบเบิกที่เซ็นแล้ว.png'));
     const copyDialog = staff.getByRole('dialog', { name: 'แนบใบเบิกที่เซ็นแล้ว', exact: true });
     await expect(copyDialog).toBeVisible();
+    await expect(copyDialog.getByRole('checkbox', { name: /^สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ/ })).toBeVisible();
     await copyDialog.getByRole('button', { name: 'ปิด', exact: true }).last().click();
     await expect(copyDialog).toHaveCount(0);
   });

@@ -107,8 +107,8 @@ export function editReimbursementInternalNote(companyId: string, id: string, not
 export function deleteReimbursementInternalNote(companyId: string, id: string, noteId: string) {
   return apiFetch(`${base(companyId)}/${id}/internal-notes/${noteId}`, { method: 'DELETE' });
 }
-export function createReimbursement(companyId: string, body: Record<string, unknown>) {
-  return apiFetch<any>(base(companyId), { method: 'POST', body: JSON.stringify(body) });
+export function createReimbursement(companyId: string, body: Record<string, unknown>, key?: string) {
+  return apiFetch<any>(base(companyId), { method: 'POST', body: JSON.stringify(body), ...(key && { headers: { 'Idempotency-Key': key } }) });
 }
 export function updateReimbursementDraft(companyId: string, id: string, body: Record<string, unknown>) {
   return apiFetch<any>(`${base(companyId)}/${id}`, { method: 'PATCH', body: JSON.stringify(body) });

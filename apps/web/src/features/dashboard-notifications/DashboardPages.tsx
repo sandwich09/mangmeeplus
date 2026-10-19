@@ -92,9 +92,9 @@ const money = (value: number | string | null) => Number(value ?? 0).toLocaleStri
  * tabs on top, then three columns — each a name, one big number, one line saying what it counts, and the one button to
  * its list. The buttons are one size; the period changes the first number only.
  */
-function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale }: {
+function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale, loading }: {
   metrics: ReturnType<typeof homeMetrics<DashboardMetricValue>>; periodKind: DashboardTabPeriodKind; onPeriod: (kind: DashboardTabPeriodKind) => void;
-  locale: ReturnType<typeof useWorkspaceLocale>;
+  locale: ReturnType<typeof useWorkspaceLocale>; loading: boolean;
 }) {
   const byKey = new Map(metrics.map((metric) => [metric.key, metric]));
   const period = t(PERIOD_TABS.find((tab) => tab.kind === periodKind)!.labelKey, locale);
@@ -114,8 +114,8 @@ function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale }: {
           </button>
         ))}
       </div>
-      <MetricGrid className="mt-5 sm:mt-7" items={columns.map(({ key, label, note, unit, dot, color, metric }) => ({ key, label, note, unit, dot, color,
-        value: metric.freshness === 'unavailable' ? '—' : metric.unit === 'บาท' ? money(metric.value) : Number(metric.value ?? 0).toLocaleString('th-TH') }))} />
+      {loading ? <div role="status" aria-busy="true" className="mt-5 py-8 text-sm text-gray-500">กำลังโหลดรายจ่าย…</div> : <MetricGrid className="mt-5 sm:mt-7" items={columns.map(({ key, label, note, unit, dot, color, metric }) => ({ key, label, note, unit, dot, color,
+        value: metric.freshness === 'unavailable' ? '—' : metric.unit === 'บาท' ? money(metric.value) : Number(metric.value ?? 0).toLocaleString('th-TH') }))} />}
     </section>
   );
 }
@@ -286,7 +286,7 @@ export function CompanyDashboardPage({
           ))}
         </div>
       ) : <>
-      {expenseWidget && <ExpenseHomeCard metrics={homeMetrics(expenseWidget.metrics)} periodKind={periodKind} onPeriod={setPeriodKind} locale={locale} />}
+      {expenseWidget && <ExpenseHomeCard loading={loading || snapshot?.periodKind !== periodKind} metrics={homeMetrics(expenseWidget.metrics)} periodKind={periodKind} onPeriod={setPeriodKind} locale={locale} />}
       {expenseWidget && <ExpenseMonthsCard companyId={companyId} branchId={branchId} />}
       {otherWidgets.map((widget) => (
         // A person with no number to see (an employee) gets no section, no period and no "no data" sentence.

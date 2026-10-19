@@ -12,7 +12,9 @@ test('one primary action respects each status, missing data, permission and syst
   assert.equal(certificateCardAction({ ...row, systemIssuanceOpen: false }, [...issue, ...link]), 'record');
   assert.equal(certificateCardAction({ ...row, missing: ['FORM_TYPE_UNRESOLVED'] }, link), 'record');
   assert.equal(certificateCardAction({ ...row, status: 'SYSTEM_ISSUED' }, issue), 'download');
-  assert.equal(certificateCardAction({ ...row, status: 'SYSTEM_ISSUED' }, ['wht.certificate.read']), null);
+  assert.equal(certificateCardAction({ ...row, status: 'SYSTEM_ISSUED' }, ['wht.certificate.read']), 'download');
+  for (const permission of ['wht.certificate.correct', 'wht.external_certificate.link']) assert.equal(certificateCardAction({ ...row, status: 'SYSTEM_ISSUED' }, [permission]), 'download');
+  assert.equal(certificateCardAction({ ...row, status: 'SYSTEM_ISSUED' }, ['expense.read']), null);
   for (const status of ['EXTERNAL_LINKED', 'CANCELLED']) assert.equal(certificateCardAction({ ...row, status }, [...issue, ...link]), null);
 });
 

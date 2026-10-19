@@ -8,6 +8,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
 import { json, unique } from '../harness/e2e-utils';
+import { QA_ACCOUNTS } from '../harness/roles';
 import { AFTER_PRESS, FIRST_SIGHT, cardWith, expectInSight, pressMenu } from './journey-kit';
 
 type Role = { id: string; name: string; status: string; isSystem: boolean; permissionKeys: string[] };
@@ -48,6 +49,48 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
   await owner.goto(`/companies/${shop}/dashboard`, FIRST_SIGHT);
   await expect(heading(owner, 'รายจ่ายของร้าน')).toBeVisible(FIRST_SIGHT);
 
+  await test.step('failed staff, role and permission reads show retry instead of empty data', async () => {
+    for (const [pagePath, endpoint, title, empty] of [
+      ['access-overview', 'employees', 'โหลดรายชื่อพนักงานไม่สำเร็จ', 'ยังไม่มีพนักงานในร้านนี้'],
+      ['permissions', 'roles', 'โหลดบทบาทไม่สำเร็จ', 'ยังไม่มีบทบาทในร้านนี้'],
+      ['permissions', 'access/matrix', 'โหลดตารางสิทธิ์ไม่สำเร็จ', 'ไม่ได้เปิดสิทธิ์'],
+    ]) {
+      // Fail every read until ลองอีกครั้ง is pressed: a dev server may read twice on mount, so `times: 1` raced the screen.
+      let failing = true;
+      const pattern = `**/companies/${shop}/settings/${endpoint}`;
+      await owner.route(pattern, route => failing ? route.fulfill({ status: 503,
+        contentType: 'application/json', body: JSON.stringify({ message: 'Unavailable' }) }) : route.fallback());
+      await owner.goto(`/companies/${shop}/settings/${pagePath}`, FIRST_SIGHT);
+      await expect(main.getByText(title, { exact: true })).toBeVisible(AFTER_PRESS);
+      await expect(main.getByText(empty, { exact: true })).toHaveCount(0);
+      if (endpoint === 'access/matrix') await expect(main.getByTestId('role-permission-matrix')).toHaveCount(0);
+      failing = false;
+      await main.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
+      await expect(main.getByText(title, { exact: true })).toHaveCount(0, AFTER_PRESS);
+      await expect(main.getByRole('searchbox', { name: pagePath === 'access-overview' ? 'ค้นหาพนักงาน' : 'ค้นหาบทบาท', exact: true })).toBeVisible(AFTER_PRESS);
+      if (endpoint === 'access/matrix') await expect(main.getByTestId('role-permission-matrix')).toBeVisible(AFTER_PRESS);
+      await owner.unroute(pattern);
+    }
+  });
+
+  await test.step('manager cannot switch a people-manager off; a shared account explains its own reset and shop email', async () => {
+    const manager = await pageAs('MANAGER');
+    await manager.goto(`/companies/${shop}/settings/access-overview?person=seed-plain-profile-manager`, FIRST_SIGHT);
+    await expect(heading(manager, 'รายชื่อพนักงาน')).toBeVisible(FIRST_SIGHT);
+    await expect(manager.getByTestId('employee-detail-card')).toContainText(QA_ACCOUNTS.MANAGER.displayName, AFTER_PRESS);
+    await expect(manager.getByRole('switch', { name: 'ใช้งาน / ปิดใช้งาน', exact: true })).toHaveCount(0);
+
+    await owner.goto(`/companies/${shop}/settings/access-overview?person=seed-plain-profile-manager`, FIRST_SIGHT);
+    await expect(main.getByTestId('employee-detail-card')).toContainText(QA_ACCOUNTS.MANAGER.displayName, AFTER_PRESS);
+    await expect(main.getByRole('button', { name: 'รีเซ็ตรหัสผ่าน', exact: true })).toHaveCount(0);
+    await expect(main.getByText('บัญชีนี้ใช้กับหลายร้าน ให้เจ้าของบัญชีตั้งรหัสผ่านเอง', { exact: true })).toBeVisible();
+    await expect(main.getByRole('link', { name: 'เปิดหน้าตั้งรหัสผ่าน', exact: true })).toHaveAttribute('href', '/forgot-password');
+    await main.getByRole('button', { name: 'แก้ไขข้อมูล', exact: true }).click();
+    await expect(main.getByLabel('อีเมลสำหรับร้านนี้ *', { exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(main.getByText('ใช้ติดต่อในร้านนี้ ใช้เข้าสู่ระบบไม่ได้', { exact: true })).toBeVisible();
+    await main.getByRole('link', { name: 'กลับไปรายชื่อพนักงาน', exact: true }).click();
+  });
+
   await test.step('owner: พนักงานและสิทธิ์ → บทบาทและสิทธิ์ → เพิ่มบทบาท, only บันทึกค่าใช้จ่ายของฉัน', async () => {
     await pressMenu(owner, 'บทบาทและสิทธิ์', 'พนักงานและสิทธิ์');
     await expect(heading(owner, 'บทบาทและสิทธิ์')).toBeVisible(FIRST_SIGHT);
@@ -61,7 +104,7 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await expect(editor.locator('input[type="checkbox"]:checked')).toHaveCount(1);
     await expect(editor.getByRole('checkbox', { name: /^ดูตั้งค่าร้าน/ })).not.toBeChecked();
     await expect(editor.getByRole('checkbox', { name: /^อนุมัติและจ่ายใบเบิก/ })).not.toBeChecked();
-    await editor.getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+    await editor.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
     await expect(toast(owner, `สร้างบทบาท ${roleName} แล้ว`)).toBeVisible(AFTER_PRESS);
     const row = cardWith(owner, 'บทบาททั้งหมด').getByRole('button').filter({ has: owner.getByText(roleName, { exact: true }) });
     await row.scrollIntoViewIfNeeded();
@@ -82,15 +125,17 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await main.getByLabel('ชื่อผู้ใช้ *', { exact: true }).fill(username);
     await main.getByLabel('วันเดือนปีเกิด (ค.ศ.) *', { exact: true }).fill('01/02/1995');
     await main.getByLabel('เลขบัตรประชาชน *', { exact: true }).fill(`${identityBase}${checksum}`);
-    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await main.locator('[data-form-action-bar]').getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(main.getByLabel('อีเมล (ใช้เข้าสู่ระบบ) *', { exact: true })).toBeVisible();
     await main.getByLabel('อีเมล (ใช้เข้าสู่ระบบ) *', { exact: true }).fill(email);
     await main.getByLabel('เบอร์โทรศัพท์ *', { exact: true }).fill(`08${randomInt(10_000_000, 100_000_000)}`);
-    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await main.locator('[data-form-action-bar]').getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(main.getByLabel('ตำแหน่งงาน *', { exact: true })).toBeVisible();
     await main.getByLabel('ตำแหน่งงาน *', { exact: true }).fill('บันทึกใบเสร็จ');
+    const roleSearch = main.getByRole('searchbox', { name: 'ค้นหาบทบาทในฟอร์มพนักงาน', exact: true });
+    if (await roleSearch.count()) await roleSearch.fill(roleName);
     await main.getByRole('radio', { name: roleName, exact: true }).check();
-    await main.getByRole('button', { name: 'บันทึกและเปิดใช้งาน', exact: true }).click();
+    await main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกและเปิดใช้งาน', exact: true }).click();
     await expect(main.getByRole('status').filter({ hasText: `เปิดใช้งานพนักงานแล้ว ส่งชื่อผู้ใช้และรหัสผ่านด้านล่างให้ ${displayName}` })).toBeVisible(AFTER_PRESS);
     const credentials = main.locator('section').filter({ has: owner.getByRole('heading', { name: 'ชื่อผู้ใช้และรหัสผ่าน', exact: true }) }).last();
     await expect(credentials).toContainText(username);
@@ -105,7 +150,25 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await expect(row).toContainText(roleName, AFTER_PRESS);
     await row.click();
     await expect(main.getByTestId('employee-detail-card')).toContainText(roleName);
+    await main.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
+    await main.getByRole('searchbox', { name: 'ค้นหาบทบาทพนักงาน', exact: true }).fill(roleName);
+    await expect(main.getByRole('listbox').getByRole('option', { name: roleName, exact: true })).toBeVisible();
+    await expect(main.getByRole('listbox').getByRole('option')).toHaveCount(1);
+    await main.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
     await expect(main.getByRole('switch', { name: 'ใช้งาน / ปิดใช้งาน', exact: true })).toBeChecked();
+  });
+
+  await test.step('an assigned role names its blocking count and opens the employees who must move', async () => {
+    await pressMenu(owner, 'บทบาทและสิทธิ์', 'พนักงานและสิทธิ์');
+    await main.getByRole('searchbox', { name: 'ค้นหาบทบาท', exact: true }).fill(roleName);
+    await cardWith(owner, 'บทบาททั้งหมด').getByRole('button').filter({ has: owner.getByText(roleName, { exact: true }) }).click();
+    const inUse = main.getByRole('status').filter({ has: owner.getByRole('link', { name: 'ย้ายพนักงานไปบทบาทอื่น', exact: true }) });
+    await expect(inUse).toContainText('ยังมีพนักงานใช้บทบาทนี้ 1 คน ย้ายไปบทบาทอื่นก่อนปิดใช้งาน', AFTER_PRESS);
+    await expect(main.getByRole('button', { name: 'ปิดใช้งานบทบาท', exact: true })).toHaveCount(0);
+    await main.getByRole('link', { name: 'ย้ายพนักงานไปบทบาทอื่น', exact: true }).click();
+    await expect(heading(owner, 'รายชื่อพนักงาน')).toBeVisible(FIRST_SIGHT);
+    await expect(main.getByRole('combobox', { name: 'เลือกบทบาท', exact: true })).toHaveText(roleName, AFTER_PRESS);
+    await expect(main.getByRole('button').filter({ has: owner.getByText(displayName, { exact: true }) })).toBeVisible();
   });
 
   const context = await browser.newContext({ baseURL: urls.web, viewport: { width: 390, height: 844 } });
@@ -157,13 +220,14 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await test.step('owner: adds ดูตั้งค่าร้าน alone; member finds ข้อมูลร้าน in the menu and can only read', async () => {
       await pressMenu(owner, 'บทบาทและสิทธิ์', 'พนักงานและสิทธิ์');
       await expect(heading(owner, 'บทบาทและสิทธิ์')).toBeVisible(FIRST_SIGHT);
+      await main.getByRole('searchbox', { name: 'ค้นหาบทบาท', exact: true }).fill(roleName);
       await cardWith(owner, 'บทบาททั้งหมด').getByRole('button').filter({ has: owner.getByText(roleName, { exact: true }) }).click();
       await main.getByRole('button', { name: 'แก้ไขบทบาท', exact: true }).click();
       const editor = main.locator('form').filter({ has: owner.getByRole('heading', { name: `แก้ไขบทบาท ${roleName}`, exact: true }) });
       await expect(editor.getByRole('checkbox', { name: /^บันทึกค่าใช้จ่ายของฉัน/ })).toBeChecked();
       await editor.getByRole('checkbox', { name: /^ดูตั้งค่าร้าน/ }).check();
       await expect(editor.getByRole('checkbox', { name: /^จัดการตั้งค่าร้าน/ })).not.toBeChecked();
-      await editor.getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+      await editor.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
       await expect(toast(owner, `บันทึกบทบาท ${roleName} แล้ว`)).toBeVisible(AFTER_PRESS);
       await expect(main.getByTestId('role-can-do')).toContainText('ดูตั้งค่าร้าน');
       await member.reload();
@@ -186,7 +250,7 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       await expect(view).toBeChecked();
       await expect(view).toBeDisabled();
       await expect(editor.getByText('ต้องดูตั้งค่าร้านได้ก่อน จึงจะจัดการตั้งค่าร้านได้', { exact: true })).toBeVisible();
-      await editor.getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+      await editor.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
       await expect(toast(owner, `บันทึกบทบาท ${roleName} แล้ว`)).toBeVisible(AFTER_PRESS);
       await member.reload();
       await expect(heading(member, 'ข้อมูลร้าน')).toBeVisible(FIRST_SIGHT);
@@ -207,7 +271,9 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       await active.click();
       const dialog = owner.getByRole('dialog', { name: `ปิดใช้งาน ${displayName}`, exact: true });
       await expect(dialog).toContainText('เข้าสู่ระบบของร้านนี้ไม่ได้และคืนที่นั่งให้ร้าน');
-      await expect(dialog.getByRole('button', { name: 'ไม่ปิด', exact: true }).last()).toBeEnabled();
+      await expect(dialog.getByRole('button', { name: 'ปิด', exact: true })).toHaveCount(1);
+      await expect(dialog.getByRole('button', { name: 'ไม่ปิด', exact: true })).toHaveCount(1);
+      await expect(dialog.getByRole('button', { name: 'ไม่ปิด', exact: true })).toBeEnabled();
       await dialog.getByRole('button', { name: 'ปิดใช้งาน', exact: true }).click();
       await expect(toast(owner, `ปิดใช้งาน ${displayName} แล้ว`)).toBeVisible(AFTER_PRESS);
       await expect(active).not.toBeChecked();
@@ -218,6 +284,26 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       await expect(member.getByRole('button', { name: 'ออกจากระบบ', exact: true })).toBeVisible();
       await expect(member.getByRole('link', { name: 'ไปร้านที่เข้าได้', exact: true })).toBeVisible();
       await expect(member.locator('aside nav')).toHaveCount(0);
+    });
+
+    await test.step('editing a disabled employee keeps that state; its result can re-enable them without the draft API', async () => {
+      await main.getByRole('button', { name: 'แก้ไขข้อมูล', exact: true }).click();
+      await expect(heading(owner, `แก้ไขข้อมูล ${displayName}`)).toBeVisible(FIRST_SIGHT);
+      await main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true }).click();
+      await expect(main.getByRole('status').filter({ hasText: `บันทึกข้อมูลของ ${displayName} แล้ว ยังปิดใช้งานอยู่` })).toBeVisible(AFTER_PRESS);
+      await expect(main).not.toContainText('ยังเป็นร่าง');
+      await main.getByRole('button', { name: 'เปิดใช้งานพนักงาน', exact: true }).click();
+      await expect(toast(owner, `เปิดใช้งาน ${displayName} แล้ว`)).toBeVisible(AFTER_PRESS);
+      await member.reload();
+      // Back in the shop on whatever page the member had open (the branches page from the steps above), no longer refused.
+      await expect(member.locator('main').getByRole('heading', { level: 1 })).toBeVisible(FIRST_SIGHT);
+      await expect(member.getByRole('heading', { level: 1, name: 'เข้าร้านนี้ไม่ได้', exact: true })).toHaveCount(0);
+      await main.getByRole('button', { name: 'ไปรายชื่อพนักงาน', exact: true }).click();
+      await main.getByRole('searchbox', { name: 'ค้นหาพนักงาน', exact: true }).fill(firstName);
+      await main.getByRole('button').filter({ has: owner.getByText(displayName, { exact: true }) }).click();
+      await main.getByRole('switch', { name: 'ใช้งาน / ปิดใช้งาน', exact: true }).click();
+      await owner.getByRole('dialog', { name: `ปิดใช้งาน ${displayName}`, exact: true }).getByRole('button', { name: 'ปิดใช้งาน', exact: true }).click();
+      await expect(toast(owner, `ปิดใช้งาน ${displayName} แล้ว`)).toBeVisible(AFTER_PRESS);
     });
 
     await test.step('server records: exact pack permissions, the member role and disabled state match the screens', async () => {

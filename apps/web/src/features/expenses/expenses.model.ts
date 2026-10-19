@@ -176,7 +176,20 @@ function moneyNumber(value: string | number | null | undefined): number {
   const parsed = Number(String(value ?? '0').replace(/,/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
 }
-const roundMoney = (value: number) => Math.round(value * 100) / 100;
+// Keep decimal input exact through the server's half-up steps; binary floats lose half a satang.
+function decimalFraction(value: string | number | null | undefined): [bigint, bigint] {
+  const text = String(value ?? '0').replace(/,/g, '').trim();
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (!match || !Number.isFinite(Number(text)) || Number(text) === 0) return [0n, 1n];
+  const places = (match[3]?.length ?? 0) - Number(match[4] ?? 0);
+  const units = BigInt(`${match[1] === '-' ? '-' : ''}${match[2] || '0'}${match[3] ?? ''}`);
+  return places < 0 ? [units * 10n ** BigInt(-places), 1n] : [units, 10n ** BigInt(places)];
+}
+function halfUp(numerator: bigint, denominator: bigint): bigint {
+  const sign = numerator < 0n ? -1n : 1n;
+  const positive = numerator * sign;
+  return sign * (positive / denominator + (positive % denominator * 2n >= denominator ? 1n : 0n));
+}
 
 /**
  * Spec §19g decision 4: documents print a VAT amount in baht far more often than a rate, and the
@@ -207,16 +220,23 @@ export function calculateManualExpenseTotals(input: {
   vatMode: ExpenseVatMode;
   discountAmount?: string | number;
 }): { subtotal: number; vat: number; grandTotal: number } {
-  const subtotal = Math.max(0, moneyNumber(input.quantity) * moneyNumber(input.unitPrice) - moneyNumber(input.discountAmount));
-  const rate = Math.max(0, moneyNumber(input.vatRate));
-  if (!rate || input.vatMode === 'NO_VAT') return { subtotal: roundMoney(subtotal), vat: 0, grandTotal: roundMoney(subtotal) };
-  if (input.vatMode === 'VAT_INCLUDED') {
-    // entered amount is the gross: before-tax = gross minus the VAT baked into it
-    const vat = subtotal - (subtotal / (1 + rate));
-    return { subtotal: roundMoney(subtotal - vat), vat: roundMoney(vat), grandTotal: roundMoney(subtotal) };
+  // Mirror the API's calcLineTotals: round the product, discount, tax base and VAT in that order.
+  const [quantity, quantityScale] = decimalFraction(input.quantity);
+  const [price, priceScale] = decimalFraction(input.unitPrice);
+  const product = halfUp(quantity * price * 100n, quantityScale * priceScale);
+  const [discountUnits, discountScale] = decimalFraction(input.discountAmount);
+  const discount = halfUp(discountUnits * 100n, discountScale);
+  const maxDiscount = product > 0n ? product : 0n;
+  const afterDiscount = product - (discount < maxDiscount ? discount : maxDiscount);
+  const [rate, rateScale] = decimalFraction(input.vatRate);
+  let taxable = afterDiscount, vat = 0n;
+  if (input.vatMode === 'VAT_INCLUDED' && rate > 0n) {
+    taxable = halfUp(afterDiscount * rateScale, rateScale + rate);
+    vat = afterDiscount - taxable;
+  } else if (input.vatMode === 'VAT_EXCLUDED') {
+    vat = halfUp(taxable * rate, rateScale);
   }
-  const vat = subtotal * rate;
-  return { subtotal: roundMoney(subtotal), vat: roundMoney(vat), grandTotal: roundMoney(subtotal + vat) };
+  return { subtotal: Number(taxable) / 100, vat: Number(vat) / 100, grandTotal: Number(taxable + vat) / 100 };
 }
 
 /** Manual entry keeps the shape the OCR path already produces for a printed service charge
@@ -262,6 +282,7 @@ export function buildManualExpenseLines(input: {
     lines.push({
       lineNumber: lines.length + 1,
       description: input.serviceChargeDescription,
+      chargeKind: 'SERVICE_CHARGE',
       quantity: '1',
       unitPrice: input.serviceChargeAmount!,
       discountAmount: '0',

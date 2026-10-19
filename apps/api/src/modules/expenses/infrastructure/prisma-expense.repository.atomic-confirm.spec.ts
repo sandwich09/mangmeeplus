@@ -8,6 +8,9 @@ import { reconcileExpenseVat } from '../domain/logic/expense-vat-reconciliation.
 import { ExpenseTransactionTaxService } from '../application/services/expense-transaction-tax.service';
 import { TransactionTaxConfigUseCase } from '../../tax/application/use-cases/transaction-tax-config.use-case';
 import { aggregatePp30Boxes } from '../../tax/domain/logic/transaction-tax.logic';
+import Decimal from 'decimal.js';
+import { ExpenseSourceAdapter } from '../../tax/infrastructure/adapters/expense-source.adapter';
+import { calcLineTotals } from '../domain/logic/expense-totals.logic';
 import { asLedgerSource } from '../../ledger/application/use-cases/journal.use-case';
 import { buildDefaultPostingLines, DEFAULT_ACCOUNT_CODES } from '../../ledger/domain/logic/posting-engine.logic';
 
@@ -589,6 +592,69 @@ describe('confirmation keeps its own period gate', () => {
 
 
 describe('expense certificate income base (E1)', () => {
+  async function certificateAndFiling(prices: string[], rate: string, rounding: string) {
+    const h = harness();
+    h.row.lines = [...prices, rounding].map((price, index) => ({ ...h.row.lines[0], id: `line-${index}`, lineNumber: index + 1,
+      ...calcLineTotals({ quantity: '1', unitPrice: price, vatMode: 'NO_VAT', whtRate: index < prices.length ? new Decimal(rate).div(100).toString() : '0' }),
+      whtRate: index < prices.length ? new Decimal(rate).div(100).toString() : null,
+      chargeKind: index === prices.length ? 'ROUNDING' : null }));
+    const gross = h.row.lines.reduce((sum: Decimal, line: any) => sum.plus(line.taxableAmount), new Decimal(0));
+    const tax = h.row.lines.reduce((sum: Decimal, line: any) => sum.plus(line.whtAmount), new Decimal(0));
+    Object.assign(h.row, { whtAmount: tax.toString(), whtRate: rate, whtCategoryCode: 'CAT1', vendorEntityKindSnapshot: 'INDIVIDUAL',
+      whtInputJson: { inputType: 'RATE', value: rate }, taxableAmount: gross.toString(), grandTotalAmount: gross.toString(),
+      netPayableAmount: gross.minus(tax).toString(), outstandingAmount: gross.minus(tax).toString() });
+    let paper: any;
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', timezone: 'Asia/Bangkok' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType: 'PND3', defaultRate: rate, status: 'ACTIVE' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
+    await h.repo.confirmExpenseCas(await inputFor(h.repo, h.updatedAt));
+    const source = { ...h.row, lines: h.row.lines.filter((line: any) => new Decimal(line.whtAmount).gt(0)), payments: [
+      { id: 'paid', amount: h.row.netPayableAmount, status: 'RECORDED', paidAtConfirmed: true, paidAt: h.row.expenseDate, createdAt: h.row.expenseDate },
+    ] };
+    const [filing] = await new ExpenseSourceAdapter({ client: { expenseRecord: { findMany: async () => [source] },
+      company: h.client.company, whtFilingLine: { findMany: async () => [] } } } as any).findConfirmedWithWhtByCompany('company-1');
+    return { paper: paper.prefillSnapshotJson, filing };
+  }
+  it('MONEY-T1 uses certificate income 143744.80 for the filing instead of the 143744.56 rounded document total', async () => {
+    const { paper, filing } = await certificateAndFiling(Array(4).fill('35936.20'), '1', '-0.24');
+    assert.equal(paper.grossAmount, '143744.8000');
+    assert.equal(Number(filing.grossAmount), Number(paper.grossAmount));
+    assert.equal(Number(filing.whtAmount), Number(paper.withheldAmount));
+  });
+  it('MONEY-T1 seeded confirmation certificates and filing payments have identical income and withholding', async () => {
+    let seed = 4242;
+    const pick = (max: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) % max);
+    for (let i = 0; i < 2500; i++) {
+      const prices = Array.from({ length: 1 + pick(5) }, () => new Decimal(100 + pick(10000000)).div(100).toFixed(2));
+      const { paper, filing } = await certificateAndFiling(prices, ['1', '2', '3', '5'][pick(4)]!, new Decimal(-1 - pick(99)).div(100).toString());
+      assert.ok(new Decimal(filing.grossAmount).eq(paper.grossAmount), `seed case ${i}`);
+      assert.ok(new Decimal(filing.whtAmount).eq(paper.withheldAmount), `seed case ${i}`);
+    }
+  });
+  it('MONEY-T1 reads the actual rate or mixed-rate absence without rewriting historical money', async () => {
+    for (const [input, lineRates, expected] of [[{ inputType: 'RATE', value: '1' }, ['0.01'], '1'],
+      [{ inputType: 'AMOUNT', value: '10' }, [null], null], [null, ['0.01', '0.02'], null]] as const) {
+      const h = harness();
+      Object.assign(h.row, { whtRate: '3', whtAmount: '10', whtInputJson: input });
+      h.row.lines = lineRates.map((whtRate, index) => ({ ...h.row.lines[0], id: `line-${index}`, whtRate, whtAmount: '5' }));
+      const read = await h.repo.findByIdWithRelations('company-1', 'expense-1');
+      assert.equal(read!.whtRate, expected); assert.equal(h.row.whtRate, '3'); assert.equal(read!.whtAmount, '10');
+    }
+  });
+  it('MONEY-T1 certificate handoffs use the captured rate rather than the category default', async () => {
+    const h = harness();
+    Object.assign(h.row, { whtAmount: '10', whtRate: '3', whtCategoryCode: 'CAT1', vendorEntityKindSnapshot: 'INDIVIDUAL',
+      whtInputJson: { inputType: 'RATE', value: '1' } });
+    Object.assign(h.row.lines[0], { taxableAmount: '1000', whtAmount: '10', whtRate: '0.01' });
+    let paper: any;
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { paper = data; } };
+    await h.repo.confirmExpenseCas(await inputFor(h.repo, h.updatedAt));
+    assert.equal(paper.prefillSnapshotJson.whtRate, '1');
+  });
   for (const path of ['confirm', 'finalize and confirm']) {
     for (const source of ['stored base', 'withheld lines', 'legacy fallback']) it(`${path} uses ${source} for the 1500 VAT-inclusive bill certificate`, async () => {
       const h = harness();

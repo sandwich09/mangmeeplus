@@ -22,6 +22,17 @@ const taxApi = mutable('../tax/tax.api');
 const { WhtCertificateCard, WhtCertificatesPage } = require('./WhtCertificatesPage');
 for (const [ext, loader] of loaders) { if (loader) require.extensions[ext] = loader; else delete require.extensions[ext]; }
 const permissions = ['wht.certificate.issue', 'wht.certificate.correct'];
+test('every API read permission opens the certificate list without issuing or recording rights', async () => {
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
+  try {
+    for (const permission of ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link']) {
+      const view = setup({ permissions: [permission] });
+      try { assert.doesNotMatch(view.render(true), /ไม่มีสิทธิ์/); await view.settle(); }
+      finally { view.cleanup(); }
+    }
+    assert.equal(request.mock.callCount(), 4);
+  } finally { request.mock.restore(); }
+});
 const row = (over: Partial<WhtCertificateRow> = {}) => ({
   id: 'handoff-private', companyId: 'co', status: 'REQUIRED', sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-private',
   payeeName: 'ร้านทดสอบชื่อยาวสำหรับโทรศัพท์', payeeTaxId: '1234567890123', expenseId: 'expense-private', expenseNumber: 'EX-01',

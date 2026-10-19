@@ -19,7 +19,7 @@ import {
   type TaxEvidenceStatus,
 } from '@watchdog-bms/contracts';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
-import { buildWorkbook, type XlsxCell } from '../../../../common/export/xlsx.logic';
+import { buildWorkbook, type WorkbookCell, type WorkbookSheet } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
 export type AccountantIndexSource = {
@@ -235,10 +235,10 @@ const VALUE_LABELS: Partial<Record<AccountantIndexColumn, Record<string, string>
   input_vat_right: INPUT_VAT_RIGHT_LABELS,
 };
 
-function xlsxCell(column: AccountantIndexColumn, value: string): XlsxCell {
+function xlsxCell(column: AccountantIndexColumn, value: string): WorkbookCell {
   if (NUMERIC_COLUMNS.has(column)) {
     const amount = Number(value);
-    return value !== '' && Number.isFinite(amount) ? amount : '';
+    return value !== '' && Number.isFinite(amount) ? column === 'quantity' ? amount : { value: amount, style: 3 } : '';
   }
   if (column === 'input_vat_decided_at' && value) return `${formatThaiExportDate(value)} ${new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }).format(new Date(value))} น.`;
   if (DATE_COLUMNS.has(column)) return formatThaiExportDate(value);
@@ -246,19 +246,28 @@ function xlsxCell(column: AccountantIndexColumn, value: string): XlsxCell {
 }
 
 /** Real .xlsx of the accountant index, headed by Thai labels instead of column keys. */
-export function buildAccountantIndexXlsx(rows: (AccountantPackageIndexRow & { sourceDocumentTypeLabel?: string; inputVatRightLabel?: string })[], columnSet: AccountantIndexColumnSet): Buffer {
-  const columns = accountantIndexColumns(columnSet);
-  return buildWorkbook([{
-    name: 'รายการค่าใช้จ่าย',
+export function buildAccountantIndexXlsx(
+  rows: (AccountantPackageIndexRow & { sourceDocumentTypeLabel?: string; inputVatRightLabel?: string })[],
+  columnSet: AccountantIndexColumnSet,
+  paymentEvidenceRows: AccountantPackageIndexRow[] = [],
+): Buffer {
+  const sheet = (name: string, entries: typeof rows, columns: readonly AccountantIndexColumn[]): WorkbookSheet => ({
+    name,
     freezeRows: 1,
     rows: [
       columns.map((col) => ACCOUNTANT_INDEX_COLUMN_LABELS[col]),
-      ...rows.map((row) => columns.map((col) => col === 'web_url' && row[col]
+      ...entries.map((row) => columns.map((col) => col === 'web_url' && row[col]
         ? { value: 'เปิดไฟล์', formula: `HYPERLINK("${webLink(row[col]).replace(/"/g, '""')}","เปิดไฟล์")` }
         : col === 'input_vat_right' && row.inputVatRightLabel ? row.inputVatRightLabel
         : col === 'source_document_type' && row.sourceDocumentTypeLabel ? row.sourceDocumentTypeLabel : xlsxCell(col, row[col] ?? ''))),
     ],
-  }]);
+  });
+  return buildWorkbook([
+    sheet('รายการค่าใช้จ่าย', rows, accountantIndexColumns(columnSet)),
+    ...(paymentEvidenceRows.length ? [sheet('หลักฐานการจ่าย', paymentEvidenceRows, [
+      'document_date', 'expense_number', 'vendor_name', 'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names', 'web_url',
+    ])] : []),
+  ]);
 }
 
 export type ManifestEntrySource = {

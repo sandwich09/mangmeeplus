@@ -1343,10 +1343,10 @@ const PENDING_CASES: PendingCase[] = [
     world: c => openWorld(c, freeShop(c), { canCancelCheckout: false }, false),
     block: { heading: CHECKING_HEADING, title: null, intro: [ASKING], steps: [checkOnly(true)] },
     generic: false, promoBox: false, reference: true, banner: BANNER_NONE, noBox: true },
-  { key: 'last-result-old-paid', title: 'an old paid record on a shop whose package ran out: the check stays, and the way to a new purchase stays too', hint: 'เลือกแพ็กเกจเพื่อใช้งานต่อ',
+  { key: 'last-result-old-paid', title: 'an applied payment stays settled after the package runs out: no recheck, and a new purchase stays available', hint: 'เลือกแพ็กเกจเพื่อใช้งานต่อ',
     world: c => defaultCustomerWorld(c, paidShopStatus(c, { accessState: 'EXPIRED', lockReason: 'trial_ended', termEndsAt: inDays(-3), paidThrough: inDays(-3), subscriptionState: 'canceled', nextChargeAt: null,
       allowedActions: ['new_sales'], promotions: promotionRows() })),
-    block: { heading: null, title: LAST_TITLE, intro: [], steps: [checkOnly()] },
+    block: null,
     generic: true, promoBox: false, reference: true, banner: BANNER_EXPIRED },
   { key: 'none', title: 'no payment at all: exactly the single button, as before', world: c => defaultCustomerWorld(c), block: null, hint: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน', generic: true, promoBox: false, reference: false, banner: BANNER_NONE },
 ];

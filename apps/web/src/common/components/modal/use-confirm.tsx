@@ -10,6 +10,8 @@ export interface ConfirmRequest {
   title?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Accessible name of the header close control, when it differs from the safe outcome. */
+  closeLabel?: string;
   /** 'danger' for destructive actions (default), 'primary' for neutral ones. */
   variant?: 'danger' | 'primary';
 }
@@ -57,7 +59,7 @@ export function useConfirm() {
       open={pending !== null}
       title={pending?.title ?? 'ยืนยัน'}
       size="sm"
-      closeLabel={pending?.cancelLabel ?? FALLBACK_SAFE_LABEL}
+      closeLabel={pending?.closeLabel ?? pending?.cancelLabel ?? FALLBACK_SAFE_LABEL}
       onClose={() => settle(false)}
       footer={(
         <>

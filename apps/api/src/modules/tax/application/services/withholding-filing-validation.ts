@@ -102,6 +102,8 @@ export async function validateWithholdingFiling(db: Prisma.TransactionClient, co
     const categoryForm = categoryByCode.get(event.incomeCategoryCode ?? '')?.formType;
     if (categoryForm && categoryForm !== formType) fault('kind', event);
     const rate = Number(event.whtRate), income = Number(event.grossAmount), withheld = Number(event.withheldAmount);
+    // This checks tax against rate, not certificate/filing income equality. Keep the two-satang
+    // allowance for independent payment-share rounding and saved legacy per-line withholding.
     if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(income) || income <= 0 || !Number.isFinite(withheld) || (withheld < 0 || (withheld === 0 && !event.sourceLineKey?.startsWith('payment:'))) || Math.abs(Math.round(income * rate) / 100 - withheld) > 0.02) fault('amount', event);
     if (event.sourceType === 'expense.record') {
       const source = expenseById.get(event.sourceId);
