@@ -342,7 +342,7 @@ export function PayoutCorrectionComparison({ detail }: { detail: any }) {
           </div>
         </dl>
       )}
-      <p className="text-sm text-gray-700">{view.unchanged.replace(/฿([\d,]+\.\d{2})/g, '$1 บาท')}</p>
+      <p className="text-sm text-gray-700">{view.unchanged}</p>
       <ul className="space-y-1 text-sm text-gray-600">
         <li>{view.sentBack}</li>
         {view.note && <li>หมายเหตุ: {view.note}</li>}

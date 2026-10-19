@@ -156,7 +156,8 @@ test('CLAIM-LIST single item has a heading, receipt first, then description and 
   const html = view.render();
   assert.match(html, /<h4[^>]*>รายการที่ 1<\/h4>/);
   assert.doesNotMatch(html, /<button[^>]*aria-expanded=[^>]*>[\s\S]*?รายการที่ 1<\/span>/);
-  assert.match(html, /mt-3 grid gap-3 lg:grid-cols-3/);
+  // UAT 2026-10-19: a long saved-expense label widened the auto column past a 375 px phone; one shrinkable column.
+  assert.match(html, /mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3 \[&amp;&gt;\*\]:min-w-0/);
   const item = html.slice(html.indexOf('รายการที่ 1'), html.indexOf('+ เพิ่มรายการ'));
   for (const [left, right] of [['ใบเสร็จ', 'เลือกจากค่าใช้จ่ายที่บันทึกไว้'], ['เลือกจากค่าใช้จ่ายที่บันทึกไว้', 'aria-label="รายการ"'],
     ['aria-label="รายการ"', 'aria-label="จำนวนเงิน"'], ['aria-label="จำนวนเงิน"', 'aria-label="วันที่"'], ['aria-label="วันที่"', 'aria-label="หมวด"'], ['aria-label="หมวด"', 'วัตถุประสงค์']]) {
