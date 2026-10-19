@@ -332,7 +332,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
   }
 
   return (
-    <div ref={rootRef} data-company-switch="" className="relative min-w-0 flex-1 sm:flex-none">
+    <div ref={rootRef} data-company-switch="" className="relative min-w-11 flex-1 sm:flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex h-11 w-full min-w-11 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
