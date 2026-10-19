@@ -171,7 +171,7 @@ function blockedText(result: Extract<LineReimbursementDraftResult, { status: 'bl
   return BLOCKED_TEXT[result.errorCode] ?? 'ยังทำรายการใบเบิกนี้ไม่ได้ กรุณาลองใหม่อีกครั้ง หรือทำรายการในเว็บค่ะ';
 }
 
-function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string, language: LineReplyLanguage = 'th'): LineReplyMessage[] {
+function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string, language: LineReplyLanguage = 'th', refusal?: { reply: string; webPath: string; webLabel: string }): LineReplyMessage[] {
   const en = language === 'en';
   if (result.status === 'preview') {
     const preview = result.preview, text = reimbursementPreviewText(preview, language);
@@ -198,8 +198,9 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
     const status = lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? (en ? 'Check status on the web' : 'ตรวจสถานะในเว็บ'), language);
     return [{ type: 'text', text: [en ? 'Claim draft saved.' : 'บันทึกร่างใบเบิกแล้วค่ะ',
       ...(requestNo ? [`${en ? 'Claim number' : 'เลขที่ใบเบิก'}: ${requestNo}`] : []),
-      `${en ? 'Status' : 'สถานะ'}: ${status}`, `${en ? 'Total' : 'ยอดรวม'}: ${formatClaimMoney(r.amount, r.currency, language)}`].join('\n'),
-      ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT'
+      `${en ? 'Status' : 'สถานะ'}: ${status}`, `${en ? 'Total' : 'ยอดรวม'}: ${formatClaimMoney(r.amount, r.currency, language)}`, ...(refusal ? [refusal.reply] : [])].join('\n'),
+      ...(refusal ? { quickReply: { items: [{ type: 'action' as const, action: { type: 'uri' as const, label: refusal.webLabel, uri: `${webBaseUrl.replace(/\/$/u, '')}${refusal.webPath}` } }] } }
+        : submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT'
         ? { quickReply: { items: [{ type: 'action', action: { type: 'postback', label: en ? 'Submit for approval' : 'ส่งอนุมัติ',
           data: lineControlData(new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString(), language) } }] } } : {}) }];
   }
@@ -239,7 +240,7 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
 }
 
 export function buildReimbursementDraftMessages(...args: Parameters<typeof reimbursementDraftMessages>): LineReplyMessage[] {
-  const [result, webBaseUrl, , , , language = 'th'] = args;
+  const [result, webBaseUrl, companyId, , , language = 'th', refusal] = args;
   return reimbursementDraftMessages(...args).map(message => {
     if (result.status === 'applied' && message.type === 'text') {
       const r = result.receipt, en = language === 'en';
@@ -248,7 +249,14 @@ export function buildReimbursementDraftMessages(...args: Parameters<typeof reimb
         { label: en ? 'Status' : 'สถานะ', value: lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'ตรวจสถานะล่าสุดในเว็บ', language) },
         { label: en ? 'Total' : 'ยอดรวม', value: formatClaimMoney(r.amount, r.currency, language), total: true },
       ];
-      const contents = drawLineSystemCard({ mascot: 'general', header: { lines: en ? ['Claim draft', 'Draft saved'] : ['ร่างใบเบิก', 'บันทึกแล้ว'] }, rows }, webBaseUrl);
+      const web = `${webBaseUrl.replace(/\/$/u, '')}/companies/${encodeURIComponent(companyId)}/reimbursements/${encodeURIComponent(String(r.requestId))}`;
+      const submit = message.quickReply?.items[0]?.action;
+      const open = { type: 'uri' as const, label: en ? 'Open claim' : 'เปิดใบเบิก', uri: web };
+      const repair = refusal ? { type: 'uri' as const, label: refusal.webLabel, uri: `${webBaseUrl.replace(/\/$/u, '')}${refusal.webPath}` } : open;
+      const contents = drawLineSystemCard({ mascot: 'general', header: { lines: en ? ['Claim draft', 'Draft saved'] : ['ร่างใบเบิก', 'บันทึกแล้ว'] }, rows,
+        ...(refusal ? { notes: [refusal.reply] } : {}),
+        ...(submit?.type === 'postback' ? { choice: [submit, open] as const }
+          : refusal && repair.uri !== open.uri ? { choice: [repair, open] as const } : { button: { icon: 'file' as const, action: repair } }) }, webBaseUrl);
       if (contents) return asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(message.text, 400), canonicalText: message.text, contents, ...(message.quickReply ? { quickReply: message.quickReply } : {}) });
     }
     return claimTextCard(message, webBaseUrl, language);

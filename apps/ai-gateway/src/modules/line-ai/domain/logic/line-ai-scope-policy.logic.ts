@@ -181,6 +181,7 @@ const SIGN_VERB_TH = ['เซ็น', 'ลงนาม', 'ลงลายมื�
 // Owner 2026-10-16: supported actions prepare signed cards; existing use-cases authorize the final button.
 // Substitute receipt signatures and approvals still require the complete web document.
 export const LINE_ACTION_RULES: readonly LineActionRule[] = [
+  { noun: REIMBURSEMENT_NOUN_TH, verb: ['ส่งอนุมัติ', 'ยื่น', 'submit'], permission: 'reimbursement.submit', actionLabelTh: 'ส่งอนุมัติใบเบิก', page: 'reimbursements', imperative: true },
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['ปฏิเสธ', 'ไม่อนุมัติ', 'reject'], permission: 'reimbursement.reject', actionLabelTh: 'ปฏิเสธใบเบิก', page: 'reimbursements' },
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['อนุมัติ', 'approve'], permission: 'reimbursement.approve', actionLabelTh: 'อนุมัติใบเบิก', page: 'reimbursements' },
   { noun: REIMBURSEMENT_NOUN_TH, verb: ['จ่าย', 'โอนเงิน', 'ชำระเงิน', 'pay'], permission: 'reimbursement.payment.record', actionLabelTh: 'จ่ายใบเบิก', page: 'reimbursements' },
@@ -242,6 +243,7 @@ export function isApprovalSettingsRequest(text: string): boolean {
 export function lineActionRuleFor(text: string): LineActionRule | undefined {
   text = text.toLowerCase();
   if (isApprovalSettingsRequest(text) || includesAny(text, STATUS_QUESTION_MARKERS_TH)) return undefined;
+  if (includesAny(text, REIMBURSEMENT_NOUN_TH) && /^(?:(?:ขอ|ช่วย)\s*)?(?:ส่ง(?:อนุมัติ|ใบเบิก|คำขอเบิก)|ยื่น(?:ใบเบิก|คำขอเบิก)|(?:please\s+)?submit\b)/u.test(text.trim())) return LINE_ACTION_RULES.find(rule => rule.permission === 'reimbursement.submit');
   const requested = includesAny(text, REQUEST_MARKERS_TH) || /^(?:อนุมัติ|ปฏิเสธ|ไม่อนุมัติ|ยืนยัน|ยกเลิก|ลบ|(?:please\s+)?(?:approve|reject|pay|confirm|void|delete|remove)\b)/u.test(text.trim());
   const verbCheckText = withoutStatePhrases(text);
   return LINE_ACTION_RULES.find((rule) => (requested || rule.imperative && rule.verb.some((verb) => text.trim().startsWith(verb)))

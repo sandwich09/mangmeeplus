@@ -318,3 +318,19 @@ it('expense edit preview uses locked fact rows and the same signed controls in T
     }
   }
 });
+
+it('Z3 saved expense edits keep the signed confirmation next step and expense web button in Thai and English', async () => {
+  const { buildDraftUpdateOutcomeCard } = await import('./line-draft-update-card.logic');
+  const { lineFlexBodyProblems } = await import('./line-system-card-limits.logic');
+  for (const language of ['th', 'en'] as const) {
+    const card = buildDraftUpdateOutcomeCard('applied', `${language === 'th' ? 'บันทึกร่างแล้วค่ะ' : 'Changes saved.'}\nhttps://web.test/companies/company/expenses/expense`, 'https://web.test', 'company',
+      { token: 'preview.signed', language } as any)!;
+    assert.equal(card.type, 'flex'); if (card.type !== 'flex') throw new Error('expected card');
+    assert.deepEqual(lineFlexBodyProblems(card.contents), []);
+    const payload = JSON.stringify(card.contents);
+    assert.match(payload, language === 'th' ? /ยืนยันรายการ/u : /Confirm expense/);
+    assert.match(payload, /action=expense_action_confirm&amp;|action=expense_action_confirm&/);
+    assert.match(payload, /token=preview.signed/);
+    assert.match(payload, /https:\/\/web.test\/companies\/company\/expenses\/expense/);
+  }
+});

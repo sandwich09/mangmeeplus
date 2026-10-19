@@ -13,7 +13,7 @@
  * and a message action's `text` are at most 300; a URI is at most 1000 and, here, always https; the
  * JSON of one bubble is at most 30 KB and of a carousel 50 KB.
  */
-import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardAction } from './line-system-card.logic';
+import { buildLineSystemCardBubble, lineSystemCardAvailable, lineSystemCardRowValue, type LineSystemCard, type LineSystemCardAction } from './line-system-card.logic';
 
 export const LINE_FLEX_ACTION_LABEL_MAX = 40;
 export const LINE_FLEX_ACTION_DATA_MAX = 300;
@@ -59,7 +59,7 @@ export function lineSystemCardSendable(card: LineSystemCard): boolean {
   const rows = card.rows ?? [], notes = card.notes ?? [], footnotes = card.footnotes ?? [];
   return card.header.lines.length === 2 && card.header.lines.every((line) => readable(line, SHORT_LINE_MAX))
     && (card.banner === undefined || readable(card.banner.text, FIELD_MAX))
-    && rows.length <= ROWS_MAX && rows.every((row) => readable(row.label, SHORT_LINE_MAX) && readable(row.value, FIELD_MAX))
+    && rows.length <= ROWS_MAX && rows.every((row) => readable(row.label, SHORT_LINE_MAX) && readable(lineSystemCardRowValue(row.value), FIELD_MAX))
     && notes.every((note) => readable(note, FIELD_MAX)) && footnotes.every((note) => readable(note, FIELD_MAX))
     && (card.text === undefined || !card.text.trim() || readable(card.text, PROSE_MAX))
     // A card must say something under its header.

@@ -23,7 +23,7 @@ import { loadEntitledFeatureKeys } from '../../../employee-access/application/en
 import { absoluteWebLink } from '../../../../common/http/web-link';
 import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic';
 import { buildStaffCompletionQuickReply } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildExpenseDraftReviewCard, buildLineAssistantTextCardMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { asCompleteLineCard, buildExpenseDraftReviewCard, buildLineAssistantTextCardMessage, inheritCompleteLineBusinessAnswerPresentation, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 import {
   CAPTURE_READ_FAILED_REPLY,
   CAPTURE_READ_PARTIAL_REPLY,
@@ -276,7 +276,7 @@ export class LineCaptureResultNotifierUseCase {
     const preparation = this.prepared.get(payload);
     if (preparation) {
       let confirmation: ExpenseActionPreview | undefined;
-      if (!evidenceRecordIds.length && composed.message?.type === 'flex' && JSON.stringify(composed.message.contents).includes('ยืนยันรายการนี้')) {
+      if (!evidenceRecordIds.length && composed.message?.type === 'flex' && composed.draft) {
         try {
           const offered = await this.expenseActions?.preview(preparation.context, preparation.owner.chatKeyHash, { action: 'CONFIRM', expenseId }, true, undefined, language);
           if (offered?.preview) {
@@ -408,7 +408,7 @@ export class LineCaptureResultNotifierUseCase {
     snapshot: NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedExpenseSnapshot']>>>,
     payload: Record<string, unknown>,
     link: string,
-  ): { text: string; nr: LineNonReceiptCase | null; message?: LineReplyMessage } | null {
+  ): { text: string; nr: LineNonReceiptCase | null; message?: LineReplyMessage; draft?: LineExpenseDraftCardFacts } | null {
     const language = snapshot.expense.language ?? 'th';
     const status = readString(payload, 'status') ?? snapshot.jobs[0]?.status ?? null;
     if (!status) return null;
@@ -462,7 +462,7 @@ export class LineCaptureResultNotifierUseCase {
   }
 
   private receiptReply(companyId: string, expenseId: string, expense: Partial<Pick<NonNullable<Awaited<ReturnType<ExpenseCaptureLineUseCase['readFinishedExpenseSnapshot']>>>['expense'],
-    'status' | 'vendorNameSnapshot' | 'grandTotalAmount' | 'currency' | 'sourceDocumentType' | 'expenseDate' | 'vendorDocumentNumber' | 'categoryName' | 'vatAmount' | 'vatMode' | 'language'>>, confirmation?: ExpenseActionPreview): { text: string; message?: LineReplyMessage } {
+    'status' | 'vendorNameSnapshot' | 'grandTotalAmount' | 'currency' | 'sourceDocumentType' | 'expenseDate' | 'vendorDocumentNumber' | 'categoryName' | 'vatAmount' | 'vatMode' | 'language'>>, confirmation?: ExpenseActionPreview): { text: string; message?: LineReplyMessage; draft?: LineExpenseDraftCardFacts } {
     const language = expense.language ?? 'th';
     const result = formatCaptureAutoHandoffReply({ language,
       expenseId, status: expense.status,
@@ -473,7 +473,7 @@ export class LineCaptureResultNotifierUseCase {
       categoryName: expense.categoryName, vatAmount: expense.vatAmount, vatMode: expense.vatMode,
     });
     const message = result.draft && buildExpenseDraftReviewCard(result.text, result.draft, this.config.webBaseUrl, companyId, confirmation, undefined, language);
-    return { text: message?.type === 'flex' ? message.canonicalText! : result.text, message };
+    return { text: message?.type === 'flex' ? message.canonicalText! : result.text, message, draft: result.draft };
   }
 
   /**
