@@ -173,7 +173,7 @@ describe('payment form: the payer chooses the method', () => {
     const source = read('./ReimbursementDetailSections.tsx');
     assert.match(source, /paidAmount: String\(request\.outstandingAmount\), paymentMethod: requestedPayout\(request\)\?\.payoutMethod \?\? ''/);
     // The two buttons are one group: back out first, the save last, and the save keeps its name while it works.
-    assert.match(source, /<ActionGroup>\s+<button type="button" className=\{ghostClass\} onClick=\{onCancel\}>ยกเลิก<\/button>\s+<button type="submit" className=\{btnClass\} disabled=\{busy \|\| futurePaidAt\} aria-busy=\{Boolean\(busy\)\}>บันทึกจ่าย \{formatMoney\(request.outstandingAmount, request.currency\)\}<\/button>\s+<\/ActionGroup>/);
+    assert.match(source, /<ActionGroup>\s+<button type="button" className=\{ghostClass\} disabled=\{busy\} aria-busy=\{busy\} onClick=\{\(\) => \{ if \(!session.current.saving\) onCancel\(\); \}\}>ยกเลิก<\/button>\s+<button type="submit" className=\{btnClass\} disabled=\{busy \|\| futurePaidAt\} aria-busy=\{Boolean\(busy\)\}>บันทึกจ่าย \{formatMoney\(request.outstandingAmount, request.currency\)\}<\/button>\s+<\/ActionGroup>/);
   });
 
   it('shows the chosen method, requires a transfer slip and explains its optional reference', () => {
@@ -568,7 +568,7 @@ describe('the pay queue\'s dialog: every listed file is opened before it is chos
     const hub = read('./ReimbursementsPages.tsx');
     const page = read('./ReimbursementJourneyPage.tsx');
     assert.match(hub, /const \{ openSlipChoice, previewModals \} = useClaimDocumentPreview\(companyId, setOpenFileError\);/);
-    assert.match(hub, /<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\} onClaimChanged=\{\(\) => onDone\(\)\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>/);
+    assert.match(hub, /<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\} onClaimChanged=\{\(\) => onDone\(\)\}\s+onBusyChange=\{saving => \{ paymentSaving.current = saving; \}\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>/);
     assert.match(page, /onOpenFile=\{\(choice\) => void openSlipChoice\(detail\.id, choice\)\} \/>/);
     assert.match(hub, /<\/Modal>\s+\{previewModals\}\s+<\/>/);
     // A file that cannot be opened says so inside the dialog, where the person is looking.

@@ -29,6 +29,9 @@ test('future payment dates refuse locally using Bangkok days', () => {
   assert.equal(disbursementPaymentDateError('2026-10-10', now), undefined);
   assert.equal(disbursementPaymentDateError('2026-10-12', new Date('2026-10-11T17:00:00Z')), undefined);
 });
+test('clearing the actual payment date requires choosing it again before payment', () => {
+  assert.equal(disbursementPaymentDateError(''), 'เลือกวันที่จ่ายจริงก่อนบันทึก');
+});
 test('payment bodies contain version and attempt but never amounts', () => {
   const base = { commandId: 'attempt', expectedVersion: 7 };
   assert.deepEqual(disbursementPaymentBody(base, { paidDate: '2026-10-12', paymentMethod: 'BANK_TRANSFER', paidFromRef: '  บัญชีร้าน  ' }),

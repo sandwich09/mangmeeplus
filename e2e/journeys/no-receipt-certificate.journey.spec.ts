@@ -52,6 +52,9 @@ test.describe('no-receipt certificate', () => {
       await chooseThemedOption(page, main.getByRole('combobox', { name: 'สาขา', exact: true }), 'Head Office (สำนักงานใหญ่)');
       await main.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true }).fill(item);
       await chooseThemedOption(page, main.getByRole('combobox', { name: 'รายการที่ 1: หมวดหมู่ค่าใช้จ่าย', exact: true }), 'ค่าอาหารและเครื่องดื่ม');
+      await main.getByRole('spinbutton', { name: 'จำนวน', exact: true }).fill('1');
+      await main.getByRole('textbox', { name: 'ราคาต่อหน่วย บาท', exact: true }).fill('1.005');
+      await expect(main.getByText(whole('รวมรายการนี้ 1.01 บาท'))).toBeVisible();
       await main.getByRole('spinbutton', { name: 'จำนวน', exact: true }).fill('3');
       await main.getByRole('textbox', { name: 'ราคาต่อหน่วย บาท', exact: true }).fill('40');
       await expect(main.getByText(whole('รวมรายการนี้ 120.00 บาท'))).toBeVisible();

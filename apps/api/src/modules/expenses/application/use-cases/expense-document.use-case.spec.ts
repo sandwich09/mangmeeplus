@@ -1,3 +1,4 @@
+import { inflateRawSync } from 'node:zlib';
 import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
 import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { describe, it } from 'node:test';
@@ -1232,6 +1233,50 @@ describe('accountant evidence bundle', () => {
     assert.equal(centralCount, entries.size);
     return entries;
   }
+  function workbookParts(file: Buffer) {
+    const parts = new Map<string, string>();
+    for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+      const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+      const start = offset + 30 + length + file.readUInt16LE(offset + 28);
+      const bytes = file.subarray(start, start + size);
+      parts.set(file.subarray(offset + 30, offset + 30 + length).toString(), (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString());
+      offset = start + size;
+    }
+    return parts;
+  }
+  it('counts 3000 seeded expenses once by document month even when payment evidence follows later', async () => {
+    let seed = 1223;
+    const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+    const rows = Array.from({ length: 3000 }, (_, i) => {
+      const month = 1 + next() % 9, paidMonth = month + 1 + next() % 3;
+      const date = `2026-${String(month).padStart(2, '0')}-12`;
+      return { id: `e-${i}`, expenseNumber: `EXP-${i}`, uploadedAt: new Date(date), expenseDate: new Date(date),
+        paidAt: new Date(`2026-${String(paidMonth).padStart(2, '0')}-15`), grandTotalAmount: ((next() % 10000000) / 100).toFixed(2), attachments: [] };
+    });
+    const repo = { listSharedEvidence: async (_: string, filter: any) => {
+      const matched = filter.expenseIds ? rows.filter(row => filter.expenseIds.includes(row.id))
+        : rows.filter(row => row.expenseDate.toISOString().startsWith(filter.yearMonth));
+      return { rows: matched.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize), total: matched.length, page: filter.page, pageSize: filter.pageSize };
+    } };
+    const useCase = new CreateAccountantPackageUseCase(repo as any, {} as any, audit, { client: {
+      company: { findUnique: async () => ({ name: 'ร้าน' }) },
+      expensePayment: { findMany: async (query: any) => rows.filter(row => row.paidAt >= query.where.paidAt.gte && row.paidAt < query.where.paidAt.lt).map(row => ({ id: `pay-${row.id}`, expenseId: row.id })) },
+      attachmentLink: { findMany: async () => [] },
+    } } as any, {} as any, {} as any);
+    const seen = new Set<string>();
+    for (let month = 1; month <= 12; month++) {
+      const yearMonth = `2026-${String(month).padStart(2, '0')}`;
+      const index = await useCase.execute(reader, { yearMonth, columnSet: 'full' });
+      const expected = rows.filter(row => row.expenseDate.toISOString().startsWith(yearMonth));
+      assert.equal(index.rowCount, expected.length, yearMonth);
+      assert.equal(index.totalMatched, expected.length);
+      assert.equal(index.truncated, false);
+      assert.deepEqual(index.indexRows.map(row => row.expense_number).sort(), expected.map(row => row.expenseNumber).sort());
+      assert.equal(index.indexRows.reduce((sum, row) => sum + Math.round(Number(row.grand_total_amount) * 100), 0), expected.reduce((sum, row) => sum + Math.round(Number(row.grandTotalAmount) * 100), 0));
+      for (const row of index.indexRows) { assert.ok(!seen.has(row.expense_number)); seen.add(row.expense_number); }
+    }
+    assert.equal(seen.size, 3000);
+  });
   it('packages paid vouchers, direct-issued vouchers, slips and issued 50 ทวิ for an earlier expense with scoped month counts and index links', async () => {
     const row = { uploadedAt: new Date('2026-09-01'), expenseDate: new Date('2026-09-01'), id: 'e', expenseNumber: 'EXP-1', branchId: 'b1', attachments: [file('receipt')] };
     const queries: any = {}, calls: string[] = [];
@@ -1275,9 +1320,17 @@ describe('accountant evidence bundle', () => {
     assert.equal(entries.get('เอกสารประกอบการจ่าย/PV-1-1.png')?.toString(), 'bank page');
     assert.ok(entries.has('สารบัญ.xlsx'));
     const index = await useCase.execute(allowed, { ...request, columnSet: 'full' });
-    assert.equal(index.indexRows[0].voucher_numbers, 'PV-1, PV-2');
-    assert.equal(index.indexRows[0].wht_certificate_numbers, 'WHT-1');
-    for (const name of [...entries.keys()].filter(name => name !== 'สารบัญ.xlsx')) assert.ok(index.indexRows[0].bundle_file_names.includes(name), name);
+    assert.equal(index.rowCount, 0, 'September expenses cannot enter the October expense total');
+    assert.equal(index.totalMatched, 0);
+    assert.deepEqual(index.indexRows, []);
+    const workbook = workbookParts(Buffer.from(index.indexXlsxBase64, 'base64'));
+    assert.match(workbook.get('xl/workbook.xml')!, /name="หลักฐานการจ่าย"/);
+    const paymentEvidence = workbook.get('xl/worksheets/sheet2.xml')!;
+    assert.match(paymentEvidence, /EXP-1/);
+    assert.match(paymentEvidence, /PV-1, PV-2/);
+    assert.match(paymentEvidence, /WHT-1/);
+    for (const name of [...entries.keys()].filter(name => name !== 'สารบัญ.xlsx')) assert.ok(paymentEvidence.includes(name), name);
+    assert.doesNotMatch(paymentEvidence, /ยอดรวม|ยอดสุทธิ|ภาษีมูลค่าเพิ่ม/);
     const withoutTax = await useCase.planBundle(reader, request);
     assert.equal(withoutTax.counts.whtCertificates, 0);
     assert.equal(withoutTax.counts.vouchers, 0);

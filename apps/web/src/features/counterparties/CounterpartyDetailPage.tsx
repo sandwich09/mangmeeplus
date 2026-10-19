@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
+import { apiErrorCode } from '@/common/api/api-error-message';
 import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { expenseDetailUrl } from '@/features/expenses/expense-list-navigation.logic';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
@@ -49,7 +50,7 @@ function withParams(message: string, params: Record<string, string>): string {
 
 /** §11.1 "conflict เมื่อมีคนแก้พร้อมกัน": the refusal has to carry the reload, not just the word. */
 function isConflict(cause: unknown): boolean {
-  return cause instanceof ApiError && (cause.code ?? '').startsWith('counterparty_conflict');
+  return (apiErrorCode(cause) ?? '').startsWith('counterparty_conflict');
 }
 
 export function CounterpartyDetailPage({ companyId, counterpartyId, permissions }: {
@@ -175,8 +176,11 @@ export function CounterpartyDetailPage({ companyId, counterpartyId, permissions 
     try {
       // §11.1/§15: same conflict handling as `save()` below — a stale token answers
       // `counterparty_conflict`, which the shared catch block turns into the reload prompt.
-      await promoteSeenAddress(companyId, counterpartyId, addressText, detail.updatedAt);
-      setReload((value) => value + 1);
+      const result = await promoteSeenAddress(companyId, counterpartyId, addressText, detail.updatedAt);
+      const nextAddress = counterpartyAddress(result.billingAddressJson);
+      setDetail((current) => current && { ...current, billingAddressJson: result.billingAddressJson ?? undefined, updatedAt: result.updatedAt });
+      setValues((current) => ({ ...current, addressText: nextAddress.addressText, postalCode: nextAddress.postalCode }));
+      setIssue(null);
       toast.success(t('counterparties.history_promoted', locale));
     } catch (cause) {
       setSaveError({ message: err(cause, locale), stale: isConflict(cause) });

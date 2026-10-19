@@ -134,7 +134,7 @@ export class CreateAccountantPackageUseCase {
     return this.createIndex(ctx, request, await this.bundleContents(ctx, request, false));
   }
 
-  private async createIndex(ctx: RequestContext, request: AccountantPackageRequest, { page, files }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>): Promise<AccountantPackageResult> {
+  private async createIndex(ctx: RequestContext, request: AccountantPackageRequest, { page, files, expenseIds }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>): Promise<AccountantPackageResult> {
     const columnSet = request.columnSet === 'full' ? 'full' : 'summary';
 
     const company = await this.prisma.client.company.findUnique({
@@ -284,6 +284,9 @@ export class CreateAccountantPackageUseCase {
       }
     }
 
+    // Payment-month papers remain available, but cannot become another month's expense rows.
+    const expenseIndexRows = indexRows.filter((_, i) => expenseIds.has(page.rows[i]!.id));
+    const paymentEvidenceRows = indexRows.filter((_, i) => !expenseIds.has(page.rows[i]!.id));
     const filterSummary: Record<string, string> = {};
     for (const [key, value] of Object.entries({ ...request, status: request.status ?? 'CONFIRMED', dateField: request.dateField ?? 'expenseDate' })) {
       if (value !== undefined && value !== null && key !== 'format' && key !== 'columnSet') filterSummary[key] = String(value);
@@ -293,18 +296,18 @@ export class CreateAccountantPackageUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.accountant_package.create', targetType: 'expense_export', targetId: ctx.requestId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { rowCount: indexRows.length, totalMatched: page.total, truncated: indexRows.length < page.total, evidenceCount: evidenceManifest.length, skippedEvidenceCount: skippedEvidence.length, filterSummary },
+      metadataJson: { rowCount: expenseIndexRows.length, totalMatched: page.total, truncated: expenseIndexRows.length < page.total, evidenceCount: evidenceManifest.length, skippedEvidenceCount: skippedEvidence.length, filterSummary },
     });
 
     return {
       generatedAt: new Date().toISOString(),
       filterSummary,
-      rowCount: indexRows.length,
+      rowCount: expenseIndexRows.length,
       totalMatched: page.total,
-      truncated: indexRows.length < page.total,
-      indexRows,
-      indexCsv: buildAccountantIndexCsv(indexRows),
-      indexXlsxBase64: buildAccountantIndexXlsx(indexRows, columnSet).toString('base64'),
+      truncated: expenseIndexRows.length < page.total,
+      indexRows: expenseIndexRows,
+      indexCsv: buildAccountantIndexCsv(expenseIndexRows),
+      indexXlsxBase64: buildAccountantIndexXlsx(expenseIndexRows, columnSet, paymentEvidenceRows).toString('base64'),
       columnSet,
       evidenceManifest,
       skippedEvidence,
@@ -333,6 +336,7 @@ export class CreateAccountantPackageUseCase {
 
   private async bundleContents(ctx: RequestContext, request: AccountantPackageRequest, bundle = true) {
     const page = await this.readPackageRows(ctx, request, bundle);
+    const expenseIds = new Set(page.rows.map(row => row.id));
     const db = this.prisma.client;
     let from = request.fromDate, to = request.toDate;
     if (request.yearMonth && /^\d{4}-\d{2}$/.test(request.yearMonth)) {
@@ -369,7 +373,7 @@ export class CreateAccountantPackageUseCase {
     for (let offset = 0; offset < extraIds.length; offset += 500) {
       const extra = await this.repo.listSharedEvidence(ctx.companyId, { ...request, yearMonth: undefined, fromDate: undefined, toDate: undefined,
         status: request.status ?? 'CONFIRMED', expenseIds: extraIds.slice(offset, offset + 500), page: 1, pageSize: 500 }, ctx.scopes, true);
-      page.rows.push(...extra.rows); page.total += extra.rows.length;
+      page.rows.push(...extra.rows);
     }
     page.rows.sort((a, b) => (a.expenseNumber ?? a.id).localeCompare(b.expenseNumber ?? b.id) || a.id.localeCompare(b.id));
     const names = new Map(page.rows.map(row => [row.id, row.expenseNumber ?? row.id]));
@@ -444,7 +448,7 @@ export class CreateAccountantPackageUseCase {
     const missingReceiptCount = page.rows.filter(row => !files.some(file => file.expenseIds.includes(row.id)
       && (file.kind === 'substituteReceipts' || row.attachments.some(attachment => attachment.id === file.attachment.id
         && !attachment.isHistorical && (attachment.id === row.primaryAttachmentId || attachment.purpose === 'expense.receipt.primary'))) && file.attachment.status === 'ACTIVE')).length;
-    return { page, files, parts, counts, missingReceiptCount };
+    return { page, expenseIds, files, parts, counts, missingReceiptCount };
   }
 
   async planBundle(ctx: RequestContext, request: AccountantPackageRequest): Promise<AccountantEvidenceBundlePlan> {

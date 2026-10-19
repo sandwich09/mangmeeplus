@@ -36,7 +36,7 @@ import { readBuyerAsPrinted, recheckBuyerAsPrinted, stampClaimStatusBeforeMark }
 import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { calcPaymentAmounts, derivePaymentStatus, expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
-import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
+import { applyExpenseWhtInput, expenseWhtLineRate, expenseWhtHeaderRate } from '../../domain/logic/expense-wht-input.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
   validateStatusTransition,
@@ -1016,7 +1016,9 @@ export class UpdateExpenseDraftUseCase {
       // WHT certificate system issuance plan §1.2 (S2/S3): the income-category classification a 50
       // ทวิ certificate needs, same "captured at review" treatment as vendorEntityKindSnapshot above.
       ...(input.whtCategoryCode !== undefined && { whtCategoryCode: input.whtCategoryCode }),
-      ...(input.whtRate !== undefined && { whtRate: input.whtRate }),
+      ...((resolvedLines || input.whtInput !== undefined || input.whtRate !== undefined) && {
+        whtRate: expenseWhtHeaderRate(whtInput, resolvedLines, input.whtRate ?? r.whtRate),
+      }),
       // GAP-4: the first thing in this codebase that ever fills `vendorCounterpartyId` from web or
       // LINE. CON-7: the registry's taxpayer class fills an empty field, which is what lets a WHT
       // expense be confirmed at all (`expense-status.logic.ts` refuses without it).

@@ -2909,6 +2909,39 @@ describe('frozen withholding papers (real PostgreSQL)', () => {
       }
     } finally { await client.$disconnect(); }
   });
+  it('MONEY-T1 persisted certificate and filing payments share the withheld-line income and captured rate', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    const { expenseWhtIncomeBase, expenseWhtHeaderRate } = await import('../domain/logic/expense-wht-input.logic');
+    const { calcLineTotals } = await import('../domain/logic/expense-totals.logic');
+    const { certificatePayment } = await import('../../tax/application/services/wht-certificate-payment');
+    const day = new Date('2026-09-18T00:00:00Z');
+    const expense = await client!.expenseRecord.create({ data: { companyId, createdByUserId: 'synthetic-actor', status: 'CONFIRMED',
+      expenseDate: day, vatMode: 'NO_VAT', taxableAmount: '143744.56', grandTotalAmount: '143744.56', netPayableAmount: '142307.12',
+      whtAmount: '1437.44', whtRate: '3', whtInputJson: { inputType: 'RATE', value: '1', origin: 'REVIEWER' },
+      vendorEntityKindSnapshot: 'INDIVIDUAL', vendorNameSnapshot: 'ผู้รับเงิน', vendorAddressSnapshot: 'ที่อยู่ผู้รับเงิน',
+      lines: { create: Array.from({ length: 5 }, (_, index) => ({ companyId, lineNumber: index + 1, description: 'Synthetic withholding source',
+        quantity: '1', unitPrice: index === 4 ? '-0.24' : '35936.20', chargeKind: index === 4 ? 'ROUNDING' : null,
+        ...calcLineTotals({ quantity: '1', unitPrice: index === 4 ? '-0.24' : '35936.20', vatMode: 'NO_VAT', whtRate: index === 4 ? '0' : '0.01' }),
+        whtRate: index === 4 ? null : '0.01' })) } } });
+    try {
+      const source = await client!.expenseRecord.findUniqueOrThrow({ where: { id: expense.id }, include: { lines: true } });
+      const payment = await client!.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: expense.netPayableAmount,
+        paidAt: day, paidAtConfirmed: true, createdByUserId: 'synthetic-actor' } });
+      const input = source.whtInputJson as any;
+      const prefill = { grossAmount: expenseWhtIncomeBase({ ...source, whtInputJson: input }), withheldAmount: source.whtAmount.toString(),
+        whtRate: expenseWhtHeaderRate(input, source.lines, source.whtRate), paymentDate: day.toISOString() };
+      const paper = await certificatePayment(client!, companyId, { sourcePaymentType: 'expense.record', sourcePaymentId: expense.id, prefillSnapshotJson: prefill }, payment.id);
+      const filing = (await new ExpenseSourceAdapter({ client } as any).findConfirmedWithWhtByCompany(companyId)).find(row => row.paymentId === payment.id)!;
+      assert.equal(paper.grossAmount, '143744.8'); assert.equal(paper.whtRate, '1');
+      assert.equal(filing.grossAmount, paper.grossAmount); assert.equal(filing.whtAmount, paper.withheldAmount);
+      assert.equal(filing.whtRate, '1.0000');
+      assert.equal((await client!.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).whtRate!.toString(), '3', 'read projection does not rewrite a saved header');
+    } finally {
+      await client!.expensePayment.deleteMany({ where: { companyId, expenseId: expense.id } });
+      await client!.expenseLine.deleteMany({ where: { companyId, expenseId: expense.id } });
+      await client!.expenseRecord.delete({ where: { id: expense.id } });
+    }
+  });
   it('W1 concurrent certificate payment handoffs have one identity and roll back with the transaction', async t => {
     if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
     const { paymentHandoff } = await import('../../tax/application/services/wht-certificate-payment');

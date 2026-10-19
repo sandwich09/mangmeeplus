@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY, FEATURE_PACKAGE_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
-import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries, proratedPackagePrice, proratedReceiptIncrease } from './billing-package';
+import { appendPackageInterval, packageAnchorDay, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries, proratedPackagePrice, proratedReceiptIncrease } from './billing-package';
 import { assertRefundControlPolicy, effectiveBillingGates, assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
 
@@ -110,7 +110,7 @@ test('first/expired purchase starts now; short months and leap years preserve th
     assert.equal(impact.serviceStartsAt.toISOString(), now.toISOString());
     assert.equal(impact.paidThrough.toISOString(), '2026-02-28T23:30:00.000Z');
     assert.equal(impact.remainingReceipts, 50);
-    assert.equal(appendPackageInterval(impact.paidThrough, 'month', 31).toISOString(), '2026-03-31T23:30:00.000Z');
+    assert.equal(appendPackageInterval(impact.paidThrough, 'month', 1).toISOString(), '2026-03-31T23:30:00.000Z');
   }
   assert.equal(appendPackageInterval(new Date('2024-02-29T10:00:00Z'), 'year', 29).toISOString(), '2025-02-28T10:00:00.000Z');
   assert.equal(appendPackageInterval(new Date('2027-02-28T10:00:00Z'), 'year', 29).toISOString(), '2028-02-29T10:00:00.000Z');
@@ -120,10 +120,10 @@ test('full-price BASIC after one used STARTER receipt carries 29 and grants 50 n
   const start = new Date('2026-09-23T00:00:00Z');
   const starterEnd = appendPackageInterval(start, 'month');
   const impact = fullPackagePurchaseImpact({ tier: 'BASIC_499', interval: 'month', verifiedPaidAt: new Date(start.getTime() + 60_000),
-    paidThrough: starterEnd, remainingPaidReceipts: 29, anchorDay: start.getUTCDate() });
+    paidThrough: starterEnd, remainingPaidReceipts: 29, anchorDay: packageAnchorDay(start) });
   assert.equal(impact.receiptUnitsAdded, 50);
   assert.equal(impact.remainingReceipts, 79);
-  assert.equal(impact.paidThrough.toISOString(), appendPackageInterval(starterEnd, 'month', start.getUTCDate()).toISOString());
+  assert.equal(impact.paidThrough.toISOString(), appendPackageInterval(starterEnd, 'month', packageAnchorDay(start)).toISOString());
 });
 
 test('upgrade adds only prorated units, including the future periods already bought', () => {
@@ -233,7 +233,7 @@ test('promotion boundaries count months once from the start: 2 months for a mont
   // A continuing purchase starts at a clamped paidThrough and keeps the shop's original anchor day.
   assert.deepEqual(ends('2026-02-28T03:00:00.000Z', 'month', 31), ['2026-03-31T03:00:00.000Z', '2026-04-30T03:00:00.000Z']);
   assert.deepEqual(ends('2026-02-28T03:00:00.000Z', 'month'), ['2026-03-28T03:00:00.000Z', '2026-04-28T03:00:00.000Z'], 'without the anchor the day would drift');
-  // 02:00 Bangkok on 5 Oct is still 4 Oct in UTC: billing keeps its UTC anchor convention.
+  // 02:00 Bangkok on 5 Oct is still 4 Oct in UTC: keep the Bangkok anniversary and clock.
   assert.deepEqual(ends('2026-10-04T19:00:00.000Z', 'month'), ['2026-11-04T19:00:00.000Z', '2026-12-04T19:00:00.000Z']);
   assert.deepEqual(ends('2026-10-05T03:00:00.000Z', 'month', undefined, 2), ['2026-11-05T03:00:00.000Z', '2027-01-05T03:00:00.000Z']);
   for (const bonusMonths of [0, -1, 1.5]) assert.throws(() => ends('2026-10-05T03:00:00.000Z', 'month', undefined, bonusMonths));

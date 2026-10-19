@@ -67,7 +67,7 @@ export function formatClaimMoney(value: unknown, currency = 'THB'): string {
   return currency === 'THB' ? baht(String(value ?? 0)) : fallbackMoney(value, currency);
 }
 export function formatClaimDetailMoney(value: unknown, currency = 'THB'): string {
-  return !currency || currency === 'THB' ? `${amountText(String(value ?? 0))} บาท` : fallbackMoney(value, currency);
+  return fallbackMoney(value, currency);
 }
 const formatMoney = formatClaimDetailMoney;
 
@@ -358,12 +358,13 @@ const signingWaitsForRound = (detail: Parameters<typeof claimStatusBadge>[0]) =>
   `ใบนี้${claimStatusBadge(detail).label} ยังเซ็นหรือยืนยันสำเนาที่เซ็นครบไม่ได้ ${detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? reimbursementDuplicateBlockNotice(detail.duplicateReasons, false, { status: detail.status }) : 'ทำได้อีกครั้งหลังจ่ายครบที่ขั้นเอกสาร'}`;
 
 /**
- * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
+ * A4: a scan counts as the signed record only after the attacher declares the claim's signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
-export function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, onSend }: {
+export function SignedCopyDialog({ requestNo, fileName, detail, waitsForRound, onClose, onSend }: {
   requestNo: string;
   fileName: string;
+  detail?: any;
   /** While the claim is in a payout round: why no declaration is taken (the API takes the file and refuses the declaration). */
   waitsForRound?: string;
   onClose: () => void;
@@ -371,6 +372,8 @@ export function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, 
 }) {
   const [declared, setDeclared] = useState(false);
   const canDeclare = !waitsForRound;
+  const signers = claimSignatureSlots(detail).filter(role => role !== 'APPROVER' || !claimHasNoApprover(detail)).map(role => CLAIM_SIGNATURE_ROLE_LABELS[role]);
+  const signerText = signers.length > 2 ? `${signers.slice(0, -1).join(' ')} และ${signers.at(-1)}` : signers.join('และ');
   return (
     // One button, always pressable, named for what it will do: the tick decides whether the file is declared as the
     // signed form or kept as an ordinary attachment. (Before: two buttons in the body, the main one greyed out on top.)
@@ -387,7 +390,7 @@ export function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, 
         <Notice tone="warning">{SIGNED_COPY_NOT_FOR_SLIPS}</Notice>
         {canDeclare ? (
           <ChoiceRow type="checkbox" checked={declared} onChange={e => setDeclared(e.target.checked)}
-            label={<>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ <span className="mangmee-unit">{requestNo}</span></>}
+            label={<>{`สำเนานี้มีลายเซ็น${signerText}ครบ และตรงกับใบเบิกเลขที่ `}<span className="mangmee-unit">{requestNo}</span></>}
             description="ถ้ายังเซ็นไม่ครบ ไม่ต้องติ๊ก ระบบเก็บเป็นไฟล์แนบทั่วไปไว้ในประวัติ แต่ยังไม่นับว่าเซ็นแล้ว" />
         ) : (
           <p className="text-sm text-gray-600">{waitsForRound} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าเซ็นแล้ว</p>
@@ -404,12 +407,13 @@ const FORM_LABEL = 'mb-1.5 block text-sm font-semibold text-gray-700';
  * Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile.
  * `request` is the claim detail where the host has it: files already attached to the claim can serve as the slip.
  */
-export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, onClaimChanged }: {
+export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, onClaimChanged, onBusyChange }: {
   companyId: string;
   request: any;
   onCancel: () => void;
   onDone: () => void;
   onClaimChanged?: (latest: any) => void;
+  onBusyChange?: (busy: boolean) => void;
   /**
    * Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Every host gives
    * it (`useClaimDocumentPreview().openSlipChoice`): the form never lists files that cannot be looked at.
@@ -429,6 +433,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, 
   const [slip, setSlip] = useState<PaymentFormSlip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const setWorking = (value: boolean) => { setBusy(value); onBusyChange?.(value); };
   // One session for this opened form: its key makes บันทึกจ่าย after a lost answer the same payment, never a
   // second one, and its in-flight flag makes a second press before the first has finished do nothing.
   const session = useRef<PaymentFormSession>({ idempotencyKey: null, saving: false });
@@ -466,17 +471,17 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, 
       // Kept once uploaded: if saving then fails, the retry sends this same slip instead of uploading again.
       onSlipUploaded: setSlip,
       newIdempotencyKey: () => crypto.randomUUID(),
-      onBusy: (sending) => { setBusy(sending); if (sending) setError(null); },
+      onBusy: (sending) => { setWorking(sending); if (sending) setError(null); },
     });
     if (result.status === 'refused') setError(result.text);
     if (result.status === 'refused' && result.refreshClaim) {
-      setBusy(true);
+      setWorking(true);
       let notice = result.text;
       try {
         const latest = await getReimbursement(companyId, request.id);
         if (onClaimChanged) onClaimChanged(latest); else onCancel();
       } catch (error) { onCancel(); notice = `${notice} · ${errorText(error)}`; }
-      finally { setBusy(false); }
+      finally { setWorking(false); }
       toast.error(notice);
     }
     // Done is said of the thing done: which claim, and how much.
@@ -581,7 +586,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, 
       {/* What no field of the form answers (the API's refusal, a failed upload): above the buttons, inside the form. */}
       {validationError && !errorAt && <ErrorBanner message={validationError} />}
       <ActionGroup>
-        <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
+        <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => { if (!session.current.saving) onCancel(); }}>ยกเลิก</button>
         <button type="submit" className={btnClass} disabled={busy || futurePaidAt} aria-busy={Boolean(busy)}>บันทึกจ่าย {formatMoney(request.outstandingAmount, request.currency)}</button>
       </ActionGroup>
     </form>
@@ -1066,6 +1071,7 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
         {pendingCopy && (
           <SignedCopyDialog
             requestNo={detail.requestNo}
+            detail={detail}
             fileName={pendingCopy.name}
             {...(correcting && { waitsForRound: signingWaitsForRound(detail) })}
             onClose={() => setPendingCopy(null)}

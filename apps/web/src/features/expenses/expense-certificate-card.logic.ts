@@ -2,7 +2,7 @@ import { isCivilDate, todayCivilDate, type WhtCertificateHandoffDto, type LinkEx
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
 export function certificateCardAction(row: Pick<WhtCertificateHandoffListRowDto, 'status' | 'systemIssuanceOpen' | 'missing'>, permissions: readonly string[]): 'issue' | 'record' | 'download' | null {
-  if (row.status === 'SYSTEM_ISSUED') return permissions.some(p => ['wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(p)) ? 'download' : null;
+  if (row.status === 'SYSTEM_ISSUED') return permissions.some(p => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(p)) ? 'download' : null;
   if (row.status !== 'REQUIRED') return null;
   if (row.systemIssuanceOpen && permissions.includes('wht.certificate.issue') && !row.missing.length) return 'issue';
   return permissions.includes('wht.external_certificate.link') ? 'record' : null;

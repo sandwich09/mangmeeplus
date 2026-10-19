@@ -5,6 +5,7 @@ import type { Prisma } from '../generated/prisma/client';
 import type { BillingSnapshot } from '../modules/billing/application/billing.service';
 import { grantPaidPackageReceipts } from '../modules/billing/application/billing-receipt-grants';
 import { paidInvoiceEvidence, termProjectionHash } from '../modules/billing/domain/paid-invoice';
+import { packageAnchorDay } from '../modules/billing/domain/billing-package';
 import type { startBillingBrowser } from './billing-browser-smoke';
 
 type Obj = Record<string, any>;
@@ -285,7 +286,7 @@ export async function checkBillingRestart(input: {
   assert.equal((await request(`${base}/documents/${oldInvoice.id}/open`, 'POST', { kind: 'receipt' })).status, 200);
   const repeat = await quote('STARTER_249'); assert.equal(repeat.status, 200, JSON.stringify(repeat.body)); assert.equal(repeat.body.purchase.kind, 'REPEAT');
   const repeatStored = await client.billingQuote.findUniqueOrThrow({ where: { id: repeat.body.quoteId } });
-  assert.equal((repeatStored.snapshotJson as unknown as BillingSnapshot).repeat!.anchorDay, new Date(start * 1000).getUTCDate());
+  assert.equal((repeatStored.snapshotJson as unknown as BillingSnapshot).repeat!.anchorDay, packageAnchorDay(new Date(start * 1000)));
   cases.push('restart-preserves-old-documents-and-next-repeat-uses-new-anniversary');
   if (input.browser) {
     const { page, origin, evidenceDir } = input.browser;

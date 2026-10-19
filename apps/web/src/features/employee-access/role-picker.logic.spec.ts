@@ -4,6 +4,34 @@ import { readFileSync } from 'node:fs';
 import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import type { RoleSummary } from '@watchdog-bms/contracts';
 import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleCanDoPacks, roleDisplayName, roleKeyDisplayName, roleTemplateChoices } from './role-picker.logic';
+import * as logic from './role-picker.logic';
+import { PRIVILEGED_GRANT_KEYS } from '@watchdog-bms/contracts';
+
+it('FIX-R2 status changes follow privileged grants rather than the role name', () => {
+  const canChange = (logic as any).canChangeEmployeeStatus;
+  assert.equal(typeof canChange, 'function');
+  const employee = { status: 'ACTIVE', roles: [{ id: 'r', key: 'CUSTOM' }] };
+  const permissions = ['access.employee.disable'];
+  for (const key of PRIVILEGED_GRANT_KEYS) {
+    const roles = [{ ...role('r'), key: 'CUSTOM', permissionKeys: [key] }];
+    assert.equal(canChange(permissions, employee, roles), false, key);
+    assert.equal(canChange([...permissions, 'access.role.manage'], employee, roles), true, key);
+  }
+  assert.equal(canChange(permissions, employee, [{ ...role('r'), permissionKeys: ['expense.read'] }]), true);
+  assert.equal(canChange(permissions, employee, []), false, 'unknown roles are not assumed safe');
+  assert.equal(canChange([], employee, [role('r')]), false);
+  for (const key of ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW']) assert.equal(canChange([...permissions, 'access.role.manage'], { ...employee, roles: [{ id: 'r', key }] }, [role('r')]), false);
+  assert.equal(canChange([...permissions, 'access.role.manage'], { ...employee, status: 'DRAFT' }, [role('r')]), false);
+});
+
+it('FIX-R2 legacy main-branch access counts the default once and ignores stale selected branches', () => {
+  const branchIds = (logic as any).employeeBranchIds;
+  assert.equal(typeof branchIds, 'function');
+  assert.deepEqual(branchIds({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'main', branchScopeBranchIds: [] }), ['main']);
+  assert.deepEqual(branchIds({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'main', branchScopeBranchIds: ['other', 'main'] }), ['main']);
+  assert.deepEqual(branchIds({ branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: 'main', branchScopeBranchIds: ['second'] }), ['second']);
+  assert.deepEqual(branchIds({ branchScopeMode: 'DEFAULT_BRANCH_ONLY', branchScopeBranchIds: [] }), []);
+});
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };

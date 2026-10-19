@@ -11,6 +11,7 @@ import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { LockedShellProvider } from '@/features/plan-term/LockedShellScope';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import type { AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
@@ -65,7 +66,7 @@ function renderEmail(account: Partial<AccountEmailOtpState> = {}, step = 'email'
  * Renders the page in its post-load state. `useState` is keyed on the initial value: `identity`
  * and `account` both start `null`, `loading` starts `true` — the three the effect would have set.
  */
-function renderLoaded(options: { accountOnly?: boolean; permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean; certificateReturnHref?: string; withholdingReturnHref?: string; shopSaved?: boolean }): string {
+function renderLoaded(options: { lockedShell?: boolean; accountOnly?: boolean; permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean; certificateReturnHref?: string; withholdingReturnHref?: string; shopSaved?: boolean }): string {
   const identity = options.identity ?? FULL_IDENTITY;
   const account = options.account ?? LINE_ONLY_ACCOUNT;
   const realUseState = reactRuntime.useState;
@@ -91,7 +92,8 @@ function renderLoaded(options: { accountOnly?: boolean; permissions: string[]; i
     return renderToStaticMarkup(React.createElement(
       ToastContext.Provider,
       { value: { success: noop, warning: noop, error: noop } },
-      React.createElement(CompanyProfilePage, { companyId: 'company-1', permissions: options.permissions, accountOnly: options.accountOnly }),
+      React.createElement(LockedShellProvider, { value: options.lockedShell ?? false },
+        React.createElement(CompanyProfilePage, { companyId: 'company-1', permissions: options.permissions, accountOnly: options.accountOnly })),
     ));
   } finally {
     Reflect.set(reactRuntime, 'useState', realUseState);
@@ -575,5 +577,23 @@ it('settings view-only and legacy settings manage-only render masked facts witho
     assert.match(shop, /ลงท้าย 3456/);
     assert.doesNotMatch(shop, /<button|<input|<textarea|<select/);
     assert.doesNotMatch(shop, /บันทึกข้อมูลร้าน/);
+  }
+});
+
+
+it('FIX-Q1 locked account keeps account details and hides the unavailable signature route', () => {
+  const permissions = ['expense.signature.self_manage'];
+  assert.match(renderLoaded({ accountOnly: true, permissions }), /จัดการลายเซ็น/);
+  const locked = renderLoaded({ accountOnly: true, permissions, lockedShell: true });
+  assert.match(locked, /บัญชีของฉัน/);
+  assert.doesNotMatch(locked, /ลายเซ็นของฉัน|จัดการลายเซ็น|expenses\/signatures/);
+});
+
+it('FIX-R3 account phone and first-password actions end their fields in a shared form bar', () => {
+  const html = renderLoaded({ accountOnly: true, permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, phoneNumber: '0812345678' } });
+  for (const title of ['เบอร์มือถือ', 'รหัสผ่านสำรอง']) {
+    const section = (html.match(/<details[\s\S]*?<\/details>/g) ?? []).find(section => section.includes(title));
+    assert.ok(section, title);
+    assert.match(section, /data-form-action-bar/);
   }
 });

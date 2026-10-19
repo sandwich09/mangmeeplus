@@ -233,11 +233,11 @@ it('labels the neutral no-receipt document in the sheet while preserving machine
 });
 
 import { inflateRawSync } from 'node:zlib';
-function exportedSheet(file: Buffer): string {
+function exportedSheet(file: Buffer, part = 'xl/worksheets/sheet1.xml'): string {
   for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
     const size = file.readUInt32LE(offset + 18), nameLength = file.readUInt16LE(offset + 26), extraLength = file.readUInt16LE(offset + 28);
     const start = offset + 30 + nameLength + extraLength;
-    if (file.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') {
+    if (file.subarray(offset + 30, offset + 30 + nameLength).toString() === part) {
       const bytes = file.subarray(start, start + size); return (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString();
     }
     offset = start + size;
@@ -267,4 +267,36 @@ it('exports waiting and fixed rights, and describes an old confirmed answer with
   const legacy = buildAccountantIndexRow({ ...nonVatExpense, sourceDocumentType: 'TAX_INVOICE', inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRecordedBeforeReview: true } as any);
   assert.equal(legacy.input_vat_right, 'NON_CLAIMABLE');
   assert.match(exportedSheet(buildAccountantIndexXlsx([legacy], 'full')), /ไม่ได้ใช้ภาษีซื้อ \(บันทึกก่อนมีการตรวจสิทธิ\)/);
+});
+
+it('formats every accountant money cell as two-decimal numeric money across 3000 seeded rows', () => {
+  let seed = 713;
+  const rows = Array.from({ length: 3000 }, () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const amount = (seed / 10000).toFixed(4);
+    const row = buildAccountantIndexRow(nonVatExpense);
+    for (const key of ACCOUNTANT_INDEX_COLUMNS) if (key.endsWith('_amount')) row[key] = amount;
+    row.quantity = '1.005';
+    return row;
+  });
+  for (const set of ['summary', 'full'] as const) {
+    const columns = set === 'full' ? ACCOUNTANT_INDEX_COLUMNS : ACCOUNTANT_INDEX_SUMMARY_COLUMNS;
+    const workbook = buildAccountantIndexXlsx(rows, set);
+    const xml = exportedSheet(workbook);
+    const styles = exportedSheet(workbook, 'xl/styles.xml');
+    assert.match(styles, /numFmt numFmtId="164" formatCode="#,##0.00(?:;[^"]*)?"/);
+    const cellStyles = styles.match(/<cellXfs[^>]*>(.*?)<\/cellXfs>/)![1]!.match(/<xf [^>]*>/g)!;
+    assert.match(cellStyles[3]!, /numFmtId="164"/);
+    const cells = [...xml.matchAll(/<c r="([A-Z]+)(\d+)" s="(\d+)"[^>]*><v>([^<]+)<\/v><\/c>/g)];
+    const columnName = (index: number): string => index < 26 ? String.fromCharCode(65 + index) : columnName(Math.floor(index / 26) - 1) + String.fromCharCode(65 + index % 26);
+    let moneyCells = 0;
+    for (const cell of cells) {
+      const key = columns.find((_, i) => columnName(i) === cell[1])!;
+      if (!key.endsWith('_amount')) { assert.equal(cell[3], '0'); continue; }
+      assert.equal(cell[3], '3', `${key} needs the shared #,##0.00 money style`);
+      assert.equal(Number(cell[4]), Number(rows[Number(cell[2]) - 2]![key]));
+      moneyCells++;
+    }
+    assert.equal(moneyCells, rows.length * columns.filter(key => key.endsWith('_amount')).length);
+  }
 });

@@ -456,6 +456,18 @@ it('G2: sold tax instructions name certificate, signature and PND53 controls', (
   assert.deepEqual(links(buildTaxGuide('co', [])), []);
 });
 
+it('FIX-Q3 tax guide names the three actions in Thai and every required self-issued certificate field', () => {
+  const text = sentences(buildTaxGuide('co')).join(' ');
+  assert.doesNotMatch(text, /tax code|reconciliation|ปุ่มดำเนินการ/iu);
+  for (const phrase of ['คำนวณรายงาน', 'ยื่นแบบแล้ว', 'ชำระแล้ว', 'รหัสภาษี', 'กระทบยอด']) assert.ok(text.includes(phrase), phrase);
+  const guide = buildTaxGuide('co');
+  const block = guide.sections.find(section => section.id === 'wht')!.blocks[0]!;
+  assert.equal(block.kind, 'items');
+  if (block.kind !== 'items') return;
+  const instructions = block.items.find(item => item.title === 'ร้านออกหนังสือรับรองเอง')!.detail;
+  for (const field of ['เลขที่หนังสือรับรอง', 'วันที่จ่ายตามหนังสือรับรองเดิม', 'วันที่ออก']) assert.ok(instructions.includes(`“${field}”`), field);
+});
+
 describe('the reports guide uses the words the reports page shows', () => {
   const guide = buildReportsGuide('co');
   const root = join(__dirname, '../../../../..');

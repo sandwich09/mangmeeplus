@@ -110,9 +110,9 @@ for (const width of [390, 1556]) for (const interval of ['month', 'year'] as con
     await page.goto(`/companies/${companyId}/billing`);
     await expect(page.getByText('มีบิลต่ออายุรอจ่าย', { exact: false }).first()).toBeVisible(FIRST_SIGHT);
     await expect(page.getByRole('button', { name: /^ต่ออายุ .*บาท$/ })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'จ่ายบิลงวดนี้', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'เปิดบิลพร้อมเพย์', exact: true })).toBeVisible();
     await noSidewaysScroll(page, width);
-    await page.getByRole('button', { name: 'จ่ายบิลงวดนี้', exact: true }).click();
+    await page.getByRole('button', { name: 'เปิดบิลพร้อมเพย์', exact: true }).click();
     await expect(page).toHaveURL(originalBill);
     await expect(page.getByRole('heading', { name: 'บิลพร้อมเพย์เดิม (จำลอง)', exact: true })).toBeVisible();
     expect(state.log.quotes).toHaveLength(0); expect(state.log.checkouts).toHaveLength(0);

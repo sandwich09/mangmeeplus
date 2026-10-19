@@ -402,6 +402,18 @@ describe('expenses.model', () => {
     assert.equal(expenseRatePercent('abc'), null);
   });
 
+  it('rounds manual line components before VAT and total, as the server does', () => {
+    assert.deepEqual(calculateManualExpenseTotals({ quantity: '1', unitPrice: '100.074', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), {
+      subtotal: 100.07, vat: 7, grandTotal: 107.07,
+    });
+    assert.deepEqual(calculateManualExpenseTotals({ quantity: '1', unitPrice: '100.074', discountAmount: '0.015', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' }), {
+      subtotal: 100.05, vat: 7, grandTotal: 107.05,
+    });
+    assert.deepEqual(calculateManualExpenseTotals({ quantity: '1', unitPrice: '0.075', vatRate: '1', vatMode: 'VAT_INCLUDED' }), {
+      subtotal: 0.04, vat: 0.04, grandTotal: 0.08,
+    });
+  });
+
   it('calculates manual-entry VAT and totals from the selected tax mode', () => {
     const fuel = calculateManualExpenseTotals({ quantity: '61.488', unitPrice: '39.19', discountAmount: '0', vatRate: '0.07', vatMode: 'VAT_INCLUDED' });
     assert.deepEqual(fuel, { subtotal: 2252.07, vat: 157.64, grandTotal: 2409.71 });
@@ -439,7 +451,7 @@ describe('expenses.model', () => {
     const lines = buildManualExpenseLines({ ...bill, serviceChargeAmount: '100' });
     assert.deepEqual(lines, [
       { lineNumber: 1, description: 'ค่าอาหาร', quantity: '1', unitPrice: '1000', discountAmount: '0', vatRate: '0.07', taxCodeDefinitionId: 'tax-def-1', externalTaxCode: 'V7', transactionContext: 'DOMESTIC_PURCHASE' },
-      { lineNumber: 2, description: 'ค่าบริการ (Service charge)', quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '0.07', taxCodeDefinitionId: 'tax-def-1', externalTaxCode: 'V7', transactionContext: 'DOMESTIC_PURCHASE' },
+      { lineNumber: 2, description: 'ค่าบริการ (Service charge)', chargeKind: 'SERVICE_CHARGE', quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '0.07', taxCodeDefinitionId: 'tax-def-1', externalTaxCode: 'V7', transactionContext: 'DOMESTIC_PURCHASE' },
     ]);
     // receipt-additional-charges spec §15, first acceptance case: 1,000 + service 100 + VAT 77 = 1,177.
     // The AI path already produces this; typing the same bill by hand must land on the same total.

@@ -4,6 +4,11 @@ import { test } from 'node:test';
 import { apiErrorMessage, translateApiError } from './api-error-message';
 import { WHT_CERTIFICATE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 
+test('FIX-R2 role-in-use conflicts explain reassignment instead of reporting duplicate data', () => {
+  assert.equal(apiErrorMessage({ status: 409, message: 'Role is still assigned to active employees. Reassign before disabling.' }),
+    'บทบาทนี้ยังมีพนักงานใช้อยู่ ย้ายพนักงานไปบทบาทอื่นก่อนปิดใช้งาน');
+});
+
 test('certificate commands keep the server Thai refusal before the code fallback', () => {
   for (const code of ['expense_changed', 'expense_changed_retry', 'expense_correction_permission_missing', 'expense_void_reason_required', 'expense_correction_blocked', 'expense_payment_correction_blocked', 'expense_wht_source_changed', 'certificate_permission_missing', 'certificate_issued', 'posting_unresolved', 'accounting_period_locked', 'tax_period_locked', 'tax_period_filed', 'expense_certificate_attestation_required', 'reimbursement_cancellation_certificate_permission_missing', 'reimbursement_cancellation_tax_period_locked', 'reimbursement_cancellation_accounting_period_locked', 'wht_certificate_not_correctable', 'wht_certificate_correction_tax_period_locked', 'wht_certificate_issue_in_progress', 'wht_handoff_not_issuable', 'wht_certificate_number_duplicate']) {
     const message = 'ยังทำรายการนี้ไม่ได้ กรุณาเปิดหน้านี้ใหม่เพื่อตรวจสอบข้อมูลล่าสุด';

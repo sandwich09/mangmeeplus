@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -2042,4 +2043,35 @@ it('multi payout 2a: third-party attestation requires strict acceptance as well 
   assert.equal(payoutAttestationError(claim, 1, true), null);
   assert.equal(payoutAttestationError(claim, undefined, true), 'payout_verification_required');
   assert.equal(payoutAttestationError({ ...claim, holderType: 'SELF' }, 1, false), null);
+});
+
+
+it('5,000 seeded claim forms and separated amounts match the server satang rounding', () => {
+  let seed = 12345;
+  const random = (limit: number) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return Math.floor(seed / 0x100000000 * limit);
+  };
+  const forms = Array.from({ length: 5000 }, (_, index) => Array.from({ length: 1 + random(50) }, () => {
+    const whole = index % 10 === 0 ? '999999999999' : String(random(100000));
+    return { amount: `${whole}.${String(random(10000)).padStart(4, '0').slice(0, 1 + random(4))}` };
+  }));
+  forms.push([{ amount: '99999999999999.99' }], [{ amount: '10.005' }, { amount: '10.005' }]);
+  const probe = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `
+    import { readFileSync } from 'node:fs';
+    import helpers from './src/features/reimbursements/reimbursements.logic.ts';
+    const { sumLineAmounts, formatMoney } = helpers;
+    const forms = JSON.parse(readFileSync(0, 'utf8'));
+    console.log(JSON.stringify(forms.map(lines => {
+      const [whole, fraction] = lines[0].amount.split('.');
+      const separated = whole.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',') + '.' + fraction;
+      return [formatMoney(sumLineAmounts(lines), 'THB'), formatMoney(separated, 'THB')];
+    })));
+  `], { cwd: join(__dirname, '../../../../../../web'), input: JSON.stringify(forms), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+  assert.equal(probe.status, 0, probe.stderr);
+  const actual: string[][] = JSON.parse(probe.stdout);
+  const display = (amount: string) => `${new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount as unknown as number)} บาท`;
+  forms.forEach((lines, index) => {
+    assert.deepEqual(actual[index], [display(computeClaimTotal(lines)), display(computeClaimTotal([lines[0]!]))], JSON.stringify(lines));
+  });
 });

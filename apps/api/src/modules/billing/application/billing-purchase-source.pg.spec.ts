@@ -1,3 +1,4 @@
+import { packageAnchorDay } from '../domain/billing-package';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
@@ -46,7 +47,7 @@ test('one-time purchase source requires the exact applied invoice and preserves 
         sourceHash: `grant-${run}`, kind: 'INITIAL', units: currentOffer.receiptAllowance, serviceStart: startsAt, serviceEnd: paidThrough,
         availableAt: startsAt, expiresAt: paidThrough, policyRevisionId: 'synthetic' } });
       await client.billingAccount.update({ where: { id: account.id }, data: { contractAttemptId: attemptId,
-        renewalMode: 'PROMPTPAY_ONCE', paidThrough, billingAnchorDay: startsAt.getUTCDate(), termProjectionHash: termProjectionHash(term) } });
+        renewalMode: 'PROMPTPAY_ONCE', paidThrough, billingAnchorDay: packageAnchorDay(startsAt), termProjectionHash: termProjectionHash(term) } });
       const service = { prisma: { client }, config: { stripeAccountId: `acct_${run}` },
         stripe: { accountId: `acct_${run}`, livemode: false, enabled: true, assertAccount: async () => {},
           request: async (_method: string, path: string, params?: any) => path === '/invoices/create_preview'
@@ -216,7 +217,7 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
           resetsAt: null, cadence: 'PAID_GRANTS', expiresAt: effectiveAt.toISOString() } },
         priceId: 'price_StarterMonth', productId: 'prod_Starter', policy, termVersion: term.updatedAt.toISOString(),
         termHash: termProjectionHash(term), oneTime: { invoiceId: `source-${run}`, paidThrough: effectiveAt.toISOString(),
-          anchorDay: effectiveAt.getUTCDate(), offerKey: currentOffer.offerKey, interval: currentOffer.interval },
+          anchorDay: packageAnchorDay(effectiveAt), offerKey: currentOffer.offerKey, interval: currentOffer.interval },
         oneTimeChange: { effectiveAt: effectiveAt.toISOString(), currentOffer }, capacity: staleSelection };
       await client.billingAttempt.create({ data: { id: attemptId, billingAccountId: account.id, initiatingUserId: userId,
         quoteId: `quote-${run}`, channel: 'web', idempotencyKey: `idem-${run}`, requestHash: `request-${run}`,
@@ -238,7 +239,7 @@ test('a prepaid one-time plan change blocks on stale capacity, accepts a fresh s
           method: 'POST', path: '', params: {} }, reason: 'paid_one_time_plan_change', initiatorUserId: userId,
         requestHash: hashBilling([attemptId, invoice.id, targetOffer]), expiresAt: newEnd, scheduledFor: effectiveAt, observedAt: new Date() } });
       await client.billingAccount.update({ where: { id: account.id }, data: { contractAttemptId: attemptId, paidThrough: newEnd,
-        billingAnchorDay: effectiveAt.getUTCDate(), termProjectionHash: termProjectionHash(term), pendingPlanChangeId: operation.id } });
+        billingAnchorDay: packageAnchorDay(effectiveAt), termProjectionHash: termProjectionHash(term), pendingPlanChangeId: operation.id } });
       const runner = { prisma: { client }, assertLease: async (tx: typeof client, id: string, token: string) => {
         const locked = await tx.billingAccount.findUniqueOrThrow({ where: { id } });
         assert.equal(locked.leaseToken, token);

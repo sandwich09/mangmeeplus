@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendPackageInterval, promotionBoundaries } from '../../billing/domain/billing-package';
+import { appendPackageInterval, packageAnchorDay, promotionBoundaries } from '../../billing/domain/billing-package';
 import { aiCreditCycleAt, type AiCreditCycleAccount, type AiCreditPaidPeriod, type AiCreditPromoSegment } from './ai-credit-cycles';
 
 const utc = (value: string) => new Date(value);
@@ -10,7 +10,7 @@ const account = (over: Partial<AiCreditCycleAccount> = {}): AiCreditCycleAccount
 });
 /** One-time periods bought back to back, the way `fullPackagePurchaseImpact` chains them. */
 function oneTimeChain(first: Date, intervals: Array<{ interval: 'month' | 'year'; count?: number }>): AiCreditPaidPeriod[] {
-  const anchor = first.getUTCDate();
+  const anchor = packageAnchorDay(first);
   const periods: AiCreditPaidPeriod[] = [];
   let start = first;
   intervals.forEach(({ interval, count }, index) => {
@@ -35,13 +35,40 @@ function boundaries(acct: AiCreditCycleAccount, periods: AiCreditPaidPeriod[], f
 }
 
 describe('AI credit cycles follow the paid package periods (add-on spec §5.1, T-01)', () => {
-  it('keeps the anchor day of the 31st through short months, matching the renewal boundary every month (spec example)', () => {
-    // Paid 31 Jan 03:00 Bangkok = 30 Jan 20:00 UTC, so the UTC anchor is the 30th.
+  it('keeps the Bangkok anchor of 31 January at 03:00 through February and March (not the UTC date)', () => {
+    // 28 Feb 03:00 Bangkok is 27 Feb 20:00 UTC; 31 Mar 03:00 is 30 Mar 20:00 UTC.
     const periods = oneTimeChain(utc('2026-01-30T20:00:00Z'), [{ interval: 'month' }, { interval: 'month' }, { interval: 'month' }]);
-    const acct = account({ billingAnchorDay: 30, paidThrough: periods[2]!.periodEnd });
+    const acct = account({ billingAnchorDay: 31, paidThrough: periods[2]!.periodEnd });
     assert.deepEqual(boundaries(acct, periods, periods[0]!.periodStart), [
-      '2026-01-30T20:00:00.000Z', '2026-02-28T20:00:00.000Z', '2026-03-30T20:00:00.000Z']);
-    assert.equal(periods[2]!.periodEnd.toISOString(), '2026-04-30T20:00:00.000Z', 'each cycle ends on a renewal boundary');
+      '2026-01-30T20:00:00.000Z', '2026-02-27T20:00:00.000Z', '2026-03-30T20:00:00.000Z']);
+    assert.equal(periods[2]!.periodEnd.toISOString(), '2026-04-29T20:00:00.000Z', 'each cycle ends on a renewal boundary');
+  });
+
+  it('derives a missing credit-cycle anchor from Bangkok for paid and pending renewal cycles', () => {
+    const periods = oneTimeChain(utc('2026-01-30T20:00:00Z'), [{ interval: 'month' }, { interval: 'month' }]);
+    const acct = account({ paidThrough: periods[1]!.periodEnd, renewalMode: 'CARD_AUTO', subscriptionState: 'active' });
+    const paid = cycleAt(acct, periods, utc('2026-03-29T21:00:00Z'))!;
+    assert.equal(paid.start.toISOString(), '2026-02-27T20:00:00.000Z');
+    assert.equal(paid.end.toISOString(), '2026-03-30T20:00:00.000Z');
+    const pending = cycleAt(acct, periods, periods[1]!.periodEnd)!;
+    assert.equal(pending.end.toISOString(), '2026-04-29T20:00:00.000Z');
+  });
+
+  it('3000 seeded credit-cycle years match independent Bangkok calendar boundaries with a missing anchor', () => {
+    let seed = 3103;
+    const pick = (limit: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % limit; };
+    for (let i = 0; i < 3000; i++) {
+      const year = 2020 + pick(30), month = pick(12), day = Math.min(29 + pick(3), new Date(Date.UTC(year, month + 1, 0)).getUTCDate());
+      const hour = pick(7), minute = pick(60);
+      const edge = (n: number) => {
+        const target = new Date(Date.UTC(year, month + n, 1));
+        const y = target.getUTCFullYear(), m = target.getUTCMonth();
+        return new Date(Date.UTC(y, m, Math.min(day, new Date(Date.UTC(y, m + 1, 0)).getUTCDate()), hour - 7, minute));
+      };
+      const period = { id: 'annual', periodStart: edge(0), periodEnd: edge(12) };
+      const starts = boundaries(account({ paidThrough: period.periodEnd }), [period], period.periodStart);
+      assert.deepEqual(starts, Array.from({ length: 12 }, (_, n) => edge(n).toISOString()), period.periodStart.toISOString());
+    }
   });
 
   it('handles anchor days 15, 29, 30 and 31 and a leap-year February without drifting', () => {
@@ -52,7 +79,7 @@ describe('AI credit cycles follow the paid package periods (add-on spec §5.1, T
       ['2028-01-30T05:00:00Z', ['2028-01-30', '2028-02-29', '2028-03-30']],
     ] as const) {
       const periods = oneTimeChain(utc(first), [{ interval: 'month' }, { interval: 'month' }, { interval: 'month' }]);
-      const acct = account({ billingAnchorDay: utc(first).getUTCDate(), paidThrough: periods[2]!.periodEnd });
+      const acct = account({ billingAnchorDay: packageAnchorDay(utc(first)), paidThrough: periods[2]!.periodEnd });
       assert.deepEqual(boundaries(acct, periods, periods[0]!.periodStart).map(iso => iso.slice(0, 10)), expected, first);
     }
   });
@@ -242,7 +269,7 @@ describe('a promotion free time is one AI credit cycle of its own (plan R9, Q2, 
         '2026-09-30', '2026-10-31', '2026-11-30', '2026-12-31', '2027-01-31']],
     ] as const) {
       const { paid, free, paidEnd, benefitEnd } = promotion(utc(first), 'year');
-      const acct = account({ billingAnchorDay: utc(first).getUTCDate(), paidThrough: benefitEnd });
+      const acct = account({ billingAnchorDay: packageAnchorDay(utc(first)), paidThrough: benefitEnd });
       assert.deepEqual(boundaries(acct, [paid], paid.periodStart, [free]).map(start => start.slice(0, 10)), starts, first);
       const last = cycleAt(acct, [paid], new Date(paidEnd.getTime() - 1), 7, false, [free])!;
       assert.deepEqual([iso(last.end), last.fundingSource], [iso(paidEnd), undefined], 'the twelfth cycle is still a paid one');

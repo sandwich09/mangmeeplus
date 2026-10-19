@@ -126,7 +126,7 @@ export function DisbursementVoucherPayCard({ companyId, detail, onReload, onWith
     {detail.header.payeeAccountLast4
       ? <DisbursementVoucherAccount companyId={companyId} header={detail.header} permissions={permissions} expanded />
       : fields.paymentMethod === 'BANK_TRANSFER' && <p role="status" className="mb-4 text-warning-700">ใบนี้ไม่มีบัญชีผู้รับ ถามผู้จัดทำ{detail.preparerName ? ` ${detail.preparerName}` : ''} ก่อนโอน</p>}
-    <form ref={bar} className="flex min-w-0 flex-col gap-4" onSubmit={event => { event.preventDefault(); if (needsRefresh) void save(); else requestConfirmation(); }}>
+    <form ref={bar} className="flex min-w-0 flex-col gap-4" onSubmit={event => { event.preventDefault(); if (needsRefresh) void reload(); else requestConfirmation(); }}>
     <div className={styles.stack}>
       <h2 ref={heading} tabIndex={-1} className={cx(styles.payee, 'outline-none')}>{word('pay')}</h2>
         <CoverLoader active={busy} scope="form" label={word('working')}>
@@ -162,7 +162,7 @@ export function DisbursementVoucherPayCard({ companyId, detail, onReload, onWith
         </CoverLoader>
     </div>
         <FormActionBar><ActionGroup>
-            <button type="submit" className={btnClass} disabled={busy || actionBlocked || slipUploading || Boolean(dateError) || Boolean(methodError) && !needsRefresh || stale} aria-busy={busy || actionBlocked || slipUploading}>
+            <button type="submit" className={btnClass} disabled={busy || actionBlocked || slipUploading || Boolean(methodError) && !needsRefresh || stale} aria-busy={busy || actionBlocked || slipUploading}>
               {slipUploading ? word('slip_uploading') : busy ? word('working') : needsRefresh ? word('reload_latest') : word('pay')}
             </button>
         </ActionGroup></FormActionBar>

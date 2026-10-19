@@ -32,3 +32,27 @@ test('the document preview lets its host own the main button', () => {
   assert.match(preview, /className=\{hostIsMain \? secondaryButtonClass : primaryButtonClass\}>พิมพ์<\/button>/);
   assert.match(preview, /hostIsMain \? <>\{openNewTab\}\{print\}\{footer\}<\/> : <>\{footer\}\{openNewTab\}\{print\}<\/>/);
 });
+
+
+test('a confirm request can name its icon close button without renaming its safe outcome', async () => {
+  const { certificateHarness, h } = await import('@/features/expenses/expense-certificate-test-harness');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { useConfirm } = await import('./use-confirm');
+  for (const closeLabel of ['ปิด', undefined]) {
+    let confirm!: ReturnType<typeof useConfirm>['confirm'];
+    function Host() { const dialog = useConfirm(); confirm = dialog.confirm; return dialog.confirmDialog; }
+    const view = certificateHarness(() => h(Host));
+    try {
+      view.render();
+      const answer = confirm({ title: 'ปิดใช้งาน มีนา', message: 'เข้าสู่ระบบของร้านนี้ไม่ได้', confirmLabel: 'ปิดใช้งาน', cancelLabel: 'ไม่ปิด', closeLabel });
+      view.render();
+      const dialog = view.find('Modal', props => props.open);
+      assert.equal(dialog.closeLabel, closeLabel ?? 'ไม่ปิด');
+      const footer = renderToStaticMarkup(h('div', null, dialog.footer));
+      assert.equal((footer.match(/>ไม่ปิด<\/button>/g) ?? []).length, 1);
+      assert.match(footer, />ปิดใช้งาน<\/button>/);
+      dialog.onClose();
+      assert.equal(await answer, false);
+    } finally { view.cleanup(); }
+  }
+});

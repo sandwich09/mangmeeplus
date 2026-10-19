@@ -103,3 +103,47 @@ test('COUNTERPARTY-1 detail shows one address hint and identifiable recent expen
   assert.equal(counterpartyAddressHint({ addressText: 'บ้าน', provenance: null }, row()), 'พิมพ์ตามที่ใบระบุ');
   assert.equal(counterpartyAddressHint({ addressText: 'บ้าน', provenance: { expenseId: 'older', at: '2026-10-17' } }, row()), 'พิมพ์ตามที่ใบระบุ · มาจากใบที่บันทึกวันที่ 17 ต.ค. 2569');
 });
+
+test('FIX-Q3 conflict from a plain API Error offers reload for saving and choosing a history address', async () => {
+  for (const method of ['updateCounterparty', 'promoteSeenAddress'] as const) {
+    for (const code of [{ code: 'counterparty_conflict' }, { details: { code: 'counterparty_conflict' } }]) {
+      const request = mock.method(api, method, async () => { throw Object.assign(new Error('changed'), code); });
+      try {
+        const view = detail(); view.render();
+        if (method === 'updateCounterparty') view.find('button', p => text(p.children) === 'บันทึก').onClick();
+        else view.find('AddressHistoryCard').onPromote('ที่อยู่จากประวัติ');
+        await view.settle();
+        view.render();
+        assert.equal((view.state[5] as any).stale, true, `${method}: conflict needs a reload action`);
+        view.find('button', p => text(p.children) === 'ลองอีกครั้ง').onClick();
+        assert.equal(view.state[8], 1);
+      } finally { request.mock.restore(); }
+    }
+  }
+});
+
+test('FIX-Q3 choosing a history address preserves every other edit and saves with the new version', async () => {
+  const result = row({ updatedAt: '2026-10-18', billingAddressJson: { addressText: 'ที่อยู่จากประวัติ', postalCode: '10110', locked: false } });
+  const calls: any[] = [];
+  const promoteMock = mock.method(api, 'promoteSeenAddress', async (...args: any[]) => { calls.push(args); return result; });
+  const saveMock = mock.method(api, 'updateCounterparty', async (...args: any[]) => { calls.push(args); return result; });
+  try {
+    const view = detail(); view.render();
+    const edits = { displayName: 'ชื่อที่กำลังแก้', legalName: 'ชื่อจดทะเบียนใหม่', taxId: '1234567890123', entityKind: 'JURISTIC', isBranch: true, branchCode: '00012', email: 'new@example.com', phone: '0812345678', locked: true };
+    view.find('CounterpartyIdentityFields').onChange(edits);
+    view.render();
+    view.find('AddressHistoryCard').onPromote('ที่อยู่จากประวัติ');
+    await view.settle();
+    assert.equal(view.state[8], 0, 'must not reload and replace the entire form');
+    view.render();
+    assert.deepEqual(view.find('CounterpartyAddressFields').values, { ...counterpartyFormValues(row()), ...edits, addressText: 'ที่อยู่จากประวัติ', postalCode: '10110' });
+    assert.equal(view.find('CounterpartyIdentityFields').values.displayName, edits.displayName);
+    assert.match(view.render(), /EXP-202610-1/, 'keep detail-only history after the summary response');
+    view.find('button', p => text(p.children) === 'บันทึก').onClick();
+    await view.settle();
+    assert.deepEqual(calls[0], ['co', 'cp1', 'ที่อยู่จากประวัติ', '2026-10-16']);
+    assert.equal(calls[1][2].expectedUpdatedAt, '2026-10-18');
+    assert.equal(calls[1][2].displayName, edits.displayName);
+    assert.equal(calls[1][2].addressText, 'ที่อยู่จากประวัติ');
+  } finally { promoteMock.mock.restore(); saveMock.mock.restore(); }
+});

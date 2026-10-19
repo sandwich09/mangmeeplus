@@ -39,7 +39,7 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
       const allowed = branches.filter(id => source.allBranches || source.branchIds.includes(id));
       return allowed.length > 0 && (m.defaultBranchId === null ? source.allBranches : allowed.includes(m.defaultBranchId));
     });
-  async function run(work: () => Promise<void>) { setBusy(true); setError(''); try { await work(); } catch { setError('ข้อมูลอาจเปลี่ยนหรือยังจัดการรายการค้างไม่ครบ กรุณาโหลดข้อมูลล่าสุดแล้วตรวจการเลือกอีกครั้ง'); } finally { setBusy(false); } }
+  async function run(work: () => Promise<void>) { setBusy(true); setError(''); try { await work(); } catch { setError('ข้อมูลอาจเปลี่ยนหรือยังจัดการรายการค้างไม่ครบ โหลดข้อมูลล่าสุดแล้วตรวจการเลือกอีกครั้ง'); } finally { setBusy(false); } }
   return <>
     <div ref={backNavigation} className="scroll-mt-[calc(var(--app-header-h,0px)+1.5rem)] space-y-1">
       <h2 ref={heading} tabIndex={-1} className="text-xl font-bold text-gray-900 sm:text-2xl">เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ</h2></div>
@@ -73,9 +73,9 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
               <span className="min-w-0 flex-1 space-y-1"><span className="flex flex-wrap items-center gap-2"><span className="break-words">{member.name}</span>{member.required && <MangmeeBadge>จำเป็นต้องคงไว้</MangmeeBadge>}</span>{member.required && !member.owner && <span className="block text-sm text-gray-500">มีรายการเบิกหรืออนุมัติค้าง</span>}</span>
             </label>
             {selected && (singleBranch ? <p className="pl-8 text-sm text-gray-500">สาขาที่ใช้งาน: {allowed[0].name}</p> : <label className="block text-sm text-gray-600">สาขาเริ่มต้น<ThemedSelect aria-label={`สาขาเริ่มต้นของ ${member.name}`} className="mt-2 w-full" disabled={busy} value={selected.defaultBranchId ?? ''} onChange={event => { setAccepted(false); setMembers(old => old.map(m => m.id === member.id ? { ...m, defaultBranchId: event.target.value || null } : m)); }}>
-              <option value="">{member.allBranches ? 'เลือกสาขาเมื่อเข้าใช้งาน' : 'กรุณาเลือกสาขาที่มีสิทธิ์'}</option>
+              <option value="">{member.allBranches ? 'เลือกสาขาเมื่อเข้าใช้งาน' : 'เลือกสาขาที่มีสิทธิ์'}</option>
               {allowed.map(b => <option value={b.id} key={b.id}>{b.name}</option>)}
-              {selected.defaultBranchId && !allowed.some(b => b.id === selected.defaultBranchId) && <option value={selected.defaultBranchId} disabled>สาขาเดิมไม่ได้คงไว้ กรุณาเลือกใหม่</option>}
+              {selected.defaultBranchId && !allowed.some(b => b.id === selected.defaultBranchId) && <option value={selected.defaultBranchId} disabled>สาขาเดิมไม่ได้คงไว้ เลือกสาขาอีกครั้ง</option>}
             </ThemedSelect></label>)}
           </div>;
         })}</div>
@@ -87,7 +87,7 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
     <div className="space-y-2 border-t border-gray-200 pt-4">
       {suspendedBranches + suspendedMembers > 0 ? <><p className="font-medium">เมื่อเริ่มแพ็กเกจใหม่ จะพัก {suspendedBranches} สาขา · {suspendedMembers} ผู้ใช้</p><p className="text-sm text-gray-500">รายการที่ไม่เลือกจะถูกพัก ข้อมูลและเอกสารเดิมยังอยู่ เปิดกลับได้จากเมนูสาขาหรือพนักงาน ภายในจำนวนที่แพ็กเกจรองรับ</p></> : <p className="text-sm text-gray-500">คงสาขาและผู้ใช้ทั้งหมด ไม่มีรายการที่ถูกพัก</p>}
       {!valid && <p role="status" className="text-sm text-amber-800">ต้องคงสำนักงานใหญ่และ{THAI_SYSTEM_ROLE_NAMES.OWNER} เลือกไม่เกินจำนวนที่แพ็กเกจรองรับ และกำหนดสาขาที่มีสิทธิ์ให้ผู้ใช้ทุกคน</p>}
-      {blockedByWork && <p className="text-sm text-amber-800">มีรายการเบิกหรืออนุมัติค้าง ทำให้จำนวนที่ต้องคงไว้เกินแพ็กเกจ กรุณา<a className="font-semibold underline" href={`/companies/${options.companyId}/reimbursements`}>จัดการรายการเบิกค้าง</a>ก่อน หรือเลือกแพ็กเกจที่รองรับจำนวนปัจจุบัน</p>}
+      {blockedByWork && <p className="text-sm text-amber-800">มีรายการเบิกหรืออนุมัติค้าง ทำให้จำนวนที่ต้องคงไว้เกินแพ็กเกจ <a className="font-semibold underline" href={`/companies/${options.companyId}/reimbursements`}>จัดการรายการเบิกค้าง</a>ก่อน หรือเลือกแพ็กเกจที่รองรับจำนวนปัจจุบัน</p>}
     </div>
     <label className="flex min-h-11 items-start gap-3 py-2"><input type="checkbox" className={checkbox} checked={accepted} disabled={busy} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว</label>
     {error && <p role="alert" className="text-red-700">{error}</p>}

@@ -10,11 +10,11 @@ test('payee mirror uses server keys: matching tax, matching names without tax, a
   assert.equal(payeeRule([]), 'none');
   assert.equal(payeeRule([row('a', null)]), 'none');
 });
-test('amounts must be positive with at most two decimals and never exceed exact outstanding', () => {
-  for (const value of ['', '0', '01', '00.2', '-1', '1.001', '1e2', 'NaN', '1,000', ' 1 ', '1.24']) assert.ok(amountError(value, '1.2399'));
-  for (const value of ['1', '1.2', '1.23']) assert.equal(amountError(value, '1.2399'), null);
+test('amounts must be positive with at most two decimals and never exceed rounded outstanding', () => {
+  for (const value of ['', '0', '01', '00.2', '-1', '1.001', '1e2', 'NaN', '1,000', ' 1 ', '1.25']) assert.ok(amountError(value, '1.2399'));
+  for (const value of ['1', '1.2', '1.23', '1.24']) assert.equal(amountError(value, '1.2399'), null);
   assert.equal(amountError('99999999999999.99', '99999999999999.9999'), null);
-  assert.equal(initialAmount('1.2399'), '1.23');
+  assert.equal(initialAmount('1.2399'), '1.24');
   assert.equal(initialAmount('104.0000'), '104.00');
   assert.equal(selectedTotal(['0.10', '0.20', '99999999999999.99']), '100000000000000.29');
 });
@@ -57,4 +57,20 @@ test('only an eligible source expense with one eligible candidate skips selectio
   assert.equal(skipSingleExpenseSelection(entry, [entry, { ...second, payeeKey: 'another' }]), true);
   assert.equal(skipSingleExpenseSelection(null, [entry]), false);
   assert.equal(skipSingleExpenseSelection({ ...entry, selectable: false }, [{ ...entry, selectable: false }]), false);
+});
+
+test('legacy four-decimal balances round half up and allow full settlement in 3000 seeded cases', () => {
+  assert.equal(initialAmount('2209780.6682'), '2209780.67');
+  assert.equal(amountError('2209780.67', '2209780.6682'), null);
+  let seed = 614;
+  for (let i = 0; i < 3000; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const units = BigInt(seed + 10000), cents = (units + 50n) / 100n;
+    const outstanding = `${units / 10000n}.${String(units % 10000n).padStart(4, '0')}`;
+    const expected = `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+    assert.equal(initialAmount(outstanding), expected);
+    assert.equal(amountError(expected, outstanding), null);
+    const tooMuch = `${(cents + 1n) / 100n}.${String((cents + 1n) % 100n).padStart(2, '0')}`;
+    assert.ok(amountError(tooMuch, outstanding));
+  }
 });

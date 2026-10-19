@@ -12,7 +12,7 @@ import { FilterTabs } from '@/common/components/tabs';
 import { expenseDetailUrl } from './expense-list-navigation.logic';
 import evidenceStyles from './WhtCertificatesPage.module.css';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { EmptyState, LoadingState } from '@/common/components/state';
+import { EmptyState, ErrorState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
 import {
   listManageCategories, createExpenseCategory, updateExpenseCategory,
@@ -34,7 +34,7 @@ import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
-import { err, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, WholeWords, EXPORT_FOR_ACCOUNTANT } from './ExpensesUi';
+import { err, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, WholeWords, EXPORT_FOR_ACCOUNTANT } from './ExpensesUi';
 import { Pagination } from '@/common/components/data-table/Pagination';
 
 /** Labels above the filters of the evidence page: 14 px, like every field label of this workspace. */
@@ -118,9 +118,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // Which row is saving, not merely whether one is: `disabled={updating}` on every row dimmed all
-  // seven selects and both toggle columns on a single change, so picking one Tax Code flashed the
-  // whole table. The single-writer guard below still reads off this.
+  // Hold switches and tax selectors while the single writer runs; only its row shows progress.
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const updating = updatingId !== null;
   const [name, setName] = useState('');
@@ -128,18 +126,23 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
   const [createError, setCreateError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const loadRequest = useRef(0);
 
   // `keepVisible` for the refresh that follows a write: `loading` swaps the whole table for the
   // spinner, so re-reading the list after one selection unmounted all eighteen rows and remounted
   // them, which is the jump users see. Only the first load has nothing to keep on screen.
   const load = useCallback(async (keepVisible = false) => {
+    const request = ++loadRequest.current;
     if (!keepVisible) setLoading(true);
     setError(null);
-    try { setCategories(await listManageCategories(companyId)); }
-    catch (e) { setError(err(e)); }
-    finally { if (!keepVisible) setLoading(false); }
+    try {
+      const next = await listManageCategories(companyId);
+      if (request === loadRequest.current) setCategories(next);
+    }
+    catch (e) { if (request === loadRequest.current) setError(err(e)); }
+    finally { if (request === loadRequest.current) setLoading(false); }
   }, [companyId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { loadRequest.current++; }; }, [load]);
   useEffect(() => {
     if (!showsTax) return;
     let cancelled = false;
@@ -210,14 +213,14 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
     return (
       <span className="flex shrink-0 items-center gap-2 text-sm text-gray-600">
         <span>{active ? 'ใช้อยู่' : 'ปิดไว้'}</span>
-        <Toggle label={`ใช้หมวดหมู่ ${c.name}`} on={active} disabled={updatingId === c.id} loading={updatingId === c.id} onToggle={() => void toggle(c)} />
+        <Toggle label={`ใช้หมวดหมู่ ${c.name}`} on={active} disabled={updating} loading={updatingId === c.id} onToggle={() => void toggle(c)} />
       </span>
     );
   };
   const taxCodeSelect = (c: ExpenseCategorySummary) => (
     <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} value={c.defaultInputTaxCode ?? ''}
       aria-label={`${t('expenses.category_default_tax_code', locale)} ${c.name}`}
-      disabled={updatingId === c.id}
+      disabled={updating}
       onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
       <option value="">ไม่กำหนด</option>
       {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
@@ -230,7 +233,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
     <div>
       <MangmeeCard className="overflow-hidden">
         {actionError && !editTarget && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
-        {error ? <div className="p-4"><StateBanner error={error} /></div> : loading ? (
+        {error ? <ErrorState description={error} onRetry={() => void load()} /> : loading ? (
           <LoadingState label="กำลังโหลด..." />
         ) : (
           <>
@@ -539,7 +542,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     <div className="space-y-4">
       {confirmDialog}
       {actionError && !showUpload && <ErrorBanner message={actionError} />}
-      <StateBanner error={error} />
+      {error && <ErrorState description={error} onRetry={() => void load()} />}
       {fromClaimId && !loading && !error && (
         <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3" data-testid="signature-return-to-claim">
           <p className="text-sm text-gray-700">{signatureReturnText(Boolean(current))}</p>
@@ -815,9 +818,9 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
     ...(postingStatus ? { postingStatus } : {}),
   };
   const filterOptions = [
-    { key: 'all' as const, label: 'ทั้งหมด', count: rows.length },
-    { key: 'attention' as const, label: 'ต้องแก้', count: summary.attention },
-    { key: 'ok' as const, label: 'ครบแล้ว', count: summary.ok },
+    { key: 'all' as const, label: 'ทั้งหมด', count: !error && view ? rows.length : undefined },
+    { key: 'attention' as const, label: 'ต้องแก้', count: !error && view ? summary.attention : undefined },
+    { key: 'ok' as const, label: 'ครบแล้ว', count: !error && view ? summary.ok : undefined },
   ];
   const bounds = pageBounds(visibleRows.length, page, 10);
   const pagedRows = visibleRows.slice(bounds.start, bounds.end);
@@ -831,25 +834,23 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
 
   return (
     <div className="space-y-4">
-      <StateBanner error={error} />
       {backfillMessage && <InfoBanner message={backfillMessage} />}
-      {/* Outside the `!error` block on purpose: a refused post is an answer, not a broken screen. */}
       {canPostClaimPayments && <ClaimPaymentPosting companyId={companyId} />}
 
       {!error && (
-        <>
-          <MangmeeCard className="p-4"><MetricGrid columns={3} items={[
+          view && <MangmeeCard className="p-4"><MetricGrid columns={3} items={[
             { key: 'documents', label: 'เอกสาร', value: String(visibleRows.length), unit: 'รายการ', note: `ยอดรวม ${amountText(total)} บาท`, dot: 'bg-brand-500' },
             { key: 'complete', label: 'ครบแล้ว', value: String(visibleRows.length - exportAttentionCount), unit: 'รายการ', dot: 'bg-success-500' },
             { key: 'attention', label: 'ต้องแก้', value: String(exportAttentionCount), unit: 'รายการ', dot: 'bg-warning-500' },
           ]} /></MangmeeCard>
+      )}
           {/* One row of filters: which month, how the month is counted, which documents. */}
           <MangmeeCard className="flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-end">
             <label className="min-w-0 flex-1">
               <span className={FILTER_LABEL}>เดือน</span>
               <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} aria-label="เดือน" value={yearMonth} onChange={(e) => setYearMonth(e.target.value)}>
                 <option value="">ทุกเดือน</option>
-                {months.map(month => <option key={month} value={month}>{`${formatThaiMonth(month)} · ${view?.folders.find(folder => folder.yearMonth === month)?.expenseCount ?? 0} รายการ`}</option>)}
+                {months.map(month => <option key={month} value={month}>{`${formatThaiMonth(month)}${view ? ` · ${view.folders.find(folder => folder.yearMonth === month)?.expenseCount ?? 0} รายการ` : ''}`}</option>)}
               </ThemedSelect>
             </label>
             <div className="shrink-0">
@@ -888,14 +889,14 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               </ThemedSelect>
             </label>}
             {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
-            {canPostLedger && <button type="button" className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy} aria-busy={Boolean(backfillBusy)}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
+            {canPostLedger && !error && <button type="button" className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy} aria-busy={Boolean(backfillBusy)}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
           </MangmeeCard>
 
-          {dateField === 'expenseDate' && rows.some(row => row.dateStatus === 'unverified' || row.dateStatus === 'implausible') && <p className="text-sm text-gray-600">รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า</p>}
+          {!error && dateField === 'expenseDate' && rows.some(row => row.dateStatus === 'unverified' || row.dateStatus === 'implausible') && <p className="text-sm text-gray-600">รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า</p>}
 
           {/* The export: one line says what the file holds (the filters above say which month), and the result is said right here.
               A download can be repeated and undone by deleting a file, so it asks nothing first. */}
-          {canExport && (
+          {canExport && !error && (
             <MangmeeCard className="space-y-3 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end [&>details]:w-full sm:[&>details]:w-auto [&>details>summary]:w-full">
                 <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])} />
@@ -915,12 +916,12 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             </MangmeeCard>
           )}
 
-          {loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && (
-            <div className={cx('transition-opacity', loading && 'pointer-events-none opacity-50')}>
+          <div className={cx('transition-opacity', loading && 'pointer-events-none opacity-50')}>
               <MangmeeCard className={`p-4 ${evidenceStyles.section}`}>
                 <FilterTabs aria-label="ความครบของหลักฐาน" value={flagFilter} onChange={setFlagFilter} tabs={filterOptions} className={evidenceStyles.tabs} />
                 <button type="button" className={`${quietButtonClass} ${evidenceStyles.phoneSort}`} aria-label={sortLabel} onClick={toggleOrder}>เรียง: {order === 'newest' ? 'ใหม่ไปเก่า ↓' : 'เก่าไปใหม่ ↑'}</button>
-                <>
+                {error ? <ErrorState description={error} onRetry={() => void load()} />
+                  : loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && <>
                   <table className={evidenceStyles.table}>
                     <colgroup><col style={{ width: '32%' }} /><col style={{ width: '16%' }} /><col style={{ width: '18%' }} /><col style={{ width: '17%' }} /><col style={{ width: '17%' }} /></colgroup>
                     <thead><tr><th>ผู้ขาย</th><th><button type="button" className="min-h-11 text-left" aria-label={sortLabel} onClick={toggleOrder}>วันที่เอกสาร {order === 'newest' ? '↓' : '↑'}</button></th><th>ประเภทเอกสาร</th><th className={evidenceStyles.money}>ยอดรวม (บาท)</th><th className={evidenceStyles.status}>สถานะ</th></tr></thead>
@@ -939,13 +940,12 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     <div className={evidenceStyles.number}>{r.expenseNumber || 'ยังไม่มีเลขที่'} · {dateShort(r.expenseDate)} · {r.sourceDocumentTypeLabel ?? expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</div>
                     <div className="mt-2 text-right"><MangmeeBadge className={evidenceStyles.badge} tone={evidenceRowState(deriveEvidenceRowFlags(r)) === 'ok' ? 'brand' : 'amber'}>{evidenceRowBadge(r)}</MangmeeBadge></div>
                   </article>)}</div>
-                </>
                 {bounds.totalPages > 1 && <div className={evidenceStyles.pager}><Pagination prominent page={bounds.page} totalPages={bounds.totalPages} onPageChange={setPage} /></div>}
+                </>}
               </MangmeeCard>
             </div>
-          )}
 
-          <Modal
+          {!error && <Modal
             open={backfillPreview !== null}
             title="ตรวจรายการย้อนหลัง ก่อนลงบัญชี"
             size="md"
@@ -996,9 +996,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                 <p className="text-xs font-semibold text-gray-600">การกด “ยืนยันลงบัญชี” จะผ่านกติกาผังบัญชี ภาษี และงวดบัญชีเดิมทุกข้อ รายการที่ไม่ผ่านจะค้างให้แก้ไขและลองอีกครั้ง</p>
               </div>
             )}
-          </Modal>
-        </>
-      )}
+          </Modal>}
     </div>
   );
 }

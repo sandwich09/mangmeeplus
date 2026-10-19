@@ -1,3 +1,4 @@
+import { packageAnchorDay } from '../../billing/domain/billing-package';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -360,7 +361,7 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     const companyId = grant.payerCompanyId;
     const start = new Date(Date.now() - 5 * 86_400_000), end = new Date(Date.now() + 25 * 86_400_000);
     const account = await client.billingAccount.create({ data: { companyId, stripeAccountId: `acct_${companyId}`, livemode: false,
-      renewalMode: 'CARD_ONCE', billingAnchorDay: start.getUTCDate(), paidThrough: end } });
+      renewalMode: 'CARD_ONCE', billingAnchorDay: packageAnchorDay(start), paidThrough: end } });
     await client.billingInvoice.create({ data: { billingAccountId: account.id, providerInvoiceId: `in_${companyId}`, offerSnapshot: {},
       policyRevisionId: 'synthetic', currency: 'thb', totalSatang: 24_900, paidSatang: 24_900, periodStart: start, periodEnd: end,
       providerStatus: 'paid', evidenceHash: 'synthetic', applyStatus: 'APPLIED', appliedAt: start } });

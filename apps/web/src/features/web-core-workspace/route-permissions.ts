@@ -120,7 +120,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
       'expense.confirm', 'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.evidence.read',
     ],
   },
-  { path: '/expenses/wht-certificates', anyOf: ['wht.certificate.issue'] },
+  { path: '/expenses/wht-certificates', anyOf: ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'] },
   {
     path: '/reimbursements',
     anyOf: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],

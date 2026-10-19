@@ -124,6 +124,19 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
     await expect(addressBox).toHaveValue(address, AFTER_PRESS);
     // The header badge uses the reloaded record, so do not leave while the form is still dirty.
     await expect(main.getByText('ยังไม่มีที่อยู่', { exact: true })).toHaveCount(0, AFTER_PRESS);
+    // Another editor saves while this form still carries the prior version.
+    const current = await json<{ updatedAt: string }>(await api.get(`${apiBase}/accounting/counterparties/${partnerId}`));
+    await json(await api.patch(`${apiBase}/accounting/counterparties/${partnerId}`, { data: { phone: '0811111111', expectedUpdatedAt: current.updatedAt } }));
+    const phone = main.getByRole('textbox', { name: 'เบอร์โทร', exact: true });
+    await phone.fill('0822222222');
+    await save.click();
+    const conflict = main.getByRole('alert').filter({ hasText: 'มีคนแก้ข้อมูลคู่ค้านี้ไปแล้ว' });
+    await expect(conflict).toBeVisible(AFTER_PRESS);
+    await expect(phone).toHaveValue('0822222222');
+    await conflict.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
+    await expect(phone).toHaveValue('0811111111', AFTER_PRESS);
+    await save.click();
+    await expect(conflict).toHaveCount(0, AFTER_PRESS);
     await main.getByRole('link', { name: 'กลับไปคู่ค้า', exact: true }).click();
     await expect(heading(page, 'คู่ค้า')).toBeVisible(AFTER_PRESS);
     await main.getByRole('searchbox').fill(partnerName);
@@ -139,7 +152,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       await resize(page, viewport);
       // Already on the overview after the first round: pressing the page you are on leaves the phone menu open.
       if (!new URL(page.url()).pathname.endsWith('/settings')) await pressMenu(page, 'ภาพรวมการตั้งค่า', 'ตั้งค่าร้าน');
-      await expect(heading(page, 'ตั้งค่า')).toBeVisible(FIRST_SIGHT);
+      await expect(heading(page, 'ตั้งค่าร้าน')).toBeVisible(FIRST_SIGHT);
       await expect(main.locator(`a[href="${base}/billing"]`)).toHaveCount(0);
       for (const entry of settingsEntries) {
         const link = main.locator(`a[href="${base}${entry.href}"]`);
@@ -150,7 +163,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
         await expectNoClientError(page);
         // The sidebar works on pages without a back control too, including the package page.
         await pressMenu(page, 'ภาพรวมการตั้งค่า', 'ตั้งค่าร้าน');
-        await expect(heading(page, 'ตั้งค่า')).toBeVisible(AFTER_PRESS);
+        await expect(heading(page, 'ตั้งค่าร้าน')).toBeVisible(AFTER_PRESS);
       }
     }
   });
@@ -242,6 +255,15 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
     }
   });
 
+  await test.step('คู่มือภาษี: read the action names and the original certificate payment date', async () => {
+    await page.goto(`${base}/user-guide/tax`, FIRST_SIGHT);
+    await expect(heading(page, 'ภาษี')).toBeVisible(FIRST_SIGHT);
+    await main.getByRole('button', { name: 'เปิดอ่านทุกหัวข้อ', exact: true }).click();
+    await expect(main.getByText('คำนวณรายงาน · ยื่นแบบแล้ว · ชำระแล้ว', { exact: true })).toBeVisible();
+    await expect(main.getByText(/กรอก “เลขที่หนังสือรับรอง” “วันที่จ่ายตามหนังสือรับรองเดิม” และ “วันที่ออก”/)).toBeVisible();
+    await expectNoClientError(page);
+  });
+
   await test.step('หน้าแรก: return through the sidebar, then read the saved records from the server', async () => {
     for (const viewport of [PHONE, WIDE]) {
       await resize(page, viewport);
@@ -267,7 +289,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
   });
 });
 
-test('@journey phone owner opens the three-line sidebar and finds every top-level sold menu', async ({ authedPage: page, api }) => {
+test('@journey phone owner opens the three-line sidebar, finds every top-level sold menu and closes it by button, Escape, backdrop and links', async ({ authedPage: page, api }) => {
   test.setTimeout(120_000);
   await page.setViewportSize(PHONE);
   await page.goto(`${base}/dashboard`, FIRST_SIGHT);
@@ -278,6 +300,15 @@ test('@journey phone owner opens the three-line sidebar and finds every top-leve
   await opener.click();
   const nav = page.locator('aside nav');
   await expect(nav).toBeVisible();
+  const drawer = page.getByRole('dialog', { name: 'เมนูหลัก', exact: true });
+  await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  await expect(page.locator('#workspace-main').locator('..')).toHaveAttribute('inert', '');
+  const controls = drawer.locator('a[href]:visible:not([inert] *), button:visible:not([disabled]):not([inert] *)');
+  await controls.first().focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect(controls.last()).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(controls.first()).toBeFocused();
   const topLevel = nav.locator('ul').first().locator(':scope > li > a, :scope > li > button');
   for (const label of ['หน้าแรก', 'ค่าใช้จ่ายและใบเสร็จ', 'คู่ค้า', 'การเบิกจ่าย', 'แพ็กเกจ', 'พนักงานและสิทธิ์', 'ตั้งค่าร้าน', 'คู่มือการใช้งานระบบ']) {
     const entry = topLevel.filter({ hasText: new RegExp(`^${label}`) });
@@ -285,6 +316,34 @@ test('@journey phone owner opens the three-line sidebar and finds every top-leve
     await entry.scrollIntoViewIfNeeded();
     await expectInSight(entry);
   }
+  const expectClosed = async () => {
+    await expect(nav).toBeHidden();
+    await expect(opener).toBeFocused();
+    await expect(page.locator('#workspace-main').locator('..')).not.toHaveAttribute('inert');
+  };
+  const close = drawer.getByRole('button', { name: 'ปิดเมนู', exact: true });
+  await expect(close.locator('..')).toHaveCSS('justify-content', 'space-between');
+  const closeBounds = await close.boundingBox();
+  await close.hover(); // A mouse on a phone-sized window must not expand the desktop rail under this click.
+  await expect(close.locator('..')).toHaveCSS('justify-content', 'space-between');
+  expect(await close.boundingBox()).toEqual(closeBounds);
+  await close.click();
+  await expectClosed();
+  await opener.click();
+  await expect(drawer).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expectClosed();
+  await opener.click();
+  await expect(drawer).toBeVisible();
+  await page.locator('.fixed.inset-0.z-40').click({ position: { x: PHONE.width - 10, y: 200 } });
+  await expectClosed();
+  await opener.click();
+  await nav.getByRole('link', { name: 'หน้าแรก', exact: true }).click(); // same route: no pathname effect
+  await expectClosed();
+  await opener.click();
+  await nav.getByRole('link', { name: 'คู่ค้า', exact: true }).click();
+  await expectClosed();
+  await expect(heading(page, 'คู่ค้า')).toBeVisible(FIRST_SIGHT);
   // Package-changing journeys own withholding visibility; this test makes no assertion about it.
   await expectNoClientError(page);
   const session = await json<{ companyId: string; roles: string[] }>(await api.get('auth/me', { headers: { 'X-Company-Id': MAIN_SHOP } }));

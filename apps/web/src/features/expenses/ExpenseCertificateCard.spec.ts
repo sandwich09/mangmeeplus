@@ -55,7 +55,7 @@ test('card always has its heading and one primary at most across every permissio
     [{ status: 'SYSTEM_ISSUED' }, issue, 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
     [{ status: 'SYSTEM_ISSUED' }, ['wht.certificate.correct'], 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
     [{ status: 'SYSTEM_ISSUED' }, link, 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
-    [{ status: 'SYSTEM_ISSUED' }, read, 'ออกแล้ว เลขที่ WHT-2 วันที่', 0],
+    [{ status: 'SYSTEM_ISSUED' }, read, 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
     [{ status: 'EXTERNAL_LINKED', externalEvidenceRef: 'ตู้เอกสาร', linkNote: 'ส่งแล้ว' }, link, 'ร้านออกเอง เลขที่ EXT-1 วันที่', 0],
     [{ status: 'EXTERNAL_LINKED' }, read, 'ร้านออกเอง เลขที่ EXT-1 วันที่', 0],
   ];
@@ -64,7 +64,12 @@ test('card always has its heading and one primary at most across every permissio
     assert.ok(html.includes('หนังสือรับรอง 50 ทวิ'));
     assert.ok(html.includes(sentence), sentence); assert.equal(primaryCount(markup), count);
     assert.doesNotMatch(html, /REQUIRED|SYSTEM_ISSUED|EXTERNAL_LINKED|PND3|PND53|อัปเกรด|undefined/);
-    if (permissions === read) assert.doesNotMatch(markup, /<button/);
+    if (permissions === read) {
+      if (over.status === 'SYSTEM_ISSUED') {
+        assert.match(markup, />ดาวน์โหลดหนังสือรับรอง<\/button>/);
+        assert.equal((markup.match(/<button/g) ?? []).length, 1);
+      } else assert.doesNotMatch(markup, /<button/);
+    }
     if (over.missing) { assert.ok(html.includes('กด “แก้ไขเอกสาร” เพื่อเติมข้อมูล')); assert.doesNotMatch(html, /ออกหนังสือรับรอง 50 ทวิ/); }
     if (over.status === 'EXTERNAL_LINKED') assert.ok(html.includes('ไม่ได้ออกจากระบบนี้ ไม่มีไฟล์ให้ดาวน์โหลด'));
   }
@@ -106,13 +111,15 @@ test('walk C: a record refused because someone issued or recorded first uses thi
 });
 
 test('issued primary downloads through the existing callback and yields to the correction submit action', () => {
+  for (const permissions of [issue, read]) {
   let downloads = 0;
-  const view = setup(row({ status: 'SYSTEM_ISSUED' }));
+  const view = setup(row({ status: 'SYSTEM_ISSUED' }), permissions);
   view.props.onDownload = () => { downloads++; };
   view.render(); view.find('button', p => p.children.includes('ดาวน์โหลดหนังสือรับรอง')).onClick();
   assert.equal(downloads, 1);
   view.props.primaryHidden = true;
   assert.doesNotMatch(view.render(), />ดาวน์โหลดหนังสือรับรอง<\/button>/);
+  }
 });
 
 test('loading and refused reads stay inside a headed card, retry works and superseded reads are ignored', async () => {

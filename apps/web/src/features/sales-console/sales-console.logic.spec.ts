@@ -5,7 +5,7 @@ import { translateApiError } from '@/common/api/api-error-message';
 import {
   agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
   dealOverLimit, dealPaymentNote, dealPriceState, dealTermText,
-  dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
+  dealWarnings, dealCatalogPriceSatang, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_ACCESS_STATE_META, SALES_DEAL_MENU_BINDINGS,
   SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, SALES_WAITING, SALES_WAITING_NOTE, salesAgentAddress, salesCodeError, salesDeductionLine,
@@ -683,4 +683,20 @@ describe('Phase 5: auto-renewing deals (§17.3 / D-P5-1…6)', () => {
     ] }];
     assert.deepEqual(salesReportLeads(months), [{ userId: 'l9', displayName: 'หัวหน้าเก้า' }]);
   });
+});
+
+
+it('MONEY-Q1 3000 seeded deal-warning thresholds match catalog monthly/yearly purchase costs', async () => {
+  const { billingOffer, SALES_DEAL_BASE_TIERS } = await import('@watchdog-bms/contracts');
+  let seed = 5678;
+  const pick = (limit: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 4294967296 * limit); };
+  for (let i = 0; i < 3000; i++) {
+    const base = SALES_DEAL_BASE_TIERS[pick(SALES_DEAL_BASE_TIERS.length)]!, months = 1 + pick(36);
+    const monthly = billingOffer(base, 'month').priceSatang, yearly = billingOffer(base, 'year').priceSatang, costs = [0];
+    for (let n = 1; n <= months; n++) costs[n] = Math.min(costs[n - 1]! + monthly, n >= 12 ? costs[n - 12]! + yearly : Infinity);
+    const catalogPriceSatang = dealCatalogPriceSatang(base, months), priceSatang = costs[months]! + pick(20001) - 10000;
+    assert.equal(catalogPriceSatang, costs[months]);
+    const warnings = dealWarnings({ priceSatang, catalogPriceSatang, accessState: null, usage: null, branchLimit: null, employeeLimit: null });
+    assert.equal(warnings.length > 0, priceSatang > costs[months]!);
+  }
 });

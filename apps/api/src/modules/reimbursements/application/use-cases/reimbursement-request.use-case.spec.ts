@@ -613,6 +613,32 @@ describe('every company role own reimbursement journey', () => {
 });
 
 describe('CreateReimbursementDraftUseCase (multi-line)', () => {
+  it('FIX-R1 replays a lost create answer without creating or validating the draft again', async () => {
+    const state = fakeRepo();
+    const create = useCases(state).create;
+    const input = { reason: 'เดินทาง', lines: [inputLine()] } as any;
+    const first = await create.execute(ctx(), input, 'same-create');
+    assert.ok(first.id.length <= 64);
+    state.repo.resolveSourceLines = async () => { throw new Error('source changed after creation'); };
+    const replay = await create.execute(ctx(), input, 'same-create');
+    assert.equal(replay.id, first.id);
+    assert.equal(state.calls.audits.length, 1);
+  });
+
+  it('FIX-R1 create keys are scoped to the shop and actor and retain branch permission checks', async () => {
+    const ids: string[] = [];
+    for (const context of [ctx(), ctx({ userId: 'another' }), ctx({ companyId: 'another-company' })]) {
+      const state = fakeRepo();
+      ids.push((await useCases(state).create.execute(context, { reason: 'เดินทาง', lines: [inputLine()] } as any, 'same-create')).id);
+    }
+    assert.equal(new Set(ids).size, 3);
+    const state = fakeRepo();
+    const create = useCases(state).create;
+    await create.execute(ctx(), { reason: 'เดินทาง', lines: [inputLine()] } as any, 'same-create');
+    await assert.rejects(() => create.execute(ctx({ permissions: [] }), { reason: 'เดินทาง', lines: [inputLine()] } as any, 'same-create'), ForbiddenException);
+    await assert.rejects(() => create.execute(ctx({ scopes: { branchIds: ['another-branch'] } }), { branchId: 'branch-1', reason: 'เดินทาง', lines: [inputLine()] } as any, 'same-create'), ForbiddenException);
+    await assert.rejects(() => create.execute(ctx({ scopes: { branchIds: ['another-branch'] } }), { reason: 'เดินทาง', lines: [inputLine()] } as any, 'same-create'), ForbiddenException);
+  });
   it('rejects future dates at create/update/submit without mutation and accepts correction at Bangkok midnight', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-12-31T17:00:00.000Z') });
     const state = fakeRepo();
@@ -2661,6 +2687,9 @@ describe('list paging and hub buckets', () => {
       const page = await list.execute(own, { search: 'ทดสอบจำนวน', bucket: bucket as any, pageSize: 100 });
       assert.equal(page.items.length, all.hub.counts[bucket as keyof typeof all.hub.counts]);
       assert.equal(page.total, page.items.length);
+      if (bucket === 'payment') assert.deepEqual(all.hub.metrics?.pendingPayment, {
+        count: page.items.length, amount: page.items.reduce((sum, item) => sum + Number(item.amount), 0).toFixed(4),
+      });
       for (const item of page.items) {
         assert.equal(reimbursementHubBucket(item), bucket, item.id);
         assert.equal((item as any).hasDuplicateBlocker, bucket === 'duplicate_blocked', item.id);
@@ -2668,8 +2697,33 @@ describe('list paging and hub buckets', () => {
       if (bucket === 'payment') assert.deepEqual(page.items.map((item) => item.id).sort(), ['payable', 'warn-open']);
     }
     assert.equal(factReads.length, 3, 'one facts read per hub request, including a filtered page');
-    assert.ok(factReads.every(({ select }) => Object.keys(select).sort().join(',') === '_count,approvalPolicySnapshotJson,id,sourceExpenses'));
+    assert.ok(factReads.every(({ select }) => Object.keys(select).sort().join(',') === '_count,amount,approvalPolicySnapshotJson,id,sourceExpenses'));
   });
+  it('3,000 seeded hub payment cards equal every row of their scoped, searched filter', async () => {
+    let seed = 12345;
+    const random = (limit: number) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return Math.floor(seed / 0x100000000 * limit);
+    };
+    for (let sample = 0; sample < 3000; sample++) {
+      const fixtures = Array.from({ length: 1 + random(20) }, (_, index) => ({
+        ...claims[0], id: `seed-${sample}-${index}`, amount: ((1 + random(10000000)) / 100).toFixed(2),
+        status: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'CANCELLED', 'VOIDED', 'DRAFT'][random(6)],
+        reason: random(2) ? 'ค่าเดินทาง' : 'ค่าของ', requesterUserId: random(3) ? 'staff-1' : 'staff-2',
+        financeReviewStatus: 'NOT_REQUIRED', sourceExpenses: random(2) ? [] : [{ duplicateStatus: 'CONFIRMED_DUPLICATE', status: 'CONFIRMED' }],
+      }));
+      const { list } = database(fixtures);
+      const filter = { scope: 'own' as const, search: sample % 2 ? 'ค่าเดินทาง' : undefined, pageSize: 100 };
+      const page = await list.execute(ctx({ permissions: ['reimbursement.read_own'], userId: 'staff-1' }), { ...filter, bucket: 'payment' });
+      const cents = page.items.reduce((sum, item) => sum + Math.round(Number(item.amount) * 100), 0);
+      assert.deepEqual(page.hub.metrics?.pendingPayment, { count: page.items.length, amount: (cents / 100).toFixed(4) }, String(sample));
+      assert.equal(page.hub.counts.payment, page.items.length, String(sample));
+      const all = fixtures.filter(row => row.requesterUserId === 'staff-1' && (!filter.search || row.reason === filter.search));
+      assert.equal(page.hub.counts.all, all.length, String(sample));
+      assert.equal(page.hub.totalAmount, (all.reduce((sum, row) => sum + Math.round(Number(row.amount) * 100), 0) / 100).toFixed(4), String(sample));
+    }
+  });
+
   /** Every page of one list, the way a client walks it. */
   async function walk(list: ListReimbursementsUseCase, filter: Record<string, unknown>, pageSize: number) {
     const pages: any[] = [];
@@ -6092,10 +6146,10 @@ describe('CLAIM-LIST scoped queue metrics', () => {
       { status: 'PARTIALLY_PAID', count: 1, amount: '4.40' },
       { status: 'PAID', count: 1, amount: '9.90' },
     ];
-    const summary = hubSummary(groups as any, 1);
+    const summary = hubSummary(groups as any, 1, '7.70');
     assert.deepEqual(summary.metrics, {
       pendingApproval: { count: 3, amount: '20.2000' },
-      pendingPayment: { count: 5, amount: '34.7000' },
+      pendingPayment: { count: 4, amount: '27.0000' },
     });
     assert.equal(summary.totalAmount, '79.9000');
     assert.equal(summary.counts.all, 12);

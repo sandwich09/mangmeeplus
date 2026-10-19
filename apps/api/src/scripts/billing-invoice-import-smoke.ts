@@ -5,6 +5,7 @@ import {expect} from '@playwright/test';
 import {billingOffer,BILLING_DRAFT_POLICY} from '@watchdog-bms/contracts';
 import {termProjectionHash} from '../modules/billing/domain/paid-invoice';
 import {hashBilling} from '../modules/billing/domain/billing-policy';
+import {appendPackageInterval,packageAnchorDay} from '../modules/billing/domain/billing-package';
 import type {ProviderScansSmokeInput} from './billing-provider-scans-smoke';
 
 /** Actual Admin HTTP/PG/worker/browser; only provider transport and named race faults are synthetic. */
@@ -33,7 +34,7 @@ export async function checkBillingInvoiceImport(input:ProviderScansSmokeInput&{r
     const id=randomUUID().replaceAll('-',''),attemptId=randomUUID(),scanId=randomUUID(),findingId=randomUUID(),created=Math.floor(Date.now()/1000)-90*86400,paidAt=created+3;
     const invoiceId=`in_${id}`,subId=`sub_${id}`,sessionId=`cs_${id}`,intentId=`pi_${id}`,chargeId=`ch_${id}`,amount=999000,policy='synthetic-import-policy';
     const snapshot:any={quote:{quoteId:randomUUID(),companyId,consentRevision:'import-consent',policyRevision:policy,offer:billingOffer('PRO_999','year'),totalSatang:amount,taxSatang:0},
-      policy:BILLING_DRAFT_POLICY,priceId:'price_original',termHash:termProjectionHash(term),...(repeat?{repeat:{subscriptionId:'sub_CurrentUnrelated',paidThrough:new Date((paidAt+240*86400)*1000).toISOString(),productId:'prod_original',anchorDay:new Date((paidAt+240*86400)*1000).getUTCDate()}}:{})};
+      policy:BILLING_DRAFT_POLICY,priceId:'price_original',termHash:termProjectionHash(term),...(repeat?{repeat:{subscriptionId:'sub_CurrentUnrelated',paidThrough:new Date((paidAt+240*86400)*1000).toISOString(),productId:'prod_original',anchorDay:packageAnchorDay(new Date((paidAt+240*86400)*1000))}}:{})};
     const attempt=await db.billingAttempt.create({data:{id:attemptId,billingAccountId:account.id,initiatingUserId:input.userId,quoteId:snapshot.quote.quoteId,channel:'web',
       idempotencyKey:randomUUID(),requestHash:randomUUID(),quoteSnapshot:snapshot,policyRevisionId:policy,consentRevision:'import-consent',consentAt:new Date((created-3)*1000),
       checkoutSessionId:sessionId,subscriptionId:repeat?null:subId,status:'COMPLETED'}});
@@ -101,7 +102,7 @@ export async function checkBillingInvoiceImport(input:ProviderScansSmokeInput&{r
     const repeat=await finding(true);repeat.charge.amount_refunded=100;repeat.charge.disputed=true;const repeated=await run(repeat.id);
     assert.equal(repeated.state,'SUCCEEDED',JSON.stringify(repeated));const ledger=await db.billingInvoice.findUniqueOrThrow({where:{id:repeated.observed.invoiceId}});
     assert.equal(ledger.subscriptionId,null);assert.equal(ledger.sourceAttemptId,repeat.attempt.id);assert.equal(ledger.refundedSatang,100);assert.equal(ledger.disputed,true);
-    assert.equal(ledger.periodEnd.getTime(),Date.parse(repeat.snapshot.repeat.paidThrough)+365*86400000);assert.equal(await db.billingIssue.count({where:{companyId,kind:'FINANCIAL_REVIEW',referenceId:ledger.id,state:'OPEN'}}),1);
+    assert.equal(ledger.periodEnd.getTime(),appendPackageInterval(new Date(repeat.snapshot.repeat.paidThrough),'year',repeat.snapshot.repeat.anchorDay).getTime());assert.equal(await db.billingIssue.count({where:{companyId,kind:'FINANCIAL_REVIEW',referenceId:ledger.id,state:'OPEN'}}),1);
     await unchanged();cases.push('invoice-import-original-repeat-verified-service-period-and-refund-dispute-remain-held-with-no-provider-mutation');
 
     for(const mutate of [(f:any)=>{f.invoice.customer='cus_other';},(f:any)=>{f.session.metadata.billingAttemptId='foreign';},(f:any)=>{f.line.pricing.price_details.price='price_other';},(f:any)=>{delete f.charge.amount_refunded;},(f:any)=>{f.invoice.amount_paid=0;}]){

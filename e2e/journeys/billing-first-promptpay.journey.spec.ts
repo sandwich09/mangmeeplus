@@ -61,6 +61,8 @@ for (const width of [390, 1556]) for (const [mode, label] of [
     let reloads = 0; page.on('load', () => { reloads++; });
     state.stage = 'applied';
     await expect(page.getByRole('heading', { name: /^จ่าย [\d,]+\.\d{2} บาทแล้ว$/, exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(page.getByText('ผลการจ่ายเงินล่าสุด', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toHaveCount(0);
     expect(reloads).toBe(0);
     await expect(page.locator('aside a[href$="/dashboard"]').first()).toBeAttached();
     await fits(); await expectNoClientError(page);
@@ -78,6 +80,7 @@ for (const width of [390, 1556]) for (const [mode, label] of [
     await expectInSight(page.getByRole('heading', { name: 'ประวัติและเอกสารการจ่ายเงิน', exact: true }));
     const paidRow = page.locator('#billing-history').getByRole('link', { name: /เปิดรายการจ่ายเงิน NOSETUP-0001|^เริ่มต้น · รายเดือน/ });
     await expect(paidRow).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'ตรวจผลการจ่ายเงิน', exact: true })).toHaveCount(0);
     await paidRow.focus(); await paidRow.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/billing/invoices/${INVOICE}$`));
     expect(state.log.checkouts).toHaveLength(1);
