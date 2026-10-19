@@ -25,7 +25,7 @@ The owner chose **separate** monthly caps for chat/general AI (`CHAT`) and docum
 4. **Multi-call routes ask before each further step.** The gateway calls an authenticated API seam (`POST /internal/ai/budget-step`) before every provider call after the first; a refusal stops the chain and returns the usable partial result with a typed `AI_BUDGET_INSUFFICIENT`/`AI_MONTHLY_BUDGET_EXCEEDED` and scope.
 5. **Settlement is driven by invocation evidence, not by the HTTP response.** After every provider call under an envelope the gateway posts the measured (or conservatively estimated) usage for that invocation to `POST /internal/ai/budget-settle`. The API settles the reservation, writes the usage event, and updates the month and bucket aggregates in one transaction, fenced by a unique invocation key. Usage attached to the HTTP response for the same invocation is then an idempotent no-op. A parser/controller error after the provider, a partial chain or a lost outer response therefore cannot turn real cost into zero.
 6. **No TTL release.** A reservation that was dispatched and never settled becomes `UNRESOLVED` and keeps counting as reserved until evidence or an audited operator decision closes it. `CANCELLED` requires proof that no provider call started.
-7. **Actual above bound is an invariant breach**: the actual cost is recorded in full, admission for that scope closes (`AI_BUDGET_UNAVAILABLE`) and a HIGH security event is raised. Nothing is clamped.
+7. **Actual above bound is an alerted overrun** (owner amendment 2026-10-19): record provider cost in full and raise the existing HIGH security event; never close admission pending operator acknowledgement. Successful v2 funded calls debit at most actual and available credit after other holds; the company absorbs any shortfall. Failed/time-out calls debit zero. See [credit levers spec](../specs/line-ai-credit-levers-20261019.md).
 8. The Gateway still has **no database access**; it only uses the internal secret it already has. The API remains the owner of company, classification, reservation, ledger and audit.
 9. The bucket of a step is decided by the API before the provider call with the Phase D1 function `classifyAiUsageRequest(sourceRoute, content)`; a step whose bucket cannot be derived is refused under SPLIT (`AI_BUDGET_UNAVAILABLE`), never defaulted.
 
@@ -202,8 +202,7 @@ above on purpose; both are marked.
 - ~~`LineIntakeRouteRequest` carries no webhook event id, so a TEXT intake's attempt key is derived
   from its transport request id.~~ **CLOSED by E1c** (§13.7): the contract gained an optional
   `webhookEventId`, the webhook use case sends it, and the fallback stays for callers that do not.
-- A breach closes its scope until an operator clears `AiBudgetReservation.breach`; there is no
-  operator surface for that yet (the flag is cleared by hand).
+- **Superseded 2026-10-19:** a breach is an operator alert, never an admission lock. The historical flag remains and the audited acknowledgement clears the alert only.
 - No reconciliation surface for `UNRESOLVED` holds beyond the count in the admin read.
 - A `settled-anomaly` closes the hold and records the money, but there is no operator workflow for
   reviewing those rows beyond the HIGH security event and `evidenceJson.anomaly`.

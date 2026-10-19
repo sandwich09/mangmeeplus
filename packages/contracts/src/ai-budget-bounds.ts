@@ -211,7 +211,7 @@ export function parseAiBudgetEnvelope(
 
 // V2 is additive: the legacy table and parser above intentionally remain unchanged.
 export const AI_BUDGET_PROFILE_TABLE_VERSION_V2 = 'budget-profile-table/2' as const;
-export const AI_BUDGET_ESTIMATOR_VERSION_V2 = 'utf8-v2' as const;
+export const AI_BUDGET_ESTIMATOR_VERSION_V2 = 'utf8-split-prefix-v4' as const;
 export const AI_BUDGET_PROFILES_V2 = {
   'line-intake-text/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
   'line-intake-image/2': { maxInputTokens: 160_000, maxOutputTokens: 8_000, maxCalls: 2 },
@@ -221,7 +221,7 @@ export const AI_BUDGET_PROFILES_V2 = {
   'public-lookup/2': { maxInputTokens: 32_000, maxOutputTokens: 4_096, maxCalls: 1, hostedToolUnits: 2 },
 } as const;
 /** SHA-256 of the lexicographically canonical JSON form of version, estimatorVersion and profiles. */
-export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'bb983780e657127bf2a8cc3e5334d7d4cce1928f5fc457d3c581c71896613d98' as const;
+export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'eeea47e84c77574a300a88b69eee65cd164535364733950b2b5cfa78bfa7d0b6' as const;
 export type AiBudgetProfileIdV2 = keyof typeof AI_BUDGET_PROFILES_V2;
 export type AiBudgetProfileBoundsV2 = (typeof AI_BUDGET_PROFILES_V2)[AiBudgetProfileIdV2];
 

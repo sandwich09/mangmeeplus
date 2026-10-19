@@ -35,9 +35,8 @@ const logger = new Logger('CompanyAiBudgetReservation');
 /** Holds that still owe the company money — the exact set `reserved` sums over. */
 const LIVE_STATUSES = ['RESERVED', 'DISPATCHED', 'UNRESOLVED'] as const;
 /**
- * A breach that still CLOSES its scope. The `breach` column is the historical fact and is never
- * cleared; `breachAcknowledgedAt` is the operator's audited decision, and only an UNacknowledged
- * row keeps admission shut (hold spec §4.2, ADR 0013 §11.6 "until an operator clears it").
+ * Historical overrun alerts awaiting operator acknowledgement. Owner 2026-10-19 removed the
+ * admission lock: this predicate is only for the operator snapshot/list, never admission.
  */
 const UNACKNOWLEDGED_BREACH = { breach: true, breachAcknowledgedAt: null } as const;
 /** Bucket rows are always touched in this order, so two settlements cannot deadlock on them. */
@@ -377,16 +376,7 @@ export async function reserveAiBudgetStep(
 
       await sweepCompanyMonth(tx, input.companyId, input.monthKey, now);
 
-      // An actual above its bound closed this scope (spec §12.3). Nothing else may start here
-      // until an operator clears the flag; the money already recorded is never clamped.
-      // `breachAcknowledgedAt: null` is what "until an operator clears it" now means (hold spec
-      // §4.2): the breach FACT is kept forever, the acknowledgement is what reopens admission.
-      const breached = await tx.aiBudgetReservation.count({
-        where: { ...UNACKNOWLEDGED_BREACH, companyId: input.companyId, monthKey: input.monthKey, bucket: input.bucket },
-      });
-      if (breached > 0) {
-        return { ok: false as const, reason: 'unavailable' as const, budgetScope: input.bucket as AiBudgetScope, detail: 'invariant_breach' };
-      }
+      // Owner 2026-10-19: overrun is an alert, never an operator-acknowledgement admission lock.
 
       const spend = await liveSpend(tx, input.companyId, input.monthKey, input.bucket);
       const reserved = await liveReserved(tx, input.companyId, input.monthKey, input.bucket);
@@ -427,7 +417,7 @@ export async function reserveAiBudgetStep(
           attemptKey: input.attemptKey, invocationKey, upperBoundSatang: bound,
           pricingSnapshot: { ...priced.snapshot, thbPerUsdSource: input.thbPerUsdSource,
             // The marker settlement reads: only a funded hold has AI credit entries to turn into use.
-            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey } } : {}),
+            ...(funding ? { aiCredit: { cycleKey: funding.cycleKey, asOf: fundingAsOf.toISOString() } } : {}),
             // The marker `budget-step` reads, so every further call of this turn inherits it.
             ...(input.admitOverCap ? { admitOverCap: true } : {}) },
           requestKind: input.requestKind ?? null, status: rendered ? 'DISPATCHED' : 'RESERVED', ownerToken,
@@ -695,8 +685,7 @@ export async function releaseAiBudgetHoldByOperator(
 /**
  * `breach = true, breachAcknowledgedAt IS NULL -> acknowledged` (hold spec §4.2). Touches no money:
  * the recorded actual and the `breach` fact both stay exactly as they are. What changes is that
- * {@link readAiBudgetMonthSnapshot} and the admission check stop counting this row, so the scope
- * reopens — the "until an operator clears it" ADR 0013 §11.6 promised and never had a surface for.
+ * {@link readAiBudgetMonthSnapshot} stops counting this alert. Admission does not depend on it.
  */
 export async function acknowledgeAiBudgetBreach(
   prisma: PrismaService,
@@ -831,7 +820,7 @@ export async function settleAiBudgetStep(
   // not non-negative safe integers must never reach pricing or an aggregate.
   if (!isMeterableEntry(input.entry)) return 'invalid-evidence';
   const now = input.now ?? new Date();
-  let breach: { companyId: string; monthKey: string; bucket: string; reservationId: string; boundSatang: number; actualSatang: number } | undefined;
+  let breach: { companyId: string; monthKey: string; bucket: string; reservationId: string; boundSatang: number; actualSatang: number; customerChargedSatang: number; companyAbsorbedSatang: number } | undefined;
   let anomaly: { companyId: string; monthKey: string; bucket: string; reservationId: string; invariant: string } | undefined;
   try {
     const result = await prisma.client.$transaction(async (tx: any) => {
@@ -842,6 +831,8 @@ export async function settleAiBudgetStep(
         where: { invocationKey: input.invocationKey }, select: { companyId: true, monthKey: true },
       });
       if (!locator) return 'unknown-invocation' as const;
+      // Credit lots span months: serialize overrun debits with reserve/revoke under the same L1.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${locator.companyId}`}))`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ai-budget:${locator.companyId}:${locator.monthKey}`}))`;
       const reservation = await tx.aiBudgetReservation.findUnique({ where: { invocationKey: input.invocationKey } });
       if (!reservation) return 'unknown-invocation' as const;
@@ -931,17 +922,25 @@ export async function settleAiBudgetStep(
         await upsertBucketUsage(tx, reservation.companyId, reservation.monthKey, reservation.bucket, costSatang, callCount);
       }
 
-      // No clamp, ever. The FULL actual is already recorded above; this only closes the scope.
+      // Provider cost remains complete; credit debits are independently capped at available funds.
       // An operator charge lands exactly ON the bound, so this decision can never open a breach.
       const breached = !absorbed && (costSatang > reservation.upperBoundSatang
         || isV2 && !operator && typeof input.externalUnits === 'number'
           && input.externalUnits > (reservation.pricingSnapshot as AiRenderedPricingSnapshotV2).externalUnitBound);
+      const credit = (reservation.pricingSnapshot as { aiCredit?: { cycleKey: string; asOf?: string } }).aiCredit;
+      const customerChargedSatang = !absorbed && credit && reservation.status !== 'CANCELLED'
+        ? await consumeAiCreditHold(tx, { companyId: reservation.companyId, reservationId: reservation.id, costSatang,
+          ...(isV2 && !operator && breached ? { overrun: { cycleKey: credit.cycleKey,
+            asOf: new Date(credit.asOf ?? reservation.createdAt ?? now) } } : {}) })
+        : absorbed || credit ? 0 : costSatang;
+      const companyAbsorbedSatang = costSatang - customerChargedSatang;
       await tx.aiBudgetReservation.update({
         where: { id: reservation.id },
         data: {
           status: absorbed ? 'CANCELLED' : 'SETTLED', settledCostSatang: absorbed ? 0 : costSatang, settledAt: now, breach: breached,
           usageBasis,
           evidenceJson: { tag: input.entry.tag, modelId: input.entry.modelId, ok: input.entry.ok,
+            customerChargedSatang, companyAbsorbedSatang,
             ...(absorbed ? { reason: 'COMPANY_ABSORBED', absorbedCostSatang: costSatang, cancelledAt: now.toISOString(),
               providerUsageBasis: normalizeUsageBasis(input.entry.usageBasis),
               ...(typeof input.entry.errorCode === 'string' ? { errorCode: input.entry.errorCode.slice(0, 64) } : {}) } : {}),
@@ -954,12 +953,6 @@ export async function settleAiBudgetStep(
             ...(operator ? { operator: { action: 'charge_at_bound', userId: operator.decision.actorUserId, reason: operator.decision.reason } } : {}) },
         },
       });
-      // Add-on spec §5.3: a funded hold becomes use on the lots it held (charge-at-bound included).
-      // After an operator released it (CANCELLED) that credit may already fund other work, so the
-      // late cost is the provider's, never a second debit (spec §15.2).
-      if (!absorbed && (reservation.pricingSnapshot as { aiCredit?: unknown } | null)?.aiCredit && reservation.status !== 'CANCELLED') {
-        await consumeAiCreditHold(tx, { companyId: reservation.companyId, reservationId: reservation.id, costSatang });
-      }
       // In the SAME transaction as the money: an operator's money decision may never commit
       // without its audit (and therefore history) row.
       if (operator) {
@@ -971,7 +964,8 @@ export async function settleAiBudgetStep(
       }
       if (breached) {
         breach = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
-          reservationId: reservation.id, boundSatang: reservation.upperBoundSatang, actualSatang: costSatang };
+          reservationId: reservation.id, boundSatang: reservation.upperBoundSatang, actualSatang: costSatang,
+          customerChargedSatang, companyAbsorbedSatang };
       }
       if (anomalous) {
         anomaly = { companyId: reservation.companyId, monthKey: reservation.monthKey, bucket: reservation.bucket,
@@ -1079,7 +1073,7 @@ export async function readAiBudgetMonthSnapshot(
  *
  * Two kinds of row, read in one query because they are the same table and the operator triages them
  * together: an `UNRESOLVED` hold (money held with no outcome) and an UNACKNOWLEDGED `breach` (money
- * recorded above its bound, closing a scope). Newest first.
+ * recorded above its bound, requiring operator review). Newest first.
  *
  * Money, ids, timestamps and declared kinds only — never a prompt, a message or a LINE identifier.
  * The invocation key is shortened here rather than in the DTO mapper so the full execution identity

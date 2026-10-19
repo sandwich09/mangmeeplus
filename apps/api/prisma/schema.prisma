@@ -4669,10 +4669,10 @@ model AiBudgetReservation {
   settledCostSatang Int?
   usageBasis        String? // 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE'
   evidenceJson      Json?
-  /** Actual settled above the reserved bound: admission for the scope closes until an operator clears it. */
+  /** Actual above hold: historical overrun alert; never an admission lock (owner 2026-10-19). */
   breach            Boolean   @default(false)
   /** The operator's acknowledgement of that breach (hold spec §4.2). `breach` keeps the historical
-   *  fact; these two are what reopens admission, and the AuditLog row is the authority on who. No
+   *  fact; acknowledgement clears the operator alert only, with AuditLog recording who. No
    *  FK to User on purpose: nothing about an account may cascade into money history. */
   breachAcknowledgedAt       DateTime?
   breachAcknowledgedByUserId String?

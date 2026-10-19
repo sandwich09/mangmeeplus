@@ -265,10 +265,9 @@ describe('AI credit hold reconciliation on PostgreSQL', { skip: !databaseUrl }, 
     const breached = await client.aiBudgetReservation.findUniqueOrThrow({ where: { id: held.reservation.id } });
     assert.equal(breached.breach, true, 'the actual really exceeded the bound');
 
-    // Admission for OCR is shut; CHAT is untouched, because the breach is per bucket.
+    // Both buckets remain open; the unacknowledged breach remains visible to operators.
     const shut = await reserve(companyId, 'OCR', 'after-breach');
-    assert.equal((shut as { reason: string }).reason, 'unavailable');
-    assert.equal((shut as { detail: string }).detail, 'invariant_breach');
+    assert.equal(shut.ok, true, 'overrun alerts need no acknowledgement to admit work');
     assert.equal((await client.$transaction((tx) => readAiBudgetMonthSnapshot(tx, companyId, MONTH))).breach, true);
     assert.ok((await reserve(companyId, 'CHAT', 'chat-unaffected')).ok, 'the other bucket keeps working');
 

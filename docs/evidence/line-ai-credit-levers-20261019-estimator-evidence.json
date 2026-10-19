@@ -1,0 +1,615 @@
+{
+  "sourceFiles": [
+    {
+      "path": "../eval-fx29-20261017/baseline-tuning/2026-10-16T21-11-14-161Z.evidence.json",
+      "sha256": "f6ec0d9cda9ff4c31914ebc1a5ca91461005c542c9fcaf32e3f142e245a423fc"
+    },
+    {
+      "path": "../eval-fx29-20261017/heldout/2026-10-16T20-54-44-051Z.evidence.json",
+      "sha256": "a69fe4a739220bc1b3fdc8556fdc63c287822e025accf90c21c38ce78cfe4274"
+    },
+    {
+      "path": "../eval-fx29-20261017/rerun-tuning/2026-10-16T21-08-54-399Z.evidence.json",
+      "sha256": "bf432d88bd2eefd4f18327e4b594379d78e9198dc005a01e8693035bc6c0b771"
+    },
+    {
+      "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+      "sha256": "e3c690d87a78cfc9726f220bafc9a86a7c31fbe3b83a7c501f2cdf05fa5bb733"
+    },
+    {
+      "path": "../eval-landing-20261017/baseline-heldout/2026-10-16T18-46-10-941Z.evidence.json",
+      "sha256": "4c9790d4a2bf7e1a98384d3bbc9b41ec2807a1fd1a5a0318c49cab907aa79fb2"
+    },
+    {
+      "path": "../eval-landing-20261017/baseline-tuning/2026-10-16T18-36-36-635Z.evidence.json",
+      "sha256": "17528fbb9fe1681ead057dd0efaea465986deea2449e1bf61a7f71ad03f9be8b"
+    },
+    {
+      "path": "../eval-landing-20261017/heldout/2026-10-16T18-21-53-607Z.evidence.json",
+      "sha256": "6e2ff731c4e4ec71963e3b6e18ca187c05042b6c897bcbaedc9f5efe9e057663"
+    },
+    {
+      "path": "../eval-landing-20261017/rerun-heldout/2026-10-16T18-55-15-849Z.evidence.json",
+      "sha256": "23ad565bcfbd31ca50a5f8e88924f37a3d25ed123b1b4e50e0e1386bafcbe29d"
+    },
+    {
+      "path": "../eval-landing-20261017/rerun-tuning/2026-10-16T18-50-18-333Z.evidence.json",
+      "sha256": "73a7e2a5ce805bc42b175163ccfa0d6c2b44759a8937ad7f97c46a2302b204ec"
+    },
+    {
+      "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+      "sha256": "8c2edc6c09b007858dde0ee303f4f4908e3587a8b3da1d1b540070679498d5a7"
+    },
+    {
+      "path": "../eval-xall-20261017/heldout/2026-10-17T05-08-32-200Z.evidence.json",
+      "sha256": "5927e4137785c05e81e8e1f08feb3d062cd20f71ecf5b10ca96a65c3b3277478"
+    },
+    {
+      "path": "../eval-xall-20261017/rerun-heldout/2026-10-17T05-26-32-572Z.evidence.json",
+      "sha256": "5fad39b2cad02fcfea6275fc32c9948633ce3e9900298d400fda593d1a22f8b5"
+    },
+    {
+      "path": "../eval-xall-20261017/rerun-tuning/2026-10-17T05-23-24-028Z.evidence.json",
+      "sha256": "e62692537d9b801608bb52930e43e2b01da27819635c0a7eb0a4d75198d941bf"
+    },
+    {
+      "path": "../eval-xall-20261017/tuning/2026-10-17T04-20-15-663Z.evidence.json",
+      "sha256": "a9e3693949ffcc63d306b52ce2700331d95719717ac5724b862ae47e96284d8c"
+    },
+    {
+      "path": "../eval-xd-20261017/heldout/2026-10-17T06-22-04-422Z.evidence.json",
+      "sha256": "f60e4d0fde58e2073dcdb432c2a022bedc23cf2ee0a514ec1e5ae84c2637acdf"
+    },
+    {
+      "path": "../eval-xd-20261017/tuning-subset/2026-10-17T06-36-33-662Z.evidence.json",
+      "sha256": "d49171750cf2a83b305f29473bf2eea2be0817e6ef3bf021cb10da6194559632"
+    },
+    {
+      "path": "../eval-xf-20261017/heldout/2026-10-17T10-46-24-456Z.evidence.json",
+      "sha256": "c3bf322440aceec0f0518c209a2b621e7914f82ac4322e7a2cfbb5692c623a59"
+    },
+    {
+      "path": "../eval-xg-20261018/heldout/2026-10-17T20-30-02-050Z.evidence.json",
+      "sha256": "31c445d8dd10ace7c81caedd14e4f529cc4acf99b24770e9ecb36e858d2a2a51"
+    },
+    {
+      "path": "../eval-xg-20261018/rerun-tuning/2026-10-17T20-44-05-851Z.evidence.json",
+      "sha256": "284c8ac93dc2cb57f9b9a9df9caefe6dcab7ed7fd03615de79447e589758658c"
+    },
+    {
+      "path": "../eval-xg-20261018/tuning/2026-10-17T19-43-17-230Z.evidence.json",
+      "sha256": "a82b6651eab184a2ad8839d572d70d54e0b92c8227746311a45803aa51ba32d4"
+    },
+    {
+      "path": "../eval-xh-20261018/heldout/2026-10-18T02-00-28-543Z.evidence.json",
+      "sha256": "4e3f446e40e966d6a6e178835686e8472c52b890802477b747d14e8ede1ecc7f"
+    },
+    {
+      "path": "../eval-xh-20261018/rerun-tuning/2026-10-18T02-13-35-933Z.evidence.json",
+      "sha256": "2ad085157ddd36de23a398464250bff9cad8b50bb0c808c427240b7f51a3c52c"
+    },
+    {
+      "path": "../eval-xh-20261018/tuning/2026-10-18T01-14-17-870Z.evidence.json",
+      "sha256": "9e5740676f08cb1c048782beef7733e8fa84a34bdd322068e46938b668458d4d"
+    },
+    {
+      "path": "../eval-xh2-20261018/heldout/2026-10-18T03-50-46-010Z.evidence.json",
+      "sha256": "fa164e5897faf7e5993f935f2af6ffd31fb2abd9270112166cecfbcb0b9c9ce5"
+    },
+    {
+      "path": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+      "sha256": "5f530b46bfce1efd468153f96fe709e953fdd35a061ab715f5cfebed413ee4b6"
+    }
+  ],
+  "usageSummary": [
+    {
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "tag": "line.intake-route",
+      "calls": 2059,
+      "maxTotalInput": 33559,
+      "maxOutput": 4096,
+      "maxCachedPrefix": 23655,
+      "usageBasis": [
+        "COMPANY_ABSORBED",
+        "PROVIDER_REPORTED"
+      ]
+    },
+    {
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "tag": "line.compose",
+      "calls": 566,
+      "maxTotalInput": 37888,
+      "maxOutput": 1536,
+      "maxCachedPrefix": 3963,
+      "usageBasis": [
+        "COMPANY_ABSORBED",
+        "CONSERVATIVE_ESTIMATE",
+        "PROVIDER_REPORTED"
+      ]
+    },
+    {
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "tag": "line.loop",
+      "calls": 40,
+      "maxTotalInput": 9977,
+      "maxOutput": 344,
+      "maxCachedPrefix": 3292,
+      "usageBasis": [
+        "PROVIDER_REPORTED"
+      ]
+    }
+  ],
+  "staticPrefixCharacterClasses": {
+    "before": {
+      "systemPrompt": {
+        "utf8Bytes": 56222,
+        "asciiCharacters": 45757,
+        "thaiCharacters": 3387,
+        "otherCharacters": 101
+      },
+      "cacheableContext": {
+        "utf8Bytes": 26077,
+        "asciiCharacters": 23743,
+        "thaiCharacters": 769,
+        "otherCharacters": 9
+      }
+    },
+    "after": {
+      "systemPrompt": {
+        "utf8Bytes": 56222,
+        "asciiCharacters": 45757,
+        "thaiCharacters": 3387,
+        "otherCharacters": 101
+      },
+      "cacheableContext": {
+        "utf8Bytes": 29229,
+        "asciiCharacters": 25413,
+        "thaiCharacters": 1263,
+        "otherCharacters": 9
+      }
+    }
+  },
+  "framingTokens": 4096,
+  "roundingTokens": 1024,
+  "estimatorVersion": "utf8-split-prefix-v4",
+  "profileTableDigest": "eeea47e84c77574a300a88b69eee65cd164535364733950b2b5cfa78bfa7d0b6",
+  "limits": [
+    "Recorded usage lacks captured rendered bodies/digests. Source reconstruction differs by one English status-filter wording edit (net seven bytes smaller); margin is empirical and requires paired live validation before release.",
+    "No global Thai/ASCII/JSON ratio. Model + constant digest gates calibration. Unknown feature entries and all dynamic permissions/evidence are byte counted.",
+    "Current-builder registered guard catches constant edits; minor reviewed byte growth can be scaled conservatively. Large/mix/model/mode changes require live measurement.",
+    "No network/provider/tokenizer verification performed."
+  ],
+  "maxRecordedPrefixTokens": 23655,
+  "minimumCoreMarginPercent": 38.52462481504968,
+  "maxIsolatedSystemTokens": 16650,
+  "systemTokenBound": 23065,
+  "maxCatalogueTokens": 7005,
+  "catalogueTokenBound": 9704,
+  "constantPartsBytes": 66609,
+  "constantPartsTokenBound": 26681,
+  "constantPartsDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+  "previousSinglePrefixCalibration": {
+    "reviewedNewPrefixSha256": "efdbaa8e731b77c73d90ee4edfe8f77412a59f28a38f013b3fd765736646bd0e",
+    "coreMeasuredPrefixTokens": 23653,
+    "coreTokenBound": 32768,
+    "coreMarginPercent": 38.53633788525768,
+    "movedCatalogueFullByteBound": 3152,
+    "prefixTokenBound": 35920
+  },
+  "splitCheckpointEvidence": {
+    "sourceCommit": "66cafe805df3956c3b0d42deeaaf9bd81672cea1",
+    "sourceFile": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+    "isolatedSystemCacheRead": 16650,
+    "catalogueCacheWrites": {
+      "STAFF": 5837,
+      "ACCOUNTANT": 6270,
+      "AUDITOR_READONLY": 5595
+    },
+    "largestCombinedPrefix": 23655,
+    "catalogueConservativeDifference": 7005,
+    "reconstructedOldSystemBytes": 61709,
+    "currentSystemBytes": 61702,
+    "reviewedCatalogueEntries": 32,
+    "catalogueRule": "Any duplicate-free subset of the exact 32 reviewed Starter owner feature objects gets min(full bytes, 9704); all unfamiliar entries, family keys, disabled entries and dynamic inputs keep bytes. The finite class covers owner/staff/accountant/auditor/manager; Enterprise extra entries retain bytes.",
+    "mixedCheckpoints": [
+      {
+        "path": "../eval-fx29-20261017/baseline-tuning/2026-10-16T21-11-14-161Z.evidence.json",
+        "scenarioId": "T-097-b-owner-needsaction",
+        "actor": "มีรายการที่ต้องจัดการอีกไหมครับ เดือนนี้",
+        "sourceCommit": "c8d74507cc43f36e69e7106bd86d7cd905d7f3e4",
+        "read": 14906,
+        "write": 4743,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "18b682135de86fd848f28857fc1b1dbec1df258e",
+        "read": 16466,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "18b682135de86fd848f28857fc1b1dbec1df258e",
+        "read": 16466,
+        "write": 6082,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "18b682135de86fd848f28857fc1b1dbec1df258e",
+        "read": 16466,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "18b682135de86fd848f28857fc1b1dbec1df258e",
+        "read": 16466,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-fx29-20261017/tuning/2026-10-16T20-06-04-157Z.evidence.json",
+        "scenarioId": "T-023-a-auditor-total-polite",
+        "actor": "รบกวนสอบถามยอดรวมค่าใช้จ่ายของเดือนนี้ด้วยค่ะ",
+        "sourceCommit": "18b682135de86fd848f28857fc1b1dbec1df258e",
+        "read": 16466,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/baseline-tuning/2026-10-16T18-36-36-635Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "c8d74507cc43f36e69e7106bd86d7cd905d7f3e4",
+        "read": 14906,
+        "write": 4453,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/baseline-tuning/2026-10-16T18-36-36-635Z.evidence.json",
+        "scenarioId": "T-079-b-auditor-compare-breakdown",
+        "actor": "แยกตามหมวดเดือนนี้กับเดือนที่แล้วต่างกันยังไงคะ",
+        "sourceCommit": "c8d74507cc43f36e69e7106bd86d7cd905d7f3e4",
+        "read": 14906,
+        "write": 3804,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/baseline-tuning/2026-10-16T18-36-36-635Z.evidence.json",
+        "scenarioId": "T-109-b-staff-explain-scope",
+        "actor": "ทำไมค่าใช้จ่ายของฉันเดือนนี้เยอะกว่าปกติคะ",
+        "sourceCommit": "c8d74507cc43f36e69e7106bd86d7cd905d7f3e4",
+        "read": 14906,
+        "write": 4367,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/baseline-tuning/2026-10-16T18-36-36-635Z.evidence.json",
+        "scenarioId": "T-132-a-accountant-outofpackage-sales",
+        "actor": "ขอดูยอดขายเดือนนี้หน่อยจ้ะ",
+        "sourceCommit": "c8d74507cc43f36e69e7106bd86d7cd905d7f3e4",
+        "read": 14906,
+        "write": 4453,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/heldout/2026-10-16T18-21-53-607Z.evidence.json",
+        "scenarioId": "H-staff-vendor-breakdown-ordinal",
+        "actor": "จ่ายร้านไหนเยอะสุดเดือนนี้อะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/heldout/2026-10-16T18-21-53-607Z.evidence.json",
+        "scenarioId": "H-accountant-breakdown-explain",
+        "actor": "แยกค่าใช้จ่ายเดือนนี้ตามหมวดให้หน่อยค่ะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 6082,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/heldout/2026-10-16T18-21-53-607Z.evidence.json",
+        "scenarioId": "H-auditor-payment-status-chain",
+        "actor": "ยังไม่จ่ายมีเท่าไหร่คะเดือนนี้",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/rerun-tuning/2026-10-16T18-50-18-333Z.evidence.json",
+        "scenarioId": "T-123-a-auditor-knowledge-nondeductible",
+        "actor": "ค่าไช้จ่ายต้องห้ามทางภาษีคืออะไรคะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/rerun-tuning/2026-10-16T18-50-18-333Z.evidence.json",
+        "scenarioId": "T-144-b-staff-approve-directly-denied",
+        "actor": "ช่วยอนุมัติใบเบิกของสมชายให้หน่อยค่ะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/rerun-tuning/2026-10-16T18-50-18-333Z.evidence.json",
+        "scenarioId": "T-147-a-accountant-approve-denied",
+        "actor": "ช่วยอนุมัติใบเบิกอันนี้ให้หน่อยค่ะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 6082,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 6082,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5650,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-landing-20261017/tuning/2026-10-16T17-26-09-349Z.evidence.json",
+        "scenarioId": "T-023-a-auditor-total-polite",
+        "actor": "รบกวนสอบถามยอดรวมค่าใช้จ่ายของเดือนนี้ด้วยค่ะ",
+        "sourceCommit": "4d10aae35990f218819919d8093bc6f0bde3eb1f",
+        "read": 16304,
+        "write": 5408,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xall-20261017/rerun-heldout/2026-10-17T05-26-32-572Z.evidence.json",
+        "scenarioId": "H-staff-explain-why-high",
+        "actor": "ทำไมเดือนนี้ค่าใช้จ่ายเยอะกว่าปกติอ่ะคะ งงเลย",
+        "sourceCommit": "a0d21cb15d0ee4b67de5c0c174063d00f84b9e54",
+        "read": 16553,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xall-20261017/tuning/2026-10-17T04-20-15-663Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "a0d21cb15d0ee4b67de5c0c174063d00f84b9e54",
+        "read": 16553,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xall-20261017/tuning/2026-10-17T04-20-15-663Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "a0d21cb15d0ee4b67de5c0c174063d00f84b9e54",
+        "read": 16553,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xall-20261017/tuning/2026-10-17T04-20-15-663Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "a0d21cb15d0ee4b67de5c0c174063d00f84b9e54",
+        "read": 16553,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xall-20261017/tuning/2026-10-17T04-20-15-663Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "a0d21cb15d0ee4b67de5c0c174063d00f84b9e54",
+        "read": 16553,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xd-20261017/heldout/2026-10-17T06-22-04-422Z.evidence.json",
+        "scenarioId": "H-staff-vendor-breakdown-ordinal",
+        "actor": "จ่ายร้านไหนเยอะสุดเดือนนี้อะ",
+        "sourceCommit": "24d3545c2d95a779aa2d0f8cd026078bcd7b8ef3",
+        "read": 16553,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xd-20261017/heldout/2026-10-17T06-22-04-422Z.evidence.json",
+        "scenarioId": "H-accountant-breakdown-explain",
+        "actor": "แยกค่าใช้จ่ายเดือนนี้ตามหมวดให้หน่อยค่ะ",
+        "sourceCommit": "24d3545c2d95a779aa2d0f8cd026078bcd7b8ef3",
+        "read": 16553,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xd-20261017/heldout/2026-10-17T06-22-04-422Z.evidence.json",
+        "scenarioId": "H-auditor-payment-status-chain",
+        "actor": "ยังไม่จ่ายมีเท่าไหร่คะเดือนนี้",
+        "sourceCommit": "24d3545c2d95a779aa2d0f8cd026078bcd7b8ef3",
+        "read": 16553,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xd-20261017/tuning-subset/2026-10-17T06-36-33-662Z.evidence.json",
+        "scenarioId": "T-143-a-staff-pending-approvals-denied",
+        "actor": "มีใบเบิกรออนุมัติกี่ใบคะ",
+        "sourceCommit": "24d3545c2d95a779aa2d0f8cd026078bcd7b8ef3",
+        "read": 16553,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xf-20261017/heldout/2026-10-17T10-46-24-456Z.evidence.json",
+        "scenarioId": "H-accountant-breakdown-explain",
+        "actor": "แยกค่าใช้จ่ายเดือนนี้ตามหมวดให้หน่อยค่ะ",
+        "sourceCommit": "511898fea5f1969ec69ee20247f204f642d2d6ad",
+        "read": 16553,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xf-20261017/heldout/2026-10-17T10-46-24-456Z.evidence.json",
+        "scenarioId": "H-auditor-payment-status-chain",
+        "actor": "ยังไม่จ่ายมีเท่าไหร่คะเดือนนี้",
+        "sourceCommit": "511898fea5f1969ec69ee20247f204f642d2d6ad",
+        "read": 16553,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xg-20261018/tuning/2026-10-17T19-43-17-230Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
+        "read": 16648,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xg-20261018/tuning/2026-10-17T19-43-17-230Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
+        "read": 16648,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xg-20261018/tuning/2026-10-17T19-43-17-230Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
+        "read": 16648,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xg-20261018/tuning/2026-10-17T19-43-17-230Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "31a99e1343dd2a8d4361b4cdf11df9c8c451559d",
+        "read": 16648,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh-20261018/tuning/2026-10-18T01-14-17-870Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "8f2a09f66ae6076de04dff7476d03fd21fcb6d66",
+        "read": 16648,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh-20261018/tuning/2026-10-18T01-14-17-870Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "8f2a09f66ae6076de04dff7476d03fd21fcb6d66",
+        "read": 16648,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh-20261018/tuning/2026-10-18T01-14-17-870Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "8f2a09f66ae6076de04dff7476d03fd21fcb6d66",
+        "read": 16648,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh-20261018/tuning/2026-10-18T01-14-17-870Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "8f2a09f66ae6076de04dff7476d03fd21fcb6d66",
+        "read": 16648,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+        "scenarioId": "T-003-a-staff-scope-correction",
+        "actor": "เดือนนี้ค่าใช้จ่ายของฉันเท่าไหร่คะ",
+        "sourceCommit": "66cafe805df3956c3b0d42deeaaf9bd81672cea1",
+        "read": 16650,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+        "scenarioId": "T-005-a-accountant-payment-compare-explain",
+        "actor": "เดือนนี้จ่ายจริงไปเท่าไหร่คะ",
+        "sourceCommit": "66cafe805df3956c3b0d42deeaaf9bd81672cea1",
+        "read": 16650,
+        "write": 6270,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+        "scenarioId": "T-008-b-auditor-broad-view-vendor",
+        "actor": "เดือนนี้บริษัทใช้จ่ายไปเท่าไหร่แล้วคะ",
+        "sourceCommit": "66cafe805df3956c3b0d42deeaaf9bd81672cea1",
+        "read": 16650,
+        "write": 5595,
+        "basis": "PROVIDER_REPORTED"
+      },
+      {
+        "path": "../eval-xh2-20261018/tuning/2026-10-18T03-05-59-240Z.evidence.json",
+        "scenarioId": "T-015-a-staff-draft-explain-howto-return",
+        "actor": "มีร่างของฉันค้างอยู่ไหมคะ",
+        "sourceCommit": "66cafe805df3956c3b0d42deeaaf9bd81672cea1",
+        "read": 16650,
+        "write": 5837,
+        "basis": "PROVIDER_REPORTED"
+      }
+    ]
+  },
+  "systemMarginPercent": 38.528528528528525,
+  "catalogueMarginPercent": 38.52962169878658
+}

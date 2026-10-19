@@ -18,6 +18,7 @@
  *      and timeout alike — and a settle failure never fails the business call.
  */
 import { createHash } from 'node:crypto';
+import { calibratedIntakeTextBound } from './intake-token-calibration';
 import { conservativeTimeoutUsage, pdfPageUpperBound } from '../../modules/line-ai/infrastructure/provider/provider-usage-estimate';
 export { pdfPageUpperBound } from '../../modules/line-ai/infrastructure/provider/provider-usage-estimate';
 
@@ -122,7 +123,7 @@ function v2ProfileFor(input: ProviderInput | ProviderToolsInput): AiBudgetProfil
   return undefined;
 }
 
-function v2RenderedInput(input: ProviderInput | ProviderToolsInput): {
+export function v2RenderedInput(input: ProviderInput | ProviderToolsInput, modelId = ''): {
   inputTokenBound: number;
   payloadDigest: string;
   schemaDigest: string;
@@ -141,6 +142,9 @@ function v2RenderedInput(input: ProviderInput | ProviderToolsInput): {
   // Include framing, IDs, escaped JSON and the full tool schema. Counting only visible strings
   // misses substantial native tool-result input and can price less than the rendered request.
   let textBytes = bytes(canonicalJson({ systemPrompt: input.systemPrompt ?? '', cacheableContext: input.cacheableContext ?? '', messages, ...(tools ? { tools } : {}) }));
+  // Constant identity excludes permission/package-dependent catalogue entries. Unknown parts
+  // retain bytes; reviewed finite catalogue entries have independent cache-checkpoint evidence.
+  textBytes = calibratedIntakeTextBound(input, modelId) ?? textBytes;
   if ('images' in input) textBytes += (input.images?.length ?? 0) * AI_BUDGET_IMAGE_TOKEN_CEILING;
   if ('documents' in input) {
     for (const document of input.documents ?? []) {
@@ -260,7 +264,7 @@ async function admitV2(
   if (!profileId || !grant.allowedProfileIds.includes(profileId)) return refuse('v2_profile_not_allowed');
   const profile = AI_BUDGET_PROFILES_V2[profileId];
   if (input.maxTokens < 1 || input.maxTokens > profile.maxOutputTokens) return refuse('v2_output_bound_exceeded');
-  const rendered = v2RenderedInput(input);
+  const rendered = v2RenderedInput(input, opts.modelId);
   if (rendered.inputTokenBound > profile.maxInputTokens) return refuse('v2_input_bound_exceeded');
   const ordinal = claimBudgetCallOrdinal();
   const repair = state.repairPending === true;

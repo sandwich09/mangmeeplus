@@ -2327,7 +2327,8 @@ describe('Fix-up 17B: uncovered how-to answers select a checked action in the ex
           assert.match(input.systemPrompt!, /helpActions/);
           const payload = JSON.parse(input.messages[0]!.text);
           assert.equal(payload.approvedHelp, undefined);
-          assert.ok(payload.chatActions.some((entry: any) => entry.id === action.id));
+          assert.equal(payload.chatActions, undefined);
+          assert.ok(input.systemPrompt!.includes(JSON.stringify({ id: action.id, title: action.title, group: action.group })));
           return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: action.id }] }) };
         } }, invoke: async () => assert.fail('help navigation never reads or mutates ERP') });
       // Feature-denied WHT is answered by the existing entitlement guard before composition.
@@ -2714,10 +2715,13 @@ describe('Exam C: independent exam router conversation replays', () => {
       provider: { generateText: async input => {
         modelCalls++; assert.equal(input.usageTag, 'line.compose');
         const payload = JSON.parse(input.messages[0]!.text);
-        assert.equal(payload.conversationGuidance, ADVISOR_CONVERSATION_GUIDANCE);
+        assert.equal(payload.conversationGuidance, undefined);
+        assert.ok(input.systemPrompt!.includes(JSON.stringify(ADVISOR_CONVERSATION_GUIDANCE)));
         if (replay.id === 'V055-A') {
-          assert.equal(payload.taxGuidance, ADVISOR_TAX_GUIDANCE);
-          assert.match(payload.taxGuidance, /interest and dividends belong to ภ.ง.ด.2.*NOT PND3/);
+          const prefix = JSON.parse(input.systemPrompt!.split('\n').at(-1)!);
+          assert.equal(payload.taxGuidance, undefined);
+          assert.equal(prefix.taxGuidance, ADVISOR_TAX_GUIDANCE);
+          assert.match(prefix.taxGuidance, /interest and dividends belong to ภ.ง.ด.2.*NOT PND3/);
         }
         const text = replay.id === 'V055-A' ? 'ดอกเบี้ยที่จ่ายให้บุคคลธรรมดาใช้ ภ.ง.ด.2 ให้ผู้ทำบัญชีจัดทำแยกค่ะ'
           : replay.id === 'C013-A' ? 'ยิ้มด้วยเลยค่ะ ถ้ามีรายจ่ายหรือใบเบิกให้น้องช่วยก็บอกได้เลยค่ะ'
@@ -2940,5 +2944,33 @@ it('U3 capability buttons cover a permitted specialist and a caller with no avai
       provider: { generateText: async () => assert.fail('existing capability facts need no additional compose call') }, invoke: async () => assert.fail('no record read for capabilities') });
     if (specialist) assert.ok(result.presentation?.cards[0]?.chatActionIds?.includes('inventory'));
     else { assert.match(result.replyText, /ยังไม่มีงาน.*เจ้าของกิจการ/); assert.ok(result.presentation?.cards[0]?.webLink); assert.deepEqual(result.presentation?.cards[0]?.chatActionIds, []); }
+  }
+});
+
+it('credit X2: semantic cached prefix is identical across tenants while the last four user turns remain per-turn', async () => {
+  const captured: ProviderInput[] = [];
+  for (const companyId of ['credit-company-a', 'credit-company-b']) {
+    const req = makeReq('ทำไมท้องฟ้าถึงเป็นสีฟ้า');
+    req.userContext.companyId = companyId;
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: req.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [] }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15,
+      recentTurns: Array.from({ length: 15 }, (_, n) => ({ at: new Date(1792397000000 + n * 1000).toISOString(),
+        userMessagePreview: `${companyId} ข้อความ ${n}`, userMessagePreviewComplete: true })) };
+    await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => { captured.push(input);
+        return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'แสงสีฟ้ากระเจิงในอากาศค่ะ', sourceRefIds: [] }] }) }; } },
+      invoke: async () => assert.fail('general question needs no ERP') });
+    assert.equal(req.conversationContext.recentTurns.length, 15, 'source context remains complete');
+  }
+  assert.equal(captured.length, 2);
+  assert.equal(captured[0]!.systemPrompt, captured[1]!.systemPrompt);
+  assert.ok(captured[0]!.systemPrompt!.length >= 4000, 'the actual Bedrock system-prefix cache checkpoint applies');
+  for (const input of captured) {
+    assert.equal(input.systemPrompt!.includes('credit-company-'), false);
+    assert.ok(input.systemPrompt!.includes('"chatActions":'));
+    const payload = JSON.parse(input.messages[0]!.text);
+    assert.equal(payload.chatActions, undefined);
+    assert.equal(payload.conversationContext.recentTurns.length, 4);
+    assert.equal(payload.conversationContext.recentTurns[0].userMessagePreview.endsWith('11'), true);
   }
 });

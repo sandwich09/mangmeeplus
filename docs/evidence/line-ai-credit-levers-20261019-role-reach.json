@@ -1,0 +1,98 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "fx": 33,
+  "recipe": "Real controller options: prepared family allowlist, approved knowledge, all actual role grants and actual tier preset; current ค่าอาหาร evidence; no previous history/categories; output4096. Before is reviewed X1 single-digest implementation, after is split calibration. Public lookup disabled as in default config.",
+  "rows": [
+    {
+      "tier": "STARTER_249",
+      "role": "OWNER",
+      "fullDigest": "7caea2d6cde51d31006576c0cbff407744866779ba51fae4efc62336d8905f14",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 25933,
+      "dynamicBytes": 13891,
+      "boundBefore": 114688,
+      "holdBeforeThb": 16.23,
+      "boundAfter": 56320,
+      "holdAfterThb": 9
+    },
+    {
+      "tier": "STARTER_249",
+      "role": "STAFF",
+      "fullDigest": "483081509c4d15c315639d6c8b9606805a07ee2f59fdb8ba896b09f2beb3eeb2",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 21346,
+      "dynamicBytes": 6046,
+      "boundBefore": 100352,
+      "holdBeforeThb": 14.45,
+      "boundAfter": 48128,
+      "holdAfterThb": 7.99
+    },
+    {
+      "tier": "STARTER_249",
+      "role": "ACCOUNTANT",
+      "fullDigest": "f2e6d4e6a8fbb76dd7cde152b57c0e29602980ac71b77e6e336938141e673c67",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 23024,
+      "dynamicBytes": 8859,
+      "boundBefore": 105472,
+      "holdBeforeThb": 15.08,
+      "boundAfter": 51200,
+      "holdAfterThb": 8.37
+    },
+    {
+      "tier": "STARTER_249",
+      "role": "AUDITOR_READONLY",
+      "fullDigest": "84aea6ac87c35388ebc078f03c3145a8d0003c5982a58cffda8a7678fc3e7844",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 20542,
+      "dynamicBytes": 8001,
+      "boundBefore": 102400,
+      "holdBeforeThb": 14.7,
+      "boundAfter": 50176,
+      "holdAfterThb": 8.24
+    },
+    {
+      "tier": "PRO_999",
+      "role": "OWNER",
+      "fullDigest": "7caea2d6cde51d31006576c0cbff407744866779ba51fae4efc62336d8905f14",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 25933,
+      "dynamicBytes": 13891,
+      "boundBefore": 114688,
+      "holdBeforeThb": 16.23,
+      "boundAfter": 56320,
+      "holdAfterThb": 9
+    },
+    {
+      "tier": "PRO_999",
+      "role": "MANAGER",
+      "fullDigest": "7caea2d6cde51d31006576c0cbff407744866779ba51fae4efc62336d8905f14",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 25933,
+      "dynamicBytes": 8127,
+      "boundBefore": 108544,
+      "holdBeforeThb": 15.46,
+      "boundAfter": 50176,
+      "holdAfterThb": 8.24
+    },
+    {
+      "tier": "ENTERPRISE_1999",
+      "role": "OWNER",
+      "fullDigest": "7dee45f24f565bfdf7a1250e9f3eb7df16c0dc3128d25418cd22db1ab00e1439",
+      "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
+      "constantBytes": 66609,
+      "variableBytes": 27298,
+      "dynamicBytes": 13915,
+      "boundBefore": 115712,
+      "holdBeforeThb": 16.35,
+      "boundAfter": 57344,
+      "holdAfterThb": 9.13
+    }
+  ]
+}
