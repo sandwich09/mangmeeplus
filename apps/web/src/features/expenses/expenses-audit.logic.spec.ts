@@ -29,6 +29,11 @@ const check = (over: Partial<AuditInput>, key: string) => {
 };
 
 describe('deriveExpenseAuditChecks', () => {
+  it('warns about an invalid seller checksum on ordinary receipts and non-VAT shops too', () => {
+    for (const sourceDocumentType of ['RECEIPT', 'TAX_INVOICE'] as const) {
+      assert.equal(check({ sourceDocumentType, vendorTaxIdSnapshot: '1234567890123', inputVatRight: { vatStatus: 'NOT_REGISTERED' } as any }, 'vendor_tax_id')?.status, 'warn');
+    }
+  });
   it('passes vendor tax id when exactly 13 digits', () => {
     const c = check({}, 'vendor_tax_id');
     assert.equal(c?.status, 'pass');

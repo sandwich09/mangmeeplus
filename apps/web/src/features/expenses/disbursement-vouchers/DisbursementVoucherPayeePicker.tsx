@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { DISBURSEMENT_VOUCHER_WORDS } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_WORDS, type DisbursementExpenseReason } from '@watchdog-bms/contracts';
 import { Pagination } from '@/common/components/data-table/Pagination';
 import { EmptyState, ErrorState, LoadingState } from '@/common/components/state';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -10,6 +10,11 @@ import { amountText, ghostClass, inputClass } from '../ExpensesUi';
 import { listDisbursementPayees } from './disbursement-vouchers.api';
 import type { DisbursementPayee, DisbursementPayeePage } from './disbursement-vouchers.model';
 import styles from './disbursement-voucher-form.module.css';
+
+const excludedReasons: Record<DisbursementExpenseReason, string> = {
+  reserved: 'อยู่ในใบเตรียมจ่าย', claim: 'อยู่ในใบเบิก', personal_advance: 'ใช้เงินส่วนตัวจ่าย',
+  missing_branch: 'ยังไม่ระบุสาขา', foreign_currency: 'ใช้สกุลเงินอื่น', not_confirmed: 'ยังไม่ยืนยัน', no_balance: 'ไม่มียอดค้าง',
+};
 
 export function DisbursementVoucherPayeePicker({ companyId, selectedKey, onChoose, search, onSearch, visible = true }: {
   visible?: boolean; search: string; onSearch: (value: string) => void; companyId: string; selectedKey?: string; onChoose: (payee: DisbursementPayee) => void;
@@ -31,6 +36,8 @@ export function DisbursementVoucherPayeePicker({ companyId, selectedKey, onChoos
     return () => { active = false; window.clearTimeout(timer); };
   }, [companyId, search, page, retry]);
   const rows = result?.data ?? [];
+  const excluded = Object.entries(result?.excludedExpenses ?? {}).filter(([, count]) => count > 0);
+  const excludedCount = excluded.reduce((sum, [, count]) => sum + count, 0);
   const totalPages = Math.max(1, Math.ceil((result?.total ?? 0) / 10));
   return <div className={styles.stack}>
     {/* One label for the step ("จ่ายให้ใคร", the heading above); what to type is said inside the box. */}
@@ -38,13 +45,16 @@ export function DisbursementVoucherPayeePicker({ companyId, selectedKey, onChoos
       value={search} onChange={event => { onSearch(event.target.value); setPage(1); }} />
     {loading ? <LoadingState label={t('expenses.disbursement.loading_payees', 'th')} />
       : error ? <ErrorState description={apiErrorMessage(error)} onRetry={() => setRetry(value => value + 1)} />
-        : rows.length === 0 ? <EmptyState title={t(search.trim() ? 'list.no_results' : 'expenses.disbursement.empty_payees', 'th')} description={search.trim() ? '' : t('expenses.disbursement.empty_payees_help', 'th')}
-          action={search.trim() ? undefined : <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>{t('expenses.disbursement.go_expenses', 'th')}</Link>} /> : null}
+        : rows.length === 0 ? <EmptyState title={excludedCount > 0 && !search.trim() ? 'ยังไม่มีรายจ่ายที่เลือกจ่ายได้' : t(search.trim() ? 'list.no_results' : 'expenses.disbursement.empty_payees', 'th')} description={search.trim() || excludedCount > 0 ? '' : t('expenses.disbursement.empty_payees_help', 'th')}
+          action={search.trim() || excludedCount > 0 ? undefined : <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>{t('expenses.disbursement.go_expenses', 'th')}</Link>} /> : null}
     {!loading && !error && rows.length === 0 && search.trim() && <p className={styles.hint}>{t('expenses.disbursement.search_empty_help', 'th')}</p>}
     {!loading && !error && <div className={styles.stack} data-testid="disbursement-payee-card-list">
       {rows.map(payee => <DisbursementVoucherPayeeRow key={payee.payeeKey} companyId={companyId} payee={payee} selected={selectedKey === payee.payeeKey} onChoose={onChoose} visible={visible} />)}
       {totalPages > 1 && <Pagination prominent page={page} totalPages={totalPages} onPageChange={setPage} />}
     </div>}
+    {!loading && !error && !search.trim() && excludedCount > 0 && <p className={styles.hint}>
+      อีก {excludedCount} รายการยังเลือกไม่ได้ · {excluded.map(([reason, count]) => `${excludedReasons[reason as DisbursementExpenseReason]} ${count}`).join(' · ')} · <Link className="underline" href={`/companies/${companyId}/expenses?view=unpaid`}>ดูที่หน้ารายจ่าย</Link>
+    </p>}
   </div>;
 }
 

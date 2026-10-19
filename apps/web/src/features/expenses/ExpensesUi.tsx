@@ -17,10 +17,10 @@ export function err(e: unknown, locale: 'th' | 'en' = 'th') { return apiErrorMes
 // OCR fields copy money exactly as printed on the bill, so a raw value can carry
 // thousand separators ("12,500") — Number() alone would render ฿NaN.
 const money = (v: string | number) => Number((typeof v === 'string' ? v.replace(/,/g, '') : v) || 0) || 0;
-export const baht = (v: string | number) => '฿' + money(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const baht = (v: string | number) => amountText(v) + ' บาท';
 /** The amount alone: where the column or the unit beside it already says baht (owner 2026-10-15: no ฿ there). */
 export const amountText = (v: string | number) => money(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-export const baht0 = (v: string | number) => '฿' + money(v).toLocaleString('th-TH');
+export const baht0 = (v: string | number) => baht(v);
 export const dateShort = (v?: string | null) => formatThaiDate(v, '-');
 
 /** One name for the export, on the expense list and on the evidence page. */

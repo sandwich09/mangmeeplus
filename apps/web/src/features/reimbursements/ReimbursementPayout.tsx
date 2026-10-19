@@ -468,7 +468,7 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         : 'คุณยังไม่ได้ตั้งบัญชีประจำ บันทึกร่างได้ แต่ต้องเลือกวิธีอื่นหรือตั้งบัญชีประจำก่อนส่งอนุมัติ';
   const option = (mode: ClaimPayoutForm['mode'], label: string, hint?: string | null) => (
     <label className={cx(choiceClass, value.mode === mode && 'border-brand-300 bg-brand-25')}>
-      <input type="radio" name="claim-payout-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={value.mode === mode} onChange={() => choose(mode)} />
+      <input type="radio" aria-label={label} name="claim-payout-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={value.mode === mode} onChange={() => choose(mode)} />
       <span className="min-w-0">
         <span className="block font-semibold text-gray-900">{label}</span>
         {hint && <span className="mt-0.5 block break-words text-sm text-gray-500">{hint}</span>}
@@ -504,13 +504,13 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
           <PayoutHolderFields value={value.holder ?? { holderType: 'SELF' }} onChange={holder => onChange(setClaimPayoutHolder(value, holder))} forSelf={forSelf} invalidField={invalidField} error={error} />
           {canSaveAsDefault && value.holder?.holderType !== 'THIRD_PARTY' && (
             <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
-              <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={value.saveAsDefault}
+              <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" aria-label={forSelf ? 'บันทึกเป็นบัญชีประจำของฉัน' : 'บันทึกเป็นบัญชีประจำของผู้เบิก'} checked={value.saveAsDefault}
                 onChange={(event) => onChange(setClaimPayoutSaving(value, 'saveAsDefault', event.target.checked))} />
               <span>{forSelf ? 'บันทึกเป็นบัญชีประจำของฉัน' : 'บันทึกเป็นบัญชีประจำของผู้เบิก'}</span>
             </label>
           )}
           {forSelf && <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
-            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={value.saveForLater === true}
+            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" aria-label={SAVED_PAYOUT_WORDS.saveForLater} checked={value.saveForLater === true}
               onChange={event => onChange(setClaimPayoutSaving(value, 'saveForLater', event.target.checked))} />
             <span>{SAVED_PAYOUT_WORDS.saveForLater}</span>
           </label>}

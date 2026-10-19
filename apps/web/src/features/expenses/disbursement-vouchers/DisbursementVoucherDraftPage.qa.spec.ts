@@ -115,7 +115,7 @@ test('session refresh keeps the loaded draft form and permission loss still rend
 
 test('an empty search uses existing no-result copy rather than claiming the shop has no outstanding expenses', () => {
   assert.match(payees, /search\.trim\(\) \? 'list\.no_results' : 'expenses\.disbursement\.empty_payees'/);
-  assert.match(payees, /description=\{search\.trim\(\) \? ''/);
+  assert.match(payees, /description=\{search\.trim\(\) \|\| excludedCount > 0 \? ''/);
   assert.match(expenses, /search\.trim\(\) \? 'list\.no_results' : 'expenses\.disbursement\.empty_payees'/);
 });
 

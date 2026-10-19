@@ -243,3 +243,21 @@ it('detail carries the same category and unavailable-source facts as the account
   assert.equal((detail as any).sourceEvidenceUnavailable, true);
   assert.deepEqual(detail?.attachments, []);
 });
+
+
+it('UAT-T1 evidence reads recognise categories on every goods line without inventing a document category', async () => {
+  for (const categorised of [true, false]) {
+    let query: any;
+    const record = { id: 'expense-1', companyId: 'co-1', status: 'CONFIRMED', expenseCategoryId: null, expenseCategory: null,
+      lines: [{ expenseCategoryId: 'food', chargeKind: null }, { expenseCategoryId: categorised ? 'food' : null, chargeKind: null }, { expenseCategoryId: null, chargeKind: 'ROUNDING' }] };
+    const repo = new PrismaExpenseRepository({ client: {
+      expenseRecord: { findMany: async (args: any) => { query = args; return [record]; }, count: async () => 1 },
+      attachmentLink: { findMany: async () => [] }, expenseSubstituteReceiptEvidence: { findMany: async () => [] },
+      expenseLine: { groupBy: async () => [] }, expensePayment: { findMany: async () => [] }, journalEntry: { findMany: async () => [] },
+    } } as any);
+    const result = await repo.listSharedEvidence('co-1', {});
+    assert.deepEqual(query.include.lines, { select: { expenseCategoryId: true, chargeKind: true } });
+    assert.equal(result.rows[0]!.categoryName, categorised ? 'ตามรายการ' : null);
+    assert.equal(result.rows[0]!.expenseCategoryId, null);
+  }
+});

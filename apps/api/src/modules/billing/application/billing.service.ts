@@ -51,7 +51,7 @@ import { planMenuImpact } from './billing-plan-menus';
 import { assertDealOfferUnchanged, assertDealSnapshot, dealOffer, dealPurchaseModes, dealSnapshot, dealSnapshotHash, type DealSource } from '../domain/deal-offer';
 import { autoRenewOf, DEAL_KIND } from '../../sales-console/domain/sales-deal.logic';
 import type { BillingEventDiscountView } from '@watchdog-bms/contracts';
-import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
+import { eventDiscountBasis, eventDiscountCheckoutRule, eventDiscountDocumentDescription, eventDiscountExpected, eventDiscountPurchase, type EventDiscountSnapshot } from '../domain/billing-event-discount.logic';
 import { eventDiscountHolderBlock, eventDiscountOffer, eventDiscountPath, eventDiscountRenewalState, eventDiscountView, holderEventDiscountTickets, releaseEventDiscount, reserveEventDiscount } from './billing-event-discount';
 import { paymentCheckoutMode, paymentCheckoutSnapshot, prepaidCardAuto } from '../domain/billing-checkout-mode';
 import type { BillingBenefitChoice, BillingPromotionSnapshot, BillingPromotionUse } from '@watchdog-bms/contracts';
@@ -896,12 +896,14 @@ export class BillingService {
       financialRequestStarted = true;
       const metadata = { billingAttemptId: attempt.id, billingAccountId: account.id };
       const once = paymentCheckoutSnapshot(snapshot);
+      const documentDescription = eventDiscountDocumentDescription(snapshot);
       const session = await this.stripe.request('POST', '/checkout/sessions', once ? {
         mode: 'payment', customer: customerId, client_reference_id: attempt.id,
         payment_method_types: [snapshot.quote.purchaseMode?.startsWith('PROMPTPAY') ? 'promptpay' : 'card'],
-        metadata, payment_intent_data: { metadata, ...((snapshot.advanceDeal && snapshot.quote.purchaseMode === 'CARD_AUTO') || prepaidCardAuto(snapshot)
+        metadata, payment_intent_data: { metadata, ...(documentDescription ? { description: documentDescription } : {}), ...((snapshot.advanceDeal && snapshot.quote.purchaseMode === 'CARD_AUTO') || prepaidCardAuto(snapshot)
           ? { setup_future_usage: 'off_session' } : {}) },
         invoice_creation: { enabled: true, invoice_data: { metadata,
+          ...(documentDescription ? { description: documentDescription } : {}),
           ...(snapshot.policy.taxTreatment !== 'NOT_VAT_REGISTERED' && snapshot.policy.issuer ? { account_tax_ids: [snapshot.policy.issuer.stripeTaxId] } : {}) } },
         line_items: [{ quantity: 1, price_data: { product: snapshot.productId, currency: 'thb',
           unit_amount: eventDiscountExpected(snapshot)?.unitAmountSatang ?? snapshot.upgrade?.amountSatang ?? snapshot.quote.offer.priceSatang, tax_behavior: snapshot.policy.taxTreatment === 'EXCLUSIVE_VAT_7' ? 'exclusive' : 'inclusive' },

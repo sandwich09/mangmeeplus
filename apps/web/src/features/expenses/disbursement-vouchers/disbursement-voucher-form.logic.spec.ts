@@ -33,7 +33,7 @@ test('command id is reused on unchanged retries and renewed on every form change
 test('an amount refusal says which of the two things is wrong, and typed separators are dropped rather than refused', () => {
   assert.equal(amountError('abc', '4000.0000'), 'พิมพ์ยอดเป็นตัวเลข ทศนิยมไม่เกิน 2 ตำแหน่ง เช่น 1500 หรือ 1500.50');
   assert.equal(amountError('', '4000.0000'), amountError('1.234', '4000.0000'));
-  for (const value of ['0', '4000.01']) assert.equal(amountError(value, '4000.0000'), 'ยอดต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย ฿4,000.00');
+  for (const value of ['0', '4000.01']) assert.equal(amountError(value, '4000.0000'), 'ยอดต้องมากกว่า 0 และไม่เกินยอดค้างจ่าย 4,000.00 บาท');
   assert.equal(cleanAmountInput(' ฿1,234.50 '), '1234.50');
   assert.equal(amountError(cleanAmountInput('1,000'), '4000.0000'), null);
   // While its box is not being typed in, a stored amount reads with commas; what is not a plain number is shown as typed.

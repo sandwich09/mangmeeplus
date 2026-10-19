@@ -1,3 +1,4 @@
+import { hasExpenseCategory } from '@watchdog-bms/contracts';
 import { withholdingPayerPrefill } from '../../tax/application/services/withholding-establishments';
 import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../reimbursements/domain/reimbursement.constants';
@@ -4770,7 +4771,7 @@ export class PrismaExpenseRepository {
     const [records, total] = await Promise.all([
       this.prisma.client.expenseRecord.findMany({
         where: where as any,
-        include: { expenseCategory: { select: { name: true } }, inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } },
+        include: { expenseCategory: { select: { name: true } }, lines: { select: { expenseCategoryId: true, chargeKind: true } }, inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } },
         orderBy: [{ [dateField]: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -4852,7 +4853,7 @@ export class PrismaExpenseRepository {
           ...mapExpense(r),
           latestInputVatDecision: decisionNames.get(r.id) ?? null,
           inputVatRecordedBeforeReview: inputVatRecordedBeforeReview(r, Boolean(r.inputVatDecisions?.length)),
-          categoryName: (r as any).expenseCategory?.name ?? null,
+          categoryName: (r as any).expenseCategory?.name ?? (hasExpenseCategory(r) ? 'ตามรายการ' : null),
           journalEntryId,
           journalEntryNumber: journalEntryId ? journalNumberById.get(journalEntryId) ?? null : null,
           pendingPostingSourceType: pendingSource?.sourceType ?? null,

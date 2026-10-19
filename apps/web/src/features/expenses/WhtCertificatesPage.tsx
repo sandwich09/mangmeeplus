@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { companyProfilePath, WHT_CERTIFICATE_HISTORY_EVENT_LABELS, type WhtCertificateHandoffPageDto } from '@watchdog-bms/contracts';
@@ -71,12 +71,20 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   const pathname = usePathname();
   const params = useSearchParams();
   const { tab, search, page, order } = certificateListState(params);
+  const urlQuery = params.toString();
+  const pendingQuery = useRef({ source: urlQuery, value: urlQuery });
+  if (pendingQuery.current.source !== urlQuery) pendingQuery.current = { source: urlQuery, value: urlQuery };
+  const replaceQuery = (next: URLSearchParams) => {
+    pendingQuery.current.value = next.toString();
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  };
+
   const periodKey = params.get('periodKey') ?? '';
   const formType = params.get('formType') === 'PND3' ? 'PND3' : params.get('formType') === 'PND53' ? 'PND53' : undefined;
   function filterMonthOrForm(key: string, value: string) {
-    const next = new URLSearchParams(params.toString());
+    const next = new URLSearchParams(pendingQuery.current.value);
     if (value) next.set(key, value); else next.delete(key);
-    next.set('page', '1'); router.replace(`${pathname}?${next}`, { scroll: false });
+    next.set('page', '1'); replaceQuery(next);
   }
   const branchId = useBranchFilter()?.branchId || undefined;
   const canRead = permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].includes(permission));
@@ -85,11 +93,15 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const navigate = (state: WhtCertificateListState) => router.replace(`${pathname}?${certificateListQuery(new URLSearchParams(params.toString()), state)}`, { scroll: false });
+  // A second press can arrive before the router commits the first filter change.
+  const navigate = (change: Partial<WhtCertificateListState>) => {
+    const latest = new URLSearchParams(pendingQuery.current.value);
+    replaceQuery(new URLSearchParams(certificateListQuery(latest, { ...certificateListState(latest), ...change })));
+  };
   useEffect(() => { setSearchInput(search); }, [search]);
   useEffect(() => {
     if (searchInput === search) return;
-    const timer = setTimeout(() => navigate({ tab, order, search: searchInput, page: 1 }), 300);
+    const timer = setTimeout(() => navigate({ search: searchInput, page: 1 }), 300);
     return () => clearTimeout(timer);
     // The URL is the saved filter; back/forward restores the input above.
   }, [searchInput, search, tab, order, pathname, params, router]);
@@ -101,7 +113,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
       .then(result => {
         if (!current) return;
         const lastPage = Math.max(1, Math.ceil(result.total / WHT_CERTIFICATE_PAGE_SIZE));
-        if (page > lastPage) navigate({ tab, order, search, page: lastPage });
+        if (page > lastPage) navigate({ page: lastPage });
         setData(result);
       })
       .catch(failure => { if (current) setError(err(failure, locale)); })
@@ -125,7 +137,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   const statusColumn = rows.some(row => certificateRowStatus(row, shopBanner));
   // Return the former menu column's room to the payee; every tab totals 100%.
   const columnWidths = statusColumn ? [37, 11, 9, 13, 12, 18] : [49, 13, 10, 14, 14];
-  const changeOrder = () => navigate({ tab, search, page: 1, order: order === 'newest' ? 'oldest' : 'newest' });
+  const changeOrder = () => navigate({ page: 1, order: order === 'newest' ? 'oldest' : 'newest' });
   return <MangmeePage title={word('expenses.certificates.title')} description={word('expenses.certificates.description')} className="mangmee-flat">
     {!canRead ? <ForbiddenState locale={locale} /> : <div className={styles.section}>
       <MangmeeCard className="mb-4 p-4"><MetricGrid columns={2} items={[
@@ -133,7 +145,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
         { key: 'withheld', label: 'ภาษีที่หักไว้', value: data?.sums ? amountText(data.sums.withheld) : '—', unit: 'บาท', dot: 'bg-brand-500' },
       ]} /></MangmeeCard>
       <MangmeeCard className="p-4">
-      <FilterTabs className={styles.tabs} aria-label={word('expenses.certificates.title')} value={tab} onChange={choice => navigate({ tab: choice, order, search: searchInput, page: 1 })}
+      <FilterTabs className={styles.tabs} aria-label={word('expenses.certificates.title')} value={tab} onChange={choice => navigate({ tab: choice, search: searchInput, page: 1 })}
         tabs={(Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).map(choice => ({ key: choice, label: word(`expenses.certificates.${choice}`), count: data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0, disabled: loading }))} />
       {/* What can be searched is said once, inside the box (the full list of what matches is the box's spoken name). */}
       <div className="mb-4 grid grid-cols-1 items-end gap-4 lg:grid-cols-3">
@@ -151,7 +163,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
             {otherTabs.map(choice => <div key={choice} className="flex flex-wrap items-center gap-2">
               <p>{formatMessage(word('expenses.certificates.found_elsewhere'), { count: data!.counts[WHT_CERTIFICATE_TABS[choice]], tab: word(`expenses.certificates.${choice}`) })}</p>
               <button type="button" className={ghostClass} disabled={loading} aria-busy={loading}
-                onClick={() => navigate({ tab: choice, order, search, page: 1 })}>{word('expenses.certificates.view')}</button>
+                onClick={() => navigate({ tab: choice, page: 1 })}>{word('expenses.certificates.view')}</button>
             </div>)}
           </div> : rows.length === 0 ? <EmptyState locale={locale} title={word(search.trim() ? 'expenses.certificates.empty_search' : `expenses.certificates.empty_${tab}`)}
             description={!search.trim() && tab === 'pending' ? word('expenses.certificates.empty_hint') : ''} /> : <>
@@ -175,7 +187,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
             </tr>)}</tbody></table>
           </>}
         {total > 0 && <div className={styles.pager}>
-          {totalPages > 1 && <Pagination prominent page={page} totalPages={totalPages} disabled={loading} locale={locale} onPageChange={next => navigate({ tab, order, search, page: next })} />}
+          {totalPages > 1 && <Pagination prominent page={page} totalPages={totalPages} disabled={loading} locale={locale} onPageChange={next => navigate({ page: next })} />}
         </div>}
       </CoverLoader>
       </MangmeeCard>

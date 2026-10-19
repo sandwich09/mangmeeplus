@@ -94,11 +94,13 @@ export function RiskBadge({ risk }: { risk: RiskLevel }) {
  * What a role lets a person do, in the builder's own plain sentences (read-only). `packs` and
  * `corePacks` arrive already limited to what the shop's package has (`roleCanDoPacks`).
  */
-export function RoleCanDoList({ packs, corePacks }: { packs: CapabilityPackView[]; corePacks: CapabilityPackView[] }) {
+export function RoleCanDoList({ packs, corePacks, permissionKeys }: { packs: CapabilityPackView[]; corePacks: CapabilityPackView[]; permissionKeys: readonly string[] }) {
+  const held = new Set(permissionKeys);
+  const heldCore = corePacks.filter(pack => pack.permissionKeys.length > 0 && pack.permissionKeys.every(key => held.has(key)));
   return (
     <>
       {packs.length === 0 ? (
-        <p className="mt-1 text-sm text-gray-600">ทำได้เฉพาะสิ่งที่ทุกบทบาททำได้</p>
+        <p className="mt-1 text-sm text-gray-600">ดูสิทธิ์ที่เปิดไว้ในรายการเมนูด้านล่าง</p>
       ) : (
         <ul className="mt-2 grid gap-2">
           {packs.map((pack) => (
@@ -109,8 +111,8 @@ export function RoleCanDoList({ packs, corePacks }: { packs: CapabilityPackView[
           ))}
         </ul>
       )}
-      {corePacks.length > 0 && (
-        <p className="mt-3 text-sm text-gray-600">ทุกบทบาททำได้: {corePacks.map((pack) => pack.nameTh).join(' · ')}</p>
+      {heldCore.length > 0 && (
+        <p className="mt-3 text-sm text-gray-600">สิทธิ์พื้นฐานที่มี: {heldCore.map((pack) => pack.nameTh).join(' · ')}</p>
       )}
     </>
   );
@@ -1056,7 +1058,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                           const requiredForSettings = p.key === 'pack.company.settings.view' && selectedPacks.includes('pack.company.settings.manage');
                           return (
                             <label key={p.key} className={`flex min-h-11 min-w-0 items-start gap-3 rounded-lg border px-3 py-2.5 text-sm [overflow-wrap:anywhere] ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
-                              <input type="checkbox" className={choiceInputClass} checked={checked} disabled={requiredForSettings} onChange={() => togglePack(p.key)} />
+                              <input type="checkbox" aria-label={p.nameTh} className={choiceInputClass} checked={checked} disabled={requiredForSettings} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
                                 <span className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-semibold text-gray-800">{p.nameTh}</span>

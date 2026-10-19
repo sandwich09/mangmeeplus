@@ -39,7 +39,6 @@ import {
   disableRole,
   getAccessMatrix,
   listCapabilityPacks,
-  listEmployees,
   listRoleTemplates,
   listRoles,
   updateRole,
@@ -153,8 +152,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
   const [roleQuery, setRoleQuery] = useState('');
   const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
-  const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
-  const [staffCountsAvailable, setStaffCountsAvailable] = useState(false);
   const [packModules, setPackModules] = useState<Array<{ module: string; packs: CapabilityPackView[] }>>([]);
   const [templates, setTemplates] = useState<RoleTemplate[]>([]);
   const [roleOptionsAvailable, setRoleOptionsAvailable] = useState(false);
@@ -187,10 +184,9 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
     if (showLoading) setLoading(true);
     setRolesLoadFailed(false);
     setError(null);
-    const [rolesR, matrixR, employeesR, packsR, templatesR] = await Promise.allSettled([
+    const [rolesR, matrixR, packsR, templatesR] = await Promise.allSettled([
       listRoles(companyId),
       getAccessMatrix(companyId),
-      canReadEmployees ? listEmployees(companyId) : Promise.resolve([]),
       listCapabilityPacks(companyId),
       listRoleTemplates(companyId),
     ]);
@@ -202,14 +198,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
       setRolesLoadFailed(true);
     }
     setMatrix(matrixR.status === 'fulfilled' ? matrixR.value : null);
-    if (canReadEmployees && employeesR.status === 'fulfilled') {
-      const counts: Record<string, number> = {};
-      for (const emp of employeesR.value as Array<{ roles: { id: string }[] }>) {
-        for (const r of emp.roles) counts[r.id] = (counts[r.id] ?? 0) + 1;
-      }
-      setStaffCounts(counts);
-      setStaffCountsAvailable(true);
-    } else setStaffCountsAvailable(false);
     if (packsR.status === 'fulfilled') {
       setPackModules(packsR.value.modules);
       setRoleOptionsAvailable(true);
@@ -220,13 +208,13 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
     if (templatesR.status === 'fulfilled') setTemplates(templatesR.value);
     else setTemplates([]);
     setLoading(false);
-  }, [canReadEmployees, companyId, locale, viewerPermissions]);
+  }, [companyId]);
 
   useEffect(() => { void reload(); return () => { generation.current++; }; }, [reload]);
 
   const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
   const selectedRole = useMemo(
-    () => roles.find((r) => r.id === roleParam) ?? roles[0] ?? null,
+    () => roleParam ? roles.find((r) => r.id === roleParam) ?? null : roles[0] ?? null,
     [roles, roleParam],
   );
   const roleEditable = Boolean(canManageRoles && selectedRole && isRoleEditableByCompany(selectedRole));
@@ -274,18 +262,20 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const selectedPacks = selectedRole ? roleCanDoPacks(selectedRole.permissionKeys, allPacks) : [];
   const corePacks = allPacks.filter((pack) => pack.isCore && !pack.locked);
   // On a narrow screen: the list, or one role (or the form for a new one).
-  const narrowDetail = mode === 'create' || Boolean(roleParam);
+  const missingRole = Boolean(roleParam && !selectedRole);
+  const narrowDetail = mode === 'create' || Boolean(roleParam && selectedRole);
   const filteredRoles = roles.filter(role => roleDisplayName(role, locale).toLowerCase().includes(roleQuery.trim().toLowerCase()));
 
   return (
     <MangmeePage
       title="บทบาทและสิทธิ์"
-      back={roleParam && mode === 'view' ? <div className="lg:hidden"><BackLink href={pathname} label="กลับไปบทบาททั้งหมด" /></div> : undefined}
+      back={roleParam && selectedRole && mode === 'view' ? <div className="lg:hidden"><BackLink href={pathname} label="กลับไปบทบาททั้งหมด" /></div> : undefined}
       actions={canManageRoles && mode !== 'create' ? (
         <button type="button" className={cx(primaryButtonClass, narrowDetail && 'hidden lg:inline-flex')} disabled={!roleOptionsAvailable} onClick={() => setMode('create')}>เพิ่มบทบาท</button>
       ) : undefined}
     >
       {error && <Notice tone="error">{error}</Notice>}
+      {missingRole && mode === 'view' && <Notice tone="info">ไม่พบบทบาทนี้แล้ว</Notice>}
       {canManageRoles && !roleOptionsAvailable && (
         <Notice tone="warning" action={<button type="button" className={secondaryButtonClass} onClick={() => void reload()}>ลองอีกครั้ง</button>}>
           ยังโหลดตัวเลือกสำหรับกำหนดบทบาทไม่ได้
@@ -322,7 +312,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                   <span className="min-w-0 flex-1">
                     <span className="block break-words text-base font-semibold text-gray-900">{roleDisplayName(role, locale)}</span>
                     <span className="mt-0.5 block text-sm text-gray-500">
-                      {disabled ? 'ปิดใช้งาน' : `${staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน · ` : ''}${role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}`}
+                      {disabled ? 'ปิดใช้งาน' : `${role.activeEmployeeCount !== undefined ? `${role.activeEmployeeCount} คน · ` : ''}${role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}`}
                     </span>
                   </span>
                 </button>
@@ -351,7 +341,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
           <div className="min-w-0 space-y-3">
             {selectedRole.isSystem && roleEditable && (
               <Notice tone="warning">
-                บทบาทมาตรฐาน: บันทึกแล้วร้านจะได้สำเนาของตัวเอง {staffCountsAvailable ? `พนักงาน ${staffCounts[selectedRole.id] ?? 0} คน` : 'พนักงานที่ใช้บทบาทนี้'}ย้ายมาใช้สำเนานี้
+                บทบาทมาตรฐาน: บันทึกแล้วร้านจะได้สำเนาของตัวเอง {selectedRole.activeEmployeeCount !== undefined ? `พนักงาน ${selectedRole.activeEmployeeCount} คน` : 'พนักงานที่ใช้บทบาทนี้'}ย้ายมาใช้สำเนานี้
               </Notice>
             )}
             <RoleBuilder
@@ -372,7 +362,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
               <div className="min-w-0">
                 <h2 className="break-words text-xl font-bold text-gray-900">{roleDisplayName(selectedRole, locale)}</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  {selectedRole.isSystem && staffCountsAvailable ? `${staffCounts[selectedRole.id] ?? 0} คน · ` : ''}{selectedRole.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}
+                  {selectedRole.isSystem && selectedRole.activeEmployeeCount !== undefined ? `${selectedRole.activeEmployeeCount} คน · ` : ''}{selectedRole.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}
                 </p>
                 {/* A standard role's description is the server's list of its menus, which the table below already says. */}
                 {!selectedRole.isSystem && selectedRole.description && <p className="mt-1 break-words text-sm text-gray-600">{selectedRole.description}</p>}
@@ -405,7 +395,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
               {allPacks.length > 0 && (
                 <div data-testid="role-can-do">
                   <h3 className="text-sm font-semibold text-gray-900">บทบาทนี้ทำอะไรได้</h3>
-                  <RoleCanDoList packs={selectedPacks} corePacks={corePacks} />
+                  <RoleCanDoList packs={selectedPacks} corePacks={corePacks} permissionKeys={selectedRole.permissionKeys} />
                 </div>
               )}
               <h3 className="text-sm font-semibold text-gray-900">สิทธิ์เข้าถึงเมนู</h3>
@@ -483,7 +473,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
             </div>
             </div>}
           </MangmeeCard>
-        ) : (
+        ) : !missingRole && (
           <MangmeeCard className="p-6 text-sm text-gray-500 lg:hidden">ยังไม่มีบทบาทในร้านนี้</MangmeeCard>
         )}
         </div>

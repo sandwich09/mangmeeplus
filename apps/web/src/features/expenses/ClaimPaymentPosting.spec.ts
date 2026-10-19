@@ -44,8 +44,8 @@ test('lists each unposted claim payout in plain Thai with its own posting action
   // What was paid, to whom, when — the facts an accountant checks before posting.
   assert.match(text, /RB-202602-0001/);
   assert.match(text, /จ่ายคืน สมชาย ใจดี · เลขที่จ่าย RBPAY-202602-000001/);
-  assert.match(text, /฿500\.50/);
-  assert.match(text, /฿1,289\.00/);
+  assert.match(text, /500\.50 บาท/);
+  assert.match(text, /1,289\.00 บาท/);
   assert.match(text, /จ่ายเมื่อ 1 ก\.พ\. 2569/);
   // A payout still waiting and one whose last attempt failed read differently, and so do their buttons.
   const [waitingRow, failedRow] = html.split('<li ').slice(1).map(visibleText);
@@ -70,7 +70,7 @@ test('shows no machine token: no ids, status keys, currency code or ISO date', a
 test('a row with no claim number, payer name or payment number falls back to words, never to an id', async () => {
   const bare: UnpostedClaimPayment = { paymentId: 'cmpaymentbare0000003', reimbursementRequestId: 'cmrequest0000000003', paidAmount: '75', currency: 'THB', paidAt: '2026-02-03T00:00:00.000Z', postingStatus: 'pending' };
   const text = visibleText(await render({ rows: [bare] }));
-  assert.match(text, /ใบเบิก ฿75\.00 จ่ายคืน พนักงาน จ่ายเมื่อ 3 ก\.พ\. 2569/);
+  assert.match(text, /ใบเบิก 75\.00 บาท จ่ายคืน พนักงาน จ่ายเมื่อ 3 ก\.พ\. 2569/);
   assert.doesNotMatch(text, /เลขที่จ่าย|undefined|null|cmpayment|cmrequest/);
 });
 
@@ -151,8 +151,8 @@ test('reads top to bottom on a 390px phone: stacked cards, amount in view, full-
   assert.doesNotMatch(html, /<table/, 'no table to scroll sideways on a phone');
   assert.match(html, /<li [^>]*class="[^"]*sm:flex/, 'a row only becomes a single line from the sm breakpoint up');
   // The amount is printed once per layout; the phone copy sits beside the claim number.
-  assert.equal((html.match(/sm:hidden[^>]*>฿500\.50</g) ?? []).length, 1);
-  assert.equal((html.match(/hidden [^"]*sm:inline[^>]*>฿500\.50</g) ?? []).length, 1);
+  assert.equal((html.match(/sm:hidden[^>]*>500\.50 บาท</g) ?? []).length, 1);
+  assert.equal((html.match(/hidden [^"]*sm:inline[^>]*>500\.50 บาท</g) ?? []).length, 1);
   assert.equal((html.match(/<button[^>]*class="[^"]*mangmee-btn[^"]*w-full sm:w-auto/g) ?? []).length, 2);
   // The claim number is a 44px touch target, and it is the number that gets cut when it is too long.
   assert.equal((html.match(/<a class="flex min-h-11 min-w-0 items-center [^"]*" href="[^"]*"><span class="truncate">/g) ?? []).length, 2,

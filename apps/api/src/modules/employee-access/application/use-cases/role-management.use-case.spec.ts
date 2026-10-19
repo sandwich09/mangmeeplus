@@ -243,7 +243,7 @@ describe('ListRolesUseCase', () => {
   it('FIX-R2 custom-role usage counts the exact assignments that block disabling', async () => {
     const prisma = { client: {
       role: { findMany: async (query: any) => {
-        assert.deepEqual(query.include._count.select.memberships.where, { membership: { status: { in: ['ACTIVE', 'INVITED'] } } });
+        assert.deepEqual(query.include._count.select.memberships.where, { membership: { companyId: COMPANY_ID, status: { in: ['ACTIVE', 'INVITED'] } } });
         return [{ id: 'custom', key: 'CUSTOM', name: 'ผู้ช่วย', scopeKey: COMPANY_ID, isSystem: false, status: 'ACTIVE', permissions: [], _count: { memberships: 2 } }];
       } }, companyFeatureEntitlement: { findMany: async () => [] },
     } } as any;
@@ -1018,4 +1018,46 @@ it('create and update persist settings view rights when only manage is selected'
     assert.ok(!role.permissionKeys.includes('company.legal_identity.manage'));
   }
   assert.ok(state.rolePermissions.some(row => row.roleId === created.id && row.permissionId === 'perm-company.setup.read'));
+});
+
+
+it('UAT-R2 role usage counts include system-role memberships in this shop without requiring employee profiles', async () => {
+  const prisma = { client: {
+    role: { findMany: async (query: any) => {
+      assert.deepEqual(query.include._count.select.memberships.where,
+        { membership: { companyId: COMPANY_ID, status: { in: ['ACTIVE', 'INVITED'] } } });
+      return [{ id: 'owner', key: 'OWNER', name: 'Owner', scopeKey: 'system', isSystem: true,
+        status: 'ACTIVE', description: null, permissions: [], _count: { memberships: 1 } }];
+    } }, companyFeatureEntitlement: { findMany: async () => [] },
+  } } as any;
+  const [owner] = await new ListRolesUseCase(prisma).execute(COMPANY_ID);
+  assert.equal(owner?.activeEmployeeCount, 1);
+});
+
+
+it('UAT-R2 role × menu description × matrix follows raw rights even when no additional work pack is complete', async () => {
+  const { ALL_FEATURE_ENTITLEMENT_KEYS } = await import('@watchdog-bms/contracts');
+  const cases = [
+    { key: 'EMPTY', keys: [], menus: [], expenses: [false, false, false] },
+    { key: 'BASIC', keys: ['dashboard.read', 'notification.read', 'notification.preference.manage'], menus: ['หน้าแรก', 'การแจ้งเตือน'], expenses: [false, false, false] },
+    { key: 'STAFF', keys: ['dashboard.read', 'notification.read', 'notification.preference.manage', 'expense.read_own', 'expense.create', 'expense.update'],
+      menus: ['หน้าแรก', 'ค่าใช้จ่าย+ใบเสร็จ', 'การแจ้งเตือน'], expenses: [true, true, true] },
+  ];
+  const prisma = { client: {
+    role: { findMany: async () => cases.map(row => ({ id: row.key, key: row.key, name: row.key, isSystem: true,
+      scopeKey: 'system', status: 'ACTIVE', description: null, permissions: row.keys.map(key => ({ permission: { key } })), _count: { memberships: 0 } })) },
+    companyFeatureEntitlement: { findMany: async () => ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({ featureKey, enabled: true })) },
+  } } as any;
+  const list = new ListRolesUseCase(prisma);
+  const roles = await list.execute(COMPANY_ID);
+  const matrix = await new GetAccessMatrixUseCase(list, prisma).execute(COMPANY_ID);
+  for (const row of cases) {
+    const role = roles.find(role => role.key === row.key)!;
+    const projected = matrix.rows.find(role => role.roleKey === row.key)!;
+    const shownMenus = matrix.menus.filter(menu => projected.menus[menu.id]?.view).map(menu => menu.labelTh);
+    assert.deepEqual(shownMenus, row.menus, row.key);
+    assert.deepEqual(['view', 'create', 'edit'].map(action => projected.menus.expenses?.[action as 'view' | 'create' | 'edit']), row.expenses, row.key);
+    if (row.menus.length) assert.equal(role.description, `เมนูที่บทบาทนี้มีสิทธิ์ใช้: ${row.menus.join(' · ')}`, row.key);
+    else assert.equal(role.description, 'สิทธิ์ของบทบาทขึ้นอยู่กับเมนูที่บริษัทเปิดใช้');
+  }
 });

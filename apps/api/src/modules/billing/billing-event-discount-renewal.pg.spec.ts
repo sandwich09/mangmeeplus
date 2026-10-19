@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingPurchaseMode } from '@watchdog-bms/contracts';
+import { eventDiscountAmounts, eventDiscountDocumentDescription, type EventDiscountSnapshot } from './domain/billing-event-discount.logic';
 import { PrismaClient } from '../../generated/prisma/client';
-import { BillingService } from './application/billing.service';
+import { BillingService, type BillingSnapshot } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { BillingCollection } from './application/billing-collection';
 import { StripeRequestError } from './infrastructure/stripe.client';
@@ -14,6 +15,76 @@ import { detectBillingIssue } from './application/billing-issues';
 import { BillingRefundsService } from './application/billing-refunds.service';
 
 const databaseUrl = process.env.BILLING_EVENT_DISCOUNT_RENEWAL_TEST_DATABASE_URL;
+
+/** Unit-test the real Checkout payload after reservation; transaction/permission rules are covered by the PG cases. */
+async function documentCheckoutPayload(snapshot: BillingSnapshot) {
+  const account = { id: 'account', customerId: 'cus_test', livemode: false }, attempt = { id: 'attempt', quoteSnapshot: snapshot };
+  let transactions = 0, payload: any;
+  const service = {
+    prisma: { client: {
+      billingQuote: { findUnique: async () => null },
+      $transaction: async () => ++transactions === 1 ? { account, attempt, fresh: true } : undefined,
+      billingAttempt: { updateMany: async () => ({ count: 1 }), findUniqueOrThrow: async () => ({ status: 'OPEN' }) },
+    } },
+    config: { sesWebBaseUrl: 'https://app.example.test' }, assertTaxSettings: async () => {},
+    stripe: { enabled: true, livemode: false, assertAccount: async () => {}, list: async () => [],
+      request: async (method: string, path: string, body: any) => {
+        if (method === 'GET' && path === '/customers/cus_test') return { id: account.customerId, name: snapshot.quote.companyName, metadata: { billingAccountId: account.id } };
+        if (method === 'GET' && path === `/prices/${snapshot.priceId}`) return { id: snapshot.priceId, object: 'price', product: snapshot.productId,
+          livemode: false, active: true, type: 'recurring', currency: 'thb', unit_amount: snapshot.quote.offer.priceSatang,
+          recurring: { interval: snapshot.quote.offer.interval, interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit' };
+        assert.equal(method, 'POST'); assert.equal(path, '/checkout/sessions'); payload = body;
+        return { id: 'cs_test', object: 'checkout.session', mode: body.mode, livemode: false, client_reference_id: attempt.id,
+          customer: account.customerId, metadata: body.metadata, url: 'https://checkout.stripe.com/test' };
+      } },
+  } as unknown as BillingService;
+  const result = await BillingService.prototype.checkout.call(service, { companyId: 'shop', userId: 'owner' } as any,
+    { quoteId: 'quote', consentRevision: 'revision', accepted: true, channel: 'web' }, 'document-payload-test');
+  assert.equal(result.state, 'OPEN');
+  return payload;
+}
+
+// These document payload checks are pure; only the integration tests below need PostgreSQL.
+for (const interval of ['month', 'year'] as const) for (const purchaseMode of ['CARD_ONCE', 'PROMPTPAY_ONCE', 'CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
+  test(`UAT-Q3b Checkout document payload with and without discount: ${interval} ${purchaseMode}`, async () => {
+    const offer = billingOffer('STARTER_249', interval), applied = eventDiscountAmounts(offer.priceSatang, 1000, 'NOT_VAT_REGISTERED')!;
+    const discount: EventDiscountSnapshot = { choice: 'USE', ticketSerial: 'ticket', eventName: 'event4', expiresAt: '2026-12-01T00:00:00.000Z',
+      discountSatang: 1000, shownDiscountSatang: applied.shownDiscountSatang, applied, ticketId: 'ticket', ticketVersion: 1, batchId: 'batch', salesUserId: 'sales' };
+    const snapshot = { quote: { offer, purchaseMode, purchase: { kind: 'INITIAL' as const, previousPaidThrough: null,
+      projectedPaidThrough: '2027-01-01T00:00:00.000Z', receiptUnitsAdded: offer.receiptAllowance, projectedRemainingReceipts: offer.receiptAllowance } },
+      policy: { taxTreatment: 'NOT_VAT_REGISTERED' as const }, eventDiscount: discount };
+    const text = eventDiscountDocumentDescription(snapshot);
+    assert.equal(text, `ราคา ${interval === 'year' ? '2,490.00' : '249.00'} บาท · ส่วนลดจากงาน event4 −10.00 บาท`);
+    assert.doesNotMatch(text!, /฿/);
+    assert.equal(eventDiscountDocumentDescription({ ...snapshot, eventDiscount: undefined }), undefined, 'full price adds no document text');
+    assert.equal(eventDiscountDocumentDescription({ ...snapshot, eventDiscount: { choice: 'DECLINE', offeredTicketId: 'ticket' } }), undefined);
+    if (purchaseMode === 'CARD_AUTO' || purchaseMode === 'PROMPTPAY_RENEW') {
+      assert.equal(eventDiscountDocumentDescription({ ...snapshot, quote: { ...snapshot.quote, purchase: { ...snapshot.quote.purchase, kind: 'REPEAT' } } }), undefined, 'renewal never repeats the first-bill discount text');
+    }
+    assert.equal(offer.priceSatang - applied.shownDiscountSatang, applied.unitAmountSatang, 'description never changes the one discounted unit amount');
+    for (const eventDiscount of [discount, undefined, { choice: 'DECLINE' as const, offeredTicketId: 'ticket' }]) {
+      const payload = await documentCheckoutPayload({ ...snapshot, policy: { ...BILLING_DRAFT_POLICY, ...snapshot.policy },
+        quote: { ...snapshot.quote, companyName: 'ร้านทดสอบ' }, priceId: 'price_test', productId: 'prod_test', eventDiscount } as BillingSnapshot);
+      if (!eventDiscount || eventDiscount.choice === 'DECLINE') {
+        assert.equal(payload.payment_intent_data?.description, undefined);
+        assert.equal(payload.invoice_creation?.invoice_data.description, undefined);
+        if (purchaseMode === 'CARD_AUTO') {
+          assert.equal(payload.mode, 'subscription'); assert.equal(payload.payment_intent_data, undefined);
+          assert.equal(payload.invoice_creation, undefined); assert.deepEqual(payload.subscription_data, { billing_mode: { type: 'classic' }, metadata: payload.metadata });
+          continue;
+        }
+      } else {
+        assert.equal(payload.invoice_creation.invoice_data.description, text);
+        assert.equal(payload.payment_intent_data.description, text);
+      }
+      assert.equal(payload.mode, 'payment');
+      assert.equal(payload.line_items.length, 1);
+      assert.equal(payload.line_items[0].price_data.unit_amount, eventDiscount?.choice === 'USE' ? applied.unitAmountSatang : offer.priceSatang);
+      assert.equal(payload.discounts, undefined);
+      assert.equal(payload.payment_intent_data.setup_future_usage, purchaseMode === 'CARD_AUTO' ? 'off_session' : undefined);
+    }
+  });
+}
 const address = { line1: '99 ถนนทดสอบ', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110' };
 const policy = { ...BILLING_DRAFT_POLICY, portalConfigurationId: 'bpc_synthetic', priceIds: {
   'STARTER_249:month': 'price_StarterMonth', 'STARTER_249:year': 'price_StarterYear', 'BASIC_499:month': 'price_BasicMonth', 'BASIC_499:year': 'price_BasicYear',
@@ -195,6 +266,8 @@ test('CARD_AUTO first bill: discounted one-time Checkout, first period applied, 
     const payload = f.sessions.at(-1)!;
     assert.deepEqual([payload.mode, payload.payment_method_types, payload.payment_intent_data.setup_future_usage, payload.line_items[0].price_data.unit_amount],
       ['payment', ['card'], 'off_session', 39900]);
+    assert.equal(payload.invoice_creation.invoice_data.description, `ราคา 499.00 บาท · ส่วนลดจากงาน ${quoted.eventDiscount!.eventName} −100.00 บาท`);
+    assert.equal(payload.payment_intent_data.description, payload.invoice_creation.invoice_data.description);
     assert.equal((await f.ticket(f.serials[0]!)).state, 'RESERVED');
 
     // Step 2: paid → the first period applies through the one-time path; the renewal slot stays held until the subscription binds.
@@ -269,6 +342,8 @@ test('PROMPTPAY_RENEW first bill: discounted QR payment, then a full-price send_
     const payload = f.sessions.at(-1)!;
     assert.deepEqual([payload.mode, payload.payment_method_types, payload.payment_intent_data.setup_future_usage, payload.line_items[0].price_data.unit_amount],
       ['payment', ['promptpay'], undefined, 39900]);
+    assert.equal(payload.invoice_creation.invoice_data.description, `ราคา 499.00 บาท · ส่วนลดจากงาน ${quoted.eventDiscount!.eventName} −100.00 บาท`);
+    assert.equal(payload.payment_intent_data.description, payload.invoice_creation.invoice_data.description);
     await f.reconcileOneTime(await f.pay(opened.attemptId, 39900, 'promptpay'));
     const [sub] = [...f.subscriptions.values()], account = await f.current();
     assert.deepEqual([sub.collection_method, sub.payment_settings.payment_method_types, sub.items.data[0].price, sub.trial_end],

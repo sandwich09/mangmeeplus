@@ -1,4 +1,5 @@
 'use client';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { formatClaimMoney as formatMoney } from './ReimbursementDetailSections';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -80,7 +81,7 @@ function TablePager({ total, page, totalPages, onPage }: {
 
 export function ClaimQueueMetrics({ metrics }: { metrics: ReturnType<typeof claimQueueMetrics> }) {
   return <MangmeeCard className="p-4"><MetricGrid columns={3} items={[
-    { key: 'all', label: 'ใบเบิก', value: String(metrics.all.count), unit: 'รายการ', note: `ยอดรวม ${amountText(metrics.all.amount)} บาท`, dot: 'bg-gray-400' },
+    { key: 'all', label: 'ใบเบิกในแท็บนี้', value: String(metrics.all.count), unit: 'รายการ', note: `ยอดรวม ${amountText(metrics.all.amount)} บาท`, dot: 'bg-gray-400' },
     { key: 'approval', label: 'รออนุมัติ', value: String(metrics.pendingApproval.count), unit: 'รายการ', note: `${amountText(metrics.pendingApproval.amount)} บาท`, dot: 'bg-amber-400' },
     { key: 'payment', label: 'รอจ่าย', value: String(metrics.pendingPayment.count), unit: 'รายการ', note: `${amountText(metrics.pendingPayment.amount)} บาท`, dot: 'bg-brand-500' },
   ]} /></MangmeeCard>;
@@ -183,7 +184,9 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     void getReimbursementHub(companyId).then(answer => {
       if (!current) return;
       notePolicy(answer);
-      setQueueRead({ companyId, ...answer.queueCounts, listCounts: answer.listCounts });
+      setQueueRead(current => ({ companyId, ...answer.queueCounts, listCounts: { ...answer.listCounts,
+        finance: answer.financeReviewRequired || answer.listCounts?.finance === 0 ? answer.listCounts?.finance
+          : current?.companyId === companyId ? current.listCounts?.finance : undefined } }));
       if (answer.hasApprovalTasks) setAssignedApprovalCompanyId(companyId);
     }).catch(() => { if (current) notePolicy({ financeReviewRequired: true }); })
       .finally(() => { if (current) setProbedApprovalCompanyId(companyId); });
@@ -245,7 +248,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
           {canCreate && <Link href={`/companies/${companyId}/reimbursements/payout-account`}>บัญชีรับเงินคืนของฉัน</Link>}
           {tabs.includes('policy') && <button type="button" onClick={() => chooseTab('policy')}>{HUB_TAB_LABELS.policy}</button>}
         </MoreActions>}
-        {canCreate && tab === 'mine' && <Link href={`/companies/${companyId}/reimbursements/new`} className={btnClass}>+ สร้างใบเบิก</Link>}
+        {canCreate && <Link href={`/companies/${companyId}/reimbursements/new`} className={btnClass}>+ สร้างใบเบิก</Link>}
       </div>}
     >
       {workTabs.length > 0 && <nav aria-label="งานเบิกจ่าย"><FilterTabs aria-label="งานเบิกจ่าย" value={tab} onChange={chooseTab}
@@ -531,10 +534,13 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, detailHref, permiss
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const rows = await listFinanceQueue(companyId); setData(rows); onQueueCount('finance', rows.length); }
+    try { const rows = await listFinanceQueue(companyId); setData(rows); }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId, onQueueCount]);
+  }, [companyId]);
   useEffect(() => { load(); }, [load, refreshKey]);
+  // Older claims retain their finance step. They remain reachable below the pay list, under their own heading.
+  const queueData = useMemo(() => financeStep === false ? data.filter(row => reimbursementHubBucket(row) === 'payment') : data, [data, financeStep]);
+  useEffect(() => { if (!loading && financeStep !== undefined) onQueueCount('finance', queueData.length); }, [loading, financeStep, queueData, onQueueCount]);
 
   /**
    * อนุมัติจ่าย commits its decision before it projects the claim expenses, so a failed call
@@ -558,8 +564,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, detailHref, permiss
   const financeLine = useCallback((r: any): string | undefined => (
     financeStep === true || rowHasFinanceReview(r) ? FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—' : undefined
   ), [financeStep]);
-  const words = financeQueueWords(financeStep === true || data.some(queueRowOffersFinanceReview));
-  const filteredData = useMemo(() => sortClaimRows(data.filter(r => matchesSearch([
+  const words = financeQueueWords(financeStep === true);
+  const searchedData = useMemo(() => sortClaimRows(data.filter(r => matchesSearch([
     r.requestNo,
     r.requesterDisplayNameSnapshot,
     r.lineCount ?? 1,
@@ -571,6 +577,9 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, detailHref, permiss
     r.hasDuplicateBlocker ? reimbursementDuplicateBlockText(r.duplicateReasons) : '',
     claimDeskText(r),
   ], query)), order), [data, query, financeLine, order]);
+  const filteredData = useMemo(() => financeStep === false ? searchedData.filter(row => reimbursementHubBucket(row) === 'payment') : searchedData, [searchedData, financeStep]);
+  const reviewData = financeStep === false ? searchedData.filter(row => reimbursementHubBucket(row) === 'review') : [];
+  const heldData = financeStep === false ? searchedData.filter(row => !['payment', 'review'].includes(reimbursementHubBucket(row))) : [];
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
   useEffect(() => { setPage(1); }, [query, order]);
@@ -610,8 +619,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, detailHref, permiss
           {filteredData.length === 0 ? (
             <div className="mt-3">
               <EmptyState
-                title={data.length === 0 ? words.emptyTitle : 'ไม่พบใบเบิกที่ตรงกับคำค้น'}
-                description={data.length === 0 ? words.emptyDescription : 'ลองล้างคำค้น'}
+                title={queueData.length === 0 ? words.emptyTitle : 'ไม่พบใบเบิกที่ตรงกับคำค้น'}
+                description={queueData.length === 0 ? words.emptyDescription : 'ลองล้างคำค้น'}
               />
             </div>
           ) : (
@@ -619,7 +628,12 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, detailHref, permiss
           )}
           <TablePager from={bounds.from} to={bounds.to} total={filteredData.length}
             page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
-        </MangmeeCard></>
+        </MangmeeCard>
+        {([['รอตรวจสอบการเงิน', 'finance-review', reviewData], ['ต้องตรวจสอบก่อนจ่าย', 'finance-held', heldData]] as const).map(([title, queue, rows]) => rows.length > 0 && <MangmeeCard key={queue} className="p-4">
+          <h2 className="mb-3 text-base font-semibold text-gray-900">{title} ({rows.length})</h2>
+          <div className="max-h-[32rem] overflow-y-auto"><ClaimQueueRows rows={rows} queue={queue} detailHref={detailHref} onOpenDetail={onOpenDetail} order={order} onOrder={() => setOrder(order === 'newest' ? 'oldest' : 'newest')} action={rowButton} /></div>
+        </MangmeeCard>)}
+        </>
       )}
     </div>
   );

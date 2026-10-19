@@ -246,3 +246,42 @@ test('manual wizard shows the server-rounded amount when a unit price changes at
     } finally { view.cleanup(); }
   }
 });
+
+
+test('UAT-T1 substitute choices expose their visible Thai names instead of stored values', () => {
+  const view = setup(/$^/);
+  const detail = view.state.detail, evidence = view.state.receiptEvidence;
+  try {
+    Object.assign(view.state, { detail: null, receiptEvidence: null, activeStep: 'expense', entryMode: 'new' });
+    view.render();
+    assert.equal(view.find('ChoiceRow', p => p.value === 'new')['aria-label'], 'ยังไม่ได้บันทึก');
+    Object.assign(view.state, { detail, activeStep: 'details' }); view.render();
+    assert.ok(view.find('ChoiceRow', p => p.checked === view.state.consent)['aria-label']);
+    assert.match(view.find('ChoiceRow', p => p.checked === view.state.paidInFullAcknowledged && p['aria-label']?.startsWith('จ่ายครบ'))['aria-label'], /100.00 บาท/);
+    view.state.activeStep = 'method'; view.render();
+    assert.equal(view.find('ChoiceRow', p => p.value === 'DIGITAL')['aria-label'], 'เซ็นออนไลน์');
+    assert.equal(view.find('ChoiceRow', p => p.value === 'PAPER')['aria-label'], 'พิมพ์แล้วเซ็นบนกระดาษ');
+    Object.assign(view.state, { receiptEvidence: evidence, activeStep: 'certify' }); view.render();
+    assert.equal(view.find('ChoiceRow', p => p['aria-labelledby'])['aria-labelledby'], 'substitute-certify-label');
+  } finally { view.cleanup(); }
+});
+
+test('UAT-T1 substitute summary names shop funding in one phrase and unnumbered picker dates have no leading separator', () => {
+  const view = setup(/$^/);
+  const text = (node: any): string => Array.isArray(node) ? node.map(text).join('') : React.isValidElement(node) ? text((node.props as any).children) : typeof node === 'string' || typeof node === 'number' ? String(node) : '';
+  try {
+    Object.assign(view.state, { activeStep: 'done', receiptEvidence: { ...view.state.receiptEvidence, status: 'ISSUED', artifactAttachmentId: 'issued' } });
+    view.render();
+    assert.ok(view.find('dt', p => p.children.includes('จ่ายจาก')));
+    assert.ok(view.find('dd', p => p.children.includes('เงินของร้าน')));
+    Object.assign(view.state, { detail: null, receiptEvidence: null, activeStep: 'expense', entryMode: 'existing', candidatesLoading: false,
+      candidates: [{ id: 'expense', expenseNumber: null, grandTotalAmount: '100', expenseDate: '2026-10-19', lines: [{ description: 'ผัก' }] }], candidateTotal: 1 });
+    view.render();
+    const date = view.find('span', p => p.className === 'mt-1 block text-sm text-gray-600');
+    assert.equal(text(date.children), '19 ต.ค. 2569');
+    const { MIME_TYPE_LABELS } = require('./expenses.model');
+    const { workspaceDictionary } = require('@/common/i18n/workspace-dictionary');
+    assert.equal(MIME_TYPE_LABELS['image/png'], 'รูปภาพ');
+    assert.equal(workspaceDictionary.th['expenses.ai_prefill_complete'], 'ข้อมูลพร้อมตรวจแล้ว ตรวจทานให้ตรงกับใบเสร็จ');
+  } finally { view.cleanup(); }
+});

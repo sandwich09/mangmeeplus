@@ -11,7 +11,7 @@ import { json, unique } from '../harness/e2e-utils';
 import { QA_ACCOUNTS } from '../harness/roles';
 import { AFTER_PRESS, FIRST_SIGHT, cardWith, expectInSight, pressMenu } from './journey-kit';
 
-type Role = { id: string; name: string; status: string; isSystem: boolean; permissionKeys: string[] };
+type Role = { id: string; key: string; name: string; status: string; isSystem: boolean; permissionKeys: string[]; activeEmployeeCount?: number };
 type Pack = { key: string; isCore?: boolean; permissionKeys: string[] };
 type Employee = {
   id: string; displayName: string; email: string; status: string; mustChangePassword: boolean;
@@ -73,6 +73,26 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     }
   });
 
+  await test.step('obsolete role links show the list; the owner count includes the owner account', async () => {
+    const api = await apiAs('OWNER');
+    const roles = await json<Role[]>(await api.get(`companies/${shop}/settings/roles`, { headers: { 'X-Company-Id': shop } }));
+    const ownerRole = roles.find(role => role.key === 'OWNER')!;
+    expect(ownerRole.activeEmployeeCount).toBeGreaterThan(0);
+    for (const width of [390, 1280, 1556]) {
+      await owner.setViewportSize({ width, height: 1000 });
+      await owner.goto(`/companies/${shop}/settings/permissions?role=missing-old-role`, FIRST_SIGHT);
+      await expect(main.getByText('ไม่พบบทบาทนี้แล้ว', { exact: true })).toBeVisible(AFTER_PRESS);
+      await expect(main.getByRole('searchbox', { name: 'ค้นหาบทบาท', exact: true })).toBeVisible();
+      await expect(main.getByTestId('role-permission-matrix')).toHaveCount(0);
+      const ownerRow = cardWith(owner, 'บทบาททั้งหมด').getByRole('button').filter({ has: owner.getByText('เจ้าของกิจการ', { exact: true }) });
+      await expect(ownerRow).toContainText(`${ownerRole.activeEmployeeCount} คน`);
+      await ownerRow.click();
+      await expect(main.getByRole('heading', { name: 'เจ้าของกิจการ', exact: true })).toBeVisible(AFTER_PRESS);
+      await expect(main.getByText('ไม่พบบทบาทนี้แล้ว', { exact: true })).toHaveCount(0);
+      await expect(main.getByTestId('role-permission-matrix')).toBeVisible();
+    }
+  });
+
   await test.step('manager cannot switch a people-manager off; a shared account explains its own reset and shop email', async () => {
     const manager = await pageAs('MANAGER');
     await manager.goto(`/companies/${shop}/settings/access-overview?person=seed-plain-profile-manager`, FIRST_SIGHT);
@@ -98,7 +118,8 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     const editor = main.locator('form').filter({ has: owner.getByRole('heading', { name: 'เพิ่มบทบาท', exact: true }) });
     await expect(editor.getByText('เลือกสิ่งที่บทบาทนี้ทำได้เพิ่ม', { exact: true })).toBeVisible();
     await editor.getByRole('textbox', { name: /^ชื่อบทบาท/ }).fill(roleName);
-    const capture = editor.getByRole('checkbox', { name: /^บันทึกค่าใช้จ่ายของฉัน/ });
+    const capture = editor.getByRole('checkbox', { name: 'บันทึกค่าใช้จ่ายของฉัน', exact: true });
+    await expect(editor.getByRole('checkbox', { name: 'on', exact: true })).toHaveCount(0);
     await capture.check();
     await expect(capture).toBeChecked();
     await expect(editor.locator('input[type="checkbox"]:checked')).toHaveCount(1);
@@ -141,6 +162,7 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await expect(credentials).toContainText(username);
     await expect(credentials).toContainText('เขาต้องตั้งรหัสผ่านใหม่เมื่อเข้าสู่ระบบครั้งแรก');
     // The screen generates the first password; a person reads this handoff, not a hidden API response.
+    await expect(main.getByAltText(`QR เชื่อม LINE ของ ${displayName}`, { exact: true })).toBeVisible();
     temporaryPassword = (await credentials.locator('dd[data-secret]').innerText()).trim();
     expect(Boolean(temporaryPassword), 'a one-time password is handed to the preparer').toBe(true);
     await main.getByRole('button', { name: 'ไปรายชื่อพนักงาน', exact: true }).click();
@@ -289,11 +311,30 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await test.step('editing a disabled employee keeps that state; its result can re-enable them without the draft API', async () => {
       await main.getByRole('button', { name: 'แก้ไขข้อมูล', exact: true }).click();
       await expect(heading(owner, `แก้ไขข้อมูล ${displayName}`)).toBeVisible(FIRST_SIGHT);
-      await main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true }).click();
-      await expect(main.getByRole('status').filter({ hasText: `บันทึกข้อมูลของ ${displayName} แล้ว ยังปิดใช้งานอยู่` })).toBeVisible(AFTER_PRESS);
-      await expect(main).not.toContainText('ยังเป็นร่าง');
-      await main.getByRole('button', { name: 'เปิดใช้งานพนักงาน', exact: true }).click();
-      await expect(toast(owner, `เปิดใช้งาน ${displayName} แล้ว`)).toBeVisible(AFTER_PRESS);
+      let issued = 0;
+      const countIssue = (request: import('@playwright/test').Request) => {
+        if (request.method() === 'POST' && request.url().endsWith('/line-link-token')) issued++;
+      };
+      owner.on('request', countIssue);
+      try {
+        await main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true }).click();
+        await expect(main.getByRole('status').filter({ hasText: `บันทึกข้อมูลของ ${displayName} แล้ว ยังปิดใช้งานอยู่` })).toBeVisible(AFTER_PRESS);
+        expect(issued).toBe(0);
+        await expect(main.getByAltText(`QR เชื่อม LINE ของ ${displayName}`, { exact: true })).toHaveCount(0);
+        await expect(main.getByRole('button', { name: 'ออก QR ใหม่', exact: true })).toHaveCount(0);
+        await expect(main).not.toContainText('ยังเป็นร่าง');
+        await main.getByRole('button', { name: 'เปิดใช้งานพนักงาน', exact: true }).click();
+        await expect(toast(owner, `เปิดใช้งาน ${displayName} แล้ว`)).toBeVisible(AFTER_PRESS);
+        expect(issued).toBe(0);
+        await expect(main.getByRole('button', { name: 'ออก QR ใหม่', exact: true })).toBeEnabled(AFTER_PRESS);
+        const [issue] = await Promise.all([
+          owner.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/line-link-token')),
+          main.getByRole('button', { name: 'ออก QR ใหม่', exact: true }).click(),
+        ]);
+        expect(issue.ok()).toBe(true);
+        await expect(main.getByAltText(`QR เชื่อม LINE ของ ${displayName}`, { exact: true })).toBeVisible(AFTER_PRESS);
+        expect(issued).toBe(1);
+      } finally { owner.off('request', countIssue); }
       await member.reload();
       // Back in the shop on whatever page the member had open (the branches page from the steps above), no longer refused.
       await expect(member.locator('main').getByRole('heading', { level: 1 })).toBeVisible(FIRST_SIGHT);

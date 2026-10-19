@@ -55,6 +55,18 @@ const FORMS = [
   { key: 'PND53', short: 'ภ.ง.ด.53', card: 'ภ.ง.ด.53 (จ่ายให้บริษัท)', paid: '10,000.00', withheld: '300.00' },
 ] as const;
 
+async function addBranch(page: Page, name: string, code: string, taxCode?: string) {
+  const main = page.locator('main');
+  await pressMenu(page, 'สาขา', 'ตั้งค่าร้าน');
+  await main.getByRole('button', { name: '+ เพิ่มสาขา', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'เพิ่มสาขา' });
+  await dialog.getByRole('textbox', { name: 'ชื่อสาขา', exact: true }).fill(name);
+  await dialog.getByRole('textbox', { name: /^รหัสสาขา ชื่อย่อ/ }).fill(code);
+  if (taxCode) await dialog.getByRole('textbox', { name: /^รหัสสาขาภาษี/ }).fill(taxCode);
+  await dialog.getByRole('button', { name: 'เพิ่มสาขา', exact: true }).click();
+  await expect(dialog).toBeHidden(AFTER_PRESS);
+}
+
 test('@journey withholding forms: three paid expenses, the shop fault fixed through its link, both forms and a 50 ทวิ downloaded, the month filed', async ({ authedPage: page, api }) => {
   test.setTimeout(600_000);
   page.setDefaultTimeout(30_000);
@@ -84,12 +96,12 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
   await expect(page.locator('header').getByText('Bloom Beauty Clinic', { exact: true })).toBeVisible(FIRST_SIGHT);
 
   const personExpense = await test.step('expense 1: a person, service 3% of 4,000, confirmed and paid', () => recordExpenseByHand(page, {
-    branch: BRANCH, item: unique('ค่าจ้างช่างซ่อมแอร์'), price: '4000', total: '฿4,000.00', seller: person,
+    branch: BRANCH, item: unique('ค่าจ้างช่างซ่อมแอร์'), price: '4000', total: '4,000.00 บาท', seller: person,
     withholding: {
-      payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿120.00',
+      payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '120.00 บาท',
       taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900',
     },
-    toPay: '฿3,880.00', pay: true,
+    toPay: '3,880.00 บาท', pay: true,
   }));
 
   await test.step('the 50 ทวิ card of that expense is off and says what the shop lacks', async () => {
@@ -102,12 +114,12 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
   });
 
   const companyExpense = await test.step('expense 2: a company, service 3% of 10,000, confirmed and paid', () => recordExpenseByHand(page, {
-    branch: BRANCH, item: unique('ค่าทำป้ายหน้าร้าน'), price: '10000', total: '฿10,000.00', seller: company,
+    branch: BRANCH, item: unique('ค่าทำป้ายหน้าร้าน'), price: '10000', total: '10,000.00 บาท', seller: company,
     withholding: {
-      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '฿300.00',
+      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '300.00 บาท',
       taxId: '0105564000128', address: '45 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500',
     },
-    toPay: '฿9,700.00', pay: true,
+    toPay: '9,700.00 บาท', pay: true,
   }));
 
   await test.step('ภาษีหัก ณ ที่จ่าย: each card counts one payment and a download press explains the missing shop facts', async () => {
@@ -172,10 +184,10 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
 
   const prizeExpense = await test.step('same person: prize 5%, a second PND3 payment without blocking either form', async () => {
     const expense = await recordExpenseByHand(page, {
-      branch: BRANCH, item: unique('รางวัลประกวดจัดหน้าร้าน'), price: '2000', total: '฿2,000.00', seller: person,
+      branch: BRANCH, item: unique('รางวัลประกวดจัดหน้าร้าน'), price: '2000', total: '2,000.00 บาท', seller: person,
       withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'รางวัลจากการประกวด แข่งขัน หรือชิงโชค (บุคคลธรรมดา) · หัก 5%',
-        rate: '5', withheld: '฿100.00', taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900' },
-      toPay: '฿1,900.00', pay: true,
+        rate: '5', withheld: '100.00 บาท', taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900' },
+      toPay: '1,900.00 บาท', pay: true,
     });
     await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
     await expectFormTotals(card(FORMS[0].card), 2, '6,000.00', '220.00', dueDate);
@@ -184,20 +196,10 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     return expense;
   });
 
-  async function addBranch(name: string, code: string, taxCode?: string) {
-    await pressMenu(page, 'สาขา', 'ตั้งค่าร้าน');
-    await main.getByRole('button', { name: '+ เพิ่มสาขา', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'เพิ่มสาขา' });
-    await dialog.getByRole('textbox', { name: 'ชื่อสาขา', exact: true }).fill(name);
-    await dialog.getByRole('textbox', { name: /^รหัสสาขา ชื่อย่อ/ }).fill(code);
-    if (taxCode) await dialog.getByRole('textbox', { name: /^รหัสสาขาภาษี/ }).fill(taxCode);
-    await dialog.getByRole('button', { name: 'เพิ่มสาขา', exact: true }).click();
-    await expect(dialog).toBeHidden(AFTER_PRESS);
-  }
   // S2.3 forbids changing the effective mode of an already-filed month: answer BEFORE filing.
   // The new branch's payment is recorded AFTER filing, so the kept head-office paper is still tested.
   await test.step('add a paying branch and choose แต่ละสาขาจ่ายเอง before the first paper is filed', async () => {
-    await addBranch(branchName, `T${Date.now().toString(36)}`, '00009');
+    await addBranch(page, branchName, `T${Date.now().toString(36)}`, '00009');
     await chooseThemedOption(page, main.getByRole('combobox', { name: 'ผู้ที่จ่ายเงินและหักภาษี', exact: true }), 'แต่ละสาขาจ่ายเอง');
     await expect(main.getByRole('combobox', { name: 'ใช้ตั้งแต่เดือน', exact: true })).toHaveText(thaiMonth());
     await main.getByRole('button', { name: 'บันทึกวิธีจ่าย', exact: true }).click();
@@ -345,9 +347,9 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
   // branch this person chose last in this browser.
   async function branchExpense(branch: string, offered: string, seller: string) {
     return recordExpenseByHand(page, {
-      branch, branchOffered: offered, item: unique('ค่าบริการสาขา'), price: '1000', total: '฿1,000.00', seller,
-      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿30.00', taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900' },
-      toPay: '฿970.00', pay: true,
+      branch, branchOffered: offered, item: unique('ค่าบริการสาขา'), price: '1000', total: '1,000.00 บาท', seller,
+      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '30.00 บาท', taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900' },
+      toPay: '970.00 บาท', pay: true,
     });
   }
   await test.step('a new branch payment has its own paper; the head-office filed bytes never change', async () => {
@@ -374,7 +376,7 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     expect(truth.establishments.map(row => [row.code, row.forms.find(form => form.formType === 'PND3')?.status]).sort()).toEqual([['00000', 'FILED'], ['00009', 'EXPORTED']]);
   });
   await test.step('a branch without a code stays off paper; its link opens the code field and saving returns to this month', async () => {
-    await addBranch(noCodeName, `N${Date.now().toString(36)}`);
+    await addBranch(page, noCodeName, `N${Date.now().toString(36)}`);
     const seller = unique('ผู้รับเงินสาขารอรหัส');
     await branchExpense(noCodeName, branchName, seller);
     await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
@@ -403,10 +405,10 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     const latePayee = unique('ผู้รับเงินหลังยื่น');
     // The step before chose the branch without a code last on this browser: the chooser offers it again.
     await recordExpenseByHand(page, {
-      branch: BRANCH, branchOffered: noCodeName, item: unique('ค่าบริการหลังยื่น'), price: '3000', total: '฿3,000.00', seller: latePayee,
-      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿90.00',
+      branch: BRANCH, branchOffered: noCodeName, item: unique('ค่าบริการหลังยื่น'), price: '3000', total: '3,000.00 บาท', seller: latePayee,
+      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '90.00 บาท',
         taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900' },
-      toPay: '฿2,910.00', pay: true,
+      toPay: '2,910.00 บาท', pay: true,
     });
     await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
     await chooseThemedOption(page, main.getByRole('combobox', { name: 'ยื่นในนาม', exact: true }), 'สำนักงานใหญ่ (00000)');
@@ -460,8 +462,8 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
 
   await test.step('W1/W2: an invoice last month waits unpaid, then belongs to this payment month', async () => {
     const seller = unique('นายทดสอบวันที่จ่าย');
-    const expense = await recordExpenseByHand(page, { branch: BRANCH, lastMonthDay: 28, item: unique('บริการข้ามเดือน'), seller, price: '1000', total: '฿1,000.00', toPay: '฿970.00',
-      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿30.00', taxId: '3101200456789', address: '12 กรุงเทพมหานคร 10900' } });
+    const expense = await recordExpenseByHand(page, { branch: BRANCH, lastMonthDay: 28, item: unique('บริการข้ามเดือน'), seller, price: '1000', total: '1,000.00 บาท', toPay: '970.00 บาท',
+      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '30.00 บาท', taxId: '3101200456789', address: '12 กรุงเทพมหานคร 10900' } });
     const certificate = main.locator('.mangmee-card').filter({ has: page.locator('h2#wht-certificate') });
     await expect(certificate).toContainText('ร่าง · บันทึกการจ่ายก่อนออกหนังสือรับรอง', AFTER_PRESS);
     await expect(certificate.getByRole('button', { name: 'ออกเลขที่และดาวน์โหลด', exact: true })).toHaveCount(0);
@@ -472,8 +474,8 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     await main.getByRole('link', { name: seller, exact: true }).click();
     await expect(main.getByRole('button', { name: 'ไปที่การจ่ายเงิน', exact: true })).toHaveCount(0);
     await main.getByRole('heading', { name: 'การจ่ายเงิน', exact: true }).scrollIntoViewIfNeeded();
-    await main.getByRole('button', { name: 'บันทึกจ่าย ฿970.00', exact: true }).click();
-    await expect(page.getByText('บันทึกจ่ายแล้ว ฿970.00', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await main.getByRole('button', { name: 'บันทึกจ่าย 970.00 บาท', exact: true }).click();
+    await expect(page.getByText('บันทึกจ่ายแล้ว 970.00 บาท', { exact: true }).first()).toBeVisible(AFTER_PRESS);
     await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
     await chooseThemedOption(page, main.getByRole('combobox', { name: 'เดือนที่จ่าย', exact: true }), thaiMonth());
     await expect(paymentRows(main).filter({ hasText: seller })).toContainText(today, AFTER_PRESS);
@@ -483,15 +485,15 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
   });
   await test.step('W6: issue later keeps the real payment day and shows today as the issue day', async () => {
     const seller = unique('นายออกหนังสือรับรองภายหลัง');
-    await recordExpenseByHand(page, { branch: BRANCH, lastMonthDay: 1, item: unique('บริการจ่ายเดือนก่อน'), seller, price: '1000', total: '฿1,000.00', toPay: '฿970.00',
-      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿30.00', taxId: '3101200456789', address: '12 กรุงเทพมหานคร 10900' } });
+    await recordExpenseByHand(page, { branch: BRANCH, lastMonthDay: 1, item: unique('บริการจ่ายเดือนก่อน'), seller, price: '1000', total: '1,000.00 บาท', toPay: '970.00 บาท',
+      withholding: { payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '30.00 บาท', taxId: '3101200456789', address: '12 กรุงเทพมหานคร 10900' } });
     await expect(main.getByRole('button', { name: 'ไปที่การจ่ายเงิน', exact: true })).toHaveCount(0);
     await main.getByRole('heading', { name: 'การจ่ายเงิน', exact: true }).scrollIntoViewIfNeeded();
     await main.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true }).click();
     await page.getByRole('button', { name: 'เดือนก่อนหน้า', exact: true }).click();
     await page.getByRole('button', { name: '5', exact: true }).click();
-    await main.getByRole('button', { name: 'บันทึกจ่าย ฿970.00', exact: true }).click();
-    await expect(page.getByText('บันทึกจ่ายแล้ว ฿970.00', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await main.getByRole('button', { name: 'บันทึกจ่าย 970.00 บาท', exact: true }).click();
+    await expect(page.getByText('บันทึกจ่ายแล้ว 970.00 บาท', { exact: true }).first()).toBeVisible(AFTER_PRESS);
     const certificate = main.locator('.mangmee-card').filter({ has: page.locator('h2#wht-certificate') });
     await certificate.getByRole('button', { name: 'ออกเลขที่และดาวน์โหลด', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'ออกหนังสือรับรอง 50 ทวิ ให้ผู้รับเงิน' });
@@ -514,11 +516,11 @@ test('@journey other company income: accountant workbook without changing the pe
   expect(before.forms.find(form => form.formType === 'PND53')?.status, 'Use the main shop, where no journey files the month').not.toBe('FILED');
   const payee = unique('บริษัท รับจัดงาน');
   await recordExpenseByHand(page, {
-    branch: 'Head Office (สำนักงานใหญ่)', item: unique('เงินได้อื่น'), price: '1000', total: '฿1,000.00', seller: payee,
-    withholding: { payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'อื่นๆ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '฿30.00',
+    branch: 'Head Office (สำนักงานใหญ่)', item: unique('เงินได้อื่น'), price: '1000', total: '1,000.00 บาท', seller: payee,
+    withholding: { payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'อื่นๆ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '30.00 บาท',
       taxId: '0105564000128', address: '45 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500',
       routeHint: 'บอกผู้ทำบัญชีว่าเป็นเงินได้อะไร ผู้ทำบัญชีต้องจัดทำแบบของเดือนนี้เอง' },
-    toPay: '฿970.00', pay: true,
+    toPay: '970.00 บาท', pay: true,
   });
   await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
   const card = page.locator('main .mangmee-card').filter({ has: page.getByRole('heading', { name: 'ภ.ง.ด.53 (จ่ายให้บริษัท)', exact: true }) });
@@ -540,7 +542,7 @@ test('@journey other company income: accountant workbook without changing the pe
 });
 
 /*
- * Found by looking on the proof stack (2026-10-14). These regression tests press what a person presses and assert what that person must then read. Order matters. The first two read Bloom as the first test leaves it. In the main shop, which has several
+ * Found by looking on the proof stack (2026-10-14). These regression tests press what a person presses and assert what that person must then read. The month-display check reads Bloom as the first test leaves it; the empty-form check creates its own branch and payments. In the main shop, which has several
  * branches and has not answered: the next one needs this month's accountant workbook downloaded by "other company
  * income"; the next two work in last month, where nothing was downloaded, and the passing one answers the question; the
  * last one leaves the main shop with head office as its only active branch.
@@ -548,14 +550,14 @@ test('@journey other company income: accountant workbook without changing the pe
 const HEAD = 'Head Office (สำนักงานใหญ่)';
 const SIAM = 'Room45 Eyes Lashes · สยาม';
 const PERSON_SERVICE = {
-  payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '฿30.00',
+  payeeKind: 'บุคคลธรรมดา', incomeType: 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%', rate: '3', withheld: '30.00 บาท',
   taxId: '3101200456789', address: '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900',
 } as const;
 async function paidFromBranch(page: Page, branch: string, options: { offered?: string; lastMonthDay?: number } = {}) {
   const seller = unique('นายสมชาย ช่างหลายสาขา');
   await recordExpenseByHand(page, {
     branch, ...(options.offered && { branchOffered: options.offered }), ...(options.lastMonthDay && { lastMonthDay: options.lastMonthDay }),
-    item: unique('ค่าซ่อมหน้าร้าน'), price: '1000', total: '฿1,000.00', seller, withholding: PERSON_SERVICE, toPay: '฿970.00', pay: !options.lastMonthDay,
+    item: unique('ค่าซ่อมหน้าร้าน'), price: '1000', total: '1,000.00 บาท', seller, withholding: PERSON_SERVICE, toPay: '970.00 บาท', pay: !options.lastMonthDay,
   });
   if (options.lastMonthDay) {
     // These older branch regressions need an actual payment in last month, not just an older invoice.
@@ -565,22 +567,35 @@ async function paidFromBranch(page: Page, branch: string, options: { offered?: s
     await main.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true }).click();
     await page.getByRole('button', { name: 'เดือนก่อนหน้า', exact: true }).click();
     await page.getByRole('button', { name: String(options.lastMonthDay), exact: true }).click();
-    await main.getByRole('button', { name: 'บันทึกจ่าย ฿970.00', exact: true }).click();
-    await expect(page.getByText('บันทึกจ่ายแล้ว ฿970.00', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await main.getByRole('button', { name: 'บันทึกจ่าย 970.00 บาท', exact: true }).click();
+    await expect(page.getByText('บันทึกจ่ายแล้ว 970.00 บาท', { exact: true }).first()).toBeVisible(AFTER_PRESS);
   }
   return seller;
 }
 const formCard = (page: Page, heading: string) => page.locator('main .mangmee-card').filter({ has: page.getByRole('heading', { name: heading, exact: true }) });
 const STOP = 'มีรายการจ่ายจากหลายสาขา บอกก่อนว่าใครจ่ายเงินและหักภาษี';
 
+// This scenario creates its own branch and payments; it does not depend on the long filing journey finishing.
 // A branch's own paper with no payment of a form warns "เดือนนี้ไม่มีรายการหักภาษี ดึงรายการล่าสุดก่อนดาวน์โหลดแบบ" under
 // "เดือนนี้ไม่มีรายการ": the month has payments (head office's) and pulling changes nothing. Head office's empty card has no such line.
 test('@journey withholding: a branch paper with no payment of a form says only that there is none', async ({ authedPage: page }) => {
+  test.setTimeout(240_000);
   const main = page.locator('main');
   await page.goto(`/companies/${SECOND_SHOP}/dashboard`, FIRST_SIGHT);
+  const branchName = unique('สาขาจ่ายให้บุคคลเท่านั้น');
+  await addBranch(page, branchName, `N${Date.now().toString(36)}`, '90009');
+  // Wait for the saved answer before changing it; a previously filed month already has this mode.
+  await expect(main.getByRole('button', { name: 'บันทึกวิธีจ่าย', exact: true })).toBeEnabled(AFTER_PRESS);
+  const mode = main.getByRole('combobox', { name: 'ผู้ที่จ่ายเงินและหักภาษี', exact: true });
+  if ((await mode.innerText()).trim() !== 'แต่ละสาขาจ่ายเอง') {
+    await chooseThemedOption(page, mode, 'แต่ละสาขาจ่ายเอง');
+    await main.getByRole('button', { name: 'บันทึกวิธีจ่าย', exact: true }).click();
+    await expect(main.getByRole('status').filter({ hasText: 'บันทึกวิธีจ่ายแล้ว' })).toContainText(thaiMonth(), AFTER_PRESS);
+  }
+  await paidFromBranch(page, BRANCH);
+  await paidFromBranch(page, branchName, { offered: BRANCH });
   await pressMenu(page, 'ภาษีหัก ณ ที่จ่าย');
-  await main.getByRole('combobox', { name: 'ยื่นในนาม', exact: true }).click(FIRST_SIGHT);
-  await page.getByRole('option', { name: /\(00009\)$/ }).click();
+  await chooseThemedOption(page, main.getByRole('combobox', { name: 'ยื่นในนาม', exact: true }), `${branchName} (90009)`);
   const companies = formCard(page, 'ภ.ง.ด.53 (จ่ายให้บริษัท)');
   await expect(companies.locator('.mangmee-unit').first()).toHaveText(metricText('0', 'รายการ'), AFTER_PRESS);
   await expect(companies.getByText('เดือนนี้ไม่มีรายการ', { exact: true })).toBeVisible();

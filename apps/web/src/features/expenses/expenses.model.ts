@@ -1,6 +1,6 @@
 import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
-import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
+import { JPEG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
@@ -581,7 +581,9 @@ export function reviewValues(detail: ExpenseDetail, prefillCertificatePayee = fa
     ? detail.substituteReceiptEvidence?.payeeName?.trim() : undefined;
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
   const storedPurpose = detail.note?.split(' · ').find((part) => part.trim().startsWith('วัตถุประสงค์:'))?.trim().slice('วัตถุประสงค์:'.length).trim();
-  const businessPurpose = source ? source.header.businessPurpose ?? ''
+  const issuedReceipt = detail.substituteReceiptEvidence?.status === 'ISSUED' ? detail.substituteReceiptEvidence : null;
+  const vendorName = source ? source.header.vendorName || (issuedReceipt ? detail.vendorNameSnapshot || issuedReceipt.payeeName : '') : detail.vendorNameSnapshot;
+  const businessPurpose = source ? source.header.businessPurpose || (issuedReceipt ? storedPurpose || issuedReceipt.businessPurpose : '')
     : storedPurpose ?? detail.substituteReceiptEvidence?.businessPurpose;
   let vatSource = expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson);
   const lines: ExpenseDraftReviewValues['lines'] = detail.lines.map((line) => ({
@@ -631,7 +633,7 @@ export function reviewValues(detail: ExpenseDetail, prefillCertificatePayee = fa
     }
   }
   return {
-    vendorNameSnapshot: payee || (source?.header.vendorName === null ? '' : (detail.vendorNameSnapshot ?? '')),
+    vendorNameSnapshot: vendorName?.trim() ? vendorName : payee ?? '',
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
     vendorAddressSnapshot: detail.vendorAddressSnapshot ?? '',
     vendorBranchCodeSnapshot: detail.vendorBranchCodeSnapshot ?? '',
@@ -645,7 +647,7 @@ export function reviewValues(detail: ExpenseDetail, prefillCertificatePayee = fa
     vatSource,
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value,
       ...(detail.whtInputJson.baseAmount !== undefined && { baseAmount: detail.whtInputJson.baseAmount }) } }),
-    ...(businessPurpose !== undefined && { businessPurpose, originalBusinessPurpose: businessPurpose, originalNote: detail.note }),
+    ...(businessPurpose !== undefined && { businessPurpose, originalBusinessPurpose: source ? source.header.businessPurpose ?? '' : businessPurpose, originalNote: detail.note }),
     lines,
   };
 }
@@ -1296,6 +1298,18 @@ export const ATTACHMENT_PURPOSE_LABELS: Record<string, string> = {
   'expense.signature.asset': 'รูปลายเซ็น',
 };
 
+/** Both signing stages stay stored; the expense viewer presents the issued document once. */
+export function expenseDisplayAttachments(detail: Pick<ExpenseDetail, 'attachments' | 'substituteReceiptEvidence'>) {
+  const certificate = detail.substituteReceiptEvidence;
+  if (certificate?.status !== 'ISSUED' || !certificate.artifactAttachmentId) return detail.attachments;
+  return detail.attachments.filter(file => file.id !== certificate.certifiedArtifactAttachmentId || file.id === certificate.artifactAttachmentId)
+    .map(file => file.id === certificate.artifactAttachmentId ? { ...file, originalFileName: `ใบรับรองแทนใบเสร็จ ${certificate.documentNumber}` } : file);
+}
+
+export function expenseAttachmentTypeLabel(file: ExpenseDetail['attachments'][number], certificate: ExpenseDetail['substituteReceiptEvidence']) {
+  return file.id === certificate?.artifactAttachmentId ? 'ไฟล์เอกสาร' : MIME_TYPE_LABELS[file.mimeType] ?? 'ไฟล์เอกสาร';
+}
+
 /** R11: the hand-signed scan is linked with the certification-chain purpose that system-rendered
  *  artifacts use, so the purpose alone would call a photograph of real ink “เอกสารที่ผ่านการตรวจ”.
  *  It stays visible — that photo is the only place the signatures exist — under its own name. */
@@ -1310,7 +1324,7 @@ export const MIME_TYPE_LABELS: Record<string, string> = {
   'application/pdf': 'เอกสาร PDF',
   'image/jpeg': `รูปภาพ${JPEG_LABEL}`,
   'image/jpg': `รูปภาพ${JPEG_LABEL}`,
-  'image/png': `รูปภาพ${PNG_LABEL}`,
+  'image/png': 'รูปภาพ',
   'image/svg+xml': 'ภาพเวกเตอร์',
 };
 
@@ -1360,7 +1374,8 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
         : assessment.route === 'SUBSTITUTE_RECEIPT' ? { detail: 'ยังไม่ได้ทำใบรับรองแทนใบเสร็จ' } : {}) });
   }
 
-  if (!noReceipt && ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'].includes(detail.sourceDocumentType) && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED') {
+  const invalidSellerTaxId = (detail.vendorTaxIdSnapshot ?? '').replace(/\D/g, '').length === 13 && !thaiTaxIdChecksumValid(detail.vendorTaxIdSnapshot!.replace(/\D/g, ''));
+  if (invalidSellerTaxId || !noReceipt && ['TAX_INVOICE', 'CUSTOMS_VAT_RECEIPT', 'PP36_RECEIPT'].includes(detail.sourceDocumentType) && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED') {
     // OCR/manual entry can keep the dashes as printed on Thai invoices (0-1055-58096-34-8) — compare digits only.
     const taxIdRaw = (detail.vendorTaxIdSnapshot ?? '').trim();
     const taxIdDigits = taxIdRaw.replace(/\D/g, '');
@@ -1951,7 +1966,7 @@ export function expensePaymentFormState(outstanding: string, amount: string, pai
     ? 'กรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
     : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย ตรวจยอดอีกครั้ง'
     : !isCivilDate(paidAt) ? 'เลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
-  const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatted = `${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
   return { prefill, disabledReason, maxPaidAt: today, label: hasRecordedPayments && value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
 }
 

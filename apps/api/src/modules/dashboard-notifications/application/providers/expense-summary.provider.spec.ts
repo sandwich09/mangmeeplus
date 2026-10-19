@@ -75,6 +75,16 @@ describe('ExpenseSummaryProvider', () => {
     assert.deepEqual([...EXPENSE_PENDING_STATUSES], ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']);
   });
 
+  it('UAT-Q1 outstanding sums remaining confirmed unpaid and partially paid balances across all months in the selected branches', async () => {
+    const { provider, calls } = makeSut({ outstanding: '6842.1200' });
+    const [widget] = await provider.collectMetrics({ ...input(), branchIds: ['b1'] });
+    assert.deepEqual(calls[2], { companyId: 'c1', branchId: { in: ['b1'] }, status: 'CONFIRMED',
+      paymentStatus: { in: ['UNPAID', 'PARTIALLY_PAID'] } });
+    const metric = widget.metrics.find(metric => metric.key === 'expense_unpaid_outstanding')!;
+    assert.equal(metric.value, 6842.12);
+    assert.equal(metric.label, 'ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)');
+  });
+
   it('stays normal severity when there is nothing pending or outstanding', async () => {
     const { provider } = makeSut({ confirmedTotal: 0, pendingReview: 0, outstanding: 0 });
     const [widget] = await provider.collectMetrics(input());
