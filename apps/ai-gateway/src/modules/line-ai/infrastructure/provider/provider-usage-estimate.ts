@@ -1,4 +1,3 @@
-import sharp from 'sharp';
 import type { TokenUsage } from '@aws-sdk/client-bedrock-runtime';
 import { AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING, AI_BUDGET_IMAGE_TOKEN_CEILING } from '@watchdog-bms/contracts';
 import { currentBudgetEnvelope } from '../../../../common/usage/usage-context';
@@ -26,6 +25,8 @@ export async function conservativeTimeoutUsage(
   if ('images' in input) {
     for (const image of input.images ?? []) {
       try {
+        // Loaded on use: the AgentCore bundle leaves sharp out, and a top-level import crashed it at start.
+        const { default: sharp } = await import('sharp');
         const { width, height } = await sharp(Buffer.from(image.contentBase64, 'base64')).metadata();
         estimated += width && height ? Math.ceil(width * height / 750) : AI_BUDGET_IMAGE_TOKEN_CEILING;
       } catch {
