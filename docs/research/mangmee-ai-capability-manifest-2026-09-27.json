@@ -3,13 +3,13 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "99986d82330eaed91ae91f6e6cbd830400e1c08b",
-  "checkoutBranch": "claude/line-uat2-20261019",
+  "sourceRevision": "bbc73bf49fe9ae3dc38e8596dd52120734cfa9dc",
+  "checkoutBranch": "claude/line-credit-levers-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "c3a04ae6b3464b353955978bd2b6464485444909fd219cb7dc8dcafe2697d4f7"
+      "sha256": "91dbe74b6c572d610615869e15df90cef91628a3c6ac86df14245f8f3a186b89"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T08:42:07.180Z",
-  "manifestDigest": "f2623df6ae08ca4482050009d1efbf06499842fdd302d0b85c0f014f81210ec3"
+  "generatedAt": "2026-10-19T09:43:58.015Z",
+  "manifestDigest": "2bc6020cd49c563ea37d00d08552a1e4a4b79867368edeff279d0f86d9c8f215"
 }

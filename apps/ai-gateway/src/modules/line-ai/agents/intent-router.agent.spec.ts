@@ -1713,7 +1713,7 @@ it('Fix-up 15: the metered intake selects a catalog action by meaning and ignore
       permissions: ['reimbursement.create'], enabledFeatures: [], inputEvidence: evidence, offeredToolNames: [] } as any);
     assert.equal(calls.length, 1, 'uses the existing intake call');
     assert.match(calls[0]!.systemPrompt!, /For ANY product action how-to/);
-    assert.deepEqual(JSON.parse(calls[0]!.messages[0]!.text).chatActions.map((action: any) => action.id), LINE_CHAT_ACTIONS.map(action => action.id));
+    assert.ok(calls[0]!.systemPrompt!.includes(JSON.stringify(LINE_CHAT_ACTIONS_CONTEXT.chatActions)));
     assert.equal(plan.howToActionId, actionId === 'reimbursement_claim' ? actionId : undefined);
     assert.equal(plan.semanticSubrequests?.[0]?.kind, 'help');
   }
@@ -1733,4 +1733,191 @@ it('Fix-up 17B: personal payout setup and its bank-detail continuation select th
     assert.equal(plan.howToActionId, 'payout_account'); assert.equal(plan.semanticSubrequests?.[0]?.kind, 'help');
     assert.equal(plan.clarifyQuestion, undefined);
   }
+});
+
+// Owner-approved credit levers: exercise the real payload builder, not a parallel serializer.
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { LINE_TOOL_REGISTRY, TIER_FEATURE_PRESETS, extractValueCandidatesV2,
+  type LineIntakeRouteRequest, type LineAiConversationContext } from '@watchdog-bms/contracts';
+import { v2RenderedInput } from '../../../common/usage/ai-budget-provider';
+import { INTAKE_CONSTANT_CALIBRATIONS, intakeConstantParts, scaleIntakeCalibration, REVIEWED_CATALOGUE_TOKEN_BOUND } from '../../../common/usage/intake-token-calibration';
+import { ROLE_GRANTS } from '../../../../../api/src/modules/auth/permission-registry';
+import { APPROVED_PREPARED_FAMILY_KEYS } from './prepared-simple-read-formatter';
+import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
+
+const creditRoot = resolve(__dirname, '../../../../../..');
+const creditModel = 'global.anthropic.claude-sonnet-4-6';
+async function creditRequest(text = 'ค่าอาหาร'): Promise<LineIntakeRouteRequest> {
+  const built = await createLineAiInputEvidence({ turnKey: 'credit-test', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: 1792397640000, rawText: text }] });
+  assert.ok(built);
+  return { requestId: 'credit-test', companyId: 'company-1', userId: 'user-1', locale: 'th', messageText: text,
+    inputEvidence: built.inputEvidence, valueCandidates: await extractValueCandidatesV2(built.inputEvidence, '2026-10-19'),
+    permissions: [...new Set(LINE_TOOL_REGISTRY.flatMap(t => [...(t.requiredPermissions ?? []), ...(t.anyOfPermissions ?? [])]))],
+    enabledFeatures: [...TIER_FEATURE_PRESETS.STARTER_249], offeredToolNames: LINE_TOOL_REGISTRY.map(t => t.name),
+    capabilities: { fusedPlan: true, substituteSemantic: true, reimbursementSemantic: true, advisor: true, responsePreference: true }, attachments: [] };
+}
+async function creditCapture(request: LineIntakeRouteRequest): Promise<ProviderInput> {
+  let captured: ProviderInput | undefined;
+  await new IntentRouterAgent({ generateText: async input => { captured = input;
+    return { ok: false, error: { code: 'PROVIDER_DISABLED', message: 'offline', retryable: false } }; } }, true, {}, false, []).routeIntake(request);
+  assert.ok(captured);
+  return captured;
+}
+
+describe('owner-approved credit payload and estimator', () => {
+  it('shares only byte-identical static catalogue across tenants and keeps authority fresh per turn', async () => {
+    const a = await creditRequest();
+    const first = await creditCapture(a);
+    const second = await creditCapture({ ...await creditRequest('another turn'), companyId: 'other-company', userId: 'other-user', messageText: 'another turn',
+      activeCategories: [{ id: 'private-category', name: 'ชื่อเฉพาะร้าน' }] });
+    assert.equal(first.cacheableContext, second.cacheableContext);
+    const prefix = JSON.parse(first.cacheableContext!);
+    assert.deepEqual(prefix.chatActions, LINE_CHAT_ACTIONS_CONTEXT.chatActions);
+    for (const key of ['companyId', 'userId', 'permissions', 'activeCategories', 'taskProjection', 'inputEvidenceParts', 'messageText']) {
+      assert.equal(prefix[key], undefined, key);
+    }
+    assert.equal(first.cacheableContext!.includes('private-category'), false);
+    const payload = JSON.parse(second.messages[0]!.text);
+    assert.equal(payload.chatActions, undefined);
+    assert.deepEqual(payload.permissions, a.permissions);
+    assert.equal(payload.activeCategories[0].id, 'private-category');
+    const restricted = await creditCapture({ ...a, permissions: [], offeredToolNames: [] });
+    assert.notEqual(first.cacheableContext, restricted.cacheableContext, 'permission-filtered tool catalogue has its own content identity');
+    assert.deepEqual(JSON.parse(restricted.cacheableContext!).chatActions, prefix.chatActions);
+  });
+
+  it('bounds unknown ASCII/hex/Thai/Unicode and native results by bytes, retains media adders, pins the model/prefix', async () => {
+    const input = await creditCapture(await creditRequest());
+    const bound = v2RenderedInput(input, creditModel).inputTokenBound;
+    const audit = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/line-ai-credit-levers-20261019-estimator-evidence.json'), 'utf8'));
+    const recorded = audit.usageSummary.find((row: any) => row.model === creditModel && row.tag === 'line.intake-route');
+    assert.equal(recorded.calls, 2059);
+    assert.ok(audit.systemTokenBound >= audit.maxIsolatedSystemTokens);
+    assert.ok(REVIEWED_CATALOGUE_TOKEN_BOUND >= audit.maxCatalogueTokens * (1 + audit.minimumCoreMarginPercent / 100));
+    assert.ok(bound >= recorded.maxTotalInput, 'greater than every recorded eval intake, including cached tokens');
+    assert.ok(bound <= 51_200, 'typical hold stays within eight baht at FX33 and unchanged output4096');
+    const fallback = v2RenderedInput(input, 'apac.anthropic.claude-3-haiku-20240307-v1:0').inputTokenBound;
+    assert.ok(fallback > bound, 'no tokenizer assumption transfers to another model');
+    assert.ok(v2RenderedInput({ ...input, systemPrompt: input.systemPrompt + ' ' }, creditModel).inputTokenBound > bound);
+    for (const text of ['a'.repeat(4000), '0123456789abcdef'.repeat(300), 'ก฿\u0e3a'.repeat(2000), '🙂漢字\u0301'.repeat(1000), JSON.stringify({ id: 'f'.repeat(64), text: '\\"\n' })]) {
+      const testInput = { messages: [{ role: 'user' as const, text }] };
+      assert.ok(v2RenderedInput(testInput, creditModel).inputTokenBound >= Buffer.byteLength(text) + 4096);
+    }
+    const image = v2RenderedInput({ ...input, images: [{ mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' }] }, creditModel).inputTokenBound;
+    assert.ok(image >= bound + 1024);
+    const unknownPdf = v2RenderedInput({ ...input, documents: [{ mimeType: 'application/pdf', contentBase64: 'bm90LXBkZg==' }] }, creditModel).inputTokenBound;
+    assert.ok(unknownPdf > 160000);
+    const toolsInput = { systemPrompt: 'schema', tools: [{ name: 'test', description: 'schema', inputSchema: { type: 'object' } }],
+      messages: [{ role: 'tool_results' as const, results: [{ toolUseId: 'x', content: '🙂'.repeat(2000), isError: false }] }] };
+    assert.ok(v2RenderedInput(toolsInput, creditModel).inputTokenBound >= 8000 + 4096);
+  });
+
+  it('trims ordinary history to four turns and three reads, retaining task/question history without verified retained evidence', () => {
+    const context: LineAiConversationContext = { windowMinutes: 15, maxTurns: 15,
+      recentTurns: Array.from({ length: 15 }, (_, n) => ({ at: `2026-10-19T08:${String(n).padStart(2, '0')}:00Z`, userMessagePreview: `ข้อความ ${n}`, userMessagePreviewComplete: true })),
+      recentReads: Array.from({ length: 4 }, () => ({ tool: 'expense.list_recent', answerShape: 'list' as const, asOf: '2026-10-19T08:00:00Z' })) };
+    assert.deepEqual(modelConversationContext(context)?.recentTurns, context.recentTurns.slice(-4));
+    assert.equal(modelConversationContext(context)?.recentReads?.length, 3);
+    const replays = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/advisor-exam-d-router-replays.json'), 'utf8'));
+    const j7 = replays.find((r: any) => r.id === 'J7#4');
+    assert.deepEqual(modelConversationContext(context, j7.taskProjection)?.recentTurns, context.recentTurns);
+    assert.deepEqual(modelConversationContext(context, undefined, false, true)?.recentTurns, context.recentTurns);
+    assert.deepEqual(modelConversationContext(context, j7.taskProjection, true)?.recentTurns, context.recentTurns.slice(-4));
+    assert.deepEqual(modelConversationContext(context, { ...j7.taskProjection, tasks: [...j7.taskProjection.tasks, ...j7.taskProjection.tasks] }, true)?.recentTurns, context.recentTurns, 'one retained source cannot cover another open task');
+    assert.equal(context.recentTurns.length, 15, 'never mutates the source request');
+  });
+
+  it('renders every recorded router replay with its current text/evidence/task intact and bound above recorded real intake maximum', async () => {
+    let count = 0;
+    for (const file of readdirSync(resolve(creditRoot, 'docs/evidence')).filter(file => file.endsWith('router-replays.json'))) {
+      const recorded = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence', file), 'utf8'));
+      const rows: any[] = [];
+      const collect = (value: any): void => {
+        if (Array.isArray(value)) return value.forEach(collect);
+        if (!value || typeof value !== 'object') return;
+        const text = value.messageText ?? value.body?.events?.[0]?.message?.text;
+        if (typeof text === 'string') rows.push({ ...value, messageText: text });
+        else Object.values(value).forEach(collect);
+      };
+      collect(recorded);
+      for (const replay of rows as any[]) {
+        if (!replay.messageText) continue;
+        const req = { ...await creditRequest(replay.messageText), ...(replay.taskProjection ? { taskProjection: replay.taskProjection } : {}),
+          ...(replay.conversationContext ? { conversationContext: replay.conversationContext } : {}),
+          ...(replay.openClarifications ? { openClarifications: replay.openClarifications } : {}) };
+        const input = await creditCapture(req);
+        const payload = JSON.parse(input.messages[0]!.text);
+        assert.equal(payload.messageText, replay.messageText, `${file}:${replay.id}`);
+        assert.equal(payload.inputEvidenceParts[0].rawText, replay.messageText);
+        assert.deepEqual(payload.taskProjection, replay.taskProjection);
+        assert.deepEqual(payload.openClarifications, replay.openClarifications);
+        if (replay.taskProjection?.tasks.some((task: any) => !['completed', 'canceled', 'invalidated'].includes(task.state))) {
+          assert.deepEqual(payload.conversationContext?.recentTurns, replay.conversationContext?.recentTurns);
+        }
+        assert.ok(v2RenderedInput(input, creditModel).inputTokenBound >= 33559);
+        assert.equal(input.maxTokens, 4096, 'output ceiling is retained, including repair');
+        count++;
+      }
+    }
+    assert.ok(count > 100, `covered ${count} recorded payload shapes`);
+  });
+});
+
+it('credit X2 J7: the claim amount/date, continuing question, current evidence and exact task reference survive old-history trimming', async () => {
+  const journey = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/mangmee-advisor-fx24-router-replays.json'), 'utf8')).J7.turns;
+  const exam = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/advisor-exam-d-router-replays.json'), 'utf8')).find((r: any) => r.id === 'J7#4');
+  const priorText = journey.slice(0, -1).flatMap((r: any) => typeof r.body.events[0].message?.text === 'string' ? [r.body.events[0].message.text] : []);
+  const history = [...Array.from({ length: 12 }, () => 'คำถามเก่าที่ไม่เกี่ยวข้อง'), ...priorText].map((userMessagePreview, n) => ({
+    at: new Date(1792397000000 + n * 1000).toISOString(), userMessagePreview, userMessagePreviewComplete: true as const }));
+  const input = await creditCapture({ ...await creditRequest(exam.messageText), taskProjection: exam.taskProjection,
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: history } });
+  const payload = JSON.parse(input.messages[0]!.text);
+  assert.ok(payload.conversationContext.recentTurns.some((r: any) => r.userMessagePreview === 'เบิกค่าน้ำมัน 350 บาท เมื่อวาน ให้หน่อย'));
+  assert.equal(payload.taskProjection.tasks[0].userGoal, exam.taskProjection.tasks[0].userGoal);
+  assert.deepEqual(payload.taskProjection.tasks[0].deliveredQuestionRefs, exam.taskProjection.tasks[0].deliveredQuestionRefs);
+  assert.equal(payload.inputEvidenceParts[0].rawText, exam.messageText);
+  assert.deepEqual(payload.resumableTaskRefs[0], exam.route.semanticSubrequests[0].taskRef);
+  const ordinary = await creditCapture({ ...await creditRequest(exam.messageText),
+    conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: history } });
+  const trimmed = JSON.parse(ordinary.messages[0]!.text);
+  assert.equal(trimmed.conversationContext.recentTurns.length, 4);
+  assert.ok(trimmed.conversationContext.recentTurns.some((r: any) => r.userMessagePreview === priorText.at(-1)));
+  assert.equal(trimmed.inputEvidenceParts[0].rawText, exam.messageText);
+});
+
+
+it('credit P1/P2: every deployed role/package builder has a calibrated constant digest; prompt/glossary edits require recalibration', async () => {
+  const expected = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/line-ai-credit-levers-20261019-role-reach.json'), 'utf8'));
+  for (const row of expected.rows) {
+    const req = { ...await creditRequest(), permissions: ROLE_GRANTS[row.role as keyof typeof ROLE_GRANTS],
+      enabledFeatures: [...TIER_FEATURE_PRESETS[row.tier as keyof typeof TIER_FEATURE_PRESETS]],
+      capabilities: { fusedPlan: true, substituteSemantic: true, reimbursementSemantic: true, advisor: true, responsePreference: true, approvedKnowledge: true } };
+    let input: ProviderInput | undefined;
+    await new IntentRouterAgent({ generateText: async captured => { input = captured; return { ok: false,
+      error: { code: 'PROVIDER_DISABLED', message: 'offline', retryable: false } }; } }, true, { enabled: true }, false,
+      [...APPROVED_PREPARED_FAMILY_KEYS]).routeIntake(req);
+    assert.ok(input);
+    const parts = intakeConstantParts(input);
+    const entry = INTAKE_CONSTANT_CALIBRATIONS.find(entry => entry.digest === parts?.digest);
+    assert.ok(entry, `Uncalibrated current intake constant digest ${parts?.digest}. Recalibrate: pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx ../../scripts/recalibrate-line-intake.cjs ${INTAKE_CONSTANT_CALIBRATIONS[0].digest}; review character mix/semantic changes, update table and contract pins. Large changes or different models require paired live measurement.`);
+    assert.equal(entry.bytes, parts!.bytes);
+    assert.equal(parts!.digest, row.constantDigest);
+    assert.equal(v2RenderedInput(input, creditModel).inputTokenBound, row.boundAfter);
+    assert.ok(row.holdAfterThb <= 9.13, `${row.tier}/${row.role}`);
+    const changed = { ...input, systemPrompt: input.systemPrompt + ' ' };
+    assert.equal(INTAKE_CONSTANT_CALIBRATIONS.some(entry => entry.digest === intakeConstantParts(changed)?.digest), false);
+    assert.ok(v2RenderedInput(changed, creditModel).inputTokenBound > row.boundAfter, 'unreviewed constants safely retain bytes');
+    const catalogue = JSON.parse(input.cacheableContext!);
+    catalogue.enabledFeatures.push({ toolName: 'unknown', description: 'f'.repeat(5000) });
+    assert.ok(v2RenderedInput({ ...input, cacheableContext: JSON.stringify(catalogue) }, creditModel).inputTokenBound >= row.boundAfter + 4096, 'unfamiliar catalogue text retains bytes');
+  }
+});
+
+it('credit P2 recalibration scales upward, preserves the existing margin, and rejects large growth', () => {
+  const old = INTAKE_CONSTANT_CALIBRATIONS[0];
+  assert.equal(scaleIntakeCalibration(old, old.bytes - 100), old.tokenBound);
+  const grown = old.bytes + 100;
+  assert.ok(scaleIntakeCalibration(old, grown) / grown >= old.tokenBound / old.bytes);
+  assert.throws(() => scaleIntakeCalibration(old, Math.ceil(old.bytes * 1.11)), /Live measurement required/);
 });

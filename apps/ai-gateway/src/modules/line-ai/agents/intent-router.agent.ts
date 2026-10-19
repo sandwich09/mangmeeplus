@@ -16,6 +16,7 @@ import { APPROVED_KNOWLEDGE_SELECTION_PROMPT, offeredKnowledgeMetadata, parseSel
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { conversationReadCandidates } from './read-tool-input';
+import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
 import { INTAKE_REPAIR_HINTS, clarificationReadCandidates, parseLineIntakeCompactDecision, type CompactDecodeRejection } from './line-intake-compact-decision';
 // Spec R-L1: the exact pre-call check the orchestrator runs before executing a proposed simple
 // read, reused here so a plan that would fail it is never proposed as `complexity: 'simple'` in
@@ -645,7 +646,9 @@ export class IntentRouterAgent {
     const preparedFamilies = caps.fusedPlan
       ? effectivePreparedFamilies(this.preparedFamilyAllowlist, intakeTools)
       : new Set<string>();
-    const readContext = conversationReadCandidates(request.conversationContext, request.valueCandidates);
+    const conversationContext = semanticV2 ? modelConversationContext(request.conversationContext, request.taskProjection,
+      !!retainedTaskSource, !!request.openClarifications?.length) : request.conversationContext;
+    const readContext = conversationReadCandidates(conversationContext, request.valueCandidates);
     const readGroundingCandidates = readContext
       ? { amounts: request.valueCandidates?.amounts ?? [], dates: readContext.candidates.dates, periods: readContext.candidates.periods }
       : request.valueCandidates;
@@ -670,14 +673,14 @@ export class IntentRouterAgent {
       locale: request.locale,
       // Baseline: the glossary rides in the DATA payload (legacy). When fused planning is on it moves into
       // the stable cacheable catalog block below (so the fused prefix caches) and is omitted here.
-      ...(caps.fusedPlan ? {} : { businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY }),
+      ...(caps.fusedPlan || semanticV2 ? {} : { businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY }),
       attachments: (request.attachments ?? []).map((a) => ({ id: a.id, mimeType: a.mimeType, purpose: a.purpose, hasImageContent: !!a.contentBase64 })),
       permissions: request.permissions,
       enabledFeatures: request.enabledFeatures ?? [],
       activeCategories: request.activeCategories ?? [],
       ...(knowledgeMetadata.length ? { approvedKnowledge: knowledgeMetadata } : {}),
-      chatActions: LINE_CHAT_ACTIONS.map(({ id, title, group }) => ({ id, title, group })),
-      ...(request.conversationContext && { conversationContext: request.conversationContext }),
+      ...(!semanticV2 ? LINE_CHAT_ACTIONS_CONTEXT : {}),
+      ...(conversationContext && { conversationContext }),
       ...(readContext && { readContextCandidates: readContext.turns }),
       ...(semanticV2 && request.taskProjection ? { taskProjection: request.taskProjection } : {}),
       ...(resumableTaskRefs.length ? { resumableTaskRefs } : {}),
@@ -715,11 +718,15 @@ export class IntentRouterAgent {
       lastAttempt = attempt + 1;
       result = await this.provider.generateText({
         systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource, preparedFamilies)
-          + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : ''),
+          + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : '')
+          + (semanticV2 && !caps.fusedPlan ? `\n${JSON.stringify({
+            ...LINE_CHAT_ACTIONS_CONTEXT, businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY })}` : ''),
         // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
-        ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({ businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY,
-          preparedSimpleReadFamilies: [...preparedFamilies].sort(),
-          ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled, semanticV2 ? intakeTools : undefined) }) } : {}),
+        ...(caps.fusedPlan ? { cacheableContext: JSON.stringify({
+          ...(semanticV2 ? LINE_CHAT_ACTIONS_CONTEXT : {}),
+          businessGlossary: LINE_AI_THAI_BUSINESS_GLOSSARY,
+          ...(caps.fusedPlan ? { preparedSimpleReadFamilies: [...preparedFamilies].sort(),
+            ...buildFeatureCatalog(this.draftEditEnabled, this.publicLookupEnabled, semanticV2 ? intakeTools : undefined) } : {}) }) } : {}),
         messages: [{ role: 'user', text: JSON.stringify({ ...payload, ...(attempt > 0 ? {
           schemaRepair: `Return the same route plus a complete decisionV1. Preserve one subrequest per distinct clause. Never emit legacy semanticSubrequests or preparedPlan beside decisionV1. Previous defect: ${lastCompactRejection}. ${INTAKE_REPAIR_HINTS[lastCompactRejection as CompactDecodeRejection] ?? 'Use the documented JSON shape.'}`
         } : {}) }) }],
@@ -736,7 +743,7 @@ export class IntentRouterAgent {
         retainedTaskSource, retainedText, retainedValueCandidates, intakeTools, preparedFamilies, readGroundingCandidates,
         (observation) => { lastCompactRejection = observation.rejection;
           this.logger.log({ msg: 'line.intake_route.compact_decode', requestId: request.requestId, attempt: lastAttempt, ...observation }); },
-        request.conversationContext, request.permissions, hasAttachment,
+        conversationContext, request.permissions, hasAttachment,
       );
       if (parsed) break;
     }

@@ -157,23 +157,38 @@ export async function writeAiCreditHold(tx: any, input: {
 }
 
 /**
- * Settlement turns the hold into use on the SAME lots, in spend order, never more than was held —
- * an actual above the bound is recorded as cost and breach by the existing flow, not charged to the
- * customer (spec §5.3). Lots that expired meanwhile still take it (A07). Idempotent per operation key.
+ * Settlement consumes held lots in spend order. Owner 2026-10-19: a successful v2 overrun may use
+ * additional unheld eligible credit, never another call's hold. The company absorbs the shortfall.
+ * Held amounts can still settle after expiry (A07). Idempotent per operation key.
  */
-export async function consumeAiCreditHold(tx: any, input: { companyId: string; reservationId: string; costSatang: number }): Promise<void> {
+export async function consumeAiCreditHold(tx: any, input: {
+  companyId: string; reservationId: string; costSatang: number;
+  /** V2 successful overrun only; caller holds company config -> month locks, hold still live. */
+  overrun?: { cycleKey: string; asOf: Date };
+}): Promise<number> {
   const holds = await tx.aiCreditEntry.findMany({ where: { reservationId: input.reservationId, kind: 'RESERVE' },
     select: { grantId: true, units: true, grant: { select: { id: true, sourceKind: true, availableAt: true, expiresAt: true } } } });
+  const held = new Map<string, number>(holds.map((hold: any) => [hold.grantId, -hold.units]));
+  const eligible = input.overrun ? await tx.aiCreditGrant.findMany({ where: {
+    companyId: input.companyId, revokedAt: null, availableAt: { lte: input.overrun.asOf }, expiresAt: { gt: input.overrun.asOf },
+    OR: [{ sourceKey: `cycle:${input.overrun.cycleKey}` }, { sourceKind: { not: 'INCLUDED_CYCLE' } }],
+  }, select: { id: true, units: true, sourceKind: true, availableAt: true, expiresAt: true } }) : [];
+  const balance = input.overrun ? await aiCreditLotBalances(tx, input.companyId, eligible) : new Map<string, number>();
+  const lots = new Map<string, any>(holds.map((hold: any) => [hold.grantId, hold.grant]));
+  for (const lot of eligible) lots.set(lot.id, lot);
   let left = Math.max(0, input.costSatang);
   const data: Array<Record<string, unknown>> = [];
-  for (const hold of [...holds].sort((a: any, b: any) => aiCreditLotOrder(a.grant, b.grant))) {
-    const take = Math.min(left, -hold.units);
+  for (const lot of [...lots.values()].sort(aiCreditLotOrder)) {
+    // Balance excludes this still-live hold and every competing hold. Only add our own back.
+    const available = (held.get(lot.id) ?? 0) + Math.max(0, balance.get(lot.id) ?? 0);
+    const take = Math.min(left, available);
     if (take <= 0) continue;
     left -= take;
-    data.push({ companyId: input.companyId, grantId: hold.grantId, kind: 'CONSUME', units: -take,
-      reservationId: input.reservationId, operationKey: `consume:${input.reservationId}:${hold.grantId}` });
+    data.push({ companyId: input.companyId, grantId: lot.id, kind: 'CONSUME', units: -take,
+      reservationId: input.reservationId, operationKey: `consume:${input.reservationId}:${lot.id}` });
   }
   if (data.length) await tx.aiCreditEntry.createMany({ data, skipDuplicates: true });
+  return Math.max(0, input.costSatang) - left;
 }
 
 /**

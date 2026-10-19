@@ -560,7 +560,7 @@ export function aiCreditHoldConsequence(
   const settled = hold.settledCostSatang === null ? amount : satangToBaht(hold.settledCostSatang);
   return {
     title: 'ยืนยันรับทราบรายการใช้เกินที่กันไว้',
-    message: `${step} · ใช้จริง ${settled} จากที่กันไว้ ${amount}\nหลังยืนยัน ระบบจะเปิดรับงาน AI ของส่วนนี้อีกครั้ง ยอดที่บันทึกไว้ไม่เปลี่ยน และไม่มีการคืนเครดิต\n`
+    message: `${step} · ใช้จริง ${settled} จากที่กันไว้ ${amount}\nหลังยืนยัน ระบบจะปิดการแจ้งเตือนนี้ค่ะ ยอดที่บันทึกไว้ไม่เปลี่ยน และไม่มีการคืนเครดิต\n`
       + `ตรวจเพดานของส่วนนี้ก่อน ถ้ายังต่ำเกินไป งานถัดไปจะถูกปฏิเสธเพราะเครดิตไม่พอ${tail}`,
     confirmLabel: 'รับทราบ',
   };
@@ -670,7 +670,7 @@ export function aiTabStatusRows(usage: PartnerAiUsageDto, formatDate: DateText, 
     else if (budget.policy.chatCapSatang !== null && budget.policy.chatCapSatang > ceiling) {
       add('safety', 'เพดานความปลอดภัยค่า AI', `${text} — ต่ำกว่าเครดิตแชต แชตจึงใช้ได้ไม่เกินเพดานนี้`, 'warn');
     } else add('safety', 'เพดานความปลอดภัยค่า AI', text);
-    if (budget.position.breach) add('breach', 'เครดิตที่กันไว้', 'มีรายการใช้เกินที่กันไว้ ระบบหยุดรับงานใหม่ของส่วนนั้น — ดูหัวข้อเครดิตที่กันไว้ค้าง', 'stop');
+    if (budget.position.breach) add('breach', 'เครดิตที่กันไว้', 'มีรายการใช้เกินที่กันไว้ค่ะ ตรวจสอบได้ที่เครดิตที่กันไว้ค้าง', 'warn');
     else if (budget.position.unresolvedHolds > 0) add('holds', 'เครดิตที่กันไว้', `${budget.position.unresolvedHolds.toLocaleString('th-TH')} รายการยังไม่ทราบผล — เครดิตส่วนนั้นยังถูกกันไว้`, 'warn');
   }
   return rows;
