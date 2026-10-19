@@ -244,6 +244,7 @@ export function expenseRelatedToUserWhere(userId: string): Prisma.ExpenseRecordW
 function mapExpense(r: any): ExpenseRecord {
   return {
     ...r,
+    ...(r._count?.substituteReceiptEvidences !== undefined && { hasRetainedSubstituteReceiptEvidence: r._count.substituteReceiptEvidences > 0 }),
     costSourceExpenseId: r.sourceReimbursementRequestId && typeof r.sourceChannelMetadataJson?.reimbursementSource?.expenseId === 'string' ? r.sourceChannelMetadataJson.reimbursementSource.expenseId : undefined,
     journalEntryNumber: r.journalEntryNumber ?? null,
     pendingPostingSourceType: r.pendingPostingSourceType ?? null,
@@ -1108,6 +1109,7 @@ export class PrismaExpenseRepository {
     const r = await db.expenseRecord.findFirst({
       where: { id, companyId, ...branchScopeWhere(scopes) },
       include: {
+        _count: { select: { substituteReceiptEvidences: true } },
         lines: { orderBy: { lineNumber: 'asc' } },
         payments: { orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] },
         // The category's suggested Tax Code rides on the row already being joined — the line
@@ -1269,7 +1271,7 @@ export class PrismaExpenseRepository {
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
     const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([
-      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy, include: { inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } } }),
+      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy, include: { _count: { select: { substituteReceiptEvidences: true } }, inputVatDecisions: { take: 1, orderBy: { decidedAt: 'desc' }, select: { reason: true, decidedByUserId: true, decidedAt: true } } } }),
       this.prisma.client.expenseRecord.count({ where }),
     ]);
     const decisionNames = await this.inputVatDecisionNames(data);

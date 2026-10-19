@@ -115,7 +115,10 @@ export class LineReimbursementDraftService {
     const now = input.now ?? new Date();
     if (!await this.drafts.markLineDelivered({ ctx: input.ctx, owner, actionId: control.actionId,
       previewRevision: control.previewRevision, confirmationDigest: control.confirmationDigest,
-      deliveryPlanId: input.deliveryPlanId, now })) return { status: 'blocked', errorCode: 'preview_not_fully_delivered' };
+      deliveryPlanId: input.deliveryPlanId, now })) {
+      const current = await this.drafts.get({ ctx: input.ctx, owner, actionId: control.actionId, now });
+      return current.status === 'stale' ? current : { status: 'blocked', errorCode: 'preview_not_fully_delivered' };
+    }
     return this.drafts.confirm({ ctx: input.ctx, owner, actionId: control.actionId,
       previewRevision: control.previewRevision, confirmationDigest: control.confirmationDigest, now });
   }

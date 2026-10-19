@@ -5404,7 +5404,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     this.boundConversations.set(event, { owner, epoch: ownerEpoch, id: current.row.id });
     const prior = await this.reimbursementDrafts.get({ ctx, owner, ownerEpoch, actionId: control.actionId });
     let result: LineReimbursementDraftResult = prior;
-    if (prior.status !== 'applied') {
+    if (prior.status !== 'applied' && prior.status !== 'stale') {
       if (control.action === 'reimbursement_draft_cancel') result = await this.reimbursementDrafts.cancel({ ctx, owner, ownerEpoch, control });
       else {
         const plan = await this.prisma.client.lineDeliveryPlan.findFirst({ where: { companyId: ctx.companyId,

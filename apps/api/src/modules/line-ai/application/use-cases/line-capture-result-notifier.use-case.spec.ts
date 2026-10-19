@@ -72,7 +72,10 @@ type Scenario = {
   captureSource?: string;
   /** NR07 cleanup: how many rows the guarded delete matches (0 = the draft is no longer empty). */
   draftDeleteCount?: number;
+  retainedCertificateStatus?: string;
 };
+
+const intakeRevision = new Date('2026-07-25T00:00:00.000Z');
 
 function makeNotifier(scenario: Scenario = {}) {
   const published: string[] = [];
@@ -83,6 +86,13 @@ function makeNotifier(scenario: Scenario = {}) {
   const handoffCalls: string[] = [];
   const expenses: string[] = [];
   const draftDeletes: any[] = [];
+  const mutateDraft = async (input: any) => {
+    draftDeletes.push(input.where);
+    const edited = input.where.updatedAt && new Date(scenario.expenseFacts?.updatedAt as any ?? intakeRevision).getTime() !== input.where.updatedAt.getTime();
+    const none = input.where.substituteReceiptEvidences?.none;
+    const retained = none && scenario.retainedCertificateStatus && (!none.status || none.status.in?.includes(scenario.retainedCertificateStatus));
+    return { count: edited || retained ? 0 : scenario.draftDeleteCount ?? 1 };
+  };
   const events = Array.from({ length: scenario.events ?? 1 }, (_value, index) => ({
     id: `outbox-${index + 1}`, companyId: scenario.companyId ?? 'company-1',
     eventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE,
@@ -100,8 +110,9 @@ function makeNotifier(scenario: Scenario = {}) {
       lineIntakeAttempt: { findMany: async () => [{ id: 'attempt-1' }] },
       expenseRecord: {
         // `draftDeleteCount: 0` models a draft someone already filled in — the guarded delete matches nothing.
-        deleteMany: async (input: any) => { draftDeletes.push(input.where); return { count: scenario.draftDeleteCount ?? 1 }; },
-        findFirst: async () => ({
+        deleteMany: mutateDraft,
+        updateMany: mutateDraft,
+        findFirst: async (input: any) => input.where.status === 'VOIDED' ? null : ({
           status: 'NEEDS_REVIEW',
           vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
           sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
@@ -110,6 +121,7 @@ function makeNotifier(scenario: Scenario = {}) {
       },
       // The NR07 cleanup runs in one transaction over the same client.
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma.client),
+      expenseCaptureReadJob: { findFirst: async () => ({ expectedSourceUpdatedAt: intakeRevision }) },
       attachmentLink: {
         findMany: async () => [{ attachmentId: 'att-1' }, { attachmentId: 'att-shared' }],
         deleteMany: async (input: any) => { linkDeletes.push(input.where); return { count: 2 }; },
@@ -566,7 +578,7 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     ['non-business', { classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }, 'ภาพนี้ไม่ใช่เอกสารค่าใช้จ่ายค่ะ จึงไม่ได้สร้างรายการ ส่งเอกสารค่าใช้จ่ายที่ต้องการบันทึกได้เลยค่ะ'],
   ] as const) {
     it(`pins ${name} as today's text notice byte for byte`, async () => {
-      const h = makeNotifier({ payload: expensePayload(payload) });
+      const h = makeNotifier({ payload: expensePayload({ jobId: 'job-1', ...payload }) });
       await h.notifier.execute();
       assert.equal(h.pushes.length, 1);
       assert.equal(h.pushes[0].messages[0].type, name === 'failed' ? 'flex' : 'text');
@@ -651,6 +663,7 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     assert.deepEqual(h.draftDeletes[0], {
       companyId: 'company-1', id: 'expense-1', status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
       grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required', sourceReimbursementRequestId: null,
+      updatedAt: intakeRevision, substituteReceiptEvidences: { none: {} },
     });
     // Its file links go with it; a file nothing else links is retired, a shared one stays.
     assert.deepEqual(h.linkDeletes, [{ companyId: 'company-1', targetType: 'expense.record', targetId: 'expense-1' }]);
@@ -673,6 +686,23 @@ describe('LINE capture result push — the expense lane (appendix §25)', () => 
     assert.ok(!/จึงไม่ได้สร้างรายการ/.test(pushedText(h)), 'the record exists, so that sentence would be false');
     assert.match(pushedText(h), /เก็บไฟล์ไว้แล้ว/);
     assert.match(pushedText(h), /\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('LINE-ACT keeps a zero-total draft edited after intake and every retained certificate status', async () => {
+    const scenarios = [{ expenseFacts: { updatedAt: new Date(intakeRevision.getTime() + 1) } },
+      ...['PREPARED', 'PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED'].map(retainedCertificateStatus => ({ retainedCertificateStatus }))];
+    for (const retainReceipt of [false, true]) for (const scenario of scenarios) {
+      const h = makeNotifier({ ...scenario, payload: expensePayload({ jobId: 'job-1', classification: { contentKind: 'DOCUMENT', documentKind: 'NON_FINANCIAL_IMAGE' } }) });
+      const removed = await (h.notifier as any).deleteEmptyDraft('company-1', 'expense-1', 'job-1', retainReceipt);
+      assert.equal(removed, false);
+      assert.equal(h.linkDeletes.length, 0); assert.equal(h.attachmentDeletes.length, 0); assert.equal(h.auditEntries.length, 0);
+    }
+  });
+
+  it('LINE-ACT keeps an empty draft when no intake revision is available', async () => {
+    const h = makeNotifier();
+    assert.equal(await (h.notifier as any).deleteEmptyDraft('company-1', 'expense-1', null), false);
+    assert.equal(h.draftDeletes.length, 0);
   });
 
   it('a DONE read that was not written onto the draft sends the partial sentence, never a zero receipt card', async () => {

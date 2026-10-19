@@ -198,6 +198,11 @@ test.describe('no-receipt certificate', () => {
     await test.step('ไปยืนยันค่าใช้จ่าย: headed by the payee, the seller field holds it', async () => {
       await main.getByRole('link', { name: 'ไปยืนยันค่าใช้จ่าย', exact: true }).click();
       await expect(main.getByRole('heading', { level: 1, name: payee, exact: true })).toBeVisible(FIRST_SIGHT);
+      await expect(main.getByRole('button', { name: 'ลบรายจ่าย', exact: true })).toHaveCount(0);
+      const more = main.locator('summary').filter({ hasText: /^เพิ่มเติม$/ });
+      await more.click();
+      await expect(main.getByRole('button', { name: 'ยกเลิกเอกสาร', exact: true })).toBeVisible();
+      await more.click();
       await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ตรวจข้อมูล' })).toBeVisible();
       await expect(main.getByText(whole(`ใบรับรองแทนใบเสร็จ ${certificateNumber} · ออกแล้ว`)).first()).toBeVisible();
       await expect(main.getByText(expenseNumber, { exact: true })).toBeVisible();

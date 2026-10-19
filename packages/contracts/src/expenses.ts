@@ -864,6 +864,8 @@ export function expenseReimbursementProgressLabel(progress: ExpenseReimbursement
 }
 
 export type ExpenseSummary = {
+  /** Any retained certificate version, including SUPERSEDED, prevents physical deletion. */
+  hasRetainedSubstituteReceiptEvidence?: boolean;
   cancelledCertificate?: { kind: 'SYSTEM' | 'EXTERNAL'; number: string | null };
   costSourceExpenseId?: string;
   reimbursementProgress?: ExpenseReimbursementProgress;

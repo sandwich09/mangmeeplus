@@ -1157,6 +1157,9 @@ export class PrismaReimbursementRepository {
     canPrepareOthers: boolean; scopes: { branchIds?: string[] }; onDeleted: (tx: any) => Promise<void>;
   }): Promise<void> {
     await this.prisma.client.$transaction(async (tx) => {
+      // LINE apply locks Company FOR UPDATE before its action. Take a compatible FK lock first:
+      // either apply or delete finishes before the other can hold the action/request locks.
+      await tx.$queryRaw`SELECT id FROM "Company" WHERE id = ${data.companyId} FOR KEY SHARE`;
       await this.lockRequest(tx, data.companyId, data.requestId);
       const row = await tx.reimbursementRequest.findFirst({
         where: { companyId: data.companyId, id: data.requestId }, include: { approvalSteps: true },
@@ -1170,6 +1173,9 @@ export class PrismaReimbursementRepository {
         companyId: data.companyId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: data.requestId,
       } });
       // Preserve the draft-action audit history while releasing its optional FK to this deleted draft.
+      // An APPLIED or open action must name its request, so it becomes STALE: a LINE replay then answers that the draft is gone.
+      await tx.reimbursementDraftAction.updateMany({ where: { companyId: data.companyId, requestId: data.requestId,
+        status: { in: ['COLLECTING', 'PREVIEW', 'APPLIED'] } }, data: { status: 'STALE', requestId: null } });
       await tx.reimbursementDraftAction.updateMany({ where: { companyId: data.companyId, requestId: data.requestId }, data: { requestId: null } });
       await tx.reimbursementRequest.delete({ where: { id: data.requestId } });
       await data.onDeleted(tx);
