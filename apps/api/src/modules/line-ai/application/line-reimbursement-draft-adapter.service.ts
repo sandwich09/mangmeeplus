@@ -1054,10 +1054,18 @@ export class LineReimbursementDraftAdapterService {
     if (branchId) branch = await this.currentChoice(ctx, this.findChoice(options, branchId, 'BRANCH'), options); else missing.push('branchChoiceId');
     if (requesterId) requester = await this.currentChoice(ctx, this.findChoice(options, requesterId, 'REQUESTER'), options); else missing.push('requesterChoiceId');
     if (branch && requester && requester.raw['branchId'] !== branch.raw['id']) throw new Error('REIMBURSEMENT_CHOICE_STALE');
-    if (!proposal.fields.reason) missing.push('fields.reason');
     const changes = (proposal.lineChanges ?? []).filter(change => change.operation === 'ADD');
+    const linkedChoice = changes.length === 1 && changes[0]?.operation === 'ADD' && changes[0].values.linkedExpenseChoiceId
+      ? this.findChoice(options, changes[0].values.linkedExpenseChoiceId, 'SOURCE') : undefined;
+    // Picker labels are control text, never a business reason (UAT 2026-10-19, Starbucks claim).
+    const pickedReason = proposal.fields.reason?.value.replace(/^(?:เบิกบิล\s+|claim expense:\s*)/iu, '').replace(/[\s·•|]+$/gu, '');
+    if (linkedChoice && pickedReason && (linkedChoice.label.startsWith(pickedReason) || pickedReason.startsWith(linkedChoice.label))) {
+      delete proposal.fields.reason;
+      receipts = receipts.filter(receipt => receipt.fieldPath !== 'fields.reason');
+    }
+    if (!proposal.fields.reason) missing.push('fields.reason');
     if (!proposal.fields.reason && changes.length === 1 && changes[0]!.operation === 'ADD') {
-      const reason = changes[0]!.values.purpose ?? changes[0]!.values.description;
+      const reason = linkedChoice ? undefined : changes[0]!.values.purpose ?? changes[0]!.values.description;
       if (reason) {
         proposal.fields.reason = reason;
         receipts = this.mergeReceipts(receipts, [{ fieldPath: 'fields.reason', valueDigest: digest(reason.value),

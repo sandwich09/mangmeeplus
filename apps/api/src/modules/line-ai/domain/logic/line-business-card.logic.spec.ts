@@ -1031,7 +1031,11 @@ describe('expense draft card (§10.1) — the locked review card', () => {
     assert.equal(card.mascot, `${WEB}/assets/line/system-card-mascot-review-20261005.png`);
     assert.deepEqual(card.rows, FULL.rows.map((row) => [row.label, ':', row.value]));
     assert.deepEqual(card.notes, FULL.notes);
-    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/c1/expenses/exp-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/c1/expenses/exp-1' }]);
+    const signed = readSystemCard(buildExpenseDraftReviewCard('บันทึกร่างแล้วค่ะ', FULL, WEB, 'c1', { token: 'preview.signed', summary: 'ตรวจยอด 170.00 บาทก่อนยืนยันค่ะ', details: ['มีหลักฐานแล้วค่ะ'] } as any)!);
+    assert.equal(signed.actions[0]?.type, 'postback');
+    assert.match(String((signed.actions[0] as any)?.data), /expense_action_confirm/);
+    assert.ok(signed.notes.includes('ตรวจยอด 170.00 บาทก่อนยืนยันค่ะ\nมีหลักฐานแล้วค่ะ'));
     // The owner cut the yellow "รอตรวจสอบ" strip: the header and the status row already say it.
     assert.equal(card.banner, undefined);
     assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a bound chat is sent the card itself');
@@ -1071,7 +1075,7 @@ describe('expense draft card (§10.1) — the locked review card', () => {
   });
 
   it('opens exactly the tenant expense record — no query, no hash, no financial parameter', () => {
-    const [, action] = readSystemCard(buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1')).actions;
+    const [action] = readSystemCard(buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1')).actions;
     assert.equal(action!.uri, 'https://app.example.com/companies/c1/expenses/exp-1');
     assert.equal(new URL(action!.uri!).search, '');
     assert.equal(new URL(action!.uri!).hash, '');

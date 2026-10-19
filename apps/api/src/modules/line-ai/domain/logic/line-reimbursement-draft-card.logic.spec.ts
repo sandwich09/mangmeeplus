@@ -214,3 +214,30 @@ describe('no customer-visible reimbursement text carries a machine token (Owner 
     }
   });
 });
+
+it('Z3 saved claim has a signed submit next step and its own web button in Thai and English', () => {
+  for (const language of ['th', 'en'] as const) for (const permitted of [true, false]) for (const state of ['DRAFT', 'PENDING_APPROVAL']) {
+    const message = buildReimbursementDraftMessages({ status: 'applied', receipt: { requestId: 'saved-claim', amount: '170', currency: 'THB', currentState: state } } as any,
+      'https://web.test', 'company', permitted ? ['reimbursement.submit'] : [], 'saved-claim.signed-token', language)[0]!;
+    assert.equal(message.type, 'flex'); if (message.type !== 'flex') throw new Error('expected card');
+    assert.deepEqual(lineFlexBodyProblems(message.contents), []);
+    const actions: any[] = [];
+    const visit = (value: any) => { if (!value || typeof value !== 'object') return; if (value.action) actions.push(value.action); Object.values(value).forEach(child => { if (child && typeof child === 'object') Array.isArray(child) ? child.forEach(visit) : visit(child); }); };
+    visit(message.contents);
+    const submit = actions.filter(action => action.type === 'postback');
+    assert.equal(submit.length, Number(permitted && state === 'DRAFT'));
+    if (submit.length) { assert.equal(submit[0].label, language === 'th' ? 'ส่งอนุมัติ' : 'Submit for approval'); assert.equal(new URLSearchParams(submit[0].data).get('token'), 'saved-claim.signed-token'); }
+    const open = actions.find(action => action.type === 'uri');
+    assert.equal(open.label, language === 'th' ? 'เปิดใบเบิก' : 'Open claim');
+    assert.equal(open.uri, 'https://web.test/companies/company/reimbursements/saved-claim');
+  }
+});
+
+it('Z4 shared card rows never end in picker separators, including the exact Starbucks UAT value', async () => {
+  const { drawLineSystemCard, lineSystemCardSendable } = await import('./line-system-card-limits.logic');
+  const values = ['261005-08-00190 · Starbucks Coffee ·', 'Starbucks Coffee | ', 'อาหาร •  '];
+  const card = drawLineSystemCard({ mascot: 'general', header: { lines: ['ใบเบิก', 'ร่างใบเบิก'] }, rows: values.map(value => ({ label: 'รายการ', value })) }, 'https://web.test');
+  assert.ok(card); assert.deepEqual(lineFlexBodyProblems(card), []);
+  for (const text of lineSystemCardTexts(card)) assert.doesNotMatch(text, /[·•|]\s*$/u);
+  assert.equal(lineSystemCardSendable({ mascot: 'general', header: { lines: ['ใบเบิก', 'ร่างใบเบิก'] }, rows: [{ label: 'รายการ', value: ' · | • ' }] }), false);
+});

@@ -417,3 +417,46 @@ for (const [name, card, buttons] of [
     assert.doesNotMatch(JSON.stringify(capture.saved!.batches), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
   }
 });
+
+it('Z1 exact UAT: timed-out reply pushes the frozen batch once, records acceptance and never pushes on replay', async t => {
+  const { LineLedgerDeliveryService } = await import('../line-ledger-delivery.service');
+  const { initialDeliveryBatchStates } = await import('../../domain/logic/line-delivery-plan.logic');
+  const { LineReplyAdapter } = await import('../../infrastructure/line-reply.adapter');
+  const { lineMessagingCredentialsFixture } = await import('../../../../common/config/line-messaging-credentials.fixture');
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  await mediaResultFlow(new Date(), capture).sendMessagesV2(SECOND_PHOTO, [{ type: 'text', text: 'บันทึกร่างใบเบิกแล้วค่ะ' }]);
+  const plan = capture.saved!, now = new Date();
+  const row: any = { id: plan.planId, status: 'READY', planJson: plan, planHash: deliveryHash(plan), outcomeId: plan.producerId,
+    batchStateJson: initialDeliveryBatchStates(plan), nextAttemptAt: now, expiresAt: new Date(plan.expiresAt), leaseToken: null, leaseExpiresAt: null };
+  const checkpoints: any[] = [], calls: Array<{ url: string; body: any; key: string | null; timeout: number }> = [];
+  const tx: any = { $executeRaw: async () => 1, $queryRaw: async () => [],
+    lineTurnOutcome: { findUnique: async () => ({ companyId: plan.authorization.kind === 'PRIVATE' ? plan.authorization.actor.companyId : null, event: { deliveryOwnerId: 'webhook' } }), updateMany: async () => ({ count: 1 }) },
+    lineDeliveryPlan: {
+      findUnique: async () => row, findUniqueOrThrow: async () => row,
+      findFirst: async ({ where }: any) => (!where.leaseToken || where.leaseToken === row.leaseToken) && (!where.status?.in || where.status.in.includes(row.status)) ? row : null,
+      update: async ({ data }: any) => { Object.assign(row, structuredClone(data)); if (data.batchStateJson) checkpoints.push(structuredClone(data)); return row; },
+    } };
+  const prisma: any = { client: { ...tx, $transaction: async (fn: any) => fn(tx) } };
+  const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'test', lineMessagingChannelId: 'oa' } as any), {} as any);
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const originalTimeout = AbortSignal.timeout;
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => { calls.push({ url: '', body: null, key: null, timeout: ms }); return originalTimeout(ms); });
+  globalThis.fetch = (async (url: unknown, init: RequestInit) => {
+    Object.assign(calls.at(-1)!, { url: String(url), body: JSON.parse(String(init.body)), key: new Headers(init.headers).get('X-Line-Retry-Key') });
+    if (String(url).endsWith('/reply')) throw new DOMException('Timed out', 'TimeoutError');
+    return Response.json({}, { headers: { 'x-line-request-id': 'push-accepted-z1' } });
+  }) as typeof fetch;
+  const flow: any = new (ProcessLineWebhookUseCase as any)();
+  Object.assign(flow, { prisma, deliveryPlans: new LineLedgerDeliveryService(prisma), lineReply: adapter, verifyWebhookPlan: async () => true });
+  const event = { ...SECOND_PHOTO, webhookEventId: '01M5A436964B3J0K2RWFZAYAYP', replyToken: 'token-z1', pushTargetId: 'line' };
+  assert.equal(await flow.replayDeliveryPlan(plan.planId, event), 'ok');
+  assert.deepEqual(calls.map(call => [call.url.split('/').at(-1), call.timeout]), [['reply', 8000], ['push', 5000]]);
+  assert.deepEqual(calls[0]!.body.messages, calls[1]!.body.messages);
+  assert.equal(calls[1]!.key, plan.batches[0]!.primary.pushRetryKey);
+  assert.equal(checkpoints[1].batchStateJson[0].lastErrorCode, 'REPLY_ACCEPTANCE_UNKNOWN');
+  assert.equal(row.status, 'ACCEPTED'); assert.equal(row.batchStateJson[0].pushAttempts, 1);
+  assert.equal(row.batchStateJson[0].providerRequestId, 'push-accepted-z1');
+  assert.equal(await flow.replayDeliveryPlan(plan.planId, event), 'ok');
+  assert.equal(calls.length, 2);
+});

@@ -5080,7 +5080,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(card.header[1], 'รอตรวจสอบ');
     assert.match(card.mascot, /system-card-mascot-review-\d{8}\.png$/u);
     assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
-    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/expense-line-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/expense-line-1' }]);
     assert.match(replies[0].canonicalText, /ตรวจสอบและยืนยันในเว็บแอป/, 'the reply that was sent before is the card\'s canonical text');
     assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
     assert.equal((updates.at(-1) as any).data.status, 'completed');
@@ -8354,7 +8354,7 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
     assert.deepEqual(card.totals, ['ยอดรวม']);
     assert.deepEqual(Object.keys(card.pills), ['สถานะเอกสาร']);
     assert.deepEqual(card.notes, ['รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ', '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน']);
-    assert.deepEqual(card.actions, [{ type: 'message', label: 'ยืนยันรายการ', text: 'ยืนยันรายการนี้' }, { type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/exp-1' }]);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/exp-1' }]);
     assert.equal(card.banner, undefined, 'no yellow "รอตรวจสอบ" strip: the owner cut it');
     // The canonical text is the summary this lane has always sent; the card is its presentation.
     assert.match(message.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/u);
@@ -10341,7 +10341,8 @@ it('Fix-up 15: a saved draft offers the existing submit journey only to a submit
   assert.deepEqual(messages[0]!.quickReply!.items.map(item => item.action), [{ type: 'postback', label: 'ส่งอนุมัติ', data: 'action=expense_action_submit&token=signed-token' }]);
   assert.equal(buildReimbursementDraftMessages(result, '', 'company', [])[0]!.quickReply, undefined);
   assert.equal(buildReimbursementDraftMessages({ ...result, receipt: { ...result.receipt, currentState: 'PENDING_APPROVAL' } }, '', 'company', ['reimbursement.submit'])[0]!.quickReply, undefined);
-  assert.doesNotMatch(JSON.stringify(messages), /private-id/);
+  assert.doesNotMatch(messages[0]?.type === 'flex' ? messages[0].canonicalText ?? '' : messages[0]?.type === 'text' ? messages[0].text : '', /private-id/);
+  assert.match(JSON.stringify(messages), /\/reimbursements\/private-id/);
 });
 
 it('Fix-up 15: the newly created claim locator comes only from a delivered receipt for this exact owner', async () => {
@@ -10359,6 +10360,14 @@ it('Fix-up 15: the newly created claim locator comes only from a delivered recei
   assert.deepEqual(await service.recentReimbursementDraft(owner), [{ tool: 'reimbursement.get_detail', id: 'claim' }]);
   for (const changed of [{ userId: 'other' }, { membershipId: 'other' }, { chatKeyHash: 'other' }, { accessFingerprint: 'changed' }, { ownerEpoch: 2 }])
     assert.deepEqual(await service.recentReimbursementDraft({ ...owner, ...changed }), []);
+  const shown = structuredClone(plan); shown.businessResult = null;
+  if (shown.authorization.kind !== 'PRIVATE') throw new Error('expected private');
+  shown.authorization.proofs = [{ id: 'quote', kind: 'QUOTE_REFERENCES', records: [{ tool: 'reimbursement.get_detail', id: 'shown-claim' }] }];
+  row = { planJson: shown, planHash: deliveryHash(shown), batchStateJson: states };
+  assert.deepEqual(await service.recentReimbursementDraft(owner), [{ tool: 'reimbursement.get_detail', id: 'shown-claim' }]);
+  shown.authorization.proofs = [{ id: 'quote', kind: 'QUOTE_REFERENCES', records: [{ tool: 'expense.get_detail', id: 'newer-expense' }] }];
+  row = { planJson: shown, planHash: deliveryHash(shown), batchStateJson: states };
+  assert.deepEqual(await service.recentReimbursementDraft(owner), [], 'a later shown expense never selects an older claim');
   row = { ...row, planHash: 'tampered' }; assert.deepEqual(await service.recentReimbursementDraft(owner), []);
   row = { planJson: plan, planHash: deliveryHash(plan), batchStateJson: initialDeliveryBatchStates(plan) as any }; assert.deepEqual(await service.recentReimbursementDraft(owner), []);
 });
@@ -10677,7 +10686,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   assert.equal(action.status, 'PREVIEW', JSON.stringify(messages)); assert.ok(evidenceChecks > 0);
   const confirm = messages.flatMap((message: any) => flexButtons(message)).find((button: any) => button.action.label === 'บันทึกร่าง')!.action;
   assert.equal(writes, 0); messages = await tap(confirm.data);
-  assert.equal(writes, 1); assert.match(JSON.stringify(messages), /ส่งอนุมัติ/);
+  assert.equal(writes, 1); assert.match(JSON.stringify(messages), /เปิดใบเบิก/);
   if ((literal || fresh23 === 5) && journey === 'E03') {
     const { SubmitReimbursementUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-request.use-case');
     const { payoutSubmitToken } = await import('../../../reimbursements/domain/logic/payout-destination.logic');
@@ -10698,15 +10707,19 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
     if (!live22) (submitActions as any).grounded = async (_actor: any, _chat: string, id: string) => id === savedClaim.id;
     flow.expenseActions = submitActions; savedSubmit = true;
     currentRoute = { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', semanticOutcome: 'REIMBURSEMENT_CLAIM', language: 'th', confidence: 1, semanticSubrequests: [{ index: 0, kind: 'write', goal: 'ส่งอนุมัติใบเบิกที่เพิ่งบันทึก', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
-    const savedSubmitButton = messages[0].quickReply.items[0].action;
-    assert.equal(savedSubmitButton.type, 'postback');
+    messages = await flow.reimbursementDraftMessages(await service.replay({ ctx, owner: owner as any, ownerEpoch: 1, actionId: action.id }), ctx, {});
+    const savedSubmitButton = messages[0].quickReply?.items[0]?.action;
     if (fresh23 === 5) {
-      messages = await tap(savedSubmitButton.data);
+      assert.equal(savedSubmitButton?.type, 'uri', 'an incomplete saved draft offers the named web repair instead of submission');
+      assert.equal(savedSubmitButton?.label, 'แนบหลักฐาน');
+      const { reimbursementApprovalOpenToken } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+      messages = await tap(new URLSearchParams({ action: 'expense_action_submit', token: reimbursementApprovalOpenToken('fx22-submit-secret', ctx.companyId, ctx.userId, savedClaim.id, 'expense_action_submit') }).toString());
       const payload = JSON.stringify(messages);
-      assert.match(payload, /แนบหลักฐาน \/ เปิดใบเบิก/);
+      assert.match(payload, /"label":"แนบหลักฐาน"/);
       assert.match(payload, /\/reimbursements\/saved-claim/); assert.equal(savedClaim.status, 'DRAFT'); assert.equal(writes, 1);
       return;
     }
+    assert.equal(savedSubmitButton.type, 'postback');
     if (live22) {
       // The trace's save postback also replays the applied receipt without a second save.
       messages = await tap(fixture.savePostback);
@@ -12237,7 +12250,8 @@ for (const [id, amount, date] of [
     assert.equal(creates, 1); assert.equal(Number(record.grandTotalAmount), 750, JSON.stringify(h.delivered.at(-1)));
   }
   const payload = JSON.stringify(h.delivered.at(-1));
-  assert.match(payload, lineReplyLanguage(original.turns.at(-1).body.events[0].message.text) === 'en' ? /Confirm expense/ : /ยืนยันรายการ/);
+  assert.match(payload, lineReplyLanguage(original.turns.at(-1).body.events[0].message.text) === 'en' ? /Open on web/ : /เปิดดูในเว็บ/);
+  assert.doesNotMatch(payload, /expense_action_confirm/, 'capture-only permission never offers financial confirmation');
   if (id === 'F036-A') assert.doesNotMatch(payload, /[\u0E00-\u0E7F]/u, 'English correction preserves the capture facts and switches the full delivered surface to English');
   assert.doesNotMatch(payload, /วันไหนคะ|ซื้อจากร้าน|I01|2026-10-1[67]/);
   assert.equal(record.status, 'DRAFT', 'no financial confirmation without the user press');
@@ -12795,4 +12809,165 @@ it('expense collection keeps current facts and only the next question on a locke
     assert.doesNotMatch(card.rows.map(row => row[2]).join('\n'), /^-$/mu);
     if (language === 'en') assert.doesNotMatch(card.notes.join('\n'), /[ก-๙]/u);
   }
+});
+
+for (const command of ['ส่งอนุมัติ', 'ส่งเลย', 'ยื่นเลย', 'submit it', 'ส่งใบเบิกนี้']) it(`Z2 exact UAT semantic_only BUSINESS_READ_QUESTION: ${command} prepares the saved claim SUBMIT card after metered intake`, async t => {
+  const { SubmitReimbursementUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-request.use-case');
+  const { payoutSubmitToken } = await import('../../../reimbursements/domain/logic/payout-destination.logic');
+  const { toRequestDetail } = await import('../../../reimbursements/application/dto/reimbursement.mapper');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { REIMBURSEMENT_POLICY_DEFAULTS } = await import('../../../reimbursements/domain/reimbursement.constants');
+  const { buildCompanySeed } = await import('../../../../../../../scripts/line-ai-expense-advisor/seed');
+  const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
+  const seed = buildCompanySeed('A', new Date()), now = new Date();
+  const claim: any = structuredClone(seed.rows.find(row => row.model === 'reimbursementRequest')!.data);
+  Object.assign(claim, { id: 'saved-starbucks-claim', companyId: 'company-1', requesterUserId: 'user-1', status: 'DRAFT', amount: '170.0000', currency: 'THB',
+    reason: 'V.COLD BREW', updatedAt: now, createdAt: now, incurredDate: now, approvalSteps: [] });
+  claim.lines = [{ id: 'claim-line', lineNo: 1, incurredDate: now, description: 'V.COLD BREW', categoryKey: 'meals', amount: claim.amount, createdAt: now, updatedAt: now }];
+  const cashPlan = { payoutMethod: 'CASH', followsDefault: false } as const;
+  let preflights = 0;
+  const repo: any = { findRequestById: async () => claim, findPolicy: async () => ({ ...REIMBURSEMENT_POLICY_DEFAULTS, requireReceipt: false, approvalRequiredFromAmount: '1', duplicatePolicy: 'WARN', updatedAt: now }),
+    findLinesClaimedElsewhere: async () => [], findReceiptChecksums: async () => ({}), findDuplicateCandidates: async () => [], planSubmitPayout: async () => cashPlan,
+    getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listPaymentSlips: async () => ({}), findClaimPayout: async () => undefined,
+    submitRequestAtomic: async () => assert.fail('text prepares only; the user must press the final button') };
+  const submit = new SubmitReimbursementUseCase(repo, { log: async () => assert.fail('no mutation audit for preview') } as any, {} as any,
+    { validate: async () => { preflights++; }, getAttachmentFileNames: async () => ({}), getAttachmentFileName: async () => undefined } as any,
+    { resolveSubmissionRoute: async () => ({ responsibilityRole: 'MANAGER', effectiveTaskRole: 'MANAGER', recipientUserIds: ['manager'], ownerFallbackUsed: false }) } as any, {} as any);
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'reimbursement.read_own', 'reimbursement.submit'];
+  // Owner's recorded failing route: 0.9, semantic_only, BUSINESS_READ_QUESTION; the continuation must not depend on a better model answer.
+  const route: any = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 0.9, language: command === 'submit it' ? 'en' : 'th',
+    semanticSubrequests: [{ index: 0, kind: 'read', goal: command, requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+  const h = await fx21bBoundWebhook(t, { source: `owner-z2-${['ส่งอนุมัติ', 'ส่งเลย', 'ยื่นเลย', 'submit it', 'ส่งใบเบิกนี้'].indexOf(command)}`, messageText: command, route }, permissions);
+  const actions = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'line-v2:conversation', lifecycleEpoch: 1 }) } } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'owner-z2-secret' } as any,
+    { execute: async () => ({ ...toRequestDetail(claim), payout: { payoutMethod: 'CASH', submitToken: payoutSubmitToken(claim.id, cashPlan) } }) } as any, submit);
+  h.flow.expenseActions = actions;
+  h.flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [], quotedRecords: [{ tool: 'reimbursement.get_detail', id: claim.id }] });
+  await h.execute();
+  assert.equal(h.intakeRequests.length, 1, 'metered intake retained'); assert.equal(h.aiGatewayRequests.length, 0);
+  const payload = h.delivered.at(-1)!;
+  assert.equal(payload.length, 1); assert.equal(payload[0].type, 'flex');
+  assert.deepEqual(lineFlexBodyProblems(payload[0].contents), []);
+  const button = flexButtons(payload[0]).find(item => item.action.type === 'postback' && new URLSearchParams(item.action.data).get('action') === 'expense_action_confirm');
+  assert.ok(button); assert.ok(new URLSearchParams(button.action.data).get('token')?.includes('.'));
+  const pending = await actions.pending({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' } as any, chatKeyHashOf(h.baseEvent));
+  assert.equal(pending?.action, 'REIMBURSEMENT_SUBMIT');
+  assert.deepEqual(await actions.quoteRecords({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' } as any, chatKeyHashOf(h.baseEvent), pending!.token), [{ tool: 'reimbursement.get_detail', id: claim.id }]);
+  assert.equal(claim.status, 'DRAFT'); assert.ok(preflights > 0);
+  // The same preflight controls the saved card's button; incomplete and changed states must hide it.
+  const ctx: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', permissions, scopes: {}, roles: [] };
+  assert.equal(await actions.canSubmitClaim(ctx, claim.id), true);
+  assert.equal(await actions.canSubmitClaim({ ...ctx, permissions: ['reimbursement.read_own'] }, claim.id), false);
+  claim.lines[0].description = ''; assert.equal(await actions.canSubmitClaim(ctx, claim.id), false); claim.lines[0].description = 'V.COLD BREW';
+  claim.status = 'PENDING_APPROVAL'; assert.equal(await actions.canSubmitClaim(ctx, claim.id), false);
+  h.intakeRequests.length = 0; await h.execute();
+  assert.match(JSON.stringify(h.delivered.at(-1)), /เปิดใบเบิก|Open claim/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  if (command === 'ส่งอนุมัติ') {
+    claim.status = 'DRAFT'; permissions.splice(permissions.indexOf('reimbursement.submit'), 1);
+    await h.execute();
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /สิทธิ์|ผู้ขอเบิก|Open claim|เปิดใบเบิก/);
+    h.flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [], quotedRecords: [
+      { tool: 'reimbursement.get_detail', id: claim.id }, { tool: 'reimbursement.get_detail', id: 'other-claim' }] });
+    await h.execute(); assert.match(JSON.stringify(h.delivered.at(-1)), /ต้องการส่งอนุมัติใบเบิกไหนคะ/);
+  }
+});
+
+it('Z5 submit readiness: every real submit refusal has the exact localized repair on saved, typed and signed-open paths', async t => {
+  const { SubmitReimbursementUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-request.use-case');
+  const { payoutSubmitToken } = await import('../../../reimbursements/domain/logic/payout-destination.logic');
+  const { toRequestDetail } = await import('../../../reimbursements/application/dto/reimbursement.mapper');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { REIMBURSEMENT_POLICY_DEFAULTS } = await import('../../../reimbursements/domain/reimbursement.constants');
+  const { reimbursementApprovalOpenToken } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  const { buildCompanySeed } = await import('../../../../../../../scripts/line-ai-expense-advisor/seed');
+  const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
+  const { UnprocessableEntityException } = await import('@nestjs/common');
+  const permission = ['ให้ผู้เบิกหรือผู้ตรวจการเงินที่มีสิทธิ์ส่งอนุมัติส่งใบเบิกนี้ค่ะ', 'Ask the requester or a finance reviewer with submit permission to submit this claim.'];
+  const evidence = ['แนบหลักฐานที่ถูกต้องของสาขาเดียวกับใบเบิกก่อนส่งอนุมัติค่ะ', 'Attach valid evidence from the same branch before submitting.'];
+  const claimed = ['หลักฐานนี้ใช้กับใบเบิกอื่นแล้ว เปิดตรวจรายการก่อนค่ะ', 'This evidence is already used on another claim; review this claim.'];
+  const payout = ['ให้ผู้เบิกตั้งบัญชีรับเงินคืนก่อนส่งอนุมัติค่ะ', 'Ask the requester to set up the reimbursement payout account before submitting.'];
+  const cases = [
+    { name: 'permission', text: permission }, { name: 'requester', text: permission },
+    { name: 'branch', text: ['ให้ผู้มีสิทธิ์ในสาขานี้ส่งอนุมัติใบเบิกค่ะ', 'Ask a user authorized for this branch to submit the claim.'], labels: ['เปิดรายการใบเบิก', 'Open claims'], path: '' },
+    { name: 'status', text: ['ส่งอนุมัติได้เฉพาะร่างใบเบิก เปิดตรวจสถานะปัจจุบันค่ะ', 'Only a draft claim can be submitted; check its current status.'] },
+    { name: 'lines', text: ['เติมรายละเอียดรายการเบิกให้ครบก่อนส่งอนุมัติค่ะ', 'Complete the claim item details before submitting.'] },
+    ...['invalid_primary_attachment', 'invalid_linked_expense', 'REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH', 'missing_receipt'].map(name => ({ name, text: evidence, labels: ['แนบหลักฐาน', 'Attach evidence'] })),
+    { name: 'missing_receipt_reason_required', text: ['ระบุเหตุผลที่ไม่มีใบเสร็จในใบเบิกก่อนส่งอนุมัติค่ะ', 'Add the missing receipt reason on the claim before submitting.'], labels: ['แนบหลักฐาน', 'Attach evidence'] },
+    { name: 'source', text: ['ตรวจบิลต้นทางในใบเบิกก่อนส่งอนุมัติค่ะ', 'Review the source expense before submitting.'] },
+    { name: 'policy', text: ['ให้เจ้าของกิจการเปิดใช้นโยบายใบเบิกก่อนค่ะ', 'Ask the shop owner to activate the claim policy.'] },
+    ...['attachment_already_claimed', 'expense_already_claimed'].map(name => ({ name, text: claimed })),
+    { name: 'duplicate', text: ['ตรวจใบเบิกที่อาจซ้ำก่อนส่งอนุมัติค่ะ', 'Review the possible duplicate before submitting.'] },
+    ...['payout_method_required', 'payout_destination_required', 'payout_destination_changed'].map(name => ({ name, text: payout, labels: ['ตั้งบัญชีรับเงินคืน', 'Set payout account'], path: '/payout-account' })),
+    { name: 'passing', text: [] },
+  ];
+  for (const c of cases) for (const [index, language] of ['th', 'en'].entries()) await t.test(`${c.name} ${language}`, async () => {
+    const now = new Date(), seed = buildCompanySeed('A', now);
+    const claim: any = structuredClone(seed.rows.find(row => row.model === 'reimbursementRequest')!.data);
+    Object.assign(claim, { id: 'saved-claim', companyId: 'company-1', branchId: 'branch-1', requesterUserId: 'user-1', status: 'DRAFT', amount: '170.0000', currency: 'THB',
+      reason: 'Coffee', missingReceiptReason: null, updatedAt: now, createdAt: now, incurredDate: now, approvalSteps: [] });
+    claim.lines = [{ id: 'claim-line', lineNo: 1, incurredDate: now, description: 'Coffee', categoryKey: 'meals', amount: claim.amount, createdAt: now, updatedAt: now }];
+    const ctx: any = { requestId: 'z5', companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', roles: [], scopes: {}, permissions: ['reimbursement.read_own', 'reimbursement.submit'] };
+    const policy: any = { ...REIMBURSEMENT_POLICY_DEFAULTS, requireReceipt: false, allowMissingReceiptWithReason: false, approvalRequiredFromAmount: '1', duplicatePolicy: 'WARN', updatedAt: now };
+    const cashPlan = { payoutMethod: 'CASH', followsDefault: false } as const;
+    let previewCalls = 0, evidenceError: string | undefined;
+    if (c.name === 'permission') ctx.permissions = ['reimbursement.read_own'];
+    if (c.name === 'requester') claim.requesterUserId = 'another-user';
+    if (c.name === 'branch') ctx.scopes = { branchIds: ['another-branch'] };
+    if (c.name === 'status') claim.status = 'PENDING_APPROVAL';
+    if (c.name === 'lines') claim.lines[0].description = '';
+    if (c.name.startsWith('invalid_') || c.name === 'REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH') evidenceError = c.name;
+    if (c.name === 'source' || c.name === 'expense_already_claimed') claim.lines[0].linkedExpenseId = 'source-expense';
+    if (c.name === 'expense_already_claimed') claim.lines[0].sourceExpenseSnapshot = { schemaVersion: 1, expenseId: 'source-expense', expenseDate: now.toISOString(), currency: 'THB', seller: { name: 'Coffee shop' } };
+    if (c.name === 'policy') policy.status = 'INACTIVE';
+    if (c.name === 'missing_receipt' || c.name === 'missing_receipt_reason_required') policy.requireReceipt = true;
+    if (c.name === 'missing_receipt_reason_required') policy.allowMissingReceiptWithReason = true;
+    if (c.name === 'attachment_already_claimed' || c.name === 'duplicate') claim.lines[0].attachmentId = 'receipt';
+    if (c.name === 'duplicate') policy.duplicatePolicy = 'BLOCK_SUBMIT';
+    const repo: any = { findRequestById: async () => claim, findPolicy: async () => policy,
+      findLinesClaimedElsewhere: async () => c.name === 'attachment_already_claimed' ? [{ attachmentId: 'receipt' }] : c.name === 'expense_already_claimed' ? [{ linkedExpenseId: 'source-expense' }] : [],
+      findReceiptChecksums: async () => ({}), findDuplicateCandidates: async () => c.name === 'duplicate' ? [{ ...claim, id: 'duplicate-claim' }] : [],
+      planSubmitPayout: async () => ['payout_method_required', 'payout_destination_required'].includes(c.name) ? { error: c.name } : cashPlan,
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listPaymentSlips: async () => ({}), findClaimPayout: async () => undefined,
+      submitDraftAtomic: async () => assert.fail('preview must not submit'), recordBlockedSubmitDuplicates: async () => assert.fail('preview must not persist duplicate audit') };
+    const submit = new SubmitReimbursementUseCase(repo, { log: async () => assert.fail('preview must not audit') } as any, {} as any,
+      { validate: async () => { if (evidenceError) throw new UnprocessableEntityException({ code: evidenceError }); }, getAttachmentFileNames: async () => ({}), getAttachmentFileName: async () => undefined } as any,
+      { resolveSubmissionRoute: async () => ({ responsibilityRole: 'MANAGER', effectiveTaskRole: 'MANAGER', recipientUserIds: ['manager'], ownerFallbackUsed: false }) } as any, {} as any);
+    const execute = submit.execute.bind(submit);
+    submit.execute = async (...args: Parameters<typeof execute>) => { previewCalls++; assert.equal(args[3]?.previewOnly, true); return execute(...args); };
+    const secret = 'z5-secret';
+    const actions = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'conversation', lifecycleEpoch: 1 }) } } } as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: secret } as any,
+      { execute: async () => ({ ...toRequestDetail(claim), payout: { payoutMethod: 'CASH', submitToken: c.name === 'payout_destination_changed' ? 'old-token' : payoutSubmitToken(claim.id, cashPlan) } }) } as any, submit);
+    const flow: any = makeUseCase({} as any, { config: { aiGatewayInternalSecret: secret } }).useCase;
+    flow.expenseActions = actions; flow.updateEventLog = async () => {};
+    const event: any = { language, messageText: language === 'th' ? 'ส่งอนุมัติ' : 'submit it', lineUserId: 'line-user', sourceType: 'user', sourceId: 'line-user', webhookEventId: 'z5-event' };
+    const readiness = await actions.claimSubmitReadiness(ctx, claim.id, language as 'th' | 'en');
+    const saved = await flow.reimbursementDraftMessages({ status: 'applied', receipt: { requestId: claim.id, currentState: 'DRAFT', amount: '170', currency: 'THB' } }, ctx, event);
+    assert.deepEqual(lineFlexBodyProblems(saved[0].contents), []);
+    let delivered: any[] = []; flow.deliverRequiredMessages = async (_event: any, messages: any[]) => { delivered = messages; };
+    assert.equal(await flow.handleClaimSubmitText(event, ctx, null, { quotedRecords: [{ tool: 'reimbursement.get_detail', id: claim.id }] }), true);
+    const opened = await actions.apply(ctx, chatKeyHashOf(event), { action: 'expense_action_submit', token: reimbursementApprovalOpenToken(secret, ctx.companyId, ctx.userId, claim.id, 'expense_action_submit') }, language as 'th' | 'en');
+    if (c.name === 'passing') {
+      assert.equal(readiness.ready, true); assert.equal(opened.status, 'prepared');
+      assert.ok(flexButtons(saved[0]).some(button => new URLSearchParams(button.action.data).get('action') === 'expense_action_submit'));
+      assert.ok(flexButtons(delivered[0]).some(button => new URLSearchParams(button.action.data).get('action') === 'expense_action_confirm'));
+      assert.deepEqual(lineFlexBodyProblems(delivered[0].contents), []);
+    } else {
+      const label = ('labels' in c ? c.labels! : ['เปิดใบเบิก', 'Open claim'])[index];
+      const path = `/companies/company-1/reimbursements${'path' in c ? c.path : '/saved-claim'}`;
+      assert.deepEqual(readiness, { ready: false, reply: c.text[index], webLabel: label, webPath: path });
+      assert.deepEqual(readLineSystemCard(saved[0]).notes, [c.text[index]]);
+      assert.ok(flexButtons(saved[0]).some(button => button.action.label === label && button.action.uri === `https://app.example.com${path}`));
+      assert.equal(flexButtons(saved[0]).filter(button => button.action.type === 'postback').length, 0);
+      assert.equal(delivered[0].text, c.text[index]);
+      assert.deepEqual(delivered[0].quickReply.items[0].action, { type: 'uri', label, uri: `https://app.example.com${path}` });
+      assert.deepEqual(opened, { status: 'blocked', reply: c.text[index], webPath: path, webLabel: label });
+    }
+    assert.equal(claim.status, c.name === 'status' ? 'PENDING_APPROVAL' : 'DRAFT');
+    assert.equal(previewCalls, 4, 'saved readiness, saved card, typed continuation and signed-open all invoke the same preview use case');
+  });
 });

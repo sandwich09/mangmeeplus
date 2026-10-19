@@ -46,20 +46,21 @@ function sameOwner(saved: Record<string, unknown>, owner: LineQuoteOwner): boole
 @Injectable()
 export class LineQuotedMessageService {
   constructor(private readonly prisma: PrismaService) {}
-  /** A delivered draft receipt supplies a locator for “ส่งอนุมัติใบที่เพิ่งบันทึก”; never financial facts. */
+  /** The latest delivered claim read or draft receipt supplies a follow-up locator, never financial facts. */
   async recentReimbursementDraft(owner: LineQuoteOwner): Promise<LineQuotedRecord[]> {
     const now = new Date();
     const rows = await this.prisma.client.lineDeliveryPlan.findMany({ where: { companyId: owner.companyId, userId: owner.userId,
-      createdAt: { gte: new Date(now.getTime() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60_000) }, purgeAt: { gt: now },
-      planJson: { path: ['businessResult', 'kind'], equals: 'REIMBURSEMENT_DRAFT' } }, orderBy: { createdAt: 'desc' }, take: 10,
+      createdAt: { gte: new Date(now.getTime() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60_000) }, purgeAt: { gt: now } }, orderBy: { createdAt: 'desc' }, take: 10,
       select: { planJson: true, planHash: true, batchStateJson: true } });
     for (const row of rows) {
       const plan = parseLineDeliveryPlan(row.planJson);
       if (!plan || row.planHash !== deliveryHash(plan) || plan.authorization.kind !== 'PRIVATE'
-        || !sameOwner(plan.authorization.actor, owner) || plan.businessResult?.kind !== 'REIMBURSEMENT_DRAFT'
+        || !sameOwner(plan.authorization.actor, owner)
         || !parseDeliveryBatchStates(row.batchStateJson, plan)?.every(state => state.status === 'ACCEPTED')) continue;
-      const records = quoteRecordsFromPlan(plan).filter(record => record.tool === 'reimbursement.get_detail');
-      if (records.length === 1 && plan.businessResult.recordIds.includes(records[0]!.id)) return records;
+      const records = quoteRecordsFromPlan(plan);
+      if (!records.length) continue;
+      // A later expense/voucher is a different target; never silently select an older claim.
+      return records.every(record => record.tool === 'reimbursement.get_detail') ? records : [];
     }
     return [];
   }

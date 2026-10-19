@@ -42,7 +42,7 @@ class CategoryPreviewRollback extends Error {
 
 export const EXPENSE_ACTIONS = ['MARK_READY', 'CONFIRM', 'DELETE_DRAFT', 'VOID', 'REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT', 'RECORD_PAYMENT', ...VOUCHER_ACTIONS] as const;
 export type ExpenseAction = typeof EXPENSE_ACTIONS[number] | TeamAction;
-export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งใบเบิก', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
+export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งอนุมัติ', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
 export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next'; token: string };
 export type ExpenseActionPreview = {
   language?: LineReplyLanguage;
@@ -102,7 +102,7 @@ function missingActionFields(error: unknown): string[] {
   return Array.isArray(fields) ? fields.filter((field): field is string => typeof field === 'string') : [];
 }
 export type ExpenseActionResult = { status: 'applied' | 'replayed' | 'prepared'; reply: string; preview: ExpenseActionPreview; expenseIds?: string[] }
-  | { status: 'blocked' | 'cancelled'; reply: string };
+  | { status: 'blocked' | 'cancelled'; reply: string; webPath?: string; webLabel?: string };
 export const EXPENSE_ACTION_CHANGED = 'รายการเปลี่ยนไปแล้วค่ะ ขอเตรียมการ์ดใหม่ก่อนยืนยันอีกครั้ง';
 // Confirm/ready/void/payment and their repository guards: customer text never echoes an exception.
 export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
@@ -362,6 +362,58 @@ export class LineExpenseActionService {
       case 'REIMBURSEMENT_REJECT': return this.rejectClaim!.execute(ctx, claim.id, reason ?? '', undefined, line);
     }
   }
+  /** Use the web submit guards (including payout/token) without any mutation. */
+  async claimSubmitReadiness(ctx: RequestContext, id: string, language: LineReplyLanguage = 'th') {
+    try {
+      const claim = await this.getClaim!.execute(ctx, id);
+      await this.validateClaim(ctx, claim, 'REIMBURSEMENT_SUBMIT');
+      return { ready: true as const };
+    } catch (error) {
+      return { ready: false as const, ...this.claimSubmitRefusal(error, ctx, id, language) };
+    }
+  }
+  async canSubmitClaim(ctx: RequestContext, id: string): Promise<boolean> {
+    return (await this.claimSubmitReadiness(ctx, id)).ready;
+  }
+  private claimSubmitRefusal(error: unknown, ctx: RequestContext, id: string, language: LineReplyLanguage) {
+    if (!(error instanceof HttpException)) throw error;
+    const response = error.getResponse();
+    const code = typeof response === 'object' && response ? String((response as any).code ?? (response as any).message ?? error.message) : String(response);
+    const en = language === 'en';
+    let reply = en ? 'Review the claim details before submitting.' : 'ตรวจข้อมูลใบเบิกให้ครบก่อนส่งอนุมัติค่ะ';
+    let webLabel = en ? 'Open claim' : 'เปิดใบเบิก';
+    let webPath = `/companies/${ctx.companyId}/reimbursements/${id}`;
+    if (/payout_(?:method_required|destination_required|destination_changed)/u.test(code)) {
+      reply = en ? 'Ask the requester to set up the reimbursement payout account before submitting.' : 'ให้ผู้เบิกตั้งบัญชีรับเงินคืนก่อนส่งอนุมัติค่ะ';
+      webLabel = en ? 'Set payout account' : 'ตั้งบัญชีรับเงินคืน';
+      webPath = `/companies/${ctx.companyId}/reimbursements/payout-account`;
+    } else if (/Branch is outside|branch.*scope/iu.test(code)) {
+      reply = en ? 'Ask a user authorized for this branch to submit the claim.' : 'ให้ผู้มีสิทธิ์ในสาขานี้ส่งอนุมัติใบเบิกค่ะ';
+      webLabel = en ? 'Open claims' : 'เปิดรายการใบเบิก';
+      webPath = `/companies/${ctx.companyId}/reimbursements`;
+    } else if (error.getStatus() === 403) {
+      reply = en ? 'Ask the requester or a finance reviewer with submit permission to submit this claim.' : 'ให้ผู้เบิกหรือผู้ตรวจการเงินที่มีสิทธิ์ส่งอนุมัติส่งใบเบิกนี้ค่ะ';
+    } else if (/Cannot submit from status/u.test(code)) {
+      reply = en ? 'Only a draft claim can be submitted; check its current status.' : 'ส่งอนุมัติได้เฉพาะร่างใบเบิก เปิดตรวจสถานะปัจจุบันค่ะ';
+    } else if (/duplicate_unresolved/u.test(code)) {
+      reply = en ? 'Review the possible duplicate before submitting.' : 'ตรวจใบเบิกที่อาจซ้ำก่อนส่งอนุมัติค่ะ';
+    } else if (/(?:attachment|expense)_already_claimed/u.test(code)) {
+      reply = en ? 'This evidence is already used on another claim; review this claim.' : 'หลักฐานนี้ใช้กับใบเบิกอื่นแล้ว เปิดตรวจรายการก่อนค่ะ';
+    } else if (/reimbursement_source_review_required/u.test(code)) {
+      reply = en ? 'Review the source expense before submitting.' : 'ตรวจบิลต้นทางในใบเบิกก่อนส่งอนุมัติค่ะ';
+    } else if (/reimbursement_policy_inactive/u.test(code)) {
+      reply = en ? 'Ask the shop owner to activate the claim policy.' : 'ให้เจ้าของกิจการเปิดใช้นโยบายใบเบิกก่อนค่ะ';
+    } else if (/missing_receipt_reason_required/u.test(code)) {
+      reply = en ? 'Add the missing receipt reason on the claim before submitting.' : 'ระบุเหตุผลที่ไม่มีใบเสร็จในใบเบิกก่อนส่งอนุมัติค่ะ';
+      webLabel = en ? 'Attach evidence' : 'แนบหลักฐาน';
+    } else if (/missing_receipt|invalid_primary_attachment|invalid_linked_expense|REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH/u.test(code)) {
+      reply = en ? 'Attach valid evidence from the same branch before submitting.' : 'แนบหลักฐานที่ถูกต้องของสาขาเดียวกับใบเบิกก่อนส่งอนุมัติค่ะ';
+      webLabel = en ? 'Attach evidence' : 'แนบหลักฐาน';
+    } else if (/lines_required|too_many_lines|line_|amount_|incurred_date/u.test(code)) {
+      reply = en ? 'Complete the claim item details before submitting.' : 'เติมรายละเอียดรายการเบิกให้ครบก่อนส่งอนุมัติค่ะ';
+    }
+    return { reply, webPath, webLabel };
+  }
   private async recentSlip(ctx: RequestContext, chat: string, expenseId: string) {
     const rows = await this.repo.listRecentLineCaptures({ companyId: ctx.companyId, createdByUserId: ctx.userId,
       chatKeyHash: chat, since: new Date(Date.now() - 15 * 60_000), scopes: ctx.scopes ?? {}, take: 5, includeAllStatuses: true });
@@ -381,7 +433,7 @@ export class LineExpenseActionService {
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
-    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string }> {
+    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     const en = language === 'en';
     let action = input.action as ExpenseAction;
     const id = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
@@ -535,6 +587,7 @@ export class LineExpenseActionService {
       if (awaitingReason || entry.awaitingField) return { reply: this.question(entry) };
       return { preview, reply: preview.summary };
     } catch (error) {
+      if (action === 'REIMBURSEMENT_SUBMIT') return this.claimSubmitRefusal(error, ctx, id as string, language);
       const reply = this.refusal(error, action, approvers, language);
       if (action === 'CONFIRM' || action === 'MARK_READY') {
         const fields = missingActionFields(error);
@@ -786,7 +839,7 @@ export class LineExpenseActionService {
     if (control.action === 'expense_action_approve' || control.action === 'expense_action_reject' || control.action === 'expense_action_submit') {
       if (!verifyReimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId, control.token, control.action)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
       const result = await this.preview(ctx, chat, { reimbursementId: control.token.split('.')[0], action: control.action === 'expense_action_submit' ? 'REIMBURSEMENT_SUBMIT' : control.action === 'expense_action_approve' ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT' }, true, undefined, language);
-      return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', reply: result.reply };
+      return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', ...result };
     }
     const id = control.token.split('.')[0]!;
     const applied = await this.store.loadApplied(ctx.companyId, this.key(chat));
@@ -986,7 +1039,7 @@ export class LineExpenseActionService {
       if (code === 'missing_receipt') return 'ขอหลักฐานใบเบิกให้ครบตามนโยบายบริษัทก่อนส่งอนุมัติค่ะ';
       if (code === 'missing_receipt_reason_required') return 'ขอเหตุผลที่ไม่มีใบเสร็จสั้นๆ ก่อนส่งอนุมัติค่ะ';
       if (/rejection_reason_required/u.test(error.message)) return 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ';
-      if (/not_awaiting_approval|Cannot.*(submit|cancel)|invalid_status_transition/u.test(error.message)) return 'สถานะใบเบิกนี้ยังทำรายการที่ขอไม่ได้ค่ะ';
+      if (/not_awaiting_approval|Cannot.*(submit|cancel)|invalid_status_transition/u.test(error.message)) return 'สถานะใบเบิกนี้ยังทำรายการที่ขอไม่ได้ เปิดใบเบิกดูขั้นตอนต่อได้ค่ะ';
       if (/payout.*(required|attestation)/u.test(error.message)) return 'ขอข้อมูลบัญชีรับเงินและการตรวจบัญชีให้ครบก่อนค่ะ';
     }
     if (code === 'disbursement_payment_method_required') return 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ';
@@ -1035,6 +1088,6 @@ export class ExpenseActionPreviewTool implements ErpReadToolPort {
     const result = await this.actions.preview({ requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId,
       companyId: ctx.companyId, membershipId: ctx.membershipId ?? '', roles: ctx.roles ?? [], permissions: ctx.permissions,
       scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th');
-    return { toolName: this.toolName, status: 'ok', data: result, sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, ...(result.webPath ? { webPath: result.webPath } : {}) }], asOf: new Date().toISOString() };
+    return { toolName: this.toolName, status: 'ok', data: result, sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: result.webLabel ?? 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, ...(result.webPath ? { webPath: result.webPath } : {}) }], asOf: new Date().toISOString() };
   }
 }

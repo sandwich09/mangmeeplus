@@ -68,14 +68,14 @@ test('G3/G6 durable delivery PostgreSQL leases, immutable replay, cancellation a
       assert.ok(push, 'claimable at once — a spent reply token is not a transport fault to back off from');
       assert.equal((await service.beginPlanBatch(push!, 'PUSH', now))?.index, 0);
     });
-    await t.test('UNKNOWN reply never becomes a push; cancel is terminal even when in-flight request accepts', async () => {
+    await t.test('Z1 UNKNOWN reply permits frozen push; cancel remains terminal when an in-flight push accepts', async () => {
       const { plan, fence } = await fixture(6);
       await service.savePlan(fence, plan, new Date(now.getTime() + 86400000), now);
       const first = (await service.claimPlan(plan.planId, fence, now))!;
       await service.beginPlanBatch(first, 'REPLY', now);
       await service.finishPlanBatch(first, 0, { kind: 'unknown', code: 'NETWORK' }, now);
       const later = new Date(now.getTime() + 3000), retry = (await service.claimPlan(plan.planId, fence, later))!;
-      assert.equal(await service.beginPlanBatch(retry, 'PUSH', later), null);
+      assert.equal((await service.beginPlanBatch(retry, 'PUSH', later))?.index, 0);
       assert.equal(await service.cancelPlan(plan.planId, deliveryHash(plan), later), true);
       assert.equal(await service.finishPlanBatch(retry, 0, { kind: 'accepted', code: 'API_ACCEPTED' }, later), true);
       const row = await client.lineDeliveryPlan.findUniqueOrThrow({ where: { id: plan.planId } });

@@ -1,4 +1,4 @@
-import { lineDisplayDate, lineControlData, lineUiLabel, type LineReplyLanguage } from './line-language.logic';
+import { lineReplyLanguage, lineDisplayDate, lineControlData, lineUiLabel, type LineReplyLanguage } from './line-language.logic';
 import { lineMessagePreview } from './line-message-preview.logic';
 /**
  * The LINE surface of S-4 (draft-control spec §5.4, J3): one confirm card and the replies that
@@ -22,6 +22,7 @@ import { absoluteWebLink } from '../../../../common/http/web-link';
 import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard } from './line-system-card-limits.logic';
 import { buildLineSystemTextCardMessage } from './line-business-card.logic';
+import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 
 export const DRAFT_UPDATE_CONFIRM_COMMAND = 'ยืนยันการแก้ไข';
 export const DRAFT_UPDATE_CANCEL_COMMAND = 'ยกเลิกการแก้ไข';
@@ -277,8 +278,13 @@ export function buildDraftUpdateOutcomeCard(
   reply: string,
   webBaseUrl: string | undefined,
   companyId: string,
+  confirmation?: ExpenseActionPreview,
 ): LineReplyMessage | undefined {
-  return buildLineSystemTextCardMessage({ text: reply, header: draftUpdateCardHeader(state), webBaseUrl, companyId, linkLabel: 'ดูในเว็บ' });
+  const language = lineReplyLanguage(reply);
+  const text = [reply, ...(confirmation ? [confirmation.summary, ...(confirmation.details ?? [])] : [])].filter(Boolean).join('\n');
+  return buildLineSystemTextCardMessage({ text, header: draftUpdateCardHeader(state), webBaseUrl, companyId, linkLabel: confirmation ? language === 'en' ? 'Open expense' : 'เปิดรายการ' : 'ดูในเว็บ',
+    ...(confirmation ? { action: { type: 'postback' as const, label: language === 'en' ? 'Confirm expense' : 'ยืนยันรายการ',
+      data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation.token }).toString(), language) } } : {}) });
 }
 
 /** J3.2 — what actually changed, then the link. Numbers copied from the applied preview. */
