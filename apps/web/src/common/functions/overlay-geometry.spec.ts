@@ -66,3 +66,31 @@ test('UAT-T1 a portaled calendar can open above a phone bottom sheet and show a 
     assert.ok(placed.edge - placed.maxHeight >= bounds.top);
   } finally { globals.window = previous.window; globals.document = previous.document; }
 });
+
+test('MOBILE-1 a dialog calendar fits the whole month above its action bar on a 375 by 667 phone', () => {
+  const screen = { top: 0, bottom: 667, left: 0, right: 375 };
+  const bounds = overlayEdges(screen, [{ ...screen, top: 575, edge: 'bottom' }]);
+  const anchor = { top: 325, bottom: 369, left: 16, right: 359 };
+  // Neither side of the field has 500px: the calendar may overlap its trigger,
+  // rather than cutting the final week out of view.
+  const placed = placeAnchoredPanel(anchor, bounds, 500, 286, true)!;
+  assert.equal(placed.maxHeight, 500);
+  const top = placed.side === 'above' ? placed.edge - placed.maxHeight : placed.edge;
+  assert.ok(top >= bounds.top + 8);
+  assert.ok(top + placed.maxHeight <= bounds.bottom - 8);
+});
+
+test('MOBILE-1 normal-flow dialog action bars reserve space for portaled calendars', () => {
+  const globals = globalThis as any;
+  const previous = { window: globals.window, document: globals.document, getComputedStyle: globals.getComputedStyle };
+  const rect = { top: 575, bottom: 667, left: 0, right: 375, width: 375, height: 92 };
+  const footer = { hasAttribute: (name: string) => name === 'data-modal-chrome', contains: () => false,
+    closest: () => null, getBoundingClientRect: () => ({ ...rect, toJSON: () => rect }) };
+  const root = { querySelectorAll: () => [footer] };
+  const anchor = { closest: () => root, getBoundingClientRect: () => ({ top: 325, bottom: 369, left: 16, right: 359 }) };
+  try {
+    globals.window = { innerHeight: 667, innerWidth: 375 }; globals.document = { body: root };
+    globals.getComputedStyle = () => ({ position: 'static', visibility: 'visible', display: 'block' });
+    assert.deepEqual(readOverlayBounds(anchor as any), { top: 0, bottom: 575, left: 0, right: 375 });
+  } finally { Object.assign(globals, previous); }
+});

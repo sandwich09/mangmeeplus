@@ -12,15 +12,21 @@ export function overlayEdges(viewport: OverlayRect, bars: Bar[]): OverlayRect {
   return bounds;
 }
 
-export function placeAnchoredPanel(anchor: OverlayRect, bounds: OverlayRect, height: number, width: number) {
+export function placeAnchoredPanel(anchor: OverlayRect, bounds: OverlayRect, height: number, width: number, keepWhole = false) {
   // A sticky bar may cover one edge while the field is still pressable. Open from
   // its visible edge; only close once the field is wholly hidden by the bars.
   if (anchor.bottom <= bounds.top || anchor.top >= bounds.bottom || anchor.right <= bounds.left || anchor.left >= bounds.right) return null;
   const below = bounds.bottom - anchor.bottom - 14, above = anchor.top - bounds.top - 14;
   const side = below >= height || below >= above ? 'below' : 'above';
-  const maxHeight = Math.min(height, side === 'below' ? below : above);
+  const maxHeight = Math.min(height, keepWhole ? bounds.bottom - bounds.top - 16 : side === 'below' ? below : above);
   if (maxHeight < 96) return null;
-  return { side, edge: side === 'below' ? anchor.bottom + 6 : anchor.top - 6,
+  const edge = side === 'below' ? anchor.bottom + 6 : anchor.top - 6;
+  // A short phone may have room for the whole calendar, but not on either side
+  // of its field. Slide it inside the visible area instead of hiding a week.
+  const fittedEdge = side === 'below'
+    ? Math.max(bounds.top + 8, Math.min(edge, bounds.bottom - maxHeight - 8))
+    : Math.min(bounds.bottom - 8, Math.max(edge, bounds.top + maxHeight + 8));
+  return { side, edge: keepWhole ? fittedEdge : edge,
     left: Math.max(bounds.left + 8, Math.min(anchor.left, bounds.right - width - 8)), maxHeight };
 }
 
@@ -35,10 +41,14 @@ export function readOverlayBounds(anchor?: HTMLElement | null, panel?: HTMLEleme
   for (const element of root.querySelectorAll<HTMLElement>('*')) {
     if (element === panel || panel?.contains(element) || element.contains(anchor ?? null) || element.closest('[data-toast-stack]')) continue;
     const css = getComputedStyle(element);
-    if (!['sticky', 'fixed'].includes(css.position) || css.visibility === 'hidden' || css.display === 'none') continue;
+    const modalChrome = element.hasAttribute('data-modal-chrome');
+    if ((!modalChrome && !['sticky', 'fixed'].includes(css.position)) || css.visibility === 'hidden' || css.display === 'none') continue;
     const rect = element.getBoundingClientRect();
     // Tall sticky document viewers and sidebars are columns, not chrome bars.
     if (!rect.width || !rect.height || rect.right <= column.left || rect.left >= column.right) continue;
+    // Modal action bars use normal flex layout, rather than sticky/fixed.
+    if (modalChrome && rect.top >= column.bottom) bars.push({ ...rect.toJSON(), edge: 'bottom' });
+    if (!['sticky', 'fixed'].includes(css.position)) continue;
     if (rect.height >= (viewport.bottom - viewport.top) / 2 && rect.width < (viewport.right - viewport.left) * 0.9) continue;
     const top = parseFloat(css.top), bottom = parseFloat(css.bottom);
     if (Number.isFinite(top) && rect.top <= viewport.top + top + 1) bars.push({ ...rect.toJSON(), edge: 'top' });

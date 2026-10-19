@@ -83,3 +83,9 @@ test('BEH-Q picking or escaping a date restores its trigger; scrolling it out cl
   assert.match(source, /event.key === 'Escape'[^\n]*closeCalendar\(\)/);
   assert.match(source, /<PopoverPanel\s+open=\{open\}\s+onClose=\{\(\) => setOpen\(false\)\}/);
 });
+
+test('MOBILE-1 the calendar reserves room for six touch-sized weeks, its header and footer', () => {
+  const source = readFileSync(new URL('./ThemedDate.tsx', import.meta.url), 'utf8');
+  assert.match(source, /height=\{mode === 'month' \? 300 : 500\}\s+keepWhole/);
+  assert.match(source, /className="min-h-0 flex-1 overflow-y-auto"/);
+});
