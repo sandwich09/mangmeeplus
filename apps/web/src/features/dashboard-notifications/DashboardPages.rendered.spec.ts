@@ -11,7 +11,24 @@ const snapshot = { id: 'snapshot', companyId: 'shop', periodKind: 'month', gener
   widgets: [{ key: 'expense_summary', title: 'รายจ่าย', metrics: [
     { key: 'expense_total_in_period', label: 'รายจ่าย', value: 12345.67, unit: 'บาท', freshness: 'fresh' },
     { key: 'expense_pending_review', label: 'รอตรวจ', value: 7, unit: 'ใบ', freshness: 'fresh' },
+    { key: 'expense_unpaid_outstanding', label: 'ค้างจ่ายที่ยืนยันแล้ว (ทุกช่วงเวลา)', value: 6842.12, unit: 'บาท', freshness: 'fresh' },
   ] }] };
+
+test('UAT-Q1 home names the all-month outstanding balance and includes partially paid expenses', () => {
+  const original = runtime.useState;
+  let index = 0;
+  Reflect.set(runtime, 'useState', (initial: any) => {
+    const state = (original as any)(initial), i = index++;
+    return [i === 1 ? snapshot : i === 2 ? false : state[0], state[1]];
+  });
+  try {
+    const html = renderToStaticMarkup(React.createElement(CompanyDashboardPage, { companyId: 'shop', permissions: ['expense.read'], displayName: 'สมชาย' }));
+    assert.match(html, />ค้างจ่ายทั้งหมด</);
+    assert.match(html, /รายจ่ายยืนยันแล้วทุกเดือน รวมที่จ่ายบางส่วน/);
+    assert.match(html, />6,842\.12</);
+    assert.doesNotMatch(html, /฿|ยืนยันแล้ว ยังไม่ได้จ่าย/);
+  } finally { Reflect.set(runtime, 'useState', original); }
+});
 
 for (const loading of [false, true]) test(`FIX-Q2 home period change hides stale totals before and during the request: ${loading}`, () => {
   const original = runtime.useState;

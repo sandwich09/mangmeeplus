@@ -1,4 +1,5 @@
 'use client';
+import { expenseDisplayAttachments, expenseAttachmentTypeLabel } from './expenses.model';
 import { deriveEvidenceRowFlags } from './evidence-audit.logic';
 import { focusExpenseField } from './expense-focus.logic';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -948,7 +949,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
     viewerUrlsRef.current = {};
   }, []);
 
-  const attachments = detail?.attachments ?? [];
+  const attachments = detail ? expenseDisplayAttachments(detail) : [];
   const safeViewerIndex = Math.min(viewerIndex, Math.max(0, attachments.length - 1));
   const activeAttachment = attachments[safeViewerIndex] ?? null;
   const activeAttachmentId = activeAttachment?.id ?? null;
@@ -1218,7 +1219,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
     ? `${t('expenses.non_expense_override_recorded', locale)}: ${DOCUMENT_KIND_LABELS[locale][storedClassification['documentKind']] ?? 'เอกสารธุรกิจอื่น'} — ${storedResolution['reason']} · ${formatThaiDateTime(storedResolution['resolvedAt'])}`
     : null;
   const missingFields = Array.isArray(aiMap?.['missingFields'])
-    ? aiMap.missingFields.filter((field): field is string => typeof field === 'string')
+    ? aiMap.missingFields.filter((field): field is string => typeof field === 'string' && Boolean(AI_MISSING_FIELD_LABELS[field]))
     : [];
   const aiMissingDataFields = expenseAiMissingFields(aiMap, 'data');
 
@@ -1710,7 +1711,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
       )}
     </div>
   );
-  const aiDataBox = !isCancelled && hasAiOutput && aiMap && (
+  const aiDataBox = isMutable && !isCancelled && hasAiOutput && aiMap && (
     <div className="space-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] p-3 text-xs text-[#3538CD]">
       <p className="font-semibold">{t('expenses.ai_data_title', locale)}</p>
       {typeof aiMap['status'] === 'string' && <p>{t('expenses.status_label', locale)}: {expenseValueLabel(AI_SUMMARY_STATUS_LABELS, aiMap['status'], 'ข้อมูลจาก AI')}</p>}
@@ -1994,7 +1995,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   );
 
   const previewMore = (attachment: typeof activeAttachment) => <details className="relative">
-    <summary className={cx(ghostClass, 'cursor-pointer list-none')}>เพิ่มเติมไฟล์</summary>
+    <summary className={cx(ghostClass, 'w-full cursor-pointer list-none')}>ตัวเลือกไฟล์</summary>
     <div className="absolute right-0 top-full z-20 mt-2 flex min-w-48 flex-col gap-2 rounded-xl bg-white p-2 shadow-lg">
       {appendEvidenceControl}
       {removeReceiptControl(attachment)}
@@ -2111,7 +2112,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
                       <div className="truncate text-sm font-semibold text-gray-800">{activeAttachment?.originalFileName}</div>
                       <div className="text-xs text-gray-500">{activeAttachment && isWetSignedScanAttachment(activeAttachment.id, detail.substituteReceiptEvidence)
                         ? t('expenses.attachment.wet_signed_scan', locale)
-                        : activeAttachment?.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
+                        : activeAttachment?.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')} · {activeAttachment && expenseAttachmentTypeLabel(activeAttachment, detail.substituteReceiptEvidence)}</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {/* Owner 2026-08-28: "เผื่ออัพโหลดผิด". Re-uploading has always worked on the server —
@@ -2159,7 +2160,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
                 </div>
               )}
               {attachments.length > 0 && (
-                <div className={cx('border-b border-gray-100 bg-gray-50 lg:hidden', checkBillBlocked && 'order-2')}>
+                <div data-testid="expense-attachment-list" className={cx('border-b border-gray-100 bg-gray-50 lg:hidden', checkBillBlocked && 'order-2')}>
                   {/* The phone is where receipts are actually reviewed, so the "wrong file" fix has to be
                       here too — the desktop viewer header alone would have left mobile with no way out. */}
                   {replaceReceiptControl && (
@@ -2168,24 +2169,19 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
                     </div>
                   )}
                   {attachments.map((attachment) => (
-                    <div key={`${attachment.id}:${attachment.purpose}`} className="flex items-center gap-2 border-b border-gray-100 pr-5 last:border-b-0">
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-5 text-left hover:bg-gray-100 disabled:opacity-60"
-                      onClick={() => void openPreview(attachment)}
-                      disabled={previewLoading} aria-busy={Boolean(previewLoading)}
-                    >
-                      <span className="flex h-10 w-10 items-center justify-center rounded-[9px]" style={{ background: '#E0F2FE', color: '#0BA5EC' }}>{ICON.file}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-gray-800">{attachment.originalFileName}</div>
+                    <div key={`${attachment.id}:${attachment.purpose}`} className="flex flex-wrap items-center gap-3 border-b border-gray-100 px-5 py-3 last:border-b-0">
+                      <div className="min-w-0 flex-1 basis-48">
+                        <div className="text-sm font-semibold text-gray-800">{attachment.originalFileName}</div>
                         <div className="text-xs text-gray-500">{isWetSignedScanAttachment(attachment.id, detail.substituteReceiptEvidence)
                           ? t('expenses.attachment.wet_signed_scan', locale)
-                          : attachment.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseValueLabel(MIME_TYPE_LABELS, attachment.mimeType, 'ไฟล์เอกสาร')}</div>
+                          : attachment.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseAttachmentTypeLabel(attachment, detail.substituteReceiptEvidence)}</div>
                       </div>
-                      <span className="flex-shrink-0 text-xs font-semibold text-brand-600">{previewLoading ? t('expenses.opening', locale) : t('expenses.view_file', locale)}</span>
-                    </button>
-
-                    {previewMore(attachment)}
+                      <ActionGroup>
+                        {previewMore(attachment)}
+                        <button type="button" className={ghostClass} onClick={() => void openPreview(attachment)} disabled={previewLoading} aria-busy={Boolean(previewLoading)}>
+                          {previewLoading ? t('expenses.opening', locale) : t('expenses.view_file', locale)}
+                        </button>
+                      </ActionGroup>
                     </div>
                   ))}
                 </div>

@@ -22,7 +22,7 @@ type ExpenseDetail = { status: string; paymentStatus: string };
 
 const FINANCE = QA_ACCOUNTS.FINANCE.displayName;
 const MANAGER = QA_ACCOUNTS.MANAGER.displayName;
-const AMOUNT = '฿2,500.00';
+const AMOUNT = '2,500.00 บาท';
 const evidence = picture('หลักฐาน.png');
 
 const toast = (page: Page, text: string | RegExp) => page.getByRole('status').filter({ hasText: text }).first();
@@ -129,6 +129,11 @@ test('@journey a payment document is prepared by finance, approved by the manage
     const send = dialog.getByRole('button', { name: 'ส่งอนุมัติ', exact: true });
     await expect(dialog.getByRole('radio', { name: 'ฉันอนุมัติเลย', exact: true })).toBeChecked();
     await expect(send).toBeEnabled();
+    await expect(dialog.getByRole('button', { name: 'ปิด', exact: true })).toHaveCount(1);
+    await dialog.getByRole('button', { name: 'ยังไม่ส่ง', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await main.getByRole('button', { name: 'ส่งอนุมัติ', exact: true }).click();
+    await expect(dialog.getByRole('radio', { name: 'ฉันอนุมัติเลย', exact: true })).toBeChecked();
     await expect(dialog.getByRole('button', { name: 'อนุมัติเลย', exact: true })).toHaveCount(0);
     await dialog.getByRole('radio', { name: MANAGER, exact: true }).check();
     await send.click();
@@ -143,6 +148,16 @@ test('@journey a payment document is prepared by finance, approved by the manage
     await expect(main.getByRole('button', { name: 'อนุมัติเอง', exact: true })).toBeEnabled();
   });
 
+  await test.step('finance: the payee step explains reserved bills and opens the unpaid expense list', async () => {
+    await pressMenu(finance, 'ใบเตรียมจ่าย/ใบสำคัญจ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
+    await main.getByRole('link', { name: 'สร้างใบเตรียมจ่าย', exact: true }).click();
+    const excluded = main.getByText(/^อีก \d+ รายการยังเลือกไม่ได้/);
+    await expect(excluded).toContainText(/อยู่ในใบเตรียมจ่าย [1-9]\d*/, AFTER_PRESS);
+    await excluded.getByRole('link', { name: 'ดูที่หน้ารายจ่าย', exact: true }).click();
+    await expect(finance).toHaveURL(new RegExp(`/companies/${companyId}/expenses\\?view=unpaid$`));
+    await pressMenu(finance, 'ใบเตรียมจ่าย/ใบสำคัญจ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
+    await main.getByRole('link', { name: `เปิด ${seller} · ${number}`, exact: true }).click();
+  });
   await test.step('finance: ส่งเตือนอีกครั้ง', async () => {
     await main.getByRole('button', { name: 'ส่งเตือนอีกครั้ง', exact: true }).click();
     const dialog = finance.getByRole('dialog', { name: 'ส่งเตือนให้ใคร' });
@@ -419,12 +434,12 @@ test('@journey an approver pays directly unless another bill for the same payee 
   page.on('request', request => { if (request.url().includes('/disbursement-vouchers/payable-expenses')) reads++; });
   await page.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
   const firstRead = page.waitForResponse(response => response.url().includes('/disbursement-vouchers/payable-expenses') && response.ok(), FIRST_SIGHT);
-  const first = await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('บิลแรก'), seller, price: '100', total: '฿100.00', toPay: '฿100.00' });
+  const first = await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('บิลแรก'), seller, price: '100', total: '100.00 บาท', toPay: '100.00 บาท' });
   await firstRead;
   await expect(main.getByRole('link', { name: linkName, exact: true })).toHaveCount(0);
   await expect(main.getByText('จ่ายแล้วพิมพ์ใบสำคัญจ่ายได้จากประวัติการจ่าย', { exact: true })).toBeVisible();
   await expect(main.getByRole('link', { name: 'เพิ่มเข้าใบเตรียมจ่าย', exact: true })).toHaveCount(0);
-  const second = await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('บิลที่สอง'), seller, price: '200', total: '฿200.00', toPay: '฿200.00' });
+  const second = await recordExpenseByHand(page, { branch: 'Head Office (สำนักงานใหญ่)', item: unique('บิลที่สอง'), seller, price: '200', total: '200.00 บาท', toPay: '200.00 บาท' });
   const link = main.getByRole('link', { name: linkName, exact: true });
   await expect(link).toBeVisible(AFTER_PRESS);
   await expect(link).not.toHaveClass(/mangmee-btn/);

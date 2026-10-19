@@ -3,7 +3,7 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import Decimal from 'decimal.js';
 import { DISBURSEMENT_VOUCHER_WORDS, coerceCivilDate,
   type RequestContext, type DisbursementPayee, type DisbursementPayeePage, type DisbursementPayeeQuery,
-  type DisbursementPayableExpense, type DisbursementPayableExpenseQuery,
+  type DisbursementPayableExpense, type DisbursementPayableExpenseQuery, type DisbursementExpenseReason,
 } from '@watchdog-bms/contracts';
 import { normalizeVendorName, toAsciiDigits } from '../../../accounting-documents/domain/logic/vendor-counterparty-match.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -40,6 +40,7 @@ export class ReadDisbursementVoucherSourcesUseCase {
   }
 
   async payees(ctx: RequestContext, query: DisbursementPayeeQuery): Promise<DisbursementPayeePage> {
+    const excludedExpenses: Partial<Record<DisbursementExpenseReason, number>> = {};
     const groups = new Map<string, { payee: DisbursementPayee; amount: Decimal; newest: Source }>();
     for (const expense of await this.sources(ctx, query)) {
       const identity = payeeIdentity(expense);
@@ -49,9 +50,13 @@ export class ReadDisbursementVoucherSourcesUseCase {
         groups.set(identity.payeeKey, group);
       }
       if (expense.createdAt > group.newest.createdAt || expense.createdAt.getTime() === group.newest.createdAt.getTime() && expense.id > group.newest.id) group.newest = expense;
-      group.payee.allReserved = group.payee.allReserved && selectionReason(expense) === 'reserved';
+      const reason = selectionReason(expense);
+      group.payee.allReserved = group.payee.allReserved && reason === 'reserved';
       // Owner 2026-10-15: what cannot be paid is not offered, so a payee counts only the bills it can pay now.
-      if (selectionReason(expense) !== null) continue;
+      if (reason !== null) {
+        excludedExpenses[reason] = (excludedExpenses[reason] ?? 0) + 1;
+        continue;
+      }
       group.payee.expenseCount++;
       group.payee.selectableExpenseCount++;
       group.amount = group.amount.plus(String(expense.outstandingAmount));
@@ -70,7 +75,7 @@ export class ReadDisbursementVoucherSourcesUseCase {
     const pageSize = Number.isFinite(query.pageSize) ? Math.min(200, Math.max(1, Math.floor(query.pageSize!))) : 20;
     return { data: matching.slice((page - 1) * pageSize, page * pageSize).map(g => ({ ...g.payee,
       totalOutstanding: g.amount.toFixed(4),
-    })), total: matching.length, page, pageSize };
+    })), total: matching.length, page, pageSize, excludedExpenses };
   }
 
   async payableExpenses(ctx: RequestContext, query: DisbursementPayableExpenseQuery): Promise<DisbursementPayableExpense[]> {

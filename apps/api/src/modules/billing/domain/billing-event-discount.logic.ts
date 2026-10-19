@@ -86,3 +86,11 @@ export function eventDiscountExpected(snapshot: { quote: Pick<BillingQuote, 'pur
     expected.taxSatang === applied.taxSatang && expected.totalSatang === applied.totalSatang && expected.shownDiscountSatang === discount.shownDiscountSatang
     ? expected : null;
 }
+
+/** Document words only; the one paid line and Stripe's zero discount amounts stay unchanged. */
+export function eventDiscountDocumentDescription(snapshot: Parameters<typeof eventDiscountExpected>[0]): string | undefined {
+  const discount = snapshot.eventDiscount;
+  if (discount?.choice !== 'USE' || !eventDiscountExpected(snapshot)) return undefined;
+  const baht = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
+  return `ราคา ${baht(eventDiscountBasis(snapshot))} · ส่วนลดจากงาน ${discount.eventName} −${baht(discount.shownDiscountSatang)}`;
+}

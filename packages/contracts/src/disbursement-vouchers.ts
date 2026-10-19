@@ -220,7 +220,7 @@ export type DisbursementVoucherDetail = {
   actions: DisbursementVoucherActions;
 };
 export type DisbursementPayeeQuery = { search?: string; branchId?: string; page?: number; pageSize?: number };
-export type DisbursementPayeePage = { data: DisbursementPayee[]; total: number; page: number; pageSize: number };
+export type DisbursementPayeePage = { data: DisbursementPayee[]; total: number; page: number; pageSize: number; excludedExpenses?: Partial<Record<DisbursementExpenseReason, number>> };
 export type DisbursementPayableExpenseQuery = { payeeKey?: string; search?: string; branchId?: string };
 export type DisbursementExpenseReservation = { voucherId?: string | null; documentNumber: string | null; preparerName: string | null };
 export type DisbursementPayableExpense = {

@@ -156,7 +156,7 @@ test.describe('no-receipt certificate', () => {
       await expect(main.locator('.mangmee-page-header').getByText('ออกแล้ว', { exact: true })).toBeVisible();
       // `has:` takes a page-level locator; a `main.` one is looked up inside the card itself and never matches.
       const facts = main.locator('section.mangmee-card').filter({ has: page.getByText('จำนวนเงิน', { exact: true }) });
-      await expect(facts).toContainText(inOrder('จำนวนเงิน', '120.00', 'บาท', 'ผู้รับเงิน', payee, 'วันที่จ่าย', today, 'เงินของ', 'ร้าน', 'ค่าใช้จ่าย', expenseNumber));
+      await expect(facts).toContainText(inOrder('จำนวนเงิน', '120.00', 'บาท', 'ผู้รับเงิน', payee, 'วันที่จ่าย', today, 'จ่ายจาก', 'เงินของร้าน', 'ค่าใช้จ่าย', expenseNumber));
       await expect(main.getByRole('link', { name: 'กลับไปรายการ', exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'ดาวน์โหลด PDF', exact: true })).toBeEnabled();
       await main.getByText('เพิ่มเติม', { exact: true }).click();
@@ -202,6 +202,7 @@ test.describe('no-receipt certificate', () => {
       await expect(main.getByText(whole(`ใบรับรองแทนใบเสร็จ ${certificateNumber} · ออกแล้ว`)).first()).toBeVisible();
       await expect(main.getByText(expenseNumber, { exact: true })).toBeVisible();
       await expect(main.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true })).toHaveValue(payee);
+      await expect(main.getByRole('textbox', { name: 'ซื้อไปใช้ทำอะไร', exact: true })).toHaveValue('ใช้แช่เครื่องดื่มขายหน้าร้าน');
     });
 
     await test.step('ถัดไป (no refusal) → ถัดไป → the summary has the certificate and no warning', async () => {
@@ -227,8 +228,14 @@ test.describe('no-receipt certificate', () => {
       await expect(page.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
       await expect(main.locator('.mangmee-page-header').getByText('จ่ายแล้ว', { exact: true })).toBeVisible();
       await expect(main.getByRole('heading', { name: 'รายละเอียดเอกสาร', exact: true })).toBeVisible();
+      await expect(main.getByText('ยังไม่จัดหมวด', { exact: true })).toHaveCount(0);
+      await expect(main.getByText('ข้อมูลจาก AI (ต้องตรวจสอบก่อนยืนยัน)', { exact: true })).toHaveCount(0);
+      const files = main.getByTestId('expense-attachment-list');
+      await expect(files.getByText(`ใบรับรองแทนใบเสร็จ ${certificateNumber}`, { exact: true })).toHaveCount(1);
+      await expect(files).toContainText('ไฟล์เอกสาร');
+      await expect(files).not.toContainText('.svg');
       await expect(main.getByRole('link', { name: 'เปิดดูเอกสาร', exact: true })).toBeVisible();
-      await expect(main).toContainText(inOrder('ประวัติการจ่าย', `${today} · โอนเงิน`, '฿120.00'));
+      await expect(main).toContainText(inOrder('ประวัติการจ่าย', `${today} · โอนเงิน`, '120.00 บาท'));
       await main.getByTestId('expense-payment-history').getByRole('button', { name: 'ดูหลักฐานการจ่าย', exact: true }).click();
       const proofReader = page.getByRole('dialog', { name: 'สลิปโอนค่าน้ำแข็ง.png', exact: true });
       await expect(proofReader).toBeVisible(AFTER_PRESS);
@@ -274,7 +281,7 @@ test.describe('no-receipt certificate', () => {
       }
       await main.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true }).fill(item);
       await main.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('60');
-      await expect(main.getByText(whole('ยอดรวม ฿60.00'))).toBeVisible();
+      await expect(main.getByText(whole('ยอดรวม 60.00 บาท'))).toBeVisible();
       await save.click();
       await expect(main.getByRole('heading', { level: 1, name: '(รอระบุผู้ขาย)', exact: true })).toBeVisible(FIRST_SIGHT);
       const number = main.getByText(/^EXP-\d{6}-\d{5}$/);

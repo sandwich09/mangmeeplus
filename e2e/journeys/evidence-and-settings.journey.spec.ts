@@ -30,7 +30,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
   await owner.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
 
   await test.step('owner: a confirmed receipt of this journey, so the files do not depend on another journey', () => recordExpenseByHand(owner, {
-    branch: 'Head Office (สำนักงานใหญ่)', item: unique('อาหารประชุม'), price: '1.005', total: '฿1.01', seller: vendor, toPay: '฿1.01',
+    branch: 'Head Office (สำนักงานใหญ่)', item: unique('อาหารประชุม'), price: '1.005', total: '1.01 บาท', seller: vendor, toPay: '1.01 บาท',
   }));
 
   await test.step('หลักฐานทางบัญชี: this month → fix a row, return to its filters, and download the accountant bundle', async () => {

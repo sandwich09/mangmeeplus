@@ -12,7 +12,7 @@ require.cache[require.resolve('./disbursement-vouchers.api')]!.exports = new Pro
   get: (target, key: string) => typeof target[key] === 'function' ? (...args: any[]) => target[key](...args) : target[key],
 });
 const modalPath = require.resolve('@/common/components/modal'), modal = require(modalPath);
-require.cache[modalPath]!.exports = { ...modal, Modal: (props: any) => React.createElement('div', {}, props.title, props.children, props.footer) };
+require.cache[modalPath]!.exports = { ...modal, Modal: (props: any) => React.createElement('div', {}, React.createElement('button', { type: 'button', 'aria-label': props.closeLabel, onClick: props.onClose }, '×'), props.title, props.children, props.footer) };
 const { DisbursementVoucherCommandDialog } = require('./DisbursementVoucherCommandDialog');
 const { DisbursementVoucherPayCard } = require('./DisbursementVoucherPayCard');
 const { ToastContext } = require('@/common/components/toast/use-toast');
@@ -61,6 +61,19 @@ function dialogHarness(patch: any = {}) {
     choose: (id: string) => nodes.find(node => node.tag === 'input' && node.value === id).onChange(),
     unmount: () => effects.forEach(effect => effect?.cleanup?.()) };
 }
+
+test('submit chooser names radios by person and offers one close plus an unsent back-out', async () => {
+  const list = mock.method(api, 'listDisbursementApprovers', async () => people);
+  const screen = dialogHarness({ kind: 'submit', detail: { header: { ...header, status: 'DRAFT' }, actions: { submit: true } } });
+  try {
+    screen.draw(); await settle(); const html = screen.draw();
+    assert.deepEqual(screen.nodes.filter(node => node.type === 'radio').map(node => node['aria-label']), ['คุณเอ', 'คุณบี']);
+    assert.equal(screen.nodes.filter(node => node['aria-label'] === 'ปิด' || node.children.includes('ปิด')).length, 1);
+    assert.match(html, /ยังไม่ส่ง/);
+    screen.nodes.find(node => node.children.includes('ยังไม่ส่ง')).onClick();
+    assert.equal(screen.closes(), 1);
+  } finally { screen.unmount(); list.mock.restore(); }
+});
 
 test('reminder dialog loads branch approvers, preselects the person asked and shows the last reminder', async () => {
   const list = mock.method(api, 'listDisbursementApprovers', async (company: string, branch: string) => { assert.equal(company, 'shop'); assert.equal(branch, 'branch'); return people; });
@@ -234,7 +247,7 @@ test('approval opens as a question, closing sends none, and confirming twice sen
   const closed = dialogHarness(patch), confirmed = dialogHarness(patch);
   try {
     const text = closed.draw(); await settle();
-    assert.match(text, /อนุมัติจ่าย ฿4,850.00 ให้ ร้านศิริพร ใช่ไหม/);
+    assert.match(text, /อนุมัติจ่าย 4,850.00 บาท ให้ ร้านศิริพร ใช่ไหม/);
     assert.equal(approve.mock.callCount(), 0);
     closed.nodes.find(node => node.children.includes('ปิด')).onClick();
     assert.equal(closed.closes(), 1); assert.equal(approve.mock.callCount(), 0); assert.equal(successfulCloses, 0);
@@ -315,7 +328,7 @@ test('sole-self send keeps the existing money question before submitting', async
   const submit = mock.method(api, 'submitDisbursementVoucher', async (_company: string, _id: string, body: any) => { bodies.push(body); return { ...header, selfApproved: true, status: 'APPROVED' }; });
   const screen = dialogHarness({ kind: 'selfApprove', detail: { header: { ...header, status: 'DRAFT', payeeName: 'ร้าน ก', totalAmount: '2500.00' }, actions: { submitAndApprove: true } } });
   try {
-    const html = screen.draw(); assert.match(html, /อนุมัติจ่าย ฿2,500.00 ให้ ร้าน ก เองเลย/); assert.match(html, /ระบบจะบันทึกว่าอนุมัติเอง/);
+    const html = screen.draw(); assert.match(html, /อนุมัติจ่าย 2,500.00 บาท ให้ ร้าน ก เองเลย/); assert.match(html, /ระบบจะบันทึกว่าอนุมัติเอง/);
     assert.equal(bodies.length, 0); assert.doesNotMatch(html, /type="radio"/);
     await screen.nodes.find(node => node.children.includes('ส่งและอนุมัติ')).onClick(); await settle();
     assert.equal(bodies.length, 1); assert.equal(bodies[0].approveNow, true);

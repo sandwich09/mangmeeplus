@@ -45,8 +45,7 @@ export function readOverlayBounds(anchor?: HTMLElement | null, panel?: HTMLEleme
     if (Number.isFinite(bottom) && rect.bottom >= viewport.bottom - bottom - 1) bars.push({ ...rect.toJSON(), edge: 'bottom' });
   }
   const bounds = overlayEdges(viewport, bars);
-  const modalBody = anchor?.closest('[data-modal-body]')?.getBoundingClientRect();
-  if (modalBody) { bounds.top = Math.max(bounds.top, modalBody.top); bounds.bottom = Math.min(bounds.bottom, modalBody.bottom); }
+  // The panel is portaled outside the scrolling sheet; only its trigger must stay inside it.
   return bounds;
 }
 

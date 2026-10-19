@@ -71,6 +71,7 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
   await expect(main.getByText('เลือกให้จากรายละเอียด เปลี่ยนได้', { exact: true })).toHaveCount(0);
 
   const payout = main.getByRole('radiogroup', { name: 'รับเงินคืนทาง' });
+  await expect(payout.getByRole('radio', { name: /claim-payout|DEFAULT|SPECIFIED|CASH/ })).toHaveCount(0);
   if (claim.payout === 'cash') {
     await payout.getByRole('radio', { name: 'รับเป็นเงินสด', exact: true }).check();
   } else {
@@ -104,6 +105,20 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
   const today = thaiDate();
   const first = { reason: unique('ค่าแท็กซี่ไปส่งของ'), amount: '180', printed: '฿180.00', category: 'เดินทาง', payout: 'cash' as const };
   const second = { reason: unique('ค่าถุงใส่ของ'), amount: '95', printed: '฿95.00', category: 'วัสดุอุปกรณ์', payout: 'account' as const };
+
+  await test.step('owner: create stays in the same header on all claim work tabs', async () => {
+    const owner = await pageAs('OWNER');
+    const main = owner.locator('main');
+    await owner.goto(`/companies/${companyId}/reimbursements`, FIRST_SIGHT);
+    await expect(claimsHeading(owner)).toBeVisible(FIRST_SIGHT);
+    const nav = main.getByRole('navigation', { name: 'งานเบิกจ่าย' });
+    for (let index = 0; index < await nav.getByRole('button').count(); index++) {
+      await nav.getByRole('button').nth(index).click();
+      await expect(main.locator('.mangmee-page-header').getByRole('link', { name: '+ สร้างใบเบิก', exact: true })).toBeVisible();
+    }
+    await main.locator('.mangmee-page-header').getByRole('link', { name: '+ สร้างใบเบิก', exact: true }).click();
+    await expect(main.getByRole('heading', { level: 1, name: 'สร้างใบเบิก', exact: true })).toBeVisible(FIRST_SIGHT);
+  });
 
   const staff = await pageAs('STAFF');
   staff.setDefaultTimeout(30_000);
@@ -249,6 +264,8 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await expect(financeMain.getByText(/^รอจ่าย \d+ ใบ/)).toHaveCount(0);
     const row = financeMain.locator('tr[role="link"]').filter({ hasText: paid.number });
     await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace('฿', ''), 'รอจ่าย'));
+    await expect(row).toHaveAccessibleName(`เปิดใบเบิก ${second.reason} ${paid.number}`);
+    await expect(financeMain.getByText('ใบเบิกในแท็บนี้', { exact: true })).toBeVisible();
     await row.getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
 
     const dialog = finance.getByRole('dialog', { name: `บันทึกจ่าย ${paid.number}` });

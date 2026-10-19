@@ -73,3 +73,33 @@ for (const canGrantView of [true, false]) test(`an existing manage-only role ope
   assert.match(inputs[0]!, /disabled=""/);
   assert.match(inputs[1]!, /checked=""/);
 });
+
+
+test('UAT-R2 each role-editor checkbox has its visible permission name rather than on', () => {
+  const html = renderToStaticMarkup(React.createElement(RoleBuilder, { companyId: 'shop', allPacks: packs,
+    packModules: [{ module: 'company', packs }], templates: [], roleOptionsAvailable: true,
+    onCancel() {}, onSubmit: async () => {} }));
+  const inputs = html.match(/<input[^>]*type="checkbox"[^>]*>/g)!;
+  assert.equal(inputs.length, packs.length);
+  inputs.forEach((input, index) => assert.ok(input.includes(`aria-label="${packs[index]!.nameTh}"`), input));
+});
+
+test('UAT-R2 role × summary text never treats incomplete work packs as having only baseline rights', () => {
+  const { RoleCanDoList } = require('./EmployeeAccessPages');
+  const { roleCanDoPacks } = require('./role-picker.logic');
+  const cases = [
+    { role: 'ไม่มีสิทธิ์', keys: [], expected: ['ดูสิทธิ์ที่เปิดไว้ในรายการเมนูด้านล่าง'] },
+    { role: 'สิทธิ์พื้นฐาน', keys: ['dashboard.read', 'notification.read'], expected: ['ดูสิทธิ์ที่เปิดไว้ในรายการเมนูด้านล่าง'] },
+    { role: 'พนักงานเดิมที่มีสิทธิ์บางข้อ', keys: ['expense.read_own', 'expense.create', 'expense.update'], expected: ['ดูสิทธิ์ที่เปิดไว้ในรายการเมนูด้านล่าง'] },
+    { role: 'ดูตั้งค่าร้าน', keys: ['company.setup.read'], expected: ['ดูตั้งค่าร้าน'] },
+    { role: 'จัดการตั้งค่าร้าน', keys: ['company.setup.read', 'company.setup.manage'], expected: ['ดูตั้งค่าร้าน', 'จัดการตั้งค่าร้าน'] },
+  ];
+  for (const row of cases) {
+    const html = renderToStaticMarkup(React.createElement(RoleCanDoList, { packs: roleCanDoPacks(row.keys, packs),
+      corePacks: [{ ...packs[0], isCore: true, nameTh: 'สิทธิ์บัญชีพื้นฐาน', permissionKeys: ['dashboard.read', 'notification.read'] }], permissionKeys: row.keys }));
+    assert.equal(html.includes('สิทธิ์พื้นฐานที่มี: สิทธิ์บัญชีพื้นฐาน'), row.role === 'สิทธิ์พื้นฐาน', row.role);
+    assert.doesNotMatch(html, /ทุกบทบาททำได้/, row.role);
+    row.expected.forEach(text => assert.ok(html.includes(text), row.role));
+    assert.doesNotMatch(html, /ทำได้เฉพาะสิ่งที่ทุกบทบาททำได้/, row.role);
+  }
+});

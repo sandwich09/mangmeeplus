@@ -135,7 +135,7 @@ test('SUB-DOC header owns guarded document actions and one status badge with sep
   assert.match(header, /canCancelHere && <button[^]*?ยกเลิกใบรับรองนี้/);
   assert.match(header, /className=\{btnClass\}[^]*?>ดาวน์โหลด PDF<\/button>/);
   assert.match(header, /label: 'จำนวนเงิน', value: amountText\(detail.grandTotalAmount\), unit: 'บาท'/);
-  for (const label of ['ผู้รับเงิน', 'วันที่จ่าย', 'เงินของ', 'ค่าใช้จ่าย']) assert.ok(header.includes(`>${label}</dt>`));
+  for (const label of ['ผู้รับเงิน', 'วันที่จ่าย', 'จ่ายจาก', 'ค่าใช้จ่าย']) assert.ok(header.includes(`>${label}</dt>`));
   const history = source.slice(source.indexOf('const renderVersionHistory'), source.indexOf('const canEditPrepared'));
   assert.doesNotMatch(history, /<button|<Notice/);
   assert.match(history, /text-gray-500.*ยกเลิกใบนี้จากหน้านี้ไม่ได้/);

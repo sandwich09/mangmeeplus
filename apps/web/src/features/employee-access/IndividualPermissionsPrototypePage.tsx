@@ -765,7 +765,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 {packs && selectedRoles.length > 0 && (
                   <div className="mt-4" data-testid="person-can-do">
                     <h3 className="text-sm font-semibold text-gray-900">ทำอะไรได้</h3>
-                    <RoleCanDoList packs={roleCanDoPacks(selectedRoles.flatMap((role) => role.permissionKeys), packs)} corePacks={packs.filter((pack) => pack.isCore && !pack.locked)} />
+                    <RoleCanDoList packs={roleCanDoPacks(selectedRoles.flatMap((role) => role.permissionKeys), packs)} corePacks={packs.filter((pack) => pack.isCore && !pack.locked)} permissionKeys={selectedRoles.flatMap((role) => role.permissionKeys)} />
                   </div>
                 )}
 

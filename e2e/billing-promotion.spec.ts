@@ -723,7 +723,7 @@ for (const width of WIDTHS) {
     await expect(choice.locator('p')).toHaveText([CHOICE_NOTE, 'ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม งานเดียวกันใช้ได้ร้านละครั้ง']);
     // the card of the promoted package shows the promotion, and not the discount that is not picked
     await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น' })).toBeVisible();
-    await expect(starterOf(page)).not.toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(starterOf(page)).not.toContainText('หลังส่วนลด');
     await settle(page, info, width, 'promo06b-chooser');
     await choosePackage(page);
     await expect(promoReviewOf(page)).toBeVisible();
@@ -765,7 +765,7 @@ for (const width of WIDTHS) {
     // the default: the promoted package takes the promotion, the other package keeps what its card shows
     await expect(starterOf(page).getByRole('region', { name: 'โปรโมชั่น เริ่มต้น' })).toBeVisible();
     await expect(basic.getByRole('region', { name: /^โปรโมชั่น / })).toHaveCount(0);
-    await expect(basic).toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(basic).toContainText('หลังส่วนลด 449.00 บาท');
     await choosePackage(page, basic);
     await expect(reviewOf(page).getByRole('region', { name: 'ส่วนลดจากงาน' })).toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า');
     await expect(reviewOf(page).getByRole('region', { name: 'ส่วนลดจากงาน' }).getByRole('button', { name: 'ไม่ใช้ส่วนลดครั้งนี้', exact: true })).toBeVisible();
@@ -776,7 +776,7 @@ for (const width of WIDTHS) {
     await backToPackages(page);
     await choice.getByRole('radio').nth(2).check();
     await choice.getByRole('radio').nth(0).check();
-    await expect(basic).not.toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(basic).not.toContainText('หลังส่วนลด');
     await choosePackage(page, basic);
     await expect(reviewOf(page)).toBeVisible();
     expect(w.log.quotes.at(-1)).toEqual({ offerKey: 'BASIC_499', interval: 'month', purchaseMode: 'CARD_AUTO', eventDiscountChoice: 'DECLINE' });
@@ -786,7 +786,7 @@ for (const width of WIDTHS) {
 
 const TICKET_BOX = {
   legend: 'ส่วนลดจากงาน', ticket: 'ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท · ใช้ได้ถึง 31 ธ.ค. 2569', decline: 'ไม่ใช้ครั้งนี้',
-  notes: ['ใช้ได้ครั้งละ 1 ส่วนลดต่อการจ่าย ส่วนลดที่ไม่ได้เลือกยังเก็บไว้ใช้ครั้งถัดไปได้', 'ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม งานเดียวกันใช้ได้ร้านละครั้ง'],
+  notes: ['ใช้ได้ครั้งละ 1 ส่วนลด ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม งานเดียวกันใช้ได้ร้านละครั้ง ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้'],
 };
 const ticketOnlyWorld = (companyId: string) => {
   const w = defaultCustomerWorld(companyId, newShopStatus(companyId, { promotions: undefined, eventDiscount: heldTicket() }));
@@ -795,10 +795,10 @@ const ticketOnlyWorld = (companyId: string) => {
 };
 
 for (const width of WIDTHS) {
-  test(`PROMO-06 a shop holding only a sales-event ticket sees the discount box exactly as origin/main shows it, and its quote request is recorded at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+  test(`PROMO-06 a shop holding only a sales-event ticket sees the discount choice and one instruction line, and its quote request is recorded at ${width}px`, async ({ authedPage: page, companyId }, info) => {
     const w = ticketOnlyWorld(companyId);
     await openChooser(page, w, width, info, 'promo06-first-screen');
-    // origin/main: one section "ส่วนลดจากงาน" — legend, one radio per held ticket, "ไม่ใช้ครั้งนี้", the two notes — and nothing about a promotion
+    // UAT-Q1: one discount section, one radio per held discount, "ไม่ใช้ครั้งนี้", and one instruction line.
     const box = regionNamed(page, 'ส่วนลดจากงาน');
     await expect(box).toBeVisible();
     await expect(box.locator('legend')).toHaveText(TICKET_BOX.legend);
@@ -807,7 +807,7 @@ for (const width of WIDTHS) {
     await expect(box.locator('p')).toHaveText(TICKET_BOX.notes);
     await expect(box.getByRole('radio').first()).toBeChecked();
     await expect(page.getByText(/โปรโมชั่น|ซื้อแบบปกติ|สิทธิ์ที่ใช้ในการซื้อครั้งนี้/)).toHaveCount(0);
-    await expect(starterOf(page)).toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(starterOf(page)).toContainText('หลังส่วนลด 199.00 บาท');
     await settle(page, info, width, 'promo06-chooser');
     await choosePackage(page);
     await expect(reviewOf(page)).toBeVisible();
@@ -879,13 +879,13 @@ for (const width of WIDTHS) {
       await expect(regionNamed(page, 'เลือกแพ็กเกจ')).toBeVisible();
     };
     // nothing touched: the promotion radio is the default, Starter has the promotion and Basic has only the held discount, which lowers it
-    await expect(cardOf(page, 'เติบโต')).toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(cardOf(page, 'เติบโต')).toContainText('หลังส่วนลด 449.00 บาท');
     await settle(page, info, width, 'promo06r2-basic-with-ticket-chooser');
     await tap('เติบโต');
     // the buyer picks the promotion on purpose (the radio looks checked from the start, so choose another first) and taps Basic: no promotion there, and the discount stays unspent (main's own word)
     await choice.getByRole('radio', { name: 'ซื้อแบบปกติ' }).check();
     await choice.getByRole('radio', { name: /ใช้โปรโมชั่น/ }).check();
-    await expect(cardOf(page, 'เติบโต')).not.toContainText('ส่วนลดจากงาน งานสัมมนาร้านค้า −50 บาท');
+    await expect(cardOf(page, 'เติบโต')).not.toContainText('หลังส่วนลด');
     await tap('เติบโต');
     await tap('เริ่มต้น');
     await choice.getByRole('radio', { name: /ส่วนลดจากงาน/ }).check();

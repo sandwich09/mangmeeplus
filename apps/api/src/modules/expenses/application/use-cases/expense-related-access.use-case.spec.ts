@@ -2147,6 +2147,28 @@ describe('disbursement voucher source readers', () => {
     assert.equal(none.total, 0); assert.deepEqual(none.data, []);
   });
 
+  it('reports excluded expense counts by existing blockers without hiding unnamed or partially paid bills', async () => {
+    const useCase = reader([
+      row('available', { outstandingAmount: '12' }),
+      row('unnamed', { vendorNameSnapshot: null, outstandingAmount: '20' }),
+      row('partial', { outstandingAmount: '40' }),
+      row('reserved', { reservedByDisbursementVoucherId: 'other' }),
+      row('claim', { recordPaymentBlocker: 'live_claim' }),
+      row('advance', { recordPaymentBlocker: 'personal_advance' }),
+      row('branch', { branchId: null, recordPaymentBlocker: 'missing_branch' }),
+      row('foreign', { currency: 'USD' }),
+    ]);
+    const result = await useCase.payees(prepareCtx, { pageSize: 1 });
+    const excluded = { reserved: 1, claim: 1, personal_advance: 1, missing_branch: 1, foreign_currency: 1 };
+    assert.deepEqual(result.excludedExpenses, excluded);
+    assert.equal(result.total, 2);
+    assert.equal(result.data[0].expenseCount, 2);
+    assert.equal(result.data[0].totalOutstanding, '52.0000');
+    assert.deepEqual((await useCase.payees(prepareCtx, { search: 'ไม่พบ', page: 2 })).excludedExpenses, excluded);
+    const bills = await useCase.payableExpenses(prepareCtx, {});
+    assert.deepEqual(bills.filter(bill => bill.selectable).map(bill => bill.expenseId), ['available', 'unnamed', 'partial']);
+  });
+
   it('pages tied payees into disjoint stable ten-row pages of payable payees only', async () => {
     const rows = Array.from({ length: 20 }, (_, index) => row(`page-${index}`, {
       vendorNameSnapshot: `ร้าน ${index}`, outstandingAmount: '100.0000',

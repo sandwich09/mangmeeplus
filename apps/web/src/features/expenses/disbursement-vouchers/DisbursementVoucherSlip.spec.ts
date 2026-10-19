@@ -153,7 +153,7 @@ test('payment confirmation renders facts, closes without paying and one confirm 
   try {
     screen.draw(); screen.openConfirmation();
     const question = screen.draw();
-    assert.match(question, /จ่าย ฿100.00 ให้ ร้าน ก/); assert.match(question, /· เงินสด/);
+    assert.match(question, /จ่าย 100.00 บาท ให้ ร้าน ก/); assert.match(question, /· เงินสด/);
     assert.match(question, /ยังไม่ได้แนบหลักฐาน/); assert.doesNotMatch(question, /สลิป/); assert.equal(pay.mock.callCount(), 0);
     screen.nodes.find(node => node.children.includes('กลับไปตรวจ')).onClick();
     screen.draw(); assert.equal(pay.mock.callCount(), 0);
@@ -162,6 +162,15 @@ test('payment confirmation renders facts, closes without paying and one confirm 
     await new Promise(resolve => setImmediate(resolve));
   } finally { pay.mock.restore(); }
 });
+test('twelve-baht payment confirmation and its button use the baht formatter', () => {
+  const screen = payHarness({ header: { id: 'doc', documentNumber: 'DV-1', status: 'APPROVED', version: 2, plannedMethod: 'CASH', totalAmount: '12.00', payeeName: 'แซนบ็อค' } });
+  screen.draw(); screen.openConfirmation();
+  const html = screen.draw();
+  assert.match(html, /จ่าย 12\.00 บาท ให้ แซนบ็อค/);
+  assert.match(html, /ยืนยัน จ่ายแล้ว 12\.00 บาท/);
+  assert.doesNotMatch(html, /฿/);
+});
+
 test('pay attaches the upload first, uses its new version, and retries a lost answer with the same body', async () => {
   const order: string[] = [], bodies: any[] = [];
   const attach = mock.method(api, 'attachDisbursementVoucherSlip', async () => { order.push('attach'); return { header: { status: 'APPROVED', version: 3 }, slip: { ...slip, attachmentId: 'uploaded' } }; });

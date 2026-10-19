@@ -352,12 +352,13 @@ describe('the hub filter counts what it shows (spec §18.1, AC38)', () => {
   });
 
   it('Round 4: each queue says in one line how many rows it lists and how much, with what is held or late beside it', () => {
-    const payable = { ...queueRow, status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, amount: '100.00' };
+    const payable = { ...queueRow, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' }, hasDuplicateBlocker: false, amount: '100.00' };
     const blocked = { ...payable, id: 'blocked', amount: '900.00', hasDuplicateBlocker: true };
     for (const tab of ['finance', 'approvals']) {
       const html = hubTab(tab, [payable, blocked], undefined, {}, '', false);
-      assert.match(html, /ยอดรวม 1,000.00 บาท/);
-      assert.match(html, /ใบเบิก/); assert.match(html, /รออนุมัติ/); assert.match(html, /รอจ่าย/);
+      assert.ok(html.includes(tab === 'finance' ? 'ยอดรวม 100.00 บาท' : 'ยอดรวม 1,000.00 บาท'));
+      if (tab === 'finance') assert.match(html, /ต้องตรวจสอบก่อนจ่าย \(1\)/);
+      assert.match(html, /ใบเบิกในแท็บนี้/); assert.match(html, /รออนุมัติ/); assert.match(html, /รอจ่าย/);
       assert.doesNotMatch(html, /฿|รอจ่าย 2 ใบ|รอคุณอนุมัติ 2 ใบ/);
     }
   });
@@ -888,7 +889,9 @@ describe('the hub\'s third tab is the pay list where the company has no finance-
   it('keeps the review line and its count for a list that still holds such a claim, under the tab the company now has', () => {
     const html = hubTab('finance', [ready, underReview], undefined, {}, '', false);
     assert.deepEqual(tabsOf(html), ['ใบเบิกทั้งหมด', 'รออนุมัติ', 'รอจ่าย']);
-    for (const text of ['รอตรวจสอบการเงิน', 'ยอดรวม 3,229.00 บาท']) assert.ok(visible(html).includes(text), text);
+    for (const text of ['รอตรวจสอบการเงิน (1)', 'ยอดรวม 1,614.50 บาท']) assert.ok(visible(html).includes(text), text);
+    assert.equal(html.match(/data-testid="reimbursements-finance-card"/g)?.length, 1);
+    assert.equal(html.match(/data-testid="reimbursements-finance-review-card"/g)?.length, 1);
     // The claim beside it never had the step: it says nothing of a review (before: "ตรวจการเงิน: ไม่ต้องตรวจ").
     assert.equal(visible(html).some((text) => text.includes('ไม่ต้องตรวจ')), false);
   });
@@ -1472,7 +1475,7 @@ it('a pay-list row says a duplicate hold once, by its status, and leaves what to
   assert.doesNotMatch(source, /duplicateNoticeForViewer/);
   const held = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'PAYMENT' } };
   const html = hubTab('finance', [held], undefined, {}, '', false);
-  const list = visible(html.slice(html.indexOf('data-testid="reimbursements-finance-table"')));
+  const list = visible(html.slice(html.indexOf('data-testid="reimbursements-finance-held-table"')));
   assert.equal(list.filter((text) => text === 'ติดรายการซ้ำ').length, 2, 'once in the table, once in the stacked row');
   assert.equal(list.includes('อาจซ้ำ'), false, 'no second mark for the same fact');
   for (const text of list) assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจแล้วถ้าไม่ซ้ำ/u);
@@ -1515,14 +1518,16 @@ it('both pay-list layouts mark a confirmed duplicate as one, never as a possible
 
 it('the pay-list table lets free text wrap and keeps the number, the amount and the one button whole', () => {
   for (const withReview of [false, true]) {
-    const rows = [{ ...queueRow, status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] },
-      { ...queueRow, id: 'payable', status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, duplicateReasons: [] }];
+    const rows = [{ ...queueRow, currentDesk: { kind: 'PAYMENT' }, status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] },
+      { ...queueRow, id: 'payable', currentDesk: { kind: 'PAYMENT' }, status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, duplicateReasons: [] }];
     const html = hubTab('finance', rows, undefined, {}, '', withReview);
-    const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('</table>', html.indexOf('data-testid="reimbursements-finance-table"')));
-    // Before: fixed column widths broke "RB-202610-" / "00002" and "1,420.50 / ฿1,420.50" over two lines, while the
-    // status column took half the table. Now only the cells of free text wrap.
-    assert.equal([...table.matchAll(/width:(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0), 100);
-    assert.match(table, /break-words px-2 py-3/);
+    const tables = [...html.matchAll(/<table[^>]*data-testid="reimbursements-finance(?:-held)?-table"[\s\S]*?<\/table>/g)].map(match => match[0]);
+    assert.equal(tables.length, withReview ? 1 : 2);
+    for (const table of tables) {
+      assert.equal([...table.matchAll(/width:(\d+)%/g)].reduce((sum, match) => sum + Number(match[1]), 0), 100);
+      assert.match(table, /break-words px-2 py-3/);
+    }
+    const table = tables.join('');
     assert.equal(table.match(/<td class="break-words[^"]*"/g)?.length, 4, 'reason and requester wrap on both rows');
     assert.match(table, /รอยกเลิก/);
     assert.match(table, /จ่ายเงิน<\/button>/, 'other rows retain their payment action');

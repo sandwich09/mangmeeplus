@@ -12,7 +12,7 @@ import { test, expect } from '../harness/fixtures';
 import { ensureBrowserLegalAcceptance } from '../harness/auth';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { QA_ACCOUNTS } from '../harness/roles';
-import { AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, idFromUrl, metricValue, picture, pressMenu, recordExpenseByHand, signOnScreen, whole } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, idFromUrl, metricValue, picture, pressMenu, recordExpenseByHand, signOnScreen, thaiDate, whole } from './journey-kit';
 
 const BRANCH = 'สำนักงานใหญ่ (สำนักงานใหญ่)';
 const STAFF = QA_ACCOUNTS.STAFF.displayName;
@@ -50,7 +50,7 @@ async function manual(page: Page, branch: string, simple: boolean, invoice: bool
   const main = page.locator('main');
   const seller = unique(invoice ? 'ร้านใบกำกับภาษี' : 'ร้านใบเสร็จธรรมดา');
   const amount = invoice ? '107' : '85';
-  const total = invoice ? '฿107.00' : '฿85.00';
+  const total = invoice ? '107.00 บาท' : '85.00 บาท';
   await pressMenu(page, 'บันทึกด้วยมือ', 'ค่าใช้จ่ายและใบเสร็จ');
   await expect(main.getByRole('heading', { level: 1, name: 'บันทึกด้วยมือ', exact: true })).toBeVisible(FIRST_SIGHT);
   await pick(page, 'สาขา', branch);
@@ -114,12 +114,21 @@ async function manual(page: Page, branch: string, simple: boolean, invoice: bool
     const numberOn = async (value: Locator) => Number((await value.innerText()).replace(/[^\d.]/g, ''));
     expect(await numberOn(totalValue) - await numberOn(vatValue)).toBe(100);
     await expect(totals.getByText(/^ฐานภาษี \(ยอดก่อน VAT\)|^VAT ที่คำนวณได้/)).toHaveCount(0);
-    await expect(main.getByText(whole('VAT ที่คำนวณได้ ฿7.00'))).toBeVisible();
+    await expect(main.getByText(whole('VAT ที่คำนวณได้ 7.00 บาท'))).toBeVisible();
+  }
+  if (!invoice) {
+    await main.getByRole('textbox', { name: 'เลขประจำตัวผู้เสียภาษีผู้ขาย', exact: true }).fill('1234567890123');
+    await expect(main.getByText('เลขผู้เสียภาษี 13 หลักนี้ดูไม่ถูกต้อง ลองตรวจกับใบเสร็จอีกครั้ง', { exact: true })).toBeVisible();
   }
   await next(page, page.locator('main [aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' }));
   await pick(page, 'ประเภทเอกสาร', invoice ? 'ใบกำกับภาษี (เต็มรูป)' : 'ใบเสร็จรับเงิน');
   await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
   await next(page, page.locator('main [aria-current="step"]').filter({ hasText: 'ตรวจสรุป' }));
+  if (!invoice) {
+    const summary = main.locator('.mangmee-card').filter({ has: page.getByRole('heading', { name: 'สรุปการตรวจ', exact: true }) });
+    await expect(summary).toContainText('เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง');
+    await expect(summary).toContainText(/ต้องตรวจ [1-9]\d* รายการ/);
+  }
   const confirm = main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true });
   await expect(confirm).toBeEnabled(AFTER_PRESS);
   await confirm.click();
@@ -300,7 +309,7 @@ test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a s
     await paymentProof.getByRole('button', { name: 'ปิด', exact: true }).click();
     await expect(main.getByTestId('expense-payment-history').getByRole('button', { name: 'ดูหลักฐานการจ่าย', exact: true })).toBeFocused();
     await expect(main.getByText(proof.name, { exact: true }).filter({ visible: true })).toBeVisible();
-    await expect(main.getByText('หลักฐานการจ่ายเงิน', { exact: true }).filter({ visible: true })).toBeVisible();
+    await expect(main.getByText(/^หลักฐานการจ่ายเงิน · /).filter({ visible: true })).toBeVisible();
   });
 
   let claimId = '';
@@ -448,9 +457,9 @@ test('@journey a plain shop keeps withholding and explains the certificate and f
   await enter(owner, shop);
   const expense = await recordExpenseByHand(owner, {
     branch: BRANCH, item: unique('ค่าบริการร้านทั่วไป'), seller: unique('ผู้ให้บริการร้านทั่วไป'),
-    price: '1000', total: '฿1,000.00', toPay: '฿970.00', pay: true,
+    price: '1000', total: '1,000.00 บาท', toPay: '970.00 บาท', pay: true,
     withholding: {
-      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '฿30.00',
+      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '30.00 บาท',
       taxId: '0105564000128', address: '45 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500',
     },
   });
@@ -462,4 +471,18 @@ test('@journey a plain shop keeps withholding and explains the certificate and f
   expect(saved.paymentStatus).toBe('PAID');
   expect(Number(saved.whtAmount)).toBe(30);
   expect(Number(saved.paidAmount)).toBe(970);
+  await main.getByRole('button', { name: 'บันทึกว่าออกหนังสือรับรองเองแล้ว', exact: true }).click();
+  const dialog = owner.getByRole('dialog', { name: 'บันทึกว่าออกหนังสือรับรองเองแล้ว', exact: true });
+  await expect(dialog.getByRole('textbox', { name: 'เลขที่หนังสือรับรอง', exact: true })).toBeVisible();
+  const paidDate = dialog.getByRole('combobox', { name: 'วันที่จ่ายตามหนังสือรับรองเดิม', exact: true });
+  await expect(paidDate).toHaveText(thaiDate(new Date(saved.payments[0]!.paidAt)));
+  await paidDate.click();
+  const previous = owner.getByRole('button', { name: 'เดือนก่อนหน้า', exact: true });
+  const calendar = owner.locator('div').filter({ has: previous }).filter({ has: owner.getByRole('button', { name: /^\d{1,2}$/ }) }).last();
+  const days = calendar.getByRole('button', { name: /^\d{1,2}$/ });
+  await expect(days.first()).toBeInViewport({ ratio: 1 });
+  await expect(days.last()).toBeInViewport({ ratio: 1 });
+  await paidDate.press('Escape');
+  await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
+
 });

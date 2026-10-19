@@ -470,8 +470,6 @@ function EmployeeForm({ companyId, editEmployeeId, viewerUserId, viewerPermissio
         if (editingEmployee) setEditingEmployee(updated); else setCreatedEmployee(updated);
         setIdCard('');
         setSavedForm(null);
-        // ponytail: fresh QR on each save; backend keeps a single pending token per employee
-        setEditLineLink(await issueEmployeeLineLinkToken(companyId, updated.id).catch(() => null));
         return updated.id;
       }
       const created = await createEmployee(companyId, {
