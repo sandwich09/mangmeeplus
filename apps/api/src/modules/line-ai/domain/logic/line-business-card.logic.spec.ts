@@ -1350,7 +1350,7 @@ describe('CHAT budget refusal card', () => {
   it('keeps the existing package actions for a TOTAL refusal to a reader who may buy', () => {
     const rendered = JSON.stringify(buildAiBudgetExceededMessage(false,
       { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' }, true));
-    assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/);
+    assert.match(rendered, /เปลี่ยนแพ็กเกจ/);
     assert.match(rendered, /"label":"ดูแพ็กเกจ"/);
   });
 
@@ -1368,29 +1368,18 @@ describe('CHAT budget refusal card', () => {
     }
   });
 
-  // The same gap as the quota card: every wording of this card now carries its own sentence, so the
-  // text a delivery plan sends follows the same §2.2 rule as the card.
-  it('carries the sentence the card shows as canonical text, for every refusal and either reader', () => {
-    for (const canManagePlan of [true, false]) {
-      for (const trialTier of [true, false]) {
-        for (const refusal of BUDGET_REFUSALS) {
-          const message = buildAiBudgetExceededMessage(trialTier, refusal, canManagePlan) as any;
-          const prose = message.contents.body.contents[1].contents;
-          assert.equal(message.canonicalText, prose.map((node: any) => node.text).join(''), JSON.stringify({ trialTier, refusal, canManagePlan }));
-          for (const node of [...message.contents.header.contents, message.contents.body.contents[0], prose[0]]) {
-            assert.equal(node.wrap, false);
-            assert.equal(node.adjustMode, 'shrink-to-fit');
-            assert.doesNotMatch(node.text, /\n/);
-          }
-          assert.match(prose[0].text, /^เครดิต AI.*เดือนนี้$/);
-          assert.equal(prose[1].wrap, true);
-          assert.match(message.canonicalText, /^เครดิต AI/);
-          assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a delivery plan sends the card itself');
-          if (!canManagePlan) assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|ซื้อ|โปรโมชั่น/);
-        }
-      }
+  it('says the refusal once and the next step once, in Thai and English', () => {
+    for (const language of ['th', 'en'] as const) for (const canManagePlan of [true, false]) for (const refusal of BUDGET_REFUSALS) {
+      const message = buildAiBudgetExceededMessage(false, refusal, canManagePlan, language) as any;
+      assert.equal(message.contents.body.contents.length, 1, 'one body sentence, no duplicate badge');
+      const title = message.contents.header.contents[0].text, sentence = message.contents.body.contents[0].text;
+      assert.equal(message.canonicalText, `${title}\n${sentence}`);
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
+      assert.doesNotMatch(sentence, language === 'th' ? /ไม่พอเริ่มงาน|หมดแล้ว/u : /insufficient|has run out/u);
+      if (refusal?.budgetScope !== 'CHAT' && canManagePlan) assert.deepEqual(message.contents.footer.contents.map((node: any) => node.action.label), [language === 'th' ? 'ดูแพ็กเกจ' : 'View packages']);
     }
   });
+
 });
 
 // Owner 2026-09-30 (advisor spec §2.2): a public policy question gets the staff door, never the
@@ -1509,5 +1498,23 @@ it('U5 current package usage uses customer names in the requested language for e
     const data = (await new BillingGetPackageUsageTool(prisma, billing).execute({ companyId: 'company', userId: 'user',
       permissions: ['company.plan.manage'], locale: 'en-GB' } as any)).data as any;
     assert.equal(data.package.label, english[index]); assert.doesNotMatch(data.package.label, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+  }
+});
+
+
+it('expense confirmation and result keep signed actions on locked rows in Thai and English', async () => {
+  const { buildExpenseActionCard } = await import('./line-expense-action-card.logic');
+  const sample: any = { token: 'preview.' + 'a'.repeat(43), previewId: 'preview', action: 'CONFIRM', summary: 'ตรวจค่าใช้จ่ายก่อนยืนยันค่ะ', expiresAt: '2026-10-19T12:30:00Z',
+    record: { vendorName: 'Starbucks Coffee', amount: '170.0000', currency: 'THB', date: '2026-10-05', status: 'ร่าง', nextStatus: 'ยืนยันแล้ว' } };
+  for (const language of ['th', 'en'] as const) for (const reply of [undefined, language === 'th' ? 'ยืนยันค่าใช้จ่ายแล้วค่ะ' : 'Expense confirmed.']) {
+    const legacy = buildExpenseActionCard(sample, reply, language) as any;
+    const message = buildExpenseActionCard(sample, reply, language, 'https://app.example.com');
+    assert.equal(isLineSystemCard(message), true);
+    const card = readLineSystemCard(message);
+    assert.deepEqual(card.actions, (legacy.contents.footer?.contents ?? []).map((button: any) => button.action));
+    assert.ok(card.rows.some(row => row[2] === (language === 'th' ? '170.00 บาท' : '170.00 THB')));
+    assert.ok(card.rows.some(row => row[2] === 'Starbucks Coffee'));
+    assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
   }
 });

@@ -567,7 +567,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
       assert.equal(h.redis.streams.get(CHAT_LEDGER_KEY)?.length ?? 0, 0, 'no turn entry for a closed gate');
       assert.equal(h.replies.length, 1);                                      // (5)
       const card = customerReplies(h.replies)[0];
-      assert.match(card, /เครดิต AI ส่วนแชตของเดือนนี้หมดแล้วค่ะ/);
+      assert.match(card, /เครดิต AI ส่วนแชตเดือนนี้หมดแล้ว/);
       assert.match(card, /ไม่เติมเครดิตแชตในเดือนนี้/);
       assert.match(card, /ติดต่อเจ้าหน้าที่/);
       assert.doesNotMatch(card, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ/);
@@ -705,7 +705,7 @@ describe('LINE AI combined regression: ledger + split budget + receipt persisten
 
     const rendered = customerReplies(h.replies);                               // (5)
     assert.equal(rendered.length, 2, 'one reply per turn');
-    assert.match(rendered[0], /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
+    assert.match(rendered[0], /เครดิต AI เดือนนี้หมดแล้ว/);
     assert.match(rendered[1], /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     rendered.forEach(assertNoMoneyFigure);
   });

@@ -560,9 +560,9 @@ export class PrismaReimbursementRepository {
     const rows = await (this.prisma.client as any).companyMembership.findMany({
       where: { companyId, status: 'ACTIVE', ...(ownUserId ? { userId: ownUserId } : {}), user: { status: 'ACTIVE' }, OR: [
         { branchScopeMode: 'ALL_BRANCHES' }, { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: branchId }, { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: { some: { branchId } } },
-      ] }, select: { userId: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: 'asc' } },
+      ] }, select: { userId: true, employeeAccessProfile: { select: { displayName: true } }, user: { select: { displayName: true } } }, orderBy: { user: { displayName: 'asc' } },
     });
-    return rows.map((row: any) => ({ userId: row.userId as string, displayName: row.user.displayName as string }));
+    return rows.map((row: any) => ({ userId: row.userId as string, displayName: (row.employeeAccessProfile?.displayName?.trim() || row.user.displayName) as string }));
   }
 
   async listReimbursementSources(companyId: string, branchId: string, requesterUserId: string, search: string, expenseId?: string,
@@ -922,8 +922,8 @@ export class PrismaReimbursementRepository {
         lines, missingReceiptReason: command.missingReceiptReason });
       if (receipt.status !== command.receiptRequirementStatus) return { kind: 'stale' } as const;
       if (!await tx.branch.findFirst({ where: { id: command.branchId, companyId: input.owner.companyId, status: 'ACTIVE' }, select: { id: true } })) return { kind: 'stale' } as const;
-      const member = await tx.companyMembership.findFirst({ where: activeApproverMembershipWhere(input.owner.companyId, [command.requesterUserId], command.branchId), include: { user: { select: { displayName: true } } } });
-      if (!member || member.user.displayName !== command.requesterDisplayNameSnapshot) return { kind: 'stale' } as const;
+      const member = await tx.companyMembership.findFirst({ where: activeApproverMembershipWhere(input.owner.companyId, [command.requesterUserId], command.branchId), include: { employeeAccessProfile: { select: { displayName: true } }, user: { select: { displayName: true } } } });
+      if (!member || (member.employeeAccessProfile?.displayName?.trim() || member.user.displayName) !== command.requesterDisplayNameSnapshot) return { kind: 'stale' } as const;
       await assertReimbursementSources(tx, { companyId: input.owner.companyId, requesterUserId: command.requesterUserId, branchId: command.branchId, currency: command.currency, lines });
 
       let request: any;

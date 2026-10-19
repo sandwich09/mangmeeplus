@@ -140,9 +140,9 @@ for (const scenario of [
 // ลองใหม่", provider_unavailable — and now answers it with the credit card and a budget status. A credit
 // that could not be checked, like any other failure, keeps the try-again line.
 for (const scenario of [
-  { name: 'spent (owner)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
-  { name: 'spent (staff)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: [] },
-  { name: 'too small for this answer (owner)', code: 'AI_BUDGET_INSUFFICIENT', status: 'ai_budget_insufficient', sentence: /^เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
+  { name: 'spent (owner)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI เดือนนี้หมดแล้ว/, buttons: ['ดูแพ็กเกจ'] },
+  { name: 'spent (staff)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI เดือนนี้หมดแล้ว/, buttons: [] },
+  { name: 'too small for this answer (owner)', code: 'AI_BUDGET_INSUFFICIENT', status: 'ai_budget_insufficient', sentence: /^เครดิต AI เดือนนี้เหลือไม่พอ/, buttons: ['ดูแพ็กเกจ'] },
   { name: 'not checkable', code: 'AI_BUDGET_UNAVAILABLE', status: 'provider_unavailable', sentence: null, buttons: [] },
 ]) it(`answers a general question whose answer call meets an AI credit that is ${scenario.name}`, async () => {
   const event: any = { webhookEventId: 'evt-credit', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'กำไรขั้นต้นคืออะไร', inputEvidence: { joinedSha256: 'digest' } };
@@ -399,9 +399,9 @@ const PACKAGE_BUTTONS = ['ดูแพ็กเกจ', 'ขอเปลี่�
 for (const [name, card, buttons] of [
   ['receipt quota (owner)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, true), true), PACKAGE_BUTTONS],
   ['receipt quota (staff)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, false), false), []],
-  ['AI credit (owner)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true), PACKAGE_BUTTONS],
+  ['AI credit (owner)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true), ['ดูแพ็กเกจ']],
   ['AI credit (staff)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, false), []],
-  ['AI credit, not enough left (owner)', buildAiBudgetExceededMessage(true, { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }, true), PACKAGE_BUTTONS],
+  ['AI credit, not enough left (owner)', buildAiBudgetExceededMessage(true, { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }, true), ['ดูแพ็กเกจ']],
   ['chat credit (staff)', buildAiBudgetExceededMessage(false, { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' }, false), ['ติดต่อเจ้าหน้าที่']],
 ] as const) it(`sends the ${name} card of a bound chat as the card itself`, async () => {
   const capture: { saved?: DeliveryPlanV2 } = {};

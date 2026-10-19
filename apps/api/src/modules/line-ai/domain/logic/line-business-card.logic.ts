@@ -527,7 +527,7 @@ export type LineExpenseDraftCardValues = {
  */
 export function expenseDraftCardFactsFrom(values: LineExpenseDraftCardValues): LineExpenseDraftCardFacts {
   const row = (label: string, value: string | null | undefined, extra: Partial<LineSystemCardRow> = {}): LineSystemCardRow[] =>
-    value?.trim() ? [{ label, value: value.trim(), ...extra }] : [];
+    value?.trim() && value.trim() !== '-' ? [{ label, value: value.trim(), ...extra }] : [];
   const notes = (entries: ReadonlyArray<string | null | undefined> = []) => entries.map((entry) => entry?.trim()).filter((entry): entry is string => !!entry);
   const vendor = values.vendor?.trim();
   return {
@@ -869,67 +869,31 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
  */
 export function buildAiBudgetExceededMessage(
   trialTier: boolean,
-  /** The typed refusal, when the caller has one (spec §9.1). Absent ⇒ the legacy TOTAL-exhausted card. */
   refusal: { budgetErrorCode?: string; budgetScope?: AiBudgetScope } | undefined,
-  /** The reader holds `company.plan.manage` (advisor spec §2.2). Only they get the package buttons. */
   canManagePlan: boolean,
   language: LineReplyLanguage = 'th',
+  webBaseUrl?: string,
 ): LineReplyMessage {
-  if (language === 'en') {
-    const insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
-    const chat = refusal?.budgetScope === 'CHAT';
-    const text = `${chat ? 'Chat AI credit' : 'AI credit'} ${insufficient ? 'is insufficient to start this task' : 'has run out'} for this month; it resets next month.${chat
-      ? ' Changing packages does not refill this month’s chat credit; contact the team to check special-deal eligibility.'
-      : canManagePlan ? ' You can request a package change to continue.' : ' Ask the shop owner or an authorized package manager for help.'}`;
-    const actions = chat ? [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]
-      : canManagePlan ? [{ label: 'View packages', data: lineControlData('action=view-packages', language) }, { label: 'Change package', data: lineControlData('action=package-change', language) }] : [];
-    return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text,
-      contents: bubble({ title: insufficient ? 'Insufficient AI credit' : 'Monthly AI credit used', text }, undefined, '', actions) }, text);
-  }
-  // §9.1: money is LEFT — it just cannot cover this job's upper bound. Saying "ครบ/เต็ม" here would
-  // be false, and the shop would stop trying smaller work that still fits.
-  const insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
-  // §9.2: a CHAT-bucket refusal names the chat part. It deliberately does NOT promise that receipts
-  // still work — that needs the saved split policy AND current OCR eligibility, which no caller can
-  // prove until §12 ships. Until then the card says less rather than something it cannot stand by.
-  const chatOnly = refusal?.budgetScope === 'CHAT';
-  const what = chatOnly ? 'เครดิต AI ส่วนแชตของเดือนนี้' : 'เครดิต AI ของเดือนนี้';
-  // §2.2: whoever cannot buy is told who can, never offered a package action they cannot take.
-  const next = canManagePlan ? ' หรือขอเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้เลยนะคะ' : ` ${ASK_PLAN_MANAGER_TH}`;
-  const text = insufficient
-    ? `${chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือ' : 'เครดิต AI ที่เหลือ'}ของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ `
-      + `${trialTier ? 'ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน ' : ''}เดือนหน้าเริ่มใหม่`
-      + `${chatOnly ? ' การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
-        : next}`
-    : chatOnly
-      ? `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ `
-        + 'หากต้องการตรวจสอบสิทธิ์ดีลพิเศษ กรุณาติดต่อทีมงานค่ะ'
-    : trialTier
-      ? `${what}หมดแล้วค่ะ ช่วงทดลองมีเครดิต AI จำกัดต่อเดือน เดือนหน้าเริ่มใหม่${next}`
-      : `${what}หมดแล้วค่ะ เดือนหน้าเริ่มใหม่${next}`;
-  const actions = chatOnly
-    ? [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]
-    : canManagePlan ? [
-      { label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND },
-      { label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND },
-    ] : [];
-  return completeCard({
-    type: 'flex',
-    altText: preview(text, 400),
-    canonicalText: text,
-      contents: bubble(
-      insufficient
-        ? { title: chatOnly ? 'เครดิต AI ส่วนแชตที่เหลือไม่พอ' : 'เครดิต AI เดือนนี้เหลือไม่พอ',
-          badge: chatOnly ? '💚 เครดิต AI ส่วนแชตเหลือไม่พอเริ่มงาน' : '💚 เครดิต AI เหลือไม่พอเริ่มงาน', text }
-        : { title: chatOnly ? 'เครดิต AI ส่วนแชตเดือนนี้หมดแล้ว' : 'เครดิต AI เดือนนี้หมดแล้ว', badge: '💚 เครดิต AI หมดเดือนนี้', text },
-      undefined,
-      '',
-      actions,
-      undefined,
-      language,
-      true,
-    ),
-  }, text);
+  const en = language === 'en', insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
+  const chat = refusal?.budgetScope === 'CHAT';
+  const title = en ? `${chat ? 'Chat AI' : 'AI'} credit ${insufficient ? 'is insufficient' : 'used up this month'}`
+    : chat ? `เครดิต AI ส่วนแชตเดือนนี้${insufficient ? 'เหลือไม่พอ' : 'หมดแล้ว'}` : `เครดิต AI เดือนนี้${insufficient ? 'เหลือไม่พอ' : 'หมดแล้ว'}`;
+  const text = en ? chat
+    ? 'Credit resets next month; changing packages does not refill this month’s chat credit, so contact the team to check special-deal eligibility.'
+    : canManagePlan ? 'Credit resets next month, or change your package to continue.' : 'Credit resets next month; ask the shop owner or an authorized package manager for help.'
+    : chat ? 'เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ ติดต่อทีมงานเพื่อตรวจสิทธิ์ดีลพิเศษได้ค่ะ'
+      : canManagePlan ? 'เดือนหน้าเริ่มใหม่ หรือเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้ค่ะ' : `เดือนหน้าเริ่มใหม่ ${ASK_PLAN_MANAGER_TH}`;
+  const actions: SafeButton[] = en ? chat ? [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]
+    : canManagePlan ? [{ label: 'View packages', data: lineControlData('action=view-packages', language) }] : []
+    : chat ? [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]
+      : canManagePlan ? [{ label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND }] : [];
+  const canonicalText = `${title}\n${text}`;
+  const designed = drawLineSystemCard({ mascot: 'general', header: { lines: [en ? 'Package' : 'แพ็กเกจ', title] }, text,
+    ...(actions.length ? { buttons: actions.map(action => ({ icon: 'file' as const, action: 'data' in action ? { type: 'postback' as const, ...action }
+      : 'text' in action ? { type: 'message' as const, ...action } : { type: 'uri' as const, ...action } })) } : {}),
+  }, webBaseUrl);
+  return completeCard({ type: 'flex', altText: preview(canonicalText, 400), canonicalText,
+    contents: designed ?? bubble({ title, text }, undefined, '', actions, undefined, language) }, canonicalText);
 }
 
 /** Accepts only a handoff URL on our own web origin (`<web>/l/<token>`); anything else keeps the plain link. */
