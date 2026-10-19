@@ -1,7 +1,7 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { documentAdvisorReadText } from './document-advisor-read';
 import { Logger } from '@nestjs/common';
-import { LINE_CHAT_ACTIONS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
+import { LINE_CHAT_ACTIONS, canUseLineChatAction, lineCustomerWording, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
   type LineAiAnswerCardLayout, type LineAiPeriodCandidate,
   type LineAiTurnRequest, type LineAiSemanticCoverageV2, type LineAiSourceRefV2, type LineAiValueCandidatesV2,
@@ -28,15 +28,15 @@ import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type Expens
   REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText,
   PACKAGE_MANAGER_REQUIRED, packageManagerRequiredReplyText, PACKAGE_TOOL_NAMES, withoutUnaskedPackagePurchaseLine,
   withReceiptRestartDate, withAskedSubstituteQueueSideLead } from '../domain/logic/business-read-result-semantics';
-import { documentExplanationTopic, featureLimitReplyText, moduleFeatureEnabled, permissionAlternative, scopePolicyOverride, scopePolicyStatus, scopePolicyWebLinks, toolPermissionReplyText } from '../domain/logic/line-ai-scope-policy.logic';
+import { documentExplanationTopic, documentExplanationReply, packageLifecycleReply, featureLimitReplyText, moduleFeatureEnabled, permissionAlternative, scopePolicyOverride, scopePolicyStatus, scopePolicyWebLinks, toolPermissionReplyText } from '../domain/logic/line-ai-scope-policy.logic';
 import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
 const logger = new Logger('SemanticTurnV2');
 
 // Match only a capability question, not a specific how-to or an independent business clause.
 // The API's menu matcher is API-local; semantic turns use this clause's quoted input evidence.
-function isCurrentCapabilityQuestion(text: string): boolean {
-  return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities))(?:[?？!。.]*)$/iu.test(text.trim().replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
+export function isCurrentCapabilityQuestion(text: string): boolean {
+  return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+(?:you|u|i|we)\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities)|help|capabilities|features)(?:[?？!。.]*)$/iu.test(text.trim().replace(/^(?:แล้ว|งั้น|ละ|so\s+|and\s+)/iu, '').replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
 }
 
 // Spec §8 row 1 ("อ่านข้อมูลไม่ได้ ฝั่งระบบ"): system-side, terminal, no retry invitation, no dead
@@ -657,12 +657,35 @@ export async function runSemanticTurnV2(input: {
   const itemText = new Map<number, string>();
   const scopePolicyForcedIndices = new Set<number>();
   const scopeWebLinks: Array<{ label: string; path: string }> = [];
+  const usableActions = LINE_CHAT_ACTIONS.filter(action => !('webPath' in action) && canUseLineChatAction(action.id, req.userContext.permissions, entitledFeatureKeys == null ? null : new Set(entitledFeatureKeys)));
+  const mainActions = usableActions.filter(action => ['expense_capture', 'reimbursement_claim', 'expense_search', 'approvals', 'counterparty', 'package_purchase'].includes(action.id));
+  const capabilityActions = (mainActions.length ? mainActions : usableActions).slice(0, 6).map(action => action.id);
+  const capabilityReply = capabilityActions.length ? language === 'en' ? 'Choose what you would like to do with your current package and permissions.' : 'เลือกงานที่ทำได้ตามแพ็กเกจและสิทธิ์ของคุณได้เลยค่ะ'
+    : language === 'en' ? 'No LINE tasks are available under your current access; ask the shop owner to check your permissions and package.' : 'ยังไม่มีงานที่คุณทำผ่าน LINE ได้ตามสิทธิ์ตอนนี้ ให้เจ้าของกิจการตรวจสิทธิ์และแพ็กเกจได้ค่ะ';
   const capabilityIndices = new Set<number>();
+  const followupActions = new Map<number, string>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
     itemText.set(item.index, text);
-    if ((item.kind === 'help' || item.kind === 'general') && isCurrentCapabilityQuestion(text)) capabilityIndices.add(item.index);
-    const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language, item.toolHint);
+    if (isCurrentCapabilityQuestion(text)) {
+      capabilityIndices.add(item.index);
+      forced.set(item.index, { status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', text: capabilityReply });
+      scopePolicyForcedIndices.add(item.index);
+      continue;
+    }
+    const lifecycle = item.kind === 'write' ? undefined : packageLifecycleReply(text, language);
+    if (lifecycle) {
+      forced.set(item.index, { status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', text: lifecycle });
+      scopePolicyForcedIndices.add(item.index);
+      scopeWebLinks.push({ label: language === 'en' ? 'Packages' : 'ดูแพ็กเกจ', path: `/companies/${req.userContext.companyId}/billing?channel=line` });
+      continue;
+    }
+    const previousTopic = documentExplanationTopic(req.conversationContext?.recentTurns.at(-1)?.userMessagePreview ?? '');
+    if (previousTopic && /^(?:แล้ว|งั้น)?(?:ทำ|ออก|สร้าง|ยื่น|ใช้)(?:ได้)?(?:เลย)?(?:หรอ|เหรอ|ได้ไหม|ได้มั้ย|ได้ป่าว|ได้เปล่า)(?:คะ|ค่ะ|ครับ)?[?？]*$/u.test(text.replace(/\s+/gu, ''))) {
+      const actionId = previousTopic.featureKey === 'wht_50bis' ? 'wht_certificate' : previousTopic.featureKey === 'wht_pnd53' ? 'pnd53' : previousTopic.label === 'ใบสำคัญจ่าย' ? 'payment_voucher' : undefined;
+      if (actionId) followupActions.set(item.index, actionId);
+    }
+    const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language, item.toolHint, req.packageOffers);
     if (override) {
       forced.set(item.index, { status: scopePolicyStatus(override), reasonCode: override.reasonCode, text: override.text });
       scopePolicyForcedIndices.add(item.index);
@@ -1097,8 +1120,12 @@ export async function runSemanticTurnV2(input: {
       req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId) : null;
   const actionHelps = new Map<number, NonNullable<ReturnType<typeof productHelpAction>>>();
   const helpFor = (actionId?: unknown, selectedKnowledgeCardIds?: readonly string[], text?: string, toolHint?: string) => productHelpAction({ actionId, language, text, toolHint,
-    selectedKnowledgeCardIds, permissions: req.userContext.permissions, companyId: req.userContext.companyId,
+    packageOffers: req.packageOffers, selectedKnowledgeCardIds, permissions: req.userContext.permissions, companyId: req.userContext.companyId,
     featureKeys: entitledFeatureKeys ?? null, availableToolNames: offered.map(tool => tool.name) });
+  for (const [index, actionId] of followupActions) {
+    const help = helpFor(actionId);
+    if (help) actionHelps.set(index, help);
+  }
   const selectedHelp = inventory.filter(item => item.kind === 'help');
   if (selectedHelp.length === 1) {
     const help = helpFor(req.howToActionId, req.selectedKnowledgeCardIds, itemText.get(selectedHelp[0]!.index) ?? selectedHelp[0]!.goal, selectedHelp[0]!.toolHint);
@@ -1121,6 +1148,8 @@ export async function runSemanticTurnV2(input: {
     ...(inventory.some(item => item.kind === 'general' || item.kind === 'help')
       && /ภาษี|ภ\.?\s*ง\.?\s*ด|แวท|ทวิ|ใบรับรอง|ดอกเบี้ย|เงินปันผล|ยื่น|vat|wht|pnd|withhold|tax|50\s*(?:bis|tawi)|substitute\s*receipt|interest|dividend/iu.test([req.messageText, ...inventory.map(item => item.goal)].join(' '))
       ? { taxGuidance: ADVISOR_TAX_GUIDANCE } : {}),
+    productActionFacts: LINE_CHAT_ACTIONS.filter(action => canUseLineChatAction(action.id, req.userContext.permissions, entitledFeatureKeys == null ? null : new Set(entitledFeatureKeys))).map(({ title, sentence }) => ({ title, sentence })),
+    productOfferRule: 'Only offer product actions present in productActionFacts. A general explanation never implies the shop can perform that action. Do not invent package prices or instructions.',
     chatActions: LINE_CHAT_ACTIONS.map(({ id, title, group }) => ({ id, title, group })),
     forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })),
     documentExplanations: inventory.flatMap(item => documentExplanationTopic(itemText.get(item.index) ?? '')
@@ -1142,7 +1171,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && (object(entry.result.data.reimbursementDraft) || ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(entry.result.toolName)))).map(item => item.index));
-  const needsComposition = inventory.some(item => !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
@@ -1471,10 +1500,9 @@ export async function runSemanticTurnV2(input: {
       const layout = draftUpdateCardLayout(good[0]!.data);
       if (layout) layouts.set(item.index, layout);
     }
-    const explanation = documentExplanationTopic(itemText.get(item.index) ?? '');
-    if (explanation && answer.status === 'handled' && !moduleFeatureEnabled(explanation.featureKey, entitledFeatureKeys)) {
-      answer.text += `\n${featureLimitReplyText(explanation.featureKey, language)}`;
-    }
+    const explanation = documentExplanationReply(itemText.get(item.index) ?? '', entitledFeatureKeys, req.userContext.permissions, language, req.packageOffers);
+    if (explanation && !scopePolicyForcedIndices.has(item.index)) answer = { index: item.index, status: 'handled', text: explanation };
+    answer.text = lineCustomerWording(answer.text);
     if (!comparisonFollowers.has(item.index)) texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),
       ...(answer.sourceRefIds ? { sourceRefIds: answer.sourceRefIds } : {}), ...(answer.status === 'needs_user' ? { question: answer.text.slice(0, 500) } : {}) });
@@ -1524,5 +1552,7 @@ export async function runSemanticTurnV2(input: {
     ...(actionHelps.size ? { presentation: { kind: 'answer_cards' as const, cards: inventory.map(item => actionHelps.get(item.index)?.presentation.cards[0] ?? { text: texts[item.index] ?? replyText }) } } : {}),
     ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,
       ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(webLinks[0] ? { webLink: webLinks[0] } : {}) }] } } : {}),
+    ...(capabilityIndices.size && inventory.length === 1 ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, chatActionIds: capabilityActions,
+      ...(!capabilityActions.length ? { webLink: { label: language === 'en' ? 'Packages' : 'ดูแพ็กเกจ', path: `/companies/${req.userContext.companyId}/billing?channel=line` } } : {}) }] } } : {}),
     durationMs: Date.now() - started };
 }

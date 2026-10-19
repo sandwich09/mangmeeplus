@@ -127,6 +127,7 @@ const ACTION_HELP_EN: Record<(typeof LINE_CHAT_ACTIONS)[number]["id"], string> =
 
 /** The semantic selector names a registry entry; neither its prose nor a guide can grant action access. */
 export function productHelpAction(input: { actionId?: unknown; text?: string; toolHint?: string; selectedKnowledgeCardIds?: readonly string[];
+  packageOffers?: import('@watchdog-bms/contracts').BillingOffer[];
   permissions: readonly string[]; featureKeys: readonly string[] | null; availableToolNames?: readonly string[]; companyId?: string; language?: ScopePolicyLanguage }) {
   const mapped = LINE_CHAT_ACTIONS.filter(action => action.helpTopics.some(topic => input.selectedKnowledgeCardIds?.includes(topic)));
   const text = input.text ?? '';
@@ -159,10 +160,10 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
         : action.id === 'pnd53' && !entitled.has('wht_pnd53') ? 'wht_pnd53'
           : tool && !hasToolFeature(tool, entitled) ? (tool.featureKeys ?? TOOL_MODULE_FEATURE_KEYS[tool.sourceModule])?.find(key => !entitled.has(key)) : undefined;
   const alternative = permissionAlternative(input.permissions, language);
-  const replyText = allowed ? language === 'en' ? ACTION_HELP_EN[action.id] : action.sentence : missingFeature ? featureLimitReplyText(missingFeature, language)
+  const replyText = allowed ? language === 'en' ? ACTION_HELP_EN[action.id] : action.sentence : missingFeature ? featureLimitReplyText(missingFeature, language, undefined, input.packageOffers, input.featureKeys, input.permissions)
     : permissionLimitReplyText(language, language === 'en' ? 'perform this action' : action.title, input.permissions);
   const limitLink = !allowed && input.companyId ? scopePolicyWebLinks({ reasonCode: missingFeature ? 'PACKAGE_FEATURE_NOT_ENABLED' : 'ROLE_PERMISSION_REQUIRED', text: replyText,
-    webPage: missingFeature && featurePackageOffer(missingFeature) ? 'packages' : alternative.page }, input.permissions, input.companyId, language)[0] : undefined;
+    webPage: missingFeature && featurePackageOffer(missingFeature, input.packageOffers) ? 'packages' : alternative.page }, input.permissions, input.companyId, language)[0] : undefined;
   const presentation: LineAiAnswerPresentation = { kind: 'answer_cards', cards: [{ text: replyText,
     ...(allowed ? 'webPath' in action ? { webLink: { label: language === 'en' ? 'My payout account' : 'บัญชีรับเงินคืนของฉัน', path: action.webPath.replace('{companyId}', input.companyId ?? '') } } : { chatActionId: action.id } : limitLink ? { webLink: limitLink } : {}) }] };
   return { replyText, presentation, allowed };

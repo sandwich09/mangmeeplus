@@ -899,11 +899,11 @@ function appendPlanRefusalLines(replyText: string, plan: AgentIntentPlan): strin
   return replyText.includes(line) ? replyText : `${replyText}\n${line}`;
 }
 
-function appendPartialAvailability(replyText: string, plan: AgentIntentPlan, featureDisabledTools: readonly string[]): string {
+function appendPartialAvailability(replyText: string, plan: AgentIntentPlan, featureDisabledTools: readonly string[], offers?: LineAiTurnRequest['packageOffers'], features?: readonly string[] | null, permissions: readonly string[] = []): string {
   if (plan.status !== 'PARTIAL') return replyText;
   const lines: string[] = [];
   if (plan.refusals.some((refusal) => refusal.reason === 'feature_disabled')) {
-    lines.push(featureDisabledReply(featureDisabledTools, plan.language));
+    lines.push(featureDisabledReply(featureDisabledTools, plan.language, offers, features, permissions));
   }
   if (plan.refusals.some((refusal) => /forbidden|permission/i.test(refusal.reason))) {
     lines.push(plan.language.toLowerCase().startsWith('en')
@@ -1165,7 +1165,7 @@ export class OrchestratorAgent {
       const language = req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
       const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
       const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
-        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint);
+        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint, req.packageOffers);
       if (override) {
         // Advisor S1: "sign it on the web" comes with the page to sign on (spec §2.6).
         const webLinks = scopePolicyWebLinks(override, req.userContext.permissions, req.userContext.companyId, language);
@@ -1530,7 +1530,7 @@ export class OrchestratorAgent {
 
     const composer = new ResponseComposerAgent();
     const composed = composer.compose(plan, outputsForComposer, req.messageText, req.userContext.locale, {
-      featureDisabledTools,
+      featureDisabledTools, packageOffers: req.packageOffers, entitledFeatureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys,
       permissions: req.userContext.permissions,
       // So the `unsupported_yet` copy can point at the workspace it says the answer lives in. The
       // API turns a `/companies/…` path into a one-time auto-login handoff link on delivery.
@@ -1622,7 +1622,7 @@ export class OrchestratorAgent {
           knowledgeAccess(plan.language), req.userContext.companyId) : null;
       const actionHelp = productHelpAction({ actionId: req.howToActionId, text: req.messageText, language: plan.language === 'en' ? 'en' : 'th', companyId: req.userContext.companyId,
         selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
-        permissions: req.userContext.permissions, featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null });
+        packageOffers: req.packageOffers, permissions: req.userContext.permissions, featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null });
       if (actionHelp) {
         replyText = actionHelp.replyText;
         finalSourceRefs = knowledgeAnswer?.sourceRefs ?? [];
@@ -1684,7 +1684,7 @@ export class OrchestratorAgent {
         locale: req.userContext.locale,
       });
     }
-    replyText = appendPartialAvailability(replyText, plan, featureDisabledTools);
+    replyText = appendPartialAvailability(replyText, plan, featureDisabledTools, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions);
     replyText = appendPlanRefusalLines(replyText, plan);
     const displayWebLinks = monthReply ? finalWebLinks.map((link) => ({
       ...link, label: plan.language.startsWith('en') ? 'Choose a month in the expense list' : 'เลือกเดือนในรายการค่าใช้จ่าย',

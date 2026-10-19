@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable } from '@nestjs/common';
+import { BillingService } from '../../billing/application/billing.service';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Optional } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -14,7 +15,7 @@ import { CreateEmployeeDto, UpdateEmployeeDto } from '../../employee-access/pres
 import { CreateBranchDto, UpdateBranchDto } from '../../data-model-core/presentation/http/data-model-core.dtos';
 import { CreateBranchUseCase } from '../../data-model-core/application/use-cases/create-branch.use-case';
 import { UpdateBranchUseCase } from '../../data-model-core/application/use-cases/update-branch.use-case';
-import { BILLING_PAID_TIERS, billingOffer } from '@watchdog-bms/contracts';
+import { customerPackageName } from '@watchdog-bms/contracts';
 import { assertBranchLimit, assertEmployeeLimit, planCapacityUsed } from '../../system-partner-management/application/plan-term-limit';
 import { LineDraftPreviewStore, LINE_DRAFT_PREVIEW_TTL_SECONDS } from '../../expenses/application/services/line-draft-preview.store';
 import { canonicalDeliveryJson, deliveryHash } from '../domain/logic/line-delivery-plan.logic';
@@ -57,7 +58,7 @@ export class LineTeamActionService {
   constructor(private readonly prisma: PrismaService, private readonly store: LineDraftPreviewStore<Entry>, private readonly config: AppConfigService,
     private readonly createEmployee: CreateEmployeeUseCase, private readonly updateEmployee: UpdateEmployeeUseCase,
     private readonly statusEmployee: SetEmployeeStatusUseCase, private readonly issueLink: IssueEmployeeLineLinkTokenUseCase,
-    private readonly roles: ListRolesUseCase, private readonly createBranch: CreateBranchUseCase, private readonly updateBranch: UpdateBranchUseCase) {}
+    private readonly roles: ListRolesUseCase, private readonly createBranch: CreateBranchUseCase, private readonly updateBranch: UpdateBranchUseCase, @Optional() private readonly billing?: BillingService) {}
   private get inputs() { return this.store as unknown as LineDraftPreviewStore<TeamInput>; }
   private key(chat: string) { return `team-action:${chat}`; }
   private owner(ctx: RequestContext, chat: string) {
@@ -115,9 +116,9 @@ export class LineTeamActionService {
       const code = typeof response === 'object' && response ? String((response as any).code ?? '') : '';
       if (code !== 'plan_branch_limit_exceeded' && !/แพ็กเกจ.*พนักงาน/u.test(error.message)) throw error;
       const used = action === 'BRANCH_CREATE' ? await planCapacityUsed.branches(this.prisma.client, ctx.companyId) : await planCapacityUsed.members(this.prisma.client, ctx.companyId);
-      const offer = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(item => action === 'BRANCH_CREATE' ? item.branchLimit > used : item.employeeLimit > used);
-      const price = offer ? (offer.priceSatang / 100).toLocaleString('en-US') : '';
-      const pack = offer && (language === 'en' ? `${offer.offerKey.split('_')[0]} ${price} baht` : `${offer.label.replace(/\s*\(.*\)$/u, '')} ${price} บาท`);
+      const offers = this.billing ? (await this.billing.catalog()).offers.filter(item => item.interval === 'month') : [];
+      const offer = offers.find(item => action === 'BRANCH_CREATE' ? item.branchLimit > used : item.employeeLimit > used);
+      const pack = offer && customerPackageName(offer, language);
       return language === 'en' ? `Your current package has reached its ${action === 'BRANCH_CREATE' ? 'branch' : 'employee'} limit; ${pack ? `choose ${pack} for more capacity` : 'contact the team for more capacity'}.`
         : `แพ็กเกจปัจจุบันใช้จำนวน${action === 'BRANCH_CREATE' ? 'สาขา' : 'พนักงาน'}ครบแล้วค่ะ ${pack ? `เลือกแพ็กเกจ ${pack} เพื่อเพิ่มได้ค่ะ` : 'ติดต่อทีมงานเพื่อเพิ่มจำนวนได้ค่ะ'}`;
     }

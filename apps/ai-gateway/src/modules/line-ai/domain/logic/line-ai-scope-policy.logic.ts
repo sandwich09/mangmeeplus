@@ -17,7 +17,7 @@
  * eligible subrequest) and runSemanticTurnV2 (every subrequest, so a mixed message still answers
  * its allowed part) apply BEFORE any tool is offered or called.
  */
-import { BILLING_PAID_TIERS, billingOffer, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, canUseLineChatAction, customerPackageName, type BillingOffer, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions } from '@watchdog-bms/contracts';
 import type { LineAiSemanticSubrequestV2, LineAiWebLink } from '@watchdog-bms/contracts';
 
 export type ScopePolicyLanguage = 'th' | 'en';
@@ -113,26 +113,41 @@ export function moduleFeatureEnabled(featureKey: string | null, entitledFeatureK
 }
 
 /** Offer only a package the billing catalog actually sells; otherwise state current product scope. */
-export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopePolicyLanguage): string {
-  if (topic.featureKey && featurePackageOffer(topic.featureKey)) return featureLimitReplyText(topic.featureKey, language);
+export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopePolicyLanguage, offers?: readonly BillingOffer[]): string {
+  if (topic.featureKey && featurePackageOffer(topic.featureKey, offers)) return featureLimitReplyText(topic.featureKey, language, undefined, offers);
   return language === 'en'
-    ? `Mangmee Plus does not offer ${topic.topicLabelEn} today; I can help with expenses, receipt evidence and reimbursement claims.`
-    : `Mangmee Plus วันนี้ยังไม่มี${topic.topicLabelTh} แต่น้องช่วยเรื่องรายจ่าย หลักฐานใบเสร็จ และใบเบิกได้ค่ะ`;
+    ? `Mangmee Plus does not offer ${topic.topicLabelEn} today; check the expense, receipt and reimbursement work available under your access.`
+    : `Mangmee Plus วันนี้ยังไม่มี${topic.topicLabelTh} ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ`;
 }
 
 /** The same catalog builder and tier features used by billing; never invent a tier for an unsold module. */
-export function featurePackageOffer(featureKey: string) {
-  return BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(offer => offer.featureKeys.includes(featureKey));
+export function featurePackageOffer(featureKey: string, offers?: readonly BillingOffer[]) {
+  if (offers) return offers.find(offer => offer.interval === 'month' && offer.featureKeys.includes(featureKey));
+  // Older producers can identify the required tier, but cannot supply a current selling price.
+  const tier = BILLING_PAID_TIERS.find(tier => TIER_FEATURE_PRESETS[tier].includes(featureKey));
+  return tier ? { offerKey: tier, featureKeys: [...TIER_FEATURE_PRESETS[tier]] } : undefined;
 }
 
-export function featureLimitReplyText(featureKey: string, language: ScopePolicyLanguage, label?: string): string {
-  const offer = featurePackageOffer(featureKey);
+export function featureLimitReplyText(featureKey: string, language: ScopePolicyLanguage, label?: string, offers?: readonly BillingOffer[], features?: readonly string[] | null, permissions: readonly string[] = []): string {
+  const offer = featurePackageOffer(featureKey, offers);
+  const expenseAccess = moduleFeatureEnabled('expenses', features);
+  const canRecordExternal = expenseAccess && permissions.includes('wht.external_certificate.link')
+    && ['expense.read', 'expense.read_own', 'expense.read_related'].some(key => permissions.includes(key));
+  const canRecordExpense = expenseAccess && ['expense.create', 'expense.update'].some(key => permissions.includes(key));
+  const alternative = featureKey === 'wht_50bis' && canRecordExternal
+    ? language === 'en' ? 'You can record a self-issued withholding certificate on the expense page' : 'บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้วได้ที่หน้ารายจ่ายบนเว็บ'
+    : featureKey === 'wht_pnd53' && canRecordExpense
+      ? language === 'en' ? 'You can keep the supporting expense records on the web' : 'เก็บข้อมูลรายจ่ายและหลักฐานบนเว็บได้'
+      : permissions.includes('company.plan.manage') ? language === 'en' ? 'Open Packages to check the work available to your shop' : 'ดูงานที่ร้านใช้ได้ที่หน้าแพ็กเกจ'
+        : language === 'en' ? 'Ask the shop owner to check your package' : 'ให้เจ้าของกิจการตรวจแพ็กเกจ';
+  const addition = featureKey === 'wht_50bis' ? language === 'en' ? 'issuing certificates in the system' : 'ออกหนังสือรับรองในระบบ'
+    : featureKey === 'wht_pnd53' ? language === 'en' ? 'preparing PND3 and PND53 periods' : 'จัดทำงวด ภ.ง.ด.3 และ ภ.ง.ด.53'
+      : label ?? (language === 'en' ? 'this feature' : 'ฟีเจอร์นี้');
   if (!offer) return unsoldModuleReplyText(UNSOLD_MODULE_TOPICS.find(topic => topic.featureKey === featureKey)
-    ?? { featureKey, topicLabelTh: label ?? 'ฟีเจอร์นี้', topicLabelEn: label ?? 'this feature' }, language);
-  const price = (offer.priceSatang / 100).toLocaleString('en-US');
+    ?? { featureKey, topicLabelTh: label ?? 'ฟีเจอร์นี้', topicLabelEn: label ?? 'this feature' }, language, offers);
   return language === 'en'
-    ? `Your current package does not include this feature; ${offer.offerKey.split('_')[0]} includes it at ${price} baht per month.`
-    : `แพ็กเกจของร้านยังไม่มีฟีเจอร์นี้ ซึ่งอยู่ในแพ็กเกจ${offer.label} ราคา ${price} บาทต่อเดือนค่ะ`;
+    ? `${alternative}; ${addition} requires the ${customerPackageName(offer, language)}${'priceSatang' in offer ? ' monthly package' : ' package; check Packages for the current price'}.`
+    : `${alternative} ส่วน${addition}ต้องใช้แพ็กเกจ${customerPackageName(offer, language)}${'priceSatang' in offer ? 'ต่อเดือน' : ' ตรวจราคาปัจจุบันได้ที่หน้าแพ็กเกจ'}ค่ะ`;
 }
 
 export function permissionAlternative(permissions: readonly string[], language: ScopePolicyLanguage): { page: 'expenses' | 'reimbursements' | 'packages'; label: string; text: string } {
@@ -333,6 +348,7 @@ const NAMED_WRITE_ACTIONS = [
 
 /** Definitions use the existing general-knowledge composer, never a shop document read. */
 export function documentExplanationTopic(text: string): { featureKey: string; label: string } | undefined {
+  text = text.trim().replace(/^(?:แล้ว|งั้น|และ|so\s+|and\s+)/iu, '').replace(/ทวิ\s*50/gu, '50 ทวิ');
   // Definitions/comparisons never require permission to the shop's records or an action button.
   const explanationRequest = /อธิบาย|\bexplain\b/iu.test(text);
   const conceptual = explanationRequest || /คือ(?:อะไร|ไร)|หมายถึง|ใช้(?:ทำอะไร|ตอนไหน)|แตกต่าง|ต่าง(?:กัน|จาก)|\bwhat\s+(?:is|are|does)\b|\bdifference\b|\bwhy\b/iu.test(text);
@@ -342,7 +358,9 @@ export function documentExplanationTopic(text: string): { featureKey: string; la
     if (/ภ\.?\s*ง\.?\s*ด\.?\s*(?:3|53)|pnd\s*(?:3|53)/iu.test(text)) return { featureKey: 'wht_pnd53', label: 'ภ.ง.ด.3 และ ภ.ง.ด.53' };
     if (/50\s*(?:ทวิ|bis|tawi)/iu.test(text)) return { featureKey: 'wht_50bis', label: '50 ทวิ' };
     if (/หัก\s*ณ\s*ที่จ่าย|withhold|\bwht\b/iu.test(text)) return { featureKey: 'expenses', label: 'ภาษีหัก ณ ที่จ่าย' };
-    if (/ใบรับรองแทนใบเสร็จ|substitute\s*receipt|\bVAT\b|แวท|ใบสำคัญจ่าย/iu.test(text)) return { featureKey: 'expenses', label: 'เอกสารค่าใช้จ่าย' };
+    if (/ใบสำคัญจ่าย|payment\s*voucher/iu.test(text)) return { featureKey: 'expenses', label: 'ใบสำคัญจ่าย' };
+    if (/ใบรับรองแทนใบเสร็จ|substitute\s*receipt/iu.test(text)) return { featureKey: 'expenses', label: 'ใบรับรองแทนใบเสร็จ' };
+    if (/\bVAT\b|แวท/iu.test(text)) return { featureKey: 'expenses', label: 'VAT' };
   }
   const question = /^(.*?)\s*(?:คืออะไร|หมายถึงอะไร)(?:\s*(?:นะ)?(?:คะ|ค่ะ|ครับ))?[?？]*$|^ทำไมต้อง(?:ทำ|ออก|ยื่น)\s*(.*?)(?:\s*(?:นะ)?(?:คะ|ค่ะ|ครับ))?[?？]*$/iu.exec(text.trim());
   const subject = (question?.[1] ?? question?.[2])?.trim();
@@ -361,6 +379,7 @@ export function scopePolicyOverride(
   entitledFeatureKeys: readonly string[] | null | undefined,
   language: ScopePolicyLanguage,
   toolHint?: string,
+  offers?: readonly BillingOffer[],
 ): ScopePolicyOverride | undefined {
   if (isApprovalSettingsRequest(text)) return { reasonCode: 'APPROVAL_SETTINGS_WEB',
     text: permissions.includes('reimbursement.policy.manage')
@@ -387,14 +406,14 @@ export function scopePolicyOverride(
     : /ภ\.?\s*ง\.?\s*ด\.?\s*(?:53|3|สาม)|pnd\s*(?:53|3)/iu.test(text) ? ['wht_pnd53']
       : /หัก\s*ณ\s*ที่จ่าย|withholding|\bwht\b/iu.test(text) || toolHint?.startsWith('wht.') ? ['wht_50bis', 'wht_pnd53'] : undefined;
   if (whtKeys && !whtKeys.some(key => moduleFeatureEnabled(key, entitledFeatureKeys))) return {
-    reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: featureLimitReplyText(whtKeys[0]!, language), webPage: 'packages',
+    reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: featureLimitReplyText(whtKeys[0]!, language, undefined, offers, entitledFeatureKeys, permissions), webPage: 'packages',
   };
   const packageQuestion = toolHint !== undefined && PACKAGE_TOOL_HINTS.has(toolHint) && PACKAGE_WORD.test(text);
   if (!packageQuestion && !whtKeys) {
     const topic = unsoldModuleTopicFor(text);
     if (topic && !moduleFeatureEnabled(topic.featureKey, entitledFeatureKeys)) {
-      return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language),
-        webPage: topic.featureKey && featurePackageOffer(topic.featureKey) ? 'packages' : permissionAlternative(permissions, language).page };
+      return { reasonCode: 'PACKAGE_FEATURE_NOT_ENABLED', text: unsoldModuleReplyText(topic, language, offers),
+        webPage: topic.featureKey && featurePackageOffer(topic.featureKey, offers) ? 'packages' : permissionAlternative(permissions, language).page };
     }
   }
   const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === toolHint);
@@ -402,4 +421,41 @@ export function scopePolicyOverride(
     reasonCode: 'ROLE_PERMISSION_REQUIRED', text: toolPermissionReplyText(language, permissions), webPage: permissionAlternative(permissions, language).page,
   };
   return undefined;
+}
+
+/** Definitions and product offers are one fact-derived answer, never a model's unsolicited promise. */
+export function documentExplanationReply(text: string, features: readonly string[] | null | undefined,
+  permissions: readonly string[], language: ScopePolicyLanguage, offers?: readonly BillingOffer[]): string | undefined {
+  const topic = documentExplanationTopic(text);
+  if (!topic) return undefined;
+  const en = language === 'en';
+  const definition = topic.featureKey === 'wht_50bis'
+    ? en ? 'A withholding certificate records the amount paid and tax withheld for the recipient.' : 'หนังสือรับรอง 50 ทวิบอกยอดที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินค่ะ'
+    : topic.featureKey === 'wht_pnd53'
+      ? en ? 'PND3 reports withholding for individuals and PND53 for legal entities.' : 'ภ.ง.ด.3 ใช้นำส่งภาษีที่หักจากบุคคลธรรมดา ส่วน ภ.ง.ด.53 ใช้กับนิติบุคคลค่ะ'
+      : topic.label === 'ใบสำคัญจ่าย'
+        ? en ? 'A payment voucher records an actual payment; a prepared voucher is still awaiting payment.' : 'ใบสำคัญจ่ายเป็นหลักฐานหลังบันทึกว่าจ่ายเงินจริง ส่วนใบเตรียมจ่ายยังไม่ได้จ่ายค่ะ'
+        : topic.label === 'VAT' ? en ? 'VAT is value added tax; a receipt showing VAT is not by itself proof that it can be claimed.' : 'VAT คือภาษีมูลค่าเพิ่ม การพบยอด VAT บนเอกสารยังไม่ได้แปลว่าขอคืนได้ค่ะ'
+        : topic.label === 'ภาษีหัก ณ ที่จ่าย' ? en ? 'Withholding tax is deducted by the payer and remitted on the recipient’s behalf.' : 'ภาษีหัก ณ ที่จ่ายคือภาษีที่ผู้จ่ายหักไว้เพื่อนำส่งกรมสรรพากรแทนผู้รับเงินค่ะ'
+          : en ? 'A substitute receipt supports a real business expense when the recipient cannot provide a complete receipt.' : 'ใบรับรองแทนใบเสร็จใช้ประกอบรายจ่ายจริงของร้านเมื่อผู้รับเงินออกใบเสร็จที่ครบถ้วนให้ไม่ได้ค่ะ';
+  const actionId = topic.featureKey === 'wht_50bis' ? 'wht_certificate' : topic.featureKey === 'wht_pnd53' ? 'pnd53' : topic.label === 'ใบสำคัญจ่าย' ? 'payment_voucher' : undefined;
+  const action = LINE_CHAT_ACTIONS.find(row => row.id === actionId);
+  if (!moduleFeatureEnabled(topic.featureKey, features)) {
+    return `${definition} ${featureLimitReplyText(topic.featureKey, language, topic.label, offers, features, permissions)}`;
+  }
+  if (!action || !canUseLineChatAction(action.id, permissions, features == null ? null : new Set(features))) return definition;
+  return `${definition} ${en ? 'Use the action button to check the details before confirming.' : action.sentence}`;
+}
+
+/** Billing amendment 2026-09-13 and the package page: count exhaustion differs from term expiry. */
+export function packageLifecycleReply(text: string, language: ScopePolicyLanguage): string | undefined {
+  const quota = /(?:โควตา|จำนวนใบ|quota|receipt\s*reads?).*(?:หมด|ครบ|เต็ม|used\s*up|exhaust|run\s*out)|(?:ใช้|อ่าน|สแกน).*ใบเสร็จ.*(?:หมด|ครบ)|(?:หมด|ครบ).*(?:โควตา|จำนวนใบ)|(?:used\s*up|exhaust).*receipts?/iu.test(text);
+  const period = /(?:หมด|สิ้นสุด).*แพ[็ก๊ค]+เกจ|แพ[็ก๊ค]+เกจ.*(?:หมด|สิ้นสุด)|หมดอายุ|(?:package|plan|subscription).*(?:expire|end|run\s*out)/iu.test(text);
+  if (!quota && !period) return undefined;
+  if (quota) return language === 'en'
+    ? 'When receipt reads run out, AI stops reading new receipts; while your package is active, authorized staff can enter expenses manually on the web and the owner can buy a full package to add reads.'
+    : 'เมื่อใช้จำนวนใบเสร็จครบ AI จะหยุดอ่านใบใหม่ แต่ถ้าแพ็กเกจยังไม่หมดอายุ ผู้มีสิทธิ์กรอกรายจ่ายเองบนเว็บได้ และเจ้าของกิจการซื้อแพ็กเกจเต็มเพิ่มได้ค่ะ';
+  return language === 'en'
+    ? 'When the paid period and any applicable renewal grace end, shop access is paused until renewal; your records are kept and the owner can open Packages to renew.'
+    : 'เมื่อหมดอายุแพ็กเกจและพ้นระยะผ่อนผันต่ออายุที่ใช้ได้ ร้านจะถูกพักใช้งานจนกว่าจะต่ออายุ โดยข้อมูลเดิมยังอยู่ค่ะ เจ้าของกิจการเปิดหน้าแพ็กเกจเพื่อต่ออายุได้ค่ะ';
 }

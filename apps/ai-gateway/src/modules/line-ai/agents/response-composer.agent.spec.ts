@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, featureDisabledReply, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, safeModelLineText, featureDisabledReply, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
@@ -1072,7 +1072,7 @@ it('sold feature help names an owner permission check without promising a shop f
     status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
     refusals: [{ request: 'ค่าใช้จ่ายเดือนนี้', reason: 'feature_disabled' }],
   }, [], 'ค่าใช้จ่ายเดือนนี้', 'th-TH', { featureDisabledTools: ['expense.list_recent'] });
-  assert.match(reply.replyText, /STARTER.*249 บาทต่อเดือนค่ะ/);
+  assert.match(reply.replyText, /เริ่มต้น.*ตรวจราคาปัจจุบัน.*ค่ะ/);
   assert.doesNotMatch(reply.replyText, /เปิดฟีเจอร์ในเว็บแอป/);
 });
 
@@ -1088,9 +1088,9 @@ it('the shared specialist fallback describes unavailable data without guessing a
 
 
 it('disabled dashboard guidance names หน้าแรก while English capability terminology stays intact', () => {
-  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /STARTER.*249 บาทต่อเดือน/);
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /เริ่มต้น.*ตรวจราคาปัจจุบัน/);
   assert.doesNotMatch(featureDisabledReply(['dashboard.get_business_health_summary'], 'th'), /แดชบอร์ด/);
-  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /STARTER.*249 baht per month/);
+  assert.match(featureDisabledReply(['dashboard.get_business_health_summary'], 'en'), /Starter.*current price/);
 
 });
 it('F3/F5: casual free compose cannot claim a write or leak Markdown', async () => {
@@ -1279,4 +1279,11 @@ describe('exam A: current-message language survives Thai account defaults', () =
     const reply = safeModelLineText('The expense is NEEDS_REVIEW; check /companies/company/expenses.', true);
     assert.match(reply, /needs review/u); assert.doesNotMatch(reply, /[\u0E00-\u0E7F]/u);
   });
+});
+
+
+it('U5 model formatter never delivers plan enums or em dashes in Thai or English', () => {
+  for (const code of ['STARTER', 'BASIC', 'PRO', 'ENTERPRISE']) for (const text of [`แพ็กเกจ (${code}) — ดูได้ค่ะ`, `Your package is ${code} — check Packages.`]) {
+    assert.doesNotMatch(safeModelLineText(text), /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+  }
 });
