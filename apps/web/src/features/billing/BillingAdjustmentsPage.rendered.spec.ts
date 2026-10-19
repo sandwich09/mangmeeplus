@@ -14,7 +14,7 @@ const invoice: BillingInvoiceItem = { id: 'invoice', number: 'PAY-001', currency
   offer: { key: 'BASIC_499', label: 'เติบโต', interval: 'month' }, method: 'CARD', refundedSatang: 0, disputed: false,
   financialObservedAt: null, paymentState: 'paid', applyState: 'APPLIED', periodStart: '2026-10-01T00:00:00Z', periodEnd: '2026-11-01T00:00:00Z',
   paidAt: '2026-10-01T00:00:00Z', createdAt: '2026-10-01T00:00:00Z', hasDocuments: true };
-function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustments['items'] = [], other: BillingAdjustments['items'] = [], onStateChange: (index: number, value: any) => void = () => {}) {
+function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustments['items'] = [], other: BillingAdjustments['items'] = [], onStateChange: (index: number, value: any) => void = () => {}, states: Record<number, any> = {}) {
   const data: BillingAdjustments = { invoiceId: invoice.id, invoiceNumber: invoice.number, invoice: { ...invoice, ...patch }, kind: 'refunds', mode: 'TEST',
     items, nextCursor: null, observedAt: invoice.createdAt, canOpenDocuments: true, documentActions: { canResend: true }, recipientEmail: 'docs@example.com' };
   const original = runtime.useState, create = runtime.createElement;
@@ -22,7 +22,7 @@ function render(patch: Partial<BillingInvoiceItem> = {}, items: BillingAdjustmen
   const buttons: any[] = [];
   Reflect.set(runtime, 'useState', (initial: any) => {
     const current = index++; const [value] = original(initial);
-    return [current === 3 ? data : current === 4 ? false : current === 7 ? { ...data, items: other } : value, (next: any) => onStateChange(current, next)];
+    return [current in states ? states[current] : current === 3 ? data : current === 4 ? false : current === 7 ? { ...data, items: other } : value, (next: any) => onStateChange(current, next)];
   });
   Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
     if (type === 'button') buttons.push({ ...props, children });
@@ -87,6 +87,43 @@ test('PAY-MENU unknown offer and method stay unknown, and paid and refund states
   assert.match(render({ refundedSatang: 49900 }).html, /คืนเงินแล้ว/);
   assert.match(render({ refundedSatang: 10000, method: 'PROMPTPAY' }).html, /คืนบางส่วน/);
   assert.match(render({ method: 'PROMPTPAY' }).html, /พร้อมเพย์/);
+});
+
+for (const scenario of ['receipt', 'pdf', 'api-failure'] as const) test(`UAT-Q4 document retry keeps the right recovery action: ${scenario}`, async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window'), originalFetch = globalThis.fetch;
+  const states: Record<number, any> = {}, navigated: string[] = [];
+  let blocked = scenario !== 'api-failure', opens = 0, reads = 0;
+  const tab = { opener: {} as unknown, location: { replace: (url: string) => navigated.push(url) }, close: () => {} };
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { open: () => { opens++; return blocked ? null : tab; } } });
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    reads++; assert.equal(JSON.parse(init.body as string).kind, scenario === 'pdf' ? 'pdf' : 'receipt');
+    return scenario === 'api-failure' ? Response.json({}, { status: 503 }) : Response.json({ url: 'https://invoice.stripe.com/retried' });
+  }) as typeof fetch;
+  const show = () => render({}, [], [], (index, next) => { states[index] = typeof next === 'function' ? next(states[index] ?? 0) : next; }, states);
+  try {
+    show().buttons.find(button => button.children.join('') === (scenario === 'pdf' ? 'ใบแจ้งหนี้' : 'ใบเสร็จรับเงิน')).onClick();
+    await new Promise(resolve => setImmediate(resolve));
+    const { html, buttons } = show(), alert = html.slice(html.indexOf('<section role="alert"'), html.indexOf('</section>', html.indexOf('<section role="alert"')));
+    const retry = buttons.find(button => button.children.join('') === 'ลองอีกครั้ง');
+    assert.ok(retry); assert.equal(retry.disabled, retry['aria-busy']);
+    if (scenario === 'api-failure') {
+      assert.match(alert, /ติดต่อทีมงานมั่งมี/);
+      retry.onClick(); assert.equal(states[2], 1); assert.equal(opens, 1);
+    } else {
+      assert.match(alert, /เปิดแท็บเอกสารไม่ได้ อนุญาตหน้าต่างใหม่แล้วกดเอกสารอีกครั้ง/);
+      assert.doesNotMatch(alert, /ติดต่อทีมงานมั่งมี|mailto:/);
+      assert.equal(reads, 0);
+      blocked = false; retry.onClick();
+      assert.equal(opens, 2, 'retry opens the same document synchronously in this click gesture');
+      assert.equal(reads, 1); assert.equal(states[2], undefined, 'retry does not reload the payment page');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(navigated, ['https://invoice.stripe.com/retried']);
+      assert.equal(states[5], null);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
 });
 test('PAY-MENU adjustment rows alone reveal the section, including credit notes, and promotions keep free time', () => {
   const credit = [{ id: 'cn_one', number: 'CN-001', amountSatang: 10000, createdAt: invoice.createdAt, status: 'issued' as const }];
