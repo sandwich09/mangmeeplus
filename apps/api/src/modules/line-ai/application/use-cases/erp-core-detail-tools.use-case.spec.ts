@@ -126,6 +126,16 @@ describe('LINE ERP core detail tools', () => {
     assert.deepEqual((result.data as any).payments, { count: 0, lastPaidOn: null, methods: [] });
   });
 
+  for (const locale of ['th-TH', 'en-US']) it(`EVID-1 ${locale}: the read exposes the original in hand without claiming a missing receipt`, async () => {
+    const tool = new ExpenseGetDetailTool({ execute: async () => expenseRecord({ primaryAttachmentId: null, attachments: [],
+      aiVerificationSummaryJson: { documentEvidenceDraft: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note: 'เก็บตัวจริงที่ร้าน' } } }),
+      categoryName: async () => null } as any);
+    const result = await tool.execute({ ...ctx, locale }, { expenseId: 'e1' });
+    const data = result.data as any;
+    assert.equal(data.attachmentCount, 0); assert.equal(data.originalDocumentAvailable, true); assert.equal(data.documentImageMissing, true);
+    assert.deepEqual(data.evidenceNotes, locale.startsWith('en') ? ['Document image not attached', 'Note: เก็บตัวจริงที่ร้าน'] : ['ยังไม่มีรูปเอกสาร', 'หมายเหตุ: เก็บตัวจริงที่ร้าน']);
+  });
+
   // Design lock contexts 5 and 7: what the record and payment cards print, from the one
   // permission-checked read of that record.
   it('projects the category name, the close reason and the recorded payments — never a bank reference', async () => {

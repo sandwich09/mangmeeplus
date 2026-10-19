@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "bbc73bf49fe9ae3dc38e8596dd52120734cfa9dc",
-  "checkoutBranch": "claude/line-credit-levers-20261019",
+  "sourceRevision": "159c843a3a6d16f8f2784007dd295ed9eb5d17ed",
+  "checkoutBranch": "claude/line-evid1-landing-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "1c69121939dd7b924b3bd2afa20ecb51e7dedc6644dab9e7f758ffdaab1dd53a"
+      "sha256": "7fb21071e0c07c7f86d2fa6968995e3d23fa62152c453f33b827302c0a69b369"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "8e939ba19e5c2570a9b3e582f4c662b22ac1ed9f6518f393297eed610b07624f"
+      "sha256": "82c97d89b86353ac8cbe1bc021576d6df4a3c06e923c60111dd5a9858575468d"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -93,7 +93,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts",
-      "sha256": "dc8365b1baca1ab9d972845fc4377b621a06a89e452d35c62c4dd781d4722278"
+      "sha256": "91c4b78bb40a9fb6c369d4a52dd06c86e8f96f4aa3ad0dbb01697736adc9feb6"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T09:43:58.015Z",
-  "manifestDigest": "2bc6020cd49c563ea37d00d08552a1e4a4b79867368edeff279d0f86d9c8f215"
+  "generatedAt": "2026-10-19T11:23:40.649Z",
+  "manifestDigest": "dcfe9c73ff694be5a9625ffc5fbe74b123bbd6565daf90f304cc4e4eea763766"
 }
