@@ -151,6 +151,7 @@ function bubble(
   suppliedButtons?: SafeButton[],
   rows?: DetailRow[],
   language: LineReplyLanguage = lineReplyLanguage(card.text),
+  keepCreditPhrase = false,
 ): Record<string, unknown> {
   // LINE refuses a message for one empty text or label, so a title or label of only spaces falls back too.
   const title = bounded(card.title ?? '', 80) || lineUiLabel('ข้อมูลจากน้องมั่งมี', language);
@@ -167,17 +168,24 @@ function bubble(
     },
     header: {
       type: 'box', layout: 'vertical', backgroundColor: THEME.brandDark, paddingAll: '16px',
-      contents: [{ type: 'text', text: title, color: THEME.surface, weight: 'bold', size: 'lg', wrap: true }],
+      contents: [{ type: 'text', text: title, color: THEME.surface, weight: 'bold', size: 'lg', wrap: !keepCreditPhrase,
+        ...(keepCreditPhrase ? { adjustMode: 'shrink-to-fit' } : {}) }],
     },
     body: {
       type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
       contents: [
         // §13: the state badge is its own row ABOVE the body, so the reader sees where the work
         // stands before reading anything else.
-        ...(badge ? [{ type: 'text', text: badge, color: THEME.brandDark, weight: 'bold', size: 'sm', wrap: true }] : []),
+        ...(badge ? [{ type: 'text', text: badge, color: THEME.brandDark, weight: 'bold', size: 'sm', wrap: !keepCreditPhrase,
+          ...(keepCreditPhrase ? { adjustMode: 'shrink-to-fit' } : {}) }] : []),
         // A row-only card passes no prose; LINE rejects an empty text element, so the row is omitted
         // rather than sent blank. Every prose caller passes non-empty text, so their bytes are unchanged.
-        ...(text ? [{ type: 'text', text: lineCustomerText(text), color: THEME.text, size: 'md', wrap: true }] : []),
+        ...(text ? keepCreditPhrase && text.includes('เดือนนี้')
+          ? [{ type: 'box', layout: 'vertical', contents: [
+            { type: 'text', text: text.slice(0, text.indexOf('เดือนนี้') + 'เดือนนี้'.length), color: THEME.text, size: 'md', wrap: false, adjustMode: 'shrink-to-fit' },
+            { type: 'text', text: lineCustomerText(text.slice(text.indexOf('เดือนนี้') + 'เดือนนี้'.length)), color: THEME.text, size: 'md', wrap: true },
+          ] }]
+          : [{ type: 'text', text: lineCustomerText(text), color: THEME.text, size: 'md', wrap: true }] : []),
         ...(rows ?? []).map(({ label, value }) => ({
           type: 'box', layout: 'horizontal', spacing: 'sm',
           contents: [
@@ -917,6 +925,9 @@ export function buildAiBudgetExceededMessage(
       undefined,
       '',
       actions,
+      undefined,
+      language,
+      true,
     ),
   }, text);
 }

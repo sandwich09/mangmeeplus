@@ -148,6 +148,11 @@ export class CaptureLineExpenseNoteUseCase {
       };
     }
 
+    // A description alone is not an expense; keep it in the open task instead of creating a zero-value record.
+    const sourceValues = extractValueCandidates(cmd.messageText, todayCivilDate('Asia/Bangkok'));
+    if (!sourceValues.amounts.length && !sourceValues.dates.length && !sourceValues.periods?.some(period => period.kind === 'day')) {
+      throw new LineTextExpenseCaptureIncompleteError();
+    }
     const activeCategories = await this.repo.listCategories(ctx.companyId);
     if (cmd.semanticBusinessExpenseConfirmed && !cmd.captureHints?.expenseCategoryId) {
       const description = lineExpenseNoteDescription(cmd.messageText);
