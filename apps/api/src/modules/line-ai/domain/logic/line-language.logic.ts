@@ -1,8 +1,16 @@
-import { lineReplyLanguage, lineChatAction } from '@watchdog-bms/contracts';
+import { lineReplyLanguage, lineChatAction, lineCustomerWording } from '@watchdog-bms/contracts';
 export function lineCustomerText(value: string): string {
   const ids = /\bc[a-z0-9]{24}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/iu;
-  return value.replace(/https?:\/\/[^\s]*\/companies\/[^\s]+/gu, uri => ids.test(uri) ? '' : uri)
-    .replace(new RegExp(ids.source, 'giu'), '—');
+  return lineCustomerWording(value.replace(/https?:\/\/[^\s]*\/companies\/[^\s]+/gu, uri => ids.test(uri) ? '' : uri)
+    .replace(new RegExp(ids.source, 'giu'), 'ไม่ระบุ'));
+}
+/** Visible LINE fields only; never normalize a signed command, URI or identifier. */
+export function lineCustomerVisibleText<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(lineCustomerVisibleText) as T;
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
+    ['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string' ? lineCustomerText(child)
+      : typeof child === 'object' ? lineCustomerVisibleText(child) : child])) as T;
 }
 export type LineReplyLanguage = 'th' | 'en';
 export { lineReplyLanguage };
@@ -23,6 +31,8 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 }
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
+  'บันทึกค่าใช้จ่าย': 'Record expense', 'สร้างใบเบิก': 'Create claim', 'ค้นหาค่าใช้จ่าย': 'Find expenses',
+  'ดูใบเบิกรออนุมัติ': 'Review claims', 'เพิ่มคู่ค้า': 'Add counterparty', 'เลือกแพ็กเกจ': 'Choose package', 'ดูยอดขาย': 'View sales', 'ค้นหาสินค้า': 'Find products',
   'ค่าเดินทาง': 'Travel', 'ค่าน้ำมัน': 'Fuel', 'ค่าออฟฟิศ': 'Office', 'ค่าใช้จ่ายอื่นๆ': 'Other expenses',
   'ภาษาไทย': 'Thai', 'ภาษาอังกฤษ': 'English', 'สั้น': 'Short', 'ปกติ': 'Normal', 'ละเอียด': 'Detailed', 'ย่อหน้า': 'Paragraphs', 'หัวข้อ': 'Bullets', 'ตาราง': 'Table', 'ขั้นตอน': 'Steps',
   'ไม่พบรูปแบบคำตอบนี้ที่จำไว้ค่ะ จึงไม่ได้ลบอะไร': 'No matching answer preference was saved, so nothing was deleted.',
@@ -66,7 +76,7 @@ const EN_LABELS: Record<string, string> = {
   'ยกเลิกใบเบิก': 'Cancel claim', 'อนุมัติ': 'Approve', 'ไม่อนุมัติ': 'Reject', 'บันทึกจ่ายคืน': 'Record reimbursement',
   'บันทึกจ่าย': 'Record payment', 'สร้างใบเตรียมจ่าย': 'Prepare voucher', 'ส่งอนุมัติ': 'Submit for approval',
   'อนุมัติใบเตรียมจ่าย': 'Approve voucher', 'ส่งกลับแก้ไข': 'Return for correction', 'ยกเลิกใบเตรียมจ่าย': 'Cancel voucher',
-  'ออก 50 ทวิ': 'Issue tax certificate', 'ดู / ดาวน์โหลด 50 ทวิ': 'View tax certificate', 'ให้น้องทำให้': 'Prepare this for me',
+  'ออก 50 ทวิ': 'Issue 50 bis', 'ดู / ดาวน์โหลด 50 ทวิ': 'View tax certificate', 'ให้น้องทำให้': 'Prepare this for me',
   'ข้อความของคุณ': 'Your message', 'เอกสารที่ส่งมา': 'Your document', 'ขอข้อมูลเพิ่ม': 'More information needed',
   'กำลังอ่านเอกสาร': 'Reading document', 'ผลการอ่านเอกสาร': 'Document result', 'อ่านข้อมูลไม่ได้': 'Unable to read document',
   'ยังรับเอกสารนี้ไม่ได้': 'Unable to accept document', 'ไม่ใช่เอกสารค่าใช้จ่าย': 'Not an expense document', 'เก็บไว้แล้ว': 'Stored',

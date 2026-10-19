@@ -1,3 +1,4 @@
+import { BILLING_PAID_TIERS as testPaidTiers, billingOffer as testBillingOffer } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_ACTION_RULES, lineActionBoundaryReplyText, moduleFeatureEnabled, readOnlyCaptureReplyText, scopePolicyOverride, unsoldModuleReplyText, unsoldModuleTopicFor } from './line-ai-scope-policy.logic';
@@ -272,7 +273,7 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
 // Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): stock asked without the exact word got a planner
 // sentence or the dead-end line. The fixed reply and its wording are unchanged; only what counts as stock widened.
 describe('advisor S0: stock asked without the exact word still gets the fixed unsold-module reply', () => {
-  const FIXED = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ แต่น้องช่วยเรื่องรายจ่าย หลักฐานใบเสร็จ และใบเบิกได้ค่ะ';
+  const FIXED = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ';
 
   for (const text of ['ของอะไรใกล้หมดบ้าง', 'ร้านเรามีของเหลือเท่าไหร่', 'สต๊อกเหลือเท่าไหร่อะ', 'สินค้าคงเหลือมีเท่าไหร่',
     'น้ำปลาเหลือกี่ขวด', 'เหลือกี่ชิ้น', 'เช็คสตอกต่ำที', 'สินค้าที่เหลือมีอะไรบ้าง', 'ของใกล้จะหมดมีอะไรบ้าง', 'Stock เหลือเท่าไหร่']) {
@@ -305,7 +306,54 @@ it('Exam D4: unavailable-module wording follows every purchasable billing offer'
     const offer = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(offer => offer.featureKeys.includes(featureKey!));
     const text = unsoldModuleReplyText({ featureKey: featureKey!, topicLabelTh: topicLabelTh!, topicLabelEn: featureKey! }, 'th');
     assert.equal(featurePackageOffer(featureKey!)?.offerKey, offer?.offerKey);
-    if (offer) { assert.match(text, /แพ็กเกจ/u); assert.ok(text.includes(offer.label)); assert.doesNotMatch(text, /วันนี้ยังไม่มี/u); }
+    if (offer) { assert.match(text, /แพ็กเกจ/u); assert.ok(text.includes(offer.label.replace(/ \(.+\)$/u, ''))); assert.doesNotMatch(text, /วันนี้ยังไม่มี/u); }
     else { assert.match(text, /Mangmee Plus วันนี้ยังไม่มี/u); assert.doesNotMatch(text, /อัปเกรด|บาทต่อเดือน/u); }
+  }
+});
+
+
+describe('U2 document facts and offers follow package entitlement and actor permission', () => {
+  for (const [text, feature, permission] of [
+    ['แล้วทวิ 50 คืออะไร', 'wht_50bis', 'wht.certificate.issue'],
+    ['50 ทวิคืออะไร', 'wht_50bis', 'wht.certificate.issue'],
+    ['ภ.ง.ด.53 คืออะไร', 'wht_pnd53', 'wht.pnd53.read'],
+    ['ภ.ง.ด.3 คืออะไร', 'wht_pnd53', 'wht.pnd53.read'],
+    ['ใบสำคัญจ่ายคืออะไร', 'expenses', 'expense.disbursement.prepare'],
+    ['ใบรับรองแทนใบเสร็จคืออะไร', 'expenses', 'expense.read'],
+  ]) for (const entitled of [false, true]) it(`${text}: entitled=${entitled}`, async () => {
+    const { documentExplanationReply } = await import('./line-ai-scope-policy.logic');
+    const reply = documentExplanationReply(text!, entitled ? [feature!] : feature === 'expenses' ? [] : ['expenses'], [permission!, 'wht.external_certificate.link', 'expense.read', 'expense.create'], 'th', testPaidTiers.map(tier => testBillingOffer(tier, 'month')))!;
+    assert.ok(reply);
+    assert.doesNotMatch(reply, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+    if (!entitled && feature === 'wht_50bis') {
+      assert.match(reply, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*หน้ารายจ่ายบนเว็บ/);
+      assert.match(reply, /ออกหนังสือรับรองในระบบ.*ธุรกิจ 1,999 บาท/);
+    }
+    if (!entitled && feature === 'wht_pnd53') assert.match(reply, /เก็บข้อมูลรายจ่าย.*ธุรกิจ 1,999 บาท/);
+    if (entitled && feature !== 'expenses') assert.doesNotMatch(reply, /ต้องใช้แพ็กเกจ/);
+  });
+  it('U6 uses an admin-set active price in package limits and action help', async () => {
+    const { billingOffer } = await import('@watchdog-bms/contracts');
+    const { featureLimitReplyText } = await import('./line-ai-scope-policy.logic');
+    const offer = billingOffer('ENTERPRISE_1999', 'month', { offerTerms: { ENTERPRISE_1999: { monthlyPriceSatang: 234567, annualPriceSatang: 2345670, monthlyReceiptAllowance: 500 } } });
+    for (const language of ['th', 'en'] as const) {
+      const reply = featureLimitReplyText('wht_50bis', language, undefined, [offer]);
+      assert.match(reply, /2,345.67/); assert.doesNotMatch(reply, /1,999|ENTERPRISE|—/);
+    }
+  });
+});
+
+
+it('U4 receipt completeness is not package exhaustion', async () => {
+  const { packageLifecycleReply } = await import('./line-ai-scope-policy.logic');
+  for (const text of ['ดูใบเสร็จฉบับเต็ม', 'ใบเสร็จครบแล้ว สร้างใบเบิกได้ไหม', 'บันทึกค่าใช้จ่ายตามใบเสร็จฉบับเต็ม']) assert.equal(packageLifecycleReply(text, 'th'), undefined);
+});
+
+
+it('U6 absent active offers never falls back to a catalog selling price', async () => {
+  const { featureLimitReplyText } = await import('./line-ai-scope-policy.logic');
+  for (const language of ['th', 'en'] as const) {
+    const reply = featureLimitReplyText('wht_50bis', language);
+    assert.doesNotMatch(reply, /1,999|1999|249|ENTERPRISE/); assert.match(reply, /ตรวจราคาปัจจุบัน|current price/);
   }
 });

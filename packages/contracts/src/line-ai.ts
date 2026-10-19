@@ -326,6 +326,8 @@ export type LineAiTurnRequest = {
   /** Idempotency key: LINE webhook event id */
   webhookEventId: string;
   userContext: LineUserContext;
+  /** Public selling terms resolved by the API from BillingService.catalog(). Never budget authority. */
+  packageOffers?: import('./billing.js').BillingOffer[];
   /** API-resolved CompanyAiConfiguration; never accepted from an end-user payload. */
   modelPolicy?: AiModelPolicy;
   /** Bounded API-issued single-use delegations selected by exact ERP tool name. */
@@ -1480,7 +1482,7 @@ export type LineDraftUpdatePreview = {
 
 /** What the two buttons under a preview mean, in one place: the gateway's preview text ends with it
  *  and the API's confirm card prints it, so the sentence and the card cannot say different things. */
-export const LINE_DRAFT_UPDATE_CONFIRM_HINT = 'กด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ — ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ';
+export const LINE_DRAFT_UPDATE_CONFIRM_HINT = 'กด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ';
 
 /** The locked design's "แก้ไขค่าใช้จ่าย" header: the context, then the state the edit is really in.
  *  Here, because the API's cards and the gateway's `edit_command` layout must name a state alike. */
@@ -1900,6 +1902,8 @@ export type LineAiWebLink = {
 export type LineAiAnswerCard = {
   /** Fixed registry entry; the API rechecks current action access before offering its command. */
   chatActionId?: LineChatActionId;
+  /** Bounded navigation suggestions; the API rechecks every action against current access. */
+  chatActionIds?: LineChatActionId[];
   title?: string;
   text: string;
   sourceLabels?: string[];

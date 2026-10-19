@@ -1,4 +1,4 @@
-import { lineCustomerText } from './line-language.logic';
+import { lineCustomerText, lineCustomerVisibleText } from './line-language.logic';
 import { isLineNavigationPostback, type LineReplyLanguage } from './line-language.logic';
 import { linePaymentEvidencePostbackCommand, parseLinePaymentEvidenceControl } from './line-payment-evidence-reply.logic';
 import { createHash } from 'node:crypto';
@@ -42,18 +42,11 @@ export function canonicalDeliveryJson(value: unknown): string {
 }
 export const deliveryHash = (value: unknown) => createHash('sha256').update(canonicalDeliveryJson(value)).digest('hex');
 export const lineDeliveryPlanId = (kind: LineDeliveryProducer, id: string) => deliveryHash(['line-delivery-v2', kind, id]);
-function safeVisibleText<T>(value: T): T {
-  if (Array.isArray(value)) return value.map(safeVisibleText) as T;
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
-    ['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string' ? lineCustomerText(child)
-      : typeof child === 'object' ? safeVisibleText(child) : child])) as T;
-}
 export function lineDeliveryWireMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
   return messages.map(message => {
-    if (message.type !== 'flex') return safeVisibleText(message);
+    if (message.type !== 'flex') return lineCustomerVisibleText(message);
     const { canonicalText: _internal, ...wire } = message;
-    return safeVisibleText(wire);
+    return lineCustomerVisibleText(wire);
   });
 }
 export function lineDeliveryRetryKey(planId: string, index: number, variant: 'primary' | 'fallback', wireHash: string): string {

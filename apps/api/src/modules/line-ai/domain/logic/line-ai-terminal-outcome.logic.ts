@@ -52,7 +52,13 @@ export function knownAiBudgetRefusal(error: unknown): { code: AiBudgetRefusalCod
     ? (error as { getResponse: () => unknown }).getResponse()
     : undefined;
   if (!response || typeof response !== 'object') return null;
-  const { code, budgetScope } = response as { code?: unknown; budgetScope?: unknown };
+  return knownAiBudgetResponse(response as { code?: unknown; budgetScope?: unknown });
+}
+
+/** Only use on an authenticated gateway response, never on customer/provider text. */
+export function knownAiBudgetResponse(response: { code?: unknown; errorCode?: unknown; budgetScope?: unknown }): { code: AiBudgetRefusalCode; budgetScope?: AiBudgetScope } | null {
+  const code = response.errorCode ?? response.code;
+  const { budgetScope } = response;
   if (!isAiBudgetRefusalCode(typeof code === 'string' ? code : undefined)) return null;
   return {
     code: code as AiBudgetRefusalCode,

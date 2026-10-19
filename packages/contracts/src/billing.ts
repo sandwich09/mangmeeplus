@@ -1,4 +1,4 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason, type PlanTermState } from './plan-term.js';
+import { PLAN_TIER_PRESETS, shopPlanTierLabel, type PlanTierKey, type CompanyPlanCapacity, type PlanTermLockReason, type PlanTermState } from './plan-term.js';
 import { TIER_FEATURE_PRESETS } from './menu-entitlements.js';
 import type { SalesDealBaseTier, SalesDealCadence, SalesEventTicketDisplayState } from './sales.js';
 import type { BillingCompanyProfile } from './billing-company-profile.js';
@@ -775,3 +775,31 @@ export type BillingPromotionPreviewInput = { expectedVersion: number; draftVersi
 export type BillingPromotionPreviewResult = { operation: BillingConfigurationOperation; previewRows: BillingPromotionPreviewRow[] };
 /** Pause or end now. `expectedVersion` = settingsVersion. */
 export type BillingPromotionStateInput = { expectedVersion: number; reason: string };
+
+/** Customer names share the web tier vocabulary; prices must come from the active catalog. */
+export function customerPackageName(offer: Pick<BillingOffer, 'offerKey'> & Partial<Pick<BillingOffer, 'priceSatang'>>, language: 'th' | 'en' = 'th'): string {
+  const name = language === 'th' ? shopPlanTierLabel(offer.offerKey) : ({ STARTER_249: 'Starter', BASIC_499: 'Basic', PRO_999: 'Pro', ENTERPRISE_1999: 'Enterprise' } as const)[offer.offerKey];
+  return offer.priceSatang === undefined ? name : `${name} ${(offer.priceSatang / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${language === 'th' ? 'บาท' : 'THB'}`;
+}
+
+/** Wording only: never apply to control data, paths or source evidence. */
+export function lineCustomerWording(text: string): string {
+  const thai = /[ก-๙]/u.test(text);
+  const packageContext = /แพ[็ก๊ค]+เกจ|\b(?:package|plan|tier)\b/iu.test(text);
+  const names: Record<string, string> = { STARTER: 'Starter', BASIC: 'Basic', PRO: 'Pro', ENTERPRISE: 'Enterprise', FREE_TRIAL: 'Free trial' };
+  return text.replace(/\s*\((?:STARTER|BASIC|PRO|ENTERPRISE)(?:_\d+)?\)/gu, '')
+    .replace(/\b(?:STARTER|BASIC|PRO|ENTERPRISE|FREE_TRIAL)(?:_\d+)?\b/gu, code => {
+      if (!packageContext && !/_\d+$/u.test(code)) return code;
+      const tier = Object.keys(PLAN_TIER_PRESETS).find(tier => tier === code || tier.replace(/_\d+$/u, '') === code);
+      return thai && tier ? shopPlanTierLabel(tier as PlanTierKey) : names[code.replace(/_\d+$/u, '')] ?? '';
+    }).replace(/^[ \t]*—[ \t]*$/u, '-').replace(/[ \t]*—[ \t]*/gu, ' ').trim();
+}
+
+/** Public catalog facts crossing the authenticated API/gateway/runtime boundary. */
+export function parseLinePackageOffers(value: unknown): BillingOffer[] | undefined {
+  if (!Array.isArray(value) || value.length > 8) return undefined;
+  if (value.some(o => !o || !BILLING_PAID_TIERS.includes(o.offerKey) || !['month', 'year'].includes(o.interval)
+    || !Number.isSafeInteger(o.priceSatang) || o.priceSatang < 0 || !Array.isArray(o.featureKeys)
+    || o.featureKeys.some((key: unknown) => typeof key !== 'string'))) return undefined;
+  return value as BillingOffer[];
+}

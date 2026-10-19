@@ -464,3 +464,13 @@ it('preserves presentation language across runtime validation and the synthetic 
   const english = validatePayload({ turnId: 'english', companyId: 'company', userId: 'user', messageText: 'Please check my expenses', locale: 'th-TH', permissions: [] });
   assert.equal(payloadToTurnRequest(english!).language, 'en');
 });
+
+
+it('U6 active offer facts survive the explicit AgentCore payload allowlist', async () => {
+  const { validatePayload, payloadToTurnRequest } = await import('../../../../agentcore/runtime');
+  const { billingOffer } = await import('@watchdog-bms/contracts');
+  const offer = { ...billingOffer('ENTERPRISE_1999', 'month'), priceSatang: 234567 };
+  const payload = validatePayload({ turnId: 'u6', companyId: 'company', userId: 'user', messageText: '50 ทวิคืออะไร', packageOffers: [offer] });
+  assert.ok(payload); assert.equal(payloadToTurnRequest(payload).packageOffers?.[0]?.priceSatang, 234567);
+  assert.equal(validatePayload({ turnId: 'u6', companyId: 'company', userId: 'user', messageText: 'hello', packageOffers: [{ ...offer, priceSatang: '1999' }] })?.packageOffers, undefined);
+});
