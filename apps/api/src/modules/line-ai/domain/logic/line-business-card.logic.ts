@@ -47,9 +47,18 @@ export function lineChoiceQuickReply(choices: readonly { label: string; text: st
 
 /** Recheck current access; a gateway-selected action is navigation advice, never authority. */
 export function productHelpQuickReply(response: LineAiTurnResponse, permissions: readonly string[], entitled: ReadonlySet<string> | null, language: LineReplyLanguage = lineReplyLanguage(response.replyText ?? '')): LineReplyMessage['quickReply'] | undefined {
-  const action = response.presentation?.cards.map(card => lineChatAction(card.chatActionId)).find(Boolean);
-  if (response.refused || !action || 'webPath' in action || !canUseLineChatAction(action.id, permissions, entitled)) return undefined;
-  return language === 'en' ? { items: [{ type: 'action', action: { type: 'postback', label: 'Prepare this for me', data: lineControlData(new URLSearchParams({ action: 'chat-action', id: action.id }).toString(), language) } }] } : lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: action.command }]);
+  if (response.refused) return undefined;
+  const capabilityMenu = response.presentation?.cards.some(card => card.chatActionIds !== undefined);
+  const ids = response.presentation?.cards.flatMap(card => card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : [])) ?? [];
+  const actions = [...new Set(ids)].map(id => lineChatAction(id)).filter(action => action && !('webPath' in action)
+    && canUseLineChatAction(action.id, permissions, entitled)).slice(0, 6);
+  if (!actions.length) return undefined;
+  if (!capabilityMenu && actions.length === 1 && language === 'th') return lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: actions[0]!.command }]);
+  const shortTitles: Record<string, string> = { counterparty: 'เพิ่มคู่ค้า', package_purchase: 'เลือกแพ็กเกจ', expense_search: 'ค้นหาค่าใช้จ่าย', sales: 'ดูยอดขาย', inventory: 'ค้นหาสินค้า' };
+  return { items: actions.map(action => ({ type: 'action', action: { type: 'postback',
+    label: !capabilityMenu && actions.length === 1 ? language === 'en' ? 'Prepare this for me' : 'ให้น้องทำให้' : lineUiLabel(shortTitles[action!.id] ?? action!.title, language),
+    data: lineControlData(new URLSearchParams({ action: 'chat-action', id: action!.id }).toString(), language) } })) };
+
 }
 
 function businessAnswerPresentationFingerprint(message: LineReplyMessage): string | null {

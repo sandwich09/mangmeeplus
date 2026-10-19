@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { THAI_SYSTEM_ROLE_NAMES, addCivilDays, billingPlanLabel, civilDate, DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingOffer, type BillingTaxTreatment,
+import { BILLING_PAID_TIERS, customerPackageName, lineCustomerWording, THAI_SYSTEM_ROLE_NAMES, addCivilDays, billingPlanLabel, civilDate, DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingOffer, type BillingTaxTreatment,
   type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -76,6 +76,7 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
     const resetsOn = monthly && usage.resetsAt && term && Date.parse(usage.resetsAt) < term.termEndsAt.getTime()
       ? civilDate(new Date(usage.resetsAt)) : null;
     const expiresOn = usage.expiresAt ? civilDate(new Date(usage.expiresAt)) : null;
+    const paidTier = BILLING_PAID_TIERS.find(tier => tier === term?.tierKey);
     const sourceRefs: SourceRef[] = [{
       label: 'แพ็กเกจของร้าน', module: 'billing', entityType: 'package_usage',
       asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/billing`,
@@ -84,7 +85,7 @@ export class BillingGetPackageUsageTool implements ErpReadToolPort {
       toolName: this.toolName,
       status: 'ok',
       data: {
-        package: { label: billingPlanLabel(term?.tierKey), termEndsOn },
+        package: { label: paidTier ? customerPackageName({ offerKey: paidTier }, ctx.locale?.startsWith('en') ? 'en' : 'th') : lineCustomerWording(billingPlanLabel(term?.tierKey)), termEndsOn },
         capacity: { branches: room(branches, capacity?.branchLimit ?? null), members: room(members, capacity?.employeeLimit ?? null) },
         receipts: {
           used: usage.used, limit: usage.limit, remaining: usage.remaining, cadence: monthly ? 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน' : 'ตามรอบที่ชำระ',
@@ -149,7 +150,7 @@ export class BillingGetPackageCatalogTool implements ErpReadToolPort {
       const saving = month.priceSatang * 12 - year.priceSatang;
       const pricedAsMonths = year.priceSatang / month.priceSatang;
       return [{
-        name: month.label, branches: month.branchLimit, users: month.employeeLimit,
+        name: customerPackageName(month, ctx.locale?.startsWith('en') ? 'en' : 'th'), branches: month.branchLimit, users: month.employeeLimit,
         monthly: sellingPrice(month, catalog.taxTreatment),
         yearly: { ...sellingPrice(year, catalog.taxTreatment), months: 12, averagePerMonth: baht(Math.round(year.priceSatang / 12)),
           ...(saving > 0 ? { savingVersusMonthly: baht(saving) } : {}), ...(Number.isInteger(pricedAsMonths) ? { pricedAsMonths } : {}) },

@@ -1909,7 +1909,7 @@ it('H5: live unavailable PRO copy has a space and offers the nearest sellable pa
   for (const offer of h.catalog.offers.filter(offer => offer.offerKey === 'PRO_999')) offer.availability = 'COMING_SOON';
   const unavailable = await h.prepare('ซื้อแพ็ก 999');
   const reply = unavailable.reply;
-  assert.match(reply, /มืออาชีพ ยังไม่เปิดขายค่ะ/u);
+  assert.match(reply, /มืออาชีพ 999 บาท ยังไม่เปิดขายค่ะ/u);
   assert.match(reply, /เลือกแพ็กเกจที่เปิดขาย/u);
   assert.match(unavailable.choices![0]!.label, /499/u);
   assert.doesNotMatch(reply, /PRO|ENTERPRISE|_999/u); assert.equal(h.calls.length, 0);

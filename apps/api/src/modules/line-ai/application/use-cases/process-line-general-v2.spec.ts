@@ -158,7 +158,7 @@ for (const scenario of [
     aiGateway: { narrowLineReliabilityGrant: async () => grant, requestLineTurn: async () => {
       const error: any = new Error(scenario.code); error.getStatus = () => 429; error.getResponse = () => ({ code: scenario.code, budgetScope: 'TOTAL' }); throw error;
     } },
-    ledger: { appendTurn: async () => 'ledger', ack: async () => assert.fail('a refused answer is not acknowledged as answered') },
+    ledger: { appendTurn: async () => 'ledger', ack: async (_entry: unknown, status: string) => assert.equal(status, 'refused', 'a permanent credit refusal must not be retried as unanswered') },
     isTrialTier: async () => false,
     deliverRequiredMessages: async (_event: unknown, messages: any[]) => { cards.push(...messages); },
     deliverReply: async (_event: unknown, text: string) => { replies.push(text); },

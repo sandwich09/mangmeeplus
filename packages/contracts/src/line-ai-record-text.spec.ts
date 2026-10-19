@@ -284,3 +284,22 @@ it('selects current LINE language independently of account locale or style', asy
     ['123.45', 'en', 'en'], ['', 'th', 'th'], ['EXP-2026-000123', 'th', 'th'],
   ] as const) assert.equal(lineReplyLanguage(text, fallback), expected, text);
 });
+
+
+describe('U5 customer package names', () => {
+  it('uses the web Thai names, English names and the supplied selling price for every tier', async () => {
+    const { BILLING_PAID_TIERS, billingOffer, customerPackageName, lineCustomerWording } = await import('./billing.js');
+    for (const tier of BILLING_PAID_TIERS) for (const language of ['th', 'en'] as const) {
+      const name = customerPackageName({ ...billingOffer(tier, 'month'), priceSatang: 234567 }, language);
+      assert.match(name, /2,345.67/); assert.doesNotMatch(name, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+      assert.equal(lineCustomerWording(`${name} — (${tier.split('_')[0]})`), name);
+    }
+  });
+});
+
+
+it('U5 a vendor name that contains PRO is source evidence, not a package enum', async () => {
+  const { lineCustomerWording } = await import('./billing.js');
+  const evidence = 'ผู้ขาย PRO SERVICE ยอด 1,388.00 บาท';
+  assert.equal(lineCustomerWording(evidence), evidence);
+});

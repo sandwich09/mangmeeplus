@@ -301,6 +301,7 @@ export class LineAiTurnUseCase {
         // gating, request level for the capability answer). userContext is the richer source; the
         // request-level copy is the fallback for callers that only populate that one.
         entitledFeatureKeys: req.userContext.entitledFeatureKeys ?? req.entitledFeatureKeys,
+        packageOffers: req.packageOffers,
         actorDelegations: req.actorDelegations,
         modelPolicy: req.modelPolicy,
         attachments: req.attachments?.map((a) => ({
@@ -440,7 +441,7 @@ export class LineAiTurnUseCase {
       const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
       const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
       if (access === 'feature_disabled') {
-        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions), startMs);
       }
       if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
       const summary = req.conversationContext?.deliveredExpenseSummary;
@@ -462,7 +463,7 @@ export class LineAiTurnUseCase {
     if (noAttachments && mentionsExpense && !mentionsOtherBusinessTopic && uncertainExpenseFilter(req.messageText, hasPriorExpenseContext)) {
       const expenseTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.list_recent');
       const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
-      if (access === 'feature_disabled') return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+      if (access === 'feature_disabled') return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions), startMs);
       if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
       return {
         ...this.baseResponse(req, 'read_summary', 'accounting', startMs),
@@ -473,7 +474,7 @@ export class LineAiTurnUseCase {
       const expenseDetailTool = LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.get_detail');
       const access = expenseDetailTool ? toolAccessOutcome(expenseDetailTool, req.userContext) : 'forbidden';
       if (access === 'feature_disabled') {
-        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.get_detail'], req.userContext.locale), startMs);
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.get_detail'], req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions), startMs);
       }
       if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
       return {
@@ -494,7 +495,7 @@ export class LineAiTurnUseCase {
     if (hasExpenseSummaryIntent || hasExpenseFollowupContext) {
       const access = expenseTool ? toolAccessOutcome(expenseTool, req.userContext) : 'forbidden';
       if (access === 'feature_disabled') {
-        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale), startMs);
+        return this.buildRefusedResponse(req, 'feature_disabled', featureDisabledReply(['expense.list_recent'], req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions), startMs);
       }
       if (access !== 'allowed') return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs);
       const periods = req.valueCandidates?.periods ?? [];
@@ -580,7 +581,7 @@ export class LineAiTurnUseCase {
       return this.buildRefusedResponse(
         req,
         'feature_disabled',
-        featureDisabledReply(featureDisabledTools.map((tool) => tool.name), req.userContext.locale),
+        featureDisabledReply(featureDisabledTools.map((tool) => tool.name), req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions),
         startMs,
         intent,
         agent,
@@ -622,7 +623,7 @@ export class LineAiTurnUseCase {
       return this.buildRefusedResponse(
         req,
         'feature_disabled',
-        featureDisabledReply(topTools.map((tool) => tool.name), req.userContext.locale),
+        featureDisabledReply(topTools.map((tool) => tool.name), req.userContext.locale, req.packageOffers, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, req.userContext.permissions),
         startMs,
         intent,
         agent,

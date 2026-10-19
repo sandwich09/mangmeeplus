@@ -1,3 +1,4 @@
+import { parseLinePackageOffers } from '@watchdog-bms/contracts';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 /**
  * AgentCore Runtime entry point – item 10B Phase 8.
@@ -81,6 +82,7 @@ export type RuntimePayload = {
    *  not send them; the artifact must keep answering, just without entitlement-exact copy.
    *  `null` is the explicit server-resolved "no entitlement rows" form of the same fail-open. */
   entitledFeatureKeys?: string[] | null;
+  packageOffers?: LineAiTurnRequest['packageOffers'];
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
@@ -433,6 +435,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
       entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
       entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
+      packageOffers: parseLinePackageOffers(p['packageOffers']),
       actorDelegations: parseActorDelegations(p['actorDelegations']),
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
@@ -473,6 +476,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
     entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
     entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
+      packageOffers: parseLinePackageOffers(p['packageOffers']),
     actorDelegations: parseActorDelegations(p['actorDelegations']),
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
@@ -512,6 +516,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     ...(p.responsePreferences ? { responsePreferences: p.responsePreferences } : {}),
     ...(p.semanticSubrequests ? { semanticSubrequests: p.semanticSubrequests } : {}),
     ...(p.retainedTaskSource ? { retainedTaskSource: p.retainedTaskSource } : {}),
+    packageOffers: p.packageOffers,
     ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     ...(p.preparedPlan ? { preparedPlan: p.preparedPlan } : {}),
     ...(p.intakeIntent ? { intakeIntent: p.intakeIntent } : {}),

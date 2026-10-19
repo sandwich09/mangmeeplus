@@ -1,7 +1,7 @@
 import { lineControlData, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ForbiddenException, HttpException, Injectable } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { scrubRecordText, type BillingCatalog, type BillingCheckoutResult, type BillingInterval, type BillingOffer, type BillingPurchaseMode, type BillingQuote, type RequestContext } from '@watchdog-bms/contracts';
+import { customerPackageName, scrubRecordText, type BillingCatalog, type BillingCheckoutResult, type BillingInterval, type BillingOffer, type BillingPurchaseMode, type BillingQuote, type RequestContext } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { absoluteWebLink } from '../../../common/http/web-link';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -137,9 +137,9 @@ export class LinePackagePurchaseService {
         await this.store.save(entry);
         const choices = available.length ? available.slice(0, 4) : catalog.offers.filter(row => row.interval === selection.interval && row.availability !== 'COMING_SOON').slice(0, 4);
         const billingPath = `/companies/${encodeURIComponent(ctx.companyId)}/billing?channel=line`;
-        return { reply: `${scrubRecordText(offer.label, 80).replace(/\s*\([A-Z_0-9]+\)/gu, '')} ${language === 'en' ? (offer.availability !== 'AVAILABLE' ? 'is not on sale yet.' : 'cannot be purchased through LINE yet.') : offer.availability !== 'AVAILABLE' ? 'ยังไม่เปิดขายค่ะ' : 'ยังซื้อผ่าน LINE ไม่ได้ค่ะ'}${language === 'en' ? (available.length ? ' Choose an available package below.' : ' View other packages and payment options on the web.') : available.length ? ' เลือกแพ็กเกจที่เปิดขายได้เลยค่ะ' : ' ดูแพ็กเกจอื่นและช่องทางซื้อบนเว็บได้ค่ะ'}`,
-          choices: [...choices.map(row => ({ label: `${scrubRecordText(row.label, 40).replace(/\s*\([A-Z_0-9]+\)/gu, '')} ${money(row.priceSatang, language)}`,
-            text: `${language === 'en' ? 'Buy package' : 'ซื้อแพ็กเกจ'} ${scrubRecordText(row.label, 80).replace(/\s*\([A-Z_0-9]+\)/gu, '')} ${row.interval === 'year' ? (language === 'en' ? 'yearly' : 'รายปี') : (language === 'en' ? 'monthly' : 'รายเดือน')}`,
+        return { reply: `${customerPackageName(offer, language)} ${language === 'en' ? (offer.availability !== 'AVAILABLE' ? 'is not on sale yet.' : 'cannot be purchased through LINE yet.') : offer.availability !== 'AVAILABLE' ? 'ยังไม่เปิดขายค่ะ' : 'ยังซื้อผ่าน LINE ไม่ได้ค่ะ'}${language === 'en' ? (available.length ? ' Choose an available package below.' : ' View other packages and payment options on the web.') : available.length ? ' เลือกแพ็กเกจที่เปิดขายได้เลยค่ะ' : ' ดูแพ็กเกจอื่นและช่องทางซื้อบนเว็บได้ค่ะ'}`,
+          choices: [...choices.map(row => ({ label: customerPackageName(row, language),
+            text: `${language === 'en' ? 'Buy package' : 'ซื้อแพ็กเกจ'} ${customerPackageName(row, language)} ${row.interval === 'year' ? (language === 'en' ? 'yearly' : 'รายปี') : (language === 'en' ? 'monthly' : 'รายเดือน')}`,
             ...(!available.length ? { uri: absoluteWebLink(this.config.webBaseUrl, `${billingPath}&offer=${row.offerKey}&interval=${row.interval}`) } : {}) })),
             ...(!available.length ? [{ label: language === 'en' ? 'Manage packages' : 'จัดการแพ็กเกจ', text: language === 'en' ? 'Manage packages' : 'จัดการแพ็กเกจ', uri: absoluteWebLink(this.config.webBaseUrl, billingPath) }] : [])] };
       }
@@ -167,7 +167,7 @@ export class LinePackagePurchaseService {
   private quoteLines(q: BillingQuote, mode: BillingPurchaseMode, language: LineReplyLanguage = 'th'): string[] {
     const en = language === 'en';
     const totals = q.eventDiscount?.applied ?? q;
-    return [(en ? 'Review the details before creating the payment link.' : 'ตรวจรายละเอียดแล้วกดสร้างลิงก์จ่ายค่ะ'), scrubRecordText(q.companyName, 80), `${scrubRecordText(q.offer.label, 80)} · ${q.offer.interval === 'year' ? (en ? 'Yearly' : 'รายปี') : (en ? 'Monthly' : 'รายเดือน')}`,
+    return [(en ? 'Review the details before creating the payment link.' : 'ตรวจรายละเอียดแล้วกดสร้างลิงก์จ่ายค่ะ'), scrubRecordText(q.companyName, 80), `${customerPackageName(q.offer, language)} · ${q.offer.interval === 'year' ? (en ? 'Yearly' : 'รายปี') : (en ? 'Monthly' : 'รายเดือน')}`,
       `${en ? 'Pay' : 'ชำระ'} ${money(totals.totalSatang, language)} · ${en ? ({ CARD_AUTO: 'Automatic card renewal', CARD_ONCE: 'One-time card payment', PROMPTPAY_RENEW: 'QR payment each cycle', PROMPTPAY_ONCE: 'One-time QR payment' } as Record<string, string>)[mode] ?? 'Selected payment terms' : MODE_LABELS[mode]}`, `${en ? 'Before tax' : 'ก่อนภาษี'} ${money(totals.subtotalSatang, language)} · ${en ? 'Tax' : 'ภาษี'} ${money(totals.taxSatang, language)}`,
       ...(q.promotion ? [`${en ? 'Promotion' : 'โปรโมชั่น'} ${scrubRecordText(q.promotion.displayName, 80)} · ${en ? 'Bonus' : 'แถม'} ${q.promotion.bonusMonths} ${en ? 'months and' : 'เดือนและใบเสร็จ'} ${q.promotion.bonusReceiptUnits} ${en ? 'receipt reads' : 'ใบ'}`,
         `${en ? 'Benefits expected through' : 'ใช้สิทธิ์ได้ถึงประมาณ'} ${date(q.promotion.benefitEnd, language)}${q.promotion.expectedNextChargeAt ? ` · ${en ? 'Next renewal' : 'ต่ออายุรอบถัดไป'} ${date(q.promotion.expectedNextChargeAt, language)}` : ''}`] : []),

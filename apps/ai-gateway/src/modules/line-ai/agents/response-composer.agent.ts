@@ -1,3 +1,4 @@
+import { lineCustomerWording, type BillingOffer } from '@watchdog-bms/contracts';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 /**
  * ResponseComposerAgent – builds the LINE reply from SpecialistOutput[].
@@ -377,12 +378,12 @@ function capabilityLabel(toolName: string, language: 'th' | 'en'): string {
   return label('ส่วนนี้', 'this capability');
 }
 
-export function featureDisabledReply(toolNames: readonly string[], language: string): string {
+export function featureDisabledReply(toolNames: readonly string[], language: string, offers?: readonly BillingOffer[], features?: readonly string[] | null, permissions: readonly string[] = []): string {
   const lang: 'th' | 'en' = language.toLowerCase().startsWith('en') ? 'en' : 'th';
   const replies = toolNames.map(name => {
     const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === name);
     const feature = tool && toolFeatureKeys(tool)[0];
-    return feature ? featureLimitReplyText(feature, lang, capabilityLabel(name, lang)) : COPY[lang].disabled;
+    return feature ? featureLimitReplyText(feature, lang, capabilityLabel(name, lang), offers, features, permissions) : COPY[lang].disabled;
   });
   return [...new Set(replies)].join('\n') || COPY[lang].disabled;
 }
@@ -474,7 +475,7 @@ export class ResponseComposerAgent {
     outputs: SpecialistOutput[],
     messageText = '',
     locale = 'th-TH',
-    options: { featureDisabledTools?: readonly string[]; companyId?: string; permissions?: readonly string[] } = {},
+    options: { entitledFeatureKeys?: readonly string[] | null; packageOffers?: readonly BillingOffer[]; featureDisabledTools?: readonly string[]; companyId?: string; permissions?: readonly string[] } = {},
   ): ComposedReply {
     const language = detectReplyLanguage(messageText, plan.language, locale);
     const copy = COPY[language];
@@ -488,7 +489,7 @@ export class ResponseComposerAgent {
       if (reasons.includes('privacy_rumor')) return empty(copy.privacyRumor);
       if (reasons.includes('mutation_blocked')) return empty(copy.mutation);
       if (reasons.some((reason) => reason.startsWith('feature_disabled'))) {
-        const disabled = featureDisabledReply(options.featureDisabledTools ?? [], language);
+        const disabled = featureDisabledReply(options.featureDisabledTools ?? [], language, options.packageOffers, options.entitledFeatureKeys, options.permissions);
         return reasons.some((reason) => /forbidden|permission/i.test(reason))
           ? { ...empty(`${disabled}\n${forbidden}`), webLinks: permissionLinks } : empty(disabled);
       }
@@ -925,12 +926,12 @@ export function claimsCompletedWrite(text: string): boolean {
 }
 
 export function safeModelLineText(text: string, english = !/[ก-๙]/u.test(text), context?: LineAiConversationContext): string {
-  if (!claimsCompletedWrite(text)) return sanitizeMangmeeComposedText(text, true, undefined, english ? 'en' : 'th');
+  if (!claimsCompletedWrite(text)) return lineCustomerWording(sanitizeMangmeeComposedText(text, true, undefined, english ? 'en' : 'th'));
   const remaining = text.split(/(?<=ค่ะ|คะ|[!?\n])\s*|(?<=\.)\s+(?=[A-Z])|\s*—\s*/u).filter(part => !claimsCompletedWrite(part)).join(' ').trim();
   const next = context?.activeExpenseDrafts?.length
     ? english ? 'The expense is still a draft. Please review it before confirming.' : 'รายการนี้ยังเป็นร่างค่ะ ตรวจรายละเอียดก่อนกดยืนยันได้เลยค่ะ'
     : english ? 'Please review the draft, or tell me which details to change.' : 'ตรวจร่างหรือบอกข้อมูลที่ต้องการแก้ไขได้เลยค่ะ';
-  return sanitizeMangmeeComposedText([remaining, next].filter(Boolean).join(' '), true, undefined, english ? 'en' : 'th');
+  return lineCustomerWording(sanitizeMangmeeComposedText([remaining, next].filter(Boolean).join(' '), true, undefined, english ? 'en' : 'th'));
 }
 
 /**

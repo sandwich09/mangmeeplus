@@ -210,6 +210,7 @@ import {
   classifyLineAiTerminalOutcome,
   emitLineAiTerminalOutcome,
   knownAiBudgetRefusal,
+  knownAiBudgetResponse,
   terminalStatusForLineTurn,
   type LineAiTerminalMediaState,
 } from '../../domain/logic/line-ai-terminal-outcome.logic';
@@ -2603,6 +2604,8 @@ export class ProcessLineWebhookUseCase {
         this.logger.log({ msg: 'line.ai.intake_timing', surface: 'employee_oa', requestId: input.requestId, webhookEventId: input.webhookEventId,
           grantMs: timing.grantMs, contextMs: timing.contextMs, categoriesMs: timing.categoriesMs, gatewayMs: Date.now() - gatewayStartedAt });
       } catch { /* telemetry cannot change the outcome it observes */ }
+      const bodyRefusal = knownAiBudgetResponse(routed);
+      if (bodyRefusal) throw new HttpException(bodyRefusal, 429);
       const question = input.openClarifications?.length === 1 ? input.openClarifications[0] : undefined;
       const intent = question?.clarifyForIntent;
       const evidence = input.event?.inputEvidence;
@@ -4451,12 +4454,18 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       chatKey: mediaChatKey(event), turnId: requestId, webhookEventId: event.webhookEventId, userId: bound.owner.userId, text: event.messageText,
       acceptedRequest: { request, ownerEpoch: bound.epoch, conversationId: bound.id, accessFingerprint: this.deliveryAccess.get(event)!.fingerprint } });
     let response: LineAiTurnResponse;
-    try { response = await this.aiGateway.requestLineTurn(request); }
+    try { response = await this.aiGateway.requestLineTurn(request);
+      const bodyRefusal = knownAiBudgetResponse(response);
+      if (bodyRefusal) throw new HttpException(bodyRefusal, 429);
+    }
     catch (error) {
       const budget = knownAiBudgetRefusal(error);
       if (budget && await this.answerAiCreditRefusal(event, bound.owner.companyId,
         { budgetErrorCode: budget.code, ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}) },
-        access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
+        access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) {
+        if (ledgerId && this.ledger) await this.ledger.ack({ key: ledgerKey(bound.owner.companyId, mediaChatKey(event)), id: ledgerId, companyId: bound.owner.companyId, turnId: requestId, kind: 'turn' }, 'refused', { reason: budget.code });
+        return;
+      }
       await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not finish this answer; please try again." : 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่')); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return;
     }
     if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
@@ -7665,6 +7674,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
 
     if (this.boundConversations.has(event)) {
       if (!initialGrantV2 || routePlan.status !== 'ROUTED') {
+        if (await this.answerAiCreditRefusal(event, companyId, routePlan, resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY))) return;
         // A missing grant is a system/budget-admission gap, not a text the model failed to parse.
         await this.deliverReply(event, !initialGrantV2 || isTransientLineAiRouteFailure(routePlan.errorCode)
           ? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_TRANSIENT_REPLY : LINE_AI_ROUTE_TRANSIENT_REPLY) : (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.LINE_AI_ROUTE_UNCLEAR_REPLY : LINE_AI_ROUTE_UNCLEAR_REPLY));
@@ -8634,6 +8644,8 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
     try {
       turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest, { busyWaitDeadlineMs,
         ...(event.admitOverCap ? { admitOverCap: true } : {}) }));
+      const bodyRefusal = knownAiBudgetResponse(turnResponse);
+      if (bodyRefusal) throw new HttpException(bodyRefusal, 429);
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, ...safeLineErrorDetails(err) });
       const failure = classifyLineAiGatewayFailure(err);

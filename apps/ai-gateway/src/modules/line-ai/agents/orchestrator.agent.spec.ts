@@ -1,3 +1,4 @@
+import { BILLING_PAID_TIERS as testPaidTiers, billingOffer as testBillingOffer } from '@watchdog-bms/contracts';
 import '../domain/logic/line-ai-scope-policy.logic.spec';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { scopePolicyOverride, featureLimitReplyText, permissionAlternative } from '../domain/logic/line-ai-scope-policy.logic';
@@ -25,6 +26,7 @@ function preparedInventoryPlan(): LineAiPreparedPlan {
 
 function makeReq(messageText: string, attachments: any[] = []): LineAiTurnRequest {
   return {
+    packageOffers: testPaidTiers.map(tier => testBillingOffer(tier, 'month')),
     requestId: 'req-test',
     webhookEventId: 'evt-test',
     messageText,
@@ -2080,7 +2082,7 @@ it('F5: planner questions pass the existing LINE sanitizer before reply and cove
     provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ calls: [], questions: [{ index: 0, text: question }] }) }) } as any,
     invoke: async () => assert.fail('a question must not call tools'),
   });
-  assert.equal(result.replyText, 'ข้อมูลเพิ่มเติม\nหมวดหมู่ค่าใช้จ่าย — อินฟลูจัดอยู่ในหมวดไหนคะ\nชื่อสาขา และ วิธีชำระเงิน คะ');
+  assert.equal(result.replyText, 'ข้อมูลเพิ่มเติม\nหมวดหมู่ค่าใช้จ่าย อินฟลูจัดอยู่ในหมวดไหนคะ\nชื่อสาขา และ วิธีชำระเงิน คะ');
   assert.equal(result.semanticCoverage?.[0]?.question, result.replyText);
 });
 
@@ -2165,13 +2167,14 @@ describe('round 5A document advisor orchestrator', () => {
     const explanation = '50 ทวิคือหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ ให้ผู้รับเงินใช้เป็นหลักฐานภาษีค่ะ';
     globalThis.fetch = async () => { modelCalls++; return new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: explanation }] }) }), { status: 200, headers: { 'content-type': 'application/json' } }); };
     const req = makeReq('50 ทวิ คืออะไร'); req.userContext.entitledFeatureKeys = ['expenses'];
-    req.userContext.permissions = ['company.plan.manage'];
+    req.userContext.permissions = ['company.plan.manage', 'expense.read', 'wht.external_certificate.link'];
     req.semanticSubrequests = [{ index: 0, kind: 'help', goal: req.messageText, evidenceRefs: [], requiredEvidence: [], requestedFilters: {}, dependsOn: [] }];
     req.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'u2', parts: [{ partId: 'text', rawText: req.messageText, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() }] }))!.inputEvidence;
     req.budgetGrantV2 = {} as any;
     const result = await new OrchestratorAgent({ invoke: async () => { calls++; throw new Error('must not read'); } } as any, makeConfig()).run(req);
     assert.equal(calls, 0); assert.equal(modelCalls, 1);
-    assert.equal(result.replyText, `${explanation}\nแพ็กเกจของร้านยังไม่มีฟีเจอร์นี้ ซึ่งอยู่ในแพ็กเกจธุรกิจ (ENTERPRISE) ราคา 1,999 บาทต่อเดือนค่ะ`);
+    assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ภาษีที่หักไว้.*บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*ธุรกิจ 1,999 บาท/);
+    assert.doesNotMatch(result.replyText, /ENTERPRISE|ทำได้เลย/);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
   });
 });
@@ -2271,7 +2274,7 @@ describe('U2 document explanations precede a package limit and keep the general 
   ]) for (const kind of ['help', 'general', 'read'] as const) it(`${question} routed ${kind}`, async () => {
     const calls: ProviderInput[] = [];
     const result = await runSemanticTurnV2({
-      req: { requestId: 'u2', webhookEventId: 'u2', messageText: question, messagePreviewHash: 'a'.repeat(16),
+      req: { packageOffers: testPaidTiers.map(tier => testBillingOffer(tier, 'month')), requestId: 'u2', webhookEventId: 'u2', messageText: question, messagePreviewHash: 'a'.repeat(16),
         entitledFeatureKeys: [], intakeIntent: 'BUSINESS_READ_QUESTION',
         userContext: { ...makeReq(question).userContext, permissions: ['company.plan.manage'] },
         semanticSubrequests: [{ index: 0, kind, goal: question, evidenceRefs: [], requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] },
@@ -2281,8 +2284,9 @@ describe('U2 document explanations precede a package limit and keep the general 
     });
     assert.deepEqual(calls.map(call => call.usageTag), ['line.compose']);
     assert.match(JSON.stringify(calls[0]), /one or two sentences of general knowledge/);
-    assert.equal(result.replyText.split('\n')[0], explanation);
-    assert.match(result.replyText, /แพ็กเกจ.*ราคา [0-9,]+ บาทต่อเดือนค่ะ$/);
+    assert.match(result.replyText, /ภาษี|จ่ายเงินจริง/);
+    assert.match(result.replyText, /แพ็กเกจ.*[0-9,]+ บาทต่อเดือนค่ะ$/);
+    assert.doesNotMatch(result.replyText, /ENTERPRISE|STARTER|ทำได้เลย/);
     assert.deepEqual(result.sourceRefs, []);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
     assert.equal(result.semanticCoverage?.[0].status, 'handled');
@@ -2668,13 +2672,13 @@ describe('Exam C2/C3: every sold pack × feature, from the real billing catalog'
     ['reports', 'ขอรายงานกำไรขาดทุน', 'ledger.get_financial_summary'],
   ] as const) it(`${tier}/${feature}`, () => {
     const pack = billingOffer(tier, 'month');
-    const override = scopePolicyOverride(question, 'read', ROLE_GRANTS.OWNER!, pack.featureKeys, 'th', hint);
+    const override = scopePolicyOverride(question, 'read', ROLE_GRANTS.OWNER!, pack.featureKeys, 'th', hint, testPaidTiers.map(tier => testBillingOffer(tier, 'month')));
     if (pack.featureKeys.includes(feature)) assert.equal(override, undefined);
     else {
       assert.equal(override?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
       const containing = BILLING_PAID_TIERS.map(tier => billingOffer(tier, 'month')).find(offer => offer.featureKeys.includes(feature));
       if (containing) {
-        assert.ok(override!.text.includes(containing.label));
+        assert.ok(override!.text.includes(containing.label.replace(/ \(.+\)$/u, '')));
         assert.ok(override!.text.includes((containing.priceSatang / 100).toLocaleString('en-US')));
         assert.equal(override!.webPage, 'packages');
         assert.doesNotMatch(override!.text, /ไม่มีสิทธิ์/u);
@@ -2725,7 +2729,7 @@ describe('Exam C: independent exam router conversation replays', () => {
     if (replay.intent === 'permission') {
       assert.match(result.replyText, /[ก-๙]/u.test(replay.messageText) ? /ไม่มีสิทธิ์.*เจ้าของกิจการ.*คุณ.*ได้ค่ะ/u : /cannot.*shop owner.*you can/); assert.ok(result.webLinks.length);
     } else if (replay.intent === 'package_limit') {
-      assert.match(result.replyText, /ENTERPRISE.*1,999.*บาท/u); assert.ok(result.webLinks.some(link => link.path.includes('/billing')));
+      assert.match(result.replyText, /ธุรกิจ.*1,999.*บาท/u); assert.ok(result.webLinks.some(link => link.path.includes('/billing')));
     } else if (replay.intent === 'unsold') {
       assert.match(result.replyText, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย/u); assert.doesNotMatch(result.replyText, /อัปเกรด/u);
     } else if (actions[replay.id]) {
@@ -2764,8 +2768,8 @@ it('Exam C2/C4: a polite explanation cannot become action help even when both mo
       answers: [{ index: 0, status: 'handled', text: '50 ทวิรับรองยอดที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินใช้เป็นหลักฐานค่ะ' }] }) }; } },
     invoke: async () => assert.fail('a concept must not invoke ERP or start an action') });
   assert.equal(calls, 1);
-  assert.match(result.replyText, /^50 ทวิรับรอง.*หลักฐานค่ะ/u);
-  assert.match(result.replyText, /ENTERPRISE.*1,999/u);
+  assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ยอดที่จ่ายและภาษีที่หักไว้/u);
+  assert.match(result.replyText, /ธุรกิจ.*1,999/u);
   assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
   assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
 });
@@ -2873,4 +2877,68 @@ it('Exam E2a: multiple how-to answers cannot replace create/submit with the comp
     invoke: async () => assert.fail('how-to cannot execute an operation') });
   assert.deepEqual(result.presentation?.cards.map(card => card.chatActionId), ['reimbursement_claim', 'reimbursement_submit']);
   assert.doesNotMatch(result.replyText, /ไม่มีสิทธิ์/);
+});
+
+
+describe('U2/U3/U4 exact-input advisor corrections in the semantic turn', () => {
+  async function answer(text: string, kind: 'help' | 'general' | 'read', features: string[], permissions: string[]) {
+    const req = makeReq(text); req.entitledFeatureKeys = features; req.userContext.permissions = permissions;
+    req.semanticSubrequests = [{ index: 0, kind, goal: text, dependsOn: [], requiredEvidence: [], evidenceRefs: [], requestedFilters: {} }];
+    return runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'หากต้องการออก 50 ทวิ ทำได้เลยนะคะ', sourceRefIds: [] }] }) }) },
+      invoke: async () => assert.fail('these product facts must never read shop records') });
+  }
+  it('U2 definition cannot repeat a model offer outside Starter entitlement', async () => {
+    const result = await answer('แล้วทวิ 50 คืออะไร', 'general', ['expenses'], ['expense.read', 'wht.external_certificate.link']);
+    assert.match(result.replyText, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*เว็บ/);
+    assert.match(result.replyText, /ออกหนังสือรับรองในระบบ.*ธุรกิจ 1,999 บาท/);
+    assert.doesNotMatch(result.replyText, /ทำได้เลย|ENTERPRISE/);
+  });
+  for (const text of ['แล้วทำอะไรได้บ้าง', 'ทำไรได้บ้าง', 'what can you do?', 'what can u do', 'help', 'features']) it(`U3 ${text}`, async () => {
+    const result = await answer(text, 'help', ['expenses', 'ai_line_assistant', 'reimbursement'], ['ai.tool.invoke', 'expense.read', 'expense.create', 'expense.receipt.line_upload', 'reimbursement.create']);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.doesNotMatch(result.replyText, /ไม่มีคู่มือ|50 ทวิ|ENTERPRISE|—/);
+    assert.ok(result.presentation?.cards[0]?.chatActionIds?.includes('expense_search'));
+    assert.ok(!result.presentation?.cards[0]?.chatActionIds?.includes('wht_certificate'));
+  });
+  for (const text of ['ถ้าหมดแพ็กเกจแล้วเป็นยังไงต่อ', 'แพ็กเกจหมดอายุแล้วจะเกิดอะไรขึ้น', 'what happens when my package expires?']) it(`U4 ${text}`, async () => {
+    const result = await answer(text, 'read', ['expenses'], ['line.ai.query']);
+    assert.match(result.replyText, /พักใช้งาน|paused/); assert.match(result.replyText, /ข้อมูลเดิมยังอยู่|records are kept/);
+    assert.ok(result.webLinks.some(link => link.path.endsWith('/billing?channel=line')));
+    assert.doesNotMatch(result.replyText, /ไม่มีรายละเอียด|8 of 90|8 จาก 90/);
+  });
+  it('U4 receipt allowance exhausted still permits manual entry during the active period', async () => {
+    const result = await answer('ถ้าใช้โควตาใบเสร็จหมดแล้วจะเป็นยังไง', 'read', ['expenses'], ['line.ai.query']);
+    assert.match(result.replyText, /หยุดอ่านใบใหม่.*แพ็กเกจยังไม่หมดอายุ.*กรอกรายจ่ายเอง/);
+    assert.doesNotMatch(result.replyText, /พักใช้งาน/);
+  });
+});
+
+
+it('U2 exact follow-up ทำได้เลยหรอ inherits the document topic, then checks current entitlement and permission', async () => {
+  for (const entitled of [false, true]) {
+    const req = makeReq('ทำได้เลยหรอ'); req.entitledFeatureKeys = entitled ? ['expenses', 'wht_50bis'] : ['expenses'];
+    req.userContext.permissions = ['wht.certificate.issue', 'ai.tool.invoke', 'expense.read', 'wht.external_certificate.link'];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'แล้วทวิ 50 คืออะไร',
+      assistantReplyPreview: 'หากต้องการออก 50 ทวิ สำหรับค่าใช้จ่ายในระบบ ทำได้เลยนะคะ' }] };
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: req.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async () => assert.fail('the existing metered intake already resolved the follow-up; reuse the checked action facts') }, invoke: async () => assert.fail('no financial mutation from a capability question') });
+    if (!entitled) { assert.match(result.replyText, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*ธุรกิจ 1,999 บาท/); assert.equal(result.presentation?.cards[0]?.chatActionId, undefined); }
+    else { assert.match(result.replyText, /ตรวจชื่อ.*ที่อยู่.*กดยืนยัน/); assert.equal(result.presentation?.cards[0]?.chatActionId, 'wht_certificate'); }
+    assert.doesNotMatch(result.replyText, /ENTERPRISE|—/);
+  }
+});
+
+
+it('U3 capability buttons cover a permitted specialist and a caller with no available actions', async () => {
+  for (const specialist of [false, true]) {
+    const req = makeReq('แล้วทำอะไรได้บ้าง'); req.entitledFeatureKeys = specialist ? ['inventory', 'product_catalog'] : [];
+    req.userContext.permissions = specialist ? ['ai.tool.invoke', 'inventory.product.read', 'inventory.report.read'] : [];
+    req.semanticSubrequests = [{ index: 0, kind: 'help', goal: req.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async () => assert.fail('existing capability facts need no additional compose call') }, invoke: async () => assert.fail('no record read for capabilities') });
+    if (specialist) assert.ok(result.presentation?.cards[0]?.chatActionIds?.includes('inventory'));
+    else { assert.match(result.replyText, /ยังไม่มีงาน.*เจ้าของกิจการ/); assert.ok(result.presentation?.cards[0]?.webLink); assert.deepEqual(result.presentation?.cards[0]?.chatActionIds, []); }
+  }
 });

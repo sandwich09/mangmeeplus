@@ -71,7 +71,7 @@ describe('round 5A sold-pack WHT gating', () => {
     for (const name of ['wht.get_month_summary', 'wht.calculate_withholding']) {
       assert.equal(toolAccessOutcome(tool(name), user({ permissions, entitledFeatureKeys: [...TIER_FEATURE_PRESETS.ENTERPRISE_1999] })), 'allowed');
       assert.equal(toolAccessOutcome(tool(name), user({ permissions, entitledFeatureKeys: [...TIER_FEATURE_PRESETS.STARTER_249] })), 'feature_disabled');
-      assert.match(featureDisabledReply([name], 'th'), /^แพ็กเกจของร้าน.*ENTERPRISE.*1,999 บาทต่อเดือนค่ะ$/);
+      assert.match(featureDisabledReply([name], 'th'), /ธุรกิจ.*ตรวจราคาปัจจุบัน.*ค่ะ$/);
     }
     for (const name of ['tax.get_wht_summary', 'tax.get_vat_summary', 'tax.get_cit_calendar', 'tax.get_transaction_tax_summary']) {
       assert.equal(hasToolFeature(tool(name), new Set(TIER_FEATURE_PRESETS.ENTERPRISE_1999)), false, name);
@@ -85,7 +85,7 @@ describe('round 5A sold withholding scope', () => {
     for (const kind of ['read', 'help', 'general'] as const) for (const text of ['50 ทวิ คืออะไร', 'ภงด.53 ต้องยื่นเมื่อไหร่', 'หัก ณ ที่จ่ายคิดยังไง']) {
       const result = scopePolicyOverride(text, kind, [], ['expenses'], 'th');
       if (kind === 'general' || text === '50 ทวิ คืออะไร') { assert.equal(result, undefined); continue; }
-      assert.equal(result?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED'); assert.match(result!.text, /^แพ็กเกจของร้าน.*ENTERPRISE.*1,999 บาทต่อเดือนค่ะ$/);
+      assert.equal(result?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED'); assert.match(result!.text, /ธุรกิจ.*ตรวจราคาปัจจุบัน.*ค่ะ$/);
     }
   });
   it('leaves sold WHT reads to tool permission checks without opening unrelated modules', () => {

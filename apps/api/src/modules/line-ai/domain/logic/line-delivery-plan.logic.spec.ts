@@ -614,3 +614,13 @@ test('Exam G2: formatter, primary and fallback never print record ids; URI and s
     }
   }
 });
+
+
+test('U5 every LINE visible field strips internal plan codes and em dashes', async () => {
+  const { lineDeliveryWireMessages } = await import('./line-delivery-plan.logic');
+  for (const code of ['STARTER', 'BASIC', 'PRO', 'ENTERPRISE']) {
+    const text = `แพ็กเกจ (${code}) — ใช้ได้ค่ะ`;
+    const wire = lineDeliveryWireMessages([{ type: 'text', text }, { type: 'flex', altText: text, contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text }] } } }]);
+    assert.doesNotMatch(JSON.stringify(wire), /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+  }
+});

@@ -1,3 +1,5 @@
+import { BillingService } from '../../billing/application/billing.service';
+import { knownAiBudgetResponse, knownAiBudgetRefusal } from '../domain/logic/line-ai-terminal-outcome.logic';
 /**
  * AI Gateway internal HTTP client.
  * Sends server-derived context only; never raw LINE secrets or user tokens.
@@ -146,6 +148,7 @@ export class AiGatewayClient {
     @Inject(RedisRateLimitService) private readonly rateLimits: RedisRateLimitService | undefined,
     private readonly prisma: PrismaService,
     @Optional() private readonly budgetAuthority?: LineAiBudgetAuthorityService,
+    @Optional() private readonly billing?: BillingService,
   ) {}
 
   /** Producer-only authority issuance, after access/legal/AI admission. Probe the serving runtime
@@ -244,6 +247,7 @@ export class AiGatewayClient {
      *  `admitOverCap`: see `CompanyAiBudgetStep.admitOverCap` (owner 2026-09-30). */
     options: { busyWaitDeadlineMs?: number; retryOrdinal?: number; admitOverCap?: boolean } = {},
   ): Promise<LineAiTurnResponse> {
+    if (this.billing) request = { ...request, packageOffers: (await this.billing.catalog()).offers };
     const grant = await this.validateLineV2(request, { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, membershipId: request.userContext.membershipId });
     if (request.retainedTaskSource !== undefined) {
       const retained = await verifyLineAiRetainedTaskSource(request.retainedTaskSource);
@@ -567,6 +571,7 @@ export class AiGatewayClient {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
       });
+      if (knownAiBudgetRefusal(error)) throw error;
       this.logger.warn({ msg: 'line_ocr_no_usable_result', requestId: request.requestId,
         providerCost: 'unknown', ...safeLineErrorDetails(error) });
       return {
@@ -675,7 +680,11 @@ export class AiGatewayClient {
     // one of our refusal codes and zero usage rows, which is proof nothing was spent — so the
     // hold is released here instead of becoming a permanent UNRESOLVED one. All three routes of
     // this client report their code on `errorCode`, so one hook covers them.
-    if (grant) return result; // Each rendered v2 invocation settles through its durable reservation; never double-meter the response.
+    const budgetRefusal = knownAiBudgetResponse(result as { errorCode?: unknown; budgetScope?: unknown });
+    if (grant) {
+      if (budgetRefusal) throw new HttpException(budgetRefusal, HttpStatus.TOO_MANY_REQUESTS);
+      return result; // V2 settles each rendered invocation through its own durable reservation.
+    }
     await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
       budgetCode: (result as { errorCode?: string })?.errorCode,
       usage: (result as { usage?: AiUsageEntry[] })?.usage,
@@ -691,6 +700,7 @@ export class AiGatewayClient {
       content,
       hold?.invocationKey,
     );
+    if (budgetRefusal) throw new HttpException(budgetRefusal, HttpStatus.TOO_MANY_REQUESTS);
     return result;
   }
 

@@ -284,3 +284,23 @@ it('Round 7A captures only accepted LINE sent message IDs for reply, push and fr
     assert.deepEqual(stored, [['bot-message-1'], ['bot-message-1']]); assert.equal(JSON.stringify(stored).includes('never-store'), false);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+
+it('U5 legacy reply and push sanitize all visible plan wording while preserving signed controls', async () => {
+  const original = globalThis.fetch, bodies: any[] = [];
+  globalThis.fetch = async (_url, init) => { bodies.push(JSON.parse(String(init?.body))); return new Response('', { status: 200 }); };
+  try {
+    const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+    for (const code of ['STARTER', 'BASIC', 'PRO', 'ENTERPRISE']) {
+      const text = `แพ็กเกจ (${code}) — ดูได้ค่ะ`, data = `action=package&code=${code}`;
+      const message: any = { type: 'text', text, quickReply: { items: [{ type: 'action', action: { type: 'postback', label: text, displayText: text, data } }] } };
+      assert.equal(await adapter.sendReply('reply', [message]), 'ok');
+      assert.equal(await adapter.sendPush('user', [message]), 'ok');
+      for (const body of bodies.splice(0)) {
+        assert.equal(body.messages[0].quickReply.items[0].action.data, data);
+        const visible = [body.messages[0].text, body.messages[0].quickReply.items[0].action.label, body.messages[0].quickReply.items[0].action.displayText].join(' ');
+        assert.doesNotMatch(visible, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+      }
+    }
+  } finally { globalThis.fetch = original; }
+});
