@@ -121,7 +121,7 @@ test('confirming a claim receipt duplicate warns before confirmation about payme
 
 test('A1 owner without ledger sees confirmed lock, reopen, actual certificate blockers and missing capability', () => {
   const html = harness().render();
-  assert.match(html, /ค้างจ่าย[\s\S]*฿500.00/); assert.doesNotMatch(html, /ต้องจ่าย ฿/);
+  assert.match(html, /ค้างจ่าย[\s\S]*500.00 บาท/); assert.doesNotMatch(html, /ต้องจ่าย ฿/);
   assert.match(html, />แก้ไขเอกสาร<\/button>/);
   assert.doesNotMatch(html, /รายการจ่ายเดิมยังอยู่/);
   const blocked = harness({ detail: expense({ correctionCapabilities: { ...allowed, canReopen: false, reopenBlockers: ['certificate_issued'] } }) }).render();
@@ -149,13 +149,13 @@ test('A2 recorded payments remain visible at totals in every correction review s
 test('A3 overpayment is immediate, names excess/remedy and blocks confirmation; legacy has its own next step', () => {
   const d = expense({ status: 'READY_FOR_CONFIRMATION', paidAmount: '700', outstandingAmount: '0', payments: [payment] });
   const html = harness({ detail: d }).render();
-  assert.match(visible(html), /จ่ายเกินยอดสุทธิ ฿200.00/);
+  assert.match(visible(html), /จ่ายเกินยอดสุทธิ 200.00 บาท/);
   assert.match(html, /ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>ยืนยันเอกสาร<\/button>/);
   assert.doesNotMatch(html, /ต้องตรวจ 0 รายการ|>จ่ายแล้ว<|>จ่ายบางส่วน</);
   // The amount to pay after the edit (500), what was paid (700) and the excess (200) explain each other.
   assert.match(html, /data-testid="expense-review-totals"[\s\S]*>ยอดรวม<\/span>[\s\S]*>500.00<span class="ml-1 text-sm font-normal text-gray-500">บาท<\/span><\/span>/, 'the review total stays 500, not the zero outstanding');
-  assert.match(visible(html), /จ่ายแล้ว\s*฿700.00/);
+  assert.match(visible(html), /จ่ายแล้ว\s*700.00 บาท/);
   const legacy = harness({ detail: { ...d, payments: [] } }).render();
   assert.match(legacy, /ไม่พบรายการจ่ายให้ยกเลิก ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร/);
   assert.doesNotMatch(legacy, /ยกเลิกรายการจ่ายด้านล่าง/);
@@ -171,13 +171,13 @@ test('A4 stale payment refusals refresh balances/status and appear once beside t
       assert.equal(reads, 1); assert.equal(page.state.detail, fresh);
       const message = code === 'expense_payment_not_confirmed' ? 'เอกสารถูกเปิดแก้ไขแล้ว จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ตรวจและยืนยันเอกสารก่อน' : 'โหลดข้อมูลล่าสุดแล้ว ตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง';
       assert.equal(html.split(message).length - 1, 1); assert.doesNotMatch(html, /•/);
-      if (code !== 'expense_payment_not_confirmed') assert.match(html, /บันทึกจ่ายส่วนที่เหลือ ฿100.00/);
+      if (code !== 'expense_payment_not_confirmed') assert.match(html, /บันทึกจ่ายส่วนที่เหลือ 100.00 บาท/);
     } finally { record.mock.restore(); get.mock.restore(); }
   }
 });
 test('A5 leading zeros are accepted and the form names the normalized amount', () => {
   const html = harness({ paidAmount: '0500' }).render();
-  assert.match(html, /<button[^>]*type="submit"(?![^>]*disabled="")[^>]*>บันทึกจ่าย ฿500.00<\/button>/);
+  assert.match(html, /<button[^>]*type="submit"(?![^>]*disabled="")[^>]*>บันทึกจ่าย 500.00 บาท<\/button>/);
   assert.doesNotMatch(html, /กรุณากรอกยอดจ่ายมากกว่า 0/);
 });
 test('A6 form allows yesterday/today, refuses tomorrow and uses Bangkok day boundary and maximum', (t) => {
@@ -195,7 +195,7 @@ test('A6 form allows yesterday/today, refuses tomorrow and uses Bangkok day boun
 });
 test('B correction dialogs identify payment and transition, use specific reason/actions and full-width footers', () => {
   const cancel = dialog(harness({ detail: expense({ payments: [payment] }), correctionAction: { paymentId: 'p1' }, correctionReason: 'ยอดไม่ถูกต้อง' }).render());
-  assert.match(cancel, /฿700.00/); assert.match(cancel, /เงินสด/); assert.match(cancel, /3 ต.ค. 2569/);
+  assert.match(cancel, /700.00 บาท/); assert.match(cancel, /เงินสด/); assert.match(cancel, /3 ต.ค. 2569/);
   assert.match(cancel, /เหตุผลที่ยกเลิก/); assert.doesNotMatch(cancel, /autoFocus|autofocus/); assert.match(cancel, /data-expense-dialog-heading="true" role="heading" aria-level="2" tabindex="-1"/);
   assert.match(cancel, /w-full sm:w-auto/); assert.match(cancel, />ยกเลิกรายการจ่ายนี้<\/button>/);
   for (const payments of [[], [payment]]) {
@@ -395,9 +395,9 @@ test('round 7: unconfirmed and refreshed stale-pay notices use one boxed alert e
 });
 
 test('round 7: exactly one full excess remedy follows the visible review/confirm action or stays in payment history', () => {
-  const full = 'จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน';
+  const full = 'จ่ายเกินยอดสุทธิ 200.00 บาท ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน';
   // Beside ส่งให้ตรวจ nothing is blocked yet, so that one screen says what is true there instead.
-  const sendable = 'จ่ายเกินยอดสุทธิ ฿200.00 ส่งให้ตรวจได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน';
+  const sendable = 'จ่ายเกินยอดสุทธิ 200.00 บาท ส่งให้ตรวจได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน';
   for (const status of ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) {
     for (const step of ['data', 'evidence', 'review']) {
       const html = harness({ step, detail: expense({ status, paidAmount: '700', outstandingAmount: '0', payments: [payment] }) }).render();
@@ -407,7 +407,7 @@ test('round 7: exactly one full excess remedy follows the visible review/confirm
       assert.doesNotMatch(html, /ด้านล่างก่อนยืนยัน/, 'the payment card sits above the sentence on the last step');
       const card = html.match(/data-testid="expense-payment-overpayment"[^>]*>([\s\S]*?)<\/p>/)?.[1];
       assert.ok(card);
-      assert.match(card, /จ่ายเกินยอดสุทธิ ฿200.00/);
+      assert.match(card, /จ่ายเกินยอดสุทธิ 200.00 บาท/);
       assert.doesNotMatch(card, /<span/);
       assert.equal(card.includes(full), step !== 'review');
       assert.equal(html.includes('id="expense-review-overpayment"'), step === 'review');
@@ -429,13 +429,13 @@ test('recheck 3: editing prices shows an adjacent excess cue and sending for rev
   const detail = expense({ status: 'NEEDS_REVIEW', paidAmount: '700', payments: [payment], outstandingAmount: '0',
     lines: [{ id: 'l1', description: 'สินค้า', quantity: '1', unitPrice: '500', discountAmount: '0', vatRate: '0', whtRate: '0', lineSubtotalAmount: '500', lineTaxAmount: '0', lineTotalAmount: '500' }] });
   const edit = harness({ step: 'data', detail }).render();
-  assert.match(edit, /value="500"[^>]*\/><p[^>]*data-testid="expense-overpayment-cue"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00<\/p>/);
+  assert.match(edit, /value="500"[^>]*\/><p[^>]*data-testid="expense-overpayment-cue"[^>]*>จ่ายเกินยอดสุทธิ 200.00 บาท<\/p>/);
   const page = harness({ step: 'review', detail, reviewers: [{ userId: 'checker', displayName: 'ผู้ตรวจ' }], requestedReviewer: 'checker' }); let sent = 0;
   const mark = stub(api, 'markExpenseReadyAsReviewer', async () => { sent++; return detail; });
   const get = stub(api, 'getExpense', async () => detail);
   try {
     const html = page.render();
-    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ส่งให้ตรวจได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน/);
+    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ 200.00 บาท ส่งให้ตรวจได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน/);
     assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งให้ตรวจ')?.props.disabled, false);
     await page.act('button', 'ส่งให้ตรวจ'); assert.equal(sent, 0);
     page.nodes.findLast(n => n.tag === 'button' && text(n.props.children) === 'ส่งให้ตรวจ')!.props.onClick();
@@ -484,7 +484,7 @@ test('recheck 7: blurring the amount normalizes its displayed leading zeros and 
   page.render(); const html = await page.act('input', 'expense-payment-amount', 'onBlur');
   assert.equal(page.state.paidAmount, '500');
   assert.match(html, /id="expense-payment-amount"[^>]*value="500"/);
-  assert.match(html, /บันทึกจ่าย ฿500.00/);
+  assert.match(html, /บันทึกจ่าย 500.00 บาท/);
 });
 
 function recordingExpense(status = 'NEEDS_REVIEW') {
@@ -565,7 +565,7 @@ test('R3 manual and cancelled expenses without AI output never show an empty AI 
     assert.doesNotMatch(html, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
   }
   const html = harness({ detail: expense({ status: 'CONFIRMED', extractionId: 'read-1', aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW' } }) }).render();
-  assert.match(html, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
+  assert.doesNotMatch(html, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
 });
 
 test('R3 cancelled expense retains reading and file links but hides unavailable writes', () => {
@@ -579,13 +579,13 @@ test('R3 cancelled expense retains reading and file links but hides unavailable 
   for (const label of ['เปิดเต็มจอ', 'ดูไฟล์', 'EX-OTHER']) assert.match(visible(html), new RegExp(label));
   assert.match(html, /href="\/companies\/co\/expenses"/);
   assert.match(html, /ยกเลิกแล้ว/);
-  assert.doesNotMatch(html, /ตรวจหารายการซ้ำ|ยืนยันว่าเป็นรายการซ้ำ|ไม่ใช่รายการซ้ำ|ให้ AI อ่านอีกครั้ง|ยอมรับยอด|ยกเลิกรายการจ่ายนี้|แก้ไขหนังสือรับรอง|ออกหนังสือรับรอง 50 ทวิ|บันทึกจ่ายส่วนที่เหลือ|บันทึกจ่าย ฿/);
+  assert.doesNotMatch(html, /ตรวจหารายการซ้ำ|ยืนยันว่าเป็นรายการซ้ำ|ไม่ใช่รายการซ้ำ|ให้ AI อ่านอีกครั้ง|ยอมรับยอด|ยกเลิกรายการจ่ายนี้|แก้ไขหนังสือรับรอง|ออกหนังสือรับรอง 50 ทวิ|บันทึกจ่ายส่วนที่เหลือ|บันทึกจ่าย (?:฿|[\d,]+\.\d{2} บาท)/);
 });
 
 test('R3 payment method never wraps and only an effective payment earns the remainder label', () => {
   for (const payments of [[], [{ ...payment, status: 'VOIDED' }], [payment]]) {
     const html = harness({ detail: expense({ payments }), paidAmount: '500' }).render();
-    assert.equal(html.includes('บันทึกจ่ายส่วนที่เหลือ ฿500.00'), payments.some(row => row.status === 'RECORDED'));
+    assert.equal(html.includes('บันทึกจ่ายส่วนที่เหลือ 500.00 บาท'), payments.some(row => row.status === 'RECORDED'));
   }
   const html = harness({ detail: expense({ payments: [{ ...payment, paymentMethod: 'BANK_TRANSFER' }] }) }).render();
   assert.match(html, /<span class="whitespace-nowrap">โอนเงิน<\/span>/);
@@ -603,7 +603,7 @@ test('DETAIL-1 confirmed metrics and document facts retain the outstanding amoun
   for (const status of ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED']) {
     const html = harness({ detail: expense({ whtAmount: '15', outstandingAmount: '485' }), whtHandoff: { id: 'h1', status } }).render();
     const box = html.slice(html.indexOf('data-testid="expense-correction-actions"'), html.indexOf('data-testid="expense-review-form"'));
-    assert.match(html, /ค้างจ่าย[\s\S]*฿485.00/); assert.match(html, /ภาษีหัก ณ ที่จ่าย[\s\S]*฿15.00/);
+    assert.match(html, /ค้างจ่าย[\s\S]*485.00 บาท/); assert.match(html, /ภาษีหัก ณ ที่จ่าย[\s\S]*15.00 บาท/);
     assert.doesNotMatch(html, /ไปที่การจ่ายเงิน|ต้องจ่าย ฿/);
     assert.equal(html.includes('ไปที่หนังสือรับรอง 50 ทวิ'), status === 'REQUIRED');
     assert.doesNotMatch(html, />50 ทวิ<\/button>/);
@@ -982,8 +982,9 @@ test('DETAIL-1 confirmed substitute receipt is shown once inside document detail
 
 test('DETAIL-1 file append and removal sit in the preview overflow on both layouts', () => {
   const html = harness({ detail: recordingExpense(), step: 'data' }).render();
-  assert.equal((html.match(/<summary[^>]*>เพิ่มเติมไฟล์<\/summary>/g) ?? []).length, 2);
-  for (const block of html.split('<summary').slice(1).filter(block => block.includes('เพิ่มเติมไฟล์'))) {
+  assert.equal((html.match(/<summary[^>]*>ตัวเลือกไฟล์<\/summary>/g) ?? []).length, 2);
+  assert.match(html, /class="mangmee-actions"><details[\s\S]*?ตัวเลือกไฟล์[\s\S]*?<button[^>]*class="mangmee-btn mangmee-btn-secondary"[^>]*>ดูไฟล์<\/button><\/div>/);
+  for (const block of html.split('<summary').slice(1).filter(block => block.includes('ตัวเลือกไฟล์'))) {
     const menu = block.slice(0, block.indexOf('</details>'));
     assert.match(menu, /แนบหลักฐานเพิ่ม/); assert.match(menu, /ลบไฟล์/); assert.match(menu, /โหลดไฟล์ใหม่/);
   }
@@ -1272,4 +1273,33 @@ test('EVIDENCE-1 complete expenses have no accounting failure card and evidence 
   const html = page.render();
   assert.doesNotMatch(html, /data-testid="expense-evidence-checks"/);
   assert.match(html, /href="\/companies\/co\/expenses\/evidence\?page=3&amp;yearMonth=2026-09&amp;flagFilter=ok&amp;order=oldest&amp;highlight=e1"/);
+});
+
+
+test('UAT-T1 issued substitute receipt displays one named document while retaining the evidence chain', () => {
+  const files = [{ id: 'certified', purpose: 'expense.review.evidence', originalFileName: 'SRC-01-certified.svg', mimeType: 'image/svg+xml' },
+    { id: 'issued', purpose: 'expense.review.evidence', originalFileName: 'SRC-01.svg', mimeType: 'image/svg+xml' }];
+  const detail = expense({ attachments: files, substituteReceiptEvidence: { status: 'ISSUED', documentNumber: 'SRC-01', artifactAttachmentId: 'issued', certifiedArtifactAttachmentId: 'certified' } });
+  const html = harness({ detail }).render();
+  assert.match(html, /ใบรับรองแทนใบเสร็จ SRC-01/); assert.equal((html.match(/ไฟล์เอกสาร/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /SRC-01-certified.svg|SRC-01.svg|ภาพเวกเตอร์/);
+  assert.equal(detail.attachments.length, 2);
+});
+
+test('UAT-T1 AI missing-field output never renders a blank chip or an empty missing-list heading', () => {
+  const html = harness({ detail: expense({ status: 'NEEDS_REVIEW', extractionId: 'ocr', aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['', '  ', 'unknown_field'] } }) }).render();
+  assert.doesNotMatch(html, /ข้อมูลที่ยังขาด:|ข้อมูลที่ต้องตรวจเพิ่ม/);
+});
+
+
+test('UAT-T1 issued receipt payee and purpose remain visible as read-only facts in the review form', () => {
+  const d = recordingExpense();
+  Object.assign(d, { vendorNameSnapshot: 'แม่ค้าผักทดสอบ', note: 'วัตถุประสงค์: ทดสอบระบบ',
+    sourceDraft: { header: { vendorName: null, businessPurpose: null, expenseDate: '2026-10-03' }, items: [], missingFields: [], canEdit: true },
+    substituteReceiptEvidence: { status: 'ISSUED', documentNumber: 'SRC-01', payeeName: 'แม่ค้าผักทดสอบ', businessPurpose: 'ทดสอบระบบ', artifactAttachmentId: 'issued' } });
+  const page = harness({ detail: d, step: 'data' }); page.render();
+  const seller = page.nodes.find(n => n.tag === 'input' && n.props.id === 'expense-vendor-name-e1')!.props;
+  const purpose = page.nodes.find(n => n.tag === 'textarea' && n.props['aria-label'] === 'ซื้อไปใช้ทำอะไร')!.props;
+  assert.equal(seller.value, 'แม่ค้าผักทดสอบ'); assert.equal(seller.readOnly, true);
+  assert.equal(purpose.value, 'ทดสอบระบบ'); assert.equal(purpose.readOnly, true);
 });

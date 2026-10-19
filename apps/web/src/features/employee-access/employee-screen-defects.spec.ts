@@ -127,12 +127,15 @@ test('FIX-R2 a new role assignment during disable refreshes the count and explai
   } finally { confirm.mock.restore(); disable.mock.restore(); }
 });
 
-test('FIX-R2 saving a disabled employee keeps the disabled state and re-enables through the status endpoint', async () => {
+test('FIX-R2 a disabled edit keeps its status, hides LINE issuance, and re-enables before an explicit QR request', async () => {
   const person = { ...employee, status: 'DISABLED' };
-  let completed = 0, switched = 0;
+  let completed = 0, switched = 0, issued = 0;
   const mocks = [
     mock.method(api, 'updateEmployee', async () => person),
-    mock.method(api, 'issueEmployeeLineLinkToken', async () => null),
+    mock.method(api, 'issueEmployeeLineLinkToken', async (companyId: string, employeeId: string) => {
+      assert.equal(companyId, 'shop'); assert.equal(employeeId, person.id); issued++;
+      return null;
+    }),
     mock.method(api, 'completeEmployee', async () => { completed++; }),
     mock.method(api, 'setEmployeeStatus', async (_company: string, _id: string, status: string) => { assert.equal(status, 'ACTIVE'); switched++; return { ...person, status }; }),
   ];
@@ -143,10 +146,17 @@ test('FIX-R2 saving a disabled employee keeps the disabled state and re-enables 
       const html = view.render();
       assert.match(html, /ยังปิดใช้งานอยู่/);
       assert.doesNotMatch(html, /ยังเป็นร่าง|เป็นร่างแล้ว/);
+      assert.doesNotMatch(html, /ออก QR ใหม่|QR เชื่อม LINE/);
+      assert.equal(issued, 0);
       view.find('button', props => props.children.includes('เปิดใช้งานพนักงาน')).onClick();
       await view.settle(); view.render();
       assert.equal(completed, 0);
       assert.equal(switched, 1);
+      assert.equal(issued, 0, 'reactivation does not mint a token');
+      assert.doesNotMatch(view.render(), /<img[^>]*alt="QR เชื่อม LINE/);
+      view.find('button', props => props.children.includes('ออก QR ใหม่')).onClick();
+      await view.settle();
+      assert.equal(issued, 1);
     });
   } finally { mocks.forEach(item => item.mock.restore()); }
 });
@@ -281,4 +291,45 @@ for (const [Page, failedRead, endpoint, latest, visible] of [
       assert.doesNotMatch(html, /โหลดรายชื่อพนักงานไม่สำเร็จ|โหลดบทบาทไม่สำเร็จ|โหลดตารางสิทธิ์ไม่สำเร็จ/);
     } finally { read.mock.restore(); }
   }, new Set([failedRead]));
+});
+
+
+test('UAT-R2 an obsolete role id shows the role list and a notice instead of silently selecting another role', async () => {
+  await withPage(PermissionMatrixPrototypePage, { viewerPermissions: ['access.role.manage'] }, employee,
+    [{ ...role, id: 'first-role', name: 'ฝ่ายบัญชี' }], view => {
+      const html = view.render();
+      assert.match(html, /ไม่พบบทบาทนี้แล้ว/);
+      assert.match(html, /บทบาททั้งหมด/);
+      assert.doesNotMatch(html, /<h2[^>]*>ฝ่ายบัญชี<\/h2>|บทบาทนี้ทำอะไรได้|ยังไม่มีบทบาทในร้านนี้/);
+      const list = view.nodes.find(node => node.tag === 'MangmeeCard' && String(node.props.className).includes('p-4'));
+      assert.ok(list); assert.doesNotMatch(list.props.className, /hidden lg:block/);
+    });
+});
+
+test('UAT-R2 role counts include owner memberships without an employee profile and remain available without employee-read permission', async () => {
+  for (const permissions of [[], ['access.employee.read']]) await withPage(PermissionMatrixPrototypePage,
+    { viewerPermissions: permissions }, employee,
+    [{ ...role, key: 'OWNER', name: 'Owner', isSystem: true, activeEmployeeCount: 1 }], view => {
+      const html = view.render();
+      assert.match(html, /เจ้าของกิจการ/);
+      assert.match(html, /1 คน/); assert.doesNotMatch(html, /0 คน/);
+    });
+});
+
+test('UAT-R2 editing an employee never mints a LINE token; the explicit issue button still does', async () => {
+  let issued = 0;
+  const mocks = [mock.method(api, 'updateEmployee', async () => employee),
+    mock.method(api, 'issueEmployeeLineLinkToken', async () => { issued++; return null; })];
+  try {
+    await withPage(AddEmployeePrototypePage, { editEmployeeId: employee.id,
+      viewerPermissions: ['access.employee.read', 'access.employee.update', 'access.role.manage'] }, employee, [role], async view => {
+      view.find('button', props => props.children.includes('บันทึก')).onClick();
+      await view.settle();
+      assert.equal(issued, 0);
+      const html = view.render();
+      assert.doesNotMatch(html, /<img[^>]*alt="QR เชื่อม LINE/);
+      await view.find('button', props => props.children.includes('ออก QR ใหม่')).onClick();
+      await view.settle(); assert.equal(issued, 1);
+    });
+  } finally { mocks.forEach(item => item.mock.restore()); }
 });

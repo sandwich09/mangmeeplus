@@ -104,7 +104,7 @@ test('pay and approve confirmation actions wait 600 ms after opening while the s
   assert.match(dialog, /kind !== 'approve'\) return;[\s\S]*setTimeout\(\(\) => setConfirmationReady\(true\), 600\)/);
   assert.match(dialog, /kind === 'approve' && !confirmationReady \|\| !ready/);
   assert.match(dialog, /disabled=\{busy \|\| kind === 'approve' && !confirmationReady \|\| !ready/);
-  assert.match(dialog, /disabled=\{busy\} onClick=\{onCancel\}/);
+  assert.match(dialog, /disabled=\{busy\} aria-busy=\{busy\} onClick=\{onCancel\}/);
 });
 test('the page busy guard survives a successful dialog close and blocks the newly exposed pay button', () => {
   assert.match(page, /onSuccess=\{holdPrimary\}/);

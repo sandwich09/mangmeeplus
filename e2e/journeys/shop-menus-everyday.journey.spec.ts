@@ -269,6 +269,9 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       await resize(page, viewport);
       await pressMenu(page, 'หน้าแรก');
       await expect(heading(page, 'รายจ่ายของร้าน')).toBeVisible(FIRST_SIGHT);
+      const expenses = main.getByRole('region', { name: 'ตัวเลขรายจ่าย', exact: true });
+      await expect(expenses.getByText('ค้างจ่ายทั้งหมด', { exact: true })).toBeVisible(AFTER_PRESS);
+      await expect(expenses.getByText('รายจ่ายยืนยันแล้วทุกเดือน รวมที่จ่ายบางส่วน', { exact: true })).toBeVisible(AFTER_PRESS);
       await expectNoClientError(page);
     }
     const categories = await json<Array<{ id: string; name: string; companyId: string | null; status: string }>>(

@@ -83,7 +83,7 @@ test('the issue confirmation keeps a server refusal inside its dialog and reuses
   try {
     let html = draw();
     // The question names the payment by its amount; the body is the one consequence.
-    assert.match(html, /<h2>ออกใบสำคัญจ่ายสำหรับการจ่าย ฿9,700.00\?<\/h2>/); assert.match(html, /ระบบจะออกเลขที่ใบให้ทันที/);
+    assert.match(html, /<h2>ออกใบสำคัญจ่ายสำหรับการจ่าย 9,700.00 บาท\?<\/h2>/); assert.match(html, /ระบบจะออกเลขที่ใบให้ทันที/);
     for (let attempt = 0; attempt < 2; attempt++) {
       nodes.findLast(node => node.children.includes('ออกใบสำคัญจ่าย')).onClick();
       await new Promise(resolve => setImmediate(resolve)); html = draw();

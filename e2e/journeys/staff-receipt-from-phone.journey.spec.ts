@@ -153,7 +153,7 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
 
   const expenseId = idFromUrl(owner);
   await test.step('owner: walks the three steps, confirms, records the payment', async () => {
-    await confirmThroughThreeSteps(owner, { toPay: '฿85.00', pay: true });
+    await confirmThroughThreeSteps(owner, { toPay: '85.00 บาท', pay: true });
     await expect(ownerMain.getByText('จ่ายครบแล้ว', { exact: true })).toHaveCount(0);
     await expect(ownerMain.getByTestId('expense-detail-totals')).toBeVisible();
     await expect(ownerMain.getByTestId('expense-detail-totals')).toContainText(inOrder('จ่ายแล้ว', '85.00', 'บาท'));

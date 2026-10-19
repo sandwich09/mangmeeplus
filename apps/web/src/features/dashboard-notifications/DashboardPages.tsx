@@ -103,7 +103,7 @@ function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale, loading }: {
   const columns = [
     { key: 'expense_total_in_period', label: `รายจ่าย${period}`, note: 'ยืนยันแล้ว', unit: 'บาท', dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
     { key: 'expense_pending_review', label: 'ใบเสร็จรอตรวจ', note: 'ยังไม่ได้ตรวจ จากทุกช่วงเวลา', unit: 'ใบ', dot: 'bg-[#e9ad43]', color: 'text-[#1f3b2c]' },
-    { key: 'expense_unpaid_outstanding', label: 'ค้างจ่าย', note: 'ยืนยันแล้ว ยังไม่ได้จ่าย', unit: 'บาท', dot: 'bg-gray-400', color: 'text-[#1f3b2c]' },
+    { key: 'expense_unpaid_outstanding', label: 'ค้างจ่ายทั้งหมด', note: 'รายจ่ายยืนยันแล้วทุกเดือน รวมที่จ่ายบางส่วน', unit: 'บาท', dot: 'bg-gray-400', color: 'text-[#1f3b2c]' },
   ].flatMap((column) => { const metric = byKey.get(column.key); return metric ? [{ ...column, metric }] : []; });
   return (
     <section aria-label="ตัวเลขรายจ่าย" className="mangmee-card mangmee-card-shadow p-4 sm:px-6 sm:pb-7 sm:pt-4">

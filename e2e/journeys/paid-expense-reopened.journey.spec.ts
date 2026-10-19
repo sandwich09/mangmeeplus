@@ -45,9 +45,9 @@ test('@journey an owner reopens a paid company expense, adds evidence without re
 
   const expense = await test.step('owner: a picture, company service withholding at 3%, confirm and pay', () => recordExpenseByHand(page, {
     branch: 'Head Office (สำนักงานใหญ่)', item: unique('ค่าบริการตรวจอุปกรณ์'), seller,
-    price: '1000', total: '฿1,000.00', toPay: '฿970.00', pay: true,
+    price: '1000', total: '1,000.00 บาท', toPay: '970.00 บาท', pay: true,
     withholding: {
-      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '฿30.00',
+      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '30.00 บาท',
       taxId: '0105564000128', address: '45 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500',
     },
   }));
@@ -67,10 +67,12 @@ test('@journey an owner reopens a paid company expense, adds evidence without re
   await test.step('แก้ไขเอกสาร with a reason → the correction marker and step 2', () => reopenToStepTwo(page, expense.expenseNumber));
 
   await test.step('แนบหลักฐานเพิ่ม keeps the payment; replacing the main receipt is refused', async () => {
-    await main.locator('summary').filter({ hasText: /^เพิ่มเติมไฟล์$/ }).filter({ visible: true }).first().click();
+    await main.locator('summary').filter({ hasText: /^ตัวเลือกไฟล์$/ }).filter({ visible: true }).first().click();
     await fileControl(main, 'แนบหลักฐานเพิ่ม').setInputFiles(supporting);
     await expect(page.getByRole('status').filter({ hasText: 'แนบไฟล์ใบเสร็จแล้ว' }).first()).toBeVisible(AFTER_PRESS);
-    await expect(main.getByRole('button').filter({ hasText: supporting.name }).filter({ visible: true })).toBeVisible(AFTER_PRESS);
+    const supportingRow = main.getByTestId('expense-attachment-list').locator(':scope > div').filter({ hasText: supporting.name });
+    await expect(supportingRow.getByText(supporting.name, { exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(supportingRow.getByRole('button', { name: 'ดูไฟล์', exact: true })).toBeEnabled();
     const appended = await readExpense();
     expect(appended.attachments).toContainEqual(expect.objectContaining({ originalFileName: supporting.name, purpose: 'expense.receipt.supporting' }));
     expect(appended.paidAmount).toBe(paid.paidAmount);
@@ -114,7 +116,7 @@ test('@journey an owner reopens a paid company expense, adds evidence without re
     await expect(main.locator('.mangmee-page-header').getByText('จ่ายแล้ว', { exact: true })).toBeVisible();
     // With tax withheld and no 50 ทวิ yet the page has no "จ่ายครบแล้ว" line; it shows nothing left to pay and the same payment.
     await expect(main.getByText(/^ต้องจ่าย /)).toHaveCount(0);
-    await expect(main).toContainText(inOrder('ประวัติการจ่าย', `${thaiDate()} · โอนเงิน`, '฿970.00'));
+    await expect(main).toContainText(inOrder('ประวัติการจ่าย', `${thaiDate()} · โอนเงิน`, '970.00 บาท'));
     await expect(main.getByTestId('expense-detail-totals')).toContainText(inOrder('จ่ายแล้ว', '970.00', 'บาท'));
     await expect(main.getByText('ยอดที่ต้องจ่าย (หลังหัก ณ ที่จ่าย)', { exact: true })).toHaveCount(0);
   });
@@ -139,7 +141,7 @@ test('@journey the notice left on the page after a refused receipt replacement o
   await page.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
   const expense = await recordExpenseByHand(page, {
     branch: 'Head Office (สำนักงานใหญ่)', item: unique('ค่าซ่อมเครื่องพิมพ์'), seller: unique('ร้านซ่อมเครื่องพิมพ์'),
-    price: '800', total: '฿800.00', toPay: '฿800.00', pay: true,
+    price: '800', total: '800.00 บาท', toPay: '800.00 บาท', pay: true,
   });
   await reopenToStepTwo(page, expense.expenseNumber);
 

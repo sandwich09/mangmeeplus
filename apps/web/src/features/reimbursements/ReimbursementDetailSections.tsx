@@ -950,6 +950,7 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
   const slots = claimSignatureSlots(detail).filter((role) => role !== 'APPROVER' || !noApprover);
   const signAction = claimSignAction(detail, userId);
   // A4: a declared paper scan signs the ผู้เบิก/ผู้อนุมัติ blocks. Newest first, so this is the copy that counts.
+  const digitallySigned = detail.documentSignedVia === 'DIGITAL' || detail.documentSignedVia === 'BOTH';
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
   const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const activeDocument = mode === 'step' && detail.status === 'PAID' && !detail.pendingCancellation;
@@ -969,9 +970,9 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
     <>
       <div id={activeDocument ? undefined : 'reimbursement-signatures'} className="scroll-mt-24">
         <Frame className={activeDocument ? 'space-y-3' : 'p-4'}>
-          {activeDocument ? <p className="text-sm text-gray-600">เลือกวิธีใดวิธีหนึ่ง</p>
+          {activeDocument ? <p className="text-sm text-gray-600">{digitallySigned ? 'เซ็นในระบบครบแล้ว' : 'เลือกวิธีใดวิธีหนึ่ง'}</p>
             : <h2 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นและใบเบิกที่เซ็นแล้ว</h2>}
-          <div className={activeDocument ? 'grid gap-6 sm:grid-cols-2' : undefined}>
+          <div className={activeDocument && !digitallySigned ? 'grid gap-6 sm:grid-cols-2' : undefined}>
           <div className="min-w-0">
           {activeDocument && <h3 className="mb-3 font-semibold text-gray-900">เซ็นในระบบ</h3>}
           <div className={cx('grid gap-x-4 gap-y-3', slots.length > 1 && 'grid-cols-2', slots.length > 2 && 'sm:grid-cols-4')}>
@@ -1022,7 +1023,7 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
             </ActionGroup>
           )}
           </div>
-          {activeDocument && <div className="min-w-0 space-y-3">
+          {activeDocument && !digitallySigned && <div className="min-w-0 space-y-3">
             <h3 className="font-semibold text-gray-900">เซ็นบนกระดาษ</h3>
             <ol className="list-decimal space-y-3 pl-5 text-sm text-gray-700">
               <li>{print ? <ActionGroup align="start"><button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={print.onPress}>พิมพ์ใบเบิก</button></ActionGroup> : 'พิมพ์ใบเบิก'}</li>
@@ -1037,6 +1038,9 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
             </ol>
           </div>}
           </div>
+          {activeDocument && digitallySigned && print && <ActionGroup align="start">
+            <button type="button" className={ghostClass} disabled={busy || print.working} aria-busy={Boolean(busy || print.working)} onClick={print.onPress}>พิมพ์ใบเบิก</button>
+          </ActionGroup>}
           {!activeDocument && <div id="reimbursement-signed-copies" className="mt-4 scroll-mt-24 space-y-2">
           <p className="text-sm font-semibold text-gray-700">ไฟล์ที่แนบกลับ ({signedCopies.length})</p>
           {signedCopies.length === 0

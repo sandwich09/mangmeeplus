@@ -263,7 +263,7 @@ test('correction locked facts show Thai category and grouped money as text witho
   const view = certificateHarness(() => h(ExpenseCertificateCorrectionFields, { values }));
   const html = view.render();
   for (const text of ['ค่าบริการ', '10,000.00', '300.00', '1111111111111', 'นิติบุคคล']) assert.ok(html.includes(text), text);
-  assert.match(html, /line-clamp-2/); assert.match(html, /3% · จ่าย ฿10,000.00 · หักไว้ ฿300.00 · เลขผู้เสียภาษี/);
+  assert.match(html, /line-clamp-2/); assert.match(html, /3% · จ่าย 10,000.00 บาท · หักไว้ 300.00 บาท · เลขผู้เสียภาษี/);
   assert.doesNotMatch(html, /WHT_SERVICE_5|<input|<select|<textarea/);
 });
 
@@ -545,7 +545,7 @@ test('W3 each payment choice shows its own date, cash amount and certificate con
     view.render(); const select = view.find('SelectField', p => p.id === 'certificate-payment');
     assert.equal(select.value, 'p1');
     select.onChange({ target: { value: 'p2' } });
-    const html = visible(view.render()); assert.match(html, /5 ต.ค. 2569 · ฿485.00/); assert.doesNotMatch(html, /รายการจ่ายที่/);
+    const html = visible(view.render()); assert.match(html, /5 ต.ค. 2569 · 485.00 บาท/); assert.doesNotMatch(html, /รายการจ่ายที่/);
     const issue = view.find('WhtIssueButton'); assert.equal(issue.handoff.prefill.paymentDate, '2026-10-05'); assert.equal(issue.handoff.prefill.grossAmount, '500'); assert.equal(issue.handoff.prefill.withheldAmount, '15');
   } finally { view.cleanup(); }
 });
@@ -582,8 +582,8 @@ test('same-day same-amount payment choices use money, recording order and issued
   try {
     view.render();
     const html = view.nodes.filter(n => n.tag === 'option').map(n => n.props.children.join('')).join('\n');
-    assert.match(html, /14 ต.ค. 2569 · ฿1,940.00 · รายการจ่ายที่ 1 · ออกหนังสือรับรองแล้ว/);
-    assert.match(html, /14 ต.ค. 2569 · ฿1,940.00 · รายการจ่ายที่ 2/);
+    assert.match(html, /14 ต.ค. 2569 · 1,940.00 บาท · รายการจ่ายที่ 1 · ออกหนังสือรับรองแล้ว/);
+    assert.match(html, /14 ต.ค. 2569 · 1,940.00 บาท · รายการจ่ายที่ 2/);
     view.find('SelectField', p => p.id === 'certificate-payment').onChange({ target: { value: 'first-id' } });
     assert.match(visible(view.render()), /ยังไม่ออก/);
   } finally { view.cleanup(); }
@@ -661,4 +661,24 @@ test('address landing dialog prefers the typed address over the snapshot and clo
     view.find('Modal').onClose(); assert.doesNotMatch(view.render(), /data-dialog/);
     assert.equal(view.changes.length, 0);
   } finally { view.cleanup(); }
+});
+
+
+test('UAT-T1 self-issued form names every field and prefills only one confirmed recorded payment date', () => {
+  for (const payments of [[{ id: 'p1', amount: '485', paidAt: '2026-10-04T17:00:00.000Z', paidAtConfirmed: true }],
+    [{ id: 'p1', amount: '485', paidAt: '2026-10-05', paidAtConfirmed: false }],
+    [{ id: 'p1', amount: '485', paidAt: '2026-10-05', paidAtConfirmed: true }, { id: 'p2', amount: '485', paidAt: '2026-10-06', paidAtConfirmed: true }]]) {
+    const view = setup(row({ systemIssuanceOpen: false, payments } as any), link);
+    try {
+      view.render();
+      // Unconfirmed dates correctly block this route; the form must never invent that date.
+      if (!payments[0]!.paidAtConfirmed) continue;
+      openRecord(view);
+      assert.equal(view.find('ThemedDate', p => p.id === 'certificate-paymentDate-expense').value, payments.length === 1 ? '2026-10-05' : '');
+      for (const field of ['number', 'paymentDate', 'date', 'reference', 'note']) {
+        const tag = field === 'note' ? 'textarea' : field === 'date' || field === 'paymentDate' ? 'ThemedDate' : 'input';
+        assert.ok(view.find(tag, p => p.id === `certificate-${field}-expense`)['aria-label']);
+      }
+    } finally { view.cleanup(); }
+  }
 });

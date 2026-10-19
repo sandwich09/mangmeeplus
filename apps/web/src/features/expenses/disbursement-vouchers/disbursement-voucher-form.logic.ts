@@ -17,7 +17,7 @@ export function amountError(amount: string, outstanding: string): string | null 
   if (!MONEY.test(amount)) return words['expenses.disbursement.amount_format'];
   if (scaled(amount) > 0n && scaled(amount) <= scaled(initialAmount(outstanding))) return null;
   const owed = Number(initialAmount(outstanding)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return words['expenses.disbursement.amount_range'].replace('{outstanding}', `฿${owed}`);
+  return words['expenses.disbursement.amount_range'].replace('{outstanding}', `${owed} บาท`);
 }
 /** Thousands separators, spaces and the currency sign are accepted while typing and never stored. */
 export const cleanAmountInput = (value: string) => value.replace(/[,\s฿]/g, '');

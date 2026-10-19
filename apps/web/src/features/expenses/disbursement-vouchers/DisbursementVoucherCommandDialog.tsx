@@ -121,7 +121,7 @@ export function DisbursementVoucherCommandDialog({ companyId, detail, kind, view
   const stale = code === 'disbursement_version_conflict' || code === 'disbursement_status_changed' || code === 'disbursement_not_draft';
   const busyLabel = word(kind === 'delete' ? 'deleting' : 'working');
   // The button that backs out says what backing out means: nothing is cancelled, nothing is deleted, what was typed is dropped, or the window only closes.
-  const safeLabel = kind === 'cancel' ? word('cancel_safe') : kind === 'delete' ? word('cancel_delete') : kind === 'return' ? t('common.cancel', 'th') : t('common.close', 'th');
+  const safeLabel = kind === 'submit' ? 'ยังไม่ส่ง' : kind === 'cancel' ? word('cancel_safe') : kind === 'delete' ? word('cancel_delete') : kind === 'return' ? t('common.cancel', 'th') : t('common.close', 'th');
   const showAction = !choosingApprover || !peopleLoading && !peopleError && people.length > 0;
 
   // A question before a numbered or irreversible step names the thing: the amount and the payee, or the document's number.
@@ -129,9 +129,9 @@ export function DisbursementVoucherCommandDialog({ companyId, detail, kind, view
   const title = kind === 'submit' ? 'ให้ใครอนุมัติ' : kind === 'delete' ? 'ลบร่างใบเตรียมจ่ายนี้?' : kind === 'approve' || kind === 'selfApprove' ? word(kind === 'approve' ? 'approve_confirm' : 'self_confirm_title').replace('{total}', baht(detail.header.totalAmount)).replace('{payee}', detail.header.payeeName)
     : numbered && detail.header.documentNumber ? word(numbered).replace('{number}', detail.header.documentNumber) : word(DISBURSEMENT_DIALOG_TITLES[kind]);
   // A typed reason is asked about before ✕ or Escape closes the window.
-  return <Modal open title={<span ref={dialogHeading} className={styles.commandHeading} data-expense-dialog-heading role="heading" aria-level={2} tabIndex={-1}>{title}</span>} size="sm" onClose={onCancel} closeOnBackdrop={false} closeLabel={safeLabel} dirty={reason.trim() !== '' && !busy}
+  return <Modal open title={<span ref={dialogHeading} className={styles.commandHeading} data-expense-dialog-heading role="heading" aria-level={2} tabIndex={-1}>{title}</span>} size="sm" onClose={onCancel} closeOnBackdrop={false} closeLabel={kind === 'submit' ? 'ปิด' : safeLabel} dirty={reason.trim() !== '' && !busy}
     footer={<>
-      <button type="button" className={ghostClass} disabled={busy} onClick={onCancel}>{safeLabel}</button>
+      <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={onCancel}>{safeLabel}</button>
       {showAction && <button type="button" className={kind === 'cancel' || kind === 'delete' ? dangerClass : btnClass}
         disabled={busy || kind === 'approve' && !confirmationReady || !ready && !needsRefresh || stale} aria-busy={busy} onClick={() => void run()}>
         {busy ? busyLabel : needsRefresh ? word('reload_latest') : kind === 'submit' ? 'ส่งอนุมัติ' : word(DISBURSEMENT_DIALOG_LABELS[kind])}
@@ -147,7 +147,7 @@ export function DisbursementVoucherCommandDialog({ companyId, detail, kind, view
             {manyPeople && <TextField type="search" label={word('approver_search')} value={approverQuery} onChange={event => setApproverQuery(event.target.value)} />}
             <fieldset className={manyPeople ? `${styles.approvers} ${styles.approversScroll}` : styles.approvers} disabled={busy || needsRefresh}>
               {shownPeople.length === 0 && <p className={styles.muted}>{word('approver_not_found')}</p>}
-              {shownPeople.map(person => <ChoiceRow key={person.userId} name="disbursement-approver" value={person.userId} label={person.displayName}
+              {shownPeople.map(person => <ChoiceRow key={person.userId} name="disbursement-approver" value={person.userId} label={person.displayName} aria-label={person.displayName}
                 checked={approver === person.userId} onChange={() => { changeAttempt(); setApprover(person.userId); }} />)}
             </fieldset>
             {kind === 'submit' && effectiveKind !== 'selfApprove' && <p className={styles.muted}>{word(viewerUserId && approver && approver !== viewerUserId ? 'send_help' : 'send_help_others')}</p>}

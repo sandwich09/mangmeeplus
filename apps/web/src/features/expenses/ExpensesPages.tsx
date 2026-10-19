@@ -1927,7 +1927,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label>
           <span className="mb-1 block text-sm font-medium text-gray-700"><AiFieldLabel label={t('expenses.vendor_name', locale)} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
-          <input id={`expense-vendor-name-${detail.id}`} className={validationInputClass(vendorNameIssue)} aria-invalid={vendorNameIssue?.severity === 'error' || undefined} placeholder={isMutable ? noReceipt ? 'ชื่อผู้รับเงิน' : 'ชื่อตามใบเสร็จ' : undefined} value={values.vendorNameSnapshot} onChange={(e) => setValues((v) => ({ ...v, vendorNameSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
+          <input id={`expense-vendor-name-${detail.id}`} readOnly={detail.substituteReceiptEvidence?.status === 'ISSUED'} className={validationInputClass(vendorNameIssue)} aria-invalid={vendorNameIssue?.severity === 'error' || undefined} placeholder={isMutable ? noReceipt ? 'ชื่อผู้รับเงิน' : 'ชื่อตามใบเสร็จ' : undefined} value={values.vendorNameSnapshot} onChange={(e) => setValues((v) => ({ ...v, vendorNameSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
           <FieldIssueNote canEdit={isMutable} issue={vendorNameIssue} />
           <AiFieldMissingHint canEdit={isMutable} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} />
           {!vendorNameIssue && sourceMissingNote('vendorName')}
@@ -2017,7 +2017,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {values.businessPurpose !== undefined && (
           <label className="sm:col-span-2">
             <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.source_draft_business_purpose', locale)}</span>
-            <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} className={inputClass} rows={2} maxLength={500} value={values.businessPurpose}
+            <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} readOnly={detail.substituteReceiptEvidence?.status === 'ISSUED'} className={inputClass} rows={2} maxLength={500} value={values.businessPurpose}
               onChange={(event) => setValues((current) => ({ ...current, businessPurpose: stripDisallowed(event.target.value) }))}
               disabled={!isMutable || busy} />
           </label>

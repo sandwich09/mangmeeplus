@@ -40,6 +40,7 @@ export function DisbursementVoucherExpenseRows({ rows, amounts, onToggle, onAmou
       disabled={disabled} onChange={event => onSelectAll(event.target.checked)} />เลือกทั้งหมด</label>}
     {rows.map(row => {
       const checked = amounts[row.expenseId] !== undefined;
+      const expenseNumber = row.expenseNumber?.trim();
       const error = checked ? amountError(amounts[row.expenseId]!, row.outstandingAmount) : null;
       const reason = reasons?.[row.expenseId] ?? (row.reasonCode ? disbursementExpenseReasonMessage(row.reasonCode, row.reservation?.documentNumber) : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_expense_unreadable);
       return <div key={row.expenseId} className={`${styles.expenseRow} ${!row.selectable ? styles.unavailable : ''}`}>
@@ -51,8 +52,8 @@ export function DisbursementVoucherExpenseRows({ rows, amounts, onToggle, onAmou
               <span className={styles.rowBalance} data-line="balance">{amountText(row.outstandingAmount)} บาท</span>
             </span>
             <span className={styles.rowIdentity} data-line="identity">
-              <span className="whitespace-nowrap">{row.expenseNumber ?? t('expenses.disbursement.no_number', 'th')}</span>
-              <span className={styles.rowDate}>· {formatThaiDate(row.expenseDate)}</span>
+              {expenseNumber && <span className="whitespace-nowrap">{expenseNumber}</span>}
+              <span className={styles.rowDate}>{expenseNumber ? '· ' : ''}{formatThaiDate(row.expenseDate)}</span>
               {row.vendorInvoiceNumber && <span className={`${styles.rowInvoice} whitespace-nowrap`} title={t('expenses.disbursement.vendor_invoice', 'th').replace('{number}', row.vendorInvoiceNumber)}>· {row.vendorInvoiceNumber}</span>}
             </span>
             {otherPayeeKey && row.payeeKey !== otherPayeeKey && <span className="inline-block rounded bg-gray-100 px-2 py-1 text-xs text-gray-600">ชื่อบนบิล: {row.vendorName}</span>}

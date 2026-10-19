@@ -848,3 +848,16 @@ describe('the default-account card can sit inside another page\'s form without a
     assert.doesNotMatch(read('./ReimbursementPayoutAccountPage.tsx'), /embedded/);
   });
 });
+
+
+it('UAT-R1 claim payout choices expose Thai names rather than their internal group codes', () => {
+  const html = section({ value: { ...logic.emptyClaimPayoutForm(), mode: 'SPECIFIED' } });
+  const choices = [...html.matchAll(/<input\b[^>]*type="(?:radio|checkbox)"[^>]*>/g)].map(match => match[0])
+    .filter(input => input.includes('name="claim-payout-mode"') || input.includes('type="checkbox"'));
+  assert.equal(choices.length, 5);
+  for (const input of choices) {
+    const name = input.match(/aria-label="([^"]+)"/)?.[1];
+    assert.ok(name && /[ก-๙]/u.test(name), input);
+    assert.doesNotMatch(name, /claim-payout|SPECIFIED|DEFAULT|SELF|CASH/);
+  }
+});

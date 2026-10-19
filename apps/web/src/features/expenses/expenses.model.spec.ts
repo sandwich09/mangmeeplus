@@ -69,6 +69,21 @@ import {
 } from './expenses.model';
 
 describe('expenses.model', () => {
+  it('issued receipt facts fill an empty quick-expense source without replacing entered facts', () => {
+    const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-10-19', vendorNameSnapshot: 'แม่ค้าผักทดสอบ', note: 'วัตถุประสงค์: ทดสอบระบบ', lines: [],
+      sourceDraft: { header: { vendorName: null, businessPurpose: null }, items: [] },
+      substituteReceiptEvidence: { status: 'ISSUED', payeeName: 'แม่ค้าผักทดสอบ', businessPurpose: 'ทดสอบระบบ' } } as unknown as ExpenseDetail;
+    const values = reviewValues(detail);
+    assert.equal(values.vendorNameSnapshot, 'แม่ค้าผักทดสอบ');
+    assert.equal(values.businessPurpose, 'ทดสอบระบบ');
+    const payload = buildExpenseDraftReviewPayload(values, { sourceDraft: detail.sourceDraft, partial: true });
+    assert.equal(payload.sourceDraft?.vendorName, 'แม่ค้าผักทดสอบ');
+    assert.equal(payload.sourceDraft?.businessPurpose, 'ทดสอบระบบ');
+    assert.equal(payload.note, detail.note);
+    const entered = reviewValues({ ...detail, sourceDraft: { ...detail.sourceDraft!, header: { ...detail.sourceDraft!.header, vendorName: 'ผู้ขายที่แก้', businessPurpose: 'ใช้จัดงาน' } } });
+    assert.equal(entered.vendorNameSnapshot, 'ผู้ขายที่แก้'); assert.equal(entered.businessPurpose, 'ใช้จัดงาน');
+  });
+
   it('prefills shared purpose on linked manual receipts and preserves legacy notes on unchanged saves', () => {
     const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-08-14', vendorNameSnapshot: 'ร้าน ก',
       note: 'ใช้ในสำนักงาน', lines: [], substituteReceiptEvidence: { businessPurpose: 'ใช้ในสำนักงาน' } } as unknown as ExpenseDetail;

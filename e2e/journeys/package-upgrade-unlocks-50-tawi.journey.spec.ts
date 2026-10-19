@@ -75,9 +75,9 @@ test('@journey a 999 shop records a withheld payment; after the package becomes 
 
   const expense = await test.step('owner on 999: a company paid with 3% withheld, confirmed and paid', () => recordExpenseByHand(page, {
     branch: 'สำนักงานใหญ่ (สำนักงานใหญ่)', item: unique('ค่าซ่อมบำรุงเครื่องปรับอากาศ'), seller: payee,
-    price: '2000', total: '฿2,000.00', toPay: '฿1,940.00', pay: true,
+    price: '2000', total: '2,000.00 บาท', toPay: '1,940.00 บาท', pay: true,
     withholding: {
-      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '฿60.00',
+      payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '60.00 บาท',
       taxId: '0105564000128', address: '45 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500',
     },
   }));

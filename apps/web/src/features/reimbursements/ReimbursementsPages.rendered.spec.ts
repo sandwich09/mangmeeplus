@@ -17,8 +17,8 @@ const rows = Array.from({ length: 20 }, (_, index) => ({ id: String(index), reas
 const hub = { counts: { all: 20, draft: 10, review: 10, payment: 0, duplicate_blocked: 0, correction: 0, paid: 0, closed: 0 },
   totalAmount: '2010.00', blockedDraftCount: 0, metrics: { pendingApproval: { count: 10, amount: '1005.00' }, pendingPayment: { count: 0, amount: '0.00' } } };
 
-function hubView(permissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.approve', 'reimbursement.payment.record', 'reimbursement.policy.manage']) {
-  let query = new URLSearchParams('tab=mine');
+function hubView(permissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.approve', 'reimbursement.payment.record', 'reimbursement.policy.manage'], initialQuery = 'tab=mine') {
+  let query = new URLSearchParams(initialQuery);
   const visits: string[] = [];
   const view = certificateHarness(() => h(AppRouterContext.Provider, { value: { push: (href: string) => visits.push(href), replace: (href: string) => { query = new URLSearchParams(href.split('?')[1]); }, prefetch: noop } as never },
     h(SearchParamsContext.Provider, { value: query }, h(ToastContext.Provider, { value: { success: noop, error: noop } as never },
@@ -102,4 +102,55 @@ test('CLAIM-LIST five balanced columns and one badge share the same row actions 
   assert.deepEqual(layouts, ['table', 'cards']);
   assert.match(html, /px-2 py-3/); assert.match(html, /hover:bg-gray-50/); assert.match(html, /sm:hidden/);
   assert.doesNotMatch(html, /ยังไม่มีเลขที่|฿|>—</);
+});
+
+
+test('UAT-R1 create stays in the header on every permitted tab', () => {
+  for (const tab of ['mine', 'approvals', 'finance', 'policy']) {
+    const view = hubView(undefined, `tab=${tab}`);
+    try {
+      view.render();
+      const page = view.find('MangmeePage');
+      assert.match(require('react-dom/server').renderToStaticMarkup(page.actions), /href="\/companies\/co\/reimbursements\/new"[^>]*>\+ สร้างใบเบิก/);
+    } finally { view.cleanup(); }
+  }
+  const view = hubView(['reimbursement.read'], 'tab=mine');
+  try { assert.doesNotMatch(view.render(), /\+ สร้างใบเบิก/); } finally { view.cleanup(); }
+});
+
+test('UAT-R1 pay tab, pay list and metrics count the same set while older finance reviews stay reachable', async () => {
+  const ready = { ...rows[0], id: 'ready', status: 'READY_FOR_PAYMENT', amount: '6541.12' };
+  const review = { ...rows[1], id: 'review', status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', amount: '15.00' };
+  const blocked = { ...ready, id: 'blocked', hasDuplicateBlocker: true, amount: '25.00' };
+  const bootstrap = mock.method(api, 'getReimbursementHub', async () => ({ financeReviewRequired: false,
+    hasApprovalTasks: false, queueCounts: { approvals: 0, finance: 2 }, listCounts: { mine: 7, finance: 3 } }));
+  const load = mock.method(api, 'listFinanceQueue', async () => [ready, review, blocked]);
+  const view = hubView(undefined, 'tab=finance');
+  try {
+    view.render(true); await view.settle(); view.render(true); await view.settle(); view.render(true); await view.settle();
+    const html = view.render();
+    const tab = view.find('FilterTabs').tabs.find((tab: any) => tab.key === 'finance');
+    assert.deepEqual([tab.label, tab.count], ['รอจ่าย', 1]);
+    const main = view.find('ClaimQueueRows', props => props.queue === 'finance');
+    assert.deepEqual(main.rows.map((row: any) => row.id), ['ready']);
+    const metrics = view.find('ClaimQueueMetrics').metrics;
+    assert.deepEqual(metrics.all, { count: 1, amount: '6541.12' });
+    assert.deepEqual(metrics.pendingPayment, metrics.all);
+    assert.match(html, /ใบเบิกในแท็บนี้/);
+    assert.match(html, /รอตรวจสอบการเงิน/);
+    assert.ok(view.nodes.some(node => node.tag === 'ClaimQueueRows' && node.props.rows.some((row: any) => row.id === 'review')));
+    assert.ok(view.nodes.some(node => node.tag === 'ClaimQueueRows' && node.props.rows.some((row: any) => row.id === 'blocked')));
+  } finally { view.cleanup(); bootstrap.mock.restore(); load.mock.restore(); }
+});
+
+
+test('UAT-R1 both claim row layouts have a Thai link name identifying the claim', () => {
+  const view = certificateHarness(() => h(ClaimQueueRows, { rows: [{ ...rows[0], requestNo: 'RB-1' }], queue: 'mine',
+    detailHref: () => '/claim', onOpenDetail: noop, order: 'newest', onOrder: noop }));
+  try {
+    view.render();
+    const links = view.nodes.filter(node => node.props.role === 'link');
+    assert.equal(links.length, 2);
+    for (const link of links) assert.equal(link.props['aria-label'], 'เปิดใบเบิก ค่าเดินทาง 0 RB-1');
+  } finally { view.cleanup(); }
 });

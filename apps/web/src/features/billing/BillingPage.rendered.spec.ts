@@ -4,6 +4,7 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { createBillingPreview, type PreviewScenario } from './billing-preview.fixture';
+import { formatThaiDate } from '@/common/i18n/thai-date';
 import type { BillingEventDiscountView, BillingInvoiceItem, BillingAttemptView, BillingPurchaseMode, BillingQuote, BillingStatus } from '@watchdog-bms/contracts';
 
 (globalThis as any).React = React;
@@ -76,6 +77,57 @@ async function withBuyer(run: (ui: { render: () => string; button: (name: string
   try { await run({ render, button, input, calls, get quoteCalls() { return quoteCalls; }, flushRecipient, replayInitialLoad, capacityPicker: () => capacityProps, changeRecipient, next, method, pay, packageStep, row, latestRecipientInvoice: () => recipientInvoice, documentsOpened: () => documentOpens }); }
   finally { Reflect.set(runtime, 'useEffect', originalEffect); Reflect.set(runtime, 'useState', originalState); Reflect.set(runtime, 'useRef', originalRef); Reflect.set(runtime, 'createElement', originalCreate); if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow); else Reflect.deleteProperty(globalThis, 'window'); if (oldDocument) Object.defineProperty(globalThis, 'document', oldDocument); else Reflect.deleteProperty(globalThis, 'document'); }
 }
+
+test('UAT-Q2 payment method radios explicitly use the visible Thai names', async () => {
+  await withBuyer(async ({ render, input, next }) => {
+    render(); input('offer', 'STARTER_249').onChange(); render();
+    const html = await next();
+    for (const [group, value, label] of [['renewalChoice', 'auto', 'ต่ออายุอัตโนมัติ'], ['renewalChoice', 'once', 'จ่ายครั้งเดียว'],
+      ['paymentChoice', 'qr', 'QR พร้อมเพย์'], ['paymentChoice', 'card', 'บัตร']]) {
+      assert.equal(input(group, value)['aria-label'], label);
+      assert.ok(html.includes(`/>${label}</label>`), label);
+    }
+  });
+});
+
+test('UAT-Q1 package cards keep discounted prices without repeating the event name or instructions', async () => {
+  await withBuyer(async ({ render, input, method, packageStep }) => {
+    render(); input('offer', 'STARTER_249').onChange(); render(); method('CARD_ONCE'); packageStep();
+    const html = render();
+    const choice = html.slice(html.indexOf('aria-label="ส่วนลดจากงาน"'), html.indexOf('</fieldset>', html.indexOf('aria-label="ส่วนลดจากงาน"')));
+    const cards = html.slice(html.indexOf('aria-label="แพ็กเกจ"'), html.indexOf('นับเฉพาะใบเสร็จ'));
+    assert.match(cards, /หลังส่วนลด 239\.00 บาท/);
+    assert.match(cards, /หลังส่วนลด 489\.00 บาท/);
+    assert.doesNotMatch(cards, /ส่วนลดจากงาน event4|ลดเฉพาะการจ่ายครั้งนี้/);
+    assert.equal((choice.match(/<p /g) ?? []).length, 1);
+    assert.match(choice, /ใช้ได้ครั้งละ 1 ส่วนลด/);
+    assert.match(choice, /ส่วนลดอื่นเก็บไว้ใช้ครั้งถัดไปได้/);
+  }, false, { status: status => { status.eventDiscount = { ticketSerial: 'ticket', eventName: 'event4', discountSatang: 1000,
+    expiresAt: '2099-12-31T00:00:00.000Z', reason: null, offers: [
+      { offerKey: 'STARTER_249', interval: 'month', eventName: 'event4', shownDiscountSatang: 1000 },
+      { offerKey: 'BASIC_499', interval: 'month', eventName: 'event4', shownDiscountSatang: 1000 },
+    ] }; } });
+});
+
+test('UAT-Q1 history links name the package, amount, payment date and status on phone and wide screens', async () => {
+  const source = createBillingPreview('shop', 'success', null, () => {});
+  const base = (await source.history()).items[0];
+  await withBuyer(async ({ render }) => {
+    const html = render();
+    const names = [...html.matchAll(/(?:<tr|<a)\b[^>]*aria-label="(เปิดรายการจ่ายเงิน [^"]+)"/g)].map(match => match[1]);
+    assert.equal(names.length, 2);
+    for (const name of names) {
+      assert.match(name, /เริ่มต้น · รายเดือน/);
+      assert.match(name, /249\.00 บาท/);
+      assert.match(name, /2 ต.ค. 2569/);
+      assert.match(name, /จ่ายแล้ว/);
+    }
+    assert.equal(names[0], names[1]);
+  }, false, { scenario: 'success', startWithPlans: false, history: async () => ({ items: [{ ...base,
+    offer: { key: 'STARTER_249', label: 'เริ่มต้น', interval: 'month' }, amountSatang: 24900,
+    paidAt: '2026-10-02T03:00:00.000Z', createdAt: '2026-10-01T03:00:00.000Z',
+  }], nextCursor: null }) });
+});
 
 test('PAY-1 package then payment: early presses show the missing choice in sight and never quote', async () => {
   await withBuyer(async ({ render, input, calls, next }) => {
@@ -540,8 +592,9 @@ test('PAY-2 history shows ten facts per page, supports previous cursors and keep
     await button('ถัดไป').onClick(); html = render(); assert.match(html, /BILL-10/); assert.doesNotMatch(html, /BILL-0"/);
     await button('ถัดไป').onClick(); html = render(); assert.match(html, /BILL-20/);
     assert.equal(latestRecipientInvoice()?.id, 'invoice-0');
-    row('เปิดรายการจ่ายเงิน BILL-20').onKeyDown({ key: 'Escape' }); assert.equal(documentsOpened(), 0);
-    row('เปิดรายการจ่ายเงิน BILL-20').onKeyDown({ key: 'Enter', preventDefault: () => {} }); assert.equal(documentsOpened(), 1);
+    const name = `เปิดรายการจ่ายเงิน BILL-20 · เติบโต · รายเดือน · 499.00 บาท · ${formatThaiDate(base.paidAt ?? base.createdAt)} · จ่ายแล้ว`;
+    row(name).onKeyDown({ key: 'Escape' }); assert.equal(documentsOpened(), 0);
+    row(name).onKeyDown({ key: 'Enter', preventDefault: () => {} }); assert.equal(documentsOpened(), 1);
     await button('ก่อนหน้า').onClick(); html = render(); assert.match(html, /BILL-10/);
     await button('ก่อนหน้า').onClick(); html = render(); assert.match(html, /BILL-0/);
     assert.deepEqual(reads, [{ cursor: undefined, limit: 10 }, { cursor: 'invoice-9', limit: 10 }, { cursor: 'invoice-19', limit: 10 }, { cursor: 'invoice-9', limit: 10 }, { cursor: undefined, limit: 10 }]);

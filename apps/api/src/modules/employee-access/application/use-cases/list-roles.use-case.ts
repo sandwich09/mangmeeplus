@@ -24,7 +24,7 @@ export class ListRolesUseCase {
     const [rows, entitled] = await Promise.all([
       this.prisma.client.role.findMany({
         where: companyRoleReadWhere(companyId),
-        include: { ...ROLE_INCLUDE, _count: { select: { memberships: { where: { membership: { status: { in: ['ACTIVE', 'INVITED'] } } } } } } },
+        include: { ...ROLE_INCLUDE, _count: { select: { memberships: { where: { membership: { companyId, status: { in: ['ACTIVE', 'INVITED'] } } } } } } },
         orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
       }),
       loadEntitledFeatureKeys(this.prisma, companyId),
@@ -43,7 +43,7 @@ export class ListRolesUseCase {
       return {
         ...summary,
         effectivePermissionCount: filterPermissionsByEntitlement(summary.permissionKeys, entitled).length,
-        ...(!row.isSystem && { activeEmployeeCount: row._count?.memberships ?? 0 }),
+        activeEmployeeCount: row._count?.memberships ?? 0,
         // Same rule the write path enforces, so a picker filtered on this flag cannot dead-end in a 403.
         ...(requester && {
           assignableByCurrentUser: summary.status === 'ACTIVE'

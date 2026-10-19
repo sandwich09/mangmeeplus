@@ -375,6 +375,7 @@ function SignatureFields({
               <input
                 className="sr-only"
                 type="radio"
+                aria-label={t(option === 'draw' ? 'expenses.substitute_wizard.signature_method_draw' : 'expenses.substitute_wizard.signature_method_upload', locale)}
                 name="signature-method"
                 value={option}
                 required={!savedSignatureUsed}
@@ -1662,10 +1663,10 @@ export function SubstituteReceiptWizardPage({
         <fieldset className="min-w-0">
           <legend className="text-base font-semibold text-gray-900">{t('expenses.substitute_wizard.entry_question', locale)}</legend>
           <div className="mt-2 grid gap-2 md:grid-cols-2">
-            <ChoiceRow framed name="substitute-entry" value="existing" checked={entryMode === 'existing'}
+            <ChoiceRow framed name="substitute-entry" value="existing" aria-label={t('expenses.substitute_wizard.entry_existing_title', locale)} checked={entryMode === 'existing'}
               onChange={() => { setEntryMode('existing'); requestWorkflowFocus('candidate'); }}
               label={t('expenses.substitute_wizard.entry_existing_title', locale)} description={t('expenses.substitute_wizard.entry_existing_help', locale)} />
-            <ChoiceRow framed name="substitute-entry" value="new" checked={entryMode === 'new'}
+            <ChoiceRow framed name="substitute-entry" value="new" aria-label={t('expenses.substitute_wizard.entry_new_title', locale)} checked={entryMode === 'new'}
               onChange={() => { setEntryMode('new'); requestWorkflowFocus('manual'); }}
               label={t('expenses.substitute_wizard.entry_new_title', locale)} description={t('expenses.substitute_wizard.entry_new_help', locale)} />
           </div>
@@ -1709,7 +1710,7 @@ export function SubstituteReceiptWizardPage({
                           <span className="mangmee-unit shrink-0 font-semibold text-gray-900">{`${amountText(item.grandTotalAmount)} บาท`}</span>
                         </span>
                         <span className="mt-1 block text-sm text-gray-600">
-                          <span className="mangmee-unit">{item.expenseNumber}</span>{' · '}<span className="mangmee-unit">{dateShort(item.expenseDate)}</span>
+                          {item.expenseNumber && <><span className="mangmee-unit">{item.expenseNumber}</span>{' · '}</>}<span className="mangmee-unit">{dateShort(item.expenseDate)}</span>
                           {item.lines.length > 1 && ` · ${t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(item.lines.length))}`}
                         </span>
                         {item.lines.length > 1 && (
@@ -1878,7 +1879,7 @@ export function SubstituteReceiptWizardPage({
           )}
           {/* What this paper cannot be used for, said once more as the tick itself. */}
           <div>
-            <ChoiceRow ref={consentRef} type="checkbox" framed required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)}
+            <ChoiceRow ref={consentRef} aria-label={t('expenses.substitute_wizard.consent_confirm', locale)} type="checkbox" framed required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)}
               label={<>{t('expenses.substitute_wizard.consent_confirm', locale)}<RequiredMark /></>} />
             <details className="text-sm text-gray-600">
               <summary className="min-h-11 cursor-pointer py-2.5 font-semibold text-brand-700 underline underline-offset-2">{t('expenses.substitute_wizard.consent_more', locale)}</summary>
@@ -2020,9 +2021,9 @@ export function SubstituteReceiptWizardPage({
             <fieldset className="min-w-0">
               <legend className="text-sm font-semibold text-gray-700">ใช้เงินของใครจ่าย<RequiredMark /></legend>
               <div className="mt-1 grid gap-2 sm:grid-cols-2">
-                <ChoiceRow framed name="substitute-funding" value="COMPANY" checked={fundingSource === 'COMPANY'} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
+                <ChoiceRow framed name="substitute-funding" value="COMPANY" aria-label="เงินของร้าน" checked={fundingSource === 'COMPANY'} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
                   onChange={() => { setFundingSource('COMPANY'); setPaidInFullAcknowledged(false); }} label="เงินของร้าน" />
-                <ChoiceRow framed name="substitute-funding" value="PERSONAL_ADVANCE" checked={fundingSource === 'PERSONAL_ADVANCE'} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
+                <ChoiceRow framed name="substitute-funding" value="PERSONAL_ADVANCE" aria-label="พนักงานสำรองจ่าย" checked={fundingSource === 'PERSONAL_ADVANCE'} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
                   onChange={() => { setFundingSource('PERSONAL_ADVANCE'); setPaidInFullAcknowledged(false); }} label="เงินส่วนตัวของพนักงาน" description="พนักงานสำรองจ่ายไปก่อน" />
               </div>
             </fieldset>
@@ -2032,7 +2033,7 @@ export function SubstituteReceiptWizardPage({
                 ยอด <span className="mangmee-unit">{`${amountText(detail.grandTotalAmount)} บาท`}</span> · หัก ณ ที่จ่าย <span className="mangmee-unit">{`${amountText(detail.whtAmount)} บาท`}</span> · จ่ายผู้รับเงิน <span className="mangmee-unit">{`${amountText(detail.netPayableAmount)} บาท`}</span>
               </p>
             )}
-            <ChoiceRow type="checkbox" framed required aria-required="true" checked={paidInFullAcknowledged} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
+            <ChoiceRow type="checkbox" framed required aria-required="true" aria-label={`จ่ายครบ ${amountText(detail.netPayableAmount)} บาท แล้ว ไม่ได้แบ่งจ่าย`} checked={paidInFullAcknowledged} disabled={Boolean(receiptEvidence) || factsDisabled || busy}
               onChange={(event) => setPaidInFullAcknowledged(event.target.checked)}
               label={<>จ่ายครบ <span className="mangmee-unit">{`${amountText(detail.netPayableAmount)} บาท`}</span> แล้ว ไม่ได้แบ่งจ่าย<RequiredMark /></>} />
             {/* The one consequence of issuing that touches money, said where the money is chosen. */}
@@ -2111,7 +2112,7 @@ export function SubstituteReceiptWizardPage({
             </p>
             {attachments.map((attachment) => (
               <div key={attachment.id} className="flex items-center gap-2">
-                <ChoiceRow type="checkbox" className="min-w-0 flex-1" disabled={factsDisabled || busy} checked={ids.includes(attachment.id)}
+                <ChoiceRow type="checkbox" className="min-w-0 flex-1" disabled={factsDisabled || busy} aria-label={attachment.originalFileName} checked={ids.includes(attachment.id)}
                   label={<span className="[overflow-wrap:anywhere]">{attachment.originalFileName}</span>}
                   onChange={(event) => {
                     const nextIds = event.target.checked
@@ -2278,9 +2279,9 @@ export function SubstituteReceiptWizardPage({
     <fieldset className="min-w-0">
       <legend className={sectionHeadingClass}>เลือกวิธีเซ็น</legend>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <ChoiceRow framed name="signing-method" value="DIGITAL" checked={signingMethod === 'DIGITAL'} onChange={() => setSigningMethod('DIGITAL')}
+        <ChoiceRow framed name="signing-method" value="DIGITAL" aria-label="เซ็นออนไลน์" checked={signingMethod === 'DIGITAL'} onChange={() => setSigningMethod('DIGITAL')}
           label="เซ็นออนไลน์" description={policy?.approvalMode === 'OWNER_SELF' ? 'เจ้าของกิจการเซ็นรับรองและอนุมัติได้ในครั้งเดียวด้วยบัญชีของตัวเอง' : 'ผู้รับรองการจ่ายเซ็นก่อน แล้วผู้อนุมัติที่ร้านกำหนดเซ็นด้วยบัญชีของตัวเอง'} />
-        <ChoiceRow framed name="signing-method" value="PAPER" checked={signingMethod === 'PAPER'} onChange={() => setSigningMethod('PAPER')}
+        <ChoiceRow framed name="signing-method" value="PAPER" aria-label="พิมพ์แล้วเซ็นบนกระดาษ" checked={signingMethod === 'PAPER'} onChange={() => setSigningMethod('PAPER')}
           label="พิมพ์แล้วเซ็นบนกระดาษ" description="พิมพ์แบบฟอร์มไปกรอกชื่อและเซ็น แล้วอัปโหลดกลับมา ใช้ได้กับคนที่ไม่มีบัญชี" />
       </div>
     </fieldset>
@@ -2399,8 +2400,8 @@ export function SubstituteReceiptWizardPage({
                 <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={policy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
                 <span className="mt-1 block text-sm font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
               </label>
-              <div id="substitute-sign-acknowledgement"><ChoiceRow type="checkbox" framed required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)}
-                label={<>{combinedSigning ? 'รับรองว่าจ่ายจริงเพื่อร้านและใช้ใบเสร็จประกอบไม่ได้ ตรวจเอกสารและหลักฐานแล้ว และอนุมัติให้ออกใบรับรอง' : t('expenses.substitute_wizard.certify_acknowledgement', locale)}<RequiredMark /></>} />
+              <div id="substitute-sign-acknowledgement"><ChoiceRow type="checkbox" framed required aria-required="true" aria-labelledby="substitute-certify-label" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)}
+                label={<span id="substitute-certify-label">{combinedSigning ? 'รับรองว่าจ่ายจริงเพื่อร้านและใช้ใบเสร็จประกอบไม่ได้ ตรวจเอกสารและหลักฐานแล้ว และอนุมัติให้ออกใบรับรอง' : t('expenses.substitute_wizard.certify_acknowledgement', locale)}<RequiredMark /></span>} />
                 {signingAttempted && !certificationAcknowledged && <p role="alert" className={errorLineClass}>{t('expenses.substitute_wizard.certification_ack_required', locale)}</p>}</div>
               <div className="space-y-3 border-t border-gray-100 pt-4">
                 <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={certifyBlockers} />
@@ -2463,7 +2464,7 @@ export function SubstituteReceiptWizardPage({
               <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={policy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
               <span className="mt-1 block text-sm font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
             </label>
-            <div id="substitute-sign-acknowledgement"><ChoiceRow type="checkbox" framed required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)}
+            <div id="substitute-sign-acknowledgement"><ChoiceRow type="checkbox" framed required aria-required="true" aria-label={t('expenses.substitute_wizard.approve_acknowledgement', locale)} checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)}
               label={<>{t('expenses.substitute_wizard.approve_acknowledgement', locale)}<RequiredMark /></>} />
                 {signingAttempted && !approvalAcknowledged && <p role="alert" className={errorLineClass}>{t('expenses.substitute_wizard.approval_ack_required', locale)}</p>}</div>
             <div className="space-y-3 border-t border-gray-100 pt-4">
@@ -2732,7 +2733,7 @@ export function SubstituteReceiptWizardPage({
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <div><dt className="text-gray-500">ผู้รับเงิน</dt><dd className="break-words font-semibold">{receiptEvidence.payeeName || t('expenses.substitute_hub.payee_missing', locale)}</dd></div>
                 <div><dt className="text-gray-500">วันที่จ่าย</dt><dd className="mangmee-unit font-semibold">{dateShort(receiptEvidence.paymentDate)}</dd></div>
-                <div><dt className="text-gray-500">เงินของ</dt><dd className="font-semibold">{receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่าย' : receiptEvidence.fundingSource === 'COMPANY' ? 'ร้าน' : 'ยังไม่ระบุ'}</dd></div>
+                <div><dt className="text-gray-500">จ่ายจาก</dt><dd className="font-semibold">{receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่าย' : receiptEvidence.fundingSource === 'COMPANY' ? 'เงินของร้าน' : 'ยังไม่ระบุ'}</dd></div>
                 <div><dt className="text-gray-500">ค่าใช้จ่าย</dt><dd><Link className="text-brand-700 underline underline-offset-2" href={expenseHref}>{detail.expenseNumber}</Link></dd></div>
               </dl>
             </MangmeeCard>}

@@ -74,7 +74,7 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&
 /**
  * The whole text of one element, whatever it is built from. `getByText(text, { exact: true })` only
  * reads an element's own text nodes, and the screens put every amount in a span of its own
- * (`รวมรายการนี้ <span>฿120.00</span>`), so a line with an amount in it never matches exactly.
+ * (`รวมรายการนี้ <span>120.00 บาท</span>`), so a line with an amount in it never matches exactly.
  */
 export function whole(text: string) {
   return new RegExp(`^\\s*${text.trim().split(/\s+/).map(escapeRegExp).join('\\s*')}\\s*$`);
@@ -203,7 +203,7 @@ export type HandExpense = {
   lastMonthDay?: number;
   /** Unit price as typed, e.g. `4000`. */
   price: string;
-  /** The total as the form prints it, e.g. `฿4,000.00`. */
+  /** The total as the form prints it, e.g. `4,000.00 บาท`. */
   total: string;
   seller: string;
   withholding?: {
@@ -214,10 +214,10 @@ export type HandExpense = {
     rate: string;
     taxId: string;
     address: string;
-    /** e.g. `฿120.00` */
+    /** e.g. `120.00 บาท` */
     withheld: string;
   };
-  /** What is left to pay after confirming, as printed: `฿3,880.00`. */
+  /** What is left to pay after confirming, as printed: `3,880.00 บาท`. */
   toPay: string;
   /** Also record the payment in full from the expense page. */
   pay?: boolean;
@@ -321,7 +321,7 @@ export async function confirmThroughThreeSteps(page: Page, expense: { toPay: str
   await expect(main.getByText(/^ต้องจ่าย ฿/)).toHaveCount(0);
   const outstanding = metricValue(main.getByTestId('expense-detail-totals'), 'ค้างจ่าย');
   await expect(outstanding).toBeVisible();
-  await expect(outstanding).toHaveText(whole(`${expense.toPay.replace('฿', '')} บาท`));
+  await expect(outstanding).toHaveText(whole(expense.toPay));
   if (expense.withheld) {
     await expect(main.getByText(/^หักภาษี ณ ที่จ่ายไว้ ฿/)).toHaveCount(0);
     const withheld = main.locator('[data-expense-document-facts] dl > div').filter({ has: page.getByText('ภาษีหัก ณ ที่จ่าย', { exact: true }) });
