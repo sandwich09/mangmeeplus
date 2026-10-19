@@ -281,24 +281,32 @@ describe('claim pages speak plain Thai (Owner rule 2026-09-27/29)', () => {
     assert.doesNotMatch(html, /20\.01/);
   });
 
-  it('shows amounts as "฿1,234.50" and dates in Thai with the Buddhist year', () => {
+  it('shows the UAT source net, tax and withholding amounts in baht', () => {
+    const source = { ...bill, totals: { ...bill.totals, netPayableAmount: '170.0000', vatAmount: '11.1200', whtAmount: '0.0000' } };
+    const facts = visible(renderToStaticMarkup(h(ReimbursementSourceFacts, { source })));
+    for (const text of ['170.00 บาท', '11.12 บาท / 0.00 บาท']) assert.ok(facts.includes(text), text);
+    assert.doesNotMatch(facts.join(' '), /฿/);
+  });
+
+  it('shows amounts as "1,234.50 บาท" and dates in Thai with the Buddhist year', () => {
     const facts = visible(renderToStaticMarkup(h(ReimbursementSourceFacts, { source: bill })));
-    for (const text of ['฿380.00', '฿24.86 / ฿0.00', '26 ก.ย. 2569', 'ไม่ได้ระบุ']) assert.ok(facts.includes(text), text);
+    for (const text of ['380.00 บาท', '24.86 บาท / 0.00 บาท', '26 ก.ย. 2569', 'ไม่ได้ระบุ']) assert.ok(facts.includes(text), text);
     const form = visible(filledCreatePage());
-    for (const text of ['26 ก.ย. 2569 · ปากกาและแฟ้ม · ฿380.00', '27 ก.ย. 2569 · ค่าแท็กซี่ · ฿1,234.57', 'INV-0042 · ร้านเครื่องเขียนสมใจ · ฿380.00',
+    assert.doesNotMatch(form.join(' '), /฿/);
+    for (const text of ['26 ก.ย. 2569 · ปากกาและแฟ้ม · 380.00 บาท', '27 ก.ย. 2569 · ค่าแท็กซี่ · 1,234.57 บาท', 'INV-0042 · ร้านเครื่องเขียนสมใจ · 380.00 บาท',
       '1,614.57 บาท', 'บาท']) assert.ok(form.includes(text), text);
-    // A form of one line shows no total: it repeated the amount typed above it (and "฿0.00" before anything was typed).
+    // A form of one line shows no total: it repeated the amount typed above it (and "0.00 บาท" before anything was typed).
     const fresh = visible(renderToStaticMarkup(createPage()));
-    assert.equal(fresh.includes('ยอดรวม') || fresh.includes('฿0.00'), false);
+    assert.equal(fresh.includes('ยอดรวม') || fresh.includes('0.00 บาท'), false);
     assert.ok(form.includes('ยอดรวม'), 'two lines are added up');
     // An amount is typed as text with the number keypad, with its unit beside it: a typed comma is kept and read.
     assert.match(filledCreatePage(), /<input aria-label="จำนวนเงิน" class="mangmee-input mangmee-input-icon-end text-right tabular-nums"[^>]*type="text" inputMode="decimal"/u);
     const { typedAmount } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
     assert.deepEqual(['1,200.50', ' 1 200 ', '350', ''].map(typedAmount), ['1200.50', '1200', '350', '']);
-    assert.ok(visible(filledCreatePage({ ...filledForm, lines: [{ ...filledForm.lines[1]!, amount: '1,234.5' }, filledForm.lines[1]!] })).includes('27 ก.ย. 2569 · ค่าแท็กซี่ · ฿1,234.50'));
-    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · ฿95.50 — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
+    assert.ok(visible(filledCreatePage({ ...filledForm, lines: [{ ...filledForm.lines[1]!, amount: '1,234.5' }, filledForm.lines[1]!] })).includes('27 ก.ย. 2569 · ค่าแท็กซี่ · 1,234.50 บาท'));
+    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · 95.50 บาท — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
     const diff = diffApprovalFields(approvalComparable({ ...draft, amount: '1234.5000', lineCount: 1 }, 1), approvalComparable(paid, 2));
-    assert.deepEqual(diff.find(row => row.key === 'amount'), { key: 'amount', label: 'จำนวนเงิน', before: '฿1,234.50', after: '฿1,614.50', changed: true });
+    assert.deepEqual(diff.find(row => row.key === 'amount'), { key: 'amount', label: 'จำนวนเงิน', before: '1,234.50 บาท', after: '1,614.50 บาท', changed: true });
     assert.deepEqual(diff.find(row => row.key === 'currency'), { key: 'currency', label: 'สกุลเงิน', before: 'บาท', after: 'บาท', changed: false });
   });
 });
@@ -776,7 +784,7 @@ describe('the claim form asks only for what this claim needs, and chooses nothin
     const texts = visible(filledCreatePage());
     assert.ok(texts.includes('ดูรายการที่เบิกไม่ได้ 2 รายการ'), texts.filter((text) => text.includes('เบิกไม่ได้')).join(' | '));
     // A line bound to one that can no longer be claimed still shows it, with the reason.
-    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · ฿95.50 — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
+    assert.ok(visible(filledCreatePage(refusedForm)).includes('ร้านกาแฟ · 95.50 บาท — ค่าใช้จ่ายนี้ถูกใช้เบิกในใบเบิกอื่นอยู่แล้ว'));
     // A line typed by hand offers the list as a link, never as a field above every line.
     assert.ok(visible(fresh()).includes('เลือกจากค่าใช้จ่ายที่บันทึกไว้'));
     assert.equal(fresh().includes('aria-label="ค้นหาค่าใช้จ่ายที่บันทึกไว้"'), false);
@@ -1111,12 +1119,11 @@ describe('the edit page speaks of a reason for sending back only for a draft som
   });
 });
 
-// The three totals read "฿7,219.5": a currency sign, and a satang digit dropped. Every other amount of a claim reads "฿7,219.50".
+// Totals share the baht unit and both satang digits with every other claim amount.
 describe('the totals on the hub read as money in baht, like every other amount of a claim (owner 2026-09-27/29)', () => {
   const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', hasDuplicateBlocker: false, currentDesk: { kind: 'PAYMENT' } };
-  const MONEY = /^฿\d{1,3}(,\d{3})*\.\d{2}$/u;
 
-  it('shows the total of each tab as "฿1,234.50", with the shared currency sign and both satang digits', () => {
+  it('shows the total of each tab as "1,234.50 บาท", with the baht unit and both satang digits', () => {
     for (const [tab, rows] of [['mine', hubClaims], ['approvals', [queueRow]], ['finance', [ready]]] as const) {
       const html = hubTab(tab, [...rows], undefined, {}, '', false);
       assert.match(html, /ยอดรวม [\d,]+\.\d{2} บาท/);
@@ -1227,7 +1234,7 @@ describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () 
   });
 });
 
-// The summary beside the policy form read "≥ ฿1.00": a sign where the field and the preview say "ตั้งแต่" in words.
+// The policy summary uses the same approval-threshold words as its field and preview.
 describe('the policy summary says the approval threshold in the words of its field (owner 2026-10-02)', () => {
   it('reads "ยอดตั้งแต่ 1.00 บาท" where the tab says what the settings add up to, with no comparison sign anywhere on the tab', () => {
     const texts = policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]);

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   claimListBadge, sortClaimRows, claimQueueMetrics, paymentVoidedMessage, paymentReferenceRequired, validatePaymentForm, validateRequestForm, requestFormProblems, payStepInstruction, sumLineAmounts, summariseQueue,
-  matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
+  matchesSearch, formatMoney, money, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, SELF_APPROVAL_STEP_NOTE, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
   approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
@@ -650,6 +650,21 @@ describe('errorText', () => {
 });
 
 describe('formatMoney', () => {
+  it('uses the same baht format for retained source amounts and keeps the unverifiable-amount guard', () => {
+    for (const value of ['170.0000', '11.1200', '0.0000', '1234.50', '1234.5650', '9007199254740993.01']) {
+      assert.equal(money(value), formatMoney(value));
+      assert.equal(money(value, 'THB'), formatMoney(value, 'THB'));
+      assert.doesNotMatch(money(value), /฿/);
+    }
+    assert.equal(money('170.0000'), '170.00 บาท');
+    assert.equal(money('11.1200'), '11.12 บาท');
+    assert.equal(money('0.0000'), '0.00 บาท');
+    assert.equal(money('170.0000', 'USD'), '170.00 USD');
+    for (const value of [undefined, null, 170, '', '12,500.00', '-1', '1.00001', 'unknown']) {
+      assert.equal(money(value), 'ยังตรวจสอบจำนวนเงินไม่ได้');
+    }
+  });
+
   it('reads thousands separators and names baht on the claim form', () => {
     assert.equal(formatMoney('12,500.00'), '12,500.00 บาท');
     assert.equal(formatMoney('1 200.50', 'THB'), '1,200.50 บาท');

@@ -19,12 +19,13 @@ test('steps run who then what then details and Back changes only the step', () =
   assert.match(page, /onClick=\{\(\) => setStep\(previous => previous - 1\)\}/);
   assert.match(page, /step === 0 \?[\s\S]+step === 1 \?/);
 });
-test('prepare is required and the hidden-menu card makes no source request except to validate a named draft', () => {
+test('editing needs open entry while a closed existing draft explains the block and links to its list', () => {
   assert.match(page, /canPrepareDisbursementVoucher\(permissions\)/);
   assert.match(page, /if \(!canPrepare\) return <><ForbiddenState/);
-  assert.match(page, /if \(!canPrepare \|\| !entryOpen && !draftId\) return/);
+  assert.match(page, /if \(!canPrepare \|\| !entryOpen\) return/);
   assert.match(page, /detail\.header\.status !== 'DRAFT' \|\| !detail\.actions\.edit/);
   assert.match(page, /if \(!entryOpen && !draftId/);
+  assert.match(page, /if \(!entryOpen && draftId && permissions\.includes\('expense\.disbursement\.read'\)\)[\s\S]*?ปิดการทำใบเตรียมจ่ายแล้ว ร่างนี้ทำต่อไม่ได้[\s\S]*?action=\{backAction\}/);
   assert.match(route, /disbursementVoucherWebEntry === true/);
   assert.match(route, /draftId=\{typeof query\.draft === 'string'[\s\S]*expenseId=\{typeof query\.expenseId === 'string'/);
   assert.doesNotMatch(route, /canOpenDisbursementVoucherWeb|redirect\(/);
@@ -108,7 +109,7 @@ test('the final create step sends after saving, keeps draft save secondary, and 
 
 test('session refresh keeps the loaded draft form and permission loss still renders the leave dialog', () => {
   assert.match(page, /if \(loadedContext\.current === context\) return/);
-  assert.match(page, /canPrepare && \(entryOpen \|\| Boolean\(draftId\)\)/);
+  assert.match(page, /canPrepare && entryOpen && validSelection/);
   assert.match(page, /if \(!canPrepare\) return <>.*?<ForbiddenState titleAs="h1" \/>.*?navigation\.dialog/);
 });
 

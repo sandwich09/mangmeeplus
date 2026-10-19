@@ -1630,7 +1630,7 @@ export function approverPaymentWarning(
   return `บทบาท ${labels.join(' และ ')} อนุมัติได้ แต่บันทึกจ่ายไม่ได้ ใบที่อนุมัติแล้วจะรอผู้ที่มีสิทธิ์บันทึกจ่าย ถ้าต้องการให้ผู้อนุมัติจ่ายเองได้ ให้เพิ่มสิทธิ์บันทึกจ่ายให้บทบาทนี้ในหน้าบทบาทและสิทธิ์`;
 }
 
-export function formatMoney(v: unknown, currency?: string): string {
+export function formatMoney(v: unknown, currency?: unknown): string {
   const amount = satang.format(typedAmount(String(v ?? 0)) as `${number}`);
   return `${amount} ${currencyWord(currency)}`;
 }
@@ -1643,7 +1643,7 @@ const currencyWord = (currency: unknown) => (!currency || currency === 'THB' ? '
 /** "1,234.50 บาท", like formatMoney, but the decimal string is formatted as is (no float) and rounds half up like the API. */
 export function money(value: unknown, currency?: unknown) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d{1,4})?$/.test(value)) return 'ยังตรวจสอบจำนวนเงินไม่ได้';
-  return !currency || currency === 'THB' ? `฿${satang.format(value as `${number}`)}` : `${satang.format(value as `${number}`)} ${currencyWord(currency)}`;
+  return formatMoney(value, currency);
 }
 /** A category by its Thai label; a missing label never falls back to the key. */
 export const categoryText = (label: unknown) => (typeof label === 'string' && label.trim()) || 'ยังไม่ได้เลือกหมวด';
