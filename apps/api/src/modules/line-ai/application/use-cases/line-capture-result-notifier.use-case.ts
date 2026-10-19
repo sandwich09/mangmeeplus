@@ -486,10 +486,16 @@ export class LineCaptureResultNotifierUseCase {
   private async deleteEmptyDraft(companyId: string, expenseId: string, jobId: string | null, retainReceipt = false): Promise<boolean> {
     return this.prisma.client.$transaction(async (tx) => {
       if (retainReceipt && await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId, status: 'VOIDED', voidReason: 'LINE_NR07_EMPTY_DRAFT' }, select: { id: true } })) return true;
+      const job = jobId ? await tx.expenseCaptureReadJob.findFirst({
+        where: { id: jobId, companyId, expenseId, ownerType: 'EXPENSE' }, select: { expectedSourceUpdatedAt: true },
+      }) : null;
+      // The upload itself sets updatedByUserId; the read job holds the exact intake revision instead.
+      if (!job?.expectedSourceUpdatedAt) return false;
       const where = {
           companyId, id: expenseId, status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
           grandTotalAmount: 0, paidAmount: 0, postingStatus: 'not_required' as const,
           sourceReimbursementRequestId: null,
+          updatedAt: job.expectedSourceUpdatedAt, substituteReceiptEvidences: { none: {} },
         };
       const deleted = retainReceipt
         ? await tx.expenseRecord.updateMany({ where: { ...where, status: { in: ['DRAFT', 'NEEDS_REVIEW'] } }, data: { status: 'VOIDED', voidedAt: new Date(), voidReason: 'LINE_NR07_EMPTY_DRAFT', updatedByUserId: null } })

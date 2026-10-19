@@ -1,3 +1,4 @@
+import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
@@ -380,6 +381,8 @@ export class LineExpenseActionService {
     const response = error.getResponse();
     const code = typeof response === 'object' && response ? String((response as any).code ?? (response as any).message ?? error.message) : String(response);
     const en = language === 'en';
+    if (error.getStatus() === 404) return { reply: REIMBURSEMENT_DRAFT_CHANGED[language],
+      webPath: `/companies/${ctx.companyId}/reimbursements`, webLabel: en ? 'Open claims' : 'เปิดรายการใบเบิก' };
     let reply = en ? 'Review the claim details before submitting.' : 'ตรวจข้อมูลใบเบิกให้ครบก่อนส่งอนุมัติค่ะ';
     let webLabel = en ? 'Open claim' : 'เปิดใบเบิก';
     let webPath = `/companies/${ctx.companyId}/reimbursements/${id}`;
@@ -849,6 +852,7 @@ export class LineExpenseActionService {
       if (!permission) return { status: 'blocked', reply: language === 'en' ? 'Ask the owner or an authorized user to perform this action.' : PERMISSION[applied.preview.action] };
       if (applied.applied.revision) {
         const current = await this.read(ctx, applied.expenseId, applied.preview.action, applied.voucher).catch(() => null);
+        if (!current && this.isClaim(applied.preview.action)) return { status: 'blocked', reply: REIMBURSEMENT_DRAFT_CHANGED[language] };
         if (!current || current.updatedAt.toISOString() !== applied.applied.revision || applied.applied.digest && current.digest !== applied.applied.digest) return { status: 'blocked', reply: language === 'en' ? 'The record changed; please request a new card.' : EXPENSE_ACTION_CHANGED };
       }
       if (control.action === 'expense_action_next') {
@@ -1009,6 +1013,7 @@ export class LineExpenseActionService {
   }
   private refusal(error: unknown, action: ExpenseAction, approvers?: string[], language: LineReplyLanguage = 'th'): string {
     if (!(error instanceof HttpException)) throw error;
+    if (this.isClaim(action) && error.getStatus() === 404) return REIMBURSEMENT_DRAFT_CHANGED[language];
     const response = error.getResponse(), code = typeof response === 'object' ? String((response as any).code ?? error.message) : response;
     if (language === 'en') {
       if (code === 'feature_not_enabled') return 'Your package does not include this feature.';

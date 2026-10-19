@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "04a8067e31f5c2f0349fb871d976386f4db0ea93",
-  "checkoutBranch": "claude/line-claim-submit-landing-20261019",
+  "sourceRevision": "d66d44754f83ba8bbe691e0553b136c5ced79935",
+  "checkoutBranch": "claude/line-actions-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -37,7 +37,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "17d857c942eb032c58562900246d2709e178f07a2ffcb21c9548aaf227409917"
+      "sha256": "48ccd46551b3072424421f5debcfe0bdbfa117afd29772bda02df6c9abd4d638"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-reimbursement-draft.service.ts",
-      "sha256": "6753f156a8ef0737bd077013e00c69a1a43cea1533f364a8bcd025ec3995ddf5"
+      "sha256": "efe9e3162cfb44fea06b0358ab444ea0c1d26fd9b5fa67e3a9ab5816f80d31cb"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-team-action.service.ts",
@@ -137,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "0ebc753d16e659ecc2832b563f2cab3a6e28fb0433f3f4ed14e56fe7153bd86e"
+      "sha256": "2d691d41baaf79f189536aa3b9f0554691f0b1e1f4487eff7499d63b66ea9f55"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T13:55:35.432Z",
-  "manifestDigest": "bb0c1fe6698b6157818bfda881e68d15375299b2c98031caee7e182611f641ea"
+  "generatedAt": "2026-10-19T15:02:30.307Z",
+  "manifestDigest": "f0de4119338fd731a07a32eb7cf3701dfa19b6d11c3976bd8d85d53717a4f524"
 }

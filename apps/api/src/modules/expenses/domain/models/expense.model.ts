@@ -11,6 +11,7 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
+  hasRetainedSubstituteReceiptEvidence?: boolean;
   latestInputVatDecision?: import('@watchdog-bms/contracts').ExpenseSummary['latestInputVatDecision'];
   /** Whether the right is relevant for this document date and VAT amount; presentation only. */
   inputVatRightVisible?: boolean;

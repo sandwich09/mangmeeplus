@@ -353,6 +353,93 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.ok(await db.attachmentObject.findUnique({ where: { id: file.id } }));
   });
 
+  it('deletes a draft started in LINE, leaving its applied action STALE with the audit kept (UAT 2026-10-19)', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const draft = await createDraft('line draft');
+    const membership = await db.companyMembership.findFirstOrThrow({ where: { companyId, userId: `${TAG}-user` } });
+    const action = await db.reimbursementDraftAction.create({ data: {
+      companyId, actorUserId: `${TAG}-user`, membershipId: membership.id, messagingChannelId: 'line-channel', channel: 'line', channelKind: 'USER',
+      chatKeyHash: 'a'.repeat(64), ownerEpoch: 0, taskId: randomUUID(), actionOrdinal: 1, intentKeyHash: 'b'.repeat(64), operation: 'CREATE',
+      status: 'APPLIED', requestId: draft.id, resultJson: { requestId: draft.id }, appliedAt: new Date(), appliedRequestUpdatedAt: draft.updatedAt,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    } });
+    await repos[0]!.deleteNeverSentDraftAtomic({ companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt,
+      actorUserId: `${TAG}-user`, canPrepareOthers: false, scopes: {}, onDeleted: async () => undefined });
+    assert.equal(await db.reimbursementRequest.count({ where: { id: draft.id } }), 0);
+    const kept = await db.reimbursementDraftAction.findUniqueOrThrow({ where: { id: action.id } });
+    assert.equal(kept.status, 'STALE');
+    assert.equal(kept.requestId, null);
+    assert.deepEqual(kept.resultJson, { requestId: draft.id });
+  });
+
+  it('LINE-ACT delete vs LINE confirmation of an UPDATE preview has one winner and no deadlock', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const membership = await db.companyMembership.findFirstOrThrow({ where: { companyId, userId: `${TAG}-user` } });
+    const policy = await db.reimbursementPolicy.findFirst({ where: { companyId, branchId: null }, orderBy: { createdAt: 'asc' } });
+    for (const deleteWins of [true, false]) {
+      const draft = await createDraft(`update preview race ${deleteWins}`);
+      const owner = { companyId, actorUserId: draft.requesterUserId, membershipId: membership.id,
+        channel: 'line' as const, channelKind: 'USER' as const, messagingChannelId: 'line-channel', chatKeyHash: 'a'.repeat(64), ownerEpoch: 0 };
+      const reason = 'updated through the LINE preview';
+      const command = { schemaVersion: 1, operation: 'UPDATE', requestId: draft.id, expectedRequestUpdatedAt: draft.updatedAt.toISOString(),
+        requesterUserId: draft.requesterUserId, requesterDisplayNameSnapshot: 'Race User', branchId, reason, currency: 'THB',
+        receiptRequirementStatus: (policy?.requireReceipt ?? true) ? 'REQUIRED' : 'WAIVED_BY_POLICY',
+        header: { amount: '100.0000', categoryKey: 'travel', incurredDate: '2026-08-03T00:00:00.000Z' },
+        lines: [{ lineNo: 1, incurredDate: '2026-08-03T00:00:00.000Z', description: reason, categoryKey: 'travel', amount: '100.0000' }],
+        policyProof: { currency: policy?.currency ?? 'THB', requireReceipt: policy?.requireReceipt ?? true, allowMissingReceiptWithReason: policy?.allowMissingReceiptWithReason ?? false }, invalidateSignatures: false };
+      const previewId = randomUUID(), expiresAt = new Date(Date.now() + 3_600_000);
+      const snapshot = { requesterUserId: draft.requesterUserId, requesterDisplayName: 'Race User', branchId, currency: 'THB',
+        reason, amount: command.header.amount, categoryKey: 'travel', incurredDate: command.header.incurredDate,
+        receiptRequirementStatus: command.receiptRequirementStatus, status: 'DRAFT', signatureImpact: 'NONE',
+        lines: command.lines.map(line => ({ ...line, lineRef: 'line-1' })) };
+      const previewJson = { schemaVersion: 1, actionId: previewId, previewRevision: 1, operation: 'UPDATE',
+        expiresAt: expiresAt.toISOString(), expectedRequestUpdatedAt: draft.updatedAt.toISOString(),
+        before: { ...snapshot, reason: draft.reason }, after: snapshot, diff: [{ fieldPath: 'reason', before: draft.reason, after: reason }],
+        warnings: [], confirmationDigest: 'e'.repeat(64) };
+      const action = await db.reimbursementDraftAction.create({ data: { id: previewId, ...owner, taskId: randomUUID(), actionOrdinal: 1,
+        intentKeyHash: (deleteWins ? 'c' : 'd').repeat(64), operation: 'UPDATE', status: 'PREVIEW', requestId: draft.id,
+        expectedRequestUpdatedAt: draft.updatedAt, previewRevision: 1, confirmationDigest: 'e'.repeat(64), previewDeliveryId: 'delivered',
+        commandJson: command, previewJson, expiresAt } });
+      const deleting = new PrismaReimbursementRepository({ client: clients[0]! } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+      const applying = new PrismaReimbursementRepository({ client: clients[1]! } as any, new PrismaDocumentSequenceRepository({ client: clients[1]! } as any));
+      // Only recipient authentication is fixed; owner matching, locks, version checks and writes are real.
+      (applying as any).draftActionOwnerCurrent = async () => true;
+      let held!: () => void, release!: () => void;
+      const locked = new Promise<void>(resolve => { held = resolve; }), go = new Promise<void>(resolve => { release = resolve; });
+      const first = deleteWins ? deleting : applying;
+      const key = deleteWins ? 'lockRequest' : 'lockDraftAction';
+      const lock = (first as any)[key].bind(first);
+      (first as any)[key] = async (...args: any[]) => { await lock(...args); held(); await go; };
+      const remove = () => deleting.deleteNeverSentDraftAtomic({ companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt,
+        actorUserId: draft.requesterUserId, canPrepareOthers: false, scopes: {}, onDeleted: async tx => {
+          await new PrismaAuditRepository({ client: db } as any).log({ companyId, actorUserId: draft.requesterUserId,
+            action: 'reimbursement.request.delete_draft', targetType: 'reimbursement_request', targetId: draft.id,
+            requestId: `${TAG}-update-preview-delete`, result: 'SUCCESS', riskLevel: 'MEDIUM' } as any, tx);
+        } });
+      const confirm = () => applying.applyDraftActionAtomic({ owner, actionId: action.id, previewRevision: 1,
+        confirmationDigest: 'e'.repeat(64), requestId: draft.id, traceRequestId: `${TAG}-update-preview-confirm`, now: new Date() });
+      const winner = deleteWins ? remove() : confirm();
+      await locked;
+      const loser = deleteWins ? confirm() : remove();
+      // Let the opposite transaction reach its conflicting lock while the winner is held.
+      await new Promise(resolve => setTimeout(resolve, 100)); release();
+      const results = await Promise.allSettled([winner, loser]);
+      for (const result of results) if (result.status === 'rejected') assert.doesNotMatch(String(result.reason), /deadlock|40P01|P2010/i);
+      assert.equal(results[0]!.status, 'fulfilled');
+      const remaining = await db.reimbursementRequest.findUnique({ where: { id: draft.id } });
+      if (deleteWins) {
+        assert.equal(remaining, null);
+        assert.equal((results[1] as PromiseFulfilledResult<any>).value.kind, 'stale');
+      } else {
+        assert.equal((results[0] as PromiseFulfilledResult<any>).value.kind, 'applied');
+        assert.equal(remaining?.reason, reason);
+        assert.equal(errorCode((results[1] as PromiseRejectedResult).reason), 'reimbursement_draft_changed');
+      }
+    }
+  });
+
   it('serializes draft deletion against submission so exactly one command commits', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const draft = await createDraft('delete vs submit');

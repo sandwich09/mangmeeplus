@@ -24,6 +24,7 @@ describe('LineReimbursementDraftService', () => {
     let confirmed = 0;
     const drafts = {
       markLineDelivered: async () => false,
+      get: async () => ({ status: 'preview' }),
       confirm: async () => { confirmed += 1; return { status: 'applied', receipt: {} }; },
     } as any;
     const service = new LineReimbursementDraftService(drafts);
