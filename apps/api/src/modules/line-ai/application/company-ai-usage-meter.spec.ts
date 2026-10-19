@@ -2248,3 +2248,52 @@ describe('owner no-charge rule on SHARED', () => {
     assert.equal(Object.values(aggregate)[0], 347);
   });
 });
+
+
+it('budget info logs follow committed holds and settlements without user text or signing secrets', async t => {
+  const { reserveAiBudgetStep, settleAiBudgetStep } = await import('./company-ai-budget-reservation');
+  const { splitPrisma } = await import('./company-ai-budget-prisma.fixture');
+  const { priceRenderedAiInvocationV2 } = await import('./ai-model-pricing');
+  const logs: any[] = [];
+  const info = t.mock.method(Logger.prototype, 'log', (value: any) => logs.push(value));
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const priced = priceRenderedAiInvocationV2({ version: 'test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+    usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, 4096, 2048)!;
+  for (const failed of [false, true]) for (const overrun of [false, true]) {
+    const fixture = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 });
+    const input = { companyId: 'co', monthKey: '2026-10', bucket: 'CHAT' as const, stepKind: 'provider-v2', attemptKey: 'opaque-attempt', ordinal: 0,
+      sourceRoute: 'line-ai-v2', modelId, thbPerUsd: 33, thbPerUsdSource: 'pinned-grant' };
+    const start = logs.length;
+    const outcome = await reserveAiBudgetStep(fixture.prisma, config, input, { ...priced, maxCalls: 3, authorizeAndClaim: async () => true,
+      snapshot: { ...priced.snapshot, profileId: 'line-intake-text/2', estimatorVersion: 'utf8-split-prefix-v4', grantSignature: 'never-log-this-secret' } });
+    assert.equal(outcome.ok, true); if (!outcome.ok) throw new Error('reserve failed');
+    assert.deepEqual(logs[start], { msg: 'ai.budget.reserved', companyId: 'co', reservationId: outcome.reservation.id,
+      profileId: 'line-intake-text/2', usageTag: null, estimatorVersion: 'utf8-split-prefix-v4', inputTokenBound: 4096, outputBound: 2048, holdSatang: priced.upperBoundSatang });
+    const entry = { tag: 'line.intake-route', modelId, ok: !failed, inputTokens: overrun ? 100000 : 1000, outputTokens: 100,
+      cacheReadInputTokens: 20, cacheWriteInputTokens: 30, durationMs: 1, usageBasis: 'PROVIDER_REPORTED' as const };
+    const settle = { invocationKey: outcome.reservation.invocationKey, meta: { sourceRoute: 'line-ai-v2' }, entry };
+    assert.equal(await settleAiBudgetStep(fixture.prisma, settle), 'settled');
+    const hold = fixture.reservations.get(outcome.reservation.id), evidence = hold.evidenceJson;
+    assert.deepEqual(logs.at(-1), { msg: 'ai.budget.settled', reservationId: hold.id, usageTag: entry.tag, settledSatang: fixture.events.get(settle.invocationKey).costSatang,
+      holdSatang: hold.upperBoundSatang, inputTokens: entry.inputTokens, outputTokens: entry.outputTokens,
+      cacheReadInputTokens: 20, cacheWriteInputTokens: 30, overrun: !failed && overrun,
+      customerChargedSatang: evidence.customerChargedSatang, companyAbsorbedSatang: evidence.companyAbsorbedSatang });
+    assert.equal(logs.length, start + 2);
+    assert.equal(await settleAiBudgetStep(fixture.prisma, settle), 'duplicate');
+    assert.equal((await reserveAiBudgetStep(fixture.prisma, config, input, { ...priced, maxCalls: 3, authorizeAndClaim: async () => true })).ok, false);
+    assert.equal(logs.length, start + 2, 'replays produce no second money log');
+    assert.doesNotMatch(JSON.stringify(logs), /never-log-this-secret|ownerToken|prompt|messageText|grantSignature/u);
+  }
+  const rolledBack = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 });
+  rolledBack.prisma.client.$transaction = async () => { throw new Error('rollback'); };
+  const start = logs.length;
+  assert.equal(await settleAiBudgetStep(rolledBack.prisma, { invocationKey: 'unknown', meta: { sourceRoute: 'line-ai-v2' }, entry: usage() }), 'failed');
+  assert.equal(logs.length, start);
+  const loggingFailure = splitPrisma({ total: 10000, chat: 5000, ocr: 5000 });
+  info.mock.mockImplementation(() => { throw new Error('logger unavailable'); });
+  const reserved = await reserveAiBudgetStep(loggingFailure.prisma, config, { companyId: 'co', monthKey: '2026-10', bucket: 'CHAT',
+    stepKind: 'receipt-ocr', attemptKey: 'opaque', ordinal: 0, sourceRoute: 'line-ai-v2', modelId, thbPerUsd: 33, thbPerUsdSource: 'stored' });
+  assert.equal(reserved.ok, true); if (!reserved.ok) throw new Error('reservation failed');
+  assert.equal(await settleAiBudgetStep(loggingFailure.prisma, { invocationKey: reserved.reservation.invocationKey,
+    meta: { sourceRoute: 'line-ai-v2' }, entry: usage({ modelId }) }), 'settled-anomaly');
+});

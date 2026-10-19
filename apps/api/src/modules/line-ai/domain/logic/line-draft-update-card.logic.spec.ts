@@ -294,10 +294,27 @@ describe('edit command on the locked design (context 4)', () => {
   });
 });
 
-it('the claim reply calls a rejected claim returned for correction without changing its message shape', async () => {
+it('the claim result shows returned for correction on a locked row card', async () => {
   const { buildReimbursementDraftMessages } = await import('./line-reimbursement-draft-card.logic');
   const messages = buildReimbursementDraftMessages({ status: 'applied', receipt: {
     requestNo: 'RB-202610-00001', amount: '120.00', currency: 'THB', currentState: 'REJECTED',
   } } as any, 'https://app.example.com', 'co-1');
-  assert.deepEqual(messages, [{ type: 'text', text: 'บันทึกร่างใบเบิกแล้ว\nเลขที่ใบเบิก: RB-202610-00001\nยอด: 120.00 บาท\nสถานะปัจจุบัน: ถูกส่งกลับให้แก้\nยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้' }]);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]!.type, 'flex');
+  assert.deepEqual(readLineSystemCard(messages[0]!).rows, [['เลขที่ใบเบิก', ':', 'RB-202610-00001'], ['สถานะ', ':', 'ถูกส่งกลับให้แก้'], ['ยอดรวม', ':', '120.00 บาท']]);
+});
+
+
+it('expense edit preview uses locked fact rows and the same signed controls in Thai and English', () => {
+  for (const language of ['th', 'en'] as const) {
+    const message = buildDraftUpdatePreviewCard(preview, 'https://app.example.com', language) as any;
+    assert.equal(isLineSystemCard(message), true);
+    assert.deepEqual(lineFlexBodyProblems(message.contents), []);
+    assert.ok(readLineSystemCard(message).rows.length >= 5);
+    for (const action of readLineSystemCard(message).actions) {
+      const data = new URLSearchParams(action.data);
+      assert.equal(data.get('previewId'), preview.previewId);
+      assert.ok(['draft-update-confirm', 'draft-update-cancel'].includes(data.get('action')!));
+    }
+  }
 });

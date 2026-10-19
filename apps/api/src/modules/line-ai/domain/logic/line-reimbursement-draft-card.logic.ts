@@ -3,8 +3,10 @@ import type { ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import type { LineReimbursementDraftResult, LineReimbursementDraftPreview, LineReimbursementDraftSnapshot } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { normalizeReimbursementAmount } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
-import { lineChoiceQuickReply } from './line-business-card.logic';
-import { splitLineDeliveryText } from './line-delivery-plan.logic';
+import { asCompleteLineCard, buildLineSystemTextCardMessage, lineChoiceQuickReply } from './line-business-card.logic';
+import { drawLineSystemCard } from './line-system-card-limits.logic';
+import type { LineSystemCardRow } from './line-system-card.logic';
+import { lineMessagePreview } from './line-message-preview.logic';
 import { formatThaiDate } from './line-draft-update-card.logic';
 
 type ClaimSnapshot = LineReimbursementDraftSnapshot;
@@ -80,51 +82,68 @@ function changeText(before: ClaimSnapshot, after: ClaimSnapshot, diff: LineReimb
   return [...out];
 }
 
-function lineText(line: ClaimLine, currency: string): string {
-  const source = sourceText(line);
-  return [`รายการ ${line.lineNo}: ${line.description}`, `วันที่: ${formatThaiDate(line.incurredDate)} | หมวด: ${categoryText(line)}`,
-    `วัตถุประสงค์: ${line.purpose ?? '-'}`, `จำนวน: ${formatClaimMoney(line.amount, currency)}`,
-    `หลักฐาน: ${evidenceText(line)}${source ? ` | บิลต้นทาง: ${source}` : ''}`].join('\n');
+/** Facts from the authorized snapshot, never empty form fields. */
+function previewRows(claim: ClaimSnapshot, language: LineReplyLanguage): LineSystemCardRow[] {
+  const en = language === 'en', rows: LineSystemCardRow[] = [];
+  const add = (label: string, value: string | undefined) => {
+    if (value?.trim() && value.trim() !== '-') rows.push({ label, value: value.trim() });
+  };
+  add(en ? 'Requester' : 'ผู้เบิก', claim.requesterDisplayName);
+  add(en ? 'Branch' : 'สาขา', /^(head office|สำนักงานใหญ่)$/iu.test(claim.branchName?.trim() ?? '')
+    ? en ? 'Head Office' : 'สำนักงานใหญ่' : claim.branchName);
+  add(en ? 'Title' : 'หัวเรื่อง', claim.title);
+  add(en ? 'Reason' : 'เหตุผล', claim.reason);
+  add(en ? 'Missing receipt reason' : 'เหตุผลที่ไม่มีใบเสร็จ', claim.missingReceiptReason);
+  for (const line of claim.lines) {
+    const source = line.sourceExpenseSnapshot as Partial<ReimbursementSourceSnapshot> | undefined;
+    const bill = [source?.certificate?.documentNumber ?? source?.seller?.documentNumber, source?.seller?.name].filter(Boolean).join(' · ');
+    const evidence = line.linkedExpenseId ? `${en ? 'Receipt from expense' : 'ใบเสร็จจากบิล'}${bill ? ` ${bill}` : ''}`
+      : line.attachmentId ? en ? 'Attachment included' : 'มีไฟล์แนบ' : en ? 'Receipt missing' : 'ยังไม่มีใบเสร็จ';
+    const facts: LineSystemCardRow[] = [
+      { label: en ? 'Item' : 'รายการ', value: line.description },
+      { label: en ? 'Date' : 'วันที่', value: lineDisplayDate(line.incurredDate, language) },
+      ...(line.categoryLabel?.trim() ? [{ label: en ? 'Category' : 'หมวด', value: lineUiLabel(line.categoryLabel, language) }] : []),
+      ...(line.purpose?.trim() ? [{ label: en ? 'Purpose' : 'วัตถุประสงค์', value: line.purpose }] : []),
+      { label: en ? 'Evidence' : 'หลักฐาน', value: evidence },
+    ];
+    if (claim.lines.length === 1) rows.push(...facts.filter(row => row.value.trim() && row.value.trim() !== '-'));
+    else rows.push({ label: `${en ? 'Item' : 'รายการ'} ${line.lineNo}`, value: [line.description, formatClaimMoney(line.amount, claim.currency, language),
+      ...facts.slice(1).map(row => `${row.label}: ${row.value}`)].join(' · ') });
+  }
+  rows.push({ label: en ? 'Total' : 'ยอดรวม', value: formatClaimMoney(claim.amount, claim.currency, language), total: true });
+  return rows;
 }
 
-/** Every resulting line, the complete change list and warnings, from the authorized domain snapshots — in words. */
+function previewNotes(preview: LineReimbursementDraftPreview, language: LineReplyLanguage): string[] {
+  const en = language === 'en';
+  return [en ? 'Not saved yet.' : 'ยังไม่ได้บันทึกค่ะ',
+    ...(preview.warnings.includes('missing_receipt') ? [en ? 'Attach the missing receipts before submitting.' : 'แนบใบเสร็จที่ขาดก่อนส่งอนุมัติค่ะ'] : []),
+    ...(preview.after.signatureImpact === 'INVALIDATED' ? [en ? 'Existing signatures will be invalidated; sign again on the web.' : 'ลายเซ็นเดิมจะใช้ไม่ได้หลังแก้ไข ต้องเซ็นใหม่ในเว็บค่ะ'] : []),
+    ...preview.warnings.filter(warning => !Object.hasOwn(WARNING_TEXT, warning)).map(() => en ? 'Review the details and evidence before saving.' : 'ตรวจรายละเอียดและหลักฐานก่อนบันทึกค่ะ')];
+}
+
+function previewChanges(preview: LineReimbursementDraftPreview, language: LineReplyLanguage): LineSystemCardRow[] {
+  if (!preview.before) return [];
+  if (language === 'th') return changeText(preview.before, preview.after, preview.diff).map(text => {
+    const colon = text.indexOf(':');
+    return colon < 0 ? { label: 'แก้ไข', value: text } : { label: text.slice(0, colon), value: text.slice(colon + 1).trim().replace(/(^| → )-(?= → |$)/gu, '$1ยังไม่ระบุ') };
+  });
+  const before = previewRows(preview.before, language), after = previewRows(preview.after, language);
+  return [...new Set([...before, ...after].map(row => row.label))].flatMap(label => {
+    const old = before.find(row => row.label === label)?.value, value = after.find(row => row.label === label)?.value;
+    return old === value ? [] : [{ label: `Change: ${label}`, value: `${old ?? 'Not provided'} → ${value ?? 'Removed'}` }];
+  });
+}
+
 export function reimbursementPreviewText(preview: LineReimbursementDraftPreview, language: LineReplyLanguage = 'th'): string {
-  const after = preview.after;
-  if (language === 'en') {
-    const snapshot = (claim: ClaimSnapshot) => [
-      `Requester: ${claim.requesterDisplayName}`, ...(claim.branchName ? [`Branch: ${claim.branchName}`] : []),
-      `Status: ${lineUiLabel(CLAIM_STATE_TEXT[claim.status] ?? '', language)}`, `Title: ${claim.title ?? '-'}`,
-      `Reason: ${claim.reason}`, `Missing receipt reason: ${claim.missingReceiptReason ?? '-'}`,
-      ...claim.lines.flatMap(line => [`Item: ${line.description}`, `Date: ${lineDisplayDate(line.incurredDate, language)}`,
-        `Category: ${lineUiLabel(line.categoryLabel?.trim() || 'Not selected', language)}`, `Purpose: ${line.purpose ?? '-'}`,
-        `Amount: ${formatClaimMoney(line.amount, claim.currency, language)}`,
-        `Evidence: ${line.attachmentId ? 'Attachment included' : line.linkedExpenseId ? 'Receipt from source expense' : 'No attachment'}`,
-        ...(line.linkedExpenseId ? (() => { const source = line.sourceExpenseSnapshot as Partial<ReimbursementSourceSnapshot> | undefined;
-          return [`Source expense: ${[source?.certificate?.documentNumber ?? source?.seller?.documentNumber, source?.seller?.name,
-            source?.expenseDate ? lineDisplayDate(source.expenseDate, language) : undefined].filter(Boolean).join(' · ') || 'Selected expense'}`]; })() : [])]),
-      `Calculated total: ${formatClaimMoney(claim.amount, claim.currency, language)}`,
-      `Evidence status: ${{ REQUIRED: 'Some receipts are missing', ATTACHED: 'All items have evidence',
-        MISSING_WITH_REASON: 'Missing receipts have reasons recorded', WAIVED_BY_POLICY: 'Receipts waived by company policy' }[claim.receiptRequirementStatus] ?? 'Review evidence on the web'}`,
-    ];
-    return [preview.operation === 'CREATE' ? 'Review new claim draft; it has not been saved.' : 'Review claim draft changes; they have not been saved.',
-      ...(preview.before ? ['Before:', ...snapshot(preview.before), 'After:'] : []), ...snapshot(after),
-      ...preview.warnings.flatMap(warning => warning === 'signatures_invalidated' ? [] : [warning === 'missing_receipt'
-        ? 'You can save a draft; attach the missing receipts before submitting.' : 'Review the details and evidence before confirming.']),
-      ...(after.signatureImpact === 'INVALIDATED' ? ['Existing signatures will be invalidated; sign again on the web.'] : []),
-      'This button saves a draft only; it does not submit, approve, pay or post it.'].join('\n');
-  }
-  return [preview.operation === 'CREATE' ? 'ตรวจร่างใบเบิกใหม่ (ยังไม่ได้บันทึก)' : 'ตรวจการแก้ร่างใบเบิก (ยังไม่ได้บันทึก)',
-    `ผู้เบิก: ${after.requesterDisplayName}`, ...(after.branchName ? [`สาขา: ${after.branchName}`] : []), `สถานะหลังบันทึก: ${CLAIM_STATE_TEXT[after.status]}`,
-    `หัวเรื่อง: ${after.title ?? '-'}`, `เหตุผล: ${after.reason}`, `เหตุผลที่ไม่มีใบเสร็จ: ${after.missingReceiptReason ?? '-'}`,
-    ...after.lines.map(line => lineText(line, after.currency)),
-    `ยอดรวมที่ระบบคำนวณ: ${formatClaimMoney(after.amount, after.currency)}`, `สถานะหลักฐาน: ${receiptText(after.receiptRequirementStatus)}`,
-    ...(preview.before ? ['การเปลี่ยนแปลงทั้งหมด:', ...changeText(preview.before, after, preview.diff)] : []),
-    ...new Set(preview.warnings.flatMap(warning => {
-      const text = Object.hasOwn(WARNING_TEXT, warning) ? WARNING_TEXT[warning] : 'กรุณาตรวจรายละเอียดและหลักฐานก่อนยืนยัน';
-      return text ? [`ข้อควรตรวจ: ${text}`] : [];
-    })),
-    ...(after.signatureImpact === 'INVALIDATED' ? ['ลายเซ็นเดิมจะใช้ไม่ได้หลังแก้ไข ต้องลงนามใหม่ในเว็บ'] : []),
-    'ปุ่มนี้บันทึกเป็นร่างเท่านั้น ยังไม่ได้ยื่น อนุมัติ จ่ายเงิน หรือลงบัญชี'].join('\n');
+  return [language === 'en' ? 'Claim draft' : 'ร่างใบเบิก', ...previewRows(preview.after, language).map(row => `${row.label}: ${row.value}`),
+    ...previewChanges(preview, language).map(row => `${row.label}: ${row.value}`), ...previewNotes(preview, language)].join('\n');
+}
+
+function claimTextCard(message: LineReplyMessage, webBaseUrl: string, language: LineReplyLanguage): LineReplyMessage {
+  if (message.type !== 'text') return message;
+  const card = buildLineSystemTextCardMessage({ text: message.text, header: { lines: language === 'en' ? ['Claim', 'Claim draft'] : ['ใบเบิก', 'ร่างใบเบิก'] }, webBaseUrl, companyId: '', language });
+  return card ? asCompleteLineCard({ ...card, ...(message.quickReply ? { quickReply: message.quickReply } : {}) }) : message;
 }
 
 /** One plain sentence per blocked code. The code stays on the result for logs and audit, never in the reply. */
@@ -152,38 +171,37 @@ function blockedText(result: Extract<LineReimbursementDraftResult, { status: 'bl
   return BLOCKED_TEXT[result.errorCode] ?? 'ยังทำรายการใบเบิกนี้ไม่ได้ กรุณาลองใหม่อีกครั้ง หรือทำรายการในเว็บค่ะ';
 }
 
-export function buildReimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string, language: LineReplyLanguage = 'th'): LineReplyMessage[] {
+function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBaseUrl: string, companyId: string, permissions: readonly string[] = [], submitToken?: string, language: LineReplyLanguage = 'th'): LineReplyMessage[] {
   const en = language === 'en';
   if (result.status === 'preview') {
     const preview = result.preview, text = reimbursementPreviewText(preview, language);
-    const parts = splitLineDeliveryText(text, 4500);
     const web = `${webBaseUrl.replace(/\/$/u, '')}/companies/${encodeURIComponent(companyId)}/reimbursements/draft-actions/${encodeURIComponent(preview.actionId)}`;
-    if (parts.length > 4) return [{ type: 'text', text: en ? `Please review and confirm this long draft on the web.\n${web}` : `รายละเอียดร่างยาวเกินปุ่มยืนยัน LINE กรุณาตรวจทั้งหมดและยืนยันในเว็บ\n${web}` }];
     const data = (action: string) => new URLSearchParams({ action, actionId: preview.actionId,
       previewRevision: String(preview.previewRevision), confirmationDigest: preview.confirmationDigest, ...(en ? { language } : {}) }).toString();
-    return [...parts.map(part => ({ type: 'text' as const, text: part.text })), { type: 'flex', altText: (en ? 'Confirm claim draft' : 'ยืนยันบันทึกร่างใบเบิก'), canonicalText: (en ? 'Save this claim as a draft, or cancel this proposal.' : 'ยืนยันบันทึกเฉพาะร่างใบเบิก หรือยกเลิกร่างที่กำลังตรวจ'),
-      contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text: (en ? 'Review all details before confirming.' : 'ตรวจครบแล้วจึงยืนยัน'), wrap: true }] },
-        footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', action: { type: 'postback', label: (en ? 'Save draft' : 'บันทึกเป็นร่าง'), data: data('reimbursement_draft_confirm') } },
-          { type: 'button', action: { type: 'postback', label: (en ? 'Cancel proposal' : 'ยกเลิกร่างนี้'), data: data('reimbursement_draft_cancel') } },
-        ] } } }];
+    const contents = drawLineSystemCard({ mascot: 'general', header: { lines: en ? [preview.operation === 'UPDATE' ? 'Claim changes' : 'Claim', 'Claim draft'] : [preview.operation === 'UPDATE' ? 'แก้ไขใบเบิก' : 'ใบเบิก', 'ร่างใบเบิก'] },
+      rows: [...previewRows(preview.after, language), ...previewChanges(preview, language)], notes: previewNotes(preview, language),
+      choice: [
+        { type: 'postback', label: en ? 'Save draft' : 'บันทึกร่าง', data: data('reimbursement_draft_confirm') },
+        { type: 'postback', label: en ? 'Cancel draft' : 'ยกเลิกร่างนี้', data: data('reimbursement_draft_cancel') },
+      ],
+    }, webBaseUrl);
+    if (contents) return [asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(text, 400), canonicalText: text, contents })];
+    // LINE has a 30 KB bubble limit; never offer a save control beside an incomplete preview.
+    const handoff = en ? 'Review and save this draft on the web; its details exceed the LINE card limits.' : 'รายละเอียดร่างเกินขนาดการ์ด LINE เปิดตรวจและบันทึกในเว็บได้ค่ะ';
+    const handoffCard = drawLineSystemCard({ mascot: 'general', header: { lines: en ? ['Claim draft', 'Review on the web'] : ['ร่างใบเบิก', 'ตรวจร่างในเว็บ'] },
+      text: handoff, button: { icon: 'file', action: { type: 'uri', label: en ? 'Open claim draft' : 'เปิดร่างใบเบิก', uri: web } } }, webBaseUrl);
+    return handoffCard ? [asCompleteLineCard({ type: 'flex', altText: handoff, canonicalText: `${handoff}\n${web}`, contents: handoffCard })]
+      : [{ type: 'text', text: `${handoff}\n${web}` }];
   }
   if (result.status === 'applied') {
-    // The claim's own document number once it has one; its internal id is never printed.
     const r = result.receipt, requestNo = typeof r.requestNo === 'string' ? r.requestNo : '';
-    if (en) return [{ type: 'text', text: ['Claim draft saved.', ...(requestNo ? [`Claim number: ${requestNo}`] : []),
-      `Total: ${formatClaimMoney(r.amount, r.currency, language)}`,
-      `Current status: ${lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'Check the latest status on the web', language)}`,
-      'This action did not submit, approve or pay the claim.'].join('\n'),
+    const status = lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? (en ? 'Check status on the web' : 'ตรวจสถานะในเว็บ'), language);
+    return [{ type: 'text', text: [en ? 'Claim draft saved.' : 'บันทึกร่างใบเบิกแล้วค่ะ',
+      ...(requestNo ? [`${en ? 'Claim number' : 'เลขที่ใบเบิก'}: ${requestNo}`] : []),
+      `${en ? 'Status' : 'สถานะ'}: ${status}`, `${en ? 'Total' : 'ยอดรวม'}: ${formatClaimMoney(r.amount, r.currency, language)}`].join('\n'),
       ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT'
-        ? { quickReply: { items: [{ type: 'action', action: { type: 'postback', label: 'Submit for approval',
+        ? { quickReply: { items: [{ type: 'action', action: { type: 'postback', label: en ? 'Submit for approval' : 'ส่งอนุมัติ',
           data: lineControlData(new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString(), language) } }] } } : {}) }];
-    return [{ type: 'text', text: ['บันทึกร่างใบเบิกแล้ว', ...(requestNo ? [`เลขที่ใบเบิก: ${requestNo}`] : []),
-      `ยอด: ${formatClaimMoney(r.amount, r.currency)}`,
-      `สถานะปัจจุบัน: ${CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'ตรวจสถานะล่าสุดได้ในเว็บ'}`,
-      'ยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้'].join('\n'),
-      ...(submitToken && permissions.includes('reimbursement.submit') && String(r.currentState ?? r.committedState ?? 'DRAFT') === 'DRAFT' ? { quickReply: { items: [{ type: 'action' as const,
-        action: { type: 'postback' as const, label: 'ส่งอนุมัติ', data: new URLSearchParams({ action: 'expense_action_submit', token: submitToken }).toString() } }] } } : {}) }];
   }
   if (en) {
     const fieldNames: Array<[RegExp, string]> = [[/missingReceiptReason/u, 'missing receipt reason'], [/reason/u, 'claim reason'],
@@ -220,6 +238,23 @@ export function buildReimbursementDraftMessages(result: LineReimbursementDraftRe
   return [{ type: 'text', text }];
 }
 
+export function buildReimbursementDraftMessages(...args: Parameters<typeof reimbursementDraftMessages>): LineReplyMessage[] {
+  const [result, webBaseUrl, , , , language = 'th'] = args;
+  return reimbursementDraftMessages(...args).map(message => {
+    if (result.status === 'applied' && message.type === 'text') {
+      const r = result.receipt, en = language === 'en';
+      const rows = [
+        ...(typeof r.requestNo === 'string' && r.requestNo ? [{ label: en ? 'Claim number' : 'เลขที่ใบเบิก', value: r.requestNo }] : []),
+        { label: en ? 'Status' : 'สถานะ', value: lineUiLabel(CLAIM_STATE_TEXT[String(r.currentState ?? r.committedState ?? 'DRAFT')] ?? 'ตรวจสถานะล่าสุดในเว็บ', language) },
+        { label: en ? 'Total' : 'ยอดรวม', value: formatClaimMoney(r.amount, r.currency, language), total: true },
+      ];
+      const contents = drawLineSystemCard({ mascot: 'general', header: { lines: en ? ['Claim draft', 'Draft saved'] : ['ร่างใบเบิก', 'บันทึกแล้ว'] }, rows }, webBaseUrl);
+      if (contents) return asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(message.text, 400), canonicalText: message.text, contents, ...(message.quickReply ? { quickReply: message.quickReply } : {}) });
+    }
+    return claimTextCard(message, webBaseUrl, language);
+  });
+}
+
 /** NAT04 (2026-09-29): the customer reads field names, never paths such as `lineChanges.0.values.amount`.
  *  Specific names first: `missingReceiptReason` also contains `reason`. */
 const MISSING_FIELD_LABELS: Array<[RegExp, string]> = [[/missingReceiptReason/u, 'เหตุผลที่ไม่มีใบเสร็จ'], [/reason/u, 'เหตุผลการเบิก'],
@@ -236,7 +271,7 @@ function reimbursementMissingText(fieldPaths: string[]): string {
 
 /** Bounded server choices keep labels visible without turning them into final-mutation controls. A family the
  *  server already chose is not asked again, and bills are shown only when they can actually be claimed. */
-export function buildReimbursementOptionsMessages(options: { choices: Array<{ choiceId?: string; kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
+function reimbursementOptionsMessages(options: { choices: Array<{ choiceId?: string; kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
   pages: Partial<Record<string, { hasMore: boolean }>>; selected?: { branchChoiceId?: string; requesterChoiceId?: string; targetRef?: string };
   control?: { actionId: string; revision: string }; awaitingPhoto?: boolean;
   nonEditableTargets?: Array<{ label: string; webPath: string; canReopen: boolean; pending: boolean }>; reasonQuestion?: string; receiptNotice?: string; collection?: { lineChosen: boolean; receiptChosen: boolean; categoryChosen: boolean } }, webBaseUrl = '', language: LineReplyLanguage = 'th'): LineReplyMessage[] {
@@ -310,7 +345,11 @@ function reimbursementOptionsEnglish(options: Parameters<typeof buildReimburseme
   if (!options.collection?.categoryChosen) {
     const categories = options.choices.filter(entry => entry.kind === 'CATEGORY');
     if (categories.length) return [{ type: 'text', text: 'Please choose the expense category.', quickReply: { items: categories.slice(0, 12).map(entry => ({ type: 'action',
-      action: choice(lineUiLabel(entry.label, 'en'), entry.choiceId ?? '', `Choose expense category: ${entry.label}`) })) } }];
+      action: choice(lineUiLabel(entry.label, 'en'), entry.choiceId ?? '', `Choose expense category: ${lineUiLabel(entry.label, 'en')}`) })) } }];
   }
   return options.reasonQuestion ? [{ type: 'text', text: options.reasonQuestion === 'ไม่มีใบเสร็จเพราะอะไรคะ' ? 'Why is the receipt missing?' : 'What was the business purpose of this claim?' }] : [];
+}
+
+export function buildReimbursementOptionsMessages(...args: Parameters<typeof reimbursementOptionsMessages>): LineReplyMessage[] {
+  return reimbursementOptionsMessages(...args).map(message => claimTextCard(message, args[1] ?? '', args[2] ?? 'th'));
 }
