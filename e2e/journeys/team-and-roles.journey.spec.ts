@@ -7,6 +7,7 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
+import { watchScreenFit } from '../harness/screen-fit';
 import { json, unique } from '../harness/e2e-utils';
 import { QA_ACCOUNTS } from '../harness/roles';
 import { AFTER_PRESS, FIRST_SIGHT, cardWith, expectInSight, pressMenu } from './journey-kit';
@@ -194,6 +195,7 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
   });
 
   const context = await browser.newContext({ baseURL: urls.web, viewport: { width: 390, height: 844 } });
+  const finishScreenFit = watchScreenFit(context, info);
   const member = await context.newPage();
   member.setDefaultTimeout(30_000);
   try {
@@ -371,6 +373,6 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
       expect(employee!.roles[0]!.name).toBe(roleName);
     });
   } finally {
-    await context.close();
+    try { await finishScreenFit(); } finally { await context.close(); }
   }
 });

@@ -29,6 +29,14 @@ if (css) require.extensions['.css'] = css; else delete require.extensions['.css'
 const h = React.createElement;
 const noop = () => {};
 
+test('DELETE-HISTORY detail retains a voided payment and offers cancellation instead of deletion', () => {
+  const page = harness({ detail: expense({ status: 'DRAFT', hasDeletionBlockingHistory: true,
+    payments: [{ ...payment, status: 'VOIDED' }] }) }, [...OWNER, 'expense.delete', 'expense.reject']);
+  const html = page.render();
+  assert.doesNotMatch(html, />ลบรายจ่าย</);
+  assert.match(html, />ยกเลิกรายการ</);
+});
+
 test('LINE-ACT offers cancellation instead of deletion for a draft retained by a superseded certificate', () => {
   const page = harness({ detail: expense({ status: 'DRAFT', hasRetainedSubstituteReceiptEvidence: true }) }, [...OWNER, 'expense.delete', 'expense.reject']);
   const html = page.render();

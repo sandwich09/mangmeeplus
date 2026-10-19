@@ -1,4 +1,4 @@
-import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
+import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate, canVoidExpenseFinancialState } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, expenseEvidenceAssessment, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -336,6 +336,7 @@ export function substituteReceiptPreparationHref(companyId: string, expenseId: s
 }
 
 export type ExpenseSummary = {
+  hasDeletionBlockingHistory?: import('@watchdog-bms/contracts').ExpenseSummary['hasDeletionBlockingHistory'];
   hasRetainedSubstituteReceiptEvidence?: import('@watchdog-bms/contracts').ExpenseSummary['hasRetainedSubstituteReceiptEvidence'];
   cancelledCertificate?: import('@watchdog-bms/contracts').ExpenseSummary['cancelledCertificate'];
   /**
@@ -1654,12 +1655,18 @@ export function receiptDraftFillPayload(detail: ExpenseDetail, missing: ReceiptD
 }
 
 export function canDeleteExpense(
-  expense: Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'paymentStatus' | 'createdByUserId' | 'hasRetainedSubstituteReceiptEvidence'> & { sourceReimbursementRequestId?: string | null },
+  expense: Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'paymentStatus' | 'createdByUserId' | 'hasRetainedSubstituteReceiptEvidence' | 'hasDeletionBlockingHistory'> & { sourceReimbursementRequestId?: string | null; payments?: readonly unknown[] },
   userId: string,
   caps: Pick<ExpenseCapabilities, 'canDelete' | 'canUpdate'>,
 ): boolean {
-  return !expense.hasRetainedSubstituteReceiptEvidence && !isClaimExpenseRecord(expense) && isExpenseDeletableState(expense)
+  return !expense.hasDeletionBlockingHistory && !expense.payments?.length && !expense.hasRetainedSubstituteReceiptEvidence && !isClaimExpenseRecord(expense) && isExpenseDeletableState(expense)
     && (caps.canDelete || (caps.canUpdate && expense.createdByUserId === userId));
+}
+
+export function canCancelExpenseInsteadOfDelete(expense: ExpenseSummary, caps: Pick<ExpenseCapabilities, 'canReject' | 'canVoid'>): boolean {
+  return Boolean(expense.hasDeletionBlockingHistory) && !isClaimExpenseRecord(expense)
+    && ((caps.canVoid && canVoidExpenseFinancialState(expense))
+      || (caps.canReject && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)));
 }
 
 /** One list badge names the next action; payment details stay on the expense. */
@@ -1751,6 +1758,19 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
   } | null | undefined;
   const code = candidate?.code ?? candidate?.details?.code;
   const blocker = candidate?.details?.blocker;
+  if (code === 'EXPENSE_HAS_LINKED_DATA' && blocker === 'PAYMENT') return locale === 'th'
+    ? status === 'REJECTED' || status === 'VOIDED'
+      ? 'รายจ่ายนี้ยกเลิกแล้ว ต้องเก็บประวัติการจ่ายไว้ เลือกรายการอื่นได้'
+      : 'ลบรายจ่ายนี้ไม่ได้ เพราะเคยบันทึกการจ่ายไว้ ใช้ยกเลิกรายการแทน'
+    : 'This expense has payment history. Cancel the expense instead, or choose another expense if already cancelled.';
+  if (code === 'EXPENSE_HAS_LINKED_DATA' && blocker === 'DISBURSEMENT_VOUCHER') return locale === 'th'
+    ? 'ลบรายจ่ายนี้ไม่ได้ เพราะเคยอยู่ในใบเตรียมจ่าย เปิดรายจ่ายเพื่อตรวจใบที่เกี่ยวข้อง'
+    : 'This expense has voucher history. Open the expense to review its linked documents.';
+  if (code === 'EXPENSE_HAS_LINKED_DATA' && blocker === 'HISTORY') return locale === 'th'
+    ? status === 'REJECTED' || status === 'VOIDED'
+      ? 'รายจ่ายนี้ยกเลิกแล้ว ต้องเก็บประวัติไว้ เลือกรายการอื่นได้'
+      : 'ลบรายจ่ายนี้ไม่ได้ เพราะมีประวัติที่ต้องเก็บไว้ ใช้ยกเลิกรายการแทน'
+    : 'This expense has retained history. Cancel the expense instead, or choose another expense if already cancelled.';
   if (code === 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED' && (status === 'REJECTED' || status === 'VOIDED')) return locale === 'th'
     ? 'รายจ่ายนี้ยกเลิกแล้ว ต้องเก็บหลักฐานใบรับรองแทนใบเสร็จไว้ เลือกรายการอื่นได้'
     : 'This expense is already cancelled and its substitute-receipt evidence must be kept. Choose another expense.';

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, mock } from 'node:test';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -22,6 +24,17 @@ it('LINE-ACT list reads retain the certificate-history deletion guard for every 
   assert.equal(query.include._count.select.substituteReceiptEvidences, true);
 });
 
+for (const relation of ['payments', 'disbursementVoucherLines'] as const) it(`DELETE-HISTORY list exposes ${relation} history without filtering cancelled rows`, async () => {
+  let query: any;
+  const repo = new PrismaExpenseRepository({ client: {
+    expenseRecord: { findMany: async (input: any) => { query = input; return [{ ...baseExpense, companyId: COMPANY_ID, vatAmount: '0', inputVatDecisions: [],
+      _count: { payments: 0, disbursementVoucherLines: 0, substituteReceiptEvidences: 0, [relation]: 1 } }]; }, count: async () => 1 },
+  } } as any);
+  const result = await repo.listExpenses({ companyId: COMPANY_ID });
+  assert.equal(result.data[0]?.hasDeletionBlockingHistory, true);
+  assert.equal(query.include._count.select[relation], true);
+});
+
 const baseExpense = {
   id: EXPENSE_ID,
   branchId: 'branch-1' as string | null,
@@ -36,7 +49,7 @@ const baseExpense = {
   createdByUserId: 'creator-1',
   sourceReimbursementRequestId: null as string | null,
   updatedAt: new Date('2026-07-29T08:00:00.000Z'),
-  _count: { lines: 3 },
+  _count: { lines: 3, payments: 0, disbursementVoucherLines: 0 },
 };
 
 const linkedModels = {
@@ -124,6 +137,7 @@ function setup(input: {
   duplicateReferencedBy?: Array<{ expenseId: string }>;
   duplicateRemaining?: Array<{ candidateExpenseId: string; status: string; resolvedByUserId: string | null }>;
   deleteCount?: number;
+  deleteError?: unknown;
   /** The reimbursement claim the expense record was built for, as the claims table holds it. */
   claim?: { id: string; requestNo: string | null; status: string };
 } = {}) {
@@ -144,6 +158,7 @@ function setup(input: {
     }),
     deleteMany: mock.fn(async () => {
       order.push('expense.delete');
+      if (input.deleteError) throw input.deleteError;
       return { count: input.deleteCount ?? 1 };
     }),
   };
@@ -209,6 +224,7 @@ function setup(input: {
     }),
   };
   const tx = {
+    $executeRaw: mock.fn(async () => 0),
     expenseRecord,
     reimbursementRequest,
     expenseDuplicateCandidate,
@@ -291,6 +307,45 @@ function exceptionResponse(error: unknown): unknown {
 }
 
 describe('DeleteExpenseUseCase', () => {
+  it('DELETE-HISTORY inventories every restrictive FK into ExpenseRecord', () => {
+    const schema = readFileSync(resolve(__dirname, '../../../../../prisma/schema.prisma'), 'utf8');
+    const restrictive = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)]
+      .filter(([, , body]) => body!.split('\n').some(line => /\bExpenseRecord\??\s+@relation\([^\n]*fields:/.test(line)
+        && !/onDelete: (?:Cascade|SetNull|SetDefault)/.test(line)))
+      .map(([, model]) => model).sort();
+    assert.deepEqual(restrictive, ['DisbursementVoucherLine', 'ExpensePayment', 'ExpenseSubstituteReceiptEvidence']);
+  });
+
+  for (const deleteError of [{ code: 'P2003' },
+    { code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '23503' } } } },
+    { cause: { originalCode: '23001' } },
+  ]) it('DELETE-HISTORY rolls a concurrent FK refusal back and responds with 409 rather than 500', async () => {
+    const harness = setup({ deleteError });
+    await assert.rejects(() => harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID), (error: any) => {
+      assert.equal(error.getStatus(), 409);
+      assert.equal(error.getResponse().code, 'EXPENSE_HAS_LINKED_DATA');
+      assert.equal(error.getResponse().blocker, 'HISTORY');
+      return true;
+    });
+    assert.equal(harness.rollbacks(), 1);
+    assert.equal(harness.auditCalls.at(-1)?.entry.result, 'DENIED');
+  });
+  for (const [relation, blocker] of [['payments', 'PAYMENT'], ['disbursementVoucherLines', 'DISBURSEMENT_VOUCHER']] as const) {
+    it(`DELETE-HISTORY refuses ${relation} history even with UNPAID and zero paid amount`, async () => {
+      const harness = setup({ expense: { ...baseExpense, _count: { ...baseExpense._count, [relation]: 1 } } });
+      await assert.rejects(() => harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.equal(error.getResponse().code, 'EXPENSE_HAS_LINKED_DATA');
+        assert.equal(error.getResponse().blocker, blocker);
+        return true;
+      });
+      assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
+      assert.equal(harness.attachmentLink.deleteMany.mock.callCount(), 0);
+      assert.deepEqual((firstCallArgs(harness.expenseRecord.findFirst) as any).select._count.select,
+        { lines: true, payments: true, disbursementVoucherLines: true });
+      assert.equal(harness.tx.$executeRaw.mock.callCount(), 1, 'shares the payment and voucher lifecycle lock');
+    });
+  }
   it('deletes a WEB_UPLOAD DRAFT with only its own lines, extraction, verification, and attachment', async () => {
     const harness = setup({
       expense: { ...baseExpense, captureSource: 'WEB_UPLOAD' },
