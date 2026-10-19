@@ -21,7 +21,7 @@ const row = { expenseId: 'a', expenseNumber: 'EXP-1', expenseDate: '2026-10-15',
   grandTotalAmount: '2000.00', netPayableAmount: '1940.00', whtAmount: '60.00', selectable: true, reasonCode: null, reservation: null };
 const payee = { payeeKey: 'payee', displayName: 'ร้าน ก' };
 const fields = { ...emptyDisbursementAccount, payeeName: 'ร้าน ก', plannedPayDate: '', plannedMethod: '', note: '', payeeConfirmed: false };
-function setup(step: number, selected = true, draftId?: string) {
+function setup(step: number, selected = true, draftId?: string, entryOpen = true, permissions = ['expense.disbursement.prepare']) {
   const mocks = [
     mock.method(supporting, 'DisbursementVoucherSupportingFiles', () => h('div', { 'data-component': 'DisbursementVoucherSupportingFiles' })),
     mock.method(navigation, 'useRouter', () => ({ push() {}, replace() {} })),
@@ -33,7 +33,7 @@ function setup(step: number, selected = true, draftId?: string) {
   const state: unknown[] = [];
   state[0] = draftId ? 'PV-1' : null; state[7] = step; state[8] = payee; state[9] = [row];
   state[10] = selected ? { a: '1940.00' } : {}; state[11] = fields; state[14] = false;
-  const view = certificateHarness(() => h(DisbursementVoucherDraftPage, { companyId: 'shop', permissions: ['expense.disbursement.prepare'], entryOpen: true, draftId }), state);
+  const view = certificateHarness(() => h(DisbursementVoucherDraftPage, { companyId: 'shop', permissions, entryOpen, draftId }), state);
   return { ...view, close: () => mocks.reverse().forEach(m => m.mock.restore()) };
 }
 test('payee tap advances directly; changing a selected payee waits for confirmation and cancel keeps the items', async () => {
@@ -160,6 +160,19 @@ test('new first step has no draft bar before both a payee and an item are select
       const html = view.render(); const available = Boolean(draftId || hasPayee && selected);
       assert.equal(html.includes('data-testid="disbursement-draft-bottom-bar"'), available);
       assert.equal(view.nodes.some(node => node.tag === 'button' && node.props.children.includes('บันทึกร่าง')), available);
+    } finally { view.close(); }
+  }
+});
+
+
+test('VOUCHER-CLOSED an existing draft explains that editing is closed and links to its list', () => {
+  for (const permissions of [['expense.disbursement.prepare', 'expense.disbursement.read'], ['expense.disbursement.read']]) {
+    const view = setup(2, true, 'saved-draft', false, permissions);
+    try {
+      const html = view.render();
+      assert.match(html, /ปิดการทำใบเตรียมจ่ายแล้ว ร่างนี้ทำต่อไม่ได้/);
+      assert.match(html, /href="\/companies\/shop\/expenses\/disbursement-vouchers"/);
+      assert.doesNotMatch(html, /หน้านี้ยังไม่ได้เปิดใช้|บันทึกร่าง|ส่งอนุมัติ/);
     } finally { view.close(); }
   }
 });

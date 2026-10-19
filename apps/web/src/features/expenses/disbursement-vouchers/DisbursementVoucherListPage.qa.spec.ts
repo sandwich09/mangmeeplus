@@ -8,12 +8,12 @@ const card = page.slice(page.indexOf('export function DisbursementVoucherCard(')
 const styles = readFileSync(new URL('./disbursement-vouchers.module.css', import.meta.url), 'utf8');
 const route = readFileSync(new URL('../../../../app/(workspace)/companies/[companyId]/expenses/disbursement-vouchers/page.tsx', import.meta.url), 'utf8');
 
-test('create uses prepare and the hidden-menu card prevents the list API call', () => {
-  assert.match(page, /const canPrepare = canPrepareDisbursementVoucher\(permissions\)/);
+test('create needs open entry while closed entry still reads old vouchers before choosing an empty state', () => {
+  assert.match(page, /const canPrepare = entryOpen && canPrepareDisbursementVoucher\(permissions\)/);
   // Creation stays in the header even for an empty list or search.
   assert.match(page, /actions=\{canPrepare \? create : undefined\}/);
-  assert.match(page, /if \(!canRead \|\| !entryOpen\) return;[\s\S]*?listDisbursementVouchers\(/);
-  assert.match(page, /if \(!entryOpen\) return \([\s\S]*?<EmptyState title=\{t\('expenses\.disbursement\.hidden'/);
+  assert.match(page, /if \(!canRead\) return;[\s\S]*?listDisbursementVouchers\(/);
+  assert.match(page, /if \(!entryOpen && !loading && !error && result && \(unfilteredCount \?\? allCount\) === 0\) return \([\s\S]*?<EmptyState title=\{t\('expenses\.disbursement\.hidden'/);
   assert.match(route, /entryOpen=\{canOpenDisbursementVoucherWeb\(session, companyId\)\}/);
   assert.doesNotMatch(route, /redirect\(|getDisbursementVoucher|listDisbursementVouchers/);
 });

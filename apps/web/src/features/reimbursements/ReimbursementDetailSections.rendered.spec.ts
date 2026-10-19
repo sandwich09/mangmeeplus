@@ -148,6 +148,7 @@ it('CLAIM-DETAIL money formatter keeps other currencies and the hub formatter al
   assert.equal(ui.formatClaimDetailMoney('650', ''), '650.00 บาท');
   assert.equal(ui.formatClaimDetailMoney('650', 'USD'), ui.formatClaimMoney('650', 'USD'));
   assert.equal(ui.formatClaimMoney('650'), '650.00 บาท');
+  assert.equal(ui.formatClaimMoney('9007199254740993.01'), '9,007,199,254,740,993.01 บาท');
   assert.doesNotMatch(read('./ReimbursementJourneyPage.tsx'), /formatClaimMoney as formatMoney/);
 });
 
@@ -164,7 +165,7 @@ it('CLAIM-DETAIL void, stale approval, payment summary and source facts never us
   Object.assign(globalThis, { document: { body: {} } });
   try {
     const voidDialog = render(h(ui.VoidPaymentDialog, { payment: { paidAmount: '95', currency: 'THB' }, onClose: noop, onConfirm: noop }));
-    const staleDialog = render(h(ui.StaleApprovalDialog, { diff: [{ key: 'amount', label: 'จำนวนเงิน', before: '฿650.00', after: '฿700.00', changed: true }],
+    const staleDialog = render(h(ui.StaleApprovalDialog, { diff: [{ key: 'amount', label: 'จำนวนเงิน', before: '650.00 บาท', after: '700.00 บาท', changed: true }],
       lines: detail.lines, currency: 'THB', onClose: noop, onConfirm: noop }));
     const payment = render(h(ui.PaymentForm, { companyId: 'shop', request: detail, onDone: noop, onCancel: noop }));
     const source = { expenseDate: '2026-10-10', currency: 'THB', seller: {}, attachments: [], totals: { netPayableAmount: '650', vatAmount: '0', whtAmount: '0' } };

@@ -54,6 +54,7 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
   await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).first().fill('12,500.00');
   await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).nth(1).fill('0');
   await expect(main.getByText('12,500.00 บาท', { exact: true })).toBeVisible();
+  await expect(main).not.toContainText('฿');
   await main.getByRole('button', { name: 'ลบรายการ', exact: true }).nth(1).click();
   await expect(main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true })).toHaveCount(1);
   await main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true }).fill(claim.amount);
@@ -94,7 +95,7 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
   const step = main.getByRole('region', { name: 'อนุมัติ' });
   await expect(step.getByText('ขั้นตอน 2 จาก 4', { exact: true })).toBeVisible();
   await expect(step.getByText(new RegExp(`^รอ .*${MANAGER}.* อนุมัติ$`))).toBeVisible();
-  await expect(main).toContainText(inOrder('ผู้เบิก', STAFF, 'เหตุผล', claim.reason, 'ยอดรวม', claim.printed.replace('฿', ''), 'บาท'));
+  await expect(main).toContainText(inOrder('ผู้เบิก', STAFF, 'เหตุผล', claim.reason, 'ยอดรวม', claim.printed));
   await expect(main.getByRole('button', { name: 'เซ็นใบเบิก', exact: true })).toHaveCount(0);
   await expect(main.getByLabel('แนบใบที่เซ็นแล้ว', { exact: true })).toHaveCount(0);
   return { number, id: idFromUrl(page) };
@@ -103,8 +104,8 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
 test('@journey a declined claim is cancelled by its owner from its own page; a second claim is approved with the account check, paid by finance and seen as paid', async ({ pageAs, api, companyId }, info) => {
   test.setTimeout(300_000);
   const today = thaiDate();
-  const first = { reason: unique('ค่าแท็กซี่ไปส่งของ'), amount: '180', printed: '฿180.00', category: 'เดินทาง', payout: 'cash' as const };
-  const second = { reason: unique('ค่าถุงใส่ของ'), amount: '95', printed: '฿95.00', category: 'วัสดุอุปกรณ์', payout: 'account' as const };
+  const first = { reason: unique('ค่าแท็กซี่ไปส่งของ'), amount: '180', printed: '180.00 บาท', category: 'เดินทาง', payout: 'cash' as const };
+  const second = { reason: unique('ค่าถุงใส่ของ'), amount: '95', printed: '95.00 บาท', category: 'วัสดุอุปกรณ์', payout: 'account' as const };
 
   await test.step('owner: create stays in the same header on all claim work tabs', async () => {
     const owner = await pageAs('OWNER');
@@ -148,7 +149,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await expect(managerMain.getByText(/^ยอดรวม [\d,]+\.\d{2} บาท$/)).toBeVisible(AFTER_PRESS);
     await expect(managerMain.getByText(/^รอคุณอนุมัติ \d+ ใบ/)).toHaveCount(0);
     const row = managerMain.locator('tr[role="link"]').filter({ hasText: declined.number });
-    await expect(row).toContainText(inOrder(first.reason, declined.number, STAFF, today, first.printed.replace('฿', ''), 'รออนุมัติ'));
+    await expect(row).toContainText(inOrder(first.reason, declined.number, STAFF, today, first.printed.replace(' บาท', ''), 'รออนุมัติ'));
     await expect(row.getByRole('link')).toHaveCount(0);
     await row.focus();
     await row.press('Enter');
@@ -181,7 +182,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await staff.getByRole('option', { name: /^ต้องแก้ไข \([1-9]\d*\)$/ }).click();
     await expect(group).toHaveText(/^ต้องแก้ไข \([1-9]\d*\)$/);
     const row = staffMain.locator('tr[role="link"]').filter({ hasText: declined.number });
-    await expect(row).toContainText(inOrder(first.reason, declined.number, STAFF, today, first.printed.replace('฿', ''), 'ส่งกลับให้แก้'));
+    await expect(row).toContainText(inOrder(first.reason, declined.number, STAFF, today, first.printed.replace(' บาท', ''), 'ส่งกลับให้แก้'));
     await expect(row.locator('.mangmee-badge')).toHaveText('ส่งกลับให้แก้');
     await expect(row).not.toContainText('ส่งกลับให้แก้: ไม่ใช่งานของร้าน');
     await expect(staffMain).not.toContainText('ปฏิเสธ');
@@ -199,7 +200,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
 
   await test.step('staff: cancels it directly from its page; back lands in the same group', async () => {
     await staffMain.getByRole('region', { name: 'อนุมัติ' }).getByRole('button', { name: 'ยกเลิกใบเบิกนี้', exact: true }).click();
-    const dialog = staff.getByRole('dialog', { name: `ยกเลิกใบเบิก ${declined.number} ${first.printed.replace('฿', '')} บาท` });
+    const dialog = staff.getByRole('dialog', { name: `ยกเลิกใบเบิก ${declined.number} ${first.printed}` });
     await expect(dialog.getByText('ยกเลิกแล้วนำกลับมาใช้ไม่ได้', { exact: true })).toBeVisible();
     const cancel = dialog.getByRole('button', { name: 'ยกเลิกใบเบิก', exact: true });
     // Off until a reason is typed, and the dialog says how long it must be.
@@ -235,7 +236,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
   await test.step('manager: ตรวจบัญชีและอนุมัติ, the page asks for the account check before it approves', async () => {
     await openClaims(manager);
     const row = managerMain.locator('tr[role="link"]').filter({ hasText: paid.number });
-    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace('฿', ''), 'รออนุมัติ'), AFTER_PRESS);
+    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace(' บาท', ''), 'รออนุมัติ'), AFTER_PRESS);
     await row.getByRole('button', { name: 'ตรวจบัญชีและอนุมัติ', exact: true }).click();
     await expect(managerMain.getByRole('heading', { level: 1, name: `ใบเบิก ${paid.number}`, exact: true })).toBeVisible(FIRST_SIGHT);
     const step = managerMain.getByRole('region', { name: 'อนุมัติ' });
@@ -263,7 +264,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await expect(financeMain.getByText(/^ยอดรวม [\d,]+\.\d{2} บาท$/)).toBeVisible(AFTER_PRESS);
     await expect(financeMain.getByText(/^รอจ่าย \d+ ใบ/)).toHaveCount(0);
     const row = financeMain.locator('tr[role="link"]').filter({ hasText: paid.number });
-    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace('฿', ''), 'รอจ่าย'));
+    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace(' บาท', ''), 'รอจ่าย'));
     await expect(row).toHaveAccessibleName(`เปิดใบเบิก ${second.reason} ${paid.number}`);
     await expect(financeMain.getByText('ใบเบิกในแท็บนี้', { exact: true })).toBeVisible();
     await row.getByRole('button', { name: 'จ่ายเงิน', exact: true }).click();
@@ -271,7 +272,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     const dialog = finance.getByRole('dialog', { name: `บันทึกจ่าย ${paid.number}` });
     await expect(dialog).toContainText(inOrder('โอนเข้าบัญชี', 'ผู้เบิก', STAFF, 'ชื่อบัญชี', STAFF, 'บัญชีรับเงินคืน', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 7890'));
     await expect(dialog.getByText(new RegExp(`^ตรวจบัญชีแล้วโดย ${MANAGER} เมื่อ ${today.replace(/\./g, '\\.')}`))).toBeVisible();
-    await expect(dialog.getByText(inOrder(`จ่ายให้ ${STAFF}`, second.printed.replace('฿', ''), 'บาท'))).toBeVisible();
+    await expect(dialog.getByText(inOrder(`จ่ายให้ ${STAFF}`, second.printed))).toBeVisible();
     await expect(dialog.getByRole('combobox', { name: 'วิธีจ่าย', exact: true })).toHaveText('โอนเงิน');
     await expect(dialog.getByText(/^โอนเงินต้องแนบหลักฐานการจ่าย/)).toBeVisible();
     const slip = picture('สลิปโอนคืนค่าถุง.png');
@@ -284,18 +285,18 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     const paymentUrl = `**/api/v1/companies/${companyId}/reimbursements/${paid.id}/payments`;
     await finance.route(paymentUrl, async route => { await paymentHeld; await route.continue(); });
     try {
-      await dialog.getByRole('button', { name: `บันทึกจ่าย ${second.printed.replace('฿', '')} บาท`, exact: true }).click();
+      await dialog.getByRole('button', { name: `บันทึกจ่าย ${second.printed}`, exact: true }).click();
       await expect(dialog.getByRole('button', { name: 'ยกเลิก', exact: true })).toBeDisabled();
       await expect(dialog.getByRole('button', { name: 'ยกเลิก', exact: true })).toHaveAttribute('aria-busy', 'true');
       await finance.keyboard.press('Escape');
       await expect(dialog).toBeVisible();
     } finally { releasePayment(); }
-    await expect(toast(finance, `บันทึกจ่าย ${paid.number} ${second.printed.replace('฿', '')} บาท แล้ว`)).toBeVisible(AFTER_PRESS);
+    await expect(toast(finance, `บันทึกจ่าย ${paid.number} ${second.printed} แล้ว`)).toBeVisible(AFTER_PRESS);
     await finance.unroute(paymentUrl);
     await expect(financeMain.locator('tr[role="link"]').filter({ hasText: paid.number })).toHaveCount(0, AFTER_PRESS);
 
     await financeMain.getByRole('button', { name: /^ใบเบิกทั้งหมด\s*\d+$/ }).click();
-    await expect(financeMain.locator('tr[role="link"]').filter({ hasText: paid.number })).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace('฿', ''), 'รอเซ็นใบเบิก'), AFTER_PRESS);
+    await expect(financeMain.locator('tr[role="link"]').filter({ hasText: paid.number })).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace(' บาท', ''), 'รอเซ็นใบเบิก'), AFTER_PRESS);
   });
 
   await test.step('staff: sees it under จ่ายแล้ว with the payment on its page', async () => {
@@ -305,7 +306,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await group.click();
     await staff.getByRole('option', { name: /^จ่ายแล้ว \([1-9]\d*\)$/ }).click();
     const row = staffMain.locator('tr[role="link"]').filter({ hasText: paid.number });
-    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace('฿', ''), 'รอเซ็นใบเบิก'));
+    await expect(row).toContainText(inOrder(second.reason, paid.number, STAFF, today, second.printed.replace(' บาท', ''), 'รอเซ็นใบเบิก'));
     await expect(row.getByRole('link')).toHaveCount(0);
     await row.click();
     await expect(staffMain.getByRole('heading', { level: 1, name: `ใบเบิก ${paid.number}`, exact: true })).toBeVisible(FIRST_SIGHT);
@@ -319,7 +320,7 @@ test('@journey a declined claim is cancelled by its owner from its own page; a s
     await expect(staffMain.getByRole('heading', { name: 'ลายเซ็นและใบเบิกที่เซ็นแล้ว', exact: true })).toHaveCount(0);
     await expect(staffMain.getByRole('heading', { name: 'ลายเซ็นในใบเบิก', exact: true })).toHaveCount(0);
     await expect(staffMain.getByRole('heading', { name: /^ใบเบิกที่เซ็นแล้ว/ })).toHaveCount(0);
-    await expect(payments).toContainText(inOrder(second.printed.replace('฿', ''), 'บาท', 'บันทึกแล้ว', 'วิธีจ่าย', 'โอนเงิน', 'วันที่จ่าย', today));
+    await expect(payments).toContainText(inOrder(second.printed, 'บันทึกแล้ว', 'วิธีจ่าย', 'โอนเงิน', 'วันที่จ่าย', today));
     await expect(payments).toContainText(inOrder('จ่ายโดย', QA_ACCOUNTS.FINANCE.displayName, 'หลักฐาน', 'มีหลักฐานการจ่ายแนบ 1 ไฟล์'));
     await expect(staffMain).toContainText(`ตรวจบัญชีแล้วโดย ${MANAGER}`);
     const work = staffMain.locator('section[aria-labelledby="journey-step-title"]');

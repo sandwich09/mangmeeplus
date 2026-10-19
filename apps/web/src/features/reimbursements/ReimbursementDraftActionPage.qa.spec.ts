@@ -46,7 +46,7 @@ describe('ReimbursementDraftActionView', () => {
     const html = render(ready({ status: 'preview', preview }));
     const texts = visible(html);
     for (const text of ['ตรวจร่างใบเบิกจาก LINE', 'บันทึกเป็นร่างเท่านั้น ยังไม่ส่งอนุมัติ', 'ข้อมูลก่อนแก้ไข', 'ข้อมูลหลังแก้ไข', 'สำนักงานใหญ่',
-      'ค่าแท็กซี่', 'ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', '27 ก.ย. 2569', '฿1,234.50', '฿1,614.50', '฿100.00',
+      'ค่าแท็กซี่', 'ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', '27 ก.ย. 2569', '1,234.50 บาท', '1,614.50 บาท', '100.00 บาท',
       'วัสดุอุปกรณ์ · มีไฟล์แนบ · บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569', 'ยังขาดใบเสร็จบางรายการ', 'มีหลักฐานครบทุกรายการแล้ว',
       // Each thing to mind is one shared warning notice (its mark is part of its text), in the web's own word for sending a claim.
       '⚠ การแก้ไขนี้จะลบลายเซ็นเดิม และต้องเซ็นใหม่ภายหลัง', '⚠ บันทึกเป็นร่างได้ แต่ต้องแนบใบเสร็จให้ครบก่อนส่งอนุมัติ', 'ยกเลิกร่างนี้', 'ยืนยันบันทึกเป็นร่าง']) assert.ok(texts.includes(text), text);
@@ -83,7 +83,7 @@ describe('ReimbursementDraftActionView', () => {
     for (const gone of ['สิ่งที่จะเปลี่ยน', 'ข้อมูลก่อนแก้ไข', 'ข้อมูลหลังแก้ไข']) assert.equal(fresh.includes(gone), false, gone);
     // An edit says each changed value once, as it was and as it will be; the lines are in the cards.
     const edited = visible(render(ready({ status: 'preview', preview: { ...preview, diff: [{ fieldPath: 'reason' }, { fieldPath: 'amount' }, { fieldPath: 'lines' }] } })));
-    for (const text of ['สิ่งที่จะเปลี่ยน', 'เดิม: เดิม', 'ใหม่: ไปพบลูกค้า', 'เดิม: ฿100.00', 'ใหม่: ฿1,614.50', 'ยังไม่มีรายการ']) assert.ok(edited.includes(text), text);
+    for (const text of ['สิ่งที่จะเปลี่ยน', 'เดิม: เดิม', 'ใหม่: ไปพบลูกค้า', 'เดิม: 100.00 บาท', 'ใหม่: 1,614.50 บาท', 'ยังไม่มีรายการ']) assert.ok(edited.includes(text), text);
     // After the save the page says what is still to do, only while the claim is a draft.
     assert.ok(visible(render(ready({ status: 'applied', receipt: { ...receipt, currentState: 'DRAFT' } }))).includes('ยังไม่ได้ส่งอนุมัติ เปิดใบเบิกเพื่อตรวจและส่งอนุมัติ'));
     assert.equal(visible(render(ready({ status: 'applied', receipt: { ...receipt, currentState: 'PENDING_APPROVAL' } }))).some((text) => text.includes('ยังไม่ได้ส่งอนุมัติ')), false);
@@ -107,18 +107,18 @@ describe('ReimbursementDraftActionView', () => {
     assert.match(html, /<div class="[^"]*\bsm:hidden\b[^"]*" data-testid="draft-line-cards">/u);
     assert.match(html, /<div class="mangmee-table-scroll mt-4 hidden sm:block" data-testid="draft-lines-table"><table /u);
     const cards = visible(html.slice(html.indexOf('data-testid="draft-line-cards"'), html.indexOf('data-testid="draft-lines-table"')));
-    for (const text of ['ค่าแท็กซี่', '฿1,234.50', '27 ก.ย. 2569', 'ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', 'ปากกาและแฟ้ม', '฿380.00', '26 ก.ย. 2569',
+    for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569', 'ยังไม่ได้เลือกหมวด · ยังไม่มีไฟล์แนบ', 'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569',
       'วัสดุอุปกรณ์ · มีไฟล์แนบ · บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']) assert.ok(cards.includes(text), text);
   });
 
   it('renders terminal and unknown recovery states without offering a second create', () => {
     const applied = render(ready({ status: 'applied', receipt: { ...receipt, currentState: 'DRAFT' } }));
-    assert.ok(visible(applied).includes('ยอด ฿1,614.50 · สถานะปัจจุบัน ร่าง'));
+    assert.ok(visible(applied).includes('ยอด 1,614.50 บาท · สถานะปัจจุบัน ร่าง'));
     assert.match(applied, new RegExp(`href="/companies/company-1/reimbursements/${ids.request}"`));
     assert.doesNotMatch(applied, /สร้าง.*ใหม่/);
     // Once submitted, the claim is named by its document number; its id stays in the link only.
     const submitted = visible(render(ready({ status: 'applied', receipt: { ...receipt, currentState: 'PENDING_APPROVAL', requestNo: 'RB-202609-00007' } })));
-    assert.ok(submitted.includes('เลขที่ใบเบิก RB-202609-00007 · ยอด ฿1,614.50 · สถานะปัจจุบัน รออนุมัติ'));
+    assert.ok(submitted.includes('เลขที่ใบเบิก RB-202609-00007 · ยอด 1,614.50 บาท · สถานะปัจจุบัน รออนุมัติ'));
     const unknown = render({ kind: 'unknown', notice: 'result_unconfirmed' });
     assert.match(unknown, /ตรวจสถานะจากระบบ/);
     assert.match(unknown, /ระบบจะตรวจจากร่างเดิมโดยไม่สร้างใบเบิกซ้ำ/);
@@ -127,8 +127,8 @@ describe('ReimbursementDraftActionView', () => {
 
   it('preserves large decimal amounts, rounds half up at the satang and does not turn an unknown amount into zero', () => {
     const withTotal = (amount: unknown) => render(ready({ status: 'preview', preview: { ...preview, after: { ...preview.after, amount } } }));
-    assert.match(withTotal('9007199254740993.01'), /฿9,007,199,254,740,993\.01/);
-    assert.match(withTotal('1234.5650'), /฿1,234\.57/);
+    assert.match(withTotal('9007199254740993.01'), /9,007,199,254,740,993\.01 บาท/);
+    assert.match(withTotal('1234.5650'), /1,234\.57 บาท/);
     assert.match(withTotal(null), /ยังตรวจสอบจำนวนเงินไม่ได้/);
     assert.doesNotMatch(withTotal('120.00'), /missing_receipt|signatures_invalidated|claimSignatures/);
   });
