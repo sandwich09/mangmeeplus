@@ -781,7 +781,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
       await deleteExpense(companyId, expenseId);
       onRefresh();
       router.push(`/companies/${companyId}/expenses`);
-    } catch (e) { setError(expenseDeleteErrorMessage(e, locale)); setDeleting(false); setShowDelete(false); }
+    } catch (e) { setError(expenseDeleteErrorMessage(e, locale, detail?.status)); setDeleting(false); setShowDelete(false); }
   };
 
   // Manually-entered expenses start with no file; confirmation needs a receipt in

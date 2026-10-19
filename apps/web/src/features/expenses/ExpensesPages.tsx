@@ -2726,6 +2726,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteRetentionLocked, setDeleteRetentionLocked] = useState(false);
   // EXP-UX-01: `?highlight=<expenseId>` is written by ส่งให้ตรวจ. Always the id, never "the newest
   // row" — with two people submitting at once, "newest" points at somebody else's document.
   const highlightId = searchParams.get('highlight') ?? '';
@@ -2897,7 +2898,10 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
       setConfirmId(null);
       await load();
       toast.success(confirmLabel ? `ลบรายจ่าย ${confirmLabel} แล้ว` : 'ลบรายจ่ายแล้ว');
-    } catch (e) { setDeleteError(expenseDeleteErrorMessage(e, locale)); }
+    } catch (e) {
+      setDeleteError(expenseDeleteErrorMessage(e, locale, confirmTarget.status));
+      setDeleteRetentionLocked(apiErrorCode(e) === 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED');
+    }
     finally { setDeleting(false); }
   };
 
@@ -2944,7 +2948,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
     : activeChip !== 'all' || sourceView
       ? <EmptyState title="ไม่มีรายการในกลุ่มนี้" />
       : <EmptyState title="ยังไม่มีรายจ่ายในช่วงที่เลือก" action={caps.canUploadReceipts ? <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link> : undefined} />;
-  const openDelete = (id: string) => { setDeleteError(null); setConfirmId(id); };
+  const openDelete = (id: string) => { setDeleteError(null); setDeleteRetentionLocked(false); setConfirmId(id); };
   const statusBadges = (e: ExpenseSummary) => {
     const status = expenseListStatus(e);
     return <><MangmeeBadge tone={status.tone}>{status.label}</MangmeeBadge>{!isExpenseCancelled(e.status) && showListedInputVatRight(e) && e.inputVatClaimStatus === 'NEEDS_REVIEW' && <MangmeeBadge tone="amber">ภาษีซื้อรอตรวจสอบ</MangmeeBadge>}</>;
@@ -3123,12 +3127,14 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
         footer={(
           <>
             <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ไม่ลบ</button>
-            <button type="button" className={dangerClass} disabled={deleting} aria-busy={Boolean(deleting)} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ…' : 'ลบรายจ่าย'}</button>
+            {deleteRetentionLocked
+              ? <button type="button" className={btnClass} onClick={() => { setConfirmId(null); if (confirmTarget) onSelect(confirmTarget.id); }}>{confirmTarget?.status === 'REJECTED' || confirmTarget?.status === 'VOIDED' ? 'เปิดรายจ่าย' : 'เปิดรายจ่ายเพื่อยกเลิก'}</button>
+              : <button type="button" className={dangerClass} disabled={deleting} aria-busy={Boolean(deleting)} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ…' : 'ลบรายจ่าย'}</button>}
           </>
         )}
       >
         <div className="space-y-3">
-          <p className="text-sm text-gray-600">ลบแล้วกู้คืนไม่ได้</p>
+          {!deleteRetentionLocked && <p className="text-sm text-gray-600">ลบแล้วกู้คืนไม่ได้</p>}
           {deleteError && <ErrorBanner message={deleteError} />}
         </div>
       </Modal>

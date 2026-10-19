@@ -1078,6 +1078,14 @@ describe('summarizeExpenseKpis', () => {
 });
 
 describe('expenseDeleteErrorMessage', () => {
+  it('LINE-ACT names the retained expense and its cancellation route while file errors keep their own wording', () => {
+    assert.equal(expenseDeleteErrorMessage({ code: 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED' }, 'th'),
+      'ลบรายจ่ายนี้ไม่ได้ เพราะเคยออกใบรับรองแทนใบเสร็จไว้ ใช้ยกเลิกรายการแทน');
+    assert.equal(canDeleteExpense({ status: 'DRAFT', grandTotalAmount: '0', paymentStatus: 'UNPAID', createdByUserId: 'user', hasRetainedSubstituteReceiptEvidence: true } as any,
+      'user', { canDelete: true, canUpdate: true }), false);
+    assert.match(expenseDeleteErrorMessage({ code: 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED' }, 'th', 'REJECTED'), /ยกเลิกแล้ว/);
+    assert.doesNotMatch(expenseDeleteErrorMessage({ code: 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED' }, 'th', 'REJECTED'), /ใช้ยกเลิกรายการแทน/);
+  });
   const blockers = [
     ['PAYMENT', 'ข้อมูลการจ่ายเงิน', 'recorded payment'],
     ['TAX_EVENT', 'เหตุการณ์ภาษี', 'tax event'],

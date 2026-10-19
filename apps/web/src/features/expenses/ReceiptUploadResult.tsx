@@ -61,7 +61,7 @@ export function ReceiptUploadResult({ companyId, expenseIds, userId, caps, onSen
     if (busy || !await confirm({ title: `ลบร่างใบเสร็จ ${expenseDeleteTargetLabel(detail) ?? ''}`.trim(), message: 'รูปและข้อมูลของรายการนี้จะถูกลบ', confirmLabel: 'ลบร่างใบเสร็จ', cancelLabel: 'ไม่ลบ', variant: 'danger' })) return;
     setBusy(true); setError(null);
     try { await deleteExpense(companyId, detail.id); setDeletedIds(ids => [...ids, detail.id]); setDetails(rows => rows!.filter(row => row.id !== detail.id)); }
-    catch (cause) { setError(expenseDeleteErrorMessage(cause, locale)); }
+    catch (cause) { setError(expenseDeleteErrorMessage(cause, locale, detail.status)); }
     finally { setBusy(false); }
   };
   return <div className="mangmee-flat space-y-4 [overflow-anchor:none]">

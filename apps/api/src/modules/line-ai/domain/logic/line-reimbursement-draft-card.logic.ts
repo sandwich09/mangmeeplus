@@ -9,6 +9,11 @@ import type { LineSystemCardRow } from './line-system-card.logic';
 import { lineMessagePreview } from './line-message-preview.logic';
 import { formatThaiDate } from './line-draft-update-card.logic';
 
+export const REIMBURSEMENT_DRAFT_CHANGED = {
+  th: 'ข้อมูลหรือสถานะใบเบิกเปลี่ยนแล้ว กรุณาตรวจร่างฉบับปัจจุบันใหม่',
+  en: 'The claim has changed; please review its current draft again.',
+};
+
 type ClaimSnapshot = LineReimbursementDraftSnapshot;
 type ClaimLine = ClaimSnapshot['lines'][number];
 
@@ -224,7 +229,7 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
       : result.status === 'needs_target' ? 'Please choose the claim to edit.'
         : result.status === 'cancelled' ? 'Draft collection or confirmation cancelled; any saved claim is kept.'
           : result.status === 'expired' ? 'This proposal has expired; please send a new request.'
-            : result.status === 'stale' ? 'The claim has changed; please review its current draft again.'
+            : result.status === 'stale' ? REIMBURSEMENT_DRAFT_CHANGED.en
               : result.status === 'result_unknown' ? 'The save result is unconfirmed; check the existing claim on the web before creating another.'
                 : blocked[result.errorCode] ?? 'This claim action is unavailable; please try again or use the web app.';
     return [{ type: 'text', text }];
@@ -233,7 +238,7 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
     : result.status === 'needs_target' ? 'กรุณาเลือกใบเบิกที่ต้องการแก้ ระบบยังไม่ได้เลือกใบล่าสุดให้อัตโนมัติ'
       : result.status === 'cancelled' ? 'ยกเลิกการเก็บข้อมูลหรือการยืนยันร่างนี้แล้ว ไม่ได้ยกเลิกใบเบิกที่บันทึกไว้'
         : result.status === 'expired' ? 'ร่างที่รอยืนยันหมดอายุแล้ว กรุณาระบุคำขอใหม่'
-          : result.status === 'stale' ? 'ข้อมูลหรือสถานะใบเบิกเปลี่ยนแล้ว กรุณาตรวจร่างฉบับปัจจุบันใหม่'
+          : result.status === 'stale' ? REIMBURSEMENT_DRAFT_CHANGED.th
             : result.status === 'result_unknown' ? 'ยังตรวจสอบผลบันทึกไม่ได้ กรุณาตรวจใบเดิมในเว็บ ยังไม่ควรสร้างซ้ำ'
               : blockedText(result);
   return [{ type: 'text', text }];

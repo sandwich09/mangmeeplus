@@ -625,7 +625,7 @@ export class PrismaExpenseCaptureRepository {
         select: { linkedExpenseId: true },
       }),
       db.expenseSubstituteReceiptEvidence.findMany({
-        where: { companyId, expenseId: { in: ids }, status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] } },
+        where: { companyId, expenseId: { in: ids } },
         select: { expenseId: true },
       }),
     ]);
@@ -653,8 +653,9 @@ export class PrismaExpenseCaptureRepository {
    * `ExpenseLine`, `ReceiptExtraction` and the duplicate-candidate rows cascade with the record.
    */
   async deleteDerivedSource(db: CaptureDb, companyId: string, expenseId: string, expectedUpdatedAt: Date): Promise<boolean> {
+    if (await db.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId }, select: { id: true } })) return false;
     await db.attachmentLink.deleteMany({ where: { companyId, targetType: 'expense.record', targetId: expenseId } });
-    const deleted = await db.expenseRecord.deleteMany({ where: { companyId, id: expenseId, updatedAt: expectedUpdatedAt } });
+    const deleted = await db.expenseRecord.deleteMany({ where: { companyId, id: expenseId, updatedAt: expectedUpdatedAt, substituteReceiptEvidences: { none: {} } } });
     return deleted.count === 1;
   }
 
