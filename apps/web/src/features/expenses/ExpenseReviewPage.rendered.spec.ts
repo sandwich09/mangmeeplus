@@ -28,6 +28,13 @@ if (svg) require.extensions['.svg'] = svg; else delete require.extensions['.svg'
 if (css) require.extensions['.css'] = css; else delete require.extensions['.css'];
 const h = React.createElement;
 const noop = () => {};
+
+test('LINE-ACT offers cancellation instead of deletion for a draft retained by a superseded certificate', () => {
+  const page = harness({ detail: expense({ status: 'DRAFT', hasRetainedSubstituteReceiptEvidence: true }) }, [...OWNER, 'expense.delete', 'expense.reject']);
+  const html = page.render();
+  assert.doesNotMatch(html, />ลบรายจ่าย</);
+  assert.match(html, />ยกเลิกรายการ</);
+});
 const stub = mock.method.bind(mock);
 const OWNER = ['expense.read', 'expense.review', 'expense.confirm', 'expense.payment.record', 'expense.void'];
 const allowed = { canReopen: true, reopenBlockers: [], canReject: true, rejectBlocker: null, canRecordPayment: true, recordPaymentBlocker: null, payments: [{ id: 'p1', canCancel: true, cancelBlocker: null }] };

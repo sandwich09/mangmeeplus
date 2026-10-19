@@ -279,9 +279,9 @@ export class LineReimbursementDraftUseCase {
         ['APPLIED', 'CANCELLED', 'EXPIRED', 'STALE'].includes(action.status))) return { status: 'blocked', errorCode: 'forbidden' };
     if (action.status === 'APPLIED') return this.replay(input.ctx, input.owner, action.id);
     if (!await this.canOperate(input.ctx, action)) return { status: 'blocked', errorCode: 'forbidden' };
+    if (action.status === 'STALE') return { status: 'stale', actionId: action.id };
     if (action.status === 'CANCELLED') return { status: 'cancelled', actionId: action.id };
     if (action.status === 'EXPIRED' || action.expiresAt <= now) return { status: 'expired', actionId: action.id };
-    if (action.status === 'STALE') return { status: 'stale', actionId: action.id };
     if (action.status === 'COLLECTING') {
       const fields = (action.commandJson as { fieldPaths?: unknown } | undefined)?.fieldPaths;
       return { status: 'needs_fields', actionId: action.id, fieldPaths: Array.isArray(fields) ? fields.filter((item): item is string => typeof item === 'string') : [], actionRevision: action.previewRevision };
@@ -326,6 +326,7 @@ export class LineReimbursementDraftUseCase {
     }
     const action = await this.repo.findDraftAction(input.owner.companyId, input.actionId);
     if (!action || !this.ownerMatches(action, input.owner) || !this.contextMatches(input.ctx, input.owner)) return { status: 'blocked', errorCode: 'forbidden' };
+    if (action.status === 'STALE') return this.get(input);
     if (action.status === 'APPLIED') return this.replay(input.ctx, input.owner, action.id);
     if (!await this.canOperate(input.ctx, action)) return { status: 'blocked', errorCode: 'forbidden' };
     if (!this.config.lineAiReimbursementDraftWriteEnabled) return { status: 'blocked', errorCode: 'feature_disabled' };
@@ -377,6 +378,7 @@ export class LineReimbursementDraftUseCase {
 
   async replay(ctx: RequestContext, owner: ReimbursementDraftActionOwner, actionId: string): Promise<LineReimbursementDraftResult> {
     const action = await this.repo.findDraftAction(owner.companyId, actionId);
+    if (action?.status === 'STALE') return this.get({ ctx, owner, actionId });
     if (!action || action.status !== 'APPLIED' || !this.ownerMatches(action, owner) || !this.contextMatches(ctx, owner)
       || !await this.repo.isDraftActionOwnerCurrent(owner, this.config.lineMessagingChannelId, true)
       || !await this.canReadApplied(ctx, action)) return { status: 'blocked', errorCode: 'forbidden' };
@@ -560,7 +562,7 @@ export class LineReimbursementDraftUseCase {
 
   private async canOperate(ctx: RequestContext, action: ReimbursementDraftActionRecord): Promise<boolean> {
     if (action.operation === 'CREATE') return ctx.permissions.includes('reimbursement.create');
-    if (action.status === 'COLLECTING' && !action.requestId) {
+    if (['COLLECTING', 'STALE'].includes(action.status) && !action.requestId) {
       return ctx.permissions.some(permission => ['reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission));
     }
     const request = action.requestId ? await this.repo.findRequestById(ctx.companyId, action.requestId) : null;

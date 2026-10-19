@@ -359,7 +359,7 @@ export class LineReimbursementDraftAdapterService {
     const actionOwner = this.actionOwner(owner, authority.owner.epoch);
     let active = await this.drafts.active(authority.ctx, actionOwner);
     if (authority.continuedActionId && active?.id !== authority.continuedActionId)
-      return this.denied('reimbursement.draft.get_options', 'UNKNOWN_REIMBURSEMENT_ACTION');
+      return this.staleAction('reimbursement.draft.get_options', authority.ctx, authority.owner, authority.continuedActionId ?? input.actionId);
     let key: LineReimbursementActionKey;
     if (active) {
       if (authority.retainedTaskRef && active.taskId !== stableUuid(['reimbursement-draft-task', owner, authority.retainedTaskRef]))
@@ -392,7 +392,7 @@ export class LineReimbursementDraftAdapterService {
       key = { taskId, actionId: stableUuid(['reimbursement-draft-action', taskId, input.operation, input.subrequestIndex + 1]),
         actionOrdinal: input.subrequestIndex + 1, operation: input.operation };
       if ((input.actionId && input.actionId !== key.actionId) || (input.taskId && input.taskId !== key.taskId)) {
-        return this.denied('reimbursement.draft.get_options', 'UNKNOWN_REIMBURSEMENT_ACTION');
+        return this.staleAction('reimbursement.draft.get_options', authority.ctx, authority.owner, authority.continuedActionId ?? input.actionId);
       }
     }
 
@@ -449,7 +449,7 @@ export class LineReimbursementDraftAdapterService {
     const owner = authority.owner.owner, ownerEpoch = authority.owner.epoch;
     const active = await this.drafts.active(authority.ctx, this.actionOwner(owner, ownerEpoch));
     if (!active || active.id !== wrapper.action.actionId || active.taskId !== wrapper.action.taskId || active.operation !== operation) {
-      return this.denied(toolName, 'UNKNOWN_REIMBURSEMENT_ACTION');
+      return this.staleAction(toolName, authority.ctx, authority.owner, wrapper.action.actionId);
     }
     const key: LineReimbursementActionKey = { actionId: active.id, taskId: active.taskId,
       actionOrdinal: active.actionOrdinal, operation: active.operation };
@@ -1214,6 +1214,17 @@ export class LineReimbursementDraftAdapterService {
   }
   private domainResult(toolName: string, key: LineReimbursementActionKey, result: LineReimbursementDraftResult): ToolResult {
     return this.ok(toolName, key, { reimbursementDraft: result, actionLocator: this.locator(key) });
+  }
+  private async staleAction(toolName: string, ctx: RequestContext, bound: Authority['owner'], actionId?: string): Promise<ToolResult> {
+    if (actionId) {
+      const result = await this.draftService.get({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId });
+      if (result.status === 'stale') {
+        const action = await this.repo.findDraftAction(ctx.companyId, actionId);
+        if (action) return this.domainResult(toolName, { actionId, taskId: action.taskId,
+          actionOrdinal: action.actionOrdinal, operation: action.operation }, result);
+      }
+    }
+    return this.denied(toolName, 'UNKNOWN_REIMBURSEMENT_ACTION');
   }
   private denied(toolName: string, errorCode: string): ToolResult {
     return { toolName, status: 'forbidden', sourceRefs: [], asOf: new Date().toISOString(), errorCode };

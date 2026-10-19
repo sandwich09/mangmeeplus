@@ -22,6 +22,20 @@ const list = source.slice(source.indexOf('function ExpenseListPage('), source.in
 const names = [...list.matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(match => match[1]!);
 const h = React.createElement;
 const noop = () => {};
+test('LINE-ACT a retained-evidence delete refusal offers opening the expense for cancellation instead of retrying delete', () => {
+  let footer: React.ReactNode;
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'Modal' && props.open) footer = props.footer;
+    return realCreate(tag, props, ...children);
+  });
+  try {
+    render([row(1, { status: 'DRAFT' })], { confirmId: 'e1', deleteRetentionLocked: true });
+    const html = renderToStaticMarkup(footer);
+    assert.match(html, /เปิดรายจ่ายเพื่อยกเลิก/);
+    assert.doesNotMatch(html, />ลบรายจ่าย</);
+  } finally { create.mock.restore(); }
+});
 test('table and evidence exports use the same past date range rather than the month in state', async () => {
   let bundle: any, exportTable: (() => Promise<void>) | undefined, table: any;
   const realCreate = runtime.createElement;

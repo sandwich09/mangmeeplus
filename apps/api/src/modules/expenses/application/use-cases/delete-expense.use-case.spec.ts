@@ -6,10 +6,21 @@ import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
 import { ExpenseController } from '../../presentation/http/expense.controller';
 import { DeleteExpenseUseCase } from './delete-expense.use-case';
+import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 
 const EXPENSE_ID = 'expense-1';
 const COMPANY_ID = 'company-1';
 const TX = Symbol('expense-delete-tx');
+
+it('LINE-ACT list reads retain the certificate-history deletion guard for every status', async () => {
+  let query: any;
+  const repo = new PrismaExpenseRepository({ client: {
+    expenseRecord: { findMany: async (input: any) => { query = input; return [{ ...baseExpense, companyId: COMPANY_ID, vatAmount: '0', inputVatDecisions: [], _count: { substituteReceiptEvidences: 1 } }]; }, count: async () => 1 },
+  } } as any);
+  const result = await repo.listExpenses({ companyId: COMPANY_ID });
+  assert.equal((result.data[0] as any).hasRetainedSubstituteReceiptEvidence, true);
+  assert.equal(query.include._count.select.substituteReceiptEvidences, true);
+});
 
 const baseExpense = {
   id: EXPENSE_ID,

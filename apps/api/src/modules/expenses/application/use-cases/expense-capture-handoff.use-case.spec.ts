@@ -12,6 +12,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ValidationPipe } from '@nestjs/common';
+import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
 import {
   EXPENSE_CAPTURE_ALLOCATION_POLICY,
   EXPENSE_CAPTURE_ALLOCATION_POLICY_VERSION,
@@ -29,6 +30,24 @@ import {
 } from './expense-capture-handoff.use-case';
 
 // ─── fixtures ─────────────────────────────────────────────────────────────────
+
+it('LINE-ACT keeps a derived expense and its file links when a SUPERSEDED certificate retains it', async () => {
+  const repo = new PrismaExpenseCaptureRepository({ client: {} } as any);
+  let deletes = 0;
+  const evidence = { expenseId: 'expense' };
+  const db: any = {
+    expenseRecord: { findMany: async () => [{ id: 'expense', status: 'DRAFT', paidAmount: '0', paymentStatus: 'UNPAID', postingStatus: 'not_required' }], deleteMany: async () => { deletes++; return { count: 1 }; } },
+    reimbursementLine: { findMany: async () => [] },
+    expenseSubstituteReceiptEvidence: {
+      findMany: async ({ where }: any) => !where.status || where.status.in.includes('SUPERSEDED') ? [evidence] : [],
+      findFirst: async () => evidence,
+    },
+    attachmentLink: { deleteMany: async () => { deletes++; } },
+  };
+  assert.deepEqual(await repo.findHandoffConsumers(db, 'co', 'group'), [{ expenseId: 'expense', reason: 'certificate' }]);
+  assert.equal(await repo.deleteDerivedSource(db, 'co', 'expense', new Date()), false);
+  assert.equal(deletes, 0);
+});
 
 const classification = {
   contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',

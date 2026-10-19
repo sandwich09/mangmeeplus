@@ -12971,3 +12971,101 @@ it('Z5 submit readiness: every real submit refusal has the exact localized repai
     assert.equal(previewCalls, 4, 'saved readiness, saved card, typed continuation and signed-open all invoke the same preview use case');
   });
 });
+
+
+describe('LINE-ACT2 deleted claim actions', () => {
+  const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+  const digest = 'a'.repeat(64);
+  const owner = { companyId: 'c1', userId: 'u1', membershipId: 'm1', channel: 'line' as const,
+    channelKind: 'USER' as const, messagingChannelId: 'oa1', chatKeyHash: 'b'.repeat(64) };
+  const actionOwner = { ...owner, actorUserId: owner.userId, ownerEpoch: 1 };
+  const ctx = { companyId: 'c1', userId: 'u1', membershipId: 'm1', permissions: [], requestId: 'r1' } as any;
+  const config = { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: 'oa1' } as any;
+  it('LINE-ACT2 old confirm cards return the authorized stale result when delivery marking fails', async () => {
+    let confirmed = false;
+    const service = new LineReimbursementDraftService({ markLineDelivered: async () => false,
+      get: async () => ({ status: 'stale', actionId }), confirm: async () => { confirmed = true; } } as any);
+    const result = await service.confirm({ ctx, owner, ownerEpoch: 1, control: {
+      action: 'reimbursement_draft_confirm', actionId, previewRevision: 1, confirmationDigest: digest,
+    }, deliveryPlanId: 'old-plan' });
+    assert.deepEqual(result, { status: 'stale', actionId });
+    assert.equal(confirmed, false);
+  });
+
+  it('LINE-ACT2 all deleted-draft continuation tools return an owned stale action source for the API reply', async () => {
+    const taskId = '018fbad0-4d4e-7cc7-8e43-0123456789ab';
+    const action = { id: actionId, taskId, actionOrdinal: 1, operation: 'CREATE', status: 'STALE' };
+    let continuedActionId: string | undefined = actionId;
+    let resultStatus = 'stale';
+    const adapter: any = new LineReimbursementDraftAdapterService({} as any, { findDraftAction: async () => action } as any, {} as any,
+      { get: async () => ({ status: resultStatus, actionId }) } as any, { active: async () => null } as any);
+    adapter.authority = async () => ({ ctx, owner: { owner, epoch: 1 }, writeIndexes: [0], continuedActionId,
+      acceptedRequest: { requestId: 'turn' }, evidence: { turnKey: 'turn' } });
+    const toolCtx = { budgetGrantV2: { attemptKey: 'attempt' } } as any;
+    for (const route of ['continued-options', 'options-by-id', 'preview'] as const) {
+      continuedActionId = route === 'continued-options' ? actionId : undefined;
+      const result = route === 'preview'
+        ? await adapter.preview(toolCtx, { action: { actionId, taskId }, proposal: {} }, 'CREATE')
+        : await adapter.getOptions(toolCtx, { operation: 'CREATE', subrequestIndex: 0, actionId, taskId });
+      assert.equal(result.status, 'ok', route);
+      assert.equal(result.data.reimbursementDraft.status, 'stale', route);
+      assert.equal(result.sourceRefs[0].entityId, actionId, 'webhook replaces model text with the API stale reply');
+    }
+    resultStatus = 'blocked';
+    assert.equal((await adapter.preview(toolCtx, { action: { actionId, taskId }, proposal: {} }, 'CREATE')).status, 'forbidden');
+  });
+
+
+  it('LINE-ACT2 old submit cards for a deleted claim use the same stale claim sentence and the claims list', async () => {
+    const { NotFoundException } = await import('@nestjs/common');
+    const { LineExpenseActionService } = await import('../line-expense-action.service');
+    const { reimbursementApprovalOpenToken } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+    const { REIMBURSEMENT_DRAFT_CHANGED } = await import('../../domain/logic/line-reimbursement-draft-card.logic');
+    const service: any = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'chat', lifecycleEpoch: 1 }) } } } as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      { aiGatewayInternalSecret: 'secret' } as any, { execute: async () => { throw new NotFoundException('Reimbursement request not found'); } } as any);
+    const token = reimbursementApprovalOpenToken('secret', 'c1', 'u1', 'gone-claim', 'expense_action_submit');
+    const result = await service.apply(ctx, owner.chatKeyHash, { action: 'expense_action_submit', token });
+    const expected = REIMBURSEMENT_DRAFT_CHANGED.th;
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.reply, expected);
+    const preview = await service.preview(ctx, owner.chatKeyHash, { action: 'REIMBURSEMENT_SUBMIT', reimbursementId: 'gone-claim' }, true);
+    assert.equal(preview.webPath, '/companies/c1/reimbursements');
+    service.store = { loadApplied: async () => ({ previewId: 'applied', expenseId: 'gone-claim',
+      preview: { action: 'REIMBURSEMENT_SUBMIT' }, applied: { revision: new Date().toISOString() } }) };
+    service.bound = async () => true;
+    service.permitted = async () => true;
+    assert.equal((await service.apply(ctx, owner.chatKeyHash, { action: 'expense_action_confirm', token: 'applied.signature' })).reply, expected);
+  });
+
+  it('LINE-ACT2 the webhook delivers a stale reply without re-entering expired delivery proof lookup', async () => {
+    const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    let delivered: any;
+    handler.contextV2 = { load: async () => ({ row: { lifecycleEpoch: 1, id: 'chat' } }) };
+    handler.boundConversations = new WeakMap();
+    handler.reimbursementDrafts = { get: async () => ({ status: 'stale', actionId }) };
+    handler.deliverReimbursementDraftResult = async (_event: unknown, _ctx: unknown, result: unknown) => { delivered = result; };
+    handler.updateEventLog = async () => {};
+    // No delivery-plan repository: a deleted action must not need its old delivery proof at all.
+    await handler.handleReimbursementDraftControl({ lineUserId: 'line-user', messagingChannelId: 'oa1', webhookEventId: 'event',
+      reimbursementDraftControl: { action: 'reimbursement_draft_confirm', actionId, previewRevision: 1, confirmationDigest: digest } }, ctx);
+    assert.deepEqual(delivered, { status: 'stale' as const, actionId });
+    const messages = buildReimbursementDraftMessages(delivered, '', 'c1');
+    assert.match(JSON.stringify(messages), /ข้อมูลหรือสถานะใบเบิกเปลี่ยนแล้ว/);
+  });
+
+  it('LINE-ACT2 deleted CREATE and UPDATE actions stay stale for get, confirm and replay without revealing another owner', async () => {
+    for (const operation of ['CREATE', 'UPDATE'] as const) for (const age of [-60000, 60000]) {
+      const action = { ...actionOwner, id: actionId, taskId: actionId, actionOrdinal: 1, previewRevision: 0, operation, status: 'STALE', requestId: undefined, expiresAt: new Date(Date.now() + age) };
+      const useCase = new LineReimbursementDraftUseCase({ findDraftAction: async () => action,
+        findRequestById: async () => null, isDraftActionOwnerCurrent: async () => true } as any, {} as any, config);
+      const actor = { ...ctx, permissions: ['reimbursement.create', 'reimbursement.update_own_draft'] };
+      assert.deepEqual(await useCase.get({ ctx: actor, owner: actionOwner, actionId }), { status: 'stale', actionId });
+      assert.deepEqual(await useCase.confirm({ ctx: actor, owner: actionOwner, actionId, previewRevision: 1, confirmationDigest: digest }), { status: 'stale', actionId });
+      assert.deepEqual(await useCase.replay(actor, actionOwner, actionId), { status: 'stale', actionId });
+      assert.deepEqual(await useCase.get({ ctx: { ...actor, permissions: [] }, owner: actionOwner, actionId }), { status: 'blocked', errorCode: 'forbidden' });
+      assert.deepEqual(await useCase.get({ ctx: actor, owner: { ...actionOwner, actorUserId: 'outsider' }, actionId }), { status: 'blocked', errorCode: 'forbidden' });
+    }
+  });
+
+});
