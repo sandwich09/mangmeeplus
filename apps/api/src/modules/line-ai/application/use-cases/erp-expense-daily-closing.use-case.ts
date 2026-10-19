@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import {
+  expenseEvidenceImageMissing,
+  type ExpenseEvidenceSource,
   EXPENSE_CANCELLED_STATUSES,
   EXPENSE_PENDING_STATUSES,
   civilDate,
@@ -16,6 +18,8 @@ import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.l
 import { expenseRelatedToUserWhere } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { bangkokToday, resolveExpenseBranchFilter } from './erp-tools.use-case';
+
+import { lineExpenseEvidenceNotes, type LineReplyLanguage } from '../../domain/logic/line-language.logic';
 
 const TIME_ZONE = 'Asia/Bangkok';
 const THAI_MONTH_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
@@ -34,7 +38,7 @@ const QUERY_COUNT = 16;
 type MoneyGroup = { currency: string; count: number; total: string };
 type AggregateRow = { currency: string; _count: { _all: number }; _sum: Record<string, unknown> };
 
-type DetailRow = {
+type DetailRow = Pick<ExpenseEvidenceSource, 'aiVerificationSummaryJson' | 'attachments'> & {
   id: string;
   expenseNumber: string | null;
   vendorNameSnapshot: string | null;
@@ -65,6 +69,7 @@ const DETAIL_SELECT = {
   outstandingAmount: true,
   status: true,
   paymentStatus: true,
+  aiVerificationSummaryJson: true,
   primaryAttachmentId: true,
   missingReceiptReason: true,
   taxEvidenceStatus: true,
@@ -112,7 +117,7 @@ function hasPositiveSum(row: AggregateRow, field: string): boolean {
   return new Decimal(decimal(row._sum[field])).greaterThan(0);
 }
 
-function boundedItems(total: number, rows: DetailRow[], companyId: string) {
+function boundedItems(total: number, rows: DetailRow[], companyId: string, language: LineReplyLanguage) {
   const items = rows.map((row) => ({
     id: row.id,
     expenseNumber: row.expenseNumber,
@@ -126,7 +131,8 @@ function boundedItems(total: number, rows: DetailRow[], companyId: string) {
     outstandingAmount: decimal(row.outstandingAmount),
     status: row.status,
     paymentStatus: row.paymentStatus,
-    evidenceAttention: row.primaryAttachmentId === null && row.missingReceiptReason === null
+    evidenceNotes: lineExpenseEvidenceNotes(row, language),
+    evidenceAttention: !expenseEvidenceImageMissing(row) && row.primaryAttachmentId === null && row.missingReceiptReason === null
       || row.taxEvidenceStatus === 'NEEDS_REVIEW',
     duplicateRisk: row.duplicateStatus === 'POSSIBLE_DUPLICATE'
       || row.duplicateStatus === 'CONFIRMED_DUPLICATE',
@@ -211,6 +217,8 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
       AND: [activeWhere, { OR: [
         { primaryAttachmentId: null, missingReceiptReason: null },
         { taxEvidenceStatus: 'NEEDS_REVIEW' },
+        { aiVerificationSummaryJson: { path: ['documentEvidenceDraft', 'originalDocumentAvailable'], equals: true } },
+        { aiVerificationSummaryJson: { path: ['documentReview', 'assessment', 'originalDocumentAvailable'], equals: true } },
       ] }],
     };
     const duplicateWhere: Prisma.ExpenseRecordWhereInput = {
@@ -226,7 +234,6 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
         unscheduledRows,
         submittedCount,
         pendingCount,
-        evidenceCount,
         duplicateCount,
         excludedRows,
         occurredDetails,
@@ -246,7 +253,6 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
         db.expenseRecord.groupBy({ by: ['currency'], where: unscheduledWhere, _sum: { outstandingAmount: true }, _count: { _all: true } }),
         db.expenseRecord.count({ where: { AND: [scopeWhere, { uploadedAt: uploadedRange }] } }),
         db.expenseRecord.count({ where: pendingWhere }),
-        db.expenseRecord.count({ where: evidenceWhere }),
         db.expenseRecord.count({ where: duplicateWhere }),
         db.expenseRecord.groupBy({
           by: ['status'], where: { AND: [scopeWhere, { expenseDate: dayRange }, { status: { in: EXPENSE_CANCELLED_STATUSES } }] },
@@ -257,13 +263,24 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
         db.expenseRecord.findMany({ where: overdueWhere, select: DETAIL_SELECT, orderBy: [{ dueDate: 'asc' }, { uploadedAt: 'desc' }], take: detailLimit }),
         db.expenseRecord.findMany({ where: unscheduledWhere, select: DETAIL_SELECT, orderBy: { uploadedAt: 'desc' }, take: detailLimit }),
         db.expenseRecord.findMany({ where: pendingWhere, select: DETAIL_SELECT, orderBy: { uploadedAt: 'asc' }, take: detailLimit }),
-        db.expenseRecord.findMany({ where: evidenceWhere, select: DETAIL_SELECT, orderBy: { uploadedAt: 'asc' }, take: detailLimit }),
+        db.expenseRecord.findMany({ where: evidenceWhere, select: DETAIL_SELECT, orderBy: { uploadedAt: 'asc' } }),
         db.expenseRecord.findMany({ where: duplicateWhere, select: DETAIL_SELECT, orderBy: { uploadedAt: 'asc' }, take: detailLimit }),
       ]);
+      const details = [occurredDetails, dueDetails, overdueDetails, unscheduledDetails, pendingDetails, evidenceDetails, duplicateDetails].map(asDetailRows);
+      const ids = [...new Set(details.flat().map(row => row.id))];
+      const links = await db.attachmentLink.findMany({ where: { companyId: ctx.companyId, targetType: 'expense.record', targetId: { in: ids } },
+        select: { targetId: true, attachmentId: true, purpose: true, attachment: { select: { status: true } } } });
+      for (const row of details.flat()) row.attachments = links.filter(link => link.targetId === row.id)
+        .map(link => ({ id: link.attachmentId, status: link.attachment.status, purpose: link.purpose }));
+      // The shared validator distinguishes an original in hand from missing evidence before counting or limiting.
+      const candidates = asDetailRows(evidenceDetails);
+      const imagesToAdd = candidates.filter(expenseEvidenceImageMissing);
+      const blockers = candidates.filter(row => row.taxEvidenceStatus === 'NEEDS_REVIEW'
+        || row.primaryAttachmentId === null && row.missingReceiptReason === null && !expenseEvidenceImageMissing(row));
       return {
         occurredRows, dueRows, overdueRows, unscheduledRows,
-        submittedCount, pendingCount, evidenceCount, duplicateCount, excludedRows,
-        occurredDetails, dueDetails, overdueDetails, unscheduledDetails, pendingDetails, evidenceDetails, duplicateDetails,
+        imagesToAdd, submittedCount, pendingCount, evidenceCount: blockers.length, duplicateCount, excludedRows,
+        occurredDetails, dueDetails, overdueDetails, unscheduledDetails, pendingDetails, evidenceDetails: blockers.slice(0, detailLimit), duplicateDetails,
       };
     }, { isolationLevel: 'RepeatableRead' });
     const queryDurationMs = Date.now() - startedAt;
@@ -300,24 +317,25 @@ export class ExpenseGetDailyClosingTool implements ErpReadToolPort {
           totals: collapseMoneyRows(occurred, 'grandTotalAmount'),
           paid: collapseMoneyRows(paidOccurred, 'paidAmount'),
           outstanding: collapseMoneyRows(outstandingOccurred, 'outstandingAmount'),
-          items: boundedItems(totalOccurred, asDetailRows(snapshot.occurredDetails), ctx.companyId),
+          items: boundedItems(totalOccurred, asDetailRows(snapshot.occurredDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th'),
         },
         submittedToday: { count: snapshot.submittedCount },
         dueEndOfDay: {
           totals: collapseMoneyRows(asAggregateRows(snapshot.dueRows), 'outstandingAmount'),
-          items: boundedItems(aggregateCount(asAggregateRows(snapshot.dueRows)), asDetailRows(snapshot.dueDetails), ctx.companyId),
+          items: boundedItems(aggregateCount(asAggregateRows(snapshot.dueRows)), asDetailRows(snapshot.dueDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th'),
         },
         overdue: {
           totals: collapseMoneyRows(asAggregateRows(snapshot.overdueRows), 'outstandingAmount'),
-          items: boundedItems(aggregateCount(asAggregateRows(snapshot.overdueRows)), asDetailRows(snapshot.overdueDetails), ctx.companyId),
+          items: boundedItems(aggregateCount(asAggregateRows(snapshot.overdueRows)), asDetailRows(snapshot.overdueDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th'),
         },
         unscheduledOutstanding: {
           totals: collapseMoneyRows(asAggregateRows(snapshot.unscheduledRows), 'outstandingAmount'),
-          items: boundedItems(aggregateCount(asAggregateRows(snapshot.unscheduledRows)), asDetailRows(snapshot.unscheduledDetails), ctx.companyId),
+          items: boundedItems(aggregateCount(asAggregateRows(snapshot.unscheduledRows)), asDetailRows(snapshot.unscheduledDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th'),
         },
-        pendingReview: { count: snapshot.pendingCount, items: boundedItems(snapshot.pendingCount, asDetailRows(snapshot.pendingDetails), ctx.companyId) },
-        evidenceBlockers: { count: snapshot.evidenceCount, items: boundedItems(snapshot.evidenceCount, asDetailRows(snapshot.evidenceDetails), ctx.companyId) },
-        duplicateRisks: { count: snapshot.duplicateCount, items: boundedItems(snapshot.duplicateCount, asDetailRows(snapshot.duplicateDetails), ctx.companyId) },
+        pendingReview: { count: snapshot.pendingCount, items: boundedItems(snapshot.pendingCount, asDetailRows(snapshot.pendingDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th') },
+        documentImagesToAdd: { count: snapshot.imagesToAdd.length, items: boundedItems(snapshot.imagesToAdd.length, snapshot.imagesToAdd.slice(0, detailLimit), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th') },
+        evidenceBlockers: { count: snapshot.evidenceCount, items: boundedItems(snapshot.evidenceCount, asDetailRows(snapshot.evidenceDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th') },
+        duplicateRisks: { count: snapshot.duplicateCount, items: boundedItems(snapshot.duplicateCount, asDetailRows(snapshot.duplicateDetails), ctx.companyId, ctx.locale.startsWith('en') ? 'en' : 'th') },
         excluded: { rejected: excluded['REJECTED'] ?? 0, voided: excluded['VOIDED'] ?? 0 },
         observability: {
           queryDurationMs,

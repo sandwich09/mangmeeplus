@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException, Optional } from '@ne
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
 import {
-  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice, reimbursementDuplicateWait,
+  expenseEvidenceAssessment, expenseEvidenceImageMissing, civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice, reimbursementDuplicateWait,
 } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -14,6 +14,7 @@ import { parseLineExpenseDraftContinuation } from '../../../expenses/domain/logi
 import { GetReimbursementDetailUseCase, mayCancelReimbursement } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import { PAYOUT_CORRECTION_STEP_REASON } from '../../../reimbursements/domain/logic/reimbursement.logic';
+import { lineExpenseEvidenceNotes } from '../../domain/logic/line-language.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import {
   BUSINESS_READ_BASIS_VERSION,
@@ -212,6 +213,9 @@ export class ExpenseGetDetailTool implements ErpReadToolPort<{ expenseId?: strin
           // "ค่าบริการ 152.00" instead of reading a charge back as one more product line.
           charges: expense.charges,
           attachmentCount: expense.attachments.length,
+          originalDocumentAvailable: expenseEvidenceAssessment(expense)?.originalDocumentAvailable === true,
+          documentImageMissing: expenseEvidenceImageMissing(expense),
+          evidenceNotes: lineExpenseEvidenceNotes(expense, ctx.locale.startsWith('en') ? 'en' : 'th'),
         },
         sourceRefs: [source(ctx, asOf, expense.expenseNumber ?? 'ค่าใช้จ่าย', 'expenses', 'expense', expense.id, `/companies/${ctx.companyId}/expenses/${expense.id}`)],
       };

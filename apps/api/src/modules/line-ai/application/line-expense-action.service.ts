@@ -1,5 +1,5 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
-import { lineUiLabel, lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-language.logic';
+import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
 import { RecordReimbursementPaymentUseCase } from '../../reimbursements/application/use-cases/reimbursement-finance.use-case';
 import { InitPaymentSlipUploadUseCase, CompletePaymentSlipUploadUseCase } from '../../reimbursements/application/use-cases/reimbursement-payment-slip.use-case';
@@ -19,7 +19,7 @@ import { calcPaymentAmounts, derivePaymentStatus } from '../../expenses/domain/l
 import type { Prisma } from '../../../generated/prisma/client';
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Optional } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { EXPENSE_STATUS_LABELS, EXPENSE_RECEIPT_SOURCE_TYPES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS, expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, isExpenseEvidenceFile, scrubRecordText, type ExpenseEvidenceAssessment, type RequestContext, type ToolResult } from '@watchdog-bms/contracts';
+import { EXPENSE_STATUS_LABELS, EXPENSE_RECEIPT_SOURCE_TYPES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS, expenseEvidenceAssessment, expenseEvidenceImageMissing, expenseEvidenceInputError, expenseEvidenceFingerprint, isExpenseEvidenceFile, scrubRecordText, type ExpenseEvidenceAssessment, type RequestContext, type ToolResult } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
@@ -48,6 +48,7 @@ export type ExpenseActionPreview = {
   language?: LineReplyLanguage;
   previewId: string; token: string; action: ExpenseAction; reason?: string; details?: string[]; payment?: RecordExpensePaymentInput; expiresAt: string; summary: string;
   certificates?: { number: string; uri: string }[]; offerWht?: boolean; offerPayment?: boolean; offerNext?: VoucherAction; evidenceReview?: boolean;
+  documentImageUrl?: string;
   record: { vendorName: string; amount: string; currency: string; date: string; status: string; nextStatus: string };
 };
 type ActionCategory = { id: string; name: string; kind?: 'wht'; other?: { id: string; name: string; kind?: 'wht' } };
@@ -250,7 +251,7 @@ export class LineExpenseActionService {
       .update(canonicalDeliveryJson({ id: entry.previewId, company: entry.companyId, user: entry.userId, membership: entry.membershipId,
         chat: entry.chatKeyHash, conversation: entry.conversationId, epoch: entry.ownerEpoch, expense: entry.expenseId,
         revision: entry.revision, digest: entry.digest, branch: entry.branchId, creator: entry.createdByUserId, action: entry.preview.action, reason: entry.preview.reason ?? null,
-        record: entry.preview.record, details: entry.preview.details, review: entry.review, markReady: entry.markReady, category: entry.category, evidenceReview: entry.preview.evidenceReview, payment: entry.preview.payment, claim: entry.claim, paymentIntent: entry.paymentIntent, evidence: entry.evidence, voucher: entry.voucher, awaitingField: entry.awaitingField, awaitingReason: entry.awaitingReason, expires: entry.preview.expiresAt })).digest('base64url');
+        record: entry.preview.record, details: entry.preview.details, documentImageUrl: entry.preview.documentImageUrl, review: entry.review, markReady: entry.markReady, category: entry.category, evidenceReview: entry.preview.evidenceReview, payment: entry.preview.payment, claim: entry.claim, paymentIntent: entry.paymentIntent, evidence: entry.evidence, voucher: entry.voucher, awaitingField: entry.awaitingField, awaitingReason: entry.awaitingReason, expires: entry.preview.expiresAt })).digest('base64url');
   }
   private async bound(ctx: RequestContext, chat: string, entry: StoredAction, token?: string): Promise<boolean> {
     if (entry.companyId !== ctx.companyId || entry.userId !== ctx.userId || entry.membershipId !== ctx.membershipId
@@ -435,6 +436,7 @@ export class LineExpenseActionService {
           const assessment: ExpenseEvidenceAssessment = input.evidenceAssessment as ExpenseEvidenceAssessment ?? expenseEvidenceAssessment(expense) ?? { route: receipt ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE', receiptProblem: receipt ? 'NONE' : 'NOT_AVAILABLE',
             attachmentIds: expense.attachments.filter(file => isExpenseEvidenceFile(file) && file.id === expense.primaryAttachmentId).map(file => file.id), reason: '' };
           if (expenseEvidenceInputError(assessment, expense, true)) {
+            if (expenseEvidenceImageMissing(expense)) return { reply: en ? 'Review the document details on the web before confirming.' : 'ตรวจข้อมูลเอกสารในเว็บก่อนยืนยันค่ะ', webPath: `/companies/${ctx.companyId}/expenses/${id}` };
             if (preparedCategory) throw error;
             const owner = (await this.owner(ctx, chat))!;
             if (!await this.evidenceChoices.save({ language, previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
@@ -517,6 +519,11 @@ export class LineExpenseActionService {
           currency: record.currency, date: record.expenseDate.toISOString().slice(0, 10), status: lineUiLabel(this.status(action, record.status), language),
           nextStatus: record.claim ? record.claim.payoutCorrection && action === 'REIMBURSEMENT_REJECT' ? (en ? 'Awaiting payout correction' : 'รอผู้เบิกแก้บัญชี') : en ? lineUiLabel(EXPENSE_ACTION_LABELS[action], language) : `${EXPENSE_ACTION_LABELS[action]}แล้ว` : nextStatus === 'DELETED' ? (en ? 'Deleted' : 'ลบแล้ว') : lineUiLabel(this.status(action, nextStatus), language) } };
       if (paymentChange) Object.assign(preview.record, paymentChange);
+      const evidenceSource = 'attachments' in record ? { ...record, aiVerificationSummaryJson: review ? { ...record.aiVerificationSummaryJson, documentEvidenceDraft: review.assessment } : record.aiVerificationSummaryJson } : undefined;
+      if (action === 'CONFIRM' && evidenceSource && expenseEvidenceImageMissing(evidenceSource)) {
+        preview.details = [...(preview.details ?? []), ...lineExpenseEvidenceNotes(evidenceSource, language)];
+        if (this.config.webBaseUrl?.startsWith('https://')) preview.documentImageUrl = `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${ctx.companyId}/expenses/${id}`;
+      }
       if (paymentIntent) preview.details = [...(preview.details ?? []), en ? `After confirming, record payment for ${lineDisplayDate(String(paymentIntent.paidAt), language)}.` : `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
       const entry: StoredAction = { previewId: preview.previewId, companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
@@ -576,6 +583,10 @@ export class LineExpenseActionService {
       return [{ label: (language === 'en' ? 'Send transfer slip' : 'ส่งสลิปโอน'), text: (language === 'en' ? 'Send transfer slip for this claim' : 'ส่งสลิปโอนสำหรับใบเบิกนี้') }];
     const evidence = await this.evidenceChoice(ctx, chat, requestId);
     if (evidence) {
+      if (expenseEvidenceImageMissing(evidence.expense)) {
+        const uri = this.config.webBaseUrl?.startsWith('https://') ? `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${ctx.companyId}/expenses/${evidence.expense.id}` : undefined;
+        return uri ? [{ label: lineUiLabel('ส่งรูปเอกสาร', language), text: lineUiLabel('ส่งรูปเอกสาร', language), uri }] : [];
+      }
       const choices: Array<{ label: string; text: string; uri?: string; cameraRoll?: boolean }> = [{ label: (language === 'en' ? 'Send receipt photo' : 'ส่งรูปใบเสร็จ'), text: (language === 'en' ? 'Send receipt photo' : 'ส่งรูปใบเสร็จ') }, { label: (language === 'en' ? 'Wait for receipt' : 'รอใบเสร็จ'), text: (language === 'en' ? 'Wait for receipt' : 'รอใบเสร็จ') }];
       const reviewUri = this.config.webBaseUrl ? `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${ctx.companyId}/expenses/${evidence.expense.id}` : '';
       const next = new Decimal(evidence.expense.whtAmount).gt(0) && ctx.permissions.includes('expense.confirm') && reviewUri.startsWith('https://')
@@ -583,6 +594,8 @@ export class LineExpenseActionService {
       if (evidence.entry.stage === 'photo') return [...next, { ...choices[0]!, cameraRoll: true }];
       if (evidence.entry.stage === 'waiting') return [...next, ...choices.slice(0, 1)];
       const source = evidence.expense;
+      if (!expenseEvidenceInputError({ route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true }, source, true))
+        choices.push({ label: language === 'en' ? 'Original in hand' : 'มีตัวจริง', text: language === 'en' ? 'Original in hand, no photo yet' : 'มีตัวจริง ยังไม่ได้แนบรูป' });
       if (!expenseEvidenceInputError({ route: 'SUBSTITUTE_RECEIPT', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [], reason: '' }, source, true))
         choices.push({ label: (language === 'en' ? 'Substitute receipt' : 'ใบรับรองแทนใบเสร็จ'), text: (language === 'en' ? 'Prepare substitute receipt' : 'จัดทำใบรับรองแทนใบเสร็จ') });
       if (!expenseEvidenceInputError({ route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'NOT_AVAILABLE', attachmentIds: [...new Set(source.attachments.filter(isExpenseEvidenceFile).map(file => file.id))], reason: 'รอเหตุผลจากผู้ใช้' }, source, true)) choices.push({ label: (language === 'en' ? 'Use other evidence' : 'ใช้หลักฐานอื่นที่มี'), text: (language === 'en' ? 'Use other evidence' : 'ใช้หลักฐานอื่นที่มี') });
@@ -614,9 +627,18 @@ export class LineExpenseActionService {
     const evidence = await this.evidenceChoice(ctx, chat);
     if (!evidence) return null;
     const { entry, expense } = evidence;
+    if (text.trim() === 'มีตัวจริง ยังไม่ได้แนบรูป' || text.trim() === 'Original in hand, no photo yet') {
+      const note = expenseEvidenceAssessment(expense)?.note;
+      const assessment: ExpenseEvidenceAssessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, ...(note ? { note } : {}) };
+      if (expenseEvidenceInputError(assessment, expense, true)) return { reply: language === 'en' ? 'Review the document type on the web before recording the original in hand.' : 'ตรวจประเภทเอกสารในเว็บก่อนระบุว่ามีตัวจริงค่ะ' };
+      return this.preview(ctx, chat, { ...entry.paymentIntent, recordPaymentAfterConfirm: !!entry.paymentIntent, action: 'CONFIRM', expenseId: expense.id, evidenceAssessment: assessment }, true, undefined, language);
+    }
     if (['ไม่ทำ', 'ยกเลิก'].includes(text.trim())) {
       await this.evidenceChoices.discard(ctx.companyId, entry.chatKeyHash);
       return { reply: (language === 'en' ? 'The existing draft is retained.' : 'เก็บร่างไว้ให้ค่ะ') };
+    }
+    if (expenseEvidenceImageMissing(expense) && ['ส่งรูปใบเสร็จ', 'รอใบเสร็จ', 'จัดทำใบรับรองแทนใบเสร็จ'].includes(text.trim())) {
+      return this.preview(ctx, chat, { ...entry.paymentIntent, recordPaymentAfterConfirm: !!entry.paymentIntent, action: 'CONFIRM', expenseId: expense.id }, true, undefined, language);
     }
     if (text.trim() === 'รอใบเสร็จ') {
       if (!this.updateDraft) return { reply: language === 'en' ? 'This expense changed; review its current state before continuing.' : EXPENSE_ACTION_CHANGED };

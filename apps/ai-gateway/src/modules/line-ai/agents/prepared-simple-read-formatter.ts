@@ -12,7 +12,7 @@
  * `unverified` when the output does not match the family's exact shape, so the caller falls back to an
  * honest terminal without claiming success. No provider, no tool re-invocation.
  */
-import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, expensePeriodComparisonCard, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
@@ -655,9 +655,13 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
   const number = text('expenseNumber');
   // The locked record and payment cards have no "ข้อมูล ณ" row (the summary and open-work cards do):
   // the as-of stays in the sentence, which is the card's fallback and its notification text.
+  const evidenceNotes = Array.isArray(data?.['evidenceNotes']) ? data['evidenceNotes'].filter((note): note is string => typeof note === 'string').slice(0, 2) : [];
+  const evidenceText = evidenceNotes.length ? `\n${evidenceNotes.join('\n')}` : '';
+  const imageMissing = data?.['documentImageMissing'] === true;
+  if (imageMissing) for (const link of webLinks) link.label = english ? 'Send document photo' : 'ส่งรูปเอกสาร';
   const shared = {
-    notes: cardNotes([scopeNote(data?.['accessScope'])]),
-    link: webLinks[0] ? { linkLabel: 'เปิดดูรายการในเว็บ' } : {},
+    notes: cardNotes([scopeNote(data?.['accessScope']), ...evidenceNotes]),
+    link: webLinks[0] ? { linkLabel: imageMissing ? 'ส่งรูปเอกสาร' : 'เปิดดูรายการในเว็บ' } : {},
   };
 
   // A question about PAYING a confirmed record is answered with what was paid, what is left, and —
@@ -672,7 +676,7 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
     const replyText = (english
       ? `Payment: ${vendor}, net payable ${net} THB\nPaid ${paid} THB · Outstanding ${outstanding} THB\nPayment status: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`
       : `การชำระเงิน: ${vendor} ยอดสุทธิที่ต้องจ่าย ${net} บาท\nจ่ายแล้ว ${paid} บาท · ยอดคงค้าง ${outstanding} บาท\nสถานะชำระเงิน: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`)
-      + `${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+      + `${evidenceText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
     const layout = english ? undefined : cardLayout({
       context: 'payment',
       header: ['การชำระเงิน', paymentStatus === 'UNPAID' ? 'รอชำระเงิน' : paymentStatusLabel],
@@ -705,7 +709,7 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
     + (closed ? (reason ? (english ? ` · Reason: ${reason}` : ` · เหตุผล: ${reason}`) : '')
       : (english ? ` · Payment status: ${paymentStatusLabel}` : ` · สถานะการจ่าย: ${paymentStatusLabel}`));
 
-  const replyText = `${headline}${statusText}${categoryText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
+  const replyText = `${headline}${statusText}${categoryText}${evidenceText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
   const item = expenseItemPhrase(data?.['lines']);
   const vat = data?.['vatAmount'];
   const layout = english ? undefined : cardLayout({
@@ -1052,6 +1056,7 @@ function dailyClosingEntries(data: Record<string, unknown> | undefined, isToday:
     dailyClosingMoneyEntry('overdue', 'เกินกำหนดจ่าย', 'Overdue:', data, english),
     dailyClosingMoneyEntry('unscheduledOutstanding', 'ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', 'Unpaid (no due date scheduled):', data, english),
     dailyClosingCountEntry('evidenceBlockers', 'รอตรวจหลักฐาน', 'Awaiting evidence review:', data, english),
+    dailyClosingCountEntry('documentImagesToAdd', EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, 'Document image not attached:', data, english),
   ].filter((entry): entry is DailyClosingEntry => Boolean(entry));
 }
 
