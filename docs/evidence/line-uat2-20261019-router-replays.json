@@ -1,0 +1,222 @@
+[
+  {
+    "id": "W1#1",
+    "source": "owner-uat2-20261019-W1-1",
+    "fixtureOrigin": "synthetic router JSON for exact owner input; not captured provider output",
+    "acceptedAtMs": 1792397400000,
+    "messageText": "สร้างใบเบิกให้หน่อย",
+    "body": {
+      "destination": "synthetic-channel",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "uat2-w1-1",
+          "replyToken": "synthetic-reply",
+          "timestamp": 1792397400000,
+          "source": {
+            "type": "user",
+            "userId": "synthetic-owner"
+          },
+          "message": {
+            "type": "text",
+            "id": "uat2-w1-1",
+            "text": "สร้างใบเบิกให้หน่อย"
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "สร้างใบเบิกให้หน่อย",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 19,
+              "rawSha256": "204f68ffb8d5e869dfbc700cdb30844827f227c6a4bbcceb1a7a8eca7f4b261c"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "W1#2",
+    "source": "owner-uat2-20261019-W1-2",
+    "fixtureOrigin": "synthetic router JSON for exact owner input; not captured provider output",
+    "acceptedAtMs": 1792397460000,
+    "messageText": "เบิกบิล 691017019 · TONCHIN THAILAND · 17 ต.ค. 2569 · 1,388.00 บาท",
+    "body": {
+      "destination": "synthetic-channel",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "uat2-w1-2",
+          "replyToken": "synthetic-reply",
+          "timestamp": 1792397460000,
+          "source": {
+            "type": "user",
+            "userId": "synthetic-owner"
+          },
+          "message": {
+            "type": "text",
+            "id": "uat2-w1-2",
+            "text": "เบิกบิล 691017019 · TONCHIN THAILAND · 17 ต.ค. 2569 · 1,388.00 บาท"
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "เบิกบิล 691017019 · TONCHIN THAILAND · 17 ต.ค. 2569 · 1,388.00 บาท",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 66,
+              "rawSha256": "0c0be45730206f6b6f27c8e66c65fd150b4e56b770ba3ef7073c75a91869d0bd"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "W1#3",
+    "source": "owner-uat2-20261019-W1-3",
+    "fixtureOrigin": "synthetic router JSON for exact owner input; not captured provider output",
+    "acceptedAtMs": 1792397520000,
+    "messageText": "ค่าอาหาร",
+    "body": {
+      "destination": "synthetic-channel",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "uat2-w1-3",
+          "replyToken": "synthetic-reply",
+          "timestamp": 1792397520000,
+          "source": {
+            "type": "user",
+            "userId": "synthetic-owner"
+          },
+          "message": {
+            "type": "text",
+            "id": "uat2-w1-3",
+            "text": "ค่าอาหาร"
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "EXPENSE_DOCUMENT_CAPTURE",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "BUSINESS_EXPENSE",
+      "fundingSource": "COMPANY_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "ค่าอาหาร",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "EXPENSE_DOCUMENT_CAPTURE",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 8,
+              "rawSha256": "e459e096a22351d882ade3dd911eb753ac0003a072296edbf37bb17f36b3d115"
+            }
+          ]
+        }
+      ],
+      "captureHints": {
+        "description": "ค่าอาหาร",
+        "confidence": 0.95
+      }
+    }
+  },
+  {
+    "id": "W1#4",
+    "source": "owner-uat2-20261019-W1-4",
+    "fixtureOrigin": "synthetic router JSON for exact owner input; not captured provider output",
+    "acceptedAtMs": 1792397580000,
+    "messageText": "ให้ทำใบเบิกไม่ใช่หรอ",
+    "body": {
+      "destination": "synthetic-channel",
+      "events": [
+        {
+          "type": "message",
+          "webhookEventId": "uat2-w1-4",
+          "replyToken": "synthetic-reply",
+          "timestamp": 1792397580000,
+          "source": {
+            "type": "user",
+            "userId": "synthetic-owner"
+          },
+          "message": {
+            "type": "text",
+            "id": "uat2-w1-4",
+            "text": "ให้ทำใบเบิกไม่ใช่หรอ"
+          }
+        }
+      ]
+    },
+    "route": {
+      "status": "ROUTED",
+      "intent": "REIMBURSEMENT_REQUEST_START",
+      "language": "th",
+      "confidence": 0.95,
+      "semanticOutcome": "REIMBURSEMENT_CLAIM",
+      "fundingSource": "EMPLOYEE_PAID",
+      "semanticSubrequests": [
+        {
+          "index": 0,
+          "kind": "write",
+          "goal": "ให้ทำใบเบิกไม่ใช่หรอ",
+          "requiredEvidence": [],
+          "requestedFilters": {},
+          "writeIntent": "REIMBURSEMENT_REQUEST_START",
+          "dependsOn": [],
+          "evidenceRefs": [
+            {
+              "partId": "part-0",
+              "startUtf16": 0,
+              "endUtf16": 20,
+              "rawSha256": "0a8910fd96a6501aab2b6ad6e890ad8b5b1f7439c6a376b96dcd5828a4c6c5c8"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

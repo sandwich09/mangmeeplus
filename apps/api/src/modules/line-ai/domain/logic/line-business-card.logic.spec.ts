@@ -1375,7 +1375,15 @@ describe('CHAT budget refusal card', () => {
       for (const trialTier of [true, false]) {
         for (const refusal of BUDGET_REFUSALS) {
           const message = buildAiBudgetExceededMessage(trialTier, refusal, canManagePlan) as any;
-          assert.equal(message.canonicalText, message.contents.body.contents[1].text, JSON.stringify({ trialTier, refusal, canManagePlan }));
+          const prose = message.contents.body.contents[1].contents;
+          assert.equal(message.canonicalText, prose.map((node: any) => node.text).join(''), JSON.stringify({ trialTier, refusal, canManagePlan }));
+          for (const node of [...message.contents.header.contents, message.contents.body.contents[0], prose[0]]) {
+            assert.equal(node.wrap, false);
+            assert.equal(node.adjustMode, 'shrink-to-fit');
+            assert.doesNotMatch(node.text, /\n/);
+          }
+          assert.match(prose[0].text, /^เครดิต AI.*เดือนนี้$/);
+          assert.equal(prose[1].wrap, true);
           assert.match(message.canonicalText, /^เครดิต AI/);
           assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a delivery plan sends the card itself');
           if (!canManagePlan) assert.doesNotMatch(message.canonicalText, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|ซื้อ|โปรโมชั่น/);

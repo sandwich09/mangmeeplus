@@ -10854,6 +10854,105 @@ it('Fix-up 20A C03 payout: missing account delivers one sentence and an exact cl
   assert.doesNotMatch(payload, /แหล่งข้อมูล|ส่งสลิป|ลายเซ็น|เซ็น|expense_action_confirm/);
 });
 
+const uat2ClaimReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/line-uat2-20261019-router-replays.json'), 'utf8')) as any[];
+for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim reason survives ${wrongRoute} routing and the owner's correction through real webhook/adapter/delivery`, async t => {
+  const replay = structuredClone(uat2ClaimReplays[0]);
+  const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'reimbursement.create', 'reimbursement.read_own', 'reimbursement.update_own_draft'];
+  const h = await fx21bBoundWebhook(t, replay, permissions);
+  h.flow.config.lineAiReimbursementDraftWriteEnabled = true;
+  const owner: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER',
+    messagingChannelId: h.baseEvent.messagingChannelId, chatKeyHash: chatKeyHashOf(h.baseEvent) };
+  const ctx: any = { ...owner, authSubject: owner.userId, authProvider: 'line', requestId: 'uat2-claim', roles: ['OWNER'], permissions, scopes: {} };
+  const now = new Date(), branch = { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'HQ', type: 'HEAD_OFFICE', updatedAt: now };
+  const source = { expenseId: 'source-bill', label: '691017019 · TONCHIN THAILAND', incurredDate: '2026-10-17', description: 'ค่าอาหาร',
+    amount: '1388.0000', categoryKey: 'meals', categoryLabel: 'ค่าอาหาร', currency: 'THB', eligible: true, updatedAt: now.toISOString() };
+  let action: any, acceptedRequest: any, saved: any, writes = 0, sourceReads = 0, evidenceChecks = 0;
+  const repo: any = {
+    isDraftActionOwnerCurrent: async (value: any) => value.actorUserId === owner.userId && value.ownerEpoch === 1,
+    findActiveDraftAction: async () => ['COLLECTING', 'PREVIEW'].includes(action?.status) ? action : null,
+    findDraftAction: async () => action,
+    findOrCreateDraftAction: async (input: any) => action ??= { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now },
+    saveDraftActionCollection: async (input: any) => action = { ...action, ...input, status: 'COLLECTING', updatedAt: now },
+    saveDraftActionPreview: async (input: any) => action = { ...action, ...input, status: 'PREVIEW', updatedAt: now },
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: 'เจ้าของร้าน' }],
+    listReimbursementSources: async (company: string, branchId: string, requester: string) => {
+      assert.equal(company, owner.companyId); assert.equal(branchId, branch.id); assert.equal(requester, owner.userId); sourceReads++; return [source];
+    },
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: 'เจ้าของร้าน' }),
+    findPolicy: async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' }),
+    resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line,
+      sourceExpenseSnapshot: { schemaVersion: 1, seller: { name: 'TONCHIN THAILAND', documentNumber: '691017019' }, expenseDate: source.incurredDate } })),
+    markDraftActionLineDelivered: async (input: any) => input.confirmationDigest === action.confirmationDigest,
+    findRequestById: async () => saved,
+    applyDraftActionAtomic: async (input: any) => {
+      assert.equal(input.confirmationDigest, action.confirmationDigest); assert.equal(input.previewRevision, action.previewRevision); writes++;
+      const cmd = action.commandJson;
+      saved = { ...cmd, ...cmd.header, id: action.id, status: 'DRAFT', updatedAt: now, createdAt: now,
+        incurredDate: new Date(cmd.header.incurredDate), lines: cmd.lines };
+      action = { ...action, status: 'APPLIED', requestId: saved.id, resultJson: { actionId: action.id, operation: 'CREATE', requestId: saved.id,
+        committedState: 'DRAFT', amount: saved.amount, currency: 'THB', committedAt: now.toISOString(), appliedRequestUpdatedAt: now.toISOString() } };
+      return { kind: 'applied', action, request: saved };
+    },
+  };
+  const data: any = { client: { branch: { findMany: async () => [branch], findFirst: async () => branch }, companyMembership: { findUnique: async () => ({ defaultBranchId: branch.id }) },
+    attachmentObject: { findMany: async () => [] }, lineWebhookEventLog: { findUnique: async () => ({ webhookEventId: acceptedRequest.webhookEventId }) },
+    lineLedgerDelivery: { findFirst: async () => ({ acceptedRequestJson: { request: acceptedRequest } }) } } };
+  const drafts = new LineReimbursementDraftUseCase(repo, { validate: async () => { evidenceChecks++; } } as any,
+    { lineAiReimbursementDraftWriteEnabled: true, reimbursementWriteQuiesce: false, lineMessagingChannelId: owner.messagingChannelId } as any);
+  const service = new LineReimbursementDraftService(drafts);
+  const adapter = new LineReimbursementDraftAdapterService(data, repo, { resolvePrivateOwner: async () => ({ owner, epoch: 1, taskRevision: 1 }) } as any,
+    service, drafts, { listCategories: async () => [{ id: 'meals', name: 'ค่าอาหาร' }] } as any);
+  h.flow.reimbursementDrafts = service; h.flow.reimbursementAdapter = adapter;
+  h.flow.captureExpenseNote = { execute: async () => assert.fail('claim answer must never create an expense') };
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    acceptedRequest = request;
+    const toolCtx: any = { ...ctx, requestId: request.requestId, inputEvidence: request.inputEvidence, valueCandidatesV2: request.valueCandidates, budgetGrantV2: request.budgetGrantV2 };
+    let result: any;
+    if (!action) result = await adapter.getOptions(toolCtx, { operation: 'CREATE', subrequestIndex: 0 });
+    else {
+      const options = await adapter.readDisplayOptions({ ctx, owner, ownerEpoch: 1, actionId: action.id });
+      const choice = options!.choices.find((item: any) => item.kind === 'SOURCE')!;
+      result = await adapter.preview(toolCtx, { action: { actionId: action.id, taskId: action.taskId }, proposal: {
+        schemaVersion: 1, taskId: action.taskId, taskRevision: options!.taskRevision, operation: 'CREATE', fields: {},
+        lineChanges: [{ operation: 'ADD', values: { linkedExpenseChoiceId: choice.choiceId } }],
+      } }, 'CREATE');
+    }
+    assert.equal(result.status, 'ok', JSON.stringify(result));
+    return { requestId: request.requestId, replyText: 'เตรียมใบเบิกให้ตรวจค่ะ', sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', refused: false,
+      toolsInvoked: ['reimbursement.draft.get_options'], toolCalls: [], durationMs: 0, semanticCoverage: [{ index: 0, status: 'needs_user' }] };
+  };
+  const send = async (index: number) => {
+    replay.route = structuredClone(uat2ClaimReplays[index].route);
+    if (index === 2 && wrongRoute === 'general') replay.route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ค่าอาหาร', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+    await h.execute(uat2ClaimReplays[index].messageText, undefined, uat2ClaimReplays[index].body);
+  };
+  await send(0);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกบิลที่จะเบิก/);
+  const claimId = action.id;
+  await send(1);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /เหตุผลการเบิกบิลนี้คืออะไรคะ/);
+  assert.deepEqual(action.commandJson.fieldPaths, ['fields.reason']);
+  assert.deepEqual(Object.keys(action.commandJson.accepted.proposal.lineChanges[0].values), ['linkedExpenseChoiceId']);
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'uat2-owner-boundary', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: 'ค่าอาหาร' }] }))!.inputEvidence;
+  assert.equal(await adapter.answerReason({ ctx: { ...ctx, userId: 'other' }, owner, ownerEpoch: 1, evidence, text: 'ค่าอาหาร' }), null);
+  assert.equal(await adapter.answerReason({ ctx, owner, ownerEpoch: 2, evidence, text: 'ค่าอาหาร' }), null);
+  assert.equal(action.status, 'COLLECTING');
+  // The reminder before the answer returns the same outstanding question.
+  await send(3); assert.equal(action.id, claimId); assert.match(JSON.stringify(h.delivered.at(-1)), /เหตุผลการเบิกบิลนี้คืออะไรคะ/);
+  await send(2);
+  assert.equal(action.id, claimId); assert.equal(action.status, 'PREVIEW'); assert.equal(writes, 0);
+  assert.equal(action.previewJson.after.reason, 'ค่าอาหาร'); assert.equal(action.previewJson.after.lines[0].linkedExpenseId, source.expenseId);
+  assert.equal(Number(action.previewJson.after.amount), 1388); assert.ok(sourceReads > 0 && evidenceChecks > 0);
+  await send(3);
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.match(payload, /ค่าอาหาร|บันทึกเป็นร่าง/); assert.doesNotMatch(payload, /เหตุผลการเบิกบิลนี้คืออะไรคะ|ยังไม่ได้บันทึกอะไร ขอเพิ่ม/);
+  const confirm = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+  await h.execute('บันทึกเป็นร่าง', confirm.data);
+  assert.equal(writes, 1); assert.equal(saved.reason, 'ค่าอาหาร'); assert.equal(saved.status, 'DRAFT');
+  assert.equal(h.intakeRequests.length, 5, 'every text turn retains the metered intake, including recovery');
+});
+
 const fx20bReplayRoutes = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/mangmee-advisor-fx20b-router-replays.json'), 'utf8')) as any[];
 describe('Fix-up 20B: editing by words uses the metered route and existing human cards', () => {
   for (const journey of ['E01', 'E04']) it(`${journey} vague real router JSON offers editable recent items and Other`, async () => {
@@ -12171,7 +12270,11 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     assert.equal(prepared.lineChanges[0].values.amount.value, facts.amount.value, 'money formatting and an omitted hint do not discard source facts');
   }
   await press(controls().find((action: any) => action.label === (receipt === 'photo' ? 'ส่งรูปใบเสร็จ' : 'ไม่มีใบเสร็จ')));
-  await press(controls().find((action: any) => action.label === 'ค่าเดินทาง'));
+  if (id === 'X036-A' && receipt === 'optional-receipt') {
+    await h.execute('หมวดที่ยังไม่มี');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกหมวดค่าใช้จ่ายได้เลยค่ะ/);
+    await h.execute('ค่าเดินทาง');
+  } else await press(controls().find((action: any) => action.label === 'ค่าเดินทาง'));
   if (receipt === 'no-receipt') {
     assert.match(JSON.stringify(h.delivered.at(-1)), /ไม่มีใบเสร็จเพราะอะไรคะ/);
     await h.execute('ร้านไม่ออกใบเสร็จให้');
@@ -12208,7 +12311,8 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     assert.equal(refused.status, 'forbidden', 'an unlinked task cannot claim draft authority');
     acceptedRequest.semanticSubrequests[0].taskRef.taskId = valid;
     }
-    for (const text of ['ค่าแท็กซี่ 200 บาท', 'ใบเบิกนี้ทำยังไง?', 'ดูใบเบิกของฉัน']) {
+    // A question to the bot without "?" is still never the claim's purpose or reason (UAT 2026-10-19 widened routes).
+    for (const text of ['ค่าแท็กซี่ 200 บาท', 'ใบเบิกนี้ทำยังไง?', 'ดูใบเบิกของฉัน', 'ทำอะไรได้บ้าง', 'ทำไมยังไม่บันทึกคะ', 'what can you do', 'ใช้ได้ไหม']) {
       const evidence = (await createLineAiInputEvidence({ turnKey: 'purpose-boundary', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
       assert.equal(await adapter.answerReason({ ctx, owner, ownerEpoch: 1, evidence, text, purposeFallback: true }), null, text);
     }

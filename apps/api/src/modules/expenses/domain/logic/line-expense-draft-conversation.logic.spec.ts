@@ -295,7 +295,8 @@ describe('LINE expense draft conversation logic', () => {
   });
 
   it('only opens an incomplete draft from a high-confidence expense statement', () => {
-    assert.equal(isLineExpenseDraftStartEligible('ซื้อกระดาษมาใช้ที่ออฟฟิศ', { confidence: 0.9, description: 'กระดาษ' }), true);
+    assert.equal(isLineExpenseDraftStartEligible('ซื้อกระดาษมาใช้ที่ออฟฟิศ', { confidence: 0.9, description: 'กระดาษ' }), false);
+    assert.equal(isLineExpenseDraftStartEligible('ซื้อกระดาษเมื่อวาน', { confidence: 0.9, description: 'กระดาษ' }), true);
     assert.equal(isLineExpenseDraftStartEligible('จ่ายอะไรไปแล้วหรือยัง', { confidence: 0.9 }), false);
     assert.equal(isLineExpenseDraftStartEligible('ยอด 590 บาท', { confidence: 0.9, amount: '590' }), false);
     assert.equal(isLineExpenseDraftStartEligible('ซื้อกระดาษ', { confidence: 0.4, description: 'กระดาษ' }), false);
