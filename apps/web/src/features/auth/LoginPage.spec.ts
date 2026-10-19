@@ -81,3 +81,10 @@ describe('LoginPage R-B5 extended (a LINE link never dead-ends at a password for
     assert.ok(text.indexOf('LINE') < text.indexOf('รหัสผ่าน'), 'LINE must read before รหัสผ่าน in the notice');
   });
 });
+
+describe('LoginPage sign-up', () => {
+  it('offers no web sign-up: new shops join through LINE only (owner 2026-10-19)', () => {
+    assert.doesNotMatch(source, /href="\/signup"/);
+    assert.doesNotMatch(source, /auth\.login\.open_shop|auth\.login\.no_account/);
+  });
+});
