@@ -56,7 +56,7 @@ const envelope = () => ({
   profileId: 'line-intake-text/2',
   inputTokenBound: 5_120,
   requestedOutputTokens: 1_536,
-  estimatorVersion: 'utf8-v2',
+  estimatorVersion: 'utf8-split-prefix-v4',
   promptVersion: 'line-intake-v2',
   payloadDigest: hash,
   schemaDigest: hash,
@@ -75,6 +75,7 @@ test('v2 budget grant parser pins the immutable profile table and rejects wideni
 
 test('v2 invocation parser binds exact profile, ordinal, grant and invocation limits', () => {
   assert.equal(parseAiBudgetEnvelopeV2(envelope())?.inputTokenBound, 5_120);
+  assert.equal(parseAiBudgetEnvelopeV2({ ...envelope(), estimatorVersion: 'utf8-v2' }), undefined);
   assert.equal(parseAiBudgetEnvelopeV2({ ...envelope(), inputTokenBound: 160_001 }), undefined);
   assert.equal(parseAiBudgetEnvelopeV2({ ...envelope(), ordinal: 2, invocationKey: 'company-1#attempt-1#provider-v2#2' })?.ordinal, 2);
   assert.equal(parseAiBudgetEnvelopeV2({ ...envelope(), invocationKey: 'company-2#attempt-1#provider-v2#0' }), undefined);

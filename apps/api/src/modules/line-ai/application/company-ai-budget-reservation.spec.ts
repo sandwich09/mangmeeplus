@@ -613,14 +613,14 @@ describe('acknowledgeAiBudgetBreach (hold spec §4.2)', () => {
   });
 });
 
-describe('the UNACKNOWLEDGED breach predicate is what closes a scope', () => {
-  it('both the admission check and the snapshot count only rows with no acknowledgement', () => {
+describe('the UNACKNOWLEDGED breach predicate is alert-only', () => {
+  it('only the snapshot and operator list count unacknowledged breaches, never admission', () => {
     // The whole point of the two new columns: `breach` stays true forever, so if either of these
     // two reads still counted it, acknowledging would change nothing at all.
     const engine = readFileSync(join(__dirname, 'company-ai-budget-reservation.ts'), 'utf8');
     assert.match(engine, /const UNACKNOWLEDGED_BREACH = \{ breach: true, breachAcknowledgedAt: null \}/);
-    assert.equal((engine.match(/\.\.\.UNACKNOWLEDGED_BREACH/g) ?? []).length, 3,
-      'the admission gate, the month snapshot and the operator list all use the one predicate');
+    assert.equal((engine.match(/\.\.\.UNACKNOWLEDGED_BREACH/g) ?? []).length, 2,
+      'the month snapshot and operator list retain the alert predicate');
     assert.equal(/count\(\{ where: \{ companyId, monthKey, breach: true \} \}\)/.test(engine), false,
       'no read may count an acknowledged breach as closing a scope');
   });

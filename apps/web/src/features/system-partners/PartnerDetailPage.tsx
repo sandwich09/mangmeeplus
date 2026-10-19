@@ -1864,7 +1864,7 @@ function AiBudgetPolicyPanel({
       )}
       {position.breach && (
         <p role="alert" data-testid="ai-budget-breach" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
-          มีรายการที่ใช้เครดิตเกินที่กันไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
+          มีรายการใช้เกินที่กันไว้และบันทึกยอดจริงครบแล้วค่ะ ระบบยังรับงานตามเครดิตที่เหลือ
         </p>
       )}
 

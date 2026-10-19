@@ -11,6 +11,7 @@ import type { ErpToolContext } from '../infrastructure/erp-tool.client';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { extractJson } from '../../../common/ai/extract-json';
 import { currentBudgetState } from '../../../common/usage/usage-context';
+import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
@@ -629,12 +630,15 @@ export async function runSemanticTurnV2(input: {
    *  permission check. Omitted (e.g. an older caller/test) keeps today's honest §8 terminal. */
   enabledDeterministicFamilies?: ReadonlySet<string>;
 }): Promise<AgentRunResult> {
-  const req = resolveExpenseReadReferences(input.req), { provider } = input, started = Date.now();
+  let req = resolveExpenseReadReferences(input.req);
+  const { provider } = input, started = Date.now();
   const inventory = req.semanticSubrequests!.map(item => item.kind !== 'write'
     && documentExplanationTopic(evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText))
     ? { ...item, kind: 'general' as const, toolHint: undefined } : item);
   const enabledFamilies = input.enabledDeterministicFamilies ?? new Set<string>();
   const retained = await retainedSelection(req);
+  req = { ...req, conversationContext: modelConversationContext(req.conversationContext, req.taskProjection,
+    !!retained, !!req.openClarifications?.length) };
   const readContext = conversationReadCandidates(req.conversationContext, req.valueCandidates);
   const language = req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
   const plan = { status: 'ROUTABLE' as const, language, intents: [], refusals: [], requiresHumanReview: false };
@@ -1138,19 +1142,16 @@ export async function runSemanticTurnV2(input: {
   // prompt, so ANSWER_PROMPT's cache stays warm) — run 4 composed answers said both "กันยายน 2566"
   // and "กันยายน 2026" for the same turn with no notion of today to anchor against.
   const today = todayCivilDate();
+  const taxGuidance = inventory.some(item => item.kind === 'general' || item.kind === 'help')
+    && /ภาษี|ภ\.?\s*ง\.?\s*ด|แวท|ทวิ|ใบรับรอง|ดอกเบี้ย|เงินปันผล|ยื่น|vat|wht|pnd|withhold|tax|50\s*(?:bis|tawi)|substitute\s*receipt|interest|dividend/iu.test([req.messageText, ...inventory.map(item => item.goal)].join(' '))
+    ? ADVISOR_TAX_GUIDANCE : undefined;
   const answerInput = { messageText: req.messageText, today, todayBuddhistYear: Number(today.slice(0, 4)) + 543,
     language, semanticSubrequests: inventory, responsePreferences: req.responsePreferences ? { ...req.responsePreferences, language } : undefined,
     taskProjection: req.taskProjection, conversationContext: req.conversationContext,
     toolResults: results.map(entry => ({ index: entry.index, result: entry.result,
       sources: entry.result.sourceRefs.map(ref => ({ ...ref, id: sourceId(ref) })) })), questions: [...questions].map(([index, text]) => ({ index, text })),
     approvedHelp: knowledge?.replyText,
-    conversationGuidance: ADVISOR_CONVERSATION_GUIDANCE,
-    ...(inventory.some(item => item.kind === 'general' || item.kind === 'help')
-      && /ภาษี|ภ\.?\s*ง\.?\s*ด|แวท|ทวิ|ใบรับรอง|ดอกเบี้ย|เงินปันผล|ยื่น|vat|wht|pnd|withhold|tax|50\s*(?:bis|tawi)|substitute\s*receipt|interest|dividend/iu.test([req.messageText, ...inventory.map(item => item.goal)].join(' '))
-      ? { taxGuidance: ADVISOR_TAX_GUIDANCE } : {}),
     productActionFacts: LINE_CHAT_ACTIONS.filter(action => canUseLineChatAction(action.id, req.userContext.permissions, entitledFeatureKeys == null ? null : new Set(entitledFeatureKeys))).map(({ title, sentence }) => ({ title, sentence })),
-    productOfferRule: 'Only offer product actions present in productActionFacts. A general explanation never implies the shop can perform that action. Do not invent package prices or instructions.',
-    chatActions: LINE_CHAT_ACTIONS.map(({ id, title, group }) => ({ id, title, group })),
     forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })),
     documentExplanations: inventory.flatMap(item => documentExplanationTopic(itemText.get(item.index) ?? '')
       ? [{ index: item.index, instruction: 'Explain what this document is and why it matters in one or two sentences of general knowledge. Do not read or claim any shop records or give product workflow instructions.' }] : []),
@@ -1180,7 +1181,12 @@ export async function runSemanticTurnV2(input: {
       if (state?.status !== 'active-v2' || state.repairCount >= state.grant.maxRepairs || state.calls >= aiBudgetV2OrdinalCeiling(state.grant)) break;
       state.repairPending = true;
     }
-    const answer = await provider.generateText({ usageTag: 'line.compose', systemPrompt: ANSWER_PROMPT, maxTokens: req.responsePreferences?.detail === 'detailed' ? 4096 : 1536,
+    const answer = await provider.generateText({ usageTag: 'line.compose', systemPrompt: ANSWER_PROMPT
+      + `\n${JSON.stringify({ ...LINE_CHAT_ACTIONS_CONTEXT,
+        conversationGuidance: ADVISOR_CONVERSATION_GUIDANCE,
+        ...(taxGuidance ? { taxGuidance } : {}),
+        productOfferRule: 'Only offer product actions present in productActionFacts. A general explanation never implies the shop can perform that action. Do not invent package prices or instructions.' })}`,
+      maxTokens: req.responsePreferences?.detail === 'detailed' ? 4096 : 1536,
       messages: [{ role: 'user', text: JSON.stringify({ ...answerInput, ...(attempt ? { repair: 'Return all indexed answers once and helpActions for every help index: select the matching chatActions actionId for an action how-to, or null for a definition/status explanation; use the exact schema and supplied source IDs.' } : {}) }) }] });
     const candidate = answer.ok ? json(answer.text) : undefined;
     if (Array.isArray(candidate?.helpActions)) for (const selection of candidate.helpActions) {

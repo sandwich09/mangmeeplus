@@ -1,0 +1,149 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "fx": 33,
+  "origin": "Offline real builders, baseline from HEAD; no provider/network dispatch. Document QA source copied unchanged with capturing transport.",
+  "rows": [
+    {
+      "name": "intake text 4 turns",
+      "bytesBefore": 94459,
+      "bytesAfter": 94459,
+      "boundBefore": 99328,
+      "boundAfter": 47104,
+      "output": 4096,
+      "holdBeforeThb": 14.32,
+      "holdAfterThb": 7.86,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 8239,
+      "dynamicAfter": 5087
+    },
+    {
+      "name": "intake text 4 turns pending task",
+      "bytesBefore": 95350,
+      "bytesAfter": 95350,
+      "boundBefore": 100352,
+      "boundAfter": 47104,
+      "output": 4096,
+      "holdBeforeThb": 14.45,
+      "holdAfterThb": 7.86,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 9064,
+      "dynamicAfter": 5912
+    },
+    {
+      "name": "intake image one page",
+      "bytesBefore": 49155,
+      "bytesAfter": 49158,
+      "boundBefore": 55296,
+      "boundAfter": 55296,
+      "output": 8000,
+      "holdBeforeThb": 10.81,
+      "holdAfterThb": 10.81,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 9591,
+      "dynamicAfter": 5992
+    },
+    {
+      "name": "intake text 15 turns",
+      "bytesBefore": 98555,
+      "bytesAfter": 94459,
+      "boundBefore": 103424,
+      "boundAfter": 47104,
+      "output": 4096,
+      "holdBeforeThb": 14.83,
+      "holdAfterThb": 7.86,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 11917,
+      "dynamicAfter": 5087
+    },
+    {
+      "name": "intake text 15 turns pending task",
+      "bytesBefore": 99446,
+      "bytesAfter": 99446,
+      "boundBefore": 104448,
+      "boundAfter": 51200,
+      "output": 4096,
+      "holdBeforeThb": 14.96,
+      "holdAfterThb": 8.37,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 12742,
+      "dynamicAfter": 9590
+    },
+    {
+      "name": "claim control",
+      "bytesBefore": 37318,
+      "bytesAfter": 37318,
+      "boundBefore": 41984,
+      "boundAfter": 41984,
+      "output": 2048,
+      "holdBeforeThb": 6.21,
+      "holdAfterThb": 6.21,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 23759,
+      "dynamicAfter": 23759
+    },
+    {
+      "name": "line.loop",
+      "bytesBefore": 37019,
+      "bytesAfter": 37019,
+      "boundBefore": 41984,
+      "boundAfter": 41984,
+      "output": 2048,
+      "holdBeforeThb": 6.21,
+      "holdAfterThb": 6.21,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 23488,
+      "dynamicAfter": 23488
+    },
+    {
+      "name": "line.public.lookup",
+      "bytesBefore": 997,
+      "bytesAfter": 997,
+      "boundBefore": 5120,
+      "boundAfter": 5120,
+      "output": 4096,
+      "holdBeforeThb": 1.16,
+      "holdAfterThb": 1.16,
+      "model": "gpt-4.1-mini",
+      "dynamicBefore": 307,
+      "dynamicAfter": 307
+    },
+    {
+      "name": "line.compose",
+      "bytesBefore": 27504,
+      "bytesAfter": 27507,
+      "boundBefore": 31744,
+      "boundAfter": 31744,
+      "output": 1536,
+      "holdBeforeThb": 4.69,
+      "holdAfterThb": 4.69,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 10160,
+      "dynamicAfter": 6183
+    },
+    {
+      "name": "document QA one page (unchanged builder)",
+      "bytesBefore": 6752,
+      "bytesAfter": 6752,
+      "boundBefore": 13312,
+      "boundAfter": 13312,
+      "output": 3000,
+      "holdBeforeThb": 3.14,
+      "holdAfterThb": 3.14,
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "dynamicBefore": 137,
+      "dynamicAfter": 137
+    }
+  ],
+  "warmEstimates": {
+    "ordinary": {
+      "baselineThb": 0.9162747000000001,
+      "afterThb": 0.5996642762356297,
+      "method": "Proportional dynamic bytes at observed 5850 uncached / 23653 cache-read / 208 output; successful warm cache only; no measured new provider usage."
+    },
+    "pendingWithoutRetainedSource": {
+      "baselineThb": 0.9162747000000001,
+      "afterThb": 0.7873363292575734,
+      "method": "Proportional dynamic bytes at observed 5850 uncached / 23653 cache-read / 208 output; successful warm cache only; no measured new provider usage."
+    }
+  }
+}

@@ -334,7 +334,7 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.deepEqual((reopened.evidenceJson as { anomaly: unknown }).anomaly, { previousStatus: 'CANCELLED' });
   });
 
-  it('spec §12.3: an actual above the bound records in FULL, flags a breach and closes the scope', async (t) => {
+  it('spec §12.3: an actual above the bound records in FULL, flags an alert without closing admission', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const companyId = await company('breach', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
     const held = await reserve(companyId, 'CHAT', 0, 'breach-attempt');
@@ -353,11 +353,10 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     const event = await client.aiUsageEvent.findUniqueOrThrow({ where: { invocationKey: held.reservation.invocationKey } });
     assert.equal(event.costSatang, row.settledCostSatang);
 
-    // CHAT is now closed for this company-month; OCR is untouched.
+    // Both buckets continue when their actual spend and holds fit.
     const chatAfter = await reserve(companyId, 'CHAT', 1, 'after-breach');
     const ocrAfter = await reserve(companyId, 'OCR', 0, 'after-breach-ocr');
-    assert.equal((chatAfter as { reason: string }).reason, 'unavailable');
-    assert.equal((chatAfter as { detail: string }).detail, 'invariant_breach');
+    assert.equal(chatAfter.ok, true, 'overrun alert never locks the customer');
     assert.equal(ocrAfter.ok, true, 'a breach in one bucket does not close the other');
   });
 
@@ -625,7 +624,7 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 0, 'no hold is left behind');
   });
 
-  it('owner 2026-09-30: only the cap yields — a breach still closes the scope to a drain retry', async (t) => {
+  it('owner 2026-09-30: an overrun alert does not close admission to a drain retry', async (t) => {
     if (unreachable) return t.skip(unreachable);
     const companyId = await company('drain-breach', { total: 1_000_000, chat: 500_000, ocr: 500_000 });
     const held = await reserve(companyId, 'CHAT', 0, 'drain-breach-attempt');
@@ -637,8 +636,7 @@ describe('AI budget reservations on PostgreSQL', { skip: !databaseUrl }, () => {
     });
 
     const retry = await drainRetry(companyId, 'line-text:drain-breach:r1');
-    assert.equal((retry as { reason: string }).reason, 'unavailable');
-    assert.equal((retry as { detail: string }).detail, 'invariant_breach');
+    assert.equal(retry.ok, true, 'overrun alert never blocks a drain retry');
   });
 
   it('item 5: requestKind pinned at reserve time lands on a settlement that supplies none', async (t) => {
