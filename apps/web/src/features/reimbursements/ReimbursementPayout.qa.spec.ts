@@ -463,7 +463,7 @@ describe('the receiving choice on the claim form', () => {
     assert.match(page, /forSelf=\{requesterUserId === userId\}\s+defaultAccount=\{requesterUserId === userId \? myPayoutAccount : null\}/);
     // Choosing another requester starts the receiving choice over.
     assert.match(page, /setRequesterUserId\(event\.target\.value\);[^\n]*setPayout\(resetClaimPayoutForRequester\);/);
-    assert.equal(page.match(/\.\.\.\(payoutInput && \{ payout: payoutInput \}\)/g)?.length, 2, 'create and update both carry the choice');
+    assert.equal(page.match(/\.\.\.\(payoutInput && \{ payout: payoutInput \}\)/g)?.length, 3, 'create, update and lost-answer recovery all carry the choice');
   });
 
   // Security review nit: the tick box was offered by a guess made on the page (the viewer holds the
@@ -673,7 +673,7 @@ describe('"บัญชีรับเงินคืนของฉัน" and 
     assert.match(employee, /canEdit=\{!branchScopeReadOnly\}/);
     // Not for a draft, invited, suspended or disabled employee: the notice the account owner is owed
     // reaches active members only, and the server refuses the save for the same reason.
-    assert.match(employee, /const employeeActive = draftActivated \|\| editingEmployee\?\.status === 'ACTIVE';/);
+    assert.match(employee, /const employeeActive = draftActivated \|\| person\?\.status === 'ACTIVE';/);
     assert.match(employee, /\{editingEmployee && employeeActive && viewerPermissions\.includes\('reimbursement\.create'\) && \(\s+<MemberPayoutAccountCard/);
     assert.equal(employee.match(/<MemberPayoutAccountCard/g)?.length, 1, 'the one place an employee account is set');
     assert.equal(translateApiError('payout_account_member_not_active'),

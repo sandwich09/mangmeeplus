@@ -59,12 +59,13 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
       .catch(e => { if (active) setError(apiErrorMessage(e)); }); }, 4000);
     return () => { active = false; window.clearInterval(timer); };
   }, [api, settle, operation?.id, operation?.state]);
+  const waitingForCode = step === 'code_sent' || rateLimitUntil > now;
   useEffect(() => {
-    if (step !== 'code_sent') return;
+    if (!waitingForCode) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [step]);
+  }, [waitingForCode]);
   // The account email is read once when the editor opens, only to decide whether to offer it (no polling).
   const open = useCallback(() => {
     setStep(value => value === 'previewed' || value === 'op_pending' ? value : 'choose');
@@ -121,7 +122,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
   const resend = () => run(async () => { if (!latestInvoice) return; setResent(null); setResent(await api.resendDocument(latestInvoice.id)); });
   const clear = () => { setStep('idle'); setChallenge(null); setProof(null); setCode(''); setNewEmail(''); setResent(null); setError(''); setErrorCode(null); setOperation(null); };
 
-  if (!current?.hasCustomer && !error) return null;
+  if (!current?.hasCustomer && !error && !busy) return null;
   // F04: the recipient op refuses while a purchase is in flight; the status says so (`canChange`) — the
   // same gate the return page's own "แก้อีเมลรับเอกสาร" uses (`billingRecipientLocked`).
   const blockedByPurchase = billingRecipientLocked(status) && !current?.busy;
@@ -131,8 +132,7 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
   const view = (!canEdit || hideEdit) && (step === 'choose' || step === 'code_sent') ? 'idle' : step;
   const accountOption = account?.emailRequirement === 'READY' && account.email && account.email !== current?.email ? account.email : null;
   const retrySeconds = Math.max(0, Math.ceil((Math.max(rateLimitUntil, challenge ? Date.parse(challenge.retryAt) : 0) - now) / 1000));
-  const accountHref = status.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/settings/profile#account`
-    : `/account/email?company=${encodeURIComponent(companyId)}`;
+  const accountHref = `/companies/${encodeURIComponent(companyId)}/account`;
   return <section aria-label="ผู้รับเอกสารของร้าน" className="mangmee-card space-y-4 p-5 sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="min-w-0 space-y-1"><h2 className="text-base font-semibold">อีเมลรับเอกสาร</h2>
@@ -142,6 +142,9 @@ export function BillingEmailRecipientPanel({ companyId, status, latestInvoice, o
     </div>
     {error && <div role="alert" className="space-y-1 rounded-xl bg-red-50 p-3"><p className="break-words">{error}</p>
       {errorCode === 'BILLING_EMAIL_VERIFICATION_REQUIRED' && <a className="inline-flex min-h-11 items-center text-brand-700 underline" href={accountHref}>ไปที่บัญชีของฉัน</a>}</div>}
+    {!current && (error || busy) && <button className={button} disabled={busy} aria-busy={busy} onClick={() => void run(async () => {
+      const value = await load(); if (value.operation) settle(value.operation);
+    })}>ลองอีกครั้ง</button>}
     {/* Documents, notices and bounce tracking all read the stored column, not the live Stripe value. */}
     {view === 'idle' && <div className="space-y-2">
       {current?.hasCustomer && blockedByPurchase && <p className="text-sm text-gray-600">{BILLING_RECIPIENT_WAIT_TEXT}</p>}

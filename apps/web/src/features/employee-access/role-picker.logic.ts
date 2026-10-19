@@ -1,8 +1,25 @@
 import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '../../common/i18n/workspace-dictionary';
 import { t } from '../../common/i18n/workspace-i18n.logic';
-import { THAI_SYSTEM_ROLE_NAMES, HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, HR_ASSIGNABLE_ROLE_KEYS, hasPrivilegedGrant, isRoleEditableByCompany, type EmployeeSummary, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 
 export const EMPLOYEE_BRANCH_SCOPE_HELP = `กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง สาขาอื่นให้${THAI_SYSTEM_ROLE_NAMES.OWNER}กำหนด`;
+
+/** The status endpoint checks raw role grants, including custom roles, rather than the role's name. */
+export function canChangeEmployeeStatus(permissions: readonly string[], employee: Pick<EmployeeSummary, 'status' | 'roles'> | null | undefined, roles: readonly RoleSummary[]): boolean {
+  return !!employee && employee.status !== 'DRAFT' && permissions.includes('access.employee.disable')
+    && employee.roles.every(isRoleEditableByCompany)
+    && (permissions.includes('access.role.manage') || employee.roles.every(ref => {
+      const role = roles.find(role => role.id === ref.id);
+      return !!role && !hasPrivilegedGrant(role.permissionKeys);
+    }));
+}
+
+/** Older memberships keep main-branch access in defaultBranchId, without a branchScopes row. */
+export function employeeBranchIds(employee: Pick<EmployeeSummary, 'branchScopeMode' | 'defaultBranchId' | 'branchScopeBranchIds'>): string[] {
+  return employee.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
+    ? employee.defaultBranchId ? [employee.defaultBranchId] : []
+    : employee.branchScopeBranchIds;
+}
 
 /**
  * What a role lets a person do in THIS shop, for the read-only lists (the role page, a person's rights).

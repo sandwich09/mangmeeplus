@@ -4,6 +4,7 @@ import { billingOffer, type BillingPolicy } from '@watchdog-bms/contracts';
 import type { PrismaService } from '../common/database/prisma.service';
 import type { Prisma } from '../generated/prisma/client';
 import { termProjectionHash } from '../modules/billing/domain/paid-invoice';
+import { packageAnchorDay } from '../modules/billing/domain/billing-package';
 import type { startBillingBrowser } from './billing-browser-smoke';
 
 type Request = (path: string, method?: string, body?: unknown, extra?: Record<string,string>) => Promise<{status:number;body:any}>;
@@ -60,7 +61,7 @@ export async function checkBillingPurchaseRecovery(input: {request:Request;prism
   const snapshot={quote:{offer,purchaseMode:'CARD_ONCE'},policy};
   const paidTerm=await db.companyPlanTerm.update({where:{companyId},data:{tierKey:offer.offerKey,branchLimit:offer.branchLimit,employeeLimit:offer.employeeLimit,
     monthlySlipLimit:offer.monthlySlipLimit,termStartAt:start,termEndsAt:end,billingReceiptAccountId:account.id}});
-  await db.billingAccount.update({where:{id:account.id},data:{renewalMode:'CARD_ONCE',contractAttemptId:attemptId,paidThrough:end,billingAnchorDay:start.getUTCDate(),termProjectionHash:termProjectionHash(paidTerm)}});
+  await db.billingAccount.update({where:{id:account.id},data:{renewalMode:'CARD_ONCE',contractAttemptId:attemptId,paidThrough:end,billingAnchorDay:packageAnchorDay(start),termProjectionHash:termProjectionHash(paidTerm)}});
   const invoice=await db.billingInvoice.create({data:{billingAccountId:account.id,sourceAttemptId:attemptId,providerInvoiceId:`in_recovery${randomUUID().replaceAll('-','')}`,
     offerSnapshot:offer as unknown as Prisma.InputJsonValue,contractSnapshot:snapshot as unknown as Prisma.InputJsonValue,policyRevisionId:revision.id,currency:'THB',totalSatang:24900,paidSatang:24900,
     periodStart:start,periodEnd:end,providerStatus:'paid',applyStatus:'APPLIED',appliedAt:start,evidenceHash:'synthetic-recovery-paid-history'}});

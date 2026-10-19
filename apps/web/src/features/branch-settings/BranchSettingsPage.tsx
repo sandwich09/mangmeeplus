@@ -136,7 +136,7 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
       await updateBranch(companyId, editing.id, {
         name: editing.name.trim(),
         taxBranchCode: editing.taxBranchCode?.trim() || null,
-        phone: editing.phone?.trim() || undefined,
+        phone: editing.phone?.trim() ?? '',
         email: editing.email?.trim() || undefined,
         status: editing.status,
       });

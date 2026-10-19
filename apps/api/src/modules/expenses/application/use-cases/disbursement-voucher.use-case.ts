@@ -89,7 +89,7 @@ export class DisbursementVoucherUseCase {
       const reason = disbursementExpenseSelectionReason(expense);
       if (reason) throw new UnprocessableEntityException({ code: `disbursement_expense_${reason}` as DisbursementVoucherErrorCode,
         message: `รายการ ${expense.expenseNumber || 'ที่เลือก'}: ${disbursementExpenseReasonMessage(reason, expense.reservation?.documentNumber)}` });
-      if (typeof line.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(line.amount) || new Decimal(line.amount).gt(String(expense.outstandingAmount))) {
+      if (typeof line.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(line.amount) || new Decimal(line.amount).gt(new Decimal(String(expense.outstandingAmount)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP))) {
         throw new UnprocessableEntityException(disbursementVoucherError('disbursement_amount_invalid', { number: expense.expenseNumber || 'ที่เลือก', outstanding: new Decimal(String(expense.outstandingAmount)).toFixed(4) }));
       }
       total = total.plus(line.amount);
@@ -517,7 +517,7 @@ export class DisbursementVoucherUseCase {
     for (const line of voucher.lines) {
       const source = sources.get(line.expenseId);
       if (!source || source.status !== 'CONFIRMED' || source.reservedByDisbursementVoucherId !== voucher.id
-        || new Decimal(String(source.outstandingAmount)).lt(String(line.amount)) || disbursementVoucherSourceHash(source) !== line.sourceHashAtSubmit
+        || new Decimal(String(source.outstandingAmount)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).lt(String(line.amount)) || disbursementVoucherSourceHash(source) !== line.sourceHashAtSubmit
         || disbursementExpenseSelectionReason({ ...source, reservedByDisbursementVoucherId: null })) throw this.changed(source?.expenseNumber ?? line.expense.expenseNumber, paying, voucher, ctx, await this.repo.canOwnerRecover(voucher, ctx.roles.includes('OWNER'), tx));
     }
     return sources;

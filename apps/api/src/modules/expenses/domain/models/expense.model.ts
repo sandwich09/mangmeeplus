@@ -327,7 +327,7 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   buyerAsPrintedJson?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted;
   vendorEntityKindSnapshot?: BuyerEntityKind;
   whtCategoryCode?: string;
-  whtRate?: string;
+  whtRate?: string | null;
   vendorDocumentNumber?: string;
   receivedAt?: Date | null;
   dueDate?: Date | null;

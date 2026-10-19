@@ -89,7 +89,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const returnQuery = claimHubQuery(searchParams?.get('tab') ?? null, searchParams?.get('filter') ?? null);
   const editing = Boolean(requestId);
   const [form, setForm] = useState(emptyForm);
-  const [requesterUserId, setRequesterUserId] = useState(userId);
+  const [requesterUserId, setRequesterUserId] = useState(!editing && sourceExpenseId && canPrepareForOthers ? searchParams?.get('requesterUserId') || userId : userId);
   // Where the money goes back to. A claim follows the REQUESTER's default account unless it says otherwise.
   const [payout, setPayout] = useState<ClaimPayoutForm>(emptyClaimPayoutForm);
   const [currentPayout, setCurrentPayout] = useState<ReimbursementPayoutSummary | null>(null);
@@ -113,6 +113,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   // Collapsed line indices. Lines stay mounted when collapsed; this only hides them.
   const [collapsedLines, setCollapsedLines] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState(false);
+  const [createSession] = useState(() => ({ key: null as string | null, saving: false, attempted: false }));
   const [loading, setLoading] = useState(editing && canUpdate);
   const [editLoaded, setEditLoaded] = useState(!editing);
   const [error, setError] = useState<string | null>(null);
@@ -197,7 +198,14 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       // Without the preview the choice still works: the server reads the default at submit.
       .catch(() => { if (active && forSelf) { defaultUnreadRef.current = true; setMyPayoutAccount(null); } });
     return () => { active = false; };
-  }, [canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId]);
+  }, [canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId, savedAccountsReload]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refreshAccounts = () => { if (!createSession.saving) setSavedAccountsReload(value => value + 1); };
+    window.addEventListener('focus', refreshAccounts);
+    return () => window.removeEventListener('focus', refreshAccounts);
+  }, [createSession]);
 
   // A person who is known to have no default account is not left on "follow my default": that choice let the draft be
   // saved and then blocked it on the next page. Nothing is chosen for them, and saving asks for the choice here.
@@ -354,6 +362,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (createSession.saving) return;
     const send = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'draft';
     setValidationIntent(send ? 'send' : 'draft');
     setError(null); setPayoutInvalidField(undefined);
@@ -379,6 +388,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     }
     // Undefined leaves an existing draft's receiving choice as it is.
     const payoutInput = claimPayoutInput(payout, maySaveAsDefault, requesterUserId === userId);
+    createSession.saving = true;
     setBusy(true);
     let createdId: string | null = null;
     let receiptFailureMessage: string | null = null;
@@ -417,6 +427,9 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         await finishSavedDraft(requestId, send);
         return;
       }
+      const retryingCreate = createSession.attempted;
+      createSession.key ??= crypto.randomUUID();
+      createSession.attempted = true;
       const created = await createReimbursement(companyId, {
         branchId,
         requesterUserId,
@@ -425,8 +438,20 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         missingReceiptReason: form.missingReceiptReason.trim() || undefined,
         ...(payoutInput && { payout: payoutInput }),
         lines,
-      });
+      }, createSession.key);
       createdId = created.id;
+      if (retryingCreate && (created.requesterUserId !== requesterUserId || created.branchId !== branchId)) {
+        setStrandedDraftId(created.id);
+        setError('ร่างที่บันทึกไว้ใช้สาขาหรือผู้เบิกต่างจากที่เลือกตอนนี้ เปิดร่างเพื่อตรวจและแก้ไข');
+        return;
+      }
+      // A lost answer may have saved earlier field values. Apply the current form to that same draft.
+      if (retryingCreate) await updateReimbursementDraft(companyId, created.id, {
+        reason: form.reason.trim(), currency: form.currency,
+        missingReceiptReason: form.missingReceiptReason.trim() || null,
+        ...(payoutInput && { payout: payoutInput }),
+        lines: lines.map((line, i) => ({ ...line, ...mergeDraftLineEvidence(form.lines[i], null) })),
+      });
       const files = form.lines.map(l => l.file);
       if (files.some(Boolean)) {
         const results = await Promise.allSettled(files.map(f => (f ? uploadReceiptFile(companyId, f, created.branchId ?? branchId) : Promise.resolve(null))));
@@ -457,6 +482,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         : errorText(e));
       setStrandedDraftId(createdId);
     } finally {
+      createSession.saving = false;
       setBusy(false);
     }
   };
@@ -491,6 +517,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           covers every field in Thai, under the field itself, instead. */}
       {/* One column that fills the page; the buttons end the form in the page's action bar (owner 2026-10-13). */}
       <form onSubmit={handleCreate} noValidate className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
+        <fieldset disabled={busy} aria-busy={busy} inert={busy} className="contents"
+          onClickCapture={event => { if (busy) { event.preventDefault(); event.stopPropagation(); } }}>
         <div className="space-y-4">
           {/* Why the draft came back, said once, beside the fields it asks to change. */}
           {correctionNote && <Notice tone="warning">{correctionNote}</Notice>}
@@ -693,13 +721,14 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             {/* Leaving the edit of a draft goes back to that draft, not to the list. */}
             <Link href={editing ? `${hubHref}/${requestId}${returnQuery}` : `${hubHref}${returnQuery}`} className={ghostClass}>ยกเลิก</Link>
             {strandedDraftId
-              ? <Link href={`${hubHref}/${strandedDraftId}${returnQuery}`} className={btnClass}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
+              ? <Link href={`${hubHref}/${strandedDraftId}${returnQuery}`} className={btnClass}>เปิดร่าง</Link>
               : <>
                 <button type="submit" name="intent" value="draft" className={ghostClass} disabled={busy || refreshingSource !== null} aria-busy={Boolean(busy)}>บันทึกร่าง</button>
                 <button type="submit" name="intent" value="send" className={btnClass} disabled={busy || sourcesLoading || refreshingSource !== null} aria-busy={Boolean(busy)}>ส่งอนุมัติ</button>
               </>}
           </ActionGroup>
         </FormActionBar>
+        </fieldset>
       </form>
     </MangmeePage>
   );

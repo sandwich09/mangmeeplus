@@ -15,7 +15,7 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import { priceRenderedAiInvocationV2 } from './ai-model-pricing';
-import { appendPackageInterval, promotionBoundaries } from '../../billing/domain/billing-package';
+import { appendPackageInterval, packageAnchorDay, promotionBoundaries } from '../../billing/domain/billing-package';
 import { grantPromotionPackageReceipts } from '../../billing/application/billing-receipt-grants';
 import {
   cancelAiBudgetStep, chargeAiBudgetHoldAtBound, releaseAiBudgetHoldByOperator, reserveAiBudgetStep, settleAiBudgetStep,
@@ -67,7 +67,7 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
   const daysFromNow = (days: number) => new Date(now.getTime() + days * DAY);
   /** `count` calendar months back to back from `start`, the way one-time renewals chain. */
   const months = (start: Date, count: number): Array<readonly [Date, Date]> => Array.from({ length: count }, (_, k) =>
-    [k ? appendPackageInterval(start, 'month', start.getUTCDate(), k) : start, appendPackageInterval(start, 'month', start.getUTCDate(), k + 1)] as const);
+    [k ? appendPackageInterval(start, 'month', packageAnchorDay(start), k) : start, appendPackageInterval(start, 'month', packageAnchorDay(start), k + 1)] as const);
   /** A paid company; paidThrough = the last period end. Default: one calendar month that began 10 days ago. */
   async function fixture(suffix: string, opts: { allowance?: number; cutOver?: boolean; mode?: 'SHARED' | 'SPLIT'; chatCap?: number;
     periods?: Array<readonly [Date, Date]>; account?: Record<string, unknown>; term?: boolean } = {}) {
@@ -80,7 +80,7 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
       aiCreditCutoverAt: opts.cutOver === false ? null : new Date(now.getTime() - 60 * DAY), aiCreditCutoverSource: 'SYNTHETIC' } });
     const periods = opts.periods ?? months(daysFromNow(-10), 1);
     const account = await client.billingAccount.create({ data: { companyId, stripeAccountId: `acct_${companyId}`, livemode: false,
-      renewalMode: 'CARD_ONCE', billingAnchorDay: periods[0]![0].getUTCDate(), paidThrough: periods[periods.length - 1]![1], ...opts.account } });
+      renewalMode: 'CARD_ONCE', billingAnchorDay: packageAnchorDay(periods[0]![0]), paidThrough: periods[periods.length - 1]![1], ...opts.account } });
     for (const [index, [periodStart, periodEnd]] of periods.entries()) {
       await client.billingInvoice.create({ data: { billingAccountId: account.id, providerInvoiceId: `in_${companyId}_${index}`, offerSnapshot: {},
         policyRevisionId: 'synthetic', currency: 'thb', totalSatang: 24_900, paidSatang: 24_900, periodStart, periodEnd,
@@ -101,7 +101,7 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
     const start = daysFromNow(-opts.startDaysAgo);
     const { paidEnd, benefitEnd } = promotionBoundaries({ serviceStartsAt: start, interval: 'month', bonusMonths: 1 });
     const periods: Array<readonly [Date, Date]> = [[start, paidEnd]];
-    if (opts.later) periods.push([benefitEnd, appendPackageInterval(benefitEnd, 'month', start.getUTCDate())]);
+    if (opts.later) periods.push([benefitEnd, appendPackageInterval(benefitEnd, 'month', packageAnchorDay(start))]);
     const paidThrough = opts.paidThrough ?? (opts.later ? periods[1]![1] : benefitEnd);
     const shop = await fixture(suffix, { allowance: opts.allowance, periods, account: { paidThrough } });
     await client.companyPlanTerm.update({ where: { companyId: shop.companyId }, data: { termEndsAt: paidThrough } });

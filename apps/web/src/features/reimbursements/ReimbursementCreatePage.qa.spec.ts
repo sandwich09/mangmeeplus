@@ -68,18 +68,26 @@ test('failed sends are consumed once outside the address and only shown on draft
 // Exercise the real page handlers with the existing SSR hook harness; no browser or server.
 import { mock } from 'node:test';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import { certificateHarness, h, mutable } from '../expenses/expense-certificate-test-harness';
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const select = mutable('@/common/components/field/ThemedSelect');
 const api = mutable('../reimbursements/reimbursements.api');
+const branch = mutable('../web-core-workspace/TransactionBranchField');
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage');
 const noop = () => undefined;
-function createView(props: object = {}) {
+function createView(props: object = {}, query = '') {
   return certificateHarness(() => h(AppRouterContext.Provider, { value: { push: noop, prefetch: noop } as never },
-    h(ToastContext.Provider, { value: { success: noop, error: noop } as never },
-      h(ReimbursementCreatePage, { companyId: 'co', canCreate: true, ...props }))));
+    h(SearchParamsContext.Provider, { value: new URLSearchParams(query) }, h(ToastContext.Provider, { value: { success: noop, error: noop } as never },
+      h(ReimbursementCreatePage, { companyId: 'co', canCreate: true, ...props })))));
 }
+test('a source link preselects its payer only for someone allowed to prepare for others', () => {
+  for (const [canPrepareForOthers, sourceExpenseId, expected] of [[true, 'expense', 'payer'], [false, 'expense', 'reader'], [true, undefined, 'reader']] as const) {
+    const view = createView({ userId: 'reader', canPrepareForOthers, sourceExpenseId }, 'requesterUserId=payer');
+    view.render(); assert.equal(view.state[1], expected);
+  }
+});
 function category(view: ReturnType<typeof createView>, index = 0) {
   return view.nodes.filter(node => node.tag === 'ThemedSelect' && node.props['aria-label'] === 'หมวด')[index]!.props;
 }
@@ -161,4 +169,84 @@ test('CLAIM-LIST single item has a heading, receipt first, then description and 
   const bar = html.slice(html.indexOf('data-form-action-bar'));
   assert.match(bar, /ยกเลิก[\s\S]*บันทึกร่าง[\s\S]*ส่งอนุมัติ/);
   assert.doesNotMatch(html.slice(0, html.indexOf('data-form-action-bar')), />บันทึกร่าง<|>ส่งอนุมัติ</);
+});
+
+test('FIX-R1 create and edit lock all fields and navigation during save', () => {
+  assert.match(page, /<fieldset disabled=\{busy\} aria-busy=\{busy\}/);
+  assert.ok(page.indexOf('<fieldset disabled={busy}') < page.indexOf('<ClaimPayoutFormSection'));
+  assert.ok(page.indexOf('</fieldset>') > page.indexOf('</FormActionBar>'));
+  assert.match(page, /if \(createSession\.saving\) return/);
+  assert.match(page, /onClickCapture=\{event => \{ if \(busy\) \{ event.preventDefault\(\); event.stopPropagation\(\); \} \}\}/);
+});
+
+test('FIX-R1 lost create answer retries the same identity and saves later edits to that draft', async () => {
+  const branchMock = mock.method(branch, 'useTransactionCreateBranchId', () => 'branch-1');
+  const calls: any[] = [], updates: any[] = [];
+  let answer: (value: any) => void = noop;
+  const create = mock.method(api, 'createReimbursement', (...args: any[]) => {
+    calls.push(args);
+    return calls.length === 1 ? Promise.reject(new Error('lost answer')) : new Promise(resolve => { answer = resolve; });
+  });
+  const update = mock.method(api, 'updateReimbursementDraft', async (...args: any[]) => { updates.push(args); });
+  const view = createView();
+  try {
+    view.render();
+    const formIndex = view.state.findIndex((value: any) => value?.lines && 'reason' in value);
+    const optionsIndex = view.state.findIndex((value: any) => value?.requesters && value?.items);
+    const payoutIndex = view.state.findIndex((value: any) => value?.mode === 'DEFAULT');
+    const form = view.state[formIndex] as any;
+    view.state[formIndex] = { ...form, reason: 'เดินทาง', lines: [{ ...form.lines[0], description: 'แท็กซี่', amount: '100', categoryKey: 'travel' }] };
+    view.state[optionsIndex] = { requesters: [], items: [], receiptPolicy: { requireReceipt: false, allowMissingReceiptWithReason: true } };
+    view.state[payoutIndex] = { ...(view.state[payoutIndex] as any), mode: 'CASH' };
+    view.render();
+    const event = { preventDefault: noop, nativeEvent: { submitter: { getAttribute: () => 'draft' } }, currentTarget: {} };
+    await view.find('form').onSubmit(event);
+    view.state[formIndex] = { ...(view.state[formIndex] as any), reason: 'แก้เหตุผลหลังคำตอบหาย' };
+    view.render();
+    const submit = view.find('form').onSubmit;
+    const pending = submit(event);
+    view.render();
+    assert.equal(view.find('fieldset').disabled, true);
+    assert.equal(view.find('fieldset')['aria-busy'], true);
+    assert.equal(view.find('fieldset').inert, true);
+    await submit(event);
+    assert.equal(calls.length, 2, 'a second press while saving sends nothing');
+    answer({ id: 'same-draft', branchId: 'branch-1', requesterUserId: '' });
+    await pending;
+    assert.ok(calls[0][2]);
+    assert.equal(calls[0][2], calls[1][2]);
+    assert.equal(updates[0][1], 'same-draft');
+    assert.equal(updates[0][2].reason, 'แก้เหตุผลหลังคำตอบหาย');
+    view.render();
+    assert.equal(view.find('fieldset').disabled, false);
+  } finally { view.cleanup(); create.mock.restore(); update.mock.restore(); branchMock.mock.restore(); }
+});
+
+test('FIX-R1 account management opens separately and leaves the claim and chosen files mounted', () => {
+  const view = createView({ userId: 'me' });
+  try {
+    const html = view.render();
+    const link = html.match(/<a[^>]*href="\/companies\/co\/reimbursements\/payout-account"[^>]*>/)?.[0];
+    assert.ok(link);
+    assert.match(link, /target="_blank"/);
+    assert.match(html, /เปิดแท็บใหม่ ข้อมูลใบเบิกที่กรอกยังอยู่ในแท็บนี้/);
+  } finally { view.cleanup(); }
+});
+
+test('FIX-R1 returning from account management refreshes both account lists without replacing the claim', () => {
+  assert.match(page, /window.addEventListener\('focus', refreshAccounts\)/);
+  assert.match(page, /window.removeEventListener\('focus', refreshAccounts\)/);
+  assert.match(page, /const refreshAccounts = \(\) => \{ if \(!createSession.saving\) setSavedAccountsReload\(value => value \+ 1\); \}/);
+  assert.match(page, /\[canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId, savedAccountsReload\]/);
+});
+
+test('FIX-R1 recovered drafts cannot apply edits under a different requester or branch', () => {
+  const guard = page.match(/if \(retryingCreate && \((created.requesterUserId[^\n]+)\)\) \{/);
+  assert.ok(guard);
+  const differs = new Function('created', 'requesterUserId', 'branchId', `return ${guard[1]}`);
+  const created = { requesterUserId: 'original', branchId: 'branch-1' };
+  assert.equal(differs(created, 'original', 'branch-1'), false);
+  assert.equal(differs(created, 'another-person', 'branch-1'), true);
+  assert.equal(differs(created, 'original', 'branch-2'), true);
+  assert.ok(page.indexOf(guard[0]) < page.indexOf('if (retryingCreate) await updateReimbursementDraft'));
 });

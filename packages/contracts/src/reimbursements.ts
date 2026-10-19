@@ -774,7 +774,7 @@ export type ReimbursementHubSummary = {
   totalAmount: string;
   /** Drafts that still owe a receipt before they can be submitted. */
   blockedDraftCount: number;
-  /** Whole searched scope, before paging. Amounts are claimed totals, including held payments. */
+  /** Whole searched scope before paging; pendingPayment excludes the duplicates held outside the payment bucket. */
   metrics?: { pendingApproval: { count: number; amount: string }; pendingPayment: { count: number; amount: string } };
 };
 

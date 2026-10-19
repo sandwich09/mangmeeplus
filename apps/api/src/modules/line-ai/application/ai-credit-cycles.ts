@@ -14,7 +14,7 @@
  * given, `readAiCreditCycle` reads those rows. Nothing here writes — the lot for a cycle is created
  * lazily by the funding path under the company lock (`ai-credit-ledger.ts`).
  */
-import { appendPackageInterval } from '../../billing/domain/billing-package';
+import { appendPackageInterval, packageAnchorDay } from '../../billing/domain/billing-package';
 import { promotionSegments } from '../../billing/application/billing-receipt-grants';
 
 export type AiCreditCycleState = 'PAID' | 'RENEWAL_PENDING';
@@ -150,7 +150,7 @@ export function aiCreditCycleAt(input: {
         state: 'PAID', invoiceId, renewalPaymentDueAt: null, fundingSource: 'PROMOTION' };
     }
     const probe = gift ? period.periodEnd.getTime() - 1 : time;
-    const anchorDay = account.billingAnchorDay ?? chainStart(runs, period).getUTCDate();
+    const anchorDay = account.billingAnchorDay ?? packageAnchorDay(chainStart(runs, period));
     let start = period.periodStart;
     for (let k = 1; k <= MAX_CYCLES_PER_PERIOD; k++) {
       const next = appendPackageInterval(period.periodStart, 'month', anchorDay, k);
@@ -174,7 +174,7 @@ export function aiCreditCycleAt(input: {
   // The run ending at paidThrough (a free time too), or the last one when gift days stretched coverage past it.
   if (!last || last.periodEnd.getTime() > paidThrough || clashes(runs, last)) return null;
   const start = new Date(paidThrough);
-  const end = appendPackageInterval(start, 'month', account.billingAnchorDay ?? chainStart(runs, last).getUTCDate());
+  const end = appendPackageInterval(start, 'month', account.billingAnchorDay ?? packageAnchorDay(chainStart(runs, last)));
   if (time >= end.getTime()) return null;
   return { cycleKey: cycleKey(account.id, start), billingAccountId: account.id, start, end, state: 'RENEWAL_PENDING',
     invoiceId: null, renewalPaymentDueAt: new Date(graceEnd) };

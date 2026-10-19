@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
+import { disbursementPaymentDateError } from './disbursement-voucher-payment.logic';
 
 const pay = readFileSync(new URL('./DisbursementVoucherPayCard.tsx', import.meta.url), 'utf8');
 const dialog = readFileSync(new URL('./DisbursementVoucherCommandDialog.tsx', import.meta.url), 'utf8');
@@ -48,6 +49,29 @@ test('one payment confirm makes exactly one request even on a double press, with
   const saving = action.save(); await action.save(); assert.equal(f.bodies.length, 1);
   assert.deepEqual(f.bodies[0], { commandId: 'attempt', expectedVersion: 7, ...f.fields });
   assert.equal(f.open(), false); f.resolve(); await saving;
+});
+test('an empty paid date has an inline way out and leaves the payment button enabled', () => {
+  const f = fixture(false);
+  f.fields.paidDate = '';
+  f.deps.dateError = disbursementPaymentDateError('') as any;
+  handlers(['requestConfirmation'], f.deps).requestConfirmation();
+  assert.equal(f.open(), false); assert.equal(f.bodies.length, 0);
+  assert.match(pay, /dateError && <p id="disbursement-paid-date-error" role="alert"/);
+  const submit = pay.match(/<button type="submit"[^>]*>/)![0];
+  assert.doesNotMatch(submit, /dateError/);
+});
+test('a failed refresh after payment retries the document read with the confirmation closed', async () => {
+  const f = fixture(true); let reads = 0;
+  f.deps.onReload = async () => { if (++reads === 1) throw new Error('คำตอบหาย'); };
+  const action = handlers(['save'], f.deps);
+  const saving = action.save(); f.resolve(); await saving;
+  assert.equal(f.open(), false); assert.equal(reads, 1); assert.equal(f.bodies.length, 1);
+  f.deps.confirmationReady = false;
+  const submit = pay.match(/onSubmit=\{event => \{ event.preventDefault\(\); ([^}]+) \}\}/)![1];
+  const reload = handlers(['reload'], f.deps).reload;
+  await new Function('needsRefresh', 'reload', 'save', 'requestConfirmation', submit)(true, reload, () => assert.fail('must not save again'), () => assert.fail('must not reopen confirmation'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 2); assert.equal(f.bodies.length, 1); assert.equal(f.failure(), null);
 });
 test('payment refusal keeps the form values and its existing in-card error handling', async () => {
   const f = fixture(true), refusal = new Error('บันทึกจ่ายไม่สำเร็จ กรุณาลองอีกครั้ง');

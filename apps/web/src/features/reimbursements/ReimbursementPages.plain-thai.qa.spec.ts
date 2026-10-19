@@ -274,12 +274,19 @@ describe('claim pages speak plain Thai (Owner rule 2026-09-27/29)', () => {
     for (const text of ['ยังไม่ได้เลือกหมวด', 'หลายหมวด (2 รายการ)', 'เดินทาง']) assert.ok(dialog.includes(text), text);
   });
 
+  it('shows the per-line rounded claim total before saving, in baht', () => {
+    const html = filledCreatePage({ ...filledForm, lines: filledForm.lines.map(line => ({ ...line, amount: '10.005' })) });
+    assert.match(html, /ยอดรวม/);
+    assert.match(html, /20\.02 บาท/);
+    assert.doesNotMatch(html, /20\.01/);
+  });
+
   it('shows amounts as "฿1,234.50" and dates in Thai with the Buddhist year', () => {
     const facts = visible(renderToStaticMarkup(h(ReimbursementSourceFacts, { source: bill })));
     for (const text of ['฿380.00', '฿24.86 / ฿0.00', '26 ก.ย. 2569', 'ไม่ได้ระบุ']) assert.ok(facts.includes(text), text);
     const form = visible(filledCreatePage());
     for (const text of ['26 ก.ย. 2569 · ปากกาและแฟ้ม · ฿380.00', '27 ก.ย. 2569 · ค่าแท็กซี่ · ฿1,234.57', 'INV-0042 · ร้านเครื่องเขียนสมใจ · ฿380.00',
-      '฿1,614.57', 'บาท']) assert.ok(form.includes(text), text);
+      '1,614.57 บาท', 'บาท']) assert.ok(form.includes(text), text);
     // A form of one line shows no total: it repeated the amount typed above it (and "฿0.00" before anything was typed).
     const fresh = visible(renderToStaticMarkup(createPage()));
     assert.equal(fresh.includes('ยอดรวม') || fresh.includes('฿0.00'), false);
@@ -1219,9 +1226,9 @@ describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () 
 
 // The summary beside the policy form read "≥ ฿1.00": a sign where the field and the preview say "ตั้งแต่" in words.
 describe('the policy summary says the approval threshold in the words of its field (owner 2026-10-02)', () => {
-  it('reads "ยอดตั้งแต่ ฿1.00" where the tab says what the settings add up to, with no comparison sign anywhere on the tab', () => {
+  it('reads "ยอดตั้งแต่ 1.00 บาท" where the tab says what the settings add up to, with no comparison sign anywhere on the tab', () => {
     const texts = policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]);
-    assert.ok(texts.includes('ยอดตั้งแต่ ฿1.00'), JSON.stringify(texts.filter((text) => text.includes('บาท'))));
+    assert.ok(texts.includes('ยอดตั้งแต่ 1.00 บาท'), JSON.stringify(texts.filter((text) => text.includes('บาท'))));
     for (const text of texts) assert.doesNotMatch(text, /[≥≤<>]/u, text);
   });
 });

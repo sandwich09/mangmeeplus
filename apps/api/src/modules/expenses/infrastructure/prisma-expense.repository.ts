@@ -27,7 +27,7 @@ import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
-import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
+import { expenseWhtHeaderRate, expenseWhtIncomeBase } from '../domain/logic/expense-wht-input.logic';
 import { appendWhtCertificateHistory } from '../../tax/application/services/wht-certificate-history';
 import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview, expenseDateIsReadable } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -253,7 +253,7 @@ function mapExpense(r: any): ExpenseRecord {
     vatAmount: r.vatAmount?.toString() ?? '0',
     whtAmount: r.whtAmount?.toString() ?? '0',
     whtCategoryCode: r.whtCategoryCode ?? null,
-    whtRate: r.whtRate?.toString() ?? null,
+    whtRate: expenseWhtHeaderRate(r.whtInputJson, r.lines, r.whtRate),
     grandTotalAmount: expenseDecimalToString(r.grandTotalAmount),
     netPayableAmount: r.netPayableAmount?.toString() ?? '0',
     paidAmount: r.paidAmount?.toString() ?? '0',
@@ -4912,18 +4912,13 @@ async function createWhtHandoffForExpense(tx: any, input: {
     vendorCounterpartyId: string | null; vendorNameSnapshot: string | null; vendorTaxIdSnapshot: string | null;
     vendorAddressSnapshot: string | null; vendorBranchCodeSnapshot: string | null;
     vendorEntityKindSnapshot: string | null; expenseDate: Date; grandTotalAmount: unknown;
-    whtInputJson?: { baseAmount?: string } | null; lines?: { taxableAmount: unknown; whtAmount: unknown }[];
+    whtInputJson?: import('@watchdog-bms/contracts').ExpenseWhtInput | null; lines?: { taxableAmount: unknown; whtAmount: unknown; whtRate?: unknown }[];
   };
 }): Promise<void> {
   const { companyId, expense } = input;
   const withheldAmount = String(expense.whtAmount ?? '0');
-  const whtRate = expense.whtRate === null || expense.whtRate === undefined ? null : String(expense.whtRate);
-  const withheldLines = expense.lines?.filter(line => line.taxableAmount != null && new Decimal(String(line.whtAmount ?? '0')).gt(0)) ?? [];
-  const grossAmount = expense.whtInputJson?.baseAmount != null
-    ? new Decimal(expense.whtInputJson.baseAmount).toFixed(4)
-    : withheldLines.length
-      ? withheldLines.reduce((sum, line) => sum.plus(String(line.taxableAmount)), new Decimal(0)).toFixed(4)
-      : deriveWhtIncomeBase(withheldAmount, whtRate) ?? String(expense.grandTotalAmount ?? '0');
+  const whtRate = expenseWhtHeaderRate(expense.whtInputJson, expense.lines, expense.whtRate);
+  const grossAmount = expenseWhtIncomeBase(expense);
   const [company, category] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
     expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),

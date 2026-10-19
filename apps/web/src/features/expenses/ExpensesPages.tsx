@@ -21,7 +21,7 @@ import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { InfoTip } from '@/common/components/field/InfoTip';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { CoverLoader, EmptyState, LoadingState } from '@/common/components/state';
+import { CoverLoader, EmptyState, ErrorState, LoadingState } from '@/common/components/state';
 import { Pagination } from '@/common/components/data-table/Pagination';
 import {
   getExpenseCaptureCapability,
@@ -358,6 +358,7 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
   const [blockedExpenseId, setBlockedExpenseId] = useState<string | null>(null);
   const [sentExpenseIds, setSentExpenseIds] = useState<string[]>([]);
   const uploadPending = useRef(false);
+  const uploadAttempts = useRef(new Map<File, { intent: Awaited<ReturnType<typeof initReceiptUpload>>; step: 'upload' | 'complete' | 'extract' }>());
   const sendAfterPreparation = useRef(false);
   const senderOnly = !caps.canReview && !caps.canConfirm;
   const quotaBlocked = isReceiptQuotaBlocked(quotaLatch, todayCivilDate());
@@ -465,9 +466,29 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
    * monthly read ceiling refused it, which latches the banner and keeps the user on this panel.
    */
   const uploadOneFile = async (file: File): Promise<{ expenseId: string; notice: ExtractionNotice | null }> => {
-    const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
-    await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
-    await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
+    let attempt = uploadAttempts.current.get(file);
+    if (attempt?.step === 'complete') {
+      // A lost completion answer may already have bound the ACTIVE file. That endpoint cannot
+      // complete an ACTIVE attachment again; read the same expense before retrying the command.
+      const { expenseId, attachmentId } = attempt.intent;
+      const saved = await getExpense(companyId, expenseId);
+      if (saved.primaryAttachmentId === attachmentId
+        && saved.attachments.some(attachment => attachment.id === attachmentId && attachment.status === 'ACTIVE')) attempt.step = 'extract';
+    }
+    if (!attempt) {
+      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
+      attempt = { intent, step: 'upload' };
+      uploadAttempts.current.set(file, attempt);
+    }
+    const { intent } = attempt;
+    if (attempt.step === 'upload') {
+      await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+      attempt.step = 'complete';
+    }
+    if (attempt.step === 'complete') {
+      await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
+      attempt.step = 'extract';
+    }
     setExtracting(true);
     try {
       const runAttempt = (requestId: string) => {
@@ -630,7 +651,7 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
   const sizeText = (bytes: number) => bytes >= 104_858 ? captureMegabytes(bytes) : '';
 
   if (sentExpenseIds.length) return <ReceiptUploadResult companyId={companyId} expenseIds={sentExpenseIds} userId={userId} caps={caps} onSendAnother={() => {
-    setSentExpenseIds([]); setSelectedFiles([]); setCaptureFiles([]); setFileNotice(null); setError(null); setNote(''); setValidationAttempt(0); originals.current = []; notices.current.clear(); leaveAllowed.current = false;
+    setSentExpenseIds([]); setSelectedFiles([]); setCaptureFiles([]); setFileNotice(null); setError(null); setNote(''); setValidationAttempt(0); originals.current = []; notices.current.clear(); uploadAttempts.current.clear(); leaveAllowed.current = false;
   }} />;
 
   return (
@@ -1039,11 +1060,13 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const [assessment, setAssessment] = useState<ExpenseEvidenceAssessment>(() => defaultAssessment(detail));
   const [showEvidenceOptions, setShowEvidenceOptions] = useState(() => substituteReceiptFlow || defaultAssessment(detail).receiptProblem !== 'NONE');
   const persistedAssessment = JSON.stringify(defaultAssessment(detail));
+  const [taxAnswerTouched, setTaxAnswerTouched] = useState(false);
   const documentSnapshot = useRef({ id: detail.id, docType: detail.sourceDocumentType, taxStatus: detail.taxEvidenceStatus, categoryId: detail.expenseCategoryId ?? '', assessment: defaultAssessment(detail) });
   useEffect(() => {
     const incoming = { id: detail.id, docType: detail.sourceDocumentType, taxStatus: detail.taxEvidenceStatus, categoryId: detail.expenseCategoryId ?? '', assessment: JSON.parse(persistedAssessment) as ExpenseEvidenceAssessment };
     const previous = documentSnapshot.current;
     const keepInput = previous.id === detail.id && isMutable;
+    if (!keepInput) setTaxAnswerTouched(false);
     const next = keepInput ? mergeExpenseUnsavedFields(previous, incoming, { id: detail.id, docType, taxStatus, categoryId, assessment }) : incoming;
     const nextAssessment = keepInput ? mergeExpenseUnsavedFields(previous.assessment, incoming.assessment, assessment) : incoming.assessment;
     setDocType(next.docType); setTaxStatus(next.taxStatus); setCategoryId(next.categoryId);
@@ -1248,7 +1271,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           <div className="mb-1 flex min-h-6 items-start gap-1.5 whitespace-nowrap text-sm font-medium text-gray-700">
             {t('expenses.doc_type', locale)}
           </div>
-          <ThemedSelect aria-label={t('expenses.doc_type', locale)} wrapLabel id={`expense-doc-type-${detail.id}`} placeholder={t('expenses.document_type_choose', locale)} className={inputClass} value={docType} aria-invalid={validationShown && docType === 'NEEDS_REVIEW' || undefined} onChange={(e) => { const type = e.target.value as ExpenseDetail['sourceDocumentType']; setDocType(type); }} disabled={busy}>
+          <ThemedSelect aria-label={t('expenses.doc_type', locale)} wrapLabel id={`expense-doc-type-${detail.id}`} placeholder={t('expenses.document_type_choose', locale)} className={inputClass} value={docType} aria-invalid={validationShown && docType === 'NEEDS_REVIEW' || undefined} onChange={(e) => { const type = e.target.value as ExpenseDetail['sourceDocumentType']; setDocType(type); if (!taxAnswerTouched && taxStatus === 'NEEDS_REVIEW' && !detail.taxEvidenceReasonCode) setTaxStatus(type === 'TAX_INVOICE' ? 'USABLE_FOR_TAX' : 'SUPPORTING_ONLY'); }} disabled={busy}>
             {/* In the certificate wizard the certificate itself is not a type to pick: before one exists it only blocks the wizard. A record already saved with it still shows it. */}
             {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).filter(([k]) => k !== 'NEEDS_REVIEW' && (!substituteReceiptFlow || k !== 'SUBSTITUTE_RECEIPT' || docType === k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
@@ -1257,7 +1280,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
         </div>}
         {!noDocument && <div>
           <div className={cx(FIELD_LABEL, 'min-h-6 whitespace-nowrap')}>{t('expenses.tax_evidence_status', locale)}</div>
-          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} wrapLabel id={`expense-tax-evidence-${detail.id}`} className={inputClass} value={taxStatus} aria-invalid={validationShown && taxStatus === 'NEEDS_REVIEW' || undefined} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy} aria-describedby={showTaxEvidenceHint ? `expense-tax-evidence-hint-${detail.id}` : undefined}>
+          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} wrapLabel id={`expense-tax-evidence-${detail.id}`} className={inputClass} value={taxStatus} aria-invalid={validationShown && taxStatus === 'NEEDS_REVIEW' || undefined} onChange={(e) => { setTaxAnswerTouched(true); setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus']); }} disabled={busy} aria-describedby={showTaxEvidenceHint ? `expense-tax-evidence-hint-${detail.id}` : undefined}>
             {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
           {validationShown && taxStatus === 'NEEDS_REVIEW' && <p role="alert" className="mt-1 text-sm text-error-700">{t('expenses.tax_evidence_status', locale)}: เลือกคำตอบ</p>}
@@ -2958,19 +2981,18 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
             </ThemedSelect>
           </label>
           <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts
-            request={{ yearMonth: month, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
+            request={{ fromDate, toDate, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
           {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}
           {exported && <p role="status" className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</p>}
         </div>
       </Modal>
 
+      {error ? <ErrorState description={error} onRetry={() => void load()} /> : <>
       {/* The numbers of the rows below, once, in one card (owner 2026-10-15). */}
       <section className="mangmee-card p-4 sm:px-6 sm:py-5" data-testid="expenses-summary">
         <MetricGrid columns={3} items={metricItems} className="gap-2.5" />
       </section>
-
-      {error && <ErrorBanner message={error} />}
 
       <MangmeeCard className="p-4">
           <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:max-w-3xl">
@@ -3065,7 +3087,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
             </div>
           )}
       </MangmeeCard>
-
+      </>}
 
       {/* §11.4: the way into "ใบกำกับที่ยังไม่มีที่อยู่ผู้ขาย", an accountant's backlog across every period. It is a
           quiet link under the list and only for a shop that records VAT; it used to sit among the status tabs. */}
@@ -3189,7 +3211,7 @@ export function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entr
       catch (cause) {
         // A validation refusal has not committed. A network/5xx outcome is ambiguous:
         // retain that exact command until its retry recovers the original expense.
-        if ([400, 422].includes((cause as { statusCode?: number }).statusCode ?? 0)) draftSave.current.body = undefined;
+        if ([400, 422].includes((cause as { status?: number }).status ?? 0)) draftSave.current.body = undefined;
         throw cause;
       }
       if (receiptFile) {
@@ -3206,12 +3228,9 @@ export function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entr
     } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
   }
 
-  // Same shape the review form uses (expense-review-validation.computedGrandTotal): the discount is
-  // applied first and the result priced as a single unit, then the lines are summed, so both paths
-  // run one arithmetic whether or not a service charge line exists.
-  const afterDiscount = lines.map((line) => Math.max(0, Number(line.quantity || '0') * Number(line.unitPrice || '0') - Number(line.discountAmount || '0')));
-  const totals = lines.reduce((sum, line, index) => {
-    const lineTotals = calculateManualExpenseTotals({ quantity: '1', unitPrice: afterDiscount[index]!, vatRate: line.vatRate, vatMode });
+  // Keep quantity, price and discount separate so the preview rounds each component as the server does.
+  const totals = lines.reduce((sum, line) => {
+    const lineTotals = calculateManualExpenseTotals({ ...line, vatMode });
     return { subtotal: sum.subtotal + lineTotals.subtotal, vat: sum.vat + lineTotals.vat, grandTotal: sum.grandTotal + lineTotals.grandTotal };
   }, { subtotal: 0, vat: 0, grandTotal: 0 });
   const amountReady = totals.grandTotal > 0;

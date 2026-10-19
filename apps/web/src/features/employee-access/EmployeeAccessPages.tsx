@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
+import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { Notice } from '@/common/components/notice';
 import { choiceInputClass } from '@/common/components/field';
 import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
@@ -587,7 +588,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    listCompanyBranches(companyId).then(setBranches).catch(() => { /* no branch.read → hide section */ });
+    listCompanyBranches(companyId).then(rows => setBranches(rows.filter(branch => branch.status === 'ACTIVE'))).catch(() => { /* no branch.read → hide section */ });
   }, [companyId]);
 
   // `done` is omitted for actions that already show their result in a panel (credential handoff, LINE QR).
@@ -985,7 +986,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   }, [templates, allPacks, availablePackKeys]);
 
   return (
-    <form onSubmit={submit} noValidate className={`${panelClass} min-w-0 lg:col-span-2`}>
+    <form onSubmit={submit} noValidate className={`${panelClass} mangmee-card min-w-0 lg:col-span-2`}>
       <div className="space-y-5 p-4 sm:p-6">
       <h2 className="break-words text-xl font-bold text-gray-900">{initial ? `แก้ไขบทบาท ${roleDisplayName(initial, locale)}` : 'เพิ่มบทบาท'}</h2>
       {error && <Notice tone="error">{error}</Notice>}
@@ -1119,10 +1120,10 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
         )}
       </div>
 
-      <ActionGroup className="border-t border-gray-100 pt-4">
-        <button type="button" className={secondaryButtonClass} disabled={saving} onClick={onCancel}>ยกเลิก</button>
+      <FormActionBar><ActionGroup>
+        <button type="button" className={secondaryButtonClass} disabled={saving} aria-busy={saving} onClick={onCancel}>ยกเลิก</button>
         <button type="submit" className={primaryButtonClass} disabled={saving || !roleOptionsAvailable} aria-busy={Boolean(saving)}>บันทึกบทบาท</button>
-      </ActionGroup>
+      </ActionGroup></FormActionBar>
       </div>
     </form>
   );

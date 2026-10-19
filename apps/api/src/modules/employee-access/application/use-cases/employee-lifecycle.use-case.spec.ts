@@ -279,6 +279,30 @@ describe('IssueEmployeeLineLinkTokenUseCase', () => {
 });
 
 
+it('FIX-R2 employee reads identify shared accounts without exposing other shops or login email', async () => {
+  const { ListEmployeesUseCase } = await import('./list-employees.use-case');
+  const { GetEmployeeUseCase } = await import('./get-employee.use-case');
+  for (const memberships of [1, 2, 3]) {
+    const profile = { ...PROFILE, displayName: 'ชื่อในร้าน', email: 'shop@example.com', identityLast4: '1234', createdAt: new Date(), updatedAt: new Date(),
+      user: { email: 'private-login@example.com', credential: null, externalIdentities: [], _count: { memberships } }, membership: { roles: [] } };
+    const read = async (query: any) => {
+      assert.deepEqual(query.include.user.select._count, { select: { memberships: true } });
+      return profile;
+    };
+    const prisma = { client: { employeeAccessProfile: { findMany: async (query: any) => [await read(query)], findFirst: read } } } as any;
+    const list = (await new ListEmployeesUseCase(prisma).execute(COMPANY_ID))[0]!;
+    const detail = await new GetEmployeeUseCase(prisma).execute(COMPANY_ID, PROFILE.id);
+    for (const employee of [list, detail]) {
+      assert.equal((employee as any).sharedAccount, memberships > 1);
+      assert.equal(employee.email, 'shop@example.com');
+      assert.doesNotMatch(JSON.stringify(employee), /private-login|_count|memberships/);
+    }
+    profile.email = null as any;
+    assert.equal((await new GetEmployeeUseCase(prisma).execute(COMPANY_ID, PROFILE.id)).email,
+      memberships > 1 ? undefined : 'private-login@example.com');
+  }
+});
+
 it('employee list reads the current account name while preserving the shop profile name', async () => {
   const { ListEmployeesUseCase } = await import('./list-employees.use-case');
   const profile = { ...PROFILE, displayName: 'ชื่อในร้าน', identityLast4: '1234', createdAt: new Date(), updatedAt: new Date(),

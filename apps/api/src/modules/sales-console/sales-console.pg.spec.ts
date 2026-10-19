@@ -963,3 +963,27 @@ it('E1: suspension blocks a fresh password login and the next request; access ch
     await h.teardown();
   }
 });
+
+// Pure projection checks in the existing CI-registered spec; no database connection.
+it('MONEY-Q1 yearly and multi-month deal comparisons use catalog years rather than twelve monthly prices', async () => {
+  const { billingOffer, SALES_DEAL_BASE_TIERS } = await import('@watchdog-bms/contracts');
+  const companies = { one: async () => ({ companyId: 'shop' }), usage: async () => ({ branchCount: 1, employeeCount: 1 }) };
+  const service = new SalesDealsService({ client: { user: { findMany: async () => [] }, billingAccount: { findMany: async () => [] } } } as any,
+    {} as any, companies as any, {} as any, {} as any, {} as any, {} as any);
+  let seed = 2468;
+  const pick = (limit: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 4294967296 * limit); };
+  const cases = [{ base: 'STARTER_249', months: 12, autoRenew: true, cadence: 'year' }, { base: 'STARTER_249', months: 12, autoRenew: false, cadence: null }];
+  for (let i = 0; i < 3000; i++) cases.push({ base: SALES_DEAL_BASE_TIERS[pick(SALES_DEAL_BASE_TIERS.length)]!, months: 1 + pick(36), autoRenew: Boolean(pick(2)), cadence: pick(2) ? 'year' : 'month' });
+  const now = new Date();
+  const rows = cases.map((snapshot, i) => ({ id: String(i), companyId: 'shop', status: 'DRAFT', salesUserId: null, createdAt: now, updatedAt: now,
+    offerSnapshotJson: { ...snapshot, branchLimit: 1, employeeLimit: 1 }, priceState: null }));
+  const views = await (service as any).toViews(rows);
+  for (let i = 0; i < cases.length; i++) {
+    const c = cases[i]!, monthly = billingOffer(c.base as any, 'month').priceSatang, yearly = billingOffer(c.base as any, 'year').priceSatang;
+    const months = c.autoRenew ? c.cadence === 'year' ? 12 : 1 : c.months;
+    const costs = [0];
+    for (let n = 1; n <= months; n++) costs[n] = Math.min(costs[n - 1]! + monthly, n >= 12 ? costs[n - 12]! + yearly : Infinity);
+    const expected = costs[months];
+    assert.equal(views[i].catalogPriceSatang, expected, JSON.stringify(c));
+  }
+});

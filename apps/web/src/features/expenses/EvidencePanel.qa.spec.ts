@@ -44,7 +44,7 @@ test('evidence starts in document month and explains missing-date fallback witho
 });
 
 test('the permission-gated export area makes the bundle primary, puts Excel in MoreActions and shares exact filters', () => {
-  const exportArea = source.slice(source.indexOf('{/* The export:'), source.indexOf('{loading && !view'));
+  const exportArea = source.slice(source.indexOf('{/* The export:'), source.indexOf('<div className={cx(\'transition-opacity\''));
   assert.match(exportArea, /canExport &&/);
   assert.match(exportArea, /<MoreActions label="เพิ่มเติม"/);
   assert.doesNotMatch(exportArea, /ไฟล์ Excel สรุปรายการ/);
@@ -199,4 +199,38 @@ test('EVIDENCE-1 loads every server page before computing tabs, sorting ten rows
     assert.equal(view.find('EvidenceBundleDownload').request.expenseIds.length, 201);
     assert.equal(view.nodes.filter(node => node.tag === 'article').length, 10);
   } finally { view.cleanup(); read.mock.restore(); plan.mock.restore(); }
+});
+
+test('evidence load failures retain every filter and retry the same scope before showing results', async () => {
+  const calls: any[] = [];
+  let finish!: (value: any) => void;
+  const read = mock.method(api, 'getSharedEvidence', async (_company: string, filter: any) => {
+    calls.push(filter);
+    if (calls.length === 1) throw new Error('เชื่อมต่อไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองอีกครั้ง');
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const view = panel('yearMonth=2026-09&dateField=uploadedAt&sourceDocumentType=RECEIPT&taxEvidenceStatus=USABLE_FOR_TAX&flagFilter=attention&order=oldest', [], false);
+  try {
+    view.render(true); await view.settle();
+    const failed = view.render();
+    assert.match(failed, /ลองอีกครั้ง/);
+    assert.doesNotMatch(failed, /ไม่มีรายการที่ตรงกับตัวกรอง|ยอดรวม 0.00|mangmee-tab-count/);
+    assert.equal(view.nodes.some(node => node.tag === 'MetricGrid'), false);
+    assert.equal(view.find('ThemedSelect', props => props['aria-label'] === 'เดือน').value, '2026-09');
+    assert.ok(view.nodes.some(node => node.tag === 'ThemedSelect' && node.props.value === 'RECEIPT'));
+    assert.ok(view.nodes.some(node => node.tag === 'button' && node.props.children.includes('วันที่ส่งเข้า')));
+    assert.equal(view.find('FilterTabs').value, 'attention');
+    assert.ok(view.find('FilterTabs').tabs.every((tab: any) => tab.count === undefined));
+    view.find('ErrorState').onRetry();
+    assert.match(view.render(), /กำลังโหลด/);
+    assert.deepEqual(calls[1], calls[0]);
+    finish({ dateField: 'uploadedAt', folders: [], rows: [clean(1)], total: 1, page: 1, pageSize: 200 });
+    await view.settle();
+    assert.doesNotMatch(view.render(), /โหลดไม่สำเร็จ|เชื่อมต่อไม่ได้/);
+    assert.equal(view.find('ThemedSelect', props => props['aria-label'] === 'เดือน').value, '2026-09');
+    view.find('FilterTabs').onChange('ok');
+    const next = new URLSearchParams(view.replaced.at(-1)!.split('?')[1]);
+    assert.equal(next.get('yearMonth'), '2026-09'); assert.equal(next.get('dateField'), 'uploadedAt');
+    assert.equal(next.get('sourceDocumentType'), 'RECEIPT'); assert.equal(next.get('flagFilter'), 'ok');
+  } finally { view.cleanup(); read.mock.restore(); }
 });

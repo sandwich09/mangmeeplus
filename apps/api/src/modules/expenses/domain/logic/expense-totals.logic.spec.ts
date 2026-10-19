@@ -5,6 +5,33 @@ import { acceptExpenseVatSource, reconcileExpenseVat, validateExpenseVatSourceIn
 import { expenseVatReconciliationMessage } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 import { applyExpenseWhtInput, expenseWhtLineRate } from './expense-wht-input.logic';
+it('MONEY-T1 rounds 208220.45 at 2 percent once to 4164.41, with or without an explicit base', () => {
+  for (const baseAmount of [undefined, '208220.45']) {
+    const result = bill(['104110.22', '104110.23']);
+    assert.equal(applyExpenseWhtInput(result, { inputType: 'RATE', value: '2', ...(baseAmount && { baseAmount }) }), null);
+    assert.equal(result.totals.whtAmount, '4164.4100');
+    assert.equal(result.lines.reduce((sum, line) => sum.plus(line.totals.whtAmount), new Decimal(0)).toFixed(4), '4164.4100');
+  }
+});
+it('MONEY-T1 seeded percent cases equal summed base times rate and preserve allocated satang', () => {
+  let seed = 777;
+  const pick = (max: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) % max);
+  for (let i = 0; i < 3000; i++) {
+    const prices = Array.from({ length: 1 + pick(8) }, () => new Decimal(1 + pick(10000000)).div(100).toFixed(2));
+    const rate = ['1', '2', '3', '5'][pick(4)]!;
+    const result = bill(prices, ['NO_VAT', 'VAT_INCLUDED', 'VAT_EXCLUDED'][pick(3)] as any);
+    const base = result.totals.taxableAmount;
+    assert.equal(applyExpenseWhtInput(result, { inputType: 'RATE', value: rate }), null);
+    const expected = new Decimal(base).mul(rate).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    assert.equal(result.totals.whtAmount, expected.toFixed(4), `seed case ${i}`);
+    assert.equal(result.lines.reduce((sum, line) => sum.plus(line.totals.whtAmount), new Decimal(0)).toFixed(4), expected.toFixed(4));
+    const explicit = bill(prices, 'NO_VAT');
+    const single = bill([explicit.totals.taxableAmount]);
+    applyExpenseWhtInput(explicit, { inputType: 'RATE', value: rate, baseAmount: explicit.totals.taxableAmount });
+    applyExpenseWhtInput(single, { inputType: 'RATE', value: rate });
+    assert.equal(explicit.totals.whtAmount, single.totals.whtAmount);
+  }
+});
 function bill(prices: string[], vatMode: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' = 'NO_VAT') {
   return reconcileExpenseVat({ vatMode, lines: prices.map((unitPrice, index) => ({
     lineNumber: index + 1, quantity: '1', unitPrice, vatRate: index === 0 ? '0.07' : '0',
@@ -186,11 +213,11 @@ describe('authoritative whole-bill WHT', () => {
     assert.equal(result.totals.grandTotalAmount, '157.0000');
     assert.equal(result.totals.netPayableAmount, '152.4900');
   });
-  it('keeps rate-based line rounding, zero and base cap across pricing modes', () => {
+  it('rounds rate-based withholding once per base and keeps zero and base caps across pricing modes', () => {
     for (const mode of ['NO_VAT', 'VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
       const result = bill(['107', '50'], mode);
       applyExpenseWhtInput(result, { inputType: 'RATE', value: '3' });
-      const expected = result.lines.reduce((sum, line) => sum.plus(new Decimal(line.totals.taxableAmount).mul('0.03').toDecimalPlaces(2, Decimal.ROUND_HALF_UP)), new Decimal(0));
+      const expected = new Decimal(result.totals.taxableAmount).mul('0.03').toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
       assert.equal(result.totals.whtAmount, expected.toFixed(4));
       assert.notEqual(applyExpenseWhtInput(result, { inputType: 'AMOUNT', value: '999' }), null);
       applyExpenseWhtInput(result, { inputType: 'AMOUNT', value: '0' });
@@ -451,7 +478,7 @@ describe('reconciled rows carry the charge flag into every header re-derivation'
     assert.equal(identityError('VAT_EXCLUDED', accepted, lines), null);
   });
 
-  // The WHT rule itself is untouched here. `applyExpenseWhtInput` applies a RATE to each WITHHELD
+  // `applyExpenseWhtInput` applies a RATE once to the summed base of WITHHELD
   // row's own `taxableAmount`, and uses the base — `totals.taxableAmount` when nothing is excluded,
   // otherwise the withheld rows' taxable sum — to cap and allocate an AMOUNT. Both call shapes in
   // the codebase are pinned: the OCR apply excludes the charge rows (§5.1), the draft use-cases

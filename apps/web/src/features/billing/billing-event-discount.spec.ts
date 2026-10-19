@@ -97,7 +97,7 @@ it('the second half says only what is known of the renewal: a running one by the
   assert.equal(eventDiscountHeldNotice(null), null); assert.equal(eventDiscountHeldNotice(undefined), null);
   // The page reads the renewal facts from the same answer as the tickets (the status on screen is not asked), and asks again whenever the status is read again.
   const page = readFileSync(new URL('./BillingPage.tsx', import.meta.url), 'utf8');
-  assert.match(page, /const heldDiscount = eventDiscountHeldNotice\(heldView\);/);
+  assert.match(page, /const heldDiscount = returning && returnAttempt\?\.eventDiscount\?\.state === 'USED' \? null : eventDiscountHeldNotice\(heldView\);/);
   assert.match(page, /api\.eventDiscount\(\)\.then\(view => \{ if \(live\) setHeldView\(view\); \}/);
   assert.match(page, /\[api, reload\]\);/);
   assert.doesNotMatch(page, /setHeldDiscount/);

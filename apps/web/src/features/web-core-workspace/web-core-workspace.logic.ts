@@ -319,7 +319,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (userPermissions.includes('wht.certificate.issue')) {
+      if (hasAnyPermission(userPermissions, ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'])) {
         childItems.push({ key: 'expenses.wht_certificates', label: t('expenses.certificates.title', locale),
           href: `/companies/${companyId}/expenses/wht-certificates`, icon: iconMap.DocsIcon, tone: 'slate' });
       }
@@ -401,7 +401,7 @@ export function buildLockedNavItems(
 ): NavItem[] {
   const items: NavItem[] = [{
     key: 'settings',
-    label: 'ตั้งค่า',
+    label: 'ตั้งค่าร้าน',
     icon: iconMap.SettingsIcon ?? null,
     href: `/companies/${companyId}/settings`,
     group: 'admin',

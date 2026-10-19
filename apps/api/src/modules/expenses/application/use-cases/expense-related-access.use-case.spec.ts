@@ -984,6 +984,29 @@ describe('disbursement voucher drafts and visibility', () => {
     assert.equal(h.state.vouchers.length, 0);
   });
 
+  it('prepares and pays the rounded legacy balance accepted by direct payment', async () => {
+    const h = harness([source('a', { netPayableAmount: '2209780.6682', outstandingAmount: '2209780.6682', grandTotalAmount: '2209780.6682' })]);
+    const draft = await h.useCase.create(context(), body({ lines: [{ expenseId: 'a', amount: '2209780.67' }] }));
+    await h.useCase.submit(context({ permissions: ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.read'] }), draft.id, { ...command(0), approveNow: true });
+    assert.equal((await h.useCase.pay(payer(), draft.id, command(1))).status, 'PAID');
+    assert.equal(h.state.payments[0].amount, '2209780.6700');
+  });
+
+  it('voucher amount guards agree with satang settlement for 3000 seeded legacy balances', async () => {
+    let seed = 614;
+    for (let i = 0; i < 3000; i++) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const units = BigInt(seed + 10000), cents = (units + 50n) / 100n;
+      const outstanding = `${units / 10000n}.${String(units % 10000n).padStart(4, '0')}`;
+      const amount = `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+      const h = harness([source('a', { netPayableAmount: outstanding, outstandingAmount: outstanding })]);
+      const prepared = await (h.useCase as any).prepare(context(), body({ lines: [{ expenseId: 'a', amount }] }), { companyId: ctx.companyId }, h.client, h.state.expenses);
+      assert.equal(Number(prepared.totalAmount), Number(amount));
+      const tooMuch = `${(cents + 1n) / 100n}.${String((cents + 1n) % 100n).padStart(2, '0')}`;
+      await assert.rejects(() => (h.useCase as any).prepare(context(), body({ lines: [{ expenseId: 'a', amount: tooMuch }] }), { companyId: ctx.companyId }, h.client, h.state.expenses), (e: any) => e.getResponse().code === 'disbursement_amount_invalid');
+    }
+  });
+
   it('refuses zero, negative, excessive, fractional, malformed and overflow amounts with the expense and outstanding', async () => {
     for (const amount of ['0', '-1', '104.01', '1.001', 'NaN', '1e2', '100000000000000', 10]) {
       const h = harness();

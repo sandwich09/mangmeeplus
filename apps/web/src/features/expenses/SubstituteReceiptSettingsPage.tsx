@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import type {
   SubstituteReceiptApprovalMode,
@@ -41,8 +41,11 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   // The list's error shows after the first press of the save button, under the list it is about.
   const [attempted, setAttempted] = useState(false);
   const [adviceOpen, setAdviceOpen] = useState(false);
+  const loadRequest = useRef(0);
+  const dirty = useRef(false);
 
   const applySettings = useCallback((value: SubstituteReceiptPolicySettings) => {
+    dirty.current = false;
     setSettings(value);
     setApprovalMode(value.approvalMode);
     setApproverUserIds(validApproverSelection(value.approverUserIds, value.invalidApproverUserIds));
@@ -52,18 +55,20 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   }, []);
 
   const load = useCallback(async () => {
+    const request = ++loadRequest.current;
     setLoading(true);
     setError(null);
     try {
-      applySettings(await getSubstituteReceiptPolicy(companyId));
+      const next = await getSubstituteReceiptPolicy(companyId);
+      if (request === loadRequest.current && !dirty.current) applySettings(next);
     } catch (loadError) {
-      setError(message(loadError));
+      if (request === loadRequest.current) setError(message(loadError));
     } finally {
-      setLoading(false);
+      if (request === loadRequest.current) setLoading(false);
     }
   }, [applySettings, companyId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { loadRequest.current++; }; }, [load]);
 
   const input = useMemo<UpdateSubstituteReceiptPolicyInput>(() => ({
     approvalMode,
@@ -74,6 +79,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   const validationError = validateSubstituteReceiptPolicy(input);
 
   const toggleApprover = (userId: string) => {
+    dirty.current = true;
     setApproverUserIds((current) => current.includes(userId)
       ? current.filter((id) => id !== userId)
       : [...current, userId]);
@@ -89,7 +95,10 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
     setSaving(true);
     setError(null);
     try {
-      applySettings(await updateSubstituteReceiptPolicy(companyId, input));
+      const next = await updateSubstituteReceiptPolicy(companyId, input);
+      loadRequest.current++; // A read started before this save must not replace its new pristine baseline.
+      setLoading(false);
+      applySettings(next);
       setAttempted(false);
       toast.success('บันทึกการตั้งค่าใบรับรองแทนใบเสร็จแล้ว');
     } catch (saveError) {
@@ -116,9 +125,9 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
           <fieldset className="min-w-0">
             <legend className={sectionTitle}>ใครอนุมัติใบรับรอง</legend>
             <div className="mt-2 grid gap-2">
-              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => setApprovalMode('OWNER_SELF')}
+              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => { dirty.current = true; setApprovalMode('OWNER_SELF'); }}
                 label={`${THAI_SYSTEM_ROLE_NAMES.OWNER}เซ็นและอนุมัติเอง`} description="เหมาะกับร้านที่เจ้าของทำเอง" />
-              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'DESIGNATED_APPROVERS'} onChange={() => setApprovalMode('DESIGNATED_APPROVERS')}
+              <ChoiceRow framed name="approval-mode" checked={approvalMode === 'DESIGNATED_APPROVERS'} onChange={() => { dirty.current = true; setApprovalMode('DESIGNATED_APPROVERS'); }}
                 label="กำหนดผู้อนุมัติ" description="ผู้รับรองการจ่ายกับผู้อนุมัติต้องเป็นคนละคน" />
             </div>
           </fieldset>
@@ -148,9 +157,9 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
           <fieldset className="min-w-0">
             <legend className={sectionTitle}>จ่ายเงินสดต้องแนบอะไร</legend>
             <div className="mt-2 grid gap-2">
-              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === STRICT} onChange={() => setCashEvidencePolicy(STRICT)}
+              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === STRICT} onChange={() => { dirty.current = true; setCashEvidencePolicy(STRICT); }}
                 label="ต้องมีหลักฐานการจ่ายอย่างน้อย 1 ไฟล์" description="แนบแยกจากหลักฐานประกอบ" />
-              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === ALLOW} onChange={() => setCashEvidencePolicy(ALLOW)}
+              <ChoiceRow framed name="cash-policy" checked={cashEvidencePolicy === ALLOW} onChange={() => { dirty.current = true; setCashEvidencePolicy(ALLOW); }}
                 label="ใช้หลักฐานประกอบอย่างเดียวได้" description="ควรตกลงกับผู้ทำบัญชีของร้านก่อน ผู้รับรองการจ่ายยังต้องเซ็นรับรองทุกใบ" />
             </div>
             <details className="mt-2" open={adviceOpen} onToggle={(event) => setAdviceOpen(event.currentTarget.open)}>
@@ -159,7 +168,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
               <textarea
                 id="substitute-cash-advice"
                 value={cashEvidenceInstructions}
-                onChange={(event) => setCashEvidenceInstructions(event.target.value)}
+                onChange={(event) => { dirty.current = true; setCashEvidenceInstructions(event.target.value); }}
                 maxLength={500}
                 rows={3}
                 className="mangmee-input mt-1.5"

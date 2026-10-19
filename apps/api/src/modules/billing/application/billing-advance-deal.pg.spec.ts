@@ -6,7 +6,7 @@ import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-b
 import { PrismaClient } from '../../../generated/prisma/client';
 import { buildDealSnapshot } from '../../sales-console/domain/sales-deal.logic';
 import { termProjectionHash } from '../domain/paid-invoice';
-import { appendPackageInterval } from '../domain/billing-package';
+import { appendPackageInterval, packageAnchorDay } from '../domain/billing-package';
 import { hashBilling } from '../domain/billing-policy';
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { BillingReconcilerService } from './billing-reconciler.service';
@@ -115,7 +115,7 @@ async function createFixture(client: PrismaClient, options: { currentMode: 'CARD
     sourceHash: `old-grant-${compact}`, kind: 'INITIAL', units: currentOffer.receiptAllowance, serviceStart: previousStart,
     serviceEnd: startsAt, availableAt: previousStart, expiresAt: startsAt, policyRevisionId: 'synthetic-revision' } });
   await client.billingAccount.update({ where: { id: account.id }, data: { contractAttemptId: oldAttemptId, paidThrough: startsAt,
-    billingAnchorDay: startsAt.getUTCDate(), termProjectionHash: termProjectionHash(term) } });
+    billingAnchorDay: packageAnchorDay(startsAt), termProjectionHash: termProjectionHash(term) } });
   const stripe = fixtureStripe(run, stripeAccountId, account.id, customerId, dealPriceId, priceSatang);
   const state = { policy, revision: { id: 'synthetic-revision' }, settings: { version: 1 },
     gates: Object.fromEntries(BILLING_ACTIONS.map(action => [action, true])) };
@@ -140,7 +140,7 @@ async function quoteAndCheckout(f: Awaited<ReturnType<typeof createFixture>>, pu
   assert.equal(quote.purchase?.kind, 'ADVANCE_DEAL');
   assert.equal(quote.advanceDeal?.startsAt, (await f.service.account(f.companyId))!.paidThrough!.toISOString());
   assert.equal(quote.advanceDeal?.firstCycleEndsAt, appendPackageInterval(quote.advanceDeal ? new Date(quote.advanceDeal.startsAt) : new Date(), 'month',
-    new Date(quote.advanceDeal!.startsAt).getUTCDate()).toISOString());
+    packageAnchorDay(new Date(quote.advanceDeal!.startsAt))).toISOString());
   const result = await BillingService.prototype.checkout.call(f.service, context,
     { quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: 'web' } as any,
     `idem_${f.compact}`);
@@ -435,7 +435,7 @@ test('advance deal keeps its payment pending without binding a Stripe trial beyo
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
     assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/watchdog_preview_20260923'].includes(url.pathname));
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
-    const startsAt = new Date(Date.now()); startsAt.setUTCFullYear(startsAt.getUTCFullYear() + 3); startsAt.setMilliseconds(0);
+    const startsAt = appendPackageInterval(new Date(), 'year', undefined, 3); startsAt.setMilliseconds(0);
     const f = await createFixture(client, { currentMode: 'CARD_ONCE', paidThrough: startsAt });
     try {
       const { quote, attempt } = await quoteAndCheckout(f, 'CARD_AUTO');

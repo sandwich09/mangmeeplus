@@ -45,7 +45,7 @@ export function ExpenseMonthsCard({ companyId, branchId }: { companyId: string; 
 
   useEffect(() => {
     let live = true;
-    setError(false);
+    setError(false); setData(null);
     getExpenseMonths(companyId, year, branchId)
       .then((value) => { if (live) setData(value); })
       .catch(() => { if (live) { setData(null); setError(true); } });
@@ -54,7 +54,7 @@ export function ExpenseMonthsCard({ companyId, branchId }: { companyId: string; 
 
   const months = data?.year === year ? data.months : [];
   const top = chartTop(Math.max(0, ...months.map((row) => Number(row.total))));
-  const years = [...new Set([...(data?.years ?? []), thisYear])].sort((a, b) => a - b);
+  const years = [...new Set([...(data?.years ?? []), thisYear, year])].sort((a, b) => a - b);
 
   return (
     <section aria-labelledby="home-expense-months" className="mangmee-card mangmee-card-shadow overflow-hidden">
@@ -74,7 +74,7 @@ export function ExpenseMonthsCard({ companyId, branchId }: { companyId: string; 
           <Notice tone="error" action={<button type="button" className={secondaryButtonClass} onClick={() => setAttempt((n) => n + 1)}>ลองอีกครั้ง</button>}>
             โหลดรายจ่ายรายเดือนไม่สำเร็จ
           </Notice>
-        ) : <>
+        ) : !data || data.year !== year ? <div role="status" aria-busy="true" className="py-8 text-sm text-gray-500">กำลังโหลดรายจ่ายรายเดือน…</div> : <>
           {/* The scale stays; the months scroll sideways on a phone (owner 2026-10-15), each month wide enough for its name and figure. */}
           <div className="flex min-w-0 gap-3">
             <div className="relative mt-5 h-44 w-11 shrink-0 text-right text-xs text-gray-700 sm:w-12" aria-hidden="true">

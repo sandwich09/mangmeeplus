@@ -1,5 +1,5 @@
 import type { ReimbursementHubBootstrap } from '@watchdog-bms/contracts';
-import { Controller, Delete, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards, ParseEnumPipe } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Patch, Param, Body, Query, Headers, HttpCode, UseGuards, ParseEnumPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
@@ -236,8 +236,8 @@ export class ReimbursementController {
   @Post()
   @RequirePermissions('reimbursement.create')
   @ApiOperation({ summary: 'Create reimbursement draft' })
-  create(@ReqCtx() ctx: RequestContext, @Body() body: CreateReimbursementRequestDto) {
-    return this.createDraft.execute(ctx, body);
+  create(@ReqCtx() ctx: RequestContext, @Body() body: CreateReimbursementRequestDto, @Headers('idempotency-key') key?: string) {
+    return this.createDraft.execute(ctx, body, key);
   }
 
   @Get(':requestId')

@@ -1,3 +1,4 @@
+import { calcLineTotals } from '../../../../api/src/modules/expenses/domain/logic/expense-totals.logic';
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -41,7 +42,7 @@ function setup(effectPattern = /previewRequestRef|setPreviewChecksum/) {
         if (!effectPattern.test(String(fn))) return;
         if (!effects[slot] || !same(deps, effects[slot].deps)) pending.push(() => { effects[slot]?.cleanup?.(); effects[slot] = { deps, cleanup: fn() }; });
       }),
-      mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => { nodes.push({ tag: typeof tag === 'string' ? tag : tag?.name, props: { ...props, children } }); return realCreate(tag, props, ...children); }),
+      mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => { nodes.push({ tag: typeof tag === 'string' ? tag : tag?.name ?? tag?.render?.name, props: { ...props, children } }); return realCreate(tag, props, ...children); }),
       mock.method(navigation, 'useRouter', () => ({ push() {}, replace() {} })),
       mock.method(confirm, 'useConfirm', () => ({ confirm: async () => true, confirmDialog: null })),
     ];
@@ -80,6 +81,37 @@ test('a failed read after page state changes shows a retry sentence and releases
     assert.match(view.state.error, /ลองอีกครั้ง/); assert.equal(view.read()['aria-busy'], false);
     assert.equal(view.state.preview, null); assert.equal(view.find('ErrorBanner').message, view.state.error);
   } finally { view.cleanup(); request.mock.restore(); }
+});
+test('a staff paper creator knows before creating that the expense reviewer prints and sends the signed copy', () => {
+  const view = setup(/$^/);
+  Object.assign(view.props, { userId: 'staff', permissions: ['expense.read_own'] });
+  Object.assign(view.state, { receiptEvidence: null, activeStep: 'method', signingMethod: 'PAPER' });
+  view.state.detail.createdByUserId = 'staff';
+  try {
+    view.render();
+    assert.ok(view.find('Notice', p => JSON.stringify(p.children).includes('คุณพิมพ์และส่งฉบับที่เซ็นแล้วไม่ได้ ให้ผู้ตรวจค่าใช้จ่ายเปิดใบนี้ทำต่อ')));
+    assert.ok(view.find('button', p => JSON.stringify(p.children).includes('สร้างใบรับรองให้ผู้ตรวจทำต่อ')));
+    view.state.receiptEvidence = { id: 'paper', status: 'PREPARED', signatureMode: 'PAPER', payerUserId: null };
+    view.state.activeStep = 'certify'; view.render();
+    assert.equal(view.find('SubstitutePaperSigningPanel').canPrepare, false);
+  } finally { view.cleanup(); }
+});
+test('an issued personal advance links only the payer or an authorized preparer to the payer claim', () => {
+  for (const [reader, finance, offered] of [['payer', false, true], ['approver', false, false], ['approver', true, true]] as const) {
+    const view = setup(/$^/);
+    Object.assign(view.props, { userId: reader, permissions: ['expense.read', 'reimbursement.create', ...(finance ? ['reimbursement.finance_review'] : [])] });
+    Object.assign(view.state, { activeStep: 'done', receiptEvidence: { ...view.state.receiptEvidence, status: 'ISSUED', fundingSource: 'PERSONAL_ADVANCE', payerUserId: 'payer', payerName: 'สมใจ', artifactAttachmentId: 'pdf' } });
+    try {
+      view.render();
+      if (offered) {
+        const link = view.find('LinkComponent', p => p.href?.includes('/reimbursements/new'));
+        assert.equal(new URL(link.href, 'http://local').searchParams.get('requesterUserId'), 'payer');
+      } else assert.throws(() => view.find('LinkComponent', p => p.href?.includes('/reimbursements/new')));
+      const issued = JSON.stringify(view.find('p', p => p.className === 'min-w-0 flex-1 text-sm text-gray-700').children);
+      if (reader !== 'payer') assert.doesNotMatch(issued, /คุณจ่ายเต็มจำนวน/);
+      if (finance) assert.match(issued, /สมใจ/);
+    } finally { view.cleanup(); }
+  }
 });
 
 
@@ -193,5 +225,24 @@ test('SUB-DOC payer and approver presses with missing inputs focus the first rea
     certify.mock.restore(); approve.mock.restore();
     Object.defineProperty(globalThis, 'requestAnimationFrame', { configurable: true, value: originalFrame });
     Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument });
+  }
+});
+
+test('manual wizard shows the server-rounded amount when a unit price changes at satang precision, without repeating an unchanged price', () => {
+  for (const [quantity, unitPrice, shown] of [['1', '1.005', true], ['1', '1.004', true], ['1', '1.01', false], ['1', '1.0100', false], ['3', '40', true]] as const) {
+    const view = setup(/$^/);
+    view.props.permissions.push('expense.create');
+    Object.assign(view.state, { detail: null, receiptEvidence: null, activeStep: 'expense', entryMode: 'new', categoriesLoading: false,
+      categories: [{ id: 'category', name: 'ค่าใช้จ่าย', status: 'ACTIVE' }],
+      manualLines: [{ id: 'manual-line-1', description: 'ของใช้', expenseCategoryId: 'category', quantity, unitPrice }] });
+    try {
+      view.render();
+      const total = () => view.find('p', props => JSON.stringify(props.children).includes('รวมรายการนี้'));
+      if (shown) {
+        const saved = calcLineTotals({ quantity, unitPrice, vatMode: 'NO_VAT' });
+        const expected = `${Number(saved.lineTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
+        assert.ok(JSON.stringify(total().children).includes(expected), `${quantity} × ${unitPrice} must show ${expected}`);
+      } else assert.throws(total, /missing p/, 'an unchanged single-unit price needs no second amount');
+    } finally { view.cleanup(); }
   }
 });

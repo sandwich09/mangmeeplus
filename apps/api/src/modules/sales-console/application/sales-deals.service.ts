@@ -14,7 +14,6 @@ import {
   SALES_DEAL_OPEN_STATUSES,
   SALES_DEAL_REASON_MAX,
   SALES_DEAL_STATUSES,
-  type SalesDealBaseTier,
   type SalesDealListDto,
   type SalesDealSaveBody,
   type SalesDealSnapshot,
@@ -600,17 +599,12 @@ export type SalesDealListQuery = { status?: string; salesUserId?: string };
 /** D-P5-6: how far ahead the console and the OWNER are told a deal is about to end. */
 export const DEAL_ENDING_NOTICE_DAYS = 14;
 
-/**
- * The list price of the deal's base tier for the same number of months, for the form's
- * "สูงกว่าราคา catalog" warning only — never a quote.
- *
- * ponytail: reads the code catalog, not the stored BillingPolicy. If the Owner ever sets
- * `offerTerms`, this threshold drifts from the real catalog price; the upgrade path is to pass the
- * active policy into `billingOffer`. Every other caller in the repo reads it the same way.
- */
+/** Catalog comparison only: one cycle for an auto deal, whole catalog years plus remaining months otherwise. */
 function catalogPriceFor(snapshot: SalesDealSnapshot | null): number {
   if (!snapshot) return 0;
-  return billingOffer(snapshot.base as SalesDealBaseTier, 'month').priceSatang * snapshot.months;
+  const auto = autoRenewOf(snapshot), months = auto.autoRenew ? auto.cadence === 'year' ? 12 : 1 : snapshot.months;
+  return Math.floor(months / 12) * billingOffer(snapshot.base, 'year').priceSatang
+    + (months % 12) * billingOffer(snapshot.base, 'month').priceSatang;
 }
 
 export function workKind(deal: Pick<SalesDealView, 'status' | 'renewalOfRequestId' | 'returnAt'>,

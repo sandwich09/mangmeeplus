@@ -17,7 +17,7 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { actSalesDeal, createSalesDeal, getSalesDeal, saveSalesDeal, searchSalesCompanies, type SalesDealAction } from './sales.api';
 import {
   baseTierDefaults, baseTierFeatureKeys, baseTierLabel, dealAutoRenew, dealFormFromView, dealInputFromForm, dealPaymentNote, dealPriceState,
-  dealWarnings, emptyDealForm, firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
+  dealWarnings, dealCatalogPriceSatang, emptyDealForm, firstDealErrorField, isDealCancellable, isDealEditable, isMenuSelected, parseBahtInput,
   SALES_DEAL_BASE_TIERS, SALES_DEAL_MENU_BINDINGS, SALES_DEAL_MENU_GROUPS, toggleMenuSelection, validateDealForm,
   type SalesDealFormErrors, type SalesDealFormValues,
 } from './sales-console.logic';
@@ -231,17 +231,11 @@ export default function SalesDealFormPage({ dealId, companyId, canApprove }: { d
 
   const price = parseBahtInput(values.priceBaht);
   const months = /^\d+$/.test(values.months.trim()) ? Number(values.months.trim()) : null;
-  // D-P5-2: an auto-renewing deal is priced PER CYCLE, so "สูงกว่าราคาปกติ" compares one cycle of
-  // catalog (a year being twelve months of it) — comparing it to an N-month total would warn on
-  // every monthly deal and on none of the yearly ones.
-  const cycleCatalogSatang = company ? company.catalogMonthlyPriceSatang * (values.cadence === 'year' ? 12 : 1) : null;
+  // Compare the current form's base and term with the catalog; auto deals sell one cycle at a time.
+  const catalogMonths = values.autoRenew ? values.cadence === 'year' ? 12 : 1 : months;
   const warnings = dealWarnings({
     priceSatang: price.ok ? price.satang : null,
-    // A saved deal carries the catalog total the server computed for THIS deal's tier and months —
-    // that is the authority. Before the first save the picked shop's per-month catalog price stands
-    // in, multiplied by the months in the form, so the เซลล์ is warned while still typing.
-    catalogPriceSatang: values.autoRenew ? cycleCatalogSatang : (deal?.catalogPriceSatang
-      ?? (company && months !== null ? company.catalogMonthlyPriceSatang * months : null)),
+    catalogPriceSatang: company && catalogMonths !== null ? dealCatalogPriceSatang(values.base, catalogMonths) : null,
     accessState: company?.accessState ?? null,
     // S31 likewise: the deal view's own copy of the counts once it exists, the picked search row
     // before that, so a limit below what the shop runs is called out on a brand-new form too.

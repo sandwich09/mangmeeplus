@@ -31,7 +31,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
   useEffect(() => {
     if (!id) return;
     let active = true;
-    void api.collection(id).then(value => { if (active) setOperation(value); }).catch(() => { if (active) setError('โหลดคำขอไม่ได้ ตรวจสอบสิทธิ์จัดการแพ็กเกจแล้วลองใหม่'); });
+    void api.collection(id).then(value => { if (active) setOperation(value); }).catch(() => { if (active) setError('โหลดคำขอไม่ได้ ตรวจสอบสิทธิ์จัดการแพ็กเกจแล้วลองอีกครั้ง'); });
     return () => { active = false; };
   }, [api, id, reload]);
   useEffect(() => {
@@ -105,7 +105,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         <div><dt className="text-sm text-gray-500">{status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE' ? 'ยอดที่จ่ายแล้ว' : 'ยอดจ่ายรอบถัดไป'}</dt><dd className="mt-1 font-semibold text-gray-900">{`${(status.pendingPlanChange.nextRenewalTotalSatang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`}</dd></div>
       </dl>
       <p className="text-sm text-gray-500">ใช้แพ็กเกจเดิมได้ถึงวันที่ระบุ {status.pendingPlanChange.action === 'PREPAID_PLAN_CHANGE'
-        ? status.pendingPlanChange.state === 'BLOCKED' ? 'แพ็กเกจใหม่จ่ายแล้ว กรุณาเลือกสาขาและผู้ใช้ล่าสุดก่อนเริ่มสิทธิ์ใหม่' : 'แพ็กเกจใหม่จ่ายแล้วและจะเริ่มอัตโนมัติในวันดังกล่าว'
+        ? status.pendingPlanChange.state === 'BLOCKED' ? 'แพ็กเกจใหม่จ่ายแล้ว เลือกสาขาและผู้ใช้ล่าสุดก่อนเริ่มสิทธิ์ใหม่' : 'แพ็กเกจใหม่จ่ายแล้วและจะเริ่มอัตโนมัติในวันเริ่มแพ็กเกจใหม่'
         : 'แพ็กเกจใหม่เริ่มเมื่อจ่ายรอบถัดไปสำเร็จ'}</p>
       {!confirming && !selection && <ActionGroup>
         {apiOverride ? <button className={button} disabled={busy} aria-busy={busy} onClick={() => setOperation(status.pendingPlanChange!)}>ดูรายการเปลี่ยนแพ็กเกจ</button> : <Link className={button} href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${status.pendingPlanChange.id}`}>ดูรายการเปลี่ยนแพ็กเกจ</Link>}
@@ -141,7 +141,7 @@ export default function BillingCollectionPanel({ companyId, status, operationId,
         {operation.featureImpact.preservedAdmin > 0 && <p>สิทธิ์พิเศษที่ผู้ดูแลกำหนดให้เฉพาะร้านนี้ยังคงอยู่</p>}
       </div>}
       {operation.capacity && <div><p>คงสาขา: {operation.capacity.retainedBranches.join(', ')} · พักสาขา: {operation.capacity.suspendedBranches.join(', ') || 'ไม่มี'}</p><p>คงผู้ใช้: {operation.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {operation.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p><p>ข้อมูลและประวัติยังอยู่ หากรายชื่อเปลี่ยนจะให้ตรวจเลือกอีกครั้ง</p></div>}
-      {!stopping && <p>{operation.action.startsWith('ADMIN_') ? 'รายการนี้ปรับเฉพาะการเก็บเงิน ไม่เพิ่มวันใช้งานหรือจำนวนใบเสร็จ และไม่เรียกเก็บบิลร่างย้อนหลัง' : operation.action==='EXTEND_TERM' ? operation.state === 'SUCCEEDED' ? 'เพิ่มวันใช้งานแล้ว รายการนี้ไม่มีค่าใช้จ่ายและไม่เพิ่มจำนวนใบเสร็จ' : 'ผู้ดูแลกำลังดำเนินการแถมวัน ไม่เพิ่มจำนวนใบเสร็จหรือเรียกเก็บเงินจากรายการนี้ ตรวจสถานะล่าสุดเพื่อดูวันที่ยืนยันแล้ว' : prepaidChange ? operation.state === 'BLOCKED' ? 'จ่ายแพ็กเกจใหม่แล้ว กรุณาเลือกสาขาและผู้ใช้ล่าสุดเพื่อเริ่มสิทธิ์จากรายการเดิม โดยไม่ต้องจ่ายซ้ำ' : 'จ่ายแพ็กเกจใหม่แล้ว สิทธิ์เดิมคงอยู่จนถึงวันเริ่มแพ็กเกจรอบถัดไป' : changingPlan ? 'แพ็กเกจใหม่จะเริ่มเมื่อจ่ายรอบถัดไปสำเร็จ สิทธิ์เดิมที่ซื้อไว้ไม่ลดลงในวันนี้' : 'วันและจำนวนใบเสร็จที่ซื้อไว้คงเดิม การเปลี่ยนการต่ออายุไม่เพิ่มจำนวนใบเสร็จหรือคืนเงิน'}</p>}
+      {!stopping && <p>{operation.action.startsWith('ADMIN_') ? 'รายการนี้ปรับเฉพาะการเก็บเงิน ไม่เพิ่มวันใช้งานหรือจำนวนใบเสร็จ และไม่เรียกเก็บบิลร่างย้อนหลัง' : operation.action==='EXTEND_TERM' ? operation.state === 'SUCCEEDED' ? 'เพิ่มวันใช้งานแล้ว รายการนี้ไม่มีค่าใช้จ่ายและไม่เพิ่มจำนวนใบเสร็จ' : 'ทีมงานมั่งมีกำลังเพิ่มวันใช้งาน ไม่เพิ่มจำนวนใบเสร็จหรือเรียกเก็บเงินจากรายการนี้ ตรวจสถานะล่าสุดเพื่อดูวันที่ยืนยันแล้ว' : prepaidChange ? operation.state === 'BLOCKED' ? 'จ่ายแพ็กเกจใหม่แล้ว เลือกสาขาและผู้ใช้ล่าสุดเพื่อเริ่มสิทธิ์จากรายการเดิม โดยไม่ต้องจ่ายซ้ำ' : 'จ่ายแพ็กเกจใหม่แล้ว สิทธิ์เดิมคงอยู่จนถึงวันเริ่มแพ็กเกจรอบถัดไป' : changingPlan ? 'แพ็กเกจใหม่จะเริ่มเมื่อจ่ายรอบถัดไปสำเร็จ สิทธิ์เดิมที่ซื้อไว้ไม่ลดลงในวันนี้' : 'วันและจำนวนใบเสร็จที่ซื้อไว้คงเดิม การเปลี่ยนการต่ออายุไม่เพิ่มจำนวนใบเสร็จหรือคืนเงิน'}</p>}
       {!stopping && operation.state === 'PREVIEW' && <p>ตรวจและยืนยันได้ถึง {new Date(operation.expiresAt).toLocaleTimeString('th-TH')}</p>}
       {!stopping && (ended || operation.state === 'UNKNOWN') && <p>กลับมาเปิดรายการเดิมเพื่อตรวจสถานะ หรือติดต่อทีมงาน</p>}
       </>}

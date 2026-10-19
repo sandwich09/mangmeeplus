@@ -1,4 +1,5 @@
 'use client';
+import { useLockedShell } from '@/features/plan-term/LockedShellScope';
 import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { notifyCompanyProfileChanged } from '../web-core-workspace/workspace-scope.api';
@@ -73,7 +74,8 @@ export function CompanyProfilePage({ companyId, permissions, accountOnly = false
   // box whose every save comes back 403 (FINANCE holds vat_registration.read but not .manage).
   const canManageShop = permissions.includes('company.legal_identity.manage');
   const canManageVat = permissions.includes('company.vat_registration.manage');
-  const canManageSignature = permissions.some((permission) => OWN_SIGNATURE_PERMISSIONS.includes(permission));
+  const lockedShell = useLockedShell();
+  const canManageSignature = !lockedShell && permissions.some((permission) => OWN_SIGNATURE_PERMISSIONS.includes(permission));
   const toast = useToast();
   const [section, setSection] = useState<'shop' | 'account'>(accountOnly ? 'account' : 'shop');
   const [identity, setIdentity] = useState<CompanyIdentityResponse | null>(null);
@@ -543,22 +545,21 @@ export function CompanyProfilePage({ companyId, permissions, accountOnly = false
               onChange={(event) => setPhone(event.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
             />
             {phoneError && <Banner tone="error">{phoneError}</Banner>}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <FormActionBar><ActionGroup>
+              {account?.phoneNumber && (
+                <button type="button" className={`${ACTION_BUTTON} mangmee-btn-danger`} disabled={phoneSaving} aria-busy={Boolean(phoneSaving)} onClick={() => void savePhoneValue('')}>
+                  ลบเบอร์ออก
+                </button>
+              )}
               <button
                 type="button"
-                className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto"
+                className={`${ACTION_BUTTON} mangmee-btn-primary`}
                 disabled={phoneSaving} aria-busy={Boolean(phoneSaving)}
                 onClick={() => void savePhoneValue(phone.trim())}
               >
                 {phoneSaving ? 'กำลังบันทึก...' : 'บันทึกเบอร์มือถือ'}
               </button>
-              {/* Clearing is still "save a blank", but the hint no longer has to explain that. */}
-              {account?.phoneNumber && (
-                <button type="button" className={LINK_BUTTON} disabled={phoneSaving} aria-busy={Boolean(phoneSaving)} onClick={() => void savePhoneValue('')}>
-                  ลบเบอร์ออก
-                </button>
-              )}
-            </div>
+            </ActionGroup></FormActionBar>
             </div>
           </details>
 
@@ -620,14 +621,14 @@ export function CompanyProfilePage({ companyId, permissions, accountOnly = false
                   onChange={(event) => setConfirmPassword(event.target.value)}
                 />
                 {passwordError && <Banner tone="error">{passwordError}</Banner>}
-                <button
+                <FormActionBar><ActionGroup><button
                   type="button"
                   className={`${ACTION_BUTTON} mangmee-btn-primary`}
                   disabled={passwordSaving} aria-busy={Boolean(passwordSaving)}
                   onClick={() => void savePassword()}
                 >
                   {passwordSaving ? 'กำลังบันทึก...' : 'ตั้งรหัสผ่านสำรอง'}
-                </button>
+                </button></ActionGroup></FormActionBar>
               </>
             </div>
           </details>

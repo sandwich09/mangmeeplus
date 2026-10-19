@@ -639,6 +639,7 @@ export function PaymentModal({ companyId, userId, permissions, request, onClose,
   // (upgrade test 2026-10-02: here the list had no way to look, and a signed PDF and a slip were chosen between blind).
   // The viewer is a sibling of this dialog: closing the file leaves the form as it was.
   const [openFileError, setOpenFileError] = useState<string | null>(null);
+  const paymentSaving = useRef(false);
   const { openSlipChoice, previewModals } = useClaimDocumentPreview(companyId, setOpenFileError);
   useEffect(() => {
     let active = true;
@@ -654,7 +655,7 @@ export function PaymentModal({ companyId, userId, permissions, request, onClose,
   const blocked = claim ? quickPayBlockedNote(claim, permissions, userId) : null;
   return (
     <>
-    <Modal open title={`บันทึกจ่าย ${request.requestNo ?? ''}`.trim()} size="sm" closeLabel="ปิด" closeOnBackdrop={false} onClose={onClose}>
+    <Modal open title={`บันทึกจ่าย ${request.requestNo ?? ''}`.trim()} size="sm" closeLabel="ปิด" closeOnBackdrop={false} onClose={() => { if (!paymentSaving.current) onClose(); }}>
       {claim ? (
         blocked ? (
           <div className="space-y-3">
@@ -669,6 +670,7 @@ export function PaymentModal({ companyId, userId, permissions, request, onClose,
               frame here (`plain`): no card inside the dialog, a line between it and the form. */}
           <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} plain payStep />
           <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} onClaimChanged={() => onDone()}
+            onBusyChange={saving => { paymentSaving.current = saving; }}
             onOpenFile={(choice) => void openSlipChoice(claim.id, choice)} />
           {openFileError && <ErrorBanner message={`เปิดไฟล์ไม่สำเร็จ · ${openFileError}`} />}
         </div>

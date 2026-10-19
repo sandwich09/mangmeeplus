@@ -155,7 +155,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         )}
       </div>
     </> : <>
-      <p className="text-sm text-gray-600">รอผู้จัดทำส่งฉบับที่เซ็นแล้ว</p>
+      <p className="text-sm text-gray-600">ให้ผู้ตรวจค่าใช้จ่ายเปิดใบนี้เพื่อพิมพ์และส่งฉบับที่เซ็นแล้ว</p>
       {actions(null)}
     </>) : <>
       {/* What happened and what is next, said after the send (thai-ux-standard 6.1). */}

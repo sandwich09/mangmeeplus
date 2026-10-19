@@ -19,7 +19,7 @@ import { Prisma, PrismaClient } from '../../generated/prisma/client';
 import { BillingService, type BillingSnapshot } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { promotionUsage } from './application/billing-promotion';
-import { appendPackageInterval } from './domain/billing-package';
+import { appendPackageInterval, packageAnchorDay } from './domain/billing-package';
 import { termProjectionHash } from './domain/paid-invoice';
 import { promotionOfferSignature } from './domain/billing-promotion';
 import { StripeRequestError } from './infrastructure/stripe.client';
@@ -721,7 +721,7 @@ describe('promotion purchase: quote, Checkout and views on PostgreSQL', { skip: 
     const term = await client.companyPlanTerm.create({ data: { companyId: sub, tierKey: 'STARTER_249', branchLimit: month.branchLimit, employeeLimit: month.employeeLimit,
       monthlySlipLimit: 30, termStartAt: new Date(), termEndsAt: paidThrough, billingReceiptAccountId: (await account(sub)).id } });
     const bound = await client.billingAccount.update({ where: { id: (await account(sub)).id }, data: { baseSubscriptionId: `sub_${run}`, renewalMode: 'CARD_AUTO',
-      subscriptionState: 'active', paidThrough, billingAnchorDay: paidThrough.getUTCDate(), contractAttemptId: `contract-${run}`, termProjectionHash: termProjectionHash(term) } });
+      subscriptionState: 'active', paidThrough, billingAnchorDay: packageAnchorDay(paidThrough), contractAttemptId: `contract-${run}`, termProjectionHash: termProjectionHash(term) } });
     await client.billingSubscriptionContract.create({ data: { billingAccountId: bound.id, sourceAttemptId: `contract-${run}`, effectiveAt: new Date(Date.now() - HOUR),
       snapshotJson: { quote: { offer: month }, priceId: policy.priceIds['STARTER_249:month'], policy } } });
     Object.defineProperty(service, 'repeater', { configurable: true, value: { source: async () => ({ subscriptionId: `sub_${run}`, paidThrough: paidThrough.toISOString(),

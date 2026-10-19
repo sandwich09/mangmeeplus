@@ -601,11 +601,15 @@ export class PrismaReimbursementRepository {
 
   // ---- Request ----
 
-  async createRequest(data: CreateReimbursementRequestData, payout?: DraftPayoutChange): Promise<ReimbursementRequestRecord> {
+  async createRequest(data: CreateReimbursementRequestData & { id?: string }, payout?: DraftPayoutChange): Promise<ReimbursementRequestRecord> {
     requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
       await lockPlanTermCompany(tx, data.companyId);
+      if (data.id) {
+        const previous = await tx.reimbursementRequest.findFirst({ where: { companyId: data.companyId, id: data.id } });
+        if (previous) return previous;
+      }
       if (!await tx.branch.findFirst({ where: { id: data.branchId, companyId: data.companyId, status: 'ACTIVE' }, select: { id: true } }))
         throw sourceError('branch_inactive');
       if (!await tx.companyMembership.findFirst({ where: { companyId: data.companyId, userId: data.requesterUserId, status: 'ACTIVE', user: { status: 'ACTIVE' }, OR: [
@@ -616,6 +620,7 @@ export class PrismaReimbursementRepository {
       await assertReimbursementSources(tx, data);
       const created = await tx.reimbursementRequest.create({
         data: {
+          ...(data.id && { id: data.id }),
           companyId: data.companyId,
           branchId: data.branchId,
           requesterUserId: data.requesterUserId,
@@ -3294,6 +3299,7 @@ export class PrismaReimbursementRepository {
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
     duplicateBlockedCount: number;
+    duplicateBlockedAmount: string;
   }> {
     const scope = await this.requestListWhere({ ...where, search: undefined });
     if (where.search) scope.AND.push(hubSearchWhere(where.search));
@@ -3302,10 +3308,11 @@ export class PrismaReimbursementRepository {
     // If scopes outgrow the facts read/id filter, index an eligibility projection maintained by this domain predicate.
     const paymentClaims = await this.prisma.client.reimbursementRequest.findMany({
       where: { ...scope, AND: [...scope.AND, hubBucketWhere('payment')] },
-      select: { id: true, approvalPolicySnapshotJson: true,
+      select: { id: true, amount: true, approvalPolicySnapshotJson: true,
         _count: { select: { duplicateCandidates: { where: { status: 'OPEN' } } } }, sourceExpenses: OWN_DUPLICATE_EXPENSES },
     });
-    const blockedIds = paymentClaims.filter((row) => claimDuplicateBlocksPayment(this.toRequest(row), policy, row._count.duplicateCandidates)).map((row) => row.id);
+    const blocked = paymentClaims.filter((row) => claimDuplicateBlocksPayment(this.toRequest(row), policy, row._count.duplicateCandidates));
+    const blockedIds = blocked.map((row) => row.id);
     const correction = { AND: [
       { OR: [{ requesterUserId: where.correctionUserId ?? '' }, { createdByUserId: where.correctionUserId ?? '' }] },
       { OR: [{ status: 'REJECTED' }, { status: 'DRAFT', financeReviewStatus: 'NEEDS_INFO' },
@@ -3335,6 +3342,7 @@ export class PrismaReimbursementRepository {
     return {
       rows: rows.map((row) => this.toRequest(row)),
       duplicateBlockedCount: blockedIds.length,
+      duplicateBlockedAmount: decStr(blocked.reduce((sum, row) => sum.add(d(String(row.amount))), d(0))),
       groups: groups.map((group) => ({
         needsCorrection: reimbursementNeedsCorrection(group, where.correctionUserId ?? ''),
         status: group.status,

@@ -66,6 +66,8 @@ async function reviewPaper(page: Page, invoice: boolean) {
   await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
   await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' })).toBeVisible(AFTER_PRESS);
   await pick(page, 'ประเภทเอกสาร', invoice ? 'ใบกำกับภาษี (เต็มรูป)' : 'ใบเสร็จรับเงิน');
+  await expect(main.getByRole('combobox', { name: 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', exact: true }))
+    .toHaveText(invoice ? 'ใช้ได้' : 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ');
   if (invoice) await expect(main.getByText('มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ', { exact: true })).toBeVisible();
   await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
   await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();

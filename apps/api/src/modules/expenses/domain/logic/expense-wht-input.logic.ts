@@ -1,6 +1,31 @@
 import Decimal from 'decimal.js';
 import type { ExpenseLineChargeKind, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { calcDocumentTotals, documentTotalsLines, type DocumentTotalsResult, type LineTotalsResult } from './expense-totals.logic';
+import { deriveWhtIncomeBase } from '../../../tax/domain/logic/wht-report.logic';
+
+type WithheldLine = { taxableAmount?: unknown; whtAmount?: unknown; whtRate?: unknown };
+/** Header rates are percentages; line rates are fractions. Amount capture asserts no rate. */
+export function expenseWhtHeaderRate(input: ExpenseWhtInput | null | undefined, lines: readonly WithheldLine[] = [], legacyRate?: unknown): string | null {
+  if (input) return input.inputType === 'RATE' ? new Decimal(input.value).toString() : null;
+  const withheld = lines.filter(line => new Decimal(String(line.whtAmount ?? 0)).gt(0));
+  const rates = new Set(withheld.filter(line => line.whtRate != null && new Decimal(String(line.whtRate)).gt(0))
+    .map(line => new Decimal(String(line.whtRate)).toString()));
+  if (rates.size) return rates.size === 1 && withheld.every(line => line.whtRate != null && new Decimal(String(line.whtRate)).gt(0))
+    ? new Decimal([...rates][0]!).mul(100).toString() : null;
+  return legacyRate != null && String(legacyRate).trim() && new Decimal(String(legacyRate)).gt(0) ? new Decimal(String(legacyRate)).toString() : null;
+}
+
+/** One income source for the certificate and filing: explicit base, withheld rows, legacy fallback. */
+export function expenseWhtIncomeBase(expense: {
+  whtInputJson?: ExpenseWhtInput | null; lines?: readonly WithheldLine[]; whtAmount?: unknown; whtRate?: unknown;
+  grandTotalAmount?: unknown; taxableAmount?: unknown;
+}): string {
+  if (expense.whtInputJson?.baseAmount != null) return new Decimal(expense.whtInputJson.baseAmount).toFixed(4);
+  const withheld = expense.lines?.filter(line => line.taxableAmount != null && new Decimal(String(line.whtAmount ?? 0)).gt(0)) ?? [];
+  if (withheld.length) return withheld.reduce((sum, line) => sum.plus(String(line.taxableAmount)), new Decimal(0)).toFixed(4);
+  return deriveWhtIncomeBase(String(expense.whtAmount ?? 0), expenseWhtHeaderRate(expense.whtInputJson, expense.lines, expense.whtRate))
+    ?? String(expense.grandTotalAmount ?? expense.taxableAmount ?? 0);
+}
 
 /** Convert explicit percent once; amount-only source has no asserted tax rate. */
 export function expenseWhtLineRate(input: ExpenseWhtInput | null | undefined, legacyRate?: string | null): string | null {
@@ -33,21 +58,12 @@ export function applyExpenseWhtInput(
     : withheld.reduce((sum, line) => sum.plus(line.totals.taxableAmount), new Decimal(0))
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   const sourceBase = input.baseAmount === undefined ? base : new Decimal(input.baseAmount);
-  const amount = input.inputType === 'AMOUNT' ? value
-    : input.baseAmount === undefined
-      ? withheld.reduce((sum, line) => sum.plus(new Decimal(line.totals.taxableAmount).mul(value).div(100)
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)), new Decimal(0))
-      : sourceBase.mul(value).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const amount = input.inputType === 'AMOUNT' ? value : sourceBase.mul(value).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   if (input.inputType === 'AMOUNT' && amount.gt(sourceBase)) return 'WHT amount cannot exceed the accepted pre-VAT amount.';
   if (amount.gt(result.totals.grandTotalAmount) || (amount.gt(0) && base.lte(0))) {
     return 'WHT amount cannot exceed the document total or leave a negative payable.';
   }
-  if (input.inputType === 'RATE' && input.baseAmount === undefined) {
-    for (const line of withheld) {
-      line.totals.whtAmount = new Decimal(line.totals.taxableAmount).mul(value).div(100)
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(4);
-    }
-  } else {
+  {
     // Largest remainder allocates exact satang without inventing a four-decimal rate.
     const shares = withheld.map((line) => {
       const raw = base.gt(0) ? amount.mul(100).mul(line.totals.taxableAmount).div(base) : new Decimal(0);

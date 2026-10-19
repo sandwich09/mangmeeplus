@@ -26,7 +26,7 @@ type AccessMatrix = {
 test.describe('SET — settings', () => {
   test('SET-01 @smoke settings hub renders sections', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings');
-    await expect(authedPage.getByRole('heading', { name: 'ตั้งค่า', exact: true })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'ตั้งค่าร้าน', exact: true })).toBeVisible();
     // The 50 ทวิ signature is an ordinary card since 2026-10-13: a sold shop no longer has a "การตั้งค่าขั้นสูง" block
     // (it held this one row), and a shop with the accounting rows still has one.
     await expect(authedPage.locator('main').getByRole('link', { name: /ลายเซ็นบน 50 ทวิ/ })).toBeVisible();
@@ -124,6 +124,8 @@ test.describe('SET — settings', () => {
     await toggle.click();
     const off = authedPage.getByRole('dialog');
     await expect(off.getByText('เข้าสู่ระบบของร้านนี้ไม่ได้และคืนที่นั่งให้ร้าน', { exact: true })).toBeVisible();
+    await expect(off.getByRole('button', { name: 'ปิด', exact: true })).toHaveCount(1);
+    await expect(off.getByRole('button', { name: 'ไม่ปิด', exact: true })).toHaveCount(1);
     await off.getByRole('button', { name: 'ไม่ปิด', exact: true }).click();
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
     await toggle.click();
@@ -147,21 +149,24 @@ test.describe('SET — settings', () => {
     await authedPage.getByRole('button', { name: 'เพิ่มบทบาท', exact: true }).click();
     await expect(authedPage.getByText(/สิทธิ์ขั้นสูง|สิทธิ์รายคีย์|Feature ".*" is not enabled|company\.setup\.manage/)).toHaveCount(0);
     await expect(authedPage.locator('form input[type="checkbox"]:disabled')).toHaveCount(0);
-    await authedPage.locator('form input[required]').fill(roleName);
+    const editor = authedPage.locator('form').filter({ has: authedPage.getByRole('heading', { name: 'เพิ่มบทบาท', exact: true }) });
+    await editor.getByRole('textbox', { name: /^ชื่อบทบาท/ }).fill(roleName);
     await authedPage.getByRole('checkbox', { name: /บันทึกค่าใช้จ่ายของฉัน/ }).check();
-    await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
-    await expect(authedPage.getByText('สร้างบทบาทเรียบร้อยแล้ว')).toBeVisible();
+    await editor.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+    await expect(authedPage.getByRole('status').filter({ hasText: `สร้างบทบาท ${roleName} แล้ว` })).toBeVisible();
 
     let roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
     let created = roles.find((role) => role.name === roleName);
     expect(created).toBeTruthy();
     expect(created!.permissionKeys).toEqual(expect.arrayContaining(['expense.create', 'expense.receipt.upload', 'attachment.create']));
 
-    await authedPage.getByRole('button', { name: new RegExp(roleName) }).click();
-    await authedPage.getByRole('button', { name: 'แก้ไข', exact: true }).click();
+    await authedPage.getByRole('searchbox', { name: 'ค้นหาบทบาท', exact: true }).fill(roleName);
+    await authedPage.getByRole('button').filter({ has: authedPage.getByText(roleName, { exact: true }) }).click();
+    await authedPage.getByRole('button', { name: 'แก้ไขบทบาท', exact: true }).click();
     await authedPage.getByRole('checkbox', { name: /ตรวจใบเบิก/ }).check();
-    await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();
-    await expect(authedPage.getByText('บันทึกบทบาทเรียบร้อยแล้ว')).toBeVisible();
+    const editForm = authedPage.locator('form').filter({ has: authedPage.getByRole('heading', { name: `แก้ไขบทบาท ${roleName}`, exact: true }) });
+    await editForm.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึกบทบาท', exact: true }).click();
+    await expect(authedPage.getByRole('status').filter({ hasText: `บันทึกบทบาท ${roleName} แล้ว` })).toBeVisible();
 
     roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
     created = roles.find((role) => role.name === roleName);
@@ -201,7 +206,7 @@ test.describe('SET — settings', () => {
     await expect(authedPage).toHaveURL(/\/dashboard/);
   });
 
-  test('SET-08 @p1 access overview renders employee matrix', async ({ authedPage, companyId }) => {
+  test('SET-08 @p1 access overview renders employee matrix', async ({ authedPage, api, companyId }) => {
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
     await expect(authedPage.getByRole('heading', { name: 'รายชื่อพนักงาน', exact: true })).toBeVisible();
     await expect(authedPage.getByText(/มายด์|ไนซ์|แพรว|เตย/).first()).toBeVisible();
@@ -229,7 +234,12 @@ test.describe('SET — settings', () => {
     await expect(dashboardActions.locator(':scope > span')).toHaveCount(1);
     await expect(dashboardActions).toHaveText('ดู');
 
-    await authedPage.getByRole('button', { name: /^OW OWNER/ }).click();
+    const people = await json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`));
+    const owner = people.find(person => person.roles?.some(role => role.key === 'OWNER'));
+    expect(owner, 'the seeded owner must be present in the employee list').toBeDefined();
+    await authedPage.getByRole('searchbox', { name: 'ค้นหาพนักงาน', exact: true }).fill(owner!.displayName);
+    await authedPage.locator('main').getByRole('button').filter({ has: authedPage.getByText(owner!.displayName, { exact: true }) }).click();
+    await expect(authedPage.getByTestId('employee-detail-card').getByRole('heading', { name: owner!.displayName, exact: true })).toBeVisible();
     const ownerExpenseActions = summary.locator('[data-menu-id="expenses"]').getByTestId('access-permission-actions');
     await expect(ownerExpenseActions.locator(':scope > span')).toHaveText(['ดู', 'เพิ่ม', 'แก้ไข', 'ลบ', 'อนุมัติ']);
   });
@@ -421,7 +431,7 @@ test.describe('SET — settings', () => {
       const page = await context.newPage();
 
       await gotoCompany(page, companyId, '/expenses/manual');
-      await expect(page.getByRole('heading', { name: 'บันทึกค่าใช้จ่ายด้วยมือ' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'บันทึกด้วยมือ', exact: true })).toBeVisible();
       // Several branches and the "ทุกสาขา" filter: the form stays disabled until the record's branch is chosen.
       await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขา', exact: true }), branchOptionName(await firstActiveBranch(api, companyId)));
       await page.getByLabel('รายละเอียดค่าใช้จ่าย').fill(unique('E2E union expense'));
@@ -449,7 +459,7 @@ test.describe('SET — settings', () => {
   });
 
   test('SET-08C @p1 branch failure stays scoped and does not hide a valid permission summary', async ({ authedPage, companyId }) => {
-    await authedPage.route(`**/api/v1/companies/${companyId}/branches?pageSize=100`, async (route) => {
+    await authedPage.route(`**/api/v1/companies/${companyId}/branches?pageSize=100&page=*`, async (route) => {
       await route.fulfill({
         status: 503,
         contentType: 'application/json',

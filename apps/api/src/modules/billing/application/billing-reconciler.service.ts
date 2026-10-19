@@ -23,7 +23,7 @@ import { observeBillingCharges, recordBillingFinancials } from './billing-financ
 import { advanceDealAtBoundary, refundStopsBinding } from './billing-refund-source';
 import { grantPaidPackageReceipts, grantPromotionPackageReceipts } from './billing-receipt-grants';
 import { grantTrialReceiptCarryover } from './billing-trial-carryover';
-import { appendPackageInterval, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
+import { appendPackageInterval, packageAnchorDay, fullPackagePurchaseImpact, invoiceServiceEnd, promotionBoundaries } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { packageReceiptBalance } from './billing-receipt-grants';
 import { applyDealRequest, fulfillPaidPackageRequest, recordReferralAttribution, scheduleDealReturn, supersedeUnpaidDeal, supersedeUnpaidPackageRequest } from './billing-package-request';
@@ -774,7 +774,7 @@ export class BillingReconcilerService {
         // A renewing first period keeps the slot until its subscription binds: PROMPTPAY_RENEW, SD-O13's discounted card, a promotion's card.
         contractAttemptId: attempt.id, activeAttemptId: mode === 'PROMPTPAY_RENEW' || prepaidCardAuto(snapshot) ? attempt.id : null,
         subscriptionState: 'NONE', renewalMode: mode!,
-        billingAnchorDay: snapshot.oneTime?.anchorDay ?? evidence.paidAt.getUTCDate(), nextChargeAt: null,
+        billingAnchorDay: snapshot.oneTime?.anchorDay ?? packageAnchorDay(evidence.paidAt), nextChargeAt: null,
         cancelAtPeriodEnd: false, graceEndsAt: null, termProjectionHash: termProjectionHash(term), pendingPlanChangeId: scheduled?.id ?? null,
         ...(cancellationOperationId ? { activeCollectionOperationId: cancellationOperationId, nextReconcileAt: new Date() } : {}),
         observedAt: new Date(), version: { increment: 1 } } });

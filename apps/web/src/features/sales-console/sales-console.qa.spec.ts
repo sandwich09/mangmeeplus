@@ -110,11 +110,10 @@ describe('sales console theme and copy', () => {
     assert.match(source('SalesTeamPage.tsx'), /ระบบบันทึกการเปิดดูข้อมูลนี้ไว้ทุกครั้ง/);
   });
 
-  it('warns from the picked shop before the first save, and from the saved deal after it (S31/Q5)', () => {
+  it('warns from the current base and catalog term while retaining saved shop usage (S31/Q5)', () => {
     const text = source('SalesDealFormPage.tsx');
-    // The server's own numbers win once they exist; the search row is the stand-in that lets a
-    // เซลล์ see "เกินลิมิตใหม่" and "สูงกว่าราคาปกติ" while still typing, not after a round trip.
-    assert.match(text, /deal\?\.catalogPriceSatang\s*\n?\s*\?\?\s*\(company && months !== null \? company\.catalogMonthlyPriceSatang \* months : null\)/);
+    assert.match(text, /catalogMonths = values.autoRenew \? values.cadence === 'year' \? 12 : 1 : months/);
+    assert.match(text, /dealCatalogPriceSatang\(values.base, catalogMonths\)/);
     assert.match(text, /company\.branchCount, employeeCount: company\.employeeCount/);
     assert.doesNotMatch(text, /จะแสดงหลังบันทึกฉบับร่าง/, 'the counts are live now — the apology is stale');
   });

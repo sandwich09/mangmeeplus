@@ -16,6 +16,10 @@ import { PrismaClient, type Prisma } from '../../generated/prisma/client';
 import type { PrismaService } from '../../common/database/prisma.service';
 import { latestPackageInvoice } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
+import { appendPackageInterval, fullPackagePurchaseImpact, proratedPackagePrice } from './domain/billing-package';
+import { BILLING_DRAFT_POLICY, billingOffer } from '@watchdog-bms/contracts';
+import { upgradeHistory } from './application/billing-upgrade';
+import { scheduleDealReturn } from './application/billing-package-request';
 
 const databaseUrl = process.env.BILLING_PRODUCT_FOUNDATION_TEST_DATABASE_URL;
 
@@ -113,4 +117,89 @@ describe('billing product foundation on PostgreSQL', { skip: !databaseUrl }, () 
     const released = await client.billingAccount.findUniqueOrThrow({ where: { id: row.id } });
     assert.deepEqual([released.leaseToken, released.leaseUntil], [null, null]);
   });
+});
+
+// Pure money checks live in this existing CI-registered spec; they do not need PostgreSQL.
+
+it('MONEY-Q1 a purchase on 1 March at 03:00 Bangkok buys through 1 April at 03:00', () => {
+  const paidAt = new Date('2025-02-28T20:00:00.000Z');
+  const impact = fullPackagePurchaseImpact({ tier: 'STARTER_249', interval: 'month', verifiedPaidAt: paidAt, paidThrough: null, remainingPaidReceipts: 0 });
+  assert.equal(impact.paidThrough.toISOString(), '2025-03-31T20:00:00.000Z');
+});
+
+it('MONEY-Q1 Bangkok month ends, leap years, yearly and repeated intervals keep their anniversary and clock', () => {
+  const january = new Date('2024-01-30T20:12:34.567Z'); // 31 January 03:12 Bangkok
+  const february = appendPackageInterval(january, 'month');
+  assert.equal(february.toISOString(), '2024-02-28T20:12:34.567Z');
+  assert.equal(appendPackageInterval(february, 'month', 31).toISOString(), '2024-03-30T20:12:34.567Z');
+  const leap = new Date('2024-02-28T20:12:34.567Z');
+  assert.equal(appendPackageInterval(leap, 'year').toISOString(), '2025-02-27T20:12:34.567Z');
+  assert.equal(appendPackageInterval(leap, 'year', undefined, 4).toISOString(), '2028-02-28T20:12:34.567Z');
+});
+
+it('MONEY-Q1 5000 seeded service intervals and deal returns match an independent Bangkok calendar, including 31 January 03:00', async () => {
+  let seed = 777;
+  const pick = (limit: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 4294967296 * limit); };
+  const format = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hourCycle: 'h23' });
+  for (let i = 0; i < 5000; i++) {
+    const year = 2020 + pick(30), month = pick(12), day = 1 + pick(new Date(Date.UTC(year, month + 1, 0)).getUTCDate());
+    const start = i === 0 ? new Date('2026-01-30T20:00:00Z') : new Date(Date.UTC(year, month, day, pick(24) - 7, pick(60), pick(60), pick(1000)));
+    const interval = pick(2) ? 'month' : 'year', count = 1 + pick(36);
+    const parts = Object.fromEntries(format.formatToParts(start).filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]));
+    const target = parts.year! * 12 + parts.month! - 1 + count * (interval === 'year' ? 12 : 1);
+    const y = Math.floor(target / 12), m = target % 12, anchor = parts.day!;
+    const d = Math.min(anchor, new Date(Date.UTC(y, m + 1, 0)).getUTCDate());
+    const expected = Date.UTC(y, m, d, parts.hour! - 7, parts.minute!, parts.second!, start.getUTCMilliseconds());
+    const end = appendPackageInterval(start, interval, undefined, count);
+    assert.equal(end.getTime(), expected, `${start.toISOString()} + ${count} ${interval}`);
+    let chained = start;
+    for (let n = 0; n < count; n++) chained = appendPackageInterval(chained, interval, anchor);
+    assert.equal(chained.getTime(), expected);
+    let returned: Date | undefined;
+    await scheduleDealReturn({ packageChangeRequest: { updateMany: async ({ data }: any) => { returned = data.returnAt; } } } as any,
+      { companyId: 'shop', periodStart: start, deal: { requestId: 'deal', cadence: interval, cycles: count } as any });
+    assert.equal(returned?.getTime(), expected, `deal return ${start.toISOString()} + ${count} ${interval}`);
+  }
+});
+
+function upgradeFixture(start: Date, end: Date) {
+  const old = billingOffer('STARTER_249', 'month'), next = billingOffer('BASIC_499', 'month');
+  const grant = { id: 'grant', kind: 'INITIAL', sourceKey: 'invoice', units: old.receiptAllowance, serviceStart: start, serviceEnd: end, availableAt: start, expiresAt: end, sourceHash: 'proof' };
+  const invoice = { id: 'invoice', appliedAt: start, applyStatus: 'APPLIED', providerStatus: 'paid', paidSatang: old.priceSatang, totalSatang: old.priceSatang,
+    refundedSatang: 0, disputed: false, evidenceHash: 'proof', periodStart: start, periodEnd: end, contractSnapshot: { quote: { offer: old }, policy: BILLING_DRAFT_POLICY } };
+  return { next, db: { billingReceiptGrant: { findMany: async () => [grant] }, billingInvoice: { findMany: async () => [invoice] }, billingOperation: { findMany: async () => [] } } as any,
+    account: { id: 'account', companyId: 'shop', paidThrough: end } as any };
+}
+
+it('MONEY-Q1 the 446-satang February upgrade has a specific refusal and keeps the 1000-satang minimum', async () => {
+  const start = new Date('2026-01-31T17:00:00Z'), end = new Date('2026-02-28T17:00:00Z'), at = new Date('2026-02-28T05:00:00Z');
+  const f = upgradeFixture(start, end);
+  assert.equal(proratedPackagePrice(24900, 49900, start, end, at), 446);
+  await assert.rejects(upgradeHistory(f.db, f.account, f.next, BILLING_DRAFT_POLICY, at.toISOString()), (e: any) => e.getResponse().code === 'BILLING_UPGRADE_BELOW_MINIMUM');
+});
+
+it('MONEY-Q1 3000 seeded upgrade amounts retain exact prices and the existing minimum', async () => {
+  let seed = 12345;
+  const pick = (limit: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 4294967296 * limit); };
+  for (let i = 0; i < 3000; i++) {
+    const start = new Date(Date.UTC(2024 + pick(5), pick(12), 1, -7)), end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 2, 1, -7));
+    const duration = end.getTime() - start.getTime(), at = new Date(start.getTime() + pick(duration));
+    const remaining = BigInt(end.getTime() - at.getTime()), denominator = BigInt(duration);
+    const sameDay = Math.floor((at.getTime() + 25200000) / 86400000) === Math.floor((start.getTime() + 25200000) / 86400000);
+    const expected = sameDay ? 25000 : Number((2n * 25000n * remaining + denominator) / (2n * denominator));
+    const f = upgradeFixture(start, end), result = upgradeHistory(f.db, f.account, f.next, BILLING_DRAFT_POLICY, at.toISOString());
+    if (expected < 1000) await assert.rejects(result, (e: any) => e.getResponse().code === 'BILLING_UPGRADE_BELOW_MINIMUM');
+    else assert.equal((await result).amountSatang, expected);
+  }
+});
+
+
+it('MONEY-Q1 999 satang is refused while 1000 and 1001 satang remain payable', async () => {
+  const start = new Date('2026-01-31T17:00:00Z'), end = new Date('2026-02-28T17:00:00Z');
+  for (const amount of [999, 1000, 1001]) {
+    const f = upgradeFixture(start, end), at = new Date(end.getTime() - amount * (end.getTime() - start.getTime()) / 25000);
+    const result = upgradeHistory(f.db, f.account, f.next, BILLING_DRAFT_POLICY, at.toISOString());
+    if (amount < 1000) await assert.rejects(result, (e: any) => e.getResponse().code === 'BILLING_UPGRADE_BELOW_MINIMUM');
+    else assert.equal((await result).amountSatang, amount);
+  }
 });

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { it } from 'node:test';
+import { it, mock } from 'node:test';
+import { certificateHarness, mutable } from '../expenses/expense-certificate-test-harness';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -8,6 +9,8 @@ import { ToastContext } from '@/common/components/toast/use-toast';
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
 require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel: 'panel' }; };
+const modal = mutable('@/common/components/modal/Modal');
+const logic = mutable('../reimbursements/reimbursements.logic');
 const ui = require('./ReimbursementDetailSections');
 const payout = require('./ReimbursementPayout');
 const h = React.createElement;
@@ -22,6 +25,55 @@ const detail = { id: 'claim', requestNo: 'RB-1', status: 'DRAFT', requesterUserI
 const props = { detail, userId: 'me', permissions: ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.payment.void'], busy: false,
   onLineReceipt: noop, onOpenAttachment: noop, onSign: noop, onUploadSignedCopy: noop, onUseSignedCopyAsSlip: noop,
   onOpenPaymentSlip: noop, onAttachPaymentSlip: noop, onRequestVoidPayment: noop };
+
+it('FIX-R1 signed-copy certification names only the signature boxes on this claim', () => {
+  const transport = mock.method(modal, 'Modal', ({ children, footer }: any) => h('section', null, children, footer));
+  try {
+    for (const [claim, expected] of [
+      [{ ...detail, approvedAt: '2026-10-10', approvalSteps: [] }, 'ผู้เบิก'],
+      [detail, 'ผู้เบิกและผู้อนุมัติ'],
+      [{ ...detail, claimFormLayout: 'LEGACY_FOUR_SIGNERS' }, 'ผู้เบิก ผู้อนุมัติ ฝ่ายบัญชี และฝ่ายการเงิน'],
+    ] as const) {
+      const html = render(h(ui.SignedCopyDialog, { requestNo: 'RB-1', fileName: 'ใบเบิก.pdf', detail: claim, onClose: noop, onSend: noop }));
+      assert.ok(html.replace(/<!--.*?-->/g, '').includes(`สำเนานี้มีลายเซ็น${expected}ครบ`), expected);
+    }
+  } finally { transport.mock.restore(); }
+});
+
+it('FIX-R1 pay form holds cancel while recording the payment', () => {
+  const source = read('./ReimbursementDetailSections.tsx');
+  assert.match(source, /disabled=\{busy\} aria-busy=\{busy\} onClick=\{\(\) => \{ if \(!session.current.saving\) onCancel\(\); \}\}/);
+  assert.match(read('./ReimbursementsPages.tsx'), /onClose=\{\(\) => \{ if \(!paymentSaving.current\) onClose\(\); \}\}/);
+  assert.match(read('./ReimbursementsPages.tsx'), /onBusyChange=\{saving => \{ paymentSaving.current = saving; \}\}/);
+});
+
+it('FIX-R1 an in-flight payment ignores cancel and shows its busy state', async () => {
+  let finish: () => void = noop, cancelled = 0;
+  const save = mock.method(logic, 'savePaymentForm', async ({ session }: any, deps: any) => {
+    session.saving = true; deps.onBusy(true);
+    await new Promise<void>(resolve => { finish = resolve; });
+    session.saving = false; deps.onBusy(false);
+    return { status: 'refused', text: 'ลองอีกครั้ง' };
+  });
+  const view = certificateHarness(() => h(ToastContext.Provider, { value: { success: noop, error: noop } as never },
+    h(ui.PaymentForm, { companyId: 'co', request: { ...detail, payout: { payoutMethod: 'CASH' } },
+      onCancel: () => { cancelled++; }, onDone: noop, onOpenFile: noop })));
+  try {
+    view.render();
+    const cancel = view.find('button', p => p.children.includes('ยกเลิก'));
+    const pending = view.find('form').onSubmit({ preventDefault: noop });
+    cancel.onClick();
+    assert.equal(cancelled, 0);
+    view.render();
+    const busyCancel = view.find('button', p => p.children.includes('ยกเลิก'));
+    assert.equal(busyCancel.disabled, true);
+    assert.equal(busyCancel['aria-busy'], true);
+    finish(); await pending;
+    view.render();
+    view.find('button', p => p.children.includes('ยกเลิก')).onClick();
+    assert.equal(cancelled, 1);
+  } finally { view.cleanup(); save.mock.restore(); }
+});
 
 it('CLAIM-DETAIL puts the badge with the state under the title on the flat page', () => {
   const page = read('./ReimbursementJourneyPage.tsx');
@@ -91,6 +143,8 @@ it('CLAIM-DETAIL receiving account is label/value facts and keeps reveal', () =>
 });
 it('CLAIM-DETAIL money formatter keeps other currencies and leaves the hub formatter unchanged', () => {
   assert.equal(ui.formatClaimDetailMoney('650'), '650.00 บาท');
+  assert.equal(ui.formatClaimDetailMoney('12,500.00'), '12,500.00 บาท');
+  assert.equal(ui.formatClaimDetailMoney('99999999999999.99'), '99,999,999,999,999.99 บาท');
   assert.equal(ui.formatClaimDetailMoney('650', ''), '650.00 บาท');
   assert.equal(ui.formatClaimDetailMoney('650', 'USD'), ui.formatClaimMoney('650', 'USD'));
   assert.equal(ui.formatClaimMoney('650'), '฿650.00');

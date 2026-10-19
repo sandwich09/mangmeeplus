@@ -24,7 +24,8 @@ test('the role picker shows a long role name in full, as the current value and a
   const picker = source.slice(source.indexOf('ref={rolePickerRef}'), source.indexOf('{selectedIsOwner'));
   assert.doesNotMatch(picker, /\btruncate\b/);
   assert.doesNotMatch(picker, /className="inline-flex h-9 /, 'a fixed height would clip the wrapped current value');
-  assert.match(picker, /role="listbox" className="absolute left-0 top-full /, 'the open list starts below a value that wrapped');
+  assert.match(picker, /<div className="absolute left-0 top-full /, 'the open list starts below a value that wrapped');
+  assert.match(picker, /role="listbox" className="max-h-64 overflow-y-auto"/);
   assert.match(picker, /<span className="[^"]*\[overflow-wrap:anywhere\][^"]*">\{selectedRoleNames\}<\/span>/);
   assert.match(picker, /<span className="[^"]*\[overflow-wrap:anywhere\][^"]*">\{roleDisplayName\(role\)\}<\/span>/);
 });
@@ -113,10 +114,10 @@ test('the role and employee pages print no English role name or status', () => {
 test('both employee branch pickers exclude inactive branches from options and retained selections', () => {
   const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
   assert.match(source, /setBranches\(branchesR\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\)/);
-  assert.match(source, /selectedEmployee\.branchScopeBranchIds\.filter\(\(id\) => branches\.some\(\(branch\) => branch\.id === id\)\)/);
+  assert.match(source, /employeeBranchIds\(selectedEmployee\)\.filter\(\(id\) => branches\.some\(\(branch\) => branch\.id === id\)\)/);
   assert.match(wizard, /setBranches\(branchesResult\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\)/);
   assert.match(wizard, /branchesResult\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\.map/);
-  assert.match(wizard, /employee\.branchScopeBranchIds\.filter\(\(id\) => activeBranchIds\.includes\(id\)\)/);
+  assert.match(wizard, /employeeBranchIds\(employee\)\.filter\(\(id\) => activeBranchIds\.includes\(id\)\)/);
 });
 
 test('employees-and-rights prose uses the same standard role names as the pickers', () => {

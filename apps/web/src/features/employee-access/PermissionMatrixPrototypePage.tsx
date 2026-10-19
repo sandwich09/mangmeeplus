@@ -1,9 +1,10 @@
 'use client';
 
 import type React from 'react';
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { isRoleEditableByCompany, type ActionId, type CapabilityPackView, type MenuId, type PermissionMatrix as PermissionMatrixDto, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, isRoleEditableByCompany, type ActionId, type CapabilityPackView, type MenuId, type PermissionMatrix as PermissionMatrixDto, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 import {
   BellIcon,
   CalendarIcon,
@@ -32,7 +33,7 @@ import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { BackLink } from '@/common/components/app-shell/BackLink';
 import { Notice } from '@/common/components/notice';
 import { dangerButtonClass, primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
-import { LoadingState } from '@/common/components/state';
+import { ErrorState, LoadingState } from '@/common/components/state';
 import {
   createRole,
   disableRole,
@@ -46,11 +47,11 @@ import {
 import { MENU_GROUP_LABEL_TH, MENU_GROUP_ORDER } from './access-overview.model';
 import { RoleBuilder, RoleCanDoList, roleDisplayName } from './EmployeeAccessPages';
 import { roleCanDoPacks } from './role-picker.logic';
-import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
 
@@ -149,6 +150,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   // that just replaced the right-hand column into view.
   const builderRef = useRef<HTMLDivElement | null>(null);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
+  const [roleQuery, setRoleQuery] = useState('');
   const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
   const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
   const [staffCountsAvailable, setStaffCountsAvailable] = useState(false);
@@ -178,7 +181,11 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const canManageRoles = viewerPermissions.includes('access.role.manage');
   const canReadEmployees = viewerPermissions.includes('access.employee.read');
 
-  const reload = useCallback(async () => {
+  const generation = useRef(0);
+  const reload = useCallback(async (showLoading = false) => {
+    const current = ++generation.current;
+    if (showLoading) setLoading(true);
+    setRolesLoadFailed(false);
     setError(null);
     const [rolesR, matrixR, employeesR, packsR, templatesR] = await Promise.allSettled([
       listRoles(companyId),
@@ -187,13 +194,14 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
       listCapabilityPacks(companyId),
       listRoleTemplates(companyId),
     ]);
+    if (current !== generation.current) return;
 
     if (rolesR.status === 'fulfilled') {
       setRoles(rolesR.value);
     } else {
-      setError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
+      setRolesLoadFailed(true);
     }
-    if (matrixR.status === 'fulfilled') setMatrix(matrixR.value);
+    setMatrix(matrixR.status === 'fulfilled' ? matrixR.value : null);
     if (canReadEmployees && employeesR.status === 'fulfilled') {
       const counts: Record<string, number> = {};
       for (const emp of employeesR.value as Array<{ roles: { id: string }[] }>) {
@@ -214,7 +222,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
     setLoading(false);
   }, [canReadEmployees, companyId, locale, viewerPermissions]);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { void reload(); return () => { generation.current++; }; }, [reload]);
 
   const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
   const selectedRole = useMemo(
@@ -232,6 +240,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const handleDisable = async (roleId: string) => {
     if (!canManageRoles || disabling) return;
     const role = roles.find((item) => item.id === roleId);
+    if (!role || role.isSystem || role.status !== 'ACTIVE' || role.activeEmployeeCount !== 0) return;
     const name = role ? roleDisplayName(role, locale) : '';
     // Four parts (thai-ux-standard 4.2). The sentence says only what this screen can show to be true.
     const accepted = await confirm({ title: `ปิดใช้งานบทบาท ${name}?`, message: 'บทบาทนี้จะขึ้นว่าปิดใช้งาน และแก้ไขไม่ได้อีก', confirmLabel: 'ปิดใช้งานบทบาท', cancelLabel: 'ไม่ปิด', variant: 'danger' });
@@ -242,7 +251,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
       toast.success(`ปิดใช้งานบทบาท ${name} แล้ว`);
       await reload();
     } catch (e) {
-      setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
+      await reload();
+      setError(apiErrorMessage(e, locale));
     } finally {
       setDisabling(false);
     }
@@ -256,6 +266,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
     );
   }
 
+  if (rolesLoadFailed) return <MangmeePage title="บทบาทและสิทธิ์"><ErrorState title="โหลดบทบาทไม่สำเร็จ" onRetry={() => void reload(true)} /></MangmeePage>;
+
   // What the chosen role can do, in the builder's own plain sentences (the menu grid below cannot tell
   // two roles apart: receipts, claims and tax papers are not menus of their own).
   // Only what this shop's package has: a standard role also carries rights of features the shop does not hold.
@@ -263,6 +275,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
   const corePacks = allPacks.filter((pack) => pack.isCore && !pack.locked);
   // On a narrow screen: the list, or one role (or the form for a new one).
   const narrowDetail = mode === 'create' || Boolean(roleParam);
+  const filteredRoles = roles.filter(role => roleDisplayName(role, locale).toLowerCase().includes(roleQuery.trim().toLowerCase()));
 
   return (
     <MangmeePage
@@ -286,8 +299,9 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
       <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[300px_minmax(0,1fr)]">
         <MangmeeCard className={cx('min-w-0 p-4', narrowDetail && 'hidden lg:block')}>
           <h2 className="px-2 text-sm font-semibold text-gray-700">บทบาททั้งหมด</h2>
-          <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
-            {roles.map((role) => {
+          <input type="search" className="mangmee-input mt-3" aria-label="ค้นหาบทบาท" placeholder="ค้นหาบทบาท" value={roleQuery} onChange={event => setRoleQuery(event.target.value)} />
+          <div className="mt-4 grid max-h-[60vh] min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto">
+            {filteredRoles.map((role) => {
               const active = role.id === selectedRole?.id && mode !== 'create';
               const isOpen = active && Boolean(roleParam);
               const disabled = role.status !== 'ACTIVE';
@@ -314,6 +328,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                 </button>
               );
             })}
+            {roles.length === 0 ? <p className="px-2 py-4 text-sm text-gray-500">ยังไม่มีบทบาทในร้านนี้</p>
+              : filteredRoles.length === 0 && <p className="px-2 py-4 text-sm text-gray-500">ไม่พบบทบาทที่ตรงกับคำค้น</p>}
           </div>
         </MangmeeCard>
 
@@ -356,7 +372,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
               <div className="min-w-0">
                 <h2 className="break-words text-xl font-bold text-gray-900">{roleDisplayName(selectedRole, locale)}</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  {staffCountsAvailable ? `${staffCounts[selectedRole.id] ?? 0} คน · ` : ''}{selectedRole.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}
+                  {selectedRole.isSystem && staffCountsAvailable ? `${staffCounts[selectedRole.id] ?? 0} คน · ` : ''}{selectedRole.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทของร้าน'}
                 </p>
                 {/* A standard role's description is the server's list of its menus, which the table below already says. */}
                 {!selectedRole.isSystem && selectedRole.description && <p className="mt-1 break-words text-sm text-gray-600">{selectedRole.description}</p>}
@@ -364,7 +380,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
               {roleEditable && selectedRole.status === 'ACTIVE' ? (
                 <ActionGroup align="start">
                   <button type="button" className={secondaryButtonClass} onClick={() => setMode('edit')}>แก้ไขบทบาท</button>
-                  {!selectedRole.isSystem && (
+                  {!selectedRole.isSystem && selectedRole.activeEmployeeCount === 0 && (
                     <button type="button" className={dangerButtonClass} disabled={disabling} aria-busy={Boolean(disabling)} onClick={() => void handleDisable(selectedRole.id)}>ปิดใช้งานบทบาท</button>
                   )}
                 </ActionGroup>
@@ -374,6 +390,15 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                 <p className="text-sm text-gray-500">
                   {isRoleEditableByCompany(selectedRole) ? 'คุณดูได้ แต่ไม่มีสิทธิ์แก้บทบาท' : 'บทบาทนี้แก้ไขไม่ได้'}
                 </p>
+              )}
+              {roleEditable && !selectedRole.isSystem && selectedRole.status === 'ACTIVE' && selectedRole.activeEmployeeCount !== 0 && (
+                <Notice tone="warning" action={canReadEmployees
+                  ? <Link href={`/companies/${companyId}/settings/access-overview?role=${encodeURIComponent(selectedRole.id)}`} className={secondaryButtonClass}>ย้ายพนักงานไปบทบาทอื่น</Link>
+                  : undefined}>
+                  {selectedRole.activeEmployeeCount === undefined
+                    ? 'ยังตรวจจำนวนพนักงานที่ใช้บทบาทนี้ไม่ได้ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง'
+                    : `ยังมีพนักงานใช้บทบาทนี้ ${selectedRole.activeEmployeeCount} คน ${canReadEmployees ? 'ย้ายไปบทบาทอื่นก่อนปิดใช้งาน' : `ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ย้ายไปบทบาทอื่นก่อนปิดใช้งาน`}`}
+                </Notice>
               )}
 
               {/* The role said as the things it lets a person do. */}
@@ -389,7 +414,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
             {/* The rights never scroll sideways. A phone has no room for five tick columns beside a menu
                 name, so it gets one stacked row per menu with the rights written out (the shape the
                 per-employee summary uses); from `sm` up the table fits its card. */}
-            <div data-testid="role-permission-matrix">
+            {!selectedRow ? <ErrorState title="โหลดตารางสิทธิ์ไม่สำเร็จ" onRetry={() => void reload(true)} /> : <div data-testid="role-permission-matrix">
             <div className="grid gap-4 px-3 pb-5 pt-4 sm:hidden">
               {MENU_GROUP_ORDER.map((group) => {
                 const groupMenus = menus.filter((menu) => menu.group === group);
@@ -456,10 +481,10 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions, di
                 </tbody>
               </table>
             </div>
-            </div>
+            </div>}
           </MangmeeCard>
         ) : (
-          <MangmeeCard className="p-6 text-sm text-gray-500">ยังไม่มีบทบาทในร้านนี้</MangmeeCard>
+          <MangmeeCard className="p-6 text-sm text-gray-500 lg:hidden">ยังไม่มีบทบาทในร้านนี้</MangmeeCard>
         )}
         </div>
       </div>

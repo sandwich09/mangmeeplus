@@ -44,6 +44,25 @@ function makeUseCase(overrides: Record<string, unknown> = {}) {
 }
 
 describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
+  it('MONEY-T1 derives the header from the withholding input instead of the 3 percent category default', async () => {
+    for (const inputType of ['RATE', 'AMOUNT'] as const) {
+      const { useCase, updates } = makeUseCase({ whtRate: '3' });
+      await useCase.execute(ctx, 'exp-1', { whtRate: '3', whtInput: { inputType, value: inputType === 'RATE' ? '1' : '10' },
+        lines: [{ ...receiptLine, unitPrice: '1000', vatRate: '0', whtRate: '0.03' }] });
+      assert.equal(updates[0].whtRate, inputType === 'RATE' ? '1' : null);
+    }
+  });
+  it('MONEY-T1 seeded saves retain the selected percent or no asserted rate for amount input', async () => {
+    let seed = 4242;
+    const pick = (max: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) % max);
+    for (let i = 0; i < 2000; i++) {
+      const rate = String(1 + pick(5)), inputType = pick(2) ? 'RATE' : 'AMOUNT';
+      const { useCase, updates } = makeUseCase({ whtRate: '3' });
+      await useCase.execute(ctx, 'exp-1', { whtRate: '3', whtInput: { inputType, value: rate },
+        lines: [{ ...receiptLine, unitPrice: String(100 + pick(100000)), vatRate: '0', whtRate: '0.03' }] });
+      assert.equal(updates[0].whtRate, inputType === 'RATE' ? rate : null, `seed case ${i}`);
+    }
+  });
   it('saves a 25-baht inclusive receipt from an explicit rate or amount-only source without adding VAT again', async () => {
     for (const source of [{ inputType: 'NONE' }, { inputType: 'AMOUNT', vatAmount: '1.64' }] as const) {
       const { useCase, updates, upserted } = makeUseCase();
@@ -92,6 +111,7 @@ describe('UpdateExpenseDraftUseCase VAT decoupling (spec §19c)', () => {
     ] });
     assert.deepEqual(upserted.map((line) => line.whtRate), ['0.03', '0.05']);
     assert.equal(updates[0].whtAmount, '55.0000');
+    assert.equal(updates[0].whtRate, null);
     assert.equal(updates[0].whtInputJson, undefined);
   });
 
