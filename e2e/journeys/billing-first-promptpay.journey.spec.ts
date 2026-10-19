@@ -80,12 +80,18 @@ for (const width of [390, 1556]) for (const [mode, label] of [
       route.fulfill({ json: { url: `https://invoice.stripe.com/journey-${route.request().postDataJSON().kind}` } }));
     await page.context().route('https://invoice.stripe.com/journey-*', route => route.fulfill({ contentType: 'text/html', body: '<p>เอกสารการจ่ายเงิน</p>' }));
     for (const [name, kind] of [['ใบเสร็จรับเงิน', 'receipt'], ['ใบแจ้งหนี้', 'pdf']]) {
-      const opened = page.waitForEvent('popup');
+      await page.evaluate(() => { const originalOpen = window.open; window.open = () => { window.open = originalOpen; return null; }; });
       await page.getByRole('button', { name, exact: true }).click();
+      const blocked = page.getByRole('alert').filter({ hasText: 'เปิดแท็บเอกสารไม่ได้' });
+      await expect(blocked).toContainText('เปิดแท็บเอกสารไม่ได้ อนุญาตหน้าต่างใหม่แล้วกดเอกสารอีกครั้ง');
+      await expect(blocked.getByRole('link', { name: 'ติดต่อทีมงานมั่งมี', exact: true })).toHaveCount(0);
+      const opened = page.waitForEvent('popup');
+      await blocked.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
       const document = await opened;
       await expect(document).toHaveURL(`https://invoice.stripe.com/journey-${kind}`);
       expect(await document.evaluate(() => window.opener === null)).toBe(true);
       await expect(page).toHaveURL(new RegExp(`/billing/invoices/${INVOICE}$`));
+      await expect(blocked).toHaveCount(0);
       await document.close();
     }
     await page.getByRole('link', { name: 'กลับไปแพ็กเกจ', exact: true }).click();
