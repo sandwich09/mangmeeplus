@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "159c843a3a6d16f8f2784007dd295ed9eb5d17ed",
-  "checkoutBranch": "claude/line-evid1-landing-20261019",
+  "sourceRevision": "70ed3ae454531ce7a4506dfc9e6ebac2081514eb",
+  "checkoutBranch": "claude/line-cards-20261019",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -137,7 +137,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "bde8fdfa9aeea40dda37e43f5e23bf9db1b868268d30ade18253346e30af1fe1"
+      "sha256": "291d7da6cf0ca86383917e07b0494adc3775abd8080b7e7903fe2851a278aa9d"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T11:23:40.649Z",
-  "manifestDigest": "dcfe9c73ff694be5a9625ffc5fbe74b123bbd6565daf90f304cc4e4eea763766"
+  "generatedAt": "2026-10-19T12:11:08.933Z",
+  "manifestDigest": "b0615a3f8408cb71e8c4aea5d9d8ab0f3850149bf6a22ce82b18023645123726"
 }

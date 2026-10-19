@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { buildReimbursementDraftMessages, buildReimbursementOptionsMessages, formatClaimMoney, reimbursementPreviewText } from './line-reimbursement-draft-card.logic';
 import { parseLineReimbursementDraftControl } from '../../application/line-reimbursement-draft.service';
 import type { LineReimbursementDraftPreview, LineReimbursementDraftResult, LineReimbursementDraftSnapshot } from '../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
+import { lineFlexBodyProblems } from './line-system-card-limits.logic';
+import { lineSystemCardTexts } from './line-system-card.logic';
+import { isCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
 import { computeReceiptRequirement } from '../../../reimbursements/domain/logic/reimbursement.logic';
 
 // Ids shaped like the real ones (cuid / uuid / sha-256), so a leak into visible text cannot hide.
@@ -37,52 +40,60 @@ const withLines = (lines: LineReimbursementDraftSnapshot['lines']): LineReimburs
   return { ...preview, after: { ...after, lines, receiptRequirementStatus: status }, warnings: status === 'REQUIRED' ? ['missing_receipt'] : [] };
 };
 
-const text = (messages: ReturnType<typeof buildReimbursementDraftMessages>) => messages.map(message => (message as { text?: string }).text ?? '').join('\n');
+const text = (messages: ReturnType<typeof buildReimbursementDraftMessages>) => messages.map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? '' : '').join('\n');
 const draft = (result: LineReimbursementDraftResult) => text(buildReimbursementDraftMessages(result, 'https://web.test', 'company'));
 
 describe('LINE reimbursement preview speaks plain Thai (Owner rule 2026-09-27/29)', () => {
-  it('names the branch, status, evidence, source bill and category in words, with amounts to the satang', () => {
-    assert.equal(reimbursementPreviewText(preview), [
-      'ตรวจร่างใบเบิกใหม่ (ยังไม่ได้บันทึก)', 'ผู้เบิก: คุณเอ', 'สาขา: สำนักงานใหญ่', 'สถานะหลังบันทึก: ร่าง', 'หัวเรื่อง: -', 'เหตุผล: เดินทางพบลูกค้า',
-      'เหตุผลที่ไม่มีใบเสร็จ: -',
-      'รายการ 1: ค่าแท็กซี่', 'วันที่: 27 ก.ย. 2569 | หมวด: ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: -', 'จำนวน: 1,234.50 บาท', 'หลักฐาน: ยังไม่มีไฟล์แนบ',
-      'รายการ 2: ปากกาและแฟ้ม', 'วันที่: 26 ก.ย. 2569 | หมวด: วัสดุอุปกรณ์', 'วัตถุประสงค์: -', 'จำนวน: 380.00 บาท',
-      'หลักฐาน: มีไฟล์แนบ | บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569',
-      'ยอดรวมที่ระบบคำนวณ: 1,614.50 บาท', 'สถานะหลักฐาน: ยังขาดใบเสร็จบางรายการ',
-      'ข้อควรตรวจ: บันทึกเป็นร่างได้ แต่ต้องแนบใบเสร็จให้ครบก่อนยื่นเบิก',
-      'ปุ่มนี้บันทึกเป็นร่างเท่านั้น ยังไม่ได้ยื่น อนุมัติ จ่ายเงิน หรือลงบัญชี'].join('\n'));
-    // A preview saved before the branch name existed still renders, just without the branch row.
+  it('shows only populated facts in locked rows, compact items, source receipt and exact amounts', () => {
+    const shown = reimbursementPreviewText(preview);
+    for (const fact of ['ผู้เบิก: คุณเอ', 'สาขา: สำนักงานใหญ่', 'เหตุผล: เดินทางพบลูกค้า', 'รายการ 1: ค่าแท็กซี่ · 1,234.50 บาท',
+      'รายการ 2: ปากกาและแฟ้ม · 380.00 บาท', 'วันที่: 26 ก.ย. 2569', 'หมวด: วัสดุอุปกรณ์', 'ใบเสร็จจากบิล INV-0042 · ร้านเครื่องเขียนสมใจ', 'ยอดรวม: 1,614.50 บาท']) assert.ok(shown.includes(fact), fact);
+    assert.doesNotMatch(shown, /หัวเรื่อง:|วัตถุประสงค์:|เหตุผลที่ไม่มีใบเสร็จ:|: -|สถานะหลังบันทึก|ระบบคำนวณ/u);
     assert.doesNotMatch(reimbursementPreviewText({ ...preview, after: { ...after, branchName: undefined } }), /สาขา:/u);
   });
 
-  it('lists every change as a Thai label with formatted old → new values', () => {
-    const lines = reimbursementPreviewText(update).split('\n');
-    const changes = lines.slice(lines.indexOf('การเปลี่ยนแปลงทั้งหมด:') + 1, lines.findIndex(line => line.startsWith('ข้อควรตรวจ')));
-    assert.deepEqual(changes, [
-      'เหตุผล: พบลูกค้า → เดินทางพบลูกค้า', 'ยอดรวม: 300.00 → 1,614.50 บาท', 'หมวดของใบเบิก: เดินทาง → หลายหมวด (2 รายการ)',
-      'สถานะหลักฐาน: มีหลักฐานครบทุกรายการแล้ว → ยังขาดใบเสร็จบางรายการ',
-      'หมวด รายการที่ 1: เดินทาง → ยังไม่ได้เลือกหมวด', 'ยอดเงิน รายการที่ 1: 300.00 → 1,234.50 บาท', 'หลักฐาน รายการที่ 1: มีไฟล์แนบ → ยังไม่มีไฟล์แนบ',
-      'รายละเอียด รายการที่ 2: ค่าทางด่วน → ปากกาและแฟ้ม', 'วันที่จ่าย รายการที่ 2: 27 ก.ย. 2569 → 26 ก.ย. 2569', 'หมวด รายการที่ 2: ยังไม่ได้เลือกหมวด → วัสดุอุปกรณ์',
-      'ยอดเงิน รายการที่ 2: 70.00 → 380.00 บาท', 'หลักฐาน รายการที่ 2: ยังไม่มีไฟล์แนบ → มีไฟล์แนบ',
-      'บิลต้นทาง รายการที่ 2: - → INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']);
-    // The signature change is said once, by its own sentence, not as a diff row or a warning code.
-    assert.equal(lines.filter(line => /ลายเซ็น/u.test(line)).length, 1);
-    assert.ok(lines.includes('ลายเซ็นเดิมจะใช้ไม่ได้หลังแก้ไข ต้องลงนามใหม่ในเว็บ'));
+  it('keeps every update and warns once that signatures must be renewed', () => {
+    const shown = reimbursementPreviewText(update);
+    for (const fact of ['เหตุผล: พบลูกค้า → เดินทางพบลูกค้า', 'ยอดรวม: 300.00 → 1,614.50 บาท',
+      'ยอดเงิน รายการที่ 1: 300.00 → 1,234.50 บาท', 'วันที่จ่าย รายการที่ 2: 27 ก.ย. 2569 → 26 ก.ย. 2569',
+      'บิลต้นทาง รายการที่ 2: ยังไม่ระบุ → INV-0042']) assert.ok(shown.includes(fact), fact);
+    assert.equal(shown.split('\n').filter(line => /ลายเซ็น/u.test(line)).length, 1);
   });
 
-  it('says where each line\'s evidence comes from, and a line the claim counts as evidenced never reads "no file" (2026-09-30)', () => {
-    const all = reimbursementPreviewText(withLines([noFile, ownFile, byBill])).split('\n');
-    assert.deepEqual(all.filter(line => line.startsWith('หลักฐาน:')), ['หลักฐาน: ยังไม่มีไฟล์แนบ', 'หลักฐาน: มีไฟล์แนบ',
-      'หลักฐาน: ใช้ใบเสร็จจากบิลต้นทาง | บิลต้นทาง: INV-0042 · ร้านเครื่องเขียนสมใจ · 26 ก.ย. 2569']);
-    assert.ok(all.includes('สถานะหลักฐาน: ยังขาดใบเสร็จบางรายการ'));
-    // The real-model run: a bill claimed by reference is the claim's whole evidence, and its line says so.
-    for (const lines of [[byBill], [ownFile, byBill]]) {
-      const shown = reimbursementPreviewText(withLines(lines));
-      assert.match(shown, /\nสถานะหลักฐาน: มีหลักฐานครบทุกรายการแล้ว\n/u);
-      assert.doesNotMatch(shown, /ยังไม่มีไฟล์แนบ|ข้อควรตรวจ/u);
+  it('distinguishes no receipt, own attachment and source receipt without contradicting evidence', () => {
+    const shown = reimbursementPreviewText(withLines([noFile, ownFile, byBill]));
+    for (const fact of ['หลักฐาน: ยังไม่มีใบเสร็จ', 'หลักฐาน: มีไฟล์แนบ', 'หลักฐาน: ใบเสร็จจากบิล INV-0042']) assert.ok(shown.includes(fact));
+    for (const lines of [[byBill], [ownFile, byBill]]) assert.doesNotMatch(reimbursementPreviewText(withLines(lines)), /ยังไม่มีใบเสร็จ|แนบใบเสร็จที่ขาด/u);
+  });
+
+  it('rejects placeholder rows on CREATE and UPDATE cards in Thai and English', () => {
+    for (const language of ['th', 'en'] as const) for (const sample of [preview, update]) {
+      const messages = buildReimbursementDraftMessages({ status: 'preview', preview: sample }, 'https://web.test', 'company', [], undefined, language);
+      assert.equal(messages.length, 1);
+      const message = messages[0]!;
+      assert.equal(message.type, 'flex');
+      if (message.type !== 'flex') throw new Error('expected card');
+      assert.deepEqual(lineFlexBodyProblems(message.contents), []);
+      const texts = lineSystemCardTexts(message.contents);
+      assert.ok(texts.includes(language === 'th' ? 'คุณเอ' : 'คุณเอ'));
+      assert.ok(texts.includes(':'));
+      assert.ok(texts.includes(language === 'th' ? 'บันทึกร่าง' : 'Save draft'));
+      assert.ok(texts.includes(language === 'th' ? 'ยกเลิกร่างนี้' : 'Cancel draft'));
+      assert.ok(texts.includes(language === 'th' ? 'ยังไม่ได้บันทึกค่ะ' : 'Not saved yet.'));
+      for (const value of texts) assert.doesNotMatch(value, /^-$|:\s*-(?:\s|$)/u);
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
     }
-    assert.match(reimbursementPreviewText({ ...update, before: { ...after, lines: [byBill] }, after: { ...after, lines: [{ ...noFile, lineNo: 3 }] },
-      diff: [{ fieldPath: 'lines' }], warnings: [] }), /\nหลักฐาน รายการที่ 3: ใช้ใบเสร็จจากบิลต้นทาง → ยังไม่มีไฟล์แนบ\n/u);
+  });
+
+  it('localizes the default branch and omits absent reason and purpose in either language', () => {
+    for (const language of ['th', 'en'] as const) {
+      const sample = { ...preview, after: { ...after, branchName: 'Head Office', reason: '', lines: [byBill] } };
+      const message = buildReimbursementDraftMessages({ status: 'preview', preview: sample }, 'https://web.test', 'company', [], undefined, language)[0]!;
+      assert.equal(message.type, 'flex');
+      const shown = lineSystemCardTexts((message as any).contents).join('\n');
+      assert.match(shown, language === 'th' ? /สำนักงานใหญ่/u : /Head Office/u);
+      assert.doesNotMatch(shown, language === 'th' ? /Head Office|เหตุผล|วัตถุประสงค์/u : /Reason|Purpose/u);
+    }
   });
 
   it('names added and removed lines, and a swapped file without its id', () => {
@@ -101,13 +112,14 @@ describe('LINE reimbursement preview speaks plain Thai (Owner rule 2026-09-27/29
     const controls = visit(control).map(parseLineReimbursementDraftControl);
     assert.deepEqual(controls.map(item => item!.action), ['reimbursement_draft_confirm', 'reimbursement_draft_cancel']);
     assert.ok(controls.every(item => item?.previewRevision === 2 && item.confirmationDigest === preview.confirmationDigest));
-    assert.match(JSON.stringify(control), /"label":"บันทึกเป็นร่าง"/u);
+    assert.match(JSON.stringify(control), /"label":"บันทึกร่าง"/u);
   });
 
   it('oversized full preview links to authorized web review without a financial LINE control', () => {
     const large = { ...preview, after: { ...preview.after, lines: Array.from({ length: 50 }, (_, i) => ({ ...preview.after.lines[0]!, lineNo: i + 1, description: 'ก'.repeat(500) })) } };
     const messages = buildReimbursementDraftMessages({ status: 'preview', preview: large }, 'https://example.test', 'company');
-    assert.equal(messages.length, 1); assert.equal(messages[0]!.type, 'text');
+    assert.equal(messages.length, 1); assert.equal(messages[0]!.type, 'flex');
+    assert.deepEqual(lineFlexBodyProblems((messages[0] as any).contents), []);
     assert.ok(JSON.stringify(messages).includes(`/reimbursements/draft-actions/${preview.actionId}`));
     assert.ok(!JSON.stringify(messages).includes('reimbursement_draft_confirm'));
   });
@@ -119,9 +131,9 @@ describe('reimbursement receipts and refusals speak plain Thai', () => {
 
   it('reports the saved claim by its document number, never its id, with the current state in words', () => {
     assert.equal(draft({ status: 'applied', receipt: { ...receipt, currentState: 'DRAFT' } }),
-      'บันทึกร่างใบเบิกแล้ว\nยอด: 1,614.50 บาท\nสถานะปัจจุบัน: ร่าง\nยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้');
+      'บันทึกร่างใบเบิกแล้วค่ะ\nสถานะ: ร่าง\nยอดรวม: 1,614.50 บาท');
     assert.equal(draft({ status: 'applied', receipt: { ...receipt, currentState: 'PENDING_APPROVAL', requestNo: 'RB-2569-0007' } }),
-      'บันทึกร่างใบเบิกแล้ว\nเลขที่ใบเบิก: RB-2569-0007\nยอด: 1,614.50 บาท\nสถานะปัจจุบัน: รออนุมัติ\nยังไม่ได้ยื่น อนุมัติ หรือจ่ายเงินโดยคำสั่งนี้');
+      'บันทึกร่างใบเบิกแล้วค่ะ\nเลขที่ใบเบิก: RB-2569-0007\nสถานะ: รออนุมัติ\nยอดรวม: 1,614.50 บาท');
   });
 
   it('turns each refusal into one sentence and keeps the code out of the reply', () => {
@@ -140,9 +152,9 @@ describe('reimbursement choices speak to the customer (NAT04 2026-09-29)', () =>
   it('names missing fields in words, never paths', () => {
     const [message] = buildReimbursementDraftMessages({ status: 'needs_fields', actionId: 'a', actionRevision: 1,
       fieldPaths: ['fields.reason', 'lineChanges.0.values.amount'] }, 'https://web.test', 'company');
-    assert.equal((message as any).text, 'ร่างใบเบิกยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร ขอเพิ่ม: เหตุผลการเบิก, ยอดเงิน');
+    assert.equal((message as any).canonicalText ?? (message as any).text, 'ร่างใบเบิกยังไม่ครบค่ะ ยังไม่ได้บันทึกอะไร ขอเพิ่ม: เหตุผลการเบิก, ยอดเงิน');
     const [empty] = buildReimbursementDraftMessages({ status: 'needs_fields', actionId: 'a', actionRevision: 1, fieldPaths: [] }, 'https://web.test', 'company');
-    assert.doesNotMatch((empty as any).text, /กรุณาระบุ: $|ขอเพิ่ม/u);
+    assert.doesNotMatch((empty as any).canonicalText ?? (empty as any).text, /กรุณาระบุ: $|ขอเพิ่ม/u);
     assert.match(draft({ status: 'needs_fields', actionId: 'a', actionRevision: 1, fieldPaths: ['fields.missingReceiptReason'] }), /ขอเพิ่ม: เหตุผลที่ไม่มีใบเสร็จ$/u);
   });
 

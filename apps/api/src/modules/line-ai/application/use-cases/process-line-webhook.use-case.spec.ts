@@ -21,6 +21,20 @@ import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from 
 import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LINE_SENT_DOCUMENT_OUTCOMES } from '../../domain/logic/line-business-card.logic';
 import { isLineSystemCard, readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
+
+function flexButtons(message: any): Array<{ action: any }> {
+  if (message.contents?.footer) return message.contents.footer.contents;
+  const buttons: Array<{ action: any }> = [];
+  const visit = (node: any): void => {
+    if (!node || typeof node !== 'object') return;
+    if (node.action) buttons.push({ action: node.action });
+    for (const child of node.contents ?? []) visit(child);
+    if (node.body) visit(node.body);
+    if (node.footer) visit(node.footer);
+  };
+  visit(message.contents);
+  return buttons;
+}
 import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
@@ -92,8 +106,8 @@ it('Fix-up 10 P4a/e: attachment summaries render once on both delivery paths and
     for (const messages of sent) {
       assert.equal(messages.length, 1);
       assert.equal(messages[0].canonicalText, handoff.summary);
-      assert.equal(messages[0].contents.footer.contents.length, 1);
-      assert.deepEqual(messages[0].contents.footer.contents[0].action, { type: 'uri', label, uri: handoff.webPath });
+      assert.equal(flexButtons(messages[0]).length, 1);
+      assert.deepEqual(flexButtons(messages[0])[0].action, { type: 'uri', label, uri: handoff.webPath });
       assert.doesNotMatch(JSON.stringify(messages[0]), /expense_action_confirm|expense_action_cancel|postback/);
     }
   }
@@ -1320,7 +1334,7 @@ describe('ProcessLineWebhookUseCase', () => {
         assert.match(JSON.stringify(card.contents.body), /ไม่เรียกเก็บเงินอัตโนมัติ/);
         // Owner 2026-09-30 (advisor spec §2.2): the company's official staff LINE replaces the public
         // package page; the typed "ติดต่อเจ้าหน้าที่" command keeps its own inbox route.
-        assert.deepEqual(card.contents.footer.contents.map((button: any) => button.action), [
+        assert.deepEqual(flexButtons(card).map((button: any) => button.action), [
           { type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: 'https://lin.ee/6Sc38L6' },
         ]);
         assert.doesNotMatch(card.canonicalText, /https?:\/\//, 'no package link in the text fallback either');
@@ -2984,7 +2998,7 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(card.contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ');
       assert.match(card.canonicalText, /น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจ/);
       assert.match(card.canonicalText, /ข้อมูลทั้งหมดยังอยู่ครบ/);
-      const buttons = card.contents.footer.contents.map((b: any) => b.action);
+      const buttons = flexButtons(card).map((b: any) => b.action);
       assert.deepEqual(buttons.map((a: any) => a.label), ['เลือกแพ็กเกจ', STAFF_CONTACT_COMMAND]);
       assert.equal(buttons[0].uri, 'https://app.example.com/companies/company-1/billing?channel=line');
       assert.equal(buttons[1].type, 'message', 'the staff door is a command, never a link');
@@ -3097,13 +3111,13 @@ describe('ProcessLineWebhookUseCase', () => {
       const onContext = makePrisma({ memberships: [], termExpiredMemberships: twoLocked, lineCompanyContext: { companyId: 'co-old' } });
       const a = makeUseCase(onContext.prisma, { config: { billingMode: 'test' } });
       await a.useCase.execute({ ...BASE_EVENT });
-      assert.equal(a.sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/co-old/billing?channel=line');
+      assert.equal(flexButtons(a.sentMessages[0])[0].action.uri, 'https://app.example.com/companies/co-old/billing?channel=line');
       assert.equal(a.sentMessages[0].contents.header.contents[0].text, 'ยังไม่มีแพ็กเกจ', 'and in that shop\'s own words');
 
       const noContext = makePrisma({ memberships: [], termExpiredMemberships: twoLocked });
       const b = makeUseCase(noContext.prisma, { config: { billingMode: 'test' } });
       await b.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-newest' });
-      assert.equal(b.sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/co-new/billing?channel=line');
+      assert.equal(flexButtons(b.sentMessages[0])[0].action.uri, 'https://app.example.com/companies/co-new/billing?channel=line');
       assert.equal((noContext.updates.at(-1) as any).data.companyId, 'co-new');
     });
 
@@ -3159,7 +3173,7 @@ describe('ProcessLineWebhookUseCase', () => {
         await useCase.execute({ ...BASE_EVENT });
 
         const card = sentMessageBatches[0]![0];
-        assert.equal(card.contents.footer.contents[0].action.uri, 'https://app.example.com/l/tok-1');
+        assert.equal(flexButtons(card)[0].action.uri, 'https://app.example.com/l/tok-1');
         assert.equal(calls.length, 1);
         assert.equal(calls[0]!.ctx.surface, 'locked_card_packages');
         assert.equal(calls[0]!.path, '/companies/company-1/billing?channel=line');
@@ -3181,7 +3195,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.equal(sentMessages[0].contents.footer.contents[0].action.uri, 'https://app.example.com/companies/company-1/billing?channel=line');
+      assert.equal(flexButtons(sentMessages[0])[0].action.uri, 'https://app.example.com/companies/company-1/billing?channel=line');
     });
 
     it('never mints a one-tap link for a group or room chat (RV08)', async () => {
@@ -3210,7 +3224,7 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.execute({ ...BASE_EVENT });
 
       assert.equal(sentMessages[0].type, 'flex');
-      assert.equal(sentMessages[0].contents.footer.contents[0].action.label, 'เลือกแพ็กเกจ');
+      assert.equal(flexButtons(sentMessages[0])[0].action.label, 'เลือกแพ็กเกจ');
       assert.equal((updates.at(-1) as any).data.status, 'package_required');
     });
 
@@ -3486,7 +3500,7 @@ describe('ProcessLineWebhookUseCase', () => {
         { userId: 'user-1', companyId: 'co-1', lineUserId: 'line-user-secret', surface: 'company_picker_open_web', targetPath: '/companies/co-1/dashboard' },
       ]);
       const card = sentMessageBatches[0]![0] as any;
-      assert.deepEqual(card.contents.footer.contents.map((b: any) => b.action), [
+      assert.deepEqual(flexButtons(card).map((b: any) => b.action), [
         { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
       ]);
     });
@@ -4475,7 +4489,7 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.match(card.altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ/);
       assert.match(card.altText, /ใบเสร็จ 1 ใบ = 1 ครั้ง/, 'the promise says what a receipt actually costs');
       assert.deepEqual(
-        card.contents.footer.contents.map((button: any) => button.action.label),
+        flexButtons(card).map((button: any) => button.action.label),
         ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'],
       );
     });
@@ -5466,8 +5480,8 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget', messageText: 'ยอดขายวันนี้' });
 
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
-    assert.match(rendered, /ขอเปลี่ยนแพ็กเกจ/, 'and the one action that fixes it');
+    assert.match(rendered, /เครดิต AI เดือนนี้หมดแล้ว/);
+    assert.match(rendered, /เปลี่ยนแพ็กเกจ/, 'and the one action that fixes it');
     assert.equal(rendered.includes('กำลังประมวลผลข้อความก่อนหน้า'), false, 'the congestion copy must not appear');
     assert.equal(rendered.includes('น้องมั่งมีกำลังตอบข้อความก่อนหน้าอยู่'), false);
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
@@ -5482,7 +5496,7 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-budget-member', messageText: 'ยอดขายวันนี้' });
 
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
+    assert.match(rendered, /เครดิต AI เดือนนี้หมดแล้ว/);
     assert.match(rendered, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
     assert.doesNotMatch(rendered, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     assert.equal(h.sentMessages[0].contents.footer, undefined);
@@ -5676,7 +5690,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.equal(h.getAiGatewayCalled(), false, 'B-02: no second provider/gate call after a money refusal');
     const rendered = JSON.stringify(h.sentMessages);
-    assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
+    assert.match(rendered, /เครดิต AI เดือนนี้หมดแล้ว/);
     assert.equal(rendered.includes('ขัดข้องชั่วคราว'), false, 'a policy refusal is not a temporary outage');
     const final = (updates.at(-1) as any).data;
     assert.equal(final.status, 'ai_budget_exceeded');
@@ -5687,7 +5701,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
   // Advisor spec §2.2: the intake refusal's card follows the reader's purchase right too.
   it('offers the package buttons on the intake refusal only to a reader who may buy', async () => {
     for (const [permissions, buttons] of [
-      [['line.ai.query', 'company.plan.manage'], ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ']],
+      [['line.ai.query', 'company.plan.manage'], ['ดูแพ็กเกจ']],
       [['line.ai.query'], []],
     ] as const) {
       const { prisma } = makePrisma();
@@ -5699,7 +5713,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-budget-intake-${buttons.length}`, messageText: 'ยอดขายวันนี้' });
 
       const card = h.sentMessages[0];
-      assert.deepEqual((card.contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
+      assert.deepEqual(flexButtons(card).map((button: any) => button.action.label), buttons);
       if (buttons.length === 0) assert.match(card.altText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
     }
   });
@@ -5713,7 +5727,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
     assert.deepEqual(h.ledgerCalls.turns, [], 'a refusal that cannot change this month must not be queued for retry');
     assert.deepEqual(h.ledgerCalls.acks, []);
-    assert.match(JSON.stringify(h.sentMessages), /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
+    assert.match(JSON.stringify(h.sentMessages), /เครดิต AI เดือนนี้หมดแล้ว/);
     assert.equal((updates.at(-1) as any).data.status, 'ai_budget_exceeded');
   });
 
@@ -5753,7 +5767,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     }
     it('U1 claim-picker body refusal says insufficient credit with a way out, never slowness', async () => {
       const turn = await boundTextTurn('AI_BUDGET_INSUFFICIENT', ['line.ai.query', 'company.plan.manage', 'reimbursement.create'], 'เบิกบิล … 1,388.00 บาท', true);
-      assert.match(JSON.stringify(turn.delivered), /เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/);
+      assert.match(JSON.stringify(turn.delivered), /เครดิต AI เดือนนี้เหลือไม่พอ/);
       assert.match(JSON.stringify(turn.delivered), /ดูแพ็กเกจ/);
       assert.doesNotMatch(JSON.stringify(turn.delivered), /ตอบช้า|ลองส่งข้อความเดิม|ลองอีกครั้ง/);
       assert.equal(turn.final.status, 'ai_budget_insufficient');
@@ -5766,16 +5780,16 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     ] as const) {
       it(`answers a credit refusal at the ${route} route with the credit card and a budget status`, async () => {
         for (const [code, sentence, status] of [
-          ['AI_MONTHLY_BUDGET_EXCEEDED', /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, 'ai_budget_exceeded'],
-          ['AI_BUDGET_INSUFFICIENT', /^เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/, 'ai_budget_insufficient'],
+          ['AI_MONTHLY_BUDGET_EXCEEDED', /^เครดิต AI เดือนนี้หมดแล้ว/, 'ai_budget_exceeded'],
+          ['AI_BUDGET_INSUFFICIENT', /^เครดิต AI เดือนนี้เหลือไม่พอ/, 'ai_budget_insufficient'],
         ] as const) {
           // Advisor spec §2.2: the package buttons only for a reader who may manage the package.
-          for (const [planRight, buttons] of [[['company.plan.manage'], ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ']], [[], []]] as const) {
+          for (const [planRight, buttons] of [[['company.plan.manage'], ['ดูแพ็กเกจ']], [[], []]] as const) {
             const turn = await boundTextTurn(code, [...permissions, ...planRight], messageText);
             assert.equal(turn.delivered.length, 1, code);
             assert.equal(turn.delivered[0].type, 'flex', 'the card, never the try-again line');
             assert.match(turn.delivered[0].canonicalText, sentence);
-            assert.deepEqual((turn.delivered[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
+            assert.deepEqual(flexButtons(turn.delivered[0]).map((button: any) => button.action.label), buttons);
             if (buttons.length === 0) assert.match(turn.delivered[0].canonicalText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
             assert.equal(turn.final.status, status);
             assert.equal(turn.final.errorCode, code);
@@ -8879,7 +8893,7 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
       const card = h.sentMessages[0];
       assert.equal(card.type, 'flex');
       assert.match(card.contents.body.contents[1].text, /ส่วนลดจากงาน event1 · ลด 100 บาท · ใช้ได้ถึง 30 ต.ค. 2569/);
-      assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ',
+      assert.deepEqual(flexButtons(card)[0].action, { type: 'uri', label: 'เลือกแพ็กเกจ',
         uri: 'https://app.example.com/companies/company-1/billing?channel=line' });
       assert.equal(h.getAiGatewayCalled(), false);
     });
@@ -9320,7 +9334,7 @@ describe('Round 2 A expense action postback', () => {
     h.flow.expenseActions.apply = async () => ({ status: 'prepared', reply: preview.summary, preview });
     await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
     assert.equal(h.flow.deliveryExpenseActions.get(h.event).applied, false);
-    assert.equal(h.replies[0].contents.footer.contents[0].action.label, 'อนุมัติ');
+    assert.equal(flexButtons(h.replies[0])[0].action.label, 'อนุมัติ');
   });
 
 });
@@ -9782,7 +9796,7 @@ it('Y2: a requested receipt photo uses the existing completion guard on the sele
     intent: 'replace', expectedUpdatedAt: target.revision, operationId: 'new-photo' });
   assert.equal(f.expenseInitializations(), 0, 'the photo must never create a second expense');
   assert.equal(f.trace.includes('intake'), false); assert.equal(f.trace.includes('expense-capture'), false);
-  assert.equal(delivered[0][3].contents.footer.contents[0].action.label, 'ยืนยัน');
+  assert.equal(flexButtons(delivered[0][3])[0].action.label, 'ยืนยัน');
   assert.equal(f.flow.deliveryExpenseActions.get(f.event).preview, preview);
 });
 
@@ -9859,7 +9873,7 @@ it('R11 T4: a saved signature offers the existing signed prepare button and web-
   assert.equal(calls.length, 1); assert.equal(calls[0][0], actor); assert.equal(calls[0][2], 'open-substitute-expense');
   const stored = f.flow.deliverySubstituteActions.get(f.event); assert.equal(stored.preview, preview);
   const card = buildSubstituteReceiptActionCard(stored.preview, reply) as any;
-  const actions = card.contents.footer.contents.map((button: any) => button.action);
+  const actions = flexButtons(card).map((button: any) => button.action);
   assert.equal(actions[0]!.label, 'เตรียมใบรับรอง'); assert.equal(actions[0]!.type, 'postback');
   assert.match(actions[0]!.data!, /token=sub_current/);
   calls.length = 0;
@@ -9913,8 +9927,8 @@ it('Fix-up 11: prepare retires only its clarification and replies with one web h
   assert.equal(f.flow.deliverySubstituteActions.get(event).preview, next); assert.equal(delivered.length, 1);
   assert.equal(delivered[0][1], next.summary);
   const card: any = buildSubstituteReceiptActionCard(next);
-  assert.equal(card.contents.footer.contents.length, 1);
-  assert.deepEqual(card.contents.footer.contents[0].action, { type: 'uri', label: 'เปิดลงนามในเว็บ', uri: next.webPath });
+  assert.equal(flexButtons(card).length, 1);
+  assert.deepEqual(flexButtons(card)[0].action, { type: 'uri', label: 'เปิดลงนามในเว็บ', uri: next.webPath });
   assert.doesNotMatch(JSON.stringify(card), /postback|expense_action_confirm/);
 });
 
@@ -10644,7 +10658,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   }
   assert.doesNotMatch(JSON.stringify(messages), /ส่วนที่ยังไม่เสร็จ|ข้อ 1|ส่งรูปใบเสร็จ|ไม่มีสิทธิ์/);
   if (withPhoto) assert.doesNotMatch(JSON.stringify(messages), /ไม่มีใบเสร็จเพราะอะไร/);
-  if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.equal(messages[0].text, 'ไม่มีใบเสร็จเพราะอะไรคะ');
+  if (live22 && journey === 'J7' && action.status !== 'PREVIEW') assert.ok(lineSystemCardTexts(messages[0].contents).includes('ไม่มีใบเสร็จเพราะอะไรคะ'));
   currentRoute = live.route;
   currentFragment = { fields: { reason: 'เดินทางพบลูกค้า', ...(!withPhoto ? { missingReceiptReason: 'ร้านไม่ออกใบเสร็จให้' } : {}) } };
   if (fresh23 === 4) currentRoute = FX24_LIVE.J7.turns[4].route;
@@ -10652,7 +10666,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   if (live22 && journey === 'J7') currentFragment = { fields: { reason: 'ขับรถไปส่งของให้ลูกค้า' } };
   if (action.status !== 'PREVIEW') messages = await send(fresh23 === 4 || live22 && journey === 'J7' ? 'ขับรถไปส่งของให้ลูกค้า' : withPhoto ? 'เดินทางพบลูกค้า' : 'เดินทางพบลูกค้า ร้านไม่ออกใบเสร็จให้');
   if (fresh23 === 4 || live25) {
-    assert.match(JSON.stringify(messages), /บันทึกเป็นร่าง/);
+    assert.match(JSON.stringify(messages), /บันทึกร่าง/);
     assert.equal(h.aiGatewayRequests.length, live25 ? 0 : 1, 'the pending reason is collected after metered intake without another planner');
     assert.equal(action.previewJson.after.reason, 'ค่าน้ำมัน');
     if (!live25) assert.equal(action.previewJson.after.missingReceiptReason, FX24_LIVE.J7.turns[4].body.events[0].message.text);
@@ -10661,7 +10675,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
   }
   if (editAmount) assert.equal(action.previewJson.after.amount, '380.0000');
   assert.equal(action.status, 'PREVIEW', JSON.stringify(messages)); assert.ok(evidenceChecks > 0);
-  const confirm = messages.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+  const confirm = messages.flatMap((message: any) => flexButtons(message)).find((button: any) => button.action.label === 'บันทึกร่าง')!.action;
   assert.equal(writes, 0); messages = await tap(confirm.data);
   assert.equal(writes, 1); assert.match(JSON.stringify(messages), /ส่งอนุมัติ/);
   if ((literal || fresh23 === 5) && journey === 'E03') {
@@ -10717,7 +10731,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
     assert.equal(action.status, 'PREVIEW', JSON.stringify(messages));
     assert.equal(action.operation, 'UPDATE'); assert.equal(action.previewJson.after.amount, '380.0000');
     assert.deepEqual(savedClaim, original, 'editing requires the new confirm card');
-    const update = messages.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+    const update = messages.flatMap((message: any) => flexButtons(message)).find((button: any) => button.action.label === 'บันทึกร่าง')!.action;
     await tap(update.data);
     assert.equal(writes, 2); assert.equal(savedClaim.amount, '380.0000');
     assert.equal(savedClaim.lines[0].incurredDate.toISOString(), original.lines[0].incurredDate.toISOString());
@@ -10731,7 +10745,7 @@ for (const [journey, withPhoto, editAmount, literal, live22, fresh23, live25] of
       };
       savedEdit = false;
       messages = await tap(savedSubmitButton.data);
-      const finalPress = messages[0].contents.footer.contents[0].action.data;
+      const finalPress = flexButtons(messages[0])[0].action.data;
       assert.equal(savedClaim.status, 'DRAFT');
       await tap(finalPress);
       assert.equal(savedClaim.status, 'PENDING_APPROVAL'); assert.equal(writes, 3);
@@ -10819,7 +10833,7 @@ it('Fix-up 17A C03: real refusal-router JSON reaches approval/rejection cards an
     assert.equal(cards.length, 1, JSON.stringify(cards));
     assert.equal(cards[0].type, 'flex'); assert.doesNotMatch(JSON.stringify(cards), /ทำผ่าน LINE ไม่ได้|ข้อ 1|ใบที่ 1|ส่วนที่ยังไม่เสร็จ/);
     assert.equal(mutations.length, index - 1);
-    const token = new URLSearchParams(cards[0].contents.footer.contents[0].action.data).get('token')!;
+    const token = new URLSearchParams(flexButtons(cards[0])[0].action.data).get('token')!;
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `c03-press-${index}`, messageText: 'ตรวจผลรายการค่าใช้จ่าย', expenseActionControl: { action: 'expense_action_confirm', token } });
     assert.equal(mutations.length, index);
   }
@@ -10855,8 +10869,10 @@ it('Fix-up 20A C03 payout: missing account delivers one sentence and an exact cl
 });
 
 const uat2ClaimReplays = JSON.parse(readFileSync(require.resolve('../../../../../../../docs/evidence/line-uat2-20261019-router-replays.json'), 'utf8')) as any[];
-for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim reason survives ${wrongRoute} routing and the owner's correction through real webhook/adapter/delivery`, async t => {
+for (const wrongRoute of ['expense', 'general', 'owner-20261019']) it(`UAT2 W1: exact picker claim reason survives ${wrongRoute} routing and the owner's correction through real webhook/adapter/delivery`, async t => {
+  const ownerRetest = wrongRoute === 'owner-20261019';
   const replay = structuredClone(uat2ClaimReplays[0]);
+  if (ownerRetest) { delete replay.body; replay.source = 'owner-20261019-1842'; replay.messageText = 'ทำใบเบิกให้หน่อย'; }
   const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.create', 'expense.read', 'reimbursement.create', 'reimbursement.read_own', 'reimbursement.update_own_draft'];
   const h = await fx21bBoundWebhook(t, replay, permissions);
   h.flow.config.lineAiReimbursementDraftWriteEnabled = true;
@@ -10866,6 +10882,8 @@ for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim
   const now = new Date(), branch = { id: 'branch-1', name: 'สำนักงานใหญ่', code: 'HQ', type: 'HEAD_OFFICE', updatedAt: now };
   const source = { expenseId: 'source-bill', label: '691017019 · TONCHIN THAILAND', incurredDate: '2026-10-17', description: 'ค่าอาหาร',
     amount: '1388.0000', categoryKey: 'meals', categoryLabel: 'ค่าอาหาร', currency: 'THB', eligible: true, updatedAt: now.toISOString() };
+  if (ownerRetest) Object.assign(source, { label: '261005-08-00190 · Starbucks Coffee', incurredDate: '2026-10-05', description: 'V.COLD BREW', amount: '170.0000', categoryLabel: 'ค่าอาหารและเครื่องดื่ม' });
+  if (ownerRetest) branch.name = 'Head Office';
   let action: any, acceptedRequest: any, saved: any, writes = 0, sourceReads = 0, evidenceChecks = 0;
   const repo: any = {
     isDraftActionOwnerCurrent: async (value: any) => value.actorUserId === owner.userId && value.ownerEpoch === 1,
@@ -10874,14 +10892,14 @@ for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim
     findOrCreateDraftAction: async (input: any) => action ??= { ...input, status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now },
     saveDraftActionCollection: async (input: any) => action = { ...action, ...input, status: 'COLLECTING', updatedAt: now },
     saveDraftActionPreview: async (input: any) => action = { ...action, ...input, status: 'PREVIEW', updatedAt: now },
-    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: 'เจ้าของร้าน' }],
+    listReimbursementRequesters: async () => [{ userId: owner.userId, displayName: ownerRetest ? 'สมชาย ใจดี' : 'เจ้าของร้าน' }],
     listReimbursementSources: async (company: string, branchId: string, requester: string) => {
       assert.equal(company, owner.companyId); assert.equal(branchId, branch.id); assert.equal(requester, owner.userId); sourceReads++; return [source];
     },
-    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: 'เจ้าของร้าน' }),
+    resolveCreateBranchId: async () => branch.id, findBranchName: async () => branch.name, assertReimbursementRequester: async () => ({ displayName: ownerRetest ? 'สมชาย ใจดี' : 'เจ้าของร้าน' }),
     findPolicy: async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' }),
     resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line,
-      sourceExpenseSnapshot: { schemaVersion: 1, seller: { name: 'TONCHIN THAILAND', documentNumber: '691017019' }, expenseDate: source.incurredDate } })),
+      sourceExpenseSnapshot: { schemaVersion: 1, seller: { name: ownerRetest ? 'Starbucks Coffee' : 'TONCHIN THAILAND', documentNumber: ownerRetest ? '261005-08-00190' : '691017019' }, expenseDate: source.incurredDate } })),
     markDraftActionLineDelivered: async (input: any) => input.confirmationDigest === action.confirmationDigest,
     findRequestById: async () => saved,
     applyDraftActionAtomic: async (input: any) => {
@@ -10913,7 +10931,7 @@ for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim
       const options = await adapter.readDisplayOptions({ ctx, owner, ownerEpoch: 1, actionId: action.id });
       const choice = options!.choices.find((item: any) => item.kind === 'SOURCE')!;
       result = await adapter.preview(toolCtx, { action: { actionId: action.id, taskId: action.taskId }, proposal: {
-        schemaVersion: 1, taskId: action.taskId, taskRevision: options!.taskRevision, operation: 'CREATE', fields: {},
+        schemaVersion: 1, taskId: action.taskId, taskRevision: options!.taskRevision, operation: 'CREATE', fields: ownerRetest ? { reason: { value: 'บิล 261005-08-00190 · Starbucks Coffee', proof: { kind: 'USER_TEXT', refs: [{ partId: 'part-0', startUtf16: request.messageText.indexOf('บิล '), endUtf16: request.messageText.indexOf('บิล ') + 'บิล 261005-08-00190 · Starbucks Coffee'.length, rawSha256: request.inputEvidence.parts[0].rawSha256 }] } } } : {},
         lineChanges: [{ operation: 'ADD', values: { linkedExpenseChoiceId: choice.choiceId } }],
       } }, 'CREATE');
     }
@@ -10927,6 +10945,27 @@ for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim
       semanticSubrequests: [{ index: 0, kind: 'general', goal: 'ค่าอาหาร', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
     await h.execute(uat2ClaimReplays[index].messageText, undefined, uat2ClaimReplays[index].body);
   };
+  if (ownerRetest) {
+    replay.route = { status: 'ROUTED', intent: 'REIMBURSEMENT_REQUEST_START', semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: 'ทำใบเบิกให้หน่อย', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+    await h.execute('ทำใบเบิกให้หน่อย');
+    const picker = h.delivered.at(-1)!;
+    assert.equal(picker.length, 1); assert.equal(picker[0].type, 'flex');
+    const command = 'เบิกบิล 261005-08-00190 · Starbucks Coffee · 5 ต.ค. 2569 · 170.00 บาท';
+    assert.equal(picker[0].quickReply.items[0].action.text, command);
+    replay.route.semanticSubrequests[0].goal = command;
+    await h.execute(command);
+    assert.equal(action.status, 'PREVIEW'); assert.equal(writes, 0); assert.ok(evidenceChecks > 0);
+    const delivered = h.delivered.at(-1)!;
+    assert.equal(delivered.length, 1); assert.equal(delivered[0].type, 'flex');
+    const texts = lineSystemCardTexts(delivered[0].contents).join('\n');
+    for (const fact of ['ร่างใบเบิก', 'สมชาย ใจดี', 'สำนักงานใหญ่', '170.00 บาท', '5 ต.ค. 2569', 'V.COLD BREW', 'ค่าอาหารและเครื่องดื่ม', 'ใบเสร็จจากบิล 261005-08-00190 · Starbucks Coffee', 'บันทึกร่าง', 'ยกเลิกร่างนี้']) assert.ok(texts.includes(fact), fact);
+    assert.doesNotMatch(texts, /sandwich|Head Office|^-$|:\s*-(?:\s|$)|ระบบคำนวณ|สถานะหลังบันทึก/mu);
+    const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
+    assert.deepEqual(lineFlexBodyProblems(delivered[0].contents), []);
+    assert.equal(h.intakeRequests.length, 2, 'both owner messages retain the budgeted model intake');
+    return;
+  }
   await send(0);
   assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกบิลที่จะเบิก/);
   const claimId = action.id;
@@ -10947,7 +10986,7 @@ for (const wrongRoute of ['expense', 'general']) it(`UAT2 W1: exact picker claim
   await send(3);
   const payload = JSON.stringify(h.delivered.at(-1));
   assert.match(payload, /ค่าอาหาร|บันทึกเป็นร่าง/); assert.doesNotMatch(payload, /เหตุผลการเบิกบิลนี้คืออะไรคะ|ยังไม่ได้บันทึกอะไร ขอเพิ่ม/);
-  const confirm = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => button.action.label === 'บันทึกเป็นร่าง').action;
+  const confirm = h.delivered.at(-1)!.flatMap((message: any) => flexButtons(message)).find((button: any) => button.action.label === 'บันทึกร่าง')!.action;
   await h.execute('บันทึกเป็นร่าง', confirm.data);
   assert.equal(writes, 1); assert.equal(saved.reason, 'ค่าอาหาร'); assert.equal(saved.status, 'DRAFT');
   assert.equal(h.intakeRequests.length, 5, 'every text turn retains the metered intake, including recovery');
@@ -11146,8 +11185,8 @@ it('Fix-up 21A C03: exact live approve postback is parsed; real approval preflig
   const messages = delivered.at(-1)!;
   assert.match(JSON.stringify(messages), /แนบและตรวจหลักฐาน/);
   assert.doesNotMatch(JSON.stringify(messages), /expense_action_confirm/);
-  assert.equal(messages[0].contents.footer.contents[0].action.type, 'uri');
-  assert.equal(messages[0].contents.footer.contents[0].action.uri, `https://app.example.com/companies/${ctx.companyId}/reimbursements/${claim.id}?openExternalBrowser=1`);
+  assert.equal(flexButtons(messages[0])[0].action.type, 'uri');
+  assert.equal(flexButtons(messages[0])[0].action.uri, `https://app.example.com/companies/${ctx.companyId}/reimbursements/${claim.id}?openExternalBrowser=1`);
   assert.equal(decisions, 0);
 });
 
@@ -11382,7 +11421,7 @@ for (const vendor of ['snapshot', 'counterparty', 'missing', 'trace24'] as const
     const intakeCount = h.intakeRequests.length;
     await h.execute(FX24_LIVE.C04.turns[2].body.events[0].message.text); // exact "Grab" message action from trace
     assert.equal(h.intakeRequests.length, intakeCount); assert.equal(terminal.at(-1), 'expense_action_prepared');
-    const button = (label: string) => h.delivered.at(-1)!.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.label === label)?.action.data;
+    const button = (label: string) => h.delivered.at(-1)!.flatMap((m: any) => flexButtons(m)).find((b: any) => b.action?.label === label)?.action.data;
     assert.ok(button('สร้างใบเตรียมจ่าย')); assert.equal(writes.length, 0);
     await h.execute('สร้างใบเตรียมจ่าย', button('สร้างใบเตรียมจ่าย'));
     assert.deepEqual(writes, ['create']); assert.ok(button('ส่งอนุมัติ'), JSON.stringify(h.delivered.at(-1)));
@@ -11613,7 +11652,7 @@ for (const examId of [null, 'C05-xd-fail1#1', 'C05-xd-fail2#1', 'C05-run1#1']) i
   };
   await h.execute(); let payload = JSON.stringify(h.delivered.at(-1));
   assert.match(payload, /counterparty_confirm/); assert.doesNotMatch(payload, /เลือกงานที่จะทำก่อน/); assert.equal(counterparty, undefined); assert.equal(createdDrafts.length, 0);
-  const confirm = h.delivered.at(-1)!.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.type === 'postback').action.data;
+  const confirm = h.delivered.at(-1)!.flatMap((m: any) => flexButtons(m)).find((b: any) => b.action?.type === 'postback')!.action.data;
   await h.execute('ยืนยันบันทึก', confirm);
   payload = JSON.stringify(h.delivered.at(-1)); assert.match(payload, /บันทึกข้อมูลคู่ค้าแล้ว/); assert.match(payload, /ทำข้อ 1 ก่อน/);
   assert.doesNotMatch(payload, /ทำข้อ 3 ก่อน|เลือกงานที่จะทำก่อน/); assert.equal(createdDrafts.length, 0);
@@ -11807,7 +11846,7 @@ it('Fix-up 26 U1: exact ondev C07 webhook/router uses the signed saved counterpa
   assert.equal(writes, 0); assert.equal(counterparty.billingAddressJson.addressText, before);
   const messages = h.delivered.at(-1)!;
   assert.match(JSON.stringify(messages), /ตรวจข้อมูลที่จะแก้ไข/); assert.doesNotMatch(JSON.stringify(messages), /ดึงข้อมูลส่วนนี้ไม่ได้/);
-  const confirm = messages.flatMap((m: any) => m.contents?.footer?.contents ?? []).find((b: any) => b.action?.data?.includes('counterparty_confirm'));
+  const confirm = messages.flatMap((m: any) => flexButtons(m)).find((b: any) => b.action?.data?.includes('counterparty_confirm'));
   assert.ok(confirm, JSON.stringify(messages));
   await h.execute('ยืนยันบันทึก', confirm.action.data);
   assert.equal(writes, 1); assert.equal(counterparty.billingAddressJson.addressText, replay.route.semanticSubrequests[0].requestedFilters.addressText);
@@ -11843,7 +11882,7 @@ for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_
   await h.execute();
   const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
   assert.match(payload, /รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ/); assert.doesNotMatch(payload, /ทีละอย่าง|counterparty_confirm|draft-update-confirm|expense_action_confirm/);
-  const actions = messages.flatMap((m: any) => [...(m.contents?.footer?.contents ?? []).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
+  const actions = messages.flatMap((m: any) => [...(flexButtons(m)).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
   assert.ok(actions.some((a: any) => /เว็บ/.test(a.label) && a.uri?.includes(`/expenses/${record.id}`)), payload);
   assert.equal(actions.some((a: any) => a.label === 'ยกเลิกและสร้างใหม่'), blocker === null, payload);
   assert.equal(preflights, 1); assert.equal(record.grandTotalAmount, '500.8000'); assert.equal(record.status, 'CONFIRMED'); assert.equal(record.paymentStatus, 'PAID');
@@ -11934,7 +11973,7 @@ for (const canReopen of [false, true]) for (const blocker of [null, 'tax_period_
   await h.execute();
   const messages = h.delivered.at(-1)!, payload = JSON.stringify(messages);
   assert.match(payload, /รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ/); assert.doesNotMatch(payload, /ทีละอย่าง|counterparty_confirm|draft-update-confirm|expense_action_confirm/);
-  const actions = messages.flatMap((m: any) => [...(m.contents?.footer?.contents ?? []).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
+  const actions = messages.flatMap((m: any) => [...(flexButtons(m)).map((b: any) => b.action), ...(m.quickReply?.items ?? []).map((b: any) => b.action)]);
   assert.ok(actions.some((a: any) => /เว็บ/.test(a.label) && a.uri?.includes(`/expenses/${record.id}`)), payload);
   assert.equal(actions.some((a: any) => a.label === 'ยกเลิกและสร้างใหม่'), blocker === null, payload);
   assert.equal(preflights, 1); assert.equal(record.grandTotalAmount, '500.8000'); assert.equal(record.status, 'CONFIRMED'); assert.equal(record.paymentStatus, 'PAID');
@@ -12256,7 +12295,7 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
       toolsInvoked: ['reimbursement.draft.get_options'], toolCalls: [], durationMs: 0,
       semanticCoverage: [{ index: 0, status: 'needs_user', question: 'ตรวจข้อมูลใบเบิกค่ะ', sourceRefIds: result.sourceRefs?.map((source: any) => source.id).filter(Boolean) }] };
   };
-  const controls = () => h.delivered.at(-1)!.flatMap((message: any) => [...(message.quickReply?.items ?? []), ...(message.contents?.footer?.contents ?? [])]).map((item: any) => item.action).filter(Boolean);
+  const controls = () => h.delivered.at(-1)!.flatMap((message: any) => [...(message.quickReply?.items ?? []), ...(flexButtons(message))]).map((item: any) => item.action).filter(Boolean);
   const press = async (action: any) => { assert.ok(action?.data, JSON.stringify(h.delivered.at(-1))); await h.execute(action.displayText ?? 'กดปุ่มในบัตร', action.data); };
   await h.execute();
   const active = [...actions.values()][0]; assert.ok(active.commandJson.accepted.proposal, JSON.stringify(h.delivered));
@@ -12287,7 +12326,7 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     replay.taskProjection = state; replay.route = continuation.route;
     data.client.aiConversation = { findUnique: async () => ({ lifecycleEpoch: 1, taskStateJson: { tasks: h.projection().tasks },
       stateExpiresAt: new Date(Date.now() + 900_000) }) };
-    const oldConfirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+    const oldConfirm = controls().find((action: any) => action.label === 'บันทึกร่าง');
     const intakeBefore = h.intakeRequests.length;
     await h.execute(continuation.messageText, undefined, id === 'J7-E' ? continuation.body : undefined);
     assert.equal(h.intakeRequests.length, intakeBefore + 1, 'purpose continuation still pays for the existing intake call');
@@ -12295,7 +12334,7 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่มีสิทธิ์|วัตถุประสงค์.*-"/);
     assert.match(JSON.stringify(h.delivered.at(-1)), /ส่งของให้ลูกค้า/);
     assert.equal(actions.get(active.id).previewJson.after.lines[0].purpose, id === 'J7-E' ? 'ขับรถไปส่งของให้ลูกค้า' : 'ส่งของให้ลูกค้า');
-    assert.notEqual(controls().find((action: any) => action.label === 'บันทึกเป็นร่าง').data, oldConfirm.data, 'changed facts invalidate the old confirm card');
+    assert.notEqual(controls().find((action: any) => action.label === 'บันทึกร่าง').data, oldConfirm.data, 'changed facts invalidate the old confirm card');
     if (id === 'J7-E') {
       replay.route = { ...continuation.route, intent: 'EXPENSE_DOCUMENT_CAPTURE', semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID' };
       await h.execute(continuation.messageText);
@@ -12317,7 +12356,7 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
       assert.equal(await adapter.answerReason({ ctx, owner, ownerEpoch: 1, evidence, text, purposeFallback: true }), null, text);
     }
   }
-  const confirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+  const confirm = controls().find((action: any) => action.label === 'บันทึกร่าง');
   assert.equal(writes, 0); await press(confirm); assert.equal(writes, 1);
   assert.equal(Number(saved.amount), Number(facts.amount.value)); assert.equal(saved.incurredDate.toISOString().slice(0, 10), facts.incurredDate.value);
   assert.equal(saved.lines[0].description, facts.description.value); assert.equal(saved.status, 'DRAFT'); assert.ok(evidenceChecks > 0);
@@ -12339,7 +12378,7 @@ for (const id of ['X036-A', 'X095-B', 'X042-A', 'X037-A', 'J7', 'J7-E']) for (co
     h.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
     await h.useCase.executeReceiptUpload({ ...h.baseEvent, webhookEventId: 'receipt-preview', lineMessageId: 'receipt-photo', messageType: 'image' });
     assert.equal(writes, 1, JSON.stringify(h.delivered.at(-1)));
-    const editConfirm = controls().find((action: any) => action.label === 'บันทึกเป็นร่าง');
+    const editConfirm = controls().find((action: any) => action.label === 'บันทึกร่าง');
     await press(editConfirm); assert.equal(writes, 2); assert.equal(saved.id, claimId); assert.equal(saved.lines[0].attachmentId, file.id);
   }
 });
@@ -12508,7 +12547,7 @@ for (const id of ['v2-X098-A', 'v2-X044-B', 'v2-X092-A', 'v2-X031-A', 'v2-X041-A
   assert.equal(Number(active.previewJson.after.amount), Number(first.route.reimbursementHints.amount));
   assert.equal(active.previewJson.after.lines.length, 1);
   if (['v2-X098-A', 'v2-X092-A'].includes(id)) assert.ok(active.sourceProofJson.receipts.some((proof: any) => proof.proof.key === 'CLAIM_DATE_TODAY'));
-  const confirm = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []).find((button: any) => new URLSearchParams(button.action?.data).get('action') === 'reimbursement_draft_confirm').action;
+  const confirm = h.delivered.at(-1)!.flatMap((message: any) => flexButtons(message)).find((button: any) => new URLSearchParams(button.action?.data).get('action') === 'reimbursement_draft_confirm')!.action;
   await h.execute(confirm.displayText ?? 'Confirm', confirm.data);
   assert.equal(writes, 1); assert.equal(saved.status, 'DRAFT');
   assert.equal(Number(saved.amount), Number(first.route.reimbursementHints.amount));
@@ -12679,7 +12718,7 @@ it('EVID-1: exact Exam F2 receipt-photo webhook on an original-in-hand WHT expen
   let payload = JSON.stringify(h.delivered.at(-1));
   assert.match(payload, /ยังไม่มีรูปเอกสาร/); assert.match(payload, /หมายเหตุ: เก็บตัวจริงที่ร้าน/); assert.match(payload, /ส่งรูปเอกสาร/);
   assert.doesNotMatch(payload, /รอใบเสร็จ|ใบรับรองแทนใบเสร็จ|ส่งรูปใบเสร็จ/);
-  const buttons = h.delivered.at(-1)!.flatMap((message: any) => message.contents?.footer?.contents ?? []);
+  const buttons = h.delivered.at(-1)!.flatMap((message: any) => flexButtons(message));
   const confirmButton = buttons.find((button: any) => button.action?.data?.includes('expense_action_confirm'));
   assert.ok(confirmButton, payload); assert.equal(writes, 0);
   await h.execute('ตรวจแล้ว ยืนยัน', confirmButton.action.data);
@@ -12687,4 +12726,73 @@ it('EVID-1: exact Exam F2 receipt-photo webhook on an original-in-hand WHT expen
   assert.match(payload, /สร้างใบเตรียมจ่าย/); assert.equal(writes, 1); assert.equal(record.status, 'CONFIRMED');
   assert.equal(record.aiVerificationSummaryJson.documentReview.assessment.originalDocumentAvailable, true);
   assert.equal(record.attachments.length, 0); assert.equal(record.whtAmount, '300');
+});
+
+
+it('claim requester choices use the tenant employee name instead of the login display name', async () => {
+  const { PrismaReimbursementRepository } = await import('../../../reimbursements/infrastructure/prisma-reimbursement.repository');
+  const repo = new PrismaReimbursementRepository({ client: { companyMembership: { findMany: async (query: any) => {
+    assert.equal(query.where.companyId, 'company'); assert.equal(query.where.userId, 'requester');
+    assert.equal(query.where.status, 'ACTIVE'); assert.equal(query.where.user.status, 'ACTIVE');
+    assert.ok(query.where.OR.some((clause: any) => clause.defaultBranchId === 'branch'));
+    assert.equal(query.select.employeeAccessProfile.select.displayName, true);
+    return [{ userId: 'requester', user: { displayName: 'sandwich' }, employeeAccessProfile: { displayName: 'สมชาย ใจดี' } }];
+  } } } } as any, {} as any);
+  const requester = await repo.assertReimbursementRequester('company', 'branch', 'requester');
+  assert.deepEqual(requester, { userId: 'requester', displayName: 'สมชาย ใจดี' });
+  assert.doesNotMatch(JSON.stringify(requester), /sandwich/u);
+});
+
+
+it('UPDATE claim previews refresh a legacy login snapshot through the guarded requester lookup', async () => {
+  const now = new Date('2026-10-19T12:00:00Z');
+  const owner: any = { companyId: 'company', actorUserId: 'requester', membershipId: 'membership', channel: 'line', channelKind: 'USER', messagingChannelId: 'oa', chatKeyHash: 'a'.repeat(64), ownerEpoch: 1 };
+  const ctx: any = { companyId: owner.companyId, userId: owner.actorUserId, membershipId: owner.membershipId, requestId: 'request', authProvider: 'line', roles: [], permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.update_own_draft'], scopes: {} };
+  const lines = [{ id: 'line', lineNo: 1, incurredDate: now, description: 'Coffee', categoryKey: 'meals', categoryLabelSnapshot: 'ค่าอาหาร', amount: '170.0000' }];
+  const request = { id: 'claim', companyId: owner.companyId, requesterUserId: owner.actorUserId, requesterDisplayNameSnapshot: 'sandwich', branchId: 'branch', status: 'DRAFT', updatedAt: now,
+    reason: 'Client visit', amount: '170.0000', categoryKey: 'meals', categoryLabelSnapshot: 'ค่าอาหาร', incurredDate: now, currency: 'THB', receiptRequirementStatus: 'REQUIRED', lines };
+  let action: any = { ...owner, id: '30000000-0000-4000-8000-000000000001', taskId: '30000000-0000-4000-8000-000000000002', actionOrdinal: 1, operation: 'UPDATE', status: 'COLLECTING', previewRevision: 0, createdAt: now, updatedAt: now, expiresAt: new Date(now.getTime() + 120000) };
+  let requesterReads = 0;
+  const repo: any = { isDraftActionOwnerCurrent: async () => true, findOrCreateDraftAction: async () => action,
+    findRequestById: async () => request, findPolicy: async () => null, findBranchName: async () => 'Head Office',
+    assertReimbursementRequester: async (...args: string[]) => { assert.deepEqual(args, ['company', 'branch', 'requester']); requesterReads++; return { displayName: 'สมชาย ใจดี' }; },
+    resolveSourceLines: async (_company: string, _requester: string, _branch: string, _currency: string, values: any[]) => values,
+    saveDraftActionPreview: async (value: any) => action = { ...action, ...value, status: 'PREVIEW' } };
+  const useCase = new LineReimbursementDraftUseCase(repo, { validate: async () => undefined } as any,
+    { lineAiReimbursementDraftWriteEnabled: true, lineMessagingChannelId: 'oa' } as any);
+  const result = await useCase.preview({ ctx, owner, key: { actionId: action.id, taskId: action.taskId, actionOrdinal: 1, operation: 'UPDATE' }, operation: 'UPDATE',
+    requestId: request.id, expectedRequestUpdatedAt: now.toISOString(), request: { reason: 'Client meeting' },
+    sourceProof: { schemaVersion: 1, receipts: [{ fieldPath: 'reason', valueDigest: 'b'.repeat(64), validatedAt: now.toISOString(), proof: { kind: 'SERVER_DEFAULT', key: 'ACTOR_AS_REQUESTER' } }] } }, now);
+  assert.equal(result.status, 'preview', JSON.stringify(result)); if (result.status !== 'preview') throw new Error(JSON.stringify(result));
+  assert.equal(result.preview.after.requesterDisplayName, 'สมชาย ใจดี');
+  assert.equal(result.preview.before?.requesterDisplayName, 'สมชาย ใจดี');
+  assert.equal(action.commandJson.requesterDisplayNameSnapshot, 'สมชาย ใจดี');
+  assert.equal(requesterReads, 1); assert.equal(request.requesterDisplayNameSnapshot, 'sandwich', 'preview has no financial write');
+});
+
+
+it('expense collection keeps current facts and only the next question on a locked card in th/en', async () => {
+  const { readLineSystemCard } = await import('../../domain/logic/line-system-card.fixture');
+  for (const language of ['th', 'en'] as const) {
+    const { prisma } = makePrisma(), h = makeUseCase(prisma), flow = h.useCase as any;
+    const event: any = { ...BASE_EVENT, language, messageText: language === 'th' ? 'แก้ค่าใช้จ่าย' : 'Edit expense' };
+    const now = new Date('2026-10-19T12:00:00Z');
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'draft', companyId: 'company', userId: 'user', expenseId: 'expense',
+      chatKeyHash: 'a'.repeat(64), targetRevision: now.toISOString(), provisionalExpenseDate: '2026-10-19', messageText: 'Coffee 170 บาท', hints: { description: 'Coffee', amount: '170' }, categories: [] });
+    assert.ok(state.unresolvedQuestions.length > 1);
+    let messages: any[] = [];
+    flow.expenseRepo = { findByIdWithRelations: async (...args: any[]) => { assert.deepEqual(args, ['company', 'expense', undefined, { branchIds: ['branch'] }]);
+      return { id: 'expense', updatedAt: now, status: 'NEEDS_REVIEW', grandTotalAmount: '170.0000', sourceDocumentType: 'EXPENSE_NOTE_TEXT', vendorNameSnapshot: 'Coffee shop', sourceChannelMetadataJson: { lineExpenseDraftContinuation: state } }; } };
+    flow.deliveryReceiptSources.set(event, { records: new Map([['expense', now.toISOString()]]), context: { scopes: { branchIds: ['branch'] } } });
+    flow.withCompletionMenu = async (message: any) => message;
+    flow.deliverRequiredMessages = async (_event: any, values: any[]) => { messages = values; };
+    const text = formatLineExpenseDraftReply({ state, categories: [], language });
+    await flow.deliverCompletedReplies(event, [text], 'company', { permissions: [], roles: [] });
+    assert.equal(messages.length, 1); const card = readLineSystemCard(messages[0]);
+    assert.ok(card.rows.some(row => row[2] === 'Coffee shop'));
+    assert.ok(card.rows.some(row => row[2] === (language === 'th' ? '170.00 บาท' : '170.00 THB')));
+    assert.ok(card.notes.includes(text.split('\n').at(-1)!));
+    assert.doesNotMatch(card.rows.map(row => row[2]).join('\n'), /^-$/mu);
+    if (language === 'en') assert.doesNotMatch(card.notes.join('\n'), /[ก-๙]/u);
+  }
 });

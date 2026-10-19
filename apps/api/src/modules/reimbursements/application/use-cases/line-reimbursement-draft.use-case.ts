@@ -420,6 +420,7 @@ export class LineReimbursementDraftUseCase {
     if (req.updatedAt.toISOString() !== expectedUpdatedAt) throw new ConflictException('reimbursement_draft_changed');
     assertReimbursementBranchInScope(ctx, req.branchId);
     if (input.currency !== undefined && input.currency !== req.currency) throw new BadRequestException('currency_not_supported');
+    const member = await this.repo.assertReimbursementRequester(ctx.companyId, req.branchId!, req.requesterUserId);
     const lineInputs = input.lines ?? this.toLineInputs(req.lines ?? []);
     const errors = validateRequestFields({ reason: input.reason ?? req.reason, lines: lineInputs });
     if (errors.length) throw new BadRequestException(errors.join(','));
@@ -436,7 +437,7 @@ export class LineReimbursementDraftUseCase {
       lines: resolved, missingReceiptReason });
     const command: ReimbursementDraftPreparedCommand = {
       schemaVersion: 1, operation: 'UPDATE', requestId, expectedRequestUpdatedAt: expectedUpdatedAt,
-      requesterUserId: req.requesterUserId, requesterDisplayNameSnapshot: req.requesterDisplayNameSnapshot, branchId: req.branchId!,
+      requesterUserId: req.requesterUserId, requesterDisplayNameSnapshot: member.displayName, branchId: req.branchId!,
       ...(title ? { title } : {}),
       reason, currency: req.currency, ...(missingReceiptReason ? { missingReceiptReason } : {}), receiptRequirementStatus: receipt.status,
       header: { amount: header.amount, categoryKey: header.categoryKey, ...(header.categoryLabelSnapshot ? { categoryLabelSnapshot: header.categoryLabelSnapshot } : {}), incurredDate: header.incurredDate.toISOString() },
