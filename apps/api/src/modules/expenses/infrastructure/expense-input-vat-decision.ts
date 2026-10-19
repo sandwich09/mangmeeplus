@@ -52,7 +52,9 @@ export function inputVatConditions(expense: any, facts: any, input: DecideExpens
   const condition = (code: string, answer: boolean, fact: unknown, source: 'SYSTEM' | 'REVIEWER' = 'SYSTEM') => conditions.push({ code, answer, fact, source, ...(source === 'REVIEWER' && userId ? { answeredByUserId: userId } : {}) });
   condition('SHOP_REGISTERED', facts.vatStatus === 'REGISTERED', { companyId: expense.companyId, status: facts.vatStatus, expenseDate: expense.expenseDate, registrationFacts: facts.registrationFacts });
   condition('CLAIMABLE_TYPE', !inputVatFixedReason(expense, facts.vatStatus), { sourceDocumentType: expense.sourceDocumentType });
-  condition('PAPER_ATTACHED', facts.attachmentIds.length > 0, { attachmentIds: facts.attachmentIds });
+  const originalDocumentAvailable = expenseEvidenceAssessment(expense)?.originalDocumentAvailable === true;
+  condition('PAPER_ATTACHED', facts.attachmentIds.length > 0 || originalDocumentAvailable, { attachmentIds: facts.attachmentIds,
+    ...(originalDocumentAvailable ? { originalDocumentAvailable: true } : {}) }, !facts.attachmentIds.length && originalDocumentAvailable ? 'REVIEWER' : 'SYSTEM');
   condition('SELLER_TAX_ID', /^\d{13}$/.test(expense.vendorTaxIdSnapshot ?? ''), { vendorTaxIdSnapshot: expense.vendorTaxIdSnapshot });
   condition('DOCUMENT_NUMBER', Boolean(expense.vendorDocumentNumber?.trim()), { vendorDocumentNumber: expense.vendorDocumentNumber });
   condition('USABLE_EVIDENCE', expense.taxEvidenceStatus === 'USABLE_FOR_TAX', { taxEvidenceStatus: expense.taxEvidenceStatus });

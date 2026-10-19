@@ -844,6 +844,19 @@ describe('explicit document review acknowledgement', () => {
       usecase: new UpdateExpenseDraftUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any, transactionTax) };
   }
 
+  it('EVID-1 stores original-paper acknowledgement and note in review JSON and accepts a later selected image', async () => {
+    const { usecase, get } = setup({ attachments: [], primaryAttachmentId: null, inputVatClaimStatus: 'CLAIMABLE' });
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [] as string[], reason: '', originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' };
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: assessment, documentReviewAcknowledged: true });
+    assert.deepEqual(get().aiVerificationSummaryJson.documentReview.assessment, assessment);
+    assert.equal(get().inputVatClaimStatus, 'CLAIMABLE'); assert.equal(get().taxEvidenceStatus, 'USABLE_FOR_TAX');
+    assert(hasCurrentExpenseEvidenceReview(get()));
+    get().attachments = [{ id: 'later', status: 'ACTIVE', purpose: 'expense.receipt.primary' }];
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: { ...assessment, attachmentIds: ['later'] }, documentReviewAcknowledged: true });
+    assert(hasCurrentExpenseEvidenceReview(get()));
+    assert.deepEqual(get().aiVerificationSummaryJson.documentReview.assessment.attachmentIds, ['later']);
+  });
+
   it('persists an unchanged explicit review with source identity and audit; ordinary saves cannot create it', async () => {
     const { usecase, get, audits } = setup();
     const version = () => ({ expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['receipt-1'], reason: '' } });

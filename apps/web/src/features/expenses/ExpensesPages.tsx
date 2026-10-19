@@ -1254,6 +1254,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             <Fact label="ใบเสร็จ">{assessment.receiptProblem === 'NONE' ? null : RECEIPT_PROBLEM_LABELS[assessment.receiptProblem]}</Fact>
             <Fact label="ใช้แทนใบเสร็จ">{assessment.receiptProblem === 'NONE' ? null : EVIDENCE_ROUTE_LABELS[assessment.route]}</Fact>
             <Fact label="เหตุผล">{assessment.receiptProblem === 'NONE' ? null : assessment.reason.trim()}</Fact>
+            <Fact label="หมายเหตุ">{assessment.note?.trim()}</Fact>
             {!documentDetails && <Fact label="ไฟล์ที่ใช้ประกอบรายการ">{evidenceFiles.filter(file => assessment.attachmentIds.includes(file.id)).map(file => file.originalFileName).join(', ')}</Fact>}
 
           </dl>
@@ -1314,6 +1315,18 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           <AiFieldMissingHint canEdit={isMutable && canReview} field="category" summary={detail.aiVerificationSummaryJson} />
         </div>
       </div>
+      {assessment.route === 'SOURCE_DOCUMENT' && assessment.receiptProblem === 'NONE' && editable && <div className="space-y-2">
+        {assessment.attachmentIds.length === 0 && <>
+        <label className="flex min-h-11 items-center gap-2">
+          <input type="checkbox" aria-label="มีตัวจริง ยังไม่ได้แนบรูป" aria-describedby={`expense-original-document-hint-${detail.id}`} disabled={busy}
+            checked={assessment.originalDocumentAvailable ?? false} onChange={event => setAssessment(value => ({ ...value, originalDocumentAvailable: event.target.checked }))} />
+          มีตัวจริง ยังไม่ได้แนบรูป
+        </label>
+        <p id={`expense-original-document-hint-${detail.id}`} className="text-sm text-gray-600">เลือกเมื่อมีเอกสารตัวจริงแต่ยังไม่ได้ถ่ายรูป แนบรูปทีหลังได้</p>
+        </>}
+        <TextareaField label="หมายเหตุ" aria-label="หมายเหตุ" rows={2} maxLength={500} disabled={busy}
+          value={assessment.note ?? ''} onChange={event => setAssessment(value => ({ ...value, note: event.target.value }))} />
+      </div>}
       <div className="space-y-3">
         {/* One door to "there is no receipt, or it has a problem". It stays in one place whatever the state. */}
         <button type="button" className={ghostClass} aria-expanded={showEvidenceOptions} onClick={() => (showEvidenceOptions ? setShowEvidenceOptions(false) : openEvidenceOptions())}>{showEvidenceOptions ? 'ซ่อนคำถามเรื่องใบเสร็จ' : 'ไม่มีใบเสร็จ หรือใบเสร็จมีปัญหา'}</button>
@@ -1321,7 +1334,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           <label className="block"><span className={FIELD_LABEL}>มีใบเสร็จของรายการนี้ไหม</span>
             <ThemedSelect id={`expense-receipt-question-${detail.id}`} className={inputClass} aria-label="มีใบเสร็จของรายการนี้ไหม" disabled={busy} value={assessment.receiptProblem} onChange={event => {
               const receiptProblem = event.target.value as ExpenseEvidenceAssessment['receiptProblem'];
-              setAssessment(value => ({ ...value, receiptProblem, route: receiptProblem === 'NONE' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE' }));
+              setAssessment(value => ({ ...value, originalDocumentAvailable: false, receiptProblem, route: receiptProblem === 'NONE' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE' }));
               if (!substituteReceiptFlow && (receiptProblem === 'NOT_AVAILABLE' || receiptProblem === 'LOST')) {
                 setDocType('EXPENSE_NOTE_TEXT'); setTaxStatus('SUPPORTING_ONLY');
               } else if (!substituteReceiptFlow && receiptProblem === 'NONE' && noDocument) {
@@ -1344,9 +1357,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               ไฟล์ที่เคยเลือกบางไฟล์ใช้ไม่ได้แล้ว เลือกไฟล์ใหม่
             </Notice>
           )}
-          <fieldset id={`expense-evidence-files-${detail.id}`} aria-invalid={validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' || undefined} aria-describedby={`expense-evidence-files-error-${detail.id}`} disabled={busy} className="space-y-1"><legend className={FIELD_LABEL}>ไฟล์ที่ใช้ประกอบรายการ</legend>
+          <fieldset id={`expense-evidence-files-${detail.id}`} aria-invalid={validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' && !assessment.originalDocumentAvailable || undefined} aria-describedby={`expense-evidence-files-error-${detail.id}`} disabled={busy} className="space-y-1"><legend className={FIELD_LABEL}>ไฟล์ที่ใช้ประกอบรายการ</legend>
             {evidenceFiles.map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 [overflow-wrap:anywhere]">
-              <input type="checkbox" checked={assessment.attachmentIds.includes(file.id)} onChange={event => setAssessment(value => ({ ...value, attachmentIds: event.target.checked ? [...value.attachmentIds, file.id] : value.attachmentIds.filter(id => id !== file.id) }))} />{file.originalFileName}
+              <input type="checkbox" aria-label={file.originalFileName} checked={assessment.attachmentIds.includes(file.id)} onChange={event => setAssessment(value => ({ ...value, attachmentIds: event.target.checked ? [...value.attachmentIds, file.id] : value.attachmentIds.filter(id => id !== file.id) }))} />{file.originalFileName}
             </label>)}
             {/* A statement keeps its button on the same row: with no file to tick, the way to add one is here.
                 While the receipt statement below already carries the attach button, it is not drawn twice. */}
@@ -1356,7 +1369,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 {attachFileButton('แนบไฟล์')}
               </div>
             )}
-          {validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' && <p id={`expense-evidence-files-error-${detail.id}`} role="alert" className="text-sm text-error-700">เลือกไฟล์ที่ใช้ประกอบรายการ</p>}
+          {validationShown && !assessment.attachmentIds.length && assessment.route !== 'SUBSTITUTE_RECEIPT' && !assessment.originalDocumentAvailable && <p id={`expense-evidence-files-error-${detail.id}`} role="alert" className="text-sm text-error-700">เลือกไฟล์ที่ใช้ประกอบรายการ</p>}
           </fieldset>
           {assessment.receiptProblem !== 'NONE' && <label className="block"><span className={FIELD_LABEL}>เหตุผลที่ใช้หลักฐานนี้</span>
             <textarea id={`expense-evidence-reason-${detail.id}`} aria-invalid={validationShown && assessment.route === 'ALTERNATIVE_EVIDENCE' && !assessment.reason.trim() || undefined} aria-label="เหตุผลที่ใช้หลักฐานนี้" className={inputClass} rows={2} maxLength={assessment.route === 'SUBSTITUTE_RECEIPT' ? 500 : 2000} disabled={busy} value={assessment.reason} onChange={event => setAssessment(value => ({ ...value, reason: event.target.value }))} />

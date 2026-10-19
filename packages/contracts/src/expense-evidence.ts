@@ -5,6 +5,8 @@ export type ExpenseEvidenceAssessment = {
   receiptProblem: 'NONE' | 'NOT_AVAILABLE' | 'LOST' | 'MATERIAL_INCOMPLETE';
   attachmentIds: string[];
   reason: string;
+  originalDocumentAvailable?: boolean;
+  note?: string;
 };
 
 export type ExpenseEvidenceSource = ExpenseDocumentReviewSource & {
@@ -33,9 +35,12 @@ export const EXPENSE_RECEIPT_SOURCE_TYPES = ['RECEIPT', 'TAX_INVOICE', 'ABBREVIA
 function validAssessmentShape(value: unknown): value is ExpenseEvidenceAssessment {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const input = value as Record<string, unknown>;
-  if (Object.keys(input).some(key => !['route', 'receiptProblem', 'attachmentIds', 'reason'].includes(key))
+  if (Object.keys(input).some(key => !['route', 'receiptProblem', 'attachmentIds', 'reason', 'originalDocumentAvailable', 'note'].includes(key))
     || !['SOURCE_DOCUMENT', 'ALTERNATIVE_EVIDENCE', 'SUBSTITUTE_RECEIPT'].includes(String(input.route))
     || !['NONE', 'NOT_AVAILABLE', 'LOST', 'MATERIAL_INCOMPLETE'].includes(String(input.receiptProblem))
+    || input.originalDocumentAvailable !== undefined && typeof input.originalDocumentAvailable !== 'boolean'
+    || input.originalDocumentAvailable === true && (input.route !== 'SOURCE_DOCUMENT' || input.receiptProblem !== 'NONE')
+    || input.note !== undefined && (typeof input.note !== 'string' || input.note.length > 500)
     || typeof input.reason !== 'string' || input.reason.length > 2000
     || !Array.isArray(input.attachmentIds) || input.attachmentIds.length > 100
     || input.attachmentIds.some(id => typeof id !== 'string' || !id)
@@ -55,7 +60,7 @@ export function expenseEvidenceInputError(value: unknown, source: ExpenseEvidenc
   if (!complete) return null;
   if (source.sourceDocumentType === 'NEEDS_REVIEW' || source.taxEvidenceStatus === 'NEEDS_REVIEW') return 'เลือกประเภทเอกสารและตอบ “ใช้เป็นหลักฐานรายจ่ายได้ไหม” ก่อนกด “ถัดไป”';
   if (input.route === 'SOURCE_DOCUMENT') {
-    if (input.receiptProblem !== 'NONE' || !input.attachmentIds.length) return 'เลือกเอกสารที่ใช้ประกอบรายการ หรือระบุปัญหาของเอกสาร';
+    if (input.receiptProblem !== 'NONE' || !input.attachmentIds.length && !input.originalDocumentAvailable) return 'เลือกเอกสารที่ใช้ประกอบรายการ หรือระบุปัญหาของเอกสาร';
     if (['TRANSFER_SLIP', 'EXPENSE_NOTE_TEXT', 'SUBSTITUTE_RECEIPT', 'MARKETPLACE_ORDER_SCREENSHOT'].includes(source.sourceDocumentType)) return 'เอกสารนี้เป็นหลักฐานอื่น กรุณาเลือกทางใช้หลักฐานให้ตรงกับเอกสาร';
   } else {
     if (input.receiptProblem === 'NONE') return 'ระบุปัญหาของใบเสร็จก่อนเลือกทางนี้';
@@ -66,11 +71,18 @@ export function expenseEvidenceInputError(value: unknown, source: ExpenseEvidenc
   return null;
 }
 
-export function expenseEvidenceAssessment(source: ExpenseEvidenceSource): ExpenseEvidenceAssessment | null {
+export function expenseEvidenceAssessment(source: Pick<ExpenseEvidenceSource, 'aiVerificationSummaryJson'>): ExpenseEvidenceAssessment | null {
   const review = source.aiVerificationSummaryJson?.documentReview as Record<string, unknown> | undefined;
   const value = source.aiVerificationSummaryJson?.documentEvidenceDraft ?? review?.assessment;
   if (!validAssessmentShape(value)) return null;
   return value as ExpenseEvidenceAssessment;
+}
+
+export const EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL = 'ยังไม่มีรูปเอกสาร';
+
+export function expenseEvidenceImageMissing(source: Pick<ExpenseEvidenceSource, 'aiVerificationSummaryJson' | 'attachments'>): boolean {
+  const assessment = expenseEvidenceAssessment(source);
+  return assessment?.originalDocumentAvailable === true && !assessment.attachmentIds.some(id => source.attachments?.some(file => file.id === id && isExpenseEvidenceFile(file)));
 }
 
 function scalar(value: unknown): string | null {
@@ -84,7 +96,8 @@ function decimal(value: unknown): string | null {
 }
 
 function canonicalAssessment(value: ExpenseEvidenceAssessment) {
-  return { route: value.route, receiptProblem: value.receiptProblem, reason: value.reason.trim(), attachmentIds: [...value.attachmentIds].sort() };
+  return { route: value.route, receiptProblem: value.receiptProblem, reason: value.reason.trim(), attachmentIds: [...value.attachmentIds].sort(),
+    ...(value.originalDocumentAvailable ? { originalDocumentAvailable: true } : {}), ...(value.note?.trim() ? { note: value.note.trim() } : {}) };
 }
 
 /** Canonical semantic snapshot, identical for the API's Date/string and web's JSON projections.

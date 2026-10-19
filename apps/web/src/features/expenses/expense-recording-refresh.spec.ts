@@ -5,6 +5,8 @@ import { ToastContext } from '@/common/components/toast/use-toast';
 import { h, mutable } from './expense-certificate-test-harness';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { mergeExpenseUnsavedFields, expenseTaxEvidenceReasonMessage, deriveExpenseAuditChecks, TAX_EVIDENCE_STATUS_LABELS } from './expenses.model';
+import { expenseEvidenceImageMissing } from '@watchdog-bms/contracts';
+import { deriveEvidenceRowFlags } from './evidence-audit.logic';
 import { readFileSync } from 'node:fs';
 
 require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
@@ -51,7 +53,7 @@ function view(component: any, initial: any, extra: Record<string, unknown> = {})
       mock.method(runtime, 'useRef', (init: any) => { const at = index++; return slots[at] ??= { current: init }; }),
       mock.method(runtime, 'useEffect', (fn: any, deps: any[]) => {
         const at = index++, old = slots[at];
-        if (!old || deps?.some((value, i) => !Object.is(value, old.deps?.[i]))) {
+        if (!old || !deps || deps.some((value, i) => !Object.is(value, old.deps?.[i]))) {
           pending.push(() => { old?.cleanup?.(); slots[at] = { deps, cleanup: fn() }; });
         }
       }),
@@ -414,4 +416,33 @@ test('BEH-P repeated Next refusal focuses the rendered file field and its first 
     screen.render();
     assert.equal(focused, attempt);
   }
+});
+
+test('EVID-1 original-paper choice saves without files, keeps tax answers and shows a reminder until a later image is selected', async () => {
+  const saveRef = { current: null as null | (() => Promise<boolean>) }; const bodies: any[] = [];
+  const saved = mock.method(api, 'updateExpenseReviewFields', async (_company: string, _id: string, body: any) => { bodies.push(body); return {}; });
+  const initial = detail({ sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE', expenseCategoryId: 'cat' });
+  const screen = view(DocumentReviewSection, initial, { saveRef });
+  try {
+    screen.render(); screen.field('มีตัวจริง ยังไม่ได้แนบรูป').onChange({ target: { checked: true } }); screen.render();
+    screen.field('หมายเหตุ').onChange({ target: { value: 'อยู่กับผู้ทำบัญชี' } }); screen.render();
+    assert.equal(await saveRef.current!(), true);
+    assert.equal(bodies[0].taxEvidenceStatus, 'USABLE_FOR_TAX'); assert.equal(bodies[0].sourceDocumentType, 'TAX_INVOICE');
+    assert.deepEqual(bodies[0].evidenceAssessment, { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' });
+    screen.props.detail = { ...initial, updatedAt: 'v2', aiVerificationSummaryJson: { documentEvidenceDraft: bodies[0].evidenceAssessment } };
+    const html = screen.render(); assert.match(html, /มีตัวจริง ยังไม่ได้แนบรูป/); assert.match(html, /หมายเหตุ/);
+    assert(deriveExpenseAuditChecks(screen.props.detail).some(check => check.label === 'ยังไม่มีรูปเอกสาร'));
+    assert(deriveEvidenceRowFlags({ ...screen.props.detail, categoryName: 'หมวด' }).some(flag => flag.label === 'ยังไม่มีรูปเอกสาร'));
+    const file = { id: 'later', status: 'ACTIVE', purpose: 'expense.receipt.primary', originalFileName: 'ใบกำกับ.png' };
+    screen.props.detail = { ...screen.props.detail, updatedAt: 'v3', attachments: [file] }; screen.render();
+    assert(expenseEvidenceImageMissing(screen.props.detail));
+    screen.click('ไม่มีใบเสร็จ หรือใบเสร็จมีปัญหา'); screen.render();
+    screen.field('ใบกำกับ.png').onChange({ target: { checked: true } }); screen.render();
+    assert.equal(await saveRef.current!(), true);
+    screen.props.detail = { ...screen.props.detail, updatedAt: 'v4', aiVerificationSummaryJson: { documentEvidenceDraft: bodies[1].evidenceAssessment } }; screen.render();
+    assert(!deriveExpenseAuditChecks(screen.props.detail).some(check => check.label === 'ยังไม่มีรูปเอกสาร'));
+    assert(!deriveEvidenceRowFlags({ ...screen.props.detail, categoryName: 'หมวด' }).some(flag => flag.label === 'ยังไม่มีรูปเอกสาร'));
+    assert(!screen.nodes.some(node => node.props['aria-label'] === 'มีตัวจริง ยังไม่ได้แนบรูป'));
+    assert.equal(screen.field('หมายเหตุ').maxLength, 500);
+  } finally { saved.mock.restore(); }
 });

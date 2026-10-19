@@ -1,7 +1,7 @@
 import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL } from '@watchdog-bms/contracts';
-import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
+import { expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, expenseEvidenceAssessment, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
   AiVerificationStatus, DuplicateStatus, ExpenseCaptureSource, ExpensePaymentMethod,
@@ -1360,10 +1360,11 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
   'sourceDocumentType' | 'vendorTaxIdSnapshot' | 'vendorNameSnapshot' | 'vendorDocumentNumber' | 'expenseDate'
   | 'vatMode' | 'taxableAmount' | 'vatAmount' | 'taxEvidenceStatus' | 'taxEvidenceReasonCode' | 'duplicateStatus'
   | 'aiVerificationSummaryJson'>
-  & { inputVatRight?: ExpenseDetail['inputVatRight']; lines: Array<Pick<ExpenseDetail['lines'][number], 'vatRate' | 'taxableAmount'>>;
+  & { attachments?: ExpenseDetail['attachments']; inputVatRight?: ExpenseDetail['inputVatRight']; lines: Array<Pick<ExpenseDetail['lines'][number], 'vatRate' | 'taxableAmount'>>;
     substituteReceiptEvidence?: (Pick<SubstituteReceiptEvidenceSummary, 'status' | 'documentNumber'> & Partial<Pick<SubstituteReceiptEvidenceSummary, 'signatureMode' | 'payerUserId' | 'paperSubmission'>>) | null }): ExpenseAuditCheck[] {
   const checks: ExpenseAuditCheck[] = [];
   const assessment = expenseEvidenceAssessment(detail);
+  if (expenseEvidenceImageMissing(detail)) checks.push({ key: 'receipt', status: 'warn', label: EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL });
   const noReceipt = assessment?.receiptProblem === 'NOT_AVAILABLE' || assessment?.receiptProblem === 'LOST';
   if (noReceipt) {
     const certificate = detail.substituteReceiptEvidence;

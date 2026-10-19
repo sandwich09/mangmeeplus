@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { expenseEvidenceFingerprint, isBlockingExpenseVatReconciliation, type ExpenseVatMode, type TransactionTaxComponentPreview, type TransactionTaxSnapshot } from '@watchdog-bms/contracts';
+import { expenseEvidenceFingerprint, expenseEvidenceImageMissing, isBlockingExpenseVatReconciliation, type ExpenseVatMode, type TransactionTaxComponentPreview, type TransactionTaxSnapshot } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic.js';
 import { PrismaExpenseRepository } from './prisma-expense.repository.js';
 import { ConfirmExpenseUseCase } from '../application/use-cases/expense-draft.use-case';
@@ -175,6 +175,27 @@ async function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat
 }
 
 describe('document VAT acceptance through real confirmation and tax resolution', () => {
+  it('EVID-1 confirms a reviewed original invoice with zero files and preserves claimable VAT; selecting a later image clears its reminder', async () => {
+    const h = await documentVatHarness({ sourceVat: '7', taxCode: true });
+    h.row.primaryAttachmentId = null;
+    h.client.attachmentLink.findMany = async () => [];
+    const source = (await h.repo.findByIdWithRelations('company-1', 'expense-1'))!;
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [] as string[], reason: '', originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' };
+    h.row.aiVerificationSummaryJson = { documentEvidenceDraft: assessment, documentReview: { version: 2, reviewedAt: h.updatedAt.toISOString(), reviewedByUserId: h.ctx.userId, assessment, fingerprint: expenseEvidenceFingerprint(source, assessment) } };
+    const confirmed = await h.useCase.execute(h.ctx, 'expense-1');
+    assert.equal(confirmed.status, 'CONFIRMED');
+    assert.equal(confirmed.inputVatClaimStatus, 'CLAIMABLE');
+    assert.equal(confirmed.taxEvidenceStatus, 'USABLE_FOR_TAX');
+    assert.equal(confirmed.primaryAttachmentId, null);
+    const saved = (await h.repo.findByIdWithRelations('company-1', 'expense-1'))!;
+    assert.equal(expenseEvidenceImageMissing(saved), true);
+    assert.equal((saved.aiVerificationSummaryJson as any).documentReview.assessment.note, assessment.note);
+    const file = { id: 'later-image', status: 'ACTIVE' as const, purpose: 'expense.receipt.primary' };
+    assert.equal(expenseEvidenceImageMissing({ ...saved, attachments: [file] }), true);
+    const selected = { ...assessment, attachmentIds: [file.id] };
+    assert.equal(expenseEvidenceImageMissing({ ...saved, attachments: [file], aiVerificationSummaryJson: { ...saved.aiVerificationSummaryJson, documentEvidenceDraft: selected } }), false);
+  });
+
   it('also preserves in-tolerance source VAT without requiring a reviewer override', async () => {
     for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
       const h = await documentVatHarness({ vatMode, sourceVat: '7.01', taxCode: true, tolerance: '0.01' });

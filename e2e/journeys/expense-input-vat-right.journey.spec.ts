@@ -39,7 +39,7 @@ async function openFromList(page: Page, seller: string, waiting = false) {
   await row.getByText(seller, { exact: true }).first().click();
   await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible(FIRST_SIGHT);
 }
-async function manualDraft(page: Page, seller: string) {
+async function manualDraft(page: Page, seller: string, withImage = true) {
   const main = page.locator('main');
   await pressMenu(page, 'บันทึกด้วยมือ', 'ค่าใช้จ่ายและใบเสร็จ');
   await expect(main.getByRole('heading', { level: 1, name: 'บันทึกด้วยมือ', exact: true })).toBeVisible(FIRST_SIGHT);
@@ -47,13 +47,15 @@ async function manualDraft(page: Page, seller: string) {
   await main.getByRole('textbox', { name: 'รายละเอียดค่าใช้จ่าย', exact: true }).fill(unique('ของใช้ในร้าน'));
   await main.getByRole('combobox', { name: 'ชื่อผู้ขาย', exact: true }).fill(seller);
   await main.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true }).fill('107');
-  await main.locator('input[type="file"]').first().setInputFiles(picture(`${seller}.png`));
-  await expect(main.getByRole('button', { name: 'นำไฟล์ออก', exact: true })).toBeVisible(AFTER_PRESS);
+  if (withImage) {
+    await main.locator('input[type="file"]').first().setInputFiles(picture(`${seller}.png`));
+    await expect(main.getByRole('button', { name: 'นำไฟล์ออก', exact: true })).toBeVisible(AFTER_PRESS);
+  }
   await main.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
   await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible(FIRST_SIGHT);
   return idFromUrl(page);
 }
-async function reviewPaper(page: Page, invoice: boolean) {
+async function reviewPaper(page: Page, invoice: boolean, originalNote?: string) {
   const main = page.locator('main');
   await pick(page, 'รูปแบบ VAT', 'VAT รวมในราคา');
   await pick(page, 'อัตรา VAT', 'มี VAT 7%');
@@ -70,6 +72,10 @@ async function reviewPaper(page: Page, invoice: boolean) {
     .toHaveText(invoice ? 'ใช้ได้' : 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ');
   if (invoice) await expect(main.getByText('มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ', { exact: true })).toBeVisible();
   await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
+  if (originalNote !== undefined) {
+    await main.getByRole('checkbox', { name: 'มีตัวจริง ยังไม่ได้แนบรูป', exact: true }).check();
+    await main.getByRole('textbox', { name: 'หมายเหตุ', exact: true }).fill(originalNote);
+  }
   await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
   await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ตรวจสรุป' })).toBeVisible(AFTER_PRESS);
 }
@@ -106,7 +112,7 @@ function sheetRows(file: Buffer): string[][] {
 }
 
 test('@journey input VAT: unknown shop answers from its link, waiting confirms, owner decides later, staff reads facts, accountant receives both answers', async ({ pageAs, apiAs }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(420_000);
   const owner = await pageAs('OWNER'), staff = await pageAs('STAFF'), api = await apiAs('OWNER');
   owner.setDefaultTimeout(30_000); staff.setDefaultTimeout(30_000);
   await owner.setViewportSize({ width: 1556, height: 1000 }); await staff.setViewportSize({ width: 390, height: 844 });
@@ -240,13 +246,21 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
   });
   await test.step('accounting office workbook carries both rows with the shared words and the appended decision', async () => {
     await pressMenu(owner, 'หลักฐานทางบัญชี', 'ค่าใช้จ่ายและใบเสร็จ');
-    const month = main.getByRole('combobox', { name: 'เดือน', exact: true }); await month.click();
-    await owner.getByRole('option', { name: new RegExp(`^${thaiMonth().replace(/\./g, '\\.')} · \\d+ รายการ`) }).click();
+    await expect(main.getByRole('heading', { level: 1, name: 'หลักฐานทางบัญชี', exact: true })).toBeVisible(FIRST_SIGHT);
+    const month = main.getByRole('combobox', { name: 'เดือน', exact: true });
+    // Choosing the already-current month starts an unnecessary route replacement during the export press.
+    if (!(await month.innerText()).trim().startsWith(thaiMonth())) {
+      await month.click();
+      await owner.getByRole('option', { name: new RegExp(`^${thaiMonth().replace(/\./g, '\\.')} · \\d+ รายการ`) }).click();
+      await owner.waitForURL(/\/expenses\/evidence\?/, FIRST_SIGHT);
+    }
+    await expect(main.getByRole('link').filter({ hasText: invoiceSeller }).filter({ visible: true })).toBeVisible(AFTER_PRESS);
     await main.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
     const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click());
     const [headers, ...rows] = sheetRows(await readFile((await file.download.path())!));
     expect(headers!.slice(-7, -3)).toEqual(['สิทธิภาษีซื้อ', 'เหตุผลสิทธิภาษีซื้อ', 'ผู้ตรวจสิทธิภาษีซื้อ', 'วันเวลาที่ตรวจสิทธิภาษีซื้อ']);
     expect(headers!.slice(-3)).toEqual(['เลขใบสำคัญจ่าย', 'เลขหนังสือรับรอง 50 ทวิ', 'ชื่อไฟล์ในชุดเอกสาร']);
+    expect(headers).toContain('หมายเหตุ');
     const cell = (row: string[], label: string) => row[headers!.indexOf(label)];
     const invoice = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === invoiceSeller)!;
     const receipt = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === receiptSeller)!;
@@ -286,6 +300,67 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
       expect(names.some(name => name.startsWith('ใบเสร็จ/EXP-'))).toBe(true);
       for (const name of names) expect(files.has(name), name).toBe(true);
     }
-
+    // Downloading keeps the bundle dialog open so a person can download it again.
+    await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
+    await expect(dialog).toBeHidden(AFTER_PRESS);
   });
+  await test.step('original paper without an image keeps VAT credit; later selecting its photo clears the reminder', async () => {
+    // Reopen the full tax invoice, leaving the ordinary receipt's nonclaimable result intact.
+    const seller = invoiceSeller, id = invoiceId, note = 'อยู่กับผู้ทำบัญชี';
+    await openFromList(owner, seller);
+    expect(idFromUrl(owner)).toBe(id);
+    await main.getByRole('button', { name: 'แก้ไขเอกสาร', exact: true }).click();
+    const reopen = owner.getByRole('dialog', { name: 'แก้ไขเอกสาร', exact: true });
+    await reopen.getByRole('textbox', { name: 'เหตุผลที่แก้ไข', exact: true }).fill('ตรวจใบกำกับตัวจริงที่ยังไม่ได้แนบรูป');
+    await reopen.getByRole('button', { name: 'เปิดเอกสารกลับไปตรวจสอบ', exact: true }).click();
+    await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ตรวจข้อมูล' })).toBeVisible(AFTER_PRESS);
+    await main.locator('summary').filter({ hasText: 'ตัวเลือกไฟล์' }).filter({ visible: true }).click();
+    await main.getByRole('button', { name: `ลบไฟล์ ${seller}.png`, exact: true }).filter({ visible: true }).click();
+    const remove = owner.getByRole('dialog', { name: 'ลบไฟล์นี้ออกจากรายการ?', exact: true });
+    await remove.getByRole('button', { name: 'ลบไฟล์', exact: true }).click();
+    await expect(owner.getByRole('status').filter({ hasText: 'ลบไฟล์ออกจากรายการแล้ว' }).first()).toBeVisible(AFTER_PRESS);
+    await reviewPaper(owner, true, note);
+    await expect(summaryCard(owner)).toContainText('ยังไม่มีรูปเอกสาร');
+    // Removing the primary file clears its review and tax selections; choose the code before claiming VAT.
+    await main.getByRole('button', { name: '1 ตรวจข้อมูล', exact: true }).click();
+    await pick(owner, 'เลือกประเภทภาษีของรายการ', 'ภาษีซื้อขอคืนได้ 7%');
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' })).toBeVisible(AFTER_PRESS);
+    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
+    await main.getByRole('textbox', { name: 'เหตุผลสิทธิภาษีซื้อ', exact: true }).fill('ตรวจใบกำกับตัวจริงแล้ว ยังไม่ได้แนบรูป');
+    await expect(main.getByText('✓ มีเอกสารตัวจริง', { exact: true })).toBeVisible(AFTER_PRESS);
+    await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
+    for (const label of ticks) await main.getByRole('checkbox', { name: label, exact: true }).check();
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true })).toBeEnabled(AFTER_PRESS);
+    await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
+    await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await expect(main.getByTestId('expense-evidence-checks')).toContainText('ยังไม่มีรูปเอกสาร');
+    const before = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${id}`, scope));
+    expect(before.status).toBe('CONFIRMED'); expect(before.sourceDocumentType).toBe('TAX_INVOICE');
+    expect(before.vendorNameSnapshot).toBe(invoiceSeller);
+    expect(before.lines.filter(line => Number(line.vatAmount) > 0)).toHaveLength(1);
+    expect(before.lines.filter(line => Number(line.vatAmount) > 0).every(line => line.taxSnapshot?.taxCodeDefinitionId && line.taxSnapshot.claimability === 'CLAIMABLE')).toBe(true);
+    expect(before.attachments).toHaveLength(0); expect(before.inputVatClaimStatus).toBe('CLAIMABLE'); expect(before.taxEvidenceStatus).toBe('USABLE_FOR_TAX');
+    expect((before.aiVerificationSummaryJson?.documentEvidenceDraft as any).note).toBe(note);
+    await main.getByRole('button', { name: 'แก้ไขเอกสาร', exact: true }).click();
+    const correction = owner.getByRole('dialog', { name: 'แก้ไขเอกสาร', exact: true });
+    await correction.getByRole('textbox', { name: 'เหตุผลที่แก้ไข', exact: true }).fill('แนบรูปใบกำกับตัวจริง');
+    await correction.getByRole('button', { name: 'เปิดเอกสารกลับไปตรวจสอบ', exact: true }).click();
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' })).toBeVisible(AFTER_PRESS);
+    await main.getByRole('button', { name: 'ไม่มีใบเสร็จ หรือใบเสร็จมีปัญหา', exact: true }).click();
+    const image = picture(`${seller}.png`);
+    await main.getByLabel('แนบไฟล์', { exact: true }).setInputFiles(image);
+    await expect(owner.getByRole('status').filter({ hasText: 'แนบไฟล์ใบเสร็จแล้ว' }).first()).toBeVisible(AFTER_PRESS);
+    await main.getByRole('checkbox', { name: image.name, exact: true }).check();
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(summaryCard(owner).getByText('ยังไม่มีรูปเอกสาร', { exact: true })).toHaveCount(0);
+    await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
+    await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await expect(main.getByTestId('expense-evidence-checks').getByText('ยังไม่มีรูปเอกสาร', { exact: true })).toHaveCount(0);
+    const after = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${id}`, scope));
+    expect(after.attachments).toHaveLength(1); expect(after.inputVatClaimStatus).toBe('CLAIMABLE');
+  });
+
 });
