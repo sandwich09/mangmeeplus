@@ -1,5 +1,5 @@
 import { webLink } from '../../../../common/http/web-link';
-import { expenseDocumentDateStatus, expenseDateIsReadable, expenseEvidenceAssessment, civilDate } from '@watchdog-bms/contracts';
+import { expenseDocumentDateStatus, expenseDateIsReadable, expenseEvidenceAssessment, expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, civilDate } from '@watchdog-bms/contracts';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   ACCOUNTANT_INDEX_COLUMN_LABELS,
@@ -200,7 +200,8 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     primary_evidence_ref: primary ? evidenceRef(source.expenseNumber, source.expenseId, primary.id, source.captureGroupId) : '',
     supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id, source.captureGroupId)).join(','),
     web_url: source.webUrl,
-    notes: source.notes ?? '',
+    notes: [source.notes, expenseEvidenceImageMissing(source) ? EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL : '',
+      expenseEvidenceAssessment(source)?.note?.trim() ? `หมายเหตุ: ${expenseEvidenceAssessment(source)!.note!.trim()}` : ''].filter(Boolean).join(' · '),
     additional_charges_amount: source.additionalChargesAmount,
     // Spec §5.2: the accountant reads `document_date` beside this, so a placeholder can never pass
     // for a printed date in the one artefact that leaves the system.
@@ -265,7 +266,7 @@ export function buildAccountantIndexXlsx(
   return buildWorkbook([
     sheet('รายการค่าใช้จ่าย', rows, accountantIndexColumns(columnSet)),
     ...(paymentEvidenceRows.length ? [sheet('หลักฐานการจ่าย', paymentEvidenceRows, [
-      'document_date', 'expense_number', 'vendor_name', 'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names', 'web_url',
+      'document_date', 'expense_number', 'vendor_name', 'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names', 'web_url', 'notes',
     ])] : []),
   ]);
 }

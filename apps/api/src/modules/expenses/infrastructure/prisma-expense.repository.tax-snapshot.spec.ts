@@ -357,6 +357,16 @@ describe('input VAT decision conditions', () => {
     assert.equal(conditions.filter((c: any) => c.source === 'REVIEWER').length, 3);
     assert.ok(conditions.every((c: any) => c.answer === true));
   });
+  it('EVID-1 permits a VAT decision from the recorded original paper without an image, keeping all other conditions', () => {
+    const assessment = { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true, note: 'อยู่กับผู้ทำบัญชี' };
+    const expense = { ...decisionExpense, aiVerificationSummaryJson: { documentEvidenceDraft: assessment } };
+    const conditions = validateInputVatDecision(expense, { ...decisionFacts, attachmentIds: [] }, decisionInput, 'u');
+    const paper = conditions.find(condition => condition.code === 'PAPER_ATTACHED')!;
+    assert.equal(paper.answer, true); assert.equal(paper.source, 'REVIEWER');
+    assert.equal((paper.fact as Record<string, unknown>).originalDocumentAvailable, true);
+    assert.throws(() => validateInputVatDecision(expense, { ...decisionFacts, attachmentIds: [], vatStatus: 'UNKNOWN' }, decisionInput, 'u'));
+    assert.throws(() => validateInputVatDecision({ ...expense, taxEvidenceStatus: 'SUPPORTING_ONLY' }, { ...decisionFacts, attachmentIds: [] }, decisionInput, 'u'));
+  });
   for (const [patch, code] of [
     [{ vatStatus: 'UNKNOWN' }, 'input_vat_company_registration_unanswered'],
     [{ attachmentIds: [] }, 'input_vat_attachment_required'],

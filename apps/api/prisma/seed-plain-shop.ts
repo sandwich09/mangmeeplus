@@ -8,6 +8,7 @@ import { PrismaAuditRepository } from '../src/modules/audit/infrastructure/prism
 import { CompanyVatRegistrationUseCase } from '../src/modules/data-model-core/application/use-cases/company-vat-registration.use-case';
 import { bootstrapCompanyChartOfAccounts } from '../src/modules/ledger/application/services/chart-template-bootstrap.service';
 import { bootstrapCompanyExpenseCategories } from '../src/modules/expenses/application/services/expense-category-bootstrap.service';
+import { bootstrapCompanyTaxConfiguration } from '../src/modules/tax/application/services/tax-config-bootstrap.service';
 import { EXPLICIT_COHORT, NORMALIZER_VERSION } from '../src/modules/employee-access/application/normalize-entitlements';
 
 export const PLAIN_SHOP = {
@@ -52,6 +53,8 @@ export async function seedPlainShop(prisma: PrismaClient, shop: { id: string; na
     // Same production bootstrap functions used when a new company is opened. Categories need their accounts.
     await bootstrapCompanyChartOfAccounts(tx, { companyId, createdByUserId: owner.id });
     await bootstrapCompanyExpenseCategories(tx, { companyId });
+    // The VAT journey needs the same selectable tax codes a newly onboarded shop receives.
+    if (companyId === INPUT_VAT_SHOP.id) await bootstrapCompanyTaxConfiguration(tx, { companyId, createdByUserId: owner.id });
     // The explicit starter set and its CAS/normalization markers mirror company onboarding.
     const rows = plainShopEntitlements(companyId);
     await tx.companyFeatureEntitlement.createMany({ data: rows });

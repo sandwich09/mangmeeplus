@@ -89,7 +89,7 @@ export function ExpenseInputVatRight({ companyId, detail, canReview, saveRef, on
   const conditionLabels: Record<string, [string, string]> = {
     SHOP_REGISTERED: ['ร้านจด VAT ณ วันที่ของเอกสาร', 'shop'],
     CLAIMABLE_TYPE: ['ประเภทเอกสารใช้ภาษีซื้อได้', 'evidence'],
-    PAPER_ATTACHED: ['แนบเอกสารแล้ว', 'receipt'],
+    PAPER_ATTACHED: [(right?.conditions?.find(condition => condition.code === 'PAPER_ATTACHED')?.fact as { originalDocumentAvailable?: boolean } | undefined)?.originalDocumentAvailable ? 'มีเอกสารตัวจริง' : 'แนบเอกสารแล้ว', 'receipt'],
     SELLER_TAX_ID: ['เลขผู้เสียภาษีผู้ขายครบ 13 หลัก', 'vendor_tax_id'],
     DOCUMENT_NUMBER: ['มีเลขที่เอกสาร', 'document_number'],
     USABLE_EVIDENCE: ['หลักฐานรายจ่ายใช้ได้', 'tax_evidence'],
