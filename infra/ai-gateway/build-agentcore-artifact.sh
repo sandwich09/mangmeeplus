@@ -33,9 +33,29 @@ node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/bin/esbuild \
   --platform=node \
   --target=node22 \
   --format=cjs \
+  --external:sharp \
   --tsconfig=apps/ai-gateway/tsconfig.agentcore.json \
   --outfile="$staging/runtime.js" \
   --log-level=warning
+
+# A bundle that cannot start only fails after rollout ("initialization time exceeded"), so start
+# it here: no environment, a free port, /ping within 10 s, or the build stops.
+smoke_port="$(node -e "const s=require('net').createServer().listen(0,()=>{console.log(s.address().port);s.close()})")"
+(cd "$staging" && exec env -i PATH="$PATH" PORT="$smoke_port" node runtime.js) > "$staging/smoke.log" 2>&1 &
+smoke_pid=$!
+smoke_ok=no
+for _ in $(seq 1 20); do
+  sleep 0.5
+  if curl -fs -o /dev/null "http://127.0.0.1:$smoke_port/ping"; then smoke_ok=yes; break; fi
+done
+kill "$smoke_pid" 2>/dev/null || true
+wait "$smoke_pid" 2>/dev/null || true
+if [ "$smoke_ok" != yes ]; then
+  echo "ERROR: AgentCore runtime.js did not answer /ping within 10 s" >&2
+  head -c 2000 "$staging/smoke.log" >&2
+  exit 1
+fi
+rm -f "$staging/smoke.log"
 
 # ZIP stores the input mtime even with -X. Normalize it so rebuilding one exact
 # source commit cannot produce a second artifact identity and endpoint rollout.
