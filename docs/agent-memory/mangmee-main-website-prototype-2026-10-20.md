@@ -259,3 +259,15 @@ Status: Complete — prototype only.
 Trigger: Owner asked which colour pairs with our white/green/light green, then "ลองปรับให้ดูหน่อย".
 Decisions: Gold #FCD34D (logo bar, already in tokens) as the single accent, 2 spots only: recommended-plan badge and a "ฟรี 2 เดือน" chip on the yearly tab; text #14532D on gold 6.32:1; never white on gold (2.15:1). Applied to Main, Home-Phone, Pricing, Pricing-Phone; Colors board gained a pair row and rule lines.
 Verification: Chromium 1440/390 no overflow (home 5963 / 10881); visual check of badge and tab at both widths; canvas version 16.
+
+## Revision 3i — mascot, icons, livelier colour
+
+Status: Complete — prototype only.
+Trigger: Owner: "รู้สึกว่ามันยังจืดไป" then "ลองเอาตัวการ์ตูนมาสคอตน้องมั่งมีมาใส่หน่อย".
+Decisions:
+- Mascot = existing LINE system-card art (apps/web/public/assets/line/system-card-mascot-{scanning,review}-20261005.png, read only; cropped and embedded as WebP data URIs in the canvas). Scanning pose in the hero panel corner (decorative alt=""), review pose in the น้องมั่งมี block (descriptive alt). General pose (card terminal) not used: implies POS payments.
+- Hero panel green gradient #16A34A→#14532D with the white phone on top; mint glow behind hero; kicker as white pill with a gold dot; .alt sections #F3FAF5; mint glow on #pricing; close panel gains faint green/gold light. A signal-bar decoration in the close panel was tried and dropped (looked cropped).
+- Line icons (hand-drawn 24px paths, aria-hidden) in 52px mint tiles on steps (with number badge), jobs, roles and the ENT band.
+- Pricing boards rebuilt from Main (build_pricing.py now finds the pricing-only CSS by marker instead of line numbers).
+Verification: Chromium 1440/390: home 6228 / 11562 high, pricing 3121 / 5467, scrollWidth equals viewport on all; tags balanced on Main and Pricing; canvas version 17.
+Next: ask design team for 2x mascot files before any real build.
