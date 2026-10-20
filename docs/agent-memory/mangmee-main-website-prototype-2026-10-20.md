@@ -398,3 +398,4 @@ Decisions:
 - DPO: repo still has no sign-off record (M-05 open); site wording unchanged ("AI บน AWS Bedrock").
 Verification: data: count 0 and 17 /_blob/ references in Main and Home-Phone; JSON-LD in content-th.md parses.
 Next: owner re-tests iPhone Safari on version 35 (say whether in canvas view or full-window Play); owner picks the VAT sentence.
+- VAT (follow-up): owner confirmed not VAT-registered; FAQ answer on Pricing boards and content-th.md is now "ราคานี้ยังไม่มี VAT ออกใบเสร็จรับเงินให้" (canvas version 36). FAQPage JSON-LD has no VAT question, so nothing else changed.
