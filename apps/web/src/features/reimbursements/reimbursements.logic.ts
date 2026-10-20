@@ -1,6 +1,7 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
+  REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE,
   REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, reimbursementDuplicateReasonText as sharedDuplicateReasonText, reimbursementDuplicateBlockNotice as sharedDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT,
@@ -1415,7 +1416,9 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
-      if (confirmedDuplicate) {
+      if (detail?.hasVoidedProjections) {
+        note = REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE;
+      } else if (confirmedDuplicate) {
         note = duplicateNoticeForViewer(detail, permissions, userId);
         if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
       } else if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
@@ -1473,7 +1476,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     // whoever may record its payment, the approver it stands on, or its requester. The page offers it at the foot of
     // the account box, where a wrong account is found, and says it there: not among the buttons of this step, where
     // one wrong tap beside "บันทึกจ่าย" took both signatures off a claim that only needed paying.
-    if (!ended && !confirmedDuplicate && key === 'payment' && !round && correction?.canRequest === true) actions.push('send-back');
+    if (!ended && !detail?.hasVoidedProjections && !confirmedDuplicate && key === 'payment' && !round && correction?.canRequest === true) actions.push('send-back');
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
     if (detail?.requestNo && status !== 'DRAFT') actions.push('print');

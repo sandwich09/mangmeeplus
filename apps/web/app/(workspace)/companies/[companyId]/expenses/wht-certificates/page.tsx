@@ -1,3 +1,4 @@
+import { shopHasSystemWhtCertificates } from '@/features/expenses/expense-wht-certificates.logic';
 import { fetchServerSession } from '@/common/auth/server-session';
 import { requireRoutePermission } from '@/features/web-core-workspace/route-permission-guard';
 import { WhtCertificatesPage } from '@/features/expenses/WhtCertificatesPage';
@@ -6,5 +7,5 @@ export default async function Page({ params }: { params: Promise<{ companyId: st
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
   const denied = requireRoutePermission(session, '/expenses/wht-certificates');
-  return denied ?? <WhtCertificatesPage companyId={companyId} permissions={session?.permissions ?? []} />;
+  return denied ?? <WhtCertificatesPage systemCertificatesAvailable={shopHasSystemWhtCertificates(session?.entitledFeatureKeys)} companyId={companyId} permissions={session?.permissions ?? []} />;
 }

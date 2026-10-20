@@ -32,6 +32,18 @@ test('withholding links to the shop certificate list only when the reader may is
   }
 });
 
+test('WHT-OUTSIDE hides system certificate downloads in withholding rows when the shop no longer has the feature', () => {
+  const { WithholdingPayments } = require('./WithholdingPage');
+  const row = { id: 'pay', expenseId: 'expense', payeeName: 'ผู้รับ', paymentDate: '2026-10-20', formType: 'PND3', paid: '1000', withheld: '30',
+    certificate: { state: 'SYSTEM_ISSUED', number: 'WHT-1', handoffId: 'handoff', canDownload: true } };
+  for (const systemCertificatesAvailable of [false, true]) {
+    const html = renderToStaticMarkup(h(WithholdingPayments, { rows: [row], month: { forms: [] }, companyId: 'co', order: 'newest',
+      onOrder() {}, onOpen() {}, onCertificate() {}, certificateBusy: null, systemCertificatesAvailable }));
+    assert.equal(html.includes('aria-label="ดาวน์โหลดหนังสือรับรอง"'), systemCertificatesAvailable);
+    assert.match(html, /WHT-1/);
+  }
+});
+
 const { WithholdingFormCard, withholdingPaymentPage, withholdingState, withholdingErrorMessage } = require('./WithholdingPage');
 const form = (over: any = {}) => ({ formType: 'PND3', periodId: 'p', status: 'OPEN', paymentCount: 2, totalPaid: '1000', totalWithheld: '30', dueDate: '2026-11-07', issues: [], ...over });
 function card(data: any, rights = ['wht.pnd53.prepare'], error?: string) {
@@ -600,6 +612,27 @@ test('refresh is secondary beside the month and the certificate list link lives 
     const metrics = view.nodes.filter(n => n.tag === 'MetricGrid');
     assert.equal(metrics.length, 2);
     assert.deepEqual(metrics[0].props.items.map((item: any) => [item.label, item.value, item.unit]), [['รายการ', '2', 'รายการ'], ['ยอดจ่าย', '1,000.00', 'บาท'], ['ภาษีที่หักไว้', '30.00', 'บาท']]);
+  } finally { view.cleanup(); }
+});
+
+test('MOBILE-3 three paid expenses and multiple establishments keep the certificate menu at the header right edge on phones', () => {
+  const view = pageView(undefined, [], ['wht.pnd53.read', 'wht.pnd53.prepare', 'wht.certificate.issue']);
+  const forms = [form(), form({ formType: 'PND53', periodId: 'p53' })];
+  view.state[2] = { periodKey: '2026-10', forms,
+    establishments: [{ code: '00000', name: 'สำนักงานใหญ่', forms }, { code: '00001', name: 'สาขาทดลอง', forms }],
+    payments: Array.from({ length: 3 }, (_, i) => ({ id: `pay-${i}`, expenseId: `expense-${i}`, payeeName: `ผู้รับ ${i}`,
+      formType: i === 2 ? 'PND53' : 'PND3', paymentDate: '2026-10-20', paid: '1000', withheld: '30' })) };
+  try {
+    const html = view.render();
+    assert.match(html, /ยื่นในนาม/);
+    assert.equal((html.match(/>ดูหนังสือรับรอง 50 ทวิ<\/a>/g) ?? []).length, 1);
+    const menu = view.find('MoreActions');
+    assert.equal(menu.align, 'end');
+    assert.match(html, /grid w-full auto-cols-fr grid-flow-col[^]*?<details class="menu end"/);
+    const css = readFileSync(new URL('../../common/components/actions/MoreActions.module.css', import.meta.url), 'utf8');
+    // End alignment must apply before JS measurement, including the 375px two-column header.
+    assert.match(css, /^\.end > \.panel \{ inset-inline-start: auto; inset-inline-end: 0; \}/m);
+    assert.match(css, /\.menu:not\(\[open\]\) > \.panel \{ display: none; \}/);
   } finally { view.cleanup(); }
 });
 

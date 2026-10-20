@@ -1,3 +1,4 @@
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import { THAI_SYSTEM_ROLE_NAMES, WHT_PRINT_CERTIFICATE_LABEL } from '@watchdog-bms/contracts';
 import { GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
@@ -5,7 +6,7 @@ import { GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user
  * คู่มือผู้ใช้: ภาษี — เนื้อหาชุดเดียวกับคู่มือฉบับ .docx (ฉบับที่ 1.0)
  * เนื้อหาอ้างอิงหน้าจอจริงของเมนู การเงินและบัญชี › ภาษี
  */
-export function buildTaxGuide(companyId: string, permissions: readonly string[] = []): UserGuide {
+export function buildTaxGuide(companyId: string, permissions: readonly string[] = [], systemCertificatesAvailable = true): UserGuide {
   const exporters = ['OWNER', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
   const exporterNames = exporters.map((role) => THAI_SYSTEM_ROLE_NAMES[role]).join(' หรือ');
   const tax = `/companies/${companyId}/tax`;
@@ -114,18 +115,18 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
             items: [
               {
                 title: 'หนังสือรับรอง 50 ทวิ',
-                detail: `เลือกเดือนที่จ่ายและแบบภาษีใน “หนังสือรับรอง 50 ทวิ” กรอง “ยังไม่ออก” “ออกแล้ว” “ร้านออกเอง” “ยกเลิก” กดแถวไปแก้ข้อมูล ในรายจ่ายกด “${WHT_PRINT_CERTIFICATE_LABEL}” ตรวจผู้รับและยอด แล้ว “ออกเลขที่และดาวน์โหลด” ใบเดิมกด “ดาวน์โหลดหนังสือรับรอง”`,
-                link: permissions.includes('wht.certificate.issue') ? { label: 'เปิดหนังสือรับรอง 50 ทวิ', href: `/companies/${companyId}/expenses/wht-certificates` } : undefined,
+                detail: systemCertificatesAvailable ? `เลือกเดือนที่จ่ายและแบบภาษีใน “หนังสือรับรอง 50 ทวิ” กรอง “ยังไม่ออก” “ออกแล้ว” “ทำนอกระบบ” “ยกเลิก” กดแถวไปแก้ข้อมูล ในรายจ่ายกด “${WHT_PRINT_CERTIFICATE_LABEL}” ตรวจผู้รับและยอด แล้ว “ออกเลขที่และดาวน์โหลด” ใบเดิมกด “ดาวน์โหลดหนังสือรับรอง”` : t('expenses.certificates.outside_description', 'th'),
+                link: permissions.some(p => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(p)) ? { label: 'เปิดหนังสือรับรอง 50 ทวิ', href: `/companies/${companyId}/expenses/wht-certificates` } : undefined,
               },
               {
-                title: 'ร้านออกหนังสือรับรองเอง',
-                detail: 'ในรายจ่าย กด “บันทึกว่าออกหนังสือรับรองเองแล้ว” กรอก “เลขที่หนังสือรับรอง” “วันที่จ่ายตามหนังสือรับรองเดิม” และ “วันที่ออก” ใส่ที่เก็บเอกสารใน “เก็บเอกสารไว้ที่ไหน (ไม่บังคับ)” แล้วกด “บันทึก” ขั้นนี้ไม่อัปโหลดไฟล์ ดูย้อนหลังที่ “ประวัติหนังสือรับรอง” ถ้าลบการบันทึก ตรวจเลขที่แล้วกด “ลบการบันทึก” หรือ “ไม่ลบ”',
+                title: 'ทำหนังสือรับรองนอกระบบ',
+                detail: `ในรายจ่าย กด “${t('expenses.certificate_card.record_expense', 'th')}” กรอก “${t('expenses.certificate_card.number', 'th')}” “${t('expenses.certificate_card.payment_date', 'th')}” และ “${t('expenses.certificate_card.date', 'th')}” ใส่ที่เก็บเอกสารใน “${t('expenses.certificate_card.reference', 'th')}” แล้วกด “บันทึก” แนบไฟล์ได้ถ้ามี ดูย้อนหลังที่ “ประวัติหนังสือรับรอง” ถ้าลบการบันทึก ตรวจเลขที่แล้วกด “ลบการบันทึก” หรือ “ไม่ลบ”`,
               },
-              {
+              ...(systemCertificatesAvailable ? [{
                 title: 'ลายเซ็นบน 50 ทวิ',
                 detail: 'เปิด “ลายเซ็นบน 50 ทวิ” ดูรูปที่เก็บไว้ เลือก “ใส่รูปลายเซ็นให้อัตโนมัติ” เลือกหรือเปลี่ยนรูปแล้วบันทึก ถ้าเลือก “พิมพ์แล้วเซ็นเอง” แล้วกด “บันทึก” รูปที่เก็บไว้จะถูกลบ',
                 link: permissions.includes('company.tax_signature.manage') ? { label: 'เปิดลายเซ็นบน 50 ทวิ', href: `/companies/${companyId}/settings/tax-signature` } : undefined,
-              },
+              }] : []),
               {
                 title: 'ภาษีหัก ณ ที่จ่าย',
                 detail: 'เลือกเดือน “ดึงรายการล่าสุด” ตรวจ ภ.ง.ด.3 (จ่ายให้บุคคล) / ภ.ง.ด.53 (จ่ายให้บริษัท) เปิดลิงก์แก้ข้อมูลที่ขาดใน “ต้องแก้ก่อนยื่น” กด “ดาวน์โหลดแบบ ภ.ง.ด.3” / “ดาวน์โหลดแบบ ภ.ง.ด.53” ตรวจและเซ็น ยื่นแล้วกด “บันทึกว่ายื่นแล้ว” ถ้า “ผู้ทำบัญชีจัดทำแบบนี้เอง” ใช้ “ดาวน์โหลดรายการให้ผู้ทำบัญชี” ส่วน “ต้องจัดทำ ภ.ง.ด.2 แยก” อยู่นอกสองแบบ กดแถวเปิดรายจ่าย หน้าละ 10 รายการ ดู 50 ทวิใน “เพิ่มเติม”',

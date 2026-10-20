@@ -1,3 +1,4 @@
+import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
 import { Inject, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/ports/attachment-storage.port';
@@ -68,6 +69,7 @@ export class CreateDownloadUrlUseCase {
 
     const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
     if (!existing) throw new NotFoundException('Attachment not found.');
+    if (existing.metadataJson?.['generatedFor'] === WHT_EXTERNAL_FILE.target) throw new ForbiddenException({ code: 'wht_external_file_read_denied', message: WHT_EXTERNAL_FILE.readFromRecord });
     if (existing.status === 'DELETED' || existing.status === 'QUARANTINED') {
       throw new ForbiddenException('Attachment is not accessible.');
     }

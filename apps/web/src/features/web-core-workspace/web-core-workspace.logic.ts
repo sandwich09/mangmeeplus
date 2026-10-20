@@ -197,6 +197,7 @@ export function buildNavItems(
   // nothing keeps the permission rule, so the company setting can only ever hide the item.
   canOpenManualExpense: boolean = userPermissions.includes('expense.create'),
   canOpenDisbursementVoucher: boolean = false,
+  systemCertificatesAvailable: boolean = true,
 ): NavItem[] {
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
@@ -364,7 +365,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      for (const child of filterSettingsSidebarItems(userPermissions)) {
+      for (const child of filterSettingsSidebarItems(userPermissions, systemCertificatesAvailable)) {
         childItems.push({
           key: `settings.${child.key}`,
           label: child.section === 'advanced' ? `${child.title} (ขั้นสูง)` : child.title,

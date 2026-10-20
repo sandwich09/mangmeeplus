@@ -7,7 +7,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { WhtCertificateHandoffListQueryDto, IssueWhtCertificateDto, ConfirmWhtFilingRowsDto, ExportTaxPackageDto, AnswerWhtPayerModeDto, CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, RemoveExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
+import { ExternalWhtFileUploadDto, CompleteExternalWhtFileDto, WhtCertificateHandoffListQueryDto, IssueWhtCertificateDto, ConfirmWhtFilingRowsDto, ExportTaxPackageDto, AnswerWhtPayerModeDto, CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, RemoveExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
 import { SyncTaxEventsUseCase } from '../../application/use-cases/sync-tax-events.use-case';
 import { GenerateVatReportUseCase } from '../../application/use-cases/generate-vat-report.use-case';
 import { GenerateWhtReportUseCase } from '../../application/use-cases/generate-wht-report.use-case';
@@ -454,6 +454,27 @@ export class TaxController {
   ) {
     assertRouteCompany(ctx, companyId);
     return this.whtHandoffs.setPayeeAddress(ctx, handoffId, body);
+  }
+
+  @Post('wht/payment-handoffs/:handoffId/external-certificate/file-upload-intent')
+  @RequirePermissions('wht.external_certificate.link')
+  async externalWhtFileIntent(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string, @Body() body: ExternalWhtFileUploadDto) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.externalFileIntent(ctx, handoffId, body);
+  }
+
+  @Post('wht/payment-handoffs/:handoffId/external-certificate/file-uploads/:attachmentId/complete')
+  @RequirePermissions('wht.external_certificate.link')
+  async completeExternalWhtFile(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string, @Param('attachmentId') attachmentId: string, @Body() body: CompleteExternalWhtFileDto) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.completeExternalFile(ctx, handoffId, { ...body, attachmentId });
+  }
+
+  @Get('wht/payment-handoffs/:handoffId/external-certificate/files/:attachmentId')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link')
+  async externalWhtFile(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string, @Param('attachmentId') attachmentId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.whtHandoffs.externalFile(ctx, handoffId, attachmentId);
   }
 
   @Post('wht/payment-handoffs/:handoffId/external-certificate')

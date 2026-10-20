@@ -814,3 +814,18 @@ it('W4 month read exposes undated payments without assigning a month or creating
   assert.deepEqual(month.undatedPayments, [{ paymentId: 'p', expenseId: 'e', payeeName: 'สมชาย', amount: '97', recordedAt: '2026-11-09T00:00:00.000Z', recordedByUserId: 'u' }]);
   assert.equal(month.forms.every(f => f.paymentCount === 0), true);
 });
+
+
+it('WHT-OUTSIDE-2 file routes keep external-link mutation permission and the handoff read boundary', async () => {
+  const { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+  for (const handler of [TaxController.prototype.externalWhtFileIntent, TaxController.prototype.completeExternalWhtFile]) {
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.external_certificate.link']);
+  }
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, TaxController.prototype.externalWhtFile), ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link']);
+  let calls = 0;
+  const value = Object.assign(Object.create(TaxController.prototype), { whtHandoffs: { externalFileIntent: async () => { calls++; }, completeExternalFile: async () => { calls++; }, externalFile: async () => { calls++; } } });
+  await assert.rejects(() => value.externalWhtFileIntent(ctx, 'other-company', 'handoff', {}), /company/i);
+  await assert.rejects(() => value.completeExternalWhtFile(ctx, 'other-company', 'handoff', 'file', {}), /company/i);
+  await assert.rejects(() => value.externalWhtFile(ctx, 'other-company', 'handoff', 'file'), /company/i);
+  assert.equal(calls, 0);
+});

@@ -1,3 +1,4 @@
+import { CreateUploadIntentDto, CompleteAttachmentUploadDto } from '../../../data-model-core/presentation/http/data-model-core.dtos';
 // HTTP-boundary validation for the tax module bodies that carry legal evidence.
 //
 // The rest of this controller still takes loose inline body types, which the global ValidationPipe
@@ -55,6 +56,7 @@ export class MarkPnd53FiledDto {
 
 // Bounds come from the shared validator the use case also runs, so the two layers cannot drift.
 export class LinkExternalWhtCertificateDto implements LinkExternalWhtCertificateContract {
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(200) externalAttachmentId?: string | null;
   @IsOptional()
   @IsString()
   @Matches(WHT_LINK_ISSUED_DATE)
@@ -166,3 +168,6 @@ export class IssueWhtCertificateDto {
   @MaxLength(200)
   paymentId?: string;
 }
+
+export class ExternalWhtFileUploadDto extends CreateUploadIntentDto {}
+export class CompleteExternalWhtFileDto extends CompleteAttachmentUploadDto {}

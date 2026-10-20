@@ -197,6 +197,7 @@ export async function awaitingSystemOf(
   request: ReimbursementRequestRecord,
   repo: PrismaReimbursementRepository,
 ): Promise<ReimbursementAwaitingSystem | undefined> {
+  if (request.hasVoidedProjections) return undefined;
   const intent = pendingProjectionIntent(request);
   const inScope = isBranchInScope(ctx.scopes ?? {}, request.branchId);
   if (intent?.kind === 'MANAGER') {

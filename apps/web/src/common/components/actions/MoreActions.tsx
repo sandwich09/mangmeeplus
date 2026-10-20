@@ -10,7 +10,7 @@ export interface MoreActionsProps {
   children: ReactNode;
   variant?: 'text' | 'icon';
   busy?: boolean;
-  /** `end` hangs the list from the button's right edge from 640 px (for a button at the right of a header). Text menus hang from the left on a phone; icon menus keep the chosen edge. */
+  /** `end` hangs the list from the button's right edge, including phone header rows. */
   align?: 'start' | 'end';
   /** `up` opens the list above the button, for a menu that sits in a bar at the bottom of the screen. Default `down`. */
   opens?: 'down' | 'up';

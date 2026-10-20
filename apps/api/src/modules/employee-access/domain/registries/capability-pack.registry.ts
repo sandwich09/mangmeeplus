@@ -496,7 +496,7 @@ const RAW_PACKS: RawPack[] = [
     // and still owes its payee a certificate. An ungated pack wins over a gated one in
     // filterPermissionsByEntitlement, and no PREFIX_FEATURE_RULES entry starts with `wht.`.
     key: 'pack.wht.certificate.manage', module: 'tax',
-    nameTh: 'แนบหนังสือรับรอง 50 ทวิที่ออกเอง', nameEn: 'WHT certificate handoff',
+    nameTh: 'จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ', nameEn: 'WHT certificate handoff',
     description: 'ดูรายการที่ต้องออกหนังสือรับรอง 50 ทวินอกระบบ และแนบหนังสือรับรองที่ออกแล้ว',
     // Correction & replacement plan §2.1: owner confirmed 2026-09-23 this stays ungated — fixing/
     // reissuing a certificate the company already issued is an ongoing compliance obligation, not a

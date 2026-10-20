@@ -141,8 +141,8 @@ const LOCKED_SHELL_CARD_KEYS: ReadonlySet<string> = new Set(['company-profile', 
  * open, ข้อมูลร้าน and บัญชีของฉัน, because every other card leads to a page the term guard refuses.
  * Permissions still decide, so a member without them sees nothing extra by being locked.
  */
-export function filterSettingsMenuItems(userPermissions: readonly string[], locked = false): SettingsMenuItem[] {
-  return SETTINGS_MENU_ITEMS.filter((item) => (!locked || LOCKED_SHELL_CARD_KEYS.has(item.key))
+export function filterSettingsMenuItems(userPermissions: readonly string[], locked = false, systemCertificatesAvailable = true): SettingsMenuItem[] {
+  return SETTINGS_MENU_ITEMS.filter((item) => (!locked || LOCKED_SHELL_CARD_KEYS.has(item.key)) && (systemCertificatesAvailable || item.key !== 'tax-signature')
     && canSeeRoute(item.href, userPermissions));
 }
 
@@ -182,7 +182,7 @@ const SETTINGS_SIDEBAR_KEYS = [
   'tax-signature',
 ] as const;
 
-export function filterSettingsSidebarItems(userPermissions: readonly string[]): SettingsMenuItem[] {
-  const visible = new Map(filterSettingsMenuItems(userPermissions).map((item) => [item.key, item]));
+export function filterSettingsSidebarItems(userPermissions: readonly string[], systemCertificatesAvailable = true): SettingsMenuItem[] {
+  const visible = new Map(filterSettingsMenuItems(userPermissions, false, systemCertificatesAvailable).map((item) => [item.key, item]));
   return SETTINGS_SIDEBAR_KEYS.flatMap((key) => visible.get(key) ?? []);
 }

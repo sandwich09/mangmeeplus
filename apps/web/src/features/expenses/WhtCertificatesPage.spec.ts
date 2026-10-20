@@ -22,6 +22,31 @@ const taxApi = mutable('../tax/tax.api');
 const { WhtCertificateCard, WhtCertificatesPage } = require('./WhtCertificatesPage');
 for (const [ext, loader] of loaders) { if (loader) require.extensions[ext] = loader; else delete require.extensions[ext]; }
 const permissions = ['wht.certificate.issue', 'wht.certificate.correct'];
+test('WHT-OUTSIDE shop availability, independent of the reader role, chooses the three outside tabs or four system tabs', () => {
+  for (const systemCertificatesAvailable of [false, true]) {
+    const view = setup({ permissions: ['wht.certificate.read'], result: { ...data(), counts: { ...data().counts, SYSTEM_ISSUED: 99 } } });
+    Object.assign(view.props, { systemCertificatesAvailable });
+    try {
+      const html = view.render();
+      const tabs = view.find('FilterTabs').tabs;
+      assert.equal(tabs.some((tab: any) => tab.count === 99), systemCertificatesAvailable);
+      assert.deepEqual(tabs.map((tab: any) => tab.label), systemCertificatesAvailable
+        ? ['ยังไม่ออก', 'ออกแล้ว', 'ทำนอกระบบ', 'ยกเลิกแล้ว'] : ['ยังไม่ได้ทำใบ', 'ทำใบแล้ว', 'ยกเลิก']);
+      if (!systemCertificatesAvailable) {
+        assert.match(html, /ทำใบ 50 ทวิ จากแบบฟอร์มกรมสรรพากรหรือโปรแกรมอื่น แล้วจดเลขที่ไว้ที่นี่/);
+        assert.match(html, /ไม่มีรายการที่ต้องทำใบ 50 ทวิ/);
+        assert.doesNotMatch(html, /ออกแล้ว|ลายเซ็น|พิมพ์ใบแทน/);
+      }
+    } finally { view.cleanup(); }
+  }
+});
+
+test('WHT-OUTSIDE server routes pass the shop availability read rather than the reader issue permission', () => {
+  for (const route of ['expenses/wht-certificates/page.tsx', 'expenses/[expenseId]/page.tsx']) {
+    const source = readFileSync(new URL(`../../../app/(workspace)/companies/[companyId]/${route}`, import.meta.url), 'utf8');
+    assert.match(source, /systemCertificatesAvailable=\{shopHasSystemWhtCertificates\(session\?\.entitledFeatureKeys\)\}/);
+  }
+});
 test('every API read permission opens the certificate list without issuing or recording rights', async () => {
   const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
   try {
@@ -86,7 +111,7 @@ test('issued rows route to the certificate section regardless of replacement eli
 });
 
 test('each tab and an unmatched search put its one empty sentence in EmptyState title', () => {
-  const titles = { pending: 'ไม่มีรายการที่ต้องออกหนังสือรับรอง', system: 'ยังไม่มีใบที่ออกในระบบ', external: 'ยังไม่มีรายการที่บันทึกว่าออกเอง', cancelled: 'ไม่มีรายการที่ยกเลิก' };
+  const titles = { pending: 'ไม่มีรายการที่ต้องออกหนังสือรับรอง', system: 'ยังไม่มีใบที่ออกในระบบ', external: 'ยังไม่มีรายการที่ทำนอกระบบ', cancelled: 'ไม่มีรายการที่ยกเลิก' };
   for (const tab of Object.keys(titles) as WhtCertificateTab[]) {
     const view = setup({ tab }); const html = view.render();
     assert.equal(view.find('EmptyState').title, titles[tab]);
@@ -195,7 +220,7 @@ test('list pending cards show no cancelled-certificate history (owner 2026-10-15
     assert.ok(!view.render().includes('เพิ่มที่อยู่ก่อนจึงจะออกหนังสือรับรองได้')); view.cleanup();
   }
   // One set of names for the tabs of the list and the states of the card on the expense page.
-  assert.deepEqual((['pending', 'system', 'external', 'cancelled'] as const).map(tab => workspaceDictionary.th[`expenses.certificates.${tab}`]), ['ยังไม่ออก', 'ออกแล้ว', 'ร้านออกเอง', 'ยกเลิกแล้ว']);
+  assert.deepEqual((['pending', 'system', 'external', 'cancelled'] as const).map(tab => workspaceDictionary.th[`expenses.certificates.${tab}`]), ['ยังไม่ออก', 'ออกแล้ว', 'ทำนอกระบบ', 'ยกเลิกแล้ว']);
 });
 
 
@@ -221,7 +246,7 @@ test('cancelled cards show cancellation date, the history cause and typed reason
     const view = certificateHarness(() => h(WhtCertificateCard, { row: row({ status: 'CANCELLED', certificateNumber: 'WHT-OLD', certificateIssuedAt: '2026-10-09',
       cancellation: { cancelledAt: '2026-10-11T03:00:00Z', eventType, reason: 'บันทึกผิดรายการ' } }), companyId: 'co', permissions, locale: 'th', busy: false, onAction() {} }));
     const html = view.render(); assert.ok(html.includes('ยกเลิกเมื่อ')); assert.ok(!html.includes('ออกเมื่อ'));
-    assert.ok(html.includes(eventType === 'CANCELLED_SOURCE_REOPENED' ? 'เพราะเอกสารถูกแก้ไข' : eventType === 'CANCELLED_SOURCE_VOIDED' ? 'เพราะเอกสารถูกยกเลิก' : 'ยกเลิกการบันทึกหนังสือรับรองที่ออกเอง'));
+    assert.ok(html.includes(eventType === 'CANCELLED_SOURCE_REOPENED' ? 'เพราะเอกสารถูกแก้ไข' : eventType === 'CANCELLED_SOURCE_VOIDED' ? 'เพราะเอกสารถูกยกเลิก' : 'ยกเลิกการบันทึกหนังสือรับรองที่ทำนอกระบบ'));
     assert.ok(html.includes('บันทึกผิดรายการ')); assert.ok(html.includes('WHT-OLD')); view.cleanup();
   }
 });
@@ -450,4 +475,19 @@ test('expense-list typography, padding, rule and hover are reused on every table
   assert.match(css, /\.table \.date \{ font-size: 12px; color: var\(--color-gray-500\)/);
   assert.match(css, /border-bottom: 1px solid var\(--color-gray-50\)/);
   assert.match(css, /tr:hover \{ background: var\(--color-gray-50\)/);
+});
+
+
+test('WHT-OUTSIDE-2 recorded rows show an outside badge and the optional file in both layouts', () => {
+  const view = setup({ rows: [row({ status: 'EXTERNAL_LINKED', externalAttachmentId: 'external-file' })], tab: 'external' });
+  try {
+    const html = view.render();
+    assert.equal(view.nodes.filter(node => node.tag === 'ExpenseCertificateFile').length, 2);
+    for (const node of view.nodes.filter(node => node.tag === 'ExpenseCertificateFile')) {
+      assert.equal(node.props.attachmentId, 'external-file');
+      assert.equal(node.props.handoffId, row().id);
+    }
+    assert.match(html, /ทำนอกระบบ/);
+    assert.equal((html.match(/>ดูไฟล์</g) ?? []).length, 2);
+  } finally { view.cleanup(); }
 });

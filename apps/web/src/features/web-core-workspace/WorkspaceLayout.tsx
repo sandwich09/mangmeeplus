@@ -1,4 +1,5 @@
 'use client';
+import { shopHasSystemWhtCertificates } from '@/features/expenses/expense-wht-certificates.logic';
 import Link from 'next/link';
 import { AccountNameScope, useAccountDisplayName } from '@/features/company-profile/AccountNameScope';
 import { ACCOUNT_NAME_CHANGED_EVENT } from '@/features/company-profile/company-profile.api';
@@ -290,9 +291,9 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
   const canOpenDisbursementVoucher = canOpenDisbursementVoucherWeb(session, companyId);
   const allNavItems = useMemo(
     () => canOpenDisbursementVoucher
-      ? buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, true)
-      : buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual),
-    [filteredModules, companyId, locale, session.permissions, session.roles, canOpenManual, canOpenDisbursementVoucher],
+      ? buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, true, shopHasSystemWhtCertificates(session.entitledFeatureKeys))
+      : buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, false, shopHasSystemWhtCertificates(session.entitledFeatureKeys)),
+    [filteredModules, companyId, locale, session.permissions, session.roles, canOpenManual, canOpenDisbursementVoucher, session.entitledFeatureKeys],
   );
 
   // §15.4.1 E: the Owner asked for a mark on ตั้งค่าบริษัท "จนกว่าจะตั้งครบ". Only the holder of the

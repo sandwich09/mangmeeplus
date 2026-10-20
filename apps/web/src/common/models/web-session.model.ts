@@ -8,6 +8,8 @@ export type WebSession = {
   roleNames?: Record<string, string>;
   /** Display-only package availability; never grants the reader a permission. */
   availablePermissions?: string[];
+  /** Company features, independent of roles; null is the server's legacy all-entitled sentinel. */
+  entitledFeatureKeys?: string[] | null;
   permissions: string[];
   scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';

@@ -11,6 +11,7 @@ import type {
   NotificationItem,
 } from './dashboard-notifications.model';
 import { authedApiFetch, type AuthedInit } from '@/common/api/authed-fetch';
+import type { HomeDateRange } from './dashboard-home.logic';
 
 type RawNotificationItem = Omit<NotificationItem, 'sourceModule' | 'status' | 'read' | 'deliveryChannels'> & {
   sourceRefs?: Array<{ module?: string }>;
@@ -56,18 +57,18 @@ async function apiFetch<T>(path: string, init?: AuthedInit): Promise<T> {
 
 // ---- Dashboard ----
 
-export function getDashboard(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string): Promise<DashboardSnapshot> {
-  return apiFetch(`/v1/companies/${companyId}/dashboard${qs({ periodKind, branchId })}`);
+export function getDashboard(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string, range?: HomeDateRange): Promise<DashboardSnapshot> {
+  return apiFetch(`/v1/companies/${companyId}/dashboard${qs({ periodKind, branchId, ...range })}`);
 }
 
 export function getExpenseMonths(companyId: string, year: number, branchId?: string): Promise<DashboardExpenseMonthsDto> {
   return apiFetch(`/v1/companies/${companyId}/dashboard/expense-months${qs({ year, branchId })}`);
 }
 
-export function generateSnapshot(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string): Promise<DashboardSnapshot> {
+export function generateSnapshot(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string, range?: HomeDateRange): Promise<DashboardSnapshot> {
   return apiFetch(`/v1/companies/${companyId}/dashboard/snapshots/generate`, {
     method: 'POST',
-    body: JSON.stringify({ periodKind, ...(branchId ? { branchId } : {}) }),
+    body: JSON.stringify({ periodKind, ...(branchId ? { branchId } : {}), ...range }),
   });
 }
 

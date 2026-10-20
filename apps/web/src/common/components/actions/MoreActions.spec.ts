@@ -22,11 +22,11 @@ test('with the props it always had the menu renders as before', () => {
   assert.match(renderToStaticMarkup(React.createElement(MoreActions, { label: 'เพิ่มเติม', align: 'end' }, entry)), /^<details class="menu end">/);
 });
 
-test('opens="up" hangs the list above the button, for a menu in a bottom bar; the phone still hangs it from the left', () => {
+test('opens="up" hangs the list above the button and keeps end alignment on phones', () => {
   assert.match(renderToStaticMarkup(React.createElement(MoreActions, { label: 'เพิ่มเติม', opens: 'up', align: 'end' }, entry)), /^<details class="menu end up">/);
   assert.match(css, /\.up > \.panel \{ top: auto; bottom: calc\(100% \+ \.375rem\);/);
-  // The right-edge rule stays inside the 640 px media query, and an outside press still closes the list.
-  assert.match(css, /@media \(min-width: 40rem\) \{ \.end > \.panel \{ inset-inline-start: auto; inset-inline-end: 0; \} \}/);
+  assert.match(css, /^\.end > \.panel \{ inset-inline-start: auto; inset-inline-end: 0; \}/m);
+  assert.match(css, /\.menu:not\(\[open\]\) > \.panel \{ display: none; \}/);
   assert.match(css, /\.menu\[open\] > summary::before \{ content: ''; position: fixed; inset: 0;/);
 });
 

@@ -1,3 +1,4 @@
+import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
 import { uploadPaymentSlip } from '@/common/files/slip-upload.api';
 import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
@@ -814,4 +815,22 @@ export function uploadExpensePaymentSlip(companyId: string, expenseId: string, f
 
 export function confirmExpensePaymentDate(companyId: string, expenseId: string, paymentId: string, paidAt: string) {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/confirm-date`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ paidAt }) });
+}
+
+
+export async function uploadExternalWhtFile(companyId: string, handoffId: string, file: File): Promise<string> {
+  if (file.size <= 0 || file.size > WHT_EXTERNAL_FILE.maxBytes) throw Error(WHT_EXTERNAL_FILE.invalid);
+  file = await prepareAttachmentUpload(file);
+  if (file.size > WHT_EXTERNAL_FILE.maxBytes) throw Error(WHT_EXTERNAL_FILE.invalid);
+  const endpoint = `/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate`;
+  const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(`${endpoint}/file-upload-intent`, {
+    method: 'POST', body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size }),
+  });
+  await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+  await apiFetch(`${endpoint}/file-uploads/${intent.attachmentId}/complete`, { method: 'POST', body: JSON.stringify({ byteSize: file.size }) });
+  return intent.attachmentId;
+}
+
+export function getExternalWhtFile(companyId: string, handoffId: string, attachmentId: string): Promise<{ downloadUrl: string; name: string; mimeType: string }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate/files/${attachmentId}`);
 }

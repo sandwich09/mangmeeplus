@@ -99,7 +99,7 @@ test('paid withholding wiring delegates per-line certificate facts and viewer is
   assert.match(component, /#wht-certificate/);
   assert.match(component, /whitespace-nowrap/);
   assert.equal(word('wht_issue_next'), 'รายการนี้หักภาษี ณ ที่จ่ายไว้ ยังไม่ได้ออกหนังสือรับรอง (50 ทวิ)');
-  assert.equal(word('wht_external_next'), 'รายการนี้หักภาษี ณ ที่จ่ายไว้ ถ้าออกหนังสือรับรองให้ผู้รับเงินเองแล้ว บันทึกไว้ได้ที่หน้ารายจ่าย');
+  assert.equal(word('wht_external_next'), 'รายการนี้หักภาษี ณ ที่จ่ายไว้ ถ้าทำหนังสือรับรองนอกระบบแล้ว บันทึกไว้ได้ที่หน้ารายจ่าย');
 });
 test('cancelled payment lines say which payments remain effective', () => {
   assert.match(page, /const cancelledPayments = disbursementCancelledPaymentLines\(detail\)/);

@@ -36,8 +36,8 @@ test('void gives truthful SYSTEM/EXTERNAL copy, plain footer buttons with the sa
       assert.match(html, /<\/form><button[^>]*>ไม่ยกเลิก<\/button><button[^>]*type="submit"[^>]*mangmee-btn-danger[^>]*>[^<]+<\/button><\/section>/); assert.doesNotMatch(html, /mangmee-safe-bottom|sm:w-auto/);
       assert.equal(dialog.find('Modal').closeOnBackdrop, false);
       assert.equal(html.includes('เลขที่'), Boolean(number));
-      if (kind === 'SYSTEM') assert.doesNotMatch(html, /ระบบยกเลิกใบที่ร้านออกเอง/);
-      else assert.match(html, /ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง/);
+      if (kind === 'SYSTEM') assert.doesNotMatch(html, /ระบบยกเลิกใบที่ทำนอกระบบ/);
+      else assert.match(html, /ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง/);
       assert.equal(expenseCertificateVoidedMessage(dialog.certificate), kind === 'SYSTEM'
         ? `ยกเลิกเอกสารและหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`
         : `ยกเลิกเอกสารแล้ว และยกเลิกการบันทึกหนังสือรับรอง${number ? `เลขที่ ${number}` : ''} แล้ว`);

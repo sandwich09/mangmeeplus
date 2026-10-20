@@ -567,7 +567,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   };
 
   const payoutInStep = step?.key === 'items' || step?.key === 'payment';
-  const payoutCard = (
+  const payoutCard = !detail.hasVoidedProjections && (
     <div ref={payoutBoxRef} className="scroll-mt-[calc(var(--app-header-h)+1rem)] empty:hidden">
       <ClaimPayoutCard plain={payoutInStep}
       companyId={companyId}

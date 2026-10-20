@@ -2009,7 +2009,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     expenseRecord: {
       findMany: async ({ where }: any) => projections.filter((row) => row.companyId === where.companyId
         && row.sourceReimbursementRequestId === where.sourceReimbursementRequestId
-        && (where.sourceReimbursementLineId?.in ?? []).includes(row.sourceReimbursementLineId)),
+        && ((where.sourceReimbursementLineId?.in ?? where.OR?.[0]?.sourceReimbursementLineId?.in ?? []).includes(row.sourceReimbursementLineId)
+          || (where.OR?.[1]?.status === 'VOIDED' && row.status === 'VOIDED'))),
     },
     attachmentObject: {
       findFirst: async ({ where }: any) => files.find((file) => rowMatches(file, where)) ?? null,
@@ -3215,4 +3216,52 @@ it('keeps resolved expense comparisons after the duplicate blocker is cleared', 
  const detail = await detailWithFileNames(repo, { ...fakeDetailEvidence, canReadExpense: async () => true } as any, 'co-1', req, ctx([]));
  assert.equal(detail.duplicateCandidates[0]?.documentNumber, 'EXP-OTHER');
  assert.equal(detail.duplicateCandidates[0]?.resolvedByName, 'สมศรี');
+});
+
+
+describe('CLAIM-VOIDED-PROJ permanent projection refusal', () => {
+  const refusesVoided = (error: any) => error.getStatus?.() === 409 && error.message === 'reimbursement_projection_voided';
+  it('refuses a voided projection before recording any payment and does not turn it into a transient false', async () => {
+    const h = atomicPaymentHarness(undefined, false, [claimProjection({ status: 'VOIDED' })]);
+    await assert.rejects(() => h.repo.recordPaymentAtomic(atomicPaymentInput), refusesVoided);
+    assert.equal(h.state().payments.length, 0);
+    const historical = atomicPaymentHarness(undefined, false, [claimProjection(), claimProjection({ id: 'old-expense', sourceReimbursementLineId: 'old-line', status: 'VOIDED' })]);
+    await assert.rejects(() => historical.repo.recordPaymentAtomic(atomicPaymentInput), refusesVoided);
+    assert.equal(historical.state().payments.length, 0);
+    const projection = claimProjection({ status: 'VOIDED' });
+    const repo = new PrismaReimbursementRepository({ client: { expenseRecord: { findMany: async () => [projection] } } } as any, {} as any);
+    const request = { ...financeReviewedRequest(), lines: [claimLine()] };
+    await assert.rejects(() => repo.areClaimProjectionsReady(request), refusesVoided);
+    projection.status = 'DRAFT';
+    assert.equal(await repo.areClaimProjectionsReady(request), false);
+  });
+  it('refuses settlement before journal lookup when any projection was voided', async () => {
+    const repo = new PrismaReimbursementRepository({ client: {
+      reimbursementPayment: { findFirst: async () => ({ request: { ...financeReviewedRequest(), lines: [claimLine()] } }) },
+      expenseRecord: { findMany: async () => [claimProjection({ status: 'VOIDED' })] },
+      journalEntry: { findFirst: async () => { throw Error('must refuse before posting'); } },
+    } } as any, {} as any);
+    await assert.rejects(() => repo.assertSettlementPostingReady('co-1', 'pay-1'), refusesVoided);
+  });
+  it('the orchestrator gives the same permanent refusal instead of attempting confirmation', async () => {
+    const { ReimbursementProjectionOrchestratorService } = await import('../services/reimbursement-projection-orchestrator.service');
+    const projection = claimProjection({ status: 'VOIDED' });
+    const orchestrator = new ReimbursementProjectionOrchestratorService({ listClaimProjections: async () => [projection] } as any,
+      { findByIdWithRelations: async () => projection } as any, {} as any,
+      { executeForReimbursement: async () => { throw Error('must not confirm'); } } as any, noopAudit);
+    await assert.rejects(() => orchestrator.reconcileExisting(ctx([]), { ...financeReviewedRequest(), lines: [claimLine()] }, true), refusesVoided);
+  });
+  it('detail reads expose the scoped count of voided projections and keep cancelled claims terminal', async () => {
+    const { toRequestDetail } = await import('../dto/reimbursement.mapper');
+    let status = 'READY_FOR_PAYMENT';
+    const repo = new PrismaReimbursementRepository({ client: { reimbursementRequest: { findFirst: async ({ where, include }: any) => {
+      assert.deepEqual(where, { id: 'rb-1', companyId: 'co-1' });
+      assert.deepEqual(include._count, { select: { sourceExpenses: { where: { status: 'VOIDED' } } } });
+      return { ...financeReviewedRequest(), status, _count: { sourceExpenses: 1 }, lines: [] };
+    } } } } as any, {} as any);
+    const request = (await repo.findRequestById('co-1', 'rb-1', true))!;
+    assert.equal((toRequestDetail(request) as any).hasVoidedProjections, true);
+    status = 'CANCELLED';
+    assert.equal((toRequestDetail((await repo.findRequestById('co-1', 'rb-1', true))!) as any).hasVoidedProjections, undefined);
+  });
 });

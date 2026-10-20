@@ -218,3 +218,11 @@ describe('attachment bytes for evidence bundles', () => {
     assert.equal(storage.getObject.mock.callCount(), 1, 'every refusal occurs before object storage');
   });
 });
+
+it('WHT-OUTSIDE-2 generic downloads never bypass the external certificate handoff boundary', async () => {
+  const storage = makeStorage();
+  const repo = makeRepo({ ...makeAttachment(), metadataJson: { generatedFor: 'wht.external_certificate' } });
+  const useCase = new CreateDownloadUrlUseCase(repo as any, storage as any, makeAudit() as any);
+  await assert.rejects(() => useCase.execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' }), (error: any) => error.getResponse().code === 'wht_external_file_read_denied');
+  assert.equal(storage.createDownloadUrl.mock.callCount(), 0);
+});

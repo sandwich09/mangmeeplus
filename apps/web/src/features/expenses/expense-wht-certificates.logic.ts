@@ -46,3 +46,8 @@ export function certificateRowHref(companyId: string, row: WhtCertificateRow, pe
   }
   return `/companies/${companyId}/expenses${row.expenseId ? `/${row.expenseId}?section=${section}` : ''}`;
 }
+
+/** Match the entitlement evaluator: null is the legacy all-entitled sentinel, not a role grant. */
+export function shopHasSystemWhtCertificates(entitledFeatureKeys: readonly string[] | null | undefined): boolean {
+  return entitledFeatureKeys === null || entitledFeatureKeys?.includes('wht_50bis') === true;
+}

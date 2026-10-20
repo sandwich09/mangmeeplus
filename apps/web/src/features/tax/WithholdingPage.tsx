@@ -19,6 +19,7 @@ import { downloadArtifact } from '@/common/files/download-artifact';
 import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import { downloadSystemWhtCertificate } from '../expenses/expenses.api';
 import { amountText } from '../expenses/ExpensesUi';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import { MoreActions } from '@/common/components/actions/MoreActions';
 import styles from '../expenses/WhtCertificatesPage.module.css';
 import { confirmWithholdingRows, exportWithholding, getWithholdingMonth, listWithholdingMonths, markWithholdingFiled, syncWithholding } from './tax.api';
@@ -105,7 +106,7 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
     </ActionGroup>}
   </section>;
 }
-export function WithholdingPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
+export function WithholdingPage({ companyId, permissions, systemCertificatesAvailable = true }: { companyId: string; permissions: string[]; systemCertificatesAvailable?: boolean }) {
   const [months, setMonths] = useState<string[]>([]);
   const [periodKey, setPeriodKey] = useState('');
   const [month, setMonth] = useState<WithholdingMonthDto | null>(null);
@@ -209,7 +210,7 @@ export function WithholdingPage({ companyId, permissions }: { companyId: string;
         <MangmeeCard className="min-w-0 space-y-4 p-4">
           <h2 ref={listHeading} className="scroll-mt-4 text-lg font-semibold">รายการที่หักภาษีของเดือนนี้</h2>
           <FilterTabs aria-label="แบบภาษี" value={filter} onChange={value => { setFilter(value); setPage(1); }} tabs={[{ key: 'ALL', label: 'ทั้งหมด' }, { key: 'PND3', label: 'ภ.ง.ด.3' }, { key: 'PND53', label: 'ภ.ง.ด.53' }].map(tab => ({ ...tab, count: month.payments.filter(row => tab.key === 'ALL' || row.formType === tab.key).length }))} />
-          {paged.rows.length === 0 ? <p>เดือนนี้ไม่มีรายการ</p> : <WithholdingPayments rows={paged.rows} month={month} companyId={companyId} order={order} onOrder={() => { setOrder(order === 'newest' ? 'oldest' : 'newest'); setPage(1); }} onOpen={href => router.push(href)} certificateBusy={certificateBusy} onCertificate={id => void certificate(id)} />}
+          {paged.rows.length === 0 ? <p>เดือนนี้ไม่มีรายการ</p> : <WithholdingPayments systemCertificatesAvailable={systemCertificatesAvailable} rows={paged.rows} month={month} companyId={companyId} order={order} onOrder={() => { setOrder(order === 'newest' ? 'oldest' : 'newest'); setPage(1); }} onOpen={href => router.push(href)} certificateBusy={certificateBusy} onCertificate={id => void certificate(id)} />}
           {paged.totalPages > 1 && <Pagination prominent page={Math.min(page, paged.totalPages)} totalPages={paged.totalPages} onPageChange={next => { setPage(next); listHeading.current?.scrollIntoView({ block: 'start' }); }} />}
         </MangmeeCard>
       </>}
@@ -251,8 +252,8 @@ function WithholdingFixes({ month, forms, companyId, permissions, unknownIssues 
   </MangmeeCard></div>;
 }
 
-export function WithholdingPayments({ rows, month, companyId, order, onOrder, onOpen, certificateBusy, onCertificate }: {
-  rows: WithholdingMonthDto['payments']; month: WithholdingMonthDto; companyId: string; order: 'newest' | 'oldest'; onOrder: () => void;
+export function WithholdingPayments({ rows, month, companyId, order, onOrder, onOpen, certificateBusy, onCertificate, systemCertificatesAvailable = true }: {
+  systemCertificatesAvailable?: boolean; rows: WithholdingMonthDto['payments']; month: WithholdingMonthDto; companyId: string; order: 'newest' | 'oldest'; onOrder: () => void;
   onOpen: (href: string) => void; certificateBusy: string | null; onCertificate: (id: string) => void;
 }) {
   const sort = <button type="button" className="min-h-11 text-left" aria-label={order === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า'} onClick={onOrder}>วันที่จ่าย {order === 'newest' ? '↓' : '↑'}</button>;
@@ -269,7 +270,7 @@ export function WithholdingPayments({ rows, month, companyId, order, onOrder, on
   };
   const name = (row: WithholdingMonthDto['payments'][number]) => <><div className={styles.name}>{row.payeeName || 'ไม่มีชื่อผู้รับเงิน'}</div>{row.establishment?.kind === 'ESTABLISHMENT' && (month.establishments?.length ?? 0) > 1 ? <p className={styles.number}>ยื่นโดย {row.establishment.name}</p> : row.establishment?.kind === 'BRANCH_HAS_NO_CODE' ? <p className={styles.number}>ยังไม่มีรหัสสาขาภาษี</p> : null}</>;
   const income = (row: WithholdingMonthDto['payments'][number]) => <>{row.incomeCategoryLabel ?? 'ยังไม่ได้เลือกประเภทเงินได้'}{row.rate && ` · ${Number(row.rate)}%`}</>;
-  const certificate = (row: WithholdingMonthDto['payments'][number]) => <><MangmeeBadge tone={row.certificate?.state === 'SYSTEM_ISSUED' ? 'brand' : 'slate'} className={styles.badge}>{row.certificate?.state === 'SYSTEM_ISSUED' ? 'ออกแล้ว' : row.certificate?.state === 'EXTERNAL_LINKED' ? 'ร้านออกเอง' : row.certificate?.state === 'CANCELLED' ? 'ยกเลิกแล้ว' : 'ยังไม่ออก'}</MangmeeBadge>{row.certificate?.number && <p className={styles.number}>{row.certificate.number}</p>}{row.certificate?.canDownload && <button type="button" aria-label="ดาวน์โหลดหนังสือรับรอง" className={`${button} mt-2 !min-w-0 !px-2`} disabled={certificateBusy === row.certificate.handoffId} aria-busy={certificateBusy === row.certificate.handoffId} onClick={event => { event.stopPropagation(); onCertificate(row.certificate!.handoffId); }}>ดาวน์โหลด</button>}</>;
+  const certificate = (row: WithholdingMonthDto['payments'][number]) => <><MangmeeBadge tone={row.certificate?.state === 'SYSTEM_ISSUED' ? 'brand' : 'slate'} className={styles.badge}>{row.certificate?.state === 'SYSTEM_ISSUED' ? 'ออกแล้ว' : row.certificate?.state === 'EXTERNAL_LINKED' ? t(systemCertificatesAvailable ? 'expenses.certificates.external' : 'expenses.certificates.outside_external', 'th') : row.certificate?.state === 'CANCELLED' ? 'ยกเลิกแล้ว' : 'ยังไม่ออก'}</MangmeeBadge>{row.certificate?.number && <p className={styles.number}>{row.certificate.number}</p>}{systemCertificatesAvailable && row.certificate?.canDownload && <button type="button" aria-label="ดาวน์โหลดหนังสือรับรอง" className={`${button} mt-2 !min-w-0 !px-2`} disabled={certificateBusy === row.certificate.handoffId} aria-busy={certificateBusy === row.certificate.handoffId} onClick={event => { event.stopPropagation(); onCertificate(row.certificate!.handoffId); }}>ดาวน์โหลด</button>}</>;
   return <div className={styles.section}>
     <div className={styles.phoneSort}>{sort}</div>
     <table className={styles.table}><colgroup>{[22, 11, 8, 21, 13, 13, 12].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup><thead><tr><th>ผู้รับเงิน</th><th>{sort}</th><th>แบบ</th><th>ประเภทเงินได้</th><th className={`${styles.money} !whitespace-normal`}>ยอดจ่าย (บาท)</th><th className={`${styles.money} !whitespace-normal`}>ภาษีที่หักไว้ (บาท)</th><th className={styles.status}>50 ทวิ</th></tr></thead>

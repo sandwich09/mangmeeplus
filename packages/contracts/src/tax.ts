@@ -438,13 +438,15 @@ export const WHT_CERTIFICATE_HISTORY_EVENT_LABELS: Record<WhtCertificateHistoryE
   CORRECTED: 'แก้ไขหนังสือรับรอง ออกใบใหม่แทนใบนี้',
   CANCELLED_SOURCE_REOPENED: 'ยกเลิก เพราะเอกสารถูกแก้ไข',
   CANCELLED_SOURCE_VOIDED: 'ยกเลิก เพราะเอกสารถูกยกเลิก',
-  EXTERNAL_RECORDED: 'บันทึกว่าออกหนังสือรับรองเองแล้ว',
-  EXTERNAL_RECORD_REMOVED: 'ยกเลิกการบันทึกหนังสือรับรองที่ออกเอง',
-  EXTERNAL_RECORD_CHANGED: 'แก้ไขการบันทึกหนังสือรับรองที่ออกเอง',
+  EXTERNAL_RECORDED: 'จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบแล้ว',
+  EXTERNAL_RECORD_REMOVED: 'ยกเลิกการบันทึกหนังสือรับรองที่ทำนอกระบบ',
+  EXTERNAL_RECORD_CHANGED: 'แก้ไขการบันทึกหนังสือรับรองที่ทำนอกระบบ',
   PAYEE_ADDRESS_CLEARED: 'ล้างที่อยู่ผู้รับเงิน เพราะเลขผู้เสียภาษีเปลี่ยน',
 };
 
 export type WhtCertificateHistoryDto = {
+  handoffId?: string;
+  externalAttachmentId?: string | null;
   eventType: WhtCertificateHistoryEventType;
   certificateNumber: string | null;
   isExternal: boolean;
@@ -481,6 +483,7 @@ export type WhtHandoffPrefillDto = {
 };
 
 export type WhtCertificateHandoffDto = {
+  externalAttachmentId?: string | null;
   payments?: Array<{ id: string; paidAt: string; paidAtConfirmed: boolean; amount: string; grossAmount?: string; withheldAmount?: string }>;
   id: string;
   companyId: string;
@@ -599,6 +602,7 @@ export type SetWhtHandoffPayeeAddressDto = { payeeAddress: string };
 export const WHT_HANDOFF_PAYEE_ADDRESS_MAX = 500;
 
 export type LinkExternalWhtCertificateDto = {
+  externalAttachmentId?: string | null;
   paymentDate?: string;
   paymentId?: string;
   commandId: string;
@@ -614,17 +618,17 @@ export type ChangeExternalWhtCertificateDto = LinkExternalWhtCertificateDto;
 export type RemoveExternalWhtCertificateDto = { commandId: string; expectedUpdatedAt: string; reason: string };
 
 export const WHT_EXTERNAL_RECORD_WORDS = {
-  removePermissionDenied: 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ออกเองได้ลบให้',
+  removePermissionDenied: 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ทำนอกระบบได้ลบให้',
   removeInvalid: 'กรอกเหตุผล 3–500 ตัวอักษร แล้วลองลบการบันทึกอีกครั้ง',
   removeRequestInvalid: 'ข้อมูลรายการเปลี่ยนแล้ว เปิดหน้านี้ใหม่แล้วลองลบการบันทึกอีกครั้ง',
-  removedManually: 'ลบการบันทึกว่าออกเอง',
+  removedManually: 'ลบการบันทึกว่าทำนอกระบบ',
 
   notLinkable: 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
-  alreadyLinked: 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"',
+  alreadyLinked: 'รายจ่ายนี้บันทึกหนังสือรับรองที่ทำนอกระบบไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"',
   noChanges: 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข',
   invalid: 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง ตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง',
-  futureDate: 'วันที่ออกต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง',
-  permissionDenied: 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้',
+  futureDate: 'วันที่ทำใบต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง',
+  permissionDenied: 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบแก้ไขให้',
   commandReused: 'คำขอนี้ถูกใช้บันทึกข้อมูลอื่นไปแล้ว เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
 } as const;
 
@@ -950,8 +954,8 @@ export type WithholdingMonthsDto = { months: string[] };
 
 /** No system certificate until these income types can be printed on their proper form. */
 export function whtCertificateUnsupportedReason(code?: string | null, formType?: string | null): string | null {
-  if (formType === 'PND2' || code === 'WHT_INTEREST' || code === 'WHT_DIVIDEND_IND') return 'ประเภทนี้ยื่น ภ.ง.ด.2 ระบบยังออกหนังสือรับรอง 50 ทวิให้ไม่ได้ ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง';
-  if (code === 'WHT_DIVIDEND') return 'ระบบยังออกหนังสือรับรอง 50 ทวิสำหรับเงินปันผลไม่ได้ ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง';
+  if (formType === 'PND2' || code === 'WHT_INTEREST' || code === 'WHT_DIVIDEND_IND') return 'ประเภทนี้ยื่น ภ.ง.ด.2 ระบบยังออกหนังสือรับรอง 50 ทวิให้ไม่ได้ ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้';
+  if (code === 'WHT_DIVIDEND') return 'ระบบยังออกหนังสือรับรอง 50 ทวิสำหรับเงินปันผลไม่ได้ ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้';
   return null;
 }
 export function whtFilingRouteHint(category?: { code: string; formType: string; filingRoute?: string } | null): string | null {
@@ -960,3 +964,22 @@ export function whtFilingRouteHint(category?: { code: string; formType: string; 
   if (category.code === 'WHT_OTHER_IND' || category.code === 'WHT_OTHER_JUR') return 'บอกผู้ทำบัญชีว่าเป็นเงินได้อะไร ผู้ทำบัญชีต้องจัดทำแบบของเดือนนี้เอง';
   return `ระบบยังกรอกประเภทนี้ลงแบบไม่ได้ ผู้ทำบัญชีต้องจัดทำ ${category.formType === 'PND3' ? 'ภ.ง.ด.3' : 'ภ.ง.ด.53'} ของเดือนนี้เอง`;
 }
+
+
+export const WHT_EXTERNAL_FILE = {
+  target: 'wht.external_certificate', purpose: 'wht.external_certificate.evidence', maxBytes: 10 * 1024 * 1024,
+  label: 'แนบรูปหรือ PDF ของใบ (ถ้ามี)',
+  hint: 'ใบนี้ทำจากนอกระบบ ระบบเก็บเลขที่และไฟล์ไว้ให้ค้นเจอเท่านั้น',
+  invalid: 'แนบรูปหรือ PDF ของใบ ไม่เกิน 10 เมกะไบต์ แล้วลองอีกครั้ง',
+  readFromRecord: 'เปิดไฟล์นี้จากใบ 50 ทวิ ที่จดเลขที่ไว้',
+  retained: 'ไฟล์นี้เก็บไว้ในประวัติใบ 50 ทวิ เปลี่ยนหรือนำไฟล์ออกจากการจดเลขที่ใบแทน',
+} as const;
+
+export function whtPaymentProgressText(systemCertificatesAvailable: boolean, complete: boolean) {
+  return complete
+    ? systemCertificatesAvailable ? 'จ่ายครบและมีหนังสือรับรองแล้ว' : 'จ่ายครบ และทำใบ 50 ทวิ นอกระบบแล้ว'
+    : systemCertificatesAvailable ? 'จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ' : 'จ่ายครบแล้ว ยังไม่ได้ทำใบ 50 ทวิ';
+}
+export const WHT_OUTSIDE_BEFORE_PAYMENT = 'บันทึกการจ่ายก่อน แล้วค่อยจดเลขที่ใบ 50 ทวิ';
+
+export const WHT_OUTSIDE_PAYMENT_DATE_REQUIRED = 'ระบุวันที่จ่ายจริงในรายการจ่ายก่อน แล้วค่อยจดเลขที่ใบ 50 ทวิ';

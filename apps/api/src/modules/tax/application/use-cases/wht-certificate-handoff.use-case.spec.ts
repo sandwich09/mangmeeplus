@@ -1136,7 +1136,7 @@ describe('C5 self-issued record changes and list context', () => {
     for (const over of [{ reason: '' }, { reason: ' ab ' }, { reason: 'x'.repeat(501) }, { reason: null }, { commandId: '' }, { commandId: 'x'.repeat(201) }, { expectedUpdatedAt: 'bad' }]) {
       await assert.rejects(h.remove(recorder, { ...h.body, ...over }), (error: any) => error.getStatus() === 400);
     }
-    await assert.rejects(h.remove(ctx), refuses('wht_handoff_external_remove_permission_denied', 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ออกเองได้ลบให้'));
+    await assert.rejects(h.remove(ctx), refuses('wht_handoff_external_remove_permission_denied', 'คุณไม่มีสิทธิ์ลบการบันทึกนี้ ให้ผู้ที่บันทึกหนังสือรับรองที่ทำนอกระบบได้ลบให้'));
     assert.equal(h.history.length, 1); assert.equal(h.rows[0].status, 'EXTERNAL_LINKED');
   });
   it('C15 removal refuses a source no longer confirmed and hides handoffs outside company, branch or expense scope', async () => {
@@ -1168,7 +1168,7 @@ describe('C5 self-issued record changes and list context', () => {
     const h = await linked();
     const result = await h.change();
     const { WHT_CERTIFICATE_HISTORY_EVENT_LABELS } = await import('@watchdog-bms/contracts');
-    assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.EXTERNAL_RECORD_CHANGED, 'แก้ไขการบันทึกหนังสือรับรองที่ออกเอง');
+    assert.equal(WHT_CERTIFICATE_HISTORY_EVENT_LABELS.EXTERNAL_RECORD_CHANGED, 'แก้ไขการบันทึกหนังสือรับรองที่ทำนอกระบบ');
     assert.equal(result.externalCertificateNumber, changed.externalCertificateNumber);
     assert.equal(result.externalIssuedDate, '2026-07-21T00:00:00.000Z');
     assert.equal(result.externalEvidenceRef, 'new-ref'); assert.equal(result.linkNote, 'ใหม่');
@@ -1209,7 +1209,7 @@ describe('C5 self-issued record changes and list context', () => {
       assert.equal(h.rows[0].externalCertificateNumber, 'EXT-OLD');
     }
     const h = await linked();
-    await assert.rejects(h.change(ctx), refuses('wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้'));
+    await assert.rejects(h.change(ctx), refuses('wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบแก้ไขให้'));
   });
   it('C5 no-op and invalid or future dates refuse with their sentences while keeping the standing record', async () => {
     const h = await linked();
@@ -1218,7 +1218,7 @@ describe('C5 self-issued record changes and list context', () => {
     for (const over of [{ commandId: '' }, { commandId: 'x'.repeat(201) }, { note: {} }, { externalCertificateNumber: ' ' }, { externalCertificateNumber: 'x'.repeat(101) }, { externalEvidenceRef: 'x'.repeat(501) }, { note: 'x'.repeat(1001) }, { issuedDate: '2026-02-31' }, { issuedDate: '2026-07-21T00:00:00Z' }]) {
       await assert.rejects(h.change(recorder, { ...changed, ...over }), refuses('wht_handoff_external_record_invalid', invalidMessage));
     }
-    await assert.rejects(h.change(recorder, { ...changed, issuedDate: '2099-01-01' }), refuses('wht_handoff_external_issued_date_future', 'วันที่ออกต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง'));
+    await assert.rejects(h.change(recorder, { ...changed, issuedDate: '2099-01-01' }), refuses('wht_handoff_external_issued_date_future', 'วันที่ทำใบต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง'));
     assert.equal(h.rows[0].externalCertificateNumber, 'EXT-OLD'); assert.equal(h.history.length, 1);
   });
   it('changing or removing an unfiled payment is allowed when another establishment is filed', async () => {
@@ -1327,7 +1327,7 @@ describe('C5 self-issued record changes and list context', () => {
   });
   it('C5 recording refusals describe recording instead of uploads without changing their codes', async () => {
     const h = await linked();
-    await assert.rejects(h.value.linkExternal(recorder, h.id, { ...original, commandId: 'second-record' }), refuses('wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'));
+    await assert.rejects(h.value.linkExternal(recorder, h.id, { ...original, commandId: 'second-record' }), refuses('wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ทำนอกระบบไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'));
     h.rows[0].status = 'SYSTEM_ISSUED';
     await assert.rejects(h.value.linkExternal(recorder, h.id, changed), refuses('wht_handoff_not_linkable', notLinkable));
   });
@@ -1449,4 +1449,121 @@ it('W1 recording an external certificate also refuses an unpaid expense', async 
 it('handoff list query accepts only newest or oldest order', () => {
   for (const order of [undefined, 'newest', 'oldest']) assert.equal(validateSync(Object.assign(new WhtCertificateHandoffListQueryDto(), { order })).length, 0);
   for (const order of ['', 'desc', 'invalid', ['newest']]) assert.ok(validateSync(Object.assign(new WhtCertificateHandoffListQueryDto(), { order })).some(error => error.property === 'order'));
+});
+
+
+describe('WHT-OUTSIDE-2 external certificate files', () => {
+  it('attaches, replaces and removes the current file while retaining history links', async () => {
+    const { retainExternalWhtFile, externalWhtFiles } = await import('../services/wht-external-file');
+    const links: any[] = [];
+    const db = { attachmentObject: { findFirst: async ({ where }: any) => ({ id: where.id, companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 100, metadataJson: { generatedFor: 'wht.external_certificate', handoffId: 'handoff' }, links: [] }) }, attachmentLink: { upsert: async ({ create }: any) => { links.push(create); } } } as any;
+    const writer = { ...ctx, permissions: ['wht.external_certificate.link'] };
+    await retainExternalWhtFile(db, writer, 'handoff', 'file-1');
+    await retainExternalWhtFile(db, writer, 'handoff', 'file-2');
+    await retainExternalWhtFile(db, writer, 'handoff', null);
+    assert.deepEqual(links.map(row => row.attachmentId), ['file-1', 'file-2']);
+    const history = (id: string | null) => [{ handoffId: 'handoff', eventType: 'EXTERNAL_RECORD_CHANGED', detailsJson: { externalAttachmentId: id } }];
+    assert.equal(externalWhtFiles(history('file-1')).get('handoff'), 'file-1');
+    assert.equal(externalWhtFiles(history('file-2')).get('handoff'), 'file-2');
+    assert.equal(externalWhtFiles(history(null)).get('handoff'), null);
+  });
+  it('refuses missing permission, another company, unscanned and non-certificate files', async () => {
+    const { retainExternalWhtFile } = await import('../services/wht-external-file');
+    let file: any = null;
+    const db = { attachmentObject: { findFirst: async ({ where }: any) => file?.companyId === where.companyId ? file : null } } as any;
+    await assert.rejects(() => retainExternalWhtFile(db, ctx, 'handoff', 'file'), (error: any) => error.getStatus() === 403);
+    const writer = { ...ctx, permissions: ['wht.external_certificate.link'] };
+    for (const over of [{ companyId: 'other' }, { status: 'QUARANTINED' }, { mimeType: 'text/plain' }, { byteSize: 10485761 }, { metadataJson: {} }]) {
+      file = { companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE', mimeType: 'image/png', byteSize: 100, metadataJson: { generatedFor: 'wht.external_certificate', handoffId: 'handoff' }, links: [], ...over };
+      await assert.rejects(() => retainExternalWhtFile(db, writer, 'handoff', 'file'), (error: any) => error.getStatus() === 400);
+    }
+  });
+});
+
+it('WHT-OUTSIDE-2 real link/change/read paths keep the file pointer, retain prior files, and allow explicit removal', async () => {
+  const h = makeStore();
+  const created = await h.value.createOrReplay(baseInput);
+  const recorder = { ...ctx, permissions: ['wht.external_certificate.link'] };
+  const links: any[] = [];
+  h.client.attachmentObject = { findFirst: async ({ where }: any) => ({ id: where.id, companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE', mimeType: 'application/pdf', byteSize: 100,
+    metadataJson: { generatedFor: 'wht.external_certificate', handoffId: created.id }, links: [] }) };
+  h.client.attachmentLink = { upsert: async ({ create }: any) => { links.push(create); } };
+  h.client.taxPeriod = { findMany: async () => [] };
+  h.client.whtCertificateHistory.findMany = async ({ where }: any) => h.history.filter(row => matches(row, where)).reverse();
+  const body = { commandId: 'external-file-record', externalCertificateNumber: 'OUT-1', externalEvidenceRef: '', issuedDate: '2026-07-20', externalAttachmentId: 'file-1' };
+  const first = await h.value.linkExternal(recorder, created.id, body);
+  assert.equal(first.externalAttachmentId, 'file-1');
+  assert.equal((await h.value.listPaged(recorder)).rows[0].externalAttachmentId, 'file-1');
+  const replaced = await h.value.changeExternal(recorder, created.id, { ...body, commandId: 'replace-file', externalAttachmentId: 'file-2' });
+  assert.equal(replaced.externalAttachmentId, 'file-2');
+  const removed = await h.value.changeExternal(recorder, created.id, { ...body, commandId: 'remove-file', externalAttachmentId: null });
+  assert.equal(removed.externalAttachmentId, null);
+  assert.equal(removed.externalCertificateNumber, 'OUT-1');
+  assert.equal(removed.externalIssuedDate?.slice(0, 10), '2026-07-20');
+  assert.deepEqual(links.map(link => link.attachmentId), ['file-1', 'file-2']);
+  assert.deepEqual(h.history.map(event => event.detailsJson.externalAttachmentId), ['file-1', 'file-2', null]);
+});
+
+it('WHT-OUTSIDE-2 file reads share the handoff permission, company, branch and related-expense boundary', async () => {
+  const h = makeStore();
+  const created = await h.value.createOrReplay({ ...baseInput, sourceBranchId: 'branch-1' });
+  let signed = 0;
+  Object.assign(h.value, { storage: { createDownloadUrl: async () => { signed++; return { url: '/signed/file', expiresAt: new Date() }; } } });
+  h.client.attachmentObject = { findFirst: async ({ where }: any) => {
+    assert.equal(where.companyId, ctx.companyId); assert.equal(where.status, 'ACTIVE');
+    assert.deepEqual(where.links.some, { companyId: ctx.companyId, targetType: 'wht.external_certificate', targetId: created.id, purpose: 'wht.external_certificate.evidence' });
+    return where.id === 'file-1' ? { originalFileName: 'ใบ.pdf', mimeType: 'application/pdf', bucket: 'files', objectKey: 'file-1' } : null;
+  } };
+  const reader = { ...ctx, permissions: ['wht.certificate.read'] };
+  assert.equal((await h.value.externalFile(reader, created.id, 'file-1')).downloadUrl, '/signed/file');
+  for (const actor of [{ ...reader, companyId: 'other' }, { ...reader, scopes: { branchIds: ['branch-2'] } }, { ...reader, permissions: [] }]) {
+    await assert.rejects(() => h.value.externalFile(actor, created.id, 'file-1'), (error: any) => [403, 404].includes(error.getStatus()));
+  }
+  await assert.rejects(() => h.value.externalFile(reader, created.id, 'foreign-file'), (error: any) => error.getStatus() === 404);
+  h.rows[0].sourcePaymentType = 'expense.record'; h.rows[0].sourcePaymentId = 'unreadable-expense';
+  h.client.expenseRecord.findFirst = async () => null;
+  await assert.rejects(() => h.value.externalFile(reader, created.id, 'file-1'), (error: any) => error.getStatus() === 404);
+  assert.equal(signed, 1);
+});
+
+it('WHT-OUTSIDE-2 upload delegates to the existing scanner only for the same scoped handoff and writer', async () => {
+  const h = makeStore();
+  const created = await h.value.createOrReplay({ ...baseInput, sourceBranchId: 'branch-1' });
+  const recorder = { ...ctx, permissions: ['wht.external_certificate.link'] };
+  const calls: any[] = [];
+  Object.assign(h.value, { uploadIntent: { execute: async (...args: any[]) => { calls.push(args); return { attachmentId: 'file-1' }; } }, completeUpload: { execute: async (...args: any[]) => { calls.push(args); return { status: 'ACTIVE' }; } } });
+  const file = { originalFileName: 'ใบ.pdf', mimeType: 'application/pdf', byteSize: 100 };
+  await h.value.externalFileIntent(recorder, created.id, file);
+  assert.deepEqual(calls[0][1], { ...file, branchId: 'branch-1', visibility: 'INTERNAL', metadataJson: { generatedFor: 'wht.external_certificate', handoffId: created.id } });
+  h.client.attachmentObject = { findFirst: async ({ where }: any) => {
+    assert.equal(where.companyId, ctx.companyId); assert.equal(where.uploadedByUserId, ctx.userId);
+    return { metadataJson: { generatedFor: 'wht.external_certificate', handoffId: created.id } };
+  } };
+  await h.value.completeExternalFile(recorder, created.id, { attachmentId: 'file-1', byteSize: 100 });
+  assert.deepEqual(calls[1][1], { attachmentId: 'file-1', byteSize: 100 });
+  for (const actor of [{ ...recorder, companyId: 'other' }, { ...recorder, scopes: { branchIds: ['branch-2'] } }, { ...recorder, permissions: [] }]) {
+    await assert.rejects(() => h.value.externalFileIntent(actor, created.id, file));
+    await assert.rejects(() => h.value.completeExternalFile(actor, created.id, { attachmentId: 'file-1' }));
+  }
+  h.client.attachmentObject.findFirst = async () => ({ metadataJson: { generatedFor: 'wht.external_certificate', handoffId: 'other-handoff' } });
+  await assert.rejects(() => h.value.completeExternalFile(recorder, created.id, { attachmentId: 'file-1' }));
+  assert.equal(calls.length, 2);
+});
+
+
+it('WHT-OUTSIDE-2 an upload on the expense-wide handoff follows the first payment-specific external record', async () => {
+  const h = makeStore();
+  const created = await h.value.createOrReplay({ ...baseInput, sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' });
+  h.rows[0].prefillSnapshotJson = { ...prefill, incomeCategoryCode: 'SERVICE' };
+  h.client.whtCertificateHandoff.createMany = async ({ data }: any) => { for (const row of data) await h.table.create({ data: row }); };
+  h.client.whtCertificateHandoff.findUniqueOrThrow = h.table.findUnique;
+  const links: any[] = [];
+  h.client.attachmentObject = { findFirst: async ({ where }: any) => ({ id: where.id, companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE', mimeType: 'image/png', byteSize: 100,
+    metadataJson: { generatedFor: 'wht.external_certificate', handoffId: created.id }, links: links.filter(link => link.attachmentId === where.id) }) };
+  h.client.attachmentLink = { upsert: async ({ create }: any) => { links.push(create); } };
+  const writer = { ...ctx, permissions: ['expense.read', 'wht.external_certificate.link'] };
+  const result = await h.value.linkExternal(writer, created.id, { commandId: 'first-payment-file', externalCertificateNumber: 'OUT-1', externalEvidenceRef: '', issuedDate: '2026-07-20', paymentId: 'p1', externalAttachmentId: 'photo' });
+  assert.notEqual(result.id, created.id);
+  assert.equal(result.externalAttachmentId, 'photo');
+  assert.equal(links[0].targetId, result.id);
 });

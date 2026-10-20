@@ -592,11 +592,11 @@ test('disbursement command refusals use the server Thai sentence and keep diagno
 test('C5 self-issued record refusals have their Thai fallback and keep the server sentence', () => {
   for (const [code, message] of [
     ['wht_handoff_not_linkable', 'บันทึกไม่ได้ เพราะมีผู้ออกหรือบันทึกหนังสือรับรองของรายจ่ายนี้ไปก่อนแล้ว หรือเอกสารถูกแก้ไขหรือยกเลิก เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด'],
-    ['wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ออกเองไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'],
+    ['wht_handoff_already_linked', 'รายจ่ายนี้บันทึกหนังสือรับรองที่ทำนอกระบบไว้แล้ว ถ้าข้อมูลผิด ให้ใช้ "แก้ไขการบันทึก"'],
     ['wht_handoff_external_record_no_changes', 'ข้อมูลตรงกับที่บันทึกไว้อยู่แล้ว จึงไม่มีอะไรต้องแก้ไข'],
     ['wht_handoff_external_record_invalid', 'ข้อมูลที่บันทึกไม่ครบหรือไม่ถูกต้อง ตรวจเลขที่ วันที่ เลขอ้างอิง และหมายเหตุ แล้วบันทึกอีกครั้ง'],
-    ['wht_handoff_external_issued_date_future', 'วันที่ออกต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง'],
-    ['wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ออกเองแก้ไขให้'],
+    ['wht_handoff_external_issued_date_future', 'วันที่ทำใบต้องไม่เกินวันนี้ เลือกวันที่แล้วบันทึกอีกครั้ง'],
+    ['wht_handoff_external_change_permission_denied', 'คุณไม่มีสิทธิ์แก้ไขการบันทึกหนังสือรับรองนี้ ให้ผู้ที่มีสิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบแก้ไขให้'],
   ]) {
     assert.equal(translateApiError(code), message);
     const server = 'ข้อมูลเปลี่ยนแล้ว กรุณาเปิดหน้านี้ใหม่ก่อนบันทึก';

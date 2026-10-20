@@ -15,7 +15,7 @@ import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { AFTER_PRESS, FIRST_SIGHT, inOrder, pressForDownload, pressMenu, recordExpenseByHand } from './journey-kit';
 
 const SHOP = 'seed-local-package-shop';
-const SELF_ISSUE = 'ร้านต้องออกหนังสือรับรองให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้';
+const SELF_ISSUE = 'แพ็กนี้ทำใบ 50 ทวิ ในระบบไม่ได้ ทำนอกระบบแล้วจดเลขที่ไว้';
 type ExpenseDetail = { status: string; paymentStatus: string; whtAmount: string };
 
 async function adminPage(browser: Browser) {

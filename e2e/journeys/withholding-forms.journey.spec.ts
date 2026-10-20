@@ -267,6 +267,7 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
 
   await test.step('the 50 ทวิ row lands on the expense certificate and downloads the same paper', async () => {
     await main.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
+    await expect(main.getByRole('link', { name: 'ดูหนังสือรับรอง 50 ทวิ', exact: true })).toBeInViewport({ ratio: 1 });
     await main.getByRole('link', { name: 'ดูหนังสือรับรอง 50 ทวิ', exact: true }).click();
     await expect(main.getByRole('heading', { level: 1, name: 'หนังสือรับรอง 50 ทวิ', exact: true })).toBeVisible(FIRST_SIGHT);
     await main.getByRole('button', { name: /^ออกแล้ว/ }).click();

@@ -1,3 +1,4 @@
+import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
 import { Injectable, ForbiddenException, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import type { AttachmentRecord } from '../../domain/models/attachment.model';
@@ -26,6 +27,7 @@ export class DeleteAttachmentUseCase {
 
     const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
     if (!existing) throw new NotFoundException('Attachment not found.');
+    if (existing.metadataJson?.['generatedFor'] === WHT_EXTERNAL_FILE.target) throw new ForbiddenException({ code: 'wht_external_file_retained', message: WHT_EXTERNAL_FILE.retained });
     if (await this.attachments.isDisbursementVoucherFile({ id: existing.id, companyId: ctx.companyId })) {
       void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.delete', targetType: 'attachment', targetId: existing.id,
         requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'disbursement_voucher_file_retained' } });

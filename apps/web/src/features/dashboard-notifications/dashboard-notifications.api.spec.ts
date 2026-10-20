@@ -39,6 +39,15 @@ function captureRequest(): { url?: string; body?: string } {
   return request;
 }
 
+it('HOME-RANGE reads and refreshes custom civil dates without dropping the branch', async () => {
+  const range = { customStart: '2026-09-01', customEnd: '2026-09-30' };
+  const request = captureRequest();
+  await getDashboard('c1', 'custom', 'b1', range);
+  assert.equal(request.url, '/api/v1/companies/c1/dashboard?periodKind=custom&branchId=b1&customStart=2026-09-01&customEnd=2026-09-30');
+  await generateSnapshot('c1', 'custom', 'b1', range);
+  assert.deepEqual(JSON.parse(request.body!), { periodKind: 'custom', branchId: 'b1', ...range });
+});
+
 describe('dashboard-notifications.api branch scope', () => {
   it('sends the selected branch as a query param on the dashboard read', async () => {
     const request = captureRequest();

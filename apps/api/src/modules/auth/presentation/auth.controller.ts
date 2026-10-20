@@ -1052,6 +1052,7 @@ export class AuthController {
       roles,
       // Display-only metadata for the caller's held roles; role keys still decide authorization.
       availablePermissions: req.context.availablePermissions,
+      entitledFeatureKeys: req.context.entitledFeatureKeys,
       roleNames: Object.fromEntries((membership?.roles ?? []).map(({ role }) => [role.key, role.name])),
       permissions,
       scopes,

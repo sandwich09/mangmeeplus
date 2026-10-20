@@ -124,3 +124,10 @@ describe('LinkAttachmentUseCase', () => {
     assert.equal(repository.linkToTarget.mock.callCount(), 0);
   });
 });
+
+it('WHT-OUTSIDE-2 generic links cannot expose a certificate file as an ordinary receipt', async () => {
+  const h = setup();
+  h.repository.findById = mock.fn(async () => ({ ...attachment, metadataJson: { generatedFor: 'wht.external_certificate' } }));
+  await assert.rejects(() => h.useCase.execute(context(['attachment.create', 'expense.update']), { attachmentId: 'att-1', targetType: 'expense.record', targetId: 'expense', purpose: 'expense.receipt.primary' }), (error: any) => error.getResponse().code === 'wht_external_file_retained');
+  assert.equal(h.repository.linkToTarget.mock.callCount(), 0);
+});

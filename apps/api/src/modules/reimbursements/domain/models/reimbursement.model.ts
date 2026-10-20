@@ -206,6 +206,7 @@ export type ReimbursementPayoutCorrectionLogEntry = {
 };
 
 export type ReimbursementRequestRecord = {
+  hasVoidedProjections?: true;
   id: string;
   companyId: string;
   branchId?: string;

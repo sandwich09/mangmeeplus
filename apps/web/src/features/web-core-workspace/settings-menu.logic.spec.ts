@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { shopHasSystemWhtCertificates } from '../expenses/expense-wht-certificates.logic';
 import {
   LOCKED_ACCOUNT_CARD,
   PACKAGE_MENU,
@@ -14,6 +15,21 @@ import { WORKSPACE_MODULES } from './web-core-workspace.constants';
 import { findRoutePermissionRule } from './route-permissions';
 
 describe('settings menu', () => {
+  it('WHT-OUTSIDE hides signature setup by shop availability even when the reader manages signatures', () => {
+    const permissions = ['company.tax_signature.manage'];
+    for (const available of [false, true]) {
+      assert.equal(filterSettingsMenuItems(permissions, false, available).some(item => item.key === 'tax-signature'), available);
+      assert.equal(filterSettingsSidebarItems(permissions, available).some(item => item.key === 'tax-signature'), available);
+    }
+    assert.equal(shopHasSystemWhtCertificates(undefined), false);
+    assert.equal(shopHasSystemWhtCertificates(null), true, 'the server null sentinel means every feature is entitled for an unconfigured legacy shop');
+    assert.equal(shopHasSystemWhtCertificates(['wht.certificate.read', 'company.tax_signature.manage']), false);
+    assert.equal(shopHasSystemWhtCertificates(['wht.certificate.issue']), false);
+    assert.equal(shopHasSystemWhtCertificates(['thai_tax']), false);
+    assert.equal(shopHasSystemWhtCertificates(['wht_50bis']), true);
+    const route = readFileSync(new URL('../../../app/(workspace)/companies/[companyId]/settings/tax-signature/page.tsx', import.meta.url), 'utf8');
+    assert.match(route, /!shopHasSystemWhtCertificates\(session\?\.entitledFeatureKeys\).*redirect\(/);
+  });
   it('defines the guided setup entry and existing settings cards on registered routes', () => {
     assert.deepEqual(
       SETTINGS_MENU_ITEMS.map(({ title, href }) => [title, href]),

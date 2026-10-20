@@ -956,7 +956,7 @@ describe('claim certificate cancellation (A7)', () => {
       const h = await world(kind, number);
       await assert.rejects(h.cancel.execute(requester(), 'rb-1', 'ข้อมูลผิด'), (error: any) => {
         assert.equal(error.getResponse().code, 'reimbursement_cancellation_certificate_permission_missing');
-        assert.equal(error.getResponse().message, `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM' ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ' : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้ฝ่ายการเงินหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`);
+        assert.equal(error.getResponse().message, `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM' ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ' : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบ'} ให้ฝ่ายการเงินหรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`);
         return true;
       });
       assert.equal(h.state.request.cancellationPendingAt, undefined);

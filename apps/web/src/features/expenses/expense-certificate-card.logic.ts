@@ -1,4 +1,4 @@
-import { isCivilDate, todayCivilDate, type WhtCertificateHandoffDto, type LinkExternalWhtCertificateDto, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
+import { WHT_OUTSIDE_BEFORE_PAYMENT, WHT_OUTSIDE_PAYMENT_DATE_REQUIRED, isCivilDate, todayCivilDate, type WhtCertificateHandoffDto, type LinkExternalWhtCertificateDto, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
 export function certificateCardAction(row: Pick<WhtCertificateHandoffListRowDto, 'status' | 'systemIssuanceOpen' | 'missing'>, permissions: readonly string[]): 'issue' | 'record' | 'download' | null {
@@ -9,8 +9,10 @@ export function certificateCardAction(row: Pick<WhtCertificateHandoffListRowDto,
 }
 
 /** Another person issued or recorded this certificate while the dialog was open: this card's own sentence, not the server's. */
-export function certificateRecordRefusal(cause: unknown): string | null {
+export function certificateRecordRefusal(cause: unknown, systemCertificatesAvailable = true): string | null {
   const code = (cause as { code?: unknown } | null)?.code;
+  if (!systemCertificatesAvailable && code === 'wht_certificate_payment_required') return WHT_OUTSIDE_BEFORE_PAYMENT;
+  if (!systemCertificatesAvailable && code === 'wht_certificate_payment_date_required') return WHT_OUTSIDE_PAYMENT_DATE_REQUIRED;
   return code === 'wht_handoff_not_linkable' || code === 'wht_handoff_already_linked' ? t('expenses.certificate_card.record_taken', 'th') : null;
 }
 
@@ -20,7 +22,7 @@ export function selfIssuedCertificateBody(values: SelfIssuedCertificateValues, c
   if (!isCivilDate(values.date)) throw Error(t('expenses.certificate_card.date_required', 'th'));
   if (values.date > today) throw Error(t('expenses.certificate_card.future_date', 'th'));
   if (!isCivilDate(values.paymentDate)) throw Error('ระบุวันที่จ่ายจากหนังสือรับรองเดิม');
-  if (values.paymentDate > values.date) throw Error('วันที่ออกต้องไม่ก่อนวันที่จ่าย ตรวจวันที่จากหนังสือรับรองเดิม');
+  if (values.paymentDate > values.date) throw Error('วันที่ทำใบต้องไม่ก่อนวันที่จ่าย ตรวจวันที่จากหนังสือรับรองเดิม');
   if (values.date > today) throw Error(t('expenses.certificate_card.future_date', 'th'));
   return { commandId, externalCertificateNumber: values.number.trim(), issuedDate: values.date, paymentDate: values.paymentDate, externalEvidenceRef: values.reference.trim(), note: values.note.trim() || undefined };
 }

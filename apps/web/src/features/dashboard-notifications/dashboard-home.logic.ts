@@ -1,3 +1,28 @@
+import { addCivilDays, civilPeriodRange, isCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
+import { formatThaiDate } from '@/common/i18n/thai-date';
+
+export type HomeDateRange = { customStart: string; customEnd: string };
+
+export function lastMonthHomeRange(now = new Date()): HomeDateRange {
+  const lastDay = addCivilDays(`${todayCivilDate('Asia/Bangkok', now).slice(0, 7)}-01`, -1);
+  const { startDate, endDate } = civilPeriodRange(lastDay.slice(0, 7));
+  return { customStart: startDate, customEnd: endDate };
+}
+
+export function homeRangeErrors(range: HomeDateRange, today = todayCivilDate()): Partial<HomeDateRange> {
+  return {
+    ...(!isCivilDate(range.customStart) && { customStart: 'เลือกวันที่ตั้งแต่' }),
+    ...(!isCivilDate(range.customEnd) ? { customEnd: 'เลือกวันที่ถึง' }
+      : range.customEnd > today ? { customEnd: 'ถึงต้องไม่เกินวันนี้' }
+        : isCivilDate(range.customStart) && range.customEnd < range.customStart ? { customEnd: 'ถึงต้องไม่ก่อนตั้งแต่' } : {}),
+  };
+}
+
+export function homeRangeLabel(range: HomeDateRange): string {
+  const from = formatThaiDate(range.customStart);
+  return `${range.customStart.slice(0, 4) === range.customEnd.slice(0, 4) ? from.replace(/ \d{4}$/, '') : from} – ${formatThaiDate(range.customEnd)}`;
+}
+
 /** The manual force-generate endpoint is gated by this key on the API; everyone else refreshes via the plain GET. */
 export const SNAPSHOT_GENERATE_PERMISSION = 'dashboard.snapshot.generate';
 

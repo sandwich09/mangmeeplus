@@ -48,6 +48,7 @@ export class ResolveRequestContextUseCase {
       roles: resolved.roles,
       permissions: resolved.permissions,
       availablePermissions: resolved.availablePermissions,
+      entitledFeatureKeys: resolved.entitledFeatureKeys,
       entitlementDeniedPermissions: resolved.entitlementDeniedPermissions,
       scopes: resolved.scopes,
       authProvider,

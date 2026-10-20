@@ -466,16 +466,16 @@ test('@journey a plain shop keeps withholding and explains the certificate and f
     },
   });
   const main = owner.locator('main');
-  await expect(main.getByText('ร้านต้องออกหนังสือรับรองให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้', { exact: true })).toBeVisible(AFTER_PRESS);
-  await expect(main.getByRole('button', { name: 'บันทึกว่าออกหนังสือรับรองเองแล้ว', exact: true })).toBeEnabled();
+  await expect(main.getByText('แพ็กนี้ทำใบ 50 ทวิ ในระบบไม่ได้ ทำนอกระบบแล้วจดเลขที่ไว้', { exact: true })).toBeVisible(AFTER_PRESS);
+  await expect(main.getByRole('button', { name: 'จดเลขที่ใบ 50 ทวิ', exact: true })).toBeEnabled();
   const saved = await json<ExpenseDetail>(await api.get(`companies/${shop}/expenses/${expense.expenseId}`, { headers: { 'X-Company-Id': shop } }));
   expect(saved.status).toBe('CONFIRMED');
   expect(saved.paymentStatus).toBe('PAID');
   expect(Number(saved.whtAmount)).toBe(30);
   expect(Number(saved.paidAmount)).toBe(970);
-  await main.getByRole('button', { name: 'บันทึกว่าออกหนังสือรับรองเองแล้ว', exact: true }).click();
-  const dialog = owner.getByRole('dialog', { name: 'บันทึกว่าออกหนังสือรับรองเองแล้ว', exact: true });
-  await expect(dialog.getByRole('textbox', { name: 'เลขที่หนังสือรับรอง', exact: true })).toBeVisible();
+  await main.getByRole('button', { name: 'จดเลขที่ใบ 50 ทวิ', exact: true }).click();
+  const dialog = owner.getByRole('dialog', { name: 'จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ', exact: true });
+  await expect(dialog.getByRole('textbox', { name: 'เลขที่ใบ', exact: true })).toBeVisible();
   const paidDate = dialog.getByRole('combobox', { name: 'วันที่จ่ายตามหนังสือรับรองเดิม', exact: true });
   await expect(paidDate).toHaveText(thaiDate(new Date(saved.payments[0]!.paidAt)));
   await paidDate.click();
@@ -485,6 +485,25 @@ test('@journey a plain shop keeps withholding and explains the certificate and f
   await expect(days.first()).toBeInViewport({ ratio: 1 });
   await expect(days.last()).toBeInViewport({ ratio: 1 });
   await paidDate.press('Escape');
-  await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
+  await expect(main).toContainText('จ่ายครบแล้ว ยังไม่ได้ทำใบ 50 ทวิ');
+  await expect(dialog.getByText('ใบนี้ทำจากนอกระบบ ระบบเก็บเลขที่และไฟล์ไว้ให้ค้นเจอเท่านั้น', { exact: true })).toBeVisible();
+  const externalNumber = unique('OUT');
+  await dialog.getByRole('textbox', { name: 'เลขที่ใบ', exact: true }).fill(externalNumber);
+  await dialog.getByRole('combobox', { name: 'วันที่ทำใบ', exact: true }).click();
+  await owner.getByRole('button', { name: 'วันนี้', exact: true }).click();
+  await dialog.getByLabel('แนบรูปหรือ PDF ของใบ (ถ้ามี)', { exact: true }).setInputFiles(picture('ใบ-50-ทวิ.png'));
+  await dialog.getByRole('button', { name: 'บันทึก', exact: true }).click();
+  await expect(dialog).toHaveCount(0, AFTER_PRESS);
+  await expect(toast(owner, 'จดเลขที่แล้ว ย้ายไป "ทำใบแล้ว"')).toBeVisible(AFTER_PRESS);
+  await expect(main).toContainText('จ่ายครบ และทำใบ 50 ทวิ นอกระบบแล้ว', AFTER_PRESS);
+  const certificate = main.locator('section').filter({ has: owner.getByRole('heading', { name: 'หนังสือรับรอง 50 ทวิ', exact: true }) }).last();
+  await expect(certificate).toContainText(externalNumber);
+  await expect(certificate.getByText('ทำนอกระบบ', { exact: true })).toBeVisible();
+  await certificate.getByRole('button', { name: 'ดูไฟล์', exact: true }).filter({ visible: true }).click();
+  const preview = owner.getByRole('dialog', { name: 'ใบ-50-ทวิ.png', exact: true });
+  const image = preview.getByRole('img');
+  await expect(image).toBeVisible(AFTER_PRESS);
+  await expect.poll(() => image.evaluate(node => (node as HTMLImageElement).naturalWidth), AFTER_PRESS).toBeGreaterThan(0);
+  await preview.getByRole('button', { name: 'ปิด', exact: true }).click();
 
 });

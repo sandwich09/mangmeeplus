@@ -71,7 +71,7 @@ for (const kind of ['SYSTEM', 'EXTERNAL']) for (const number of ['WT-1', null]) 
       companyId: 'shop', expenseId: 'expense', paymentId, payments, certificate,
       children: (warning: React.ReactNode) => h('section', null, warning, h('label', null, 'เหตุผล')),
     }));
-    const expected = (kind === 'SYSTEM' ? 'หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)' : 'การบันทึกหนังสือรับรองที่ออกเอง')
+    const expected = (kind === 'SYSTEM' ? 'หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)' : 'การบันทึกหนังสือรับรองที่ทำนอกระบบ')
       + (number ? (kind === 'SYSTEM' ? ' เลขที่ ' : 'เลขที่ ') + number : '')
       + ' ของเอกสารนี้ยังอยู่ การยกเลิกการจ่ายไม่ยกเลิกหนังสือรับรอง';
     const html = render('payment');

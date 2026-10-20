@@ -364,6 +364,7 @@ export function toRequestDetail(
       allowMissingReceiptWithReason: extras.allowMissingReceiptWithReason,
       approverNames: displayNames,
     }),
+    ...(r.hasVoidedProjections && { hasVoidedProjections: true as const }),
     lines: (r.lines ?? []).map((l) => toLineSummary(l, l.attachmentId ? lineAttachmentFileNames[l.attachmentId] : undefined)),
     createdByName: displayNames[r.createdByUserId],
     currentApproverUserId: r.currentApproverUserId,

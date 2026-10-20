@@ -12,6 +12,8 @@ export type RequestContext = {
   roles: string[];
   /** Display-only package availability; never grants the reader a permission. */
   availablePermissions?: string[];
+  /** Display-only company feature metadata from the existing permission resolution. */
+  entitledFeatureKeys?: string[] | null;
   permissions: string[];
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: {

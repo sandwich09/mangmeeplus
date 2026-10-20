@@ -450,10 +450,21 @@ it('G2: expenses guide names the current list, check steps and evidence controls
 it('G2: sold tax instructions name certificate, signature and PND53 controls', () => {
   const guide = buildTaxGuide('co', ['wht.certificate.issue', 'wht.pnd53.read', 'company.tax_signature.manage']);
   const text = sentences(guide).join(' ');
-  for (const label of ['หนังสือรับรอง 50 ทวิ', 'ยังไม่ออก', 'ร้านออกเอง', 'ดาวน์โหลดหนังสือรับรอง', 'ลายเซ็นบน 50 ทวิ',
+  for (const label of ['หนังสือรับรอง 50 ทวิ', 'ยังไม่ออก', 'ทำนอกระบบ', 'ดาวน์โหลดหนังสือรับรอง', 'ลายเซ็นบน 50 ทวิ',
     'พิมพ์แล้วเซ็นเอง', 'ใส่รูปลายเซ็นให้อัตโนมัติ', 'ดึงรายการล่าสุด', 'ดาวน์โหลดแบบ ภ.ง.ด.3', 'ดาวน์โหลดแบบ ภ.ง.ด.53', 'บันทึกว่ายื่นแล้ว', '10 รายการ', 'ดาวน์โหลดรายการให้ผู้ทำบัญชี', 'ต้องจัดทำ ภ.ง.ด.2 แยก']) assert.ok(text.includes(label), label);
   for (const href of ['/companies/co/expenses/wht-certificates', '/companies/co/settings/tax-signature', '/companies/co/tax/withholding']) assert.ok(links(guide).includes(href), href);
   assert.deepEqual(links(buildTaxGuide('co', [])), []);
+});
+
+it('WHT-OUTSIDE guides external recording without system printing or signature settings for a shop without the feature', () => {
+  const permissions = ['wht.certificate.read', 'wht.external_certificate.link', 'company.tax_signature.manage'];
+  const guide = buildTaxGuide('co', permissions, false);
+  const text = sentences(guide).join(' ');
+  for (const phrase of ['ทำใบ 50 ทวิ จากแบบฟอร์มกรมสรรพากรหรือโปรแกรมอื่น แล้วจดเลขที่ไว้ที่นี่', 'จดเลขที่ใบ 50 ทวิ',
+    'เลขที่ใบ', 'วันที่ทำใบ', 'เก็บใบจริงไว้ที่ (ไม่บังคับ)', 'แนบไฟล์ได้ถ้ามี']) assert.ok(text.includes(phrase), phrase);
+  assert.doesNotMatch(text, /ออกเลขที่และดาวน์โหลด|ดาวน์โหลดหนังสือรับรอง|ลายเซ็นบน 50 ทวิ/);
+  assert.ok(links(guide).includes('/companies/co/expenses/wht-certificates'));
+  assert.ok(!links(guide).includes('/companies/co/settings/tax-signature'));
 });
 
 it('FIX-Q3 tax guide names the three actions in Thai and every required self-issued certificate field', () => {
@@ -464,8 +475,8 @@ it('FIX-Q3 tax guide names the three actions in Thai and every required self-iss
   const block = guide.sections.find(section => section.id === 'wht')!.blocks[0]!;
   assert.equal(block.kind, 'items');
   if (block.kind !== 'items') return;
-  const instructions = block.items.find(item => item.title === 'ร้านออกหนังสือรับรองเอง')!.detail;
-  for (const field of ['เลขที่หนังสือรับรอง', 'วันที่จ่ายตามหนังสือรับรองเดิม', 'วันที่ออก']) assert.ok(instructions.includes(`“${field}”`), field);
+  const instructions = block.items.find(item => item.title === 'ทำหนังสือรับรองนอกระบบ')!.detail;
+  for (const field of ['เลขที่ใบ', 'วันที่จ่ายตามหนังสือรับรองเดิม', 'วันที่ทำใบ']) assert.ok(instructions.includes(`“${field}”`), field);
 });
 
 describe('the reports guide uses the words the reports page shows', () => {

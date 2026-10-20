@@ -258,9 +258,9 @@ describe('reopen certificate cancellation notices (A5)', () => {
       assert.deepEqual(await h.execute(), { id: 'exp-1', status: 'NEEDS_REVIEW', cancelledCertificate: { kind: isExternal ? 'EXTERNAL' : 'SYSTEM', number: 'WT-1' } });
       assert.deepEqual(h.notices, [{ companyId: 'co-1', triggerKey: 'expense.wht_certificate_cancelled',
         sourceModule: 'expenses', sourceType: 'expense_record', sourceId: 'exp-1', periodKey: '1', severity: 'info',
-        title: isExternal ? 'ยกเลิกการบันทึกแล้ว: หนังสือรับรองที่ออกเอง เลขที่ WT-1' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ เลขที่ WT-1',
+        title: isExternal ? 'ยกเลิกการบันทึกแล้ว: ใบ 50 ทวิ ที่ทำนอกระบบ เลขที่ WT-1' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ เลขที่ WT-1',
         body: isExternal
-          ? 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกหนังสือรับรองที่ออกเองด้วย เหตุผล: ข้อมูลผิด เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่'
+          ? 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกใบ 50 ทวิ ที่ทำนอกระบบด้วย เหตุผล: ข้อมูลผิด เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่'
           : 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกหนังสือรับรองใบเดิม เหตุผล: ข้อมูลผิด เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่',
         deepLinkHref: '/companies/co-1/expenses/exp-1#wht-certificate', recipientUserIds: ['issuer-1'] }]);
     });
@@ -277,7 +277,7 @@ describe('reopen certificate cancellation notices (A5)', () => {
   });
   for (const isExternal of [false, true]) it(`omits the number wording when a ${isExternal ? 'recorded paper' : 'system certificate'} has no number`, async () => {
     const h = await run(isExternal, 'issuer-1', [1], false, null); await h.execute();
-    assert.equal(h.notices[0].title, isExternal ? 'ยกเลิกการบันทึกแล้ว: หนังสือรับรองที่ออกเอง' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ');
+    assert.equal(h.notices[0].title, isExternal ? 'ยกเลิกการบันทึกแล้ว: ใบ 50 ทวิ ที่ทำนอกระบบ' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ');
     assert.equal(h.notices[0].deepLinkHref, '/companies/co-1/expenses/exp-1#wht-certificate');
   });
 });

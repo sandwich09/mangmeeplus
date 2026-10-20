@@ -4,6 +4,12 @@ import { accessContextFingerprint } from './workspace-scope.api';
 import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
 
 describe('accessContextFingerprint', () => {
+  it('WHT-OUTSIDE refreshes shop presentation when wht_50bis changes without a role permission change', () => {
+    const reader = { roles: ['EMPLOYEE'], permissions: ['wht.certificate.read'] };
+    const outside = accessContextFingerprint({ ...reader, entitledFeatureKeys: ['expenses'] });
+    assert.notEqual(outside, accessContextFingerprint({ ...reader, entitledFeatureKeys: ['expenses', 'wht_50bis'] }));
+    assert.equal(outside, accessContextFingerprint({ ...reader, entitledFeatureKeys: ['expenses', 'thai_tax', 'inventory'] }));
+  });
   it('ignores server ordering while detecting permission, role, and branch-scope changes', () => {
     const first = accessContextFingerprint({
       roles: ['ACCOUNTANT', 'ADMIN'],
@@ -62,7 +68,7 @@ describe('accessContextFingerprint', () => {
     const unrelated = { ...base, displayName: 'ชื่อใหม่', legalAcceptanceRequired: true, entitledFeatureKeys: ['expenses', 'inventory'] };
     assert.equal(accessContextFingerprint(base), accessContextFingerprint(unrelated));
     assert.deepEqual(Object.keys(JSON.parse(accessContextFingerprint(base))).sort(),
-      ['branchIds', 'disbursementVoucherWebEntry', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles']);
+      ['branchIds', 'disbursementVoucherWebEntry', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles', 'systemWhtCertificates']);
   });
 
   it('changes when the disbursement-voucher setting changes without a permission change', () => {

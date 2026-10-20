@@ -24,7 +24,7 @@ test('claim cancellation explains each certificate kind, omits absent numbers, a
     try {
       const html = dialog.render();
       assert.match(html, kind === 'SYSTEM' ? /ใบเบิกนี้มีรายจ่ายที่ออกหนังสือรับรอง/ : /ใบเบิกนี้มีรายจ่ายที่บันทึกไว้ว่าออกหนังสือรับรอง/);
-      assert.match(html, kind === 'SYSTEM' ? /ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วย/ : /ระบบยกเลิกหนังสือรับรองที่คุณออกเองให้ไม่ได้ ยกเลิกใบนั้นเอง/);
+      assert.match(html, kind === 'SYSTEM' ? /ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วย/ : /ระบบยกเลิกหนังสือรับรองที่ทำนอกระบบให้ไม่ได้ ยกเลิกใบนั้นเอง/);
       assert.equal(html.includes(t('wht.print_certificate', 'th')), kind === 'SYSTEM');
       if (kind === 'EXTERNAL') assert.match(html, /ให้ทำใบเบิกใหม่ด้วยข้อมูลที่ถูก แล้วบันทึกหนังสือรับรองใบใหม่/);
       assert.match(html, /ถ้าเคยส่งใบให้ผู้รับเงินแล้ว แจ้งผู้รับเงินว่าใบนี้ยกเลิก/);

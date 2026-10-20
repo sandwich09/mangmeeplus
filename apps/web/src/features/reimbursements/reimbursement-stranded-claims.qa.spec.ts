@@ -19,7 +19,7 @@ require.extensions['.css'] = module => { module.exports = { menu: 'menu', panel:
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
 const {
-  activeJourneyStep, buildClaimTimeline, buildJourneySteps, errorText, queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote,
+  activeJourneyStep, buildClaimTimeline, buildJourneySteps, errorText, opensPaymentFormOnArrival, queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote,
 } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const { claimIsBeingCancelled, claimStatusBadge, currentDeskText, reimbursementOwnActions } = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
@@ -653,4 +653,26 @@ it('a confirmed duplicate shows cancellation throughout the page and offers no p
   assert.doesNotMatch(text, /พร้อมจ่าย|กำลังรอ สมศรี บันทึกจ่าย|ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง/);
   const steps = buildJourneySteps(detail, OWNER, 'owner');
   assert.equal(steps.some(step => step.actions.includes('send-back')), false);
+});
+
+
+it('CLAIM-VOIDED-PROJ replaces an impossible payment with the explanation and existing cancel dialog', () => {
+  const detail = claim({ hasVoidedProjections: true, payout: { payoutMethod: 'CASH', payoutKind: 'CASH', version: 1 }, payoutCorrectionActions: { canRequest: true } });
+  const viewer = { userId: 'owner', permissions: OWNER };
+  const html = claimPage(detail, viewer);
+  const card = stepCard(html);
+  const sentence = 'รายการค่าใช้จ่ายของใบเบิกนี้ถูกยกเลิกไปแล้ว จ่ายใบนี้ไม่ได้ ยกเลิกใบเบิกนี้แล้วทำใบใหม่';
+  assert.equal(errorText(new Error('reimbursement_projection_voided')), sentence);
+  assert.ok(visible(html).includes(sentence));
+  const step = activeJourneyStep(buildJourneySteps(detail, OWNER, 'owner'))!;
+  assert.equal(opensPaymentFormOnArrival(true, step), false, 'a queue pay link cannot open the form either');
+  assert.ok(step.actions.includes('cancel'));
+  assert.ok(!step.actions.includes('pay'));
+  assert.ok(!step.actions.includes('send-back'));
+  assert.ok(card.buttons.some(label => label.includes('ยกเลิกใบเบิก')));
+  assert.ok(!card.buttons.some(label => label.startsWith('บันทึกจ่าย')));
+  assert.doesNotMatch(visible(html).join(' '), /โอนตามบัญชี|จ่ายเงินสดให้ผู้เบิก/);
+  const dialog = withDialog(detail, viewer, 'cancel', 'ยกเลิกใบเบิก RB-202610-00007', 'ทำใบเบิกใหม่แทนใบเดิม');
+  assert.deepEqual(button(dialog, 'ยกเลิกใบเบิก'), { shown: true, disabled: false });
+  assert.ok(visible(dialog).includes('ไม่ยกเลิก'));
 });

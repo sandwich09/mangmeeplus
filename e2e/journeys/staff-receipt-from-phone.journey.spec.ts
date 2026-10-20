@@ -147,7 +147,17 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
     await row.getByText(vendor, { exact: true }).filter({ visible: true }).first().click();
     await expect(ownerMain.getByRole('heading', { level: 1, name: vendor, exact: true })).toBeVisible(FIRST_SIGHT);
     await expect(ownerMain.locator('[aria-current="step"]').filter({ hasText: 'ตรวจข้อมูล' })).toBeVisible();
-    await expect(ownerMain.getByRole('img', { name: receipt.name })).toBeVisible();
+    const files = ownerMain.getByTestId('expense-attachment-list');
+    if (await files.isVisible()) {
+      await files.locator(':scope > div').filter({ hasText: receipt.name }).getByRole('button', { name: 'ดูไฟล์', exact: true }).click();
+      const viewer = owner.getByRole('dialog', { name: receipt.name, exact: true });
+      await expect(viewer.getByRole('img', { name: receipt.name, exact: true })).toBeVisible(AFTER_PRESS);
+      await expect(viewer.locator('[data-preview-status]')).toHaveAttribute('data-preview-status', 'ready', AFTER_PRESS);
+      await viewer.getByRole('button', { name: 'ปิด', exact: true }).click();
+      await expect(viewer).toBeHidden();
+    } else {
+      await expect(ownerMain.getByRole('img', { name: receipt.name, exact: true })).toBeVisible();
+    }
     await expect(ownerMain.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true })).toHaveValue(vendor);
     await expect(ownerMain.getByRole('combobox', { name: 'วันที่เอกสาร', exact: true })).toHaveText(today);
     await expect(ownerMain.getByRole('spinbutton', { name: 'ราคาต่อหน่วย', exact: true })).toHaveValue('85');
