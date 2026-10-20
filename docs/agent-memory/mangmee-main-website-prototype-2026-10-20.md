@@ -205,3 +205,17 @@ Verification:
 - All contrast pairs computed ≥ 7.09:1 for text; selected vs unselected option fill 8.25:1.
 - No btn-gold/btn-ghost/btn-out/btn-green left; #FCD34D appears only inside logo SVGs on home/pricing.
 - Tag balance OK on 5 boards; chooser logic outputs unchanged; FAQ text untouched this round.
+
+## Revision 3e — signal-bar logo and screen-based UX review
+
+Status: Complete — prototype only.
+Trigger: Owner: the logo is the signal-bar mark; review this screen's UX/UI for attractiveness.
+
+Decisions:
+- Logo: 4 rounded bars #4ADE80/#16A34A/#22C55E/#F59E0B (from live official site and apps/web/public/brand/logo-mangmeeyangyuen.png) replaces the app's coin icon everywhere on the canvas.
+- Review method: local Chromium render of the .dc.html (scratch renderer expanding holes/sc-for/sc-if with the file's own renderVals) at 1440 and 390. Findings: hero text overload (6 layers), flat grey visual with tiny text, Thai mid-word breaks on mobile, chooser before prices, pricing page 660px wide at 390.
+- Fixes: hero trimmed to H1 + 2-line lead + buttons + 2-line note; visual is a LINE chat in a phone frame with large amount and a floating "ยืนยันแล้ว" card (no unshipped in-chat confirm button shown); nowrap spans on key Thai phrases; price cards moved above the chooser; recommended badge absolutely positioned so prices align; table sr-only text contained (.tbl position:relative).
+
+Verification:
+- Chromium: home 1440 scrollWidth 1440, 390 scrollWidth 390; pricing 1440/390 no overflow after fix. Screenshots in ../evidence/main-website-prototype-2026-10-20/v3/.
+- Limits: renderer approximates the canvas runtime; fonts load from Google; no real device, zoom or screen-reader pass.
