@@ -42,7 +42,7 @@ test('URL updates preserve other filters, encode searches and remove cleared sea
 
 test('one status badge covers every missing reason; a row whose only state is its tab\'s name shows none', () => {
   const reasons = { FORM_TYPE_UNRESOLVED: 'ยังไม่ทราบว่าผู้รับเงินเป็นบุคคลหรือนิติบุคคล', INCOME_CATEGORY_OR_RATE_MISSING: 'ยังไม่มีประเภทเงินได้หรืออัตราภาษี' };
-  for (const [status, label] of Object.entries({ REQUIRED: 'ยังไม่ออก', SYSTEM_ISSUED: 'ออกแล้ว', EXTERNAL_LINKED: 'ร้านออกเอง', CANCELLED: 'ยกเลิกแล้ว' })) {
+  for (const [status, label] of Object.entries({ REQUIRED: 'ยังไม่ออก', SYSTEM_ISSUED: 'ออกแล้ว', EXTERNAL_LINKED: 'ทำนอกระบบ', CANCELLED: 'ยกเลิกแล้ว' })) {
     for (const [reason, message] of Object.entries(reasons)) assert.equal(certificateRowStatus(row({ status: status as any, missing: [reason as any] })), status === 'REQUIRED' ? message : ''); void label;
   }
   assert.equal(certificateRowStatus(row({ payments: [] })), 'ยังไม่บันทึกจ่าย');

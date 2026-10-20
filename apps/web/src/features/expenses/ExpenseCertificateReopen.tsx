@@ -56,8 +56,8 @@ function CertificateReopenAttestation({ certificate, busy, children, payments }:
   return children(Boolean(choice), <div className="space-y-3 text-sm leading-6 text-gray-700">
     <div className="font-semibold">{certificate.kind === 'SYSTEM'
       ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว'
-      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></div>
-    {certificate.kind === 'EXTERNAL' && <p>ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}
+      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></div>
+    {certificate.kind === 'EXTERNAL' && <p>ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}
     <ExpenseDisbursementReopenNotice payments={payments} />
   </div>, /* The buttons go to the window as they are: its shared footer gives them one width, stacked when the long name ("ยกเลิกหนังสือรับรองและแก้ไขเอกสาร") does not fit beside the other. */
   content => content, <ExpenseTaxFilingChoice name="expense-reopen-tax-filing" value={choice} onChange={setChoice} busy={busy} />);

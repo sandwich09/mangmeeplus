@@ -1,3 +1,8 @@
+import { CreateUploadIntentUseCase, type CreateUploadIntentCommand } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
+import { CompleteAttachmentUploadUseCase, type CompleteAttachmentUploadCommand } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
+import { externalWhtFiles, retainExternalWhtFile } from '../services/wht-external-file';
+import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { allocateExpenseWithholding } from '../../domain/logic/expense-payment-withholding.logic';
 import { assertPaymentNotCertified, certificatePayment, paymentHandoff } from '../services/wht-certificate-payment';
 import { filedWithholdingPaymentPeriods } from '../services/filed-withholding-payment';
@@ -11,7 +16,7 @@ import { findReadableHandoffExpense, handoffBranchWhere, handoffReadBoundary, no
 import type { Prisma, WhtCertificate } from '../../../../generated/prisma/client';
 import { lockExpenseCorrection, readExpensePeriodLocks } from '../../../expenses/infrastructure/expense-void-blocker';
 import { expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type {
   LinkExternalWhtCertificateDto,
@@ -93,6 +98,9 @@ export class WhtCertificateHandoffUseCase {
     // and is listed in this module's own providers, the same way the tax source adapters already
     // read other modules' tables directly.
     private readonly counterparties: PrismaAccountingRepository,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage?: AttachmentStoragePort,
+    private readonly uploadIntent?: CreateUploadIntentUseCase,
+    private readonly completeUpload?: CompleteAttachmentUploadUseCase,
   ) {}
 
   private get table() {
@@ -193,6 +201,7 @@ export class WhtCertificateHandoffUseCase {
     const readHistory = await this.loadReadHistory(ctx.companyId, rows);
     const payer = await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId);
     return rows.map((row: any) => ({ ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId), ctx, payer),
+      externalAttachmentId: row.status === 'EXTERNAL_LINKED' ? readHistory.files.get(row.id) ?? null : null,
       payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && readHistory.cleared.has(row.id),
       ...(readHistory.previous.get(row.sourcePaymentId) && row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId) } : {}) }));
   }
@@ -242,6 +251,7 @@ export class WhtCertificateHandoffUseCase {
       for (const event of history) if (CANCELLATION_EVENTS.includes(event.eventType) && !(event.detailsJson as Record<string, unknown> | null)?.removedManually && !cancellations.has(event.handoffId)) cancellations.set(event.handoffId, event);
       const previous = previousCertificates(history);
       const cleared = clearedAddressHandoffs(history);
+      const files = externalWhtFiles(history);
       const historicalMatches = new Map<string, string[]>();
       if (search) for (const event of history) {
         const details = event.detailsJson as { previousRecord?: { number?: string } } | null;
@@ -311,6 +321,7 @@ export class WhtCertificateHandoffUseCase {
         const currentNumber = row.status === 'SYSTEM_ISSUED' ? dto.certificateNumber : row.status === 'EXTERNAL_LINKED' ? dto.externalCertificateNumber : null;
         return {
           ...dto,
+          externalAttachmentId: row.status === 'EXTERNAL_LINKED' ? files.get(row.id) ?? null : null,
           ...(row.sourcePaymentType === 'expense.record' ? { payments: paymentRows.filter(p => p.expenseId === row.sourcePaymentId).map(p => ({ id: p.id, paidAt: p.paidAt.toISOString(), paidAtConfirmed: p.paidAtConfirmed, amount: String(p.amount), grossAmount: shares.find(s => s.id === p.id)?.grossAmount, withheldAmount: shares.find(s => s.id === p.id)?.whtAmount })) } : {}),
           formType: dto.prefill.formType,
           matchedPreviousNumber: historicalMatches.get(row.id)?.find(number => number !== currentNumber) ?? null,
@@ -332,16 +343,16 @@ export class WhtCertificateHandoffUseCase {
     }, { isolationLevel: 'RepeatableRead' });
   }
 
-  private async loadReadHistory(companyId: string, rows: { id: string; status: string; sourcePaymentType?: string | null; sourcePaymentId?: string | null; certificateId?: string | null; externalCertificateNumber?: string | null }[]) {
+  private async loadReadHistory(companyId: string, rows: { id: string; status: string; sourcePaymentType?: string | null; sourcePaymentId?: string | null; certificateId?: string | null; externalCertificateNumber?: string | null }[], db: Pick<Prisma.TransactionClient, 'whtCertificateHistory'> = this.taxRepo.prisma.client) {
     const ids = [...new Set(rows.filter(row => row.status === 'REQUIRED' && !row.certificateId && !row.externalCertificateNumber && row.sourcePaymentType === 'expense.record')
       .flatMap(row => row.sourcePaymentId ? [row.sourcePaymentId] : []))];
-    const history = rows.length ? await this.taxRepo.prisma.client.whtCertificateHistory.findMany({
+    const history = rows.length ? await db.whtCertificateHistory.findMany({
       where: { companyId, OR: [{ expenseId: { in: ids }, eventType: { in: CANCELLATION_EVENTS } },
-        { handoffId: { in: rows.map(row => row.id) }, eventType: 'PAYEE_ADDRESS_CLEARED' }] },
+        { handoffId: { in: rows.map(row => row.id) }, eventType: { in: ['PAYEE_ADDRESS_CLEARED', 'EXTERNAL_RECORDED', 'EXTERNAL_RECORD_CHANGED', 'EXTERNAL_RECORD_REMOVED'] } }] },
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       select: { expenseId: true, handoffId: true, eventType: true, certificateNumber: true, isExternal: true, occurredAt: true, detailsJson: true },
     }) : [];
-    return { previous: previousCertificates(history), cleared: clearedAddressHandoffs(history) };
+    return { previous: previousCertificates(history), cleared: clearedAddressHandoffs(history), files: externalWhtFiles(history) };
   }
 
   private async loadCertificates(companyId: string, rows: { certificateId?: string | null }[], db: Pick<Prisma.TransactionClient, 'whtCertificate'> = this.taxRepo.prisma.client) {
@@ -384,6 +395,7 @@ export class WhtCertificateHandoffUseCase {
       const priorDetails = changedPrevious ? { externalEvidenceRef: changedPrevious.externalEvidenceRef, linkNote: changedPrevious.note } : removed?.detailsJson;
       const details = (row.detailsJson ?? priorDetails ?? standing) as Record<string, unknown> | null;
       return {
+        ...(typeof details?.externalAttachmentId === 'string' ? { externalAttachmentId: details.externalAttachmentId, handoffId: row.handoffId } : {}),
         eventType: row.eventType as WhtCertificateHistoryEventType,
         certificateNumber: row.certificateNumber,
         isExternal: row.isExternal,
@@ -399,6 +411,42 @@ export class WhtCertificateHandoffUseCase {
         ...(row.eventType === 'EXTERNAL_RECORD_CHANGED' && details?.previousRecord ? { previousExternalRecord: details.previousRecord as NonNullable<WhtCertificateHistoryDto['previousExternalRecord']> } : {}),
       };
     });
+  }
+
+  private async externalFileWriter(ctx: RequestContext, handoffId: string) {
+    if (!ctx.permissions.includes('wht.external_certificate.link')) throw new ForbiddenException();
+    return loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+  }
+
+  async externalFileIntent(ctx: RequestContext, handoffId: string, body: CreateUploadIntentCommand) {
+    const handoff = await this.externalFileWriter(ctx, handoffId);
+    if (body.byteSize <= 0 || body.byteSize > WHT_EXTERNAL_FILE.maxBytes || !['image/jpeg', 'image/png', 'application/pdf'].includes(body.mimeType)) throw new BadRequestException({ code: 'wht_external_file_invalid', message: WHT_EXTERNAL_FILE.invalid });
+    // Delegate upload/scanning only after the handoff's own write permission and scope checks.
+    return this.uploadIntent!.execute({ ...ctx, permissions: [...ctx.permissions, 'attachment.create'] }, {
+      originalFileName: body.originalFileName, mimeType: body.mimeType, byteSize: body.byteSize,
+      branchId: handoff.sourceBranchId ?? undefined, visibility: 'INTERNAL',
+      metadataJson: { generatedFor: WHT_EXTERNAL_FILE.target, handoffId },
+    });
+  }
+
+  async completeExternalFile(ctx: RequestContext, handoffId: string, body: CompleteAttachmentUploadCommand) {
+    await this.externalFileWriter(ctx, handoffId);
+    const file = await this.taxRepo.prisma.client.attachmentObject.findFirst({ where: { id: body.attachmentId, companyId: ctx.companyId, uploadedByUserId: ctx.userId } });
+    const metadata = file?.metadataJson as Record<string, unknown> | null;
+    if (metadata?.generatedFor !== WHT_EXTERNAL_FILE.target || metadata?.handoffId !== handoffId) throw new NotFoundException();
+    return this.completeUpload!.execute({ ...ctx, permissions: [...ctx.permissions, 'attachment.create'] }, body);
+  }
+
+  async externalFile(ctx: RequestContext, handoffId: string, attachmentId: string) {
+    if (!ctx.permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].includes(permission))) throw new ForbiddenException();
+    await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
+    const file = await this.taxRepo.prisma.client.attachmentObject.findFirst({ where: {
+      id: attachmentId, companyId: ctx.companyId, status: 'ACTIVE',
+      links: { some: { companyId: ctx.companyId, targetType: WHT_EXTERNAL_FILE.target, targetId: handoffId, purpose: WHT_EXTERNAL_FILE.purpose } },
+    } });
+    if (!file) throw new NotFoundException();
+    const signed = await this.storage!.createDownloadUrl({ bucket: file.bucket, objectKey: file.objectKey, objectVersionId: file.objectVersionId ?? undefined, mimeType: file.mimeType, fileName: file.originalFileName, disposition: 'inline' });
+    return { downloadUrl: signed.url, expiresAt: signed.expiresAt, name: file.originalFileName, mimeType: file.mimeType };
   }
 
   /** Company-scoped lookup on the link fence, so a replay never crosses a tenant boundary. */
@@ -424,7 +472,7 @@ export class WhtCertificateHandoffUseCase {
         handoffId: found.id,
       });
     }
-    if (found.linkPayloadFingerprint === linkFingerprint) return toDto(found, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
+    if (found.linkPayloadFingerprint === linkFingerprint) return { ...toDto(found, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId)), externalAttachmentId: (await this.loadReadHistory(ctx.companyId, [found])).files.get(found.id) ?? null };
     throw new ConflictException({
       code: 'wht_handoff_link_command_reused',
       message: 'การแนบหนังสือรับรองครั้งนี้ถูกใช้กับข้อมูลชุดอื่นแล้ว เปิดหน้านี้ใหม่',
@@ -443,6 +491,7 @@ export class WhtCertificateHandoffUseCase {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, paidAt: true, paidAtConfirmed: true, amount: true },
     }) : [];
     return { payments: payments.map(p => ({ id: p.id, paidAt: p.paidAt.toISOString(), paidAtConfirmed: p.paidAtConfirmed, amount: String(p.amount) })), ...toDto(row, systemIssuanceOpen, systemCorrectionOpen, systemReplacementOpen, certificates.get(row.certificateId ?? ''), ctx, payer),
+      externalAttachmentId: row.status === 'EXTERNAL_LINKED' ? readHistory.files.get(row.id) ?? null : null,
       payeeAddressClearedByTaxIdChange: !row.payeeAddress?.trim() && readHistory.cleared.has(row.id),
       ...(readHistory.previous.get(row.sourcePaymentId ?? '') ? { previousCertificate: readHistory.previous.get(row.sourcePaymentId ?? '') } : {}) };
   }
@@ -590,7 +639,7 @@ export class WhtCertificateHandoffUseCase {
     if (issuedDate.toISOString().slice(0, 10) > todayCivilDate('Asia/Bangkok')) throw new BadRequestException({
       code: 'wht_handoff_external_issued_date_future', message: WHT_EXTERNAL_RECORD_WORDS.futureDate,
     });
-    const payloadFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), note });
+    const payloadFingerprint = fingerprint({ handoffId, ...(dto.externalAttachmentId !== undefined ? { externalAttachmentId: dto.externalAttachmentId } : {}), externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), note });
     const updated = await this.taxRepo.prisma.client.$transaction(async tx => {
       // The company-wide command lock makes history a durable retry fence, even after later changes.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${commandId}:wht-external-record-change`}))`;
@@ -615,6 +664,9 @@ export class WhtCertificateHandoffUseCase {
         });
         return row;
       }
+      const currentFile = (await this.loadReadHistory(ctx.companyId, [row], tx)).files.get(row.id) ?? null;
+      const externalAttachmentId = dto.externalAttachmentId === undefined ? currentFile : dto.externalAttachmentId;
+      await retainExternalWhtFile(tx, ctx, row.id, externalAttachmentId);
       const formType = (row.prefillSnapshotJson as WhtHandoffPrefillDto).formType;
       if (expense) {
         const locks = await readExpensePeriodLocks(tx, expense, [], true);
@@ -628,10 +680,10 @@ export class WhtCertificateHandoffUseCase {
       }
       if (row.externalCertificateNumber === externalCertificateNumber && row.externalIssuedDate?.toISOString() === issuedDate.toISOString()
         && (!paymentDate || (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate === paymentDate.toISOString().slice(0, 10))
-        && (row.externalEvidenceRef ?? '') === externalEvidenceRef && (row.linkNote ?? null) === note) throw new ConflictException({
+        && currentFile === externalAttachmentId && (row.externalEvidenceRef ?? '') === externalEvidenceRef && (row.linkNote ?? null) === note) throw new ConflictException({
         code: 'wht_handoff_external_record_no_changes', message: WHT_EXTERNAL_RECORD_WORDS.noChanges,
       });
-      const previousRecord = { paymentDate: (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate ?? null, number: row.externalCertificateNumber, issuedDate: row.externalIssuedDate?.toISOString() ?? null, externalEvidenceRef: row.externalEvidenceRef, note: row.linkNote };
+      const previousRecord = { ...(currentFile ? { externalAttachmentId: currentFile } : {}), paymentDate: (row.prefillSnapshotJson as WhtHandoffPrefillDto)?.externalPaymentDate ?? null, number: row.externalCertificateNumber, issuedDate: row.externalIssuedDate?.toISOString() ?? null, externalEvidenceRef: row.externalEvidenceRef, note: row.linkNote };
       const result = await tx.whtCertificateHandoff.update({ where: { id: handoffId }, data: {
         externalCertificateNumber, externalIssuedDate: issuedDate, externalEvidenceRef, linkNote: note,
         ...(paymentDate ? { prefillSnapshotJson: { ...(row.prefillSnapshotJson as WhtHandoffPrefillDto), externalPaymentDate: paymentDate.toISOString().slice(0, 10) } } : {}),
@@ -639,7 +691,7 @@ export class WhtCertificateHandoffUseCase {
       await appendWhtCertificateHistory(tx, row, {
         eventType: 'EXTERNAL_RECORD_CHANGED', actorUserId: ctx.userId, isExternal: true,
         certificateNumber: externalCertificateNumber, certificateDate: issuedDate,
-        detailsJson: { commandId, payloadFingerprint, externalEvidenceRef, linkNote: note,
+        detailsJson: { commandId, payloadFingerprint, externalAttachmentId, externalEvidenceRef, linkNote: note,
           previousRecord },
       });
       await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.wht_certificate.external_record_changed',
@@ -648,7 +700,7 @@ export class WhtCertificateHandoffUseCase {
       }, tx);
       return result;
     }, { isolationLevel: 'ReadCommitted' });
-    return toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
+    return { ...toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId)), externalAttachmentId: (await this.loadReadHistory(ctx.companyId, [updated])).files.get(updated.id) ?? null };
   }
 
   async removeExternal(ctx: RequestContext, handoffId: string, dto: RemoveExternalWhtCertificateDto): Promise<WhtCertificateHandoffDto> {
@@ -732,12 +784,13 @@ export class WhtCertificateHandoffUseCase {
     const parsed = normalizeWhtLinkEvidence(dto as WhtLinkEvidenceInput);
     if (!parsed.ok) throw new BadRequestException({ code: 'wht_handoff_external_record_invalid', message: WHT_EXTERNAL_RECORD_WORDS.invalid });
     const { commandId, externalCertificateNumber, externalEvidenceRef, issuedDate, paymentDate, note } = parsed.value;
+    const uploadHandoffId = handoffId;
     let row = await loadScopedWhtHandoff(this.taxRepo.prisma.client, ctx, handoffId);
     row = await paymentHandoff(this.taxRepo.prisma.client, ctx.companyId, row, dto.paymentId);
     handoffId = row.id;
     // The handoff is part of the fingerprint: the same evidence legitimately links to different
     // handoffs, so identity alone must never make one look like a replay of the other.
-    const linkFingerprint = fingerprint({ handoffId, externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), ...(dto.paymentId ? { paymentId: dto.paymentId } : {}), note });
+    const linkFingerprint = fingerprint({ handoffId, ...(dto.externalAttachmentId !== undefined ? { externalAttachmentId: dto.externalAttachmentId } : {}), externalCertificateNumber, externalEvidenceRef, issuedDate: issuedDate.toISOString(), ...(paymentDate ? { paymentDate: paymentDate.toISOString() } : {}), ...(dto.paymentId ? { paymentId: dto.paymentId } : {}), note });
 
 
     // Same-LINK-command replay first, before any state check: a retry after a dropped response must
@@ -780,10 +833,11 @@ export class WhtCertificateHandoffUseCase {
         await assertPaymentNotCertified(tx, ctx.companyId, row, paymentPrefill);
         const result = await write(tx.whtCertificateHandoff, paymentPrefill);
         if (result.count === 1) {
+          if (dto.externalAttachmentId != null) await retainExternalWhtFile(tx, ctx, row.id, dto.externalAttachmentId, uploadHandoffId);
           await appendWhtCertificateHistory(tx, row, {
             eventType: 'EXTERNAL_RECORDED', actorUserId: ctx.userId, isExternal: true,
             certificateNumber: externalCertificateNumber, certificateDate: issuedDate,
-            detailsJson: { externalEvidenceRef, linkNote: note, paymentDate: paymentDate?.toISOString() ?? paymentPrefill.paymentDate },
+            detailsJson: { ...(dto.externalAttachmentId !== undefined ? { externalAttachmentId: dto.externalAttachmentId } : {}), externalEvidenceRef, linkNote: note, paymentDate: paymentDate?.toISOString() ?? paymentPrefill.paymentDate },
           });
         }
         return result;
@@ -825,7 +879,7 @@ export class WhtCertificateHandoffUseCase {
         linkPayloadFingerprint: linkFingerprint,
       },
     });
-    return toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId));
+    return { ...toDto(updated, false, false, false, undefined, ctx, await currentWhtPayerDetails(this.taxRepo.prisma.client, ctx.companyId)), externalAttachmentId: (await this.loadReadHistory(ctx.companyId, [updated])).files.get(updated.id) ?? null };
   }
 }
 

@@ -923,9 +923,9 @@ export const REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS = {
   expenseNotVoidable: 'รายจ่ายในใบเบิกนี้ยังไม่พร้อมให้ยกเลิก จึงยกเลิกใบเบิกไม่ได้ เปิดหน้านี้ใหม่ ถ้ายังยกเลิกไม่ได้ ให้แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   taxWorkspaceCertificate: 'ใบเบิกนี้มีรายจ่ายที่มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกใบเบิกจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   permissionMissing: ({ kind, number }: Pick<ReimbursementCancellationCertificate, 'kind' | 'number'>): string =>
-    `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM'
+    `ใบเบิกนี้มีรายจ่ายที่${kind === 'SYSTEM' ? 'ออกหนังสือรับรอง 50 ทวิแล้ว' : 'บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว'}${number ? ` (เลขที่ ${number})` : ''} การยกเลิกใบเบิกจะยกเลิก${kind === 'SYSTEM'
       ? 'หนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ'
-      : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง'} ให้${THAI_SYSTEM_ROLE_NAMES.FINANCE}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`,
+      : 'การบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบ'} ให้${THAI_SYSTEM_ROLE_NAMES.FINANCE}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิกใบเบิกนี้`,
   periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกใบเบิก', formType, kind),
 } as const;
 
@@ -967,6 +967,8 @@ export type ReimbursementAwaitingSystem = {
 };
 
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
+  /** A legacy claim expense was voided; cancel this unpaid claim rather than retrying payment. */
+  hasVoidedProjections?: true;
   /** GET detail only, available before a cancellation is started. */
   certificates?: ReimbursementCancellationCertificate[];
   certificateCancelAllowed?: boolean;
@@ -2300,3 +2302,5 @@ export const REIMBURSEMENT_STATUS_LABELS: Record<string, string> = {
   PAID: 'จ่ายแล้ว',
   VOIDED: 'เพิกถอน',
 };
+
+export const REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE = 'รายการค่าใช้จ่ายของใบเบิกนี้ถูกยกเลิกไปแล้ว จ่ายใบนี้ไม่ได้ ยกเลิกใบเบิกนี้แล้วทำใบใหม่';

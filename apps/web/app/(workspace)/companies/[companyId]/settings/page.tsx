@@ -1,3 +1,4 @@
+import { shopHasSystemWhtCertificates } from '@/features/expenses/expense-wht-certificates.logic';
 import { MangmeePage } from '@/common/components/mangmee';
 import { fetchServerSession } from '@/common/auth/server-session';
 import { SettingsMenu } from '@/features/web-core-workspace/SettingsMenu';
@@ -16,7 +17,7 @@ export default async function SettingsPage({
   return (
     <MangmeePage title="ตั้งค่าร้าน">
       {/* Which cards a locked shop keeps is decided inside: only the shell knows it is locked. */}
-      <SettingsMenu
+      <SettingsMenu systemCertificatesAvailable={shopHasSystemWhtCertificates(session?.entitledFeatureKeys)}
         companyId={companyId}
         permissions={session?.permissions ?? []}
         profileBadge={showProfileAttention ? <ProfileAttentionBadge companyId={companyId} /> : null}

@@ -1,8 +1,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SNAPSHOT_GENERATE_PERMISSION, canForceGenerateSnapshot, homeMetrics, homeStartLinks } from './dashboard-home.logic';
+import { SNAPSHOT_GENERATE_PERMISSION, canForceGenerateSnapshot, homeMetrics, homeStartLinks, lastMonthHomeRange, homeRangeErrors, homeRangeLabel } from './dashboard-home.logic';
 import { dashboardMetricValueText } from './dashboard-notifications.logic';
+
+it('HOME-RANGE prefills the previous Bangkok month, formats Buddhist dates and refuses reversed or future bounds', () => {
+  assert.deepEqual(lastMonthHomeRange(new Date('2026-09-30T17:00:00Z')), { customStart: '2026-09-01', customEnd: '2026-09-30' });
+  assert.deepEqual(lastMonthHomeRange(new Date('2026-01-01T00:00:00Z')), { customStart: '2025-12-01', customEnd: '2025-12-31' });
+  assert.deepEqual(lastMonthHomeRange(new Date('2024-03-01T00:00:00Z')), { customStart: '2024-02-01', customEnd: '2024-02-29' });
+  const range = { customStart: '2026-09-01', customEnd: '2026-09-30' };
+  assert.equal(homeRangeLabel(range), '1 ก.ย. – 30 ก.ย. 2569');
+  assert.equal(homeRangeLabel({ customStart: '2025-12-31', customEnd: '2026-01-01' }), '31 ธ.ค. 2568 – 1 ม.ค. 2569');
+  assert.deepEqual(homeRangeErrors(range, '2026-10-20'), {});
+  assert.equal(homeRangeErrors({ ...range, customEnd: '2026-08-31' }, '2026-10-20').customEnd, 'ถึงต้องไม่ก่อนตั้งแต่');
+  assert.equal(homeRangeErrors({ ...range, customEnd: '2026-10-21' }, '2026-10-20').customEnd, 'ถึงต้องไม่เกินวันนี้');
+  assert.ok(homeRangeErrors({ ...range, customStart: '' }, '2026-10-20').customStart);
+});
 
 describe('canForceGenerateSnapshot', () => {
   it('is true when the viewer holds the generate permission', () => {

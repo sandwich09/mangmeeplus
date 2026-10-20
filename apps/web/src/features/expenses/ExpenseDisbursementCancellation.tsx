@@ -31,7 +31,7 @@ export function ExpenseDisbursementCancellation({ companyId, expenseId, payments
   }, [companyId, key]);
   const warnings = expenseDisbursementCancellationWarnings(payments, vouchers, expenseId, paymentId);
   const certificateWarning = paymentId && certificate
-    ? `${certificate.kind === 'SYSTEM' ? 'หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)' : 'การบันทึกหนังสือรับรองที่ออกเอง'}${certificate.number ? `${certificate.kind === 'SYSTEM' ? ' เลขที่ ' : 'เลขที่ '}${certificate.number}` : ''} ของเอกสารนี้ยังอยู่ การยกเลิกการจ่ายไม่ยกเลิกหนังสือรับรอง`
+    ? `${certificate.kind === 'SYSTEM' ? 'หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)' : 'การบันทึกหนังสือรับรองที่ทำนอกระบบ'}${certificate.number ? `${certificate.kind === 'SYSTEM' ? ' เลขที่ ' : 'เลขที่ '}${certificate.number}` : ''} ของเอกสารนี้ยังอยู่ การยกเลิกการจ่ายไม่ยกเลิกหนังสือรับรอง`
     : null;
   const warning = <>{warnings.length > 0 && <CoverLoader active={loading} scope="section" label={t('common.loading', 'th')}>
     <div className="space-y-2 text-sm text-warning-800 [overflow-wrap:anywhere]">{warnings.map(sentence => <p key={sentence}>{sentence.split(/(PV-\d{6}-\d+)/g).map((part, index) => /^PV-\d{6}-\d+$/.test(part) ? <span key={index} className="whitespace-nowrap">{part}</span> : part)}</p>)}</div>

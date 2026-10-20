@@ -47,8 +47,8 @@ export function ReimbursementCertificateCancelDialog({ title, certificates, bloc
     </div>}>
     <div className="space-y-3 text-sm leading-6 text-gray-700">
       {certificates.map((certificate, index) => <div key={index} className="space-y-3">
-        <p className="font-semibold">{certificate.kind === 'SYSTEM' ? 'ใบเบิกนี้มีรายจ่ายที่ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว' : 'ใบเบิกนี้มีรายจ่ายที่บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'}{certificate.number && <> <span className="whitespace-nowrap">เลขที่ {certificate.number}</span></>}</p>
-        {!blocker && <p>{certificate.kind === 'SYSTEM' ? 'ถ้ายกเลิกใบเบิก ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วยและเก็บไว้ในประวัติ' : 'ถ้ายกเลิกใบเบิก ระบบจะยกเลิกการบันทึกนี้และเก็บไว้ในประวัติ ระบบยกเลิกหนังสือรับรองที่คุณออกเองให้ไม่ได้ ยกเลิกใบนั้นเอง'}</p>}
+        <p className="font-semibold">{certificate.kind === 'SYSTEM' ? 'ใบเบิกนี้มีรายจ่ายที่ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว' : 'ใบเบิกนี้มีรายจ่ายที่บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว'}{certificate.number && <> <span className="whitespace-nowrap">เลขที่ {certificate.number}</span></>}</p>
+        {!blocker && <p>{certificate.kind === 'SYSTEM' ? 'ถ้ายกเลิกใบเบิก ระบบจะยกเลิกหนังสือรับรองใบนี้ด้วยและเก็บไว้ในประวัติ' : 'ถ้ายกเลิกใบเบิก ระบบจะยกเลิกการบันทึกนี้และเก็บไว้ในประวัติ ระบบยกเลิกหนังสือรับรองที่ทำนอกระบบให้ไม่ได้ ยกเลิกใบนั้นเอง'}</p>}
       </div>)}
       {blocker ? <ErrorBanner message={refusalMessage(blocker.message)} /> :
       <form id="reimbursement-certificate-cancel-form" className="space-y-3" onSubmit={event => { event.preventDefault(); submit(); }}>

@@ -18,12 +18,12 @@ test('reopen identifies SYSTEM and EXTERNAL effects with exact copy and omits a 
     const html = render(certificate).render();
     assert.match(html, new RegExp(kind === 'SYSTEM'
       ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย \\(50 ทวิ\\) แล้ว'
-      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว'));
+      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว'));
     assert.ok(html.includes('ยังไม่ได้ยื่นภาษีหัก ณ ที่จ่ายของรายการนี้')); assert.ok(html.includes('ยื่นไปแล้ว จะแจ้งคนที่ยื่นภาษีให้ร้านยื่นแบบแก้ไข'));
     assert.doesNotMatch(html, /ข้อมูลที่ยื่นไว้ไม่เปลี่ยนตาม/);
     assert.match(html, /type="radio" required=""/);
     if (kind === 'SYSTEM') assert.doesNotMatch(html, /เมื่อแก้เสร็จ|ถ้าเคยส่ง/);
-    else assert.match(html, /ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง/);
+    else assert.match(html, /ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง/);
     assert.equal(html.includes('เลขที่ WHT-1'), Boolean(number));
     const toast = expenseCertificateReopenedMessage(certificate);
     assert.equal(toast, kind === 'SYSTEM'
@@ -74,7 +74,7 @@ test('edit keeps only bold certificate facts and one consequence for a self-issu
     const notice = html.slice(0, html.indexOf('<textarea'));
     assert.equal((notice.match(/<p[ >]/g) ?? []).length, kind === 'SYSTEM' ? 0 : 1);
     assert.match(notice, /font-semibold/); assert.match(notice, /เลขที่ WHT-1/);
-    if (kind === 'EXTERNAL') assert.match(notice, /ระบบยกเลิกใบที่ร้านออกเองให้ไม่ได้ ร้านต้องยกเลิกเอง/);
+    if (kind === 'EXTERNAL') assert.match(notice, /ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง/);
     assert.doesNotMatch(expenseCertificateReopenedMessage({ kind, number: 'WHT-1' }), /เมื่อแก้เสร็จ|ยืนยันเอกสาร|ใบใหม่/);
   }
 });

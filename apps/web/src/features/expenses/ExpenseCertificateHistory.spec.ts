@@ -120,7 +120,7 @@ test('self-issued history retains wrapped evidence and note as plain text, never
 test('external record changes show the new number and only old values that existed; card history has no padded box', () => {
   const previousExternalRecord = { number: 'EXT-OLD', issuedDate: '2026-10-09', externalEvidenceRef: 'ตู้เดิม', note: 'ส่งแล้ว' };
   const html = setup([row({ eventType: 'EXTERNAL_RECORD_CHANGED', isExternal: true, certificateNumber: 'EXT-NEW', previousExternalRecord })]).render();
-  assert.ok(text(html).includes('แก้ไขการบันทึกหนังสือรับรองที่ออกเอง เลขที่ EXT-NEW'));
+  assert.ok(text(html).includes('แก้ไขการบันทึกหนังสือรับรองที่ทำนอกระบบ เลขที่ EXT-NEW'));
   assert.ok(text(html).includes(`เดิม: เลขที่ EXT-OLD · วันที่ ${formatThaiDate('2026-10-09')} · เลขอ้างอิง ตู้เดิม · หมายเหตุ ส่งแล้ว`));
   const sparse = setup([row({ eventType: 'EXTERNAL_RECORD_CHANGED', previousExternalRecord: { number: null, issuedDate: null, externalEvidenceRef: null, note: 'เฉพาะหมายเหตุ' } })]).render();
   assert.ok(text(sparse).includes('เดิม: หมายเหตุ เฉพาะหมายเหตุ'));
@@ -172,7 +172,7 @@ test('R4 cancellation banner uses loaded system-certificate history and omits un
 
 test('C15 manual removal keeps number, actor and reason and differs from expense-driven removal', () => {
   const manual = text(setup([row({ eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true, removedManually: true, certificateNumber: 'EXT-1', reason: 'บันทึกผิด' })]).render());
-  assert.match(manual, /เจ้าของกิจการลบการบันทึกว่าออกเอง เลขที่ EXT-1เหตุผล: บันทึกผิด/);
+  assert.match(manual, /เจ้าของกิจการลบการบันทึกว่าทำนอกระบบ เลขที่ EXT-1เหตุผล: บันทึกผิด/);
   assert.doesNotMatch(manual, /เพราะเอกสารถูกแก้ไขหรือยกเลิก/);
   const automatic = text(setup([row({ eventType: 'EXTERNAL_RECORD_REMOVED', isExternal: true })]).render());
   assert.match(automatic, /เพราะเอกสารถูกแก้ไขหรือยกเลิก/);
@@ -192,4 +192,16 @@ test('cleared payee address appears in history with its date and without a certi
   assert.ok(html.includes(formatThaiDate(event.occurredAt))); assert.ok(html.includes(formatThaiTime(event.occurredAt)));
   assert.ok(!html.includes('PAYEE_ADDRESS_CLEARED')); assert.ok(!html.includes('ใบเดิม'));
   view.cleanup();
+});
+
+
+test('WHT-OUTSIDE-2 certificate history opens the file saved with each past record', () => {
+  const view = setup([row({ eventType: 'EXTERNAL_RECORDED', isExternal: true, handoffId: 'handoff', externalAttachmentId: 'old-file' }),
+    row({ eventType: 'EXTERNAL_RECORD_CHANGED', isExternal: true, handoffId: 'handoff', externalAttachmentId: 'new-file', occurredAt: '2026-10-12T03:00:00Z' })]);
+  try {
+    assert.equal((view.render().match(/>ดูไฟล์</g) ?? []).length, 2);
+    const files = view.nodes.filter(node => node.tag === 'ExpenseCertificateFile');
+    assert.deepEqual(files.map(node => node.props.attachmentId).sort(), ['new-file', 'old-file']);
+    assert.ok(files.every(node => node.props.companyId === 'co' && node.props.handoffId === 'handoff'));
+  } finally { view.cleanup(); }
 });

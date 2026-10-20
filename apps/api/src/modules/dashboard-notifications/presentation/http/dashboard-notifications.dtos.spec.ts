@@ -13,6 +13,29 @@ const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 const accepts = (metatype: any, body: Record<string, unknown>) =>
   pipe.transform(body, { type: 'body', metatype });
 
+it('HOME-RANGE passes validated custom dates through both reads and manual refresh as inclusive Bangkok days', async () => {
+  const { DashboardController } = await import('./dashboard.controller');
+  const calls: any[] = [];
+  const controller = new DashboardController({ execute: async (...args: any[]) => { calls.push(args); return {}; } } as any);
+  const ctx = { companyId: 'c1' } as any;
+  const query = await pipe.transform({ periodKind: 'custom', branchId: 'b1', customStart: '2026-09-01', customEnd: '2026-09-30' }, { type: 'query', metatype: GenerateDashboardSnapshotDto });
+  await controller.getDashboard(ctx, 'c1', query);
+  await controller.getLatestSnapshot(ctx, 'c1', query);
+  await controller.generateSnapshotManual(ctx, 'c1', query);
+  for (const [, companyId, options] of calls) {
+    assert.equal(companyId, 'c1'); assert.equal(options.branchId, 'b1'); assert.equal(options.periodKind, 'custom');
+    assert.equal(options.periodStart.toISOString(), '2026-08-31T17:00:00.000Z');
+    assert.equal(options.periodEnd.toISOString(), '2026-09-30T16:59:59.999Z');
+  }
+  assert.equal(calls[2][2].forceGenerate, true);
+  await assert.rejects(() => controller.getDashboard(ctx, 'other', query), (error: any) => error.getStatus() === 403);
+  for (const invalid of [{ customStart: '2026-09-30', customEnd: '2026-09-01' }, { customStart: '2026-02-30', customEnd: '2026-03-01' }, { customStart: '2026-09-01', customEnd: '2099-01-01' }, { customStart: '2026-09-01' }]) {
+    await assert.rejects(() => controller.getDashboard(ctx, 'c1', { periodKind: 'custom', ...invalid }), (error: any) => error.getStatus?.() === 400 || error.name === 'InvalidCivilDateError');
+  }
+  for (const invalid of [{ customStart: ['2026-09-01'] }, { customEnd: 'oops' }]) await rejects(GenerateDashboardSnapshotDto, { periodKind: 'custom', ...invalid });
+  assert.equal(calls.length, 3, 'invalid ranges never reach the snapshot builder');
+});
+
 async function rejects(metatype: any, body: Record<string, unknown>, label?: string) {
   await assert.rejects(
     () => pipe.transform(body, { type: 'body', metatype }),

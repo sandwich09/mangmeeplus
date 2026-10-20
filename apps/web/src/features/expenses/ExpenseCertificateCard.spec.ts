@@ -11,6 +11,18 @@ const { ExpenseCertificateCard } = require('./ExpenseCertificateCard');
 const { ExpenseCertificateHistory } = require('./ExpenseCertificateHistory');
 const { ExpenseCertificateCorrectionFields } = require('./ExpenseCertificateCorrectionFields');
 const issue = ['wht.certificate.issue'], link = ['wht.external_certificate.link'], read = ['wht.certificate.read'];
+test('WHT-OUTSIDE a shop without system certificates offers recording and the package line, never a system download', () => {
+  for (const status of ['REQUIRED', 'SYSTEM_ISSUED'] as const) {
+    const view = setup(row({ status, systemIssuanceOpen: true }), [...issue, ...link]);
+    Object.assign(view.props, { systemCertificatesAvailable: false, children: h('button', null, 'พิมพ์ใบแทน') });
+    try {
+      const html = view.render();
+      if (status === 'REQUIRED') assert.match(visible(html), /จดเลขที่ใบ 50 ทวิ/);
+      assert.match(visible(html), /แพ็กนี้ทำใบ 50 ทวิ ในระบบไม่ได้ ทำนอกระบบแล้วจดเลขที่ไว้/);
+      assert.doesNotMatch(html, /ออกหนังสือรับรอง 50 ทวิ<\/button>|ดาวน์โหลดหนังสือรับรอง|เพิ่มที่อยู่|พิมพ์ใบแทน/);
+    } finally { view.cleanup(); }
+  }
+});
 function row(over: Partial<WhtCertificateHandoffListRowDto> = {}): WhtCertificateHandoffListRowDto {
   return { id: 'handoff', status: 'REQUIRED', systemIssuanceOpen: true, missing: [], payerMissing: [], prefill: { payeeSnapshot: { name: 'ผู้รับเงิน', address: null } }, payeeAddress: 'ที่อยู่ผู้รับเงิน',
     certificateNumber: 'WHT-2', certificateIssuedAt: '2026-10-11', externalCertificateNumber: 'EXT-1', externalIssuedDate: '2026-10-10', externalPaymentDate: '2026-10-09', ...over } as WhtCertificateHandoffListRowDto;
@@ -30,7 +42,7 @@ function setup(value = row(), permissions = issue, options: { loading?: boolean;
 const visible = (html: string) => html.replace(/<[^>]*>/g, '').replaceAll('&quot;', '"');
 const primaryCount = (html: string) => (html.match(/<button[^>]*class="[^"]*mangmee-btn-primary/g) ?? []).length;
 function openRecord(view: ReturnType<typeof setup>) {
-  view.find('button', p => p.children.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว')).onClick(); view.render();
+  view.find('button', p => p.children.includes('จดเลขที่ใบ 50 ทวิ')).onClick(); view.render();
 }
 function type(view: ReturnType<typeof setup>, field: string, value: string) {
   view.find(field === 'note' || field === 'address' ? 'textarea' : field === 'date' || field === 'paymentDate' ? 'ThemedDate' : 'input', p => p.id === `certificate-${field}-expense`).onChange({ target: { value } }); view.render();
@@ -40,6 +52,24 @@ async function submit(view: ReturnType<typeof setup>) {
 }
 
 const modal = mock.method(modals, 'Modal', ({ open, title, children, footer }: any) => open ? h('section', { 'data-dialog': true }, h('h2', null, title), children, footer) : null);
+
+test('WHT-OUTSIDE recording keeps required text fields and offers an optional file and moves the saved number to ทำใบแล้ว', async () => {
+  const request = mock.method(api, 'linkExternalWhtCertificate', async () => row({ status: 'EXTERNAL_LINKED', externalCertificateNumber: 'OUT-1' }));
+  const view = setup(row({ systemIssuanceOpen: false }), link);
+  Object.assign(view.props, { systemCertificatesAvailable: false });
+  try {
+    view.render(); openRecord(view);
+    const html = visible(view.render());
+    for (const word of ['จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ', 'เลขที่ใบ', 'วันที่ทำใบ', 'เก็บใบจริงไว้ที่ (ไม่บังคับ)', 'หมายเหตุ']) assert.ok(html.includes(word), word);
+    assert.match(view.render(), /type="file"/);
+    assert.match(view.render(), /aria-label="แนบรูปหรือ PDF ของใบ \(ถ้ามี\)"/);
+    assert.equal(view.find('ThemedFile', p => p.id === 'certificate-file-expense').required, undefined);
+    type(view, 'number', 'OUT-1'); type(view, 'date', '2026-01-02'); type(view, 'paymentDate', '2026-01-01');
+    await submit(view);
+    assert.deepEqual(view.successes, ['จดเลขที่แล้ว ย้ายไป "ทำใบแล้ว"']);
+    assert.equal(request.mock.callCount(), 1);
+  } finally { request.mock.restore(); view.cleanup(); }
+});
 
 test('card always has its heading and one primary at most across every permission and certificate state', () => {
   const cases: [Partial<WhtCertificateHandoffListRowDto>, string[], string, number][] = [
@@ -56,8 +86,8 @@ test('card always has its heading and one primary at most across every permissio
     [{ status: 'SYSTEM_ISSUED' }, ['wht.certificate.correct'], 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
     [{ status: 'SYSTEM_ISSUED' }, link, 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
     [{ status: 'SYSTEM_ISSUED' }, read, 'ออกแล้ว เลขที่ WHT-2 วันที่', 1],
-    [{ status: 'EXTERNAL_LINKED', externalEvidenceRef: 'ตู้เอกสาร', linkNote: 'ส่งแล้ว' }, link, 'ร้านออกเอง เลขที่ EXT-1 วันที่', 0],
-    [{ status: 'EXTERNAL_LINKED' }, read, 'ร้านออกเอง เลขที่ EXT-1 วันที่', 0],
+    [{ status: 'EXTERNAL_LINKED', externalEvidenceRef: 'ตู้เอกสาร', linkNote: 'ส่งแล้ว' }, link, 'ทำนอกระบบ เลขที่ EXT-1 วันที่', 0],
+    [{ status: 'EXTERNAL_LINKED' }, read, 'ทำนอกระบบ เลขที่ EXT-1 วันที่', 0],
   ];
   for (const [over, permissions, sentence, count] of cases) {
     const view = setup(row(over), permissions), markup = view.render(), html = visible(markup);
@@ -71,10 +101,10 @@ test('card always has its heading and one primary at most across every permissio
       } else assert.doesNotMatch(markup, /<button/);
     }
     if (over.missing) { assert.ok(html.includes('กด “แก้ไขเอกสาร” เพื่อเติมข้อมูล')); assert.doesNotMatch(html, /ออกหนังสือรับรอง 50 ทวิ/); }
-    if (over.status === 'EXTERNAL_LINKED') assert.ok(html.includes('ไม่ได้ออกจากระบบนี้ ไม่มีไฟล์ให้ดาวน์โหลด'));
+    if (over.status === 'EXTERNAL_LINKED') assert.ok(html.includes('ทำนอกระบบ'));
   }
   const both = setup(row(), [...issue, ...link]); both.render();
-  assert.match(both.find('button', p => p.children.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว')).className, /underline/);
+  assert.match(both.find('button', p => p.children.includes('จดเลขที่ใบ 50 ทวิ')).className, /underline/);
   const external = visible(setup(row({ status: 'EXTERNAL_LINKED', externalEvidenceRef: 'ตู้เอกสาร', linkNote: 'ส่งแล้ว' }), link).render());
   assert.ok(external.includes('เลขอ้างอิง: ตู้เอกสาร')); assert.ok(external.includes('หมายเหตุ: ส่งแล้ว'));
 });
@@ -92,7 +122,7 @@ test('walk C: the status is one run of text, the address comes before the issue 
   const pending = setup(row(), [...issue, ...link]).render();
   assert.ok(pending.indexOf('ที่อยู่ผู้รับเงินบนหนังสือรับรอง') < pending.indexOf('ออกหนังสือรับรอง 50 ทวิ'));
   const missing = setup(row({ missing: ['FORM_TYPE_UNRESOLVED'] }), [...issue, ...link]); missing.render();
-  assert.match(missing.find('button', p => p.children.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว')).className, /underline/);
+  assert.match(missing.find('button', p => p.children.includes('จดเลขที่ใบ 50 ทวิ')).className, /underline/);
   const failed = setup(row(), issue, { error: 'ระบบขัดข้องชั่วคราว กรุณาลองอีกครั้งอีกครั้ง' });
   failed.props.error = 'ระบบขัดข้องชั่วคราว กรุณาลองอีกครั้งอีกครั้ง';
   assert.equal(failed.render().split('ระบบขัดข้องชั่วคราว').length - 1, 1);
@@ -191,7 +221,7 @@ test('self-issued dialog validates, sends the trimmed body and preserves every t
   let reject = true;
   const request = mock.method(api, 'linkExternalWhtCertificate', async (...args: any[]) => {
     assert.equal(args[0], 'co'); assert.equal(args[1], 'handoff');
-    assert.deepEqual({ ...args[2], commandId: 'command' }, { commandId: 'command', externalCertificateNumber: 'EXT-9', issuedDate: '2026-01-01', paymentDate: '2025-12-31', externalEvidenceRef: '', note: 'ส่งให้แล้ว' });
+    assert.deepEqual({ ...args[2], commandId: 'command' }, { commandId: 'command', externalAttachmentId: null, externalCertificateNumber: 'EXT-9', issuedDate: '2026-01-01', paymentDate: '2025-12-31', externalEvidenceRef: '', note: 'ส่งให้แล้ว' });
     if (reject) throw Error('รายจ่ายเปลี่ยนแล้ว กรุณาเปิดรายจ่ายเพื่อตรวจสอบ');
     return row({ status: 'EXTERNAL_LINKED', externalCertificateNumber: 'EXT-9', externalIssuedDate: '2026-01-01', linkNote: 'ส่งให้แล้ว' });
   });
@@ -202,11 +232,11 @@ test('self-issued dialog validates, sends the trimmed body and preserves every t
     assert.match(view.render(), /<\/form><button[^>]*>ยกเลิก<\/button><button[^>]*form="certificate-expense"[^>]*>บันทึก<\/button><\/section>/);
     assert.equal(view.find('Modal', p => p.open).dirty, false);
     assert.doesNotMatch(view.render(), /ใช้เมื่อร้านออกหนังสือรับรองให้ผู้รับเงินเองนอกระบบ/);
-    assert.match(await submit(view), /กรอกเลขที่หนังสือรับรองก่อนบันทึก/); assert.equal(request.mock.callCount(), 0);
+    assert.match(await submit(view), /กรอกเลขที่ใบก่อนบันทึก/); assert.equal(request.mock.callCount(), 0);
     type(view, 'number', ' EXT-9 '); type(view, 'date', '2099-01-01');
     assert.equal(view.find('Modal', p => p.open).dirty, true, 'typed text is asked about before the window closes');
-    assert.match(view.render(), /วันที่ออกต้องไม่เกินวันนี้/);
-    assert.match(await submit(view), /วันที่ออกต้องไม่เกินวันนี้/); assert.equal(request.mock.callCount(), 0);
+    assert.match(view.render(), /วันที่ทำใบต้องไม่เกินวันนี้/);
+    assert.match(await submit(view), /วันที่ทำใบต้องไม่เกินวันนี้/); assert.equal(request.mock.callCount(), 0);
     type(view, 'date', '2026-01-01'); type(view, 'paymentDate', '2025-12-31'); type(view, 'note', ' ส่งให้แล้ว ');
     assert.match(await submit(view), /รายจ่ายเปลี่ยนแล้ว กรุณาเปิดรายจ่ายเพื่อตรวจสอบ/);
     assert.equal(view.find('input', p => p.id === 'certificate-number-expense').value, ' EXT-9 ');
@@ -215,7 +245,7 @@ test('self-issued dialog validates, sends the trimmed body and preserves every t
     reject = false; const html = await submit(view);
     assert.equal(request.mock.calls[1]!.arguments[2].commandId, firstCommand);
     assert.doesNotMatch(html, /data-dialog/); assert.match(html, /EXT-9/);
-    assert.deepEqual(view.successes, ['บันทึกแล้วว่าออกหนังสือรับรองเลขที่ EXT-9']); assert.equal(view.changes.length, 1);
+    assert.deepEqual(view.successes, ['จดเลขที่แล้ว ย้ายไป "ทำนอกระบบ"']); assert.equal(view.changes.length, 1);
   } finally { request.mock.restore(); }
 });
 
@@ -255,7 +285,7 @@ test('one history disclosure follows the status with cancellation and removed-ex
   assert.match(externalMarkup, /<span class="whitespace-nowrap">EXT-1<\/span>/);
   const external = visible(externalMarkup);
   assert.ok(external.includes('การบันทึกเลขที่ EXT-1 ยกเลิกแล้ว'));
-  assert.ok(external.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว'));
+  assert.ok(external.includes('จดเลขที่ใบ 50 ทวิ'));
 });
 
 test('correction locked facts show Thai category and grouped money as text without inputs', () => {
@@ -284,7 +314,7 @@ test('self-issued change pre-fills the same dialog, keeps a no-change refusal an
   const view = setup(row({ status: 'EXTERNAL_LINKED', canChangeExternalRecord: true, externalEvidenceRef: 'ตู้เดิม', linkNote: 'ส่งแล้ว' }), link);
   view.render();
   view.find('button', p => p.children.includes('แก้ไขการบันทึก')).onClick(); view.render();
-  assert.match(view.render(), /แก้ไขการบันทึกหนังสือรับรองที่ออกเอง/);
+  assert.match(view.render(), /แก้ไขการบันทึกหนังสือรับรองที่ทำนอกระบบ/);
   assert.equal(view.find('input', p => p.id === 'certificate-number-expense').value, 'EXT-1');
   assert.equal(view.find('ThemedDate', p => p.id === 'certificate-date-expense').value, '2026-10-10');
   assert.equal(view.find('input', p => p.id === 'certificate-reference-expense').value, 'ตู้เดิม');
@@ -299,7 +329,7 @@ test('self-issued change pre-fills the same dialog, keeps a no-change refusal an
     assert.equal(visible(await submit(view)).split(message).length - 1, 1);
     assert.equal(view.find('input', p => p.id === 'certificate-number-expense').value, 'EXT-1');
     const first = request.mock.calls[0]!.arguments;
-    assert.deepEqual({ ...first[2], commandId: 'stable' }, { commandId: 'stable', externalCertificateNumber: 'EXT-1', issuedDate: '2026-10-10', paymentDate: '2026-10-09', externalEvidenceRef: 'ตู้เดิม', note: 'ส่งแล้ว' });
+    assert.deepEqual({ ...first[2], commandId: 'stable' }, { commandId: 'stable', externalAttachmentId: null, externalCertificateNumber: 'EXT-1', issuedDate: '2026-10-10', paymentDate: '2026-10-09', externalEvidenceRef: 'ตู้เดิม', note: 'ส่งแล้ว' });
     await submit(view); assert.equal(request.mock.calls[1]!.arguments[2].commandId, first[2].commandId);
     type(view, 'number', ' EXT-2 '); assert.ok(!visible(view.render()).includes(message));
     reject = false; await submit(view);
@@ -398,14 +428,14 @@ test('an issuer saves the address through the one primary step, then receives is
     let html = view.render(); assert.equal(primaryCount(html), 1); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ'));
     const add = view.find('button', props => props.children.includes('เพิ่มที่อยู่'));
     assert.match(add.className, /mangmee-btn-primary/); assert.ok(html.includes('[&amp;_.mangmee-btn]:w-full'));
-    assert.ok(!html.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว'));
+    assert.ok(!html.includes('จดเลขที่ใบ 50 ทวิ'));
     add.onClick(); view.render(); type(view, 'address', 'ที่อยู่ใหม่'); await submit(view);
     view.render(true); await view.settle(); html = view.render();
     assert.ok(html.includes('ออกหนังสือรับรอง 50 ทวิ')); assert.equal(primaryCount(html), 1);
     assert.deepEqual(view.successes, ['บันทึกที่อยู่ผู้รับเงินแล้ว']);
   } finally { request.mock.restore(); list.mock.restore(); view.cleanup(); }
-  assert.ok(setup(row({ payeeAddress: null, systemIssuanceOpen: false }), link).render().includes('บันทึกว่าออกหนังสือรับรองเองแล้ว'));
-  assert.ok(setup(row({ payeeAddress: null }), [...issue, ...link]).render().includes('บันทึกว่าออกหนังสือรับรองเองแล้ว'));
+  assert.ok(setup(row({ payeeAddress: null, systemIssuanceOpen: false }), link).render().includes('จดเลขที่ใบ 50 ทวิ'));
+  assert.ok(setup(row({ payeeAddress: null }), [...issue, ...link]).render().includes('จดเลขที่ใบ 50 ทวิ'));
 });
 
 test('a server address refusal remains once in place and starts a read for the address step', async () => {
@@ -424,7 +454,7 @@ test('a server address refusal remains once in place and starts a read for the a
 test('payer details come before the payee address and only a manager gets the one primary profile link', () => {
   for (const allowed of [false, true]) {
     const view = setup(row({ payerMissing: ['TAX_ID', 'ADDRESS'], payeeAddress: null }), [...issue, ...link, ...(allowed ? ['company.legal_identity.manage'] : [])]);
-    const html = view.render(); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ')); assert.ok(html.includes('บันทึกว่าออกหนังสือรับรองเองแล้ว'));
+    const html = view.render(); assert.ok(!html.includes('ออกหนังสือรับรอง 50 ทวิ')); assert.ok(html.includes('จดเลขที่ใบ 50 ทวิ'));
     assert.equal(html.includes('ไปกรอกข้อมูลร้าน'), allowed); assert.equal(html.includes('เจ้าของกิจการ'), !allowed);
     assert.match(view.find('button', p => p.children.includes('เพิ่มที่อยู่')).className, /mangmee-btn-secondary/);
     assert.equal((html.match(/mangmee-btn-primary/g) ?? []).length, allowed ? 1 : 0);
@@ -455,7 +485,7 @@ test('an issued card gives the safe signature next step and the shorter states d
   assert.ok(visible(issued).includes('พิมพ์ ตรวจลายเซ็น แล้วส่งให้ผู้รับเงิน'));
   assert.ok(issued.indexOf('เลขที่') < issued.indexOf('พิมพ์ ตรวจลายเซ็น'));
   const external = setup(row({ status: 'EXTERNAL_LINKED' }), link).render();
-  assert.ok(!external.includes('ตรวจลายเซ็น')); assert.ok(external.includes('ไม่ได้ออกจากระบบนี้ ไม่มีไฟล์ให้ดาวน์โหลด'));
+  assert.ok(!external.includes('ตรวจลายเซ็น')); assert.ok(external.includes('ทำนอกระบบ'));
   const recorder = setup(row({ systemIssuanceOpen: false }), link).render();
   assert.ok(recorder.includes('ยังไม่ได้บันทึกหนังสือรับรอง')); assert.ok(!recorder.includes('ถ้าร้านออกหนังสือรับรอง'));
 });
@@ -509,15 +539,15 @@ test('a cleared typed address explains the tax-number change only beside the mis
 test('PND2 and dividends explain why the system cannot issue and keep the shop-issued record action', () => {
   for (const code of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND']) {
     const view = setup(row({ systemIssuanceOpen: false, prefill: { ...row().prefill, incomeCategoryCode: code } }), [...issue, ...link]);
-    assert.match(visible(view.render()), /ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง/);
-    assert.match(visible(view.render()), /บันทึกว่าออกหนังสือรับรองเองแล้ว/);
+    assert.match(visible(view.render()), /ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้/);
+    assert.match(visible(view.render()), /จดเลขที่ใบ 50 ทวิ/);
     assert.equal(view.render().includes('>ออกหนังสือรับรอง 50 ทวิ</button>'), false);
     view.cleanup();
   }
 });
 
 test('UX4 the external-only card explains delivery and filing without claiming the system files the return', () => {
-  const sentence = 'ร้านต้องออกหนังสือรับรองให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้';
+  const sentence = 'ร้านต้องทำหนังสือรับรองนอกระบบให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้';
   assert.ok(visible(setup(row({ systemIssuanceOpen: false }), link).render()).includes(sentence));
   assert.ok(!visible(setup(row(), [...issue, ...link]).render()).includes(sentence));
   assert.ok(!visible(setup(row({ status: 'SYSTEM_ISSUED' }), link).render()).includes(sentence));
@@ -681,4 +711,48 @@ test('UAT-T1 self-issued form names every field and prefills only one confirmed 
       }
     } finally { view.cleanup(); }
   }
+});
+
+
+test('WHT-OUTSIDE-2 unpaid outside card uses the payment-first sentence', () => {
+  const view = setup(row({ payments: [], systemIssuanceOpen: false }), link);
+  Object.assign(view.props, { systemCertificatesAvailable: false });
+  try {
+    const html = visible(view.render());
+    assert.match(html, /บันทึกการจ่ายก่อน แล้วค่อยจดเลขที่ใบ 50 ทวิ/);
+    assert.doesNotMatch(html, /ก่อนออกหนังสือรับรอง/);
+  } finally { view.cleanup(); }
+});
+
+test('WHT-OUTSIDE-2 optional upload is saved, shown, replaced and removed without changing required number and dates', async () => {
+  const saved = row({ status: 'EXTERNAL_LINKED', canChangeExternalRecord: true, externalAttachmentId: 'old-file' });
+  const view = setup(saved, link);
+  const upload = mock.method(api, 'uploadExternalWhtFile', async () => 'new-file');
+  const change = mock.method(api, 'changeExternalWhtCertificate', async (_company: string, _id: string, body: any) => ({ ...saved, externalAttachmentId: body.externalAttachmentId }));
+  try {
+    let html = view.render();
+    assert.match(visible(html), /ทำนอกระบบ.*เลขที่ EXT-1/);
+    assert.match(html, /ดูไฟล์/);
+    assert.doesNotMatch(html, /ไม่มีไฟล์ให้ดาวน์โหลด/);
+    view.find('button', p => p.children.includes('แก้ไขการบันทึก')).onClick(); view.render();
+    assert.match(visible(view.render()), /ใบนี้ทำจากนอกระบบ ระบบเก็บเลขที่และไฟล์ไว้ให้ค้นเจอเท่านั้น/);
+    view.find('ThemedFile', p => p.id === 'certificate-file-expense').onChange(new File(['pdf'], 'ใบ.pdf', { type: 'application/pdf' })); view.render();
+    await submit(view);
+    assert.equal(upload.mock.callCount(), 1);
+    assert.equal(change.mock.calls[0].arguments[2].externalAttachmentId, 'new-file');
+    assert.equal(change.mock.calls[0].arguments[2].externalCertificateNumber, 'EXT-1');
+    view.find('button', p => p.children.includes('แก้ไขการบันทึก')).onClick(); view.render();
+    view.find('ThemedFile', p => p.id === 'certificate-file-expense').onChange(null); view.render();
+    html = await submit(view);
+    assert.equal(change.mock.calls[1].arguments[2].externalAttachmentId, null);
+    assert.doesNotMatch(html, />ดูไฟล์</);
+  } finally { upload.mock.restore(); change.mock.restore(); view.cleanup(); }
+});
+
+
+test('WHT-OUTSIDE-2 an already recorded payment with an unknown date asks for its date rather than another payment', () => {
+  const view = setup(row({ payments: [{ id: 'payment', amount: '970', paidAt: '2026-10-10', paidAtConfirmed: false }], systemIssuanceOpen: false }), link);
+  Object.assign(view.props, { systemCertificatesAvailable: false });
+  try { assert.match(visible(view.render()), /ระบุวันที่จ่ายจริงในรายการจ่ายก่อน แล้วค่อยจดเลขที่ใบ 50 ทวิ/); }
+  finally { view.cleanup(); }
 });

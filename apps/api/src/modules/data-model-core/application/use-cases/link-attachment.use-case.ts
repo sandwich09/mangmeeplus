@@ -1,3 +1,4 @@
+import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
@@ -58,6 +59,7 @@ export class LinkAttachmentUseCase {
 
     const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId }, tx);
     if (!existing) throw new NotFoundException('Attachment not found.');
+    if (existing.metadataJson?.['generatedFor'] === WHT_EXTERNAL_FILE.target) throw new ForbiddenException({ code: 'wht_external_file_retained', message: WHT_EXTERNAL_FILE.retained });
     if (existing.status !== 'ACTIVE') {
       throw new BadRequestException('Attachment must be ACTIVE to link.');
     }

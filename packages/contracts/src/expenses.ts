@@ -707,7 +707,7 @@ export function expenseDisbursementReservationMessage(operation: 'recordPayment'
 
 export const EXPENSE_VOID_CERTIFICATE_WORDS = {
   permissionMissing: `เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว การยกเลิกเอกสารจะยกเลิกหนังสือรับรองด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรอง 50 ทวิ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก`,
-  permissionMissingExternal: 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวิเองแล้ว การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก',
+  permissionMissingExternal: 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว การยกเลิกเอกสารจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบ ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้ยกเลิก',
   taxWorkspaceCertificate: 'รายจ่ายนี้มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกเอกสารจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   attestationRequired: 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกเอกสาร',
   periodLocked: (kind: 'SYSTEM' | 'EXTERNAL', periodKey: string, formType: string): string => withholdingPeriodLockedMessage(periodKey, 'ยกเลิกเอกสารนี้', formType, kind),
@@ -819,7 +819,7 @@ export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocke
     case 'journal_pending': return `มีรายการบัญชีรอผ่านรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'certificate_issued': return `ออกเอกสาร 50 ทวิแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'certificate_permission_missing': return facts?.certificateOnExpense?.kind === 'EXTERNAL'
-      ? `เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายเองแล้ว${facts?.certificateOnExpense?.number ? ` (เลขที่ ${facts.certificateOnExpense.number})` : ''} การแก้ไขจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ออกเอง ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข`
+      ? `เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว${facts?.certificateOnExpense?.number ? ` (เลขที่ ${facts.certificateOnExpense.number})` : ''} การแก้ไขจะยกเลิกการบันทึกนั้นด้วย ซึ่งต้องใช้สิทธิ์บันทึกหนังสือรับรองที่ทำนอกระบบ ให้ผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข`
       : `เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่ายแล้ว${facts?.certificateOnExpense?.number ? ` (เลขที่ ${facts.certificateOnExpense.number})` : ''} การแก้ไขจะยกเลิกหนังสือรับรองใบเดิมด้วย ซึ่งต้องใช้สิทธิ์จัดการหนังสือรับรองหัก ณ ที่จ่าย ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์นั้นเป็นผู้แก้ไข`;
     case 'accounting_period_locked': return `เดือนบัญชี ${expenseCorrectionMonth(facts?.lockedAccountingPeriodKey ?? undefined)} ไม่เปิดรับรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
     case 'tax_period_filed': {

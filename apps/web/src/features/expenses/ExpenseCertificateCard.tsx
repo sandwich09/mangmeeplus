@@ -1,4 +1,10 @@
 'use client';
+
+import { WHT_EXTERNAL_FILE, WHT_OUTSIDE_PAYMENT_DATE_REQUIRED, WHT_OUTSIDE_BEFORE_PAYMENT } from '@watchdog-bms/contracts';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
+import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
+import { ExpenseCertificateFile } from './ExpenseCertificateFile';
+import { uploadExternalWhtFile } from './expenses.api';
 import { whtCertificateUnsupportedReason, civilDate } from '@watchdog-bms/contracts';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { isExpenseVoidReason, whtPayerIdentityMissingMessage, whtPayeeAddress, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_HANDOFF_MISSING_LABELS, WHT_HANDOFF_PAYEE_ADDRESS_MAX, isCivilDate, todayCivilDate, type WhtCertificateHandoffDto, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
@@ -27,8 +33,8 @@ const WHT_PAYEE_ADDRESS_EXAMPLE = 'เลขที่ ถนน แขวง/ต
 
 const text = (key: string) => t(`expenses.certificate_card.${key}` as DictionaryKey, 'th');
 const REMOVE_REASON_REQUIRED = 'ใส่เหตุผลที่ลบการบันทึก อย่างน้อย 3 ตัวอักษร';
-export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff, permissions, issueButton, onDownload, busy, error, onChanged, onClearError, onIssuePayment, onCoverageChanged, primaryHidden = false, children }: {
-  companyId: string; expenseId: string; revision: string; handoff: WhtCertificateHandoffDto | null; permissions: string[];
+export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff, permissions, issueButton, onDownload, busy, error, onChanged, onClearError, onIssuePayment, onCoverageChanged, primaryHidden = false, systemCertificatesAvailable = true, children }: {
+  systemCertificatesAvailable?: boolean; companyId: string; expenseId: string; revision: string; handoff: WhtCertificateHandoffDto | null; permissions: string[];
   onCoverageChanged?: (complete: boolean | null) => void;
   onIssuePayment?: (handoff: WhtCertificateHandoffDto, paymentId: string) => Promise<void>;
   issueButton: ReactNode; onDownload: (handoff?: WhtCertificateHandoffDto) => void; busy: boolean; error: string | null; onChanged: (handoff: WhtCertificateHandoffDto) => void; onClearError?: () => void; primaryHidden?: boolean; children?: ReactNode;
@@ -85,14 +91,17 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
   // "เพิ่มที่อยู่" on the list lands here, not at the top of a long page.
   useEffect(() => { if (loaded && (globalThis.location?.hash === '#wht-certificate' || new URLSearchParams(globalThis.location?.search ?? '').get('section') === 'wht-certificate')) document.getElementById('wht-certificate')?.scrollIntoView(); }, [loaded]);
   useEffect(() => { if (error === WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE || [['REGISTERED_NAME'], ['TAX_ID'], ['ADDRESS'], ['REGISTERED_NAME', 'TAX_ID'], ['REGISTERED_NAME', 'ADDRESS'], ['TAX_ID', 'ADDRESS'], ['REGISTERED_NAME', 'TAX_ID', 'ADDRESS']].some(missing => error === whtPayerIdentityMissingMessage(missing as ('REGISTERED_NAME' | 'TAX_ID' | 'ADDRESS')[]))) setAttempt(value => value + 1); }, [error]);
-  const action = row ? certificateCardAction(row, permissions) : null;
+  const action = row ? certificateCardAction(systemCertificatesAvailable ? row : { ...row, systemIssuanceOpen: false }, permissions) : null;
   const payerMissing = row?.payerMissing ?? [];
   const canLink = permissions.includes('wht.external_certificate.link');
-  const issuer = !!row?.systemIssuanceOpen && permissions.includes('wht.certificate.issue');
+  const issuer = systemCertificatesAvailable && !!row?.systemIssuanceOpen && permissions.includes('wht.certificate.issue');
   const payeeAddress = whtPayeeAddress(row?.payeeAddress, row?.prefill.payeeSnapshot.address) || '';
-  const canEditAddress = row?.status === 'REQUIRED' && permissions.some(p => ['wht.external_certificate.link', 'wht.certificate.issue'].includes(p));
+  const canEditAddress = systemCertificatesAvailable && row?.status === 'REQUIRED' && permissions.some(p => ['wht.external_certificate.link', 'wht.certificate.issue'].includes(p));
+  const [file, setFile] = useState<File | null>(null);
+  const [fileId, setFileId] = useState<string | null>(null);
   const openRecord = (change = false) => {
     const start = change && row ? { number: row.externalCertificateNumber ?? '', date: row.externalIssuedDate?.slice(0, 10) ?? '', paymentDate: row.externalPaymentDate?.slice(0, 10) ?? '', reference: row.externalEvidenceRef ?? '', note: row.linkNote ?? '' } : { number: '', date: '', paymentDate: payments?.length === 1 && payments[0]!.paidAtConfirmed ? civilDate(new Date(payments[0]!.paidAt)) : '', reference: '', note: '' };
+    setFile(null); setFileId(change ? row?.externalAttachmentId ?? null : null);
     setValues(start); setOpened(JSON.stringify(start));
     setRefusal(null); setCommandId(crypto.randomUUID()); setDialog(change ? 'change-record' : 'record');
   };
@@ -110,12 +119,15 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
         setRead({ row: updated, loading: false, error: null }); onChanged(updated);
         toast.success(text('removed'));
       } else if (dialog === 'record' || dialog === 'change-record') {
-        const body = { ...selfIssuedCertificateBody(values, commandId), ...(selectedPayment && { paymentId: selectedPayment.id }) };
+        const fields = selfIssuedCertificateBody(values, commandId);
+        const attachmentId = file ? await uploadExternalWhtFile(companyId, row.id, file) : fileId;
+        if (file) { setFileId(attachmentId); setFile(null); }
+        const body = { ...fields, externalAttachmentId: attachmentId, ...(selectedPayment && { paymentId: selectedPayment.id }) };
         const result = await (dialog === 'change-record' ? changeExternalWhtCertificate : linkExternalWhtCertificate)(companyId, row.id, body);
         const updated = { ...row, ...result, systemIssuanceOpen: row.systemIssuanceOpen, systemCorrectionOpen: row.systemCorrectionOpen, systemReplacementOpen: row.systemReplacementOpen };
         setRead({ row: updated, loading: false, error: null });
         onChanged(updated);
-        toast.success(formatMessage(text(dialog === 'change-record' ? 'record_changed' : 'saved'), { number: body.externalCertificateNumber }));
+        toast.success(dialog === 'change-record' ? formatMessage(text('record_changed'), { number: body.externalCertificateNumber }) : text(systemCertificatesAvailable ? 'saved_system' : 'saved_outside'));
       } else {
         if (!address.trim()) throw Error(text('address_required'));
         const result = await setWhtHandoffPayeeAddress(companyId, row.id, { payeeAddress: address.trim() });
@@ -126,7 +138,7 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
       }
       onClearError?.(); refreshHistory?.(); setDialog(null); setAttempt(value => value + 1);
     } catch (cause) {
-      const taken = dialog === 'record' ? certificateRecordRefusal(cause) : null;
+      const taken = dialog === 'record' ? certificateRecordRefusal(cause, systemCertificatesAvailable) : null;
       setRefusal(taken ?? err(cause));
       if (taken) setAttempt(value => value + 1);
     }
@@ -136,7 +148,7 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
   // A sentence about one box is shown under that box; anything else (a refusal from the server) closes the form.
   const errorField = dialogError === text('number_required') ? 'number' : dialogError === text('date_required') || dialogError === text('future_date') ? 'date'
     : dialogError === text('address_required') ? 'address' : dialogError === REMOVE_REASON_REQUIRED ? 'reason' : null;
-  const typed = dialog === 'remove-record' ? removeReason !== '' : dialog === 'address' ? address !== payeeAddress : dialog !== null && JSON.stringify(values) !== opened;
+  const typed = dialog === 'remove-record' ? removeReason !== '' : dialog === 'address' ? address !== payeeAddress : dialog !== null && (JSON.stringify(values) !== opened || !!file || fileId !== (dialog === 'change-record' ? row?.externalAttachmentId ?? null : null));
   const missing = row?.missing.map(reason => WHT_HANDOFF_MISSING_LABELS[reason]).join(' และ ') ?? '';
   const number = row?.currentCertificate?.number ?? row?.certificateNumber ?? row?.externalCertificateNumber ?? '—';
   const date = row?.currentCertificate?.issuedAt ?? row?.certificateIssuedAt ?? row?.externalIssuedDate;
@@ -145,7 +157,7 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
   const status = row?.status === 'SYSTEM_ISSUED' ? t('expenses.certificates.system', 'th')
     : row?.status === 'EXTERNAL_LINKED' ? t('expenses.certificates.external', 'th')
     : missing && issuer ? t('expenses.certificates.incomplete', 'th')
-    : action === 'record' && !issuer ? text('external_pending') : missing ? t('expenses.certificates.incomplete', 'th') : t('expenses.certificates.pending', 'th');
+    : !systemCertificatesAvailable ? t('expenses.certificates.outside_pending', 'th') : action === 'record' && !issuer ? text('external_pending') : missing ? t('expenses.certificates.incomplete', 'th') : t('expenses.certificates.pending', 'th');
   const statusNumber = row?.status === 'EXTERNAL_LINKED' ? row.externalCertificateNumber ?? '—' : number;
   const statusDate = row?.status === 'EXTERNAL_LINKED' ? row.externalIssuedDate : date;
   // What the card is waiting for before it can issue, said once beside the state; the two errands below each carry their own button.
@@ -158,47 +170,48 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
     {!read.loading && !read.error && !row && <div className="space-y-2"><p>{text('no_handoff')}</p><button type="button" className={ghostClass} onClick={retry}>{text('reload')}</button></div>}
     {row && <>
       {payments && payments.length > 1 && <SelectField id="certificate-payment" label="รายการจ่าย" value={selectedPayment?.id ?? ''} onChange={e => { setPaymentId(e.target.value); const next = read.rows?.find(r => r.prefill.expensePaymentId === e.target.value && r.status !== 'CANCELLED'); if (next) onChanged(next); }}>{payments.map((p, index) => <option key={p.id} value={p.id}>{paymentLabels[index]}{paymentLabels.filter(label => label === paymentLabels[index]).length > 1 ? ` · รายการจ่ายที่ ${index + 1}` : ''}{certificateRows.some(row => ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'].includes(row.status) && (!row.prefill.expensePaymentId || row.prefill.expensePaymentId === p.id)) ? ' · ออกหนังสือรับรองแล้ว' : ''}</option>)}</SelectField>}
-      {waitingPayment && <p>ร่าง · {selectedPayment ? 'ระบุวันที่จ่ายจริงในรายการจ่ายก่อนออกหนังสือรับรอง' : 'บันทึกการจ่ายก่อนออกหนังสือรับรอง'}</p>}
+      {waitingPayment && <p>{systemCertificatesAvailable ? <>ร่าง · {selectedPayment ? 'ระบุวันที่จ่ายจริงในรายการจ่ายก่อนออกหนังสือรับรอง' : 'บันทึกการจ่ายก่อนออกหนังสือรับรอง'}</> : selectedPayment ? WHT_OUTSIDE_PAYMENT_DATE_REQUIRED : WHT_OUTSIDE_BEFORE_PAYMENT}</p>}
       {!stale && <p className="flex flex-wrap items-center gap-x-2 gap-y-1 break-words leading-6" role="status">
-        <MangmeeBadge tone={row?.status === 'SYSTEM_ISSUED' ? 'brand' : row?.status === 'EXTERNAL_LINKED' ? 'sky' : 'amber'}>{status}</MangmeeBadge>{' '}
-        {numbered && <span><span className="inline-block max-w-full">เลขที่ <span className={statusNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{statusNumber}</span></span>{' '}<span className="whitespace-nowrap">วันที่ออก {statusDate ? formatThaiDate(statusDate) : '—'}</span></span>}
+        <MangmeeBadge tone={row?.status === 'SYSTEM_ISSUED' ? 'brand' : row?.status === 'EXTERNAL_LINKED' ? 'slate' : 'amber'}>{status}</MangmeeBadge>{' '}
+        {numbered && <span><span className="inline-block max-w-full">เลขที่ <span className={statusNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{statusNumber}</span></span>{' '}<span className="whitespace-nowrap">{row.status === 'EXTERNAL_LINKED' ? text('date') : 'วันที่ออก'} {statusDate ? formatThaiDate(statusDate) : '—'}</span></span>}
         {waitingFor && <span>ออกได้เมื่อมี{waitingFor}</span>}
       </p>}
       {numbered && <p>วันที่จ่าย {formatThaiDate(row.currentCertificate?.paymentDate ?? row.externalPaymentDate ?? row.prefill.paymentDate)}</p>}
-      {row?.status === 'REQUIRED' && whtCertificateUnsupportedReason(row.prefill.incomeCategoryCode, row.prefill.formType) && <p>{whtCertificateUnsupportedReason(row.prefill.incomeCategoryCode, row.prefill.formType)}</p>}
-      {row?.status === 'REQUIRED' && !issuer && canLink && <p>ร้านต้องออกหนังสือรับรองให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้</p>}
-      {row?.status === 'SYSTEM_ISSUED' && <p>{text('issued_next')}</p>}
+      {systemCertificatesAvailable && row?.status === 'REQUIRED' && whtCertificateUnsupportedReason(row.prefill.incomeCategoryCode, row.prefill.formType) && <p>{whtCertificateUnsupportedReason(row.prefill.incomeCategoryCode, row.prefill.formType)}</p>}
+      {!systemCertificatesAvailable && <p>{text('outside_hint')}</p>}
+      {systemCertificatesAvailable && row?.status === 'REQUIRED' && !issuer && canLink && <p>ร้านต้องทำหนังสือรับรองนอกระบบให้ผู้รับเงินและยื่นแบบภาษีหัก ณ ที่จ่ายเอง ระบบเก็บยอดที่หักไว้</p>}
+      {systemCertificatesAvailable && row?.status === 'SYSTEM_ISSUED' && <p>{text('issued_next')}</p>}
       {row?.status === 'REQUIRED' && (row.previousCertificate ? <ExpensePreviousCertificate previous={row.previousCertificate} /> : <><ExpenseCertificateHistoryNotice placement="issue" /><ExpenseCertificateExternalRecordNotice /></>)}
       {row?.status === 'EXTERNAL_LINKED' && <div className="space-y-1 break-words">
         {row.externalEvidenceRef && <p>{formatMessage(text('reference_value'), { reference: row.externalEvidenceRef })}</p>}
         {row.linkNote && <p className="whitespace-pre-wrap">{formatMessage(text('note_value'), { note: row.linkNote })}</p>}
-        <p>{text('no_file')}</p>
+        {row.externalAttachmentId && <ExpenseCertificateFile companyId={companyId} handoffId={row.id} attachmentId={row.externalAttachmentId} />}
       </div>}
-      {row?.status === 'REQUIRED' && missing && <div className="space-y-1 leading-6">{row.missing.map(reason => <p key={reason}>{WHT_HANDOFF_MISSING_LABELS[reason]}</p>)}{issuer && <p>{text('edit_hint')}</p>}</div>}
+      {systemCertificatesAvailable && row?.status === 'REQUIRED' && missing && <div className="space-y-1 leading-6">{row.missing.map(reason => <p key={reason}>{WHT_HANDOFF_MISSING_LABELS[reason]}</p>)}{issuer && <p>{text('edit_hint')}</p>}</div>}
     </>}
     {error && !read.error && <div className="space-y-2"><ErrorBanner message={error} /><button type="button" className={ghostClass} onClick={retry}>{t('expenses.substitute_wizard.retry', 'th')}</button></div>}
     {row && !read.error && <>
-      {(action === 'issue' || row.status === 'SYSTEM_ISSUED' && permissions.some(permission => ['wht.certificate.issue', 'wht.certificate.correct'].includes(permission))) && payerMissing.length > 0 && <WhtPayerIdentityNotice companyId={companyId} missing={payerMissing} permissions={permissions} primary={action === 'issue'} returnTo={`/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(expenseId)}#wht-certificate`} />}
+      {systemCertificatesAvailable && (action === 'issue' || row.status === 'SYSTEM_ISSUED' && permissions.some(permission => ['wht.certificate.issue', 'wht.certificate.correct'].includes(permission))) && payerMissing.length > 0 && <WhtPayerIdentityNotice companyId={companyId} missing={payerMissing} permissions={permissions} primary={action === 'issue'} returnTo={`/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(expenseId)}#wht-certificate`} />}
       {canEditAddress && <div className="space-y-1 border-t border-gray-100 pt-3">
         <p className="font-semibold">{text('address')}</p><p className="whitespace-pre-wrap break-words">{payeeAddress || text('no_address_warning')}</p>
         {!payeeAddress && row.payeeAddressClearedByTaxIdChange && <p>{text('address_cleared')}</p>}
         <button type="button" className={action === 'issue' && !payerMissing.length && !payeeAddress ? btnClass : ghostClass} disabled={busy || stale} aria-busy={false} onClick={() => { setAddress(payeeAddress); setRefusal(null); setDialog('address'); }}>{payeeAddress ? text('edit_address') : t('expenses.certificates.add_address', 'th')}</button>
       </div>}
       {action === 'issue' && !waitingPayment && !payerMissing.length && payeeAddress && (selectedPayment && onIssuePayment ? <WhtIssueButton handoff={row} busy={busy} label="ออกเลขที่และดาวน์โหลด" onIssue={() => onIssuePayment(row, selectedPayment.id)} /> : issueButton)}
-      {action === 'download' && !primaryHidden && <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => onDownload(row)}>{text('download')}</button>}
-      {action === 'record' && !waitingPayment && !issuer && <button type="button" className={btnClass} disabled={busy || stale} aria-busy={false} onClick={() => openRecord()}>{text('record')}</button>}
+      {systemCertificatesAvailable && action === 'download' && !primaryHidden && <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={() => onDownload(row)}>{text('download')}</button>}
+      {action === 'record' && !waitingPayment && !issuer && <button type="button" className={btnClass} disabled={busy || stale} aria-busy={false} onClick={() => openRecord()}>{text('record_expense')}</button>}
       {/* The pair is one group: one size, side by side when both names fit. */}
       {row?.status === 'EXTERNAL_LINKED' && row.canChangeExternalRecord && <ActionGroup align="start">
         <button type="button" className={ghostClass} disabled={busy || stale} aria-busy={false} onClick={() => { setRemoveReason(''); setRemoveVersion(row.updatedAt); setRefusal(null); setCommandId(crypto.randomUUID()); setDialog('remove-record'); }}>{text('remove_record')}</button>
         <button type="button" className={ghostClass} disabled={busy || stale} aria-busy={false} onClick={() => openRecord(true)}>{text('change_record')}</button>
       </ActionGroup>}
-      {canLink && !waitingPayment && (action === 'issue' || (action === 'record' && issuer)) && <button type="button" className="block min-h-11 text-left font-semibold underline underline-offset-2" disabled={busy || stale} aria-busy={false} onClick={() => openRecord()}>{text('record')}</button>}
+      {canLink && !waitingPayment && (action === 'issue' || (action === 'record' && issuer)) && <button type="button" className="block min-h-11 text-left font-semibold underline underline-offset-2" disabled={busy || stale} aria-busy={false} onClick={() => openRecord()}>{text('record_expense')}</button>}
     </>}
-    {(!payments || row?.status === 'SYSTEM_ISSUED' && row.id === handoff?.id) && children}
+    {systemCertificatesAvailable && (!payments || row?.status === 'SYSTEM_ISSUED' && row.id === handoff?.id) && children}
     {row && <ExpenseCertificateHistoryDisclosure plain label={text('history')} />}
     {/* The window names the thing; its two buttons name the two outcomes. Typed text is never lost by a stray press: ✕ and Escape ask first. */}
     <Modal open={dialog !== null} onClose={close} closeOnBackdrop={false} dirty={typed && !saving} size="sm"
-      title={dialog === 'remove-record' ? <>{text('remove_title')} <span className={statusNumber.length > 30 ? undefined : 'mangmee-unit'}>{statusNumber}</span>?</> : text(dialog === 'address' ? (payeeAddress ? 'edit_address_title' : 'add_address_title') : dialog === 'change-record' ? 'change_record_title' : 'record')}
+      title={dialog === 'remove-record' ? <>{text('remove_title')} <span className={statusNumber.length > 30 ? undefined : 'mangmee-unit'}>{statusNumber}</span>?</> : text(dialog === 'address' ? (payeeAddress ? 'edit_address_title' : 'add_address_title') : dialog === 'change-record' ? 'change_record_title' : 'record_title')}
       footer={<>
         <button type="button" className={ghostClass} disabled={saving} aria-busy={false} onClick={close}>{dialog === 'remove-record' ? t('expenses.disbursement.cancel_delete', 'th') : t('common.cancel', 'th')}</button>
         <button form={`certificate-${expenseId}`} type="submit" className={dialog === 'remove-record' ? dangerClass : btnClass} disabled={saving} aria-busy={saving}>{text(dialog === 'remove-record' ? 'remove_submit' : 'save')}</button>
@@ -211,13 +224,20 @@ export function ExpenseCertificateCard({ companyId, expenseId, revision, handoff
           </label>
           {errorField === 'reason' && <FieldError>{dialogError}</FieldError>}
         </> : dialog === 'record' || dialog === 'change-record' ? <>
+          <p>{WHT_EXTERNAL_FILE.hint}</p>
           {(['number', 'paymentDate', 'date', 'reference', 'note'] as const).map(field => <label key={field} className="block" htmlFor={`certificate-${field}-${expenseId}`}>
-            <span className="block text-sm">{field === 'paymentDate' ? 'วันที่จ่ายตามหนังสือรับรองเดิม' : text(field)}</span>
-            {field === 'date' || field === 'paymentDate' ? <ThemedDate id={`certificate-${field}-${expenseId}`} aria-label={field === 'paymentDate' ? 'วันที่จ่ายตามหนังสือรับรองเดิม' : text(field)} className={inputClass} value={values[field]} required max={todayCivilDate('Asia/Bangkok')} allowClear={false} disabled={saving} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
+            <span className="block text-sm">{field === 'paymentDate' ? text('payment_date') : text(field)}</span>
+            {field === 'date' || field === 'paymentDate' ? <ThemedDate id={`certificate-${field}-${expenseId}`} aria-label={field === 'paymentDate' ? text('payment_date') : text(field)} className={inputClass} value={values[field]} required max={todayCivilDate('Asia/Bangkok')} allowClear={false} disabled={saving} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
               : field === 'note' ? <textarea id={`certificate-${field}-${expenseId}`} aria-label={text(field)} className={inputClass} rows={3} maxLength={1000} disabled={saving} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
               : <input id={`certificate-${field}-${expenseId}`} aria-label={text(field)} className={inputClass} type="text" required={field === 'number'} maxLength={field === 'number' ? 100 : field === 'reference' ? 500 : undefined} disabled={saving} aria-invalid={errorField === field || undefined} value={values[field]} onChange={event => { setValues(v => ({ ...v, [field]: event.target.value })); setRefusal(null); setCommandId(crypto.randomUUID()); }} />}
             {errorField === field && <FieldError>{dialogError}</FieldError>}
           </label>)}
+          <div className="space-y-1">
+            <label htmlFor={`certificate-file-${expenseId}`}>{WHT_EXTERNAL_FILE.label}</label>
+            <ThemedFile id={`certificate-file-${expenseId}`} aria-label={WHT_EXTERNAL_FILE.label} accept={ATTACHMENT_UPLOAD_ACCEPT}
+              file={file ?? (fileId ? 'ใบ 50 ทวิ' : null)} disabled={saving} loading={saving && !!file}
+              hint="PDF หรือรูปภาพ ไม่เกิน 10 เมกะไบต์" onChange={next => { setFile(next); setFileId(null); setRefusal(null); setCommandId(crypto.randomUUID()); }} />
+          </div>
         </> : <label className="block" htmlFor={`certificate-address-${expenseId}`}><span className="block text-sm">{text('address')}</span><textarea id={`certificate-address-${expenseId}`} className={inputClass} rows={4} required maxLength={WHT_HANDOFF_PAYEE_ADDRESS_MAX} disabled={saving} aria-invalid={errorField === 'address' || undefined} placeholder={WHT_PAYEE_ADDRESS_EXAMPLE} value={address} onChange={event => { setAddress(event.target.value); setRefusal(null); }} />
           {errorField === 'address' && <FieldError>{dialogError}</FieldError>}</label>}
         {dialogError && !errorField && <ErrorBanner message={dialogError} />}

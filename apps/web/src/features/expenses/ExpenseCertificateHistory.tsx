@@ -5,11 +5,12 @@ import { WHT_EXTERNAL_RECORD_WORDS, WHT_CERTIFICATE_HISTORY_EVENT_LABELS, type W
 import { MangmeeCard } from '@/common/components/mangmee';
 import { formatThaiDate, formatThaiTime } from '@/common/i18n/thai-date';
 import { t } from '@/common/i18n/workspace-i18n.logic';
+import { ExpenseCertificateFile } from './ExpenseCertificateFile';
 import { getExpenseCertificateHistory } from './expenses.api';
 import { err, ErrorBanner, ghostClass } from './ExpensesUi';
 
 type HistoryState = { rows: WhtCertificateHistoryDto[]; loading: boolean; error: string | null };
-const HistoryContext = createContext<(HistoryState & { confirmed: boolean; retry: () => void }) | null>(null);
+const HistoryContext = createContext<(HistoryState & { confirmed: boolean; companyId: string; retry: () => void }) | null>(null);
 
 export function ExpenseCertificateHistory({ companyId, expenseId, revision, canRead, confirmed, children }: {
   companyId: string; expenseId: string; revision: string; canRead: boolean; confirmed: boolean; children: ReactNode;
@@ -25,7 +26,7 @@ export function ExpenseCertificateHistory({ companyId, expenseId, revision, canR
       .catch(cause => { if (!cancelled) setState({ rows: [], loading: false, error: err(cause) }); });
     return () => { cancelled = true; };
   }, [companyId, expenseId, revision, canRead, attempt]);
-  return <HistoryContext.Provider value={canRead ? { ...state, confirmed, retry: () => setAttempt(value => value + 1) } : null}>{children}</HistoryContext.Provider>;
+  return <HistoryContext.Provider value={canRead ? { ...state, confirmed, companyId, retry: () => setAttempt(value => value + 1) } : null}>{children}</HistoryContext.Provider>;
 }
 
 export function ExpenseCertificateHistoryNotice({ placement }: { placement: 'edit' | 'issue' }) {
@@ -78,6 +79,7 @@ export function ExpenseCertificateHistoryDisclosure({ label, plain = false }: { 
             row.certificateNumber && <span className="inline-block max-w-full">เลขที่ <span className={row.certificateNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{row.certificateNumber}</span></span>,
             row.eventType === 'CORRECTED' && row.relatedCertificateNumber && <span className="inline-block max-w-full">ใบใหม่เลขที่ <span className={row.relatedCertificateNumber.length > 30 ? undefined : 'whitespace-nowrap'}>{row.relatedCertificateNumber}</span></span>,
           ].filter(Boolean).map((part, position) => <Fragment key={position}>{position > 0 && ' ' /* a space, not a dot: a dot would hang at the end of a line when the number wraps as one unit */}{part}</Fragment>)}</p>
+          {row.externalAttachmentId && row.handoffId && <ExpenseCertificateFile companyId={history.companyId} handoffId={row.handoffId} attachmentId={row.externalAttachmentId} />}
           {row.reason && <p className="whitespace-pre-wrap break-words">เหตุผล: {row.reason}</p>}
           {oldValues.length > 0 && <p className="whitespace-pre-wrap break-words">
             {t('expenses.certificate_card.history_old', 'th')}{' '}

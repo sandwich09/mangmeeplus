@@ -38,13 +38,14 @@ function SettingsCard({ href, title, desc, badge }: { href: string; title: strin
  * uses, without a second plan-term read. `profileBadge` stays the caller's, so the permission that
  * decides who pays for the checklist read is still declared on the page itself.
  */
-export function SettingsMenu({ companyId, permissions, profileBadge }: {
+export function SettingsMenu({ companyId, permissions, profileBadge, systemCertificatesAvailable = true }: {
   companyId: string;
   permissions: readonly string[];
+  systemCertificatesAvailable?: boolean;
   profileBadge?: React.ReactNode;
 }) {
   const locked = useLockedShell();
-  const items = filterSettingsMenuItems(permissions, locked);
+  const items = filterSettingsMenuItems(permissions, locked, systemCertificatesAvailable);
   const primary = items.find((item) => item.section === 'primary');
   const advanced = items.filter((item) => item.section === 'advanced');
   const general = items.filter((item) => !item.section);

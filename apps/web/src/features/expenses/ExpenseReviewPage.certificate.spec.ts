@@ -68,7 +68,7 @@ function setup(certificate: ExpenseCertificate | null, reason = 'แก้ยอ
     try {
       return renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push() {}, replace() {}, back() {}, prefetch() {} } as any },
         h(ToastContext.Provider, { value: { success: message => successes.push(message), warning() {}, error() { throw Error('refusal must stay by action'); } } },
-          h(ExpenseReviewPage, { companyId: 'co', expenseId: 'expense', userId: 'owner', permissions: pagePermissions, canSelfApprove: true }))));
+          h(ExpenseReviewPage, { systemCertificatesAvailable: overrides.systemCertificatesAvailable ?? true, companyId: 'co', expenseId: 'expense', userId: 'owner', permissions: pagePermissions, canSelfApprove: true }))));
     } finally { mocks.reverse().forEach(m => m.mock.restore()); }
   }
   const find = (tag: string, id: string) => {
@@ -543,5 +543,23 @@ test('paid header requires certificates for every active withholding payment and
     if (expected) assert.ok(html.includes(expected));
     else assert.doesNotMatch(html, /จ่ายครบและมีหนังสือรับรองแล้ว|จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ/);
     if (!complete) assert.match(html, /ไปที่หนังสือรับรอง 50 ทวิ/);
+  }
+});
+
+
+test('WHT-OUTSIDE-2 outside paid summaries keep both shop kinds clear and confirmed cards have no inset wrapper', () => {
+  for (const [complete, systemCertificatesAvailable, expected] of [
+    [false, false, 'จ่ายครบแล้ว ยังไม่ได้ทำใบ 50 ทวิ'],
+    [true, false, 'จ่ายครบ และทำใบ 50 ทวิ นอกระบบแล้ว'],
+    [true, true, 'จ่ายครบ และทำใบ 50 ทวิ นอกระบบแล้ว'],
+  ] as const) {
+    const page = setup(null, '', false, { correctionAction: null, detail: { ...detail(null), whtAmount: '120', outstandingAmount: '0' },
+      whtHandoff: { status: 'EXTERNAL_LINKED', prefill: { payeeSnapshot: {} } }, whtCertificatesComplete: complete, systemCertificatesAvailable });
+    // The server route supplies the shop entitlement independently of this person's rights.
+
+    const html = page.render();
+    assert.ok(html.includes(expected));
+    assert.doesNotMatch(html, /class="relative p-4" data-testid="expense-review-form"/);
+    assert.match(html, /class="m-0 min-w-0 space-y-4 border-0 p-0"/);
   }
 });

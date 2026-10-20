@@ -81,3 +81,10 @@ describe('DeleteAttachmentUseCase reimbursement payment slips', () => {
     ]);
   });
 });
+
+it('WHT-OUTSIDE-2 generic deletion cannot erase external certificate history files', async () => {
+  const h = makeUseCase(null);
+  h.attachments.findById = mock.fn(async () => ({ ...attachment, metadataJson: { generatedFor: 'wht.external_certificate' } }));
+  await assert.rejects(() => h.useCase.execute(ctx, { attachmentId: 'att-1' }), (error: any) => error.getResponse().code === 'wht_external_file_retained');
+  assert.equal(h.attachments.markDeleted.mock.callCount(), 0);
+});

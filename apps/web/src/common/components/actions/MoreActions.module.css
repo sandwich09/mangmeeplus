@@ -8,8 +8,10 @@
 /* While the list is open this layer covers the window and belongs to the button, so a press anywhere else closes the list. */
 .menu[open] > summary::before { content: ''; position: fixed; inset: 0; z-index: 40; cursor: default; }
 .panel { position: absolute; z-index: 41; top: calc(100% + .375rem); inset-inline-start: 0; translate: var(--panel-shift-x, 0px) 0; display: grid; min-width: 13rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .25rem; border: 0; border-radius: var(--radius-md); background: var(--color-surface); box-shadow: 0 12px 32px rgb(16 24 40 / .16); }
-/* `align="end"` is for a button at the right of a header row; on a phone that header stacks and the button sits at the left, so the list hangs from the left there. */
-@media (min-width: 40rem) { .end > .panel { inset-inline-start: auto; inset-inline-end: 0; } }
+/* Closed native disclosures must not leave a laid-out absolute panel beyond the page edge. */
+.menu:not([open]) > .panel { display: none; }
+/* Header buttons also share a row on phones; keep the chosen edge before JS measures the panel. */
+.end > .panel { inset-inline-start: auto; inset-inline-end: 0; }
 /* `opens="up"` is for a button in a bar at the bottom of the screen: the list rises above it, scrolls inside itself on a short screen, and the chevron points the way it opens. */
 .up > .panel { top: auto; bottom: calc(100% + .375rem); max-height: calc(100dvh - 9rem); overflow-y: auto; box-shadow: 0 -8px 32px rgb(16 24 40 / .16); }
 .up > summary::after { transform: translateY(.1rem) rotate(-135deg); }

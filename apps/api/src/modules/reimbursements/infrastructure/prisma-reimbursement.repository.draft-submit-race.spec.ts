@@ -3469,6 +3469,26 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     return { requestId: request.id, periodId: period.id, periodKey, expenseIds: projections.map((projection) => projection.expenseId) };
   }
 
+  it('CLAIM-VOIDED-PROJ cancels a READY_FOR_PAYMENT claim with two already VOIDED projections without voiding them twice', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    // Reproduce the legacy expense-screen void through the same void machinery and financial reversal.
+    const original = await repos[0]!.listClaimProjections(companyId, claim.requestId);
+    for (const projection of original) await on(0).expenseScreen.void.executeForReimbursement(finance(), projection.id, 'ยกเลิกจากหน้ารายจ่ายเดิม', {
+      reimbursementRequestId: claim.requestId, reimbursementLineId: projection.sourceReimbursementLineId, branchId, systemReconcile: true,
+    });
+    const before = await stored(claim);
+    assert.deepEqual([before.status, before.expenses, before.reversals], ['READY_FOR_PAYMENT', ['VOIDED', 'VOIDED'], 2]);
+    const detail = await on(0).detail.execute(requester(), claim.requestId);
+    assert.equal(detail.hasVoidedProjections, true);
+    await assert.rejects(() => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId), /reimbursement_projection_voided/);
+    const cancelled = await on(0).cancel.execute(requester(), claim.requestId, 'ยกเลิกใบเดิมเพื่อทำใบใหม่');
+    assert.equal(cancelled.status, 'CANCELLED');
+    const after = await stored(claim);
+    assert.deepEqual([after.status, after.expenses, after.reversals, after.voidReasons], ['CANCELLED', ['VOIDED', 'VOIDED'], before.reversals, before.voidReasons]);
+    assert.equal((await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } })).paymentStatus, 'NOT_PAYABLE');
+  });
+
   it('rolls back duplicate dismissal and its audit when confirmation fails while payment waits', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const claim = await payableClaim();

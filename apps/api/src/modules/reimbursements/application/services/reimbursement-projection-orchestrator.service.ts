@@ -5,7 +5,7 @@ import { ConfirmExpenseUseCase } from '../../../expenses/application/use-cases/e
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { PrismaExpenseRepository, type ExpenseDb } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { assertClaimProjectionsNotVoided, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { MaterializeClaimExpensesService } from './materialize-claim-expenses.service';
 
 export type ReimbursementProjectionDecision = {
@@ -86,6 +86,7 @@ export class ReimbursementProjectionOrchestratorService {
         || (expense.branchId ?? undefined) !== request.branchId) {
         throw new ConflictException('reimbursement_projection_source_mismatch');
       }
+      assertClaimProjectionsNotVoided(request, [expense]);
       if (expense.status === 'CONFIRMED') continue;
       if (expense.status !== 'READY_FOR_CONFIRMATION') {
         throw new ConflictException('reimbursement_projection_not_ready');

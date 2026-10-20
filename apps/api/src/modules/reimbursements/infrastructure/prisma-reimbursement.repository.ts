@@ -126,6 +126,12 @@ function stringArrayOpt(value: unknown): string[] | undefined {
   return [...new Set(value)];
 }
 
+export function assertClaimProjectionsNotVoided(request: Pick<ReimbursementRequestRecord, 'status'>, projections: readonly { status: string }[]): void {
+  if (!['CANCELLED', 'VOIDED'].includes(request.status) && projections.some(projection => projection.status === 'VOIDED')) {
+    throw new ConflictException('reimbursement_projection_voided');
+  }
+}
+
 const OWN_DUPLICATE_EXPENSES = {
   where: { OR: [
     { duplicateStatus: 'POSSIBLE_DUPLICATE' as const, status: { not: 'VOIDED' as const } },
@@ -2508,7 +2514,7 @@ export class PrismaReimbursementRepository {
       await this.assertClaimProjectionsReady(this.prisma.client as any, request);
       return true;
     } catch (error) {
-      if (error instanceof ConflictException) return false;
+      if (error instanceof ConflictException && error.message !== 'reimbursement_projection_voided') return false;
       throw error;
     }
   }
@@ -2523,9 +2529,10 @@ export class PrismaReimbursementRepository {
       where: {
         companyId: request.companyId,
         sourceReimbursementRequestId: request.id,
-        sourceReimbursementLineId: { in: lines.map((line) => line.id) },
+        OR: [{ sourceReimbursementLineId: { in: lines.map((line) => line.id) } }, { status: 'VOIDED' }],
       },
     });
+    assertClaimProjectionsNotVoided(request, rows);
     const byLineId = new Map(rows.map((row: any) => [row.sourceReimbursementLineId, row]));
     if (byLineId.size !== lines.length) throw new ConflictException('reimbursement_projection_not_ready');
 
@@ -3230,6 +3237,7 @@ export class PrismaReimbursementRepository {
       include: withRelations
         ? {
             lines: { orderBy: { lineNo: 'asc' } },
+            _count: { select: { sourceExpenses: { where: { status: 'VOIDED' } } } },
             approvalSteps: { orderBy: { sequenceNo: 'asc' } },
             payments: { orderBy: { createdAt: 'asc' } },
             duplicateCandidates: true,
@@ -4050,9 +4058,10 @@ export class PrismaReimbursementRepository {
       where: {
         companyId,
         sourceReimbursementRequestId: request.id,
-        sourceReimbursementLineId: { in: lines.map((line) => line.id) },
+        OR: [{ sourceReimbursementLineId: { in: lines.map((line) => line.id) } }, { status: 'VOIDED' }],
       },
     });
+    assertClaimProjectionsNotVoided(request, projections);
     const byLine = new Map(projections.map((row: any) => [row.sourceReimbursementLineId, row]));
     if (!lines.length || byLine.size !== lines.length) {
       throw new ConflictException('reimbursement_projection_not_ready');
@@ -4869,6 +4878,7 @@ export class PrismaReimbursementRepository {
 
   private toRequest(row: any): ReimbursementRequestRecord {
     return {
+      ...(row._count?.sourceExpenses > 0 && !['CANCELLED', 'VOIDED'].includes(row.status) ? { hasVoidedProjections: true as const } : {}),
       id: row.id,
       companyId: row.companyId,
       branchId: opt(row.branchId),

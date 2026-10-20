@@ -23,11 +23,11 @@ test('certificate guidance and its one-line action sit with each expense without
   assert.match(html, /whitespace-nowrap" href="[^"]+">ไปออกหนังสือรับรอง/);
   assert.doesNotMatch(html, /ไปออกหนังสือรับรอง ·|ดูหนังสือรับรอง ·/);
   assert.match(html, /ออกหนังสือรับรอง \(50 ทวิ\) ให้ผู้รับเงินแล้ว เลขที่ <span><span class="whitespace-nowrap">WHT-2/);
-  assert.match(html, /บันทึกไว้แล้วว่าออกหนังสือรับรอง \(50 ทวิ\) ให้ผู้รับเงินเอง เลขที่ <span><span class="whitespace-nowrap">WHT-3/);
+  assert.match(html, /จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบแล้ว เลขที่ <span><span class="whitespace-nowrap">WHT-3/);
   assert.equal((html.match(/ดูหนังสือรับรอง/g) ?? []).length, 2);
   for (const index of [1, 2, 3]) assert.match(html, new RegExp(`href="/companies/shop/expenses/e%2F${index}\\?section=wht-certificate#wht-certificate"`));
   const noRight = render(false);
-  assert.match(noRight, /ถ้าออกหนังสือรับรองให้ผู้รับเงินเองแล้ว บันทึกไว้ได้ที่หน้ารายจ่าย/);
+  assert.match(noRight, /ถ้าทำหนังสือรับรองนอกระบบแล้ว บันทึกไว้ได้ที่หน้ารายจ่าย/);
   assert.match(noRight, /เปิดรายการ/);
   assert.doesNotMatch(noRight, /ไปออกหนังสือรับรอง/);
   assert.equal((noRight.match(/ดูหนังสือรับรอง/g) ?? []).length, 2);
@@ -37,5 +37,5 @@ test('each expense keeps its certificate sentence and number, including missing-
   assert.equal(html.split('ให้ผู้รับเงินแล้ว').length - 1, 2);
   assert.match(html, /whitespace-nowrap">WHT-2/); assert.match(html, /whitespace-nowrap">WHT-4/);
   const missing = render(false, [{ ...lines[3]!, withholdingCertificate: { state: 'EXTERNAL_LINKED', number: null } }]);
-  assert.match(missing, /ให้ผู้รับเงินเอง/); assert.doesNotMatch(missing, /เลขที่/);
+  assert.match(missing, /จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบแล้ว/); assert.doesNotMatch(missing, /เลขที่ <span>|WHT-/);
 });

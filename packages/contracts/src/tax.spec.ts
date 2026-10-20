@@ -15,3 +15,13 @@ test('only PND2 and dividend system certificates are blocked', () => {
   assert.ok(whtCertificateUnsupportedReason('fixture', 'PND2'));
   for (const code of ['WHT_PRIZE', 'WHT_PRIZE_JUR', 'WHT_INTEREST_JUR', 'WHT_OTHER_IND', 'WHT_OTHER_JUR']) assert.equal(whtCertificateUnsupportedReason(code), null);
 });
+
+
+test('WHT-OUTSIDE-2 payment progress keeps system wording and uses outside words for other shops', async () => {
+  const { whtPaymentProgressText, WHT_OUTSIDE_BEFORE_PAYMENT } = await import('./tax.js');
+  assert.equal(WHT_OUTSIDE_BEFORE_PAYMENT, 'บันทึกการจ่ายก่อน แล้วค่อยจดเลขที่ใบ 50 ทวิ');
+  assert.equal(whtPaymentProgressText(false, false), 'จ่ายครบแล้ว ยังไม่ได้ทำใบ 50 ทวิ');
+  assert.equal(whtPaymentProgressText(false, true), 'จ่ายครบ และทำใบ 50 ทวิ นอกระบบแล้ว');
+  assert.equal(whtPaymentProgressText(true, false), 'จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ');
+  assert.equal(whtPaymentProgressText(true, true), 'จ่ายครบและมีหนังสือรับรองแล้ว');
+});

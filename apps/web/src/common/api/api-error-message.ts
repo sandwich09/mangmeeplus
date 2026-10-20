@@ -1,5 +1,5 @@
-import { DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
-import { whtPayerIdentityMissingMessage, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_EXTERNAL_RECORD_WORDS, EXPENSE_VOID_CERTIFICATE_WORDS, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS, reimbursementCertificateCancellationMessage } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE, DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { WHT_EXTERNAL_FILE, whtPayerIdentityMissingMessage, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_EXTERNAL_RECORD_WORDS, EXPENSE_VOID_CERTIFICATE_WORDS, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS, reimbursementCertificateCancellationMessage } from '@watchdog-bms/contracts';
 import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
@@ -29,7 +29,7 @@ const CODE_LABELS: Record<string, string> = {
 
   WHT_ACCOUNTANT_PREPARES: 'ผู้ทำบัญชีจัดทำแบบนี้เอง ดาวน์โหลดรายการให้ผู้ทำบัญชีแทน',
   WHT_PND2_SEPARATE: 'ประเภทนี้ต้องยื่น ภ.ง.ด.2 แยก ให้ผู้ทำบัญชีจัดทำแบบให้',
-  wht_certificate_income_unsupported: 'ระบบยังออกหนังสือรับรอง 50 ทวิสำหรับประเภทนี้ไม่ได้ ให้ผู้ทำบัญชีออกแล้วบันทึกว่าร้านออกเอง',
+  wht_certificate_income_unsupported: 'ระบบยังออกหนังสือรับรอง 50 ทวิสำหรับประเภทนี้ไม่ได้ ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้',
   WHT_FILING_FILE_RETAINED: 'ไฟล์นี้เป็นแบบภาษีที่เก็บไว้ ลบไม่ได้ เปิดหน้าภาษีหัก ณ ที่จ่ายเพื่อดาวน์โหลด',
   WHT_FILING_ROWS_UNCERTAIN: 'รายการของแบบที่ยื่นไว้ตรวจได้ไม่ครบ ให้ผู้ทำบัญชีเทียบกับแบบที่ยื่นจริง',
   WHT_FILING_CONFIRM_FORBIDDEN: 'ไม่มีสิทธิ์ยืนยันรายการของแบบ ให้ผู้ที่มีสิทธิ์จัดทำแบบภาษีตรวจและยืนยัน',
@@ -876,6 +876,7 @@ const CODE_LABELS: Record<string, string> = {
   // ---- รายการเบิกจ่าย: รายการค่าใช้จ่ายที่ระบบสร้างจากใบเบิก ----
   // ผู้ใช้ไม่ได้สร้างรายการเหล่านี้เอง ระบบสร้างให้ตอนอนุมัติจ่าย ข้อความจึงต้องบอกว่ามันคืออะไร
   // ไม่ใช่แค่ว่า "projection" ผิด
+  reimbursement_projection_voided: REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE,
   reimbursement_projection_not_ready: 'รายการค่าใช้จ่ายที่ระบบสร้างจากใบเบิกยังไม่พร้อม ลองอีกครั้ง',
   reimbursement_projection_not_confirmed: 'รายการค่าใช้จ่ายที่ระบบสร้างจากใบเบิกยังไม่ได้ยืนยัน',
   reimbursement_projection_source_changed: 'รายการในใบเบิกถูกแก้ไขระหว่างทำรายการ เปิดหน้านี้ใหม่',
@@ -1229,6 +1230,9 @@ const CODE_LABELS: Record<string, string> = {
   legacy_transaction_tax_remediation_blocked: 'ยังแก้ข้อมูลภาษีเดิมไม่ได้ เพราะมีรายการที่ต้องตรวจ กรุณาดำเนินการตามรายการตรวจสอบก่อน',
   wht_handoff_link_command_reused: 'การแนบหนังสือรับรองครั้งนี้ถูกใช้กับรายการอื่นแล้ว เปิดหน้านี้ใหม่',
   wht_handoff_external_record_no_changes: WHT_EXTERNAL_RECORD_WORDS.noChanges,
+  wht_external_file_invalid: WHT_EXTERNAL_FILE.invalid,
+  wht_external_file_read_denied: WHT_EXTERNAL_FILE.readFromRecord,
+  wht_external_file_retained: WHT_EXTERNAL_FILE.retained,
   wht_handoff_external_record_invalid: WHT_EXTERNAL_RECORD_WORDS.invalid,
   wht_handoff_external_issued_date_future: WHT_EXTERNAL_RECORD_WORDS.futureDate,
   wht_handoff_external_remove_permission_denied: WHT_EXTERNAL_RECORD_WORDS.removePermissionDenied,
@@ -1243,7 +1247,7 @@ const CODE_LABELS: Record<string, string> = {
   wht_certificate_payment_date_required: 'ยังไม่ทราบวันที่จ่ายเงินจริง เปิดรายการจ่ายแล้วระบุวันที่ก่อนออกหนังสือรับรอง 50 ทวิ',
   wht_certificate_payment_selection_required: 'รายการนี้จ่ายหลายครั้ง เลือกรายการจ่ายที่จะออกหนังสือรับรอง 50 ทวิ',
   wht_handoff_not_issuable: workspaceDictionary.th['wht.print_certificate_not_issuable'],
-  wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ',
+  wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองในระบบ',
   wht_handoff_form_type_unresolved: 'ระบุแบบ ภ.ง.ด. ไม่ได้ ตรวจว่าผู้รับเงินเป็นบริษัทหรือบุคคลธรรมดาก่อนออกหนังสือรับรอง',
   wht_handoff_income_category_missing: 'รายการนี้ยังไม่มีประเภทเงินได้หรืออัตราหัก ณ ที่จ่าย กรอกให้ครบก่อนออกหนังสือรับรอง',
   wht_certificate_issue_in_progress: 'กำลังออกเอกสารนี้อยู่ ลองอีกครั้ง',

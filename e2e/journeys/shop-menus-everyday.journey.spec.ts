@@ -1,10 +1,10 @@
 /** Everyday owner errands, using real reads and writes; no route stubs or API-created records. */
 import type { Page } from '@playwright/test';
-import { shopPlanTierLabel, type BillingStatus, type PlanTierKey } from '@watchdog-bms/contracts';
+import { addCivilDays, civilPeriodRange, todayCivilDate, shopPlanTierLabel, type BillingStatus, type PlanTierKey } from '@watchdog-bms/contracts';
 import { test, expect } from '../harness/fixtures';
 import { expectNoClientError } from '../harness/auth';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
-import { AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, expectInSight, pressMenu, whole } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, expectInSight, pressMenu, thaiDate, whole } from './journey-kit';
 
 const WIDE = { width: 1556, height: 1000 };
 const PHONE = { width: 390, height: 844 };
@@ -48,6 +48,59 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
   let partnerId = '';
   let originalCashPolicy = '';
   let packageName = '';
+
+  await test.step('หน้าแรก: choose last month and change a date at phone and wide widths', async () => {
+    const range = civilPeriodRange(addCivilDays(`${todayCivilDate().slice(0, 7)}-01`, -1).slice(0, 7));
+    const spending = main.getByRole('region', { name: 'ตัวเลขรายจ่าย', exact: true });
+    const tabs = spending.getByRole('group', { name: 'ช่วงเวลา', exact: true });
+    const customRead = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/dashboard') && url.searchParams.get('periodKind') === 'custom'
+        && url.searchParams.get('customStart') === range.startDate && url.searchParams.get('customEnd') === range.endDate;
+    }, AFTER_PRESS);
+    await tabs.getByRole('button', { name: 'เลือกวันที่', exact: true }).click();
+    expect((await customRead).ok()).toBe(true);
+    const from = spending.getByRole('combobox', { name: 'ตั้งแต่', exact: true });
+    const to = spending.getByRole('combobox', { name: 'ถึง', exact: true });
+    await expect(from).toHaveText(thaiDate(new Date(range.startDate)));
+    await expect(to).toHaveText(thaiDate(new Date(range.endDate)));
+    await expect(spending.getByText(whole(`รายจ่าย ${thaiDate(new Date(range.startDate)).replace(/ \d{4}$/, '')} – ${thaiDate(new Date(range.endDate))}`))).toBeVisible();
+    await expect(spending.getByRole('status')).toHaveCount(0, AFTER_PRESS);
+    await expect(spending.getByText('ใบเสร็จรอตรวจ', { exact: true })).toBeVisible();
+    await expect(spending.getByText('ค้างจ่ายทั้งหมด', { exact: true })).toBeVisible();
+    for (const viewport of [{ width: 375, height: 667 }, PHONE, { width: 1280, height: 900 }, WIDE]) {
+      await page.setViewportSize(viewport);
+      await expect(from).toBeVisible(); await expect(to).toBeVisible();
+      const boxes = await tabs.getByRole('button').evaluateAll(buttons => buttons.map(button => {
+        const { left, right, width, height } = button.getBoundingClientRect(); return { left, right, width, height };
+      }));
+      expect(boxes).toHaveLength(5);
+      for (const box of boxes) {
+        expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(viewport.width);
+        expect(Math.abs(box.width - boxes[0]!.width)).toBeLessThan(1);
+        expect(box.height).toBe(boxes[0]!.height);
+        expect(box.height).toBeGreaterThanOrEqual(viewport.width < 640 ? 44 : 40);
+      }
+      const fromBox = (await from.boundingBox())!, toBox = (await to.boundingBox())!;
+      expect(fromBox.x + fromBox.width).toBeLessThanOrEqual(viewport.width);
+      expect(toBox.x + toBox.width).toBeLessThanOrEqual(viewport.width);
+      if (viewport.width >= 390) expect(Math.abs(fromBox.y - toBox.y)).toBeLessThan(1);
+      else expect(toBox.y).toBeGreaterThan(fromBox.y + fromBox.height);
+    }
+    await from.click();
+    const changed = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/dashboard') && url.searchParams.get('periodKind') === 'custom'
+        && url.searchParams.get('customStart') === addCivilDays(range.startDate, 1) && url.searchParams.get('customEnd') === range.endDate;
+    }, AFTER_PRESS);
+    await page.getByRole('button', { name: '2', exact: true }).click();
+    expect((await changed).ok()).toBe(true);
+    await expect(from).toHaveText(thaiDate(new Date(addCivilDays(range.startDate, 1))));
+    await expect(spending.getByRole('status')).toHaveCount(0, AFTER_PRESS);
+    await tabs.getByRole('button', { name: 'เดือนนี้', exact: true }).click();
+    await expect(tabs.getByRole('button', { name: 'เดือนนี้', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(from).toHaveCount(0);
+  });
 
   await test.step('หมวดหมู่: add on wide, rename on phone; built-in rows cannot be renamed', async () => {
     await pressMenu(page, 'หมวดหมู่', 'ค่าใช้จ่ายและใบเสร็จ');
@@ -260,7 +313,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
     await expect(heading(page, 'ภาษี')).toBeVisible(FIRST_SIGHT);
     await main.getByRole('button', { name: 'เปิดอ่านทุกหัวข้อ', exact: true }).click();
     await expect(main.getByText('คำนวณรายงาน · ยื่นแบบแล้ว · ชำระแล้ว', { exact: true })).toBeVisible();
-    await expect(main.getByText(/กรอก “เลขที่หนังสือรับรอง” “วันที่จ่ายตามหนังสือรับรองเดิม” และ “วันที่ออก”/)).toBeVisible();
+    await expect(main.getByText(/กรอก “เลขที่ใบ” “วันที่จ่ายตามหนังสือรับรองเดิม” และ “วันที่ทำใบ”/)).toBeVisible();
     await expectNoClientError(page);
   });
 

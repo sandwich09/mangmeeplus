@@ -12,6 +12,11 @@ import { ListCapabilityPacksUseCase } from '../../application/use-cases/list-cap
 const COMPANY_KEYS = new Set(COMPANY_PERMISSION_KEYS);
 
 describe('capability-pack registry integrity', () => {
+  it('WHT-OUTSIDE names the unchanged external certificate pack as recording a number made outside the system', () => {
+    const pack = CAPABILITY_PACK_BY_KEY.get('pack.wht.certificate.manage')!;
+    assert.equal(pack.nameTh, 'จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ');
+    assert.deepEqual(pack.permissionKeys, ['wht.certificate.read', 'wht.external_certificate.link', 'wht.certificate.correct']);
+  });
   it('shows own-request self-service as automatic rather than an ungrantable job pack for a feature-OFF editor', async () => {
     const catalog = await new ListCapabilityPacksUseCase({ client: { companyFeatureEntitlement: {
       findMany: async () => [{ featureKey: 'reimbursement', enabled: false }],

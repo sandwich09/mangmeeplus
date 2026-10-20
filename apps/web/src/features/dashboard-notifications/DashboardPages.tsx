@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type { CrmDailyBriefWidget } from '@watchdog-bms/contracts';
+import { civilDate, todayCivilDate } from '@watchdog-bms/contracts';
 import { getDashboard, generateSnapshot } from './dashboard-notifications.api';
-import { canForceGenerateSnapshot, homeMetrics, homeStartLinks } from './dashboard-home.logic';
+import { canForceGenerateSnapshot, homeMetrics, homeStartLinks, lastMonthHomeRange, homeRangeErrors, homeRangeLabel, type HomeDateRange } from './dashboard-home.logic';
 import { dashboardMetricValueText } from './dashboard-notifications.logic';
 import { getCrmDailyBrief } from '@/features/crm-inbox/crm-inbox.api';
 import type { DashboardSnapshot, DashboardMetricValue, DashboardPeriodKind } from './dashboard-notifications.model';
@@ -16,23 +17,25 @@ import { MangmeePage, MetricGrid, stripThaiTitlePrefix } from '@/common/componen
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { primaryButtonClass, quietButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { Notice } from '@/common/components/notice';
 import { FilterTabs } from '@/common/components/tabs';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { ExpenseMonthsCard } from './ExpenseMonthsCard';
 
-type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month' | 'custom'>;
+type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month'>;
+type DashboardPresetPeriodKind = Exclude<DashboardTabPeriodKind, 'custom'>;
 
 const PERIOD_TABS: { kind: DashboardTabPeriodKind; labelKey: DictionaryKey }[] = [
   { kind: 'today', labelKey: 'dashboard.period.today' },
   { kind: 'week', labelKey: 'dashboard.period.week' },
   { kind: 'month', labelKey: 'dashboard.period.month' },
-  { kind: 'quarter', labelKey: 'dashboard.period.quarter' },
+  { kind: 'custom', labelKey: 'dashboard.period.custom' },
 ];
 
 // Period label used as a suffix on the date-scoped CRM cards.
-const PERIOD_LABEL_KEY: Record<DashboardTabPeriodKind, DictionaryKey> = {
+const PERIOD_LABEL_KEY: Record<DashboardPresetPeriodKind, DictionaryKey> = {
   today: 'dashboard.period.today',
   week: 'dashboard.period.last7',
   month: 'dashboard.period.month',
@@ -92,36 +95,55 @@ const money = (value: number | string | null) => Number(value ?? 0).toLocaleStri
  * tabs on top, then three columns — each a name, one big number, one line saying what it counts, and the one button to
  * its list. The buttons are one size; the period changes the first number only.
  */
-function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale, loading }: {
+function ExpenseHomeCard({ metrics, periodKind, onPeriod, locale, loading, range, onRange }: {
   metrics: ReturnType<typeof homeMetrics<DashboardMetricValue>>; periodKind: DashboardTabPeriodKind; onPeriod: (kind: DashboardTabPeriodKind) => void;
   locale: ReturnType<typeof useWorkspaceLocale>; loading: boolean;
+  range: HomeDateRange; onRange: (range: HomeDateRange) => void;
 }) {
   const byKey = new Map(metrics.map((metric) => [metric.key, metric]));
+  const today = todayCivilDate();
+  const errors = homeRangeErrors(range, today);
+  const invalid = periodKind === 'custom' && Object.keys(errors).length > 0;
   const period = t(PERIOD_TABS.find((tab) => tab.kind === periodKind)!.labelKey, locale);
+  const [rangeFrom, rangeTo] = homeRangeLabel(range).split(' – ');
   // Owner 2026-10-15: numbers only, no buttons under them (the menu leads to each list). The name is the quiet line, the
   // number the loud one with its unit after it; a phone gives each number one row, name left and figure right.
   const columns = [
-    { key: 'expense_total_in_period', label: `รายจ่าย${period}`, note: 'ยืนยันแล้ว', unit: 'บาท', dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
+    { key: 'expense_total_in_period', label: periodKind === 'custom'
+      ? <span>รายจ่าย <span className="mangmee-unit">{rangeFrom}</span> – <span className="mangmee-unit">{rangeTo}</span></span>
+      : `รายจ่าย${period}`, note: 'ยืนยันแล้ว', unit: 'บาท', dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
     { key: 'expense_pending_review', label: 'ใบเสร็จรอตรวจ', note: 'ยังไม่ได้ตรวจ จากทุกช่วงเวลา', unit: 'ใบ', dot: 'bg-[#e9ad43]', color: 'text-[#1f3b2c]' },
     { key: 'expense_unpaid_outstanding', label: 'ค้างจ่ายทั้งหมด', note: 'รายจ่ายยืนยันแล้วทุกเดือน รวมที่จ่ายบางส่วน', unit: 'บาท', dot: 'bg-gray-400', color: 'text-[#1f3b2c]' },
   ].flatMap((column) => { const metric = byKey.get(column.key); return metric ? [{ ...column, metric }] : []; });
   return (
     <section aria-label="ตัวเลขรายจ่าย" className="mangmee-card mangmee-card-shadow p-4 sm:px-6 sm:pb-7 sm:pt-4">
-      <div role="group" aria-label="ช่วงเวลา" className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5">
+      <div role="group" aria-label="ช่วงเวลา" className="grid grid-cols-4 gap-2 sm:gap-2.5">
         {PERIOD_TABS.map((tab) => (
-          <button key={tab.kind} type="button" className="mangmee-home-tab" aria-pressed={tab.kind === periodKind} onClick={() => onPeriod(tab.kind)}>
+          <button key={tab.kind} type="button" className="mangmee-home-tab !min-h-11 min-w-0 sm:!min-h-10" aria-pressed={tab.kind === periodKind} onClick={() => onPeriod(tab.kind)}>
             {t(tab.labelKey, locale)}
           </button>
         ))}
       </div>
-      {loading ? <div role="status" aria-busy="true" className="mt-5 py-8 text-sm text-gray-500">กำลังโหลดรายจ่าย…</div> : <MetricGrid className="mt-5 sm:mt-7" items={columns.map(({ key, label, note, unit, dot, color, metric }) => ({ key, label, note, unit, dot, color,
-        value: metric.freshness === 'unavailable' ? '—' : metric.unit === 'บาท' ? money(metric.value) : Number(metric.value ?? 0).toLocaleString('th-TH') }))} />}
+      {periodKind === 'custom' && <div className="mt-4 grid grid-cols-1 gap-3 min-[390px]:grid-cols-2">
+        {([{ key: 'customStart', label: 'ตั้งแต่' }, { key: 'customEnd', label: 'ถึง' }] as const).map(({ key, label }) => (
+          <div key={key} className="min-w-0">
+            <label htmlFor={`home-${key}`} className="mb-1 block text-sm font-medium">{label}</label>
+            <ThemedDate id={`home-${key}`} aria-label={label} value={range[key]} allowClear={false} today={today} max={today}
+              min={key === 'customEnd' ? range.customStart : undefined} aria-invalid={Boolean(errors[key])} aria-describedby={errors[key] ? `home-${key}-error` : undefined}
+              onChange={(event) => onRange({ ...range, [key]: event.target.value })} />
+            {errors[key] && <p id={`home-${key}-error`} role="alert" className="mt-1 text-sm text-red-600">{errors[key]}</p>}
+          </div>
+        ))}
+      </div>}
+      {loading && <div role="status" aria-busy="true" className="mt-3 text-sm text-gray-500">กำลังโหลดรายจ่าย…</div>}
+      <MetricGrid className="mt-5 sm:mt-7" items={columns.map(({ key, label, note, unit, dot, color, metric }) => ({ key, label, note, unit, dot, color,
+        value: ((invalid || loading) && key === 'expense_total_in_period') || metric.freshness === 'unavailable' ? '—' : metric.unit === 'บาท' ? money(metric.value) : Number(metric.value ?? 0).toLocaleString('th-TH') }))} />
     </section>
   );
 }
 
 /** A8 CRM daily brief — inbox-operations widgets with deep links, above the dashboard snapshot. */
-function CrmDailyBriefCard({ companyId, periodKind, refreshToken }: { companyId: string; periodKind: DashboardTabPeriodKind; refreshToken: number }) {
+function CrmDailyBriefCard({ companyId, periodKind, refreshToken }: { companyId: string; periodKind: DashboardPresetPeriodKind; refreshToken: number }) {
   const locale = useWorkspaceLocale();
   const [widgets, setWidgets] = useState<CrmDailyBriefWidget[] | null>(null);
   useEffect(() => {
@@ -190,11 +212,14 @@ export function CompanyDashboardPage({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [customRange, setCustomRange] = useState(lastMonthHomeRange);
+  const crmPeriodRef = useRef<DashboardPresetPeriodKind>('month');
   const snapshotRequestRef = useRef(0);
   const scopeRef = useRef('');
 
   const load = useCallback(async (kind: DashboardTabPeriodKind) => {
     const requestId = ++snapshotRequestRef.current;
+    if (kind === 'custom' && Object.keys(homeRangeErrors(customRange)).length > 0) { setLoading(false); return; }
     setLoading(true);
     setRefreshing(false);
     // Another shop or branch: its numbers go at once. Another period of the same scope: the card stays while it loads,
@@ -203,7 +228,7 @@ export function CompanyDashboardPage({
     if (scopeRef.current !== scope) { scopeRef.current = scope; setSnapshot(null); }
     setError(null);
     try {
-      const data = await getDashboard(companyId, kind, branchId);
+      const data = await getDashboard(companyId, kind, branchId, kind === 'custom' ? customRange : undefined);
       if (requestId !== snapshotRequestRef.current) return;
       setSnapshot(data);
     } catch (e) {
@@ -215,7 +240,7 @@ export function CompanyDashboardPage({
       if (requestId === snapshotRequestRef.current) setLoading(false);
     }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, locale, branchId]);
+  }, [companyId, locale, branchId, customRange]);
 
   useEffect(() => {
     void load(periodKind);
@@ -229,8 +254,8 @@ export function CompanyDashboardPage({
     setRefreshToken((n) => n + 1);
     try {
       const data = canForceGenerateSnapshot(permissions)
-        ? await generateSnapshot(companyId, periodKind, branchId)
-        : await getDashboard(companyId, periodKind, branchId);
+        ? await generateSnapshot(companyId, periodKind, branchId, periodKind === 'custom' ? customRange : undefined)
+        : await getDashboard(companyId, periodKind, branchId, periodKind === 'custom' ? customRange : undefined);
       if (requestId !== snapshotRequestRef.current) return;
       setSnapshot(data);
     } catch (e) {
@@ -259,6 +284,13 @@ export function CompanyDashboardPage({
   // and the two ways to start.
   const expenseHome = Boolean(expenseWidget) || (loading && permissions.includes('expense.read'));
   const updated = snapshot ? `อัปเดตล่าสุด ${formatThaiDate(snapshot.generatedAt)} เวลา ${formatThaiTime(snapshot.generatedAt)}` : null;
+  const onPeriod = (kind: DashboardTabPeriodKind) => {
+    if (kind !== 'custom') crmPeriodRef.current = kind;
+    setPeriodKind(kind);
+  };
+  const invalidRange = periodKind === 'custom' && Object.keys(homeRangeErrors(customRange)).length > 0;
+  const rangeLoaded = periodKind !== 'custom' || Boolean(snapshot?.periodStart && snapshot?.periodEnd
+    && civilDate(new Date(snapshot.periodStart)) === customRange.customStart && civilDate(new Date(snapshot.periodEnd)) === customRange.customEnd);
 
   return (
     <MangmeePage title={expenseHome ? 'รายจ่ายของร้าน' : greeting} className={expenseHome ? 'mangmee-home' : undefined}
@@ -286,7 +318,7 @@ export function CompanyDashboardPage({
           ))}
         </div>
       ) : <>
-      {expenseWidget && <ExpenseHomeCard loading={loading || snapshot?.periodKind !== periodKind} metrics={homeMetrics(expenseWidget.metrics)} periodKind={periodKind} onPeriod={setPeriodKind} locale={locale} />}
+      {expenseWidget && <ExpenseHomeCard loading={!invalidRange && (loading || snapshot?.periodKind !== periodKind || !rangeLoaded)} metrics={homeMetrics(expenseWidget.metrics)} periodKind={periodKind} onPeriod={onPeriod} locale={locale} range={customRange} onRange={setCustomRange} />}
       {expenseWidget && <ExpenseMonthsCard companyId={companyId} branchId={branchId} />}
       {otherWidgets.map((widget) => (
         // A person with no number to see (an employee) gets no section, no period and no "no data" sentence.
@@ -296,7 +328,7 @@ export function CompanyDashboardPage({
             {homeMetrics(widget.metrics).map((metric) => (
               <MetricTile key={metric.key} label={metric.homeLabel} metric={metric}>
                 {metric.periodScoped && (
-                  <ThemedSelect aria-label="ช่วงเวลา" value={periodKind} onChange={(event) => setPeriodKind(event.target.value as DashboardTabPeriodKind)}>
+                  <ThemedSelect aria-label="ช่วงเวลา" value={periodKind} onChange={(event) => onPeriod(event.target.value as DashboardTabPeriodKind)}>
                     {PERIOD_TABS.map((tab) => <option key={tab.kind} value={tab.kind}>{t(tab.labelKey, locale)}</option>)}
                   </ThemedSelect>
                 )}
@@ -315,7 +347,7 @@ export function CompanyDashboardPage({
 
       {permissions.includes('crm.inbox.read') && <details className="mangmee-card mangmee-card-shadow p-4">
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">สรุปงานลูกค้าและการขาย</summary>
-        <CrmDailyBriefCard companyId={companyId} periodKind={periodKind} refreshToken={refreshToken} />
+        <CrmDailyBriefCard companyId={companyId} periodKind={periodKind === 'custom' ? crmPeriodRef.current : periodKind} refreshToken={refreshToken} />
       </details>}
 
 

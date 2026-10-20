@@ -2038,9 +2038,9 @@ async function notifyExpenseCertificateCancelled(
   try {
     const actorName = await repo.findMemberDisplayName(ctx.companyId, ctx.userId) ?? 'ผู้ทำรายการ';
     const number = certificate.certificateNumber ? ` เลขที่ ${certificate.certificateNumber}` : '';
-    const title = certificate.isExternal ? 'ยกเลิกการบันทึกแล้ว: หนังสือรับรองที่ออกเอง' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ';
+    const title = certificate.isExternal ? 'ยกเลิกการบันทึกแล้ว: ใบ 50 ทวิ ที่ทำนอกระบบ' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ';
     const cancellation = certificate.isExternal
-      ? 'ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกหนังสือรับรองที่ออกเองด้วย'
+      ? 'ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกใบ 50 ทวิ ที่ทำนอกระบบด้วย'
       : action === 'reopen' ? 'ระบบจึงยกเลิกหนังสือรับรองใบเดิม' : 'ระบบจึงยกเลิกหนังสือรับรองด้วย';
     await notify!.execute({
       companyId: ctx.companyId, triggerKey: 'expense.wht_certificate_cancelled', sourceModule: 'expenses',

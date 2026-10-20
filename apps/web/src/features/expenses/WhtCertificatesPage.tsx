@@ -22,10 +22,12 @@ import { listWithholdingCertificates } from '../tax/tax.api';
 import { certificateListQuery, certificateListState, certificateRowHref, certificateRowStatus } from './expense-wht-certificates.logic';
 import { WHT_CERTIFICATE_TABS, WHT_CERTIFICATE_PAGE_SIZE, type WhtCertificateListState, type WhtCertificateRow, type WhtCertificateTab } from './expense-wht-certificates.model';
 import styles from './WhtCertificatesPage.module.css';
+import { ExpenseCertificateFile } from './ExpenseCertificateFile';
 
-type RowProps = { row: WhtCertificateRow; companyId: string; permissions: string[]; locale: SupportedLocale; shopBanner?: boolean;
+type RowProps = { row: WhtCertificateRow; companyId: string; permissions: string[]; locale: SupportedLocale; shopBanner?: boolean; systemCertificatesAvailable?: boolean;
   onOpen?: () => void };
-function Status({ row, shopBanner }: Pick<RowProps, 'row' | 'shopBanner'>) {
+function Status({ row, shopBanner, systemCertificatesAvailable = true }: Pick<RowProps, 'row' | 'shopBanner' | 'systemCertificatesAvailable'>) {
+  if (!systemCertificatesAvailable && row.status === 'REQUIRED' && row.payments?.length !== 0) return <span>{t('expenses.certificate_card.record', 'th')}</span>;
   if (!certificateRowStatus(row, shopBanner)) return null;
   return <MangmeeBadge className={styles.badge} tone={row.status === 'SYSTEM_ISSUED' || certificateRowStatus(row, shopBanner) === 'พร้อมออก' ? 'brand' : row.status === 'REQUIRED' ? 'amber' : 'slate'}>{certificateRowStatus(row, shopBanner)}</MangmeeBadge>;
 }
@@ -44,7 +46,8 @@ function CertificateDetails(props: Pick<RowProps, 'row' | 'companyId' | 'permiss
   const { row, locale } = props;
   const number = row.status === 'REQUIRED' ? null : row.status === 'EXTERNAL_LINKED' ? row.externalCertificateNumber ?? row.certificateNumber : row.currentCertificate?.number ?? row.certificateNumber;
   return <div className={styles.number}>
-    <div className={styles.meta}>{number && <><span className={styles.unit}>{number}</span>{row.expenseNumber && ' · '}</>}<span className={styles.unit}>{row.expenseNumber}</span></div>
+    <div className={styles.meta}>{number && <><span className={styles.unit}>{number}</span>{row.status === 'EXTERNAL_LINKED' && <MangmeeBadge tone="slate">{t('expenses.certificates.external', locale)}</MangmeeBadge>}{row.expenseNumber && ' · '}</>}<span className={styles.unit}>{row.expenseNumber}</span></div>
+    {row.externalAttachmentId && <ExpenseCertificateFile companyId={props.companyId} handoffId={row.id} attachmentId={row.externalAttachmentId} />}
     {/* Owner 2026-10-15: no cancelled-certificate history in the list (rows keep one height); the expense page holds it. */}
     {row.matchedPreviousNumber && <p>{formatMessage(t('expenses.certificates.matched_previous', locale), { number: row.matchedPreviousNumber })}</p>}
     {row.status === 'CANCELLED' && row.cancellation && <p>
@@ -60,17 +63,20 @@ export function WhtCertificateCard(props: RowProps) {
     <div className={styles.facts}>
       <CertificateDetails row={row} companyId={companyId} permissions={props.permissions} locale={locale} />
       <div className={styles.meta}>{paymentDate(row)} · {formName(row)}</div>
-      <Status row={row} shopBanner={props.shopBanner} />
+      <Status row={row} shopBanner={props.shopBanner} systemCertificatesAvailable={props.systemCertificatesAvailable} />
     </div>
   </MangmeeCard></article>;
 }
 
-export function WhtCertificatesPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
+export function WhtCertificatesPage({ companyId, permissions, systemCertificatesAvailable = true }: { companyId: string; permissions: string[]; systemCertificatesAvailable?: boolean }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const { tab, search, page, order } = certificateListState(params);
+  const savedState = certificateListState(params);
+  const { search, page, order } = savedState;
+  const tab = !systemCertificatesAvailable && savedState.tab === 'system' ? 'pending' : savedState.tab;
+  const visibleTabs = (Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).filter(choice => systemCertificatesAvailable || choice !== 'system');
   const urlQuery = params.toString();
   const pendingQuery = useRef({ source: urlQuery, value: urlQuery });
   if (pendingQuery.current.source !== urlQuery) pendingQuery.current = { source: urlQuery, value: urlQuery };
@@ -96,7 +102,9 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   // A second press can arrive before the router commits the first filter change.
   const navigate = (change: Partial<WhtCertificateListState>) => {
     const latest = new URLSearchParams(pendingQuery.current.value);
-    replaceQuery(new URLSearchParams(certificateListQuery(latest, { ...certificateListState(latest), ...change })));
+    const next = { ...certificateListState(latest), ...change };
+    if (!systemCertificatesAvailable && next.tab === 'system') next.tab = 'pending';
+    replaceQuery(new URLSearchParams(certificateListQuery(latest, next)));
   };
   useEffect(() => { setSearchInput(search); }, [search]);
   useEffect(() => {
@@ -122,31 +130,32 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
   }, [companyId, canRead, tab, search, branchId, page, order, refresh, locale, periodKey, formType]);
   const rows = data?.rows ?? [];
   const otherTabs = search.trim() && rows.length === 0
-    ? (Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).filter(choice => choice !== tab && (data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0) > 0) : [];
+    ? visibleTabs.filter(choice => choice !== tab && (data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0) > 0) : [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / WHT_CERTIFICATE_PAGE_SIZE));
   const returnTo = `${pathname}${params.size ? `?${params}` : ''}`;
-  const openRow = (row: WhtCertificateRow) => router.push(certificateRowHref(companyId, row, permissions, returnTo));
-  const rowProps = (row: WhtCertificateRow): RowProps => ({ row, companyId, permissions, locale, shopBanner, onOpen: () => openRow(row) });
+  const openRow = (row: WhtCertificateRow) => router.push(certificateRowHref(companyId, systemCertificatesAvailable ? row : { ...row, missing: [], payerMissing: [], hasPayeeAddress: true }, permissions, returnTo));
+  const rowProps = (row: WhtCertificateRow): RowProps => ({ row, companyId, permissions, locale, shopBanner, systemCertificatesAvailable, onOpen: () => openRow(row) });
   const word = (key: DictionaryKey) => t(key, locale);
+  const tabLabel = (choice: WhtCertificateTab) => word(!systemCertificatesAvailable && choice !== 'system' ? `expenses.certificates.outside_${choice}` : `expenses.certificates.${choice}`);
   const waitingForShop = rows.filter(row => row.status === 'REQUIRED' && row.payerMissing?.length);
   const shopMissing = [...new Set(waitingForShop.flatMap(row => row.payerMissing ?? []))];
   const canFillShop = permissions.includes('company.legal_identity.manage');
-  const shopBanner = canFillShop && shopMissing.length > 0;
+  const shopBanner = systemCertificatesAvailable && canFillShop && shopMissing.length > 0;
   // A status column only when some row has something to say beyond the tab's name.
-  const statusColumn = rows.some(row => certificateRowStatus(row, shopBanner));
+  const statusColumn = rows.some(row => systemCertificatesAvailable ? certificateRowStatus(row, shopBanner) : row.status === 'REQUIRED');
   // Return the former menu column's room to the payee; every tab totals 100%.
   const columnWidths = statusColumn ? [37, 11, 9, 13, 12, 18] : [49, 13, 10, 14, 14];
   const changeOrder = () => navigate({ page: 1, order: order === 'newest' ? 'oldest' : 'newest' });
-  return <MangmeePage title={word('expenses.certificates.title')} description={word('expenses.certificates.description')} className="mangmee-flat">
+  return <MangmeePage title={word('expenses.certificates.title')} description={word(systemCertificatesAvailable ? 'expenses.certificates.description' : 'expenses.certificates.outside_description')} className="mangmee-flat">
     {!canRead ? <ForbiddenState locale={locale} /> : <div className={styles.section}>
       <MangmeeCard className="mb-4 p-4"><MetricGrid columns={2} items={[
-        { key: 'count', label: word(`expenses.certificates.${tab}`), value: data ? total.toLocaleString('th-TH') : '—', unit: 'ใบ', dot: 'bg-gray-400' },
+        { key: 'count', label: tabLabel(tab), value: data ? total.toLocaleString('th-TH') : '—', unit: 'ใบ', dot: 'bg-gray-400' },
         { key: 'withheld', label: 'ภาษีที่หักไว้', value: data?.sums ? amountText(data.sums.withheld) : '—', unit: 'บาท', dot: 'bg-brand-500' },
       ]} /></MangmeeCard>
       <MangmeeCard className="p-4">
       <FilterTabs className={styles.tabs} aria-label={word('expenses.certificates.title')} value={tab} onChange={choice => navigate({ tab: choice, search: searchInput, page: 1 })}
-        tabs={(Object.keys(WHT_CERTIFICATE_TABS) as WhtCertificateTab[]).map(choice => ({ key: choice, label: word(`expenses.certificates.${choice}`), count: data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0, disabled: loading }))} />
+        tabs={visibleTabs.map(choice => ({ key: choice, label: tabLabel(choice), count: data?.counts[WHT_CERTIFICATE_TABS[choice]] ?? 0, disabled: loading }))} />
       {/* What can be searched is said once, inside the box (the full list of what matches is the box's spoken name). */}
       <div className="mb-4 grid grid-cols-1 items-end gap-4 lg:grid-cols-3">
         <SelectField id="certificate-month" label="เดือนที่จ่าย" value={periodKey} disabled={loading} onChange={e => filterMonthOrForm('periodKey', e.target.value)}>
@@ -161,12 +170,12 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
         {loading && !data ? <LoadingState label={word('expenses.certificates.loading')} /> : error ? <ErrorState description={error} locale={locale} onRetry={() => setRefresh(value => value + 1)} />
           : rows.length === 0 && otherTabs.length > 0 ? <div className="space-y-3 py-6" role="status">
             {otherTabs.map(choice => <div key={choice} className="flex flex-wrap items-center gap-2">
-              <p>{formatMessage(word('expenses.certificates.found_elsewhere'), { count: data!.counts[WHT_CERTIFICATE_TABS[choice]], tab: word(`expenses.certificates.${choice}`) })}</p>
+              <p>{formatMessage(word('expenses.certificates.found_elsewhere'), { count: data!.counts[WHT_CERTIFICATE_TABS[choice]], tab: tabLabel(choice) })}</p>
               <button type="button" className={ghostClass} disabled={loading} aria-busy={loading}
                 onClick={() => navigate({ tab: choice, page: 1 })}>{word('expenses.certificates.view')}</button>
             </div>)}
-          </div> : rows.length === 0 ? <EmptyState locale={locale} title={word(search.trim() ? 'expenses.certificates.empty_search' : `expenses.certificates.empty_${tab}`)}
-            description={!search.trim() && tab === 'pending' ? word('expenses.certificates.empty_hint') : ''} /> : <>
+          </div> : rows.length === 0 ? <EmptyState locale={locale} title={word(search.trim() ? 'expenses.certificates.empty_search' : !systemCertificatesAvailable && tab === 'pending' ? 'expenses.certificates.outside_empty_pending' : `expenses.certificates.empty_${tab}`)}
+            description={systemCertificatesAvailable && !search.trim() && tab === 'pending' ? word('expenses.certificates.empty_hint') : ''} /> : <>
             {shopBanner && <Notice tone="warning" className={styles.notice}
               action={<Link className={ghostClass} href={`${companyProfilePath(companyId)}?${new URLSearchParams({ returnTo })}`}>กรอกข้อมูลร้าน</Link>}>
               ข้อมูลร้านยังไม่ครบ ออกหนังสือรับรองไม่ได้
@@ -183,7 +192,7 @@ export function WhtCertificatesPage({ companyId, permissions }: { companyId: str
               <td><div className={styles.name}>{row.payeeName}</div><CertificateDetails row={row} companyId={companyId} permissions={permissions} locale={locale} /></td>
               <td className={styles.date}><span className={styles.unit}>{paymentDate(row)}</span></td><td>{formName(row)}</td>
               <td className={styles.money}>{amountText(row.currentCertificate?.grossAmount ?? row.prefill.grossAmount)}</td><td className={styles.money}>{amountText(row.withheldAmount)}</td>
-              {statusColumn && <td className={styles.status}><Status row={row} shopBanner={shopBanner} /></td>}
+              {statusColumn && <td className={styles.status}><Status row={row} shopBanner={shopBanner} systemCertificatesAvailable={systemCertificatesAvailable} /></td>}
             </tr>)}</tbody></table>
           </>}
         {total > 0 && <div className={styles.pager}>

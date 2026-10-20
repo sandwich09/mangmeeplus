@@ -54,8 +54,8 @@ describe('void certificate cancellation notices (A5)', () => {
       assert.deepEqual(await useCase.execute(ctx, 'exp_1', 'ข้อมูลผิด', true), { id: 'exp_1', status: 'VOIDED', cancelledCertificate: { kind: isExternal ? 'EXTERNAL' : 'SYSTEM', number: 'WT-1' } });
       assert.deepEqual(notices, [{ companyId: ctx.companyId, triggerKey: 'expense.wht_certificate_cancelled',
         sourceModule: 'expenses', sourceType: 'expense_record', sourceId: 'exp_1', periodKey: '1', severity: 'info',
-        title: isExternal ? 'ยกเลิกการบันทึกแล้ว: หนังสือรับรองที่ออกเอง เลขที่ WT-1' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ เลขที่ WT-1',
-        body: isExternal ? 'สมใจ ยกเลิกเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกหนังสือรับรองที่ออกเองด้วย เหตุผล: ข้อมูลผิด'
+        title: isExternal ? 'ยกเลิกการบันทึกแล้ว: ใบ 50 ทวิ ที่ทำนอกระบบ เลขที่ WT-1' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ เลขที่ WT-1',
+        body: isExternal ? 'สมใจ ยกเลิกเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกใบ 50 ทวิ ที่ทำนอกระบบด้วย เหตุผล: ข้อมูลผิด'
           : 'สมใจ ยกเลิกเอกสารรายจ่ายนี้ ระบบจึงยกเลิกหนังสือรับรองด้วย เหตุผล: ข้อมูลผิด',
         deepLinkHref: '/companies/co_1/expenses/exp_1#wht-certificate', recipientUserIds: ['issuer-1'] }]);
       await useCase.execute(ctx, 'exp_1', 'ข้อมูลผิด', true);

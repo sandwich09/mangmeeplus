@@ -20,6 +20,30 @@ import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-au
 import { SesAuthMailerAdapter } from './infrastructure/ses-auth-mailer.adapter';
 import { selectAuthMailer } from './auth.module';
 import { AppConfigService } from '../../common/config/app-config.service';
+import { AuthController } from './presentation/auth.controller';
+import { ResolveRequestContextUseCase } from './application/use-cases/resolve-request-context.use-case';
+
+describe('WHT-OUTSIDE shop feature metadata', () => {
+  it('forwards the already resolved feature keys through auth/me independently of the reader role without another feature read', async () => {
+    for (const roles of [['OWNER'], ['STAFF']]) for (const entitledFeatureKeys of [['expenses'], ['thai_tax'], ['expenses', 'wht_50bis'], null]) {
+      const permissions = ['account.session.read'];
+      const prisma = { client: {
+        user: { findUnique: async () => ({ status: 'ACTIVE', displayName: 'ผู้ใช้' }) },
+        userCredential: { findUnique: async () => null },
+        companyMembership: { findFirst: async () => null },
+        companyWebEntrySetting: { findUnique: async () => null },
+      } };
+      const resolved = { companyId: 'shop', membershipId: 'member', roles, permissions, entitledFeatureKeys, scopes: {} };
+      const context = await new ResolveRequestContextUseCase(prisma as any, { resolveAccess: async () => resolved } as any)
+        .execute('user', 'request', 'watchdog', 'shop');
+      assert.deepEqual((context as any).entitledFeatureKeys, entitledFeatureKeys);
+      const controller = Object.assign(Object.create(AuthController.prototype), { prisma, legalAcceptance: { getStatus: async () => ({ required: false }) } });
+      const result = await controller.me({ context });
+      assert.deepEqual(result.entitledFeatureKeys, entitledFeatureKeys);
+      assert.deepEqual(result.permissions, permissions);
+    }
+  });
+});
 
 const pendingLegalAcceptance = {
   getStatus: async () => ({ required: true }),

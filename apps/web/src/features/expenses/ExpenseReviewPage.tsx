@@ -1,4 +1,6 @@
 'use client';
+
+import { whtPaymentProgressText } from '@watchdog-bms/contracts';
 import { expenseDisplayAttachments, expenseAttachmentTypeLabel } from './expenses.model';
 import { deriveEvidenceRowFlags } from './evidence-audit.logic';
 import { focusExpenseField } from './expense-focus.logic';
@@ -127,7 +129,7 @@ function withUnit(text: string, part?: string | null) {
   return at < 0 ? text : <>{text.slice(0, at)}<span className="mangmee-unit">{part}</span>{text.slice(at + part!.length)}</>;
 }
 
-export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, disbursementEntryOpen = false }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean; disbursementEntryOpen?: boolean }) {
+export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, disbursementEntryOpen = false, systemCertificatesAvailable = true }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean; systemCertificatesAvailable?: boolean; disbursementEntryOpen?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const listBack = searchParams?.get('back') ?? null;
@@ -1306,7 +1308,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   // Guided review exposes cancellation on every step, then deletion for a cancelled record.
   // Existing permission checks and financial-void actions still apply.
   const certificateCardVisible = isConfirmed && hasWht && permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
-  const certificateIssueButton = canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
+  const certificateIssueButton = systemCertificatesAvailable && canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
     <WhtIssueButton handoff={whtHandoff} busy={whtIssuing} unpaid={detail.paymentStatus !== 'PAID'} label={t('wht.print_certificate', locale)} onIssue={() => doIssueWhtCertificate()} />
   );
   const changeCorrectForm = (changed: Partial<typeof correctForm>) => {
@@ -1315,8 +1317,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   };
   const correctionHasChanges = Object.keys(expenseCertificateCorrectionChanges(correctForm, correctForm.opened)).length > 0;
   const issuedCertificateActions = certificateCardVisible && (
-    <ExpenseCertificateCard key={`${companyId}-${expenseId}`} companyId={companyId} expenseId={expenseId} revision={detail.updatedAt} handoff={whtHandoff} permissions={permissions} issueButton={certificateIssueButton} onIssuePayment={doIssueWhtCertificate} onDownload={handoff => void downloadWht(handoff)} busy={whtIssuing} error={whtIssueError} primaryHidden={correctOpen && whtHandoff?.status === 'SYSTEM_ISSUED'} onChanged={next => setWhtHandoff(next)} onCoverageChanged={setWhtCertificatesComplete} onClearError={() => setWhtIssueError(null)}>
-      {whtHandoff && (canCorrectWhtCertificate(whtHandoff, permissions) || canIssueWhtReplacementCopy(whtHandoff, permissions)) && <>
+    <ExpenseCertificateCard systemCertificatesAvailable={systemCertificatesAvailable} key={`${companyId}-${expenseId}`} companyId={companyId} expenseId={expenseId} revision={detail.updatedAt} handoff={whtHandoff} permissions={permissions} issueButton={certificateIssueButton} onIssuePayment={doIssueWhtCertificate} onDownload={handoff => void downloadWht(handoff)} busy={whtIssuing} error={whtIssueError} primaryHidden={correctOpen && whtHandoff?.status === 'SYSTEM_ISSUED'} onChanged={next => setWhtHandoff(next)} onCoverageChanged={setWhtCertificatesComplete} onClearError={() => setWhtIssueError(null)}>
+      {systemCertificatesAvailable && whtHandoff && (canCorrectWhtCertificate(whtHandoff, permissions) || canIssueWhtReplacementCopy(whtHandoff, permissions)) && <>
             {!correctOpen && replaceError && <ErrorBanner message={replaceError} />}
             {/* The two rarer actions under the download are one group: one size, no rule between them. */}
             <ActionGroup align="start">
@@ -1397,7 +1399,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   ].filter(Boolean) : [];
   // The result reuses the list's permission and draft-state gate for deletion.
   const deleteShown = canDelete;
-  const certificateLineShown = !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
+  const certificateLineShown = systemCertificatesAvailable && !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
   const reviewNoticeClass = 'text-sm font-medium text-warning-700';
   // A bar with nothing to press is not drawn.
   const certificateBlock = <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{issuedCertificateActions}</div>;
@@ -2015,7 +2017,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
           { key: 'total', label: 'ยอดรวม', value: amountText(detail.grandTotalAmount), unit: 'บาท', dot: 'bg-slate-400' },
           { key: 'payment', label: isDead ? isCancelled ? 'ยกเลิก' : 'ปฏิเสธ' : owed ? 'ค้างจ่าย' : 'จ่ายแล้ว',
             value: amountText(isDead || !owed ? detail.paidAmount : detail.outstandingAmount), unit: 'บาท', dot: 'bg-brand-500',
-            note: overpaymentMessage ?? (isDead ? 'ยอดที่จ่ายไว้' : !owed && hasWht && whtCertificatesComplete !== null ? whtCertificatesComplete ? 'จ่ายครบและมีหนังสือรับรองแล้ว' : 'จ่ายครบแล้ว ยังออกหนังสือรับรองไม่ครบ' : Number(detail.paidAmount) > 0 && owed ? `จ่ายแล้ว ${baht(detail.paidAmount)}` : undefined) },
+            note: overpaymentMessage ?? (isDead ? 'ยอดที่จ่ายไว้' : !owed && hasWht && whtCertificatesComplete !== null ? whtPaymentProgressText(systemCertificatesAvailable && !(whtCertificatesComplete && whtHandoff?.status === 'EXTERNAL_LINKED'), whtCertificatesComplete) : Number(detail.paidAmount) > 0 && owed ? `จ่ายแล้ว ${baht(detail.paidAmount)}` : undefined) },
         ]} /></div></MangmeeCard>}
         <ExpenseCertificateHistoryNotice placement="edit" />
         {detail.status === 'READY_FOR_CONFIRMATION' && detail.reviewRequest && <p role="status" className="text-sm">
@@ -2187,9 +2189,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
                 </div>
               )}
 
-              <div className={cx('relative p-4', checkBillBlocked && 'order-1')} data-testid="expense-review-form">
+              <div className={cx('relative', isMutable && 'p-4', checkBillBlocked && 'order-1')} data-testid="expense-review-form">
                 {/* Keep the form mounted while toggling the cover; inert also locks custom selectors. */}
-                <fieldset disabled={aiReading} inert={aiReading} aria-busy={aiReading} className="min-w-0 space-y-4">
+                <fieldset disabled={aiReading} inert={aiReading} aria-busy={aiReading} className="m-0 min-w-0 space-y-4 border-0 p-0">
                 {sourceOnlyDraft ? (
                   <>
                     {noticesBlock}
