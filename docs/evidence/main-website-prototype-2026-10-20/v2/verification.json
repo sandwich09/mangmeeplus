@@ -1,0 +1,79 @@
+{
+  "verified_at": "2026-10-20T16:47:57.175586+07:00",
+  "scope": "Local v2 design and commercial entitlement coverage; no production changes",
+  "catalog_source": "https://mangmeeplus.com/api/v1/billing/catalog",
+  "catalog_generated_at": "2026-10-20T09:40:02.124Z",
+  "feature_coverage": {
+    "common_keys": 17,
+    "enterprise_keys": 19,
+    "content_groups": 6,
+    "mapping": "feature-content-map.json",
+    "meaning": "Entitlement coverage, not every runtime journey or legal issuance readiness"
+  },
+  "http": {
+    "index.html": 200,
+    "index-v1.html": 200,
+    "preview.html": 200
+  },
+  "browser": "Chrome via CUA",
+  "viewport_checks": [
+    {
+      "width": 1512,
+      "scrollWidth": 1512
+    },
+    {
+      "width": 390,
+      "scrollWidth": 390
+    }
+  ],
+  "interactions": {
+    "v1_v2_switch": "PASS",
+    "desktop_mobile_switch": "PASS",
+    "mobile_features_menu_and_close": "PASS",
+    "month_year_prices_and_allowances": "PASS",
+    "enterprise_annual_dialog": "PASS",
+    "escape_close": "PASS"
+  },
+  "annual_prices": [
+    2490,
+    4990,
+    9990,
+    19990
+  ],
+  "annual_receipt_allowances": [
+    360,
+    600,
+    1200,
+    6000
+  ],
+  "static_checks": [
+    "unique IDs",
+    "valid local anchors",
+    "safe new-tab rel",
+    "node --check for inline scripts in all 3 files"
+  ],
+  "sampled_color_contrast_ratios": {
+    "hero body": 8.55,
+    "hero headline": 8.87,
+    "hero CTA": 11.92,
+    "white section body": 6.31,
+    "yellow strip numbers": 6.8,
+    "primary button": 5.46
+  },
+  "contrast_limit": "Selected text pairs only, not a full accessibility audit",
+  "browser_warnings_errors": [],
+  "screenshots": [
+    "desktop-home.jpg",
+    "desktop-full-page.jpg",
+    "desktop-features.jpg",
+    "mobile-home.jpg",
+    "mobile-yearly-pricing.jpg",
+    "current-official-home.jpg"
+  ],
+  "limits": [
+    "No conversion/SEO lift or Thai target-user preference proved",
+    "Local HTML only; no auth, billing, uploads or external messaging exercised",
+    "Normal catalog prices only; temporary promotions not advertised",
+    "Server stopped after capture; README includes reopening command"
+  ]
+}
