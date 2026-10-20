@@ -384,3 +384,7 @@ Decisions:
 - Deliberately NOT claimed: data stays in Singapore; Bedrock retention/training (U-08 open); RDS/S3 encryption or backup cadence after the 2026-10-09 rebuild (U-02, M-17, L-15 open); "passed security review" (15 High / 50 open items from 2026-07-17); PDPA/ISO/SOC 2 (G-04); 2FA (none found); live AI permission proof (H-15 deploy evidence pending). DPO sign-off for the global Bedrock profile (M-05) is open — owner should know before publishing.
 - Live bug (outside this task's allowed scope, apps/ not editable here): apps/web/proxy.ts sets a per-request nonce CSP with 'strict-dynamic' (security-headers.logic.ts:63-64) but /privacy and /terms are statically prerendered (no dynamic API; root layout does not read headers()), so their inline scripts carry no nonce and are blocked; hydration never finishes. Queued a separate fix task (force-dynamic or nonce-reading layout, plus a guard test).
 Verification: Chromium 1440/390 no overflow (home 8743 / 15186); scroll test 0 transparent sections; canvas version 32.
+
+## Revision 3u — security wording, live CSP fix
+
+Owner: remove "ศูนย์ข้อมูลที่สิงคโปร์" and "ซึ่งอาจประมวลผลนอกประเทศ…"; "บน AWS" → "บน AWS Bedrock" for the AI item (apply_r17.py; canvas version 34). Owner then asked to fix /privacy and /terms directly: done in apps/web (root layout awaits connection()), recorded in docs/agent-memory/web-csp-static-pages-2026-10-20.md; not deployed. The earlier suggested-task card had been sent to this session, so no other session holds it.
