@@ -221,6 +221,7 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
 
   function matches(row: any, where: any): boolean {
     return Object.entries(where ?? {}).every(([key, want]: [string, any]) => {
+      if (key === 'OR') return want.some((branch: any) => matches(row, branch));
       if (want instanceof Date) return row[key]?.getTime() === want.getTime();
       if (want && typeof want === 'object' && Array.isArray(want.in)) return want.in.includes(row[key]);
       return row[key] === want;
