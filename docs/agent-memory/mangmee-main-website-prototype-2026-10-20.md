@@ -151,3 +151,24 @@ Verification:
 - No PR, no GitHub Actions, no deploy, no AWS/UAT/Production/LINE changes.
 
 Next: Owner decisions above; verify claims table in content-th.md §7; replace mock visuals with consented real screenshots; comprehension test with 6–8 Thai owners; then marketing-repo implementation under SEO plan R0/S1–S4.
+
+## Revision 3b — language, icons, colour, package truth, น้องมั่งมี
+
+Status: Complete — prototype only.
+Trigger: Owner asked to review language, icons, colours, truth of sold packages, and LINE AI น้องมั่งมี capabilities; then "วิจัยสีมาใหม่".
+
+Decisions:
+- Colour: new research doc ../research/mangmee-main-website-color-research-2026-10-20-th.md. Adopted palette A = product Brand Kit (green ramp #14532D/#166534/#15803D + coin gold #FCD34D). Dropped v2 lime (not in brand, 1.16:1 on white) and LINE green (white text 2.26:1). Canvas board "Colors.dc.html" compares A/B/C.
+- Icons: real coin-with-sprout logo from apps/web MangmeeLogo; check marks only in comparison table; dot bullets elsewhere; "(เปิดแท็บใหม่)" sr text on new-tab links; no LINE logo, no emoji.
+- Language: app vocabulary (Thai-only package names via shopPlanTierLabel, ผู้ใช้ รวมเจ้าของ, ร่าง · รอตรวจสอบ, ยืนยันเอกสารแล้ว, รายปี · ฟรี 2 เดือน); one CTA name "เริ่มใช้งานผ่าน LINE" with aria-label per package.
+- Package truth (code check): users include owner; every AI-read image counts (LINE+web, signatures too), failed reads refunded, typed entries free; web manual entry hidden by default; claim payout is recorded, not transferred; ภ.ง.ด.53 printable form, no e-filing, no ภ.ง.ด.3; no free trial, no card at signup; Stripe card/PromptPay; upgrade/downgrade and quota-exhausted rules filled in; VAT left as placeholder for accounting.
+- น้องมั่งมี: new #line section limited to capabilities in Production build de8389ce3 (12 Oct). Chat actions merged 17 Oct (confirm/approve/pay/buy in chat) are not claimed.
+- Conflicts kept for owner: login link (owner brief app.mangmeeplus.com vs system mangmeeplus.com/login); 50 ทวิ attachment and date range (owner says shipped 20 Oct, runbook shows last release 12 Oct).
+
+Verification:
+- 14 FAQ Q/A identical across canvas Main/Home-Phone, FAQPage JSON-LD and the content-th.md list; both JSON blocks parse; relative links resolve.
+- Chooser logic in node: default → เติบโต 499/month; yearly+tax → ธุรกิจ 19,990/year; users and receipts match catalog.
+- Tag balance OK for all 5 artboards; banned strings (English tier codes, "พนักงาน 2 คน", lime, "รอตรวจ<", "เดือนก่อน") absent from home/pricing.
+- Contrast computed for all text pairs ≥ 5.02:1; option-button border 3.97:1.
+- Web sources for colour research: only abstracts/snippets readable (proxy 403 on journals, LINE docs, competitor sites); recorded in the doc.
+- Not done: real-browser render, user tests.
