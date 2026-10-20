@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { connection } from 'next/server';
 import { ToastProvider } from '@/common/components/toast';
 import { LEGAL_OPERATOR } from '@/common/legal/legal-content';
 import './globals.css';
@@ -15,11 +16,15 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // proxy.ts sends a per-request nonce CSP with 'strict-dynamic', and Next stamps that nonce on its
+  // scripts only when a page renders per request. A page prerendered at build time (/privacy, /terms,
+  // /forgot-password, /data-deletion, /) ships nonce-less scripts the browser blocks, so it never hydrates.
+  await connection();
   return (
     <html lang="th">
       <body><ToastProvider>{children}</ToastProvider></body>
