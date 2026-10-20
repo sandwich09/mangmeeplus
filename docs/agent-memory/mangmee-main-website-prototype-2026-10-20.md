@@ -347,3 +347,10 @@ Decisions:
 - A dashboard-markup cut left one stray </div> and broke the layout (mobile scrollWidth 482); caught by section measurements and the tag-balance check; fixed.
 - Test numbers from a read-only audit of docs/specs/research/agent-memory, ci.yml and spec counts: advisor 2,624 code-graded question-runs (223×10 + 71×2 + 183 S1 + 69 S2a); real documents sent to the model 60 (38 UAT receipts 2026-08-28, totals 30/38 with some wrong labels; 15 customer images 2026-09-08, 14/14 printed-total images = 13 documents; 7 public docs 2026-09-19); 5,273 test declarations around AI/documents, run by ci.yml on every PR into main/develop (about 12 PostgreSQL AI specs only in manual extended-tests); 48 frozen attack cases are deterministic rule checks in CI, not model tests; real-model scope refusals 40/40 + 12/12. Not claimed: population accuracy, production/UAT accuracy, October "independent exam" results (untracked), model-tested prompt injection.
 Verification: Chromium 1440/390 no overflow (home 8496 / 14873; pricing 3103 / 5429); tags balanced; scroll test 0 transparent sections; no lin.ee/6Sc38L6 or simulated-data captions left; pipeline r13 → r14 → r14_docs → faq → r15 reproduces Main byte-for-byte; canvas version 26.
+
+## Revision 3p — dashboard without the manual-entry menu
+
+Status: Complete — prototype only.
+Trigger: Owner: remove "บันทึกด้วยมือ" from the dashboard image.
+Decision: re-rendered with the product default rather than editing pixels — the shop setting "แสดงเมนูบันทึกด้วยมือบนเว็บ" defaults to hidden (`MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW = false`, apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts:12; web gate `canOpenManualWeb`, apps/web/src/features/expenses/manual-expense-entry.logic.ts:24). Mocked session reads `manualExpenseWebEntryState(null)` like GET /auth/me.
+Verification: new 1440 shot shows the sidebar without the item, rest unchanged; home 1440/390 no overflow (8496 / 14873); repo tree unchanged by the render; canvas version 27.
