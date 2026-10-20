@@ -547,17 +547,19 @@ describe('buildNavItems', () => {
     assert.ok(guide);
     // ลำดับต้องตรงกับลำดับเมนูจริงในแถบซ้าย ไม่ใช่ลำดับที่เขียนไฟล์คู่มือ
     assert.deepEqual(guide.subItems?.map((sub) => sub.key), [
+      'guide.getting_started',
       'guide.expenses',
       'guide.substitute_receipts',
       'guide.reimbursements',
     ]);
     assert.deepEqual(guide.subItems?.map((sub) => sub.href), [
+      '/companies/guide-company/user-guide/getting-started',
       '/companies/guide-company/user-guide/expenses',
       '/companies/guide-company/user-guide/substitute-receipts',
       '/companies/guide-company/user-guide/reimbursements',
     ]);
-    assert.equal(guide.href, '/companies/guide-company/user-guide/expenses');
-    for (const slug of ['expenses', 'substitute-receipts', 'reimbursements', 'tax', 'reports']) {
+    assert.equal(guide.href, '/companies/guide-company/user-guide/getting-started');
+    for (const slug of ['getting-started', 'expenses', 'substitute-receipts', 'reimbursements', 'tax', 'reports']) {
       assert.equal(
         canAccessWorkspacePath(WORKSPACE_MODULES, [], 'guide-company', `/companies/guide-company/user-guide/${slug}`),
         true,

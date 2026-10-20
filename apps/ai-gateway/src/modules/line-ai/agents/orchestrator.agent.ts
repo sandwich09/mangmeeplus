@@ -24,7 +24,7 @@ import { APPROVED_PREPARED_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote, format
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { draftUpdateCardLayout, formatDraftUpdateReply } from './draft-update-formatter';
 import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
-import { PRODUCT_HELP_PACK, productHelpAction } from './approved-product-help';
+import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
@@ -1346,7 +1346,7 @@ export class OrchestratorAgent {
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
     const router = new IntentRouterAgent(provider, true, { enabled: knowledgeEnabled });
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications,
-      knowledgeEnabled ? offeredKnowledgeMetadata(PRODUCT_HELP_PACK, knowledgeAccess()) : undefined);
+      knowledgeEnabled ? offeredKnowledgeMetadata(activeProductHelpPack(), knowledgeAccess(), req.messageText) : undefined);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
     // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must
@@ -1619,7 +1619,7 @@ export class OrchestratorAgent {
       // The self-description is filtered by the same two gates a real answer would hit, so it can
       // never advertise a capability this caller's permissions or this company's features refuse.
       const knowledgeAnswer = knowledgeEnabled
-        ? renderApprovedKnowledge(PRODUCT_HELP_PACK, knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
+        ? renderApprovedKnowledge(activeProductHelpPack(), knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
           knowledgeAccess(plan.language), req.userContext.companyId) : null;
       const actionHelp = productHelpAction({ actionId: req.howToActionId, text: req.messageText, language: plan.language === 'en' ? 'en' : 'th', companyId: req.userContext.companyId,
         selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
@@ -1712,7 +1712,7 @@ export class OrchestratorAgent {
     // A selected guide never replaces another requested read. Keep the reviewed body and its
     // source separate from model composition, so a mixed question preserves both answers.
     if (knowledgeEnabled && !zeroToolIntent && plan.status !== 'UNROUTABLE') {
-      const help = renderApprovedKnowledge(PRODUCT_HELP_PACK,
+      const help = renderApprovedKnowledge(activeProductHelpPack(),
         knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
         knowledgeAccess(plan.language), req.userContext.companyId);
       if (help) {

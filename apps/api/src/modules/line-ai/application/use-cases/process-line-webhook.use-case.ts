@@ -173,7 +173,7 @@ import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, ty
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic } from '../../domain/logic/line-public-policy.logic';
+import { isOpenShopHelpQuestion, OPEN_SHOP_HELP_ANSWER, isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer, type PublicPolicyTopic, type PublicPolicyAnswer } from '../../domain/logic/line-public-policy.logic';
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -6508,6 +6508,11 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
     const identity = await this.resolveLineIdentity(event);
 
+    if (identity?.user.status === 'ACTIVE' && isOpenShopHelpQuestion(event.messageText) && !await this.assistantPaused(event.lineUserId)) {
+      await this.handleCompanyCommand(event, requestId, identity.userId, identity.user.displayName, { kind: 'list' }, OPEN_SHOP_HELP_ANSWER);
+      return;
+    }
+
     if (!identity || identity.user.status !== 'ACTIVE') {
       // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
       // not exist, so a short capability question is answered by the curated card — deterministic,
@@ -9009,7 +9014,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       : item)));
   }
 
-  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
+  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand, signupHelp?: PublicPolicyAnswer): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
       await this.deliverReply(event, UNLINKED_REPLY[replyLanguage(event)]);
@@ -9040,7 +9045,10 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       // button, because the LIFF form behind it can only answer `line_signup_already_pending`.
       const pendingSignup = await this.findOpenLineSignup(event.lineUserId);
       const stateLabel = companyStateLabel(currentMembership);
-      const messages: LineReplyMessage[] = [buildCompanyContextMessage({
+      const messages: LineReplyMessage[] = [
+        ...(signupHelp && isCompanyOwner(currentMembership) && this.newShopSignupUrl() && !pendingSignup
+          ? [buildPublicPolicyCardMessage(signupHelp, replyLanguage(event))] : []),
+        buildCompanyContextMessage({
         companyName: companyLabel(currentMembership, replyLanguage(event)),
         ...(stateLabel ? { stateLabel } : {}),
         displayName,

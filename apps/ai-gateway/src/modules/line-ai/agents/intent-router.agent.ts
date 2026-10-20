@@ -13,7 +13,7 @@ import { extractJson } from '../../../common/ai/extract-json';
 import { parseBusinessDocumentClassification } from '../domain/logic/business-document-classification.logic';
 import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
 import { APPROVED_KNOWLEDGE_SELECTION_PROMPT, offeredKnowledgeMetadata, parseSelectedKnowledgeCardIds, productKnowledgeAccess, type KnowledgeMetadata, type ProductKnowledgePack } from './approved-knowledge';
-import { PRODUCT_HELP_PACK } from './approved-product-help';
+import { activeProductHelpPack } from './approved-product-help';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { conversationReadCandidates } from './read-tool-input';
 import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
@@ -633,9 +633,9 @@ export class IntentRouterAgent {
     if (caps.fusedPlan && hasAttachment) delete caps.fusedPlan;
 
     const knowledgeMetadata = caps.approvedKnowledge && this.knowledge.enabled && !hasAttachment
-      ? offeredKnowledgeMetadata(this.knowledge.pack ?? PRODUCT_HELP_PACK,
+      ? offeredKnowledgeMetadata(this.knowledge.pack ?? activeProductHelpPack(),
         productKnowledgeAccess(request.permissions, request.enabledFeatures ?? [], true,
-          /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en'))
+          /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en'), request.messageText)
       : [];
 
     const semanticV2 = request.inputEvidence !== undefined;

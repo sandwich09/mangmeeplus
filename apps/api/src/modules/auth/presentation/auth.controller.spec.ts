@@ -392,11 +392,11 @@ describe('AuthController me()', () => {
     assert.equal(await meIn('company-3'), MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW);
   });
 
-  it('reports the disbursement-voucher web entry as hidden without a row or when its stored column is null', async () => {
+  it('reports the disbursement-voucher web entry as shown without a row or when its stored column is null (owner 2026-10-20)', async () => {
     const absent = await makeMeController(false).me(context);
     assert.equal(absent.disbursementVoucherWebEntry, DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW);
     const nullValue = await makeMeController(false, true, {}, 'company-1', { 'company-1': null }).me(context);
-    assert.equal(nullValue.disbursementVoucherWebEntry, false);
+    assert.equal(nullValue.disbursementVoucherWebEntry, true);
   });
 
   it('reports only the disbursement-voucher setting for the request company', async () => {
@@ -405,7 +405,7 @@ describe('AuthController me()', () => {
       .me({ context: { ...context.context, companyId } } as any)).disbursementVoucherWebEntry;
     assert.equal(await meIn('company-1'), true);
     assert.equal(await meIn('company-2'), false);
-    assert.equal(await meIn('company-3'), false);
+    assert.equal(await meIn('company-3'), DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW);
   });
 
   it('does not let the disbursement-voucher menu setting change the permissions in /auth/me', async () => {

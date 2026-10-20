@@ -883,21 +883,22 @@ describe('SetPartnerManualExpenseWebEntryUseCase', () => {
 });
 
 describe('disbursement-voucher web entry — one shared company setting version', () => {
-  it('has one default: a missing row and a null column both read as hidden', () => {
-    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW, false);
-    assert.deepEqual(disbursementVoucherWebEntryState(null), { enabled: false, version: 0 });
-    assert.deepEqual(disbursementVoucherWebEntryState(undefined), { enabled: false, version: 0 });
-    assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: null, version: 7 }), { enabled: false, version: 7 });
+  it('has one default: a missing row and a null column both read as shown (owner 2026-10-20); an explicit false hides', () => {
+    assert.equal(DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW, true);
+    assert.deepEqual(disbursementVoucherWebEntryState(null), { enabled: true, version: 0 });
+    assert.deepEqual(disbursementVoucherWebEntryState(undefined), { enabled: true, version: 0 });
+    assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: null, version: 7 }), { enabled: true, version: 7 });
+    assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: false, version: 9 }), { enabled: false, version: 9 });
     assert.deepEqual(disbursementVoucherWebEntryState({ disbursementVoucherEntryEnabled: true, version: 8 }), { enabled: true, version: 8 });
   });
 
-  it('the partner detail returns the hidden default and treats a null column as hidden', async () => {
+  it('the partner detail returns the shown default and treats a null column as shown', async () => {
     const missing = await detailUseCase(detailCompany({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' })).execute('co-1');
-    assert.deepEqual(missing.disbursementVoucherWebEntry, { enabled: false, version: 0 });
+    assert.deepEqual(missing.disbursementVoucherWebEntry, { enabled: true, version: 0 });
     const row = detailCompany({ status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT' });
     row.webEntrySetting = { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: null, version: 6 };
     const withNull = await detailUseCase(row).execute('co-1');
-    assert.deepEqual(withNull.disbursementVoucherWebEntry, { enabled: false, version: 6 });
+    assert.deepEqual(withNull.disbursementVoucherWebEntry, { enabled: true, version: 6 });
   });
 
   it('the partner detail lists only disbursement permissions and marks company-created or edited roles', async () => {
@@ -920,25 +921,25 @@ describe('disbursement-voucher web entry — one shared company setting version'
     ]);
   });
 
-  it('creating the row writes the manual switch default, enables the requested setting, and audits it', async () => {
+  it('creating the row writes the manual switch default, turns the shown default off, and audits it', async () => {
     const h = disbursementWebEntryHarness();
-    assert.deepEqual(await h.run(true, 0), { enabled: true, version: 1 });
-    assert.deepEqual(h.row(), { manualExpenseEntryEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, disbursementVoucherEntryEnabled: true, version: 1 });
+    assert.deepEqual(await h.run(false, 0), { enabled: false, version: 1 });
+    assert.deepEqual(h.row(), { manualExpenseEntryEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, disbursementVoucherEntryEnabled: false, version: 1 });
     assert.deepEqual(h.writes[0]?.create, {
       companyId: 'co-1', manualExpenseEntryEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW,
-      disbursementVoucherEntryEnabled: true, version: 1, updatedBySystemAdminUserId: 'admin-1',
+      disbursementVoucherEntryEnabled: false, version: 1, updatedBySystemAdminUserId: 'admin-1',
     });
     assert.deepEqual(h.audits, [{
       companyId: 'co-1', actorUserId: 'admin-1', action: 'system.partner_disbursement_voucher_web_entry.update',
       targetType: 'company', targetId: 'co-1', requestId: 'req-1', result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { entryPoint: 'SYSTEM_PARTNER_ADMIN', fromEnabled: false, toEnabled: true, fromVersion: 0, toVersion: 1 },
+      metadataJson: { entryPoint: 'SYSTEM_PARTNER_ADMIN', fromEnabled: true, toEnabled: false, fromVersion: 0, toVersion: 1 },
     }]);
     assert.equal(h.locks.length, 1);
   });
 
-  it('a null stored value is false, and saving false is a no-op that leaves it null', async () => {
+  it('a null stored value is shown, and saving true is a no-op that leaves it null', async () => {
     const h = disbursementWebEntryHarness({ row: { manualExpenseEntryEnabled: true, disbursementVoucherEntryEnabled: null, version: 4 } });
-    assert.deepEqual(await h.run(false, 3), { enabled: false, version: 4 });
+    assert.deepEqual(await h.run(true, 3), { enabled: true, version: 4 });
     assert.equal(h.row()?.disbursementVoucherEntryEnabled, null);
     assert.deepEqual([h.writes, h.audits], [[], []]);
   });

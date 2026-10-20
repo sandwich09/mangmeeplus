@@ -867,19 +867,12 @@ describe('P10-L LIFF client script', () => {
     assert.notEqual(body.submissionId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
   });
 
-  it('files help directly with verified identity even when LIFF sendMessages is unavailable and keeps a phone fallback', async () => {
-    const status = signupStatus({ state: 'PROVISIONING_FAILED' });
-    const sent = runSignupScript(status, [{ status: 200, body: status }, { status: 202, body: '{"received":true}' }], { sendMessagesFails: new Error('LIFF unavailable') });
-    await settle(); await settle(); await sent.click('support'); await settle();
-    assert.equal(sent.sentMessages.length, 0);
-    assert.equal(sent.calls.at(-1)!.url, 'https://api.example.test/v1/public/line-signups/support');
-    assert.deepEqual(JSON.parse(sent.calls.at(-1)!.init.body), { idToken: 'aaa.bbb.ccc' });
-    assert.match(sent.elements.status!.textContent, /รับเรื่องขอความช่วยเหลือแล้ว/);
-
-    const failed = runSignupScript(status, [], { fetchThrows: new Error('network') });
-    await settle(); await settle(); await failed.click('support'); await settle();
-    assert.match(failed.elements.status!.textContent, /ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้/);
-    assert.match(failed.elements.status!.textContent, /098-256-5628/);
+  it('ติดต่อเจ้าหน้าที่ opens the Official OA chat (owner 2026-10-20) and files nothing from the page', () => {
+    const html = makeController().lineSignupPage(request());
+    for (const id of ['form-support', 'support']) {
+      assert.match(html, new RegExp(`<a id="${id}" class="btn quiet" href="https://line\\.me/R/ti/p/@695ultfm"[^>]*>ติดต่อเจ้าหน้าที่ · LINE @mangmeeplus</a>`), id);
+    }
+    assert.equal(html.includes('/line-signups/support'), false, 'the page no longer posts a support request');
   });
 
   it('posts the challenge ATTRIBUTE the page was rendered with, not a value from anywhere else', async () => {
