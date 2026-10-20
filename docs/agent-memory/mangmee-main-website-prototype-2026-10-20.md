@@ -298,3 +298,14 @@ Decisions:
 - Hover: cards lift 6px with deeper shadow, icons scale/tilt, ask bubbles lift. All motion and lifts off under prefers-reduced-motion.
 Verification: Chromium 1440/390 no overflow; hero frames at 0.3/0.9/1.5/2.6 s show the sequence; hover on a plan card → matrix(...,-6); scroll test at 1440 (700px steps): 0 in-view sections left transparent at every step; reduced-motion full-page renders for evidence; tags balanced; canvas version 19.
 Limits: renderer is not the canvas runtime; Safari support for scroll-driven animation not checked (fallback shows content without the reveal).
+
+## Revision 3l — modern style
+
+Status: Complete — prototype only.
+Trigger: Owner: "ปรับให้เป็น style modern design".
+Decisions:
+- Floating glass pill nav (`.hdr` sticky top 12px with height 0, `.hdr-row` 82% white + backdrop blur); hero top padding 128 (104 phone) so the hero runs under it; mobile menu is a floating white card; `.sec` scroll-margin-top 84.
+- Pill shapes for buttons, period toggle and chooser options (deliberate departure from the app's 10px radius for the marketing site); pill eyebrows; card radius 24; h2 42.
+- Hero grid texture via masked ::before; gradient text (#86EFAC→#BBF7D0→#FDE68A) on the green headline line; dot texture on `.alt`.
+- Bento grid replaces the jobs row + full-width blocks: jobs span 2/6 each; น้องมั่งมี spans 4/6 (inner 2 columns, "ควรรู้" and asks full width); ENTERPRISE spans 2/6 as a tall dark tile with form pills and catalog figures (500 ใบ, 30 คน, 10 สาขา). One column under 1100px container width.
+Verification: Chromium 1440/390 no overflow (home 6643 / 12349; pricing 3153 / 5500); scroll test 0 transparent in-view sections; hover lift still -6px; canvas version 20.
