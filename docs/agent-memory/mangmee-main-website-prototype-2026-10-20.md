@@ -121,3 +121,33 @@ Verification:
 Next:
 - Implement the prioritized prototype changes when that work is requested.
 - Validate real demo assets and onboarding contract, then conduct the proposed Thai buyer comprehension and plan-selection tasks.
+
+## Revision 3 — Claude Design canvas, copy deck and SEO content
+
+Status: Complete — prototype only; nothing deployed, live official site unchanged.
+Trigger: Owner asks for a Claude Design prototype with full content, aimed at purchase intent and first-place Google/AI-answer visibility; "อย่าพึ่งดีพลอยจริง".
+
+Decisions:
+- Built in Claude Design (Artifact type Design), not plain HTML: canvas https://claude.ai/artifact/M2MVVV99nKaxXt33yME1Nm (private until shared). Four fluid artboards: home 1440, home 390, pricing/package chooser 1440, pricing 390. Canvas source stays in the artifact, not committed.
+- Kept homepage-only per SEO plan; pricing is the home `#pricing` section shown in full on its own artboard. BreadcrumbList documented for future subpages only.
+- Fixed UX review items 1–5: hero H1 = guideline set A plus "คุณตรวจ แล้วค่อยยืนยัน"; one-picture flow with who-does-what tags; price/no-trial/after-click text beside CTA; "AI อ่านผิดได้" correction example; job-based feature story (3 jobs) still covering all 6 FEAT groups + ENTERPRISE; single-column mobile pricing with 4-question chooser (default = review example → BASIC); comparison table; no "ยอดนิยม".
+- Added quotable "มั่งมีพลัสคืออะไร" answer + facts list, 12 FAQ written as real questions (incl. loan-brand disambiguation), JSON-LD graph (Organization, WebSite, SoftwareApplication with 8 Offers, WebPage, FAQPage). FAQPage kept only because live site already has it; Google FAQ rich results ended May 2026.
+- llms.txt drafted as optional/low priority because Google states it has no ranking effect.
+- Shipped facts used: ENTERPRISE issues 50 ทวิ/ภ.ง.ด.53 in system; others record outside-system 50 ทวิ with number + optional image/PDF; claim flow ส่ง → อนุมัติ → จ่ายเงินคืน → เซ็น (system or paper); dashboard any date range. Login link app.mangmeeplus.com/login.
+- Vocabulary follows docs/guidelines/thai-ux-standard.md glossary (ร้าน, ใบเบิก, จ่าย, ใบเสร็จ N ใบ, หนังสือรับรอง 50 ทวิ, ทีมงานมั่งมี).
+
+Open questions (owner): H1 set A vs B test; title change; root-domain timing/canonical; homepage-only vs pricing page; STARTER promotion (ends 2026-11-10 23:59 ICT); llms.txt; demo clip.
+
+Artifacts:
+- ../prototypes/mangmee-main-website/v3/content-th.md
+- ../prototypes/mangmee-main-website/v3/README.md
+
+Verification:
+- Both JSON-LD blocks parse; 12 canvas FAQ Q/A strings equal FAQPage text exactly; content-th.md relative links resolve.
+- Artboard logic classes run in node: default chooser → BASIC 499/month; yearly prices 2,490/4,990/9,990/19,990 and receipts 360/600/1,200/6,000 match catalog.
+- Artboard HTML tag balance checked with Python HTMLParser (no unclosed/mismatched tags).
+- Computed contrast for all text/background pairs ≥ 5.46:1 (table dash fixed from 4.42:1 to 7.05:1).
+- Not done: real-browser render at 390/1280, screen reader, 200% zoom, Lighthouse, target-user tests. The Design type forbids self-rendering checks unless the owner asks.
+- No PR, no GitHub Actions, no deploy, no AWS/UAT/Production/LINE changes.
+
+Next: Owner decisions above; verify claims table in content-th.md §7; replace mock visuals with consented real screenshots; comprehension test with 6–8 Thai owners; then marketing-repo implementation under SEO plan R0/S1–S4.
