@@ -271,3 +271,17 @@ Decisions:
 - Pricing boards rebuilt from Main (build_pricing.py now finds the pricing-only CSS by marker instead of line numbers).
 Verification: Chromium 1440/390: home 6228 / 11562 high, pricing 3121 / 5467, scrollWidth equals viewport on all; tags balanced on Main and Pricing; canvas version 17.
 Next: ask design team for 2x mascot files before any real build.
+
+## Revision 3j — sales copy, free shop opening, ENTERPRISE featured, PND3
+
+Status: Complete — prototype only.
+Trigger: Owner: too much space above the hero; replace "no free trial" with "เปิดร้านฟรี"; feature the 1,999 pack; we also issue ภ.ง.ด.3; use real eval use cases; fewer middle dots; lead with saving time, working anywhere and the "money hole" pain.
+Decisions:
+- Hero grid align start, top padding 40. H1 green line "ไม่ต้องจดเอง ทำได้ทุกที่"; kicker "มั่งมีพลัส ช่วยร้านรู้ทุกบาทที่จ่ายออกไป"; lead keeps "คุณแค่ตรวจแล้วกดยืนยัน". No time-saved numbers (none measured).
+- #how H2 "ขายได้ทุกวัน แต่จ่ายไปเท่าไรไม่รู้?" with the money-hole lead.
+- "เปิดร้านฟรี ไม่ต้องใส่บัตร" everywhere (hero chip, pricing note, summary dl, close, mobile bar, FAQ Q4 renamed "ราคาเท่าไร เปิดร้านเสียเงินไหม?", pricing FAQ). Honest limit stated: nothing is read until a package is chosen.
+- PND3 verified: ENTERPRISE_1999 grants `wht_pnd53` (menu-entitlements.ts:500), which the sales console labels "ออก ภ.ง.ด.3 และ ภ.ง.ด.53 ในระบบ" (SalesConsoleParts.tsx:87) and LINE AI "จัดทำงวด ภ.ง.ด.3 และ ภ.ง.ด.53" (line-ai-scope-policy.logic.ts:144). Copy, chooser question, table row, FAQ Q9 and JSON-LD updated.
+- Chooser starts unanswered (state -1); unanswered → ธุรกิจ featured with badge "ครบที่สุด ออกเอกสารภาษีได้เอง"; answered → pick follows answers. `.plan-rec{order:-1}` on phones. ENT band dark green with gold tag and white button.
+- น้องมั่งมี block: 6 real questions from scripts/line-ai-expense-advisor/corpus.*.json as chat bubbles; refusal cases (invoice, P&L, stock) excluded.
+- Process slip: the first push of this round (commit "v3 sales copy leads with…") carried only the FAQ doc edits and screenshots because the doc script failed on a duplicate line; the follow-up commit adds the rest of the docs.
+Verification: Chromium 1440/390 no overflow (home 6445 / 12080, pricing 3121 / 5489); chooser logic node cases (unanswered→ธุรกิจ 1,999; staff 3–5→เติบโต; staff+receipts 51–100→มืออาชีพ; tax→ธุรกิจ; yearly→19,990); JSON-LD blocks parse; FAQ parity 14/14; canvas version 18.
