@@ -219,3 +219,16 @@ Decisions:
 Verification:
 - Chromium: home 1440 scrollWidth 1440, 390 scrollWidth 390; pricing 1440/390 no overflow after fix. Screenshots in ../evidence/main-website-prototype-2026-10-20/v3/.
 - Limits: renderer approximates the canvas runtime; fonts load from Google; no real device, zoom or screen-reader pass.
+
+## Revision 3f — app techniques on the website
+
+Status: Complete — prototype only.
+Trigger: Owner asked to use the same techniques as the system.
+
+Decisions:
+- Read apps/web/app/globals.css, design tokens and thai-ux-standard. Applied: font stack Outfit + IBM Plex Sans Thai; `.mangmee-unit` rule (units nowrap + tabular-nums, no global word-break); `.mangmee-btn-primary` gradient #15803D→#166534 with green shadow, radius 10; cards white with --shadow-theme-sm edges on a white page (owner rule 2026-10-15); segmented solid tabs (gray-100 track, brand-700 chosen); selected plan card 2px brand-700 like the app's package page.
+- Kept owner's earlier rule over the app for secondary buttons: borderless soft fill instead of the app's grey-bordered secondary.
+- Fixed new Plex line breaks: H1 "ให้ AI ช่วยอ่าน" kept together; ENTERPRISE line text "ออก 50 ทวิ และ ภ.ง.ด.53 ในระบบ".
+
+Verification:
+- Chromium render 1440/390: no horizontal overflow on home or pricing; tags balanced on 5 boards. Screenshots refreshed in ../evidence/main-website-prototype-2026-10-20/v3/.
