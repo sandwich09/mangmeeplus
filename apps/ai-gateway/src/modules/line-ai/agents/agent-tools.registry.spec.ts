@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { PRODUCT_HELP_PACK, PRODUCT_HELP_DRAFT_PACK } from './approved-product-help';
+import { activeProductHelpPack, PRODUCT_HELP_PACK, PRODUCT_HELP_DRAFT_PACK } from './approved-product-help';
 import { eligibleKnowledgeCards, knowledgeCardHash, knowledgePackHash, renderApprovedKnowledge, validateKnowledgePack, type KnowledgeAccess } from './approved-knowledge';
 const access = (): KnowledgeAccess => ({ release: '2.4.0', permissions: [], featureKeys: [], capabilities: [], member: true, now: new Date('2026-10-15T00:00:00Z') });
 const rehash = (pack: typeof PRODUCT_HELP_PACK) => { for (const card of pack.cards) card.contentHash = knowledgeCardHash(card); pack.contentHash = knowledgePackHash(pack); return pack; };
@@ -13,7 +13,7 @@ const rehash = (pack: typeof PRODUCT_HELP_PACK) => { for (const card of pack.car
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, hasToolPermissions } from '@watchdog-bms/contracts';
+import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, hasToolPermissions, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { AccountingSummaryAgent, ACCOUNTING_SUMMARY_SYSTEM_PROMPT, ALLOWED_TOOLS as ACCOUNTING_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_TOOLS } from './inventory.agent';
 import { ROUTER_ENABLED_TOOLS } from './intent-router.agent';
@@ -348,28 +348,114 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
   });
 });
 
-describe('round 5A pinned document help awaiting owner review', () => {
-  it('keeps the new immutable pack draft without claiming the original approval', () => {
+describe('owner-approved v6 product help and previous v4 record', () => {
+  it('serves all 68 owner-approved v6 cards and retains the previous approved v4 record', () => {
     validateKnowledgePack(PRODUCT_HELP_DRAFT_PACK);
-    assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 5); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'DRAFT');
-    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, []); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 16);
+    assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 6); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'APPROVED');
+    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, ['owner-review:2026-10-21']); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 68);
     assert.equal(PRODUCT_HELP_PACK.cards.length, 12); assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
-    assert.deepEqual(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] }), []);
+    assert.ok(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] }).some(card => card.id === 'wht.calculation'));
     const root = resolve(__dirname, '../../../../../..');
     for (const card of PRODUCT_HELP_DRAFT_PACK.cards.slice(12)) {
       assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash);
       assert.equal(card.contentHash, knowledgeCardHash(card));
       const [guide, anchor] = card.sourceURL.split('/user-guide/')[1]!.split('#');
       assert.ok(readFileSync(resolve(root, `apps/web/app/(workspace)/companies/[companyId]/user-guide/${guide}/page.tsx`)));
-      assert.ok(readFileSync(resolve(root, card.sourceFile), 'utf8').includes(`id: '${anchor}'`));
+      const source = readFileSync(resolve(root, card.sourceFile), 'utf8');
+      assert.ok(card.sourceFile.endsWith('getting-started-guide.content.ts') ? source.includes(`"${anchor}":`) : source.includes(`id: '${anchor}'`), card.id);
     }
   });
-  it('filters the proposed cards by their source permissions and sold features after a test-only review', () => {
-    const pack = structuredClone(PRODUCT_HELP_DRAFT_PACK); pack.status = 'APPROVED'; pack.reviewers = ['test-only-owner-review-fixture']; rehash(pack);
+  it('filters owner-approved v6 cards by their source permissions and sold features', () => {
+    const pack = activeProductHelpPack();
     const all = { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] };
     assert.deepEqual(eligibleKnowledgeCards(pack, all).filter(c => /^(voucher|wht)\./.test(c.id)).map(c => c.id), ['voucher.meaning', 'wht.certificate-meaning', 'wht.pnd53-due', 'wht.calculation']);
-    assert.deepEqual(eligibleKnowledgeCards(pack, { ...all, featureKeys: ['expenses'] }).filter(c => c.id.startsWith('wht.')), []);
-    assert.deepEqual(eligibleKnowledgeCards(pack, { ...all, permissions: [] }), []);
-    assert.equal(renderApprovedKnowledge(PRODUCT_HELP_DRAFT_PACK, ['wht.calculation'], all, 'company-A'), null);
+    assert.deepEqual(eligibleKnowledgeCards(pack, { ...all, featureKeys: ['expenses'] }).filter(c => c.id.startsWith('wht.')).map(c => c.id), ['wht.certificate-meaning', 'wht.calculation']);
+    assert.equal(eligibleKnowledgeCards(pack, { ...all, permissions: [] }).some(c => c.id.startsWith('wht.')), false);
+    assert.match(renderApprovedKnowledge(pack, ['wht.calculation'], all, 'company-A')!.replyText, /จ่ายค่าอะไร/);
+  });
+  it('LINE-HELP-APPROVE serves reviewed v6 while preserving the previous v4 bytes', () => {
+    assert.equal(activeProductHelpPack(), PRODUCT_HELP_DRAFT_PACK);
+    assert.equal(PRODUCT_HELP_PACK.contentHash, 'd900b41d31287179551c270635e1333d56432b86627ce7f5b7ad3bfd2571ab14');
+    for (const original of PRODUCT_HELP_PACK.cards) {
+      const draft = PRODUCT_HELP_DRAFT_PACK.cards.find(card => card.id === original.id)!;
+      assert.notEqual(draft.body, original.body); assert.equal(draft.sourceHash, original.sourceHash);
+      assert.equal(draft.version, original.version + 1);
+    }
+    for (const card of PRODUCT_HELP_DRAFT_PACK.cards) assert.ok(card.questions.length >= 4, card.id);
+    assert.equal(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: PRODUCT_HELP_DRAFT_PACK.cards.flatMap(c => c.permissionAnyOf),
+      featureKeys: null, capabilities: LINE_TOOL_REGISTRY.map(t => t.name) }).length, 68);
+    const oversized = structuredClone(PRODUCT_HELP_DRAFT_PACK);
+    oversized.cards[0]!.summary = 'ก'.repeat(11000); rehash(oversized);
+    assert.throws(() => validateKnowledgePack(oversized), /METADATA_LIMIT/);
+    const tooMany = structuredClone(PRODUCT_HELP_DRAFT_PACK);
+    tooMany.cards = Array.from({ length: 81 }, () => tooMany.cards[0]!); rehash(tooMany);
+    assert.throws(() => validateKnowledgePack(tooMany), /CARD_LIMIT/);
+  });
+  it('LINE-HELP-ALL-3 uses only one or two warm face emoji or the brand heart within its budgets', () => {
+    const graphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
+    const words = new Intl.Segmenter('th', { granularity: 'word' });
+    const allowedEmoji = new Set(['😊', '☺️', '🙂', '😄', '😁', '😆', '🥰', '😳', '🤗', '😉', '💚']);
+    for (const card of PRODUCT_HELP_DRAFT_PACK.cards) {
+      const emoji = [...graphemes.segment(card.body)].filter(part => /\p{Extended_Pictographic}/u.test(part.segment));
+      assert.ok(emoji.length >= 1 && emoji.length <= 2, card.id);
+      for (const part of emoji) assert.ok(allowedEmoji.has(part.segment), `${card.id}: ${part.segment}`);
+      assert.ok(emoji.some(part => part.segment !== '💚'), `${card.id}: a warm face accompanies the answer`);
+      assert.match(card.body, /ค่ะ|นะคะ/, card.id);
+      assert.doesNotMatch(card.body, /🤖|ครับ|อย่า(?!ง)|ห้าม|การถาม.*ยังไม่ได้|\*\*|```/, card.id);
+      assert.ok(Buffer.byteLength(card.body) <= 4096, card.id);
+      assert.ok([...words.segment(card.body)].filter(part => part.isWordLike).length <= 85, card.id);
+      assert.ok(card.body.split('\n').length <= 6, card.id);
+      for (const name of card.body.matchAll(/“([^”]+)”/gu)) assert.doesNotMatch(name[1]!, /\p{Extended_Pictographic}/u, card.id);
+    }
+    validateKnowledgePack(PRODUCT_HELP_DRAFT_PACK);
+  });
+  it('LINE-HELP-ALL-2 pins every named label to its real UI or command source line', () => {
+    const root = resolve(__dirname, '../../../../../..');
+    const sheet = readFileSync(resolve(root, 'docs/agent-memory/line-help-cards-review-2026-10-20.md'), 'utf8');
+    const audit = sheet.split('## ตรวจชื่อปุ่ม/เมนู')[1]!;
+    assert.ok(audit);
+    const labels = new Set<string>();
+    for (const row of audit.split('\n')) {
+      const match = row.match(/^\| (.+?) \| .+? \| `([^`]+):(\d+)` \|$/u);
+      if (!match) continue;
+      const [, label, file, line] = match;
+      assert.ok(!labels.has(label!), label); labels.add(label!);
+      const source = readFileSync(resolve(root, file!), 'utf8').split('\n')[Number(line) - 1];
+      assert.ok(source?.includes(label!), `${label}: ${file}:${line}`);
+    }
+    for (const card of PRODUCT_HELP_DRAFT_PACK.cards) for (const name of card.body.matchAll(/“([^”]+)”/gu)) {
+      assert.ok(labels.has(name[1]!), `${card.id}: ${name[1]}`);
+    }
+    assert.ok(labels.has('เปิดร้านใหม่')); // The unchanged public-policy card uses the same LINE door.
+  });
+  it('LINE-HELP-ALL pins one owner-review row per approved card with its exact answer and guide anchor', () => {
+    const root = resolve(__dirname, '../../../../../..');
+    const sheet = readFileSync(resolve(root, 'docs/agent-memory/line-help-cards-review-2026-10-20.md'), 'utf8');
+    assert.match(sheet, /Status: APPROVED.*2026-10-21/);
+    for (const card of PRODUCT_HELP_DRAFT_PACK.cards) {
+      const rows = sheet.split('\n').filter(line => line.startsWith(`| ${card.id} |`));
+      assert.equal(rows.length, 1, card.id);
+      assert.ok(rows[0]!.includes(card.body.replace(/\|/g, '\\|').replace(/\n/g, '<br>')), card.id);
+      assert.ok(rows[0]!.includes(card.sourceURL.split('/user-guide/')[1]!), card.id);
+      for (const question of card.questions) assert.ok(rows[0]!.includes(question), `${card.id}: ${question}`);
+    }
+  });
+  it('LINE-HELP-ALL gates owner steps, capabilities and system certificates per role and all four packages', () => {
+    const pack = activeProductHelpPack();
+    const ownerPermissions = [...new Set(pack.cards.flatMap(c => [...c.permissionAnyOf, ...c.requiredPermissions]))];
+    for (const [tier, featureKeys] of Object.entries(TIER_FEATURE_PRESETS)) {
+      const eligible = eligibleKnowledgeCards(pack, { ...access(), permissions: ownerPermissions, featureKeys: [...featureKeys], capabilities: LINE_TOOL_REGISTRY.map(t => t.name) });
+      assert.equal(eligible.some(c => c.id === 'wht.system'), tier === 'ENTERPRISE_1999', tier);
+      assert.ok(eligible.some(c => c.id === 'wht.outside'), tier);
+      assert.ok(eligible.some(c => c.id === 'home.range'), tier);
+    }
+    const staff = eligibleKnowledgeCards(pack, { ...access(), permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.read_own', 'reimbursement.create'],
+      featureKeys: [...TIER_FEATURE_PRESETS.STARTER_249], capabilities: [] }).map(c => c.id);
+    assert.ok(staff.includes('shop.staff-open')); assert.ok(staff.includes('line.receipt'));
+    for (const id of ['shop.open', 'staff.invite', 'staff.roles', 'package.buy', 'wht.system', 'line.totals', 'claim.create']) assert.ok(!staff.includes(id), id);
+    const accountant = eligibleKnowledgeCards(pack, { ...access(), permissions: ['expense.read', 'expense.export', 'wht.external_certificate.link'],
+      featureKeys: [...TIER_FEATURE_PRESETS.PRO_999], capabilities: [] }).map(c => c.id);
+    assert.ok(accountant.includes('expense.export')); assert.ok(accountant.includes('wht.outside'));
+    assert.ok(!accountant.includes('shop.open')); assert.ok(!accountant.includes('wht.system'));
   });
 });

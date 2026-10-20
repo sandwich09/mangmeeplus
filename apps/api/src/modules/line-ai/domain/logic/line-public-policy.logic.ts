@@ -79,6 +79,12 @@ function answer(topic: PublicPolicyTopic): PublicPolicyAnswer {
   return { topic, ...ANSWERS[topic], text: `${ANSWERS[topic].text}\nมีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ` };
 }
 
+/** Same reviewed public instructions; a linked member's actual door is role/config scoped by the API. */
+export const OPEN_SHOP_HELP_ANSWER = answer('card');
+export function isOpenShopHelpQuestion(messageText: string): boolean {
+  return /^(?:อยาก|ขอ)?เปิด(?:ร้าน(?:ใหม่|เพิ่ม|อีก(?:ร้าน)?)?|อีกร้าน)(?:ต้อง)?(?:ทำ)?(?:ยังไง|อย่างไร|ได้ไหม|ได้มั้ย|ได้หรือเปล่า)?$/u.test(normalizedQuestion(messageText));
+}
+
 export function resolvePublicPolicyAnswer(messageText: string, previous?: PublicPolicyTopic): PublicPolicyAnswer | null {
   const text = normalizedQuestion(messageText);
   if (!text) return null;

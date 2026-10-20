@@ -1887,7 +1887,7 @@ it('credit X2 J7: the claim amount/date, continuing question, current evidence a
 });
 
 
-it('credit P1/P2: every deployed role/package builder has a calibrated constant digest; prompt/glossary edits require recalibration', async () => {
+it('credit P1/P2: approved-v6 offers stay bounded with the calibrated constant digest for every deployed role/package', async () => {
   const expected = JSON.parse(readFileSync(resolve(creditRoot, 'docs/evidence/line-ai-credit-levers-20261019-role-reach.json'), 'utf8'));
   for (const row of expected.rows) {
     const req = { ...await creditRequest(), permissions: ROLE_GRANTS[row.role as keyof typeof ROLE_GRANTS],
@@ -1904,6 +1904,10 @@ it('credit P1/P2: every deployed role/package builder has a calibrated constant 
     assert.equal(entry.bytes, parts!.bytes);
     assert.equal(parts!.digest, row.constantDigest);
     assert.equal(v2RenderedInput(input, creditModel).inputTokenBound, row.boundAfter);
+    const offered = JSON.parse(input.messages[0]!.text).approvedKnowledge;
+    assert.ok(offered.length <= 12 && Buffer.byteLength(JSON.stringify(offered)) <= 12 * 1024);
+    assert.ok(row.boundAfter <= row.approvedV4BoundAfter, 'the ordinary intake sample stays below its prior v4 reservation');
+    assert.ok(row.boundAfter < row.unboundedV6Bound, 'the full approved v6 catalogue never rides on this turn');
     assert.ok(row.holdAfterThb <= 9.13, `${row.tier}/${row.role}`);
     const changed = { ...input, systemPrompt: input.systemPrompt + ' ' };
     assert.equal(INTAKE_CONSTANT_CALIBRATIONS.some(entry => entry.digest === intakeConstantParts(changed)?.digest), false);

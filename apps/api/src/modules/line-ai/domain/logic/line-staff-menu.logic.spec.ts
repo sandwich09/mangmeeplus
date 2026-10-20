@@ -182,10 +182,10 @@ describe('LINE staff menu', () => {
     const rendered = JSON.stringify(message);
     assert.equal(rendered.includes('เปิดร้านใหม่'), false);
     assert.equal((message as any).contents?.footer, undefined);
-    // No URL and no LIFF id reach an employee — the route is a menu button they already have.
+    // No URL and no LIFF id reach an employee — the pointer uses the existing typed command.
     assert.equal(rendered.includes('"uri"'), false);
     assert.equal(rendered.includes('liff.line.me'), false);
-    assert.match(rendered, /อยากเปิดร้านของตัวเอง กดปุ่ม โปรโมชั่น ในเมนูได้เลยค่ะ/);
+    assert.match(rendered, /อยากเปิดร้านของตัวเอง กด “แพ็กเกจและราคา” ในเมนูด้านล่าง หรือพิมพ์ โปรโมชั่น ได้เลยค่ะ/);
     // The chat-list preview is unchanged: this is a pointer the reader sees when they open the card,
     // not news about their own request the way the 🕒 line is.
     assert.equal((message as any).altText.includes(VIEW_PACKAGES_COMMAND), false);

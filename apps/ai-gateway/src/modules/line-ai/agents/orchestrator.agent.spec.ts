@@ -1858,15 +1858,16 @@ describe('run-level expense follow-up execution', () => {
 
 describe('approved knowledge orchestration', () => {
   async function withReviewedPack(run: () => Promise<void>) {
-    const { PRODUCT_HELP_PACK } = await import('./approved-product-help');
+    const { activeProductHelpPack } = await import('./approved-product-help');
     const { knowledgePackHash } = await import('./approved-knowledge');
-    const original = structuredClone(PRODUCT_HELP_PACK);
-    Object.assign(PRODUCT_HELP_PACK, {
+    const pack = activeProductHelpPack();
+    const original = structuredClone(pack);
+    Object.assign(pack, {
       status: 'APPROVED', reviewers: ['synthetic-test-reviewer'],
       effectiveFrom: '2020-01-01T00:00:00Z', effectiveTo: '2100-01-01T00:00:00Z', reviewDueAt: '2100-01-01T00:00:00Z',
     });
-    PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);
-    try { await run(); } finally { Object.assign(PRODUCT_HELP_PACK, original); }
+    pack.contentHash = knowledgePackHash(pack);
+    try { await run(); } finally { Object.assign(pack, original); }
   }
   function knowledgeRequest() {
     const req = makeReq('เอกสารยืนยันแล้วแปลว่าจ่ายแล้วไหม');
@@ -1896,11 +1897,12 @@ describe('approved knowledge orchestration', () => {
   it('renders only the exact reviewed body and real guide citation without a composition call', async () => withReviewedPack(async () => {
     const calls = helpProvider();
     const result = await new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiApprovedKnowledgeEnabled: true })).run(knowledgeRequest());
-    const { PRODUCT_HELP_PACK } = await import('./approved-product-help');
-    const card = PRODUCT_HELP_PACK.cards.find((entry) => entry.id === 'expense.status')!;
+    const { activeProductHelpPack } = await import('./approved-product-help');
+    const card = activeProductHelpPack().cards.find((entry) => entry.id === 'expense.status')!;
     assert.equal(calls(), 1);
     assert.equal(result.replyText, `${card.title}\n${card.body}`);
     assert.equal(result.sourceRefs[0]?.entityType, 'approved_product_help');
+    assert.match(result.sourceRefs[0]?.entityId ?? '', /:6:expense\.status:/);
     assert.equal(result.webLinks[0]?.path, '/companies/company-1/user-guide/expenses#overview');
     assert.deepEqual(result.outputs.flatMap((entry) => entry.toolCalls), []);
   }));

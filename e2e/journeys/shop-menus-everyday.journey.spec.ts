@@ -74,7 +74,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       const boxes = await tabs.getByRole('button').evaluateAll(buttons => buttons.map(button => {
         const { left, right, width, height } = button.getBoundingClientRect(); return { left, right, width, height };
       }));
-      expect(boxes).toHaveLength(5);
+      expect(boxes).toHaveLength(4);
       for (const box of boxes) {
         expect(box.left).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(viewport.width);
         expect(Math.abs(box.width - boxes[0]!.width)).toBeLessThan(1);
@@ -84,7 +84,8 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       const fromBox = (await from.boundingBox())!, toBox = (await to.boundingBox())!;
       expect(fromBox.x + fromBox.width).toBeLessThanOrEqual(viewport.width);
       expect(toBox.x + toBox.width).toBeLessThanOrEqual(viewport.width);
-      if (viewport.width >= 390) expect(Math.abs(fromBox.y - toBox.y)).toBeLessThan(1);
+      // Measured after the resize settles: the grid switches to two columns at 390 px.
+      if (viewport.width >= 390) await expect.poll(async () => Math.abs((await from.boundingBox())!.y - (await to.boundingBox())!.y)).toBeLessThan(1);
       else expect(toBox.y).toBeGreaterThan(fromBox.y + fromBox.height);
     }
     await from.click();
@@ -277,6 +278,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
 
   await test.step('คู่มือการใช้งานระบบ: open each guide, expand its contents, and read without sideways scrolling on phone', async () => {
     const guides = [
+      { slug: 'getting-started', title: 'เริ่มใช้งานร้านและ LINE' },
       { slug: 'expenses', title: 'ค่าใช้จ่ายและใบเสร็จ' },
       { slug: 'substitute-receipts', title: 'ใบรับรองแทนใบเสร็จ' },
       { slug: 'reimbursements', title: 'การเบิกจ่าย' },

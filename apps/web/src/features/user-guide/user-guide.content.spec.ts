@@ -12,6 +12,8 @@ import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content'
 import { buildExpensesGuide } from './expenses-guide.content';
 import { buildTaxGuide } from './tax-guide.content';
 import { buildReportsGuide } from './reports-guide.content';
+import { buildGettingStartedGuide } from './getting-started-guide.content';
+import { PLAN_TIER_PRESETS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import type { UserGuide } from './user-guide.model';
 
 /** Every shortcut a reader is offered, parent action included. */
@@ -32,6 +34,46 @@ const OWNER = [
   'expense.receipt.upload', 'expense.create', 'expense.category.manage', 'expense.evidence.read',
   'tax.period.read', 'report.catalog.read',
 ];
+
+it('LINE-HELP-ALL-2 keeps the web guide neutral and names current LINE commands and web buttons', () => {
+  const text = sentences(buildGettingStartedGuide('co', ['line.ai.query', 'company.plan.manage', 'company.legal_identity.manage',
+    'reimbursement.cancel_own', 'wht.external_certificate.link'])).join(' ');
+  for (const label of ['เปลี่ยนบริษัท', 'เปิดเว็บบริษัทนี้', 'โปรโมชั่น', 'ติดต่อเจ้าหน้าที่', 'ยกเลิกใบเบิกนี้', 'จดเลขที่ใบ 50 ทวิ']) {
+    assert.ok(text.includes(`“${label}”`), label);
+  }
+  assert.match(text, /ลิงก์นี้เป็นของคุณคนเดียว/);
+  assert.match(text, /หากต้องการลบข้อมูล แจ้งคำขอแยกกับทีมงาน/);
+  assert.doesNotMatch(text, /อย่า(?!ง)|ห้าม|ค่ะ|นะคะ|\p{Extended_Pictographic}|พิมพ์ “บริษัทของฉัน”|กด “ติดต่อเจ้าหน้าที่” ในเมนู/u);
+});
+
+it('LINE-HELP-ALL renders the getting-started guide with role/package-safe steps and current catalog facts', () => {
+  const permissions = [...OWNER, 'line.ai.query', 'company.legal_identity.manage', 'company.plan.manage', 'company.branch.manage', 'access.employee.create',
+    'access.role.manage', 'wht.external_certificate.link', 'wht.certificate.issue', 'wht.pnd53.read', 'notification.read', 'expense.signature.self_manage', 'dashboard.read'];
+  const starter = buildGettingStartedGuide('co', permissions, [...TIER_FEATURE_PRESETS.STARTER_249]);
+  const enterprise = buildGettingStartedGuide('co', permissions, [...TIER_FEATURE_PRESETS.ENTERPRISE_1999]);
+  assert.ok(sentences(starter).includes('จดเลขที่ 50 ทวิที่ทำนอกระบบ'));
+  assert.ok(!sentences(starter).includes('ออก 50 ทวิในระบบ'));
+  assert.ok(sentences(enterprise).includes('ออก 50 ทวิในระบบ'));
+  const staff = sentences(buildGettingStartedGuide('co', ['line.ai.query', 'expense.read_own'], [...TIER_FEATURE_PRESETS.STARTER_249]));
+  assert.ok(staff.includes('พนักงานอยากเปิดร้านของตัวเอง'));
+  for (const ownerStep of ['เปิดร้านหรือเปิดร้านเพิ่ม', 'เพิ่มพนักงานและเชื่อม LINE', 'กำหนดหน้าที่และสิทธิ์', 'ซื้อแพ็กเกจ']) assert.ok(!staff.includes(ownerStep), ownerStep);
+  assert.deepEqual(Object.values(PLAN_TIER_PRESETS).slice(1).map(p => [p.branchLimit, p.employeeLimit, p.monthlySlipLimit]), [[1, 2, 30], [2, 5, 50], [5, 10, 100], [10, 30, 500]]);
+  assert.ok(sentences(starter).some(text => text.includes('ผู้ใช้ 2/5/10/30 คน') && text.includes('30/50/100/500 ใบ')));
+  assert.doesNotMatch(sentences(enterprise).join(' '), /ค่ะ|ครับ|กรุณา/);
+  (globalThis as any).React = React;
+  require.extensions['.svg'] = module => { module.exports = () => null; };
+  const { UserGuidePage } = require('./UserGuidePage') as typeof import('./UserGuidePage');
+  const runtime = require('react') as typeof React, original = runtime.useState;
+  Reflect.set(runtime, 'useState', (initial: unknown) => {
+    const [value, set] = (original as any)(initial);
+    return [Array.isArray(initial) ? enterprise.sections.map(section => section.id) : value, set];
+  });
+  try {
+    const html = renderToStaticMarkup(React.createElement(UserGuidePage, { guide: enterprise }));
+    assert.match(html, /เริ่มใช้งานร้านและ LINE/); assert.match(html, /เลือกวันที่/); assert.match(html, /ทำนอกระบบ/);
+    assert.match(html, /href="\/companies\/co\/dashboard"/); assert.match(html, /aria-expanded="true"/);
+  } finally { Reflect.set(runtime, 'useState', original); }
+});
 
 describe('user guide shortcuts', () => {
   it('sends each role shortcut to the tab that role actually works in', () => {

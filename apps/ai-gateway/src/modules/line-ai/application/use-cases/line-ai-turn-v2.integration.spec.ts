@@ -529,8 +529,9 @@ it('answers pure help from the deterministic guide boundary without control or c
     selectedKnowledgeCardIds: ['expense.status'], answers: [] });
   assert.equal(run.response.semanticCoverage?.[0]?.status, 'handled');
   assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, undefined);
-  assert.match(run.response.replyText, /เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน/);
+  assert.match(run.response.replyText, /เอกสารยืนยันแล้วอาจรอจ่าย/);
   assert.equal(run.response.sourceRefs[0]?.entityType, 'approved_product_help');
+  assert.match(run.response.sourceRefs[0]?.entityId ?? '', /:6:expense\.status:/);
   assert.equal(run.response.sourceRefs[0]?.permissionChecked, true);
   assert.deepEqual(run.steps, []);
   assert.deepEqual(run.providerRequests, []);

@@ -257,7 +257,7 @@ export function buildCompanyContextMessage(context: CompanyContextCard, language
   // send an employee to words that stopped working.
   const door = Boolean(context.newShopSignupUrl) && !pendingLine;
   const promotionLine = door && !context.isOwner
-    ? `💡 อยากเปิดร้านของตัวเอง กดปุ่ม ${VIEW_PACKAGES_COMMAND} ในเมนูได้เลยค่ะ`
+    ? `💡 อยากเปิดร้านของตัวเอง กด “แพ็กเกจและราคา” ในเมนูด้านล่าง หรือพิมพ์ ${VIEW_PACKAGES_COMMAND} ได้เลยค่ะ`
     : undefined;
   // Opening the web on the company you are already in is not a shop-owner action — the web enforces
   // its own permissions — so this one is for every member, and the door above keeps its own gate.

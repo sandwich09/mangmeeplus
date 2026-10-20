@@ -232,6 +232,9 @@ export function extractSid(req: Request): string | undefined {
   return extractSidFromToken(headerToken ?? cookieToken);
 }
 
+/** Owner 2026-10-20: "ติดต่อเจ้าหน้าที่" on the open-shop page opens the Official OA chat (@695ultfm, premium id @mangmeeplus). */
+const OFFICIAL_OA_CHAT_URL = 'https://line.me/R/ti/p/@695ultfm';
+
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -556,7 +559,7 @@ export class AuthController {
       style: 'label{display:block;margin-top:16px;margin-bottom:6px;font-weight:600}'
         + '\n    input{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;color:var(--ink)}'
         + '\n    .secondary{margin-top:10px;background:#fff;color:var(--brand-dark);border:1px solid var(--brand-dark)}'
-        + '\n    .quiet{margin-top:10px;background:#fff;color:var(--ink);border:1px solid var(--line)}'
+        + '\n    .quiet,a.btn.quiet{margin-top:10px;background:#fff;color:var(--ink);border:1px solid var(--line)}'
         + '\n    .actions{margin-top:16px}'
         + '\n    .actions button+button{margin-top:10px}'
         + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
@@ -621,7 +624,7 @@ export class AuthController {
         <p><button id="link" disabled>ยอมรับและเปิดร้าน</button></p>
         <p class="fine">เลือกแพ็กเกจเพื่อเริ่มใช้งานหลังเปิดร้าน (เริ่มต้น 249 บาทต่อเดือน)</p>
         <button id="start-existing" type="button" class="secondary">เคยใช้แล้ว เข้าร้านเดิม</button>
-        <button id="form-support" type="button" class="quiet">ติดต่อเจ้าหน้าที่</button>
+        <a id="form-support" class="btn quiet" href="${OFFICIAL_OA_CHAT_URL}">ติดต่อเจ้าหน้าที่ · LINE @mangmeeplus</a>
       </section>
       <section id="progress-view" data-view hidden>
         <h2 id="progress-title"></h2>
@@ -638,7 +641,7 @@ export class AuthController {
           <button id="retry-status" type="button" hidden>ตรวจสอบสถานะอีกครั้ง</button>
           <button id="edit-email" type="button" class="secondary" hidden>แก้อีเมล</button>
           <button id="add-shop" type="button" class="secondary" hidden>เปิดร้านเพิ่ม</button>
-          <button id="support" type="button" class="quiet" hidden>ติดต่อเจ้าหน้าที่</button>
+          <a id="support" class="btn quiet" href="${OFFICIAL_OA_CHAT_URL}" hidden>ติดต่อเจ้าหน้าที่ · LINE @mangmeeplus</a>
           <button data-close type="button" class="quiet">ปิด</button>
         </div>
       </section>

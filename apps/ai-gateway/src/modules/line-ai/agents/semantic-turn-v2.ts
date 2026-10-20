@@ -13,7 +13,7 @@ import { extractJson } from '../../../common/ai/extract-json';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
-import { PRODUCT_HELP_PACK, productHelpAction } from './approved-product-help';
+import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
 import { buildCapabilityHelp, claimsCompletedWrite, safeModelLineText } from './response-composer.agent';
 import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
@@ -1120,7 +1120,7 @@ export async function runSemanticTurnV2(input: {
     if (fact) derivedFactsByIndex.set(entry.index, [derivedFactsByIndex.get(entry.index), fact].filter(Boolean).join('\n'));
   }
   const knowledge = input.approvedKnowledgeEnabled && req.approvedKnowledge === true
-    ? renderApprovedKnowledge(PRODUCT_HELP_PACK, req.selectedKnowledgeCardIds, productKnowledgeAccess(req.userContext.permissions,
+    ? renderApprovedKnowledge(activeProductHelpPack(), req.selectedKnowledgeCardIds, productKnowledgeAccess(req.userContext.permissions,
       req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId) : null;
   const actionHelps = new Map<number, NonNullable<ReturnType<typeof productHelpAction>>>();
   const helpFor = (actionId?: unknown, selectedKnowledgeCardIds?: readonly string[], text?: string, toolHint?: string) => productHelpAction({ actionId, language, text, toolHint,

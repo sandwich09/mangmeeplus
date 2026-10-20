@@ -9,7 +9,7 @@ import {
   parseSelectedKnowledgeCardIds, renderApprovedKnowledge, validateKnowledgePack,
   type KnowledgeAccess, type ProductKnowledgePack,
 } from './approved-knowledge';
-import { PRODUCT_HELP_PACK } from './approved-product-help';
+import { activeProductHelpPack, PRODUCT_HELP_PACK } from './approved-product-help';
 
 const access = (): KnowledgeAccess => ({
   release: '2.4.0', permissions: ['expense.read', 'expense.read_own', 'expense.review', 'expense.export', 'reimbursement.read', 'report.catalog.read'],
@@ -26,6 +26,37 @@ const rehash = (pack: ProductKnowledgePack) => {
 };
 
 describe('approved product knowledge eligibility, source integrity and rendering', () => {
+  it('LINE-HELP-APPROVE bounds relevant owner and staff offers before the model sees them', () => {
+    const pack = activeProductHelpPack();
+    const owner = { ...access(), permissions: [...new Set(pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions]))],
+      featureKeys: null, capabilities: pack.cards.flatMap(card => card.requiredCapabilities) };
+    for (const [message, wanted] of [['เปิดร้านยังไง', 'shop.open'], ['50 ทวิ คืออะไร', 'wht.certificate-meaning'], ['ขอคืนเงินค่าแพ็ก', 'package.cancellation']]) {
+      const rows = offeredKnowledgeMetadata(pack, owner, message);
+      assert.ok(rows.some(row => row.id === wanted), message);
+      assert.ok(rows.length <= 12, message);
+      assert.ok(Buffer.byteLength(JSON.stringify(rows)) <= 12 * 1024, message);
+      assert.deepEqual(rows, offeredKnowledgeMetadata(pack, owner, message));
+    }
+    const staff = { ...owner, permissions: ['line.ai.query', 'expense.read_own'] };
+    const rows = offeredKnowledgeMetadata(pack, staff, 'เปิดร้านยังไง');
+    for (const id of ['shop.open', 'staff.invite', 'staff.roles', 'package.buy']) assert.ok(!rows.some(row => row.id === id), id);
+    const fallback = offeredKnowledgeMetadata(pack, owner, 'xyzxyz');
+    assert.deepEqual(fallback.map(row => row.id), eligibleKnowledgeCards(pack, owner).slice(0, 12).map(card => card.id));
+    assert.ok(Buffer.byteLength(JSON.stringify(fallback)) <= 12 * 1024);
+    const outsideOffer = eligibleKnowledgeCards(pack, owner).find(card => !fallback.some(row => row.id === card.id))!;
+    assert.ok(renderApprovedKnowledge(pack, [outsideOffer.id], owner, 'company-A'), 'rendering rechecks the full eligible set');
+    assert.deepEqual(offeredKnowledgeMetadata(pack, owner, 'เปิด ร้าน ยัง ไง'), offeredKnowledgeMetadata(pack, owner, 'เปิดร้านยังไง'));
+  });
+
+  it('LINE-HELP-APPROVE keeps the byte cap even when a valid card has oversized metadata', () => {
+    const pack = structuredClone(activeProductHelpPack());
+    pack.cards = pack.cards.slice(0, 2);
+    pack.cards[0]!.title = 'ก'.repeat(5000); rehash(pack);
+    const rows = offeredKnowledgeMetadata(pack, access(), '');
+    assert.deepEqual(rows.map(row => row.id), [pack.cards[1]!.id]);
+    assert.ok(Buffer.byteLength(JSON.stringify(rows)) <= 12 * 1024);
+  });
+
   it('validates bounded curated bodies against the exact checked-in manual source hashes', () => {
     validateKnowledgePack(PRODUCT_HELP_PACK);
     assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');

@@ -1,7 +1,7 @@
 {
   "model": "global.anthropic.claude-sonnet-4-6",
   "fx": 33,
-  "recipe": "Real controller options: prepared family allowlist, approved knowledge, all actual role grants and actual tier preset; current ค่าอาหาร evidence; no previous history/categories; output4096. Before is reviewed X1 single-digest implementation, after is split calibration. Public lookup disabled as in default config.",
+  "recipe": "Real controller options: prepared family allowlist, approved knowledge, all actual role grants and actual tier preset; current ค่าอาหาร evidence; no previous history/categories; output4096. Before is reviewed X1 single-digest implementation, after is split calibration. Public lookup disabled as in default config. Owner-approved v6 (2026-10-21): after now measures the bounded 12-card/12-KiB offer with 0.25 bigram Dice floor; prior v4 bounds/holds are retained per row. Constant digest, model, token margin and estimator contract are unchanged; metadata remains fully byte-counted. Holds are cold-cache bounds, not actual charges.",
   "rows": [
     {
       "tier": "STARTER_249",
@@ -10,11 +10,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 25933,
-      "dynamicBytes": 13891,
+      "dynamicBytes": 11007,
       "boundBefore": 114688,
       "holdBeforeThb": 16.23,
-      "boundAfter": 56320,
-      "holdAfterThb": 9
+      "boundAfter": 52224,
+      "holdAfterThb": 8.5,
+      "approvedV4BoundAfter": 56320,
+      "approvedV4HoldAfterThb": 9,
+      "unboundedV6Bound": 81920
     },
     {
       "tier": "STARTER_249",
@@ -23,11 +26,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 21346,
-      "dynamicBytes": 6046,
+      "dynamicBytes": 2944,
       "boundBefore": 100352,
       "holdBeforeThb": 14.45,
-      "boundAfter": 48128,
-      "holdAfterThb": 7.99
+      "boundAfter": 44032,
+      "holdAfterThb": 7.48,
+      "approvedV4BoundAfter": 48128,
+      "approvedV4HoldAfterThb": 7.99,
+      "unboundedV6Bound": 61440
     },
     {
       "tier": "STARTER_249",
@@ -36,11 +42,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 23024,
-      "dynamicBytes": 8859,
+      "dynamicBytes": 5597,
       "boundBefore": 105472,
       "holdBeforeThb": 15.08,
-      "boundAfter": 51200,
-      "holdAfterThb": 8.37
+      "boundAfter": 47104,
+      "holdAfterThb": 7.86,
+      "approvedV4BoundAfter": 51200,
+      "approvedV4HoldAfterThb": 8.37,
+      "unboundedV6Bound": 66560
     },
     {
       "tier": "STARTER_249",
@@ -49,11 +58,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 20542,
-      "dynamicBytes": 8001,
+      "dynamicBytes": 4667,
       "boundBefore": 102400,
       "holdBeforeThb": 14.7,
-      "boundAfter": 50176,
-      "holdAfterThb": 8.24
+      "boundAfter": 46080,
+      "holdAfterThb": 7.73,
+      "approvedV4BoundAfter": 50176,
+      "approvedV4HoldAfterThb": 8.24,
+      "unboundedV6Bound": 62464
     },
     {
       "tier": "PRO_999",
@@ -62,11 +74,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 25933,
-      "dynamicBytes": 13891,
+      "dynamicBytes": 11007,
       "boundBefore": 114688,
       "holdBeforeThb": 16.23,
-      "boundAfter": 56320,
-      "holdAfterThb": 9
+      "boundAfter": 52224,
+      "holdAfterThb": 8.5,
+      "approvedV4BoundAfter": 56320,
+      "approvedV4HoldAfterThb": 9,
+      "unboundedV6Bound": 81920
     },
     {
       "tier": "PRO_999",
@@ -75,11 +90,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 25933,
-      "dynamicBytes": 8127,
+      "dynamicBytes": 5205,
       "boundBefore": 108544,
       "holdBeforeThb": 15.46,
-      "boundAfter": 50176,
-      "holdAfterThb": 8.24
+      "boundAfter": 46080,
+      "holdAfterThb": 7.73,
+      "approvedV4BoundAfter": 50176,
+      "approvedV4HoldAfterThb": 8.24,
+      "unboundedV6Bound": 67584
     },
     {
       "tier": "ENTERPRISE_1999",
@@ -88,11 +106,14 @@
       "constantDigest": "1239bb8e4d0a8bb627c2af19c048931f33455f0857581a65b2a3644fc6ba5fae",
       "constantBytes": 66609,
       "variableBytes": 27298,
-      "dynamicBytes": 13915,
+      "dynamicBytes": 11035,
       "boundBefore": 115712,
       "holdBeforeThb": 16.35,
-      "boundAfter": 57344,
-      "holdAfterThb": 9.13
+      "boundAfter": 54272,
+      "holdAfterThb": 8.75,
+      "approvedV4BoundAfter": 57344,
+      "approvedV4HoldAfterThb": 9.13,
+      "unboundedV6Bound": 84992
     }
   ]
 }

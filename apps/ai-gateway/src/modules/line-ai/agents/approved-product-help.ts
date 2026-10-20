@@ -1,6 +1,7 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
 import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
+import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES } from './product-help-draft-cards';
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
@@ -69,7 +70,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
 PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);
 
 /** New subjects are awaiting owner review; the original 12-card AI-only approval does not cover them. */
-export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
+const previousDraftPack: ProductKnowledgePack = {
   ...PRODUCT_HELP_PACK, version: 5, status: 'DRAFT', reviewers: [], contentHash: '',
   cards: [...PRODUCT_HELP_PACK.cards,
     card('voucher.meaning', 'disbursement-vouchers', 'disbursement-vouchers', 'ใบสำคัญจ่ายคืออะไร ทำไมต้องทำ',
@@ -89,7 +90,43 @@ export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
     }),
   ],
 };
+const extraQuestions: Record<string, string[]> = {
+  'expense.start': ['เริ่มบันทึกบิลตรงไหน', 'รับใบเสร็จเข้าร้านยังไง'],
+  'expense.status': ['ยืนยันบิลแล้วต้องจ่ายอีกไหม', 'สถานะตรวจและจ่ายต่างกันไหม'],
+  'expense.find': ['ค้นหาบิลเก่าที่ไหน', 'กรองบิลรอตรวจยังไง'],
+  'expense.draft': ['ร่างคืออะไร', 'บันทึกแล้วทำไมยังไม่ยืนยัน'],
+  'expense.vat-display': ['VAT ในรายการคือภาษีซื้อไหม', 'มี VAT แล้วใช้สิทธิ์ได้เลยไหม'],
+  'expense.export': ['ส่งออกให้นักบัญชีตรงไหน', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี'],
+  'reimbursement.meaning': ['ใบเบิกคืออะไร', 'จ่ายแทนร้านแล้วขอคืนอย่างไร'],
+  'reimbursement.roles': ['ทำไมไม่เห็นแท็บอนุมัติ', 'ฝ่ายบัญชีเห็นใบเบิกแบบไหน'],
+  'substitute.meaning': ['ใบรับรองแทนใบเสร็จใช้ทำอะไร', 'แม่ค้าไม่มีใบเสร็จใช้อะไรแทน'],
+  'substitute.evidence': ['ต้องมีหลักฐานอะไรบ้าง', 'รูปของกับหลักฐานโอนต่างกันไหม'],
+  'substitute.review-sign': ['อ่านใบรับรองก่อนเซ็นที่ไหน', 'ตรวจใบที่เซ็นกระดาษยังไง'],
+  'report.access': ['เปิดรายงานแล้วไม่มีสิทธิ์', 'บัญชีดูรายงานได้ทุกอย่างไหม'],
+  'voucher.meaning': ['ใบเตรียมจ่ายกับใบสำคัญจ่ายต่างกันไหม', 'ร่างใบเตรียมจ่ายแปลว่าจ่ายแล้วไหม'],
+  'wht.certificate-meaning': ['ใบ 50 ทวิใช้ทำอะไร', 'มี 50 ทวิแล้วต้องยื่นอีกไหม'],
+  'wht.pnd53-due': ['ดูวันครบกำหนด ภงด53 ตรงไหน', 'ต้องนำส่ง ภงด53 วันไหน'],
+  'wht.calculation': ['คำนวณหักภาษีจากยอดไหน', 'หักภาษีรวม VAT หรือเปล่า'],
+};
+
+/** Owner-approved v6; the previous v4 record above remains unchanged. */
+export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
+  // Owner approved every v6 body as shown on the review page (2026-10-21: "อนุมัติคู่มือทั้งหมด").
+  ...previousDraftPack, version: 6, status: 'APPROVED', reviewers: ['owner-review:2026-10-21'], contentHash: '',
+  cards: [...previousDraftPack.cards.map(original => {
+    const value = { ...original, version: original.version + 1, body: V6_REVISED_BODIES[original.id]!, questions: [...original.questions, ...extraQuestions[original.id]!],
+      // A certificate's meaning/calculation also applies to shops recording an outside certificate.
+      featureKeys: ['wht.certificate-meaning', 'wht.calculation'].includes(original.id) ? [] : original.featureKeys };
+    value.contentHash = knowledgeCardHash(value);
+    return value;
+  }), ...NEW_PRODUCT_HELP_CARDS],
+};
 PRODUCT_HELP_DRAFT_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_DRAFT_PACK);
+
+/** Changing the reviewed pack's status/reviewers is the release gate; draft text never reaches the model. */
+export function activeProductHelpPack(): ProductKnowledgePack {
+  return PRODUCT_HELP_DRAFT_PACK.status === 'APPROVED' ? PRODUCT_HELP_DRAFT_PACK : PRODUCT_HELP_PACK;
+}
 
 const ACTION_HELP_EN: Record<(typeof LINE_CHAT_ACTIONS)[number]["id"], string> = {
   "reimbursement_submit": "Choose the claim to submit, review it and press submit.",

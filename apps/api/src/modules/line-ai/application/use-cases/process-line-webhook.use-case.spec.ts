@@ -3530,6 +3530,27 @@ describe('ProcessLineWebhookUseCase', () => {
     });
   });
 
+  it('LINE-HELP-ALL answers open-shop questions with the existing owner door or staff promotion pointer', async () => {
+    for (const role of ['OWNER', 'STAFF', 'ACCOUNTANT']) for (const question of ['เปิดร้านยังไง', 'เปิดร้านเพิ่ม', 'เปิดร้านใหม่ทำยังไง', 'เปิดอีกร้านได้ไหม']) {
+      const { prisma } = makePrisma({ displayName: 'สมชาย', memberships: [{ companyId: 'co-1', company: { name: 'ร้านหนึ่ง' }, roles: [{ role: { key: role, name: role } }] }] });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'], config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true } });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `help-${role}-${question}`, messageText: question });
+      const messages = JSON.stringify(sentMessageBatches);
+      if (role === 'OWNER') {
+        assert.match(messages, /กรอกข้อมูล/);
+        assert.match(messages, /https:\/\/liff.line.me\/2007891234-AbCdEf01\/signup/);
+      } else {
+        assert.match(messages, /อยากเปิดร้านของตัวเอง กด “แพ็กเกจและราคา” ในเมนูด้านล่าง หรือพิมพ์ โปรโมชั่น/);
+        assert.doesNotMatch(messages, /liff.line.me|กรอกข้อมูล/);
+      }
+      assert.doesNotMatch(messages, /ยังไม่มีคู่มือที่ตรวจสอบแล้ว/);
+    }
+    const { prisma } = makePrisma({ memberships: [{ companyId: 'co-1', company: { name: 'ร้านหนึ่ง' }, roles: [{ role: { key: 'OWNER' } }] }] });
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'], config: { externalSignupEnabled: false } });
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'help-door-closed', messageText: 'เปิดร้านยังไง' });
+    assert.doesNotMatch(JSON.stringify(sentMessageBatches), /liff.line.me|กด \\"เปิดร้านใหม่/);
+  });
+
   it('puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup', async () => {
     const card = async (config: Record<string, unknown>) => {
       const { prisma } = makePrisma({
@@ -3637,7 +3658,7 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(card?.contents?.footer, undefined, roles[0]!.role.key);
       assert.equal(rendered.includes('เปิดร้านใหม่'), false, roles[0]!.role.key);
       assert.equal(rendered.includes('liff.line.me'), false, roles[0]!.role.key);
-      assert.match(rendered, /อยากเปิดร้านของตัวเอง กดปุ่ม โปรโมชั่น ในเมนูได้เลยค่ะ/);
+      assert.match(rendered, /อยากเปิดร้านของตัวเอง กด “แพ็กเกจและราคา” ในเมนูด้านล่าง หรือพิมพ์ โปรโมชั่น ได้เลยค่ะ/);
     }
 
     // An OWNER role alongside employee roles in the SAME company is still an owner of it.

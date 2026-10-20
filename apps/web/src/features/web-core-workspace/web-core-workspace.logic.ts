@@ -87,6 +87,7 @@ const USER_GUIDE_NAV_KEY = 'guide';
  *   { key: 'guide.reports', label: 'รายงานการเงิน', slug: 'reports', iconKey: 'PieChartIcon' },
  */
 const USER_GUIDE_PAGES = [
+  { key: 'guide.getting_started', label: 'เริ่มใช้งานร้านและ LINE', slug: 'getting-started', iconKey: 'FileIcon' },
   { key: 'guide.expenses', label: 'ค่าใช้จ่ายและใบเสร็จ', slug: 'expenses', iconKey: 'FileIcon' },
   { key: 'guide.substitute_receipts', label: 'ใบรับรองแทนใบเสร็จ', slug: 'substitute-receipts', iconKey: 'SwapIcon' },
   { key: 'guide.reimbursements', label: 'การเบิกจ่าย', slug: 'reimbursements', iconKey: 'DollarLineIcon' },

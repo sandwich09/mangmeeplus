@@ -3,13 +3,25 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "39321c1ab29a186e06f60a8a2e3ecd67381e8159",
-  "checkoutBranch": "claude/line-wht-outside-land-20261020",
-  "checkoutDirty": false,
+  "sourceRevision": "a1f60929cccd9fb24383f335330d02cb71fdd223",
+  "checkoutBranch": "claude/line-help-guides-20261020",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
       "sha256": "91dbe74b6c572d610615869e15df90cef91628a3c6ac86df14245f8f3a186b89"
+    },
+    {
+      "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
+      "sha256": "5c202d1be45a7001b4df16f1a928b31ad21af42674912083b1c63a1254a2c104"
+    },
+    {
+      "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
+      "sha256": "37d89b4e95822ebf1dfd8a2d88ee626f483b1b71f934f3683a05c2f33f35395f"
+    },
+    {
+      "path": "apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts",
+      "sha256": "7b6c968362bfcf7d4e517f0cd781f8c9acc888c9e0b41c13115a13adf47cf492"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -137,11 +149,15 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "2d691d41baaf79f189536aa3b9f0554691f0b1e1f4487eff7499d63b66ea9f55"
+      "sha256": "38c721e9e370694f8965d38e6892d7349fe2d9119d6b65ec1c6dab1d12e04a3b"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
       "sha256": "13a2ea51b280800152b189418dcb10d11c0886d73dc50112a864b5836a1379de"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-public-policy.logic.ts",
+      "sha256": "90160fb150017e597111412672cef3f5cd656c615c8a9f8f4223f1f5553ebdf8"
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
@@ -153,7 +169,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai-capability-manifest.ts",
-      "sha256": "4d367e89b09cd304dd7897600ec5b21d5c876c4eff64c3bdd075b078c6292df0"
+      "sha256": "f23b3718bacc8880604cd1dcdef1bd3fce829537d296d2db185e21bfe26114ee"
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
@@ -194,6 +210,10 @@
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
       "sha256": "cd5a574c79c3443eb2a2fb5f6f131c76406474d98f485f2a32c33b342d7cbdb0"
+    },
+    {
+      "path": "apps/web/src/features/user-guide/getting-started-guide.content.ts",
+      "sha256": "ef93cde536758ee86211171fdc53abf7e7d291775c82527716b000a91edc8b8b"
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
@@ -8275,6 +8295,26 @@
           "symbol": "reliabilityContext/approvedKnowledge request forwarding"
         },
         {
+          "path": "apps/api/src/modules/line-ai/domain/logic/line-public-policy.logic.ts",
+          "symbol": "reviewed public signup instructions and linked-member question recognition"
+        },
+        {
+          "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
+          "symbol": "approved v4, draft v6 and activeProductHelpPack approval gate"
+        },
+        {
+          "path": "apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts",
+          "symbol": "source-pinned draft card inventory"
+        },
+        {
+          "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
+          "symbol": "approval, source hash and access validation"
+        },
+        {
+          "path": "apps/web/src/features/user-guide/getting-started-guide.content.ts",
+          "symbol": "role/package-scoped help source"
+        },
+        {
           "path": "packages/config/src/index.ts",
           "symbol": "LINE_AI_APPROVED_KNOWLEDGE_ENABLED"
         }
@@ -10131,6 +10171,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-20T08:56:46.222Z",
-  "manifestDigest": "f0de4119338fd731a07a32eb7cf3701dfa19b6d11c3976bd8d85d53717a4f524"
+  "generatedAt": "2026-10-20T17:17:13.078Z",
+  "manifestDigest": "f8aec50a705ae30bda9e4d0bcdf0c9f067f73b5385088e058fbf52a1b44ac7c8"
 }

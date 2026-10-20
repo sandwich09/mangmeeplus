@@ -59,7 +59,7 @@ export function productKnowledgeAccess(permissions: readonly string[], featureKe
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const knowledgeCardHash = ({ contentHash: _ignored, ...card }: ProductKnowledgeCard) => hash(card);
 export const knowledgePackHash = ({ contentHash: _ignored, ...pack }: ProductKnowledgePack) => hash(pack);
-const sourcePath = /^\/companies\/\{companyId\}\/user-guide\/(expenses|reimbursements|substitute-receipts|reports|tax)(#[a-z0-9-]+)?$/;
+const sourcePath = /^\/companies\/\{companyId\}\/user-guide\/(expenses|reimbursements|substitute-receipts|reports|tax|getting-started)(#[a-z0-9-]+)?$/;
 const fail = (reason: string): never => { throw new Error(`KNOWLEDGE_${reason}`); };
 const releaseParts = (version: string): number[] => {
   if (!/^\d+\.\d+\.\d+$/.test(version)) return fail('INVALID_RELEASE');
@@ -77,7 +77,7 @@ const metadata = (card: ProductKnowledgeCard): KnowledgeMetadata => ({
 
 /** Build/load validation: refuse an invalid pack as a whole, never silently slice cards or bodies. */
 export function validateKnowledgePack(pack: ProductKnowledgePack): void {
-  if (!pack || !Array.isArray(pack.cards) || pack.cards.length > 64) fail('CARD_LIMIT');
+  if (!pack || !Array.isArray(pack.cards) || pack.cards.length > (pack.version >= 6 ? 80 : 64)) fail('CARD_LIMIT');
   if (!['DRAFT', 'APPROVED', 'RETIRED'].includes(pack.status) || !['th', 'en'].includes(pack.language)
     || pack.jurisdiction !== 'TH' || !pack.owner || !Number.isInteger(pack.version) || pack.version < 1) fail('INVALID_PACK');
   if (pack.status === 'APPROVED' && (!Array.isArray(pack.reviewers) || !pack.reviewers.length || pack.reviewers.some((reviewer) => !reviewer.trim()))) fail('REVIEW_REQUIRED');
@@ -98,7 +98,8 @@ export function validateKnowledgePack(pack: ProductKnowledgePack): void {
     }
     if (card.contentHash !== knowledgeCardHash(card)) fail('CARD_HASH_MISMATCH');
   }
-  if (Buffer.byteLength(JSON.stringify(pack.cards.map(metadata)), 'utf8') > 12 * 1024) fail('METADATA_LIMIT');
+  // v6 inventories all sold features with four everyday questions per card; v4 keeps its original budget.
+  if (Buffer.byteLength(JSON.stringify(pack.cards.map(metadata)), 'utf8') > (pack.version >= 6 ? 32 : 12) * 1024) fail('METADATA_LIMIT');
   if (pack.contentHash !== knowledgePackHash(pack)) fail('PACK_HASH_MISMATCH');
 }
 
@@ -115,8 +116,30 @@ export function eligibleKnowledgeCards(pack: ProductKnowledgePack, access: Knowl
     && card.requiredCapabilities.every((operation) => access.capabilities.includes(operation)));
 }
 
-export function offeredKnowledgeMetadata(pack: ProductKnowledgePack, access: KnowledgeAccess): KnowledgeMetadata[] {
-  return eligibleKnowledgeCards(pack, access).map(metadata);
+function questionBigrams(text: string): Set<string> {
+  const chars = Array.from(text.normalize('NFC').toLowerCase().replace(/\s+/gu, ''));
+  return new Set(chars.length < 2 ? chars : chars.slice(1).map((char, index) => chars[index]! + char));
+}
+
+/** Rank only eligible guide metadata; bodies and full-set render checks stay outside the offer. */
+export function offeredKnowledgeMetadata(pack: ProductKnowledgePack, access: KnowledgeAccess, messageText = ''): KnowledgeMetadata[] {
+  const query = questionBigrams(messageText);
+  const ranked = eligibleKnowledgeCards(pack, access).map((card, order) => ({ card, order,
+    score: Math.max(0, ...[card.title, ...card.questions].map(text => {
+      const grams = questionBigrams(text);
+      const overlap = [...grams].filter(gram => query.has(gram)).length;
+      return query.size + grams.size ? 2 * overlap / (query.size + grams.size) : 0;
+    })),
+  })).sort((a, b) => b.score - a.score || a.order - b.order);
+  const relevant = ranked.filter(row => row.score >= 0.25);
+  const offered: KnowledgeMetadata[] = [];
+  // Low-confidence/short questions still get a bounded, stable fallback for semantic selection.
+  for (const { card } of relevant.length ? relevant : ranked) {
+    if (offered.length === 12) break;
+    const row = metadata(card);
+    if (Buffer.byteLength(JSON.stringify([...offered, row])) <= 12 * 1024) offered.push(row);
+  }
+  return offered;
 }
 
 export function parseSelectedKnowledgeCardIds(value: unknown, offered: readonly Pick<KnowledgeMetadata, 'id'>[]): string[] | undefined {

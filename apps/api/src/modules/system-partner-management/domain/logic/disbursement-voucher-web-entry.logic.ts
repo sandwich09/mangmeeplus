@@ -1,5 +1,5 @@
-/** A company without a stored value, or with a null value from before this setting existed, hides the menu. */
-export const DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW = false;
+/** Owner 2026-10-20 "ใบสำคัญจ่ายให้ default true": a company without a stored value (or a null one) shows the menu; only an explicit false hides it. */
+export const DISBURSEMENT_VOUCHER_WEB_ENTRY_WITHOUT_ROW = true;
 
 /** Read this screen setting and the shared company setting version. */
 export function disbursementVoucherWebEntryState(

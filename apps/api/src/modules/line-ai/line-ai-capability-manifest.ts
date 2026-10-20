@@ -153,6 +153,11 @@ const INTAKE_DEFINITIONS = [
     dataBasis: 'API only enables and forwards approved-knowledge selectors for a bound private conversation. Knowledge-pack content/approval and retrieval grounding are Gateway-owned and not proven by API wiring.',
     sourceReferences: [
       { path: PROCESS_WEBHOOK_PATH, symbol: 'reliabilityContext/approvedKnowledge request forwarding' },
+      { path: 'apps/api/src/modules/line-ai/domain/logic/line-public-policy.logic.ts', symbol: 'reviewed public signup instructions and linked-member question recognition' },
+      { path: 'apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts', symbol: 'approved v4, draft v6 and activeProductHelpPack approval gate' },
+      { path: 'apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts', symbol: 'source-pinned draft card inventory' },
+      { path: 'apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts', symbol: 'approval, source hash and access validation' },
+      { path: 'apps/web/src/features/user-guide/getting-started-guide.content.ts', symbol: 'role/package-scoped help source' },
       { path: CONFIG_PATH, symbol: 'LINE_AI_APPROVED_KNOWLEDGE_ENABLED' },
     ],
   },

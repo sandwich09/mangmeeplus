@@ -294,7 +294,6 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const PREPARE_LINK_GUIDANCE = { tone: 'warning', text: 'ยังเตรียมลิงก์หน้าแพ็กเกจไม่สำเร็จ', advice: 'แตะ ตรวจสอบสถานะอีกครั้ง เพื่อลองใหม่ค่ะ' };
   /** The one read on open failed, so nothing is on screen yet: the retry view is the way back. */
   const STATUS_READ_GUIDANCE = { tone: 'warning', text: 'ยังโหลดสถานะคำขอไม่สำเร็จ', advice: 'แตะ ลองอีกครั้ง ด้านล่างเพื่อโหลดใหม่ค่ะ' };
-  const SUPPORT_NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้', advice: SUPPORT_TH };
   const BUSY_LABEL_TH = 'กำลังส่ง…';
 
   /**
@@ -1075,23 +1074,6 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     renderSignupStatus(JSON.parse(text));
   }
 
-  async function sendSupportRequest() {
-    const idToken = currentIdToken();
-    if (!idToken) return;
-    let res;
-    let result;
-    try {
-      res = await fetch(apiBase + '/public/line-signups/support', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ idToken })
-      });
-      if (res.ok) result = JSON.parse(await res.text());
-    } catch (error) { throw refusal(SUPPORT_NETWORK_GUIDANCE); }
-    if (res.status === 429) throw refusal({ tone: 'warning', text: 'วันนี้ส่งคำขอช่วยเหลือหลายครั้งแล้ว หากเร่งด่วนติดต่อทีมงานได้เลยค่ะ', advice: SUPPORT_TH });
-    if (!res.ok || !result || result.received !== true) throw refusal(SUPPORT_NETWORK_GUIDANCE);
-    setStatus('รับเรื่องขอความช่วยเหลือแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้ตามเวลาทำการ ' + SUPPORT_TH, '', 'success');
-  }
-
   function eventDiscountGuidance(status, text) {
     const body = refusalBody(text);
     const known = EVENT_DISCOUNT_GUIDANCE[typeof body.code === 'string' ? body.code : ''];
@@ -1469,12 +1451,6 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   if (saveEmailBtn) saveEmailBtn.addEventListener('click', function () {
     void runWith(updateContactEmail, saveEmailBtn, 'กำลังบันทึก…');
   });
-  for (const supportId of ['support', 'form-support']) {
-    const supportBtn = document.getElementById(supportId);
-    if (supportBtn) supportBtn.addEventListener('click', function () {
-      void runWith(sendSupportRequest, supportBtn, 'กำลังส่งข้อความ…');
-    });
-  }
   // The signup page's own button lives inside the form, which an init failure never renders — so
   // the retry that recovers from it needs a control of its own.
   // The only guidance action there is: a release that moved needs the SERVER to re-render the page,
