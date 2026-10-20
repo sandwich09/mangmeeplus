@@ -34,7 +34,7 @@ export const WHT_SYSTEM_INITIAL_ISSUE_GATE = { gateKey: 'cap.wht50bis', routeKey
 export const WHT_SYSTEM_ISSUANCE_UNAVAILABLE = 'wht_system_issuance_unavailable';
 export const WHT_EXTERNAL_FALLBACK = 'EXTERNAL_CERTIFICATE_REQUIRED';
 const WHT_EXTERNAL_FALLBACK_MESSAGE_TH =
-  'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ — บันทึกข้อมูลไว้แล้ว สามารถออกเอกสารภายนอกแล้วแนบกลับได้';
+  'ระบบยังไม่เปิดการออกหนังสือรับรองในระบบ บันทึกข้อมูลไว้แล้ว ทำใบนอกระบบแล้วจดเลขที่ใบได้ที่หน้ารายจ่ายค่ะ';
 
 @Injectable()
 export class CreateWhtCertificateUseCase {

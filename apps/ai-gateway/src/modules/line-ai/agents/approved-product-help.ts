@@ -4,7 +4,7 @@ import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type P
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
-  'tax': { file: 'tax-guide.content.ts', hash: 'cba0f41bf7aaadc1ee208df558c584fdc1a2929db1eb568b154e93e8b1c9feb4' },
+  'tax': { file: 'tax-guide.content.ts', hash: '1eac64225f803d0e436138261b81ff3d33a55c6d54bbd557843a7b733f4a8319' },
   'disbursement-vouchers': { file: 'disbursement-voucher-guide.content.ts', hash: 'def3bfcd017f1fb2558621a1f015434659455fde63bfd95bca42c46c35e91b8a' },
 
   expenses: { file: 'expenses-guide.content.ts', hash: '7503a7696e159765672b4762ab082858831b9b58e92140fea652b74d9aae717f' },

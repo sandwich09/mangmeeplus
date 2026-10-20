@@ -326,7 +326,7 @@ describe('U2 document facts and offers follow package entitlement and actor perm
     assert.ok(reply);
     assert.doesNotMatch(reply, /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
     if (!entitled && feature === 'wht_50bis') {
-      assert.match(reply, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*หน้ารายจ่ายบนเว็บ/);
+      assert.match(reply, /จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ.*หน้ารายจ่ายบนเว็บ/);
       assert.match(reply, /ออกหนังสือรับรองในระบบ.*ธุรกิจ 1,999 บาท/);
     }
     if (!entitled && feature === 'wht_pnd53') assert.match(reply, /เก็บข้อมูลรายจ่าย.*ธุรกิจ 1,999 บาท/);

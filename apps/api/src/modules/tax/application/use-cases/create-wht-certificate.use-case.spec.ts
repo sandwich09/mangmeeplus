@@ -105,8 +105,8 @@ describe('CreateWhtCertificateUseCase — cap.wht50bis/SYSTEM_INITIAL_ISSUE fenc
       assert.equal(err.getStatus(), 409);
       assert.equal(body.code, WHT_SYSTEM_ISSUANCE_UNAVAILABLE);
       assert.equal(body.fallback, WHT_EXTERNAL_FALLBACK);
-      assert.match(body.message, /ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ/);
-      assert.match(body.message, /ออกเอกสารภายนอกแล้วแนบกลับได้/);
+      assert.match(body.message, /ระบบยังไม่เปิดการออกหนังสือรับรองในระบบ/);
+      assert.match(body.message, /ทำใบนอกระบบแล้วจดเลขที่ใบได้/);
       // The message promises "บันทึกข้อมูลไว้แล้ว" — the handoff id is what makes that true.
       assert.equal(body.handoffId, 'handoff-tax.wht_certificate:period-1:event-1');
       assert.equal(body.handoffStatus, 'REQUIRED');

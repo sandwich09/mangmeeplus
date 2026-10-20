@@ -135,7 +135,7 @@ export function featureLimitReplyText(featureKey: string, language: ScopePolicyL
     && ['expense.read', 'expense.read_own', 'expense.read_related'].some(key => permissions.includes(key));
   const canRecordExpense = expenseAccess && ['expense.create', 'expense.update'].some(key => permissions.includes(key));
   const alternative = featureKey === 'wht_50bis' && canRecordExternal
-    ? language === 'en' ? 'You can record a self-issued withholding certificate on the expense page' : 'บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้วได้ที่หน้ารายจ่ายบนเว็บ'
+    ? language === 'en' ? 'You can note the number of a 50 Tawi certificate made outside the system on the expense page' : 'จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบได้ที่หน้ารายจ่ายบนเว็บ'
     : featureKey === 'wht_pnd53' && canRecordExpense
       ? language === 'en' ? 'You can keep the supporting expense records on the web' : 'เก็บข้อมูลรายจ่ายและหลักฐานบนเว็บได้'
       : permissions.includes('company.plan.manage') ? language === 'en' ? 'Open Packages to check the work available to your shop' : 'ดูงานที่ร้านใช้ได้ที่หน้าแพ็กเกจ'
