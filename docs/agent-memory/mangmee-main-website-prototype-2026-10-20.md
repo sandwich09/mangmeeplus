@@ -388,3 +388,13 @@ Verification: Chromium 1440/390 no overflow (home 8743 / 15186); scroll test 0 t
 ## Revision 3u — security wording, live CSP fix
 
 Owner: remove "ศูนย์ข้อมูลที่สิงคโปร์" and "ซึ่งอาจประมวลผลนอกประเทศ…"; "บน AWS" → "บน AWS Bedrock" for the AI item (apply_r17.py; canvas version 34). Owner then asked to fix /privacy and /terms directly: done in apps/web (root layout awaits connection()), recorded in docs/agent-memory/web-csp-static-pages-2026-10-20.md; not deployed. The earlier suggested-task card had been sent to this session, so no other session holds it.
+
+## Revision 3v — iPhone scroll report, owner decisions
+
+Owner (real devices): Android fine; iPhone Safari cannot scroll down, video pause/play works. Mascot files OK as is. Title chosen: "มั่งมีพลัส (MangmeePlus) | มั่งมี Plus AI อ่านใบเสร็จและบันทึกค่าใช้จ่ายผ่าน LINE ผู้ช่วยร้านค้าและนักบัญชี". STARTER promotion: not on the site. Domain: owner migrates it. Reviews: none yet, none on the site. DPO: owner says it was submitted.
+Decisions:
+- No scroll-blocking CSS in the boards (no touch-action/overscroll, no vh, no fixed overlays, overflow:hidden only on inner boxes). Each home board embedded 17 images as data: URIs (930 KB per board), which the Design type forbids; moved them to the canvas asset store (/_blob/ URLs, same WebP bytes), boards now 75 KB. Most likely iOS factor is memory; not proven, because no WebKit/iOS device is available here. Canvas version 35.
+- VAT: owner sent both candidate sentences without picking one; FAQ keeps the placeholder until one is chosen.
+- DPO: repo still has no sign-off record (M-05 open); site wording unchanged ("AI บน AWS Bedrock").
+Verification: data: count 0 and 17 /_blob/ references in Main and Home-Phone; JSON-LD in content-th.md parses.
+Next: owner re-tests iPhone Safari on version 35 (say whether in canvas view or full-window Play); owner picks the VAT sentence.
