@@ -1,6 +1,5 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import {
   buildContentSecurityPolicy,
   buildS3EndpointOrigin,
@@ -99,16 +98,5 @@ describe('buildContentSecurityPolicy', () => {
       ])).get('connect-src'),
       "'self'",
     );
-  });
-});
-
-// The nonce in this CSP only reaches Next's scripts on a per-request render. A page prerendered at
-// build time ships nonce-less scripts that 'strict-dynamic' blocks, so it never hydrates (/privacy,
-// /terms, /forgot-password, /data-deletion and / did, 2026-10-20). The root layout keeps every page dynamic.
-describe('nonce CSP needs per-request rendering', () => {
-  it('root layout awaits connection() so no page is prerendered without the nonce', () => {
-    const layout = readFileSync(new URL('../../../app/layout.tsx', import.meta.url), 'utf8');
-    assert.match(layout, /import \{ connection \} from 'next\/server'/);
-    assert.match(layout, /export default async function RootLayout[\s\S]*?await connection\(\);/);
   });
 });

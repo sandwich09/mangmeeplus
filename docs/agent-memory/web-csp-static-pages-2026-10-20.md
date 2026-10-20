@@ -1,24 +1,29 @@
-# Agent Memory: web CSP nonce vs statically prerendered pages
+# Agent Memory: web CSP blocks statically prerendered pages (2026-10-20)
 
-Status: Fixed on branch `claude/official-site-prototype-20261020` (not deployed).
-Owner: thawatchai (reported 2026-10-20: mangmeeplus.com/privacy and /terms stay on "กำลังเปิดหน้า..." with CSP errors in the console).
-Scope: `apps/web/app/layout.tsx`, `apps/web/src/common/security/security-headers.logic.spec.ts`.
+Status: Fixed on branch `claude/amazing-bardeen-pzyx6o`; not deployed (needs owner go-ahead and `docs/runbooks/uat-production-v2-deployment.md`).
+Owner: web
+Scope: `apps/web/app/layout.tsx`, `apps/web/src/common/security/csp-dynamic-rendering.spec.ts`.
+
+Problem: owner report — https://mangmeeplus.com/privacy and /terms stay on "กำลังเปิดหน้า..." with ~22 CSP errors.
+Cause: `proxy.ts` sends `script-src 'self' 'nonce-…' 'strict-dynamic'` with a fresh nonce per request. Next stamps the nonce only on
+per-request renders; routes with no dynamic API were prerendered at build (`○` in the `next build` table), so their scripts carry
+no nonce, the CSP blocks all of them, React never hydrates and the root `loading.tsx` fallback is never swapped out.
+Affected (build table before fix): `/`, `/_not-found` (every 404), `/privacy`, `/terms`, `/data-deletion`, `/forgot-password`.
+`/forgot-password` and the 404 page painted but never hydrated (form/links had no client JS).
 
 Decisions:
-- Root cause: `apps/web/proxy.ts` sends `script-src 'self' 'nonce-…' 'strict-dynamic'` with a fresh nonce per request (`security-headers.logic.ts:63-64`). Next stamps the nonce on its scripts only during a per-request render (Next 16 docs, `node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md` §"How nonces work", §"Static vs Dynamic Rendering with CSP": with nonces all pages must render dynamically). The root layout read nothing request-bound, so `next build` prerendered `/`, `/privacy`, `/terms`, `/forgot-password`, `/data-deletion`, `/_not-found`; their scripts had no nonce and were blocked, hydration never ran, and `app/loading.tsx` stayed on screen.
-- Fix at the shared point: root layout is `async` and `await connection()` (docs-recommended; `export const dynamic` is removed in v16 once Cache Components is on). One change covers every route, no per-page flags.
-- `/_global-error` stays prerendered: it is Next's own error document and does not use the root layout.
-- Trade-off accepted: the public legal pages render per request (no static optimisation); the docs state this is required for nonce CSP.
+- Root layout calls `await connection()` (next/server) so every page renders per request, including pages added later — one file
+  instead of `force-dynamic` on six routes. Trade-off: legal pages lose the year-long `s-maxage` prerender cache and render per
+  request (`private, no-store`); they are small server components, so this is acceptable. Pages stay indexable (no robots change).
+- Guard spec scans source: root layout must await `connection()`, and no route under `app/` may export `dynamic = 'force-static'|'error'`,
+  a positive `revalidate`, or `generateStaticParams`.
 
-Open questions:
-- None for the fix. Release needs the owner's go-ahead and must follow `docs/runbooks/uat-production-v2-deployment.md`.
+Verification (local, `next build --webpack` + `next start` with `NODE_ENV/APP_ENV/DEPLOY_ENVIRONMENT=production`):
+- Before: build table had the six `○` routes; Playwright Chromium at 390 and 1280 — /privacy, /terms, /data-deletion 4 CSP errors
+  each and loading screen visible; /forgot-password and 404 2 CSP errors each.
+- After: only `/icon.svg` static; at 390 and 1280 all of /privacy, /terms, /data-deletion, /forgot-password, 404, /login, / have
+  0 CSP errors and no loading screen; full content visible in screenshots.
+- `tsx --test src/common/security/*.spec.ts src/common/auth/proxy.spec.ts` → 24/24 pass; new spec fails against the old layout.
+- `tsc --noEmit` (web): only error is unrelated `decimal.js` resolution from `apps/api` (API deps not installed in this session).
 
-Artifacts:
-- Regression guard: `security-headers.logic.spec.ts` "nonce CSP needs per-request rendering" asserts the root layout imports and awaits `connection()`.
-
-Verification (2026-10-20, local production build `next build --webpack`, `next start`, Chromium):
-- Before: prerender manifest listed / /_not-found /data-deletion /forgot-password /privacy /terms; at 390 and 1280 each page logged 21–22 CSP errors, /privacy /terms /data-deletion stuck on the loading screen, /forgot-password rendered but its scripts were blocked.
-- After: prerender manifest lists only /_global-error and /icon.svg; /privacy /terms /forgot-password /data-deletion / /login at 390 and 1280: 0 CSP errors, no loading screen, page h1 present.
-- `tsx --test security-headers.logic.spec.ts` 10/10 (fails 9/1 with the layout change reverted); `proxy.spec.ts` 13/13; `tsc --noEmit` exit 0.
-
-Next: owner decides when to release through UAT then Production per the runbook; after release, recheck mangmeeplus.com/privacy and /terms in a browser console.
+Next: owner go-ahead for UAT → Production per the v2 deployment runbook; after deploy, re-check /privacy and /terms console on prod.

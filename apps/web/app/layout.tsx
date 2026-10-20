@@ -16,14 +16,15 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
+// proxy.ts sends a fresh script nonce per request, and Next stamps it onto its own scripts only
+// when the page renders per request. A page prerendered at build time ships un-nonced scripts that
+// the CSP blocks, so it never hydrates (/privacy and /terms stuck on the loading screen, 2026-10-20).
+// Opting out here keeps every page — including ones added later — rendered per request.
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // proxy.ts sends a per-request nonce CSP with 'strict-dynamic', and Next stamps that nonce on its
-  // scripts only when a page renders per request. A page prerendered at build time (/privacy, /terms,
-  // /forgot-password, /data-deletion, /) ships nonce-less scripts the browser blocks, so it never hydrates.
   await connection();
   return (
     <html lang="th">
