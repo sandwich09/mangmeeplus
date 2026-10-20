@@ -370,7 +370,7 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
       type: 'bubble', size: 'mega',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
         { type: 'text', text: '🎁 แพ็กเกจที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
-        { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่เพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่ทำ ภ.ง.ด.53 และ 50 ทวิ ในระบบได้ เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
         ...(audience === 'employee'
           ? [{ type: 'text', text: `${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจให้ร้านนะคะ`, size: 'sm', color: '#667085', wrap: true }]
           : []),

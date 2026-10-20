@@ -93,7 +93,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
     // Defense-in-depth: permission + entitlement already gate the route/UI, but route-readiness is
     // a separate axis (spec §8) and must be re-checked here exactly like `CreateWhtCertificateUseCase`.
     if (!(await this.isSystemIssuanceOpen())) {
-      throw new ConflictException({ code: 'wht_system_issuance_unavailable', message: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ' });
+      throw new ConflictException({ code: 'wht_system_issuance_unavailable', message: 'ระบบยังไม่เปิดการออกหนังสือรับรองในระบบ' });
     }
 
     const prefill = await certificatePayment(this.taxRepo.prisma.client, ctx.companyId, row, paymentId);

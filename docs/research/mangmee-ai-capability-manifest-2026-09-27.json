@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "d66d44754f83ba8bbe691e0553b136c5ced79935",
-  "checkoutBranch": "claude/line-actions-20261019",
-  "checkoutDirty": true,
+  "sourceRevision": "39321c1ab29a186e06f60a8a2e3ecd67381e8159",
+  "checkoutBranch": "claude/line-wht-outside-land-20261020",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -10131,6 +10131,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-19T15:02:30.307Z",
+  "generatedAt": "2026-10-20T08:56:46.222Z",
   "manifestDigest": "f0de4119338fd731a07a32eb7cf3701dfa19b6d11c3976bd8d85d53717a4f524"
 }

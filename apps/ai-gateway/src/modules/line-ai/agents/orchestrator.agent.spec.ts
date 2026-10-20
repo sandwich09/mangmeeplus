@@ -2173,7 +2173,7 @@ describe('round 5A document advisor orchestrator', () => {
     req.budgetGrantV2 = {} as any;
     const result = await new OrchestratorAgent({ invoke: async () => { calls++; throw new Error('must not read'); } } as any, makeConfig()).run(req);
     assert.equal(calls, 0); assert.equal(modelCalls, 1);
-    assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ภาษีที่หักไว้.*บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*ธุรกิจ 1,999 บาท/);
+    assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ภาษีที่หักไว้.*จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ.*ธุรกิจ 1,999 บาท/);
     assert.doesNotMatch(result.replyText, /ENTERPRISE|ทำได้เลย/);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
   });
@@ -2894,7 +2894,7 @@ describe('U2/U3/U4 exact-input advisor corrections in the semantic turn', () => 
   }
   it('U2 definition cannot repeat a model offer outside Starter entitlement', async () => {
     const result = await answer('แล้วทวิ 50 คืออะไร', 'general', ['expenses'], ['expense.read', 'wht.external_certificate.link']);
-    assert.match(result.replyText, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*เว็บ/);
+    assert.match(result.replyText, /จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ.*เว็บ/);
     assert.match(result.replyText, /ออกหนังสือรับรองในระบบ.*ธุรกิจ 1,999 บาท/);
     assert.doesNotMatch(result.replyText, /ทำได้เลย|ENTERPRISE/);
   });
@@ -2928,7 +2928,7 @@ it('U2 exact follow-up ทำได้เลยหรอ inherits the document t
     req.semanticSubrequests = [{ index: 0, kind: 'general', goal: req.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
     const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       provider: { generateText: async () => assert.fail('the existing metered intake already resolved the follow-up; reuse the checked action facts') }, invoke: async () => assert.fail('no financial mutation from a capability question') });
-    if (!entitled) { assert.match(result.replyText, /บันทึกว่าออกหนังสือรับรอง 50 ทวิเองแล้ว.*ธุรกิจ 1,999 บาท/); assert.equal(result.presentation?.cards[0]?.chatActionId, undefined); }
+    if (!entitled) { assert.match(result.replyText, /จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ.*ธุรกิจ 1,999 บาท/); assert.equal(result.presentation?.cards[0]?.chatActionId, undefined); }
     else { assert.match(result.replyText, /ตรวจชื่อ.*ที่อยู่.*กดยืนยัน/); assert.equal(result.presentation?.cards[0]?.chatActionId, 'wht_certificate'); }
     assert.doesNotMatch(result.replyText, /ENTERPRISE|—/);
   }

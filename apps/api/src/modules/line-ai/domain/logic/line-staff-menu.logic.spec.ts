@@ -854,7 +854,7 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     assert.deepEqual(actions('owner').map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
     // G20: the business package adds tax documents; it never "opens every menu".
     assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /ครบทุกเมนู/);
-    assert.match(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /เพิ่มเอกสารภาษี ภ\.ง\.ด\.53 และ 50 ทวิ/);
+    assert.match(JSON.stringify(buildPromotionCard('owner', 'https://x/l/t')), /ทำ ภ\.ง\.ด\.53 และ 50 ทวิ ในระบบได้/);
   });
 
   it('matches the callback words as their own command, typed or from the postback', () => {
