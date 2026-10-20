@@ -172,3 +172,20 @@ Verification:
 - Contrast computed for all text pairs ≥ 5.02:1; option-button border 3.97:1.
 - Web sources for colour research: only abstracts/snippets readable (proxy 403 on journals, LINE docs, competitor sites); recorded in the doc.
 - Not done: real-browser render, user tests.
+
+## Revision 3c — colour pairing, fewer arrows, plain Thai
+
+Status: Complete — prototype only.
+Trigger: Owner: research colour pairs and other green websites and apply; too many arrow icons; make the Thai easy to understand.
+
+Decisions:
+- Colour research §7: Schloss & Palmer 2011 (similar hues harmonious; figure colour liked when it contrasts with ground), Ou & Luo 2006 (reddish pairs less harmonious); 4 green-brand pairing patterns (Wise/Robinhood lime+forest, Starbucks greens+cream+gold, KBank/Grab/LINE mid-green+white which fails AA, Intuit/Shopify green reserved for logo/success with dark buttons). Applied: primary on white #14532D (9.11:1), gold "เหมาะกับร้านคุณ" badge, forest for selected states. Colors board gained a pattern row.
+- Arrows: removed all ↗ button icons, flow down-arrows and → in chain/closing text; numbered chips for the claim steps; sr-only "(เปิดแท็บใหม่)" kept.
+- Plain Thai: everyday wording (กรอกรายการให้, ร้านค้า, ใช้ได้ N คน นับเจ้าของด้วย, ลองใช้ฟรี, หน้าสรุปยอด, ใครเห็นอะไร คุณกำหนดเอง); jargon explained at first use; web says เจ้าของร้าน (app role remains เจ้าของกิจการ); statuses keep app words รอตรวจสอบ/ยืนยันแล้ว.
+- FAQ text now single-sourced from a scratch list and written to canvas, content-th.md list and FAQPage.
+
+Verification:
+- FAQ parity 14/14 across Main, Home-Phone, content-th.md list and JSON-LD; both JSON blocks parse.
+- Home/pricing contain no ↗/↓ SVG or "→", no ฟีเจอร์/แดชบอร์ด/บทบาท/ทดลองใช้ฟรี; tag balance OK on 5 boards.
+- Chooser logic in node unchanged in outcome (default เติบโต 499; yearly+tax ธุรกิจ 19,990).
+- Green-brand data from search snippets/aggregators only (proxy 403 on brand sites).
