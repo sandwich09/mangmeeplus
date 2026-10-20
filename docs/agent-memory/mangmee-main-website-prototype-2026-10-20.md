@@ -323,3 +323,16 @@ Decisions (apply_r13.py, reproducible from the round-12 file):
 - Featured plan: rotating conic-gradient ring via @property --ang (replaces the solid ring + pulse).
 - `.hl` gradient words in h2s.
 Verification: Chromium 1440/390 no overflow (home 7155 / 12627; pricing 3153 / 5500); marquee translateX moves (-31→-111px in 1.5s); count-up mid-scroll 62/124/7/20 then 249/500/30/80; ring --ang advances; scroll test 0 transparent sections; ask bubbles opacity 1 when in view; hover lift -6px; canvas version 22.
+
+## Revision 3n — pain headline, real LINE reel, real test results, issued documents, socials
+
+Status: Complete — prototype only.
+Trigger: Owner sent 3 real LINE screenshots and asked: pain line as H1; remove review placeholders; put น้องมั่งมี test results (method, accuracy, safety); add "มั่งมี Plus" name, social links with icons, team LINE OA; turn the real LINE screenshots into a scrolling video in place of the simulated chat; app.mangmeeplus.com → mangmeeplus.com; remove all "ภาพจำลอง ข้อมูลสมมติ", the price-check note and the voice/group line. Mid-turn: add sample 50 ทวิ, ภ.ง.ด.53, ภ.ง.ด.3, ใบเบิก, ใบรับรองแทนใบเสร็จ issued by our system.
+Decisions:
+- H1 "ขายได้ทุกวัน แต่จ่ายไปเท่าไรไม่รู้?"; kicker carries "มั่งมี Plus ส่งรูปใบเสร็จทาง LINE ให้ AI ช่วยอ่าน"; the old H1 becomes the #how H2.
+- Reel: owner screenshots 5→4→3 cropped and stacked (scratchpad/reel/build.py), cashier name on the photographed receipt blurred (a real third party), LINE top/bottom bars fixed, strip animated with holds (18 s loop, off under reduced motion). Simulated confirm card and captions removed. Dashboard mock numbers remain illustrative (noted on canvas).
+- Test results (verified in source): OCR 14/14 printed-total receipts kept gross/VAT/WHT of 15 real images (receipt-ocr-real-sample-evaluation-2026-09-08.md:131); advisor 97.3% (217/223) / 91.5% (65/71), 0 wrong numbers, code-graded (mangmee-ai-expense-advisor-spec-th.md:172-175); 48 frozen attack cases (line-ai-security-eval.ts). Site does not claim "all 48 pass" (no single recorded run covering all three lanes); note says sample set, not a population accuracy, and records are drafts until a person confirms.
+- Socials from line-official-social-card.json (FB share link, IG/TikTok @mangmee_plus) with repo icons official-oa-*.png; team OA https://lin.ee/6Sc38L6 (STAFF_OA_URL). JSON-LD Organization gains sameAs; alternateName adds "มั่งมี Plus". Login decision closed: mangmeeplus.com/login.
+- Documents: a background helper rendered the five documents with the real renderers and fictional data (scratchpad/doc-samples/render.ts; `pnpm install --frozen-lockfile --filter @watchdog-bms/api...`, repo tree unchanged; Noto Sans Thai fetched from npm for rasterising only). Shown as a tilted paper gallery in the dark section; package labels: ใบเบิก/ใบรับรองแทนใบเสร็จ all packages, 50 ทวิ/ภ.ง.ด.3/ภ.ง.ด.53 ธุรกิจ.
+- build_pricing.py no longer depends on the removed price-check paragraph.
+Verification: Chromium 1440/390 no overflow (home 8122 / 14023; pricing 3103 / 5429); scroll test 0 transparent sections; none of "ภาพจำลอง/ข้อมูลสมมติ/ตรวจราคาก่อนเผยแพร่/app.mangmeeplus" left in Main or Pricing; JSON-LD parses; FAQ parity kept; canvas version 25 (the version counter had moved from 22 to 25 between publishes; publish was accepted without conflict).
