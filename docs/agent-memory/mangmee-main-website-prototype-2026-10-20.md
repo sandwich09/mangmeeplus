@@ -232,3 +232,23 @@ Decisions:
 
 Verification:
 - Chromium render 1440/390: no horizontal overflow on home or pricing; tags balanced on 5 boards. Screenshots refreshed in ../evidence/main-website-prototype-2026-10-20/v3/.
+
+## Revision 3g — buttons, line height, emphasis shadows, order by interest
+
+Status: Complete — prototype only.
+Trigger: Owner: adjust buttons and line spacing, add shadow to emphasised cards, order by interest, finish in few clicks, understand in few scrolls.
+
+Decisions:
+- Home order: hero → 3 steps (+ compact "AI can be wrong" card) → pricing (chooser collapsed in <details>) → jobs + น้องมั่งมี + ENT band → trust → what-it-is beside FAQ → close. Nav follows the same order. Removed video placeholder, second phone mock, "also" row, standalone #what section.
+- Buttons: one system (.btn 48px, .btn-lg 52px min-width 220 so the hero pair matches, .btn-sm in header), radius 10, weight 700; hero secondary is "ดูราคา" → #pricing. Mobile sticky .mbar (≤700px) with the LINE CTA and "เริ่ม 249 บาท/เดือน".
+- Type: body 17/1.65, headings 1.3, h3 20/1.4, lead 18/1.6, section padding 80 (56 mobile); `p,li,dd{text-wrap:pretty}` against one-word Thai last lines.
+- Bug fixed: `.pg p{margin:0}` (0,1,1) silently beat single-class margins such as `.after{margin-top}`; reset now uses `:where()` so component spacing applies.
+- Shadows: .card --sh-sm; .card-hi / .plan-rec / close / hero phone use --sh-lg (0 18px 44px). Proof placeholders are grey fills, no dashed border.
+- Recommended badge is derived from the answers ("เหมาะกับ 3–5 คน · 31–50 ใบ", tax, or branches) instead of "เหมาะกับร้านคุณ".
+- Pricing boards rebuilt from Main's styles + pricing section (chooser open) + comparison table, 4 next steps, pricing FAQ.
+
+Verification:
+- Chromium render (scratch renderer): home 1440 scrollWidth 1440 height 5963; 390 scrollWidth 390 height 10860; pricing 1440/390 no overflow (3121 / 5446). Tags balanced; FAQ block filled from faq_th.py (14 items). Published canvas version 15.
+- Limits: renderer approximates the canvas runtime; no real device, zoom or screen-reader pass; sticky bar position seen only in full-page screenshot.
+
+Next: owner decisions in README unchanged (login link, Production check of 20 Oct features, VAT, STARTER promotion, title, root domain, llms.txt, demo clip, real screenshots/reviews).
