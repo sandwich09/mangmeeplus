@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>MangmeePlus · Website prototype</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#dfe5dd;color:#eaf0e7;font:13px system-ui,sans-serif}.toolbar{height:60px;background:#172b22;display:flex;align-items:center;justify-content:space-between;gap:15px;padding:0 22px;box-shadow:0 1px 5px #11251620}.title{font-weight:600;line-height:1.5}.title small{font-weight:400;color:#aebfb0;display:block;font-size:10px}.controls{display:flex;gap:5px;background:#0c1e15;border-radius:8px;padding:4px}button{font:inherit;cursor:pointer;border:0;background:transparent;color:#b7c7b8;padding:8px 14px;border-radius:5px;min-height:36px}button[aria-pressed=true]{background:#e4f1d1;color:#183622}a{color:#ceddca;font-size:12px;text-decoration:none}a:hover{text-decoration:underline}button:focus-visible,a:focus-visible{outline:2px solid #e8b44e;outline-offset:3px}.canvas{height:calc(100dvh - 60px);display:flex;justify-content:center;align-items:stretch;overflow:auto;padding:0;transition:padding .15s}iframe{border:0;background:#fafbf7;width:100%;height:100%;display:block;flex-shrink:0}.canvas.mobile{padding:18px 12px}.canvas.mobile iframe{width:390px;max-width:100%;border-radius:18px;box-shadow:0 12px 45px #223d2422;outline:5px solid #fff}.size{font-family:monospace;font-size:11px;color:#9cb29f;margin-left:8px}@media(max-width:650px){.toolbar{height:74px;padding:8px 12px;gap:8px}.title{font-size:11px}.title small{font-size:9px;max-width:140px}.toolbar>a,.size{display:none}button{padding:8px 11px;font-size:11px}.canvas{height:calc(100dvh - 74px)}.canvas.mobile{padding:10px 6px}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+    .version-label{display:flex;align-items:center;gap:7px;font-size:11px;margin-right:16px}select{font:inherit;background:#fff;color:#183622;border:0;border-radius:6px;padding:9px;max-width:190px;min-height:36px}select:focus-visible{outline:2px solid #e8b44e;outline-offset:3px}@media(max-width:650px){.toolbar{height:110px;flex-wrap:wrap}.toolbar>div:nth-child(2){width:100%;justify-content:space-between}.title small{display:none}.version-label{margin-right:5px}.canvas{height:calc(100dvh - 110px)}}
+  </style>
+</head>
+<body>
+  <div class="toolbar"><div class="title">MangmeePlus <span style="color:#a9c192">/</span> Prototype v2<small>เทียบสีและเนื้อหา · ตัวอย่างข้อมูลสมมติ</small></div><div style="display:flex;align-items:center"><label class="version-label">แบบ <select id="version" aria-label="รุ่นต้นแบบ"><option value="index.html">v2 สีชัด + ฟีเจอร์ครบ</option><option value="index-v1.html">v1 สีอ่อนเดิม</option></select></label><div class="controls" role="group" aria-label="ขนาดตัวอย่าง"><button id="desktop" aria-pressed="true">เดสก์ท็อป</button><button id="mobile" aria-pressed="false">มือถือ</button></div><span class="size" id="size-label">Responsive</span></div><a id="open-full" href="./index.html" target="_blank" rel="noopener">เปิดหน้าเว็บเต็ม ↗</a></div>
+  <div class="canvas" id="canvas"><iframe id="site-preview" src="./index.html" title="ต้นแบบเว็บไซต์มั่งมีพลัส"></iframe></div>
+  <script>
+    document.getElementById('version').addEventListener('change',event=>{document.getElementById('site-preview').src='./'+event.target.value;document.getElementById('open-full').href='./'+event.target.value;});
+    // The iframe uses a real narrow viewport, so mobile media queries match.
+    const canvas=document.getElementById('canvas');
+    for(const mode of ['desktop','mobile'])document.getElementById(mode).addEventListener('click',()=>{
+      canvas.classList.toggle('mobile',mode==='mobile');
+      for(const name of ['desktop','mobile'])document.getElementById(name).setAttribute('aria-pressed',String(mode===name));
+      document.getElementById('size-label').textContent=mode==='mobile'?'390px frame':'Responsive';
+    });
+  </script>
+</body>
+</html>
