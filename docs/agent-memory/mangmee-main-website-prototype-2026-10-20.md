@@ -309,3 +309,17 @@ Decisions:
 - Hero grid texture via masked ::before; gradient text (#86EFAC→#BBF7D0→#FDE68A) on the green headline line; dot texture on `.alt`.
 - Bento grid replaces the jobs row + full-width blocks: jobs span 2/6 each; น้องมั่งมี spans 4/6 (inner 2 columns, "ควรรู้" and asks full width); ENTERPRISE spans 2/6 as a tall dark tile with form pills and catalog figures (500 ใบ, 30 คน, 10 สาขา). One column under 1100px container width.
 Verification: Chromium 1440/390 no overflow (home 6643 / 12349; pricing 3153 / 5500); scroll test 0 transparent in-view sections; hover lift still -6px; canvas version 20.
+
+## Revision 3m — SaaS/AI template energy
+
+Status: Complete — prototype only.
+Trigger: Owner: "ระบบดูไม่น่าสนใจ ดูเฉยมาก" with two Envato Elements template links.
+Blocked: elements.envato.com is denied by this environment's network policy (proxy CONNECT 403; WebFetch DNS fail); web search did not surface the items. Used common SaaS/AI landing patterns instead and told the owner; did not claim to copy the templates.
+Decisions (apply_r13.py, reproducible from the round-12 file):
+- Centered hero + product stage: web dashboard mock mirroring the real home dashboard strings (dashboard-notifications: รายจ่ายของร้าน, ตั้งแต่/ถึง, ทุกสาขา, ยืนยันแล้ว, ใบเสร็จรอตรวจ, ค้างจ่ายทั้งหมด, monthly confirmed bars, อัปโหลดใบเสร็จ, สร้างใบเบิก) with the LINE phone, mascot and confirmed card overlapping; tilt-in and bar-grow on load; drifting glow orbs. Phone layout hides the dashboard.
+- Feature marquee (13 real capabilities; duplicate list aria-hidden; pauses on hover).
+- Stats card overlapping the hero edge with CSS @property count-up (scroll-driven where supported): 249 / 500 / 30 / 80 from the catalog; sr-only static numbers for screen readers.
+- `#use` becomes a dark gradient section (`dark-sec dark`) with glass job cards and glow hover; น้องมั่งมี card forced back to ink text (it inherited white at first — caught in render).
+- Featured plan: rotating conic-gradient ring via @property --ang (replaces the solid ring + pulse).
+- `.hl` gradient words in h2s.
+Verification: Chromium 1440/390 no overflow (home 7155 / 12627; pricing 3153 / 5500); marquee translateX moves (-31→-111px in 1.5s); count-up mid-scroll 62/124/7/20 then 249/500/30/80; ring --ang advances; scroll test 0 transparent sections; ask bubbles opacity 1 when in view; hover lift -6px; canvas version 22.
