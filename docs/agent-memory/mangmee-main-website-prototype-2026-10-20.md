@@ -354,3 +354,7 @@ Status: Complete — prototype only.
 Trigger: Owner: remove "บันทึกด้วยมือ" from the dashboard image.
 Decision: re-rendered with the product default rather than editing pixels — the shop setting "แสดงเมนูบันทึกด้วยมือบนเว็บ" defaults to hidden (`MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW = false`, apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts:12; web gate `canOpenManualWeb`, apps/web/src/features/expenses/manual-expense-entry.logic.ts:24). Mocked session reads `manualExpenseWebEntryState(null)` like GET /auth/me.
 Verification: new 1440 shot shows the sidebar without the item, rest unchanged; home 1440/390 no overflow (8496 / 14873); repo tree unchanged by the render; canvas version 27.
+
+## Revision 3q — faster LINE reel
+
+Owner: speed up the LINE video. Reel loop 38 s → 20 s (start delay 0.6 s), same hold points per card. Checked in Chromium: strip moves 0 → -55 → -274 → -781 px over the first 6 s. Canvas version 29.
