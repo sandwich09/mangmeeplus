@@ -252,3 +252,10 @@ Verification:
 - Limits: renderer approximates the canvas runtime; no real device, zoom or screen-reader pass; sticky bar position seen only in full-page screenshot.
 
 Next: owner decisions in README unchanged (login link, Production check of 20 Oct features, VAT, STARTER promotion, title, root domain, llms.txt, demo clip, real screenshots/reviews).
+
+## Revision 3h — gold pair colour
+
+Status: Complete — prototype only.
+Trigger: Owner asked which colour pairs with our white/green/light green, then "ลองปรับให้ดูหน่อย".
+Decisions: Gold #FCD34D (logo bar, already in tokens) as the single accent, 2 spots only: recommended-plan badge and a "ฟรี 2 เดือน" chip on the yearly tab; text #14532D on gold 6.32:1; never white on gold (2.15:1). Applied to Main, Home-Phone, Pricing, Pricing-Phone; Colors board gained a pair row and rule lines.
+Verification: Chromium 1440/390 no overflow (home 5963 / 10881); visual check of badge and tab at both widths; canvas version 16.
