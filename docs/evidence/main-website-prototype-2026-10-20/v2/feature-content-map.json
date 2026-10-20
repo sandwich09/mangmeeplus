@@ -1,0 +1,62 @@
+{
+  "catalogRevision": "c76e1505e22444f93da5f7208e15a07f2f42b96f621dc5be8deea764496722be",
+  "groups": {
+    "feature-capture": {
+      "title": "ใบเสร็จและค่าใช้จ่าย",
+      "keys": [
+        "expenses",
+        "expenses.list",
+        "expenses.upload",
+        "expenses.manual",
+        "expenses.categories"
+      ]
+    },
+    "feature-reimburse": {
+      "title": "เบิกคืนค่าใช้จ่าย",
+      "keys": [
+        "reimbursement"
+      ]
+    },
+    "feature-evidence": {
+      "title": "เอกสารและลายเซ็น",
+      "keys": [
+        "expenses.evidence",
+        "expenses.signatures"
+      ]
+    },
+    "feature-assistant": {
+      "title": "ผู้ช่วย AI ทาง LINE",
+      "keys": [
+        "ai_line_assistant"
+      ]
+    },
+    "feature-team": {
+      "title": "พนักงาน สาขา และสิทธิ์",
+      "keys": [
+        "employee_access",
+        "employee_access.employees",
+        "employee_access.roles",
+        "employee_access.overview",
+        "company_settings",
+        "company_settings.branches",
+        "company_settings.security"
+      ]
+    },
+    "feature-overview": {
+      "title": "ภาพรวมและแจ้งเตือน",
+      "keys": [
+        "dashboard_notifications"
+      ]
+    },
+    "enterprise-feature": {
+      "title": "Enterprise tax document entitlements",
+      "keys": [
+        "wht_pnd53",
+        "wht_50bis"
+      ]
+    }
+  },
+  "common_key_coverage": 17,
+  "enterprise_key_coverage": 19,
+  "note": "Commercial entitlement coverage only; does not certify runtime/legal-output readiness."
+}

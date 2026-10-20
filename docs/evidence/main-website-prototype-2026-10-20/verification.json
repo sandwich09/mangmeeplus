@@ -1,0 +1,55 @@
+{
+  "verified_at": "2026-10-20T16:34:43.665040+07:00",
+  "scope": "Local standalone main website content/layout prototype; no production edits or deployment",
+  "browser": "Chrome via CUA, local HTTP server",
+  "http": {
+    "preview.html": 200,
+    "index.html": 200
+  },
+  "viewports": [
+    {
+      "name": "desktop",
+      "client_width": 1512,
+      "scroll_width": 1512
+    },
+    {
+      "name": "mobile iframe",
+      "client_width": 390,
+      "scroll_width": 390
+    }
+  ],
+  "interactions": {
+    "sample_steps_1_2_3_and_reset": "pass",
+    "mobile_menu_open_and_anchor_close": "pass",
+    "faq_ai_errors_expand": "pass",
+    "pro_plan_dialog": "pass",
+    "escape_dismiss_dialog": "pass",
+    "desktop_mobile_toggle": "pass"
+  },
+  "visual": {
+    "full_desktop_page_inspected": true,
+    "mobile_hero_and_pricing_inspected": true,
+    "caption_overlap_fixed": true,
+    "caption_gap_px": {
+      "desktop": 18.706787109375,
+      "mobile": 17.0096435546875
+    }
+  },
+  "browser_console_warnings_errors": [],
+  "static_checks_file": "static-checks.json",
+  "screenshots": [
+    "desktop-home.jpg",
+    "desktop-full-page.jpg",
+    "mobile-home.jpg",
+    "mobile-illustration.jpg",
+    "mobile-pricing.jpg"
+  ],
+  "limitations": [
+    "No live billing catalog or production feature verification in this prototype task",
+    "No performance, ranking or user-comprehension result claimed",
+    "External LINE/login links not activated during QA",
+    "Google Fonts require network; system fallback available",
+    "file:// browser tool navigation blocked by URL policy; HTTP preview tested instead"
+  ],
+  "delivery": "Local HTML files, screenshots and README; owned preview server stopped at teardown"
+}
