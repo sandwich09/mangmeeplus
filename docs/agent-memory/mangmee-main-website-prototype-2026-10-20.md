@@ -358,3 +358,14 @@ Verification: new 1440 shot shows the sidebar without the item, rest unchanged; 
 ## Revision 3q — faster LINE reel
 
 Owner: speed up the LINE video. Reel loop 38 s → 20 s (start delay 0.6 s), same hold points per card. Checked in Chromium: strip moves 0 → -55 → -274 → -781 px over the first 6 s. Canvas version 29.
+
+## Revision 3r — pausable LINE video, zoomable documents, accuracy-only results
+
+Status: Complete — prototype only.
+Trigger: Owner: make the LINE video pausable; documents clickable to enlarge; remove the test-volume numbers and code talk, keep only accuracy. Mid-turn: caption under the ask bubbles → "ตัวอย่างจากคำถามที่ใช้คุยกับน้องมั่งมี".
+Decisions (apply_r16.py):
+- Pause uses a visually hidden checkbox + label (CSS :checked pauses the strip) instead of component state, because a state toggle re-renders and can restart the animation from the top (seen in the local renderer). Label switches หยุดวิดีโอ/เล่นวิดีโอ; focus ring on the label; hover also pauses.
+- Documents: each paper is a button; component state `doc` adds `doc-open`, which positions the paper absolutely inside `.docs` (not `position:fixed`, so it stays correct when the canvas shows the board full height); shade + "ปิดภาพ ✕" close it. Doc images now 900 px wide.
+- Results block "แม่นยำแค่ไหน": 91–97% answers, printed-total receipts all correct in the latest set, 0 unverified money figures; no counts, no model/code wording.
+- Local renderer fix: event attributes arrive lower-case (`onclick`) from the HTML template, so render.js now matches /^on[a-z]+$/i; earlier rounds never click-tested through it.
+Verification: Chromium click tests — pause holds the strip (-274 → -274 over 1.5 s), resume continues (-274 → -796), label and checkbox state switch; document 3 opens centred (600 × 848 at x 420) and closes; home 1440/390 no overflow (8345 / 14366); scroll test 0 transparent sections; pipeline reproduces Main; canvas version 30.
