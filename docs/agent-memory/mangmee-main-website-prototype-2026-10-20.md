@@ -189,3 +189,19 @@ Verification:
 - Home/pricing contain no ↗/↓ SVG or "→", no ฟีเจอร์/แดชบอร์ด/บทบาท/ทดลองใช้ฟรี; tag balance OK on 5 boards.
 - Chooser logic in node unchanged in outcome (default เติบโต 499; yearly+tax ธุรกิจ 19,990).
 - Green-brand data from search snippets/aggregators only (proxy 403 on brand sites).
+
+## Revision 3d — minimal palette, no underlines, borderless buttons
+
+Status: Complete — prototype only.
+Trigger: Owner: too many underlines; outlined buttons look harsh; make the colour pairing minimal.
+
+Decisions:
+- Palette reduced to white / #F5F7F5 / #14532D; gold only in the logo; hero now white with #166534 accent line; dark green kept only for the closing block. Research §8 records the rationale and trade-off (gold CTA dropped).
+- Buttons: no borders. Primary solid #14532D; secondary soft #ECF3EE; white on dark close block; chooser options and segmented toggle borderless with dark-green selected state; cards borderless with surface contrast; recommended plan uses shadow + dark badge.
+- Underlines: removed all in-sentence links (hero "ดูราคาทั้งหมด", facts "ดูราคา", use row "ดูว่าน้องทำอะไรได้"); remaining links are standalone (nav, footer, contact) with text-decoration none — WCAG 1.4.1 concern applies to in-text links only.
+- Status chips became dot + text.
+
+Verification:
+- All contrast pairs computed ≥ 7.09:1 for text; selected vs unselected option fill 8.25:1.
+- No btn-gold/btn-ghost/btn-out/btn-green left; #FCD34D appears only inside logo SVGs on home/pricing.
+- Tag balance OK on 5 boards; chooser logic outputs unchanged; FAQ text untouched this round.
