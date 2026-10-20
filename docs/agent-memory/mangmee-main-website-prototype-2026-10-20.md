@@ -369,3 +369,7 @@ Decisions (apply_r16.py):
 - Results block "แม่นยำแค่ไหน": 91–97% answers, printed-total receipts all correct in the latest set, 0 unverified money figures; no counts, no model/code wording.
 - Local renderer fix: event attributes arrive lower-case (`onclick`) from the HTML template, so render.js now matches /^on[a-z]+$/i; earlier rounds never click-tested through it.
 Verification: Chromium click tests — pause holds the strip (-274 → -274 over 1.5 s), resume continues (-274 → -796), label and checkbox state switch; document 3 opens centred (600 × 848 at x 420) and closes; home 1440/390 no overflow (8345 / 14366); scroll test 0 transparent sections; pipeline reproduces Main; canvas version 30.
+
+## Revision 3s — hero phone back on the right, signup video pausable
+
+Owner screenshot showed the LINE phone on the left over the dashboard: round 16 added a generic `.reel{position:relative}` after `.stage-phone{position:absolute}`, which overrode it (the local renderer showed the same; the stage crop had not been re-checked after round 16). Scoped it to `.close-phone .reel`. The signup video got the same checkbox/label pause (`#su-pause`). Moved the image labels off `figure.stage` / `figure.close-phone` (role="img" would hide the pause controls) onto the dashboard and each phone screen. Checked: hero phone at x 930 (right), signup pause holds -253 → -253 and resumes; home 1440/390 no overflow; canvas version 31.
