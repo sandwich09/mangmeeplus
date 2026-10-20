@@ -909,7 +909,7 @@ describe('CLAIM-STEPS controls belong to the active step', () => {
       } else for (const text of ['เลือกวิธีใดวิธีหนึ่ง', 'เซ็นในระบบ', 'เซ็นบนกระดาษ', 'ถ่ายรูปหรือสแกน แล้วแนบที่นี่']) assert.ok(card.includes(text), text);
       assert.equal(card.includes('แนบใบที่เซ็นแล้ว'), who !== 'reader' && who !== 'digital');
       assert.equal(card.includes('>เซ็นใบเบิก<'), who === 'signer');
-      if (who === 'digital') assert.match(card, /เซ็นในระบบครบแล้ว/);
+      if (who === 'digital') assert.equal(card.split('เซ็นในระบบครบแล้ว').length - 1, 1, 'said once');
       if (who === 'paper') assert.match(card, /เซ็นบนกระดาษ/);
       assert.doesNotMatch(records, /type="file"|>เซ็นใบเบิก<|แนบใบที่เซ็นแล้ว/);
     });

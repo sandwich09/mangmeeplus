@@ -208,7 +208,8 @@ it('UAT-R1 a digitally completed document keeps signed facts and print without p
         { role: 'REQUESTER', signedByName: 'สมใจ', signedAt: '2026-10-10' },
         { role: 'APPROVER', signedByName: 'สมชาย', signedAt: '2026-10-10' },
       ] } }));
-    assert.match(html, /เซ็นในระบบครบแล้ว/);
+    // The step card's note says เซ็นในระบบครบแล้ว once; the documents block must not repeat it.
+    assert.doesNotMatch(html, /เซ็นในระบบครบแล้ว/);
     assert.match(html, /สมใจ/); assert.match(html, /สมชาย/);
     assert.match(html, /พิมพ์ใบเบิก/);
     assert.doesNotMatch(html, /เลือกวิธีใดวิธีหนึ่ง|เซ็นบนกระดาษ|แนบใบที่เซ็นแล้ว|type="file"/);

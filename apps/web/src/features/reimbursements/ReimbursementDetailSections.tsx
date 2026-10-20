@@ -970,7 +970,8 @@ export function ClaimDocuments({ detail, userId, permissions, busy, onOpenAttach
     <>
       <div id={activeDocument ? undefined : 'reimbursement-signatures'} className="scroll-mt-24">
         <Frame className={activeDocument ? 'space-y-3' : 'p-4'}>
-          {activeDocument ? <p className="text-sm text-gray-600">{digitallySigned ? 'เซ็นในระบบครบแล้ว' : 'เลือกวิธีใดวิธีหนึ่ง'}</p>
+          {/* Signed in the system: the step's own note already says "เซ็นในระบบครบแล้ว" (owner 2026-10-20: said twice). */}
+          {activeDocument ? !digitallySigned && <p className="text-sm text-gray-600">เลือกวิธีใดวิธีหนึ่ง</p>
             : <h2 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นและใบเบิกที่เซ็นแล้ว</h2>}
           <div className={activeDocument && !digitallySigned ? 'grid gap-6 sm:grid-cols-2' : undefined}>
           <div className="min-w-0">
