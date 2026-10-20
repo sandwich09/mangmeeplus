@@ -285,3 +285,16 @@ Decisions:
 - น้องมั่งมี block: 6 real questions from scripts/line-ai-expense-advisor/corpus.*.json as chat bubbles; refusal cases (invoice, P&L, stock) excluded.
 - Process slip: the first push of this round (commit "v3 sales copy leads with…") carried only the FAQ doc edits and screenshots because the doc script failed on a duplicate line; the follow-up commit adds the rest of the docs.
 Verification: Chromium 1440/390 no overflow (home 6445 / 12080, pricing 3121 / 5489); chooser logic node cases (unanswered→ธุรกิจ 1,999; staff 3–5→เติบโต; staff+receipts 51–100→มืออาชีพ; tax→ธุรกิจ; yearly→19,990); JSON-LD blocks parse; FAQ parity 14/14; canvas version 18.
+
+## Revision 3k — green fade, motion, hover, stronger tint
+
+Status: Complete — prototype only.
+Trigger: Owner: wants a green fade like a dark-to-light blue reference image; animation with moving data/images, cards that pop, hover; light-green background blends into white.
+Decisions:
+- FADE = linear-gradient(135deg,#03200F,#0A3A1F 38%,#11502B 70%,#16743A) on the hero band (now `.hero.dark`), ENT band and close panel. Hero type white / #86EFAC / #D1FAE5; hero primary button white, secondary 12% white; chat panel becomes a frosted-white layer; phone and confirmed card reset to ink colour (they inherited white at first — caught in render).
+- `.alt` #E3F3E8 (was #F3FAF5); pricing glow and น้องมั่งมี wash strengthened.
+- Load sequence (CSS keyframes, delays): copy rises line by line, receipt pops, green scan line loops over the receipt, bot reply rises, "ยืนยันแล้ว" pops, mascot floats, featured plan ring pulses.
+- Scroll reveal via `animation-timeline:view()` inside @supports; keyframes animate `translate`, not `transform`, because a filled transform animation cancelled the hover lift (found: hovered card transform stayed identity).
+- Hover: cards lift 6px with deeper shadow, icons scale/tilt, ask bubbles lift. All motion and lifts off under prefers-reduced-motion.
+Verification: Chromium 1440/390 no overflow; hero frames at 0.3/0.9/1.5/2.6 s show the sequence; hover on a plan card → matrix(...,-6); scroll test at 1440 (700px steps): 0 in-view sections left transparent at every step; reduced-motion full-page renders for evidence; tags balanced; canvas version 19.
+Limits: renderer is not the canvas runtime; Safari support for scroll-driven animation not checked (fallback shows content without the reveal).
