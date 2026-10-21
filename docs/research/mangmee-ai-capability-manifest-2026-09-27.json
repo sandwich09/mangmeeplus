@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "a1f60929cccd9fb24383f335330d02cb71fdd223",
-  "checkoutBranch": "claude/line-help-guides-20261020",
-  "checkoutDirty": true,
+  "sourceRevision": "a07c50fd07e961f471d548fec4e76cdd09415836",
+  "checkoutBranch": "codex/sec-int-20261021",
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -225,7 +225,7 @@
     },
     {
       "path": "packages/config/src/index.ts",
-      "sha256": "a62e637c5c964b113406e2bf75591e949b802b950b01b1788f8a916228b60723"
+      "sha256": "32f1f766d1aa59c23e2b4bfefffdda5c7f43b0f30ac98e5ee1f87caf994260d0"
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
@@ -10171,6 +10171,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-20T17:17:13.078Z",
-  "manifestDigest": "f8aec50a705ae30bda9e4d0bcdf0c9f067f73b5385088e058fbf52a1b44ac7c8"
+  "generatedAt": "2026-10-21T16:06:52.680Z",
+  "manifestDigest": "f8bd8b7f46e2ed4d7c107649e76c7bdcf01d35fc15eeb6c39326a72e91d6f034"
 }
