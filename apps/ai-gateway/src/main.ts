@@ -2,14 +2,12 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
-import { json, urlencoded } from 'express';
-import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AiGatewayConfigService } from './common/config/ai-gateway-config.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { parseProductionServingMode, productionMaintenanceMiddleware } from './common/http/production-maintenance.middleware';
+import { gatewayHttpMiddleware } from './common/http/gateway-http.middleware';
+import { parseProductionServingMode } from './common/http/production-maintenance.middleware';
 import { NestPinoLoggerBridge, createLogger } from './common/logger/logger.service';
-import { BASE64_MEDIA_ROUTES, DOCUMENT_QA_MEDIA_ROUTE } from './modules/line-ai/presentation/http/line-ai-internal.controller';
 
 function getAllowedOrigins(config: AiGatewayConfigService): string[] {
   if (config.corsAllowedOrigins.length > 0) {
@@ -37,24 +35,10 @@ async function bootstrap() {
   // silently start advertising the framework again.
   app.getHttpAdapter().getInstance().disable('x-powered-by');
   const allowedOrigins = getAllowedOrigins(config);
-  const bodyLimit = config.bodyLimit;
   const servingMode = parseProductionServingMode(process.env.PRODUCTION_SERVING_MODE, isProduction);
 
-  // This runs before helmet and every body parser. In maintenance mode the public gateway can
-  // still satisfy its exact health check, but it cannot read or process an AI/customer payload.
-  app.use(productionMaintenanceMiddleware(servingMode));
-
-  app.use(
-    helmet({
-      contentSecurityPolicy: isProduction ? undefined : false,
-    }),
-  );
-  // Base64-media routes exceed the global limit; scope the larger parser to exactly them.
-  app.use(BASE64_MEDIA_ROUTES, json({ limit: '16mb' }));
-  // 20 selected pages × 3.5MB raster × base64 expansion plus the bounded manifest.
-  app.use(DOCUMENT_QA_MEDIA_ROUTE, json({ limit: '96mb' }));
-  app.use(json({ limit: bodyLimit }));
-  app.use(urlencoded({ extended: true, limit: bodyLimit }));
+  // Maintenance stays first; internal authentication runs before helmet and every body parser.
+  app.use(gatewayHttpMiddleware(config, servingMode));
   app.enableCors({
     origin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
       if (!origin || allowedOrigins.includes(origin)) {
