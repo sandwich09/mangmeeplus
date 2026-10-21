@@ -36,7 +36,7 @@ for (const width of [375, 1440]) test(`public home fits ${width}px and offers LI
   await page.locator('#pricing').getByRole('button', { name: 'จ่ายรายปี' }).click();
   await expect(page.locator('#pricing .plans')).toContainText('19,990');
   await page.getByText('ไม่แน่ใจว่าแพ็กเกจไหน? ตอบ 4 ข้อ', { exact: true }).click();
-  await page.getByRole('button', { name: '3–5 คน', exact: true }).click();
+  await page.getByRole('button', { name: '3 - 5 คน', exact: true }).click();
   await expect(page.locator('.ch-res')).toContainText('แพ็กเกจที่เหมาะกับคำตอบ เติบโต');
   const reportFaq = page.locator('.faq details').filter({ has: page.getByText('แพ็กเกจมีรายงานให้เรียกดูไหม?', { exact: true }) });
   await reportFaq.locator('summary').click();
