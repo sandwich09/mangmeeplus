@@ -117,7 +117,7 @@ test('HOME-PAGE choosing annual billing and a team size updates the rendered off
     assert.match(render(), /ไม่ต้องออกเอกสารภาษีในระบบ/);
     buttons.find(button => button.text.startsWith('จ่ายรายปี')).props.onClick();
     assert.match(render(), /19,990/);
-    buttons.find(button => button.text === '3–5 คน').props.onClick();
+    buttons.find(button => button.text === '3 - 5 คน').props.onClick();
     assert.match(render(), /แพ็กเกจที่เหมาะกับคำตอบ เติบโต/);
     buttons.find(button => button.text === 'ต้องออก').props.onClick();
     assert.match(render(), /แพ็กเกจที่เหมาะกับคำตอบ ธุรกิจ/);
