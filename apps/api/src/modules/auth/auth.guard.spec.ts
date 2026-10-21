@@ -295,10 +295,55 @@ describe('AuthGuard', () => {
 
   it('preserves the disabled membership code on the open-session shop gate', async () => {
     const resolve = { execute: async () => { throw new ForbiddenException({ code: 'company_membership_disabled' }); } } as any;
-    const prisma = { client: { ...noopPrisma.client, company: { findUnique: async () => ({ name: 'ร้านเดิม' }) } } } as any;
+    const prisma = { client: { ...noopPrisma.client, companyMembership: { findUnique: async (query: any) => {
+      assert.deepEqual(query, {
+        where: { companyId_userId: { companyId: 'co-target', userId: 'test-sub' } },
+        select: { company: { select: { name: true } } },
+      });
+      return { status: 'DISABLED', company: { name: 'ร้านเดิม' } };
+    } } } } as any;
     const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
     await assert.rejects(() => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', xCompanyId: 'co-target', path: '/v1/auth/me' })),
-      (error: any) => error.getResponse().code === 'company_membership_disabled');
+      (error: any) => {
+        assert.deepEqual(error.getResponse(), {
+          code: 'company_membership_disabled',
+          message: 'No access to the requested company.',
+          companyName: 'ร้านเดิม',
+        });
+        return true;
+      });
+  });
+
+  it('does not name existing or nonexistent companies to unrelated users', async () => {
+    const responses: Array<{ status: number; body: unknown }> = [];
+    for (const companyId of ['co-existing', 'co-nonexistent']) {
+      const resolve = { execute: async () => { throw new ForbiddenException('No active company membership.'); } } as any;
+      const findCompany = mock.fn(async ({ where }: any) => where.id === 'co-existing' ? { name: 'ป๋อจ้าน Company' } : null);
+      const prisma = {
+        client: {
+          ...noopPrisma.client,
+          company: { findUnique: findCompany },
+          companyMembership: { findUnique: async () => null },
+        },
+      } as any;
+      const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
+
+      await assert.rejects(
+        () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', xCompanyId: companyId, path: '/v1/auth/me' })),
+        (error: unknown) => {
+          assert.ok(error instanceof ForbiddenException);
+          assert.equal(error.getStatus(), 403);
+          assert.deepEqual(error.getResponse(), {
+            code: 'company_access_unavailable',
+            message: 'No access to the requested company.',
+          });
+          responses.push({ status: error.getStatus(), body: error.getResponse() });
+          return true;
+        },
+      );
+      assert.equal(findCompany.mock.callCount(), 0);
+    }
+    assert.deepEqual(responses[0], responses[1]);
   });
 
   it('names the requested company only on a scoped auth/me access denial', async () => {
@@ -306,7 +351,11 @@ describe('AuthGuard', () => {
     const prisma = {
       client: {
         ...noopPrisma.client,
-        company: { findUnique: async () => ({ name: 'ป๋อจ้าน Company' }) },
+        // The name is available here because this user has a row for the requested company.
+        companyMembership: { findUnique: async (query: any) => {
+          assert.deepEqual(query.where, { companyId_userId: { companyId: 'co-target', userId: 'test-sub' } });
+          return { company: { name: 'ป๋อจ้าน Company' } };
+        } },
       },
     } as any;
     const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
