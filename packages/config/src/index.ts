@@ -911,10 +911,10 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     }
   }
 
-  // L-03: any process that resolves a JWT verification key — the API *and* the AI Gateway,
-  // which falls back to DEV_AUTH_SECRET — must hold the real secret and no dev fallback.
+  // The API requires its signing key. The AI Gateway can omit it: internal routes use service
+  // authentication, and the JWT guard refuses protected routes when no key is configured.
   if (readsJwtSecret) {
-    if (missing('WATCHDOG_JWT_SECRET_ARN')) {
+    if ((isApiConfig || !isAiConfig) && missing('WATCHDOG_JWT_SECRET_ARN')) {
       errors.push('WATCHDOG_JWT_SECRET_ARN is required in production');
     }
     if (str(config['DEV_AUTH_SECRET'])) {

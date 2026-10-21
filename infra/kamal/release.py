@@ -34,7 +34,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = ROOT / 'infra/dev-kamal'
 sys.path.insert(0, str(HELPERS))
-from release_inventory import SERVICES, digest, inspect_container, require
+from release_inventory import AI_JWT_SECRET_KEYS, SERVICES, digest, inspect_container, require, without_ai_jwt_secrets
 from release_source import full_sha, hotfix_source, promotion_bundle, accepted_uat_bundle
 from first_migration import FirstMigration
 
@@ -754,10 +754,11 @@ class Release:
                             self.migration.state['ecsBaseline'][service]['body'], 'Captured ECS config differs from the running baseline')
             for service, values in self.hotfix_configurations.items():
                 captured = read(capture/(service+'.resolved.json'))
-                references = read(capture/(service+'.configuration.json'))['primaryContainer'].get('secrets',[])
-                require(all(values.get(row['name']) == captured.get(row['name']) for row in references),
+                references = without_ai_jwt_secrets(service, {row['name']:row['valueFrom'] for row in
+                    read(capture/(service+'.configuration.json'))['primaryContainer'].get('secrets',[])})
+                require(all(values.get(key) == captured.get(key) for key in references),
                         'Current secret differs from the serving hotfix baseline: '+service)
-                write(capture/(service+'.resolved.json'),values)
+                write(capture/(service+'.resolved.json'),without_ai_jwt_secrets(service,values))
             configured = {s:{} for s in SERVICES}
             self.receipt['controllerConfigScope'] = 'preserve serving Production config; topology/build identity only'
             self.receipt['controllerConfigSha256'] = digest(configured)
@@ -1281,7 +1282,7 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
         expected = {'GIT_SHA':self.build['sourceCommit'],'SERVICE_VERSION':self.build['sourceCommit'],'AGENTCORE_ARTIFACT_SHA256':self.build['agentcore']['sha256'],
                     'DEPLOY_ENVIRONMENT':self.args.environment,'ERP_CORE_INTERNAL_URL':self.provider_callback()}
         actual_env = runtime['environmentVariables']
-        if all(actual_env.get(k)==v for k,v in expected.items()):
+        if all(actual_env.get(k)==v for k,v in expected.items()) and not any(k in actual_env for k in AI_JWT_SECRET_KEYS):
             object_ref=runtime['agentRuntimeArtifact']['codeConfiguration']['code']['s3']
             require(object_ref.get('versionId') not in (None,'null'), 'Existing AgentCore artifact is not pinned')
             pinned=self.work/'reused-agentcore.zip'
@@ -1317,7 +1318,7 @@ finally{await client.$disconnect();}})().catch(()=>process.exit(1));"""
         pinned=self.work/'pinned-agentcore.zip'
         self.aws(['s3api','get-object','--bucket',bucket,'--key',key,'--version-id',put['VersionId'],str(pinned)])
         require(hashlib.sha256(pinned.read_bytes()).hexdigest()==self.build['agentcore']['sha256'], 'Published AgentCore bytes changed')
-        updates={**actual_env,**expected,'SERVICE_VERSION':self.build['sourceCommit']}
+        updates=without_ai_jwt_secrets('ai-gateway', {**actual_env,**expected,'SERVICE_VERSION':self.build['sourceCommit']})
         if self.target['kind']=='dev':
             updates.update(PUBLIC_BASE_URL=self.target['publicUrl'].rstrip('/'), WATCHDOG_JWT_ISSUER=self.target['publicUrl'].rstrip('/'))
         request={'agentRuntimeId':rid,'agentRuntimeArtifact':artifact,'environmentVariables':updates,

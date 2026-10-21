@@ -21,8 +21,7 @@
         "secretsmanager:GetSecretValue"
       ],
       "Resource": [
-        "<AI_GATEWAY_SECRET_ARN>",
-        "<WATCHDOG_JWT_SECRET_SOURCE_ARN>"
+        "<AI_GATEWAY_SECRET_ARN>"
       ]
     },
     {

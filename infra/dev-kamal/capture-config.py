@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from release_inventory import without_ai_jwt_secrets
 
 ACCOUNT = '311414082667'
 REGION = 'ap-southeast-1'
@@ -89,7 +90,7 @@ def main():
         for ref in secrets.values():
             if not re.fullmatch(f'arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:watchdog-bms/{env}/[A-Za-z0-9/_-]+', ref):
                 raise SystemExit(service + ': foreign or unsupported secret reference')
-        secret_refs.update(secrets.values())
+        secret_refs.update(without_ai_jwt_secrets(service, secrets).values())
         private_json(args.private_output / (service + '.configuration.json'), config)
         evidence['services'][service] = {'sourceCommit': values.get('GIT_SHA'), 'image': container['image'],
             'environmentNames': sorted(values), 'secretNames': sorted(secrets),
@@ -119,8 +120,9 @@ def main():
     if args.resolve_secrets and not evidence['errors']:
         for service, config in captured.items():
             c = config['primaryContainer']
-            values = {row['name']: row['value'] for row in c.get('environment', [])}
-            values.update({row['name']: resolved[row['valueFrom']]['value'] for row in c.get('secrets', [])})
+            values = without_ai_jwt_secrets(service, {row['name']: row['value'] for row in c.get('environment', [])})
+            secrets = without_ai_jwt_secrets(service, {row['name']: row['valueFrom'] for row in c.get('secrets', [])})
+            values.update({key: resolved[ref]['value'] for key, ref in secrets.items()})
             private_json(args.private_output / (service + '.resolved.json'), values)
     evidence['status'] = 'passed' if len(captured) == 3 and not evidence['errors'] else 'blocked'
     args.evidence.write_text(json.dumps(evidence, indent=2) + '\n')
