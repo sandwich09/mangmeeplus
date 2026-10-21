@@ -1,0 +1,50 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "width": 390,
+      "palette": "forest",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "palette": "pumpkin",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "palette": "plum",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "palette": "forest",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "palette": "pumpkin",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "palette": "plum",
+      "content": "identical",
+      "layout": "identical",
+      "overflow": false
+    }
+  ],
+  "selection": "client swatches, normal restore, retained choice and fallback pass",
+  "interactions": "pricing, FAQ and pause pass",
+  "errors": []
+}

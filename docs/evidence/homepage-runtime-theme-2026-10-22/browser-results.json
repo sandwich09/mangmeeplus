@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "checks": [
+    "390: real admin save/on/off → fresh public homepage; baseline identical; no preview toolbar",
+    "1280: real admin save/on/off → fresh public homepage; baseline identical; no preview toolbar",
+    "real two-tab conflict: 409, no silent overwrite, reload then save",
+    "loading/retry/failed save preserves choice and real retry succeeds",
+    "real session gate redirects anonymous and denies restricted admin; API 403 removes controls",
+    "non-home login/privacy have no theme DOM or assets; final setting normal for regression checks"
+  ],
+  "pageErrors": []
+}

@@ -1,0 +1,62 @@
+{
+  "status": "pass",
+  "check": "RGBA alpha, transparent corners and byte-for-byte copy; visual review of all four illustrations completed",
+  "assets": [
+    {
+      "file": "mangmee-broom.png",
+      "width": 1536,
+      "height": 1024,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        254
+      ],
+      "fully_transparent_pixels": 885351,
+      "corners_transparent": true,
+      "sha256": "75bbb4a7ab771d7288664c0b4e35fee9336c922c285d1eb90a8326374c1e6da2",
+      "source": "/Users/thawatchai/.codex/generated_images/01a15f1e-fbe6-7da3-b057-29a88cbd9019/exec-1fe79a91-0115-46be-a541-eb1080e8d50b.png"
+    },
+    {
+      "file": "mangmee-peeking.png",
+      "width": 1312,
+      "height": 1199,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ],
+      "fully_transparent_pixels": 733771,
+      "corners_transparent": true,
+      "sha256": "d1b73bf1f50a1ff906b86005236a88469f94d576013ba7dd72c303edbf5f4458",
+      "source": "/Users/thawatchai/.codex/generated_images/01a15f1e-fbe6-7da3-b057-29a88cbd9019/exec-43fbfc79-4894-4ad9-b2c0-c14b8ba62066.png"
+    },
+    {
+      "file": "friendly-ghost.png",
+      "width": 1236,
+      "height": 1273,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ],
+      "fully_transparent_pixels": 766726,
+      "corners_transparent": true,
+      "sha256": "1fe12ee4825a2f19a950078dce01283850f12af481b4304240c8665d1b7bdacd",
+      "source": "/Users/thawatchai/.codex/generated_images/01a15f1e-fbe6-7da3-b057-29a88cbd9019/exec-eaf8076b-60a0-4b98-8028-fa5bd422fb79.png"
+    },
+    {
+      "file": "friendly-pumpkin.png",
+      "width": 1236,
+      "height": 1273,
+      "mode": "RGBA",
+      "alpha_range": [
+        0,
+        255
+      ],
+      "fully_transparent_pixels": 795065,
+      "corners_transparent": true,
+      "sha256": "c9f1c61ace94b87e8a9247c85b610aaa1119d6fc607fd093308d36dd251836e8",
+      "source": "/Users/thawatchai/.codex/generated_images/01a15f1e-fbe6-7da3-b057-29a88cbd9019/exec-e089ab37-fc97-4ee5-9485-ebad9149af48.png"
+    }
+  ]
+}

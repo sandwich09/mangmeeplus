@@ -1,0 +1,186 @@
+/* Event rules stay below the homepage root, including after client navigation. */
+.public-home[data-home-event="halloween"] .hero {
+  background: radial-gradient(ellipse at 4% 26%, #b86c2638, transparent 42%), radial-gradient(ellipse at 94% 40%, #ed9c4233, transparent 40%), linear-gradient(135deg, #102d23, #143b2a 55%, #26462d);
+}
+.public-home[data-home-event="halloween"] .orb-a { background: #c27a3233; }
+.public-home[data-home-event="halloween"] .orb-b { background: #f6ad5533; }
+.public-home[data-home-event="halloween"] .hdr-row { background: rgb(255 249 235 / 91%); }
+.public-home[data-home-event="halloween"] .hero h1 > span { background-image: linear-gradient(100deg, #b5edbf, #ffe0a3 70%, #ffb65a); }
+.public-home[data-home-event="halloween"] .hero .kicker { background: rgb(248 184 97 / 12%); }
+.public-home[data-home-event="halloween"] .hero .btn-primary { background: #fff5e4; }
+.public-home[data-home-event="halloween"] .hero .btn-primary:hover { background: #ffe8bd; }
+.public-home[data-home-event="halloween"] .alt,
+.public-home[data-home-event="halloween"] .foot { background: #fbf8f0; }
+.public-home[data-home-event="halloween"] .close { background: radial-gradient(ellipse at 95% 0, #e7a84c35, transparent 65%), linear-gradient(135deg, #173629, #264b31); }
+
+/* Palette overrides share the forest base; the component selects the default. */
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .pg { background: #fffaf3; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero { color: #493225; background: radial-gradient(ellipse at 4% 26%, #e6a04e38, transparent 45%), radial-gradient(ellipse at 94% 40%, #e9ae6b40, transparent 45%), linear-gradient(135deg, #fff7e9, #f6e7d0 55%, #f0d7b4); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero::before { background-image: linear-gradient(#8b5f3814 1px, transparent 1px), linear-gradient(90deg, #8b5f3814 1px, transparent 1px); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero h1 > span { background-image: linear-gradient(100deg, #944519, #9d4123 70%, #805029); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero :is(.lead, .after) { color: #674936; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero .kicker { color: #7b421d; background: #a9511814; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero .btn-primary { color: #fff8e8; background: #24523b; box-shadow: 0 8px 24px #3d49292b; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero .btn-primary:hover { background: #193d2b; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero .btn-soft { color: #5c3c29; background: #ffffff85; box-shadow: inset 0 0 0 1px #93653b38; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .hero :focus-visible { outline-color: #84411f; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .marquee li { color: #69462f; background: #ffffff70; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .home-event-star { fill: #935927; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .home-event-moon { background: #efc278; box-shadow: 0 0 48px 16px #f5b44420, inset -12px -8px 0 #dba058; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] :is(.alt, .foot) { background: #f7ecdc; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .close { background: radial-gradient(ellipse at 95% 0, #e7a84c35, transparent 65%), linear-gradient(135deg, #4b3025, #6e472c); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .close :is(p, figcaption) { color: #f9e9d4; }
+
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .pg { --ink: #302438; --muted: #65596e; --line: #e7deeb; --soft: #eee4f3; background: #fffcff; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero { background: radial-gradient(ellipse at 4% 26%, #aa70bd24, transparent 45%), radial-gradient(ellipse at 94% 40%, #ed9c4226, transparent 45%), linear-gradient(135deg, #20182f, #34253e 55%, #4a2d43); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero h1 > span { background-image: linear-gradient(100deg, #e5c2f4, #ffe0a3 70%, #ffb65a); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero :is(.lead, .after) { color: #eaddef; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero .kicker { color: #f4e6f9; background: #dcb6e91a; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .orb-a { background: #aa70bd26; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .marquee li { color: #eaddef; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.alt, .foot) { background: #f5eff8; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .close { background: radial-gradient(ellipse at 95% 0, #e7a84c2b, transparent 65%), linear-gradient(135deg, #30213e, #50334b); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .close :is(p, figcaption) { color: #eaddef; }
+
+/* Carry plum through the existing middle-page surfaces and interactive accents. */
+.public-home[data-home-event="halloween"][data-home-palette="plum"] #pricing { background: radial-gradient(900px 460px at 50% 0, #ead9f2, transparent 72%), #fffcff; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec { position: relative; background: radial-gradient(ellipse at 95% 0, #d69a6330, transparent 60%), linear-gradient(135deg, #241b31, #3c2846 55%, #503347); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(#ffffff0d 1px, transparent 1px), linear-gradient(90deg, #ffffff0d 1px, transparent 1px); background-size: 56px 56px; mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec > .w { position: relative; z-index: 1; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .home-event-middle { inset: 0; overflow: clip; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .mm { background: linear-gradient(140deg, #ebd8f1, #fffbff 60%); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .safe { background: linear-gradient(140deg, #f1e7f7, #fffbff 65%); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .ent { background: radial-gradient(ellipse at 100% 0, #e1aa6940, transparent 65%), linear-gradient(150deg, #513159, #2b2038); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.ey, .who-you) { color: #714889; background: #eee0f4; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .mm .ey { color: #714889; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.stats b, .stats .u, .chain, .cmp .ic) { color: #74418c; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hl { background-image: linear-gradient(90deg, #713e89, #96506b 55%, #925a17); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark .hl { background-image: linear-gradient(90deg, #e4baf6, #ffd9a5); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .ico { color: #75428e; background: linear-gradient(150deg, #f1dff9, #efe9f4); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.ico-n, .sn, .seg button[aria-pressed="true"], .opt[aria-pressed="true"]) { color: #fff; background: #75428e; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.free, .gift, .pbadge) { color: #5d3d32; background: #f6d9a2; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.dot li, .marquee li)::before { background: #b077b5; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .plan-rec::before { background: conic-gradient(from var(--ang), #b585c9, #f3d19d, #81509b, #e7c0e2, #b585c9); }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .plan-rec:hover { box-shadow: 0 28px 56px #75428e30; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .pg a:not(.brand):not(.social-line):not(.btn) { color: #704484; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .btn-primary { color: #fff; background: linear-gradient(150deg, #805195, #613973); box-shadow: 0 8px 18px #75428e33; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .btn-primary:hover { color: #fff; background: #583469; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.btn-soft, .btn-light) { color: #704484; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.btn-soft, .btn-light):hover { color: #583469; background: #e6d7ed; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero .btn-primary { color: #563367; background: #fff5e4; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero .btn-primary:hover { color: #563367; background: #ffe8bd; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero .btn-soft { color: #f7eafb; background: #ffffff1f; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .hero .btn-soft:hover { background: #ffffff33; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec :is(.lead, .job .dot li) { color: #eaddef; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.docs-head p, .ent p, .ent-stats dt) { color: #eaddef; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.dark-sec .chain, .home-doc figcaption span) { color: #e1bcf1; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec .ey { color: #eaddef; background: #ffffff1a; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec .mm .ey { color: #714889; background: #eee0f4; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] :is(.dark-sec .job .ico, .ent .ico) { color: #f6e7ff; background: #ffffff14; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .ent .tag { color: #f4c68a; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark-sec .job:hover { box-shadow: inset 0 0 0 1px #ddb0ed55, 0 24px 60px #ab6cbe26; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .docs-row li:hover .doc-paper { box-shadow: 0 0 0 2px #cda0df80, 0 28px 60px #75428e4d; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .pg :focus-visible { outline-color: #75428e; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .dark :focus-visible { outline-color: #f9dca3; }
+.public-home[data-home-event="halloween"][data-home-palette="plum"] .home-document-dialog::backdrop { background: #241b31cc; }
+
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] #pricing { background: radial-gradient(900px 460px at 50% 0, #f3dfc0, transparent 72%), #fffaf3; }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .dark-sec { background: radial-gradient(ellipse at 95% 0, #e6a04e38, transparent 60%), linear-gradient(135deg, #3e2b24, #684630); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] :is(.mm, .safe) { background: linear-gradient(140deg, #fae8cd, #fffdf9 65%); }
+.public-home[data-home-event="halloween"][data-home-palette="pumpkin"] .ent { background: radial-gradient(ellipse at 100% 0, #e1aa6940, transparent 65%), linear-gradient(150deg, #754a2d, #432d24); }
+
+.public-home[data-home-event="halloween"] #faq,
+.public-home[data-home-event="halloween"] .foot { position: relative; }
+.public-home[data-home-event="halloween"] .home-event-art { pointer-events: none; user-select: none; position: absolute; }
+.public-home[data-home-event="halloween"] .home-event-art :where(img) { display: block; height: auto; max-width: none; }
+.public-home[data-home-event="halloween"] .home-event-hero { inset: 0; overflow: clip; }
+.public-home[data-home-event="halloween"] .home-event-broom { position: absolute; width: clamp(190px, 21vw, 290px); top: 240px; left: max(20px, calc(50% - 570px)); transform: rotate(-6deg); }
+.public-home[data-home-event="halloween"] .home-event-ghost { position: absolute; width: 132px; top: 300px; right: max(28px, calc(50% - 540px)); transform: rotate(8deg); }
+.public-home[data-home-event="halloween"] .home-event-moon { position: absolute; width: 68px; height: 68px; top: 122px; right: 12%; border-radius: 50%; background: #ffe7b4; box-shadow: 0 0 48px 16px #f5b44420, inset -12px -8px 0 #efc98d; opacity: .78; }
+.public-home[data-home-event="halloween"] .home-event-star { position: absolute; width: 11px; height: 11px; fill: #f5cd8d; opacity: .55; }
+.public-home[data-home-event="halloween"] .home-event-star:nth-of-type(even) { width: 6px; height: 6px; }
+.public-home[data-home-event="halloween"] .home-event-stage { display: none; }
+.public-home[data-home-event="halloween"] .home-event-faq { right: 6%; top: -55px; z-index: 2; }
+.public-home[data-home-event="halloween"] .home-event-peeking { width: 138px; }
+.public-home[data-home-event="halloween"] .home-event-footer { inset: 0; }
+.public-home[data-home-event="halloween"] .home-event-pumpkin { position: absolute; right: 6%; top: -78px; width: 112px; transform-origin: 50% 90%; }
+.public-home[data-home-event="halloween"] .home-event-footer-ghost { display: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .public-home[data-home-event="halloween"] .home-event-broom,
+  .public-home[data-home-event="halloween"] .home-event-broom-mobile { animation: home-event-broom-float 7s ease-in-out infinite; }
+  .public-home[data-home-event="halloween"] .home-event-ghost,
+  .public-home[data-home-event="halloween"] .home-event-footer-ghost { animation: home-event-ghost-float 5.5s ease-in-out infinite; }
+  .public-home[data-home-event="halloween"] .home-event-peeking { animation: home-event-peek 6s ease-in-out infinite; }
+  .public-home[data-home-event="halloween"] .home-event-pumpkin { animation: home-event-pumpkin-rock 5s ease-in-out infinite; }
+  .public-home[data-home-event="halloween"] .home-event-star { animation: home-event-starlight 6s ease-in-out infinite; }
+}
+@keyframes home-event-broom-float { 0%, 100% { transform: translate(0, 0) rotate(-6deg); } 50% { transform: translate(12px, -16px) rotate(-2deg); } }
+@keyframes home-event-ghost-float { 0%, 100% { transform: translateY(0) rotate(8deg); } 50% { transform: translateY(-14px) rotate(2deg); } }
+@keyframes home-event-peek { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-5px) rotate(2deg); } }
+@keyframes home-event-pumpkin-rock { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes home-event-starlight { 0%, 100% { opacity: .35; } 50% { opacity: .75; } }
+.public-home:has(#home-event-pause:checked) [data-event-art] * { animation-play-state: paused; }
+
+.public-home[data-home-event="halloween"] .home-event-interactions { position: fixed; inset: 0; z-index: 19; overflow: clip; pointer-events: none; user-select: none; }
+.public-home[data-home-event="halloween"] .home-event-slide-ghost { position: absolute; top: 0; right: 2px; width: 40px; height: auto; opacity: 0; }
+.public-home[data-home-event="halloween"] .home-event-burst { position: absolute; }
+.public-home[data-home-event="halloween"] .home-event-bat { position: absolute; left: -15px; top: -9px; animation: home-event-bat-scatter 1.2s ease-out both; }
+.public-home[data-home-event="halloween"] .home-event-bat svg { display: block; width: 100%; overflow: visible; fill: #443047; stroke: #edc997; stroke-width: .7; }
+.public-home[data-home-event="halloween"] .home-event-bat-wings { transform-origin: 20px 12px; animation: home-event-bat-flap .16s ease-in-out infinite alternate; }
+@keyframes home-event-bat-scatter {
+  0% { opacity: 0; transform: translate(0, 0) scale(1.05); }
+  12% { opacity: .95; }
+  65% { opacity: .8; }
+  100% { opacity: 0; transform: translate(var(--bat-x), var(--bat-y)) rotate(var(--bat-angle)) scale(.8); }
+}
+@keyframes home-event-bat-flap { to { transform: scaleY(.4); } }
+.public-home:has(#home-event-pause:checked) .home-event-interactions { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .public-home[data-home-event="halloween"] .home-event-interactions { display: none; }
+  .public-home[data-home-event="halloween"] .home-event-bat,
+  .public-home[data-home-event="halloween"] .home-event-bat-wings { animation: none; }
+}
+
+/* The review controls exist only in development preview mode. */
+.public-home .home-event-tools { position: fixed; left: 72px; bottom: 24px; z-index: 60; width: 254px; border: 1px solid #e9d8b9; border-radius: 18px; background: #fffcf5; color: #244433; box-shadow: 0 8px 36px #122b262e; font-family: var(--font-family-sans); font-size: 14px; line-height: 1.6; }
+.public-home .home-event-tools summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 14px; cursor: pointer; font-weight: 600; list-style: none; }
+.public-home .home-event-tools summary::-webkit-details-marker { display: none; }
+.public-home .home-event-tool-dot { width: 8px; height: 8px; border-radius: 50%; background: #e99535; }
+.public-home .home-event-chevron { margin-left: auto; }
+.public-home .home-event-tools[open] .home-event-chevron { transform: rotate(180deg); }
+.public-home .home-event-tools nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px; }
+.public-home .home-event-tools nav a { display: grid; place-items: center; min-height: 44px; padding: 6px 10px; border-radius: 10px; background: #f1eee5; color: #324d3c; font-weight: 600; }
+.public-home .home-event-tools nav a[aria-current] { background: #24523b; color: #fff8e8; }
+.public-home .home-event-palettes { margin-top: 10px; }
+.public-home .home-event-palettes p { margin: 0 14px 6px; font-size: 12px; }
+.public-home .home-event-palettes nav { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.public-home .home-event-palettes nav a { min-height: 60px; padding: 7px 2px; gap: 4px; font-size: 12px; white-space: nowrap; }
+.public-home .home-event-swatch { width: 18px; height: 18px; border: 1px solid #ffffff66; border-radius: 50%; }
+.public-home .home-event-swatch-forest { background: linear-gradient(135deg, #143b2a, #be924b); }
+.public-home .home-event-swatch-pumpkin { background: linear-gradient(135deg, #fff7e9, #e9b874); }
+.public-home .home-event-swatch-plum { background: linear-gradient(135deg, #34253e, #b681ac); }
+.public-home .home-event-motion { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 12px; cursor: pointer; }
+.public-home .home-event-motion input { width: 16px; height: 16px; accent-color: #24523b; }
+.public-home .home-event-motion:has(input:disabled) { opacity: .5; cursor: default; }
+.public-home .home-event-tools :focus-visible { outline: 2px solid #267449; outline-offset: 3px; }
+@container (max-width: 1100px) {
+  .public-home[data-home-event="halloween"] .home-event-broom,
+  .public-home[data-home-event="halloween"] .home-event-ghost { display: none; }
+  .public-home[data-home-event="halloween"] .home-event-moon { width: 42px; height: 42px; right: 3%; top: 85px; opacity: .4; }
+  .public-home[data-home-event="halloween"] .home-event-stage { display: block; left: 0; bottom: -24px; z-index: 2; }
+  .public-home[data-home-event="halloween"] .home-event-broom-mobile { width: 180px; }
+}
+@container (max-width: 700px) {
+  .public-home[data-home-event="halloween"] .home-event-moon { width: 24px; height: 24px; top: 79px; right: 20px; opacity: .5; }
+  .public-home[data-home-event="halloween"] .home-event-star { width: 6px; height: 6px; opacity: .35; }
+  .public-home[data-home-event="halloween"] .home-event-stage { left: -4px; bottom: 0; }
+  .public-home[data-home-event="halloween"] .home-event-broom-mobile { width: 160px; }
+  .public-home[data-home-event="halloween"] .home-event-faq { top: -36px; right: 20px; }
+  .public-home[data-home-event="halloween"] .home-event-peeking { width: 94px; }
+  .public-home[data-home-event="halloween"] .home-event-pumpkin { top: -60px; right: 18px; width: 86px; }
+  .public-home[data-home-event="halloween"] .home-event-footer-ghost { display: block; position: absolute; top: -56px; left: 20px; width: 72px; }
+}
+@media (max-width: 700px) {
+  .public-home .home-event-tools { left: 12px; bottom: calc(88px + env(safe-area-inset-bottom, 0px)); width: 224px; }
+}
