@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { HomeThemeModule } from './modules/public-home-theme/home-theme.module';
 import { DatabaseModule } from './common/database/database.module';
 import { ConfigModule } from './common/config/config.module';
 import { SecurityModule } from './common/security/security.module';
@@ -37,7 +38,7 @@ import { SalesConsoleModule } from './modules/sales-console/sales-console.module
 import { ExecutiveReportBuildModule } from './modules/executive-business/executive-report-build.module';
 
 @Module({
-  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule, ExecutiveBusinessModule, ExecutiveReportBuildModule],
+  imports: [HomeThemeModule, ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule, ExecutiveBusinessModule, ExecutiveReportBuildModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

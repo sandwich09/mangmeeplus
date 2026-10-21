@@ -88,6 +88,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'system.company_onboarding.regenerate_temporary_password', description: 'Regenerate customer owner temporary password', riskLevel: 'CRITICAL' },
   { key: 'system.line_binding.manage',  description: 'Manage customer LINE channel bindings', riskLevel: 'HIGH' },
   { key: 'system.shared_line_credential.manage', description: 'Read and replace shared Messaging credentials for the existing OA', riskLevel: 'CRITICAL' },
+  { key: 'system.home_theme.manage', description: 'Select the public homepage event presentation', riskLevel: 'HIGH' },
   // Item 10A partner management permissions
   { key: 'system.partner_dashboard.read',           description: 'Read partner company list and detail (metadata only)', riskLevel: 'MEDIUM' },
   { key: 'system.executive.read', description: 'ดูรายงานผู้บริหาร', riskLevel: 'MEDIUM' },
@@ -542,6 +543,7 @@ const STAFF_ROLE_GRANTS = [
 export const ROLE_GRANTS: Record<string, string[]> = {
   OWNER: COMPANY_PERMISSION_KEYS,
   SYSTEM_ADMIN: [
+    'system.home_theme.manage',
     'system.shared_line_credential.manage',
     ...BILLING_PERMISSIONS,
     ...EXECUTIVE_PERMISSION_KEYS,

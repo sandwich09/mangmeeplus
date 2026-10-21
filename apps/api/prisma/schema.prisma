@@ -4591,6 +4591,15 @@ model AiFxRate {
 
 // Platform-wide AI budget settings (spec §7.4). A single row, id 'platform'; when it is
 // absent the AI_MONTHLY_BUDGET_SATANG* env values apply unchanged.
+// One platform-wide presentation selection; only the public homepage consumes it.
+model PublicHomeThemeSetting {
+  id                         String   @id // 'homepage'
+  event                      String
+  version                    Int
+  updatedBySystemAdminUserId String
+  updatedAt                  DateTime @updatedAt
+}
+
 model PlatformAiBudgetConfig {
   id                         String   @id // 'platform'
   monthlyBudgetSatang        Int
