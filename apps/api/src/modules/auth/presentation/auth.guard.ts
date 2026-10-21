@@ -246,20 +246,18 @@ export class AuthGuard implements CanActivate {
       req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId, allowTermRecovery);
       req.context.sessionId = session.id;
     } catch (error) {
-      // The company-access screen can name the blocked destination without widening access to any
-      // company data endpoint. Other forbidden responses keep their existing shape.
+      // Name the destination only through the user's membership; otherwise keep existence hidden.
+      // Other forbidden responses keep their existing shape.
       if (error instanceof ForbiddenException && companyId && cleanPath === '/v1/auth/me') {
-        const company = await this.prisma.client.company.findUnique({
-          where: { id: companyId },
-          select: { name: true },
+        const membership = await this.prisma.client.companyMembership.findUnique({
+          where: { companyId_userId: { companyId, userId: session.userId } },
+          select: { company: { select: { name: true } } },
         }).catch(() => null);
-        if (company) {
-          throw new ForbiddenException({
-            code: (error.getResponse() as { code?: string }).code === 'company_membership_disabled' ? 'company_membership_disabled' : 'company_access_unavailable',
-            message: 'No access to the requested company.',
-            companyName: company.name,
-          });
-        }
+        throw new ForbiddenException({
+          code: membership && (error.getResponse() as { code?: string }).code === 'company_membership_disabled' ? 'company_membership_disabled' : 'company_access_unavailable',
+          message: 'No access to the requested company.',
+          ...(membership ? { companyName: membership.company.name } : {}),
+        });
       }
       throw error;
     }
