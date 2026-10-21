@@ -1,0 +1,142 @@
+TAP version 13
+# Subtest: HOME-PAGE server renders the owner H1, section outline, LINE handoffs and unchanged login route
+ok 1 - HOME-PAGE server renders the owner H1, section outline, LINE handoffs and unchanged login route
+  ---
+  duration_ms: 11.779625
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE JSON-LD parses, uses the request nonce, and FAQ answers equal the rendered FAQ exactly
+ok 2 - HOME-PAGE JSON-LD parses, uses the request nonce, and FAQ answers equal the rendered FAQ exactly
+  ---
+  duration_ms: 9.531459
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE monthly and annual prices, allowances, user and branch limits match the billing catalog in HTML and offers
+ok 3 - HOME-PAGE monthly and annual prices, allowances, user and branch limits match the billing catalog in HTML and offers
+  ---
+  duration_ms: 7.687333
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE package chooser fits people, receipts, branches and system tax needs
+ok 4 - HOME-PAGE package chooser fits people, receipts, branches and system tax needs
+  ---
+  duration_ms: 0.077916
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE all 17 local assets exist; informative pictures have Thai alternatives and fixed dimensions
+ok 5 - HOME-PAGE all 17 local assets exist; informative pictures have Thai alternatives and fixed dimensions
+  ---
+  duration_ms: 7.154541
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE keeps the artboard phone columns, safe bottom CTA, reduced motion and a viewport-bound native gallery
+ok 6 - HOME-PAGE keeps the artboard phone columns, safe bottom CTA, reduced motion and a viewport-bound native gallery
+  ---
+  duration_ms: 0.565875
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE choosing annual billing and a team size updates the rendered offer without submitting or navigating
+ok 7 - HOME-PAGE choosing annual billing and a team size updates the rendered offer without submitting or navigating
+  ---
+  duration_ms: 3.791625
+  type: 'test'
+  ...
+# Subtest: event selection accepts registered IDs and falls back safely for missing, repeated and unknown inputs
+ok 8 - event selection accepts registered IDs and falls back safely for missing, repeated and unknown inputs
+  ---
+  duration_ms: 0.326917
+  type: 'test'
+  ...
+# Subtest: seasonal decoration preserves all content and links, and default mounts no event artwork
+ok 9 - seasonal decoration preserves all content and links, and default mounts no event artwork
+  ---
+  duration_ms: 20.836792
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles
+ok 10 - HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles
+  ---
+  duration_ms: 1.857792
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 catalog prices, receipt quotas, branches and users agree with package.compare
+ok 11 - HOME-WIKI-V6 catalog prices, receipt quotas, branches and users agree with package.compare
+  ---
+  duration_ms: 0.248125
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 keeps Enterprise issuing separate from an optional-file outside certificate
+ok 12 - HOME-WIKI-V6 keeps Enterprise issuing separate from an optional-file outside certificate
+  ---
+  duration_ms: 0.112084
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 claims are submitted, approved, reimbursed then signed by claimant and approver
+ok 13 - HOME-WIKI-V6 claims are submitted, approved, reimbursed then signed by claimant and approver
+  ---
+  duration_ms: 0.058083
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 never promises the report module in sold packs
+ok 14 - HOME-WIKI-V6 never promises the report module in sold packs
+  ---
+  duration_ms: 0.168375
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 expiry/refunds stay conditional and only spending follows the home date range
+ok 15 - HOME-WIKI-V6 expiry/refunds stay conditional and only spending follows the home date range
+  ---
+  duration_ms: 0.131417
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 shop opening distinguishes owners/staff, pending requests and existing trials
+ok 16 - HOME-WIKI-V6 shop opening distinguishes owners/staff, pending requests and existing trials
+  ---
+  duration_ms: 0.175208
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE llms.txt is a public cacheable bilingual plain-text wiki
+ok 17 - HOME-PAGE llms.txt is a public cacheable bilingual plain-text wiki
+  ---
+  duration_ms: 16.849
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE llms-full.txt is a public cacheable bilingual plain-text wiki
+ok 18 - HOME-PAGE llms-full.txt is a public cacheable bilingual plain-text wiki
+  ---
+  duration_ms: 0.337375
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE robots explicitly admits search/AI crawlers and keeps private application areas out
+ok 19 - HOME-PAGE robots explicitly admits search/AI crawlers and keeps private application areas out
+  ---
+  duration_ms: 0.108792
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE robots: UAT and local are never indexed
+ok 20 - HOME-PAGE robots: UAT and local are never indexed
+  ---
+  duration_ms: 0.552667
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE sitemap contains only the public home, legal and AI-readable routes
+ok 21 - HOME-PAGE sitemap contains only the public home, legal and AI-readable routes
+  ---
+  duration_ms: 0.055916
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE preserves nonce rendering and public access, with exact owner SEO copy scoped to the root
+ok 22 - HOME-PAGE preserves nonce rendering and public access, with exact owner SEO copy scoped to the root
+  ---
+  duration_ms: 0.191
+  type: 'test'
+  ...
+1..22
+# tests 22
+# suites 0
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 622.987083

@@ -1,0 +1,45 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "width": 390,
+      "baseline": "identical"
+    },
+    {
+      "width": 1280,
+      "baseline": "identical"
+    },
+    {
+      "width": 360,
+      "halloween": "content/layout/overflow/reduced-motion pass"
+    },
+    {
+      "width": 390,
+      "halloween": "content/layout/overflow/reduced-motion pass"
+    },
+    {
+      "width": 768,
+      "halloween": "content/layout/overflow/reduced-motion pass"
+    },
+    {
+      "width": 1280,
+      "halloween": "content/layout/overflow/reduced-motion pass"
+    },
+    {
+      "width": 1536,
+      "halloween": "content/layout/overflow/reduced-motion pass"
+    },
+    {
+      "interactions": "animation/pause/client theme switch/pricing/FAQ/document dialog pass"
+    },
+    {
+      "route": "/login",
+      "isolation": "no event DOM or asset requests after navigation"
+    },
+    {
+      "route": "/privacy",
+      "isolation": "no event DOM or asset requests after navigation"
+    }
+  ],
+  "pageErrors": []
+}

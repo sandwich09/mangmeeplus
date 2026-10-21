@@ -301,3 +301,4 @@ export * from './executive-business.js';
 export * from './executive-report-words.js';
 
 export * from './company-team-note.js';
+export * from './home-theme.js';
