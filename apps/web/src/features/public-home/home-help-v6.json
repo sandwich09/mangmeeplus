@@ -1,0 +1,481 @@
+{
+  "sourcePackHash": "0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0",
+  "cards": [
+    {
+      "id": "expense.start",
+      "titleTh": "เริ่มบันทึกค่าใช้จ่าย",
+      "answerTh": "เลือกสาขาและช่องทางที่มีสิทธิ์ รับใบเสร็จเป็นร่างแล้วตรวจ ยืนยัน และบันทึกจ่ายแยกกัน",
+      "titleEn": "Start an expense",
+      "answerEn": "Choose an allowed branch and channel; review the draft, confirm and record payment separately."
+    },
+    {
+      "id": "expense.status",
+      "titleTh": "สถานะเอกสารกับสถานะจ่ายเงิน",
+      "answerTh": "สถานะตรวจเอกสารและสถานะจ่ายแยกกัน ยืนยันแล้วอาจยังไม่จ่าย",
+      "titleEn": "Document and payment status",
+      "answerEn": "Document review and payment have separate statuses; confirmation does not mean paid."
+    },
+    {
+      "id": "expense.find",
+      "titleTh": "ค้นหารายการค่าใช้จ่าย",
+      "answerTh": "เลือกช่วงเวลาและสถานะ ค้นหาผู้ขายหรือเลขที่เอกสาร แล้วเปิดรายละเอียด",
+      "titleEn": "Find expenses",
+      "answerEn": "Filter dates and status, search seller or document number, then open the record."
+    },
+    {
+      "id": "expense.draft",
+      "titleTh": "ร่างต่างจากยืนยันแล้วอย่างไร",
+      "answerTh": "ร่างยังแก้ได้ หลังยืนยันใช้แก้ไขเอกสารตามสิทธิ์และเงื่อนไขโดยใช้เลขเดิม",
+      "titleEn": "Drafts and confirmation",
+      "answerEn": "Edit drafts; authorized corrections after confirmation retain the document number and follow linked-record conditions."
+    },
+    {
+      "id": "expense.vat-display",
+      "titleTh": "VAT ที่พบในเอกสารหมายถึงอะไร",
+      "answerTh": "VAT ที่พบยังไม่ใช่สิทธิ์ภาษีซื้อ ต้องตรวจประเภทและเงื่อนไขก่อนยื่น",
+      "titleEn": "VAT displayed on expenses",
+      "answerEn": "Detected VAT is not automatically claimable input VAT; check document type and eligibility."
+    },
+    {
+      "id": "expense.export",
+      "titleTh": "ส่งเอกสารให้นักบัญชี",
+      "answerTh": "ตรวจและยืนยันรายการก่อน ผู้มีสิทธิ์ส่งออกชุดข้อมูลและหลักฐานบนเว็บให้นักบัญชี",
+      "titleEn": "Accountant export",
+      "answerEn": "Review and confirm records; an authorized user exports records and evidence on the web for the accountant."
+    },
+    {
+      "id": "reimbursement.meaning",
+      "titleTh": "ใบเบิกคืออะไร",
+      "answerTh": "ใบเบิกขอเงินที่สำรองจ่าย คืนตามขั้นตอน ส่งอนุมัติ จ่ายคืน แล้วเซ็น",
+      "titleEn": "What a claim means",
+      "answerEn": "A claim requests reimbursement of an advance: submit, approve, reimburse, then sign."
+    },
+    {
+      "id": "reimbursement.roles",
+      "titleTh": "ทำไมเห็นแท็บเบิกจ่ายไม่เหมือนกัน",
+      "answerTh": "แท็บใบเบิกขึ้นกับหน้าที่และสิทธิ์ ขอให้เจ้าของกิจการตรวจสิทธิ์โดยใช้ใบเดิมต่อ",
+      "titleEn": "Claim roles",
+      "answerEn": "Claim tabs follow roles and permissions; ask the owner to review access and continue the existing claim."
+    },
+    {
+      "id": "substitute.meaning",
+      "titleTh": "ใบรับรองแทนใบเสร็จคืออะไร",
+      "answerTh": "ใบรับรองแทนใบเสร็จใช้เมื่อจ่ายจริงเพื่อร้านแต่เอกสารผู้รับเงินไม่ครบ",
+      "titleEn": "Substitute receipts",
+      "answerEn": "Use for an actual business payment when the payee cannot provide complete receipt evidence."
+    },
+    {
+      "id": "substitute.evidence",
+      "titleTh": "หลักฐานประกอบกับหลักฐานการจ่าย",
+      "answerTh": "หลักฐานประกอบบอกว่าซื้ออะไร หลักฐานการจ่ายบอกว่าจ่ายจริง ต้องตรวจทั้งสองส่วน",
+      "titleEn": "Two kinds of evidence",
+      "answerEn": "Supporting evidence explains the purchase; payment evidence proves payment; check both."
+    },
+    {
+      "id": "substitute.review-sign",
+      "titleTh": "อ่านเอกสารก่อนเซ็น",
+      "answerTh": "อ่านฉบับเต็มก่อนเซ็นหรืออนุมัติ ถ้าเซ็นกระดาษ ผู้ตรวจอ่านทุกหน้าก่อนตรวจรับ",
+      "titleEn": "Review before signing",
+      "answerEn": "Read the full document before signing or approving; review every uploaded paper page before acceptance."
+    },
+    {
+      "id": "report.access",
+      "titleTh": "รายงานที่แต่ละคนเรียกดูได้",
+      "answerTh": "รายงานไม่รวมในแพ็กที่ขาย ร้านที่เปิดแยกไว้ยังต้องมีสิทธิ์ดูและส่งออก",
+      "titleEn": "Report access",
+      "answerEn": "Reports are not included in sold packages; separately enabled reports still require view and export permissions."
+    },
+    {
+      "id": "voucher.meaning",
+      "titleTh": "ใบสำคัญจ่ายคืออะไร ทำไมต้องทำ",
+      "answerTh": "ใบเตรียมจ่ายรวมรายจ่ายผู้รับเงินคนเดียว เมื่อจ่ายจริงและบันทึกแล้วเป็นใบสำคัญจ่าย",
+      "titleEn": "Voucher meaning",
+      "answerEn": "Preparation groups one payee's expenses; after actual payment and recording it becomes a payment voucher."
+    },
+    {
+      "id": "wht.certificate-meaning",
+      "titleTh": "50 ทวิคืออะไร",
+      "answerTh": "50 ทวิบอกยอดจ่ายและภาษีที่หักไว้ การยื่นและนำส่งเป็นอีกขั้นตอน",
+      "titleEn": "What 50 bis means",
+      "answerEn": "A 50 bis certificate states payment and withholding; filing and remittance are separate."
+    },
+    {
+      "id": "wht.pnd53-due",
+      "titleTh": "ภงด.53 ต้องยื่นเมื่อไหร่",
+      "answerTh": "ร้านที่เปิดใช้ตรวจวันครบกำหนดในงวด ถ้าไม่ตั้งไว้ใช้วันที่ 7 เดือนถัดไปสำหรับกระดาษ",
+      "titleEn": "PND 53 due date",
+      "answerEn": "Enabled shops check the period's due date; an unset paper-form date defaults to the seventh of the next month."
+    },
+    {
+      "id": "wht.calculation",
+      "titleTh": "หัก ณ ที่จ่ายคิดอย่างไร",
+      "answerTh": "ใช้ยอดก่อน VAT คูณอัตราประเภทเงินได้ ต้องเลือกจ่ายค่าอะไรให้ตรง",
+      "titleEn": "Withholding calculation",
+      "answerEn": "Multiply the pre-VAT amount by the selected income-type rate; choose the actual payment purpose."
+    },
+    {
+      "id": "shop.open",
+      "titleTh": "เปิดร้านหรือเปิดร้านเพิ่ม",
+      "answerTh": "เจ้าของกิจการพิมพ์เปลี่ยนบริษัทแล้วเปิดร้านใหม่เมื่อรับสมัคร ถ้ามีคำขอค้างตรวจคำขอเดิม",
+      "titleEn": "Open another shop",
+      "answerEn": "An owner types “เปลี่ยนบริษัท” and selects “เปิดร้านใหม่” when signup is open; check any pending request first."
+    },
+    {
+      "id": "shop.staff-open",
+      "titleTh": "พนักงานอยากเปิดร้านของตัวเอง",
+      "answerTh": "พนักงานใช้แพ็กเกจและราคา หรือพิมพ์โปรโมชั่นเพื่อดูทางสมัคร ปุ่มเปิดร้านใหม่เป็นของเจ้าของกิจการ",
+      "titleEn": "Staff opening a shop",
+      "answerEn": "Staff use “แพ็กเกจและราคา” or type “โปรโมชั่น” for signup; the company-card new-shop button is for owners."
+    },
+    {
+      "id": "shop.link-line",
+      "titleTh": "เชื่อมบัญชีกับ LINE",
+      "answerTh": "ผู้จัดการพนักงานส่งลิงก์ให้เปิดด้วย LINE ของเจ้าของบัญชี ขอใหม่ได้ถ้าหมดอายุ",
+      "titleEn": "Link LINE",
+      "answerEn": "An authorized staff manager sends a link; open it with your own LINE account and request a new one if expired."
+    },
+    {
+      "id": "shop.web-login",
+      "titleTh": "เปิดร้านบนเว็บ",
+      "answerTh": "พิมพ์เปลี่ยนบริษัทแล้วกดเปิดเว็บบริษัทนี้ ลิงก์ใช้กับบัญชีของผู้รับเท่านั้น",
+      "titleEn": "Open the web app",
+      "answerEn": "Type “เปลี่ยนบริษัท”, select “เปิดเว็บบริษัทนี้”; the personal link signs in only its recipient."
+    },
+    {
+      "id": "shop.switch",
+      "titleTh": "สลับร้านใน LINE",
+      "answerTh": "พิมพ์เปลี่ยนบริษัท เลือกร้านที่เป็นสมาชิก ตรวจชื่อก่อนส่งรูปหรือถามยอด",
+      "titleEn": "Switch shops",
+      "answerEn": "Type “เปลี่ยนบริษัท”, select a member shop and check its name before sending evidence or asking totals."
+    },
+    {
+      "id": "branch.manage",
+      "titleTh": "เพิ่มหรือแก้สาขา",
+      "answerTh": "ผู้มีสิทธิ์เปิดตั้งค่าร้าน สาขา เพิ่มหรือแก้ตามจำนวนแพ็ก สาขาเลิกใช้ปิดใช้งานได้",
+      "titleEn": "Manage branches",
+      "answerEn": "Authorized users manage branches in shop settings within package limits; disable unused branches."
+    },
+    {
+      "id": "staff.invite",
+      "titleTh": "เพิ่มพนักงานและเชื่อม LINE",
+      "answerTh": "เพิ่มพนักงาน เลือกหน้าที่และสาขา แล้วส่งลิงก์ให้เจ้าของบัญชีเชื่อม LINE ของตน",
+      "titleEn": "Invite staff",
+      "answerEn": "Create the employee, assign role and branch, then send a link to connect their own LINE account."
+    },
+    {
+      "id": "staff.roles",
+      "titleTh": "กำหนดหน้าที่และสิทธิ์",
+      "answerTh": "กำหนดหน้าที่พนักงาน เลือกงานและสาขาที่รับผิดชอบภายในสิทธิ์ของผู้มอบหมาย",
+      "titleEn": "Assign roles",
+      "answerEn": "Assign duties and branches within the assigning user's own permissions."
+    },
+    {
+      "id": "staff.missing-access",
+      "titleTh": "เมนูหรือสิทธิ์ไม่เหมือนกัน",
+      "answerTh": "เมนูขึ้นกับแพ็ก ช่องทางและสิทธิ์ แจ้งเจ้าของกิจการถึงงานและสาขาที่ต้องใช้",
+      "titleEn": "Missing access",
+      "answerEn": "Menus depend on package, enabled channels and permissions; tell the owner the duty and branch needed."
+    },
+    {
+      "id": "package.compare",
+      "titleTh": "แต่ละแพ็กเกจต่างกันอย่างไร",
+      "answerTh": "แพ็ก 249/499/999 ใช้เมนูหลักเหมือนกัน รุ่น 1,999 เพิ่ม ภ.ง.ด.53 และ 50 ทวิในระบบ",
+      "titleEn": "Compare packages",
+      "answerEn": "The 249/499/999 tiers share core menus; Enterprise adds PND 53 and in-system 50 bis; see the catalog above for limits."
+    },
+    {
+      "id": "package.quota",
+      "titleTh": "นับจำนวนใบเสร็จอย่างไร",
+      "answerTh": "นับเมื่อ AI อ่านและบันทึกผลสำเร็จ แก้เองใช้ผลเดิม รายปีได้สิทธิ์ทั้งรอบตั้งแต่เริ่ม",
+      "titleEn": "Receipt allowance",
+      "answerEn": "Count successful AI reads saved to the system; corrections reuse the result; annual reads are granted upfront."
+    },
+    {
+      "id": "package.buy",
+      "titleTh": "ซื้อแพ็กเกจ",
+      "answerTh": "เลือกข้อเสนอที่เปิดขาย ตรวจราคา รอบและจำนวน แล้วผู้ซื้อยืนยันจ่ายบนเว็บ",
+      "titleEn": "Buy a package",
+      "answerEn": "Choose an available offer, review price, period and allowance, then personally confirm payment on the web."
+    },
+    {
+      "id": "package.renew",
+      "titleTh": "ต่ออายุแพ็กเกจ",
+      "answerTh": "ซื้อแพ็กเดิมเพิ่มสิทธิ์อ่านและต่อจากวันหมดอายุเดิม ถ้าหมดแล้วเริ่มวันที่จ่าย",
+      "titleEn": "Renew a package",
+      "answerEn": "A repeat purchase adds reads and extends the existing expiry; if already expired, it starts on payment day."
+    },
+    {
+      "id": "package.change",
+      "titleTh": "เปลี่ยนแพ็กเกจ",
+      "answerTh": "เพิ่มระดับมีผลหลังจ่ายส่วนต่าง วันหมดอายุเดิม ลดระดับมีผลจบรอบ ตรวจจำนวนผู้ใช้และสาขา",
+      "titleEn": "Change a package",
+      "answerEn": "Upgrade after paying the difference with the same expiry; downgrade at period end; check user and branch limits."
+    },
+    {
+      "id": "package.expiry",
+      "titleTh": "หมดอายุแล้วข้อมูลอยู่ไหม",
+      "answerTh": "เมื่อไม่มีแพ็กหรือหมดอายุ งานธุรกิจพัก ข้อมูลเก็บตามนโยบาย ขอเข้าถึงหรือข้อมูลจากทีมงาน ลบต้องขอแยก",
+      "titleEn": "Expiry and data",
+      "answerEn": "Without a package or after expiry, business work pauses; policy governs retention; contact support for access/data or a separate deletion request."
+    },
+    {
+      "id": "line.receipt",
+      "titleTh": "ส่งใบเสร็จใน LINE",
+      "answerTh": "ส่งรูปชัด เลือกสาขาถ้ามีหลายสาขา ตรวจร่างก่อนยืนยันและบันทึกจ่ายแยกกัน",
+      "titleEn": "Send a receipt",
+      "answerEn": "Send a clear image, choose the branch if needed, review the draft and handle confirmation and payment separately."
+    },
+    {
+      "id": "line.multiple",
+      "titleTh": "ส่งใบเสร็จหลายใบ",
+      "answerTh": "ส่งรูปแต่ละใบให้ชัด รอผลจากรูปเดิม แล้วตรวจจำนวนรายการกับยอดก่อนยืนยัน",
+      "titleEn": "Multiple receipts",
+      "answerEn": "Send clear images, await results from the existing uploads, then verify record counts and amounts."
+    },
+    {
+      "id": "line.totals",
+      "titleTh": "ถามยอดรายจ่าย",
+      "answerTh": "ระบุช่วงวันและสาขา ระบบตอบรายจ่ายและค้างจ่ายตามสิทธิ์และคำถาม",
+      "titleEn": "Ask spending totals",
+      "answerEn": "Specify dates and branch; expense and outstanding totals follow permissions and the question."
+    },
+    {
+      "id": "line.support",
+      "titleTh": "ติดต่อทีมงาน",
+      "answerTh": "พิมพ์ติดต่อเจ้าหน้าที่ แจ้งร้านกับปัญหา เก็บรหัสผ่านและรหัสยืนยันไว้กับตัว",
+      "titleEn": "Contact support",
+      "answerEn": "Type “ติดต่อเจ้าหน้าที่” with shop and issue details; keep passwords and verification codes private."
+    },
+    {
+      "id": "expense.confirm",
+      "titleTh": "ตรวจและยืนยันรายจ่าย",
+      "answerTh": "ตรวจผู้ขาย วันที่ ยอด ภาษีและหลักฐาน ผู้มีสิทธิ์ยืนยันเอกสาร จ่ายเป็นอีกขั้น",
+      "titleEn": "Confirm an expense",
+      "answerEn": "Check seller, dates, amount, tax and evidence; an authorized user confirms; payment is separate."
+    },
+    {
+      "id": "expense.correct",
+      "titleTh": "แก้รายจ่ายที่ยืนยันแล้ว",
+      "answerTh": "ใช้แก้ไขเอกสารตามสิทธิ์และเงื่อนไข งานเชื่อมมีเหตุผลและทางแก้ให้ใช้รายการเดิมต่อ",
+      "titleEn": "Correct a confirmed expense",
+      "answerEn": "Use the authorized correction flow; linked work may impose conditions and a route to continue the same record."
+    },
+    {
+      "id": "expense.void-help",
+      "titleTh": "ยกเลิกรายจ่าย",
+      "answerTh": "ประวัติจ่ายและเอกสารเชื่อมยังเก็บไว้ ใช้ยกเลิกเอกสารพร้อมเหตุผลตามสิทธิ์และเงื่อนไข",
+      "titleEn": "Void an expense",
+      "answerEn": "Payment and linked-document history remains; authorized voiding requires a reason and record conditions."
+    },
+    {
+      "id": "expense.duplicates",
+      "titleTh": "ตรวจบิลที่อาจซ้ำ",
+      "answerTh": "เทียบผู้ขาย เลขที่ วันและยอด ถ้าคนละรายการยืนยันพร้อมเหตุผล ถ้าใบเดียวใช้รายการเดิม",
+      "titleEn": "Possible duplicates",
+      "answerEn": "Compare seller, number, date and amount; explain distinct purchases or continue the same existing record."
+    },
+    {
+      "id": "expense.categories",
+      "titleTh": "เพิ่มหมวดหมู่รายจ่าย",
+      "answerTh": "เพิ่มหมวดหมู่ได้ตามสิทธิ์ หมวดร้านแก้ชื่อได้ หมวดระบบใช้ชื่อมาตรฐาน",
+      "titleEn": "Expense categories",
+      "answerEn": "Authorized users add categories; shop categories can be renamed while system categories keep standard names."
+    },
+    {
+      "id": "expense.vendors",
+      "titleTh": "จัดการคู่ค้าและข้อมูลผู้ขาย",
+      "answerTh": "ค้นหาคู่ค้าเดิมก่อนเพิ่ม ตรวจชื่อ ที่อยู่และเลขภาษีจากเอกสารจริง",
+      "titleEn": "Vendors",
+      "answerEn": "Search existing vendors first; verify name, address and tax number from actual documents before saving."
+    },
+    {
+      "id": "expense.vat-credit",
+      "titleTh": "VAT ใช้เป็นภาษีซื้อได้ไหม",
+      "answerTh": "ตรวจประเภทและเงื่อนไขสิทธิ์ภาษีซื้อ มีตัวจริงแต่ไม่มีรูปเลือกไว้แล้วแนบทีหลังได้",
+      "titleEn": "Input VAT eligibility",
+      "answerEn": "Check document type and VAT eligibility; retain an original-paper declaration and attach its image later."
+    },
+    {
+      "id": "payment.record",
+      "titleTh": "บันทึกว่าจ่ายรายจ่ายแล้ว",
+      "answerTh": "ตรวจผู้รับเงิน ยอด วันและวิธีจ่าย จ่ายเงินจริงก่อนกลับมาบันทึกในระบบ",
+      "titleEn": "Record a payment",
+      "answerEn": "Check payee, amount, date and method; transfer or pay cash before recording the payment."
+    },
+    {
+      "id": "payment.slip",
+      "titleTh": "แนบหลักฐานการจ่าย",
+      "answerTh": "เพิ่มหลักฐานในประวัติการจ่ายครั้งเดิม ตรวจยอดและวันที่ให้ตรง",
+      "titleEn": "Payment evidence",
+      "answerEn": "Attach evidence to the original payment history entry and match its amount and date."
+    },
+    {
+      "id": "payment.partial",
+      "titleTh": "จ่ายบางส่วน",
+      "answerTh": "บันทึกยอดจ่ายจริงแต่ละครั้ง ระบบเก็บประวัติและยอดค้าง แล้วบันทึกส่วนที่เหลือ",
+      "titleEn": "Partial payments",
+      "answerEn": "Record each actual instalment; history and outstanding balance remain until later payments are recorded."
+    },
+    {
+      "id": "claim.create",
+      "titleTh": "สร้างใบเบิก",
+      "answerTh": "ใส่รายการสำรองจ่าย หลักฐานและวิธีรับคืน ตรวจร่าง ส่งอนุมัติ จ่ายคืนแล้วเซ็น",
+      "titleEn": "Create a claim",
+      "answerEn": "Enter advances, evidence and reimbursement method; review, submit for approval, reimburse, then sign."
+    },
+    {
+      "id": "claim.approve",
+      "titleTh": "อนุมัติหรือไม่อนุมัติใบเบิก",
+      "answerTh": "ผู้มีสิทธิ์ตรวจรายการและหลักฐานก่อนตัดสิน ส่งกลับพร้อมเหตุผลได้ จ่ายหลังอนุมัติ",
+      "titleEn": "Approve a claim",
+      "answerEn": "Authorized approvers review items and evidence, return with a reason if needed; payment follows approval."
+    },
+    {
+      "id": "claim.pay",
+      "titleTh": "จ่ายคืนตามใบเบิก",
+      "answerTh": "ตรวจบัญชีและยอด จ่ายจริงก่อนบันทึก ถ้า LINE ขอหลักฐาน ให้ตรวจการ์ดก่อนยืนยัน",
+      "titleEn": "Reimburse a claim",
+      "answerEn": "Verify payout account and amount, pay first, then record; review any LINE evidence confirmation card."
+    },
+    {
+      "id": "claim.sign",
+      "titleTh": "เซ็นใบเบิกหลังจ่าย",
+      "answerTh": "หลังจ่ายคืน ผู้เบิกและผู้อนุมัติเซ็นตามหน้าที่ หรือแนบกระดาษที่เซ็นครบ",
+      "titleEn": "Sign a paid claim",
+      "answerEn": "After reimbursement, claimant and approver sign for their roles, or provide a fully signed paper copy."
+    },
+    {
+      "id": "claim.payout",
+      "titleTh": "บัญชีรับเงินคืน",
+      "answerTh": "จัดการบัญชีรับคืนของตน ใบที่ส่งแล้วเก็บบัญชีของใบนั้น แม้เปลี่ยนบัญชีประจำ",
+      "titleEn": "Payout account",
+      "answerEn": "Manage your payout accounts; a submitted claim retains its selected account even after a default-account change."
+    },
+    {
+      "id": "claim.send-back",
+      "titleTh": "ส่งใบเบิกกลับไปแก้บัญชี",
+      "answerTh": "ถ้าบัญชีผิดก่อนจ่าย ผู้มีสิทธิ์ส่งกลับแก้บัญชีแล้วตรวจใหม่ก่อนโอน",
+      "titleEn": "Return for account correction",
+      "answerEn": "Before payment, authorized staff return a wrong account for correction and review it again before transfer."
+    },
+    {
+      "id": "claim.cancel",
+      "titleTh": "ยกเลิกใบเบิก",
+      "answerTh": "ยกเลิกตามสิทธิ์พร้อมเหตุผล ถ้ารายจ่ายเดิมถูกยกเลิก ให้ยกเลิกใบเบิกแล้วทำใหม่",
+      "titleEn": "Cancel a claim",
+      "answerEn": "Cancel with a reason under the applicable permissions; if projected expenses were voided, cancel and create a new claim."
+    },
+    {
+      "id": "voucher.create",
+      "titleTh": "สร้างใบเตรียมจ่าย",
+      "answerTh": "ช่องทางที่ร้านเปิดให้เลือกผู้รับเงินและรายจ่ายยืนยันแล้วที่ยังค้าง บันทึกร่างแล้วส่งอนุมัติ",
+      "titleEn": "Create payment preparation",
+      "answerEn": "Use an enabled channel; choose the payee and confirmed unpaid expenses, save a draft and submit for approval."
+    },
+    {
+      "id": "voucher.approve",
+      "titleTh": "อนุมัติใบเตรียมจ่าย",
+      "answerTh": "ผู้อนุมัติตรวจผู้รับเงินและรายการก่อนอนุมัติ ส่งกลับพร้อมเหตุผลได้ตามขั้นตอน",
+      "titleEn": "Approve payment preparation",
+      "answerEn": "The assigned approver checks payee and expenses, approving or returning with a reason as permitted."
+    },
+    {
+      "id": "voucher.pay",
+      "titleTh": "ใบสำคัญจ่ายเกิดเมื่อใด",
+      "answerTh": "หลังอนุมัติและจ่ายจริง บันทึกว่าจ่ายแล้ว ใบเปลี่ยนเป็นใบสำคัญจ่ายใช้เลขเดิม",
+      "titleEn": "Create a payment voucher",
+      "answerEn": "After approval and actual payment, record it as paid; the payment voucher keeps the same number."
+    },
+    {
+      "id": "substitute.create",
+      "titleTh": "ทำใบรับรองแทนใบเสร็จ",
+      "answerTh": "เลือกรายจ่ายหรือเริ่มใหม่ตามสิทธิ์ กรอกผู้รับเงิน เหตุผล รายการและหลักฐานก่อนออกใบ",
+      "titleEn": "Create a substitute receipt",
+      "answerEn": "Choose an expense or start an allowed record; complete payee, reason, items and evidence before issuance."
+    },
+    {
+      "id": "substitute.paper",
+      "titleTh": "เซ็นใบรับรองบนกระดาษ",
+      "answerTh": "แนบใบที่เซ็นกระดาษครบ ผู้ตรวจเปิดอ่านทุกหน้าก่อนตรวจรับบนเว็บ",
+      "titleEn": "Paper substitute signatures",
+      "answerEn": "Upload all required paper signatures; the reviewer reads every page before accepting on the web."
+    },
+    {
+      "id": "wht.outside",
+      "titleTh": "จดเลขที่ 50 ทวิที่ทำนอกระบบ",
+      "answerTh": "ทำใบนอกระบบแล้วจดเลขที่และวันที่ แนบรูปหรือพีดีเอฟได้ถ้ามีเพื่อค้นย้อนหลัง",
+      "titleEn": "External 50 bis",
+      "answerEn": "Make the certificate outside the system; record number and date, with an optional image or PDF for retrieval."
+    },
+    {
+      "id": "wht.system",
+      "titleTh": "ออก 50 ทวิในระบบ",
+      "answerTh": "Enterprise ที่เปิดใช้และผู้มีสิทธิ์ตรวจผู้รับเงิน เลขภาษี ที่อยู่และการจ่ายก่อนออกใบ",
+      "titleEn": "In-system 50 bis",
+      "answerEn": "Enterprise with issuing enabled and authorized staff checks payee, tax ID, address and payment before issuance."
+    },
+    {
+      "id": "report.run-help",
+      "titleTh": "เรียกและส่งออกรายงาน",
+      "answerTh": "แพ็กที่ขายไม่รวมรายงาน ร้านที่เปิดแยกและมีสิทธิ์จึงเรียกและส่งออกได้",
+      "titleEn": "Run reports",
+      "answerEn": "Reports are not in sold packages; only separately enabled shops with appropriate permissions can run or export them."
+    },
+    {
+      "id": "home.range",
+      "titleTh": "ดูรายจ่ายเดือนเก่าที่หน้าแรก",
+      "answerTh": "เลือกวันที่ ตั้งแต่และถึง เริ่มที่เดือนก่อน เฉพาะรายจ่ายตามช่วง อีกสองยอดรวมทุกช่วง",
+      "titleEn": "Home date range",
+      "answerEn": "Choose start/end dates, initially last month; only spending follows the range, while pending receipts and total unpaid span all dates."
+    },
+    {
+      "id": "notifications.read",
+      "titleTh": "ดูงานที่รอจากการแจ้งเตือน",
+      "answerTh": "เปิดกระดิ่งหรือการแจ้งเตือน แล้วเปิดเอกสารไปทำงานต่อ การอ่านยังไม่ทำรายการ",
+      "titleEn": "Notifications",
+      "answerEn": "Open the bell or notifications, then the document to act; reading a notice does not perform the action."
+    },
+    {
+      "id": "signature.setup",
+      "titleTh": "ตั้งค่าลายเซ็นของฉัน",
+      "answerTh": "เพิ่มภาพในลายเซ็นของฉัน แล้วกลับไปเซ็นเอกสารตามหน้าที่เมื่อถึงขั้นตอน",
+      "titleEn": "My signature",
+      "answerEn": "Register your own signature image, then sign the relevant document for your role at its signing step."
+    },
+    {
+      "id": "claim.submit",
+      "titleTh": "ส่งใบเบิกให้อนุมัติ",
+      "answerTh": "ตรวจรายการ หลักฐาน สาขาและวิธีรับคืนก่อนส่งอนุมัติ LINE ต้องตรวจการ์ดและยืนยันเอง",
+      "titleEn": "Submit a claim",
+      "answerEn": "Check items, evidence, branch and payout method; review and personally confirm any LINE submission card."
+    },
+    {
+      "id": "pnd53.prepare",
+      "titleTh": "เตรียม ภ.ง.ด.53 และบันทึกการยื่น",
+      "answerTh": "ร้านที่เปิดใช้ตรวจงวด ภ.ง.ด.53 และผู้รับเงินก่อนส่งออก การยื่นและนำส่งแยกจาก 50 ทวิ",
+      "titleEn": "Prepare PND 53",
+      "answerEn": "Enabled, authorized shops review the period and payees before export; filing and remittance are separate from 50 bis."
+    },
+    {
+      "id": "package.before-payment",
+      "titleTh": "เปิดร้านแล้วต้องซื้อทันทีไหม",
+      "answerTh": "สมัครแล้วตั้งค่าร้าน บัญชีและดูแพ็กได้ งานธุรกิจเริ่มหลังจ่าย สิทธิ์ทดลองเดิมใช้ถึงหมดช่วง",
+      "titleEn": "Before buying",
+      "answerEn": "Set up the shop and account before buying; business work starts after payment; existing trials run to their expiry."
+    },
+    {
+      "id": "package.cancellation",
+      "titleTh": "ยกเลิกแพ็กเกจหรือขอคืนเงิน",
+      "answerTh": "ยกเลิกมีผลจบรอบที่จ่าย คืนเงินทีมงานตรวจรายกรณี ติดต่อเจ้าหน้าที่เพื่อแจ้งคำขอ",
+      "titleEn": "Cancel or request a refund",
+      "answerEn": "Cancellation takes effect at paid-period end; support reviews refund requests individually; contact the team to apply."
+    },
+    {
+      "id": "package.payment-failure",
+      "titleTh": "ชำระต่ออายุไม่สำเร็จ",
+      "answerTh": "ต่ออายุจ่ายไม่สำเร็จมีผ่อนผันมาตรฐาน 7 วัน สิทธิ์อ่านรอบใหม่เพิ่มเมื่อจ่าย ขอทีมงานตรวจเงื่อนไขร้าน",
+      "titleEn": "Failed renewal payment",
+      "answerEn": "Standard failed-renewal grace is seven days; new-period reads arrive after payment; support checks shop-specific terms."
+    }
+  ]
+}

@@ -22,6 +22,9 @@ export function shouldOpenOutsideLine(url: string): boolean {
   const parsed = parse(url);
   if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) return false;
   const host = parsed.hostname.toLowerCase();
+  // Owner 2026-10-21: the public home moved from official.mangmeeplus.com to the root of mangmeeplus.com.
+  // That one page still opens inside LINE as before; every app page on the same host keeps opening outside.
+  if ((host === 'mangmeeplus.com' || host === 'www.mangmeeplus.com') && parsed.pathname === '/') return false;
   return !SKIP_HOSTS.has(host) && !host.endsWith('.line.me');
 }
 

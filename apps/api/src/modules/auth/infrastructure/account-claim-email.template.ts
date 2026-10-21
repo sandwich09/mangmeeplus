@@ -27,8 +27,8 @@ const CLAIM_TTL_HOURS_LABEL = '72 ชั่วโมง';
 const SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 const COMPANY_LEGAL_NAME = 'บริษัท มั่งมียั่งยืน จำกัด';
 const COMPANY_PHONE = 'โทร. 098-256-5628';
-const COMPANY_SITE = 'https://official.mangmeeplus.com';
-const COMPANY_SITE_LABEL = 'official.mangmeeplus.com';
+const COMPANY_SITE = 'https://mangmeeplus.com';
+const COMPANY_SITE_LABEL = 'mangmeeplus.com';
 const COMPANY_TAGLINE = 'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน';
 
 // Owner order 2026-08-31: the trial-benefits block and the LINE-invitation block were removed from

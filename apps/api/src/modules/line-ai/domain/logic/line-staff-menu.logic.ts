@@ -360,7 +360,7 @@ export function buildPackagePosterMessage(webBaseUrl: string | undefined, langua
  * An absent `url` simply drops that button, the fail-open every card here uses for an unusable URL.
  */
 export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', url?: string, language: LineReplyLanguage = 'th'): LineReplyMessage {
-  if (language === 'en') { return { type: 'text', text: 'Choose and pay for a package in the app; monthly packages start at 249 THB, with the business package at 1,999 THB including supported tax documents.', quickReply: { items: [ ...(url ? [{ type: 'action' as const, action: { type: 'uri' as const, label: audience === 'stranger' ? 'Open new shop' : 'Choose package', uri: url } }] : []), { type: 'action', action: { type: 'uri', label: 'Package details', uri: 'https://official.mangmeeplus.com/' } }, { type: 'action', action: { type: 'uri', label: 'Contact staff', uri: STAFF_OA_URL } } ] } }; }
+  if (language === 'en') { return { type: 'text', text: 'Choose and pay for a package in the app; monthly packages start at 249 THB, with the business package at 1,999 THB including supported tax documents.', quickReply: { items: [ ...(url ? [{ type: 'action' as const, action: { type: 'uri' as const, label: audience === 'stranger' ? 'Open new shop' : 'Choose package', uri: url } }] : []), { type: 'action', action: { type: 'uri', label: 'Package details', uri: 'https://mangmeeplus.com/' } }, { type: 'action', action: { type: 'uri', label: 'Contact staff', uri: STAFF_OA_URL } } ] } }; }
 
   const stranger = audience === 'stranger';
   return {
@@ -377,7 +377,7 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         ...(url ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: stranger ? 'เปิดร้านใหม่' : 'เลือกแพ็กเกจ', uri: url } }] : []),
-        { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://official.mangmeeplus.com/' } },
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://mangmeeplus.com/' } },
         // Owner 2026-10-05: straight to the staff OA, not to the contact card first.
         { type: 'button', style: 'secondary', action: { type: 'uri', label: 'คุยกับทีมงาน', uri: STAFF_OA_URL } },
       ] },
@@ -467,7 +467,7 @@ export function buildCapabilityCard(language: LineReplyLanguage = 'th'): LineRep
 export function buildContactCard(language: LineReplyLanguage = 'th'): LineReplyMessage {
   if (language === 'en') return { type: 'text', text: 'Contact MangmeePlus: contact@mangmeeplus.com · 098-256-5628', quickReply: { items: [
     { type: 'action', action: { type: 'uri', label: 'Contact team', uri: STAFF_OA_URL } },
-    { type: 'action', action: { type: 'uri', label: 'Official website', uri: 'https://official.mangmeeplus.com/' } }] } };
+    { type: 'action', action: { type: 'uri', label: 'Official website', uri: 'https://mangmeeplus.com/' } }] } };
   return {
     type: 'flex',
     altText: 'ติดต่อมั่งมี Plus: contact@mangmeeplus.com โทร 098-256-5628',
@@ -484,7 +484,7 @@ export function buildContactCard(language: LineReplyLanguage = 'th'): LineReplyM
         // team — it opens the staff OA (owner 2026-09-29: chat there; typed support commands keep their
         // route) — and the separate "ติดต่อเจ้าหน้าที่" button that opened the same OA is gone.
         { type: 'button', style: 'secondary', action: { type: 'uri', label: 'ติดต่อทีมงาน', uri: STAFF_OA_URL } },
-        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
+        { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://mangmeeplus.com/' } },
       ] },
     },
   };

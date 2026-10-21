@@ -1576,7 +1576,7 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
     assert.deepEqual(minted[0].ctx, { userId: 'user-1', companyId: 'co-1', lineUserId: 'Uline-1', surface: 'promotion_card_packages' });
     assert.equal(minted[0].targetPath, '/companies/co-1/billing?channel=line');
     assert.deepEqual(actions(h)[0], { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `${WEB_BASE}/l/handoff-1` });
-    assert.equal(actions(h)[1].uri, 'https://official.mangmeeplus.com/', 'the web still informs');
+    assert.equal(actions(h)[1].uri, 'https://mangmeeplus.com/', 'the web still informs');
     assert.equal(outcome(h), 'staff_menu_promotion');
   });
 

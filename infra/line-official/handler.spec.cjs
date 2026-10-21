@@ -56,7 +56,7 @@ test('live sends original compact cards with exact three actions and own icon or
     const contact = calls[0].body.messages[0];
     assert.equal(contact.contents.footer.contents[0].action.clipboardText, 'contact@mangmeeplus.com');
     assert.equal(contact.contents.footer.contents[1].action.uri, 'tel:0982565628');
-    assert.equal(contact.contents.footer.contents[2].action.uri, 'https://official.mangmeeplus.com/');
+    assert.equal(contact.contents.footer.contents[2].action.uri, 'https://mangmeeplus.com/');
     assert.equal(JSON.stringify(contact.contents.body).includes('contact@mangmeeplus.com'), false);
     const rows = calls[1].body.messages[0].contents.footer.contents;
     assert.equal(rows[0].action.uri, 'https://www.instagram.com/mangmee_plus?stkn=MXR2M2kwdjl0MnV2');
