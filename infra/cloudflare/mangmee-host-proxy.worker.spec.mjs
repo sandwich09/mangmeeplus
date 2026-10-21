@@ -33,10 +33,8 @@ for (const file of [
   globalThis.fetch = async () => upstream;
 
   forwarded = undefined;
-  const root = await worker.fetch({ url: 'https://example.test/', method: 'GET', headers: {} });
-  assert.equal(root.status, 302);
-  assert.equal(root.headers.get('location'), 'https://example.test/login');
-  assert.equal(forwarded, undefined, `${file} fetched the origin before the root redirect`);
+  await worker.fetch({ url: 'https://example.test/', method: 'GET', headers: {} });
+  assert.equal(new URL(forwarded.url).pathname, '/', `${file} must serve the public home from the origin, not redirect it`);
 
   for (const method of ['GET', 'HEAD']) {
     await worker.fetch({ url: 'https://example.test/login', method, headers: {}, body: 'forbidden' });
