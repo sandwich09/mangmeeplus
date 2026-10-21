@@ -32,14 +32,6 @@ SECRET_PREFIX="${AGENTCORE_SECRET_PREFIX:-watchdog-bms/${DEPLOY_ENVIRONMENT}}"
 AI_GATEWAY_SECRET_ARN=$(aws secretsmanager describe-secret \
   --secret-id "$SECRET_PREFIX/ai-gateway-internal-secret" \
   --query ARN --output text --region "$REGION")
-# The runtime loads the shared aiGatewayConfigSchema, which always carries
-# JWT_CLOCK_TOLERANCE_SECONDS - and validateProductionConfig requires the JWT trio of anything that
-# does, whether or not it verifies a token itself. Omitting these does not degrade the runtime, it
-# stops it booting: every invocation returns 500 from config validation, and AgentCore has no log
-# group by default to say so.
-WATCHDOG_JWT_SECRET_SOURCE_ARN=$(aws secretsmanager describe-secret \
-  --secret-id "$SECRET_PREFIX/watchdog-jwt-secret" \
-  --query ARN --output text --region "$REGION")
 
 # ── Required env vars ──────────────────────────────────────────────────────────
 : "${ERP_CORE_INTERNAL_URL:?ERP_CORE_INTERNAL_URL is required (private WatchDog API URL)}"
@@ -137,7 +129,6 @@ aws iam update-assume-role-policy \
 # Replace placeholder before applying
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
   -e "s|<AI_GATEWAY_SECRET_ARN>|$AI_GATEWAY_SECRET_ARN|g" \
-  -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|$WATCHDOG_JWT_SECRET_SOURCE_ARN|g" \
   infra/ai-gateway/agentcore-execution-role-policy.json > "$STAGING/policy.json"
 if grep -q '<[A-Z_]*>' "$STAGING/policy.json"; then
   echo "ERROR: execution role policy still has unsubstituted placeholders" >&2
@@ -206,7 +197,6 @@ ENV_VARS=$(cat <<EOF
   "BEDROCK_MODEL_ID": "${BEDROCK_MODEL_ID}",
   "ERP_CORE_INTERNAL_URL": "${ERP_CORE_INTERNAL_URL}",
   "AI_GATEWAY_INTERNAL_SECRET_ARN": "${AI_GATEWAY_SECRET_ARN}",
-  "WATCHDOG_JWT_SECRET_SOURCE_ARN": "${WATCHDOG_JWT_SECRET_SOURCE_ARN}",
   "WATCHDOG_JWT_ISSUER": "${WATCHDOG_JWT_ISSUER}",
   "WATCHDOG_JWT_AUDIENCE": "${WATCHDOG_JWT_AUDIENCE}",
   "AI_FINAL_MUTATION_ENABLED": "false",

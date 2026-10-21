@@ -823,7 +823,7 @@ class Contracts(unittest.TestCase):
                 self.assertEqual(json.loads(result),[True,['--mode',default_mode,'--mode','hotfix','--environment',env]])
                 self.assertFalse((Path(tmp)/'__pycache__').exists())
 
-    def provider_runner(self,tmp,*,changed=False,spare=False,bad_bytes=False):
+    def provider_runner(self,tmp,*,changed=False,spare=False,bad_bytes=False,jwt_secrets=None):
         r,_=self.runner(tmp)
         # Exercise the real provider preparation method against AWS-shaped responses.
         del r.agentcore
@@ -838,6 +838,7 @@ class Contracts(unittest.TestCase):
         r.manifest={'services':{'ai-gateway':{}}}
         actual={'GIT_SHA':('b' if changed else 'a')*40,'SERVICE_VERSION':('b' if changed else 'a')*40,'AGENTCORE_ARTIFACT_SHA256':r.build['agentcore']['sha256'],
             'DEPLOY_ENVIRONMENT':'uat','ERP_CORE_INTERNAL_URL':'https://app.example.com/v1','KEEP_PROVIDER_CONFIG':'original'}
+        actual.update(jwt_secrets or {})
         runtime={'status':'READY','environmentVariables':actual,'roleArn':'arn:aws:iam::311414082667:role/dev',
             'networkConfiguration':{'networkMode':'PUBLIC'},'protocolConfiguration':{'serverProtocol':'HTTP'},
             'metadataConfiguration':{'requireMMDSV2':True},'authorizerConfiguration':None,
@@ -861,6 +862,7 @@ class Contracts(unittest.TestCase):
                 request=m.read(Path(args[-1].removeprefix('file://')))
                 self.assertEqual(request['environmentVariables']['KEEP_PROVIDER_CONFIG'],'original')
                 self.assertEqual(request['environmentVariables']['SERVICE_VERSION'],r.build['sourceCommit'])
+                for key in m.AI_JWT_SECRET_KEYS:self.assertNotIn(key,request['environmentVariables'])
                 self.assertEqual(request['roleArn'],runtime['roleArn'])
                 self.assertEqual(request['metadataConfiguration'],runtime['metadataConfiguration'])
                 self.assertNotIn('authorizerConfiguration',request)
@@ -871,6 +873,14 @@ class Contracts(unittest.TestCase):
             raise AssertionError(args)
         r.aws=aws;r.remote=remote
         return r,calls
+
+    def test_provider_removes_jwt_secrets_even_when_source_and_artifact_match(self):
+        for key in m.AI_JWT_SECRET_KEYS:
+            with self.subTest(key=key),tempfile.TemporaryDirectory() as tmp:
+                r,calls=self.provider_runner(tmp,spare=True,jwt_secrets={key:'old-secret'})
+                r.agentcore()
+                self.assertEqual(r.receipt['agentcore']['status'],'UPDATED_PINNED')
+                self.assertTrue(any(c[1]=='update-agent-runtime' for c in calls))
 
     def test_provider_exact_bytes_and_full_update_preserves_active_endpoint(self):
         for changed,spare in ((False,False),(True,True)):
@@ -935,6 +945,97 @@ class Contracts(unittest.TestCase):
                 m.write(old/'result.json',result);m.write(old/'previous.private.json',previous)
                 with self.assertRaises(ValueError):r.rollback(r.state/'active.json')
                 self.assertEqual(calls,[])
+
+    def test_capture_resolves_jwt_secrets_only_for_api_and_workers(self):
+        spec=importlib.util.spec_from_file_location('capture_config',m.HELPERS/'capture-config.py')
+        capture=importlib.util.module_from_spec(spec);spec.loader.exec_module(capture)
+        for injection in ('environment','secrets'):
+            with self.subTest(injection=injection),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);baseline=root/'baseline';baseline.mkdir();calls=[]
+                refs={s:f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/{s}-jwt' for s in m.SERVICES}
+                for service in m.SERVICES:
+                    c={'image':'synthetic:'+service,'environment':[{'name':'APP_ENV','value':'production'},
+                        {'name':'DEPLOY_ENVIRONMENT','value':'uat'}],'secrets':[]}
+                    for key in m.AI_JWT_SECRET_KEYS:
+                        c[injection].append({'name':key,**({'value':'jwt-value'} if injection=='environment' else {'valueFrom':refs[service]})})
+                    m.write(baseline/(service+'.configuration.json'),{'scalingTarget':{'min':1},'primaryContainer':c})
+                def aws(args,**kwargs):
+                    calls.append(args)
+                    value=({'Account':m.ACCOUNT,'Arn':f'arn:aws:sts::{m.ACCOUNT}:assumed-role/deploy/test'}
+                        if 'sts' in args else {'ARN':args[args.index('--secret-id')+1],
+                        'VersionStages':['AWSCURRENT'],'VersionId':'v1','SecretString':'jwt-value'})
+                    return subprocess.CompletedProcess(args,0,json.dumps(value),'')
+                with patch.object(sys,'argv',['capture-config.py','--environment','uat','--profile','',
+                        '--baseline',str(baseline),'--private-output',str(root/'capture'),
+                        '--evidence',str(root/'evidence.json'),'--resolve-secrets']),patch.object(capture.subprocess,'run',side_effect=aws):
+                    capture.main()
+                for service in m.SERVICES:
+                    values=m.read(root/'capture'/(service+'.resolved.json'))
+                    for key in m.AI_JWT_SECRET_KEYS:
+                        if service=='ai-gateway':self.assertNotIn(key,values)
+                        else:self.assertEqual(values[key],'jwt-value')
+                    native=m.native_config(target('uat'),service,values,'a'*40,root)
+                    self.assertEqual(set(native['env']['secret']),set(values))
+                self.assertFalse(any(refs['ai-gateway'] in call for call in calls))
+
+    def test_hotfix_drops_only_ai_jwt_secrets_and_still_checks_current_secrets(self):
+        for mismatch in (None,'api-web','ai-gateway'):
+            with self.subTest(mismatch=mismatch),tempfile.TemporaryDirectory() as tmp:
+                r=m.Release.__new__(m.Release);r.work=Path(tmp);r.state=Path(tmp)/'state';r.source=m.ROOT
+                r.target=target('production');r.local_uat_test=False;r.release_path='hotfix';r.receipt={};r.secrets=set()
+                r.args=argparse.Namespace(environment='production',profile='')
+                r.build={'sourceCommit':'a'*40,'agentcore':{'sha256':'b'*64}};r.build_dir=Path(tmp)/'build'
+                r.hotfix_configurations={s:{'AI_GATEWAY_INTERNAL_SECRET':'tool-secret',
+                    **dict.fromkeys(m.AI_JWT_SECRET_KEYS,'jwt-value')} for s in m.SERVICES}
+                class Prepared(Exception):pass
+                def command(args,**kwargs):
+                    if 'prepare' in args:raise Prepared
+                    capture=r.work/'capture';capture.mkdir()
+                    for service,values in r.hotfix_configurations.items():
+                        resolved=m.without_ai_jwt_secrets(service,values)
+                        if service==mismatch:resolved['AI_GATEWAY_INTERNAL_SECRET']='rotated-tool-secret'
+                        m.write(capture/(service+'.resolved.json'),resolved)
+                        m.write(capture/(service+'.configuration.json'),{'primaryContainer':{'secrets':[
+                            {'name':key,'valueFrom':'synthetic-ref'} for key in values]}})
+                r.command=command
+                with self.assertRaisesRegex(ValueError,'Current secret differs') if mismatch else self.assertRaises(Prepared):
+                    r.configuration()
+                if mismatch is None:
+                    for service in m.SERVICES:
+                        values=m.read(r.work/'capture'/(service+'.resolved.json'))
+                        self.assertEqual(values,m.without_ai_jwt_secrets(service,r.hotfix_configurations[service]))
+
+    def test_inventory_drops_ai_jwt_secrets_after_hotfix_config_and_overrides(self):
+        import release_inventory as inventory
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);capture=root/'capture';capture.mkdir();builddir=root/'build';builddir.mkdir()
+            (builddir/'agentcore').mkdir();(builddir/'agentcore/agentcore.zip').write_bytes(b'artifact')
+            sha='a'*40
+            build={'status':'passed','sourceCommit':sha,'sourceTreeSha256':'tree',
+                'images':{s:{'tag':s,'imageId':s} for s in inventory.ARTIFACTS},
+                'agentcore':{'sourceCommit':sha,'artifact':'agentcore.zip','sha256':hashlib.sha256(b'artifact').hexdigest()}}
+            m.write(builddir/'build.json',build);m.write(capture/'secret-versions.json',{})
+            for service in m.SERVICES:
+                m.write(capture/(service+'.resolved.json'),{'APP_ENV':'production','DEPLOY_ENVIRONMENT':'uat',
+                    **dict.fromkeys(m.AI_JWT_SECRET_KEYS,'captured-key')})
+            m.write(root/'overrides.json',{'ai-gateway':dict.fromkeys(m.AI_JWT_SECRET_KEYS,'override-key')})
+            args=argparse.Namespace(build=builddir/'build.json',source=root,capture=capture,overrides=root/'overrides.json',
+                environment='uat',private_output=root/'env',output=root/'inventory.json')
+            def inspect(command,**kwargs):
+                return json.dumps([{'Id':command[-1],'Architecture':'amd64','Config':{
+                    'Labels':{'org.opencontainers.image.revision':sha},'Env':[]}}]) if command[1]=='image' else '{}'
+            validation={'passed':True,'errors':[],'configModuleSha256':'config','defaultedKeys':[],'absentOptionalKeys':[]}
+            with patch.object(inventory,'source_inventory',return_value=({},'tree')), \
+                    patch.object(inventory.subprocess,'check_output',side_effect=inspect), \
+                    patch.object(inventory.subprocess,'run',return_value=subprocess.CompletedProcess([],0,json.dumps(validation),'')):
+                inventory.prepare(args)
+            for service in m.SERVICES:
+                env=m.read(root/'env'/(service+'.environment.json'))
+                native=m.native_config(target('uat'),service,env,sha,root)
+                for key in m.AI_JWT_SECRET_KEYS:
+                    if service=='ai-gateway':
+                        self.assertNotIn(key,env);self.assertNotIn(key,native['env']['secret'])
+                    else:self.assertEqual(env[key],'captured-key');self.assertIn(key,native['env']['secret'])
 
     def test_enrolled_baseline_replaces_the_retired_ecs_read(self):
         ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/jwt-AbCdEf'

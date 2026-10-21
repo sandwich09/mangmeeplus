@@ -555,8 +555,7 @@ const readFromSecretsManager: SecretReader = async (id, awsRegion) => {
 // ECS injects secret material with `valueFrom`, so a task simply has the value in its
 // environment. AgentCore has no equivalent - every variable it carries is literal and readable
 // by anyone who can call GetAgentRuntime - so the runtime fetches its own secrets at boot from
-// an ARN instead. Each secret therefore has two variables: the one the config layer reads,
-// holding material, and a `*_SOURCE_ARN`/`*_ARN` pointer that says where to get it.
+// an ARN instead. The internal secret has a value variable and an ARN pointer.
 async function resolveSecretInto(
   env: NodeJS.ProcessEnv,
   valueKey: string,
@@ -576,18 +575,6 @@ export async function loadInternalSecret(
   getSecret?: SecretReader,
 ): Promise<void> {
   await resolveSecretInto(env, 'AI_GATEWAY_INTERNAL_SECRET', 'AI_GATEWAY_INTERNAL_SECRET_ARN', getSecret ?? readFromSecretsManager);
-}
-
-// WATCHDOG_JWT_SECRET_ARN is a misnomer kept for compatibility with the ECS wiring: it holds the
-// signing key itself, not an ARN. The pointer therefore needs its own name. validateProductionConfig
-// demands this key for any process carrying JWT_CLOCK_TOLERANCE_SECONDS - which the shared
-// aiGatewayConfigSchema always does - so without this the runtime cannot finish booting even
-// though it never verifies a token itself.
-export async function loadJwtSecret(
-  env: NodeJS.ProcessEnv = process.env,
-  getSecret?: SecretReader,
-): Promise<void> {
-  await resolveSecretInto(env, 'WATCHDOG_JWT_SECRET_ARN', 'WATCHDOG_JWT_SECRET_SOURCE_ARN', getSecret ?? readFromSecretsManager);
 }
 
 /**
@@ -625,7 +612,6 @@ export async function createRuntimeOrchestrator(): Promise<RuntimeOrchestrator> 
 async function getRuntimeOrchestrator(): Promise<RuntimeOrchestrator> {
   runtimeOrchestrator ??= (async () => {
     await loadInternalSecret();
-    await loadJwtSecret();
     return createRuntimeOrchestrator();
   })();
   return runtimeOrchestrator;

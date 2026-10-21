@@ -1214,12 +1214,18 @@ describe('validateProductionConfig – L-03 closes the gateway and workers holes
     assert.doesNotThrow(() => validateProductionConfig(productionWorkers()));
   });
 
-  it('requires WATCHDOG_JWT_SECRET_ARN for a production AI Gateway', () => {
+  it('accepts a production AI Gateway without WATCHDOG_JWT_SECRET_ARN', () => {
     const { WATCHDOG_JWT_SECRET_ARN: _omitted, ...withoutArn } = productionAiGateway();
-    assert.throws(
-      () => validateProductionConfig(withoutArn),
-      /WATCHDOG_JWT_SECRET_ARN is required in production/,
-    );
+    assert.doesNotThrow(() => validateProductionConfig(withoutArn));
+    assert.doesNotThrow(() => validateProductionConfig(aiGatewayConfigSchema.parse(withoutArn)));
+    assert.doesNotThrow(() => validateProductionConfig({ ...withoutArn, WATCHDOG_JWT_SECRET_ARN: '' }));
+  });
+
+  it('still requires WATCHDOG_JWT_SECRET_ARN for a production API', () => {
+    const { WATCHDOG_JWT_SECRET_ARN: _omitted, ...withoutArn } = validProduction;
+    for (const config of [withoutArn, apiConfigSchema.parse(withoutArn), { ...withoutArn, WATCHDOG_JWT_SECRET_ARN: '' }]) {
+      assert.throws(() => validateProductionConfig(config), /WATCHDOG_JWT_SECRET_ARN is required in production/);
+    }
   });
 
   // L-04: every verifier pins iss/aud, falling back to the shared non-secret defaults, while the
@@ -1295,17 +1301,17 @@ describe('validateProductionConfig – L-03 closes the gateway and workers holes
     );
   });
 
-  // The holes existed because an unset optional secret is ABSENT from the parsed config, so a
-  // requirement keyed on that key can never fire. These two assert on real schema output.
-  it('closes both holes on schema-parsed configs, not just hand-written records', () => {
-    const gateway = aiGatewayConfigSchema.parse({ APP_ENV: 'production', SERVICE_NAME: 'ai-gateway' });
+  // Unset optional secrets are absent from parsed configs. Only the API requires the JWT key.
+  it('keeps required API and worker secrets enforced on schema-parsed configs', () => {
+    const { WATCHDOG_JWT_SECRET_ARN: _omitted, ...withoutArn } = validProduction;
+    const api = apiConfigSchema.parse(withoutArn);
     assert.equal(
-      Object.prototype.hasOwnProperty.call(gateway, 'WATCHDOG_JWT_SECRET_ARN'),
+      Object.prototype.hasOwnProperty.call(api, 'WATCHDOG_JWT_SECRET_ARN'),
       false,
       'an unset optional secret is absent from the parsed config',
     );
     assert.throws(
-      () => validateProductionConfig(gateway as unknown as Record<string, unknown>),
+      () => validateProductionConfig(api as unknown as Record<string, unknown>),
       /WATCHDOG_JWT_SECRET_ARN is required in production/,
     );
 

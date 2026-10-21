@@ -12,6 +12,11 @@ import subprocess
 SERVICES = ('api-web', 'ai-gateway', 'workers')
 ARTIFACTS = (*SERVICES, 'tools')
 HERE = Path(__file__).resolve().parent
+AI_JWT_SECRET_KEYS = ('WATCHDOG_JWT_SECRET_ARN', 'WATCHDOG_JWT_SECRET_SOURCE_ARN')
+
+
+def without_ai_jwt_secrets(service, values):
+    return {k: v for k, v in values.items() if service != 'ai-gateway' or k not in AI_JWT_SECRET_KEYS}
 
 
 def digest(value):
@@ -172,6 +177,7 @@ def prepare(args):
                 del config[key]
             else:
                 config[key] = value
+        config = without_ai_jwt_secrets(service, config)
         require(config.get('APP_ENV') == 'production' and config.get('DEPLOY_ENVIRONMENT') == args.environment,
                 service + ': runtime mode mismatch')
         require(config.get('GIT_SHA') == sha, service + ': override changed source')

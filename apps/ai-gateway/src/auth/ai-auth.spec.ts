@@ -123,6 +123,14 @@ function makeExecutionContext(authHeader?: string) {
 }
 
 describe('AiToolGuard', () => {
+  it('refuses a non-public route when the JWT secret is not configured', () => {
+    const token = makeToken({ sub: USER_ID, sid: SESSION_ID, permissions: ['ai.tool.invoke'] });
+    assert.throws(
+      () => makeGuard({ jwtSecret: undefined }).canActivate(makeExecutionContext(`Bearer ${token}`)),
+      (e: unknown) => e instanceof UnauthorizedException && e.message === 'JWT secret is not configured.',
+    );
+  });
+
   it('allows request when ai.tool.invoke is present', () => {
     const token = makeToken({ sub: USER_ID, sid: SESSION_ID, permissions: ['ai.tool.invoke'] });
     const result = makeGuard().canActivate(makeExecutionContext(`Bearer ${token}`));
@@ -146,7 +154,7 @@ describe('AiToolGuard', () => {
 
   it('skips verification for @Public() routes', () => {
     const reflector = { getAllAndOverride: () => true } as any;
-    const verifier = new WatchdogContextVerifier(makeConfig());
+    const verifier = new WatchdogContextVerifier(makeConfig({ jwtSecret: undefined }));
     const guard = new AiToolGuard(reflector, verifier);
     assert.equal(guard.canActivate(makeExecutionContext()), true);
   });

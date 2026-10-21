@@ -9,7 +9,7 @@ import { connect, type AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, LINE_AI_CONTEXT_MAX_TURNS, createLineAiInputEvidence, extractValueCandidates } from '@watchdog-bms/contracts';
-import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, loadJwtSecret, readBody, PayloadTooLargeError } from './runtime';
+import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, createRuntimeOrchestrator, readBody, PayloadTooLargeError } from './runtime';
 import { appendUsage } from '../common/usage/usage-context';
 
 // ── Stub orchestrator ──────────────────────────────────────────────────────────
@@ -26,24 +26,6 @@ const stubOrchestrator = {
     durationMs: 1,
   }),
 };
-
-// ── Server lifecycle ───────────────────────────────────────────────────────────
-
-let serverUrl = '';
-let testServer: ReturnType<typeof makeHttpServer>;
-
-before(async () => {
-  testServer = makeHttpServer(stubOrchestrator as any);
-  await new Promise<void>((resolve) => testServer.listen(0, () => resolve()));
-  const port = (testServer.address() as AddressInfo).port;
-  serverUrl = `http://localhost:${port}`;
-});
-
-after(async () => {
-  await new Promise<void>((resolve, reject) =>
-    testServer.close((err) => (err ? reject(err) : resolve())),
-  );
-});
 
 // ── validatePayload tests ──────────────────────────────────────────────────────
 
@@ -116,36 +98,36 @@ describe('AgentCore Runtime – payload validation', () => {
     );
   });
 
-  // validateProductionConfig requires WATCHDOG_JWT_SECRET_ARN of anything carrying
-  // JWT_CLOCK_TOLERANCE_SECONDS, which the shared schema always does. The deploy script never set
-  // it, so every invocation died in config validation with a 500 and no log group to say why.
-  it('resolves the JWT signing key from its own ARN pointer', async () => {
-    const env: NodeJS.ProcessEnv = {
-      WATCHDOG_JWT_SECRET_SOURCE_ARN: 'arn:aws:secretsmanager:ap-southeast-1:123:secret:watchdog-bms/production/watchdog-jwt-secret-y',
-      AWS_REGION: 'ap-southeast-1',
-    };
-    let requested = '';
-    await loadJwtSecret(env, async (secretId, region) => {
-      requested = `${region}:${secretId}`;
-      return 'jwt-signing-key';
-    });
-    assert.match(requested, /watchdog-jwt-secret-y$/);
-    // The config layer reads material out of the *_ARN name, so that is where it has to land.
-    assert.equal(env['WATCHDOG_JWT_SECRET_ARN'], 'jwt-signing-key');
-  });
-
-  it('leaves an already-injected JWT key alone so ECS valueFrom still wins', async () => {
-    const env: NodeJS.ProcessEnv = { WATCHDOG_JWT_SECRET_ARN: 'injected-by-ecs' };
-    await loadJwtSecret(env, async () => 'should-not-be-read');
-    assert.equal(env['WATCHDOG_JWT_SECRET_ARN'], 'injected-by-ecs');
-  });
-
-  it('fails closed when the JWT secret reference is absent or empty', async () => {
-    await assert.rejects(loadJwtSecret({}), /WATCHDOG_JWT_SECRET_SOURCE_ARN is required/);
-    await assert.rejects(
-      loadJwtSecret({ WATCHDOG_JWT_SECRET_SOURCE_ARN: 'secret-arn' }, async () => ''),
-      /WATCHDOG_JWT_SECRET_ARN is empty/,
-    );
+  it('boots and plans in production without a JWT key or source ARN', async () => {
+    const previous = { ...process.env };
+    try {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, {
+        APP_ENV: 'production', DEPLOY_ENVIRONMENT: 'production', SERVICE_NAME: 'agentcore-runtime',
+        SERVICE_VERSION: 'a'.repeat(40), GIT_SHA: 'a'.repeat(40), PUBLIC_BASE_URL: 'https://ai.example.com',
+        CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+        LOG_FORMAT: 'json', MODEL_PROVIDER: 'disabled',
+        AI_GATEWAY_INTERNAL_SECRET_ARN: 'internal-secret-arn',
+        WATCHDOG_JWT_ISSUER: 'https://api.example.com', WATCHDOG_JWT_AUDIENCE: 'watchdog-bms',
+      });
+      const requested: string[] = [];
+      await loadInternalSecret(process.env, async (id) => {
+        requested.push(id);
+        return 'gA4x8M1q6V3n9C2r7T5p0K8s1D6h4J9z';
+      });
+      const orchestrator = await createRuntimeOrchestrator();
+      const payload = validatePayload({ turnId: 'no-jwt', companyId: 'company-1', userId: 'user-1', messageText: 'สวัสดี' });
+      assert.ok(payload);
+      const result = await orchestrator.run(payloadToTurnRequest(payload));
+      assert.ok(result.plan);
+      assert.ok(result.replyText);
+      assert.deepEqual(requested, ['internal-secret-arn']);
+      assert.equal(process.env['WATCHDOG_JWT_SECRET_ARN'], undefined);
+      assert.equal(process.env['WATCHDOG_JWT_SECRET_SOURCE_ARN'], undefined);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, previous);
+    }
   });
 
   it('valid payload with all required fields is accepted', () => {
@@ -408,6 +390,22 @@ describe('AgentCore Runtime – payload validation', () => {
 // ── HTTP behavior tests ────────────────────────────────────────────────────────
 
 describe('AgentCore Runtime – HTTP endpoints', () => {
+  let serverUrl = '';
+  let testServer: ReturnType<typeof makeHttpServer>;
+
+  before(async () => {
+    testServer = makeHttpServer(stubOrchestrator as any);
+    await new Promise<void>((resolve) => testServer.listen(0, () => resolve()));
+    const port = (testServer.address() as AddressInfo).port;
+    serverUrl = `http://localhost:${port}`;
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve, reject) =>
+      testServer.close((err) => (err ? reject(err) : resolve())),
+    );
+  });
+
   it('GET /ping returns 200 with ok status and discloses nothing else (L-13)', async () => {
     const res = await fetch(`${serverUrl}/ping`);
     assert.equal(res.status, 200);
