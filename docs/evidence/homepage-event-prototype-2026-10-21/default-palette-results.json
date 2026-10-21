@@ -1,0 +1,18 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "query": "preview=events&event=halloween",
+      "palette": "plum"
+    },
+    {
+      "query": "preview=events&event=halloween&palette=unknown",
+      "palette": "plum"
+    },
+    {
+      "query": "preview=events&event=halloween&palette=plum&palette=pumpkin",
+      "palette": "plum"
+    }
+  ],
+  "comparisonsAndNormalRestore": "pass"
+}

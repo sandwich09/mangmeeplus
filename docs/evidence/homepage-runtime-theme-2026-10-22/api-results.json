@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "checks": [
+    "fresh migration/default",
+    "401 unauthenticated",
+    "403 tenant/restricted/spoofed-role",
+    "installed allowlist/DTO validation",
+    "single winner on concurrent first save/409",
+    "same-value no-op",
+    "uncached public contract",
+    "independent connection reads saved state",
+    "atomic before-after audit",
+    "audit failure rolls setting back",
+    "removed event fallback",
+    "off restores default",
+    "no delete route"
+  ],
+  "finalSetting": {
+    "event": "default",
+    "version": 3,
+    "updatedAt": "2026-10-21T17:14:04.429Z"
+  }
+}

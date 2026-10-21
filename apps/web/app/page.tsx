@@ -3,6 +3,9 @@ import { headers } from 'next/headers';
 import { PublicHome, HomeStructuredData } from '@/features/public-home/PublicHome';
 import { HOME_DESCRIPTION, HOME_TITLE, HOME_URL } from '@/features/public-home/home-content';
 import '@/features/public-home/public-home.css';
+import { resolveHomeEventPalette } from '@/features/public-home/HomeEventTheme';
+import { homeThemeForRequest } from '@/features/public-home/home-theme.server';
+import '@/features/public-home/home-events.css';
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE }, description: HOME_DESCRIPTION,
@@ -13,7 +16,10 @@ export const metadata: Metadata = {
   twitter: { card: 'summary_large_image', title: HOME_TITLE, description: HOME_DESCRIPTION, images: ['/home/spending-dashboard.webp'] },
 };
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
-  return <><HomeStructuredData nonce={nonce} /><PublicHome /></>;
+  const params = await searchParams;
+  const { event, preview } = await homeThemeForRequest(params, process.env.NODE_ENV);
+  const palette = resolveHomeEventPalette(preview ? params.palette : undefined);
+  return <><HomeStructuredData nonce={nonce} /><PublicHome event={event} preview={preview} palette={palette} /></>;
 }

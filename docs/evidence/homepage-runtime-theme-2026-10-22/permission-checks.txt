@@ -1,0 +1,374 @@
+TAP version 13
+# Subtest: Nest provider constructors expose a resolvable injection token
+    # Subtest: finds the provider registrations it is meant to police
+    ok 1 - finds the provider registrations it is meant to police
+      ---
+      duration_ms: 0.478833
+      type: 'test'
+      ...
+    # Subtest: detects both shapes that emit no paramtypes entry
+    ok 2 - detects both shapes that emit no paramtypes entry
+      ---
+      duration_ms: 0.266667
+      type: 'test'
+      ...
+    # Subtest: has no tokenless constructor parameter without an explicit @Inject
+    ok 3 - has no tokenless constructor parameter without an explicit @Inject
+      ---
+      duration_ms: 289.679875
+      type: 'test'
+      ...
+    1..3
+ok 1 - Nest provider constructors expose a resolvable injection token
+  ---
+  duration_ms: 291.084208
+  type: 'suite'
+  ...
+# Subtest: permission-registry
+    # Subtest: registers disbursement permissions with the requested risk and exact system-role grants
+    ok 1 - registers disbursement permissions with the requested risk and exact system-role grants
+      ---
+      duration_ms: 2.207667
+      type: 'test'
+      ...
+    # Subtest: registers HIGH global WHT catalog management for SYSTEM_ADMIN alone
+    ok 2 - registers HIGH global WHT catalog management for SYSTEM_ADMIN alone
+      ---
+      duration_ms: 0.200333
+      type: 'test'
+      ...
+    # Subtest: grants package management to OWNER by default, not ADMIN
+    ok 3 - grants package management to OWNER by default, not ADMIN
+      ---
+      duration_ms: 0.071542
+      type: 'test'
+      ...
+    # Subtest: billing control grants are registered only for platform administration, never customer OWNER
+    ok 4 - billing control grants are registered only for platform administration, never customer OWNER
+      ---
+      duration_ms: 0.271292
+      type: 'test'
+      ...
+    # Subtest: lets employee create/update permissions load only the supporting editor catalogs
+    ok 5 - lets employee create/update permissions load only the supporting editor catalogs
+      ---
+      duration_ms: 0.176292
+      type: 'test'
+      ...
+    # Subtest: lets role managers load the role builder without granting employee-list read
+    ok 6 - lets role managers load the role builder without granting employee-list read
+      ---
+      duration_ms: 0.130333
+      type: 'test'
+      ...
+    # Subtest: lets reimbursement policy managers load the settings they are allowed to update
+    ok 7 - lets reimbursement policy managers load the settings they are allowed to update
+      ---
+      duration_ms: 0.135291
+      type: 'test'
+      ...
+    # Subtest: has no duplicate permission keys
+    ok 8 - has no duplicate permission keys
+      ---
+      duration_ms: 0.231459
+      type: 'test'
+      ...
+    # Subtest: all role grants reference only known permission keys
+    ok 9 - all role grants reference only known permission keys
+      ---
+      duration_ms: 0.253166
+      type: 'test'
+      ...
+    # Subtest: every role granted line.ai.query is also granted ai.tool.invoke
+    ok 10 - every role granted line.ai.query is also granted ai.tool.invoke
+      ---
+      duration_ms: 0.265459
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.read is also granted expense.evidence.read
+    ok 11 - every role granted expense.read is also granted expense.evidence.read
+      ---
+      duration_ms: 0.077416
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.void is also granted expense.delete
+    ok 12 - every role granted expense.void is also granted expense.delete
+      ---
+      duration_ms: 0.035583
+      type: 'test'
+      ...
+    # Subtest: every internal employee role has the complete self-service baseline
+    ok 13 - every internal employee role has the complete self-service baseline
+      ---
+      duration_ms: 0.12925
+      type: 'test'
+      ...
+    # Subtest: every company role can request its own reimbursement without granting approval or payment to read-only roles
+    ok 14 - every company role can request its own reimbursement without granting approval or payment to read-only roles
+      ---
+      duration_ms: 0.379667
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to reimbursements it participated in
+    ok 15 - every company role has view-only access to reimbursements it participated in
+      ---
+      duration_ms: 0.179125
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to each procurement document family it participated in
+    ok 16 - every company role has view-only access to each procurement document family it participated in
+      ---
+      duration_ms: 0.10375
+      type: 'test'
+      ...
+    # Subtest: ADMIN can upload receipt evidence through web
+    ok 17 - ADMIN can upload receipt evidence through web
+      ---
+      duration_ms: 0.055083
+      type: 'test'
+      ...
+    # Subtest: default ADMIN cannot manage roles until the owner delegates it
+    ok 18 - default ADMIN cannot manage roles until the owner delegates it
+      ---
+      duration_ms: 0.147333
+      type: 'test'
+      ...
+    # Subtest: OWNER, ADMIN and MANAGER can approve and pay reimbursements; FINANCE cannot approve
+    ok 19 - OWNER, ADMIN and MANAGER can approve and pay reimbursements; FINANCE cannot approve
+      ---
+      duration_ms: 0.145166
+      type: 'test'
+      ...
+    # Subtest: ADMIN works expenses owner-equal, minus owner-level signature approval
+    ok 20 - ADMIN works expenses owner-equal, minus owner-level signature approval
+      ---
+      duration_ms: 0.196167
+      type: 'test'
+      ...
+    # Subtest: every role can change its own password
+    ok 21 - every role can change its own password
+      ---
+      duration_ms: 0.08225
+      type: 'test'
+      ...
+    # Subtest: every role that can change its own password can link its own LINE account
+    ok 22 - every role that can change its own password can link its own LINE account
+      ---
+      duration_ms: 0.059584
+      type: 'test'
+      ...
+    # Subtest: STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+    ok 23 - STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+      ---
+      duration_ms: 0.020208
+      type: 'test'
+      ...
+    # Subtest: the two Mangmee sales roles hold only sales.* and the account.* login baseline
+    ok 24 - the two Mangmee sales roles hold only sales.* and the account.* login baseline
+      ---
+      duration_ms: 0.250333
+      type: 'test'
+      ...
+    # Subtest: separates the sales lead from the sales agent exactly where the spec does
+    ok 25 - separates the sales lead from the sales agent exactly where the spec does
+      ---
+      duration_ms: 0.062917
+      type: 'test'
+      ...
+    # Subtest: gives SYSTEM_ADMIN every sales key including the PII one, and no tenant role any of them
+    ok 26 - gives SYSTEM_ADMIN every sales key including the PII one, and no tenant role any of them
+      ---
+      duration_ms: 0.049167
+      type: 'test'
+      ...
+    # Subtest: describes every role a shop is listed in Thai
+    ok 27 - describes every role a shop is listed in Thai
+      ---
+      duration_ms: 0.163333
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ROLES keys match ROLE_GRANTS keys
+    ok 28 - SYSTEM_ROLES keys match ROLE_GRANTS keys
+      ---
+      duration_ms: 0.041625
+      type: 'test'
+      ...
+    # Subtest: OWNER has all company permissions but no platform permissions
+    ok 29 - OWNER has all company permissions but no platform permissions
+      ---
+      duration_ms: 0.34275
+      type: 'test'
+      ...
+    # Subtest: lets every company role reach accounting relation ABAC without widening document reads
+    ok 30 - lets every company role reach accounting relation ABAC without widening document reads
+      ---
+      duration_ms: 0.051625
+      type: 'test'
+      ...
+    # Subtest: keeps financial role assignment approval OWNER-only
+    ok 31 - keeps financial role assignment approval OWNER-only
+      ---
+      duration_ms: 0.113125
+      type: 'test'
+      ...
+    # Subtest: gives HR only the dedicated operational employee-administration boundary
+    ok 32 - gives HR only the dedicated operational employee-administration boundary
+      ---
+      duration_ms: 0.111708
+      type: 'test'
+      ...
+    # Subtest: all 7 item-10A partner management permission keys are present
+    ok 33 - all 7 item-10A partner management permission keys are present
+      ---
+      duration_ms: 0.109167
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ADMIN has all 7 partner management permission keys
+    ok 34 - SYSTEM_ADMIN has all 7 partner management permission keys
+      ---
+      duration_ms: 0.068041
+      type: 'test'
+      ...
+    # Subtest: COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+    ok 35 - COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+      ---
+      duration_ms: 0.090709
+      type: 'test'
+      ...
+    # Subtest: customer merge and LINE identity re-point stay Owner/Admin-only
+    ok 36 - customer merge and LINE identity re-point stay Owner/Admin-only
+      ---
+      duration_ms: 0.05075
+      type: 'test'
+      ...
+    # Subtest: MARKETING can segment customers but cannot read contact-person PII
+    ok 37 - MARKETING can segment customers but cannot read contact-person PII
+      ---
+      duration_ms: 0.050459
+      type: 'test'
+      ...
+    # Subtest: Step 0 company tax identity
+        # Subtest: registers the six keys at the risk levels the spec fixes
+        ok 1 - registers the six keys at the risk levels the spec fixes
+          ---
+          duration_ms: 0.136125
+          type: 'test'
+          ...
+        # Subtest: gives the owner every company-side key without an explicit grant
+        ok 2 - gives the owner every company-side key without an explicit grant
+          ---
+          duration_ms: 0.056208
+          type: 'test'
+          ...
+        # Subtest: keeps reconciliation platform-side only
+        ok 3 - keeps reconciliation platform-side only
+          ---
+          duration_ms: 0.058209
+          type: 'test'
+          ...
+        # Subtest: keeps data-rights orchestration CRITICAL and platform-side only
+        ok 4 - keeps data-rights orchestration CRITICAL and platform-side only
+          ---
+          duration_ms: 0.075292
+          type: 'test'
+          ...
+        # Subtest: answers VAT with the accountant and reads it with finance
+        ok 5 - answers VAT with the accountant and reads it with finance
+          ---
+          duration_ms: 0.051291
+          type: 'test'
+          ...
+        # Subtest: gives buyer-evidence remediation to finance and to nobody else by default
+        ok 6 - gives buyer-evidence remediation to finance and to nobody else by default
+          ---
+          duration_ms: 0.054875
+          type: 'test'
+          ...
+        # Subtest: keeps the legal identity owner-only pending QP2
+        ok 7 - keeps the legal identity owner-only pending QP2
+          ---
+          duration_ms: 0.080167
+          type: 'test'
+          ...
+        # Subtest: keeps the WHT-certificate company signature setting owner-only (Decision B)
+        ok 8 - keeps the WHT-certificate company signature setting owner-only (Decision B)
+          ---
+          duration_ms: 0.070125
+          type: 'test'
+          ...
+        # Subtest: grants wht.certificate.correct to the same roles that hold wht.certificate.issue
+        ok 9 - grants wht.certificate.correct to the same roles that hold wht.certificate.issue
+          ---
+          duration_ms: 0.04725
+          type: 'test'
+          ...
+        1..9
+    ok 38 - Step 0 company tax identity
+      ---
+      duration_ms: 0.846625
+      type: 'suite'
+      ...
+    1..38
+ok 2 - permission-registry
+  ---
+  duration_ms: 9.458709
+  type: 'suite'
+  ...
+# Subtest: executive platform permission matrix (E1)
+    # Subtest: MANGMEE_EXECUTIVE has exactly its account baseline and executive permission
+    ok 1 - MANGMEE_EXECUTIVE has exactly its account baseline and executive permission
+      ---
+      duration_ms: 0.128875
+      type: 'test'
+      ...
+    # Subtest: MANGMEE_EXECUTIVE_EXPORT has exactly its account baseline and executive permission
+    ok 2 - MANGMEE_EXECUTIVE_EXPORT has exactly its account baseline and executive permission
+      ---
+      duration_ms: 0.050375
+      type: 'test'
+      ...
+    # Subtest: MANGMEE_EXECUTIVE_CONTACT has exactly its account baseline and executive permission
+    ok 3 - MANGMEE_EXECUTIVE_CONTACT has exactly its account baseline and executive permission
+      ---
+      duration_ms: 0.03775
+      type: 'test'
+      ...
+    # Subtest: MANGMEE_EXECUTIVE_COMPANY_NOTE has exactly its account baseline and executive permission
+    ok 4 - MANGMEE_EXECUTIVE_COMPANY_NOTE has exactly its account baseline and executive permission
+      ---
+      duration_ms: 0.072334
+      type: 'test'
+      ...
+    # Subtest: only the platform administrator receives all five executive permissions
+    ok 5 - only the platform administrator receives all five executive permissions
+      ---
+      duration_ms: 0.248667
+      type: 'test'
+      ...
+    1..5
+ok 3 - executive platform permission matrix (E1)
+  ---
+  duration_ms: 0.687084
+  type: 'suite'
+  ...
+# Subtest: executive catalog names and descriptions are plain Thai
+ok 4 - executive catalog names and descriptions are plain Thai
+  ---
+  duration_ms: 0.207708
+  type: 'test'
+  ...
+# Subtest: standard-role descriptions name the same administrator and read-only auditor as the role labels
+ok 5 - standard-role descriptions name the same administrator and read-only auditor as the role labels
+  ---
+  duration_ms: 0.218125
+  type: 'test'
+  ...
+1..5
+# tests 56
+# suites 4
+# pass 56
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1632.849208

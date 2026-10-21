@@ -1,0 +1,20 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "width": 390,
+      "input": "touch + swipe",
+      "visibleGhostSamples": 3,
+      "hiddenGhostSamples": 93,
+      "status": "pass"
+    },
+    {
+      "width": 1280,
+      "input": "mouse",
+      "visibleGhostSamples": 9,
+      "hiddenGhostSamples": 0,
+      "status": "pass"
+    }
+  ],
+  "errors": []
+}

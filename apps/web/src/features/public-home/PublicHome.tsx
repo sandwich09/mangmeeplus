@@ -2,6 +2,8 @@ import * as React from 'react';
 import { HomePricing, HomeMenu, ChatReel, SignupReel, DocumentGallery } from './HomeInteractions';
 import { HomePriceComparison } from './HomePriceComparison';
 import { HOME_FAQ, HOME_JSON_LD } from './home-content';
+import { DEFAULT_HOME_EVENT_PALETTE, HomeEventArtwork, HomeEventPreviewTools, type HomeEvent, type HomeEventPalette } from './HomeEventTheme';
+import { HomeEventEffects } from './HomeEventEffects';
 
 function HomeFaq() { return <div className="faq">{HOME_FAQ.map(item => <details key={item.question}><summary>{item.question}</summary><p>{item.answer}</p></details>)}</div>; }
 
@@ -9,7 +11,9 @@ export function HomeStructuredData({ nonce }: { nonce?: string }) {
   return <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(HOME_JSON_LD).replace(/</g, '\\u003c') }} />;
 }
 
-export function PublicHome() { return <div className="public-home">
+export function PublicHome({ event = 'default', preview = false, palette = DEFAULT_HOME_EVENT_PALETTE }: { event?: HomeEvent; preview?: boolean; palette?: HomeEventPalette }) { return <div className="public-home" data-home-event={event === 'default' ? undefined : event} data-home-palette={event === 'halloween' ? palette : undefined}>
+{preview && <HomeEventPreviewTools event={event} palette={palette} />}
+{event === 'halloween' && <HomeEventEffects />}
 <div className="pg">
 <a className="skip" href="#main">ข้ามไปเนื้อหาหลัก</a>
 <header className="hdr">
@@ -33,6 +37,7 @@ export function PublicHome() { return <div className="public-home">
 
 <main id="main">
 <section className="hero dark" id="top" aria-labelledby="hero-title">
+<HomeEventArtwork event={event} placement="hero" />
 <div className="orb orb-a" aria-hidden="true"></div><div className="orb orb-b" aria-hidden="true"></div>
 <div className="w hero-c">
 <p className="kicker">มั่งมี Plus ส่งรูปใบเสร็จทาง LINE <span className="nw">ให้ AI ช่วยอ่าน</span></p>
@@ -46,6 +51,7 @@ export function PublicHome() { return <div className="public-home">
 </div>
 <div className="w">
 <figure className="stage">
+<HomeEventArtwork event={event} placement="stage" />
 <div className="dash" role="img" aria-label="ตัวอย่างหน้าเว็บสรุปรายจ่ายของร้าน: รายจ่ายเดือนนี้ 48,250 บาท ใบเสร็จรอตรวจ 4 ใบ ค้างจ่ายทั้งหมด 12,480 บาท และกราฟรายจ่ายรายเดือน">
 <div className="dash-bar"><i></i><i></i><i></i><span>mangmeeplus.com</span></div>
 <img className="dash-shot" src="/home/spending-dashboard.webp" width="1200" height="750" alt="ตัวอย่างหน้าสรุปรายจ่ายของร้าน" />
@@ -87,6 +93,7 @@ export function PublicHome() { return <div className="public-home">
 <HomePricing><HomePriceComparison /></HomePricing>
 
 <section className="sec dark-sec dark" id="use" aria-labelledby="use-title">
+{palette === 'plum' && <HomeEventArtwork event={event} placement="middle" />}
 <div className="w">
 <div className="head">
 <p className="ey">ใช้ทำอะไรได้</p>
@@ -197,6 +204,7 @@ export function PublicHome() { return <div className="public-home">
 </section>
 
 <section className="sec alt" id="faq" aria-label="สรุปและคำถามที่พบบ่อย">
+<HomeEventArtwork event={event} placement="faq" />
 <div className="w faq-g">
 <div id="what">
 <p className="ey">รู้จักใน 1 นาที</p>
@@ -237,6 +245,7 @@ export function PublicHome() { return <div className="public-home">
 </main>
 
 <footer className="foot">
+<HomeEventArtwork event={event} placement="footer" />
 <div className="w">
 <div className="foot-g">
 <div>
