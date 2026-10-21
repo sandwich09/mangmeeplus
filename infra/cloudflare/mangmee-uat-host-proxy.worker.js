@@ -6,10 +6,7 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
     const publicHost = url.hostname;
-    if (url.pathname === '/') {
-      url.pathname = '/login';
-      return Response.redirect(url.toString(), 302);
-    }
+    // The root is the public home page (2026-10-21); the app serves it, so no redirect here.
 
     url.hostname = ORIGIN;
     url.protocol = 'https:';
