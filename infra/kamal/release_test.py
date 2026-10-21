@@ -478,15 +478,20 @@ class Contracts(unittest.TestCase):
             self.assertFalse(any(row['name'] in keys for row in rendered['secrets']))
 
     def test_native_routing_no_fixed_application_port(self):
-        for kind in ('dev','production'):
+        for kind in ('dev','uat','production'):
             for service in m.SERVICES:
                 c=m.native_config(target(kind),service,{'NEW_KEY':'new','SECRET':'synthetic'},'a'*40,Path('/tmp'))
                 self.assertEqual(c['env']['secret'],['NEW_KEY','SECRET'])
-                self.assertNotIn('publish',c['servers']['web'].get('options',{}))
+                options=c['servers']['web']['options']
+                self.assertEqual(options['cap-drop'],'ALL')
+                self.assertEqual(options['security-opt'],'no-new-privileges')
+                self.assertNotIn('publish',options)
                 self.assertEqual(c['stop_timeout'],180)
                 if service=='ai-gateway':
                     self.assertEqual(c['proxy']['app_port'],3002)
-                    self.assertIs(c['servers']['web']['options']['init'],True)
+                    self.assertIs(options['init'],True)
+                if kind=='dev':
+                    self.assertEqual(options['network-alias'],('api' if service=='api-web' else 'ai' if service=='ai-gateway' else 'workers')+'-'+('a'*12))
                 if service=='workers':self.assertIs(c['servers']['web']['proxy'],False)
 
     def runner(self,tmp,fail=None):
