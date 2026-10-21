@@ -15,7 +15,7 @@ it('adds the escape once, before the fragment, and leaves LINE-internal and non-
   const once = withLineExternalBrowserParam('https://app/companies/c/billing');
   assert.equal(withLineExternalBrowserParam(once), once);
   assert.equal(withLineExternalBrowserParam('http://localhost:3000/companies/c'), 'http://localhost:3000/companies/c?openExternalBrowser=1');
-  for (const kept of ['https://liff.line.me/123-abc/signup', 'https://line.me/R/ti/p/@x', 'https://lin.ee/UU9pbOI', 'https://official.mangmeeplus.com/', 'tel:0982565628', 'not a url']) {
+  for (const kept of ['https://liff.line.me/123-abc/signup', 'https://line.me/R/ti/p/@x', 'https://lin.ee/UU9pbOI', 'https://official.mangmeeplus.com/', 'https://mangmeeplus.com/', 'https://www.mangmeeplus.com/', 'tel:0982565628', 'not a url']) {
     assert.equal(withLineExternalBrowserParam(kept), kept);
   }
 });
@@ -91,4 +91,10 @@ it('sends a company page through the LIFF start page once configured, and nothin
   } finally {
     configureLineSignedInOpen(null);
   }
+});
+
+it('the public home at the root of mangmeeplus.com stays in LINE; its app pages still open outside (owner 2026-10-21)', () => {
+  assert.equal(withLineExternalBrowserParam('https://mangmeeplus.com/'), 'https://mangmeeplus.com/');
+  assert.equal(withLineExternalBrowserParam('https://mangmeeplus.com/login'), 'https://mangmeeplus.com/login?openExternalBrowser=1');
+  assert.equal(withLineExternalBrowserParam('https://mangmeeplus.com/companies/c/billing'), 'https://mangmeeplus.com/companies/c/billing?openExternalBrowser=1');
 });

@@ -183,7 +183,7 @@
           "action": {
             "type": "uri",
             "label": "เว็บไซต์อย่างเป็นทางการ",
-            "uri": "https://official.mangmeeplus.com/"
+            "uri": "https://mangmeeplus.com/"
           },
           "contents": [
             {
@@ -221,7 +221,7 @@
                 },
                 {
                   "type": "text",
-                  "text": "official.mangmeeplus.com",
+                  "text": "mangmeeplus.com",
                   "size": "11px",
                   "color": "#4C6255",
                   "wrap": true

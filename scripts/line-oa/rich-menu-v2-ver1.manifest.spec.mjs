@@ -40,7 +40,7 @@ describe('LINE Rich Menu V2 Ver1 manifest', () => {
       { type: 'message', label: 'ถ่ายใบเสร็จ', text: 'ถ่ายใบเสร็จ' },
       { type: 'postback', label: 'คุยกับน้องมั่งมี', data: 'action=line-rich-talk', inputOption: 'openKeyboard' },
       { type: 'message', label: 'สรุปค่าใช้จ่าย', text: 'ดูค่าใช้จ่ายเดือนนี้' },
-      { type: 'uri', label: 'เริ่มต้นใช้งานฟรี', uri: 'https://official.mangmeeplus.com/' },
+      { type: 'uri', label: 'เริ่มต้นใช้งานฟรี', uri: 'https://mangmeeplus.com/' },
       { type: 'message', label: 'ติดต่อเรา', text: 'ติดต่อเรา' },
     ]);
   });

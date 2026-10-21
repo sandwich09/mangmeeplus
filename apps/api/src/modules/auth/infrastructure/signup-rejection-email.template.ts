@@ -26,8 +26,8 @@ export const SIGNUP_REJECTION_SUBJECT = 'ผลการพิจารณาค
 const SUPPORT_EMAIL = 'contact@mangmeeplus.com';
 const COMPANY_LEGAL_NAME = 'บริษัท มั่งมียั่งยืน จำกัด';
 const COMPANY_PHONE = 'โทร. 098-256-5628';
-const COMPANY_SITE = 'https://official.mangmeeplus.com';
-const COMPANY_SITE_LABEL = 'official.mangmeeplus.com';
+const COMPANY_SITE = 'https://mangmeeplus.com';
+const COMPANY_SITE_LABEL = 'mangmeeplus.com';
 const COMPANY_TAGLINE = 'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน';
 
 function escapeHtml(value: string): string {

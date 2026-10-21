@@ -433,7 +433,7 @@ describe('LINE staff menu', () => {
     const rendered = JSON.stringify(card);
     assert.match(rendered, /contact@mangmeeplus.com/);
     assert.match(rendered, /098-256-5628/);
-    assert.match(rendered, /https:\/\/official\.mangmeeplus\.com\//);
+    assert.match(rendered, /https:\/\/mangmeeplus\.com\//);
     assert.match(rendered, /clipboardText/);
     assert.equal(rendered.includes('mailto:'), false);
     // Owner 2026-10-05: the number stays as text above; the button that carried it is "ติดต่อทีมงาน" and
@@ -443,7 +443,7 @@ describe('LINE staff menu', () => {
     assert.deepEqual((card.contents as any).footer.contents.map((button: any) => button.action), [
       { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' },
       { type: 'uri', label: 'ติดต่อทีมงาน', uri: 'https://lin.ee/6Sc38L6' },
-      { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' },
+      { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://mangmeeplus.com/' },
     ]);
     assert.equal(staffMenuCommand('ติดต่อเจ้าหน้าที่'), 'staff_contact', 'typed support remains available');
   });
@@ -838,7 +838,7 @@ describe('promotion menu (rich menu v2 ver2)', () => {
       { type: 'uri', label: 'เปิดร้านใหม่', uri: 'https://liff.line.me/1234567890-abcdef/signup' });
 
     const employee = actions('employee');
-    assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.') && action.uri !== STAFF_OA_URL).length, 0,
+    assert.equal(employee.filter((action: any) => action.type === 'uri' && action.uri !== 'https://mangmeeplus.com/' && action.uri !== STAFF_OA_URL).length, 0,
       'the package page is the owner\'s to open');
     // Owner 2026-10-05: "คุยกับทีมงาน" opens the staff OA itself, for every reader of the card.
     for (const audience of ['owner', 'employee', 'stranger'] as const) {

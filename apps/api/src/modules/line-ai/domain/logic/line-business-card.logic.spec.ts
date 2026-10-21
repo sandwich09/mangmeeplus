@@ -1399,7 +1399,7 @@ describe('public policy card', () => {
       assert.equal(message.quickReply, undefined, 'the button is the one staff door; no quick reply repeats it');
       assert.match(message.canonicalText, /มีคำถามเพิ่มเติม กดติดต่อเจ้าหน้าที่ได้เลยค่ะ$/, question);
       assert.doesNotMatch(message.canonicalText, /https?:\/\//, question);
-      assert.doesNotMatch(JSON.stringify(message), /official\.mangmeeplus|ดูรายละเอียดแพ็กเกจ|"label":"ดูแพ็กเกจ"/, question);
+      assert.doesNotMatch(JSON.stringify(message), /(?:official\.)?mangmeeplus\.com\/"|ดูรายละเอียดแพ็กเกจ|"label":"ดูแพ็กเกจ"/, question);
     }
   });
 

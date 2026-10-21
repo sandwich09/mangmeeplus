@@ -89,7 +89,7 @@ test('R-B1 exit 4: web links in item text are escaped once before the wire hash,
   const already = plan([`ดูรายการ ${link}?openExternalBrowser=1`]);
   assert.equal(already.answer.items[0]!.text, `ดูรายการ ${link}?openExternalBrowser=1`);
   assert.deepEqual(already.batches, p.batches);
-  const kept = 'เปิด https://liff.line.me/1-a/start หรือ https://official.mangmeeplus.com/';
+  const kept = 'เปิด https://liff.line.me/1-a/start หรือ https://mangmeeplus.com/';
   assert.equal(plan([kept]).answer.items[0]!.text, kept);
 });
 test('R-B1 exit 4: a plan frozen before the escape existed still parses and keeps its bytes', () => {

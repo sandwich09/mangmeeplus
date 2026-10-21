@@ -1,0 +1,81 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-20T12:30:00Z"
+  },
+  "title": "มั่งมีพลัส เว็บหลัก v3",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Colors.dc.html": {
+      "x": -1520,
+      "y": 0,
+      "w": 1440,
+      "h": 2000,
+      "title": "ชุดสีที่เทียบ · วิจัยสีรอบใหม่"
+    },
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 8800,
+      "title": "หน้าแรก · เดสก์ท็อป 1440",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Home-Phone.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 390,
+      "h": 15300,
+      "title": "หน้าแรก · มือถือ 390",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Pricing.dc.html": {
+      "x": 1990,
+      "y": 0,
+      "w": 1440,
+      "h": 3150,
+      "title": "แพ็กเกจและตัวช่วยเลือก · เดสก์ท็อป 1440",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "Pricing-Phone.dc.html": {
+      "x": 3510,
+      "y": 0,
+      "w": 390,
+      "h": 5500,
+      "title": "แพ็กเกจและตัวช่วยเลือก · มือถือ 390",
+      "expand": "fill",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Colors.dc.html",
+    "Main.dc.html",
+    "Home-Phone.dc.html",
+    "Pricing.dc.html",
+    "Pricing-Phone.dc.html"
+  ],
+  "notes": {
+    "title": {
+      "x": -1520,
+      "y": -300,
+      "text": "มั่งมีพลัส · เว็บหลัก v3 — ต้นแบบ ยังไม่เผยแพร่",
+      "kind": "title1",
+      "maxW": 5420
+    },
+    "verify": {
+      "x": 1990,
+      "y": 3270,
+      "w": 520,
+      "fill": "orange",
+      "size": "m",
+      "text": "ต้องตรวจก่อนเผยแพร่\n• ราคาและจำนวนใบเสร็จ (แคตตาล็อก 20 ต.ค. 2569 16:40 น.)\n• ลิงก์เข้าสู่ระบบ: app.mangmeeplus.com หรือ mangmeeplus.com/login\n• Production มี 50 ทวิ แนบไฟล์ และเลือกช่วงวันที่แล้วหรือยัง (บันทึกล่าสุด 12 ต.ค.)\n• VAT และใบกำกับภาษี\n• อีเมล เบอร์โทร ลิงก์นโยบาย\n• รีวิวลูกค้าจริงที่ยินยอมให้ใช้\n• ภาพหน้าจอจริงแทนภาพจำลอง"
+    }
+  }
+}

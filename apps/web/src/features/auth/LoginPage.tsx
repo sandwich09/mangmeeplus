@@ -18,7 +18,7 @@ import { trimmed } from '@/common/forms/trim';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useLocale } from '@/common/i18n/use-locale';
 import { formatMessage, localizedErrorMessage } from '@/common/i18n/error-message.logic';
-import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
+import { MangmeePlusMark } from '@/common/components/brand/MangmeeLogo';
 import { GenericClientNotice } from '@/common/client-support/GenericClientNotice';
 import { loginAsDevOwner, loginWithPassword, refreshSessionWithOutcome } from './auth.api';
 import { lineStartUrl, rememberPendingRedirect } from './auth.logic';
@@ -53,10 +53,12 @@ const LINE_NOTICE_TEXT: Record<string, string> = {
 const QR_POLL_INTERVAL_MS = 2500;
 const MAX_QR_AUTO_RENEWALS = 3;
 
-function Wordmark({ className }: { className?: string }) {
+// The public home's brand: มั่งมีพลัส with MANGMEEPLUS underneath; it links to the home page.
+function Wordmark({ className, plusClassName, smallClassName }: { className?: string; plusClassName: string; smallClassName: string }) {
   return (
-    <span className={className}>
-      มั่ง<span className="text-gold-300">มี</span>
+    <span className={`leading-tight ${className ?? ''}`}>
+      มั่งมี<span className={plusClassName}>พลัส</span>
+      <small className={`mt-0.5 block text-[10px] font-semibold tracking-[1px] ${smallClassName}`}>MANGMEEPLUS</small>
     </span>
   );
 }
@@ -77,12 +79,12 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
         style={{ background: 'radial-gradient(circle, rgba(134,239,172,.3), transparent 70%)' }}
       />
 
-      <div className="relative flex items-center gap-3.5">
-        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-2xl border border-white/20 bg-white/15 backdrop-blur">
-          <MangmeeLogo size={32} />
+      <a href="/" aria-label="มั่งมีพลัส หน้าแรก" className="relative flex w-fit items-center gap-3.5">
+        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-2xl bg-white shadow-sm">
+          <MangmeePlusMark size={28} />
         </div>
-        <Wordmark className="text-2xl font-extrabold tracking-tight text-white" />
-      </div>
+        <Wordmark className="text-2xl font-extrabold tracking-tight text-white" plusClassName="text-gold-300" smallClassName="text-white/75" />
+      </a>
 
       <div className="relative">
         <h2 className="max-w-[440px] text-3xl font-extrabold leading-snug text-white xl:text-4xl">
@@ -602,12 +604,10 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
       <div className="flex flex-1 items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-[380px]">
           <div className="mb-8 flex flex-wrap items-center justify-between lg:hidden">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-brand-500 to-brand-900">
-                <MangmeeLogo size={24} />
-              </span>
-              <Wordmark className="text-xl font-extrabold text-gray-900 [&>span]:text-gold-500" />
-            </div>
+            <a href="/" aria-label="มั่งมีพลัส หน้าแรก" className="flex items-center gap-2.5">
+              <MangmeePlusMark size={28} />
+              <Wordmark className="text-xl font-extrabold text-gray-900" plusClassName="text-brand-800" smallClassName="text-gray-500" />
+            </a>
           </div>
 
           <div className="flex items-center justify-between gap-4">
@@ -715,7 +715,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             <Link href="/privacy" className="inline-flex min-h-11 items-center underline hover:text-gray-700">ประกาศความเป็นส่วนตัว</Link>
             <Link href="/terms" className="inline-flex min-h-11 items-center underline hover:text-gray-700">ข้อกำหนดการใช้งาน</Link>
             <Link href="/data-deletion" className="inline-flex min-h-11 items-center underline hover:text-gray-700">การลบข้อมูล</Link>
-            <a href="https://official.mangmeeplus.com/" className="inline-flex min-h-11 items-center underline hover:text-gray-700">
+            <a href="/" className="inline-flex min-h-11 items-center underline hover:text-gray-700">
               {locale === 'th' ? 'รู้จักมั่งมีพลัส' : 'Explore MangmeePlus'}
             </a>
           </nav>

@@ -60,7 +60,7 @@ describe('account claim email copy', () => {
       'ขอแสดงความนับถือ',
       'บริษัท มั่งมียั่งยืน จำกัด',
       'โทร. 098-256-5628',
-      'เว็บไซต์ https://official.mangmeeplus.com',
+      'เว็บไซต์ https://mangmeeplus.com',
       'ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน',
       'contact@mangmeeplus.com',
       'ไม่ใช่รหัสผ่านของ LINE',
@@ -72,8 +72,8 @@ describe('account claim email copy', () => {
   it('renders the Owner-picked signature: bold legal name and a short site label', () => {
     const { html } = renderAccountClaimEmail(INPUT);
     assert.ok(html.includes('<strong style="color:#17352b">บริษัท มั่งมียั่งยืน จำกัด</strong>'));
-    assert.ok(html.includes('>official.mangmeeplus.com</a>'));
-    assert.ok(!html.includes('>https://official.mangmeeplus.com</a>'));
+    assert.ok(html.includes('>mangmeeplus.com</a>'));
+    assert.ok(!html.includes('>https://mangmeeplus.com</a>'));
   });
 
   it('splits the opening line and closes it with ด้านล่างนี้ (Owner 2026-08-31)', () => {
@@ -85,7 +85,7 @@ describe('account claim email copy', () => {
 
   it('places the logo inside the signature between the website line and the tagline', () => {
     const { html } = renderAccountClaimEmail({ ...INPUT, logoUrl: 'https://cdn.example.com/logo.png' });
-    const site = html.indexOf('official.mangmeeplus.com</a>');
+    const site = html.indexOf('mangmeeplus.com</a>');
     const logo = html.indexOf('<img');
     const tagline = html.indexOf('ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน');
     assert.ok(site > -1 && logo > -1 && tagline > -1);
@@ -207,9 +207,9 @@ describe('signup rejection email copy', () => {
   it('renders the same signature block as the claim email', () => {
     const { html, text } = renderSignupRejectionEmail(REJECT);
     assert.ok(html.includes('<strong style="color:#17352b">บริษัท มั่งมียั่งยืน จำกัด</strong>'));
-    assert.ok(html.includes('>official.mangmeeplus.com</a>'));
-    assert.ok(!html.includes('>https://official.mangmeeplus.com</a>'));
-    assert.ok(text.includes('เว็บไซต์ https://official.mangmeeplus.com'));
+    assert.ok(html.includes('>mangmeeplus.com</a>'));
+    assert.ok(!html.includes('>https://mangmeeplus.com</a>'));
+    assert.ok(text.includes('เว็บไซต์ https://mangmeeplus.com'));
     assert.ok(text.includes('ให้ธุรกิจของคุณ มั่งมี ไปด้วยกัน'));
   });
 

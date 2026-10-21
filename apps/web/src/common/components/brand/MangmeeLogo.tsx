@@ -17,3 +17,15 @@ export function MangmeeLogo({ size = 32 }: { size?: number }) {
     </svg>
   );
 }
+
+// Rising-bars mark of มั่งมีพลัส, the same mark as the public home header.
+export function MangmeePlusMark({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={Math.round((size * 30) / 28)} height={size} viewBox="0 0 30 28" fill="none" aria-hidden>
+      <rect x="0" y="16" width="5.5" height="12" rx="2.75" fill="#4ADE80" />
+      <rect x="8" y="10.5" width="5.5" height="17.5" rx="2.75" fill="#16A34A" />
+      <rect x="16" y="5.5" width="5.5" height="22.5" rx="2.75" fill="#22C55E" />
+      <rect x="24" y="0" width="5.5" height="28" rx="2.75" fill="#F59E0B" />
+    </svg>
+  );
+}

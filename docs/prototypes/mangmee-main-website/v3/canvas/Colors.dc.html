@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ชุดสีที่เทียบ</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400..700&amp;family=Inter:wght@500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#fff}
+.cv{font-family:Anuphan,sans-serif;color:#1a2e22;background:#fff;line-height:1.6;box-sizing:border-box}
+.cv *{box-sizing:border-box}
+.cv h1,.cv h2,.cv h3,.cv p,.cv ul{margin:0}
+.cv ul{padding:0;list-style:none}
+.num{font-family:Inter,sans-serif;font-variant-numeric:tabular-nums}
+.col{display:flex;flex-direction:column;border:1px solid #d0d5dd;border-radius:20px;overflow:hidden;background:#fff}
+.mini-hero{padding:28px;display:flex;flex-direction:column;gap:14px}
+.mini-hero h3{font-size:26px;line-height:1.35;font-weight:700}
+.mini-hero h3 span{display:block}
+.btnx{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:10px 22px;border-radius:12px;font-weight:600;font-size:16px;text-decoration:none;border:2px solid transparent;align-self:flex-start}
+.light{padding:24px 28px;display:flex;flex-direction:column;gap:14px;border-top:1px solid #eaecf0}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{font-size:13px;font-weight:600;padding:3px 10px;border-radius:6px}
+.tag{font-size:13px;font-weight:600;padding:3px 10px;border-radius:999px}
+.facts{padding:20px 28px 26px;border-top:1px solid #eaecf0;font-size:15px;display:flex;flex-direction:column;gap:6px}
+.facts li{display:flex;justify-content:space-between;gap:12px}
+.ok{color:#166534;font-weight:700}
+.bad{color:#b42318;font-weight:700}
+.verdict{margin-top:6px;padding:10px 14px;border-radius:10px;font-weight:700;font-size:16px}
+.sw{display:flex;gap:6px;flex-wrap:wrap}
+.sw span{width:40px;height:40px;border-radius:8px;border:1px solid rgba(0,0,0,.12)}
+</style>
+</helmet>
+<div class="cv" style="width:1440px;padding:56px 64px 64px;display:flex;flex-direction:column;gap:32px">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:32px">
+<div style="display:flex;flex-direction:column;gap:8px;max-width:860px">
+<div style="display:flex;align-items:center;gap:12px">
+<svg role="img" aria-label="โลโก้มั่งมีพลัส แท่งสัญญาณ 4 แท่ง" width="47.1" height="44" viewBox="0 0 30 28" fill="none"><rect x="0" y="16" width="5.5" height="12" rx="2.75" fill="#4ADE80"></rect><rect x="8" y="10.5" width="5.5" height="17.5" rx="2.75" fill="#16A34A"></rect><rect x="16" y="5.5" width="5.5" height="22.5" rx="2.75" fill="#22C55E"></rect><rect x="24" y="0" width="5.5" height="28" rx="2.75" fill="#F59E0B"></rect></svg>
+<p style="font-size:15px;color:#475467">โลโก้จริง: แท่งสัญญาณ 4 แท่ง (เขียว 3 แท่ง + ส้มทอง 1 แท่ง) ตามเว็บปัจจุบันและโลโก้บริษัท</p>
+</div>
+<h1 style="font-size:40px;line-height:1.3">ชุดสีที่เทียบสำหรับเว็บหลัก</h1>
+<p style="font-size:18px;color:#475467">ตัวเลขคือ contrast ที่คำนวณตาม WCAG 2.2 · ตัวอักษรต้องได้อย่างน้อย 4.5:1 · ขอบปุ่มบนพื้นต้องได้อย่างน้อย 3:1</p>
+</div>
+<p style="font-size:15px;color:#475467;border:1.5px dashed #98a2b3;border-radius:8px;padding:6px 12px">รายละเอียดใน docs/research/mangmee-main-website-color-research-2026-10-20-th.md</p>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px">
+
+<section class="col" aria-labelledby="opt-a" style="border:2px solid #14532d">
+<div class="mini-hero" style="background:#f5f7f5;color:#1a2e22">
+<p id="opt-a" style="font-size:15px;font-weight:700;color:#166534">A · มินิมอล (ใช้อยู่ตอนนี้)</p>
+<h3>ส่งรูปใบเสร็จทาง LINE ให้ AI ช่วยอ่าน <span style="color:#166534">คุณตรวจ แล้วกดยืนยัน</span></h3>
+<p style="color:#475467;font-size:16px">ขาว เทาอมเขียวอ่อน และเขียวเข้มสีเดียว ส้มทองอยู่ที่โลโก้เท่านั้น</p>
+<div class="row"><a class="btnx" href="#opt-a" style="background:#14532d;color:#fff;border:0">เริ่มใช้งานผ่าน LINE</a><a class="btnx" href="#opt-a" style="background:#ecf3ee;color:#14532d;border:0">ดูวิธีใช้</a></div>
+</div>
+<div class="light">
+<div class="row"><span style="font-size:14px;font-weight:600;color:#92400e">● รอตรวจสอบ</span><span style="font-size:14px;font-weight:600;color:#166534">● ยืนยันแล้ว</span><span style="font-size:14px;font-weight:600;color:#b42318">อ่านผิด</span></div>
+<div class="row"><span class="tag" style="background:#f2f4f3;color:#344054">พนักงาน</span><span class="tag" style="background:#f2f4f3;color:#344054">AI</span><span class="tag" style="background:#ecf3ee;color:#14532d">คุณ</span><span class="tag" style="background:#14532d;color:#fff">เหมาะกับร้านคุณ</span></div>
+<div class="sw" aria-hidden="true"><span style="background:#ffffff"></span><span style="background:#f5f7f5"></span><span style="background:#ecf3ee"></span><span style="background:#14532d"></span><span style="background:#1a2e22"></span><span style="background:#475467"></span></div>
+<p style="font-size:14px;color:#475467">ปุ่มไม่มีขอบ ลิงก์ไม่ขีดเส้นใต้ เพราะไม่มีลิงก์อยู่กลางประโยค</p>
+</div>
+<ul class="facts">
+<li><span>ปุ่มหลัก: ขาวบนเขียวเข้ม</span><span class="num ok">9.11 ผ่าน</span></li>
+<li><span>ปุ่มรอง: เขียวเข้มบนพื้นอ่อน</span><span class="num ok">8.08 ผ่าน</span></li>
+<li><span>ตัวอักษรรองบนพื้นเทาอ่อน</span><span class="num ok">7.14 ผ่าน</span></li>
+<li><span>สีที่ใช้ในหน้า</span><span class="ok">3 สี + สีโลโก้</span></li>
+<li><p class="verdict" style="background:#ecf3ee;color:#14532d;width:100%">ใช้ชุดนี้: เรียบ อ่านง่าย ปุ่มหลักเด่นเพราะเป็นสีเข้มสีเดียวในหน้า</p></li>
+</ul>
+</section>
+
+<section class="col" aria-labelledby="opt-b">
+<div class="mini-hero" style="background:#004b2c;color:#fff">
+<p id="opt-b" style="font-size:15px;font-weight:700;color:#d2ff43">B · v2 เขียวมะนาว (canvas ตอนนี้)</p>
+<h3>ส่งใบเสร็จผ่าน LINE ให้ AI ช่วยอ่าน <span style="color:#d2ff43">คุณตรวจ แล้วค่อยยืนยัน</span></h3>
+<p style="color:#dcefe3;font-size:16px">สีสด แต่ไม่มีในโลโก้และแอป</p>
+<a class="btnx" href="#opt-b" style="background:#d2ff43;color:#0e2c1a">เริ่มใช้งานผ่าน LINE</a>
+</div>
+<div class="light">
+<div class="row"><a class="btnx" href="#opt-b" style="background:#d2ff43;color:#0e2c1a">มะนาวบนพื้นขาว</a><a class="btnx" href="#opt-b" style="background:#007a39;color:#fff">ต้องเปลี่ยนสี</a></div>
+<div class="row"><span class="chip" style="background:#fff4d1;color:#6b4a00">รอตรวจ</span><span class="tag" style="background:#fff4d1;color:#6b4a00">AI</span><span class="chip" style="background:#fff4d1;color:#5c3f00">ป้ายต้นแบบ</span></div>
+<p style="font-size:14px;color:#475467">สีเหลืองเดียวกันใช้กับ 3 ความหมาย: รอตรวจ, AI และป้ายต้นแบบ</p>
+<div class="sw" aria-hidden="true"><span style="background:#004b2c"></span><span style="background:#007a39"></span><span style="background:#d2ff43"></span><span style="background:#ffcb47"></span><span style="background:#edf8ef"></span><span style="background:#10291b"></span></div>
+</div>
+<ul class="facts">
+<li><span>มะนาวบนเขียวเข้ม (ปุ่ม)</span><span class="num ok">13.0 ผ่าน</span></li>
+<li><span>ขอบปุ่มมะนาวบนพื้นขาว</span><span class="num bad">1.16 ไม่ผ่าน</span></li>
+<li><span>ปุ่มหลักมีสองหน้าตา</span><span class="bad">ใช่</span></li>
+<li><span>ตรงกับโลโก้และแอป</span><span class="bad">ไม่ตรง</span></li>
+<li><p class="verdict" style="background:#fef3c7;color:#7a2e0e;width:100%">เลิกใช้: แบรนด์สองชุด และใช้บนพื้นขาวไม่ได้</p></li>
+</ul>
+</section>
+
+<section class="col" aria-labelledby="opt-c">
+<div class="mini-hero" style="background:#14532d;color:#fff">
+<p id="opt-c" style="font-size:15px;font-weight:700;color:#dcfce7">C · ปุ่มเขียว LINE</p>
+<h3>ส่งใบเสร็จผ่าน LINE ให้ AI ช่วยอ่าน <span style="color:#dcfce7">คุณตรวจ แล้วค่อยยืนยัน</span></h3>
+<p style="color:#dcfce7;font-size:16px">ปุ่มสีเดียวกับ LINE</p>
+<a class="btnx" href="#opt-c" style="background:#06c755;color:#fff">เริ่มใช้งานผ่าน LINE</a>
+</div>
+<div class="light">
+<div class="row"><a class="btnx" href="#opt-c" style="background:#06c755;color:#fff">เริ่มใช้งานผ่าน LINE</a></div>
+<p style="font-size:14px;color:#475467">เขียวบนเขียว ปุ่มไม่โดดจากพื้น hero</p>
+<p style="font-size:14px;color:#475467">สี #06C755 เป็นสีของปุ่ม LINE Login ตามข้อกำหนดของ LINE ปุ่มเราไม่ใช่ LINE Login</p>
+<div class="sw" aria-hidden="true"><span style="background:#14532d"></span><span style="background:#06c755"></span><span style="background:#ffffff"></span></div>
+</div>
+<ul class="facts">
+<li><span>ขาวบนเขียว LINE (ปุ่ม)</span><span class="num bad">2.26 ไม่ผ่าน</span></li>
+<li><span>ความเด่นบนพื้นเขียวเข้ม</span><span class="bad">ต่ำ</span></li>
+<li><span>เสี่ยงข้อกำหนดแบรนด์ LINE</span><span class="bad">ต้องตรวจ</span></li>
+<li><p class="verdict" style="background:#fef3c7;color:#7a2e0e;width:100%">ไม่ใช้: ไม่ผ่าน WCAG และไม่เด่น</p></li>
+</ul>
+</section>
+</div>
+
+<section aria-labelledby="others" style="display:flex;flex-direction:column;gap:16px">
+<h2 id="others" style="font-size:28px">แบรนด์สีเขียวอื่นจับคู่สีอย่างไร</h2>
+<p style="font-size:16px;color:#475467">ค่าสีจากผลค้นหาและไซต์รวบรวม design system ไม่ใช่คู่มือทางการ ต้องตรวจก่อนอ้างภายนอก</p>
+<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">
+<div style="border:1px solid #d0d5dd;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px">
+<p style="font-weight:700">ก. เขียวสด + เขียวเข้มเกือบดำ</p>
+<p style="font-size:14px;color:#475467">Wise, Robinhood</p>
+<span style="display:inline-flex;align-self:flex-start;padding:8px 16px;border-radius:999px;background:#9fe870;color:#163300;font-weight:600">ปุ่มตัวอย่าง 9.45:1</span>
+<p style="font-size:15px">ห้ามตัวอักษรขาวบนเขียวสด (1.47:1)</p>
+</div>
+<div style="border:3px solid #15803d;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px;background:#f2f0eb">
+<p style="font-weight:700">ข. เขียวหลายระดับ + ครีม + ทอง</p>
+<p style="font-size:14px;color:#475467">Starbucks · ใกล้ชุด A ที่สุด</p>
+<span style="display:inline-flex;align-self:flex-start;padding:8px 16px;border-radius:999px;background:#00704a;color:#fff;font-weight:600">ปุ่มตัวอย่าง 6.15:1</span>
+<p style="font-size:15px">ทองเป็นจุดเล็ก ไม่ใช้เป็นตัวอักษรบนขาว (2.37:1)</p>
+</div>
+<div style="border:1px solid #d0d5dd;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px">
+<p style="font-weight:700">ค. เขียวกลาง + ตัวอักษรขาว</p>
+<p style="font-size:14px;color:#475467">KBank, Grab, LINE</p>
+<div class="row"><span style="padding:6px 10px;border-radius:8px;background:#00a94f;color:#fff;font-weight:600">3.09</span><span style="padding:6px 10px;border-radius:8px;background:#00b14f;color:#fff;font-weight:600">2.84</span><span style="padding:6px 10px;border-radius:8px;background:#06c755;color:#fff;font-weight:600">2.26</span></div>
+<p style="font-size:15px">คนไทยคุ้นตา แต่ตัวอักษรไม่ผ่าน 4.5:1 และจะดูเหมือนธนาคารหรือ LINE</p>
+</div>
+<div style="border:1px solid #d0d5dd;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px">
+<p style="font-weight:700">ง. เขียวไว้ที่โลโก้และสถานะ ปุ่มสีเข้ม</p>
+<p style="font-size:14px;color:#475467">Intuit QuickBooks, Shopify</p>
+<div class="row"><span style="padding:8px 14px;border-radius:10px;background:#303030;color:#fff;font-weight:600">ปุ่มหลัก</span><span class="chip" style="background:#dcfce7;color:#166534">สำเร็จ</span></div>
+<p style="font-size:15px">ปุ่มกับป้าย “ยืนยันแล้ว” ต้องคนละน้ำหนัก ชุด A จึงใช้ปุ่มเขียวเข้มบนพื้นขาว</p>
+</div>
+</div>
+<p style="font-size:16px"><b>จากงานวิจัยคู่สี:</b> สีที่ใกล้กันดูกลมกลืน สีตัดกันจัดดูไม่กลมกลืน ส่วนสีที่อยากให้มองก่อน (ปุ่ม ป้าย) ควรต่างจากพื้น (Schloss และ Palmer 2011) และคู่ที่มีสีแดงมักไม่กลมกลืน (Ou และ Luo 2006) ชุด A จึงใช้เขียวหลายระดับเป็นพื้น ทองเป็นสีด้านหน้า และแดงเฉพาะ “อ่านผิด”</p>
+</section>
+
+<section aria-labelledby="pair" style="display:flex;flex-direction:column;gap:14px">
+<h2 id="pair" style="font-size:24px">สีคู่ของขาว เขียว เขียวอ่อน: ทองจากโลโก้</h2>
+<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+<span style="width:56px;height:56px;border-radius:14px;background:#fff;box-shadow:0 1px 3px rgb(16 24 40 / 10%)"></span>
+<span style="width:56px;height:56px;border-radius:14px;background:#ecf3ee"></span>
+<span style="width:56px;height:56px;border-radius:14px;background:#15803d"></span>
+<span style="width:56px;height:56px;border-radius:14px;background:#14532d"></span>
+<span style="width:56px;height:56px;border-radius:14px;background:#fcd34d"></span>
+<span style="font-size:15px;color:#475467">ขาว · เขียวอ่อน #ECF3EE · เขียว #15803D · เขียวเข้ม #14532D · ทอง #FCD34D</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+<span style="font-size:12px;font-weight:700;background:#fcd34d;color:#14532d;padding:3px 10px;border-radius:999px">เหมาะกับ 3–5 คน · 31–50 ใบ</span>
+<span style="display:inline-flex;align-items:center;padding:8px 14px;border-radius:8px;background:#15803d;color:#fff;font-weight:700;font-size:15px">จ่ายรายปี<span style="margin-left:6px;padding:1px 8px;border-radius:999px;background:#fcd34d;color:#14532d;font-size:13px">ฟรี 2 เดือน</span></span>
+<span style="font-size:15px;color:#475467">ทองอุ่นตัดกับเขียวเย็น จึงเด่นโดยไม่ต้องเพิ่มสีใหม่ (แบบเดียวกับ Starbucks เขียว ครีม ทอง)</span>
+</div>
+</section>
+
+<section aria-labelledby="rules" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;background:#f0fdf4;border-radius:20px;padding:28px 32px">
+<div>
+<h2 id="rules" style="font-size:24px">กติกาสีชุด A มินิมอล</h2>
+<ul style="font-size:16px;display:flex;flex-direction:column;gap:6px;margin-top:10px">
+<li>ใช้ 3 สีหลัก: ขาว เทาอมเขียวอ่อน และเขียวเข้ม · สีคู่คือทองจากแท่งสุดท้ายของโลโก้</li>
+<li>ทองใช้แค่ 2 จุด: ป้ายแพ็กเกจที่เหมาะ และป้าย “ฟรี 2 เดือน” · ตัวเขียวเข้มบนทอง #FCD34D 6.32:1 · ห้ามตัวขาวบนทอง (2.15:1)</li>
+<li>หน้าจอหนึ่งมีปุ่มเขียวเข้มทึบปุ่มเดียว ปุ่มอื่นเป็นพื้นเขียวอ่อน ไม่มีเส้นขอบ</li>
+<li>ไม่มีลิงก์อยู่กลางประโยค จึงไม่ต้องขีดเส้นใต้</li>
+<li>พื้นเขียวเข้มเหลือแค่ส่วนปิดท้ายหน้า</li>
+</ul>
+</div>
+<div>
+<h2 style="font-size:24px">สีไม่บอกความหมายเดี่ยว ๆ</h2>
+<ul style="font-size:16px;display:flex;flex-direction:column;gap:6px;margin-top:10px">
+<li>สถานะทุกอันมีคำกำกับ: รอตรวจ ยืนยันแล้ว อ่านผิด</li>
+<li>ผู้ชายไทยในงานที่ศึกษาราว 5–8% แยกแดงกับเขียวยาก</li>
+<li>ช่องรอข้อมูลจริงเป็นพื้นเทา ไม่ซ้ำสีกับสถานะ</li>
+<li>ปุ่มไป LINE ไม่ใช้โลโก้ LINE และไม่ใส่ลูกศร</li>
+</ul>
+</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

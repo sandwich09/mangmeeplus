@@ -78,7 +78,7 @@ describe('Official OA webhook', () => {
     assert.deepEqual(contact.footer.contents.map((button: any) => button.action), [
       { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' },
       { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' },
-      { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' },
+      { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://mangmeeplus.com/' },
     ]);
   });
 
