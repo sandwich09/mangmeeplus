@@ -166,10 +166,11 @@ def enrolled_host_matches(target, host, info):
 
 
 def native_config(target, service, env, source, directory):
-    role = {'hosts': [h['address'] for h in target['hosts'][service]]}
+    role = {'hosts': [h['address'] for h in target['hosts'][service]],
+        'options': {'cap-drop': 'ALL', 'security-opt': 'no-new-privileges'}}
     if service=='ai-gateway':
         # Node as PID 1 otherwise ignores default SIGTERM and consumes the full stop timeout.
-        role['options']={'init':True}
+        role['options']['init']=True
     if target['kind'] == 'dev':
         role.setdefault('options',{})['network-alias'] = ('api' if service == 'api-web' else 'ai' if service == 'ai-gateway' else 'workers') + '-' + source[:12]
     if service == 'workers':
