@@ -5,6 +5,7 @@ import { json, type Request, type RequestHandler } from 'express';
 export const PROVIDER_EVENTS_PATH = /^\/v1\/public\/(postmark-events|stripe-events)\/?$/i;
 const parseProviderEvent = json({
   limit: '256kb',
+  inflate: false,
   verify(request: Request & { rawBody?: Buffer }, _response, body) {
     if (body.length) request.rawBody = Buffer.from(body);
   },
