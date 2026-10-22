@@ -80,16 +80,17 @@ async function bootstrap() {
   // bigger limit to that one route instead of raising the global body limit.
   app.use(
     /^\/v1\/companies\/[^/]+\/banking\/bank-accounts\/[^/]+\/statement-imports\/extract$/,
-    json({ limit: Math.ceil(config.uploadMaxBytes * 1.5), verify: saveRawBody }),
+    json({ limit: Math.ceil(config.uploadMaxBytes * 1.5), inflate: false, verify: saveRawBody }),
   );
   // Amazon SNS posts its notification envelope as `text/plain`, which the JSON parser below skips,
   // leaving the SES-events controller an empty body. Give that one path a parser that accepts any
   // content type, capped at SNS's own 256 KB maximum message size — a tighter ceiling than the
   // global limit, applied before parsing, which is this public endpoint's body-size guard.
-  app.use(/^\/v1\/public\/ses-events$/, json({ limit: '256kb', type: () => true }));
+  app.use(/^\/v1\/public\/ses-events$/, json({ limit: '256kb', inflate: false, type: () => true }));
   app.use(PROVIDER_EVENTS_PATH, providerEventsJson);
-  app.use(json({ limit: bodyLimit, verify: saveRawBody }));
-  app.use(urlencoded({ extended: true, limit: bodyLimit, verify: saveRawBody }));
+  // No caller compresses request bodies: inflate:false refuses Content-Encoding before any decoder runs.
+  app.use(json({ limit: bodyLimit, inflate: false, verify: saveRawBody }));
+  app.use(urlencoded({ extended: true, limit: bodyLimit, inflate: false, verify: saveRawBody }));
   app.enableCors({
     origin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
       if (!origin || isAllowedCorsOrigin(origin, allowedOrigins, config)) {
