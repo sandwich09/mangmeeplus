@@ -6,7 +6,7 @@ import { RequirePermissions } from '../../common/security/permissions.decorator'
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 import { HomeThemeService } from './home-theme.service';
 
-class SetHomeThemeBody {
+class SetHomeThemeDto {
   @IsIn(Object.keys(HOME_EVENTS)) event!: HomeEvent;
   @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) expectedVersion!: number;
 }
@@ -37,7 +37,7 @@ export class SystemHomeThemeController {
 
   @Put()
   @Header('Cache-Control', 'no-store')
-  set(@Body() body: SetHomeThemeBody, @Req() req: { context: RequestContext }) {
+  set(@Body() body: SetHomeThemeDto, @Req() req: { context: RequestContext }) {
     return this.themes.set(body, req.context);
   }
 }
