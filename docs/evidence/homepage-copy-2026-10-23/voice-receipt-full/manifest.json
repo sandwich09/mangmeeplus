@@ -1,0 +1,108 @@
+{
+  "created": "2026-10-23",
+  "voice": "Owner-approved item 27 Thai F5 reference voice, +12% tempo, gentle pitch range expansion",
+  "model_attribution": {
+    "creator": "VIZINTZOR",
+    "model": "F5-TTS-THAI",
+    "url": "https://huggingface.co/VIZINTZOR/F5-TTS-THAI",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "code": "https://github.com/VYNCX/F5-TTS-THAI",
+    "package": "f5-tts-th==1.0.9",
+    "vocoder": "charactr/vocos-mel-24khz"
+  },
+  "source_clip": "https://www.instagram.com/reel/DezQGLgT9nW/",
+  "reference_crop_original_seconds": [
+    11.8,
+    18.02
+  ],
+  "reference_text": "น้องมั่งมีช่วยอ่านให้ ถ้าอ่านผิดตรงไหน คุณแก้ได้ ก่อนกดยืนยัน. ",
+  "generation": {
+    "nfe_step": 32,
+    "cfg_strength": 2.0,
+    "seed": 42,
+    "device": "MPS float32",
+    "tempo": 1.12,
+    "pitch_contour_scale": 1.16,
+    "pitch_shift_limit_semitones": 0.7,
+    "reference_audio_uploaded": false
+  },
+  "cues": [
+    {
+      "index": 0,
+      "text": "ส่งรูปใบเสร็จมาในไลน์ ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+      "source": "Exact owner-approved item 27 audition",
+      "at": 0.0,
+      "duration": 5.379791666666667
+    },
+    {
+      "index": 1,
+      "text": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+      "fix_duration": 11.5,
+      "raw_peak": 1.0562034845352173,
+      "gain": 0.6702740473306331,
+      "duration": 4.669875,
+      "elapsed": 20.051181077957153,
+      "pitch_centre_hz": 302.6999270723702,
+      "at": 5.499791666666667
+    },
+    {
+      "index": 2,
+      "text": "ถ้าอ่านผิดตรงไหน คุณแก้ได้ ก่อนกดยืนยันนะคะ",
+      "fix_duration": 11.7,
+      "raw_peak": 1.3168113231658936,
+      "gain": 0.5376212764347182,
+      "duration": 4.840333333333334,
+      "elapsed": 19.70850396156311,
+      "pitch_centre_hz": 279.92068962029737,
+      "at": 10.289666666666667
+    },
+    {
+      "index": 3,
+      "text": "เรียบร้อยค่ะ เก็บทั้งรายการและใบเสร็จ ไว้ดูย้อนหลังได้เลย",
+      "fix_duration": 12.8,
+      "raw_peak": 1.0534471273422241,
+      "gain": 0.6720278275097084,
+      "duration": 5.83025,
+      "elapsed": 21.483297109603882,
+      "pitch_centre_hz": 303.23665097892814,
+      "at": 15.25
+    }
+  ],
+  "pcm_duration": 21.40025,
+  "duration": 21.4,
+  "verification": [
+    {
+      "file": "mangmee-receipt-full.wav",
+      "bytes": 1540862,
+      "sha256": "fedc846c3fcfb25593ee4d5a56dd22d3ff5cc49aac0975e4b285b6a4051ea74f",
+      "decoded_duration": 21.40025,
+      "peak_dbfs": -3.0487439036369324,
+      "clipped_samples": 0,
+      "full_decode": "pass"
+    },
+    {
+      "file": "mangmee-receipt-full.m4a",
+      "bytes": 255769,
+      "sha256": "d710a16eeb49eac70a3773c373367941d3bed3c7af801d20fa9d1ed695f798e3",
+      "decoded_duration": 21.418666666666667,
+      "peak_dbfs": -3.049725890159607,
+      "clipped_samples": 0,
+      "full_decode": "pass"
+    },
+    {
+      "file": "mangmee-receipt-full.mp3",
+      "bytes": 429871,
+      "sha256": "28ac6c6cf99cf1665ee8e6a86f92de42fb3e41fba2680ec70d1d12001f89ccff",
+      "decoded_duration": 21.40025,
+      "peak_dbfs": -3.48637193441391,
+      "clipped_samples": 0,
+      "full_decode": "pass"
+    }
+  ],
+  "notes": [
+    "Exact approved opening retained. Other scenes use the same reference and processing.",
+    "Voice only; no backing music or pops. CSS retains visual pop transitions.",
+    "Use actual audio clock; prepare draft before human review/confirmation, then saved result."
+  ]
+}

@@ -1,0 +1,382 @@
+[
+  {
+    "label": "plum-1280-paused",
+    "animation": "1.5s ease-in-out -5.97154s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "เล่นต่อ",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "1",
+    "style": "--scene-time: 1.6515449999999996s; --story-time: 5.971545s;",
+    "time": 5.971545,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "resume",
+    "animation": "1.5s ease-in-out -5.97155s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "หยุดชั่วคราว",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": false,
+    "scene": "1",
+    "style": "--scene-time: 1.6515509999999995s; --story-time: 5.971551s;",
+    "time": 5.971551,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "full-story-completed",
+    "animation": "1.5s ease-in-out -7.36771s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "เล่นต่อ",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "1",
+    "style": "--scene-time: 3.047706s; --story-time: 7.367706s;",
+    "time": 7.367706,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "playing-after-visible",
+    "animation": "1.5s ease-in-out -7.38816s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "หยุดชั่วคราว",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": false,
+    "scene": "1",
+    "style": "--scene-time: 3.068155s; --story-time: 7.388155s;",
+    "time": 7.388155,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "late-playback",
+    "animation": "1.5s ease-in-out -13.5136s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "หยุดชั่วคราว",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "เรียบร้อยค่ะ เก็บทั้งรายการและใบเสร็จไว้ดูย้อนหลังได้เลย",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": false,
+    "scene": "3",
+    "style": "--scene-time: 1.7935649999999992s; --story-time: 13.513565s;",
+    "time": 13.518388,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "completed",
+    "animation": "1.5s ease-in-out -16.82s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "เล่นอีกครั้ง",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "เรียบร้อยค่ะ เก็บทั้งรายการและใบเสร็จไว้ดูย้อนหลังได้เลย",
+    "duration": 16.82,
+    "ended": true,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "3",
+    "style": "--scene-time: 5.1s; --story-time: 16.82s;",
+    "time": 16.82,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "replay",
+    "animation": "1.5s ease-in-out -0.028214s infinite paused receipt-nod",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "หยุดชั่วคราว",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": 16.82,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": false,
+    "scene": "0",
+    "style": "--scene-time: 0.028214s; --story-time: 0.028214s;",
+    "time": 0.034867,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "plum-390-initial",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "เล่น",
+        "width": 155
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 155
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 390
+  },
+  {
+    "label": "plum-390-final-icons",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "",
+        "width": 155
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 155
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 390
+  },
+  {
+    "label": "default-390",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "",
+        "width": 155
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 155
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=default#receipt-story",
+    "width": 390
+  },
+  {
+    "label": "default-1280",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=default#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "plum-1280-final-icons",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "",
+        "width": 351.328125
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 351.3359375
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 1280
+  },
+  {
+    "label": "native-handoff",
+    "animation": "none",
+    "buttons": [
+      {
+        "height": 46,
+        "label": "",
+        "width": 140.5
+      },
+      {
+        "height": 46,
+        "label": "ปิดเสียง",
+        "width": 140.5
+      }
+    ],
+    "caption": "ส่งรูปใบเสร็จมาใน LINE ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+    "duration": null,
+    "ended": false,
+    "muted": false,
+    "overflow": false,
+    "paused": true,
+    "scene": "0",
+    "style": "--scene-time:0s;--story-time:0s",
+    "time": 0,
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "width": 361
+  },
+  {
+    "label": "accessible-controls",
+    "controls": [
+      {
+        "icon": "M6 5h4v14H6zM14 5h4v14h-4z",
+        "name": "หยุดวิดีโอ"
+      },
+      {
+        "icon": "M8 5v14l11-7z",
+        "name": "เล่น"
+      },
+      {
+        "name": "ปิดเสียง"
+      },
+      {
+        "icon": "M6 5h4v14H6zM14 5h4v14h-4z",
+        "name": "หยุดวิดีโอ"
+      }
+    ]
+  },
+  {
+    "label": "pause-proof",
+    "caption": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+    "paused": true,
+    "scene": "1",
+    "style": "--scene-time: 1.4208609999999995s; --story-time: 5.740861s;",
+    "time": 5.740861,
+    "transform": "matrix(0.999962, -0.00869219, 0.00869219, 0.999962, 0, -1.24508)"
+  }
+]

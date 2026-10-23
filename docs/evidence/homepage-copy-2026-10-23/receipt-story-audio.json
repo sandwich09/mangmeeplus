@@ -1,0 +1,41 @@
+{
+  "voice": "Owner-approved item 27 Thai F5 reference voice, +12% tempo, gentle pitch range expansion",
+  "generation": "Existing locally generated approved voice; boundary silence trimmed for synchronization",
+  "model_attribution": {
+    "creator": "VIZINTZOR",
+    "model": "F5-TTS-THAI",
+    "url": "https://huggingface.co/VIZINTZOR/F5-TTS-THAI",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "code": "https://github.com/VYNCX/F5-TTS-THAI",
+    "package": "f5-tts-th==1.0.9",
+    "vocoder": "charactr/vocos-mel-24khz"
+  },
+  "cues": [
+    {
+      "start": 0.0,
+      "narration": "ส่งรูปใบเสร็จมาในไลน์ ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+      "duration": 4.24
+    },
+    {
+      "start": 4.32,
+      "narration": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+      "duration": 3.14
+    },
+    {
+      "start": 7.54,
+      "narration": "ถ้าอ่านผิดตรงไหน คุณแก้ได้ ก่อนกดยืนยันนะคะ",
+      "duration": 4.1
+    },
+    {
+      "start": 11.72,
+      "narration": "เรียบร้อยค่ะ เก็บทั้งรายการและใบเสร็จ ไว้ดูย้อนหลังได้เลย",
+      "duration": 4.92
+    }
+  ],
+  "duration": 16.82,
+  "bytes": 208995,
+  "sha256": "7a586179fee6c1eaa689459d25a077b9f5852379a462af30ba8da87ebe8f533b",
+  "effects": "Voice only; visual animation progress follows native audio.currentTime",
+  "source_manifest": "voice-receipt-synced/manifest.json"
+}

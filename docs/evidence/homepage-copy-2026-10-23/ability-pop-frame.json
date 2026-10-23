@@ -1,0 +1,36 @@
+{
+  "class": "mm-abilities is-visible",
+  "frame": [
+    {
+      "delay": "0s",
+      "opacity": "0.588767",
+      "transform": "matrix(0.981821, 0, 0, 0.981821, 0, 4.81343)"
+    },
+    {
+      "delay": "0.08s",
+      "opacity": "0.344541",
+      "transform": "matrix(0.956177, 0, 0, 0.956177, 0, 9.45373)"
+    },
+    {
+      "delay": "0.16s",
+      "opacity": "0.0602296",
+      "transform": "matrix(0.926324, 0, 0, 0.926324, 0, 14.8556)"
+    },
+    {
+      "delay": "0.24s",
+      "opacity": "0",
+      "transform": "matrix(0.92, 0, 0, 0.92, 0, 16)"
+    },
+    {
+      "delay": "0.32s",
+      "opacity": "0",
+      "transform": "matrix(0.92, 0, 0, 0.92, 0, 16)"
+    },
+    {
+      "delay": "0.4s",
+      "opacity": "0",
+      "transform": "matrix(0.92, 0, 0, 0.92, 0, 16)"
+    }
+  ],
+  "overflow": false
+}

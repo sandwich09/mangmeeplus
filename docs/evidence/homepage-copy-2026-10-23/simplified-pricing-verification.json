@@ -1,0 +1,48 @@
+{
+  "checks": [
+    {
+      "comparison": 0,
+      "options": [
+        "ไม่ต้องทำเอง",
+        "ต้องทำเอง"
+      ],
+      "overflow": false,
+      "planCards": 4,
+      "signupSteps": 4,
+      "theme": "default",
+      "width": 390
+    },
+    {
+      "comparison": 0,
+      "options": [
+        "ไม่ต้องทำเอง",
+        "ต้องทำเอง"
+      ],
+      "overflow": false,
+      "planCards": 4,
+      "signupSteps": 4,
+      "theme": "default",
+      "width": 1280
+    },
+    {
+      "comparison": 0,
+      "options": [
+        "ไม่ต้องทำเอง",
+        "ต้องทำเอง"
+      ],
+      "overflow": false,
+      "planCards": 4,
+      "signupSteps": 4,
+      "theme": "halloween",
+      "width": 1280
+    }
+  ],
+  "annualPrices": [
+    "2,490",
+    "4,990",
+    "9,990",
+    "19,990"
+  ],
+  "taxYesRecommendation": "ธุรกิจ",
+  "taxNoRecommendation": "เริ่มต้น"
+}

@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-23",
+  "audio_and_ui_cue_alignment": "pass (<1 ms difference)",
+  "audio_cues_seconds": [
+    0.0,
+    5.5,
+    10.29,
+    15.25
+  ],
+  "duration": 21.4,
+  "approved_opening_pcm_exact_match": true,
+  "local_audio_http_status": 200,
+  "served_audio_matches_asset": true,
+  "asset_sha256": "d710a16eeb49eac70a3773c373367941d3bed3c7af801d20fa9d1ed695f798e3",
+  "homepage_tests": "26/26 pass; final caption revision rendered tests 9/9 pass",
+  "typescript": "tsc --noEmit --incremental false passed",
+  "browser_checks": {
+    "themes": [
+      "default",
+      "halloween/plum"
+    ],
+    "widths": [
+      390,
+      1280
+    ],
+    "horizontal_overflow": false,
+    "control_button_height": 46,
+    "control_button_widths": {
+      "390": 100.6640625,
+      "1280": 231.5546875
+    },
+    "initial_audio": "paused and muted, preload none",
+    "silent_start": "verified",
+    "user_gesture_audio_start": "verified",
+    "pause_resume_mute": "verified",
+    "scene_selection": {
+      "draft": 5.5,
+      "review": 10.29
+    },
+    "full_playback_end": {
+      "time": 21.4,
+      "scene": 3,
+      "label": "22 / 22 วินาที"
+    },
+    "pause_outside_section": true,
+    "replay": {
+      "verified": true,
+      "time_after_restart": 0.089634,
+      "paused_after_restart": true
+    }
+  },
+  "limitations": [
+    "ASR is a rough check; Thai transcription has spelling errors. No claim of auditory pronunciation certification.",
+    "Reduced-motion implementation is unchanged; browser tool cannot emulate media settings."
+  ],
+  "handoff": {
+    "url": "http://127.0.0.1:43831/?preview=events&event=halloween&palette=plum#receipt-story",
+    "viewport_override": "reset",
+    "actual_width": 361,
+    "horizontal_overflow": false,
+    "audio_time": 0,
+    "paused": true,
+    "muted": true,
+    "browser_visible": true
+  }
+}
