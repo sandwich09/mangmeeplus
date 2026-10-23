@@ -10,7 +10,617 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Release 2026-10-12 16:54 — Production and UAT (current for both): the Official OA is `@695ultfm`
+## Production security readback — 2026-10-21 (read-only)
+
+**Node security follow-up — 2026-10-22 14:46 Bangkok:** latest recorded Production operation
+`20261021T175544Z-f4f52630` (source `733f77864`, finished 01:02 Bangkok) still contains Node 22.23.2
+in API/Web, AI, Workers and tools. Verified by executing the exact immutable images locally with
+network disabled and matching their IDs to the release's recorded runtime readback. Node's Oct21
+security release fixes High Brotli RCE CVE-2026-111497 in 22.23.4. A benign local compressed-JSON
+probe exercised the API image's decoder before route denial; no exploit or Production test.
+Owner chose latest-release evidence after the scoped MFA session was unavailable; this is **not a
+fresh live container read**. No deploy or AWS mutation. [Assessment and evidence](../research/nodejs-security-review-2026-10-22-th.md) (kept on the owner's laptop, not in git).
+
+Owner requested a security report against real code and settings. At approximately 13:44–13:55
+Bangkok, all four running containers (two API/Web, AI Gateway, workers) reported source
+`29b1eab65fe852db0abcd7b2f69d45d64a1ae540`; API replicas matched image/config security fields.
+Non-root read APIs and SSM reads confirmed private/encrypted/MultiAZ/deletion-protected RDS with
+35-day backups, PostgreSQL client verify-full, Redis client TLS/auth, disabled dev auth/Swagger,
+and API-only actor-delegation signing-key presence (absent from the Next process and AI container).
+
+Open findings: public AI-origin requests reach the JSON parser before internal authentication
+(deployed parser limits 16/96 MB, effective AI app rate-limit flag false); shipped dependency versions
+match newly reported advisories; all four containers lack explicit cap-drop/no-new-privileges and
+have writable root filesystems; all three current Kamal application log groups retain 14 days but
+have no customer-managed KMS association. CloudWatch default at-rest encryption still applies.
+API security alarm remains ALARM; its current cause/delivery was not re-established in this audit.
+Initial non-root reads denied Redis/S3/RDS-parameter/WAF access. At 14:14–14:15 Bangkok,
+the owner explicitly authorized `thawatchai` (STS identity is account root) for metadata-only reads.
+Redis now independently confirms at-rest/TLS-required/auth encryption controls, two nodes across AZs,
+automatic failover/MultiAZ and 35-day snapshot retention. Twelve available automated snapshots
+were listed on replica `-002`; latest created 2026-10-21 04:23 Bangkok. A replication-group-only
+snapshot query returned empty, so use member-cluster queries before concluding backups are absent.
+The production S3 bucket has all four public-access blocks, BucketOwnerEnforced, SSE-S3/AES256 and
+versioning enabled. Account-level public-access-block and bucket policy are absent (NoSuch responses,
+not AccessDenied); bucket-level protection remains active, but there is no bucket-policy HTTPS deny.
+WAF returns `WebACL=null` for `mangmee-production-gateway`, whose HTTPS rules route both API/AI
+origins; this ALB has no AWS WAF association. Cloudflare account rules remain unreviewed.
+RDS `rds.force_ssl=1` with DB parameter group in-sync and no instance pending changes; no SQL check.
+Do not substitute historical ECS security closure for these findings.
+
+Independent verification ~14:15–14:35 Bangkok (non-root reads + deployed CloudFormation template)
+confirmed all five findings and added two permission findings: (1) the production deploy role trusts
+the laptop's long-lived IAM user key with no MFA condition and can read every
+`watchdog-bms/production/*` secret, push ECR images, update AgentCore and start SSM sessions;
+(2) the HS256 user-token signing key sits in the AI container and the AgentCore role although
+no AI route verifies user tokens. Both `origin` and `ai-origin` resolve straight to the ALB, so
+Cloudflare does not front them, and the API reaches AI through public `ai-origin`.
+Non-root profiles cannot read IAM, WAF or ALB rules; use `cloudformation get-template` on
+`mangmee-kamal-production` with the deploy profile to read deployed roles/rules instead.
+[Verification](../research/security-review-2026-10-21-verification-th.md) (kept on the owner's laptop, not in git).
+
+**Changed the same night (owner-approved change sets):** the deploy user now requires MFA for
+everything except read-only operations and Bedrock model calls (group `mangmee-require-mfa`), and the
+Production and UAT deploy roles trust it only with MFA (8 h sessions). Local profiles carry `mfa_serial`; the
+owner types the code once, then the CLI cache serves release tooling. Without that, every deploy-role
+call fails AccessDenied — ask the owner for the code, never work around it. Production `ai-origin`
+now admits only ApiA `13.228.157.253` / ApiB `18.139.177.255` (EIPs in the stack); anything else gets
+the ALB default 503. If an API host is replaced, its EIP must follow or LINE AI/OCR stop.
+[State and next steps](../agent-memory/security-fix-plan-2026-10-21.md).
+
+**UAT release with items 3–5 — 2026-10-21 23:47 (Asia/Bangkok):** local Kamal operation
+`20261021T164111Z-4f75a728` (prepared build `20261021T163219Z-6d53fe1c`), exact main
+`9732cb57a8876b19a079a8367b32c6a4925df6a4`, `ACCEPTED_LINE_DEFERRED`, signed, 354.7 s, both owned SSM
+sessions terminated; AgentCore UAT `kamal_uat_b` → version 24. Post-deploy readback: anonymous
+`uat-ai-origin` `/v1/internal/*` (malformed JSON, empty body, upper-case path) → 401 before any body
+parse; from the API container with the real key `GET /internal/ai/agents` 200, without key 401,
+malformed 400, 5 MB receipt body handled (no model call). Every app container `CapDrop [ALL]`,
+`no-new-privileges`, pid 1 `CapEff 0`/`NoNewPrivs 1`; ai-gateway `init=true`; only api-web keeps
+`WATCHDOG_JWT_SECRET_ARN`; AgentCore v24 env has no JWT secret key. Container logs clean. Signed-in
+walk after the owner logged in (2026-10-22 ~00:20): `/v1/auth/me` with a foreign company id → 403
+`company_access_unavailable` with no name, own company 200; 23 sold screens at 1556 px and 11 at
+375 px open with heading, no sideways overflow, no error text (tax/tax-signature = package lacks
+them; settings/security redirects by design); voucher PDF (live render) and substitute-receipt
+server preview image render correctly; API→AI receipt-ocr with a real phone photo returned the right
+shop/number/amount in 7 s. Owner LINE conversation answered normally (owner-reported); AI log shows
+a receipt read plus two routed turns (accounting read with API tools, advisor) completed, not
+refused, no new errors. UAT/READY/PROD workflow IDs NOT_DISPATCHED (local Kamal path).
+
+**Production with items 3–5 — 2026-10-22 00:26 (Asia/Bangkok):** owner's go "เอาขึ้น Production ได้เลย".
+Prepare `20261021T171401Z-7794b6b8` (54 s), then operation `20261021T171504Z-6f47b232` from UAT
+`20261021T164111Z-4f75a728`, main `9732cb57a8876b19a079a8367b32c6a4925df6a4`, `ACCEPTED_LINE_DEFERRED`,
+signed, 665.8 s (browser acceptance: owner signed in after website-ready 17:21:23Z, checks 17:25Z,
+evidence `browser-observation-20261022-production.txt` in the run); four owned SSM sessions terminated.
+AgentCore `kamal_production_a` → v9, env without the JWT secret key. Readback on all four hosts: every app
+container `CapDrop [ALL]` + `no-new-privileges`, pid 1 `CapEff 0`/`NoNewPrivs 1`, ai-gateway `init=true`,
+only api-web keeps `WATCHDOG_JWT_SECRET_ARN`. From both API containers with the real key: agents 200,
+no key 401, malformed 400, 5 MB body handled (no model call). Outside → `ai-origin` 503 (allow-list).
+Public `/`, `/login`, platform access 200/OPEN. Level-50 log lines in 15 min: 0 on every container.
+
+**Web login key rotated + festival theme — 2026-10-22 01:05 (Asia/Bangkok):** owner: "เปลี่ยน key ได้เลย …
+theme เทศกาล … เอาขึ้นไปด้วยปกติได้เลย". Main `733f77864` (homepage seasonal themes #1147/#1148, one new
+table `PublicHomeThemeSetting`, + pin re-sync; develop `5b3d3acf7` same tree). Deploy roles can only read
+secrets, so the owner wrote new `watchdog-jwt-secret` versions with his `thawatchai` login profile (final
+AWSCURRENT: UAT `7a417044…`, Production `3b81cdcf…`). UAT `20261021T174744Z-087f4a5c` (prepare
+`20261021T174146Z-488b484f`) signed 245.6 s: old browser session 401, normal + Halloween homepage OK at
+1556/375 (owner let me switch UAT to Halloween; UAT stays on Halloween). Production prepare
+`20261021T175446Z-80ca9474`, operation `20261021T175544Z-f4f52630` signed `ACCEPTED_LINE_DEFERRED` 376.2 s,
+captured key `3b81cdcf…`, AgentCore `kamal_production_b` v10, owner signed in fresh for browser
+acceptance; readback unchanged (cap-drop, API→AI 200/401/400/5 MB, 0 level-50). Production theme left
+on `default` (switch at /system/home-theme). **AgentRole removal:** a stack change set editing
+`AgentRole` also re-evaluated `AgentRuntime`/`AgentEndpointA/B` (Dynamic, endpoints Conditional
+replacement) — it would rebuild the AI runtime from the template's old artifact; it was deleted
+unexecuted. Instead the Production key carries a resource policy that DENIES `GetSecretValue` to
+`mangmee-kamal-production-agentrole` (validated; simulator: agentrole explicitDeny, apirole and
+deployrole allowed, agentrole still allowed on the internal-tool secret). Remove with
+`secretsmanager delete-resource-policy` if ever needed. The stale `ReadExactInternalToolSecret` ARN
+stays in the template (harmless under the deny); never edit AgentRole through the stack without
+pinning the runtime first. Owner afterwards switched Production to Halloween and sent a Production LINE
+message — both passed (owner-reported). UAT key deny: owner decided not needed.
+UAT was then PAUSED at 01:01:37 by a separate `power-uat pause` operation `20261021T180137Z-0ccc30e3`
+(UAT_POWER_PAUSED_WITH_DATABASE; StopInstances by the shared UAT deploy-role CLI session from this laptop,
+not by the release, not by a Claude scheduled task) — the owner confirmed he paused it himself ("ฉันสั่งปิด
+เอง"). Public UAT answers 504 until `power-uat start`.
+
+**Node 22.23.4 + API refuses compressed request bodies — 2026-10-22 20:36 (Asia/Bangkok):** from the verified
+Node.js report (`docs/research/nodejs-security-review-2026-10-22-th.md`, CVE-2026-111497 Brotli and others).
+Owner: "ตรวจดูผลกระทบก่อน" then "เริ่มลงมือแก้ไขได้เลย". Main `8d7cdca01` / develop `478b84f10` (same tree):
+six Dockerfiles → `node:22.23.4-trixie-slim@sha256:8eb619e4…`, API json/urlencoded/provider-events parsers
+`inflate:false`, theme body class renamed `SetHomeThemeDto` (the API body-validation audit had been red on
+main since the theme PR). Local impact proof on host Node 22.23.4: suites 25,620/0, real-DB 534, journeys 88/88;
+20 provider hosts TLS/fetch identical. UAT started with power-uat `20261022T125931Z-985a30f4`, prepare
+`20261022T130606Z-d4ebd077`, operation `20261022T131340Z-9ad586b5` signed 406.9 s (receipt OCR via API→AI OK).
+Production prepare `20261022T132205Z-5ddaa89c`, operation `20261022T132312Z-cb63c597` signed
+`ACCEPTED_LINE_DEFERRED` 814.8 s, AgentCore `kamal_production_a` v11; all four hosts v22.23.4/OpenSSL 3.5.9 with
+the Brotli fix marker, cap-drop kept, 0 level-50, restarts 0; public br/gzip → 415, plain → normal validation.
+UAT then paused again on the owner's word ("ถ้าเสร็จทุกอย่างแล้ว ปิด uat ให้หน่อยนะ"): power-uat pause `20261022T133726Z-0bf75cba`, UAT_POWER_PAUSED_WITH_DATABASE 20:43.
+
+No deployment, restart, customer-gate or business-data change. UAT was not started. Seven owned
+SSM sessions terminated successfully; UAT/READY/PROD IDs are NOT_DISPATCHED.
+[Full findings, exact evidence and limits](../research/security-review-2026-10-21-th.md) (kept on the owner's laptop, not in git).
+
+## Current UAT power state — paused 2026-10-22 (Asia/Bangkok)
+
+Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
+`20261021T180137Z-0ccc30e3` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 336.241
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline has source `733f77864a2ad333a781852fd95cf3c610f0a421` for all three
+services, superseding the previous resume's runtime. Future resume must use this exact retained
+baseline through `python3 infra/kamal/power-uat start` with a valid scoped MFA session.
+The workstation is no longer needed for this completed operation.
+[Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-22.md).
+
+## Historical UAT power state — running 2026-10-21 (Asia/Bangkok), second resume
+
+Owner requested “เปิด uat” and completed MFA for the scoped UAT profile. Plan A operation
+`20261021T161821Z-b5a04f57` completed once with `UAT_RUNNING_OPEN` in 343.157 seconds.
+Desired state is active; original RDS `watchdog-bms-uat-db` is available; API
+`i-0248e3a31d9b75ad1` and AI/workers `i-0ef193d594e475a65` are running. Database readiness
+preceded host startup.
+
+Exact retained runtime fingerprints match the latest pause baseline; all three services retain
+source `29b1eab65fe852db0abcd7b2f69d45d64a1ae540`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+passed before and after. No application release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-21-second.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol and MFA prerequisite remain mandatory.
+
+## Historical UAT power state — paused 2026-10-21 (Asia/Bangkok), after morning use
+
+Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
+`20261021T044652Z-a3920c2b` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 316.780
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline has source `29b1eab65fe852db0abcd7b2f69d45d64a1ae540` for all three
+services, superseding the morning resume's runtime. Future resume must use the exact retained
+baseline through `python3 infra/kamal/power-uat start`. Interim evidence remains preserved but is
+superseded by final completion. The workstation is no longer needed for this operation.
+[Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-21-second.md).
+
+## Historical UAT power state — running 2026-10-21 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. Plan A power operation `20261021T022345Z-77d13f74` completed once
+with `UAT_RUNNING_OPEN` in 264.038 seconds. Desired state is active; original RDS
+`watchdog-bms-uat-db` is available; API `i-0248e3a31d9b75ad1` and AI/workers
+`i-0ef193d594e475a65` are running. Database readiness preceded host startup.
+
+Exact retained runtime fingerprints match the latest pause baseline; all three services retain
+source `1e25d673db5d3f19997176eeab8ea54533d1a57f`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+passed before and after. No release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-21.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol remains mandatory.
+
+## Historical UAT power state — paused 2026-10-21 (Asia/Bangkok)
+
+Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
+`20261020T173137Z-bc14ee85` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 322.010
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline exactly matches the preceding resume; all three services retain source
+`1e25d673db5d3f19997176eeab8ea54533d1a57f`. Future resume must use the exact retained baseline
+through `python3 infra/kamal/power-uat start`. Interim evidence remains preserved but is superseded
+by final completion. The workstation is no longer needed for this operation.
+[Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-21.md).
+
+## Historical UAT power state — running 2026-10-20 (Asia/Bangkok), second resume
+
+Owner requested “เปิด uat” after the afternoon pause. Plan A power operation
+`20261020T160539Z-de10d81d` completed once with `UAT_RUNNING_OPEN` in 368.013 seconds.
+Desired state is active; original RDS `watchdog-bms-uat-db` is available; API
+`i-0248e3a31d9b75ad1` and AI/workers `i-0ef193d594e475a65` are running. Database readiness
+preceded host startup.
+
+Exact retained runtime fingerprints match the latest pause baseline; all three services retain
+source `1e25d673db5d3f19997176eeab8ea54533d1a57f`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+passed before and after. No release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-20-second.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol remains mandatory.
+
+## Historical UAT power state — paused 2026-10-20 (Asia/Bangkok), after afternoon use
+
+Owner requested “ปิด uat ได้แล้ว” after the afternoon resume. Original Plan A pause operation
+`20261020T103122Z-f350d84f` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 567.907
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline has source `1e25d673db5d3f19997176eeab8ea54533d1a57f` for all three
+services, superseding the afternoon resume's runtime. Future resume must use the exact retained
+baseline through `python3 infra/kamal/power-uat start`. Interim evidence remains preserved but is
+superseded by final completion. The workstation is no longer needed for this operation.
+[Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-20-second.md).
+
+## Historical UAT power state — running 2026-10-20 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. Plan A power operation `20261020T075416Z-a832c5b2` completed once
+with `UAT_RUNNING_OPEN` in 360.837 seconds. Desired state is active; original RDS
+`watchdog-bms-uat-db` is available; API `i-0248e3a31d9b75ad1` and AI/workers
+`i-0ef193d594e475a65` are running. Database readiness preceded host startup.
+
+Exact retained runtime fingerprints match the latest October20 pause baseline; all three services
+retain source `458ec9aab594b41ca272aceb99e6c26ec3042b41`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+passed before and after. No release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-20.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol remains mandatory.
+
+## Historical UAT power state — paused 2026-10-20 (Asia/Bangkok)
+
+Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
+`20261019T221356Z-5759cebe` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 441.820
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline has source `458ec9aab594b41ca272aceb99e6c26ec3042b41` for all three
+services, superseding the October19 resume's runtime. Future resume must use the exact retained
+baseline through `python3 infra/kamal/power-uat start`. Interim evidence remains preserved but is
+superseded by final completion. The workstation is no longer needed for this operation.
+[Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-20.md).
+
+## Historical UAT power state — running 2026-10-19 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. Plan A power operation `20261019T044422Z-5614625c` completed once
+with `UAT_RUNNING_OPEN` in 387.455 seconds. Desired state is active; original RDS
+`watchdog-bms-uat-db` is available; API `i-0248e3a31d9b75ad1` and AI/workers
+`i-0ef193d594e475a65` are running. Database readiness preceded host startup.
+
+Exact retained runtime fingerprints match the October18 pause baseline; all three services retain
+source `ee0d65ccc93ab344e32d363ec48171f57c271809`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+passed before and after. No release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-19.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol remains mandatory.
+
+## Historical UAT power state — paused 2026-10-18 (Asia/Bangkok)
+
+Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
+`20261018T091319Z-f5484b30` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 426.474
+seconds. API `i-0248e3a31d9b75ad1`, AI/workers `i-0ef193d594e475a65` and original RDS
+`watchdog-bms-uat-db` independently read back stopped; desired state is paused. Workers/API/AI
+were gracefully stopped before hosts and database. Both owned SSM sessions terminated; local active
+guard and shared cloud mutex are absent. Production public health 200/OPEN passed before and after.
+No Production mutation, release, data deletion or customer-gate change; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. Data, Redis, ALB and storage remain retained.
+
+The saved pause baseline has source `ee0d65ccc93ab344e32d363ec48171f57c271809` for all three
+services, superseding the earlier resume's runtime. Future resume must use the exact retained
+baseline through `python3 infra/kamal/power-uat start`. Owner-requested interim evidence remains
+preserved, but is superseded by final completion. The workstation is no longer needed for this
+operation. [Pause evidence and limits](../agent-memory/uat-power-pause-2026-10-18.md).
+
+## Historical UAT power state — running 2026-10-18 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. Plan A power operation `20261018T083826Z-a125e134` completed once
+with `UAT_RUNNING_OPEN` in 597.466 seconds. Desired state is active; original RDS
+`watchdog-bms-uat-db` is available; API `i-0248e3a31d9b75ad1` and AI/workers
+`i-0ef193d594e475a65` are running. Database readiness preceded host startup.
+
+Exact retained runtime fingerprints match the October12 pause baseline; all three services retain
+source `de8389ce304dd96dcaba0104a2a09b8d609072fa`. API/DB, AI, workers/Redis/internal-API
+readiness passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions
+terminated; local active guard and shared cloud mutex are absent. Production public health 200/OPEN
+was verified before and after. No release, data deletion, gate change or Production mutation;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+[Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-18.md).
+
+Use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT profile.
+The Plan A active-intent/database-first protocol remains mandatory.
+
+## Historical UAT power state — paused 2026-10-12 (Asia/Bangkok)
+
+Owner requested “ปิด uat ได้แล้ว”. Plan A power operation `20261012T102746Z-fe821dd6` completed
+once with `UAT_POWER_PAUSED_WITH_DATABASE` in 428.073 seconds. API `i-0248e3a31d9b75ad1`,
+AI/workers `i-0ef193d594e475a65` and original RDS `watchdog-bms-uat-db` independently read back
+stopped; desired state is paused. Workers/API/AI were gracefully stopped before hosts and database.
+Data, Redis, ALB and storage are retained. Both owned SSM sessions terminated; local active guard
+and shared cloud mutex are absent. Production public health 200/OPEN was verified before the pause
+and after UAT application hosts stopped. No Production mutation, release or customer-gate change;
+UAT/READY/PROD run IDs are `NOT_DISPATCHED`.
+
+The current saved pause baseline has source `de8389ce304dd96dcaba0104a2a09b8d609072fa` for
+all three services, superseding the morning resume's runtime. Use the exact retained baseline with
+`python3 infra/kamal/power-uat start`; do not restore the older source described below.
+[Pause evidence](../agent-memory/uat-power-pause-2026-10-12.md).
+
+## Historical UAT power state — running 2026-10-12 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. Plan A power operation `20261012T085508Z-5950c4d7` completed once
+with `UAT_RUNNING_OPEN` in 480.850 seconds. Desired state is active; original RDS
+`watchdog-bms-uat-db` is available; API `i-0248e3a31d9b75ad1` and AI/workers
+`i-0ef193d594e475a65` are running. Database readiness preceded host startup.
+
+Exact retained containers/images/config/source/restart policies match the last successful pause;
+serving release remains `20261010T051819Z-2efb43f7`, source
+`9d9473b55f30f31bd78720274c9d1d3cc94eb644`. API/DB, AI, workers/Redis/internal-API readiness
+passed, as did public health/login 200 and customer OPEN. Both owned SSM sessions terminated;
+local active guard and shared cloud mutex are absent. Production public health 200/OPEN was
+verified before and after. No release, gate change or Production mutation; UAT/READY/PROD run IDs
+are `NOT_DISPATCHED`. [Resume evidence and limits](../agent-memory/uat-power-resume-2026-10-12.md).
+
+Continue to use `python3 infra/kamal/power-uat status`, `start`, or `pause` with the scoped UAT
+profile. The Plan A active-intent/database-first protocol below remains mandatory.
+
+## Historical UAT power state — Plan A, paused 2026-10-10
+
+Owner-authorized Plan A is complete with verified KMS-signed evidence. API`i-0248e3a31d9b75ad1`
+and AI/workers`i-0ef193d594e475a65` are stopped, and original RDS`watchdog-bms-uat-db` is now
+also stopped. Desired state is paused; local/cloud guards released. Redis, EBS/S3 and data retained.
+Automation stack`mangmee-uat-power` checks every30minutes and re-stops only the exact UAT DB
+when intended paused and both hosts stopped, under the shared deploy/Redis mutex. Unknown outcomes
+retain the guard. The dedicated UAT ALB maps only existing1a/1csubnets and resolves2IPv4 addresses;
+Production's separate ALB and all shared subnet resources remain unchanged.
+
+Cold DB/host resume passed in7m14s with identical signed application containers/images/config and
+API/DB/AI/workers/Redis/internal-API/publicOPEN readiness. Read-only DB inspection found269tables/
+124397rows; exact344S3versions/6delete markers and storage identity/config matched baseline.
+Final pause took7m31s. All four Production hosts running, health200/OPEN and unchanged ALB were
+verified after completion. No application release or gate/data mutation. UAT/READY/PROD run IDs
+remainNOT_DISPATCHED. [Signed evidence, operation IDs and limits](../agent-memory/uat-cost-plan-a-2026-10-10.md).
+
+Current serving UAT is signed release`20261010T051819Z-2efb43f7`, source
+`9d9473b55f30f31bd78720274c9d1d3cc94eb644`, preceding this maintenance. The October9 restoration
+source below is historical, not the current release. The new power controller preserves current
+containers/images/config, never restores the older images. Use `python3 infra/kamal/power-uat status`,
+`python3 infra/kamal/power-uat start` or `python3 infra/kamal/power-uat pause` with the default scoped
+UAT profile. Wait at least30seconds between completed operations (SSM parameter recreation).
+Do not use bare EC2 starts after Plan A: active intent and RDS readiness must precede app start.
+The first startup may take several minutes; a failed guard requires reconciliation of that exact
+operation before retry. [Commands and recovery boundaries](../../infra/kamal/README.md#uat-power-and-cost-plan-a--october10).
+
+## Historical UAT power state — paused 2026-10-10 (Asia/Bangkok)
+
+Owner requested “ปิด uat”. One normal stop request paused API `i-0248e3a31d9b75ad1` and
+AI/workers `i-0ef193d594e475a65`. Both independently read back **stopped**, without public IPs;
+EBS volumes and data retained. Canonical target and signed restoration evidence unchanged.
+No active deployment or executable release workflow overlapped; no deployment/customer-gate change.
+
+All four Production hosts remain running; public health200 and PlatformAccessOPEN verified.
+UAT RDS, Redis, ALB and storage are retained and remain billable. Before reopening, start the exact
+two hosts and verify current IP/SSM/host identity, deep readiness and public OPEN. The public IPs in
+the historical resume below are stale. [Pause evidence](../agent-memory/uat-power-pause-2026-10-10.md).
+
+## Historical UAT cost baseline — 2026-10-10, before Plan A
+
+For the owner's20hours/month UAT cost plan, non-root readback before Plan A confirmed both application hosts
+still stopped: API t3.large in1a, AI/workers t3.medium in1c; gp3 EBS40GiB each. RDS db.t4g.micro,
+PostgreSQL/gp3/20GiB/SingleAZ/1-day backup is available with no read replica. Redis cache.t4g.micro
+one node is available. Dedicated ALB is active in1a/1b/1c; its DNS resolves3IPv4 addresses.24active
+UAT Secrets Manager entries and13CloudWatch metric alarms remain; no NAT gateway or VPC endpoint
+in the UAT VPC. Secret values and database records were not read; no resource changed.
+
+Cost consequence: EC2 downsizing only saves1.584USD at20runninghours, whereas pausing RDS and
+reducing ALB to its two host AZs could save20.90USD/month under the plan's30EC2/40RDS/730month-hour
+assumptions. The existing stopped-EC2 pattern must be used as the baseline, not always-on EC2 or
+September's transition-month total. Remaining24secret charges must not be omitted just because
+historical environment tags attributed only one secret to UAT. These are public-rate forecasts,
+not newly observed monthly billing. [Plan, acceptance, costs and rollback](../plans/uat-cost-reduction-plan-2026-10-10-th.md) (kept on the owner's laptop, not in git).
+
+## Historical UAT power state — running 2026-10-09 19:47 (Asia/Bangkok)
+
+Owner requested “เปิด uat”. One start request resumed retained API `i-0248e3a31d9b75ad1` and
+AI/workers `i-0ef193d594e475a65`; both independently running and SSM Online. Private IPs remain
+10.92.0.10/10.92.0.42; current public IPs are13.212.240.142/13.214.139.226. Existing SSH host keys
+match; canonical SSM target is unchanged. Use enrolled private addresses, not old public addresses.
+
+The same original API/AI/workers containers, images, source and configurations passed strict runtime
+readback and deep API/DB, AI, worker/Redis/internal-API readiness. Both ALB targets healthy;
+RDS/Redis available. UAT public health/login200 and PlatformAccessOPEN; LINE UAT @234jrspv's
+configured webhook passed LINE's empty-event test200. No new real conversation was exercised in
+this resume. Production public health200/OPEN verified. Both owned SSM sessions terminated.
+
+This is a power resume, not a new release or customer-gate mutation. Original signed restoration
+evidence is unchanged; UAT/READY/Production workflow IDs remainNOT_DISPATCHED. EC2 compute charges
+resume. [Power-resume evidence](../agent-memory/uat-power-resume-2026-10-09.md).
+
+## Historical UAT power state — paused 2026-10-09 (Asia/Bangkok)
+
+Owner requested “ปิด uat ก่อน” after confirming actual LINE UAT AI use. The established reversible
+power-pause procedure stopped only API `i-0248e3a31d9b75ad1` and AI/workers `i-0ef193d594e475a65`
+in restored VPC `vpc-062e5bf61b966285d`. Both independently read back **stopped**, without public IPs;
+EBS volumes and all data are retained. Public UAT health returns504 while the origin is off.
+No deployment or customer-gate mutation; canonical target and signed restoration evidence are unchanged.
+
+RDS, Redis, ALB, EBS/S3/ECR and other retained storage/services continue to incur charges. This is an
+application power pause, not zero-cost retirement. Production's four hosts remain running and public
+health200/PlatformAccessOPEN were verified. No Production resource changed.
+
+Before reopening, start the exact two retained UAT hosts, verify current IPs/SSM identity and deep
+API/AI/workers readiness, then public health/OPEN. Former public addresses must not be reused blindly.
+[Power-pause result and evidence](../agent-memory/uat-power-pause-2026-10-09.md).
+
+## UAT disaster restoration completed — 2026-10-09 (before subsequent power changes)
+
+Owner requested “แยก agent กู้ UAT ต่อเลย”. Separate operation `20261009-uat-restore` restored
+last accepted source `67c270d3cf5e46bff367d2e84e76f8efd6bb9e27` and exact retained images/configuration.
+UAT was **online and OPEN, with verified KMS-signed smoke acceptance** at09:34:56UTC; the later
+owner-requested power changes above supersede its runtime state.
+UAT/READY/PROD workflow IDs are `NOT_DISPATCHED`. Production is accepted separately below.
+
+- Stack `mangmee-kamal-uat` UPDATE_COMPLETE, VPC `vpc-062e5bf61b966285d`. API
+  `i-0248e3a31d9b75ad1` / `10.92.0.10`; AI/workers `i-0ef193d594e475a65` / `10.92.0.42`.
+  Original two-host sizes retained; enrolled SSM/strict SSH, public TCP22 closed.
+- Private RDS `watchdog-bms-uat-db`, PostgreSQL18.3/db.t4g.micro/SingleAZ/1-day backup, is available.
+  Remote restoration matched all268tables/120575rows, sequences, extensions and original owners/ACLs.
+  All342S3versions/261.8MB and6delete markers restored;332attachment and6read-job version references
+  reconciled with no other business-field changes before runtime. All310ACTIVEattachments covered.
+- Redis `watchdog-bms-uat-redis` recovered5738keys; PING and queue comparison pass. Dedicated
+  AgentCore `watchdog_orchestrator_uat_kamal-GcmkRKD5k3`, qualifier `kamal_uat_a`, is READY.
+- Dedicated ALB `mangmee-uat-gateway`; DNS-only origins `uat-origin.mangmeeplus.com` and
+  `uat-ai-origin.mangmeeplus.com`, ACM62790bc6-3cd6-4516-8d85-28b93e9e2fd4 ISSUED.
+  Both ALB targets healthy; API/AI/workers exact image/config/deep readiness passed. Public UAT proxied
+  CNAME and Worker now use uat-origin.mangmeeplus.com; Worker789e0268 is100%Ready. Public health/login
+  return200 and PlatformAccess isOPEN. Existing browser session renders the WatchDog UAT dashboard;
+  no fresh login/logout was performed or required by the retained UAT smoke protocol.
+- LINE UAT channel2010784371/bot@234jrspv now points to
+  https://uat-origin.mangmeeplus.com/v1/line/webhook. LINE new-endpoint and configured-endpoint
+  tests both pass200. After signed acceptance, the owner confirmed a successful actual LINE UAT AI
+  conversation: “ใช้ได้แล้ว เมื่อกี้ลองแล้ว” (October9, Asia/Bangkok). This is owner-reported verification;
+  the original signed smoke evidence remains unchanged. Postmark20950027 and Stripe test callbacks
+  retain their public UAT URLs; unauthenticated empty requests reach their expected401boundaries.
+  This proves routing/auth rejection, not email delivery or payment processing.
+- Three Kamal log groups retain3days,8metricfilters and13original alarms restored with unchanged
+  thresholds/actions. Existing confirmed SNS topic is reused without changing its policy/subscription;
+  M01/M14 alarms retain their original empty action lists. UAT bucket browser CORS and original
+  SSE-C blocking are restored; real OPTIONS preflight200. Final infrastructure readback has13/13alarmsOK.
+- Canonical UAT target enrolled under the operation lock; only matching active guard released.
+  Exact Redis seed/grant, remote transfer files, local isolated fixtures and owned transports cleaned.
+  All10SSMtermination calls accepted, zero active owned sessions and zero local transport processes;
+  History has EndDate for all10, with6Terminated and4staleTerminating labels retained in evidence.
+  Original archives remain unchanged. No application rebuild, schema change or customer-gate mutation.
+
+Signed result `RESTORED_UAT_OPEN_SMOKE_ACCEPTED`, receipt SHA256
+`50a77dc299b39b70e6ebc539f721dcbadbc6ad3ac98d228a52f7e5d4b97084e1`.
+Restoration resumed AWS charges; the later temporary UAT power pause and resume are recorded above.
+
+[UAT signed restoration evidence and acceptance limits](../agent-memory/uat-offline-restore-2026-10-09.md).
+Private evidence: `~/.codex/offline-restores/20261009-uat/`. Dev/Official OA remain retired.
+
+## Public website redirect preparation — 2026-10-21
+
+Owner clarified that the future promotional homepage belongs to the existing `mangmeeplus`
+application at `/`, with login at `/login`. Cloudflare Single Redirect
+`Official to MangmeePlus homepage` (`eba5af4a671a42e7a428e8f9ae190131`) is enabled:
+exact hostname `official.mangmeeplus.com` → `https://mangmeeplus.com/`, HTTP301,
+preserving query strings. Existing proxied DNS remains in place; the Pages project was not deleted.
+HTTP/HTTPS and old-path checks pass; login200, health200/ok, public platform stateOPEN and
+anonymous auth/me401 remain intact. Rollback: disable only this rule.
+
+Owner subsequently added UAT and authorized Wrangler. Both exact-root Worker redirects were
+removed, UAT first with HTTP/browser acceptance before Production. UAT version
+`d14cb6b4-e26a-4c46-90c6-c8133940b19b` and Production version
+`07f7396e-9007-4d9d-9320-d5e5433477b0` serve100%. Origins and all existing runtime settings
+are preserved. Both roots now200 and render the separately released promotional homepage;
+homepage→login navigation, health200/ok, customerOPEN, anonymous auth/me401 and static assets pass.
+Wrangler logged out and unauthenticated state confirmed. This task performed no application release,
+AWS or customer-gate change; UAT/READY/PROD IDs `NOT_DISPATCHED`.
+[Exact versions, rollback and evidence](../agent-memory/mangmee-root-homepage-cloudflare-2026-10-21.md).
+
+## WWW canonical redirect — 2026-10-21
+
+During the SEO audit, the owner explicitly requested `www.mangmeeplus.com` forwarding.
+Added CNAME `www` → `mangmeeplus.com`, Proxied, TTL Auto, and enabled native Single Redirect
+`WWW to MangmeePlus canonical` (`9f7c0a3d1f634a48a764b7370f02b715`), order2 after official.
+Exact hostname match; dynamic target `concat("https://mangmeeplus.com", http.request.uri.path)`,
+301 and preserve query. HTTP/HTTPS root, login/query and sitemap paths passed; TLS verification
+passed and Chrome navigation landed on the main homepage. Public DNS1.1.1.1/8.8.8.8 readback passed;
+an initial local negative DNS cache is retained in evidence. Existing Workers/apex/origins/UAT
+remain unchanged. No application deploy or gate change; all workflow IDs `NOT_DISPATCHED`.
+[SEO findings and www evidence](../research/mangmee-live-seo-audit-2026-10-21-th.md) (kept on the owner's laptop, not in git).
+
+## Public SEO edge remediation — 2026-10-21
+
+Owner explicitly requested sitemap submission/homepage indexing, official crawler-file redirects,
+HTTPS apex, and UAT/auth search exclusion. UAT Worker published once at04:09:29UTC, version
+`727e5434-99ae-4174-ba0b-979fb4be6b07`, deployment`0b7ffb7a-4524-4b82-8261-104c148bd62d`.
+Production followed UAT HTTP/browser acceptance at04:10:58UTC, version
+`bd2f5710-1554-4492-973c-4959c4838d29`, deployment`3d10e899-533f-4e80-ab89-6edaabf48883`.
+Source and all previous runtime settings independently read back exactly; only source/version
+annotations changed. Auth/API forwarding and origins retained, no app image/AWS/gate mutation.
+UAT/READY/PROD workflow IDs remain`NOT_DISPATCHED` for this edge operation.
+
+- UAT Worker sends`X-Robots-Tag: noindex, nofollow` and crawlable robots.txt. Private data still
+  requires the original application authentication/authorization. Google Live Test explicitly
+  detects header noindex; do not replace this with robots Disallow-all, which hides the directive.
+- Production Worker sends the same header only for public login/signup/forgot-password paths
+  and removes only their Disallow lines from robots.txt. Google Live Test detects login noindex;
+  homepage remains200/indexable. Both health200, customerOPEN, anonymous auth/me401 pass.
+- Single Redirect`73fd8ac558ae44c3bd06432f7d5cd781`, first, maps official `/sitemap.xml` and
+  `/robots.txt` to the same paths on HTTPS apex with301/query preservation. Existing official
+  homepage rule and www rule follow unchanged.
+- Single Redirect`d79db641ecf345e9bc71211ab3de5467`, last, matches
+  `(http.host eq "mangmeeplus.com" and not ssl)` and308 redirects to HTTPS apex preserving
+  method/path/query. Do not broaden to every subdomain/webhook without reviewing its owner.
+- Main sitemap processed successfully by Google (5URLs); homepage indexing requested once.
+  Ranking/index refresh remains Google's processing outcome, not a deployment acceptance claim.
+
+Rollback only affected Worker to its saved previous version: UAT`d14cb6b4-e26a-4c46-90c6-c8133940b19b`,
+Production`07f7396e-9007-4d9d-9320-d5e5433477b0`; disable only the named new rules if necessary.
+Keep older www and official homepage rules. [Task evidence and limits](../agent-memory/mangmee-seo-remediation-2026-10-21.md).
+
+## Legacy Pages and direct-origin SEO routing — 2026-10-21
+
+Owner explicitly requested completing legacy pages.dev/direct origins without affecting homepage,
+login or API. Cloudflare Bulk Redirect rule `4cbf7ea2778f49a69be93b9f175c88ec`, list
+`c2231f3334ab4d91a2ab544a6306c1df` (`mangmee_retired_pages`), now301 redirects
+`mangmeeplus-web.pages.dev` and its deployment subdomains to HTTPS apex, preserving path/query.
+The specific retired `/ai-read-receipt` subtree maps to the homepage without path suffix.
+Existing official/www/HTTPS rules and Pages deployments remain retained.
+
+Both DNS-only API origins retain their original ALBs/targets and live LINE webhook URLs.
+Two CloudFormation-managed ListenerRules now precede normal origin forwarding:
+
+- `SeoPublicProxyForward`, priority2: exact API-origin host plus exact public X-Forwarded-Host
+  → original ApiTargets. Existing Cloudflare Workers already set this header. It is a routing
+  marker, not authentication or an origin-access restriction.
+- `SeoDirectPublicRedirect`, priority3, DependsOn proxy-forward: exact API-origin host,
+  GET/HEAD, bounded public/auth/SEO-file path patterns →301 same path/query on the matching
+  public HTTPS host (Production apex; UAT public host with existing noindex).
+- API/webhook/other methods and unmatched paths keep their original forwarding rule. UAT
+  fallback260 remains unchanged; Production `ApiStagingRoute` moved only priority1→4 after
+  both new rules were staged/read back. AI routes remain unchanged. Never remove proxy-forward
+  while the redirect is active, or proxied public pages could loop.
+
+Executed once each: UAT change set `seo-legacy-20261021-uat/8e002332-8ce0-4a65-928e-498f0f65d017`
+(2Add); Production stage `seo-legacy-20261021-prod-stage/def4c652-5e4d-4a70-8b42-09ac7592d52b`
+(2Add); Production activation `seo-legacy-20261021-prod-active/e23d2d07-a5aa-4734-8137-eafb6bffaa34`
+(1Modify priority only, no replacement). Both stacks UPDATE_COMPLETE, exact template readback,
+all5original targets healthy. UAT46 and Production46 origin/public acceptance checks pass;
+Pages52public+6deployment checks and browser navigation pass. Homepage remains indexable;
+auth/UAT noindex and OPEN remain. No app/IAM/data/gate change; workflow IDs NOT_DISPATCHED.
+
+Rollback: disable only the named Bulk Redirect. For Production, reviewed CF priority4→1 on the
+original fallback deactivates the new rules; then remove only the two Seo rules if desired.
+UAT rollback removes only the two Seo rules through a reviewed CF change set. Compare current
+template first; retain intervening changes. Full private templates/intents:
+`~/.codex/edge-operations/20261021-legacy-seo/`.
+[Exact evidence, scope and limitations](../agent-memory/mangmee-legacy-domain-seo-2026-10-21.md).
+
+## Release 2026-10-12 16:54 — Production and UAT (superseded by the 2026-10-20 to 2026-10-22 releases recorded above): the Official OA is `@695ultfm`
 
 Production and UAT serve `main` source `de8389ce3` since 2026-10-12 16:54 and 16:48 Bangkok: the serving source of 2026-10-10 14:06 plus the Official OA move (#1081; twin #1082 on `develop`). The three billing merges of 2026-10-10 (#1075, #1077, #1079) are reverted on `main` and are NOT deployed; `develop` keeps them. How to put them back: `docs/agent-memory/line-official-oa-move-2026-10-12.md`. GitHub workflow ids are `NOT_DISPATCHED`: local Kamal path. PR CI was down (`startup_failure`, zero jobs); the API test list, the LINE whole-chain acceptance, the API typecheck and the release tool's tests were run locally.
 
@@ -173,7 +783,7 @@ UAT serves `main` `f32871073` since 2026-10-10 10:22 Bangkok: the refund review,
 
 **Follow-up change (same day, after this round):** the provider's own error code, type and HTTP status are kept on a rejected call (never its message, param or ids), stored on the refund operation journal and shown to staff in the reference section of the request; a create that the provider answers with 400 or 402 ends the request as `FAILED` / `CONTROL_REFUND_PROVIDER_REJECTED` with the mutation resolved, so it no longer blocks the company and `run` is no longer offered for it (409, 429, 5xx, no answer and any error of a read stay unknown as before); the refund review and request pages tell staff that a PromptPay refund goes through an e-mail from the provider to the customer.
 
-## Release 2026-10-10 14:06 — Production and UAT (current for both): refunds of PromptPay QR payments
+## Release 2026-10-10 14:06 — Production and UAT (superseded by the 2026-10-12 section above): refunds of PromptPay QR payments
 
 Production serves `main` source `9d9473b55` since 2026-10-10 14:06 Bangkok and UAT since 12:22: the QR refund fix (#1067) and its follow-up (#1071). API, contracts and web; no migration. What it does: the Admin refund review, refund request and settlement check work for an invoice paid by PromptPay QR; a create the provider rejects ends the request as failed with the provider's error identifiers kept; staff are told that a QR refund goes through an e-mail from the provider to the customer. GitHub workflow ids are `NOT_DISPATCHED`: local Kamal path. Times are Bangkok. Owner's go: "ขึ้นเลย" at about 13:58, after the UAT acceptance below was reported complete.
 
@@ -345,6 +955,440 @@ After this section, UAT and Production both serve `main` `7b1b1c11`. Every run u
 **Owner-directed speed on a critical fix.** The owner said "ไม่ต้องตรวจแล้ว ต้องขึ้นเลย", so the controller's 17-step check was stopped after step 08 (typecheck passed). The migration was proven instead on a throwaway Postgres 18.3: the old rule refuses `SALES`, and the new rule accepts `SALES` and still refuses bad values. UAT then applied the migration before Production.
 
 **Poster file names are versioned.** LINE and Cloudflare cache images by URL, so a new poster needs a new file name; the current one is `package-poster-20260930.png`.
+## Production disaster restoration completed with owner exception — 2026-10-09
+
+Owner explicitly requested restoration and reopening of Production. This supersedes the October7
+zero-resource inventory for Production. Production is
+**online and OPEN, signed and owner-accepted with one preexisting email security-alarm exception**.
+The owner subsequently requested a separate UAT restoration; see
+[UAT restoration state](../agent-memory/uat-offline-restore-2026-10-09.md). Dev and Official OA remain retired.
+Private operation `20261009-production-restore` reused serving
+source `bdb65d8e8f6153b83d83783c930e96e3a38c2a7b` and its exact retained image digests, not rebuilding
+latest main. UAT/READY/PROD workflow IDs: `NOT_DISPATCHED`.
+
+- Stack `mangmee-kamal-production` recreated; VPC `vpc-0582cab8f997af7b0`. API hosts
+  `i-05a63210c38c20d10` / `i-09c35998d5141fa72`, AI `i-0d1129ba60aedd07e`, workers
+  `i-0aa479f24c2bb3e85`; SSM transport, public TCP22 remains closed.
+- Private RDS `watchdog-bms-prod-db` and Redis `watchdog-bms-prod-redis` are available with their
+  former DNS names. PostgreSQL18.3/db.t4g.small/MultiAZ and Redis7.1/2cache.t4g.micro/MultiAZ
+  restored. All268tables/355102rows initially matched the offline DB, then rehearsed replacement
+  of S3VersionIds matched exactly. Redis TLS/auth/PING passed,1680nonexpiredkeys restored.
+-297businessobjectversions restored and downloaded/hash-verified; all255ACTIVEattachments
+  covered.295DBobject-versionreferences reconciled; no other business columns changed.65oldSSM
+  logobjects stay in the offline backup. Original backup archives remain unchanged.
+- New ALB `mangmee-production-gateway`; permanent origins `origin.mangmeeplus.com` and
+  `ai-origin.mangmeeplus.com`, ACM certificate44e7e2ba-738d-4a7b-8b71-4533c5da0624. Listener
+  now forwards both origins through exactly2Add listener rules after runtime readiness. All3ALB
+  targets healthy; both API replicas, AI and workers run exact original images/configs. Cloudflare
+  apex/Worker now use origin.mangmeeplus.com (Worker active9461df17); public health/login/OPEN pass.
+- Original23ERPsecrets and Production signing key7bb5d36e restored; old acceptance signature
+  verifies. Stale db-password alias was reconciled to the database-url credential.7current
+  runtimeSSMparameters restored; obsolete ECS/A5 endpoint/role IDs must not be copied back.
+- AgentCore `watchdog_orchestrator_production_kamal-VGIuTzFjOP`, qualifier `kamal_production_a`
+  version1 READY, exact original source/artifact; only runtime topology bindings changed.
+- Production CloudTrail/private log bucket,12DB/Redis/log/securityalarms,3securityfilters and
+  existing4EC2statusalarms restored. Owner email SNS subscription confirmed. DB CPU-credit
+  alarm is currently low after fresh provisioning/restoration (original threshold50); do not
+  weaken the alarm to report acceptance. Latest14/16alarmsOK: API security alarm reflects one
+  unchanged September25 DEAD auth.email.security_notice from the original backup. Linked Postmark
+  attempt remainsSENDING/no nextRecoveryAt; exact provider lookup returns0results, which does not
+  prove non-delivery. Do not replay, delete or mark it delivered solely to clear the alarm.
+- Current owner administrator identity/permissions and authenticated page200/live/canOpen/OPEN
+  verified, logout204 and same revoked session401. No duplicate customer-gate mutation. Exact login
+  HTTP response was not retained; browser owner-login/no-password-or-legal-prompt observation only.
+- LINE AI webhook repair08:21UTC: ERP channel2011037770, bot@458wpnio still pointed to deleted
+  wa-d522885832ce41a5aa7f8d1ffbaaa84b ECS endpoint. LINE's own empty-event test to
+  https://origin.mangmeeplus.com/v1/line/webhook passed200 before the single endpoint update;
+  readback active:true/newendpoint; configured-endpoint test also passed200. Owner confirmed
+  “ตอบแล้ว”; correlated real-message logs show errorCode:null, one tool, deliveryResult:ok and
+  completed/delivered through the expected runtime qualifier. Official OA is a separate retired
+  service and was not changed.
+
+Owner's final decision: “ยอมรับข้อยกเว้นเดิมและปิดงานกู้คืน”. The signed result is
+`OWNER_ACCEPTED_WITH_EXISTING_EMAIL_ALARM`, receipt SHA256
+`240d3bb2db22abf946fd04489262dc868d33a22086c62e00cefd1df6a8dc1df3`, KMS ECDSA_SHA_256 verified
+using the scoped Production deployment role. Private evidence is under
+`~/.codex/offline-restores/20261009-production/`. Canonical Production target enrollment now matches
+the restored hosts/origins and retains the receipt hash; the previous target and signed HOLD checkpoint
+remain preserved. This scoped exception does not assert email delivery or waive future release checks.
+Before a future feature release, reconcile the controller's retired ECS baseline; do not recreate old
+ECS resources to bypass it. Running Production resources incur AWS charges again.
+
+Restoration findings: RDS rejects explicit NOSUPERUSER/NOREPLICATION/NOBYPASSRLS in a roles
+restore even when false. Verify protected attributes, omit those clauses and restore original
+remaining privileges transactionally; never rerun a successfully committed DB restore. Recreated
+S3 bucket needs the app's browser CORS and original SSE-C blocking configuration as well as objects,
+versioning/lifecycle. Heavy workstation uploads can prevent SSM handshake; separate bulk publication
+from DB transfer and reconcile/terminate exact failed sessions before resuming. See
+[restoration memory and current next step](../agent-memory/production-offline-restore-2026-10-09.md).
+
+## AWS runtime and storage retired — 2026-10-07 10:26 Bangkok
+
+Owner authorized deletion after the verified offline backup, then explicitly included Dev,
+Official LINE OA and the local bucket. Final readback at 03:26:14 UTC: **all 42 infrastructure,
+storage and active-service checks returned zero**. A scan of 18 enabled regions found no core
+infrastructure/storage resources outside Singapore. This supersedes all older live inventories
+and start instructions below; recovery now requires provisioning and offline restoration.
+
+All eight EC2 instances and 308 GiB EBS, both RDS instances and their backups, three Redis nodes
+and all snapshots, ALB/EIPs/endpoints, ECS/AgentCore/ECR, Official OA Lambda, all five S3 buckets,
+CloudWatch logs/alarms, project secrets/parameters and monitoring producers have been retired.
+All five CloudFormation stacks are DELETE_COMPLETE. There is no automatic RDS restart left.
+
+49 secrets and four customer KMS keys are scheduled for deletion on/after October 14. They have
+no storage charge while pending deletion ([Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/manage_delete-secret.html),
+[KMS pricing](https://aws.amazon.com/kms/pricing/)). Free IAM/network settings and AWS-managed keys
+may remain; this is not account closure. No reservations/Savings Plans were found. Already accrued
+charges and delayed billing reports remain; external provider subscriptions were not cancelled.
+
+Original offline archive: `/Users/thawatchai/Downloads/mangmeeplus-prod-uat-backup-20261007.tar.gz`
+(573721632 bytes). Five PostgreSQL dumps restored with every table/content hash and sequence
+matching source; 704 S3 versions verified, covering all ACTIVE attachments. Supplemental backup
+preserves Dev files/Docker volumes (10736 files verified), both Redis RDBs (checksums verified),
+Official OA code, AgentCore artifacts, CloudTrail and CloudWatch logs, credentials and recovery
+configuration. Supplemental archive `/Users/thawatchai/Downloads/mangmeeplus-retirement-supplement-20261007.tar.gz`
+is 884725809 bytes; all 107580 payload hashes matched after archive readback. ECR/OS images were
+not archived; source/configuration are retained for rebuilding.
+
+No release workflows dispatched (UAT/READY/Production: NOT_DISPATCHED). Existing owner authority
+performed retirement without identity-policy expansion. [Exact scope, backup hashes, verification
+and restoration limits](../agent-memory/prod-uat-offline-backup-retirement-2026-10-07.md).
+
+## Production AI feature readback — 2026-10-06 11:17 Bangkok
+
+Read-only enrolled SSM/SSH inspection confirms both API replicas and AI Gateway run source
+`bdb65d8e8f6153b83d83783c930e96e3a38c2a7b` in live mode. The Gateway selects AgentCore
+`kamal_production_b` v24, READY with the same source; public customer gate returns OPEN.
+Both deployed API schemas resolve reliability/delivery v2, document Q&A, reimbursement drafts,
+approved knowledge, response preferences, expense draft conversation/edit and CRM auto-reply as
+enabled. Public lookup is disabled; final AI mutation remains disabled. Customer entitlement,
+permission and channel/conversation checks still apply. The pinned runtime source makes native
+tool loop, coverage critic and approved prepared families always on; retained environment flags
+alone cannot establish their effective behavior.
+
+The latest local release receipt `20261005T180652Z-3f9b6aa1` still says
+`AWAITING_BROWSER_ACCEPTANCE`; running/OPEN is not signed release completion. This inspection
+did not retry, accept or alter that release. No provider calls or customer-content reads; all
+5 owned SSM sessions terminated. [Feature readback and limits](../agent-memory/mangmee-ai-live-feature-structure-2026-10-06.md).
+
+## September cost readback — 2026-10-05
+
+Owner requested actual AWS and Production economics. Existing non-root `watchdog-bedrock`
+successfully reads Cost Explorer, unlike the scoped deployment role's earlier denial.
+September1 inclusive–October1 exclusive UnblendedCost is **USD755.7957298706**, Estimated=false:
+Claude model inference154.85837595 and non-model infrastructure600.9373539206 (including
+AgentCore0.6199909016). Tax group0; do not invent VAT or call this a downloaded invoice.
+Non-model Environment tags: production323.0783276928, UAT125.0474460712,
+shared100.0914657378, dev4.535883011, untagged48.1842314078. Claude model costs are untagged.
+Last7 September days extrapolated to a30-day non-model run rate give620.73501052USD;
+this is an extrapolation, not an invoice or capacity guarantee.
+
+T1 read-only Production aggregates retain557 September Bangkok AI events/523.08THB across30
+companies. UTC-aligned token cost15.610844USD does not reconcile to the account-wide154.85837595USD;
+attribution of the difference remains unresolved. September live payment249THB was fully refunded.
+No runtime/IAM/gate/payment/data mutation. Owned support session independently Terminated.
+[Evidence, unit-cost samples and limitations](../agent-memory/server-ai-actual-economics-2026-10-05.md).
+
+## Production legacy trial adjustment completed — 2026-10-05 Asia/Bangkok
+
+Owner-authorized operation `3c2146e8-270a-419d-bba5-16296dd2eb53` adjusted60companies created
+before2026-09-05T00:00+07:00 to expired FREE_TRIAL_15 terms and normal machine-expired DISABLED
+status. These60ACTIVE legacy companies had no term. Preserved24newer companies,2pending-package
+companies and1SYSTEM_ADMIN company. No data deletion, provider call/charge or notifications.
+Fresh26293087-byte backup restored/rehearsed locally; exact UAT-tested bundle applied once.
+Live preservation matched348849rows/258tables outside the exact adjusted columns/new terms/
+60audit rows. All60targets and60audits verified; repeat preview0changes.
+
+Both API replicas, AI and workers retain original containers/images/start times/source908e7aab.
+Deep readiness, publichealth/OPEN/login and authenticated admin package UI passed. No service
+stop/start, deployment, gate or IAM change. All12ownedSSM sessions closed; owned remote backup/CA/
+manifest copies and local clone container/volume retired. Verified local backup/evidence retained.
+UAT/READY/Production workflow IDs NOT_DISPATCHED; this is an operator data adjustment.
+[Exact scope, backup, recovery and verification](../agent-memory/expire-legacy-company-trials.md).
+
+## Production archived cleanup completed — 2026-10-05 Asia/Bangkok
+
+Owner-authorized operation `archived-cleanup-prod-171739Z` completed the exact28ARCHIVED-company
+manifest:32private users,58,738DB rows and19exactS3versions removed. Shared user1 and14immutable
+legal records retained. Fresh frozen DB/object backups restored/rehearsed locally; all346,400
+preserved rows across257tables matched before services resumed. Maintenance17:34:51–17:54:13UTC
+onOctober4 (19m22s). Same four containers/images/source908e7aab resumed; API/AI readiness passed
+before workers. Public health, PlatformAccessOPEN, login open-marker and signupHTTP200 passed.
+No application deployment, customer-gate change, IAM change or root use during execution.
+UAT/READY/Production workflow IDs NOT_DISPATCHED; this is operator maintenance, not a release.
+
+First exact-version S3 delete rejected VersionId+IfMatch after the DB commit. Corrected only that
+operator header after15/15actual-migration PostgreSQL18/MinIO/Redis tests and API typecheck.
+Reverified frozen preservation/object hashes, then resumed external stores from the committed
+receipt. DB apply invoked once; external resume once. No authority expansion or unversioned delete.
+Post-audit:392FK checks have0orphans,0newDLQs and0error-like application log lines. One unassigned
+global SalesEventTicket referenced a removed LINE identity. The owner separately approved this
+100-baht coupon after identifying historical shop อินทิรา; guarded one-row cleanup completed
+2026-10-04T18:12:04Z without downtime. Other7coupons, lifetime issuedCount and issuance audit
+unchanged; no remaining tickets for the removed private LINE IDs. Recovery row backup retained.
+Real provider signup not tested. [Recovery and exact evidence](../agent-memory/archived-test-company-cleanup.md).
+
+## Production archived cleanup preparation — 2026-10-04 (historical HOLD)
+
+Initial phase: owner authorized read-only preparation only; deletion requires a new explicit command. Live
+snapshot:28 ARCHIVED companies,36 memberships,32 private users eligible for deletion and1 shared
+user to preserve. Full execution is blocked by3 legacy local attachments,15 literal S3 `null`
+versions and13 old object keys outside the worker role's declared version-delete scope. The
+exact-key authority supplement is a local proposal only. Excluding the5 legacy-storage companies
+also blocks on cross-company LINE history; no partial scope is approved.
+
+Both API replicas, AI and workers retain original containers/start times and source
+`908e7aab9b15561317609a67bac770b7ca8a2886`. Deep readiness, public health/login and OPEN pass;
+legacy ECS has0 running tasks. No data deletion, Production backup, stop/start, deployment, gate
+or IAM change.28/28 owned SSM sessions closed. UAT/READY/Production workflow IDs NOT_DISPATCHED.
+The256MiB operator preview exceeded its own heap; after capacity inspection, the read-only1024MiB
+preview passed without application restart/OOM. Recheck capacity before future previews.
+[Preparation evidence and required next steps](../agent-memory/archived-test-company-cleanup.md).
+
+Follow-up16:18UTC: owner authorized code hardening and live isolated cleanup IAM preparation,
+sessions10800seconds, then explicitly root only for temporary bootstrap creation/retirement.
+Non-root configured `watchdog-bms-prod-archived-cleanup-20261004`, trusted only to
+`watchdog-bedrock-dev` with session prefix `archived-cleanup-prod-`. Exact19key/version deletion
+policy,19 allowed/7 denied simulations and real3h AssumeRole+read of all19versions pass. Read
+bucket metadata and exact19key content only; no application IAM changes. Temporary role/inline/
+user bridge independently absent at16:17:57UTC. The role remains;3hours is each session's limit.
+Root never mutated a durable role or data. No S3 write/delete probe or Production data mutation.
+
+Local PostgreSQL18/MinIO/Redis hardening regression15/15 pass; added guarded legacy-null object
+support and explicit local roots, broader legacy company-root inventory, sharing/ownership guards
+and v2 DB-bound manifests. Updated read-only Prod review retains28companies/58,738rows/19versions,
+no new blocker, current containers/readiness/OPEN unchanged.8 additional owned SSM sessions closed.
+DB privileges and Redis ACL DRYRUN pass. Execution still requires a new command, accessible live
+temp roots for both API containers/hosts, fresh frozen preview and backup/restore/preservation
+proof. No backup, stop/start, deploy or gate change; workflow IDs remain NOT_DISPATCHED.
+
+Subsequent pre-deletion checkpoint (owner requested preparation, pause before deletion, keep Prod
+OPEN): a consistent read-only pg_dump was taken beside RDS with the pinned PostgreSQL18 client.
+31,507,821bytes transferred with identical SHA256, then restored/rehearsed only in local PostgreSQL.
+28companies/32privateusers/58,738rows matched the live review; all346,150 preserved rows across
+257tables remained identical after local rehearsal.19S3versions/6,866,834bytes backed up and hashed.
+3local references absent at all4currenthost/container locations; actual mounts still required
+before future apply.4runtimecontainers/starttimes/images unchanged, deep readiness and OPEN pass.
+Task-owned remote dump/CA/staging and release lock retired,4/4additional SSM sessions closed.
+No Production data deletion, service restart, gate/IAM change or deployment in this follow-up.
+Await explicit deletion command, then obtain a fresh frozen plan/backup; do not use the live
+preparation snapshot as frozen authorization. [Checkpoint evidence](../agent-memory/archived-test-company-cleanup.md).
+
+## UAT archived test-fixture cleanup — 2026-10-04 14:35 UTC
+
+Owner-authorized operator cleanup `archived-cleanup-20261004-uat-15` completed against the
+existing UAT DB/stores:43 ARCHIVED companies,21 private users,40,352 DB rows and64 S3 versions
+removed. Protected M14 company and22 immutable legal records retained. Full DB and exact-version
+object backups saved privately; DB restore/rehearsal passed. All116,529 preserved rows matched
+before/after across257 application tables. Original API/AI/workers containers were stopped during
+mutation and restarted with unchanged IDs/images. Deep API/DB, AI, worker/Redis/internal-API,
+public health, PlatformAccess OPEN and login open-marker acceptance passed. Release lock absent.
+No deployment, customer-gate/IAM change or Production operation; UAT/READY/PROD workflow IDs
+NOT_DISPATCHED. A real email/LINE re-registration was not exercised. Impact audit subsequently
+found workers started before API readiness:42 recurring-job DLQ records during14:35:20–14:35:33Z;
+all28 affected kinds completed later. Wait for API/AI readiness before starting workers in future
+maintenance.392 FK checks found no orphans; all305 remaining ACTIVE S3 attachments resolve.
+
+Operator finding: dump beside RDS with TLS verify-full, then transfer the dump over strict SSM/SSH;
+workstation pg_dump through the tunnel timed out and its partial output is not a recovery backup.
+Runtime API dependencies live at `/app/api-runtime/apps/api/node_modules`. S3 roles intentionally
+split reads (API) and exact-version deletes (worker); separate temporary deletion credentials
+avoid changing application IAM. Legacy ECS ListTasks is readable with existing `watchdog-bedrock`,
+not the scoped deploy profile. [Operation and backup evidence](../agent-memory/archived-test-company-cleanup.md).
+
+## Historical UAT power state — 2026-10-05 17:29 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were stopped from `running`. Both independently read back `stopped`
+with no public IP. Legacy UAT ECS has no running tasks; UAT RDS `watchdog-bms-uat-db` and
+Redis `watchdog-bms-uat-redis` remain `available` under the established power-pause procedure.
+No UAT deploy process was active when the hosts were stopped; no Production resource or
+deployment was changed. The former UAT public IPs are stale; check host identity before a
+future Kamal operation.
+
+## Historical UAT power state — 2026-10-05 17:24 UTC
+
+Owner requested UAT startup; both Kamal hosts were already `running`, so no start mutation
+was needed. API `i-0eb581c5ac3b3d7ba` at `10.92.0.10` / `13.250.17.146` and AI/workers
+`i-011918b0d49534d1c` at `10.92.0.42` / `47.129.193.127` were `Online` in Systems Manager.
+Both ALB targets were `healthy`; public API health returned `status:ok` (HTTP 200), and
+`/login` returned HTTP 200. No Production or deployment change was made. Check host identity
+before a future Kamal operation; these public IPs can change after a stop/start.
+
+## Historical UAT power state — 2026-10-05 07:03 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were started from `stopped`. Both read back `running` in the enrolled
+VPC at private IPs `10.92.0.10` / `10.92.0.42` and new public IPs `13.250.17.146` /
+`47.129.193.127`; both were `Online` in Systems Manager. Read-only SSM inspection confirmed
+API, AI and workers containers running from UAT operation `20261005T020153Z-ab52b619`.
+Both ALB targets became `healthy`, the public UAT API health endpoint returned `status:ok`
+(HTTP 200), and `/login` returned HTTP 200. Legacy UAT ECS had no running tasks; RDS and
+Redis remained `available`. No deploy was performed. Check host identity before a future
+Kamal operation; the former public IPs are stale.
+
+## Historical UAT power state — 2026-10-05 02:29 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were stopped from `running`. Both independently read back `stopped`
+with no public IP. Legacy UAT ECS has no running tasks; UAT RDS `watchdog-bms-uat-db` and
+Redis `watchdog-bms-uat-redis` remain `available` under the established power-pause procedure.
+No UAT deploy process was active when the hosts were stopped; no Production resource or
+deployment was changed by this shutdown. The former UAT public IPs are stale; check host
+identity before a future Kamal operation.
+
+## Historical UAT power state — 2026-10-04 10:04 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were started from `stopped`. Both read back `running` in the enrolled
+VPC at private IPs `10.92.0.10` / `10.92.0.42` and new public IPs `175.41.177.9` /
+`47.129.169.115`; both were `Online` in Systems Manager. Read-only SSM inspection confirmed
+API, AI and workers containers running. After startup, both ALB targets became `healthy`,
+the public UAT API health endpoint returned `status:ok` (HTTP 200), and `/login` returned
+HTTP 200. Legacy UAT ECS had no running tasks; RDS and Redis remained `available`.
+No deployment or Production resource was changed. Check host identity before a future
+Kamal operation; the former public IPs are stale.
+
+## Historical UAT power state — 2026-09-30 11:02 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were stopped from `running`. Both independently read back `stopped`
+with no public IP. Legacy UAT ECS has no running tasks; UAT RDS `watchdog-bms-uat-db` and
+Redis `watchdog-bms-uat-redis` remain `available` under the established power-pause procedure.
+No Production resource or deployment was changed. The former UAT public IPs are stale;
+check host identity before a future Kamal operation.
+
+## Historical UAT power state — 2026-09-30 10:33 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were started from `stopped`. Both read back `running` in the enrolled
+VPC at private IPs `10.92.0.10` / `10.92.0.42` and new public IPs `46.137.225.87` /
+`13.212.30.239`; both were `Online` in Systems Manager. Read-only SSM inspection confirmed
+API, AI and workers containers running. Both ALB targets became `healthy`, the public UAT
+API health endpoint returned `status:ok` (HTTP 200), and `/login` returned HTTP 200.
+Legacy UAT ECS had no running tasks; RDS and Redis remained `available`. No deployment or
+Production resource was changed. Check host identity before a future Kamal operation.
+
+## Historical UAT power state — 2026-09-30 10:07 UTC
+
+At the owner's request, Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were stopped using the owner profile. Both independently read back
+`stopped` with no public IP. Legacy UAT ECS has no running tasks. UAT RDS
+`watchdog-bms-uat-db` and Redis `watchdog-bms-uat-redis` remain `available` under the
+established power-pause procedure. No Production resource or deployment was changed.
+The former UAT public IPs are stale; check host identity before a future Kamal operation.
+
+## Production Redis stalled-connection readback — 2026-10-01
+
+Cost-impact follow-up, same date: the existing `mangmee-kamal-production` scoped profile passed
+expected-account STS identity check but one September monthly SERVICE/UnblendedCost query was
+denied for `ce:GetCostAndUsage`. No billing total was obtained and no owner/role escalation was
+attempted. Client recovery can reuse existing instances, but logs/metrics, transfer, database load,
+AI retries and delayed LINE push delivery may add usage costs; do not label the full change free.
+See the cost/impact audit in the linked research report below. No cloud resource was changed.
+
+Read-only follow-up after LINE recovery fix PRs #940/#941. The September 30 ApiA auth 503s took
+1,503–1,509 ms while ApiB reached password validation in 78 ms in the same window. ApiA logged
+`read ETIMEDOUT` at 14:37:37 Bangkok; workers had a timeout burst at 14:42:31. A localhost test of
+the actual RedisRateLimitService/ioredis 5.11.1 reproduces command-timeout 503s while the client
+remains `ready`; a fresh connection works and the old client recovers after its socket closes.
+The limiter has commandTimeout=1500 but no socketTimeout. This establishes a recovery defect,
+not the exact external event that first disrupted Production TCP.
+
+Fresh primary readback: uptime 4,677,463 seconds (~54 days), PONG, 29,725,904/402,653,184 bytes,
+noeviction, zero rejected connections/evictions, one replica. Host TCP keepalive uses 7200s/75s/9
+and tcp_retries2=15. Retained incident metrics show low CPU/memory; do not label this a proven
+Redis capacity failure or restart the store from these observations. Scope a recovery fix to the
+non-blocking rate-limit client; BullMQ blocking clients need separate timeout reasoning.
+
+Scoped role denied DescribeEvents, LookupEvents and GetMetricStatistics; existing September 30
+metric files supplied the historical metrics. No IAM escalation. Enrolled SSM/SSH readback closed
+2/2 owned sessions; no service/data/gate changes. [Evidence and remaining uncertainty](../research/redis-connection-stall-2026-10-01.md) (kept on the owner's laptop, not in git).
+
+## Production LINE login diagnostic readback — 2026-10-01
+
+Read-only enrolled SSM/SSH inspection confirmed both API hosts running source `908e7aab`,
+operation label `20260930T104258Z-3c7568ae`. Current and retained September 30 API containers
+have LINE web handoff enabled and matching web/public origins `https://mangmeeplus.com`.
+No AI/worker readback or release acceptance is claimed by this diagnostic.
+
+Retained September 30 logs contain eight automatic LINE-login starts without an access cookie,
+and four handoff-exchange HTTP 503 requests at 14:21–14:27 Bangkok from unavailable abuse-control
+storage. Three other handoff exchanges were refused as non-PENDING. Logs lack browser identity
+and cannot attribute these events to a specific customer's iPhone. Historical coverage is partial;
+an empty current-container historical query is not proof of no customer traffic.
+
+Owner subsequently confirmed the customer report occurred in that 14:21–14:27 window. Three
+503 responses are followed within 1–2.5 seconds by automatic LINE-login events labelled
+`handoff-expired`, consistent with the web route mapping upstream failures to token expiry.
+The failed rate-limit check occurs before token exchange; do not interpret these 503s as evidence
+that the token expired or was consumed. The precise Redis connection failure and per-device
+visibility difference remain unresolved; no remediation was applied in this diagnosis.
+
+CloudWatch `FilterLogEvents` remains denied to the scoped deployment role. The existing enrolled
+SSM transport allowed container reads with strict host keys; all four owned sessions across two
+diagnostic passes were terminated. API Docker service label is the bare `servicePrefix`, unlike
+its CloudWatch group suffix `-api-web`; filtering on `servicePrefix + '-api-web'` incorrectly returns
+no containers. No deployment, restart, gate, database, account/session or LINE message change occurred.
+[Diagnosis, code findings and evidence limits](../agent-memory/iphone-line-repeat-login-diagnosis-2026-10-01.md).
+
+## Production LINE incident readback — 2026-09-30
+
+Follow-up at approximately 08:32 UTC: owner cancelled the signup hotfix after resolving it;
+all four current containers now serve `2d3202e6`, operation label `20260930T080539Z-c0fec60b`.
+Current-container samples have no 5xx or Redis timeout. For the separately reported slow computer
+web navigation, in-container login rendering was 32–109 ms while workstation public requests
+occasionally took 5–6 seconds, including slow TCP/TLS setup. CPU, memory, DB and Redis metrics did
+not show saturation. This points toward an intermittent client-to-edge network path, but no
+authenticated browser waterfall or exact ISP/CDN attribution was obtained; do not treat it as a
+proven Cloudflare or IPv6 defect. Full measurements and scope limits are in the incident memory below.
+
+Initial readback before the owner's fix:
+
+Read-only inspection found all four Kamal application containers running source `e52c151a`,
+zero restarts and no OOM, while customer journeys were failing. Public API health was 200.
+Two LINE turns at 07:30 UTC failed in intake with `ServiceUnavailableException` /
+`ROUTER_UNREACHABLE`; the same API host also reported Redis-dependent abuse-control failures
+and ioredis timeout. Fresh Redis PING/INFO from both API containers later passed (40/52 ms,
+zero evictions/rejected connections), which does not prove existing application sockets recovered.
+Five LINE signup requests at 07:40–07:41 UTC separately failed the discovery-source database
+constraint; the deployed application accepts SALES but its migration constraint does not.
+Do not use healthy containers or public liveness as acceptance for either customer journey.
+
+Scoped CloudWatch event reads were denied and the owner login had expired. Existing enrolled
+SSM/SSH transport under `mangmee-kamal-production` allowed read-only Docker log/status and Redis
+inspection without IAM changes; all eight owned sessions across three passes were terminated.
+No service, database, gate or release mutation occurred.
+[Incident evidence and limitations](../agent-memory/prod-line-incident-2026-09-30.md).
+
+## Historical UAT power state — 2026-09-29 02:33 UTC
+
+Owner requested UAT startup. The existing Kamal API `i-0eb581c5ac3b3d7ba` and AI/workers
+`i-011918b0d49534d1c` were started from `stopped` through the owner AWS Console after both
+non-root profiles denied an exact `ec2:StartInstances` dry run. They read back `running` in the
+enrolled VPC at private IPs `10.92.0.10` / `10.92.0.42` and new public IPs
+`13.212.250.255` / `18.142.114.170`; both were `Online` in Systems Manager. API and AI ALB
+targets became `healthy`, the public UAT health endpoint returned `status:ok`, and `/login`
+returned 200. Read-only SSM inspection found API, AI and workers containers running from source
+`a2b926c6ee80f26065aecef6998415db1d1a379f`. Legacy UAT ECS had no running tasks; RDS and
+Redis remained `available`. No deployment or target enrollment was performed. Public IPs from
+before this restart are stale; run host identity preflight before any future Kamal operation.
+
+---
+
+## Historical UAT power state — 2026-09-25 06:56 UTC
+
+At the owner's request to reopen UAT, both retained Kamal hosts were already `running` when
+inspected: API `i-0eb581c5ac3b3d7ba` at `47.129.185.109` / `10.92.0.10`, and AI/workers
+`i-011918b0d49534d1c` at `13.214.145.8` / `10.92.0.42`. Both matched the enrolled VPC and
+were `Online` in Systems Manager. Read-only SSM inspection found Docker active and all three
+current application containers running on source `0f3a14ad1af69854ccacbda33a5570ac325de57f`.
+Both UAT Kamal ALB targets became `healthy`; the first API read returned 502 during startup, then
+`https://uat.mangmeeplus.com/api/v1/health` returned `status:ok` and the login page returned 200.
+Legacy UAT ECS has no running tasks; RDS and Redis remain `available`. No EC2 start command,
+deployment, private target edit, or host-key reconciliation was performed in this inspection.
+The September 22 host-key discrepancy remains a stop condition for any future Kamal operation
+until the owner reconciles provenance and the verified keys.
 
 ---
 
