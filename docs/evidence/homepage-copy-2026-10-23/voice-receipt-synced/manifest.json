@@ -1,0 +1,71 @@
+{
+  "created": "2026-10-23",
+  "voice": "Owner-approved item 27 Thai F5 reference voice, +12% tempo, gentle pitch range expansion",
+  "model_attribution": {
+    "creator": "VIZINTZOR",
+    "model": "F5-TTS-THAI",
+    "url": "https://huggingface.co/VIZINTZOR/F5-TTS-THAI",
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "code": "https://github.com/VYNCX/F5-TTS-THAI",
+    "package": "f5-tts-th==1.0.9",
+    "vocoder": "charactr/vocos-mel-24khz"
+  },
+  "source_manifest": "../voice-receipt-full/manifest.json",
+  "processing": "Trim boundary silence only; speech samples, approved timbre, pitch and tempo unchanged. 80 ms joins and 180 ms final tail.",
+  "cues": [
+    {
+      "index": 0,
+      "at": 0.0,
+      "duration": 4.24,
+      "source_crop_seconds": [
+        0.6,
+        4.84
+      ],
+      "text": "ส่งรูปใบเสร็จมาในไลน์ ให้น้องมั่งมีช่วยอ่านได้เลยค่ะ",
+      "speech_pcm_unchanged": true
+    },
+    {
+      "index": 1,
+      "at": 4.32,
+      "duration": 3.14,
+      "source_crop_seconds": [
+        0.51,
+        3.65
+      ],
+      "text": "ชื่อร้าน วันที่ ยอดเงิน น้องเตรียมรายการให้ค่ะ",
+      "speech_pcm_unchanged": true
+    },
+    {
+      "index": 2,
+      "at": 7.54,
+      "duration": 4.1,
+      "source_crop_seconds": [
+        0.19,
+        4.29
+      ],
+      "text": "ถ้าอ่านผิดตรงไหน คุณแก้ได้ ก่อนกดยืนยันนะคะ",
+      "speech_pcm_unchanged": true
+    },
+    {
+      "index": 3,
+      "at": 11.72,
+      "duration": 4.92,
+      "source_crop_seconds": [
+        0.34,
+        5.26
+      ],
+      "text": "เรียบร้อยค่ะ เก็บทั้งรายการและใบเสร็จ ไว้ดูย้อนหลังได้เลย",
+      "speech_pcm_unchanged": true
+    }
+  ],
+  "duration": 16.82,
+  "bytes": 208995,
+  "sha256": "7a586179fee6c1eaa689459d25a077b9f5852379a462af30ba8da87ebe8f533b",
+  "verification": {
+    "wav_pcm_matches_cropped_sources": true,
+    "m4a_full_decode": "pass",
+    "decoded_duration": 16.85333333333333,
+    "clipped_samples": 0
+  }
+}

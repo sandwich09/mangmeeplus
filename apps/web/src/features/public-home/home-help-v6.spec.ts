@@ -44,7 +44,7 @@ test('HOME-WIKI-V6 catalog prices, receipt quotas, branches and users agree with
     assert.ok(faq('ราคาเท่าไร เปิดร้านเสียเงินไหม?').includes(homeNumber(p.monthlyPrice)));
   }
   assert.match(card('package.quota').body, /นับเมื่อ AI อ่านและบันทึกผลสำเร็จ/);
-  assert.match(faq('นับใบเสร็จในแพ็กเกจยังไง?'), /นับเมื่อ AI อ่านและบันทึกผลสำเร็จ/);
+  assert.match(faq('นับใบเสร็จในแพ็กเกจยังไง?'), /นับเมื่อน้องมั่งมีอ่านและบันทึกผลสำเร็จ/);
   assert.match(LLMS_FULL, /Count successful AI reads saved to the system/);
   assert.match(summary('package.quota').answerTh, /AI อ่านและบันทึกผลสำเร็จ.*ผลเดิม.*รายปี.*ตั้งแต่เริ่ม/);
   assert.match(summary('package.quota').answerEn, /successful AI reads saved.*corrections reuse.*annual.*upfront/i);

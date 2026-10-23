@@ -1,0 +1,40 @@
+{
+  "checkedOn": "2026-10-23",
+  "viewports": [
+    390,
+    1280
+  ],
+  "themes": [
+    "default",
+    "halloween-plum"
+  ],
+  "horizontalOverflow": false,
+  "equalControlSizes": {
+    "mobile": [
+      100.6640625,
+      46
+    ],
+    "desktop": [
+      231.5546875,
+      46
+    ]
+  },
+  "audio": {
+    "fileDuration": 16.439728,
+    "initiallyMuted": true,
+    "userStartedUnmuted": true,
+    "pauseKeyboard": true,
+    "pauseMouse": true,
+    "resume": true,
+    "endedCounter": "17 / 17 วินาที",
+    "replayTime": 0.208366,
+    "pausedOffscreen": true
+  },
+  "preservedContent": {
+    "abilities": 5,
+    "usageNotes": 3,
+    "exampleQuestions": 6
+  },
+  "removedPointer": true,
+  "browserErrors": []
+}
