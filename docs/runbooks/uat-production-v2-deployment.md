@@ -32,6 +32,17 @@ proof. Operator และ agent ทุกคนต้องใช้ runbook น
 Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
 Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
 
+## Scoped owner exception for October9 Production disaster restoration
+
+Operation `20261009-production-restore` restores original serving source `bdb65d8e8f6153b83d83783c930e96e3a38c2a7b`
+and its exact images from offline evidence, without a rebuild or workflow dispatch. After current
+administrator/OPEN/logout checks and an actual successful LINE AI reply, the owner explicitly accepted
+one unchanged September25 ambiguous security-email record and its retained alarm: “ยอมรับข้อยกเว้นเดิมและปิดงานกู้คืน”.
+The verified KMS result is `OWNER_ACCEPTED_WITH_EXISTING_EMAIL_ALARM`; it preserves all evidence limits
+and does not claim all security alarms are OK or that the old email was delivered. No resend, data
+mutation or alarm suppression is authorized by this exception. It applies only to this restoration,
+not future releases or UAT. [Signed result and evidence](../agent-memory/production-offline-restore-2026-10-09.md).
+
 ## Owner-authorized Production Kamal migration — 2026-09-18
 
 The owner explicitly selected ECS-to-Kamal migration and the isolated Hotfix path first, combining
