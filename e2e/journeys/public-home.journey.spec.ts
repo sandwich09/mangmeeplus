@@ -35,9 +35,10 @@ for (const width of [375, 1440]) test(`public home fits ${width}px and offers LI
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await page.locator('#pricing').getByRole('button', { name: 'จ่ายรายปี' }).click();
   await expect(page.locator('#pricing .plans')).toContainText('19,990');
-  await page.getByText('ไม่แน่ใจว่าแพ็กเกจไหน? ตอบ 4 ข้อ', { exact: true }).click();
-  await page.getByRole('button', { name: '3 - 5 คน', exact: true }).click();
-  await expect(page.locator('.ch-res')).toContainText('แพ็กเกจที่เหมาะกับคำตอบ เติบโต');
+  // The package guide asks one question at a time (น้องมั่งมี's step-by-step chooser).
+  const guide = page.locator('#package-guide');
+  for (const answer of ['3 - 5 คน', 'ไม่เกิน 30 ใบ', '1 สาขา', 'ไม่ต้องทำเอง']) await guide.getByRole('button', { name: answer, exact: true }).click();
+  await expect(guide.locator('#chooser-question')).toContainText('น้องแนะนำแพ็กเกจเติบโตค่ะ');
   const reportFaq = page.locator('.faq details').filter({ has: page.getByText('แพ็กเกจมีรายงานให้เรียกดูไหม?', { exact: true }) });
   await reportFaq.locator('summary').click();
   await expect(reportFaq.locator('p')).toContainText('รายงานไม่รวมในแพ็กที่ขาย');
