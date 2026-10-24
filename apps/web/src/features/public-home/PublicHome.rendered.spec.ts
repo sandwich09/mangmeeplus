@@ -68,10 +68,10 @@ test('HOME-PAGE package chooser fits people, receipts, branches and system tax n
   assert.equal(recommendedPlan([0, 0, 0, 1]), 3);
 });
 
-test('HOME-PAGE all 17 local assets exist; informative pictures have Thai alternatives and fixed dimensions', () => {
+test('HOME-PAGE all 18 local images exist; informative pictures have Thai alternatives and fixed dimensions', () => {
   const markup = html();
   const images = [...markup.matchAll(/<img\b[^>]*>/g)].map(match => match[0]);
-  assert.equal(images.length, 17);
+  assert.equal(images.length, 18);
   for (const image of images) {
     const src = image.match(/src="([^"]+)"/)![1]!;
     assert.ok(existsSync(new URL(`../../../public${src}`, import.meta.url)), src);
@@ -112,10 +112,10 @@ test('HOME-PAGE ability pop starts on visibility, disconnects and preserves cont
   } });
   Reflect.set(runtime, 'useEffect', (work: typeof effect) => { effect = work; });
   Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
-    if (props?.className === 'mm-abilities') props.ref.current = element;
+    if (type === 'div' && (props?.className === 'mm-abilities' || props?.className === 'chooser-mascot')) props.ref.current = element;
     return (originalCreate as any)(type, props, ...children);
   });
-  const render = () => renderToStaticMarkup(React.createElement(HomeAbilityPop, { children: 'น้องมั่งมีทำอะไรได้' }));
+  const render = (className?: string) => renderToStaticMarkup(React.createElement(HomeAbilityPop, { className, children: 'น้องมั่งมีทำอะไรได้' }));
   try {
     assert.match(render(), /น้องมั่งมีทำอะไรได้/);
     const cleanup = effect();
@@ -123,6 +123,8 @@ test('HOME-PAGE ability pop starts on visibility, disconnects and preserves cont
     onVisibility([{ isIntersecting: false }]); assert.deepEqual(classes, []);
     onVisibility([{ isIntersecting: true }]); assert.deepEqual(classes, ['is-visible']); assert.equal(disconnects, 1);
     cleanup?.(); assert.equal(disconnects, 2);
+    assert.match(render('chooser-mascot'), /class="chooser-mascot"/);
+    const mascotCleanup = effect(); assert.equal(observed, element); mascotCleanup?.();
     Reflect.deleteProperty(globalThis, 'IntersectionObserver');
     assert.match(render(), /น้องมั่งมีทำอะไรได้/); assert.equal(effect(), undefined);
   } finally {
@@ -282,13 +284,19 @@ test('HOME-PAGE receipt story starts muted once on scroll, uses plain playback h
   }
 });
 
-test('HOME-PAGE updates the offer and scrolls to the recommended card only after all four answers', () => {
+test('HOME-PAGE mascot asks one question at a time, preserves edits, and recommends only after completion', () => {
   const runtime = require('react') as typeof React;
   const originalState = runtime.useState, originalCreate = runtime.createElement, originalEffect = runtime.useEffect;
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
-  const scrolls: any[] = [], focuses: any[] = []; let effect = () => {}; let reducedMotion = false;
+  const scrolls: any[] = [], focuses: any[] = [], questionFocuses: any[] = [];
+  let reducedMotion = false, pose = '', effects: (() => void)[] = [], effectCursor = 0;
+  const dependencies: (readonly unknown[] | undefined)[] = [];
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { matchMedia: () => ({ matches: reducedMotion }) } });
-  Reflect.set(runtime, 'useEffect', (work: () => void) => { effect = work; });
+  Reflect.set(runtime, 'useEffect', (work: () => void, deps?: readonly unknown[]) => {
+    const index = effectCursor++, previous = dependencies[index];
+    if (!deps || !previous || deps.some((value, i) => value !== previous[i])) effects.push(work);
+    dependencies[index] = deps;
+  });
   const states: any[] = []; let cursor = 0; let buttons: any[] = [];
   Reflect.set(runtime, 'useState', (initial: unknown) => {
     const index = cursor++, original = originalState(initial);
@@ -298,30 +306,57 @@ test('HOME-PAGE updates the offer and scrolls to the recommended card only after
   const nodeText = (nodes: any): string => Array.isArray(nodes) ? nodes.map(nodeText).join('') : React.isValidElement(nodes) ? nodeText((nodes.props as any).children) : nodes == null || typeof nodes === 'boolean' ? '' : String(nodes);
   Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
     if (type === 'button') buttons.push({ props, text: nodeText(children) });
+    if (type === 'img') pose = props.src;
+    if (type === 'h4' && props.ref) props.ref.current = { focus: (options: unknown) => questionFocuses.push({ question: nodeText(children), options }) };
     if (type === 'article' && props.ref) props.ref.current = {
       focus: (options: unknown) => focuses.push(options),
       scrollIntoView: (options: unknown) => scrolls.push({ target: props['aria-labelledby'], options }),
     };
     return (originalCreate as any)(type, props, ...children);
   });
-  const render = () => { cursor = 0; buttons = []; const markup = renderToStaticMarkup(React.createElement(HomePricing)); effect(); return markup; };
+  const render = () => {
+    cursor = 0; effectCursor = 0; effects = []; buttons = [];
+    const markup = renderToStaticMarkup(React.createElement(HomePricing)); effects.forEach(work => work()); return markup;
+  };
+  const press = (label: string) => {
+    const button = buttons.find(button => button.text === label || button.text.startsWith(label));
+    assert.ok(button, label); button.props.onClick(); return render();
+  };
+  const options = () => buttons.filter(button => button.props.className === 'opt');
   try {
-    render(); buttons.find(button => button.text === 'ไม่ต้องทำเอง').props.onClick();
-    assert.match(render(), /ไม่ต้องทำเอกสารภาษีเอง/);
-    buttons.find(button => button.text.startsWith('จ่ายรายปี')).props.onClick();
-    assert.match(render(), /19,990/);
-    buttons.find(button => button.text === '3 - 5 คน').props.onClick();
-    assert.match(render(), /แพ็กเกจที่เหมาะกับร้านคุณ: เติบโต/);
-    buttons.find(button => button.text === 'ต้องทำเอง').props.onClick();
-    assert.match(render(), /แพ็กเกจที่เหมาะกับร้านคุณ: ธุรกิจ/);
-    buttons.find(button => button.text === 'ไม่เกิน 30 ใบ').props.onClick(); render();
-    assert.deepEqual(scrolls, []); assert.deepEqual(focuses, []);
-    buttons.find(button => button.text === '1 สาขา').props.onClick(); render();
+    const initial = render();
+    assert.match(initial, /ให้น้องมั่งมีช่วยเลือกแพ็กเกจ/); assert.match(initial, /ข้อ 1 จาก 4/);
+    assert.doesNotMatch(initial, /ตอบ 4 ข้อจากงานที่ร้านทำอยู่จริง|เลือกคำตอบด้านบน|<details class="card chooser"/);
+    assert.deepEqual(options().map(button => button.text), ['1 - 2 คน', '3 - 5 คน', '6 - 10 คน', '11 - 30 คน']);
+    assert.match(pose, /mangmee-reviewing/); assert.equal(questionFocuses.length, 0); assert.deepEqual(scrolls, []);
+    assert.match(press('3 - 5 คน'), /ข้อ 2 จาก 4/); assert.match(pose, /mangmee-scanning/);
+    assert.deepEqual(options().map(button => button.text), ['ไม่เกิน 30 ใบ', '31 - 50 ใบ', '51 - 100 ใบ', '101 - 500 ใบ']);
+    assert.match(questionFocuses[0].question, /แต่ละเดือน/);
+    assert.match(press('จ่ายรายปี'), /19,990/); assert.equal(questionFocuses.length, 1); assert.equal(scrolls.length, 0);
+    assert.match(press('ไม่เกิน 30 ใบ'), /ข้อ 3 จาก 4/); assert.match(pose, /mangmee-reviewing/);
+    assert.match(press('ย้อนกลับ'), /ข้อ 2 จาก 4/);
+    assert.equal(options().find(button => button.text === 'ไม่เกิน 30 ใบ').props['aria-pressed'], true);
+    assert.match(press('51 - 100 ใบ'), /ข้อ 3 จาก 4/);
+    assert.match(press('1 สาขา'), /ข้อ 4 จาก 4/); assert.match(pose, /mangmee-scanning/);
+    assert.deepEqual(options().map(button => button.text), ['ไม่ต้องทำเอง', 'ต้องทำเอง']);
+    assert.equal(scrolls.length, 0); assert.equal(focuses.length, 0);
+    const result = press('ต้องทำเอง');
+    assert.match(result, /น้องแนะนำแพ็กเกจธุรกิจค่ะ/); assert.match(result, /ตอบครบแล้วค่ะ/); assert.match(pose, /mangmee-reviewing/);
+    assert.match(result, /คนดูแลใบเสร็จ<\/span><b>3 - 5 คน/); assert.equal(options().length, 0);
     assert.deepEqual(scrolls, [{ target: 'home-plan-ENTERPRISE_1999', options: { behavior: 'smooth', block: 'start' } }]);
     assert.deepEqual(focuses, [{ preventScroll: true }]);
+    press('จ่ายรายเดือน'); render(); assert.equal(scrolls.length, 1); assert.equal(focuses.length, 1);
+    assert.match(press('แก้คำตอบ'), /ข้อ 1 จาก 4/);
+    assert.equal(options().find(button => button.text === '3 - 5 คน').props['aria-pressed'], true);
+    // Re-selecting the same answer advances, and old later answers do not complete the guide early.
+    assert.match(press('3 - 5 คน'), /ข้อ 2 จาก 4/);
+    assert.equal(options().find(button => button.text === '51 - 100 ใบ').props['aria-pressed'], true);
+    press('ไม่เกิน 30 ใบ'); press('1 สาขา'); assert.equal(scrolls.length, 1);
+    assert.equal(options().find(button => button.text === 'ต้องทำเอง').props['aria-pressed'], true);
     reducedMotion = true;
-    buttons.find(button => button.text === 'ไม่ต้องทำเอง').props.onClick(); render();
+    assert.match(press('ไม่ต้องทำเอง'), /น้องแนะนำแพ็กเกจเติบโตค่ะ/);
     assert.deepEqual(scrolls[1], { target: 'home-plan-BASIC_499', options: { behavior: 'instant', block: 'start' } });
+    assert.equal(scrolls.length, 2);
   } finally {
     Reflect.set(runtime, 'useState', originalState); Reflect.set(runtime, 'createElement', originalCreate); Reflect.set(runtime, 'useEffect', originalEffect);
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow); else Reflect.deleteProperty(globalThis, 'window');
