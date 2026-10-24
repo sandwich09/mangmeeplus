@@ -110,7 +110,8 @@ describe('P10-L door and status cards (§3.1/§7)', () => {
       ['ฉันเป็นพนักงาน', 'ฉันเป็นพนักงาน'],
       // R-B1: `openExternalBrowser=1` is added by the reply exit, after this builder.
       ['มีบัญชีอยู่แล้ว เชื่อม LINE', `${WEB_BASE}/login?line=link-required&next=%2F`],
-      ['ติดต่อเจ้าหน้าที่', 'ติดต่อเจ้าหน้าที่'],
+      // Owner 2026-10-24: the door to a person opens the Official OA chat, not a typed command.
+      ['ติดต่อเจ้าหน้าที่', 'https://lin.ee/6Sc38L6'],
     ]);
     assert.match(JSON.stringify(card), /บัญชีทางการที่ยืนยันแล้ว/, 'the verified shield guards against a fake OA (§9)');
   });

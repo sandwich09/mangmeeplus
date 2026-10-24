@@ -777,7 +777,7 @@ export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: str
       { label: 'Packages and prices', data: lineControlData('action=view-packages', language) },
       { label: 'I am an employee', data: lineControlData('action=employee-door', language) },
       ...(linkUrl ? [{ label: 'Link existing account', uri: linkUrl }] : []),
-      { label: 'Contact team', data: lineControlData('action=staff-contact', language) }]) }, text);
+      { label: 'Contact team', uri: STAFF_OA_URL }]) }, text);
   }
   const liff = liffId && LIFF_ID_PATTERN.test(liffId) ? liffId : undefined;
   const text = 'สวัสดีค่ะ ยินดีต้อนรับสู่มั่งมีพลัส เลือกทางที่ตรงกับคุณได้เลยค่ะ';
@@ -803,7 +803,7 @@ export function buildSignupDoorCard(liffId: string | undefined, webBaseUrl?: str
         ...(linkUrl ? [{ label: 'มีบัญชีอยู่แล้ว เชื่อม LINE', uri: linkUrl }] : []),
         // §7: the one door that reaches a person. Without it the keyword is typing-only and the
         // people most likely to need it are the ones least likely to guess it.
-        { label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
+        { label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL },
       ],
     ),
   };
@@ -842,7 +842,7 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
   if (language === 'en') {
     const text = `${companyName.trim() ? `${bounded(companyName, 60)}: ` : ''}Your registration is ${businessHours ? 'being reviewed' : 'queued for the next business day'}; our team works Monday–Saturday, 9:00–18:00 and will notify you here.`;
     return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text, contents: bubble({ title: 'Registration received', text }, undefined, '',
-      [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]) }, text);
+      [{ label: 'Contact team', uri: STAFF_OA_URL }]) }, text);
   }
   const shop = companyName.trim() ? `ร้าน ${bounded(companyName, 60)} ` : '';
   // The bubble's own title already says "ได้รับคำขอแล้ว", so the body says what happens next and
@@ -858,7 +858,7 @@ export function buildSignupStatusCard(companyName: string, businessHours: boolea
       undefined,
       '',
       // Waiting is exactly when someone wants a person, so this card carries the door too (§7).
-      [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }],
+      [{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL }],
     ),
   };
 }
@@ -886,9 +886,9 @@ export function buildAiBudgetExceededMessage(
     : canManagePlan ? 'Credit resets next month, or change your package to continue.' : 'Credit resets next month; ask the shop owner or an authorized package manager for help.'
     : chat ? 'เดือนหน้าเริ่มใหม่ การเปลี่ยนแพ็กเกจไม่เติมเครดิตแชตในเดือนนี้ ติดต่อทีมงานเพื่อตรวจสิทธิ์ดีลพิเศษได้ค่ะ'
       : canManagePlan ? 'เดือนหน้าเริ่มใหม่ หรือเปลี่ยนแพ็กเกจเพื่อใช้ต่อได้ค่ะ' : `เดือนหน้าเริ่มใหม่ ${ASK_PLAN_MANAGER_TH}`;
-  const actions: SafeButton[] = en ? chat ? [{ label: 'Contact team', data: lineControlData('action=staff-contact', language) }]
+  const actions: SafeButton[] = en ? chat ? [{ label: 'Contact team', uri: STAFF_OA_URL }]
     : canManagePlan ? [{ label: 'View packages', data: lineControlData('action=view-packages', language) }] : []
-    : chat ? [{ label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND }]
+    : chat ? [{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL }]
       : canManagePlan ? [{ label: 'ดูแพ็กเกจ', text: VIEW_PACKAGES_COMMAND }] : [];
   const canonicalText = `${title}\n${text}`;
   const designed = drawLineSystemCard({ mascot: 'general', header: { lines: [en ? 'Package' : 'แพ็กเกจ', title] }, text,
@@ -941,7 +941,7 @@ export function buildPackageRequiredMessage(input: {
     const text = `${shop ? `${shop}: ` : ''}Choose an active package before using the assistant; all your data is kept.`;
     const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId, `/companies/${encodeURIComponent(input.companyId)}/billing?channel=line`);
     return completeCard({ type: 'flex', altText: preview(text, 400), canonicalText: text, contents: bubble({ title: input.lockReason === 'no_package' ? 'No active package' : 'Package expired', text }, input.webBaseUrl, input.companyId,
-      [...(link ? [{ label: 'Choose package', uri: link }] : []), { label: 'Contact team', data: lineControlData('action=staff-contact', 'en') }]) }, text);
+      [...(link ? [{ label: 'Choose package', uri: link }] : []), { label: 'Contact team', uri: STAFF_OA_URL }]) }, text);
   }
   const text = `${shop ? `🏪 ${shop}\n` : ''}น้องมั่งมียังตอบไม่ได้จนกว่าจะเลือกแพ็กเกจค่ะ ข้อมูลทั้งหมดยังอยู่ครบ`;
   const link = oneTapPackageLink(input.webBaseUrl, input.packageUrl) ?? safeTenantLink(input.webBaseUrl, input.companyId,
@@ -961,7 +961,7 @@ export function buildPackageRequiredMessage(input: {
       [
         ...(link ? [{ label: 'เลือกแพ็กเกจ', uri: link }] : []),
         // §7: the one door that reaches a person, on the card the locked shop will keep seeing.
-        { label: STAFF_CONTACT_COMMAND, text: STAFF_CONTACT_COMMAND },
+        { label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL },
       ],
     ),
   };

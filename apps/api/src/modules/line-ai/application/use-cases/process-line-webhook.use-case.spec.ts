@@ -3001,7 +3001,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const buttons = flexButtons(card).map((b: any) => b.action);
       assert.deepEqual(buttons.map((a: any) => a.label), ['เลือกแพ็กเกจ', STAFF_CONTACT_COMMAND]);
       assert.equal(buttons[0].uri, 'https://app.example.com/companies/company-1/billing?channel=line');
-      assert.equal(buttons[1].type, 'message', 'the staff door is a command, never a link');
+      assert.equal(buttons[1].uri, 'https://lin.ee/6Sc38L6', 'owner 2026-10-24: the staff door opens the Official OA chat');
       // No price anywhere on LINE (R14), and no model call for a shop that cannot be served.
       assert.doesNotMatch(JSON.stringify(card), /249|บาท/);
       assert.equal(getAiGatewayCalled(), false, 'a locked company must cost no model call');

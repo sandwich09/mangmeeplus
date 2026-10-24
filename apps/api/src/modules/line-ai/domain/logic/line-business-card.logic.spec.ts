@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { stripLineExternalBrowserParam, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import {
   buildDesignedLineAnswerMessage,
@@ -1346,7 +1348,7 @@ describe('CHAT budget refusal card', () => {
       assert.match(rendered, /ติดต่อเจ้าหน้าที่/);
       assert.doesNotMatch(rendered, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
       assert.deepEqual(((message as any).contents).footer.contents.map((item: any) => item.action), [
-        { type: 'message', label: 'ติดต่อเจ้าหน้าที่', text: 'ติดต่อเจ้าหน้าที่' },
+        { type: 'uri', label: 'ติดต่อเจ้าหน้าที่', uri: 'https://lin.ee/6Sc38L6' },
       ]);
     }
   });
@@ -1521,4 +1523,10 @@ it('expense confirmation and result keep signed actions on locked rows in Thai a
     assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
     assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
   }
+});
+
+it('every ติดต่อเจ้าหน้าที่ / Contact team button on a card opens the Official OA chat, never a typed command or postback (owner 2026-10-24)', () => {
+  const source = readFileSync(join(__dirname, 'line-business-card.logic.ts'), 'utf8');
+  assert.doesNotMatch(source, /text: STAFF_CONTACT_COMMAND|action=staff-contact/);
+  assert.match(source, /\{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL \}/);
 });
