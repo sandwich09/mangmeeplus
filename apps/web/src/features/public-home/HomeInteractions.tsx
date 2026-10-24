@@ -36,7 +36,7 @@ function Reel({ signup = false }: { signup?: boolean }) {
 export function ChatReel() { return <Reel />; }
 export function SignupReel() { return <figure className="close-phone"><Reel signup /><figcaption>หน้าเปิดร้านจริง กรอกชื่อร้านและเบอร์มือถือ</figcaption></figure>; }
 
-export function HomeAbilityPop({ children }: { children: React.ReactNode }) {
+export function HomeAbilityPop({ children, className = 'mm-abilities' }: { children: React.ReactNode; className?: string }) {
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = root.current;
@@ -49,7 +49,7 @@ export function HomeAbilityPop({ children }: { children: React.ReactNode }) {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  return <div className="mm-abilities" ref={root}>{children}</div>;
+  return <div className={className} ref={root}>{children}</div>;
 }
 
 export function DocumentGallery() {
@@ -70,25 +70,27 @@ export function DocumentGallery() {
 }
 
 const CHOOSER_QUESTIONS = [
-  { label: 'ในร้านมีคนช่วยจัดการใบเสร็จและค่าใช้จ่ายกี่คน นับตัวเองด้วย', options: ['1 - 2 คน', '3 - 5 คน', '6 - 10 คน', '11 - 30 คน'] },
-  { label: 'เดือนหนึ่งร้านมีใบเสร็จประมาณกี่ใบ?', options: ['ไม่เกิน 30 ใบ', '31 - 50 ใบ', '51 - 100 ใบ', '101 - 500 ใบ'] },
-  { label: 'ตอนนี้ร้านมีกี่สาขา?', options: ['1 สาขา', '2 สาขา', '3 - 5 สาขา', 'มากกว่า 5 สาขา'] },
-  { label: 'ตอนนี้ร้านต้องออกเอกสารหัก ณ ที่จ่าย หรือเตรียมแบบภาษีเองไหม?', options: ['ไม่ต้องทำเอง', 'ต้องทำเอง'] },
+  { topic: 'คนดูแลใบเสร็จ', label: 'ที่ร้านมีคนช่วยดูแลใบเสร็จและค่าใช้จ่ายกี่คนคะ?', hint: 'นับตัวคุณเองด้วยนะคะ', options: ['1 - 2 คน', '3 - 5 คน', '6 - 10 คน', '11 - 30 คน'] },
+  { topic: 'ใบเสร็จต่อเดือน', label: 'แต่ละเดือน ร้านมีใบเสร็จประมาณกี่ใบคะ?', options: ['ไม่เกิน 30 ใบ', '31 - 50 ใบ', '51 - 100 ใบ', '101 - 500 ใบ'] },
+  { topic: 'จำนวนสาขา', label: 'ตอนนี้ร้านมีกี่สาขาคะ?', options: ['1 สาขา', '2 สาขา', '3 - 5 สาขา', 'มากกว่า 5 สาขา'] },
+  { topic: 'เอกสารภาษี', label: 'ร้านต้องออกเอกสารหัก ณ ที่จ่าย หรือเตรียมแบบภาษีเองไหมคะ?', options: ['ไม่ต้องทำเอง', 'ต้องทำเอง'] },
 ];
 export function recommendedPlan(answers: number[]) { return Math.max(0, ...answers.slice(0, 3), answers[3] === 1 ? 3 : 0); }
 
 export function HomePricing({ children }: { children?: React.ReactNode }) {
   const [annual, setAnnual] = useState(false), [answers, setAnswers] = useState([-1, -1, -1, -1]);
-  const recommendedCard = useRef<HTMLElement>(null);
+  const [step, setStep] = useState(0);
+  const recommendedCard = useRef<HTMLElement>(null), questionHeading = useRef<HTMLHeadingElement>(null);
+  const complete = step === CHOOSER_QUESTIONS.length, question = CHOOSER_QUESTIONS[step];
   useEffect(() => {
-    const card = recommendedCard.current;
-    if (answers.some(answer => answer < 0) || !card) return;
-    card.focus({ preventScroll: true });
-    card.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
-  }, [answers]);
-  const answered = answers.some(answer => answer >= 0), chosen = answered ? recommendedPlan(answers) : 3;
+    if (answers.every(answer => answer < 0)) return;
+    const target = complete ? recommendedCard.current : questionHeading.current;
+    target?.focus({ preventScroll: complete });
+    if (complete) target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' });
+  }, [step, answers, complete]);
+  const chosen = complete ? recommendedPlan(answers) : 3;
   const reasons = answers.slice(0, 3).flatMap((answer, i) => answer < 0 ? [] : [CHOOSER_QUESTIONS[i]!.options[answer]]);
-  const badge = !answered ? 'ครบที่สุด ทำเอกสารภาษีได้เอง' : answers[3] === 1 ? 'เหมาะกับงานเอกสารภาษี' : reasons.length ? `เหมาะกับ ${reasons.join(' · ')}` : 'ไม่ต้องทำเอกสารภาษีเอง';
+  const badge = !complete ? 'ครบที่สุด ทำเอกสารภาษีได้เอง' : answers[3] === 1 ? 'เหมาะกับงานเอกสารภาษี' : `เหมาะกับ ${reasons.join(' · ')}`;
   return <section className="sec" id="pricing" aria-labelledby="pricing-title"><div className="w">
     <div className="pr-head"><div><p className="ey">ราคา</p><h2 id="pricing-title">ราคา <span className="hl">เริ่มเดือนละ 249 บาท</span></h2>
       <p className="lead">งานหลักใช้ได้ทุกแพ็กเกจ เลือกตามจำนวนใบเสร็จ คนในทีม สาขา และงานเอกสารภาษีของร้าน</p></div>
@@ -105,11 +107,33 @@ export function HomePricing({ children }: { children?: React.ReactNode }) {
         <li>ใช้ได้ {plan.users} คน (นับเจ้าของด้วย)</li><li>{plan.branches} สาขา</li><li>{plan.systemTax ? 'ออก 50 ทวิ ภ.ง.ด.3 และ 53 ในระบบ' : 'จด 50 ทวิ ที่ทำนอกระบบได้'}</li></ul>
       <a className={`btn ${i === chosen ? 'btn-primary' : 'btn-soft'}`} href={HOME_LINE_URL} target="_blank" rel="noopener noreferrer" aria-label={`เริ่มใช้งานผ่าน LINE แพ็กเกจ${plan.name} (เปิดแท็บใหม่)`}>เริ่มใช้งานผ่าน LINE</a>
     </article>)}</div>
-    <details className="card chooser"><summary><span>หาแพ็กเกจที่เหมาะกับร้านคุณ<small>ตอบ 4 ข้อจากงานที่ร้านทำอยู่จริง</small></span></summary><div className="ch-g">
-      {CHOOSER_QUESTIONS.map((question, qi) => <div key={question.label} role="group" aria-label={question.label}><p className="ch-q">{question.label}</p><div className="opts">
-        {question.options.map((option, oi) => <button className="opt" type="button" key={option} aria-pressed={answers[qi] === oi} onClick={() => { if (answers[qi] !== oi) setAnswers(answers.map((answer, i) => i === qi ? oi : answer)); }}>{option}</button>)}
-      </div></div>)}</div><div className="ch-res" aria-live="polite"><p>{answered ? `แพ็กเกจที่เหมาะกับร้านคุณ: ${HOME_PLANS[chosen]!.name}` : 'เลือกคำตอบด้านบน เพื่อหาแพ็กเกจที่เหมาะกับร้านคุณ'}</p>
-      <p className="ch-more">มีผู้ใช้เกิน 30 คน ใบเสร็จเกิน 500 ใบต่อเดือน หรือมากกว่า 10 สาขา <a href={HOME_CONTACT_URL}>ให้ทีมงานช่วยเลือกแพ็กเกจใน LINE</a></p></div></details>
+    <div className="pr-contact"><p><b>ต้องการใช้งานมากกว่าที่แพ็กเกจรองรับ?</b></p>
+      <p>ถ้าร้านมีผู้ใช้เกิน 30 คน ใบเสร็จเกิน 500 ใบต่อเดือน หรือมากกว่า 10 สาขา <a href={HOME_CONTACT_URL}>คุยกับทีมงานใน LINE</a></p></div>
+    <section className="card chooser" id="package-guide" aria-labelledby="package-guide-title">
+      <div className="chooser-heading"><h3 id="package-guide-title">ให้น้องมั่งมีช่วยเลือกแพ็กเกจ</h3><p>น้องจะถาม 4 ข้อ กดคำตอบที่ตรงกับร้านคุณได้เลยค่ะ</p></div>
+      <div className="chooser-progress"><span>{complete ? 'ตอบครบแล้วค่ะ' : `ข้อ ${step + 1} จาก ${CHOOSER_QUESTIONS.length}`}</span>
+        <ol aria-hidden="true">{CHOOSER_QUESTIONS.map((item, index) => <li key={item.topic} data-done={index < step} data-current={index === step} />)}</ol>
+      </div>
+      <div className="chooser-turn">
+        <HomeAbilityPop className="chooser-mascot"><img key={step} src={`/home/mangmee-${step % 2 === 0 ? 'reviewing' : 'scanning'}.webp`} width="313" height="191" alt="" aria-hidden="true" loading="eager" /></HomeAbilityPop>
+        <div className="chooser-bubble"><p className="chooser-speaker">น้องมั่งมี</p>
+          <h4 id="chooser-question" ref={questionHeading} tabIndex={-1}>{question?.label ?? `น้องแนะนำแพ็กเกจ${HOME_PLANS[chosen]!.name}ค่ะ`}</h4>
+          {question?.hint && <p className="chooser-hint" id="chooser-hint">{question.hint}</p>}
+          {complete && <p className="chooser-hint">เหมาะกับจำนวนคน ใบเสร็จ สาขา และงานภาษีที่คุณบอกน้องค่ะ</p>}
+        </div>
+      </div>
+      {question ? <div className="chooser-answer-area">
+        <div className="chooser-options" role="group" aria-labelledby="chooser-question" aria-describedby={question.hint ? 'chooser-hint' : undefined}>
+          {question.options.map((option, index) => <button className="opt" type="button" key={option} aria-pressed={answers[step] === index} onClick={() => {
+            setAnswers(answers.map((answer, i) => i === step ? index : answer)); setStep(step + 1);
+          }}>{option}</button>)}
+        </div>
+        <div className="chooser-nav">{step > 0 && <button className="btn btn-soft" type="button" onClick={() => setStep(step - 1)}>ย้อนกลับ</button>}</div>
+      </div> : <div className="chooser-result">
+        <ul>{CHOOSER_QUESTIONS.map((item, index) => <li key={item.topic}><span>{item.topic}</span><b>{item.options[answers[index]!]}</b></li>)}</ul>
+        <button className="btn btn-soft" type="button" onClick={() => setStep(0)}>แก้คำตอบ</button>
+      </div>}
+    </section>
     <div className="pr-note"><div><b>ทุกแพ็กเกจได้</b>น้องมั่งมีใน LINE เบิกเงินคืนพนักงาน ใบรับรองแทนใบเสร็จและลายเซ็น ส่งเอกสารให้นักบัญชี กำหนดสิทธิ์ หน้าสรุปยอดและการเตือน</div>
       <div><b>นับใบเสร็จยังไง</b>นับเมื่อน้องมั่งมีอ่านและบันทึกผลสำเร็จ การแก้ข้อมูลเองใช้ผลอ่านเดิม ดูจำนวนคงเหลือได้ที่แพ็กเกจ</div>
       <div><b>เปิดร้านฟรี</b>ไม่ต้องใส่บัตร พร้อมใช้เมื่อเลือกและจ่ายแพ็กเกจ จ่ายด้วยบัตรหรือพร้อมเพย์ แพ็กเกจที่เลือกในหน้านี้ คุณต้องเลือกอีกครั้งหลังเปิดร้าน</div></div>

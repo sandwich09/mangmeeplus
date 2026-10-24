@@ -185,7 +185,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <div className="w">
 <div className="head">
 <p className="ey">เชื่อใจได้แค่ไหน</p>
-<h2 id="trust-title">น้องมั่งมีช่วยกรอก คนเป็นคนตัดสิน</h2>
+<h2 id="trust-title">น้องมั่งมีช่วยกรอก คุณเป็นคนตัดสิน</h2>
 <p className="lead">มั่งมีพลัสไม่ได้มาแทนนักบัญชี เราช่วยให้ข้อมูลครบ และย้อนดูได้</p>
 </div>
 <div className="roles">

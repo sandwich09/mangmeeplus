@@ -1,6 +1,6 @@
 # Agent Memory: public-home-content-copy
 
-Status: Owner approved direct integration into main and develop without PR (item 36). Implementation through item 35 is verified locally; integration in progress, 2026-10-23.
+Status: Item 40 authorized: integrating items 37–39 directly into main/develop. Pre-integration homepage suite passes 26/26; browser visual review remains blocked by tool URL policy, 2026-10-24.
 Owner: Codex
 Scope: Shared homepage copy and interactions in the existing homepage worktree, branch `codex/homepage-content-copy`. Owner wants sequential revisions, reflected in both default and festival themes, with a running local preview after each item.
 Decisions:
@@ -16,7 +16,7 @@ Verification:
 - Real in-app browser at 390 and 1280: default and Halloween screenshots inspected, no horizontal page overflow, identical shared page text between themes. Additional Halloween widths 360, 768 and 1536 have no horizontal page overflow.
 - Browser package chooser with the renamed receipt question recommends เริ่มต้น for ไม่เกิน 30 ใบ; renamed reading-error FAQ opens with its existing answer. Only the introduction retains AI in visible page content. Browser error log empty.
 - `git diff --check`: pass. No new automated tests for this copy-only change.
-Next: Owner reviews local default/Halloween and supplies the next item. No commit, push, merge or deployment performed for these revisions.
+Next: Complete the authorized direct main/develop integration, verify remote refs, and preserve the running local preview.
 
 ## Item 2: ask about the shop's existing workload
 
@@ -373,3 +373,51 @@ Next: Owner reviews local default/Halloween and supplies the next item. No commi
 - Refreshed origin/main and origin/develop. The branches have distinct histories (324 main-only and 1,770 develop-only commits), but the public-home implementation and its relevant contracts agree. Apply only this reviewed homepage changeset to each current remote branch, preserving their independent histories and unrelated changes. Use a temporary integration checkout so the active local preview and other working directories stay intact. Push fast-forward updates without force, preferably atomically for both refs.
 - Commit the homepage code, approved final narration asset, task memory, top-level screenshots/verification records and final audio provenance manifests. Keep the downloaded reference, extracted voice, intermediate audio and auditions local; they are not runtime dependencies. Screenshots predate items 32–35 and must not be presented as verification of their revised layout. Earlier media paths in this memory describe retained local artifacts.
 - Pre-integration checks: full homepage suite 26/26 passed; TypeScript `tsc --noEmit --incremental false` passed; `git diff --check` passed. Latest UI browser review remains blocked by the previously recorded automatic URL-policy rejection; owner has reviewed the running local prototype and now authorized integration. No claim of deployment or live customer acceptance.
+
+### Item 36 completion (local handoff record)
+
+- Source changeset: `5e52108313c682df51b16e8b4fa2634015b9b8e0`. Applied without conflicts to each independent remote baseline; only the scoped homepage files, final audio, evidence and memory changed (78 paths). No package.json, backend, entitlement or deployment changes.
+- `origin/main`: `8d7cdca01be51ab51780b8c80d0d9185ca4de950` → `789547f9b7ca09c3412d884c94a5bdc0a7d001ac`.
+- `origin/develop`: `478b84f107820e039be8a013f143f54f03b461b5` → `e879d556156a4c4b5da32b9664587e091a39ea59`.
+- Homepage tests pass 26/26 on each prepared target branch; compared all public-home code and the final narration asset across the two branches with no differences. `git push --atomic` successfully advanced both refs without force. `git ls-remote --heads origin main develop` confirms the exact accepted hashes above. No PR created; did not wait for/check GitHub Actions or dispatch any deployment.
+- Original preview checkout and local media auditions are preserved. Temporary integration checkout is clean after removing only its two task-created dependency symlinks and is being archived. This final acceptance note is local task memory; the published changeset includes the pre-integration plan/evidence.
+- Next: owner's next requested revision. No UAT/Production release or customer OPEN acceptance is claimed.
+
+## Item 37: distinguish larger-shop contact guidance from chooser results
+
+- Owner finds the over-limit/contact sentence confusing directly under `เลือกคำตอบด้านบน เพื่อหาแพ็กเกจที่เหมาะกับร้านคุณ`.
+- Plan: move the contact note below the four package cards, outside the chooser and its live result region. Give it the heading `ต้องการใช้งานมากกว่าที่แพ็กเกจรองรับ?`, explicitly conditional shop-size copy, and the action `คุยกับทีมงานใน LINE`. The chooser result will contain only its instruction or recommendation. Keep actual plan limits, recommendation logic, destinations and themes unchanged; verify the existing rendered suite and local availability.
+
+### Item 37 result
+
+- Moved the note into a separate compact text block after package cards and before the chooser. Added the planned heading and `ถ้าร้านมี...` wording, with `คุยกับทีมงานใน LINE` linking to the same contact destination. Removed it from `.ch-res` and its `aria-live` region so it cannot read as part of the personal recommendation. Replaced the now-unused `.ch-more` rule with scoped spacing/type rules for the contact block.
+- Existing rendered homepage suite passed 9/9; `git diff --check` passed; the current default-theme local preview returned HTTP 200. No logic, limits, dependencies, backend or other-route changes; no new test needed for this reversible copy/layout change.
+- No new browser visual verification because of the previously recorded URL-policy access rejection; no workaround attempted. Local preview is available for owner review. This follow-up is not committed, pushed, merged or deployed.
+
+## Item 38: mascot-led interactive package guide
+
+- Owner requests clearer introductory copy and a mascot that pops, changes pose and asks questions one at a time until the visitor finishes answering.
+- Spec: `docs/specs/public-home-package-guide-spec.md`; plan: `docs/plans/public-home-package-guide-plan.md`. Inline guide, existing four questions/options and recommendation rule, one visible answer group, progress, back/edit, retained answers and automatic focus/scroll to the recommended card only on completion.
+- Reuse reviewing/scanning mascot assets and the existing visibility helper. Native buttons, keyboard focus, stable answer layout, static reduced-motion fallback. No audio or new service/dependency/entitlement change. Preserve item 37's separate larger-shop note. Local prototype only for this revision.
+
+### Item 38 implementation and verification
+
+- Replaced the collapsed four-question form with an immediately visible inline guide, headed `ให้น้องมั่งมีช่วยเลือกแพ็กเกจ` / `น้องจะถาม 4 ข้อ กดคำตอบที่ตรงกับร้านคุณได้เลยค่ะ`. Questions retain their real shop-work meaning, now phrased as the mascot speaking; the first question separately reminds users to count themselves.
+- One answer group is shown per step. Clicking moves to the next question; progress shows the current question out of four. Back/edit preserve chosen answers, and selecting the same choice again still advances. Completion includes a four-answer summary and edit control. Personalized package selection and automatic focus/scroll occur only on completion, using the unchanged `recommendedPlan`; monthly/yearly switching neither resets nor scrolls the guide.
+- Reused `HomeAbilityPop` with an optional class name and both existing mascot images. First entrance observes visibility; keyed image changes alternate the phone/scanning and magnifier/reviewing artwork and trigger a 650 ms pop. Removed the old full-chooser scroll animation so it does not compete with the mascot. Reserved mascot/answer space, bubble/question layout, and two-column answer buttons are scoped to the guide, with mobile rules and default/plum colors. Reduced motion disables animation. Native focus brings new questions into view without stealing initial focus; completion retains the prior controlled card scroll.
+- Updated the existing rendered interaction check rather than introducing a test framework: one visible answer set, initial focus untouched, alternating poses, answer progression/back/reselection, edits without premature completion, unchanged recommendation boundary cases, correct completion focus/scroll, no jump on billing changes, reduced-motion scroll and media asset existence. Full homepage suite passed 26/26; final `corepack pnpm exec tsc --noEmit --incremental false` passed. `git diff --check` passed; default local preview returned HTTP 200 on port 43831. The first new helper test exposed its mock treating component props as DOM refs; scoped that mock to actual div elements, then all tests passed.
+- No actual 390/1280 browser observation or screenshot is claimed. Prior automatic approval review denied local browser access under URL policy; no alternate surface/workaround attempted. Owner preview: `http://127.0.0.1:43831/?preview=events&event=default&palette=plum#package-guide` (refresh for the new component).
+- No commit, push, merge, PR, deployment, dependency/package.json, audio, backend, data model or entitlement changes. Item 37's larger-shop contact note remains outside the guide. Next: owner reviews the interactive local prototype.
+
+## Item 39: address the visitor in the trust heading
+
+- Changed the shared homepage heading from `น้องมั่งมีช่วยกรอก คนเป็นคนตัดสิน` to `น้องมั่งมีช่วยกรอก คุณเป็นคนตัดสิน`, exactly as requested. Applies to default and seasonal themes through the same `PublicHome` markup.
+- Scope: copy only; no logic or behavior change. Verification: exact source-text replacement and `git diff --check`; no new test needed for this reversible wording edit.
+- Local only; no commit, push, merge or deployment.
+
+## Item 40: integrate the package guide and latest copy into main/develop
+
+- Owner explicitly requests `เอาเข้า main+develop`. Carry forward direct integration without a PR and without checking/waiting for GitHub Actions. Scope: items 37–39 and their spec/plan/memory; exclude local reference/audio auditions and unrelated working directories.
+- Refreshed target baselines: main `e63f99f01c042e47b256d3c7fa83bebc649fd823`, develop `18a0604bf613ee135cc03ef72ad282153820c09d`. Their existing public-home code matches the source baseline; retain each branch history and unrelated work by applying only this new scoped changeset in a temporary managed checkout. Preserve the local preview checkout.
+- Pre-integration verification: all 26 homepage tests pass; `git diff --check` passes. Item 38 TypeScript check already passed and subsequent code change is the one-line trust heading. Actual-browser review remains blocked by the previously recorded URL-policy rejection; no visual verification claim or workaround.
+- Plan: commit the seven scoped paths, apply to each remote baseline, check the integrated homepage tests and matching trees, then atomically push both refs without force and verify exact remote hashes. This request covers source integration; no deployment or customer acceptance is claimed.
