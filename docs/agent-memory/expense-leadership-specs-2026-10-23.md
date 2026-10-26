@@ -45,4 +45,25 @@ Money/tax (from spec lanes + review, cited in each spec §13):
 ## Owner questions (each spec's §17 has the recommended answer)
 e-WHT Q1–Q4; authenticity Q1–Q3; advance Q1–Q3; budget Q1–Q4; bulk payment Q1–Q5; e-Tax Q1–Q8; export cleanup Q1; software export Q1–Q4; summary Q1–Q7; LINE AI Q1–Q3 + MC1 and eval budget; unsold features D1–D6; ops: homepage release go, ALB text change, UAT EIP cost, key rotation, help-pack review.
 
-Next: owner sets the order; recommended first = the four security fixes and the AI-charging fix (each ships alone), then e-WHT after Q1–Q4.
+## Owner order (2026-10-26)
+Goal (owner, 2026-10-26): "ระบบมั่งมีพลัส ใช้ง่ายเป็นผู้นำด้านเราจ่าย คนไม่รู้บัญชี ภาษีก็ใช้ได้ ไม่จำเป็นต้องมีศัพท์ทางบัญชีสื่อสารกับยูเซอร์ แต่มีศัพท์ทางบัญชีภาษีในรีพอร์ทที่ส่งสำนักงานบัญชีและสรรพากรได้". The controller filtered the backlog against this goal. The owner accepted the order with one change: "e-WHT ย้ายมาหลัง ข้อ 11".
+
+1. Security fixes: attachment complete without an uploader/branch check, attachment delete without a branch check, receipt extraction without branch scope, and LINE substitute "1/yes" without a signed card (failing test first). The PDF scanner gets one fix for both directions: `#xx`-escaped active content passes, and standard e-Tax PDF/A-3 with embedded XML is refused with a HIGH alert. The second is e-Tax spec phase P1.
+2. Unusable AI output is still charged (LINE B6). Stop charging it.
+3. Customer-visible wrong numbers: LINE totals double-count linked receipts and claims (budget B7); the LINE WHT month summary double-counts partly certified documents (e-WHT B13); LINE substitute writes the category before confirmation (LINE B8).
+4. ภ.ง.ด. papers download while unknown-payee or missing-tax-ID payments are missing (e-WHT B11/B12).
+5. Dated ops (`docs/plans/ops-followups-2026-10-23-plan.md`):
+   - key rotation on 2026-11-04;
+   - one owner-present window for the homepage release, the ALB default text and the UAT ai-origin lock;
+   - help-pack review in Production by 2026-12-18.
+6. NEW item 26: replace accounting jargon on sold screens and in LINE with plain words, and keep exact terms in the accountant/RD reports. Needs a short spec with one word table first. 2026-10-26 evidence: the sold expense screens still say สิทธิภาษีซื้อ, ลงบัญชี, ใบสำคัญจ่าย, บันทึกบัญชี.
+7. Accountant export cleanup (item 25). Phase S and 1.1–1.3 can start; RC-F2 needs review before 1.4.
+8. Accounting-software export (item 13), FlowAccount first, after step 7 phase 1.
+9. LINE AI workflow-first (items 16–18). A9, A10, A6c, A7 and M1–M3 can start; R4-F2 needs review before A2.
+10. Proactive weekly LINE summary (item 14), opt-in only.
+11. e-WHT (item 7), including the per-shop setting (spec §5.5).
+
+Waiting, not needed for the goal now: e-Tax e-mail intake (12; BL2), cash advance (9), receipt authenticity (8), bulk payment file (11), currency mixing (only when a shop uses a foreign currency), bank connection (BOT has no date yet).
+Cut: budgets and limits (10). Unsold features (15) are not sold this round; the admin out-of-pack guard and hiding unsellable deal-form buttons stay as small later items.
+
+Next: wait for the owner's go before starting step 1. Do the steps in this order, one small change each, verified locally and pushed straight to develop and main.
