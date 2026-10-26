@@ -1,6 +1,6 @@
 # e-Withholding Tax Payment Plan — จ่ายผ่าน e-WHT (ธนาคารนำส่ง อัตรา 1%)
 
-Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first)
+Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first) · **2026-10-26: steps 1.7 and 3.6 added for the owner's shop setting (spec §5.5); focused Codex review F1–F6 (MEDIUM) applied, not re-reviewed**
 Owner: Expenses + Tax lane
 Related: `docs/specs/e-withholding-tax-payment-spec.md`, `docs/agent-memory/e-withholding-tax-payment.md`, `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` (ข้อ 7)
 Baseline: main 6c54ba208 (2026-10-23)
@@ -10,9 +10,9 @@ Baseline: main 6c54ba208 (2026-10-23)
 
 ```
 Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉพาะ 4.4)
-1.1 ─▶ 1.2 ─▶ 1.3 ─▶ { 1.4, 1.5, 1.6 }       (API + contracts)
+1.1 ─▶ 1.2 ─▶ 1.3 ─▶ { 1.4, 1.5, 1.6, 1.7 }  (API + contracts)
 1.1 ─▶ 2.1 ─▶ 2.2 ─▶ { 2.3, 2.4 } ; 1.1 ─▶ 2.5
-{1.x, 2.x} ─▶ 3.1..3.4 ─▶ 3.5               (เว็บ + browser)
+{1.x, 2.x} ─▶ 3.1..3.4, 3.6 ─▶ 3.5          (เว็บ + browser)
 {1.x, 2.x} ─▶ 4.1, 4.2, 4.3 ; Q4 ─▶ 4.4 ─▶ 4.5   (LINE/AI/คู่มือ)
 ทั้งหมด ─▶ Phase 5
 ```
@@ -80,6 +80,14 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 - `apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts:25` `AccountantIndexSource.whtRemittance`; ผู้เรียก `apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts:165-207` ส่งค่าจากแถว และ query ของหน้านั้น select ฟิลด์นี้ (review รอบ 2 F5)
 - เทสต์: `src/modules/expenses/domain/logic/expense-export.logic.spec.ts` (ค่าสี่กรณี, คอลัมน์สุดท้าย, ตำแหน่งเดิม, ผ่านผู้เรียกจริงได้ "ธนาคารนำส่ง (e-WHT)" ไม่ใช่ "ไม่ได้ระบุ"); `record-expense-payment.use-case.spec.ts` (assertion :259-264 เป็น N-1); PG `atomic-confirm.spec.ts` (ออกใบแล้ว → เปิดแก้ → E_WHT → ยืนยัน ⇒ ไม่มี `REQUIRED`; e-WHT จ่ายบางส่วน 5,000 → ร้านยื่นเอง 2% ⇒ ยืนยันได้; จ่ายครบ 10,600 → 2% ⇒ `expense_paid_exceeds_payable`)
 - ตรวจ: contracts build; api typecheck; specs
+
+### 1.7 การตั้งค่า e-WHT ของร้าน + ตัวบังคับฝั่งเซิร์ฟเวอร์ (สเปก §5.5, §7.6)
+- `apps/api/prisma/schema.prisma`: `CompanyTaxProfile.eWhtUsed Boolean @default(false)`; เพิ่มคำสั่ง `ALTER TABLE "CompanyTaxProfile" ADD COLUMN "eWhtUsed" BOOLEAN NOT NULL DEFAULT false;` ใน migration เดียวกับ 1.1
+- `packages/contracts/src/expenses.ts`: `ExpenseEWhtSetting`, `UpdateExpenseEWhtSettingInput`; error `expense_e_wht_not_enabled`
+- ใหม่ `apps/api/src/modules/expenses/application/use-cases/expense-e-wht-setting.use-case.ts` (get/update แบบ `substitute-receipt-policy.use-case.ts`; upsert ตาม `companyId`; audit `company.e_wht_setting.updated` เฉพาะเมื่อค่าเปลี่ยน); ลงทะเบียนใน module และ `ExpenseSettingsController` (`expense.controller.ts:780`) — `GET`/`PATCH expense-settings/e-wht` ตาม guard ในสเปก §7.6; body เป็นคลาส `UpdateExpenseEWhtSettingDto` (`@IsBoolean()`) ใน `expense.dtos.ts` ไม่ใช่ interface (F6)
+- `apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts`: `eWhtRemittanceAllowed({ requested, stored, shopUsesEWht })`; เรียกใน create (:118) และ update (ใกล้ :1018) ของ `expense-draft.use-case.ts` ก่อนเขียน — อ่าน `eWhtUsed` เฉพาะเมื่อคำขอเป็น `E_WHT`; create ที่มี `draftIdempotencyKey` ซึ่งมีแถวเดิมแล้ว ให้ repository replay ตามเดิม (`prisma-expense.repository.ts:893-904`) ไม่ตรวจการตั้งค่า (F5)
+- เทสต์: `src/modules/expenses/domain/logic/expense-status.logic.spec.ts`, `src/modules/expenses/application/use-cases/expense-draft-amount-validation.use-case.spec.ts` (รวม replay — F5), `src/modules/expenses/application/use-cases/substitute-receipt-policy.use-case.spec.ts` (describe "e-WHT setting"), `src/modules/expenses/presentation/http/expense.dtos.spec.ts` (DTO — F6), `src/common/pipes/body-validation-coverage.spec.ts` — ทั้งหมดอยู่ใน `apps/api/package.json` แล้ว
+- ตรวจ: contracts build; api typecheck; ห้า spec
 
 ## Phase 2 — ภาษี
 
@@ -167,6 +175,15 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 - `apps/api/prisma/seed-expenses.ts`: e-WHT 1 + ร้านยื่นเอง 1 เดือนเดียวกัน
 - ตรวจ: `pnpm exec playwright test --project=journeys-mobile e2e/journeys/e-wht-payment.journey.spec.ts e2e/journeys/withholding-forms.journey.spec.ts`; เปิดเบราว์เซอร์จริงที่ **390 และ 1,280** (ตาม `docs/guidelines/thai-ux-standard.md:114`) และ ~1,556 ด้วยข้อมูลไทย: ฟอร์มตรวจ, หน้ารายจ่าย, ฟอร์มจ่าย, กล่องเปิดแก้, ใบเตรียมจ่าย, ใบรับรองแทนใบเสร็จ, หน้า ภาษีหัก ณ ที่จ่าย — ถ่ายภาพ ดูภาพ วัดปุ่มในกลุ่ม กดผิดหนึ่งครั้ง; จดว่ากดอะไร/ไม่ได้กดอะไร ต่อบทบาท (ผู้ตรวจ, ผู้จ่าย, ผู้ทำบัญชีแพ็ก 1,999, ร้านแพ็ก 249)
 
+### 3.6 หน้าตั้งค่า e-WHT + ฟอร์มซ่อนช่องเมื่อยังไม่ได้สมัคร (สเปก §5.5, §10.1 S-1..S-8, W-F10o, §10.2)
+- `apps/web/src/features/web-core-workspace/settings-menu.logic.ts`: การ์ด `{ key: 'e-wht', href: '/settings/e-wht', title: S-1, desc: S-2 }` ต่อจาก `substitute-receipt`; เพิ่ม `'e-wht'` ใน `SETTINGS_SIDEBAR_KEYS` ต่อจาก `'substitute-receipt'`
+- `apps/web/src/features/web-core-workspace/route-permissions.ts`: `{ path: '/settings/e-wht', anyOf: ['company.setup.manage'] }`
+- ใหม่ `apps/web/app/(workspace)/companies/[companyId]/settings/e-wht/page.tsx` + `apps/web/src/features/expenses/EWhtSettingsPage.tsx` (`ChoiceRow` แบบ `SubstituteReceiptSettingsPage.tsx`; ปุ่มใน `FormActionBar` แบบ `branch-settings/WhtPayerModeSettings.tsx`; toast) + `getExpenseEWhtSetting`/`updateExpenseEWhtSetting` ใน `expenses.api.ts`
+- `apps/web/src/features/expenses/ExpensesPages.tsx` (fieldset ของ 3.1): โหลดการตั้งค่า; แสดง W-F1..F3 เมื่อ `used || expense.whtRemittance === 'E_WHT'`; ช่องถูกซ่อนแล้ว **ยังส่ง** `whtRemittance` ตามค่าตั้งต้นของ 3.1 (`PAYER_FILES` เมื่อหัก, `null` เมื่อไม่หัก — F1); W-F10o (มี `company.setup.manage` + ลิงก์) / W-F10o' แทน W-F10; อ่านการตั้งค่าไม่สำเร็จ ⇒ `used = false` แต่รายจ่ายที่เก็บ E_WHT ยังเห็นช่อง (F2) — เซิร์ฟเวอร์เป็นผู้ตัดสิน
+- เทสต์: `expense-withholding-ux.spec.ts` (แถวการตั้งค่าใน §10.2), `settings-menu.logic.spec.ts` (การ์ดตามสิทธิ์)
+- 3.5: journey `e-wht-payment` เริ่มด้วยการเปิดตั้งค่า e-WHT ของร้าน; seed ร้าน e-WHT ตั้ง `eWhtUsed = true`; กดเองเพิ่ม: ร้านที่ยังไม่ได้สมัครไม่เห็นช่อง, หน้าตั้งค่าที่ 390/1,280/~1,556
+- ตรวจ: web typecheck; สอง spec
+
 ## Phase 4 — LINE, ผู้ช่วย, คู่มือ
 
 ### 4.1 LINE การ์ดและข้อความ (F11)
@@ -236,3 +253,4 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 18. ตัวบล็อกของต้นทางที่ไม่มี event ผูกตามสาขาของรายจ่าย และซ่อนรายละเอียดเมื่อนอกขอบเขตผู้เรียก (รอบ 4 F2)
 19. `WHT_PAYEE_KIND_UNKNOWN` บล็อกกระดาษทั้ง ภ.ง.ด.3 และ 53 ของสาขาเดียวกัน ทั้งตอนดาวน์โหลดและตอนบันทึกว่ายื่นแล้ว ผ่าน `withholdingPaperBlockers` ฟังก์ชันเดียว; กระดาษที่ FILED แล้วไม่ถูกแก้ แต่ติดธง W-T6; หลังแก้ข้อมูล แบบเดิม ⇒ แบบเพิ่มเติม, อีกแบบที่ยังไม่ยื่น ⇒ แบบปกติ (อาจยื่นช้า — ข้อความ overdue เดิม) (รอบ 4 F3 / B12 + focused review + BL3 re-check)
 20. ทางผู้ทำบัญชีจัดทำเก็บ issue ต้นทางทั้ง BLOCKING และ WARNING; ตัวบล็อกของต้นทางที่ไม่ส่งผลแล้วถูก resolve ทุก sync (รอบ 4 F4, F8)
+21. (เจ้าของ 2026-10-26) ตัวเลือก e-WHT มีเฉพาะร้านที่ตอบ "สมัครแล้ว" ที่ตั้งค่าร้าน (`CompanyTaxProfile.eWhtUsed`, ค่าตั้งต้น false); เซิร์ฟเวอร์ปฏิเสธ E_WHT ใหม่เมื่อยังไม่ได้สมัคร; รายจ่ายที่เป็น E_WHT อยู่แล้วแสดงและแก้ได้เสมอ; การเปลี่ยนการตั้งค่าไม่แก้ข้อมูลเดิมและไม่เข้า sync
