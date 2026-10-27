@@ -1,0 +1,34 @@
+{
+  "operationId": "20261027T202146Z-24ec654a",
+  "environment": "production",
+  "status": "FAILED",
+  "sourceCommit": "21a8f75a0bd419e020d50c6142419689ed0ee941",
+  "releasePath": "uat",
+  "productionMutated": false,
+  "elapsedSeconds": 46.777,
+  "error": "Interrupted; inspect the retained operation before retrying",
+  "ssmSessionCleanup": {
+    "passed": true,
+    "terminatedCount": 4,
+    "failedCount": 0
+  },
+  "ownerPaused": true,
+  "phases": [
+    {
+      "name": "target-preflight",
+      "status": "PASSED"
+    },
+    {
+      "name": "main-typescript-build",
+      "status": "PASSED"
+    },
+    {
+      "name": "fresh-config-and-image-validation",
+      "status": "PASSED"
+    },
+    {
+      "name": "host-storage-capacity",
+      "status": "FAILED"
+    }
+  ]
+}

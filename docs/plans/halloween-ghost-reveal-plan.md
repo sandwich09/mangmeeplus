@@ -18,3 +18,9 @@ Spec: [mirror reveal](../specs/halloween-ghost-reveal-spec.md).
 - [x] Latest motion request: several fast spins with quiet whooshes before final-face opening; verify real390/1280 and WebKit motion plus audio lifecycle.
 
 Scope: first game only, no persistence, reward, publishing or cloud operation. Exact interfaces are in spec. Avoid concurrent edits to other agents' owned files; root coordinates shared contracts.
+
+## Social image sharing refinement — 2026-10-28
+
+- [x] Sol: route Facebook and other share triggers through prepared image sharing; best-effort clipboard in same click without awaiting, accurate feedback/manual fallback and late-result cleanup. Add focused regressions for activation/payload/clipboard failure/fallback/cancel.
+- [x] Root: review diff and Thai UX, test real390/1280 browser, run focused tests/typecheck and existing web checks.
+- [ ] Sol/root: direct merge to main+develop per owner; new UAT candidate/build required. Reconcile retained pre-mutation interrupted Production operation, then promote new signed UAT images and complete administrator/OPEN/logout acceptance.

@@ -1,6 +1,6 @@
 # Agent Memory: Halloween UAT and Production release
 
-Status: FIXING_UAT_GAME_ROUTING. Production not started. Owner authorized UAT and Production: “โอเค เอาขึ้น uat และ prod ได้”.
+Status: SHARE_REFINEMENT_VERIFIED_AWAITING_NEW_RELEASE. Owner authorized UAT and Production: “โอเค เอาขึ้น uat และ prod ได้”.
 Owner: Root; Sol performed a bounded read-only application review.
 Scope: Approved Halloween activity, 23 cards and sharing, server random draw without signing keys, theme gate, loading/smoke/audio; previously authorized dependency security updates.
 Decisions: Use the existing local Kamal UAT release then promote its signed immutable images to Production. No new infrastructure, game key, database schema or theme-setting change. Preserve customer OPEN and perform current administrator acceptance. Read both mandatory cloud/deployment runbooks before operations. Owner explicitly directs “แบ่ง agent มา merge เข้า main+develop ด้วยนะ ไม่ต้องเปิด pr merge เลย”; Sol owns direct integration without PR or force push after root verifies the final source.
@@ -38,3 +38,34 @@ Sol integrated directly per owner instruction, without PR or force push. Origina
 - Root cause: the combined container proxy sent all `/api/*` except `/api/auth/*` to Nest; the new Next draw route therefore never reached its handler. Local direct Next preview did not include this proxy.
 - Sol added only exact `/api/public/halloween/draw` forwarding to Next. Other API paths, headers and maintenance denial remain unchanged. Real HTTP proxy suite: 5 pass. Parent real-Next combined-proxy before/after proof reproduces old 404 and corrected 200 with actual cardId; cross-origin remains 403 and client-selected card remains 400. Runnable proof and output are in the release evidence folder.
 - Updated the existing maintenance proxy hash and its validator hash in the legacy workflow, with no policy weakening. Parent reviewed both one-line hash changes. Full production image-security fixture suite passed (exit 0) before source integration. No production cloud mutation, rollback, workflow rerun or duplicate deployment dispatched. Source change requires a new UAT build/release; do not promote the earlier receipt.
+
+## Corrected candidate / UAT retry
+
+- Correction 0fc4d88923a20ec0601777f0b7b31b39018d810d passed the full image-security fixture suite and real-Next combined-proxy proof. Sol merged and atomically pushed both main/develop to 21a8f75a0bd419e020d50c6142419689ed0ee941; exact tested tree e21e239aac991a273015a9d76ddaff0891ce23b5. No PR or force push. Main remains frozen.
+- Read-only sibling review confirms Cloudflare Workers preserve the draw pathname, query, POST body and original public X-Forwarded-Host; no edge change required.
+- Re-read mandatory deployment protocol; previous UAT operation is terminal and both owned SSM sessions were terminated; no current local operation. New UAT prepare 20261027T201201Z-b6eb7735 started against the corrected candidate. The prior signed infrastructure receipt is not a promotion input.
+
+- Corrected UAT prepare completed PREPARED_NO_DEPLOYMENT in 205.417 s, exact source21a8f75a0bd419e020d50c6142419689ed0ee941, all five phases passed and owned SSM cleanup passed. Proceeding once with that exact prepared build.
+
+- Corrected UAT apply operation: 20261027T201606Z-8c17a366; single apply using prepare20261027T201201Z-b6eb7735.
+
+- Corrected UAT apply20261027T201606Z-8c17a366 ACCEPTED_LINE_DEFERRED in220.38s, KMS verified, all phases and public OPEN passed, both owned SSM sessions terminated. Actual browser390 draw13-frankenstein and1280 redraw21-chonggak-gwishin passed; smoke/back-only spin observed. Download is byte-identical to approved PNG and contains five-field mangmeeplus origin metadata. Screenshots and sanitized receipt summary retained. This exact corrected receipt is the Production promotion input.
+
+- Production promotion prepare: 20261027T202044Z-e6eb95e6 (same signed UAT artifacts, no rebuild).
+
+- Production prepare20261027T202044Z-e6eb95e6 PREPARED_NO_DEPLOYMENT in49.676s, all phases and owned SSM cleanup passed; exact corrected signed UAT artifacts verified. Starting one promotion apply; main remains frozen.
+
+## Owner pause — 2026-10-28
+
+- Owner said “แปบนึง อย่าพึ่งขึ้น prod” after promotion apply began. Root immediately stopped only that controller with SIGINT. Operation20261027T202146Z-24ec654a ended FAILED/Interrupted in46.777s during host-storage-capacity, before publish/provider/database/rollout. productionMutated=false, all four owned SSM sessions terminated, process no longer running, local active guard removed. No Production version change. No retry or rollback dispatched.
+- UAT corrected release remains accepted; main/develop remain21a8f75a0bd419e020d50c6142419689ed0ee941. Integration agent instructed to stop pushes/deploys. Retain interrupted receipt and integration checkout. Only resume Production on owner's explicit instruction after reconciling this receipt; do not automatically retry.
+- Owner's next question asks how the current share buttons and copied caption/link work; answer from source without changing implementation.
+
+## Sharing change and release resumed
+
+Owner “แก้เลย เอาชึ้นไวๆ” explicitly resumes release after approving image+caption sharing for all social icons and best-effort automatic caption copying. Update spec/plan before implementation. New source invalidates older prepared/promotion inputs; prepare/apply UAT once after verification/integration, then promote its exact signed artifacts. Preserve interrupted Production receipt and reconcile it before any new apply.
+
+- Reconciled interrupted Production run from original terminal phases, no publication/provider/database/rollout and productionMutated=false; controller cleanup removed its owned remote/local lock and terminated all4SSM sessions. Fresh read-only preflight20261027T203012Z-dbce2de6 passed18.364s with cleanup; no rollback/repair needed. New source requires new UAT after owner resumes.
+
+- Sharing refinement: Sol changed only component+spec; root reviewed actual handlers. All four triggers pass preparedJPEG/caption/homepage and start clipboard without awaiting; copy failures remain independent, manual fallback does not steal focus, card/unmount cancels late feedback. PurePNG save unchanged. Focused21tests and standalone webTypeScript pass; root fullweb suite5082/0 and diff-check pass.
+- Real browser390/1280: no sideways overflow, primary action group48px high/equal widths, social icons48×48. Clipboard readback equals exact zombie caption+homepage+LINE. Native Chrome on macOS: Facebook, Instagram and TikTok each open the OS share sheet; confirmed copied-caption feedback; Escape restores retryable card. No app post sent and no claim of physical iPhone/Android social acceptance.
