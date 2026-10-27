@@ -13,7 +13,7 @@ case "$scope" in full|api-web-image) ;; *) echo "ERROR: invalid maintenance rele
 root="$(cd "$root" && pwd -P)"
 
 # Controller-reviewed bytes. The production workflow pins this validator before executing it.
-expected_proxy=ecc7ef18cef71f16e16e8f29b8804d089ba1fe15ee4835d2f2e541b069deca63
+expected_proxy=0f3d37c20378ddac2eca03599923ac8271a702274e7dbc11e1081e68a82817b4
 expected_api_dockerfile=011db89f4263c41ad800f9cf1afb09e68bb6c39231e70dd4f3fdf9cff83b099e
 expected_api_start=4410bd7a8956256b78c8f30cbbc79971837a00012cd61a1577052d0b8c86e82f
 expected_platform_migration=3ac9ea81f12d76be503b383aeab6580c91f63a4b000aa58b47e549c2a8fa218a

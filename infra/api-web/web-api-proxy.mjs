@@ -135,9 +135,9 @@ function renderMaintenance(req, res, pathname) {
 
 function targetFor(url) {
   const parsed = new URL(url, 'http://localhost');
-  // BFF session route handlers (cookie set/clear) live in Next.js, not the ERP API.
-  // Keep /api/auth/* on the web server; the /api/v1/* public-API proxy stays below.
-  if (parsed.pathname === '/api/auth' || parsed.pathname.startsWith('/api/auth/')) {
+  // Session and Halloween draw handlers live in Next.js; other API routes stay below.
+  if (parsed.pathname === '/api/auth' || parsed.pathname.startsWith('/api/auth/')
+    || parsed.pathname === '/api/public/halloween/draw') {
     return { port: webPort, path: `${parsed.pathname}${parsed.search}` };
   }
   if (parsed.pathname === '/api' || parsed.pathname.startsWith('/api/')) {

@@ -47,6 +47,43 @@ describe('combined web/API proxy 404 handling', () => {
   });
 });
 
+describe('combined web/API proxy Halloween draw routing', () => {
+  it('forwards only the exact draw pathname to Next with query, body and security headers intact', async (context) => {
+    const requests = [];
+    const upstream = (name) => http.createServer(async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      requests.push({ upstream: name, method: req.method, url: req.url, body,
+        origin: req.headers.origin, forwardedHost: req.headers['x-forwarded-host'],
+        cookie: req.headers.cookie, csrf: req.headers['x-csrf-token'] });
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ upstream: name }));
+    });
+    const api = upstream('api'), web = upstream('web');
+    await Promise.all([listen(api), listen(web)]);
+    context.after(async () => Promise.all([close(api), close(web)]));
+    process.env.API_PORT = String(api.address().port);
+    process.env.WEB_PORT = String(web.address().port);
+    const { server } = await import(`./web-api-proxy.mjs?draw=${Date.now()}`);
+    await listen(server);
+    context.after(() => close(server));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    for (const [path, expected] of [
+      ['/api/public/halloween/draw', 'web'],
+      ['/api/public/halloween/draw?preview=events&event=halloween', 'web'],
+      ['/api/public/halloween/draw/', 'api'],
+      ['/api/public/halloween/draw-other', 'api'],
+      ['/api/public/home-theme', 'api'],
+    ]) {
+      const response = await fetch(`${origin}${path}`, { method: 'POST', body: '{}',
+        headers: { origin, cookie: 'session=example', 'x-csrf-token': 'example-token' } });
+      assert.equal((await response.json()).upstream, expected, path);
+      assert.deepEqual(requests.at(-1), { upstream: expected, method: 'POST',
+        url: expected === 'web' ? path : path.slice(4), body: '{}', origin,
+        forwardedHost: new URL(origin).host, cookie: 'session=example', csrf: 'example-token' });
+    }
+  });
+});
+
 describe('combined web/API proxy global maintenance mode', () => {
   it('keeps login/system onboarding available while blocking every customer business ingress', async (context) => {
     const apiRequests = [];
@@ -97,6 +134,8 @@ describe('combined web/API proxy global maintenance mode', () => {
     }
 
     const blocked = [
+      ['POST', '/api/public/halloween/draw'],
+      ['POST', '/api/public/halloween/draw?preview=events&event=halloween'],
       ['POST', '/system/platform-access'],
       ['POST', '/v1/line/webhook'],
       ['POST', '/v1/webhooks/line'],
