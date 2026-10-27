@@ -1,0 +1,182 @@
+{
+  "operationId": "20261027T205355Z-e422dd3a",
+  "environment": "production",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "sourceCommit": "9a3deb73104eb9ffabf8f6f72916229801280657",
+  "releaseId": "56861b97a16ecb1360da6dfe7ad14483daead8a74066a2be20f2d33af946ccbe",
+  "controllerSha256": "da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080",
+  "startedAt": "2026-10-27T20:53:55.676801+00:00",
+  "finishedAt": "2026-10-27T21:13:30.612111+00:00",
+  "elapsedSeconds": 1174.921,
+  "secondsToWebsiteReady": 343.313,
+  "browserAcceptanceStageSeconds": 806.372,
+  "phases": [
+    {
+      "name": "target-preflight",
+      "startedSeconds": 0.002,
+      "status": "PASSED",
+      "elapsedSeconds": 17.774,
+      "endedSeconds": 17.776
+    },
+    {
+      "name": "main-typescript-build",
+      "startedSeconds": 18.47,
+      "status": "PASSED",
+      "elapsedSeconds": 5.736,
+      "endedSeconds": 24.207
+    },
+    {
+      "name": "fresh-config-and-image-validation",
+      "startedSeconds": 24.207,
+      "status": "PASSED",
+      "elapsedSeconds": 11.711,
+      "endedSeconds": 35.918
+    },
+    {
+      "name": "host-storage-capacity",
+      "startedSeconds": 35.919,
+      "status": "PASSED",
+      "elapsedSeconds": 5.212,
+      "endedSeconds": 41.132
+    },
+    {
+      "name": "publish-and-pull",
+      "startedSeconds": 41.133,
+      "status": "PASSED",
+      "elapsedSeconds": 140.889,
+      "endedSeconds": 182.023
+    },
+    {
+      "name": "config-freshness-before-mutation",
+      "startedSeconds": 182.025,
+      "status": "PASSED",
+      "elapsedSeconds": 4.231,
+      "endedSeconds": 186.257
+    },
+    {
+      "name": "provider-preparation",
+      "startedSeconds": 186.257,
+      "status": "PASSED",
+      "elapsedSeconds": 14.823,
+      "endedSeconds": 201.08
+    },
+    {
+      "name": "database-and-feature-authority",
+      "startedSeconds": 201.08,
+      "status": "PASSED",
+      "elapsedSeconds": 66.542,
+      "endedSeconds": 267.623
+    },
+    {
+      "name": "native-rollout-and-readback",
+      "startedSeconds": 267.624,
+      "status": "PASSED",
+      "elapsedSeconds": 74.834,
+      "endedSeconds": 342.458
+    },
+    {
+      "name": "customer-acceptance",
+      "startedSeconds": 342.459,
+      "status": "PASSED",
+      "elapsedSeconds": 817.5,
+      "endedSeconds": 1159.959
+    },
+    {
+      "name": "retire-observed-builds",
+      "startedSeconds": 1159.963,
+      "status": "PASSED",
+      "elapsedSeconds": 11.159,
+      "endedSeconds": 1171.123
+    },
+    {
+      "name": "receipt-signature",
+      "startedSeconds": 1171.125,
+      "status": "PASSED",
+      "elapsedSeconds": 1.098,
+      "endedSeconds": 1172.224
+    }
+  ],
+  "readiness": {
+    "ai-gateway": {
+      "i-0d1129ba60aedd07e": {
+        "passed": true,
+        "status": "ok"
+      }
+    },
+    "api-web": {
+      "i-05a63210c38c20d10": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      },
+      "i-09c35998d5141fa72": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      }
+    },
+    "workers": {
+      "i-0aa479f24c2bb3e85": {
+        "passed": true,
+        "status": "ok",
+        "redis": "ok",
+        "internalApi": "ok"
+      }
+    }
+  },
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/7bb5d36e-5cfd-46a7-a409-60074ff66acd",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "ssmSessionCleanup": {
+    "passed": true,
+    "terminatedCount": 4,
+    "failedCount": 0
+  },
+  "launchRetirement": {
+    "passed": true,
+    "retiredCount": 19,
+    "surveyed": 19
+  },
+  "sourceSelection": {
+    "kind": "signed_uat_promotion",
+    "sourceCommit": "9a3deb73104eb9ffabf8f6f72916229801280657",
+    "uatOperationId": "20261027T204006Z-1f430a8d",
+    "acceptedSha256": "d0893f76cf7409b02125e827769cfbef8274d1c44ac612f89ec606d66db1a94b",
+    "signingKeyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "signatureVerified": true
+  },
+  "acceptedSha256": "887fa0249ac14bb2fe4ebed50d45573a3bce649ba1b9b8ae76f9bfe5e5f68901",
+  "uatAcceptedSha256": "d0893f76cf7409b02125e827769cfbef8274d1c44ac612f89ec606d66db1a94b",
+  "uatOperationId": "20261027T204006Z-1f430a8d",
+  "exactUatArtifacts": true,
+  "imageDigests": {
+    "api-web": "sha256:a453d7259f1f3be534df7de342af3fc096fba1efb0ed7b7a453390a4d39498a1",
+    "ai-gateway": "sha256:c46019271b623a4e4689685bc1d1c6b401fb9ccce9842039a46ebc7eb0f83d2a",
+    "workers": "sha256:4e84e9d2b590a530fddcaa95b4ad22eb8c449af3c323c8664c2fccf54fc3757a",
+    "tools": "sha256:76e91fa049d976509f70e52bb3533476efc68984ab74f26f703f16960f39b597"
+  },
+  "agentcoreArtifactSha256": "e4b155d85b34631993460fdb0433ee36fc894a92b3148da1b7fadacf5cecc8c6",
+  "customerAcceptancePassed": true,
+  "browserChecks": {
+    "ownerLogin": true,
+    "systemAdminPermission": true,
+    "customerOpen": true,
+    "authenticatedRead": true,
+    "logout": true,
+    "sessionRejectedAfterLogout": true,
+    "identityVerified": true,
+    "noPasswordOrLegalAction": true,
+    "servingLive": true,
+    "canOpen": true
+  },
+  "attestationSha256": "0b85755bc421184d72d66e5dd4aede3039cfcb7a6b08e24b9df43ef15b0e22ff",
+  "alarmException": "Owner-approved inherited API security alarm; 15 other alarms OK; all-OK not claimed",
+  "lineAcceptance": "NOT_EXERCISED",
+  "workflowRunIds": {
+    "UAT": "NOT_DISPATCHED",
+    "READY": "NOT_DISPATCHED",
+    "PROD": "NOT_DISPATCHED"
+  }
+}

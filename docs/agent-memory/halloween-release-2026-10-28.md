@@ -1,13 +1,13 @@
 # Agent Memory: Halloween UAT and Production release
 
-Status: SHARE_REFINEMENT_VERIFIED_AWAITING_NEW_RELEASE. Owner authorized UAT and Production: “โอเค เอาขึ้น uat และ prod ได้”.
+Status: RELEASE_ACCEPTED_DOCS_INTEGRATION_PENDING. Owner authorized UAT and Production: “โอเค เอาขึ้น uat และ prod ได้”.
 Owner: Root; Sol performed a bounded read-only application review.
 Scope: Approved Halloween activity, 23 cards and sharing, server random draw without signing keys, theme gate, loading/smoke/audio; previously authorized dependency security updates.
 Decisions: Use the existing local Kamal UAT release then promote its signed immutable images to Production. No new infrastructure, game key, database schema or theme-setting change. Preserve customer OPEN and perform current administrator acceptance. Read both mandatory cloud/deployment runbooks before operations. Owner explicitly directs “แบ่ง agent มา merge เข้า main+develop ด้วยนะ ไม่ต้องเปิด pr merge เลย”; Sol owns direct integration without PR or force push after root verifies the final source.
 Open questions: Production MFA identity verified after owner completed the Terminal command. No remote CI pass claimed: GitHub's most recent run 39645146882 is startup_failure with zero jobs/checks. Local verification is retained; no manual CI reruns or workflow/protection changes. Historical queued READY 31611733340 is unchanged since 2026-08-12 with zero jobs, not a newly running release; leave untouched. Do not redispatch a failed deployment.
 Artifacts: Current app spec/plan and 53-test/build/browser evidence are in the Halloween documents. Release verification in docs/evidence/halloween-release-2026-10-28/. No PR per owner instruction.
-Verification: Local source is current origin/main 86e0e47366617954f6f37f079d9fe18363437096. Release controller hashes match the last accepted Production operation 20261024T170243Z-6e84b33b. Shared private .env.kamal state is in the primary checkout; its old application/controller checkout must not be used. Existing UAT scoped identity verified. No active.json file for either environment; workflow release runs not dispatched.
-Next: Finish release checks and source integration, UAT prepare/apply, verify game on UAT, promote same images, administrator/browser/logout and public OPEN acceptance, retain signed results and timings.
+Verification: UAT and Production serve exact source `9a3deb73104eb9ffabf8f6f72916229801280657`. Final web suite 5,082 pass / zero failed, standalone web TypeScript and focused 21 share/lifecycle tests pass. Signed Production acceptance and all 18 evidence hashes verified; same four images and AgentCore artifact as UAT. All runtime/deep-readiness/customer OPEN checks pass and four owned SSM sessions terminated. One unchanged API security alarm is explicitly accepted by the owner for this release only; no all-alarms-OK claim.
+Next: Integrate these final docs/evidence directly into main+develop without PR, then archive the temporary integration worktree. Application source and deployed artifacts stay unchanged.
 
 ## Source verification
 
@@ -17,16 +17,20 @@ Next: Finish release checks and source integration, UAT prepare/apply, verify ga
 - Staged only runtime assets, application/dependency changes, specs/plans/memory and reproducible textual evidence, required JPEG test fixture and current screenshots. Large output/archives and redundant historical screenshots remain local; generated Next files are not included.
 - UAT read-only preflight 20261027T194227Z-94dc7a47 passed in 11.347 s, two SSM sessions terminated. No deployment or Production mutation.
 
-## Release ledger
+## Current release ledger
 
-- candidate: 8802028dc967d3f95c2af7548bd2e652b4118a78 (integration of tested source 091b2c5cd42f8f5fed89c189443e2a1fb05a9d23)
-- controller: 8802028dc967d3f95c2af7548bd2e652b4118a78; controller hash unchanged da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080
-- UAT_RUN_ID / READY_RUN_ID / PROD_RUN_ID: NOT_DISPATCHED (local Kamal path)
-- UAT prepare: 20261027T194831Z-44f76d82, PREPARED_NO_DEPLOYMENT in 370.827 s; apply: 20261027T195456Z-f11bd9a5, signed ACCEPTED_LINE_DEFERRED in 375.151 s; subsequent game acceptance failed and blocks Production
-- Production prepare / promotion operation: NOT_STARTED
-- Signed artifacts/digests and final customer acceptance: PENDING
-- serving mode: preserve existing live/OPEN; no gate mutation inferred from this request
-- owner reference: this chat, direct UAT/Production authorization on 2026-10-28; no new legal artifact or waiver claimed
+- Candidate/deployed source: `9a3deb73104eb9ffabf8f6f72916229801280657`; exact tested Git tree `972d909f25751a90aceba9523ff740070de35896`.
+- Controller hash: `da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080`.
+- UAT_RUN_ID / READY_RUN_ID / PROD_RUN_ID: `NOT_DISPATCHED` (local Kamal path).
+- Final UAT prepare `20261027T203541Z-3f80652b`: 254.065 s; UAT apply `20261027T204006Z-1f430a8d`: signed `ACCEPTED_LINE_DEFERRED`, 248.412 s, customer OPEN, two SSM sessions terminated.
+- Final Production prepare `20261027T205106Z-3d6a28d7`: 47.178 s; apply `20261027T205355Z-e422dd3a`: signed `ACCEPTED_LINE_DEFERRED`, 1,174.921 s total, website ready at 343.313 s and browser acceptance wait 806.372 s. Finished `2026-10-27T21:13:30.612111Z` / October28 04:13 Bangkok. These include operator/browser work; do not present the website-ready time as the full release time.
+- UAT accepted artifact SHA256: `d0893f76cf7409b02125e827769cfbef8274d1c44ac612f89ec606d66db1a94b`.
+- Production accepted artifact SHA256: `887fa0249ac14bb2fe4ebed50d45573a3bce649ba1b9b8ae76f9bfe5e5f68901`; KMS ECDSA_SHA_256 verified. All 18 signed evidence hashes independently match retained files.
+- Exact four UAT image IDs and AgentCore artifact promoted without rebuild. Full digests, phase clocks and readback are in `production-accepted-summary.json`.
+- Existing `live` / `OPEN` preserved; no gate/theme mutation. Current administrator identity/permission, login200, flags false, gate canOpen/live/OPEN, logout204 and postlogout401 observed. Login's normal redirect was `/system/partners`, followed by an explicitly verified `/system/platform-access` page200. No fabricated redirect claim.
+- Owner references: direct UAT/Production authorization; later pause reconciled before mutation; “แก้เลย เอาชึ้นไวๆ” resumed the release with revised sharing; “ปล่อยต่อ บันทึกข้อยกเว้น Alarm เดิม” accepted only the inherited API security alarm. No new legal artifact or generic security waiver.
+- Post-deploy alarm read: 15 OK, one exact unchanged October9 API security ALARM. Root `thawatchai` used only for owner-authorized alarm reads; all deployment and container-log reads used scoped non-root access. No alarm suppression, database recheck or resend.
+- LINE messaging journey and physical iPhone/Android social posting were not exercised in this release. The signed status retains LINE deferral; all required customer acceptance passed.
 
 ## Branch integration
 
@@ -69,3 +73,27 @@ Owner “แก้เลย เอาชึ้นไวๆ” explicitly resumes
 
 - Sharing refinement: Sol changed only component+spec; root reviewed actual handlers. All four triggers pass preparedJPEG/caption/homepage and start clipboard without awaiting; copy failures remain independent, manual fallback does not steal focus, card/unmount cancels late feedback. PurePNG save unchanged. Focused21tests and standalone webTypeScript pass; root fullweb suite5082/0 and diff-check pass.
 - Real browser390/1280: no sideways overflow, primary action group48px high/equal widths, social icons48×48. Clipboard readback equals exact zombie caption+homepage+LINE. Native Chrome on macOS: Facebook, Instagram and TikTok each open the OS share sheet; confirmed copied-caption feedback; Escape restores retryable card. No app post sent and no claim of physical iPhone/Android social acceptance.
+
+- Sol integrated tested commit1732f71d099b86942cd773d68cfa9fc8dbdff3a1; both main/develop now9a3deb73104eb9ffabf8f6f72916229801280657, exact tree972d909f25751a90aceba9523ff740070de35896. Atomic normal push, noPR/force; frozen through acceptance. No running workflow; only unchanged August12 orphan READY31611733340 remains queued.
+
+- Share refinement UAT prepare operation: 20261027T203541Z-3f80652b.
+
+- Share UAT prepare20261027T203541Z-3f80652b passed254.065s, all phases and cleanup; single apply follows using exact prepared build9a3deb73.
+
+- Share UAT apply operation: 20261027T204006Z-1f430a8d.
+
+- Share UAT apply20261027T204006Z-1f430a8d signedACCEPTED_LINE_DEFERRED in248.412s; allphase/readiness/OPEN/cleanup pass. Real390 copy returns exactzombie caption/homepage/LINE, redrawing shows smoke/twoapprovedbacks. Productionpreparation may proceed read-only; apply waits alarm disposition.
+- Owner explicitly authorized thawatchai readCloudWatch only, then confirmed an exception after it was identified as root. AWSlogin renewed by owner. Root used only STSidentity and CloudWatchDescribeAlarms, noAWSmutation. FreshOct28 readback16productionalarms:15OK; APIsecurityALARMlasttransitionOct9. Evidence retained; no claimallalarmsOK and no reuseOct9waiver. Deploy continues to use scopednonrootrole only.
+
+- FinalProduction prepare20261027T205106Z-3d6a28d7 passed47.178s with4SSM cleanup. Owner explicitly accepts inherited APIsecurity alarm for thisrelease: “ปล่อยต่อ บันทึกข้อยกเว้น Alarm เดิม”. Currentalarm transition/reason exactmatch retainedOct9 proof; currentDB not rechecked. Record scopedownerdecision and freshalarmreadback in signed browser evidence; do not claimallalarmsOK or suppressalarm. All otheracceptance remainsrequired.
+
+- FinalProduction apply operation: 20261027T205355Z-e422dd3a; exact signedUAT sharecandidate, no rebuild, scopednonrootprofile.
+
+## Final Production acceptance and browser evidence
+
+- Actual public game on Production: random results `10-werewolf` and `02-krahang`; observed loading “กำลังเรียกวิญญาณ…”, successful reveal, pure PNG save, social icon buttons, caption/homepage/LINE copy, and responsive no-overflow layouts at actual 390/1280 widths. Native share cancellation leaves the card retryable. No social post was published.
+- Saved `mangmee-10-werewolf.png` is byte-identical to the approved 1122×1402 asset and retains five-field mangmeeplus origin metadata. This is origin attribution, not a signed draw receipt; the approved final implementation does not claim cryptographic authenticity of a client image.
+- Current administrator form already contained username/password when observed. Root clicked login once without entering a credential. The owner asked how login occurred; root explained the prefilled form and uncertainty about autofill versus prior entry. Owner replied “โอเค”. No credential reset or password persistence. User was logged out after acceptance.
+- Browser Network retained login200, me200 and gate200. Native Network capture was unreliable for the final logout row; scoped read-only logs from the two current API containers corroborated the actual UI logout at request `e955eb6e-5a68-4780-9aab-f08585a11620` with 204, then browser me401 at `a3b842ca-acab-4a95-90d0-49892a99e4ee`. BFF logout status itself was not retained, and this limitation is in the signed observations. No second login or password extraction was needed.
+- Controller rechecked all runtime/config/deep-health fields after the browser wait, reread public OPEN/login200, retired 19 observed old builds, signed/verified the accepted receipt and closed 4/4 owned SSM sessions. Original exec session54543 exited0. The private run directory contains full signed evidence; only sanitized summaries and public game screenshots are committed.
+- Freeze ended only after signed acceptance and cleanup. The remaining integration is docs/evidence only and does not require another deployment.

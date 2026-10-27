@@ -1,0 +1,13 @@
+{
+  "AlarmName": "watchdog-bms-prod-_ecs_watchdog_bms_prod_api_web-security",
+  "StateValue": "ALARM",
+  "StateReason": "Threshold Crossed: 1 out of the last 1 datapoints [2.0 (09/10/26 07:53:00)] was greater than or equal to the threshold (1.0) (minimum 1 datapoint for OK -> ALARM transition).",
+  "StateUpdatedTimestamp": "2026-10-09T14:54:12.224000+07:00",
+  "StateTransitionedTimestamp": "2026-10-09T14:54:12.224000+07:00",
+  "MetricName": "_ecs_watchdog_bms_prod_api_web",
+  "Namespace": "WatchDog/Security",
+  "Dimensions": [],
+  "Period": 60,
+  "TreatMissingData": "notBreaching",
+  "AlarmDescription": null
+}

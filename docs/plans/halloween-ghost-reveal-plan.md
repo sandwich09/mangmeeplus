@@ -23,4 +23,4 @@ Scope: first game only, no persistence, reward, publishing or cloud operation. E
 
 - [x] Sol: route Facebook and other share triggers through prepared image sharing; best-effort clipboard in same click without awaiting, accurate feedback/manual fallback and late-result cleanup. Add focused regressions for activation/payload/clipboard failure/fallback/cancel.
 - [x] Root: review diff and Thai UX, test real390/1280 browser, run focused tests/typecheck and existing web checks.
-- [ ] Sol/root: direct merge to main+develop per owner; new UAT candidate/build required. Reconcile retained pre-mutation interrupted Production operation, then promote new signed UAT images and complete administrator/OPEN/logout acceptance.
+- [x] Sol/root: direct merge to main+develop per owner; final source `9a3deb73` accepted on UAT operation `20261027T204006Z-1f430a8d`, then Production `20261027T205355Z-e422dd3a` with exact images, signed current-administrator/OPEN/logout acceptance and owned SSM cleanup. Retained interrupted operation reconciled; inherited alarm has an explicit release-specific owner exception. See release memory for evidence and limits.

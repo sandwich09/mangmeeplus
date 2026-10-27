@@ -10,6 +10,28 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Halloween release — 2026-10-28 04:13 Bangkok
+
+UAT and Production are running source `9a3deb73104eb9ffabf8f6f72916229801280657`, including the
+Halloween game/cards, draw proxy correction and image-plus-caption social sharing. UAT apply
+`20261027T204006Z-1f430a8d` is signed `ACCEPTED_LINE_DEFERRED` (248.412 s); Production promotion
+`20261027T205355Z-e422dd3a` is signed/verified `ACCEPTED_LINE_DEFERRED` (1,174.921 s, including
+806.372 s browser/operator acceptance; website ready at343.313 s). Production copied exact four UAT
+images and AgentCore artifact, without rebuild. Customer live/OPEN, current administrator permission,
+login200, no password/legal action, gate canOpen/live/OPEN, logout204 and postlogout401 passed.
+The final logout HTTP status is corroborated by current container request logs; no BFF Network row
+is claimed. All app/deep DB/Redis/internal API readiness passed after the human wait. Four owned
+Production SSM sessions and two owned UAT sessions terminated; no theme or customer-gate change.
+No power operation was performed by this release; UAT's October22 paused entry below is historical.
+
+Owner explicitly accepted only the unchanged API security alarm: “ปล่อยต่อ บันทึกข้อยกเว้น Alarm เดิม”.
+Fresh postdeploy readback has15OK and that oneALARM, with the same October9 transition and reason;
+current database cause/delivery was not rechecked. This is a new release-specific exception, not reuse
+of the restoration waiver and not an all-alarms-OK claim. Owner permitted root `thawatchai` only for
+CloudWatch alarm reads; deploy/log readback remained on the scoped non-root role. No alarm mutation.
+UAT/READY/PROD workflow IDs are `NOT_DISPATCHED`. Actual LINE messaging and physical-device social
+posting remain unexercised. [Exact ledger, signed hashes, prior failures and limits](../agent-memory/halloween-release-2026-10-28.md).
+
 ## Production security readback — 2026-10-21 (read-only)
 
 **Node security follow-up — 2026-10-22 14:46 Bangkok:** latest recorded Production operation
@@ -139,7 +161,7 @@ No deployment, restart, customer-gate or business-data change. UAT was not start
 SSM sessions terminated successfully; UAT/READY/PROD IDs are NOT_DISPATCHED.
 [Full findings, exact evidence and limits](../research/security-review-2026-10-21-th.md) (kept on the owner's laptop, not in git).
 
-## Current UAT power state — paused 2026-10-22 (Asia/Bangkok)
+## Historical UAT power state — paused 2026-10-22 (Asia/Bangkok)
 
 Owner requested “ปิด uat ได้แล้ว”. Original Plan A pause operation
 `20261021T180137Z-0ccc30e3` completed once with `UAT_POWER_PAUSED_WITH_DATABASE` in 336.241

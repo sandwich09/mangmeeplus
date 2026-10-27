@@ -1,0 +1,39 @@
+{
+  "operationId": "20261027T204006Z-1f430a8d",
+  "environment": "uat",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "sourceCommit": "9a3deb73104eb9ffabf8f6f72916229801280657",
+  "releaseId": "02b2cd084e8d0f9baff5ab716cdd985ceb92ed8b6e28721004ed481222fa68d6",
+  "controllerSha256": "da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080",
+  "elapsedSeconds": 248.412,
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "ssmSessionCleanup": {
+    "passed": true,
+    "terminatedCount": 2,
+    "failedCount": 0
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "acceptedSha256": "d0893f76cf7409b02125e827769cfbef8274d1c44ac612f89ec606d66db1a94b"
+}

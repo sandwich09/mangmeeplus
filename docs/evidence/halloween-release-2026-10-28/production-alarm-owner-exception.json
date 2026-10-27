@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-27T20:53:55.573730+00:00",
+  "sourceCommit": "9a3deb73104eb9ffabf8f6f72916229801280657",
+  "uatOperationId": "20261027T204006Z-1f430a8d",
+  "ownerDecision": "ปล่อยต่อ บันทึกข้อยกเว้น Alarm เดิม",
+  "scope": "This Halloween release only",
+  "alarmName": "watchdog-bms-prod-_ecs_watchdog_bms_prod_api_web-security",
+  "observedState": "ALARM",
+  "sameRetainedTransitionAndReasonAsOctober9": true,
+  "historicalCause": "outbox auth.email.security_notice DEAD record; ambiguous delivery",
+  "currentDatabaseRowRechecked": false,
+  "otherObservedProductionAlarms": "15 OK",
+  "alarmMutationAuthorized": false,
+  "allSecurityAlarmsOkClaimed": false,
+  "rootScope": "Owner authorized only CloudWatch alarm read; deployment uses scoped non-root role"
+}
