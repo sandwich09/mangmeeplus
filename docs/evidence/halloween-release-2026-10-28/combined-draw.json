@@ -1,0 +1,14 @@
+[
+  {
+    "version": "before",
+    "status": 404,
+    "reachesWrongUpstream": true
+  },
+  {
+    "version": "after",
+    "status": 200,
+    "cardId": "21-chonggak-gwishin",
+    "crossOriginStatus": 403,
+    "clientChoiceStatus": 400
+  }
+]
