@@ -1,0 +1,15 @@
+{
+  "sourceArtwork": "output/halloween-ghost-cards",
+  "publicDirectory": "apps/web/public/home/events/halloween/cards",
+  "originalPngCount": 25,
+  "qrData": "https://mangmeeplus.com",
+  "qrGenerator": "qrcode Python offline build tool (temporary /tmp install; no app dependency)",
+  "qrErrorCorrection": "M",
+  "qrQuietZoneModules": 4,
+  "qrSha256": "bf5dfb67c97c6485b626e6d1310ef53bc6922aee4f327b4e40074965d0741047",
+  "qrExportVerification": {
+    "tool": "macOS Vision VNDetectBarcodesRequest",
+    "file": "mangmee-01-krasue-story-9x16.jpg",
+    "decoded": "https://mangmeeplus.com"
+  }
+}

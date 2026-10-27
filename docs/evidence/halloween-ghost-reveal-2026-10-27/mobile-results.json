@@ -1,0 +1,357 @@
+{
+  "status": "pass",
+  "base": "http://127.0.0.1:43841",
+  "results": [
+    {
+      "device": "iphone-webkit",
+      "engineVersion": "26.5",
+      "nativeCapability": {
+        "share": "function",
+        "canShare": "function",
+        "canShareFile": true,
+        "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+        "platform": "MacIntel",
+        "maxTouchPoints": 0,
+        "secureContext": true
+      },
+      "measurements": {
+        "viewport": {
+          "width": 393,
+          "height": 659
+        },
+        "pageWidth": 393,
+        "game": {
+          "left": 12,
+          "right": 381
+        },
+        "social": [
+          {
+            "name": "แชร์ลิงก์บน Facebook",
+            "width": 48,
+            "height": 48,
+            "left": 30,
+            "right": 78
+          },
+          {
+            "name": "แชร์ภาพด้วย Instagram",
+            "width": 48,
+            "height": 48,
+            "left": 86,
+            "right": 134
+          },
+          {
+            "name": "แชร์ภาพด้วย TikTok",
+            "width": 48,
+            "height": 48,
+            "left": 142,
+            "right": 190
+          }
+        ],
+        "pickerCount": 0,
+        "spill": []
+      },
+      "originalDownload": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-ghost-reveal-2026-10-27/iphone-webkit-mangmee-01-krasue.png",
+        "dimensions": {
+          "width": 1122,
+          "height": 1402
+        },
+        "bytes": 2261667,
+        "sha256": "470ba11d58049641640d87336bb03d4a269fa3ba9b181cf9f29288784399a0f9",
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "01-krasue",
+          "variant": "card"
+        },
+        "pixelsEqualPreviousDownload": true,
+        "byteIdenticalToApprovedSource": true
+      },
+      "errors": [],
+      "simulatedShare": [
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 562045,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        },
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 562045,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        },
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 562045,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        }
+      ],
+      "simulatedFailedShareDownload": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-ghost-reveal-2026-10-27/iphone-webkit-failed-share-mangmee-01-krasue-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 562045,
+        "sha256": "0fc6498de2ecaaa4d9c52235a79f092601b1b20f64e8db0b9d769a3c4aacd266",
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "01-krasue",
+          "variant": "story"
+        },
+        "pixelsEqualPreviousDownload": true
+      },
+      "natural3dReveal": {
+        "lateDrawing": {
+          "m11": -1.04,
+          "transform": "matrix3d(-1.04, 0, 0, 0, 0, 1.04, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "frontBackface": "hidden",
+          "backBackface": "hidden",
+          "frontStatus": "loaded",
+          "source": "/home/events/halloween/cards/01-krasue.png",
+          "loaded": true,
+          "animationTime": 3855
+        },
+        "naturalRevealMs": 4500,
+        "phases": [
+          {
+            "phase": "drawing",
+            "time": 1263
+          },
+          {
+            "phase": "revealed",
+            "time": 5763
+          }
+        ],
+        "method": "Natural live animation sampled after3800ms; phase duration recorded by DOM mutation observer separately from screenshot work. No animation currentTime control or game-timing overrides."
+      },
+      "motionEvidenceReused": "Motion implementation unchanged; retained prior natural4500ms/front-face evidence rather than rerunning it for metadata-only changes."
+    },
+    {
+      "device": "android-chromium",
+      "engineVersion": "149.0.7827.55",
+      "nativeCapability": {
+        "share": "undefined",
+        "canShare": "undefined",
+        "canShareFile": null,
+        "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Mobile Safari/537.36",
+        "platform": "MacIntel",
+        "maxTouchPoints": 1,
+        "secureContext": true
+      },
+      "measurements": {
+        "viewport": {
+          "width": 412,
+          "height": 839
+        },
+        "pageWidth": 412,
+        "game": {
+          "left": 12,
+          "right": 400
+        },
+        "social": [
+          {
+            "name": "แชร์ลิงก์บน Facebook",
+            "width": 48,
+            "height": 48,
+            "left": 30,
+            "right": 78
+          },
+          {
+            "name": "แชร์ภาพด้วย Instagram",
+            "width": 48,
+            "height": 48,
+            "left": 86,
+            "right": 134
+          },
+          {
+            "name": "แชร์ภาพด้วย TikTok",
+            "width": 48,
+            "height": 48,
+            "left": 142,
+            "right": 190
+          }
+        ],
+        "pickerCount": 0,
+        "spill": []
+      },
+      "originalDownload": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-ghost-reveal-2026-10-27/android-chromium-mangmee-01-krasue.png",
+        "dimensions": {
+          "width": 1122,
+          "height": 1402
+        },
+        "bytes": 2261667,
+        "sha256": "470ba11d58049641640d87336bb03d4a269fa3ba9b181cf9f29288784399a0f9",
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "01-krasue",
+          "variant": "card"
+        },
+        "pixelsEqualPreviousDownload": true,
+        "byteIdenticalToApprovedSource": true
+      },
+      "errors": [],
+      "actualUnsupportedShareDownload": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-ghost-reveal-2026-10-27/android-chromium-fallback-mangmee-01-krasue-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 412313,
+        "sha256": "582322f75d67d6aec18d860c31f5c611e92fe1d0f1d95335fd14b65483784f75",
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "01-krasue",
+          "variant": "story"
+        },
+        "pixelsEqualPreviousDownload": true
+      },
+      "simulatedShare": [
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 412313,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        },
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 412313,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        },
+        {
+          "title": "การ์ดของกระสือ",
+          "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+          "url": "https://mangmeeplus.com",
+          "active": true,
+          "files": [
+            {
+              "name": "mangmee-01-krasue-story-9x16.jpg",
+              "type": "image/jpeg",
+              "size": 412313,
+              "width": 1080,
+              "height": 1920,
+              "provenance": {
+                "version": 1,
+                "source": "https://mangmeeplus.com",
+                "event": "halloween",
+                "cardId": "01-krasue",
+                "variant": "story"
+              }
+            }
+          ]
+        }
+      ],
+      "simulatedFailedShareDownload": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-ghost-reveal-2026-10-27/android-chromium-failed-share-mangmee-01-krasue-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 412313,
+        "sha256": "582322f75d67d6aec18d860c31f5c611e92fe1d0f1d95335fd14b65483784f75",
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "01-krasue",
+          "variant": "story"
+        },
+        "pixelsEqualPreviousDownload": true
+      }
+    }
+  ],
+  "provenanceNote": "Current public PNG bytes now include provenance metadata and differ from the prior unmarked source. Original downloads must equal the current marked public source. Metadata is not visible artwork, tracking, or authentication; re-encoding and screenshots may remove it. Prior-download pixel comparison verifies original artwork stayed unchanged when a prior artifact exists.",
+  "profileNote": "The installed iPhone 13 profile advertises iOS 15.0 and correctly hits the existing iOS >=16.4 compatibility gate (preserved screenshot iphone13-ios15-compatibility-gate.png). Main WebKit journey uses iPhone 16 profile advertising iOS 18.7.",
+  "limitation": "Runs installed desktop WebKit with an iPhone device profile and desktop Chromium with a Pixel profile. This is browser-engine/mobile-viewport emulation, not physical iOS/Android, an OS share sheet, or a social app posting test. Native capability is observed without mocking in the first context; payload/activation uses a separate explicit stub context. No external posts are sent."
+}

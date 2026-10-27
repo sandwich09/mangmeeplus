@@ -1,0 +1,130 @@
+{
+  "status": "pass",
+  "base": "http://127.0.0.1:43841",
+  "results": [
+    {
+      "engine": "chromium-390",
+      "version": "149.0.7827.55",
+      "initialCandy": "1 วัน 00:00:00",
+      "initialEscape": "2 วัน 00:00:00",
+      "measurements": [
+        {
+          "width": 212.203125,
+          "left": 135,
+          "right": 347.203125,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        },
+        {
+          "width": 212.203125,
+          "left": 135,
+          "right": 347.203125,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        }
+      ],
+      "baseline": {
+        "intervals": 0,
+        "visibilityListeners": 0,
+        "writes": []
+      },
+      "active": {
+        "intervals": 1,
+        "visibilityListeners": 1,
+        "writes": []
+      },
+      "foregroundResyncMs": 2.1914579999993293,
+      "errors": [],
+      "boundaries": "Distinct Bangkok deadlines, chooser and selected intro automatic disappearance, no fake play, foreground resync and repeat cleanup pass"
+    },
+    {
+      "engine": "chromium-1280",
+      "version": "149.0.7827.55",
+      "initialCandy": "1 วัน 00:00:00",
+      "initialEscape": "2 วัน 00:00:00",
+      "measurements": [
+        {
+          "width": 212.203125,
+          "left": 533.890625,
+          "right": 746.09375,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        },
+        {
+          "width": 212.203125,
+          "left": 823.21875,
+          "right": 1035.421875,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        }
+      ],
+      "baseline": {
+        "intervals": 0,
+        "visibilityListeners": 0,
+        "writes": []
+      },
+      "active": {
+        "intervals": 1,
+        "visibilityListeners": 1,
+        "writes": []
+      },
+      "foregroundResyncMs": 2.7712090000004537,
+      "errors": [],
+      "boundaries": "Distinct Bangkok deadlines, chooser and selected intro automatic disappearance, no fake play, foreground resync and repeat cleanup pass"
+    },
+    {
+      "engine": "webkit-iphone",
+      "version": "26.5",
+      "initialCandy": "1 วัน 00:00:00",
+      "initialEscape": "2 วัน 00:00:00",
+      "measurements": [
+        {
+          "width": 212.203125,
+          "left": 135,
+          "right": 347.203125,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        },
+        {
+          "width": 212.203125,
+          "left": 135,
+          "right": 347.203125,
+          "scrollWidth": 212,
+          "clientWidth": 212,
+          "role": "timer",
+          "live": "off",
+          "tabIndex": -1
+        }
+      ],
+      "baseline": {
+        "intervals": 0,
+        "visibilityListeners": 0,
+        "writes": []
+      },
+      "active": {
+        "intervals": 1,
+        "visibilityListeners": 1,
+        "writes": []
+      },
+      "foregroundResyncMs": 4.308124999999563,
+      "errors": [],
+      "boundaries": "Distinct Bangkok deadlines, chooser and selected intro automatic disappearance, no fake play, foreground resync and repeat cleanup pass"
+    }
+  ],
+  "method": "Real browser with test-only Date.now override; intervals use real browser timers. Foreground resync uses a synthetic visibilitychange event. No product clock flags. WebKit/iPhone is desktop engine emulation, not a physical phone."
+}

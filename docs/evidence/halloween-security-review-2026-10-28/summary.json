@@ -1,0 +1,136 @@
+{
+  "date": "2026-10-28",
+  "scope": "local source and dependency assessment, no production inspection or exploit",
+  "installed": {
+    "next": "16.3.8",
+    "react": "19.2.7",
+    "sharpUsedByNext": "0.35.5"
+  },
+  "productionDependencyAdvisoryCounts": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 4,
+    "critical": 2
+  },
+  "advisories": [
+    {
+      "package": "next",
+      "severity": "critical",
+      "title": "Next.js: Unauthenticated Remote Code Execution in Image Optimization API when SVG files are used",
+      "url": "https://github.com/advisories/GHSA-2464-fhr4-w9xw",
+      "affected": ">=16.0.0 <=16.4.0",
+      "patched": ">=16.4.1",
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "next",
+      "severity": "high",
+      "title": "Next.js: Denial of Service in App Router using Server Actions",
+      "url": "https://github.com/advisories/GHSA-p3m5-59mp-jv5r",
+      "affected": ">=16.0.0 <=16.4.0",
+      "patched": ">=16.4.1",
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "next",
+      "severity": "critical",
+      "title": "Next.js: Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays",
+      "url": "https://github.com/advisories/GHSA-673q-mjm6-r5xr",
+      "affected": ">=16.0.0 <=16.4.0",
+      "patched": ">=16.4.1",
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "zod",
+      "severity": "high",
+      "title": "Zod can exhaust memory while validating oversized constrained collections",
+      "url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+      "affected": "<4.6.6",
+      "patched": ">=4.6.6",
+      "findings": [
+        {
+          "version": "3.25.76",
+          "paths": [
+            "apps/ai-gateway > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "apps/api > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "apps/workers > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "packages/config > zod@3.25.76"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "body-parser",
+      "severity": "high",
+      "title": "body-parser vulnerable to Denial of Service via trailing bytes after a compressed request body",
+      "url": "https://github.com/advisories/GHSA-27r3-jxmh-p828",
+      "affected": ">=2.0.0 <2.4.0",
+      "patched": ">=2.4.0",
+      "findings": [
+        {
+          "version": "2.3.0",
+          "paths": [
+            "apps/ai-gateway > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > swagger-ui-express@5.0.1 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > swagger-ui-express@5.0.1 > express@5.2.1 > body-parser@2.3.0"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "multer",
+      "severity": "high",
+      "title": "multer vulnerable to Denial of Service via a pending asynchronous fileFilter after request teardown",
+      "url": "https://github.com/advisories/GHSA-q7qp-rjg7-q26m",
+      "affected": ">=2.0.0 <2.5.0",
+      "patched": ">=2.5.0",
+      "findings": [
+        {
+          "version": "2.4.0",
+          "paths": [
+            "apps/ai-gateway > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/ai-gateway > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/ai-gateway > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "focusedTests": {
+    "pass": 42,
+    "fail": 0
+  },
+  "changes": "No application/dependency/config changes; documentation only"
+}

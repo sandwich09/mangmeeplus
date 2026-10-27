@@ -1,0 +1,116 @@
+{
+  "browser": "Codex IAB; viewport tests, not physical phones",
+  "loading": {
+    "buttons": [
+      {
+        "busy": "true",
+        "disabled": true,
+        "height": 40,
+        "text": "กำลังเรียกวิญญาณ…",
+        "width": 216
+      },
+      {
+        "busy": "false",
+        "disabled": false,
+        "height": 40,
+        "text": "เลือกประตูอื่น",
+        "width": 216
+      }
+    ],
+    "phase": "loading"
+  },
+  "spin390": {
+    "images": [
+      "/home/events/halloween/cards/back-standard.png",
+      "/home/events/halloween/cards/back-standard.png"
+    ],
+    "overflow": false,
+    "phase": "drawing",
+    "smoke": true,
+    "width": 390
+  },
+  "spin1280": {
+    "images": [
+      "/home/events/halloween/cards/back-standard.png",
+      "/home/events/halloween/cards/back-standard.png"
+    ],
+    "phase": "drawing",
+    "smoke": true,
+    "width": 1280
+  },
+  "result390": {
+    "buttons": [
+      {
+        "height": 48,
+        "label": "แชร์ภาพ",
+        "width": 334
+      },
+      {
+        "height": 48,
+        "label": "บันทึกภาพ",
+        "width": 334
+      },
+      {
+        "height": 48,
+        "label": "คัดลอกข้อความและลิงก์",
+        "width": 334
+      }
+    ],
+    "card": "12-mummy",
+    "overflow": false,
+    "phase": "revealed",
+    "width": 390
+  },
+  "result1280": {
+    "buttons": [
+      {
+        "disabled": false,
+        "height": 48,
+        "label": "แชร์ภาพ",
+        "width": 510
+      },
+      {
+        "disabled": false,
+        "height": 48,
+        "label": "บันทึกภาพ",
+        "width": 510
+      },
+      {
+        "disabled": false,
+        "height": 48,
+        "label": "คัดลอกข้อความและลิงก์",
+        "width": 510
+      }
+    ],
+    "card": "12-mummy",
+    "overflow": false,
+    "phase": "revealed",
+    "width": 1280
+  },
+  "readyButtons390": [
+    {
+      "height": 44,
+      "label": "เผยร่างของฉัน",
+      "width": 216
+    },
+    {
+      "height": 44,
+      "label": "เลือกประตูอื่น",
+      "width": 216
+    }
+  ],
+  "reopenAfterClosingSpin": {
+    "phase": "ready",
+    "result": false
+  },
+  "themeOff": {
+    "entry": false,
+    "game": false
+  },
+  "themeOffRoute": {
+    "game": false,
+    "heading": "ไม่พบหน้านี้"
+  },
+  "download": "/Users/thawatchai/Downloads/mangmee-12-mummy.png",
+  "socialPosting": false
+}

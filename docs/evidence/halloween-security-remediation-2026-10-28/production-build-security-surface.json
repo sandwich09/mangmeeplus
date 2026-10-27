@@ -1,0 +1,9 @@
+{
+  "serverActions": {
+    "node": 0,
+    "edge": 0
+  },
+  "cacheComponents": false,
+  "next": "16.4.3",
+  "sharpResolved": "0.35.5"
+}

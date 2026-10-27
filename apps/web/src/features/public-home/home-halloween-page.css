@@ -1,0 +1,12 @@
+.halloween-event-page{min-height:100dvh;padding:20px;background:radial-gradient(ellipse at 50% 0,#492353,transparent 65%),#160e23;color:#fff5e2;font-family:'Outfit','IBM Plex Sans Thai',sans-serif;line-height:1.6}
+.halloween-event-page *{box-sizing:border-box}
+.halloween-event-nav{max-width:1040px;margin:0 auto 12px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.halloween-event-nav a{display:inline-flex;min-height:44px;align-items:center;color:#f7d28c;text-decoration:none;font-size:16px}
+.halloween-event-nav>span{font-size:22px;font-weight:600;color:#f7d28c}
+.halloween-event-page main{max-width:940px;margin:auto}
+.halloween-event-page h1{font-size:clamp(24px,4vw,34px);font-weight:600;line-height:1.6;text-align:center;margin:0 0 16px;text-wrap:balance}
+.halloween-event-kicker{color:#d9b8e7;text-align:center;font-size:14px;margin:0 0 4px}
+.halloween-event-page footer{text-align:center;margin:28px auto 0;font-size:14px;color:#d9bfdf}
+.halloween-event-page footer a{display:inline-flex;min-height:44px;align-items:center;color:#f7d28c}
+.halloween-event-page a:focus-visible{outline:3px solid #f7d28c;outline-offset:4px}
+@media(max-width:480px){.halloween-event-page{padding:12px}.halloween-event-nav{margin-bottom:16px}.halloween-event-page h1{margin-bottom:16px}}

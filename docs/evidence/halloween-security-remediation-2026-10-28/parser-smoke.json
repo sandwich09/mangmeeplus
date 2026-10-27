@@ -1,0 +1,18 @@
+[
+  {
+    "inflate": false,
+    "valid": 200,
+    "malformed": 400,
+    "oversized": 413,
+    "trailing": 415,
+    "healthAfter": 200
+  },
+  {
+    "inflate": true,
+    "valid": 200,
+    "malformed": 400,
+    "oversized": 413,
+    "trailing": 400,
+    "healthAfter": 200
+  }
+]

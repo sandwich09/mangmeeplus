@@ -14,7 +14,7 @@
     "@watchdog-bms/contracts": "workspace:*",
     "@watchdog-bms/design-tokens": "workspace:*",
     "heic-to": "^1.5.2",
-    "next": "~16.3.8",
+    "next": "~16.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.6.0"

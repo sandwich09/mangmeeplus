@@ -1,0 +1,30 @@
+{
+  "status": "pass",
+  "base": "http://127.0.0.1:43841",
+  "results": [
+    {
+      "journey": "touch, keyboard containment, all doors, reset, dismissal, focus, storage and requests pass"
+    },
+    {
+      "responsiveWidths": "360, 390, 768, 1280 and 812x375; chooser and dialog fit without horizontal overflow"
+    },
+    {
+      "reducedMotion": "pass"
+    },
+    {
+      "eventPause": "pass"
+    },
+    {
+      "routeIsolation": "client and direct navigation remove activity and effects"
+    },
+    {
+      "audio": "native loop signal, quiet gain, gesture start, persistence across doors, all closes/unmount, repeat opens and audio fallback pass"
+    }
+  ],
+  "errors": [],
+  "requests": [],
+  "navigationRequests": [
+    "http://127.0.0.1:43841/?preview=events&event=default&palette=plum&_rsc=3lrl6gc-SHGqFzQJ"
+  ],
+  "audioLimit": "Verified generated buffer samples, gain, running state and clock in headless Chrome; no physical speaker or headphone listening test."
+}

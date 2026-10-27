@@ -1,0 +1,15 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "width": 390,
+      "status": "pass",
+      "errors": []
+    },
+    {
+      "width": 1280,
+      "status": "pass",
+      "errors": []
+    }
+  ]
+}

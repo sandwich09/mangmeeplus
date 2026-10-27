@@ -1,0 +1,12 @@
+{
+  "cardId": "12-mummy",
+  "variant": "card",
+  "algorithm": "Ed25519",
+  "keyId": "NWGd4wjDDOD2axVVc5TLJU-xq0FUAPP6nSk1E2rmiL8",
+  "drawId": "f09bcbc2-6145-4790-a813-a3cb152be975",
+  "source": "https://mangmeeplus.com",
+  "signatureBytes": 64,
+  "originalAfterRemovingProofExactMatch": true,
+  "sha256": "4e43cdeb26d067750afcc9d6ed5cd997d24e582ebb274e02804305c558e0a6b1",
+  "signatureVerification": "Trusted-key cryptography exercised in server/provenance tests; preview public key is not exported by this route."
+}

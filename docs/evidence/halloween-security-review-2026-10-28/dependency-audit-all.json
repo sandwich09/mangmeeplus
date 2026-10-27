@@ -1,0 +1,759 @@
+{
+  "actions": [
+    {
+      "action": "update",
+      "resolves": [
+        {
+          "id": 1240095,
+          "path": "apps__api>@swc/cli>@xhmikosr/bin-wrapper>@xhmikosr/downloader>@xhmikosr/decompress",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "module": "@xhmikosr/decompress",
+      "target": "10.2.2",
+      "depth": 5
+    },
+    {
+      "action": "update",
+      "resolves": [
+        {
+          "id": 1240103,
+          "path": "apps__api>@swc/cli>minimatch>brace-expansion",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "id": 1240107,
+          "path": "apps__api>@swc/cli>minimatch>brace-expansion",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "id": 1240111,
+          "path": "apps__api>@swc/cli>minimatch>brace-expansion",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "module": "brace-expansion",
+      "target": "5.0.12",
+      "depth": 4
+    },
+    {
+      "action": "update",
+      "resolves": [
+        {
+          "id": 1240851,
+          "path": "apps__api>@swc/cli>piscina",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "module": "piscina",
+      "target": "4.9.4",
+      "depth": 3
+    },
+    {
+      "action": "update",
+      "resolves": [
+        {
+          "id": 1243074,
+          "path": "apps__ai-gateway>express>body-parser",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ],
+      "module": "body-parser",
+      "target": "2.4.0",
+      "depth": 3
+    },
+    {
+      "action": "review",
+      "module": "file-type",
+      "resolves": [
+        {
+          "id": 1114301,
+          "path": "apps__api>@swc/cli>@xhmikosr/bin-wrapper>@xhmikosr/downloader>file-type",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "id": 1114726,
+          "path": "apps__api>@swc/cli>@xhmikosr/bin-wrapper>@xhmikosr/downloader>file-type",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ]
+    },
+    {
+      "action": "review",
+      "module": "http-cache-semantics",
+      "resolves": [
+        {
+          "id": 1240991,
+          "path": "apps__api>@swc/cli>@xhmikosr/bin-wrapper>@xhmikosr/downloader>got>cacheable-request>http-cache-semantics",
+          "dev": false,
+          "bundled": false,
+          "optional": false
+        }
+      ]
+    },
+    {
+      "action": "review",
+      "module": "next",
+      "resolves": [
+        {
+          "id": 1242816,
+          "path": "apps__web>next",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "id": 1242818,
+          "path": "apps__web>next",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        },
+        {
+          "id": 1242859,
+          "path": "apps__web>next",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ]
+    },
+    {
+      "action": "review",
+      "module": "zod",
+      "resolves": [
+        {
+          "id": 1243066,
+          "path": "packages__config>zod",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ]
+    },
+    {
+      "action": "review",
+      "module": "multer",
+      "resolves": [
+        {
+          "id": 1243083,
+          "path": "apps__ai-gateway>@nestjs/platform-express>multer",
+          "dev": false,
+          "optional": false,
+          "bundled": false
+        }
+      ]
+    }
+  ],
+  "advisories": {
+    "1114301": {
+      "findings": [
+        {
+          "version": "20.5.0",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/archive-type@7.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tarbz2@8.1.0 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tarbz2@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-targz@8.1.0 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-targz@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-unzip@7.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > file-type@20.5.0"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/sindresorhus/file-type/security/advisories/GHSA-5v7r-6r5c-r473\n- https://nvd.nist.gov/vuln/detail/CVE-2026-31808\n- https://github.com/sindresorhus/file-type/commit/319abf871b50ba2fa221b4a7050059f1ae096f4f\n- https://github.com/advisories/GHSA-5v7r-6r5c-r473",
+      "created": "2026-03-10T23:57:09.000Z",
+      "id": 1114301,
+      "npm_advisory_id": null,
+      "overview": "### Impact\nA denial of service vulnerability exists in the ASF (WMV/WMA) file type detection parser. When parsing a crafted input where an ASF sub-header has a `size` field of zero, the parser enters an infinite loop. The `payload` value becomes negative (-24), causing `tokenizer.ignore(payload)` to move the read position backwards, so the same sub-header is read repeatedly forever.\n\nAny application that uses `file-type` to detect the type of untrusted/attacker-controlled input is affected. An attacker can stall the Node.js event loop with a 55-byte payload.\n\n### Patches\nFixed in version 21.3.1. Users should upgrade to >= 21.3.1.\n\n### Workarounds\nValidate or limit the size of input buffers before passing them to `file-type`, or run file type detection in a worker thread with a timeout.\n\n### References\n- Fix commit: 319abf871b50ba2fa221b4a7050059f1ae096f4f\n\n### Reporter\n\ncrnkovic@lokvica.com",
+      "reported_by": null,
+      "title": "file-type affected by infinite loop in ASF parser on malformed input with zero-size sub-header",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-31808"
+      ],
+      "access": "public",
+      "severity": "moderate",
+      "module_name": "file-type",
+      "vulnerable_versions": ">=13.0.0 <21.3.1",
+      "github_advisory_id": "GHSA-5v7r-6r5c-r473",
+      "recommendation": "Upgrade to version 21.3.1 or later",
+      "patched_versions": ">=21.3.1",
+      "updated": "2026-03-10T23:57:11.000Z",
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      },
+      "cwe": [
+        "CWE-835"
+      ],
+      "url": "https://github.com/advisories/GHSA-5v7r-6r5c-r473"
+    },
+    "1114726": {
+      "findings": [
+        {
+          "version": "20.5.0",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/archive-type@7.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tarbz2@8.1.0 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-tarbz2@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-targz@8.1.0 > @xhmikosr/decompress-tar@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-targz@8.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1 > @xhmikosr/decompress-unzip@7.1.0 > file-type@20.5.0",
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > file-type@20.5.0"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/sindresorhus/file-type/security/advisories/GHSA-j47w-4g3g-c36v\n- https://github.com/sindresorhus/file-type/commit/a155cd71323279de173c54e8c530d300d3854fdd\n- https://github.com/sindresorhus/file-type/releases/tag/v21.3.2\n- https://nvd.nist.gov/vuln/detail/CVE-2026-32630\n- https://github.com/sindresorhus/file-type/commit/399b0f156063f5aeb1c124a7fd61028f3ea7c124\n- https://github.com/advisories/GHSA-j47w-4g3g-c36v",
+      "created": "2026-03-13T20:56:05.000Z",
+      "id": 1114726,
+      "npm_advisory_id": null,
+      "overview": "## Summary\n\nA crafted ZIP file can trigger excessive memory growth during type detection in `file-type` when using `fileTypeFromBuffer()`, `fileTypeFromBlob()`, or `fileTypeFromFile()`.\n\nIn affected versions, the ZIP inflate output limit is enforced for stream-based detection, but not for known-size inputs. As a result, a small compressed ZIP can cause `file-type` to inflate and process a much larger payload while probing ZIP-based formats such as OOXML. In testing on `file-type` `21.3.1`, a ZIP of about `255 KB` caused about `257 MB` of RSS growth during `fileTypeFromBuffer()`.\n\nThis is an availability issue. Applications that use these APIs on untrusted uploads can be forced to consume large amounts of memory and may become slow or crash.\n\n## Root Cause\n\nThe ZIP detection logic applied different limits depending on whether the tokenizer had a known file size.\n\nFor stream inputs, ZIP probing was bounded by `maximumZipEntrySizeInBytes` (`1 MiB`). For known-size inputs such as buffers, blobs, and files, the code instead used `Number.MAX_SAFE_INTEGER` in two relevant places:\n\n```js\nconst maximumContentTypesEntrySize = hasUnknownFileSize(tokenizer)\n\t? maximumZipEntrySizeInBytes\n\t: Number.MAX_SAFE_INTEGER;\n```\n\nand:\n\n```js\nconst maximumLength = hasUnknownFileSize(this.tokenizer)\n\t? maximumZipEntrySizeInBytes\n\t: Number.MAX_SAFE_INTEGER;\n```\n\nTogether, these checks allowed a crafted ZIP to bypass the intended inflate limit for known-size APIs and force large decompression during detection of entries such as `[Content_Types].xml`.\n\n## Proof of Concept\n\n```js\nimport {fileTypeFromBuffer} from 'file-type';\nimport archiver from 'archiver';\nimport {Writable} from 'node:stream';\n\nasync function createZipBomb(sizeInMegabytes) {\n\treturn new Promise((resolve, reject) => {\n\t\tconst chunks = [];\n\t\tconst writable = new Writable({\n\t\t\twrite(chunk, encoding, callback) {\n\t\t\t\tchunks.push(chunk);\n\t\t\t\tcallback();\n\t\t\t},\n\t\t});\n\n\t\tconst archive = archiver('zip', {zlib: {level: 9}});\n\t\tarchive.pipe(writable);\n\t\twritable.on('finish', () => {\n\t\t\tresolve(Buffer.concat(chunks));\n\t\t});\n\t\tarchive.on('error', reject);\n\n\t\tconst xmlPrefix = '<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">';\n\t\tconst padding = Buffer.alloc(sizeInMegabytes * 1024 * 1024 - xmlPrefix.length, 0x20);\n\t\tarchive.append(Buffer.concat([Buffer.from(xmlPrefix), padding]), {name: '[Content_Types].xml'});\n\t\tarchive.finalize();\n\t});\n}\n\nconst zip = await createZipBomb(256);\nconsole.log('ZIP size (KB):', (zip.length / 1024).toFixed(0));\n\nconst before = process.memoryUsage().rss;\nawait fileTypeFromBuffer(zip);\nconst after = process.memoryUsage().rss;\n\nconsole.log('RSS growth (MB):', ((after - before) / 1024 / 1024).toFixed(0));\n```\n\nObserved on `file-type` `21.3.1`:\n- ZIP size: about `255 KB`\n- RSS growth during detection: about `257 MB`\n\n## Affected APIs\n\nAffected:\n- `fileTypeFromBuffer()`\n- `fileTypeFromBlob()`\n- `fileTypeFromFile()`\n\nNot affected:\n- `fileTypeFromStream()`, which already enforced the ZIP inflate limit for unknown-size inputs\n\n## Impact\n\nApplications that inspect untrusted uploads with `fileTypeFromBuffer()`, `fileTypeFromBlob()`, or `fileTypeFromFile()` can be forced to consume excessive memory during ZIP-based type detection. This can degrade service or lead to process termination in memory-constrained environments.\n\n## Cause\n\nThe issue was introduced in 399b0f1",
+      "reported_by": null,
+      "title": "file-type: ZIP Decompression Bomb DoS via [Content_Types].xml entry",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-32630"
+      ],
+      "access": "public",
+      "severity": "moderate",
+      "module_name": "file-type",
+      "vulnerable_versions": ">=20.0.0 <=21.3.1",
+      "github_advisory_id": "GHSA-j47w-4g3g-c36v",
+      "recommendation": "Upgrade to version 21.3.2 or later",
+      "patched_versions": ">=21.3.2",
+      "updated": "2026-03-16T21:59:51.000Z",
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-409"
+      ],
+      "url": "https://github.com/advisories/GHSA-j47w-4g3g-c36v"
+    },
+    "1240095": {
+      "findings": [
+        {
+          "version": "10.2.1",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > @xhmikosr/decompress@10.2.1"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/XhmikosR/decompress/security/advisories/GHSA-hrh2-vp3x-79xf\n- https://nvd.nist.gov/vuln/detail/CVE-2026-101894\n- https://github.com/XhmikosR/decompress/commit/5f4b2f64abb31bbaf1fef8975b595fd7df2558d8\n- https://github.com/XhmikosR/decompress/commit/f6c88c668216d6a12c6cecf4fe0b6c70bf77050a\n- https://github.com/XhmikosR/decompress/releases/tag/v10.2.2\n- https://github.com/XhmikosR/decompress/releases/tag/v11.1.4\n- https://github.com/advisories/GHSA-hrh2-vp3x-79xf",
+      "created": "2026-09-29T23:49:42.000Z",
+      "id": 1240095,
+      "npm_advisory_id": null,
+      "overview": "### Impact\n\nWhen extracting an untrusted archive with the default `decompress(input, output)` API, a crafted archive containing a chain of symlink entries can make a later entry resolve **outside** the output directory. The lexical containment checks pass, but the kernel follows the planted symlinks to a path outside `output`, letting an attacker write (and read) files outside the intended extraction directory. Overwriting startup scripts or configuration can lead to remote code execution.\n\nThis is a bypass of the hardening in GHSA-mp2f-45pm-3cg9. Any application that extracts attacker-controlled archives is affected.\n\n### Patches\n\nFixed in **11.1.4** (`latest`) and backported to **10.2.2** (`release-v10` dist-tag). Upgrade to one of these.\n\nThe unmaintained upstream `decompress` package shares this flaw and will not be patched. Migrate to `@xhmikosr/decompress@11.1.4` (or `@10.2.2`).\n\n### Workarounds\n\nNone. Do not extract untrusted archives on affected versions. If you cannot upgrade, validate entries out of band and reject any whose resolved path escapes the target directory.",
+      "reported_by": null,
+      "title": "@xhmikosr/decompress: Path traversal via symlink chain",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-101894"
+      ],
+      "access": "public",
+      "severity": "critical",
+      "module_name": "@xhmikosr/decompress",
+      "vulnerable_versions": "<=10.2.1",
+      "github_advisory_id": "GHSA-hrh2-vp3x-79xf",
+      "recommendation": "Upgrade to version 10.2.2 or later",
+      "patched_versions": ">=10.2.2",
+      "updated": "2026-09-29T23:49:43.000Z",
+      "cvss": {
+        "score": 9.1,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+      },
+      "cwe": [
+        "CWE-22",
+        "CWE-59"
+      ],
+      "url": "https://github.com/advisories/GHSA-hrh2-vp3x-79xf"
+    },
+    "1240103": {
+      "findings": [
+        {
+          "version": "5.0.9",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > minimatch@10.2.5 > brace-expansion@5.0.9"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-q2hr-2g5m-vwhr\n- https://nvd.nist.gov/vuln/detail/CVE-2026-102277\n- https://github.com/juliangruber/brace-expansion/commit/33a5ef17b8d800bbfa8c52b14c39043b6aac1a96\n- https://github.com/juliangruber/brace-expansion/commit/bdff773f98e5988616b7039cc9b508df5d640b22\n- https://github.com/juliangruber/brace-expansion/commit/c55e67d8d8b1c56a2474afff15c2891166b2d364\n- https://github.com/juliangruber/brace-expansion/commit/ffdfa3e3806bed17c0874b8f1439b084de354a7e\n- https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "created": "2026-09-29T23:45:39.000Z",
+      "id": 1240103,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\nExpanding `{a},b}`-shaped input takes time quadratic in the number of literal `}` characters, blocking the event loop.\n\nBash preserves a quirk where a brace group followed by a comma set still expands (`{a},b}`). The parser implements this by rewriting the string and restarting the scan. Each pass absorbs exactly one `}` and re-scans from the beginning, so `n` trailing braces cost `n` full passes.\n\n### Reproduction\n\n```js\nconst build = n => '{a}' + '}'.repeat(n) + ',z}'\n\nfor (const n of [8000, 16000, 32000, 64000, 128000]) {\n  const t = Date.now()\n  expand(build(n))\n  console.log(n, Date.now() - t + 'ms')\n}\n```\n\n| n | input | time | results |\n|---|---|---|---|\n| 8,000 | 8 KB | 110 ms | 2 |\n| 16,000 | 16 KB | 446 ms | 2 |\n| 32,000 | 32 KB | 1.7 s | 2 |\n| 64,000 | 64 KB | 6.9 s | 2 |\n| 128,000 | 128 KB | **27.7 s** | 2 |\n\n`ms/n^2` is flat at ~1.7 and each doubling of `n` costs exactly 4.0x - quadratic. 128 KB of input blocks the event loop for nearly half a minute to produce two results.\n\n### Mechanism\n\nInstrumenting the rewrite branch confirms it runs exactly `n + 1` times, once per literal `}`, each re-scanning the whole string.\n\nThere is a second multiplier. The rewrite replaces the group's closing `}` with the internal `escClose` sentinel, which is `'\\0CLOSE' + Math.random() + '\\0'` - about 25 characters. The working string therefore *grows* by ~25 characters on every pass:\n\n| n | input length | final string length |\n|---|---|---|\n| 1,000 | 1,006 | 26,006 |\n| 8,000 | 8,006 | 208,006 |\n\nSo the input is inflated roughly 26x, and that factor multiplies both the quadratic constant and peak memory. This makes it partly a memory-pressure issue as well as a CPU one.\n\n### Why `max` and `maxLength` do not help\n\nThe cost is in parsing, before the result set exists. The payload yields 2 results regardless of size, so neither bound is ever reached.\n\n### Impact\n\nAn application passing an untrusted pattern to `expand()`, directly or through `minimatch` / `glob`, can have its event loop blocked for tens of seconds by a payload well under minimatch's 65,536-character cap. For a single-threaded Node server that is a full stall, not just a slow request.\n\nDegraded availability rather than a crash - the process recovers once the expansion completes.\n\n### Affected versions\n\nVerified affected on 1.1.18, 2.1.4, 3.0.6 and 5.0.9, all within a few percent of each other (~460-490 ms at n=16,000).\n\n### Patch\n\nThe rewrite loop gets an iteration bound. Past the cap the remaining string is treated as non-expanding and returned literally, consistent with the existing `max` / `maxLength` caps, which truncate rather than throw.\n\nNote this bounds the number of passes, not the cost of each: worst-case work remains proportional to `cap x input length`. The cap is set low enough that the residual is bounded in practice, and far above what any realistic `{a},b}` input needs.\n\n### Severity note\n\nScored 5.3 Medium (`A:L`) for consistency with GHSA-3jxr-9vmj-r5cp, the other algorithmic-complexity advisory on this package (CWE-407), which uses the same vector. The stack-exhaustion advisories on this package score `A:H` because they crash the process outright; this one stalls it.",
+      "reported_by": null,
+      "title": "brace-expansion: Quadratic-time expansion of the `{a},b}` rewrite causes CPU denial of service",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-102277"
+      ],
+      "access": "public",
+      "severity": "moderate",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.12",
+      "github_advisory_id": "GHSA-q2hr-2g5m-vwhr",
+      "recommendation": "Upgrade to version 5.0.12 or later",
+      "patched_versions": ">=5.0.12",
+      "updated": "2026-09-29T23:45:39.000Z",
+      "cvss": {
+        "score": 5.3,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-407"
+      ],
+      "url": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr"
+    },
+    "1240107": {
+      "findings": [
+        {
+          "version": "5.0.9",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > minimatch@10.2.5 > brace-expansion@5.0.9"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-qhr7-859c-m2p7\n- https://nvd.nist.gov/vuln/detail/CVE-2026-102278\n- https://github.com/juliangruber/brace-expansion/commit/1efee7c397c191da6287a78ec19512476a966a7b\n- https://github.com/juliangruber/brace-expansion/commit/935d78f32f335b2ff76578e5c5e877d31ae9888c\n- https://github.com/juliangruber/brace-expansion/commit/de84f144e9816f30e25fc8179e2e1249ab6df0db\n- https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "created": "2026-09-29T23:45:17.000Z",
+      "id": 1240107,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\n`expand_()` recurses once per level of brace *nesting*. Deeply nested input exhausts the native stack and crashes the process.\n\nThis is distinct from CVE-2026-14257 / GHSA-mh99-v99m-4gvg, which made the *tail* iterative (recursion on `m.post`, driven by how many groups are chained). Nesting depth drives a different recursion that the tail fix never touched, so the documented constant-stack-depth guarantee only ever covered chained input, not nested input.\n\nIt is also distinct from GHSA-6j4f-fj2g-mc7p, which fixed recursion in `parseCommaParts()`. Both payloads below still crash with that fix applied.\n\n### Two recursion sites\n\n**Comma members.** Each alternative of a brace set is expanded by a recursive call, so nesting a set inside every alternative recurses once per level:\n\n```js\nexpand('{a,'.repeat(4000) + 'z' + '}'.repeat(4000))\n// RangeError: Maximum call stack size exceeded\n```\n\nCrashes at depth 3,907 - about **15.6 KB** of input.\n\n**Single set.** A brace set whose body parses to a single part is expanded by a recursive call before being re-wrapped (`x{{a,b}}y` -> `x{a}y x{b}y`), which recurses once per nesting level:\n\n```js\nexpand('{'.repeat(3200) + 'a,b' + '}'.repeat(3200))\n// RangeError: Maximum call stack size exceeded\n```\n\nCrashes at depth 3,125 - about **6.25 KB** of input. This is the cheapest stack-exhaustion payload known against this package: roughly a quarter the input of GHSA-6j4f-fj2g-mc7p (29 KB), and about a tenth of minimatch's `MAX_PATTERN_LENGTH` (65,536).\n\n### Why `max` and `maxLength` do not help\n\nBoth crashes happen while recursing into sub-expansions, before the result set grows. The payloads produce almost no output - the single-set case yields 2 results - so neither bound is ever the limiter. `expand(payload, { max: 1, maxLength: 1 })` still overflows.\n\n### Impact\n\nAny application passing an untrusted string to `expand()`, directly or through `minimatch` / `glob` as a user-supplied glob pattern, can be crashed. In Node a `RangeError` the application does not catch terminates the process, so a server globbing user input is exposed to remote unauthenticated denial of service.\n\nAvailability only. No code execution, no data exposure.\n\n### Affected versions\n\nVerified affected on 1.1.18, 2.1.4, 3.0.6 and 5.0.9, at near-identical depths on every line (single set: 3,125 on all four; comma members: 3,907-4,102). Not a regression from any recent fix - the gap predates them.\n\n### Patch\n\nA `maxDepth` bound (default `EXPANSION_MAX_DEPTH`) is threaded through `expand_()`. Past the cap a group is treated as non-expanding and returned literally, which is how the parser already handles a group that cannot expand. This matches the existing `max` / `maxLength` caps, which truncate rather than throw, so `expand()` continues never to throw on any input.\n\nThe default sits far above any realistic nesting depth and well below the crash threshold.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via uncontrolled recursion on nested brace groups causing stack exhaustion",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-102278"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.11",
+      "github_advisory_id": "GHSA-qhr7-859c-m2p7",
+      "recommendation": "Upgrade to version 5.0.11 or later",
+      "patched_versions": ">=5.0.11",
+      "updated": "2026-09-29T23:45:19.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-674"
+      ],
+      "url": "https://github.com/advisories/GHSA-qhr7-859c-m2p7"
+    },
+    "1240111": {
+      "findings": [
+        {
+          "version": "5.0.9",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > minimatch@10.2.5 > brace-expansion@5.0.9"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-6j4f-fj2g-mc7p\n- https://nvd.nist.gov/vuln/detail/CVE-2026-102276\n- https://github.com/juliangruber/brace-expansion/commit/0bcbfc0a5928c3073d48f42999d1ce4fc1c42fbc\n- https://github.com/juliangruber/brace-expansion/commit/316359e6019c39b3254c8ba8e25dc586a480652c\n- https://github.com/juliangruber/brace-expansion/commit/5171e681c0922b7ae8bfaf9a331e309107be6edc\n- https://github.com/juliangruber/brace-expansion/commit/6735c94873ca570bcdd6a0690033bdd3126379d3\n- https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "created": "2026-09-29T23:44:58.000Z",
+      "id": 1240111,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\n`parseCommaParts()` can exhaust the native stack and crash the process. There are two distinct ways to trigger it, both reachable from a single untrusted pattern string.\n\nThis is the parsing-side counterpart to CVE-2026-14257 / GHSA-mh99-v99m-4gvg. That fix made `expand_()` iterative and documented a constant-stack-depth guarantee, but `parseCommaParts()` was left recursive, so the guarantee only held for one of the two parsing paths.\n\n### Vector 1 - unbounded recursion on `post`\n\n`parseCommaParts()` recursed on the remainder of the string once per brace group:\n\n```js\nconst postParts = parseCommaParts(post)   // unbounded\n```\n\nA brace group containing many comma-separated groups drives one recursion level per group:\n\n```js\nexpand('{' + '{a},'.repeat(7000) + 'b}')\n// RangeError: Maximum call stack size exceeded\n```\n\nAbout 7,300 repetitions - roughly 29 KB of input - is enough on Node 24; roughly 6,300 (25 KB) on Node 18. The threshold is identical on every affected release line.\n\n### Vector 2 - `push.apply` with an unbounded array\n\nEven with the recursion removed, `parseCommaParts()` spread whole arrays into an argument list:\n\n```js\np.push.apply(p, postParts)\nparts.push.apply(parts, p)\n```\n\n`Function.prototype.apply` places one argument per element on the stack, so a single large array overflows it. This needs **no recursion depth at all** - the following reaches a recursion depth of exactly 1:\n\n```js\nexpand('{{x},' + 'a,'.repeat(125000) + 'b}')\n// RangeError: Maximum call stack size exceeded\n```\n\nThreshold is about 124,300 repetitions (~249 KB). This vector was not part of the original report; it was found while verifying the fix. A patch that only de-recurses but keeps `push.apply` leaves a working denial of service behind.\n\n### Why `max` and `maxLength` do not help\n\nBoth crashes happen during **parsing**, before any expansion. The payloads produce one result per group, so output size grows linearly with input and is never the limiter. `expand(payload, { max: 1, maxLength: 1 })` still overflows.\n\n### Impact\n\nAny application that passes an untrusted string to `expand()` - directly, or through `minimatch` / `glob` where it is a user-supplied glob pattern - can be crashed. In Node, a `RangeError` that the application does not catch terminates the process, so a server that globs user input is exposed to remote unauthenticated denial of service.\n\n`minimatch`'s own `MAX_PATTERN_LENGTH` cap (65,536) does not help against vector 1: the overflow threshold sits well below it. Confirmed on minimatch 10.2.6 - a 64,003-byte pattern passes the length check and overflows both `minimatch.braceExpand()` and `new minimatch.Minimatch()`.\n\nThis is an availability-only issue. No code execution and no data exposure.\n\n### Not a regression\n\n5.0.8 and 5.0.9 overflow at the same repetition count, so the gap predates the recent advisories; those fixes simply did not reach it. Verified affected on 1.1.18, 2.1.4, 3.0.6, 5.0.8 and 5.0.9, all at an identical threshold.\n\n### Patch\n\n`parseCommaParts()` is rewritten as a loop that carries the partial part across chunks, and every array append uses an element-by-element loop rather than `push.apply`. The redundant `if (!str) return ['']` guard is dropped - the loop returns `['']` for the empty string on its own.\n\nEquivalence of the old and new implementations was checked by differential testing: exhaustive over every string of `{`, `}`, `,`, `a` up to length 7 plus 300,000 random inputs - 322,000 cases, zero mismatches.\n\n### Severity note\n\nScored 7.5 High under CVSS 3.1 for consistency with the other availability advisories on this package (GHSA-mh99-v99m-4gvg, GHSA-rgw5-rvv9-x895), which use the same vector. The reporter self-assessed 6.9 Medium under CVSS 4.0 (`CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N`).\n\n### Credit\n\nReported by baeseungwon1010, with a working proof of concept and a proposed patch. Vector 2 was identified during maintainer verification.",
+      "reported_by": null,
+      "title": "brace-expansion: DoS via uncontrolled recursion in parseCommaParts causing stack exhaustion",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-102276"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "brace-expansion",
+      "vulnerable_versions": ">=4.0.0 <5.0.10",
+      "github_advisory_id": "GHSA-6j4f-fj2g-mc7p",
+      "recommendation": "Upgrade to version 5.0.10 or later",
+      "patched_versions": ">=5.0.10",
+      "updated": "2026-09-29T23:44:59.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-400",
+        "CWE-674"
+      ],
+      "url": "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p"
+    },
+    "1240851": {
+      "findings": [
+        {
+          "version": "4.9.3",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > piscina@4.9.3"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/piscinajs/piscina/security/advisories/GHSA-67c8-pqhq-4rmx\n- https://nvd.nist.gov/vuln/detail/CVE-2026-102992\n- https://github.com/piscinajs/piscina/commit/0cb12fca37f526065b072592afe954574dcc656f\n- https://github.com/piscinajs/piscina/commit/2f69f67159a0e48b38fd61fa4a91c2fdc19fff72\n- https://github.com/piscinajs/piscina/commit/5be7bbb19e3787bb698862cd516121a578d690f7\n- https://github.com/piscinajs/piscina/commit/bebbda255c2981cecddd36b171b94be2fd41c9a6\n- https://github.com/piscinajs/piscina/releases/tag/v4.9.4\n- https://github.com/piscinajs/piscina/releases/tag/v5.3.2\n- https://github.com/piscinajs/piscina/releases/tag/v6.0.0-rc.5\n- https://github.com/advisories/GHSA-67c8-pqhq-4rmx",
+      "created": "2026-10-01T15:03:33.000Z",
+      "id": 1240851,
+      "npm_advisory_id": null,
+      "overview": "### Summary\n\nA prototype-pollution gadget in `ThreadPool.options` allows an attacker who can pollute `Object.prototype` to execute arbitrary code in Piscina worker threads, invoke arbitrary functions during task scheduling, or inject environment variables into workers. The root cause is that `ThreadPool.options` is created as a plain object inheriting from `Object.prototype`, so any option without an explicit default in `kDefaultOptions` can be supplied via the prototype chain.\n\n### Details\n\nIn `src/index.ts` the `ThreadPool` constructor builds the resolved options object as a plain object:\n\n```ts\nthis.options = { ...kDefaultOptions, ...options, filename, maxQueue: 0 }\n```\n\nBecause this object has `Object.prototype` as its prototype, reads for properties that are not own properties of the object and are not present in `kDefaultOptions` fall back to `Object.prototype`. This means a prototype-pollution primitive (e.g. from a vulnerable `merge()` or `JSON.parse` merge elsewhere in the application) can inject values for `execArgv`, `env`, `loadBalancer`, `argv`, `workerData`, `resourceLimits`, `niceIncrement`, `closeTimeout`, `recordTiming`, `stricterFIFO`, `workerHistogram`, and `trackUnmanagedFds`.\n\nThe most serious gadget is `execArgv`, which is passed directly to `new Worker(..., { execArgv })`. An attacker can set `Object.prototype.execArgv = ['--require', '/tmp/attacker.js']`, causing every worker to preload and execute the attacker-controlled module on startup.\n\nThis issue survived the fix for **GHSA-x9g3-xrwr-cwfg / CVE-2026-55388** (\"Prototype Pollution Gadget → RCE via inherited options.filename\"). That advisory hardened the `Piscina` constructor's `filename` read and `run()`'s `filename`/`name` reads, but `ThreadPool.options` itself was not created with a null prototype. The same class of attack is therefore still possible against any option without an explicit default in `kDefaultOptions`.\n\n### PoC\n\n```js\nimport { resolve } from 'node:path'\nimport Piscina from 'piscina'\n\nObject.prototype.execArgv = ['--require', '/tmp/attacker.js']\n\nconst pool = new Piscina({\n  filename: resolve(import.meta.dirname, 'worker.js'),\n  minThreads: 1,\n  maxThreads: 1,\n})\n\nawait pool.run(1)\n```\n\n`/tmp/attacker.js` is executed in the worker on startup. A full reproduction repository with `execArgv`, `loadBalancer`, and `env` vectors is available at https://github.com/Fcmam5/piscina-pp-poc.\n\n### Impact\n\n- **Remote Code Execution**: via `execArgv` (arbitrary `--require` module preloaded in every worker on spawn).\n- **Arbitrary code execution in the main thread**: via `loadBalancer`, an attacker-supplied function that is called during task scheduling.\n- **Environment/CLI option injection**: via `env`, which is passed to each worker constructor.\n- **Denial of Service / unexpected behavior**: via other reachable options such as `workerData`, `resourceLimits`, `niceIncrement`, `closeTimeout`, `recordTiming`, etc.\n\nAnyone using Piscina in an application where `Object.prototype` can be polluted (e.g. through a dependency with a prototype-pollution vulnerability) is impacted.",
+      "reported_by": null,
+      "title": "piscina: Prototype-pollution gadget in ThreadPool.options allows RCE via execArgv / loadBalancer / env",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-102992"
+      ],
+      "access": "public",
+      "severity": "critical",
+      "module_name": "piscina",
+      "vulnerable_versions": "<4.9.4",
+      "github_advisory_id": "GHSA-67c8-pqhq-4rmx",
+      "recommendation": "Upgrade to version 4.9.4 or later",
+      "patched_versions": ">=4.9.4",
+      "updated": "2026-10-01T15:03:34.000Z",
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      },
+      "cwe": [
+        "CWE-1321"
+      ],
+      "url": "https://github.com/advisories/GHSA-67c8-pqhq-4rmx"
+    },
+    "1240991": {
+      "findings": [
+        {
+          "version": "4.2.0",
+          "paths": [
+            "apps/api > @swc/cli@0.7.10 > @xhmikosr/bin-wrapper@13.2.0 > @xhmikosr/downloader@15.2.0 > got@13.0.0 > cacheable-request@10.2.14 > http-cache-semantics@4.2.0"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://nvd.nist.gov/vuln/detail/CVE-2026-93748\n- https://github.com/kornelski/http-cache-semantics/issues/56\n- https://github.com/kornelski/http-cache-semantics/blob/f01112e954b83cfa8765b633ba880e5e980aa54c/index.js#L425-L441\n- https://github.com/kornelski/http-cache-semantics/blob/f01112e954b83cfa8765b633ba880e5e980aa54c/index.js#L603-L623\n- https://www.vulncheck.com/advisories/http-cache-semantics-through-4.2.0-cross-user-cache-disclosure-via-max-stale\n- https://github.com/advisories/GHSA-ch52-4w7c-c8xp",
+      "created": "2026-09-18T18:31:44.000Z",
+      "id": 1240991,
+      "npm_advisory_id": null,
+      "overview": "http-cache-semantics through 4.2.0 fails to properly validate security-zeroed cache entries when processing client max-stale directives, allowing unauthenticated attackers to retrieve cached responses belonging to other users. Attackers can request the same URL with a large max-stale value to obtain another user's Set-Cookie session credentials from shared-cache entries that were deliberately zeroed for security reasons.",
+      "reported_by": null,
+      "title": "http-cache-semantics max-stale handling can disclose cross-user cached responses",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-93748"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "http-cache-semantics",
+      "vulnerable_versions": "<=4.2.0",
+      "github_advisory_id": "GHSA-ch52-4w7c-c8xp",
+      "recommendation": "None",
+      "patched_versions": "<0.0.0",
+      "updated": "2026-10-02T22:36:44.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+      },
+      "cwe": [
+        "CWE-524"
+      ],
+      "url": "https://github.com/advisories/GHSA-ch52-4w7c-c8xp"
+    },
+    "1242816": {
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/vercel/next.js/security/advisories/GHSA-2464-fhr4-w9xw\n- https://nvd.nist.gov/vuln/detail/CVE-2026-96889\n- https://github.com/vercel/next.js/commit/5e3b687b5edb868b064bdc058d768a7021e7f6ad\n- https://github.com/vercel/next.js/commit/9571ec899f063df6533351bec390ccb2cc0af6a3\n- https://github.com/vercel/next.js/releases/tag/v15.5.28\n- https://github.com/vercel/next.js/releases/tag/v16.4.1\n- https://github.com/advisories/GHSA-2464-fhr4-w9xw",
+      "created": "2026-10-22T15:52:53.000Z",
+      "id": 1242816,
+      "npm_advisory_id": null,
+      "overview": "## Impact\n\nA memory-related vulnerability has been discovered in an upstream library used for Image Optimization can lead to possible remote code execution (RCE) when Next.js runs on glibc-based Linux.\n\n## Workaround\n\nEnsure the version of `sharp` used by Next.js is greater than or equal to `0.35.5`. Fresh installs automatically get a fixed version of `sharp`.\nUpgrading Next.js to the patched versions will ensure package managers automatically provide a fixed version of `sharp` to Next.js.",
+      "reported_by": null,
+      "title": "Next.js: Unauthenticated Remote Code Execution in Image Optimization API when SVG files are used",
+      "metadata": null,
+      "cves": [],
+      "access": "public",
+      "severity": "critical",
+      "module_name": "next",
+      "vulnerable_versions": ">=16.0.0 <=16.4.0",
+      "github_advisory_id": "GHSA-2464-fhr4-w9xw",
+      "recommendation": "Upgrade to version 16.4.1 or later",
+      "patched_versions": ">=16.4.1",
+      "updated": "2026-10-22T15:52:56.000Z",
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      },
+      "cwe": [
+        "CWE-1395"
+      ],
+      "url": "https://github.com/advisories/GHSA-2464-fhr4-w9xw"
+    },
+    "1242818": {
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/vercel/next.js/security/advisories/GHSA-p3m5-59mp-jv5r\n- https://github.com/vercel/next.js/releases/tag/v15.5.28\n- https://github.com/vercel/next.js/releases/tag/v16.4.1\n- https://github.com/advisories/GHSA-p3m5-59mp-jv5r",
+      "created": "2026-10-22T15:50:34.000Z",
+      "id": 1242818,
+      "npm_advisory_id": null,
+      "overview": "## Impact\n\nCrafted requests targeting Next.js applications using App Router with at least one Server Action can lead to excessive CPU usage blocking processing of further requests in the same process.\n\n## Workarounds\n\nNo workaround exists besides upgrading. Applications using Pages Router or not using Server Actions are not vulnerable.",
+      "reported_by": null,
+      "title": "Next.js: Denial of Service in App Router using Server Actions",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-94482"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "next",
+      "vulnerable_versions": ">=16.0.0 <=16.4.0",
+      "github_advisory_id": "GHSA-p3m5-59mp-jv5r",
+      "recommendation": "Upgrade to version 16.4.1 or later",
+      "patched_versions": ">=16.4.1",
+      "updated": "2026-10-22T15:50:35.000Z",
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      },
+      "cwe": [
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-p3m5-59mp-jv5r"
+    },
+    "1242859": {
+      "findings": [
+        {
+          "version": "16.3.8",
+          "paths": [
+            "apps/web > next@16.3.8"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/vercel/next.js/security/advisories/GHSA-673q-mjm6-r5xr\n- https://github.com/vercel/next.js/commit/a4cea6aec5da89d116b8960e113189cf51745d2f\n- https://github.com/vercel/next.js/releases/tag/v16.4.1\n- https://github.com/advisories/GHSA-673q-mjm6-r5xr",
+      "created": "2026-10-22T16:42:31.000Z",
+      "id": 1242859,
+      "npm_advisory_id": null,
+      "overview": "## Impact\n\nA vulnerability in applications using App router with Cache Component can lead to remote code execution. The application needs to have a `use cache` function that returns multiple typed arrays.\n\n## Workaround\n\nThere is no known workaround for affected applications with such `use cache` functions. You should upgrade immediately even if your application does not have similar functions.",
+      "reported_by": null,
+      "title": "Next.js: Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays",
+      "metadata": null,
+      "cves": [],
+      "access": "public",
+      "severity": "critical",
+      "module_name": "next",
+      "vulnerable_versions": ">=16.0.0 <=16.4.0",
+      "github_advisory_id": "GHSA-673q-mjm6-r5xr",
+      "recommendation": "Upgrade to version 16.4.1 or later",
+      "patched_versions": ">=16.4.1",
+      "updated": "2026-10-22T16:42:32.000Z",
+      "cvss": {
+        "score": 0,
+        "vectorString": null
+      },
+      "cwe": [
+        "CWE-502"
+      ],
+      "url": "https://github.com/advisories/GHSA-673q-mjm6-r5xr"
+    },
+    "1243066": {
+      "findings": [
+        {
+          "version": "3.25.76",
+          "paths": [
+            "apps/ai-gateway > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "apps/api > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "apps/workers > @watchdog-bms/config@link:../../packages/config > zod@3.25.76",
+            "packages/config > zod@3.25.76"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://nvd.nist.gov/vuln/detail/CVE-2023-54404\n- https://github.com/colinhacks/zod/issues/1872\n- https://github.com/colinhacks/zod/pull/6475\n- https://www.vulncheck.com/advisories/zod-uncontrolled-resource-consumption-via-array-validation\n- https://github.com/colinhacks/zod/pull/6652\n- https://github.com/colinhacks/zod/commit/a0ebf970f2d752e5f58527cd2942ff48be4f46bd\n- https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+      "created": "2026-10-01T18:32:46.000Z",
+      "id": 1243066,
+      "npm_advisory_id": null,
+      "overview": "Zod schema-validation library through 4.6.5 contains an uncontrolled resource consumption vulnerability that allows attackers to exhaust memory by submitting a large array to an application using an array schema without a length constraint. Attackers can exploit the handleArrayResult parse logic in $ZodArray, which accumulates every validation issue for each failing element with no cap or early termination, causing the process to allocate excessive issue objects and crash due to out-of-memory conditions.",
+      "reported_by": null,
+      "title": "Zod can exhaust memory while validating oversized constrained collections",
+      "metadata": null,
+      "cves": [
+        "CVE-2023-54404"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "zod",
+      "vulnerable_versions": "<4.6.6",
+      "github_advisory_id": "GHSA-mrhx-c7xc-m3w5",
+      "recommendation": "Upgrade to version 4.6.6 or later",
+      "patched_versions": ">=4.6.6",
+      "updated": "2026-10-23T18:26:52.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-770"
+      ],
+      "url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5"
+    },
+    "1243074": {
+      "findings": [
+        {
+          "version": "2.3.0",
+          "paths": [
+            "apps/ai-gateway > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > express@5.2.1 > body-parser@2.3.0",
+            "apps/ai-gateway > swagger-ui-express@5.0.1 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > express@5.2.1 > body-parser@2.3.0",
+            "apps/api > swagger-ui-express@5.0.1 > express@5.2.1 > body-parser@2.3.0"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/expressjs/body-parser/security/advisories/GHSA-27r3-jxmh-p828\n- https://nvd.nist.gov/vuln/detail/CVE-2026-111181\n- https://github.com/expressjs/body-parser/commit/1260c3845f54502a05a87594f09a334786bb34d7\n- https://github.com/expressjs/body-parser/commit/f7075eae3a84c3473ab4bf0a777da28db208e916\n- https://cna.openjsf.org/security-advisories.html\n- https://github.com/expressjs/body-parser/releases/tag/1.20.9\n- https://github.com/expressjs/body-parser/releases/tag/v2.4.0\n- https://github.com/advisories/GHSA-27r3-jxmh-p828",
+      "created": "2026-10-23T20:53:11.000Z",
+      "id": 1243074,
+      "npm_advisory_id": null,
+      "overview": "### Impact\n\nA single request can crash any application using `body-parser` with default options. When a request carries a `Content-Encoding` (for example `gzip`), `body-parser` pipes it into a decompression stream and, after reading the body, leaves that stream piped with no error listener. A payload of one valid compressed frame followed by trailing bytes decodes and the application responds normally, but the trailing bytes then reach the already-finished decoder, which emits an error that is re-thrown as an uncaught exception and terminates the process. No authentication or matching route is required, since parsing runs before routing.\n\n### Patches\n\nFixed in body-parser 2.4.0 and 1.20.9. Upgrade to one of these versions.\n\n### Workarounds\n\nPass `inflate: false` to the body-parser middleware if the application does not need to accept compressed request bodies. This rejects encoded requests before any decompression stream is created.",
+      "reported_by": null,
+      "title": "body-parser vulnerable to Denial of Service via trailing bytes after a compressed request body",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-111181"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "body-parser",
+      "vulnerable_versions": ">=2.0.0 <2.4.0",
+      "github_advisory_id": "GHSA-27r3-jxmh-p828",
+      "recommendation": "Upgrade to version 2.4.0 or later",
+      "patched_versions": ">=2.4.0",
+      "updated": "2026-10-23T20:53:12.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-248"
+      ],
+      "url": "https://github.com/advisories/GHSA-27r3-jxmh-p828"
+    },
+    "1243083": {
+      "findings": [
+        {
+          "version": "2.4.0",
+          "paths": [
+            "apps/ai-gateway > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/ai-gateway > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/ai-gateway > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/platform-express@11.1.27 > multer@2.4.0",
+            "apps/api > @nestjs/swagger@11.4.4 > @nestjs/core@11.1.27 > @nestjs/platform-express@11.1.27 > multer@2.4.0"
+          ]
+        }
+      ],
+      "found_by": null,
+      "deleted": null,
+      "references": "- https://github.com/expressjs/multer/security/advisories/GHSA-q7qp-rjg7-q26m\n- https://nvd.nist.gov/vuln/detail/CVE-2026-113872\n- https://github.com/expressjs/multer/commit/80a2d9df1dfd63b5fab631b8b9966164ed647adf\n- https://cna.openjsf.org/security-advisories.html\n- https://github.com/expressjs/multer/releases/tag/v2.5.0\n- https://github.com/advisories/GHSA-q7qp-rjg7-q26m",
+      "created": "2026-10-23T22:08:22.000Z",
+      "id": 1243083,
+      "npm_advisory_id": null,
+      "overview": "### Impact\n\nWhen `multer` is configured with an asynchronous `fileFilter`, a single request can crash the Node.js process. If a request is aborted (for example when one file is rejected) while another file's async `fileFilter` is still pending, the pending callback later resumes a parsing stream that multer has already torn down. busboy then emits an error on a stream that no longer has an error listener, which Node raises as an unhandled `'error'` event, and the process exits. A single unauthenticated request is enough, so any application using `multer` with an asynchronous `fileFilter` is affected, regardless of storage engine. Uploads using a synchronous `fileFilter` are not affected.\n\n### Patches\n\nUsers should upgrade to `multer` `2.5.0` or later.\n\n### Workarounds\n\nUse a synchronous `fileFilter`.",
+      "reported_by": null,
+      "title": "multer vulnerable to Denial of Service via a pending asynchronous fileFilter after request teardown",
+      "metadata": null,
+      "cves": [
+        "CVE-2026-113872"
+      ],
+      "access": "public",
+      "severity": "high",
+      "module_name": "multer",
+      "vulnerable_versions": ">=2.0.0 <2.5.0",
+      "github_advisory_id": "GHSA-q7qp-rjg7-q26m",
+      "recommendation": "Upgrade to version 2.5.0 or later",
+      "patched_versions": ">=2.5.0",
+      "updated": "2026-10-23T22:08:22.000Z",
+      "cvss": {
+        "score": 7.5,
+        "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+      },
+      "cwe": [
+        "CWE-248",
+        "CWE-404"
+      ],
+      "url": "https://github.com/advisories/GHSA-q7qp-rjg7-q26m"
+    }
+  },
+  "muted": [],
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 7,
+      "critical": 4
+    },
+    "dependencies": 892,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 892
+  }
+}

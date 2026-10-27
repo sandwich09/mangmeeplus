@@ -1,0 +1,411 @@
+{
+  "status": "pass",
+  "base": "http://127.0.0.1:43841",
+  "results": [
+    {
+      "viewport": "360x800",
+      "shareActions": [
+        {
+          "width": 310,
+          "height": 48
+        },
+        {
+          "width": 310,
+          "height": 48
+        },
+        {
+          "width": 310,
+          "height": 48
+        }
+      ],
+      "resultActions": [
+        {
+          "width": 310,
+          "height": 44
+        },
+        {
+          "width": 310,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "viewport": "390x844",
+      "shareActions": [
+        {
+          "width": 330,
+          "height": 48
+        },
+        {
+          "width": 330,
+          "height": 48
+        },
+        {
+          "width": 330,
+          "height": 48
+        }
+      ],
+      "resultActions": [
+        {
+          "width": 330,
+          "height": 44
+        },
+        {
+          "width": 330,
+          "height": 44
+        }
+      ]
+    },
+    {
+      "viewport": "1280x900",
+      "shareActions": [
+        {
+          "width": 510,
+          "height": 48
+        },
+        {
+          "width": 510,
+          "height": 48
+        },
+        {
+          "width": 510,
+          "height": 48
+        }
+      ],
+      "resultActions": [
+        {
+          "width": 251,
+          "height": 40
+        },
+        {
+          "width": 251,
+          "height": 40
+        }
+      ]
+    },
+    {
+      "viewport": "812x375",
+      "shareActions": [
+        {
+          "width": 382,
+          "height": 48
+        },
+        {
+          "width": 382,
+          "height": 48
+        },
+        {
+          "width": 382,
+          "height": 48
+        }
+      ],
+      "resultActions": [
+        {
+          "width": 187,
+          "height": 40
+        },
+        {
+          "width": 187,
+          "height": 40
+        }
+      ]
+    },
+    {
+      "exported": {
+        "title": "การ์ดของกระสือ",
+        "text": "กระสือ · สายล่องลอย\nตัวไม่อยู่…\nแต่ความน่ารักอยู่ครบ\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+        "url": "https://mangmeeplus.com",
+        "files": [
+          {
+            "name": "mangmee-01-krasue-story-9x16.jpg",
+            "type": "image/jpeg",
+            "size": 412359,
+            "width": 1080,
+            "height": 1920
+          }
+        ]
+      },
+      "savedOriginal": {
+        "name": "mangmee-01-krasue.png",
+        "width": 1122,
+        "height": 1402,
+        "byteIdentical": true
+      }
+    },
+    {
+      "share": "native story payload, download, cancellation, failure, absence, clipboard and manual fallback preserve result"
+    },
+    {
+      "retry": "failed image reload preserves result, replay draws independently"
+    },
+    {
+      "theme": "thai",
+      "card": "01-krasue",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 4.549333333333333,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 4.512,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.07414104044437408
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "theme": "western",
+      "card": "09-dracula",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 4.549333333333333,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 4.512,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.08215805888175964
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "theme": "japanese",
+      "card": "14-sadako",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 4.549333333333333,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 4.512,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.05842527002096176
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "theme": "chinese",
+      "card": "19-jiangshi",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 4.549333333333333,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 4.506666666666667,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.06518781185150146
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "theme": "korean",
+      "card": "21-chonggak-gwishin",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 4.549333333333333,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 4.512,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.08493243157863617
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "theme": "secret",
+      "card": "23-mangmee-secret",
+      "audio": [
+        {
+          "state": "running",
+          "currentTime": 7.610666666666667,
+          "closes": 0,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 0,
+              "loop": true,
+              "peak": 1
+            }
+          ],
+          "gains": [
+            0.05999999865889549
+          ]
+        },
+        {
+          "state": "closed",
+          "currentTime": 7.52,
+          "closes": 1,
+          "sources": [
+            {
+              "method": "createBufferSource",
+              "starts": 1,
+              "stops": 0,
+              "disconnects": 1,
+              "loop": false,
+              "peak": 0.08273028582334518
+            }
+          ],
+          "gains": []
+        }
+      ]
+    },
+    {
+      "audioVisibility": "real contexts suspend/resume on synthetic document visibility events; closed contexts never revive"
+    },
+    {
+      "timedBucket": 10,
+      "elapsed": 4587
+    },
+    {
+      "timedBucket": 0,
+      "elapsed": 7600
+    },
+    {
+      "modal": "keyboard containment includes social icons and manual copy, Escape restores focus, audio and URLs cleaned"
+    },
+    {
+      "lifecycle": "close during drawing cancels stale reveal; reopen resets; back and other doors remain usable"
+    },
+    {
+      "motion": "reduced motion and existing event pause reveal promptly"
+    },
+    {
+      "invalidCard": "404 UI + noindex; Next streamed notFound response uses HTTP 200"
+    },
+    {
+      "themeGate": "off/unknown themes hide entry and block game, ordinary and secret URLs; unavailable server theme fails closed; no game audio created"
+    }
+  ],
+  "errors": [],
+  "backend": [],
+  "audioLimit": "Inspected real Web Audio context/source signal and cleanup in headless Chrome; no physical speaker listening claim."
+}

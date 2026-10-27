@@ -1,0 +1,21 @@
+HEAD 86e0e4736 tree e9a0ecaed 02:42
+contracts-build GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-contracts-build.log
+prisma-validate GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-prisma-validate.log
+prisma-generate GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-prisma-generate.log
+migration-review GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-migration-review.log
+pins GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-pins.log
+di-metadata GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-di-metadata.log
+tsc GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-tsc.log
+typecheck-others GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-typecheck-others.log
+contracts-test GREEN tests=487 pass=487 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-contracts-test.log
+web-test RED tests=5078 pass=5077 fail=1 skipped=0 first=not ok 86 - feature UI does not display caught Error.message without a reviewed renderer rc=1 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-web-test.log
+loading-audit GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-loading-audit.log
+api-test GREEN tests=12363 pass=12163 fail=0 skipped=200 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-api-test.log
+harness GREEN tests=33 pass=33 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-harness.log
+whole-chain GREEN tests=5166 pass=5166 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-whole-chain.log
+m01 GREEN tests=109 pass=109 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-m01.log
+p1 GREEN tests=30 pass=30 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-p1.log
+ai-gateway-test GREEN tests=2583 pass=2583 fail=0 skipped=0 rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-ai-gateway-test.log
+pins-validator-spec GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-pins-validator-spec.log
+pins-sync-spec GREEN tests=n/a rc=0 log=/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/.local-proof/logs/halloween-release-20261028-pins-sync-spec.log
+DONE 02:44

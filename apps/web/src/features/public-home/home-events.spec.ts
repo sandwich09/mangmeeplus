@@ -18,21 +18,37 @@ test('event selection accepts registered IDs and falls back safely for missing, 
 test('seasonal decoration preserves all content and links, and default mounts no event artwork', () => {
   const normal = renderToStaticMarkup(React.createElement(PublicHome));
   const themed = renderToStaticMarkup(React.createElement(PublicHome, { event: 'halloween' }));
-  assert.doesNotMatch(normal, /data-event-art|\/home\/events\/|home-event-tools|data-home-event/);
+  assert.doesNotMatch(normal, /data-event-art|\/home\/events\/|home-event-tools|data-home-event|data-halloween-activity/);
   assert.match(themed, /data-home-event="halloween"/);
   assert.match(themed, /data-home-palette="plum"/);
   assert.match(themed, /home-event-middle/);
   const text = (html: string) => html.replace(/<[^>]*>/g, '');
-  assert.equal(text(themed), text(normal));
+  assert.match(themed, /data-halloween-activity=""/);
+  const withoutActivity = (html: string) => {
+    const start = html.search(/<[a-z][\w:-]*\b[^>]*\bdata-halloween-activity=""/i);
+    if (start < 0) return html;
+    const tag = html.slice(start + 1).match(/^[a-z][\w:-]*/i)![0];
+    const tags = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi');
+    tags.lastIndex = start;
+    let depth = 0;
+    let match: RegExpExecArray | null;
+    while ((match = tags.exec(html))) {
+      if (match[0].startsWith('</')) depth--;
+      else if (!match[0].endsWith('/>')) depth++;
+      if (depth === 0) return `${html.slice(0, start)}${html.slice(tags.lastIndex)}`;
+    }
+    assert.fail('Halloween activity wrapper was not closed');
+  };
+  assert.equal(text(withoutActivity(themed)), text(normal));
   for (const palette of ['pumpkin', 'plum'] as const) {
     const variant = renderToStaticMarkup(React.createElement(PublicHome, { event: 'halloween', palette }));
     assert.match(variant, new RegExp(`data-home-palette="${palette}"`));
-    assert.equal(text(variant), text(normal));
+    assert.equal(text(withoutActivity(variant)), text(normal));
     assert.equal(renderToStaticMarkup(React.createElement(PublicHome, { palette })), normal);
   }
   const links = (html: string) => [...html.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1]);
   assert.deepEqual(links(themed), links(normal));
-  const images = [...themed.matchAll(/<img\b[^>]*src="(\/home\/events\/[^" ]+)"[^>]*>/g)];
+  const images = [...withoutActivity(themed).matchAll(/<img\b[^>]*src="(\/home\/events\/[^" ]+)"[^>]*>/g)];
   assert.equal(images.length, 7);
   for (const [markup, path] of images) {
     assert.match(markup, /alt=""/);

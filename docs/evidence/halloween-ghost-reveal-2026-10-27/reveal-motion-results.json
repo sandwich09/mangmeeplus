@@ -1,0 +1,317 @@
+{
+  "status": "pass",
+  "results": [
+    {
+      "engine": "chromium",
+      "width": 390,
+      "region": "thai",
+      "elapsed": 4546,
+      "observedTurns": 5.500000000000001,
+      "sampledFrames": 541,
+      "frames": [
+        {
+          "m11": 0.916372,
+          "m13": 0,
+          "transform": "matrix(0.916372, 0, 0, 0.916372, 0, -2.56561)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 549.8799999973736,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 610
+        },
+        {
+          "m11": -0.50636,
+          "m13": -0.877749,
+          "transform": "matrix3d(-0.50636, 0, -0.877749, 0, 0, 1.01333, 0, 0, 0.8662, 0, -0.499698, 0, 0, -8, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 2099.979999997374,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 2154
+        },
+        {
+          "m11": -1.04,
+          "m13": 0,
+          "transform": "matrix3d(-1.04, 0, 0, 0, 0, 1.04, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 3799.8799999973735,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 3854
+        }
+      ]
+    },
+    {
+      "engine": "chromium",
+      "width": 390,
+      "region": "secret",
+      "elapsed": 7556,
+      "observedTurns": 8.500000000000002,
+      "sampledFrames": 899,
+      "frames": [
+        {
+          "m11": 0.891175,
+          "m13": 0,
+          "transform": "matrix(0.891175, 0, 0, 0.891175, 0, 1.32375)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 940.2419999966862,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 1008
+        },
+        {
+          "m11": 1.00475,
+          "m13": 0.267386,
+          "transform": "matrix3d(1.00475, 0, 0.267386, 0, 0, 1.03972, 0, 0, -0.25717, 0, 0.966366, 0, 0, -9, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 4333.441999996686,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 4404
+        },
+        {
+          "m11": -1.08,
+          "m13": 0,
+          "transform": "matrix3d(-1.08, 0, 0, 0, 0, 1.08, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 6790.241999996686,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 6854
+        }
+      ]
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "region": "thai",
+      "elapsed": 4598,
+      "observedTurns": 5.499999999999999,
+      "sampledFrames": 257,
+      "frames": [
+        {
+          "m11": 0.91057,
+          "m13": 0,
+          "transform": "matrix(0.91057, 0, 0, 0.91057, 0, -1.23113)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 508.10500000880586,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 609
+        },
+        {
+          "m11": 0.608649,
+          "m13": -0.807851,
+          "transform": "matrix3d(0.608649, 0, -0.807851, 0, 0, 1.01147, 0, 0, 0.798688, 0, 0.601745, 0, 0, -8, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 2033.0050000088056,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 2153
+        },
+        {
+          "m11": -1.04,
+          "m13": 0,
+          "transform": "matrix3d(-1.04, 0, 0, 0, 0, 1.04, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 3749.8050000088056,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 3855
+        }
+      ]
+    },
+    {
+      "engine": "chromium",
+      "width": 1280,
+      "region": "secret",
+      "elapsed": 7602,
+      "observedTurns": 8.499999999999998,
+      "sampledFrames": 403,
+      "frames": [
+        {
+          "m11": 0.887272,
+          "m13": 0,
+          "transform": "matrix(0.887272, 0, 0, 0.887272, 0, 1.90922)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 899.9909999893747,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 1007
+        },
+        {
+          "m11": 0.734698,
+          "m13": 0.734906,
+          "transform": "matrix3d(0.734698, 0, 0.734906, 0, 0, 1.03917, 0, 0, -0.707207, 0, 0.707007, 0, 0, -9, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 4299.990999989374,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 4403
+        },
+        {
+          "m11": -1.08,
+          "m13": 0,
+          "transform": "matrix3d(-1.08, 0, 0, 0, 0, 1.08, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 6725.090999989375,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 6853
+        }
+      ]
+    },
+    {
+      "engine": "webkit-iphone",
+      "width": 390,
+      "region": "thai",
+      "elapsed": 4737,
+      "observedTurns": 4.5000000000000036,
+      "sampledFrames": 231,
+      "frames": [
+        {
+          "m11": 0.891667,
+          "m13": 0,
+          "transform": "matrix(0.891667, 0, 0, 0.891667, 0, 3.116667)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 372,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 621
+        },
+        {
+          "m11": 0.534365,
+          "m13": 0.855162,
+          "transform": "matrix3d(0.534365, 0, 0.855162, 0, 0, 1.008389, 0, 0, -0.848048, 0, 0.529919, 0, 0, -8, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 1922,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 2158
+        },
+        {
+          "m11": -1.04,
+          "m13": 0,
+          "transform": "matrix3d(-1.04, 0, 0, 0, 0, 1.04, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-card-open",
+          "animationTime": 3623,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/01-krasue.png",
+          "phase": "drawing",
+          "elapsed": 3857
+        }
+      ]
+    },
+    {
+      "engine": "webkit-iphone",
+      "width": 390,
+      "region": "secret",
+      "elapsed": 7977,
+      "observedTurns": 7.500000000000008,
+      "sampledFrames": 401,
+      "frames": [
+        {
+          "m11": 0.852267,
+          "m13": 0,
+          "transform": "matrix(0.852267, 0, 0, 0.852267, 0, 7.16)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 539,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 1018
+        },
+        {
+          "m11": 1.014834,
+          "m13": 0.19359,
+          "transform": "matrix3d(1.014834, 0, 0.19359, 0, 0, 1.033133, 0, 0, -0.187381, 0, 0.982287, 0, 0, -9, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 3938,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 4414
+        },
+        {
+          "m11": -1.073885,
+          "m13": -0.114765,
+          "transform": "matrix3d(-1.073885, 0, -0.114765, 0, 0, 1.08, 0, 0, 0.106264, 0, -0.994338, 0, 0, -0.203333, 0, 1)",
+          "transformStyle": "preserve-3d",
+          "animation": "halloween-secret-card-open",
+          "animationTime": 6389,
+          "frontBackface": "hidden",
+          "blur": "none",
+          "loaded": true,
+          "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+          "phase": "drawing",
+          "elapsed": 6864
+        }
+      ]
+    }
+  ]
+}

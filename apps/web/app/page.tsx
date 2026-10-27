@@ -6,6 +6,9 @@ import '@/features/public-home/public-home.css';
 import { resolveHomeEventPalette } from '@/features/public-home/HomeEventTheme';
 import { homeThemeForRequest } from '@/features/public-home/home-theme.server';
 import '@/features/public-home/home-events.css';
+import '@/features/public-home/home-halloween-activities.css';
+import '@/features/public-home/home-halloween-game.css';
+import '@/features/public-home/home-halloween-share.css';
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE }, description: HOME_DESCRIPTION,

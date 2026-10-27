@@ -1,7 +1,7 @@
 import { resolveHomeEvent, type HomeEvent } from '@watchdog-bms/contracts';
 import { internalApiV1Base } from '../../common/api/internal-api-base';
 
-/** Only the homepage server route reads this. No browser storage or cross-request cache. */
+/** Shared server theme for the homepage and seasonal activity routes. No browser storage or cross-request cache. */
 export async function homeThemeForRequest(
   params: Record<string, string | string[] | undefined>,
   environment: string | undefined,

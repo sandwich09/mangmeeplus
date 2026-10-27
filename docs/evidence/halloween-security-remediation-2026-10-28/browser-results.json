@@ -1,0 +1,49 @@
+{
+  "browser": "Codex IAB local preview; not physical iPhone/Android",
+  "phone": {
+    "actions": [
+      {
+        "disabled": false,
+        "label": "แชร์ภาพ"
+      },
+      {
+        "disabled": false,
+        "label": "บันทึกภาพ"
+      },
+      {
+        "disabled": false,
+        "label": "คัดลอกข้อความและลิงก์"
+      }
+    ],
+    "card": "17-turbo-granny",
+    "loading": false,
+    "overflow": false,
+    "phase": "revealed",
+    "quote": "ไม่ได้รีบไปเกิด\nรีบไปเผือก",
+    "width": 390
+  },
+  "wide": {
+    "image": "/home/events/halloween/cards/17-turbo-granny.png",
+    "overflow": false,
+    "phase": "revealed",
+    "width": 1280
+  },
+  "caption": "ยายสปีด · สายซิ่งไม่พัก\nไม่ได้รีบไปเกิด\nรีบไปเผือก\nhttps://mangmeeplus.com\nLINE https://line.me/R/ti/p/@mangmeeplus",
+  "download": "/Users/thawatchai/Downloads/mangmee-17-turbo-granny.png",
+  "themeOff": {
+    "entry": false,
+    "game": false,
+    "url": "http://127.0.0.1:43841/?preview=events&event=default&palette=plum"
+  },
+  "themeOffDirectRoute": {
+    "game": false,
+    "heading": "ไม่พบหน้านี้"
+  },
+  "sharedRoute": {
+    "heading": "ฮาโลวีนนี้ คุณจะเป็นผีอะไร?",
+    "image": "/home/events/halloween/cards/14-pancake.png",
+    "loading": false,
+    "overflow": false
+  },
+  "socialPosting": false
+}

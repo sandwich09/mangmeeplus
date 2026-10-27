@@ -5,6 +5,7 @@ import { HomeReceiptStory } from './HomeReceiptStory';
 import { HOME_FAQ, HOME_JSON_LD } from './home-content';
 import { DEFAULT_HOME_EVENT_PALETTE, HomeEventArtwork, HomeEventPreviewTools, type HomeEvent, type HomeEventPalette } from './HomeEventTheme';
 import { HomeEventEffects } from './HomeEventEffects';
+import { HomeHalloweenActivities } from './HomeHalloweenActivities';
 
 function HomeFaq() { return <div className="faq">{HOME_FAQ.map(item => <details key={item.question}><summary>{item.question}</summary><p>{item.answer}</p></details>)}</div>; }
 
@@ -49,6 +50,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <a className="btn btn-soft btn-lg" href="#pricing">ดูราคา</a>
 </div>
 <p className="after"><span className="free">เปิดร้านฟรี</span> <span className="nw">ไม่ต้องใส่บัตร</span><br />กดแล้วเข้า LINE ใส่ชื่อร้านกับ<span className="nw">เบอร์มือถือ</span> พร้อมใช้เมื่อเลือกและจ่าย<span className="nw">แพ็กเกจ</span> เริ่ม<span className="mangmee-unit">เดือนละ 249 บาท</span></p>
+{event === 'halloween' && <HomeHalloweenActivities />}
 </div>
 <div className="w">
 <figure className="stage">

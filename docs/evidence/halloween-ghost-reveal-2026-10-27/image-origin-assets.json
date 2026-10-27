@@ -1,0 +1,407 @@
+{
+  "status": "pass",
+  "count": 25,
+  "allOriginalPixelsAndChunksUnchanged": true,
+  "assets": [
+    {
+      "source": "output/halloween-ghost-cards/cards/06-pop.png",
+      "public": "apps/web/public/home/events/halloween/cards/06-pop.png",
+      "sha256": "9fcde010a330523d85f5fc87387a9fb3757606c2afbc72d2104d81b35fc46e1b",
+      "sourceSha256": "9fcde010a330523d85f5fc87387a9fb3757606c2afbc72d2104d81b35fc46e1b",
+      "publicSha256": "718551f3784b89bcb8158d298065208cac6a70a03306a18d75948d45579aeca3",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "06-pop",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/03-mae-nak.png",
+      "public": "apps/web/public/home/events/halloween/cards/03-mae-nak.png",
+      "sha256": "f353e877985355d5dff64fbeb1dd64e5237dfdf171236de990dc2b2a90a5318f",
+      "sourceSha256": "f353e877985355d5dff64fbeb1dd64e5237dfdf171236de990dc2b2a90a5318f",
+      "publicSha256": "1adaf9ec5b76de6b3220fc669c362e04faf688e81c245e496b2039a6a5a8f703",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "03-mae-nak",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/02-krahang.png",
+      "public": "apps/web/public/home/events/halloween/cards/02-krahang.png",
+      "sha256": "30120bda86ede8a4a0227a55ffc48043d004ef8605fda9f4c1f42acaf2f056c1",
+      "sourceSha256": "30120bda86ede8a4a0227a55ffc48043d004ef8605fda9f4c1f42acaf2f056c1",
+      "publicSha256": "798034cbb0a036131b72c10e3f5450f1ead6eab9a2ce91655e20cd980adca02c",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "02-krahang",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/05-nang-takhian.png",
+      "public": "apps/web/public/home/events/halloween/cards/05-nang-takhian.png",
+      "sha256": "3189feb8c123696eb16e2314bc7aee54cb1f6045e72a0e7eaf94fb295ecc1107",
+      "sourceSha256": "3189feb8c123696eb16e2314bc7aee54cb1f6045e72a0e7eaf94fb295ecc1107",
+      "publicSha256": "1472d973e38b8ecba6428619444878c8e5672e6f147560983baf5d9c9d7691b9",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "05-nang-takhian",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/17-turbo-granny.png",
+      "public": "apps/web/public/home/events/halloween/cards/17-turbo-granny.png",
+      "sha256": "51bc69134779b3557c078b9c1eca6f23b10aaa445f9c06636215165747108692",
+      "sourceSha256": "51bc69134779b3557c078b9c1eca6f23b10aaa445f9c06636215165747108692",
+      "publicSha256": "e3dde617dbfeb2cb19e8741ca838ecda2370ef4c95c4a90059980c7c88c3b99a",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "17-turbo-granny",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/12-mummy.png",
+      "public": "apps/web/public/home/events/halloween/cards/12-mummy.png",
+      "sha256": "a723f3cb8ee4484a384e305110af01ec4a9177c0c26369cedca6db40a3633fa1",
+      "sourceSha256": "a723f3cb8ee4484a384e305110af01ec4a9177c0c26369cedca6db40a3633fa1",
+      "publicSha256": "47375790ec8abd26c16ccc13efd91b6deb2ecf2c4f9ba1b4ffead7e26700a41e",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "12-mummy",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/14-sadako.png",
+      "public": "apps/web/public/home/events/halloween/cards/14-sadako.png",
+      "sha256": "ddfcce74efac5476f9738fdd47c6d0e5b922a9d1822bb48bd8a1777572cd733d",
+      "sourceSha256": "ddfcce74efac5476f9738fdd47c6d0e5b922a9d1822bb48bd8a1777572cd733d",
+      "publicSha256": "8b29016b712eac373cf349bd5d48109638a794d42d70804a3099f0293d43eb30",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "14-sadako",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/04-nang-tani.png",
+      "public": "apps/web/public/home/events/halloween/cards/04-nang-tani.png",
+      "sha256": "dcf5c8b18fe3f740fb3d3c69c855a17ab6c3ac7cbaa6e61b7e7d489220f1f904",
+      "sourceSha256": "dcf5c8b18fe3f740fb3d3c69c855a17ab6c3ac7cbaa6e61b7e7d489220f1f904",
+      "publicSha256": "76b86477f92a0fdfefd82eac77acf6f54021fed6e736b1706dac018fa1ee1a29",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "04-nang-tani",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/16-nine-tailed-fox.png",
+      "public": "apps/web/public/home/events/halloween/cards/16-nine-tailed-fox.png",
+      "sha256": "23ef59ea17651c02b10f3b4b6289f4b5cdf54b63c42c67faf0fa42598e6d9679",
+      "sourceSha256": "23ef59ea17651c02b10f3b4b6289f4b5cdf54b63c42c67faf0fa42598e6d9679",
+      "publicSha256": "a44828bc861fa4606e1870576c0d9fac1e0e9dc49427bc71f279beffd06ee500",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "16-nine-tailed-fox",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/08-kuman-thong.png",
+      "public": "apps/web/public/home/events/halloween/cards/08-kuman-thong.png",
+      "sha256": "8818239a8deed45533648ff009ae45d1e8025c414bf21490d945cab4e7fa8401",
+      "sourceSha256": "8818239a8deed45533648ff009ae45d1e8025c414bf21490d945cab4e7fa8401",
+      "publicSha256": "ae3f83fca5898d5523afaa7b97caf149bdda841db226fc9072273f57417e1bfb",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "08-kuman-thong",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/15-yuki-onna.png",
+      "public": "apps/web/public/home/events/halloween/cards/15-yuki-onna.png",
+      "sha256": "b4d76e29d34cf5c222b8af41ba4c1b45a7ec7060a46b5f71a03820638e086ba8",
+      "sourceSha256": "b4d76e29d34cf5c222b8af41ba4c1b45a7ec7060a46b5f71a03820638e086ba8",
+      "publicSha256": "8cf46349a873f5834436e25625032a8eb4909effe6c073c8902bbaa8cdd43476",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "15-yuki-onna",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/10-werewolf.png",
+      "public": "apps/web/public/home/events/halloween/cards/10-werewolf.png",
+      "sha256": "f4402beea92262dec8b04f358646baf1d49f63304fcf97f85cc915540079d049",
+      "sourceSha256": "f4402beea92262dec8b04f358646baf1d49f63304fcf97f85cc915540079d049",
+      "publicSha256": "8ee6ee180f83f1e43cf4e3fe232c307fd21bbf10fed2725ba231bc5e9ab1da42",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "10-werewolf",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/21-chonggak-gwishin.png",
+      "public": "apps/web/public/home/events/halloween/cards/21-chonggak-gwishin.png",
+      "sha256": "af0e9804a26c2310bb594154aae6e97fd2352f54daa9d6dcb362bcae6995d922",
+      "sourceSha256": "af0e9804a26c2310bb594154aae6e97fd2352f54daa9d6dcb362bcae6995d922",
+      "publicSha256": "227b221a46993a5c1314a67cb104696790e341a2977a729b5e0df62cd29e4e85",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "21-chonggak-gwishin",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/22-cheonyeo-gwishin.png",
+      "public": "apps/web/public/home/events/halloween/cards/22-cheonyeo-gwishin.png",
+      "sha256": "f37907cfbbd12fd3c8e5a50b6c665dc4c1e9e907c9205fe210c88a39fdcf5a6d",
+      "sourceSha256": "f37907cfbbd12fd3c8e5a50b6c665dc4c1e9e907c9205fe210c88a39fdcf5a6d",
+      "publicSha256": "af771cf044f3b6399d67b53bb674c4bccda27d22991c8cc10614c950c9a099ed",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "22-cheonyeo-gwishin",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/01-krasue.png",
+      "public": "apps/web/public/home/events/halloween/cards/01-krasue.png",
+      "sha256": "e48c95d67b3cc536d1be33e4179449aea3a48a8ebb16c4ccd761d35e06023864",
+      "sourceSha256": "e48c95d67b3cc536d1be33e4179449aea3a48a8ebb16c4ccd761d35e06023864",
+      "publicSha256": "470ba11d58049641640d87336bb03d4a269fa3ba9b181cf9f29288784399a0f9",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "01-krasue",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/19-jiangshi.png",
+      "public": "apps/web/public/home/events/halloween/cards/19-jiangshi.png",
+      "sha256": "70dba49445b743878d923aab9030a49ee9a67b8abe279c2f9ffc788df43fea0f",
+      "sourceSha256": "70dba49445b743878d923aab9030a49ee9a67b8abe279c2f9ffc788df43fea0f",
+      "publicSha256": "4b0923b2caa1e82dbfed28d5d6e1b5ccdc9cce64deb9d861032722542c8225f8",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "19-jiangshi",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/11-zombie.png",
+      "public": "apps/web/public/home/events/halloween/cards/11-zombie.png",
+      "sha256": "13e429ab28e98f1ab9186e8bc66cc416930f1cf538db5fa69d39a8992a8528dc",
+      "sourceSha256": "13e429ab28e98f1ab9186e8bc66cc416930f1cf538db5fa69d39a8992a8528dc",
+      "publicSha256": "9495824fb420c7d65ade83eb3d3a7fdd41682b602223c073d1a2dd438c889c12",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "11-zombie",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/07-pret.png",
+      "public": "apps/web/public/home/events/halloween/cards/07-pret.png",
+      "sha256": "f997918ca5668a84b7423bf7c4f7c17a3695da3ff6288bbc848343b1e4fe152f",
+      "sourceSha256": "f997918ca5668a84b7423bf7c4f7c17a3695da3ff6288bbc848343b1e4fe152f",
+      "publicSha256": "44da071ae7e11bd68679230a4bee4351418f99e04a2076a72d8887778f8fde39",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "07-pret",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/20-red-bride.png",
+      "public": "apps/web/public/home/events/halloween/cards/20-red-bride.png",
+      "sha256": "8526fba421c24916df5e5cc15296c9d26b4d8efcfed64cce242f4b04696196a9",
+      "sourceSha256": "8526fba421c24916df5e5cc15296c9d26b4d8efcfed64cce242f4b04696196a9",
+      "publicSha256": "bb42da7a1d95c8e8950e110be5a1514d41ae388edbd7527352644507e9a90cb0",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "20-red-bride",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/18-kappa.png",
+      "public": "apps/web/public/home/events/halloween/cards/18-kappa.png",
+      "sha256": "211af7e9031d0cfd7c5b5b29a05b874ead5bb119a0881e7feae4e8bbd97a461b",
+      "sourceSha256": "211af7e9031d0cfd7c5b5b29a05b874ead5bb119a0881e7feae4e8bbd97a461b",
+      "publicSha256": "e1cd1009e0aafed794fcc69d5560911abb969f5ea346712d595a32232fef2393",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "18-kappa",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/13-frankenstein.png",
+      "public": "apps/web/public/home/events/halloween/cards/13-frankenstein.png",
+      "sha256": "d9d86593c9c0a2a9b1c24df206bc6843c4e5ee165fde6babaf28c9b31556de14",
+      "sourceSha256": "d9d86593c9c0a2a9b1c24df206bc6843c4e5ee165fde6babaf28c9b31556de14",
+      "publicSha256": "1f1cdfb507019c62bb08fe25272a7d280bed5b5ef63d4d23b0d3045422c18915",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "13-frankenstein",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/cards/09-dracula.png",
+      "public": "apps/web/public/home/events/halloween/cards/09-dracula.png",
+      "sha256": "eccfef69077c7735f6a3fd3cd5501242820587cfe1bcdfad6af4af34a3f23256",
+      "sourceSha256": "eccfef69077c7735f6a3fd3cd5501242820587cfe1bcdfad6af4af34a3f23256",
+      "publicSha256": "fd57c45585c00bd8b5a0490c28f0dcd23629d2d8fbfd2f48c3de636698664ee6",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "09-dracula",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/secret/01-mangmee-pumpkin-wizard.png",
+      "public": "apps/web/public/home/events/halloween/cards/23-mangmee-secret.png",
+      "sha256": "5306198921786373f275282dd9623b29c6c287995bdd30944af531d18627294b",
+      "sourceSha256": "5306198921786373f275282dd9623b29c6c287995bdd30944af531d18627294b",
+      "publicSha256": "c49b02f560486573fd3b9644f11c1a90c778b2bbfc956fce34cca656631fa76b",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "23-mangmee-secret",
+        "variant": "card"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/backs/01-standard-card-back.png",
+      "public": "apps/web/public/home/events/halloween/cards/back-standard.png",
+      "sha256": "f31dbc50a3d063b738e9ef1170430d84c0353008f0adf931359d84823bbc385b",
+      "sourceSha256": "f31dbc50a3d063b738e9ef1170430d84c0353008f0adf931359d84823bbc385b",
+      "publicSha256": "12ef2f403816ec0002f180d78dc5c12c4e3023d150bb6f662e404ae1c7345a9c",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "back-standard",
+        "variant": "back"
+      }
+    },
+    {
+      "source": "output/halloween-ghost-cards/backs/02-secret-card-back.png",
+      "public": "apps/web/public/home/events/halloween/cards/back-secret.png",
+      "sha256": "f663c2277af67e254cf15f7a8a31b8b2fcef89cbe6b26a2bcdc1e5255d32282c",
+      "sourceSha256": "f663c2277af67e254cf15f7a8a31b8b2fcef89cbe6b26a2bcdc1e5255d32282c",
+      "publicSha256": "9416e645ef1869e9e0ea2a4ad1698e56359f127ed38c76045da2f1e69c9dda27",
+      "sourceOriginalUnchanged": true,
+      "nonMarkerBytesIdentical": true,
+      "metadata": {
+        "version": 1,
+        "source": "https://mangmeeplus.com",
+        "event": "halloween",
+        "cardId": "back-secret",
+        "variant": "back"
+      }
+    }
+  ]
+}

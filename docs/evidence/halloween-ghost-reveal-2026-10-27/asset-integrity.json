@@ -1,0 +1,127 @@
+[
+  {
+    "source": "output/halloween-ghost-cards/cards/06-pop.png",
+    "public": "apps/web/public/home/events/halloween/cards/06-pop.png",
+    "sha256": "9fcde010a330523d85f5fc87387a9fb3757606c2afbc72d2104d81b35fc46e1b"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/03-mae-nak.png",
+    "public": "apps/web/public/home/events/halloween/cards/03-mae-nak.png",
+    "sha256": "f353e877985355d5dff64fbeb1dd64e5237dfdf171236de990dc2b2a90a5318f"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/02-krahang.png",
+    "public": "apps/web/public/home/events/halloween/cards/02-krahang.png",
+    "sha256": "30120bda86ede8a4a0227a55ffc48043d004ef8605fda9f4c1f42acaf2f056c1"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/05-nang-takhian.png",
+    "public": "apps/web/public/home/events/halloween/cards/05-nang-takhian.png",
+    "sha256": "3189feb8c123696eb16e2314bc7aee54cb1f6045e72a0e7eaf94fb295ecc1107"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/17-turbo-granny.png",
+    "public": "apps/web/public/home/events/halloween/cards/17-turbo-granny.png",
+    "sha256": "51bc69134779b3557c078b9c1eca6f23b10aaa445f9c06636215165747108692"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/12-mummy.png",
+    "public": "apps/web/public/home/events/halloween/cards/12-mummy.png",
+    "sha256": "a723f3cb8ee4484a384e305110af01ec4a9177c0c26369cedca6db40a3633fa1"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/14-sadako.png",
+    "public": "apps/web/public/home/events/halloween/cards/14-sadako.png",
+    "sha256": "ddfcce74efac5476f9738fdd47c6d0e5b922a9d1822bb48bd8a1777572cd733d"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/04-nang-tani.png",
+    "public": "apps/web/public/home/events/halloween/cards/04-nang-tani.png",
+    "sha256": "dcf5c8b18fe3f740fb3d3c69c855a17ab6c3ac7cbaa6e61b7e7d489220f1f904"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/16-nine-tailed-fox.png",
+    "public": "apps/web/public/home/events/halloween/cards/16-nine-tailed-fox.png",
+    "sha256": "23ef59ea17651c02b10f3b4b6289f4b5cdf54b63c42c67faf0fa42598e6d9679"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/08-kuman-thong.png",
+    "public": "apps/web/public/home/events/halloween/cards/08-kuman-thong.png",
+    "sha256": "8818239a8deed45533648ff009ae45d1e8025c414bf21490d945cab4e7fa8401"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/15-yuki-onna.png",
+    "public": "apps/web/public/home/events/halloween/cards/15-yuki-onna.png",
+    "sha256": "b4d76e29d34cf5c222b8af41ba4c1b45a7ec7060a46b5f71a03820638e086ba8"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/10-werewolf.png",
+    "public": "apps/web/public/home/events/halloween/cards/10-werewolf.png",
+    "sha256": "f4402beea92262dec8b04f358646baf1d49f63304fcf97f85cc915540079d049"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/21-chonggak-gwishin.png",
+    "public": "apps/web/public/home/events/halloween/cards/21-chonggak-gwishin.png",
+    "sha256": "af0e9804a26c2310bb594154aae6e97fd2352f54daa9d6dcb362bcae6995d922"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/22-cheonyeo-gwishin.png",
+    "public": "apps/web/public/home/events/halloween/cards/22-cheonyeo-gwishin.png",
+    "sha256": "f37907cfbbd12fd3c8e5a50b6c665dc4c1e9e907c9205fe210c88a39fdcf5a6d"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/01-krasue.png",
+    "public": "apps/web/public/home/events/halloween/cards/01-krasue.png",
+    "sha256": "e48c95d67b3cc536d1be33e4179449aea3a48a8ebb16c4ccd761d35e06023864"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/19-jiangshi.png",
+    "public": "apps/web/public/home/events/halloween/cards/19-jiangshi.png",
+    "sha256": "70dba49445b743878d923aab9030a49ee9a67b8abe279c2f9ffc788df43fea0f"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/11-zombie.png",
+    "public": "apps/web/public/home/events/halloween/cards/11-zombie.png",
+    "sha256": "13e429ab28e98f1ab9186e8bc66cc416930f1cf538db5fa69d39a8992a8528dc"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/07-pret.png",
+    "public": "apps/web/public/home/events/halloween/cards/07-pret.png",
+    "sha256": "f997918ca5668a84b7423bf7c4f7c17a3695da3ff6288bbc848343b1e4fe152f"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/20-red-bride.png",
+    "public": "apps/web/public/home/events/halloween/cards/20-red-bride.png",
+    "sha256": "8526fba421c24916df5e5cc15296c9d26b4d8efcfed64cce242f4b04696196a9"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/18-kappa.png",
+    "public": "apps/web/public/home/events/halloween/cards/18-kappa.png",
+    "sha256": "211af7e9031d0cfd7c5b5b29a05b874ead5bb119a0881e7feae4e8bbd97a461b"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/13-frankenstein.png",
+    "public": "apps/web/public/home/events/halloween/cards/13-frankenstein.png",
+    "sha256": "d9d86593c9c0a2a9b1c24df206bc6843c4e5ee165fde6babaf28c9b31556de14"
+  },
+  {
+    "source": "output/halloween-ghost-cards/cards/09-dracula.png",
+    "public": "apps/web/public/home/events/halloween/cards/09-dracula.png",
+    "sha256": "eccfef69077c7735f6a3fd3cd5501242820587cfe1bcdfad6af4af34a3f23256"
+  },
+  {
+    "source": "output/halloween-ghost-cards/secret/01-mangmee-pumpkin-wizard.png",
+    "public": "apps/web/public/home/events/halloween/cards/23-mangmee-secret.png",
+    "sha256": "5306198921786373f275282dd9623b29c6c287995bdd30944af531d18627294b"
+  },
+  {
+    "source": "output/halloween-ghost-cards/backs/01-standard-card-back.png",
+    "public": "apps/web/public/home/events/halloween/cards/back-standard.png",
+    "sha256": "f31dbc50a3d063b738e9ef1170430d84c0353008f0adf931359d84823bbc385b"
+  },
+  {
+    "source": "output/halloween-ghost-cards/backs/02-secret-card-back.png",
+    "public": "apps/web/public/home/events/halloween/cards/back-secret.png",
+    "sha256": "f663c2277af67e254cf15f7a8a31b8b2fcef89cbe6b26a2bcdc1e5255d32282c"
+  }
+]

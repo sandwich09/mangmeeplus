@@ -1,0 +1,56 @@
+[
+  {
+    "id": "15-payoon",
+    "image": "/home/events/halloween/cards/15-payoon.png",
+    "imageWidth": 1122,
+    "name": "เจ๊พะยูน",
+    "overflow": false,
+    "quote": "รู้ไหม ใครฆ่าอารียา\nพยูน……… ไม่ได้ฆ่า",
+    "region": "thai"
+  },
+  {
+    "id": "16-the-nun",
+    "image": "/home/events/halloween/cards/16-the-nun.png",
+    "imageWidth": 1122,
+    "name": "เดอะนัน",
+    "overflow": false,
+    "quote": "สวดมนต์ไม่ถนัด\nสวดคนอื่นจัดให้\nสาดไปสมาชิก",
+    "region": "western"
+  },
+  {
+    "id": "17-turbo-granny",
+    "image": "/home/events/halloween/cards/17-turbo-granny.png",
+    "imageWidth": 1122,
+    "name": "ยายสปีด",
+    "overflow": false,
+    "quote": "ไม่ได้รีบไปเกิด\nรีบไปเผือก",
+    "region": "japanese"
+  },
+  {
+    "id": "18-taew",
+    "image": "/home/events/halloween/cards/18-taew.png",
+    "imageWidth": 1122,
+    "name": "เจ๊แต๋ว",
+    "overflow": false,
+    "quote": "ห้ะ!\nมึงด่ากูหรอ",
+    "region": "thai"
+  },
+  {
+    "id": "21-chonggak-gwishin",
+    "image": "/home/events/halloween/cards/21-chonggak-gwishin.png",
+    "imageWidth": 1122,
+    "name": "ชองกักควีชิน",
+    "overflow": false,
+    "quote": "เป็นผีธรรมดา ไม่สะดุดตาใคร\nส่วนใหญ่สะดุด\nโต๊ะ ตู้ เตียง เก้าอี้",
+    "region": "korean"
+  },
+  {
+    "id": "23-mangmee-secret",
+    "image": "/home/events/halloween/cards/23-mangmee-secret.png",
+    "imageWidth": 1122,
+    "name": "น้องมั่งมี จอมเวทฟักทอง",
+    "overflow": false,
+    "quote": "เวทมนตร์อาจมีวันหมด\nแต่ความน่ารักไม่มีวันหยุด",
+    "region": "secret"
+  }
+]

@@ -1,0 +1,16 @@
+[data-halloween-share]{min-width:0;color:#f8f0ff;font-family:'Outfit','IBM Plex Sans Thai',sans-serif}
+[data-halloween-share] .home-halloween-share-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+[data-halloween-share] .home-halloween-share-actions button,[data-halloween-share] .home-halloween-share-retry{min-width:0;min-height:48px;padding:9px 12px;border:1px solid #866b9a;border-radius:12px;background:#2b1a3c;color:#fff7ff;font:600 15px/1.5 'Outfit','IBM Plex Sans Thai',sans-serif;cursor:pointer}
+[data-halloween-share] .home-halloween-share-actions .home-halloween-share-primary{border-color:#f5d99b;background:linear-gradient(110deg,#edc66f,#ffe7a7);color:#28172f}
+[data-halloween-share] button:disabled{cursor:wait;opacity:.55}
+[data-halloween-share] button:focus-visible,[data-halloween-share] a:focus-visible,[data-halloween-share] input:focus-visible{outline:3px solid #ffe39a;outline-offset:3px}
+[data-halloween-share] .home-halloween-share-status{min-height:24px;margin:10px 0 0;color:#e4d5ed;font-size:14px;line-height:1.6}
+[data-halloween-share] .home-halloween-share-status.is-failed{color:#ffd1c4}
+[data-halloween-share] .home-halloween-share-status.is-done{color:#d3f2c4}
+[data-halloween-share] .home-halloween-share-retry{min-height:44px;margin-top:6px;padding-inline:16px}
+[data-halloween-share] .home-halloween-share-platforms{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+[data-halloween-share] .home-halloween-share-platforms a,[data-halloween-share] .home-halloween-share-platforms button{display:grid;place-items:center;width:48px;height:48px;padding:5px;border:1px solid #806a8e;border-radius:12px;background:#21152f;cursor:pointer}
+[data-halloween-share] .home-halloween-share-platforms img{display:block;width:36px;height:36px;object-fit:contain}
+[data-halloween-share] .home-halloween-share-platforms button:disabled{cursor:wait;opacity:.55}
+[data-halloween-share] .home-halloween-share-manual{display:block;margin-top:10px;color:#f5e9ff;font-size:14px;line-height:1.6}
+[data-halloween-share] .home-halloween-share-manual textarea{display:block;width:100%;min-height:112px;margin-top:5px;padding:9px;border:1px solid #806a8e;border-radius:8px;background:#170e22;color:#fff;font:400 16px/1.6 'Outfit','IBM Plex Sans Thai',sans-serif;resize:vertical}
