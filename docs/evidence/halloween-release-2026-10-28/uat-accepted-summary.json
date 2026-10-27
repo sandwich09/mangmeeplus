@@ -1,0 +1,59 @@
+{
+  "operationId": "20261027T201606Z-8c17a366",
+  "environment": "uat",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "sourceCommit": "21a8f75a0bd419e020d50c6142419689ed0ee941",
+  "releaseId": "70cf9affd213f518da7a115854edb0a319b220fb6d478d0ec038330965c2601e",
+  "controllerSha256": "da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080",
+  "elapsedSeconds": 220.38,
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "ssmSessionCleanup": {
+    "passed": true,
+    "terminatedCount": 2,
+    "failedCount": 0
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "acceptedSha256": "bf3eff642c0741b376119f35ffd581cd9ce05c0b286160af3899f1cc0a51494d",
+  "browserGame": {
+    "draw390": "13-frankenstein",
+    "draw1280": "21-chonggak-gwishin",
+    "loadingCopy": "กำลังเรียกวิญญาณ…",
+    "smokeDuringSpin": true,
+    "bothSpinFaces": "back-standard.png",
+    "noHorizontalOverflow1280": true,
+    "savedPngExactApprovedAsset": true,
+    "savedPngSha256": "36e4da175a79a8d7a0ba85964a1e8c7c4672a18044fcf0c90cbf543373edd710",
+    "metadata": {
+      "source": "https://mangmeeplus.com",
+      "event": "halloween",
+      "cardId": "13-frankenstein",
+      "variant": "card"
+    },
+    "countdownBangkok": [
+      "2026-10-29T00:00:00+07:00",
+      "2026-10-30T00:00:00+07:00"
+    ]
+  }
+}

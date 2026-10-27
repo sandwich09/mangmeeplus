@@ -117,8 +117,10 @@ test('original save is immediately available and downloads the existing stamped 
   const runtime = require('react') as typeof React;
   const create = runtime.createElement;
   const documentBefore = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const navigatorBefore = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   const anchor = { href: '', download: '', click() { clicked++; } };
-  let clicked = 0, save!: { onClick: () => void; disabled?: boolean };
+  let clicked = 0, copied = 0, save!: { onClick: () => void; disabled?: boolean };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText() { copied++; } } } });
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { createElement: (type: string) => { assert.equal(type, 'a'); return anchor; } } });
   Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
     if (type === 'button' && children.includes('บันทึกภาพ')) save = props;
@@ -132,9 +134,143 @@ test('original save is immediately available and downloads the existing stamped 
     assert.equal(clicked, 1);
     assert.equal(anchor.href, GHOST_CARDS[0].image);
     assert.equal(anchor.download, `mangmee-${GHOST_CARDS[0].id}.png`);
+    assert.equal(copied, 0, 'original PNG save leaves clipboard untouched');
   } finally {
     Reflect.set(runtime, 'createElement', create);
     if (documentBefore) Object.defineProperty(globalThis, 'document', documentBefore);
     else Reflect.deleteProperty(globalThis, 'document');
+    if (navigatorBefore) Object.defineProperty(globalThis, 'navigator', navigatorBefore);
+    else Reflect.deleteProperty(globalThis, 'navigator');
+  }
+});
+
+// Retained hooks exercise real click handlers; this is not a native social-post test.
+async function withShareUi(run: (ui: any) => Promise<void>, navigatorValue: any) {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { HalloweenCardShare } = await import('./HalloweenCardShare');
+  const runtime = require('react') as typeof ReactRuntime;
+  const hooks = { useState: runtime.useState, useRef: runtime.useRef, useEffect: runtime.useEffect, createElement: runtime.createElement };
+  const globals = new Map(['navigator', 'document', 'requestAnimationFrame'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  const file = new File(['prepared image'], 'story.jpg', { type: 'image/jpeg' });
+  const prepared = { cardId: GHOST_CARDS[0].id, file, url: 'blob:story', name: 'story.jpg' };
+  const states: any[] = [prepared], refs: any[] = [], downloads: any[] = [];
+  let cursor = 0, refCursor = 0, buttons: any[] = [], effect!: () => () => void, focused = 0;
+  let card = GHOST_CARDS[0];
+  const setGlobal = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { configurable: true, value });
+  setGlobal('navigator', navigatorValue);
+  setGlobal('document', { fonts: { ready: new Promise(() => {}) }, createElement: () => {
+    const anchor = { href: '', download: '', click() { downloads.push({ href: this.href, download: this.download }); } };
+    return anchor;
+  } });
+  setGlobal('requestAnimationFrame', () => { focused++; });
+  Reflect.set(runtime, 'useState', (initial: any) => {
+    const i = cursor++;
+    if (!(i in states)) states[i] = initial;
+    return [states[i], (next: any) => { states[i] = typeof next === 'function' ? next(states[i]) : next; }];
+  });
+  Reflect.set(runtime, 'useRef', (initial: unknown) => { const i = refCursor++; return refs[i] ?? (refs[i] = { current: initial }); });
+  Reflect.set(runtime, 'useEffect', (work: () => () => void) => { effect = work; });
+  Reflect.set(runtime, 'createElement', (type: any, props: any, ...children: any[]) => {
+    if (type === 'button') buttons.push({ ...props, label: children.join('') });
+    return hooks.createElement(type, props, ...children);
+  });
+  function render() {
+    cursor = 0; refCursor = 0; buttons = [];
+    return renderToStaticMarkup(ReactRuntime.createElement(HalloweenCardShare, { card }));
+  }
+  let cleanup: (() => void) | undefined;
+  try {
+    render(); cleanup = effect(); states[0] = prepared; render();
+    await run({ file, downloads, render,
+      click(label: string) { render(); const button = buttons.find(button => button.label === label || button['aria-label'] === label); assert.ok(button, label); return button.onClick(); },
+      changeCard() { cleanup?.(); card = GHOST_CARDS[1]; render(); cleanup = effect(); render(); },
+      unmount() { cleanup?.(); cleanup = undefined; },
+      get focused() { return focused; },
+    });
+  } finally {
+    cleanup?.();
+    for (const [name, value] of Object.entries(hooks)) Reflect.set(runtime, name, value);
+    for (const [name, descriptor] of globals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+}
+
+const flushShare = () => new Promise(resolve => setImmediate(resolve));
+
+test('all four share clicks start clipboard then native JPEG sharing synchronously while copy is pending', async () => {
+  for (const trigger of ['แชร์ภาพ', 'แชร์ภาพด้วย Facebook', 'แชร์ภาพด้วย Instagram', 'แชร์ภาพด้วย TikTok']) {
+    const calls: string[] = [], payloads: ShareData[] = [];
+    let copyDone!: () => void, shareDone!: () => void;
+    await withShareUi(async ui => {
+      const pending = ui.click(trigger);
+      assert.deepEqual(calls, ['copy', 'share']);
+      assert.deepEqual(payloads[0], { files: [ui.file], title: `การ์ดของ${GHOST_CARDS[0].name}`, text: halloweenCaption(GHOST_CARDS[0]), url: HALLOWEEN_HOME_URL });
+      await ui.click(trigger === 'แชร์ภาพ' ? 'กำลังเปิดเมนูแชร์…' : trigger);
+      assert.equal(payloads.length, 1, 'duplicate click does not share or copy twice');
+      copyDone(); await flushShare();
+      assert.match(ui.render(), /คัดลอกข้อความและลิงก์แล้ว วางในแอปที่เลือกได้/);
+      shareDone(); await pending;
+      assert.match(ui.render(), /ส่งภาพไปยังแอปที่เลือกแล้ว/);
+    }, { canShare: () => true,
+      clipboard: { writeText(text: string) { assert.equal(text, halloweenCaption(GHOST_CARDS[0])); calls.push('copy'); return new Promise<void>(resolve => { copyDone = resolve; }); } },
+      share(data: ShareData) { calls.push('share'); payloads.push(data); return new Promise<void>(resolve => { shareDone = resolve; }); },
+    });
+  }
+});
+
+test('failed or absent clipboard offers unfocused manual copy without preventing native share', async () => {
+  for (const clipboard of [undefined, { writeText: () => Promise.reject(new Error('private diagnostic')) }]) {
+    let shares = 0;
+    await withShareUi(async ui => {
+      await ui.click('แชร์ภาพด้วย Facebook'); await flushShare();
+      const html = ui.render();
+      assert.equal(shares, 1);
+      assert.match(html, /คัดลอกข้อความอัตโนมัติไม่ได้/);
+      assert.match(html, /textarea/);
+      assert.doesNotMatch(html, /private diagnostic/);
+      assert.equal(ui.focused, 0);
+    }, { clipboard, canShare: () => true, share: async () => { shares++; } });
+  }
+});
+
+test('unsupported sharing and failure fallback download prepared JPEG and copy caption; cancel remains retryable', async () => {
+  let copied = 0;
+  await withShareUi(async ui => {
+    await ui.click('แชร์ภาพด้วย Facebook'); await flushShare();
+    assert.deepEqual(ui.downloads, [{ href: 'blob:story', download: 'story.jpg' }]);
+    assert.equal(copied, 1);
+  }, { clipboard: { writeText: async () => { copied++; } } });
+  let shares = 0;
+  await withShareUi(async ui => {
+    await ui.click('แชร์ภาพด้วย Instagram'); await flushShare();
+    assert.match(ui.render(), /แชร์ไม่สำเร็จ/);
+    await ui.click('บันทึกภาพเพื่อแชร์'); await flushShare();
+    assert.deepEqual(ui.downloads, [{ href: 'blob:story', download: 'story.jpg' }]);
+    assert.equal(shares, 1);
+    assert.equal(copied, 3);
+    await ui.click('แชร์ภาพด้วย TikTok');
+    assert.match(ui.render(), /ปิดเมนูแชร์แล้ว การ์ดยังอยู่ที่เดิม/);
+    await ui.click('แชร์ภาพ');
+    assert.equal(shares, 3);
+  }, { clipboard: { writeText: async () => { copied++; } }, canShare: () => true,
+    share: async () => { if (++shares === 1) throw new Error('internal share diagnostic'); if (shares === 2) throw new DOMException('cancel', 'AbortError'); },
+  });
+});
+
+test('late clipboard and share completion are ignored after card change or unmount', async () => {
+  for (const end of ['changeCard', 'unmount']) {
+    let copyDone!: () => void, shareDone!: () => void;
+    await withShareUi(async ui => {
+      const pending = ui.click('แชร์ภาพ');
+      ui[end]();
+      const before = ui.render();
+      copyDone(); shareDone(); await pending; await flushShare();
+      assert.equal(ui.render(), before);
+      assert.doesNotMatch(ui.render(), /คัดลอกข้อความและลิงก์แล้ว|ส่งภาพไปยังแอปที่เลือกแล้ว/);
+    }, { canShare: () => true, clipboard: { writeText: () => new Promise<void>(resolve => { copyDone = resolve; }) },
+      share: () => new Promise<void>(resolve => { shareDone = resolve; }),
+    });
   }
 });

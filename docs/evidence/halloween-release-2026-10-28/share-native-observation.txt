@@ -1,0 +1,34 @@
+The following is a diff from the previous accessibility tree for Window: "ฮาโลวีนนี้ฉันเป็น ซอมบี้ | มั่งมีพลัส" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+Removed element IDs: 99
++										101 popover Secondary Actions: Cancel
++											102 container
++												103 image safari
++												104 text การ์ดของซอมบี้
++												105 button AirDrop
++												106 button Mail
++												107 button Messages
++												108 button Reminders
++												109 button Copy
++												110 button Edit Extensions…
+~									72 button (disabled) กำลังเปิดเมนูแชร์…
+~										76 button (disabled) แชร์ภาพด้วย Facebook
+~										77 button (disabled) แชร์ภาพด้วย Instagram
+~										78 button (disabled) แชร์ภาพด้วย TikTok
+~									98 text เลือก Instagram จากเมนูแชร์
++									111 text คัดลอกข้อความและลิงก์แล้ว วางในแอปที่เลือกได้
+The following is a diff from the previous accessibility tree for Window: "ฮาโลวีนนี้ฉันเป็น ซอมบี้ | มั่งมีพลัส" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
++										101 popover Secondary Actions: Cancel
++											102 container
++												103 image safari
++												104 text การ์ดของซอมบี้
++												105 button AirDrop
++												106 button Mail
++												107 button Messages
++												108 button Reminders
++												109 button Copy
++												110 button Edit Extensions…
+~									72 button (disabled) กำลังเปิดเมนูแชร์…
+~										76 button (disabled) แชร์ภาพด้วย Facebook
+~										77 button (disabled) แชร์ภาพด้วย Instagram
+~										78 button (disabled) แชร์ภาพด้วย TikTok
+~									98 text เลือก TikTok จากเมนูแชร์
