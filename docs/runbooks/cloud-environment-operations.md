@@ -10,7 +10,31 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current Halloween campaign popup release — 2026-10-28 14:06 Bangkok
+## Current Halloween candy-game release — 2026-10-28 18:38 Bangkok
+
+UAT and Production now serve source `0d4c915d48c62af26cb39660999c0454943c1b48`. The orange door
+remains grey and natively disabled until 29 October 2026 00:00 Asia/Bangkok, then its countdown
+disappears and the 30-second candy game becomes available; the green door remains locked until its
+separate 30 October cutoff. The same release adds tab-scoped no-repeat normal-card cycles while the
+Backend keeps the independent 1% SECRET roll and final selection.
+
+UAT prepare `20261028T111404Z-f7317899` passed; apply `20261028T111943Z-7c71429f` is signed/verified
+`ACCEPTED_LINE_DEFERRED` in 241.035 s. Production preflight `20261028T112530Z-49d9140c` and promotion
+prepare `20261028T112600Z-65f8badc` passed without mutation. Production `20261028T112816Z-e632d00a`
+promoted the exact signed UAT image IDs and AgentCore artifact without rebuild, then completed signed
+`ACCEPTED_LINE_DEFERRED` in 591.098 s (website ready 278.655 s; browser acceptance 284.712 s).
+All 12 phases, deep readiness, customer live/OPEN, current administrator identity/permission,
+logout/postlogout401, build retirement and 2 UAT + 4 Production owned SSM-session cleanup passed.
+
+Actual UAT and Production checks pass at 390/1280, Android Chromium and WebKit iPhone: disabled at
+23:59:59, enabled at exactly 00:00:00, complete game/pacing/finale/replay and 1080×1920 share output,
+with no browser errors or horizontal overflow. The owner accepted only the unchanged 9 October API
+security Alarm for this release; fresh pre/post snapshots each have 29 OK, zero insufficient and that
+one unchanged Alarm. Root `thawatchai` was authorized only for `DescribeAlarms`; scoped roles performed
+the release, and no Alarm was changed. Workflow UAT/READY/PROD IDs are `NOT_DISPATCHED` (local Kamal).
+[Exact ledger, tests and limitations](../agent-memory/halloween-candy-game.md).
+
+## Previous Halloween campaign popup release — 2026-10-28 14:06 Bangkok
 
 UAT and Production now serve source `8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c`: `/halloween`
 opens the existing three-door chooser over the real homepage, ordinary `/` stays manual, and shared
