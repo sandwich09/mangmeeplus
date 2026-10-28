@@ -4,7 +4,7 @@ Status: COMPLETE UAT RELEASE — latest main is signed, OPEN and browser-verifie
 Owner: Codex
 Scope: Deploy exact latest `origin/main` containing the free-expense three-document feature and the completed Halloween escape game to retained Kamal UAT only.
 Decisions:
-- Candidate/controller is `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c`, tree `130fa7d53917871cf1567decd89197e7cbe989c8`; `origin/main` and `origin/develop` matched before prepare, apply and final readback.
+- Candidate/controller is `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c`, tree `130fa7d53917871cf1567decd89197e7cbe989c8`; `origin/main` and `origin/develop` matched before prepare, apply and application readback. Branches advanced afterward only with this release's `docs/**` ledger, which does not enter runtime images and does not require another deploy.
 - Use the existing owner-authorized local Kamal UAT smoke path with scoped profile `mangmee-kamal-uat`; workflow UAT/READY/PROD IDs are `NOT_DISPATCHED`.
 - Use `mode normal` because candidate adds migration `20261028090000_free_expense_monthly_documents`; it contains only three nullable columns and one index, with no drop/delete/rename.
 - UAT was intentionally paused. Retain read-only failed preflight `20261028T164340Z-bda91715`, which stopped at target preflight before mutation. Start the retained baseline once, then run one successful prepare and one apply. Do not deploy Production.

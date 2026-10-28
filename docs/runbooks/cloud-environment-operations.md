@@ -12,8 +12,10 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ## Current UAT latest-main release — 2026-10-29 00:05 Bangkok
 
-UAT now serves exact main/develop `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c` while Production
-remains on the previous `0d4c915d48c62af26cb39660999c0454943c1b48` candy release. The UAT
+UAT now serves application source `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c`, which was exact
+main/develop at dispatch, while Production remains on the previous
+`0d4c915d48c62af26cb39660999c0454943c1b48` candy release. Main/develop advanced afterward only
+with this `docs/**` release ledger; no runtime byte changed and no redeploy is required. The UAT
 candidate contains the three-free-expense-document feature with additive migration
 `20261028090000_free_expense_monthly_documents` and the completed third-door escape game. No
 Production, customer-gate or alarm mutation was performed.
