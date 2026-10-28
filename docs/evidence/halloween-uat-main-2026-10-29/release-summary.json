@@ -1,0 +1,40 @@
+{
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "environment": "uat",
+  "sourceCommit": "56cdb4ee50bedf3f0c22451faf1583ffb6ec252c",
+  "sourceTree": "130fa7d53917871cf1567decd89197e7cbe989c8",
+  "workflowRunIds": {
+    "uat": "NOT_DISPATCHED",
+    "ready": "NOT_DISPATCHED",
+    "production": "NOT_DISPATCHED"
+  },
+  "operations": {
+    "retainedFailedPausedPreflight": "20261028T164340Z-bda91715",
+    "powerStart": "20261028T164508Z-4420d7ca",
+    "preflight": "20261028T165128Z-ef733e4b",
+    "prepare": "20261028T165147Z-fa6b78fb",
+    "apply": "20261028T165734Z-fcdabc54"
+  },
+  "elapsedSeconds": {
+    "powerStart": 342.385,
+    "preflight": 11.926,
+    "prepare": 317.413,
+    "apply": 288.906
+  },
+  "digests": {
+    "applyResultSha256": "5a80ca94154eebf3a46a760044bc71427724d3d2a5e450ecd81d6e9a256fe981",
+    "acceptedPayloadSha256": "ce0ac6d0490753998b786e4505db7227020eb21d48549a35b613c9262f0571ec",
+    "signatureFileSha256": "f56ef6a7139bd8b3b59425dafab5438e974cf5dce552b09dff9718a8154ce1c6"
+  },
+  "acceptance": {
+    "kmsVerified": true,
+    "migrationAndAuthorityVerified": true,
+    "publicState": "OPEN",
+    "deepReadiness": true,
+    "retiredBuilds": 19,
+    "ssmSessionsTerminated": 2,
+    "doorGateViewports": [390, 1280],
+    "doorGateBrowserErrors": 0
+  },
+  "productionMutated": false
+}

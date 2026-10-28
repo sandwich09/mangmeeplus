@@ -10,7 +10,31 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current Halloween candy-game release — 2026-10-28 18:38 Bangkok
+## Current UAT latest-main release — 2026-10-29 00:05 Bangkok
+
+UAT now serves exact main/develop `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c` while Production
+remains on the previous `0d4c915d48c62af26cb39660999c0454943c1b48` candy release. The UAT
+candidate contains the three-free-expense-document feature with additive migration
+`20261028090000_free_expense_monthly_documents` and the completed third-door escape game. No
+Production, customer-gate or alarm mutation was performed.
+
+UAT was intentionally paused. Read-only preflight `20261028T164340Z-bda91715` stopped at target
+preflight before mutation and is retained. Power start `20261028T164508Z-4420d7ca` completed
+`UAT_RUNNING_OPEN` in 342.385 seconds with retained-runtime equality and2/2 SSM cleanup. Fresh
+preflight `20261028T165128Z-ef733e4b` passed. Prepare/publish
+`20261028T165147Z-fa6b78fb` completed `PREPARED_NO_DEPLOYMENT` in317.413 seconds. Apply
+`20261028T165734Z-fcdabc54` completed signed/verified `ACCEPTED_LINE_DEFERRED` in288.906 seconds;
+all12 phases, migration/authority, deep API/DB/AI/worker/Redis/internal-API readiness, public OPEN,
+retirement19/19 and2/2 SSM cleanup passed. Workflow UAT/READY/PROD IDs are `NOT_DISPATCHED`.
+
+Actual UAT Chromium at390/1280 proves each upcoming door is grey, native-disabled and non-openable
+1 ms before its own Asia/Bangkok deadline. Door2 opens exactly29 October00:00 while door3 remains
+locked; door3 opens exactly30 October00:00. The actual29 October state is door2 open and door3
+grey/disabled. The production build ignores `previewGame`; no browser errors or horizontal overflow.
+The signed smoke proves migration/catalog authority but does not claim an authenticated free-cohort
+web/native-LINE/provider journey. [Exact ledger, hashes and limits](../agent-memory/uat-latest-main-2026-10-29.md).
+
+## Previous UAT / current Production Halloween candy-game release — 2026-10-28 18:38 Bangkok
 
 UAT and Production now serve source `0d4c915d48c62af26cb39660999c0454943c1b48`. The orange door
 remains grey and natively disabled until 29 October 2026 00:00 Asia/Bangkok, then its countdown

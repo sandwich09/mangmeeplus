@@ -1,6 +1,6 @@
 # Agent Memory: free-expense-drafts
 
-Status: MERGED TO MAIN + DEVELOP — post-merge scoped tests and actual Chrome acceptance passed; not deployed
+Status: DEPLOYED TO UAT — signed normal-mode release and migration/deep readiness passed; authenticated UAT business journey pending
 Owner: thawatchai
 Scope: ร้านเปิดสำเร็จที่ยังไม่เคยซื้อแพ็กเกจ อ่านเอกสารรายจ่ายฟรี 3 ใบต่อบริษัท/เดือน ใช้ร่วมเว็บ/LINE; ดู/แก้ source drafts; no-model commands; guard/copy correctness
 
@@ -90,3 +90,9 @@ Results:
 - DB proof confirms3fixture reads, no fourthprovider/draft/orphan, no extra financial/master/grant writes. No real model/LINE/customer calls or deploy.
 - [Merged-main browser/evidence report](../evidence/free-expense-drafts-2026-10-28/main-browser/README.md); [verification](../evidence/free-expense-drafts-2026-10-28/main-browser/verification.json).
 - Local runtimes stopped, signed out and viewport reset; preserved synthetic DB/dump/evidence. Original dirty checkout untouched. Subsequent evidence commit changes docs only.
+
+## UAT release — 2026-10-29
+
+- Exact latest main/develop `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c` deployed to retained Kamal UAT in `normal` mode. Migration `20261028090000_free_expense_monthly_documents` is additive only: three nullable columns and one index, with no drop/delete/rename.
+- Prepare `20261028T165147Z-fa6b78fb` passed in 317.413 seconds. Apply `20261028T165734Z-fcdabc54` completed signed/verified `ACCEPTED_LINE_DEFERRED` in 288.906 seconds; migration/feature authority, API/DB, AI, Workers/Redis/internal API, public OPEN, retirement and SSM cleanup passed. All runtime services read back exact source `56cdb4ee5`.
+- The owner-authorized UAT smoke does not claim an authenticated free-cohort web, native LINE/LIFF or real provider journey. Those remain explicit acceptance limits; no Production deployment occurred.
