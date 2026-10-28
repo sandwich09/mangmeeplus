@@ -624,3 +624,34 @@ test('U5 every LINE visible field strips internal plan codes and em dashes', asy
     assert.doesNotMatch(JSON.stringify(wire), /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
   }
 });
+
+test('wire formatting preserves message commands and opaque targets while cleaning display fields', async () => {
+  const { lineDeliveryWireMessages } = await import('./line-delivery-plan.logic');
+  const id = '550e8400-e29b-41d4-a716-446655440000';
+  const command = `/company ${id}`;
+  const postback = `action=company-select&companyId=${id}`;
+  const uri = `https://app.example.com/l/${id}`;
+  const messages: LineReplyMessage[] = [{
+    type: 'flex', altText: id, canonicalText: 'internal recovery text',
+    contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [
+      { type: 'text', text: id },
+      { type: 'button', action: { type: 'message', label: id, text: command } },
+      { type: 'button', action: { type: 'postback', label: id, data: postback, displayText: id } },
+      { type: 'button', action: { type: 'uri', label: id, uri } },
+    ] } },
+    quickReply: { items: [{ type: 'action', action: { type: 'message', label: id, text: command } }] },
+  }, { type: 'text', text: command }];
+  const original = structuredClone(messages);
+  const wire = lineDeliveryWireMessages(messages);
+  const card = wire[0] as any, [body, message, control, link] = card.contents.body.contents;
+  assert.equal(card.altText, 'ไม่ระบุ');
+  assert.equal(card.canonicalText, undefined);
+  assert.equal(body.text, 'ไม่ระบุ');
+  assert.deepEqual(message.action, { type: 'message', label: 'ไม่ระบุ', text: command });
+  assert.deepEqual(control.action, { type: 'postback', label: 'ไม่ระบุ', data: postback, displayText: 'ไม่ระบุ' });
+  assert.deepEqual(link.action, { type: 'uri', label: 'ไม่ระบุ', uri });
+  assert.equal(card.quickReply.items[0].action.text, command);
+  assert.equal((wire[1] as any).text, '/company ไม่ระบุ', 'ordinary visible text is still sanitized');
+  assert.deepEqual(lineDeliveryWireMessages(wire), wire, 'replay formatting is idempotent');
+  assert.deepEqual(messages, original, 'stored source messages are unchanged');
+});

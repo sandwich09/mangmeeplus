@@ -6,7 +6,7 @@ import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it, type TestContext } from 'node:test';
 import { LineReplyAdapter } from '../../infrastructure/line-reply.adapter';
-import { validateLineDeliveryPlan } from '../../domain/logic/line-delivery-plan.logic';
+import { lineDeliveryWireMessages, validateLineDeliveryPlan } from '../../domain/logic/line-delivery-plan.logic';
 import { ForbiddenException } from '@nestjs/common';
 import assert from 'node:assert/strict';
 import { canAdvertiseReceiptCapture, lineReplyLanguage, createLineAiInputEvidence, LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
@@ -3309,6 +3309,46 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(JSON.stringify(ownerPicker), /บริษัทสอง/);
     assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
     assert.doesNotMatch(JSON.stringify(sentMessageBatches[0]), /🔒/, 'an ACTIVE shop carries no lock label');
+  });
+
+  it('round-trips picker actions for unpaid and expired companies without paid access or AI calls', async () => {
+    const ids = ['cmvc8kuzi05m0uqk1sw21svk5', '550e8400-e29b-41d4-a716-446655440000'];
+    const endedAt = new Date(Date.now() - 60_000);
+    for (const state of ['no-package', 'expired-before-sweep', 'expired-after-sweep']) {
+      for (const role of ['OWNER', 'STAFF']) {
+        const { prisma, upserts, updates } = makePrisma({
+          memberships: ids.map((companyId, index) => ({
+            companyId, company: { name: `ร้าน ${index + 1}`,
+              status: state === 'expired-before-sweep' ? 'ACTIVE' : 'DISABLED',
+              planTerm: {
+                termStartAt: state === 'no-package' ? endedAt : new Date(endedAt.getTime() - 30 * 86_400_000),
+                termEndsAt: endedAt, renewCount: 0,
+                termDisabledAt: state === 'expired-before-sweep' ? null : endedAt,
+              } },
+            roles: [{ role: { key: role, status: 'ACTIVE', permissions: [] } }],
+          })),
+          lineCompanyContext: { companyId: ids[0]! },
+        });
+        const { useCase, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, {
+          permissions: [], config: { billingMode: 'disabled', lineAiEnabled: false },
+        });
+        await useCase.execute({ ...BASE_EVENT, webhookEventId: `list-${state}-${role}`, messageText: '/companies' });
+        const wire = lineDeliveryWireMessages(sentMessageBatches[0]!);
+        const picker = wire[1] as any;
+        const text = picker.contents.contents[1].footer.contents[0].action.text;
+        assert.equal(text, `/company ${ids[1]}`, `${state}/${role}`);
+        await useCase.execute({ ...BASE_EVENT, webhookEventId: `select-${state}-${role}`, messageText: text });
+        assert.equal((upserts.at(-1) as any).update.companyId, ids[1]);
+        assert.equal((updates.at(-1) as any).data.status, 'company_context_switched');
+        assert.match(JSON.stringify(sentMessageBatches.at(-1)), /เปลี่ยนบริษัทเป็น ร้าน 2 แล้ว/);
+        const switchCount = upserts.length;
+        await useCase.execute({ ...BASE_EVENT, webhookEventId: `foreign-${state}-${role}`,
+          messageText: '/company 550e8400-e29b-41d4-a716-446655440099' });
+        assert.equal(upserts.length, switchCount, 'a foreign company remains unselectable');
+        assert.equal((updates.at(-1) as any).data.status, 'company_context_selection_invalid');
+        assert.equal(getAiGatewayCalled(), false, 'navigation never needs a paid AI turn');
+      }
+    }
   });
 
   it('labels a locked shop in the picker and the context card with the LIFF wording (R-C8)', async () => {

@@ -4,9 +4,30 @@ import assert from 'node:assert/strict';
 import { LineReplyAdapter, linePushRetryKey, parseOutcomeMessages, repairLegacyOutcomePreview } from './line-reply.adapter';
 import { buildLineAssistantTextCardMessage } from '../domain/logic/line-business-card.logic';
 import { lineMessagePreview } from '../domain/logic/line-message-preview.logic';
-import { buildPendingApprovalCard, buildStaffMainMenu } from '../domain/logic/line-staff-menu.logic';
+import { buildCompanyPickerMessage, buildPendingApprovalCard, buildStaffMainMenu } from '../domain/logic/line-staff-menu.logic';
 
 describe('LineReplyAdapter rich payload delivery', () => {
+  it('sends real company IDs unchanged in picker actions on reply and push', async () => {
+    const originalFetch = globalThis.fetch;
+    const ids = ['cmvc8kuzi05m0uqk1sw21svk5', '550e8400-e29b-41d4-a716-446655440000'];
+    const picker = buildCompanyPickerMessage(ids.map(companyId => ({ companyId, companyName: 'ร้านทดสอบ', stateLabel: 'หมดอายุ' })));
+    const bodies: any[] = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), {} as any);
+      assert.equal(await adapter.sendReply('token', [picker]), 'ok');
+      assert.equal(await adapter.sendPush('synthetic-user', [picker], 'picker-retry'), 'ok');
+      assert.equal(bodies.length, 2);
+      for (const body of bodies) {
+        assert.deepEqual(body.messages[0].contents.contents.map((bubble: any) => bubble.footer.contents[0].action.text),
+          ids.map(id => `/company ${id}`));
+      }
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   it('keeps an HTTPS image in the saved outcome and the LINE reply', async () => {
     const image = { type: 'image' as const, originalContentUrl: 'https://app.example.test/welcome.png', previewImageUrl: 'https://app.example.test/welcome.png' };
     assert.deepEqual(parseOutcomeMessages([image]), [image]);

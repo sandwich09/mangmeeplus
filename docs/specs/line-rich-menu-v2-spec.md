@@ -134,6 +134,14 @@ Rules:
 - If the owner has only one owner company, do not send a second switcher card.
 - If the list exceeds one LINE carousel, paginate deterministically and keep every allowed company reachable; never silently omit a company name.
 
+#### Regression boundary 2026-10-28 — เลือกบริษัทและการใช้งานพื้นฐาน
+
+- บริษัทที่ยังไม่มีแพ็กเกจหรือหมดอายุยังดูรายการ/เลือกบริบท LINE ได้ตาม ACTIVE membership ทุกบทบาท (P13); ไม่ต้องเรียก AI หรือเปิดสิทธิ์ธุรกิจเพื่อเลือกบริษัท บริษัทที่ถูกระงับ/ปิดโดยแอดมินยังใช้กฎเดิม
+- ตัวจัดข้อความก่อนส่ง LINE ต้องรักษา `action.type=message`/`action.text` ทุกตัวอักษร ทั้ง Flex และ Quick Reply เช่น `/company <companyId>`; ห้ามแทน UUID/CUID ด้วย “ไม่ระบุ” หรือเปลี่ยนถ้อยคำคำสั่ง ส่วน body/label/altText/displayText ยังผ่านกฎข้อความลูกค้า และ postback data/URI ยังรักษาปลายทางเดิม
+- ขอบเขตพื้นฐานที่คงเข้าถึงได้ตามกฎเดิม: เลือกบริษัท, login/จัดการบัญชี, ติดต่อทีมงาน, ดู/จัดการแพ็กเกจ และตั้งค่าข้อมูลบริษัทตาม permission; ไม่เปิด ERP/AI/OCR ฟรีหรือข้าม tenant/legal/security hold
+- ตรวจครบทั้งตัวจัดข้อความส่งรุ่นเดิมและรุ่นใหม่, reply/push, เลือกบริษัทจาก payload ที่ส่งจริง และปฏิเสธบริษัทนอก membership ดูหลักฐานและข้อจำกัดใน [task memory](../agent-memory/line-company-basic-access-2026-10-28.md)
+- การ์ดที่ส่งผิดไปแล้วในแชตยังมีคำสั่งเดิม หลังปล่อยแพตช์ต้องเรียก `/companies` ใหม่เพื่อรับปุ่มที่แก้แล้ว
+
 #### Delta 2026-09-06 — ปุ่มที่สอง "เปิดเว็บบริษัทนี้" (Owner)
 
 Owner (verbatim): *"ในไลน์ rich บริษัทของฉัน เมื่อกดแล้ว ในแต่ละบริษัทที่ pop up ขึ้นมาอยากให้มี ปุ่ม กดไปเข้าเว็บด้วยบริษัทนั้นๆด้วย

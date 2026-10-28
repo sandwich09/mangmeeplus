@@ -4,12 +4,13 @@ export function lineCustomerText(value: string): string {
   return lineCustomerWording(value.replace(/https?:\/\/[^\s]*\/companies\/[^\s]+/gu, uri => ids.test(uri) ? '' : uri)
     .replace(new RegExp(ids.source, 'giu'), 'ไม่ระบุ'));
 }
-/** Visible LINE fields only; never normalize a signed command, URI or identifier. */
+/** Visible LINE fields only; message-action text is executable input, like postback data or a URI. */
 export function lineCustomerVisibleText<T>(value: T): T {
   if (Array.isArray(value)) return value.map(lineCustomerVisibleText) as T;
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
-    ['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string' ? lineCustomerText(child)
+    key === 'text' && (value as { type?: unknown }).type === 'message' ? child
+      : ['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string' ? lineCustomerText(child)
       : typeof child === 'object' ? lineCustomerVisibleText(child) : child])) as T;
 }
 export type LineReplyLanguage = 'th' | 'en';
