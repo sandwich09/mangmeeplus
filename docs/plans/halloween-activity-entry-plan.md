@@ -1,5 +1,14 @@
 # Halloween activity entrance plan
 
+## Locked upcoming doors hotfix — 2026-10-28
+
+- [x] Disable the complete candy/escape door cards before their existing Bangkok deadlines; render them grey and replace the action copy with “เปิดได้เมื่อครบเวลา”. Keep ghost reveal enabled.
+- [x] Reuse the existing one-second absolute countdown so each door unlocks automatically at its own deadline without storage, API or dependency changes.
+- [x] Add lifecycle regression coverage and verify focused countdown tests, TypeScript, diff checks, and actual 390/1280 browser layout with no mobile overflow.
+- [x] Release the isolated three-file, migration-free hotfix directly from serving Production baseline `8ee5e737e` to source `996fe6b6c` after owner authorization. Production operation `20261028T074846Z-2a5a82aa` is signed `ACCEPTED_LINE_DEFERRED`; customer `OPEN`, current administrator identity/permission, logout/post-logout rejection, runtime readback and SSM cleanup all pass. The owner accepted the one unchanged API security alarm from 9 October for this hotfix only; no alarm was suppressed or changed.
+
+Evidence and exact operations: [hotfix memory](../agent-memory/halloween-door-lock-hotfix.md) and `docs/evidence/halloween-door-lock-hotfix-2026-10-28/`.
+
 ## Campaign popup — 2026-10-28
 
 - [x] Render the real homepage at bare `/halloween`, open chooser once on entry only while active, and retain manual `/` entry and direct-card behavior.
