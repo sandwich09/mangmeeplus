@@ -1,0 +1,318 @@
+{
+  "uat": {
+    "operationId": "20261028T064018Z-08c3a82d",
+    "sourceCommit": "8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c",
+    "status": "ACCEPTED_LINE_DEFERRED",
+    "controllerSha256": "da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080",
+    "releaseId": "6f0d6f82cc9d00af3c76b3fd6db7844ad0c3a8926c7dfd83bb8b1d08d07df7ba",
+    "startedAt": "2026-10-28T06:40:18.172855+00:00",
+    "finishedAt": "2026-10-28T06:44:29.777188+00:00",
+    "elapsedSeconds": 251.606,
+    "phases": [
+      {
+        "name": "target-preflight",
+        "startedSeconds": 0.004,
+        "status": "PASSED",
+        "elapsedSeconds": 12.72,
+        "endedSeconds": 12.725
+      },
+      {
+        "name": "main-typescript-build",
+        "startedSeconds": 13.304,
+        "status": "PASSED",
+        "elapsedSeconds": 0.378,
+        "endedSeconds": 13.682
+      },
+      {
+        "name": "fresh-config-and-image-validation",
+        "startedSeconds": 13.682,
+        "status": "PASSED",
+        "elapsedSeconds": 12.059,
+        "endedSeconds": 25.742
+      },
+      {
+        "name": "host-storage-capacity",
+        "startedSeconds": 25.743,
+        "status": "PASSED",
+        "elapsedSeconds": 2.759,
+        "endedSeconds": 28.502
+      },
+      {
+        "name": "publish-and-pull",
+        "startedSeconds": 28.508,
+        "status": "PASSED",
+        "elapsedSeconds": 43.946,
+        "endedSeconds": 72.455
+      },
+      {
+        "name": "config-freshness-before-mutation",
+        "startedSeconds": 72.456,
+        "status": "PASSED",
+        "elapsedSeconds": 4.089,
+        "endedSeconds": 76.548
+      },
+      {
+        "name": "provider-preparation",
+        "startedSeconds": 76.551,
+        "status": "PASSED",
+        "elapsedSeconds": 14.821,
+        "endedSeconds": 91.374
+      },
+      {
+        "name": "database-and-feature-authority",
+        "startedSeconds": 91.374,
+        "status": "PASSED",
+        "elapsedSeconds": 58.742,
+        "endedSeconds": 150.117
+      },
+      {
+        "name": "native-rollout-and-readback",
+        "startedSeconds": 150.117,
+        "status": "PASSED",
+        "elapsedSeconds": 81.053,
+        "endedSeconds": 231.17
+      },
+      {
+        "name": "customer-acceptance",
+        "startedSeconds": 231.171,
+        "status": "PASSED",
+        "elapsedSeconds": 7.891,
+        "endedSeconds": 239.063
+      },
+      {
+        "name": "retire-observed-builds",
+        "startedSeconds": 239.064,
+        "status": "PASSED",
+        "elapsedSeconds": 9.602,
+        "endedSeconds": 248.667
+      },
+      {
+        "name": "receipt-signature",
+        "startedSeconds": 248.668,
+        "status": "PASSED",
+        "elapsedSeconds": 1.293,
+        "endedSeconds": 249.962
+      }
+    ],
+    "lineAcceptance": "DEFERRED_BY_OWNER",
+    "readiness": {
+      "ai-gateway": {
+        "i-0ef193d594e475a65": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "i-0248e3a31d9b75ad1": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "i-0ef193d594e475a65": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "ssmSessionCleanup": {
+      "passed": true,
+      "terminatedCount": 2,
+      "failedCount": 0
+    },
+    "hashes": {
+      "accepted.json": "b4f86bf0e940ccefd4f1885e4632d333bb7da36218ff0893e99f1f11709341a7",
+      "accepted.sig": "1f33a4dda4ed4e6030d11e4ac4cd4a428ed7f7b44216a449aa891b8eec8fca01",
+      "result.json": "5bf5bd1dd8e90e71dd07ec6bc0fa864f0664255822fe6279cdfe90f2ebc47cb5"
+    },
+    "signatureVerified": true,
+    "publishedDigests": {
+      "api-web": "sha256:dea80018396264338b093a0dff975a98b03a4ff06e4f1cab9c3a4bd3c3419fb0",
+      "ai-gateway": "sha256:8472caa65f993b1ded15147677ef7020caaaf6afcdd1c6aff945ea0bff1142b7",
+      "workers": "sha256:e3c37f46d2642053212bd2425ad4b52df3cfde3e2dd8070b3a21b3eef36d237c",
+      "tools": "sha256:5146a7c174e815ec3685e1573fc3b868e2123f7d827afcad1546d4e2cc87c263"
+    },
+    "agentcoreArtifactSha256": "e4b155d85b34631993460fdb0433ee36fc894a92b3148da1b7fadacf5cecc8c6",
+    "customerAcceptancePassed": true
+  },
+  "production": {
+    "operationId": "20261028T064841Z-6cd1214c",
+    "sourceCommit": "8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c",
+    "status": "ACCEPTED_LINE_DEFERRED",
+    "controllerSha256": "da915391c7e6b0ed488add2e655631a44f43f866304caebcc9584faa3e8aa080",
+    "releaseId": "d0f6cf3df3b639939bc9adc9936493548d2286bb67548a612a8a7fec99e5d5a8",
+    "startedAt": "2026-10-28T06:48:41.647246+00:00",
+    "finishedAt": "2026-10-28T07:05:59.824680+00:00",
+    "elapsedSeconds": 1038.175,
+    "phases": [
+      {
+        "name": "target-preflight",
+        "startedSeconds": 0.003,
+        "status": "PASSED",
+        "elapsedSeconds": 18.471,
+        "endedSeconds": 18.474
+      },
+      {
+        "name": "main-typescript-build",
+        "startedSeconds": 19.163,
+        "status": "PASSED",
+        "elapsedSeconds": 6.56,
+        "endedSeconds": 25.723
+      },
+      {
+        "name": "fresh-config-and-image-validation",
+        "startedSeconds": 25.724,
+        "status": "PASSED",
+        "elapsedSeconds": 16.812,
+        "endedSeconds": 42.536
+      },
+      {
+        "name": "host-storage-capacity",
+        "startedSeconds": 42.537,
+        "status": "PASSED",
+        "elapsedSeconds": 5.401,
+        "endedSeconds": 47.939
+      },
+      {
+        "name": "publish-and-pull",
+        "startedSeconds": 47.94,
+        "status": "PASSED",
+        "elapsedSeconds": 56.555,
+        "endedSeconds": 104.496
+      },
+      {
+        "name": "config-freshness-before-mutation",
+        "startedSeconds": 104.497,
+        "status": "PASSED",
+        "elapsedSeconds": 4.909,
+        "endedSeconds": 109.406
+      },
+      {
+        "name": "provider-preparation",
+        "startedSeconds": 109.406,
+        "status": "PASSED",
+        "elapsedSeconds": 17.991,
+        "endedSeconds": 127.398
+      },
+      {
+        "name": "database-and-feature-authority",
+        "startedSeconds": 127.398,
+        "status": "PASSED",
+        "elapsedSeconds": 67.25,
+        "endedSeconds": 194.648
+      },
+      {
+        "name": "native-rollout-and-readback",
+        "startedSeconds": 194.649,
+        "status": "PASSED",
+        "elapsedSeconds": 76.448,
+        "endedSeconds": 271.097
+      },
+      {
+        "name": "customer-acceptance",
+        "startedSeconds": 271.098,
+        "status": "PASSED",
+        "elapsedSeconds": 750.791,
+        "endedSeconds": 1021.89
+      },
+      {
+        "name": "retire-observed-builds",
+        "startedSeconds": 1021.891,
+        "status": "PASSED",
+        "elapsedSeconds": 12.164,
+        "endedSeconds": 1034.058
+      },
+      {
+        "name": "receipt-signature",
+        "startedSeconds": 1034.059,
+        "status": "PASSED",
+        "elapsedSeconds": 1.2,
+        "endedSeconds": 1035.26
+      }
+    ],
+    "lineAcceptance": "NOT_EXERCISED",
+    "readiness": {
+      "ai-gateway": {
+        "i-0d1129ba60aedd07e": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "i-05a63210c38c20d10": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        },
+        "i-09c35998d5141fa72": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "i-0aa479f24c2bb3e85": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "ssmSessionCleanup": {
+      "passed": true,
+      "terminatedCount": 4,
+      "failedCount": 0
+    },
+    "hashes": {
+      "accepted.json": "a73526e71a98f8060bb2f5029a985d73aa49cdac4d33dfc930f0881f85f35038",
+      "accepted.sig": "23b7f4883623759275f35629dad0385b8f88f0fd30628943b0ad0176f9e5af60",
+      "result.json": "a8c0b3d17fa45347e3dd7da69bb95a3fe2d06d2067861e3a780cd51415da889b"
+    },
+    "signatureVerified": true,
+    "publishedDigests": {
+      "api-web": "sha256:dea80018396264338b093a0dff975a98b03a4ff06e4f1cab9c3a4bd3c3419fb0",
+      "ai-gateway": "sha256:8472caa65f993b1ded15147677ef7020caaaf6afcdd1c6aff945ea0bff1142b7",
+      "workers": "sha256:e3c37f46d2642053212bd2425ad4b52df3cfde3e2dd8070b3a21b3eef36d237c",
+      "tools": "sha256:5146a7c174e815ec3685e1573fc3b868e2123f7d827afcad1546d4e2cc87c263"
+    },
+    "agentcoreArtifactSha256": "e4b155d85b34631993460fdb0433ee36fc894a92b3148da1b7fadacf5cecc8c6",
+    "customerAcceptancePassed": true,
+    "secondsToWebsiteReady": 272.065,
+    "browserAcceptanceStageSeconds": 739.921,
+    "uatSource": {
+      "kind": "signed_uat_promotion",
+      "sourceCommit": "8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c",
+      "uatOperationId": "20261028T064018Z-08c3a82d",
+      "acceptedSha256": "b4f86bf0e940ccefd4f1885e4632d333bb7da36218ff0893e99f1f11709341a7",
+      "signatureVerified": true
+    },
+    "browserEvidenceVerifiedCount": 13,
+    "browserChecks": {
+      "ownerLogin": true,
+      "systemAdminPermission": true,
+      "customerOpen": true,
+      "authenticatedRead": true,
+      "logout": true,
+      "sessionRejectedAfterLogout": true,
+      "identityVerified": true,
+      "noPasswordOrLegalAction": true,
+      "servingLive": true,
+      "canOpen": true
+    }
+  },
+  "workflowRunIds": {
+    "UAT_RUN_ID": "NOT_DISPATCHED",
+    "READY_RUN_ID": "NOT_DISPATCHED",
+    "PROD_RUN_ID": "NOT_DISPATCHED"
+  },
+  "notes": [
+    "Local Kamal; exact four published UAT digests and AgentCore artifact promoted; no Production image rebuild.",
+    "Owner accepted unchanged October9 API security alarm for this release; 15other alarms OK.",
+    "Browser attestation plus read-only server HTTP logs; no BFF Network capture; no password/legal mutation.",
+    "LINE messaging and physical-device social posting not exercised."
+  ]
+}

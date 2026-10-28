@@ -1,0 +1,28 @@
+{
+  "observedAt": "2026-10-28T07:04:48.078Z",
+  "dom": {
+    "emailProtected": 0,
+    "mailLinks": 3,
+    "open": true,
+    "scroll": 1280,
+    "url": "https://mangmeeplus.com/halloween",
+    "width": 1280
+  },
+  "consoleErrors": [],
+  "checks": {
+    "autoOpen": true,
+    "closeRetainsCampaignUrl": true,
+    "manualReopen": true,
+    "refreshAutoOpen": true,
+    "normalHomepageManual": true,
+    "actualDraw": "19-jiangshi",
+    "loadedCardImage": true,
+    "loadingCopy": "กำลังเรียกวิญญาณ…",
+    "viewportWidths": [
+      390,
+      1280
+    ],
+    "horizontalOverflow": false
+  },
+  "limits": "Browser viewport checks; not physical iPhone/Android or external social posting."
+}

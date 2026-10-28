@@ -1,6 +1,6 @@
 # Agent Memory: Halloween event popup
 
-Status: LOCAL_VERIFIED; UAT/Production release authorized and being prepared, 2026-10-28.
+Status: COMPLETE — UAT and Production verified 2026-10-28 14:06 Bangkok; final docs-only integration recorded below.
 Owner: root; Sol implements the route/modal; root reviews and verifies sharing/browser behavior.
 Scope: campaign `/halloween` opens the existing three-door dialog over the public homepage; ordinary `/` remains manual.
 Decisions:
@@ -11,8 +11,8 @@ Decisions:
 - No audio without a user gesture; selecting a door/manual entry may start it, and dismissal/unmount stops it. No storage, participant records, backend changes or dependencies.
 Open questions: none. Owner explicitly authorized UAT+Production after completion. Follow the mandatory release protocol; prior accepted release is recorded separately.
 Artifacts: existing activity/mirror specs, route/modal/share source, `docs/evidence/halloween-event-popup-2026-10-28/`.
-Verification: 57/57 public-home checks; full web 5,083/0; Next typegen and TypeScript pass. Actual IAB at 390/1280 shows correct chooser, no horizontal overflow, X/Escape/backdrop close, retained URL and usable homepage, manual reopen, refresh auto-open, normal `/` manual entry, theme-off homepage and gated unknown/disabled card paths. Actual copied caption has campaign URL and LINE; QR decoded at actual 148px export size to campaign URL. No physical-device/social-posting claim. Development React performance-measure timestamp warnings were observed during route navigation; product interaction passed. Verify built UAT again.
-Next: scoped commit/direct branch integration, prepare/apply UAT, exercise actual UAT, promote exact signed artifacts to Production, current administrator/OPEN/logout acceptance and signed cleanup.
+Verification: 58/58 public-home checks, full web 5,084/0, Next typegen and TypeScript pass. Corrected UAT and Production real-browser checks at 390/1280 pass: campaign auto-open, X/Escape/backdrop dismissal retaining URL and usable homepage, manual reopen, refresh, ordinary homepage manual entry, actual card draw, no horizontal overflow, three unchanged mailto anchors and zero browser errors. Caption/QR point to the campaign. Both releases are signed/verified with exact immutable artifacts, customer OPEN/deep readiness and all owned SSM cleanup passed. Production current-administrator identity/permission, live/canOpen/OPEN, logout204 and postlogout401 verified; browser/server-log evidence limits are recorded below. One unchanged API-security alarm is explicitly accepted for this release. LINE messaging, physical-device social posting and current alarm cause/delivery remain unexercised.
+Next: none.
 
 ## Release authorization and preflight
 
@@ -36,3 +36,25 @@ Next: scoped commit/direct branch integration, prepare/apply UAT, exercise actua
 - Root cause: Cloudflare email obfuscation changes SSR markup before hydration. Official documented per-address `<!--email_off-->...<!--/email_off-->` guard avoids rewriting these existing public contact links. Sol adds one static trusted markup helper at all3sites and a focused rendered regression. No cloud configuration, CSP relaxation, data mutation or warning suppression.
 - Source correction requires a new exact UAT build/release after local checks; retain the first receipt and all failure evidence. No active controller or unresolved transport remains. Owner's current release authorization and existing-alarm exception still govern this same release.
 - Correction verified locally: one no-props static HomeContactEmail helper, three literal guarded anchors. No dynamic HTML input. Public-home58/58, fullweb5084/0 and Next typegen/TypeScript pass; live local DOM retains the exact guards and three unchanged mailto links. Actual first-UAT console error logs retained in `uat-hydration-before.json`. A terminal public-HTML read returned403 and was not retried; browser observations provide the live evidence.
+- Corrected candidate `8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c`, tree `3ba8534075c0391c46c6693d4ec9415851ba67f0`; Sol atomically fast-forwarded both remote branches after fresh no-active-operation checks. Branches frozen again.
+- Corrected UAT prepare `20261028T063415Z-febbcba9`: PREPARED_NO_DEPLOYMENT in316.318s; all5phases and2ownedSSM cleanup passed. Source matches8ee5e737e. This is the reviewed source correction, not a duplicate run of the prior candidate.
+- Corrected UAT apply `20261028T064018Z-08c3a82d`: terminal ACCEPTED_LINE_DEFERRED in251.606s; exact source8ee5e737e, signature verified, all readiness/customerOPEN pass,2ownedSSM sessions closed.
+- Actual corrected UAT390/1280: auto chooser, close/manual reopen/refresh, normal homepage manual, real draw17-turbo-granny all pass. Both `/` and `/halloween` now have3proper email links, zero Cloudflare email-protection nodes, and zero browser error logs across load/reload/game. Retained `uat-hydration-after.json` and corrected screenshots; earlier failing receipt/logs preserved.
+- Production promotion prepare `20261028T064700Z-ba7c1eb8`: PREPARED_NO_DEPLOYMENT in55.286s, all5phases and4ownedSSM cleanup passed; corrected UAT run only, no rebuild.
+- Fresh root-read-only alarm snapshot immediately before promotion again has15OK and exactly the accepted October9 alarm (state/time/reason unchanged). Preserved `production-alarms-pre-promotion.json`.
+- Production apply `20261028T064841Z-6cd1214c` running in session76231; exact corrected signed UAT artifacts, no rebuild. Branches remain frozen. Browser/customer acceptance was pending; completed below.
+
+## Final acceptance — 2026-10-28 14:06 Bangkok
+
+- Production `20261028T064841Z-6cd1214c` completed with exit0 and signed/verified `ACCEPTED_LINE_DEFERRED` in1,038.175s. Website ready at272.065s; browser/operator acceptance stage739.921s. All12phases passed, final readiness/API/deep DB/AI/workers/Redis/internal API checks passed, four owned SSM sessions terminated with zero failures.
+- Published immutable digests for all four images match corrected UAT exactly; AgentCore artifact hash also matches. No Production rebuild. UAT accepted digest `b4f86bf0e940ccefd4f1885e4632d333bb7da36218ff0893e99f1f11709341a7`; Production accepted digest `a73526e71a98f8060bb2f5029a985d73aa49cdac4d33dfc930f0881f85f35038`. Compact hashes, timings and phases: `docs/evidence/halloween-event-popup-2026-10-28/release-summary.json`.
+- Owner manually logged in as current prodmangmeeplus. Actual browser identity matches expected administrator and launch-gate permission; authenticated gate shows live/canOpen/OPEN. Actual /auth/me flags show mustChangePassword=false and legalAcceptanceRequired=false. Agent clicked logout, then observed /auth/me401, public OPEN and login marker=open. No credentials read/reset, legal action or customer-gate write.
+- Current API-container HTTP logs corroborate actual browser login200, authenticated gate200, logout204 and postlogout401. No BFF Network row/login-response body is claimed. The bound operator browser attestation retains these limits; all13signed evidence-file hashes independently rechecked. Private observations remain within the ignored release directory.
+- Actual Production390/1280: campaign auto-open, close retaining /halloween, manual reopen, refresh auto-open, ordinary homepage manual entry, actual draw19-jiangshi and fully loaded card pass. Loading says “กำลังเรียกวิญญาณ…”. No horizontal overflow. Both routes have3normal mailto anchors, zero Cloudflare email-protection anchors and no browser error logs. Public screenshots and sanitized observations retained.
+- Post-rollout CloudWatch readback:15OK and exactly the unchanged October9 API-security ALARM. User accepted this release-specific exception; alarm unchanged. Root profile used only for the explicitly authorized alarm reads, scoped non-root role for deployment/log access. LINE messages, physical-device/native social posting and current alarm cause/delivery not exercised.
+- Branch freeze can end after this signed customer acceptance. First failing UAT receipt remains retained and was not promoted. All workflow IDs remain NOT_DISPATCHED; local IDs above are authoritative. No additional build or deployment is needed for docs-only final integration.
+
+## Final docs integration
+
+- Owner-authorized direct atomic fast-forward integration into main and develop covers only final task memory, plan, cloud inventory and the listed sanitized release evidence under `docs/`. No application, dependency, controller or signed-evidence bytes changed; deployed application source remains `8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c`.
+- Final integration follows signed terminal acceptance and cleanup. No further build or deployment is required; unrelated dirty `apps/web/AGENTS.md`, local full test logs and historical generated assets are excluded.

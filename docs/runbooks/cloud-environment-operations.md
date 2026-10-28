@@ -10,7 +10,30 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current Halloween release — 2026-10-28 04:13 Bangkok
+## Current Halloween campaign popup release — 2026-10-28 14:06 Bangkok
+
+UAT and Production now serve source `8ee5e737e0b90ded61fb7955a5fe9c583dfd2f3c`: `/halloween`
+opens the existing three-door chooser over the real homepage, ordinary `/` stays manual, and shared
+links/QR return to the campaign. Closing preserves the URL and usable homepage. The release also
+protects three public contact anchors from Cloudflare email rewriting/hydration recovery without
+changing Cloudflare configuration. First UAT's application failure was retained and corrected before promotion.
+
+Corrected UAT `20261028T064018Z-08c3a82d` is signed/verified `ACCEPTED_LINE_DEFERRED` in251.606s.
+Production `20261028T064841Z-6cd1214c` is signed/verified in1,038.175s (website ready272.065s;
+operator/browser stage739.921s). Exact four UAT published digests and AgentCore artifact promoted
+without rebuild. Customer live/OPEN, current administrator identity/permission, login200, authenticated
+read200, no password/legal action, logout204 and postlogout401 verified. HTTP statuses are corroborated
+by current-container logs; no browser BFF Network row or raw login-response capture is claimed.
+Final runtime and deep readiness passed;2UAT and4Production owned SSM sessions terminated.
+Actual390/1280 popup/dismiss/reopen/refresh and real card draw pass with zero browser error logs.
+
+The owner explicitly accepted the unchanged October9 API-security alarm for this release;15other
+alarms OK, no alarm/gate/theme mutation. Root `thawatchai` was authorized only for alarm reads;
+scoped non-root deployment/log access remained in use. LINE messaging and physical-device social
+posting were not exercised. Workflow UAT/READY/PROD IDs are NOT_DISPATCHED (local Kamal).
+[Exact evidence, timing, signed hashes and limitations](../agent-memory/halloween-event-popup.md).
+
+## Previous Halloween release — 2026-10-28 04:13 Bangkok
 
 UAT and Production are running source `9a3deb73104eb9ffabf8f6f72916229801280657`, including the
 Halloween game/cards, draw proxy correction and image-plus-caption social sharing. UAT apply
