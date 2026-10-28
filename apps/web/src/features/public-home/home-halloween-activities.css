@@ -65,6 +65,9 @@
 .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"]{width:min(1040px,calc(100vw - 32px));border-color:#bb7847;background:#24142c}
 .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"] .home-halloween-dialog-content{padding:52px 18px 18px;background:#24142c}
 .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"] .home-halloween-close{z-index:10;top:9px;margin:-42px -7px 5px auto;border-color:#e3aa7666;background:#4c2b40;color:#fff2e4}
+.public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"]{width:min(1040px,calc(100vw - 32px));border-color:#6a503d;border-radius:7px;background:#09090c;box-shadow:0 36px 120px #000c,0 0 38px #6d1e3038}
+.public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"] .home-halloween-dialog-content{padding:52px 18px 18px;background:linear-gradient(145deg,#171215,#08090c)}
+.public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"] .home-halloween-close{z-index:10;top:9px;margin:-42px -7px 5px auto;border-color:#745746;background:#171316;color:#ddceb8}
 @media (prefers-reduced-motion:no-preference){
   .public-home[data-home-event="halloween"] .home-halloween-choice{transition:background .2s,border-color .2s,box-shadow .2s}
   .public-home[data-home-event="halloween"] .home-halloween-doorframe img{animation:home-halloween-character 5s ease-in-out infinite}
@@ -120,4 +123,8 @@
   .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"] .home-halloween-dialog-content{padding:52px 0 10px}
   .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"] .home-halloween-close{margin-right:10px}
   .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-candy="true"] [data-halloween-candy-game]{padding-top:10px;border-radius:0}
+  .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"]{width:calc(100vw - 20px)}
+  .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"] .home-halloween-dialog-content{padding:52px 0 10px}
+  .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"] .home-halloween-close{margin-right:10px}
+  .public-home[data-home-event="halloween"] .home-halloween-dialog[data-playing-escape="true"] [data-halloween-escape-game]{padding-top:10px;border-radius:0}
 }

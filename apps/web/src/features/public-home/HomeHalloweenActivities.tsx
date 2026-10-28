@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { startHalloweenAudio } from './home-halloween-audio';
 import { HalloweenCandyGame } from './HalloweenCandyGame';
+import { HalloweenEscapeGame } from './HalloweenEscapeGame';
 import { HalloweenGhostGame } from './HalloweenGhostGame';
 import { countdownParts, formatCountdown, HALLOWEEN_GAME_DEADLINES } from './home-halloween-countdown';
 
@@ -23,7 +24,7 @@ function HalloweenCountdown({ activity, now }: { activity: 'candy' | 'escape'; n
     {countdown ? <>
       <span className="home-halloween-countdown-value" role="timer" aria-live="off" aria-label={`เหลือเวลา ${formatCountdown(countdown)}`}>{formatCountdown(countdown)}</span>
       <span className="home-halloween-countdown-date">เปิด {openingDate} เวลา 00:00 น. กรุงเทพฯ</span>
-    </> : <span className="home-halloween-countdown-status">{activity === 'candy' ? 'พร้อมเล่น' : 'กำลังเตรียมเกม'}</span>}
+    </> : <span className="home-halloween-countdown-status">พร้อมเล่น</span>}
   </span>;
 }
 
@@ -48,25 +49,27 @@ export function HomeHalloweenActivities({ autoOpen = false }: { autoOpen?: boole
   const introTitle = useRef<HTMLHeadingElement>(null);
   const firstDoor = useRef<HTMLButtonElement>(null);
   const stopAudio = useRef<ReturnType<typeof startHalloweenAudio> | null>(null);
-  const previewCandy = useRef(false);
+  const previewGame = useRef<'candy' | 'escape' | null>(null);
   const introIsUpcoming = selected && selected.id !== 'ghost' && countdownParts(HALLOWEEN_GAME_DEADLINES[selected.id], countdownNow);
   const playingCandy = selected?.id === 'candy' && !introIsUpcoming;
-  const playingGame = selected?.id === 'ghost' || playingCandy;
+  const playingEscape = selected?.id === 'escape' && !introIsUpcoming;
+  const playingGame = selected?.id === 'ghost' || playingCandy || playingEscape;
 
   useEffect(() => () => { stopAudio.current?.(); }, []);
 
   useEffect(() => {
-    previewCandy.current = process.env.NODE_ENV !== 'production' && new URLSearchParams(window.location?.search ?? '').get('previewGame') === 'candy';
-    if (autoOpen || previewCandy.current) open(false);
-    if (previewCandy.current) {
-      setCountdownNow(HALLOWEEN_GAME_DEADLINES.candy);
-      setSelected(activities[1]);
+    const preview = new URLSearchParams(window.location?.search ?? '').get('previewGame');
+    previewGame.current = process.env.NODE_ENV !== 'production' && (preview === 'candy' || preview === 'escape') ? preview : null;
+    if (autoOpen || previewGame.current) open(false);
+    if (previewGame.current) {
+      setCountdownNow(HALLOWEEN_GAME_DEADLINES[previewGame.current]);
+      setSelected(activities[previewGame.current === 'candy' ? 1 : 2]);
     }
   }, [autoOpen]);
 
   useEffect(() => {
     if (!dialogOpen) return;
-    const sync = () => setCountdownNow(previewCandy.current ? HALLOWEEN_GAME_DEADLINES.candy : Date.now());
+    const sync = () => setCountdownNow(previewGame.current ? HALLOWEEN_GAME_DEADLINES[previewGame.current] : Date.now());
     sync();
     const interval = window.setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 1000);
     const onVisibilityChange = () => { if (document.visibilityState === 'visible') sync(); };
@@ -125,7 +128,7 @@ export function HomeHalloweenActivities({ autoOpen = false }: { autoOpen?: boole
       <div className="home-halloween-entry-copy"><p>ก๊อก ก๊อก… เปิดประตูมาสนุกกัน!</p><span>3 ประตู 3 ความสนุกจากน้องมั่งมี</span></div>
       <button ref={entrance} type="button" className="home-halloween-entry-button" aria-haspopup="dialog" onClick={() => open()}>ร่วมกิจกรรม</button>
     </div>
-    <dialog ref={dialog} className="home-halloween-dialog" data-playing-ghost={selected?.id === 'ghost'} data-playing-candy={playingCandy} aria-labelledby="home-halloween-title"
+    <dialog ref={dialog} className="home-halloween-dialog" data-playing-ghost={selected?.id === 'ghost'} data-playing-candy={playingCandy} data-playing-escape={playingEscape} aria-labelledby="home-halloween-title"
       onCancel={() => { stop(); setDialogOpen(false); }}
       onClose={event => {
         if (event.currentTarget.open) return;
@@ -152,10 +155,10 @@ export function HomeHalloweenActivities({ autoOpen = false }: { autoOpen?: boole
         <button type="button" className="home-halloween-close" aria-label="ปิดกิจกรรม" autoFocus onClick={close}><span aria-hidden="true">×</span></button>
         <header className="home-halloween-dialog-header" hidden={playingGame}>
           <p className="home-halloween-eyebrow"><span aria-hidden="true">✦</span> กิจกรรมฮาโลวีนจากมั่งมีพลัส <span aria-hidden="true">✦</span></p>
-          <h2 id="home-halloween-title">{selected?.id === 'ghost' ? 'กระจกเผยร่างผี' : playingCandy ? 'คืนล่าลูกอมต้องสาป' : selected ? 'อีกไม่นาน… ได้สนุกด้วยกัน' : 'ก๊อก ก๊อก… กล้าเปิดไหม?'}</h2>
+          <h2 id="home-halloween-title">{selected?.id === 'ghost' ? 'กระจกเผยร่างผี' : playingCandy ? 'คืนล่าลูกอมต้องสาป' : playingEscape ? 'คฤหาสน์ไร้ทางออก' : selected ? 'อีกไม่นาน… ได้สนุกด้วยกัน' : 'ก๊อก ก๊อก… กล้าเปิดไหม?'}</h2>
           <p>{selected ? 'น้องมั่งมีกำลังเตรียมความสนุกไว้ให้' : 'หลังประตูนี้มีเรื่องหลอนรออยู่ เลือกบานที่อยากลองได้เลย'}</p>
         </header>
-        {selected?.id === 'ghost' ? <HalloweenGhostGame onBack={() => setSelected(null)} /> : playingCandy ? <HalloweenCandyGame onStart={pauseAudio} onEnd={resumeAudio} onBack={() => { resumeAudio(); setSelected(null); }} /> : selected ? <section className={`home-halloween-intro home-halloween-${selected.id}`} data-halloween-intro={selected.id}>
+        {selected?.id === 'ghost' ? <HalloweenGhostGame onBack={() => setSelected(null)} /> : playingCandy ? <HalloweenCandyGame onStart={pauseAudio} onBack={() => { resumeAudio(); setSelected(null); }} /> : playingEscape ? <HalloweenEscapeGame onStart={pauseAudio} onEnd={resumeAudio} onBack={() => { resumeAudio(); setSelected(null); }} /> : selected ? <section className={`home-halloween-intro home-halloween-${selected.id}`} data-halloween-intro={selected.id}>
           <DoorIllustration activity={selected} />
           <div className="home-halloween-intro-copy">
             {introIsUpcoming && <span className="home-halloween-soon">เร็ว ๆ นี้</span>}

@@ -1,5 +1,21 @@
 # Halloween activity entrance plan
 
+## Game 3: คฤหาสน์ไร้ทางออก — 2026-10-28
+
+- [x] Keep the existing green-door cutoff as the single unlock source and replace only the expired placeholder with the real game.
+- [x] Implement the 60-second ready/countdown/three-room/result/replay flow, random clues and key order, five-second wrong-answer penalty, final-15-second music pressure, final-five-second clock ticks and complete timer/audio cleanup.
+- [x] Add four exact result tiers, an existing-art Nong Mangmee result, and a deterministic 1080×1920 share JPEG with provenance and the existing native/fallback controls.
+- [x] Add focused pure-logic and activity lifecycle coverage without API, storage, dependency or package manifest changes.
+- [x] Replace the soft mascot-led ready art with a clear haunted-mansion environment, give each room its own visual theme, replace the moving-eye portrait with six identical portraits whose answer alone has blood at the mouth, and use the approved generated crypt scene for three matching candles whose flames alone carry the colour choices.
+- [x] Give the candle memory phase its own moonlit chapel scene, show the actual randomized candle order for five seconds, and keep the answer artwork free of visible colour labels and focus-line artifacts.
+- [x] Show the five-second candle-memory countdown as a compact top-right hourglass and use the approved portrait prompt “ภาพไหนที่แตกต่าง”.
+- [x] Replace the eye clue with พระอาทิตย์, rename สีอำพัน to สีส้ม, and verify the combined final-key answer at phone and desktop widths.
+- [x] Verify focused tests, TypeScript and actual 390/1280 plus iPhone/Android journeys before proposing any release.
+
+Memory: [game 3 memory](../agent-memory/halloween-escape-game.md).
+
+Verification: 66/66 public-home tests, Next type generation/TypeScript, production build and `git diff --check` pass. Real Chromium at 390/1280, Android Chromium Pixel 7 and WebKit iPhone 16 profiles complete all three rooms, exercise the five-second penalty, reach a result and export a 1080×1920 JPEG with Mangmee provenance. No browser errors or horizontal overflow; share targets remain 48×48 px. These profiles do not prove physical-phone audio or posting into installed social apps.
+
 ## Game 2: คืนล่าลูกอมต้องสาป — 2026-10-28
 
 - [x] Keep the existing orange-door cutoff as the single unlock source; replace the expired placeholder with the real game while preserving the locked grey state before the cutoff.

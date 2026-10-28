@@ -22,7 +22,7 @@ function randomKind(): CandyKind {
   return roll < .64 ? 'ordinary' : roll < .77 ? 'gold' : roll < .91 ? 'cursed' : 'thief';
 }
 
-export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => void; onEnd?: () => void; onStart?: () => void }) {
+export function HalloweenCandyGame({ onBack, onStart }: { onBack?: () => void; onStart?: () => void }) {
   const [phase, setPhase] = useState<Phase>('ready');
   const [countdown, setCountdown] = useState(3);
   const [secondsLeft, setSecondsLeft] = useState(30);
@@ -102,6 +102,79 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
     } catch { stopMusic(); }
   }
 
+  function startVictoryMusic() {
+    const context = sound.current;
+    if (!context || context.state === 'closed' || music.current) return;
+    try {
+      const duration = 3.2;
+      const rate = 11025;
+      const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 987.77, 1046.5, 659.25];
+      const buffer = context.createBuffer(1, duration * rate, rate);
+      const samples = buffer.getChannelData(0);
+      let peak = 0;
+      for (let index = 0; index < samples.length; index++) {
+        const time = index / rate;
+        const beat = time % .4;
+        const frequency = notes[Math.floor(time / .4) % notes.length];
+        const melody = Math.sin(2 * Math.PI * frequency * time) * Math.exp(-5 * beat);
+        const sparkle = Math.sin(2 * Math.PI * frequency * 2 * time) * Math.exp(-8 * beat);
+        const bassBeat = time % .8;
+        const bass = Math.sin(2 * Math.PI * (time < 1.6 ? 130.81 : 196) * time) * Math.exp(-7 * bassBeat);
+        const edge = Math.min(1, time / .04, (duration - time) / .04);
+        samples[index] = (.56 * melody + .18 * sparkle + .2 * bass) * edge;
+        peak = Math.max(peak, Math.abs(samples[index]));
+      }
+      for (let index = 0; index < samples.length; index++) samples[index] /= peak || 1;
+      const gain = context.createGain();
+      gain.gain.value = .06;
+      music.current = context.createBufferSource();
+      music.current.buffer = buffer;
+      music.current.loop = true;
+      music.current.connect(gain);
+      gain.connect(context.destination);
+      music.current.start();
+    } catch { stopMusic(); }
+  }
+
+  function startCelebrationMusic() {
+    const context = sound.current;
+    if (!context || context.state === 'closed' || music.current) return;
+    try {
+      const duration = 2.4;
+      const rate = 22050;
+      const notes = [659.25, 783.99, 880, 1046.5, 1174.66, 1046.5, 1318.51, 1567.98, 1318.51, 1174.66, 1046.5, 1318.51];
+      const bassNotes = [261.63, 349.23, 220, 392, 261.63, 392];
+      const buffer = context.createBuffer(1, duration * rate, rate);
+      const samples = buffer.getChannelData(0);
+      let peak = 0;
+      for (let index = 0; index < samples.length; index++) {
+        const time = index / rate;
+        const noteAge = time % .2;
+        const frequency = notes[Math.floor(time / .2) % notes.length];
+        const melodyPhase = 2 * Math.PI * frequency * noteAge;
+        const melody = (.72 * Math.sin(melodyPhase) + .28 * Math.sin(melodyPhase * 2)) * Math.exp(-7 * noteAge);
+        const bassAge = time % .4;
+        const bassFrequency = bassNotes[Math.floor(time / .4) % bassNotes.length];
+        const bass = Math.sin(2 * Math.PI * bassFrequency * bassAge) * Math.exp(-8 * bassAge);
+        const kick = Math.sin(2 * Math.PI * (95 - 55 * Math.min(1, bassAge / .12)) * bassAge) * Math.exp(-22 * bassAge);
+        const hatAge = time % .1;
+        const hat = Math.sin(2 * Math.PI * 4200 * hatAge) * Math.exp(-85 * hatAge);
+        const edge = Math.min(1, time / .03, (duration - time) / .03);
+        samples[index] = (.48 * melody + .22 * bass + .22 * kick + .05 * hat) * edge;
+        peak = Math.max(peak, Math.abs(samples[index]));
+      }
+      for (let index = 0; index < samples.length; index++) samples[index] /= peak || 1;
+      const gain = context.createGain();
+      gain.gain.value = .06;
+      music.current = context.createBufferSource();
+      music.current.buffer = buffer;
+      music.current.loop = true;
+      music.current.connect(gain);
+      gain.connect(context.destination);
+      music.current.start();
+    } catch { stopMusic(); }
+  }
+
   function prepareSound() {
     try {
       const Audio = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -130,29 +203,6 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
     } catch { /* Sound is optional; gameplay stays available. */ }
   }
 
-  function winSting() {
-    const context = sound.current;
-    if (!context || context.state === 'closed') return;
-    try {
-      const now = context.currentTime;
-      [523.25, 659.25, 783.99, 1046.5].forEach((frequency, index) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        const startAt = now + index * .075;
-        oscillator.type = index === 3 ? 'sine' : 'triangle';
-        oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(.001, startAt);
-        gain.gain.linearRampToValueAtTime(.055, startAt + .025);
-        gain.gain.exponentialRampToValueAtTime(.001, startAt + .42);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
-        oscillator.start(startAt);
-        oscillator.stop(startAt + .44);
-      });
-    } catch { /* The result transition must not depend on audio. */ }
-  }
-
   function shake() {
     clearTimeout(shakeTimer.current);
     setShaking(true);
@@ -166,7 +216,6 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
     setSecondsLeft(0);
     setPhase('finishing');
     setMessage('');
-    winSting();
     clearTimeout(finishTimer.current);
     finishTimer.current = setTimeout(() => {
       if (run.current !== finalRun) return;
@@ -174,7 +223,6 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
       setTargets([]);
       setBursts([]);
       setPhase('result');
-      onEnd?.();
       showTop();
     }, reducedMotion ? 700 : 1500);
   }
@@ -182,6 +230,7 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
   function start() {
     run.current++;
     clearTimeout(finishTimer.current);
+    stopMusic();
     resolvedTargets.current.clear();
     onStart?.();
     prepareSound();
@@ -290,6 +339,12 @@ export function HalloweenCandyGame({ onBack, onEnd, onStart }: { onBack?: () => 
     document.addEventListener('visibilitychange', visibility);
     return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', visibility); stopMusic(); };
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'finishing') return;
+    if (candyTier(score).id === 'sad') startVictoryMusic();
+    else startCelebrationMusic();
+  }, [phase, score]);
 
   useEffect(() => {
     const context = sound.current;
