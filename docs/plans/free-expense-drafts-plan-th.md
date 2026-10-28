@@ -208,3 +208,7 @@ Browser paths ที่ต่อยอดได้: [expenses](../../e2e/expense
 - [x] ตรวจDBไม่มี financial/master/paidgrant/confirmedmutation และใบ4ไม่มีprovidercall/orphan
 - [x] หลังแก้ web395tests + TypeScriptผ่าน
 - [ ] LINE native/LIFF/legal/companyswitch journey, realprovider, PDF/HEIC asyncUI และ liveprotocol ยังคงเป็นงานก่อนรับรองเต็มขอบเขต
+
+## Main merge acceptance — 2026-10-28
+
+Owner authorized direct main/develop merge without PR and rerun on main. Source049aa51dea4e69307f35e3f82adda544141ec5fb was pushed to both, then scoped tests and real Chrome desktop/mobile flow passed. [Report](../evidence/free-expense-drafts-2026-10-28/main-browser/README.md) records exact counts, screenshots, DB proof and remaining native/provider/live limits. No deployment.

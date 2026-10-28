@@ -1,0 +1,28 @@
+[
+  {
+    "buttons": [
+      {
+        "height": 44,
+        "text": "ดูไฟล์",
+        "width": 155
+      }
+    ],
+    "scrollWidth": 390,
+    "width": 390
+  },
+  {
+    "buttons": [
+      {
+        "height": 40,
+        "text": "เปิดเต็มจอ",
+        "width": 95.1875
+      }
+    ],
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  {
+    "scrollWidth": 1536,
+    "width": 1536
+  }
+]

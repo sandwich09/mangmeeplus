@@ -1,0 +1,81 @@
+- button "Open Next.js Dev Tools":
+- alert: กำลังโหลด…
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "ย่อเมนู" [expanded]:
+  - navigation:
+    - list:
+      - listitem "การเงินและบัญชี"
+      - button "ค่าใช้จ่ายและใบเสร็จ" [expanded]:
+        - generic: ค่าใช้จ่ายและใบเสร็จ
+      - list:
+        - link "รายการค่าใช้จ่าย":
+          - /url: /companies/free-ui-zero/expenses
+          - text: รายการค่าใช้จ่าย
+        - link "อัปโหลดใบเสร็จ":
+          - /url: /companies/free-ui-zero/expenses/upload
+          - text: อัปโหลดใบเสร็จ
+      - listitem "ตั้งค่า"
+      - link "แพ็กเกจ เหลือ 0 วัน":
+        - /url: /companies/free-ui-zero/billing
+        - generic: แพ็กเกจ
+        - generic: เหลือ 0 วัน
+  - button "เมนูผู้ใช้":
+    - generic: ทz
+    - generic: คุณทดสอบ zero
+    - generic: เจ้าของกิจการ
+- banner:
+  - generic: ร้านทดสอบรายจ่ายฟรี
+- main:
+  - link "กลับไปรายการ":
+    - /url: /companies/free-ui-zero/expenses
+  - heading "Synthetic Stationery Shop" [level=1]
+  - paragraph:
+    - generic: ยังไม่มีเลขรายจ่าย
+    - generic: รอตรวจ
+    - generic: ใบเสร็จรับเงิน · 28 ต.ค. 2569
+  - status
+  - generic: receipt-3.png
+  - generic: เอกสารหลัก · รูปภาพ
+  - generic "ตัวเลือกไฟล์"
+  - button "เปิดเต็มจอ"
+  - img "receipt-3.png"
+  - status: อ่านเอกสารฟรีครบ 3 จาก 3 ใบของเดือนนี้แล้ว ยังแก้ร่างเดิมได้ อ่านฟรีอีกครั้งได้วันที่ 1 พฤศจิกายน 2569
+  - region "ข้อมูลบิลที่ยังไม่ครบ":
+    - heading "ข้อมูลผู้ขายและรายการ" [level=2]
+    - paragraph: กรอกเท่าที่ทราบแล้วบันทึกร่างไว้ก่อนได้ ช่องที่ยังไม่ทราบจะเว้นว่างไว้และไม่ถูกใส่เป็นศูนย์
+    - generic: ยังไม่ยืนยันรายการ
+    - text: วันที่เอกสาร
+    - combobox "วันที่เอกสาร":
+      - generic: 28 ต.ค. 2569
+    - text: ชื่อผู้ขาย
+    - textbox "ชื่อผู้ขาย": Synthetic Stationery Shop
+    - text: ซื้อไปใช้ทำอะไร
+    - textbox "ซื้อไปใช้ทำอะไร"
+    - generic: รายการในใบเสร็จ
+    - region "รายการที่ 1":
+      - heading "รายการที่ 1" [level=3]
+      - paragraph: กรอกราคาต่อหน่วยหรือยอดรวมอย่างใดอย่างหนึ่ง ช่องที่ยังไม่ทราบเว้นว่างได้
+      - text: รายละเอียด
+      - textbox "รายการที่ 1 รายละเอียด": Stationery pack 3
+      - text: จำนวน
+      - textbox "รายการที่ 1 จำนวน":
+        - /placeholder: ยังไม่ทราบ
+        - text: "1"
+      - text: ราคาต่อหน่วย
+      - textbox "รายการที่ 1 ราคาต่อหน่วย":
+        - /placeholder: ยังไม่ทราบ
+        - text: "103"
+      - text: ยอดรวมรายการ
+      - textbox "รายการที่ 1 ยอดรวมรายการ":
+        - /placeholder: ยังไม่ทราบ
+      - text: หมวดหมู่ค่าใช้จ่าย
+      - combobox "รายการที่ 1 หมวดหมู่ค่าใช้จ่าย":
+        - generic: ยังไม่ระบุ
+      - generic: ยังขาดข้อมูลนี้
+    - button "เพิ่มรายการ"
+    - button "บันทึกร่าง" [disabled]

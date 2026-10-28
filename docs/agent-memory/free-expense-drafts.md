@@ -1,6 +1,6 @@
 # Agent Memory: free-expense-drafts
 
-Status: CURRENT-MAIN PORT VERIFIED — direct main/develop push prepared; post-merge checks and actual browser pending
+Status: MERGED TO MAIN + DEVELOP — post-merge scoped tests and actual Chrome acceptance passed; not deployed
 Owner: thawatchai
 Scope: ร้านเปิดสำเร็จที่ยังไม่เคยซื้อแพ็กเกจ อ่านเอกสารรายจ่ายฟรี 3 ใบต่อบริษัท/เดือน ใช้ร่วมเว็บ/LINE; ดู/แก้ source drafts; no-model commands; guard/copy correctness
 
@@ -50,7 +50,7 @@ Verification:
 - ชุดก่อนหน้า overlapกับfinalrun จึงไม่บวกจำนวนagent runsซ้ำเป็นยอดรวม
 
 Next:
-- Review working-tree implementation และ migration ตามหลักฐานนี้
+- Implementation รวมเข้า main/develop แล้ว; รายงาน main-browser ด้านล่างเป็นหลักฐาน source ที่รวมจริง
 - ก่อนเปิดจริง ต้องเติม native LINE/LIFF และเส้นทาง browser ที่ยังไม่ครอบคลุมตาม browser report จากนั้น follow docs/runbooks/cloud-environment-operations.md และ docs/runbooks/uat-production-v2-deployment.md เมื่อได้รับคำสั่ง deploy; เก็บ UAT/READY/Production run IDs และ signed/customer OPEN acceptance
 - Rollback รักษา additive usage columns/events/drafts/attachments ห้าม dropข้อมูลเพื่อย้อน code
 
@@ -81,3 +81,12 @@ Results:
 
 - Port verification before push: API root964/964 +2 delivery-plan/source-card regressions; latest receipt/copy222/222 overlap. Access447/447, quota300/300 plus notifier75/75 updated suite (overlap), real PostgreSQL6access+16quota/add-on, web421/421. API8GiB TypeScript, web TypeScript, config/contracts builds, scoped whitespace and68 doc links pass. Default API compiler hit its4GiB heap ceiling, retried at8GiB successfully.
 - Current-main integration additionally preserves signed LINE delivery plans, blocks free pending claim/payment/substitute paths, keeps free notice claim while a durable plan owns retry, uses neutral no-button signup fallback, and updates existing English policy to match Thai.
+
+## Post-merge main acceptance
+
+- Main/develop pushed atomically to049aa51dea4e69307f35e3f82adda544141ec5fb without PR. Local main/develop safely fast-forwarded; clean managed verification worktree now checks out main.
+- Reran on that exact source: rootAPI1063, access447, quota301, realPG22, web484; all passed. Web TypeScript passed; API8GiB TypeScript passed before push with unchanged code afterward.
+- Actual Chrome main journey passed: login, expense-only navigation, upload1/2/3, third notice, fourth denial, source unknown price/save/reload, mobile save after limit, original file, manual-route boundary, paid expiry, admin hold/no-membership.
+- DB proof confirms3fixture reads, no fourthprovider/draft/orphan, no extra financial/master/grant writes. No real model/LINE/customer calls or deploy.
+- [Merged-main browser/evidence report](../evidence/free-expense-drafts-2026-10-28/main-browser/README.md); [verification](../evidence/free-expense-drafts-2026-10-28/main-browser/verification.json).
+- Local runtimes stopped, signed out and viewport reset; preserved synthetic DB/dump/evidence. Original dirty checkout untouched. Subsequent evidence commit changes docs only.

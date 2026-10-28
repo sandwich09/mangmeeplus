@@ -1,0 +1,14 @@
+  ✔ leaves ordinary business text, captions and number replies alone (0.027583ms)
+  ✔ the curated card lists only the six real functions (0.061209ms)
+✔ capability question (Owner 2026-08-27: only real features) (0.616666ms)
+✔ the public package answer names the home menu as หน้าแรก (0.029917ms)
+✔ Round 3 pending-approval menu offers approval/rejection buttons for each scoped claim (0.369625ms)
+✔ Round 3 claim controls preserve other entitled approval queues and remain hidden without claim permission (0.166ms)
+ℹ tests 1063
+ℹ suites 110
+ℹ pass 1063
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14202.977875

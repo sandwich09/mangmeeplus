@@ -1,0 +1,26 @@
+{
+  "completedAt": "2026-10-28T16:16:33.026229+00:00",
+  "provider": {
+    "pid": 50954,
+    "command": "node /tmp/free-expense-ui/ocr-fixture.mjs",
+    "port": 3082,
+    "stopped": true,
+    "finalStats": "/tmp/free-main-quota-provider-final.json"
+  },
+  "postgres": {
+    "container": "mangmee-free-merge-quota-test",
+    "containerId": "0efcf3fd7fbbe62c884a9175ff424943b5f3f871d4b68cf2116b4393369e500c",
+    "port": 15433,
+    "database": "free_expense_merge_ci",
+    "stopped": true,
+    "autoRemove": true,
+    "preservedDump": "/tmp/free-main-quota-db.dump",
+    "dumpBytes": 1172738,
+    "dumpSha256": "761aaeb81b48b382b86a0c67e9d8266295c84d32233e67db6b02e7d0efe87ac7",
+    "archiveVerified": true,
+    "archiveContents": "/tmp/free-main-quota-db.contents",
+    "removed": true,
+    "portClosed": true
+  },
+  "codeEdited": false
+}

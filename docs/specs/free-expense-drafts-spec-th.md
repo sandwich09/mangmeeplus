@@ -1,7 +1,7 @@
 # Spec: สิทธิ์อ่านเอกสารฟรี 3 ใบสำหรับร้านที่ยังไม่เคยซื้อแพ็กเกจ
 
 วันที่: 2026-10-28 (Asia/Bangkok)
-สถานะ: IMPLEMENTED / CURRENT-MAIN PORT VERIFIED — post-merge browser pending — ยังไม่ deploy หรือเปิด live gate
+สถานะ: MERGED MAIN + DEVELOP / POST-MERGE LOCAL BROWSER VERIFIED — ยังไม่ deploy หรือเปิด live gate
 Owner: thawatchai
 เอกสารคู่กัน: [แผน](../plans/free-expense-drafts-plan-th.md) · [impact / bug / gap](../research/free-expense-drafts-impact-audit-2026-10-28-th.md) · [memory](../agent-memory/free-expense-drafts.md)
 

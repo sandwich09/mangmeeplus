@@ -1,0 +1,14 @@
+ok 1 - free expense historical purchase and lifecycle policy on PostgreSQL
+  ---
+  duration_ms: 2831.710667
+  type: 'suite'
+  ...
+1..1
+# tests 6
+# suites 1
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4214.533166

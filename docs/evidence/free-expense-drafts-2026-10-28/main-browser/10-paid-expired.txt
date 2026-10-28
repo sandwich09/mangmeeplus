@@ -1,0 +1,43 @@
+- button "Open Next.js Dev Tools":
+- alert
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "ย่อเมนู" [expanded]:
+  - navigation:
+    - list:
+      - listitem "ตั้งค่า"
+      - link "ตั้งค่าร้าน":
+        - /url: /companies/free-ui-paid-expired/settings
+        - generic: ตั้งค่าร้าน
+      - link "แพ็กเกจ เหลือ 0 วัน":
+        - /url: /companies/free-ui-paid-expired/billing
+        - generic: แพ็กเกจ
+        - generic: เหลือ 0 วัน
+  - button "เมนูผู้ใช้":
+    - generic: ทp
+    - generic: คุณทดสอบ paid-expired
+    - generic: เจ้าของกิจการ
+- banner:
+  - generic: ร้านทดสอบแพ็กเกจหมดอายุ
+- status:
+  - paragraph: แพ็กเกจของร้านหมดอายุแล้ว
+- main:
+  - alert:
+    - heading "แพ็กเกจหมดอายุแล้ว" [level=1]
+    - paragraph: เลือกแพ็กเกจแล้วใช้งานต่อได้ทันที ข้อมูลยังอยู่ครบ
+    - paragraph: หมดอายุเมื่อวันที่ 1 ก.พ. 2569
+    - link "เลือกแพ็กเกจ":
+      - /url: /companies/free-ui-paid-expired/billing
+    - paragraph:
+      - text: ติดปัญหา โทร
+      - link "098-256-5628":
+        - /url: tel:0982565628
+      - text: หรืออีเมล
+      - link "contact@mangmeeplus.com":
+        - /url: mailto:contact@mangmeeplus.com
+    - link "เติมข้อมูลร้านไว้ล่วงหน้า (ไม่บังคับ)":
+      - /url: /companies/free-ui-paid-expired/settings/profile#shop

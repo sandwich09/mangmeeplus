@@ -1,0 +1,159 @@
+{
+  "from": "2026-10-28T16:02:36.806Z",
+  "to": "2026-10-28T16:12:33.242Z",
+  "providerCallsBefore": 0,
+  "providerCallsAfter": 3,
+  "companies": [
+    {
+      "companyId": "free-ui-zero",
+      "quotaBefore": {},
+      "quotaAfter": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "expensesBefore": 1,
+      "expensesAfter": 4,
+      "financeUnchanged": true,
+      "financeBefore": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "financeAfter": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "newConfirmedExpenses": []
+    },
+    {
+      "companyId": "free-ui-two",
+      "quotaBefore": {
+        "2026-10": {
+          "used": 2,
+          "inFlight": 0
+        }
+      },
+      "quotaAfter": {
+        "2026-10": {
+          "used": 2,
+          "inFlight": 0
+        }
+      },
+      "expensesBefore": 1,
+      "expensesAfter": 1,
+      "financeUnchanged": true,
+      "financeBefore": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "financeAfter": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "newConfirmedExpenses": []
+    },
+    {
+      "companyId": "free-ui-three",
+      "quotaBefore": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "quotaAfter": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "expensesBefore": 1,
+      "expensesAfter": 1,
+      "financeUnchanged": true,
+      "financeBefore": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "financeAfter": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "newConfirmedExpenses": []
+    },
+    {
+      "companyId": "free-ui-paid-expired",
+      "quotaBefore": {},
+      "quotaAfter": {},
+      "expensesBefore": 1,
+      "expensesAfter": 1,
+      "financeUnchanged": true,
+      "financeBefore": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 1
+      },
+      "financeAfter": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 1
+      },
+      "newConfirmedExpenses": []
+    },
+    {
+      "companyId": "free-ui-admin-held",
+      "quotaBefore": {},
+      "quotaAfter": {},
+      "expensesBefore": 1,
+      "expensesAfter": 1,
+      "financeUnchanged": true,
+      "financeBefore": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "financeAfter": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "newConfirmedExpenses": []
+    }
+  ],
+  "introducedAfterBaseline": []
+}

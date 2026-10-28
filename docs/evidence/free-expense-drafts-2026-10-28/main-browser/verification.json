@@ -1,0 +1,75 @@
+{
+  "testedCommit": "049aa51dea4e69307f35e3f82adda544141ec5fb",
+  "remoteBranches": [
+    "main",
+    "develop"
+  ],
+  "codeTrees": {
+    "apps/api": "8d77a0476e370842e4afd9b707563b9198f324f0",
+    "apps/web": "05af2e8f325810b5366886e3dd204abf9e852a9d",
+    "packages/contracts": "c6e024a942a80042a46ec8bdc7d1696b04048e8b"
+  },
+  "actualBrowser": "Chrome",
+  "viewports": [
+    390,
+    1280,
+    1536
+  ],
+  "api": {
+    "root": 1063,
+    "access": 447,
+    "quota": 301
+  },
+  "postgres": {
+    "access": 6,
+    "quotaAndPaidAddOn": 16
+  },
+  "web": 484,
+  "providerCalls": 3,
+  "realModelCalls": 0,
+  "deploy": false,
+  "ciRuns": 0,
+  "evidenceSha256": {
+    "01-free-list.png": "779fa288fcd53caa652bcc8d368d88b6fe5717963d9f4eddd2ce059e66cfcd43",
+    "02-source-save-reload.png": "dca469f615e02905080bef86dde3b44cfb4d9813ccf8fa73091a633a73ce3216",
+    "03-second-document.txt": "50381e28456197d5e6497c29aa715aa2d5300e5e8c1f5dafcdfe25c8cca7a2be",
+    "04-third-document.png": "b460839c7273c12b8a517b46b04fa460cd58bd94b5cdf0f843bc4fb149ed94a4",
+    "04-third-document.txt": "47fdd44a4dc0396a2761ca5c7e5b19428b95923bd856b67ebac08655dc7f824c",
+    "05-mobile-third.png": "8a66082e6fed44af652ee19f7e4b020fed1b0f35d341570dab13d8a10f24c050",
+    "06-mobile-saved-after-limit.png": "095687794dfa4995de19fc2a803a932dc97b0ede17901d15df01859067c7aa7d",
+    "07-mobile-original.png": "049e653e96f0e1301438ac5a431d143a57b803bd8c574cd297c4a1df915313d7",
+    "08-fourth-denied.png": "a088777e7397f94ee4ab47125aecd410ab4e5f46e38d2cc8826539b157f35341",
+    "08-fourth-denied.txt": "78c4d60c9a1ad58444b489ef39b0ddd5bb6a4d5613639b6d8960db120e5767a3",
+    "09-manual-route-denied.png": "8156f3e034a265cf18a3ca5cf17a5dbbc5dd6a1dea3c157f3556fe47e8b817bf",
+    "09-manual-route-denied.txt": "2d8fd3d447cffb40c812dbf0b22f5a6e6a1bbace86f0d6b84a0ee43bfb11ca15",
+    "10-paid-expired.png": "ec4e2f531c82e5ca2ce88aba2fbe2ae2ecff62f393fd488ee87f40dfa0ee5951",
+    "10-paid-expired.txt": "29ff318f516fbb82b152464ff609fd98070d942eb2c2f07a9aaa014bc1d9116c",
+    "11-admin-held.png": "b850c620300685c4634d87a5dd5ad55e408dc9fa056ecae77f4dc978cf7cb7a6",
+    "12-no-shop.png": "a0ce109241a33ea7301c32d6a79233a76b5ab21ea67aab112bd613c24622a4fe",
+    "12-no-shop.txt": "4815578c10fc5ed6853d9666b8bae70c67e45e5e0d0024119d0fc9ae8656cede",
+    "13-mobile-reloaded.png": "73cc820049b5b90071939973e17100b2b358a5224c79b763834bb43a35c6bf76",
+    "14-wide-draft.png": "5087376e52307cc094e064ff4b764e94d23f7a999d4f1b438ec35aacd101bee1",
+    "README.md": "97288fe679d92cfcba1e7c803cb7f13bfe107b9ba5ed382717c1d4346bd6a346",
+    "access-cleanup.json": "89b9602b2139436f0b86fef24f177874f5eb3570a328322d6a614c1de1ece9ff",
+    "access-cleanup.json.sha256": "554c1c7ac677f5cd8968958c1c70ed4183779ef07c1b5ceab8c7fc3d42cfbb06",
+    "api-access-tests-summary.txt": "e2239850c7ea5d95981fca0daafd945b4422c1b541e8362e44509004165c54da",
+    "api-quota-summary.txt": "fcc545a48cd4acba996aa3cc2c05458e89252d6c2b0e8a5f434e00ca2bbbbf35",
+    "api-root-tests-summary.txt": "9bc447e29aa6c0b0c70a949bcfdefa78164062a1fd53181054b3b08622efec0d",
+    "browser-errors.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "db-baseline.json": "699257fe28ddeae20c3f72674f58e4468abbf57ca7aebc4173be2c5aa127369f",
+    "db-baseline.json.sha256": "6feec9fde9bfba91e00edb567401500676bf2c9d5c31ae6f57da0e8116e1a682",
+    "db-comparison.json": "9c8cede2f73e9fb52de472ff57b1f4246485cb0ecdffe76d7714a84889494b62",
+    "db-comparison.json.sha256": "9d147946a65df6fbbec03fbb035ad32730ed03d5b122cc60b2e526d0f0913d03",
+    "db-final.json": "e7eee135ef136c35cb8b84e75a29a7013ccb67f34d8c1d7ec4dcf01535715833",
+    "db-final.json.sha256": "3b7b7efea32faa57bdb3e0fe58060d50d5f3717b73c314cfe407a9221f02a618",
+    "db-proof.json": "22365fd670b218243f7a3045070d369bc626730c623904765802a42f3f90e619",
+    "db-proof.json.sha256": "cedcecd24fcb0c1588117068c8f67c74dcc2b2632039340718834d05fabcbdcf",
+    "layout-metrics.json": "802a8840bf9ac05465df5800f9102177ebd8e1462d67f75ca409a51b939c8d30",
+    "pg-access-summary.txt": "94b8f8d6456929a3444c4b9277ed07bcd3aee53a96f3e07ea0a8137f13dbaaf7",
+    "pg-quota-summary.txt": "a60b0024394a6c614dffc0777d4d5f26c4ab2e1fc1ada4592915d19c72418fb2",
+    "provider-stats.json": "f8c67c3b07baad10bffc263b07e5ccd4c8691ac7eb281149532eafa1d05afbde",
+    "provider-stats.json.sha256": "96a04b6ebec2eadb38529dd1c2f57d3895893c3fda8b273f3dc601b67b0d4fe8",
+    "quota-cleanup.json": "b6f4ced76303f200f03b4f7354d77ba7f3e129f593dd8453cc20cdc3b7c13072",
+    "web-tests-summary.txt": "ed1fac1994f7b396f76a0fffb80d63a74ba574d483638a72ede6e8c50e1282c8"
+  }
+}

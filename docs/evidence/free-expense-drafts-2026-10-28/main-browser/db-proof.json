@@ -1,0 +1,95 @@
+{
+  "commit": "049aa51dea4e69307f35e3f82adda544141ec5fb",
+  "readOnly": true,
+  "providerCalls": 3,
+  "providerDocuments": [
+    "FREEUI-001",
+    "FREEUI-002",
+    "FREEUI-003"
+  ],
+  "quota": {
+    "2026-10": {
+      "used": 3,
+      "inFlight": 0
+    }
+  },
+  "firstExpenseId": "cmvsb56f50007dxk1g98kwh2s",
+  "firstSourceItem": {
+    "hasUnitPrice": false,
+    "rawUnitPrice": null
+  },
+  "thirdExpenseId": "cmvsb6t4c0018dxk1q7xnn4t6",
+  "thirdBusinessPurpose": "แก้ร่างหลังครบ 3 ใบ บน main มือถือ",
+  "expenseDelta": 3,
+  "attachmentDelta": 3,
+  "pendingAttachments": 0,
+  "financialComparison": [
+    {
+      "companyId": "free-ui-zero",
+      "unchangedFromFreshBaseline": true,
+      "matchesPreviousRunFinancialCounts": true,
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      }
+    },
+    {
+      "companyId": "free-ui-two",
+      "unchangedFromFreshBaseline": true,
+      "matchesPreviousRunFinancialCounts": true,
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      }
+    },
+    {
+      "companyId": "free-ui-three",
+      "unchangedFromFreshBaseline": true,
+      "matchesPreviousRunFinancialCounts": true,
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      }
+    },
+    {
+      "companyId": "free-ui-paid-expired",
+      "unchangedFromFreshBaseline": true,
+      "matchesPreviousRunFinancialCounts": true,
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 1
+      }
+    },
+    {
+      "companyId": "free-ui-admin-held",
+      "unchangedFromFreshBaseline": true,
+      "matchesPreviousRunFinancialCounts": true,
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      }
+    }
+  ],
+  "newExpensesUnconfirmed": true,
+  "allChecksPassed": true
+}

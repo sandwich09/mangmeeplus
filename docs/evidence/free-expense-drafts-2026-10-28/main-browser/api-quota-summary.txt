@@ -1,0 +1,14 @@
+ok 64 - printed ceiling fallback
+  ---
+  duration_ms: 19.28675
+  type: 'suite'
+  ...
+1..64
+# tests 301
+# suites 38
+# pass 301
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4330.788458

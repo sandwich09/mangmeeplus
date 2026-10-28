@@ -1,0 +1,55 @@
+{
+  "capturedAt": "2026-10-28T16:15:39.897856+00:00",
+  "api": {
+    "sessionId": 47228,
+    "pidBeforeStop": 51045,
+    "signal": "SIGTERM",
+    "stopped": true
+  },
+  "containers": [
+    {
+      "name": "mangmee-demo-review-pg-20261026",
+      "state": "exited",
+      "running": false,
+      "pidAfterStop": 0,
+      "dataPreserved": true
+    },
+    {
+      "name": "mangmee-demo-review-redis-20261026",
+      "state": "exited",
+      "running": false,
+      "pidAfterStop": 0,
+      "dataPreserved": true
+    },
+    {
+      "name": "mangmee-demo-review-minio-20261026",
+      "state": "exited",
+      "running": false,
+      "pidAfterStop": 0,
+      "dataPreserved": true
+    }
+  ],
+  "ports": {
+    "3081": {
+      "listening": false,
+      "output": ""
+    },
+    "15486": {
+      "listening": false,
+      "output": ""
+    },
+    "16386": {
+      "listening": false,
+      "output": ""
+    },
+    "19086": {
+      "listening": false,
+      "output": ""
+    }
+  },
+  "deletedVolumes": false,
+  "deletedDatabases": false,
+  "codeEdited": false,
+  "evidencePreserved": true,
+  "allStopped": true
+}

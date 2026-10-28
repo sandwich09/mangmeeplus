@@ -1,0 +1,55 @@
+- button "Open Next.js Dev Tools":
+- alert: อัปโหลดใบเสร็จ
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "ย่อเมนู" [expanded]:
+  - navigation:
+    - list:
+      - listitem "การเงินและบัญชี"
+      - button "ค่าใช้จ่ายและใบเสร็จ" [expanded]:
+        - generic: ค่าใช้จ่ายและใบเสร็จ
+      - list:
+        - link "รายการค่าใช้จ่าย":
+          - /url: /companies/free-ui-zero/expenses
+          - text: รายการค่าใช้จ่าย
+        - link "อัปโหลดใบเสร็จ":
+          - /url: /companies/free-ui-zero/expenses/upload
+          - text: อัปโหลดใบเสร็จ
+      - listitem "ตั้งค่า"
+      - link "แพ็กเกจ เหลือ 0 วัน":
+        - /url: /companies/free-ui-zero/billing
+        - generic: แพ็กเกจ
+        - generic: เหลือ 0 วัน
+  - button "เมนูผู้ใช้":
+    - generic: ทz
+    - generic: คุณทดสอบ zero
+    - generic: เจ้าของกิจการ
+- banner:
+  - generic: ร้านทดสอบรายจ่ายฟรี
+- main:
+  - heading "อัปโหลดใบเสร็จ" [level=1]
+  - paragraph: ถ่ายหรือเลือกรูปใบเสร็จ ระบบอ่านให้ แล้วเก็บเป็นร่างให้ตรวจ
+  - button "ลากไฟล์มาวาง หรือกดเพื่อเลือก":
+    - generic: ลากไฟล์มาวาง หรือกดเพื่อเลือก
+    - generic: PDF หรือรูปภาพ
+  - paragraph: แต่ละไฟล์จะเป็นรายจ่าย 1 รายการ
+  - paragraph: ไฟล์ที่เลือก
+  - list:
+    - paragraph: receipt-4.png
+    - paragraph:
+      - text: ส่งไม่สำเร็จ
+      - generic: ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้
+    - button "ส่งไฟล์นี้อีกครั้ง"
+    - button "เอาออก receipt-4.png":
+      - generic: ×
+  - generic: สาขา *
+  - combobox "สาขา":
+    - generic: สำนักงานใหญ่ (สำนักงานใหญ่)
+  - generic: หมายเหตุ (ไม่บังคับ)
+  - textbox "หมายเหตุ (ไม่บังคับ)":
+    - /placeholder: เช่น ค่ากาแฟทีมงาน
+  - button "ส่งใบเสร็จ 1 ใบ"

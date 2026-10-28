@@ -1,0 +1,14 @@
+ok 181 - accessContextFingerprint
+  ---
+  duration_ms: 2.182708
+  type: 'suite'
+  ...
+1..181
+# tests 484
+# suites 58
+# pass 484
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1099.700333

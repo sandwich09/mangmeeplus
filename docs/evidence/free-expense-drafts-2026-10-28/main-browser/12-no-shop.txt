@@ -1,0 +1,45 @@
+- link "มั่งมีพลัส หน้าแรก":
+  - /url: /
+  - text: มั่งมีพลัส
+  - generic: MANGMEEPLUS
+- heading "พาร้านมั่งคั่ง เก็บทุกบาทไม่รั่วไหล" [level=2]:
+  - text: พาร้านมั่งคั่ง
+  - text: เก็บทุกบาทไม่รั่วไหล
+- paragraph: เก็บใบเสร็จ การเบิกจ่าย และหนังสือรับรอง 50 ทวิไว้ในที่เดียว จัดการสิทธิ์พนักงานได้ละเอียดถึงรายเมนู
+- generic: ค่าใช้จ่ายเดือนนี้ · สาขาสยาม
+- generic: ตัวอย่าง
+- generic: ฿24,150
+- generic: ใบเสร็จ 42 ใบ
+- generic: ใบเสร็จรอตรวจ
+- generic: "18"
+- generic: การเบิกจ่ายรออนุมัติ
+- generic: ฿15,730
+- paragraph: © 2569 มั่งมี · ค่าใช้จ่าย การเบิกจ่าย และสิทธิ์พนักงานของร้าน
+- heading "เข้าสู่ระบบ" [level=1]
+- button "ภาษา": EN
+- alert: ⚠ ร้านอาจถูกปิดใช้งาน หรือสิทธิ์ของคุณอาจถูกยกเลิก ติดต่อทีมงานมั่งมี 098-256-5628
+- generic: ชื่อผู้ใช้ หรือ อีเมล
+- textbox "ชื่อผู้ใช้ หรือ อีเมล": <redacted>
+- generic: รหัสผ่าน
+- link "ลืมรหัสผ่าน?":
+  - /url: /forgot-password
+- textbox "รหัสผ่าน": <redacted>
+- button "แสดงรหัสผ่าน":
+- checkbox "จดจำการเข้าสู่ระบบ" [checked]
+- text: จดจำการเข้าสู่ระบบ
+- button "เข้าสู่ระบบ":
+  - text: เข้าสู่ระบบ
+- link "ใช้รหัสยืนยันทางอีเมลแทนรหัสผ่าน":
+  - /url: /email-access
+- button "Dev sign-in (local seed OWNER)"
+- navigation "เอกสารทางกฎหมาย":
+  - link "ประกาศความเป็นส่วนตัว":
+    - /url: /privacy
+  - link "ข้อกำหนดการใช้งาน":
+    - /url: /terms
+  - link "การลบข้อมูล":
+    - /url: /data-deletion
+  - link "รู้จักมั่งมีพลัส":
+    - /url: /
+- button "Open Next.js Dev Tools":
+- alert
