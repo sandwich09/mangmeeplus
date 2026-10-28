@@ -23,4 +23,4 @@ Verification:
 - Production result/accepted/signature SHA-256: `eb8bb9c14b2303b39d496cde2f253ca337a7c854562a08b90152379134aa02a4`, `af1e5f4f22a9fb1888de54714fb05f18921dc9a0e327f678a282a56532101dd4`, `fa97543c4a17101104aa06e993753b13f7761c9a0fbc7182cd980f868e483c33`.
 - Fresh pre/post Alarm reads: 29 `OK`, zero `INSUFFICIENT_DATA`, and only `watchdog-bms-prod-_ecs_watchdog_bms_prod_api_web-security` remains `ALARM` with the identical 9 October 2026 transition time and reason. Public API health, login 200 and public platform access `OPEN` pass after release.
 Next:
-- No release action remains. UAT stays running. A later docs-only ledger commit does not change runtime bytes and does not require redeployment.
+- No release action remains. UAT was intentionally paused afterward by operation `20261028T182046Z-2b8ad842`; see `docs/agent-memory/uat-power-pause-2026-10-29.md`. A later docs-only ledger commit does not change runtime bytes and does not require redeployment.

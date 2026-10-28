@@ -10,6 +10,19 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current UAT power state — paused 2026-10-29 01:26 Bangkok
+
+UAT is intentionally paused by owner request. Canonical power operation
+`20261028T182046Z-2b8ad842` completed `UAT_POWER_PAUSED_WITH_DATABASE` in 338.118 seconds. Both
+retained EC2 hosts and RDS are `stopped`, desired state is `paused`, no data was deleted, no release
+workflow was dispatched, and Production was not mutated. The retained runtime baseline for API/Web,
+AI Gateway and Workers is exact source `8c112ea70003057fa3063938e859de1b945747d1`, all with
+`unless-stopped`; owned SSM cleanup passed 2/2 and both the local operation guard and cloud mutex are
+clear. Public UAT health returns 504 while paused, as expected. Production remained health 200 and
+customer `OPEN` before and after the operation. Use the canonical `power-uat start` path to resume;
+do not deploy directly while desired state is `paused`.
+[Exact power-operation evidence](../agent-memory/uat-power-pause-2026-10-29.md).
+
 ## Current UAT and Production latest-main release — 2026-10-29 01:15 Bangkok
 
 UAT and Production now serve exact source `8c112ea70003057fa3063938e859de1b945747d1`, including the
