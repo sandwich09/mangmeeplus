@@ -129,6 +129,7 @@ function makeUseCase(options: {
   };
   const prisma = {
     client: {
+      company: { findUnique: async () => null },
       billingReceiptGrant: { findMany: async () => [] },
       companyOcrUsageEvent: { count: async () => options.used ?? 0 },
       companyPlanTerm: {
@@ -624,6 +625,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     const providerUsage: any[] = [];
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
       companyOcrUsageEvent: {
         findUnique: async ({ where }: any) => {
@@ -652,6 +654,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     };
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => null },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
@@ -821,6 +824,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     globalThis.fetch = mock.fn(async () => { fetchCalls += 1; return new Response('{}'); }) as any;
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
@@ -829,6 +833,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     };
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
@@ -853,6 +858,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     let quotaTransactions = 0;
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         $transaction: async () => { quotaTransactions += 1; throw new Error('unexpected OCR admission'); },
@@ -897,6 +903,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     let fetchCalls = 0;
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => { throw new Error('POLICY_DB_DOWN'); } },
         $transaction: async () => { quotaTransactions += 1; },
       },

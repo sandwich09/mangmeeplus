@@ -69,6 +69,26 @@ describe('multi-file upload = N ordinary single uploads (owner decision 2026-09-
     assert.deepEqual(retry.created.map((row) => row.expenseId), ['exp-a.jpg']);
   });
 
+  it('stops remaining files after the server refuses a free-document quota admission', async () => {
+    let stop = false;
+    const sent: string[] = [];
+    const files = ['one.jpg', 'two.jpg', 'three.jpg', 'four.jpg', 'five.jpg'].map(file);
+    const result = await runSingleFileUploads({
+      entries: files.map((picked) => ({ entry: entryForFile(picked), file: picked })),
+      shouldStop: () => stop,
+      upload: async (picked) => {
+        sent.push(picked.name);
+        if (picked.name === 'four.jpg') {
+          stop = true;
+          throw Object.assign(new Error('limit'), { code: 'FREE_DOCUMENT_LIMIT_REACHED' });
+        }
+        return { expenseId: `exp-${picked.name}` };
+      },
+    });
+    assert.deepEqual(sent, ['one.jpg', 'two.jpg', 'three.jpg', 'four.jpg']);
+    assert.deepEqual(result.entries.map((entry) => entry.state), ['STORED', 'STORED', 'STORED', 'FAILED', 'PENDING']);
+  });
+
   it('a row whose bytes this tab no longer holds is a failure to answer, not a saved file', async () => {
     const result = await runSingleFileUploads({
       entries: [{ entry: entryForFile({ name: 'gone.jpg', size: 10 }), file: null }],

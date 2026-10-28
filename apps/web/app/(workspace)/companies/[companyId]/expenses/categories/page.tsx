@@ -8,5 +8,5 @@ export default async function ExpensesCategoriesPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} tab="categories" />;
+  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} freeExpenseDrafts={session?.freeExpenseDrafts === true} tab="categories" />;
 }

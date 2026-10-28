@@ -71,6 +71,7 @@ export function splitPrisma(
   };
   const tx = {
     $executeRaw: async () => 0,
+    company: { findUnique: async () => null },
     companyAiConfiguration: { findUnique: async () => configRow },
     platformAiBudgetConfig: { findUnique: async () => null },
     aiBudgetReservation: reservationDelegate,

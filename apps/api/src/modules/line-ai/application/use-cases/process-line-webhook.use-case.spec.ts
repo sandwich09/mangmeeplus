@@ -594,6 +594,7 @@ function makePrisma(opts: {
   const branchFindManyCalls: any[] = [];
   const prisma = {
     client: {
+      company: { findUnique: async () => null },
       // Consumption markers commit with the terminal outcome; the fake runs the callback inline.
       $transaction: async (work: (tx: any) => Promise<unknown>) => work({
         outboxEvent: {
@@ -727,7 +728,8 @@ function makePrisma(opts: {
       },
       // P10-L §15.1 — what `receiptQuotaSnapshot` and the once-a-month notice claim read.
       billingReceiptGrant: { findMany: async () => [], findFirst: async () => latestAddOnLotAt && { createdAt: latestAddOnLotAt } },
-      companyOcrUsageEvent: { count: async () => receiptsUsed },
+      companyOcrUsageEvent: { count: async () => receiptsUsed,
+        findMany: async () => Array.from({ length: receiptsUsed }, () => ({ succeededAt: new Date() })) },
       companyPlanTerm: {
         findUnique: async () => planTerm && { warmupUntil: null, warmupSlipLimit: null, ...planTerm },
         updateMany: async ({ data }: any) => {
@@ -770,6 +772,7 @@ function makeUseCase(
       createUploadIntent?: any;
       completeAttachmentUpload?: any;
       legalAcceptanceRequired?: boolean;
+      freeExpenseDrafts?: boolean;
       approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
       config?: Record<string, unknown>;
       substituteContinuation?: any;
@@ -800,7 +803,7 @@ function makeUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({
-      membershipId: 'mem-1', roles, permissions,
+      membershipId: 'mem-1', roles, permissions, freeExpenseDrafts: opts.freeExpenseDrafts,
       entitlementDeniedPermissions: opts.entitlementDeniedPermissions,
       entitledFeatureKeys: opts.entitledFeatureKeys,
       scopes: branchIds === undefined ? {} : { branchIds },
@@ -1327,11 +1330,11 @@ describe('ProcessLineWebhookUseCase', () => {
           config: { lineAiTerminalOutcomeReplayEnabled: true },
         });
         await useCase.execute({ ...BASE_EVENT, messageText });
-        assert.match(replies[0] ?? '', /เลือกและชำระแพ็กเกจ/);
+        assert.match(replies[0] ?? '', /ยังไม่เคยซื้อแพ็กเกจ[\s\S]*3 ใบต่อเดือน/);
         const card = sentMessages[0];
         assert.equal(card.type, 'flex', 'trial policy must use the standard assistant card');
         assert.equal(card.contents.header.contents[0].text, 'การเริ่มใช้งานและการต่ออายุ');
-        assert.match(JSON.stringify(card.contents.body), /ไม่เรียกเก็บเงินอัตโนมัติ/);
+        assert.match(JSON.stringify(card.contents.body), /ไม่บังคับซื้อหรือเรียกเก็บเงินอัตโนมัติ/);
         // Owner 2026-09-30 (advisor spec §2.2): the company's official staff LINE replaces the public
         // package page; the typed "ติดต่อเจ้าหน้าที่" command keeps its own inbox route.
         assert.deepEqual(flexButtons(card).map((button: any) => button.action), [
@@ -1362,7 +1365,7 @@ describe('ProcessLineWebhookUseCase', () => {
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `policy-${++i}`, messageText });
       // Owner 2026-09-30: the โปรโมชั่น turn sends the package poster before its card.
       assert.deepEqual(h.sentMessageBatches[0].map((message: any) => message.type), i === 1 ? ['image', 'flex'] : ['flex']);
-      if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับซื้อทันที/);
+      if (i > 1) assert.match(h.sentMessages[0].canonicalText, i === 7 ? /ขอโทษ.*หน้าค่าใช้จ่ายไม่ใช่/ : /ไม่บังคับซื้อ/);
       assert.equal(h.getAiGatewayCalled(), false);
       assert.equal(h.intakeRequests.length, 0);
     }
@@ -1411,7 +1414,7 @@ describe('ProcessLineWebhookUseCase', () => {
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-1', messageText: 'ซื้อแพ็กเกจแล้วจะหักเงินอีกไหม' });
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'paid-2', messageText: 'เสียค่าบริการไหม' });
     assert.match(h.sentMessages[1].canonicalText, /ตามเงื่อนไขที่คุณยอมรับตอนซื้อ/);
-    assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับซื้อทันที/);
+    assert.doesNotMatch(h.sentMessages[1].canonicalText, /ไม่บังคับซื้อ/);
     const sends: any[][] = [];
     const fallback = makeUseCase(prisma, { config, sendReplyFn: async (_token, messages) => {
       sends.push(messages); return sends.length === 1 ? 'failed_flex' : 'ok';
@@ -1433,7 +1436,7 @@ describe('ProcessLineWebhookUseCase', () => {
     });
     const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma);
     await useCase.execute({ ...BASE_EVENT, messageText: 'เสียค่าบริการไหม' });
-    assert.doesNotMatch(replies[0] ?? '', /เลือกและชำระแพ็กเกจ/);
+    assert.doesNotMatch(replies[0] ?? '', /ยังไม่เคยซื้อแพ็กเกจ[\s\S]*3 ใบต่อเดือน/);
     assert.equal((updates.at(-1) as any).data.status, 'support_paused');
     assert.equal(intakeRequests.length, 0);
     assert.equal(getAiGatewayCalled(), false);
@@ -1591,7 +1594,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(identityQueries.length, 0);
     assert.equal(legalChecks.length, 0);
     assert.equal(getAiGatewayCalled(), false);
-    assert.equal(replies[0], 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚');
+    assert.equal(replies[0], 'น้องมั่งมีมาแล้วค่ะ เลือกเมนูที่ต้องการใช้งานได้เลยค่ะ');
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_talk');
   });
 
@@ -13129,4 +13132,90 @@ describe('LINE-ACT2 deleted claim actions', () => {
     }
   });
 
+});
+
+describe('free expense LINE boundary', () => {
+  it('keeps the financial action refusal without suggesting a package will authorize it', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own'] });
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'ช่วยอนุมัติแล้วจ่ายเงินบิลนี้' });
+    assert.match(h.replies.join(' '), /ไม่สามารถทำรายการอนุมัติ\/จ่ายเงิน\/ลงบัญชี/);
+    assert.doesNotMatch(h.replies.join(' '), /แพ็กเกจ|ถามตอบ|กรุณาทำรายการในเว็บ/);
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+  });
+  it('refuses open chat and semantic edits before every model seam', async () => {
+    for (const messageText of ['วันนี้ขายดีไหม', 'แก้ยอดบิลเมื่อกี้เป็น 500', 'บันทึกรายจ่าย 400 แล้ววิเคราะห์ให้ด้วย']) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { freeExpenseDrafts: true,
+        permissions: ['expense.read_own', 'expense.update', 'expense.receipt.line_upload'] });
+      await h.useCase.execute({ ...BASE_EVENT, messageText });
+      assert.match(h.replies.join(' '), messageText.startsWith('แก้') ? /การแก้ข้อมูลผ่านข้อความยังไม่รวมในสิทธิ์ใช้ฟรี.*ในเว็บ/ : /สิทธิ์ใช้ฟรีของร้านยังไม่รวมการถามตอบ/);
+      assert.equal(h.intakeRequests.length, 0);
+      assert.equal(h.getAiGatewayCalled(), false);
+    }
+  });
+  it('keeps legal and opt-out reasons ahead of the free chat refusal', async () => {
+    for (const reason of ['legal', 'optout']) {
+      const { prisma } = makePrisma({ ...(reason === 'optout' ? { aiAssistantOptOutAt: new Date() } : {}) });
+      const h = makeUseCase(prisma, { freeExpenseDrafts: true, legalAcceptanceRequired: reason === 'legal',
+        permissions: ['expense.receipt.line_upload'] });
+      await h.useCase.execute({ ...BASE_EVENT, messageText: 'สรุปยอดให้หน่อย' });
+      assert.doesNotMatch(h.replies.join(' '), /สิทธิ์ใช้ฟรี/);
+      assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+    }
+  });
+  it('keeps deterministic main menu usable without advertising financial actions', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own', 'expense.update'] });
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'เมนูหลัก' });
+    assert.match(h.replies.join(' '), /เปิดดูรายการ/);
+    assert.doesNotMatch(h.replies.join(' '), /ส่งบิล|อนุมัติ|ถามยอดขาย/);
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+  });
+  it('blocks a fourth image before downloading, routing or creating a draft', async () => {
+    const { prisma } = makePrisma({ receiptsUsed: 3 });
+    let downloads = 0;
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.receipt.line_upload'],
+      initReceiptUpload: { execute: async () => { throw new Error('capture must not run'); } }, completeReceiptUpload: {} });
+    (h.useCase as any).downloadLineMedia = async () => { downloads++; throw new Error('download must not run'); };
+    await h.useCase.executeReceiptUpload({ ...BASE_EVENT, messageType: 'image', lineMessageId: 'free-fourth' } as any);
+    assert.equal(downloads, 0); assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+    assert.match(h.replies.join(' '), /ครบ 3 ใบ/);
+    assert.match(h.replies.join(' '), /ยังไม่ได้อ่านหรือสร้างร่าง/);
+  });
+  it('a stranger sending an image sees open-shop/link choices, without OCR', async () => {
+    const { prisma } = makePrisma({ identityUserId: null });
+    const h = makeUseCase(prisma, { config: { lineLiffId: '1234567890-Abc' } });
+    await h.useCase.executeReceiptUpload({ ...BASE_EVENT, messageType: 'image', lineMessageId: 'guest-photo' } as any);
+    const cards = JSON.stringify(h.sentMessages);
+    assert.match(cards, /เปิดร้านใหม่/); assert.equal(h.intakeRequests.length, 0);
+  });
+});
+
+it('free source receipt cards never prepare confirmation or reimbursement actions', async () => {
+  const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  const event = {};
+  handler.deliveryReceiptSources = new WeakMap([[event, { context: { freeExpenseDrafts: true } }]]);
+  handler.expenseActions = { preview: async () => assert.fail('free source must not prepare confirmation') };
+  handler.reimbursementDrafts = { active: async () => assert.fail('free source must not enter claims') };
+  assert.equal(await handler.receiptReviewCard(event, 'saved', { expenseId: 'draft' }, 'company'), undefined);
+});
+
+it('free receipt notice remains claimed when a durable delivery plan owns the failed send', async () => {
+  const monthKey = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 7);
+  for (const savedPlan of [true, false]) {
+    const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const event = { webhookEventId: 'free-notice-retry' };
+    let released = 0;
+    const tx = { $executeRaw: async () => 0,
+      companyOcrUsageEvent: { findMany: async () => [1, 2, 3].map(() => ({ succeededAt: new Date() })) },
+      companyPlanTerm: { updateMany: async ({ data }: any) => { if (data.freeQuotaNoticeSentMonthKey === null) released++; return { count: 1 }; } },
+    };
+    handler.prisma = { client: { ...tx, $transaction: async (fn: any) => fn(tx),
+      lineDeliveryPlan: { findUnique: async () => savedPlan ? { id: 'frozen-plan' } : null } } };
+    handler.boundConversations = new WeakMap([[event, {}]]);
+    handler.deliverCompletedReply = async (_event: any, text: string) => { assert.match(text, /ครบ 3 ใบ/); throw new Error('delivery failed'); };
+    await assert.rejects(handler.deliverSavedReceiptReply(event, 'saved', 'company', { permissions: [], roles: [] }, monthKey), /delivery failed/);
+    assert.equal(released, savedPlan ? 0 : 1);
+  }
 });

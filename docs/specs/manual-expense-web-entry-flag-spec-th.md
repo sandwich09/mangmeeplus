@@ -511,3 +511,8 @@ e2e ที่เปิดหน้า manual (`e2e/expenses.spec.ts`, `transacti
 | คู่มือและการ์ด LINE | ดู §9.3 | ร้านที่ไม่แสดงเมนู | ดู §9.3 |
 
 “สิทธิ์ตรวจสอบค่าใช้จ่าย” เป็นคำที่หน้าใบรับรองแทนใบเสร็จใช้อยู่แล้ว (`SubstituteReceiptHubPage.tsx`) หมายเหตุประจำแถวแสดงเฉพาะเมื่อฟีเจอร์บันทึกด้วยมือเปิดอยู่ เพราะเมื่อฟีเจอร์นั้นปิด ไม่มีใครสร้างรายจ่ายได้เลยและแถวบอกเหตุผลนั้นอยู่แล้ว
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+free source-draft cohort ไม่เปิด manual empty create แม้ manual-entry flag หรือ role เดิมเปิดไว้ การสร้างร่างเริ่มจาก source document เท่านั้น รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

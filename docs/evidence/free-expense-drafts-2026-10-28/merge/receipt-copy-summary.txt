@@ -1,0 +1,12 @@
+✔ capability question (Owner 2026-08-27: only real features) (0.628875ms)
+✔ the public package answer names the home menu as หน้าแรก (0.03025ms)
+✔ Round 3 pending-approval menu offers approval/rejection buttons for each scoped claim (0.360042ms)
+✔ Round 3 claim controls preserve other entitled approval queues and remain hidden without claim permission (0.167917ms)
+ℹ tests 222
+ℹ suites 27
+ℹ pass 222
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 521.885625

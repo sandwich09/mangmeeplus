@@ -6,7 +6,7 @@ import type {
   ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus,
   SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult,
 } from './expenses.model';
-import type { ExpenseReadStatusFile } from './expense-capture-status.logic';
+import type { ExpenseReadStatusResult } from './expense-capture-status.logic';
 import type {
   AccountantEvidenceBundlePlan,
   CompleteExpenseReceiptUploadInput,
@@ -235,6 +235,7 @@ export async function uploadExpenseEvidenceFile(
           byteSize: file.size,
           visibility: 'INTERNAL',
           ...(branchId ? { branchId } : {}),
+          metadataJson: { expenseReceiptExpenseId: expenseId },
         }),
       },
     );
@@ -268,7 +269,7 @@ export async function getExpenseCaptureCapability(companyId: string): Promise<Ex
 export async function getExpenseReadStatus(
   companyId: string,
   expenseId: string,
-): Promise<{ files: ExpenseReadStatusFile[] }> {
+): Promise<ExpenseReadStatusResult> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/read-status`);
 }
 

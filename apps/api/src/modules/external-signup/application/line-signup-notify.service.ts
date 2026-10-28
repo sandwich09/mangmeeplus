@@ -45,21 +45,17 @@ export const PROFILE_GUARD_AFTER_READS = 5;
 /** §3 PDPA: a settled request is deleted 90 days after it settled, message text and all. */
 export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-/** Owner copy (§7). No plus sign in customer text; write "และ".
- *  R1: the shop opens LOCKED, so the very first thing it is told is the one step that unlocks it.
- *  Nothing here invites a receipt photo — the assistant would only refuse it.
- *  `withButton: false` is the plain-text push sent when no LIFF id is configured: there is no button
- *  below it, so it must not point at one. */
+/** Opening confirmation only; the current access policy decides what this shop can use. */
 export function approvedMessageTh(companyName: string, withButton = true): string {
-  return `🎉 เปิดร้าน ${companyName} ให้แล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจเพื่อเริ่มใช้งาน `
-    + (withButton
-      ? 'กดปุ่มด้านล่าง แล้วกดเปิดหน้าเว็บเพื่อดูแพ็กเกจและชำระเงินได้เลยนะคะ'
-      : 'เข้าเว็บแอปมั่งมีพลัสแล้วเลือกแพ็กเกจได้เลยนะคะ');
+  return `เปิดร้าน ${companyName} ให้แล้วค่ะ ` + (withButton
+    ? 'เปิดหน้าร้านได้จากปุ่มด้านล่างค่ะ'
+    : 'เข้าหน้าร้านได้ในเว็บแอปมั่งมีพลัสค่ะ');
 }
 
 export function attachedMessageTh(companyName: string, withButton = true): string {
-  return `🎉 เพิ่มร้าน ${companyName} ให้บัญชีของคุณแล้วค่ะ ขั้นต่อไปเลือกแพ็กเกจให้ร้านนี้ `
-    + (withButton ? 'กดปุ่มด้านล่างได้เลยนะคะ' : 'ในเว็บแอปมั่งมีพลัสได้เลยนะคะ') + ' สลับร้านได้ในเมนู บริษัทของฉัน';
+  return `เพิ่มร้าน ${companyName} ให้บัญชีของคุณแล้วค่ะ `
+    + (withButton ? 'เปิดหน้าร้านได้จากปุ่มด้านล่างค่ะ' : 'เข้าหน้าร้านได้ในเว็บแอปมั่งมีพลัสค่ะ')
+    + ' สลับร้านได้ในเมนู บริษัทของฉัน';
 }
 
 export function rejectedMessageTh(displayName: string | null, companyName: string): string {
@@ -374,7 +370,7 @@ export class LineSignupNotifyService {
           { type: 'text', text, size: 'sm', color: '#475467', wrap: true },
         ] },
         footer: { type: 'box', layout: 'vertical', contents: [
-          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เลือกแพ็กเกจ', uri: `https://liff.line.me/${liffId}/start` } },
+          { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดหน้าร้าน', uri: `https://liff.line.me/${liffId}/start` } },
         ] },
       },
     };

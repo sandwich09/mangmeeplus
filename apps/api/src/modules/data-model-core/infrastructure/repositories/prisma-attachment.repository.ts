@@ -54,6 +54,7 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
     ] }, select: { id: true } })) return true;
     return isDisbursementVoucherFile(db, { companyId: input.companyId, attachmentId: input.id });
   }
+  get commercialAccessDb() { return this.prisma.client; }
 
   async isSubstituteRawSignature(input: FindAttachmentInput): Promise<boolean> {
     const row = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findFirst({
@@ -187,6 +188,12 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
   async createPending(input: CreatePendingAttachmentInput): Promise<AttachmentRecord> {
     const row = await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:attachment-pending-quota`}))`;
+      if (typeof input.metadataJson?.freeExpenseUploadMonth === 'string') {
+        const pendingFree = await tx.attachmentObject.count({ where: { companyId: input.companyId,
+          status: { in: ['PENDING_UPLOAD', 'ACTIVE'] }, createdAt: { gte: input.pendingCreatedAfter },
+          metadataJson: { path: ['freeExpenseUploadMonth'], equals: input.metadataJson.freeExpenseUploadMonth } } });
+        if (pendingFree >= 3) throw new ConflictException({ code: 'FREE_DOCUMENTS_IN_FLIGHT', message: 'กรุณาใช้ไฟล์ที่ส่งไว้หรือลองอ่านไฟล์เดิมอีกครั้งค่ะ' });
+      }
       const pending = await tx.attachmentObject.aggregate({
         where: { companyId: input.companyId, status: { in: ['PENDING_UPLOAD', 'QUARANTINED'] }, createdAt: { gte: input.pendingCreatedAfter } },
         _sum: { byteSize: true },

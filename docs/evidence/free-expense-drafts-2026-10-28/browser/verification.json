@@ -1,0 +1,369 @@
+{
+  "status": "passed_scoped_local_browser_after_fixes",
+  "capturedAt": "2026-10-28T15:36:32.893037+00:00",
+  "browser": "Chrome through Computer Use",
+  "web": "http://127.0.0.1:3080",
+  "api": "http://127.0.0.1:3081",
+  "data": "isolated synthetic PostgreSQL+MinIO",
+  "ocr": "local HTTP fixture; real model not called",
+  "tests": {
+    "command": "pnpm --dir apps/web exec tsx --test <web-test-files.txt>",
+    "files": 13,
+    "passed": 395,
+    "failed": 0,
+    "skipped": 0
+  },
+  "typecheck": {
+    "command": "pnpm --dir apps/web exec tsc --noEmit",
+    "exitCode": 0,
+    "alsoPassedAfterRemovingTemporaryDistPath": true
+  },
+  "whitespace": "passed",
+  "dbComparisons": "both passed; see db-comparison.json",
+  "cleanup": "signed out; viewport reset; API/web/provider and three task containers stopped",
+  "notVerified": [
+    "native LINE/LIFF guest/handoff",
+    "real OCR provider",
+    "PDF/HEIC async UI",
+    "multi-company switch UI",
+    "live UAT/Production"
+  ],
+  "files": [
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/[expenseId]/page.tsx",
+      "sha256": "748bee6fdc97ca040235f3f274c13a710537989b46dbcf11c933ac9919d3318f"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/categories/page.tsx",
+      "sha256": "aa645916dcbf15f836005e366503f2afd67976d56dc3e7f64e3f60972e6478f2"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/evidence/page.tsx",
+      "sha256": "3dc6e872fc3d9511e1b741d83d2dc928e66ce0fff4163ab9b45a01f71738bf14"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/manual/page.tsx",
+      "sha256": "ab534567c11631091e2e1b81d19e8c19800c1293735d74677d3366132e8fc1b2"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx",
+      "sha256": "313cbcdf99a3a03c5e88565413c2bf9ebc4f7b7ec9f3e92216a4a530687763dd"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/signatures/page.tsx",
+      "sha256": "c107dfa071efc7867f33a33adddfecbfa35b68c20d1fe4d80528c74d091dd7ee"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/upload/page.tsx",
+      "sha256": "8f2a29e1423570bb9e50405c72c54b8fc3b295fd99847149ec7dc6c0ba46695c"
+    },
+    {
+      "path": "apps/web/src/common/api/api-error-message.spec.ts",
+      "sha256": "ae941da93094154584a756cc85a9d83980e790f574d5d0549dd282bd7e116917"
+    },
+    {
+      "path": "apps/web/src/common/api/api-error-message.ts",
+      "sha256": "7f7f4fe78293b253df09a858eb63bb67b2bfa017d47f0edb6fc55e9deac7436c"
+    },
+    {
+      "path": "apps/web/src/common/auth/session-gate.logic.spec.ts",
+      "sha256": "65fd41014a227c54fdb2d9af4a73601fbd16af933d074d625ea7ba4c8b03949b"
+    },
+    {
+      "path": "apps/web/src/common/auth/session-gate.logic.ts",
+      "sha256": "c53d7c3d67506e52eca5b3031264753e7e4fd0f306969c8218efc37794bef20d"
+    },
+    {
+      "path": "apps/web/src/common/i18n/workspace-dictionary.ts",
+      "sha256": "47bfd0f232916860b37bc27ffa2320deb670904d5281892d16083f595b40e6bf"
+    },
+    {
+      "path": "apps/web/src/common/models/web-session.model.ts",
+      "sha256": "83d74e161359d4e06fe782ef7e1545377438396699cb67cd7de4a7004616f685"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpenseReviewPage.qa.spec.ts",
+      "sha256": "cf7d3088a3b4feca912daff819c8ffe41971467c58956c4bfe585170f5a57c4d"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpenseReviewPage.tsx",
+      "sha256": "4659142d835c048cacf835eace3e9d07e7b24caba5e91f98f350b829fea0a5ec"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpensesPages.qa.spec.ts",
+      "sha256": "0f721e09bbeb60cf575941abc01e171fb8c174e43eab77b595d34efd4f2ac23c"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpensesPages.tsx",
+      "sha256": "036010f8828f6f355db8b6c7adfabc83c9b85fcf3867bd7262eb59e42da240e3"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-status.logic.spec.ts",
+      "sha256": "c56924455caa949a36d28ede769af359a8c4884bf16d0b0600457b706b90f3c7"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-status.logic.ts",
+      "sha256": "3789ab865492fba333c359dfdc4e71558e98a26ff6feff5d861ef0b3ac58e662"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-upload.logic.spec.ts",
+      "sha256": "49985a143efe793c96b127b0aa0e0fd54e2f43798499bb9354cbdd72f7b15a26"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-upload.logic.ts",
+      "sha256": "e238ed55a089cd9c4519c2b1684412447f4b0e7201058300f62f935604503d86"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-notice.logic.spec.ts",
+      "sha256": "759acbd875c416a9a7454eb3cb58bf3a2d2dc0aa64d8f982df3e547d6d92b614"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-notice.logic.ts",
+      "sha256": "66e21e209dd745f8392566f8c03cd50d8a907adfa3dcfe0e3080a05e409ebed5"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-upload.logic.spec.ts",
+      "sha256": "f3654792853f3328c876b743bbd389ad1e1918b0d7283d36e38177c8ea450368"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-upload.logic.ts",
+      "sha256": "1f201d8f5ba2686cee6203701fa798e94c91da09ae832054fd56754428f74db0"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.api.spec.ts",
+      "sha256": "99304e1ac44d44c582f56cbf49e9294f05b06cce39d54f65542a22f0b03c932b"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.api.ts",
+      "sha256": "677b91474841035b577cf49227c00d3d1f44cac7da2445c1344c78eed378efe2"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.model.spec.ts",
+      "sha256": "586ee7d1dc2b1acaf84420c183897272e099c05e2c577cd87412e26630bab103"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.model.ts",
+      "sha256": "afeec5a6c1c8cf1602ed3dfa0ba7c905d4a53781c1668bf86b04570a88df380e"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/PlanTermBanner.tsx",
+      "sha256": "0b4e05355cb77f0e91980e1ad1e9440379be710e627c2f222179b8c3c9c4e092"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.api.ts",
+      "sha256": "ac31506f3ea15814c05d122c48820f7a7d2fc43671cf0072e16f1681f191773d"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.logic.spec.ts",
+      "sha256": "d78505230b56c3d268d4f70ad3890b688ccbbf3282f5f43ab3d4c55576fc17de"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.logic.ts",
+      "sha256": "0e891b55a7fca833700db56091f58e5bbb62e1f4f8bdb73e9306ad97c607c9f6"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/WorkspaceLayout.tsx",
+      "sha256": "4147b0650fbd6932899365dd8ef5da35114f4f3b82b3defeb449de0c2f62aae6"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/WorkspaceScope.tsx",
+      "sha256": "e214e4349d545578128c78bc17c9274d6fe1c0659f566d5bc57e9fa8c0bbac2b"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/web-core-workspace.logic.ts",
+      "sha256": "1b313b5e63f82969f04c1911e511aa3494f6d32eeb0829e6954c4184d4cb851d"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/web-core-workspace.spec.ts",
+      "sha256": "9877fd65b03ac874d358d258554e3283116d237d25a84fb4d7e6a3047d31827d"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/workspace-scope.api.spec.ts",
+      "sha256": "922fb978d5fc3c80ec9c5e73b1274af2a6422f1b65a480c579070db8b1b845d3"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/workspace-scope.api.ts",
+      "sha256": "881fa049dcdeea841f1e6358c507071f15bb0289908a798250aa38c558d2a88d"
+    },
+    {
+      "path": "docs/agent-memory/free-expense-drafts.md",
+      "sha256": "cb46cfc2e411e7b8258a77a4e2121ac4a431b75dfcc2508db9ca2ed01a9a74f5"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/01-free-list-before.jpg",
+      "sha256": "063752acfaca773e297147acec5d425b89f9144ef70bf839256a5a382fb45450"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/02-export-denied-before.jpg",
+      "sha256": "d7fde2deacc5b873e16ea68a1bb99a863c3a1c28cba6b92ff4a64b6f24cc9f76"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/03-incomplete-draft-reloaded.jpg",
+      "sha256": "5d3393d773b7e59d36d6018f42ac821db5ef872dd0f6dadf2dd3fe2660e3c8b3"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/04-original-file.jpg",
+      "sha256": "01ff861f60520092c3acc7ae35bb6dcdc8c236288ecbf0b07ebb989a795532e5"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/05-first-document.jpg",
+      "sha256": "5391b6edba38bf566ebc6d12965e00e4ce4c5f5ca547c5e53bf16af8058c67ab"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/05-first-document.txt",
+      "sha256": "0d5160ea8bdb119e296731b948d228e5bb5f10925bf11a434da242a87d81e02b"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/06-second-document.txt",
+      "sha256": "4aa0ab2d63c92ef47479fac582684fd400b9b6a8ba51292e35905f191810cb77"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/07-third-document-before.jpg",
+      "sha256": "ffc09eb8f529ebe580babedcfc382bf5fcab6350f27d0da7b898e23614d4b858"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/07-third-document-before.txt",
+      "sha256": "2df133e2ac136166d6ac4930b6e8015393481253868eaa16ad01cf06a122969d"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/08-fourth-document-denied.jpg",
+      "sha256": "ea31b0952c5c5fc19d35b73d5600bfbcc0339108310a60ad98ca602ec3ed201f"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/08-fourth-document-denied.txt",
+      "sha256": "33988618cdd4cc7436c30672f8c4ea034e140152c3be24fca1236e26c95af279"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/09-free-list-count-before.jpg",
+      "sha256": "c3ddfc4905c0f996c13add64ea00247d186d940b2c0ea585deea811337139de5"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/10-free-list-fixed.jpg",
+      "sha256": "dd3fbd4a437fe625e2e6b1b14383b8bd67af8ed88120850fba96af08f5bfc5d9"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/11-mobile-save-after-limit.jpg",
+      "sha256": "4ea2958ed0546bb07f2d793465fc2d8bb2b95ec208a2130ac9599c0865463219"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/12-mobile-original.jpg",
+      "sha256": "e07e3fbe17aaa909c6df043ff926d9bc78b047caa474812870138a784492942f"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/13-third-retest-before.txt",
+      "sha256": "100c7e981743dcde40812f05086f86334ccf3f853cb8b65c8684c7d41b082140"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/14-paid-history-denied.jpg",
+      "sha256": "3f3daac875529897f2db768f7146f8ad1297e1080d6a5152698a93e66eca2782"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/15-admin-hold.jpg",
+      "sha256": "755bfdc370cb013b21ced828abbcbfc5ac8171e09c00c20f0ab8c4644450bbc7"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/16-third-notice-fixed.jpg",
+      "sha256": "28024fccb16dafbe43673634b41e50d41cf766b2074b6b9241f205f1e327206c"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/16-third-notice-fixed.txt",
+      "sha256": "3359299d292b0d0195b395650f0ff9da0e5a5401637e65847702a11125fb267a"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/17-third-notice-mobile.jpg",
+      "sha256": "34268376b3110029c929371416f61b67f5197e61b8366e4d29667b4beb24e5ad"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/18-fourth-denied-final.jpg",
+      "sha256": "0c004510a09abaa9288231f01280a7dcdd6084d11734f4973c34c94346f1af9f"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/19-manual-route-denied.txt",
+      "sha256": "aea89e07cdd00b530ca80fc66cb13a6c08b3093c963cc40a2988d5707e31dc00"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/20-paid-expired-final.jpg",
+      "sha256": "3d83a07e633e419605afc852d17eb8e2715ae195b018f5e0c2b54eeb33a3b4aa"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/20-paid-expired-final.txt",
+      "sha256": "27902333a0a04b9c3ce5b637150c07c2d4469783342752af6c52c538d9ceb5ea"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/README.md",
+      "sha256": "a44a1f1f53e4e0695dc5175c1e847d3ee935d09a6f1b4ee6c12f1367bfaf1ffe"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/browser-errors.json",
+      "sha256": "528dbdd2e28b0d74bc2a29313729fe520e7bddd2b19ce59bc532fbc81aeab6ab"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-baseline.json",
+      "sha256": "9a0ea30c881c147a1e09ef725591614c560c65e76060c8b163a1c4cb70d42fd6"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-baseline.json.sha256",
+      "sha256": "4653e508d3582981143dd626dc857bff0ea1aa90d09761ebba7a5c65ac83d2e8"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-comparison.json",
+      "sha256": "bc8525ff311a23de5cea831cd738cc856fe777d0218133e419e77030cb1e1de3"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-comparison.json.sha256",
+      "sha256": "524779794d6e92ecb0550153643ca6b910c0b443bded7a9dd926914583147b5e"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-evidence-notes.md",
+      "sha256": "f3ae49bbbd920c8d8353e0e57834faa58381be7034c77429c4148f5de5d08ba2"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-final.json",
+      "sha256": "0884a5a840e9be60db3b29d5b0968736dd3ab270813351fee1ab089b7d94786b"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-final.json.sha256",
+      "sha256": "e89b896481806045039b7f1c4d8e076eef06a24c729e6ebe257608dfd1bece21"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-followup-baseline.json",
+      "sha256": "8f9b7f1b9419cfe67d7a6798555a96cf3b2fdf2715cfbf16f36c21be2b7f36d5"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/db-followup-baseline.json.sha256",
+      "sha256": "2b8bb6492f3d1168f3d766a41d27a8b541f672a5b656f12f6710225b3fc0bc87"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/local-ocr-fixture-stats.json",
+      "sha256": "36e952e220d2a2a3cfb4975c9b9cc17b71bdf9aead26a35078f916d01f1dbf56"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/local-ocr-fixture-stats.json.sha256",
+      "sha256": "08220af864212100f46c5320f4b05e164b8f2ab597f6ee80064c573e530a3ee8"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/web-cleanup-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/web-test-files.txt",
+      "sha256": "b49676b2c932a13ccffffdf460e107616004bcd09a97bfd1fbe02b8271681435"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/web-tests.log",
+      "sha256": "16802cacdddfdb5ef525299dbec33aee5cdb5cf42c82d946f4c9cf9d9eb39160"
+    },
+    {
+      "path": "docs/evidence/free-expense-drafts-2026-10-28/browser/web-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/plans/free-expense-drafts-plan-th.md",
+      "sha256": "600c0c5f17a347f0e4977000ba34ec1d731473a2e98a77958cdb2d3dee17b74c"
+    },
+    {
+      "path": "packages/contracts/src/expenses.ts",
+      "sha256": "913f585c20e47767c451a9f4add2203ad51d2d88d3eb25bfec7677ad19e9c343"
+    }
+  ]
+}

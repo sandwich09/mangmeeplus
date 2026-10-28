@@ -15,6 +15,8 @@ export type RequestContext = {
   /** Display-only company feature metadata from the existing permission resolution. */
   entitledFeatureKeys?: string[] | null;
   permissions: string[];
+  /** Server-resolved source-only draft access; missing means no free entitlement. */
+  freeExpenseDrafts?: boolean;
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: {
     branchIds?: string[];

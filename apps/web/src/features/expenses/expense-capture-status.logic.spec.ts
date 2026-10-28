@@ -9,8 +9,11 @@ import {
   captureReadJobNotice,
   captureReadNotice,
   captureReadProgressParams,
+  freeAllowanceNotice,
   type ExpenseReadStatusFile,
 } from './expense-capture-status.logic';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+import { bangkokMonthKey } from './expense-upload.logic';
 
 const statusFile = (patch: Partial<ExpenseReadStatusFile>): ExpenseReadStatusFile => ({
   fileId: 'file-1', attachmentId: 'att-1', status: 'READING',
@@ -19,6 +22,24 @@ const statusFile = (patch: Partial<ExpenseReadStatusFile>): ExpenseReadStatusFil
 });
 
 describe('read status → what the user is told (§17.2/§17.6)', () => {
+  it('shows free usage only after the server confirms all three current-month reads', () => {
+    const allowance = {
+      source: 'FREE_MONTHLY_3' as const, monthKey: bangkokMonthKey(todayCivilDate()), limit: 3,
+      usedCount: 2, inFlightCount: 0, remainingCount: 1,
+      resetAt: new Date(Date.now() + 86_400_000).toISOString(),
+    };
+    assert.equal(freeAllowanceNotice(allowance, 'th'), null);
+    const reached = freeAllowanceNotice({ ...allowance, usedCount: 3, remainingCount: 0 }, 'th');
+    assert.match(reached ?? '', /ครบ 3 จาก 3 ใบ/);
+    assert.equal(freeAllowanceNotice({ ...allowance, usedCount: 3, monthKey: '2000-01' }, 'th'), null);
+  });
+
+  it('explains that one multi-document file must be split before a free read', () => {
+    const notice = captureReadNotice(statusFile({ status: 'FAILED', lastErrorCode: 'FREE_MULTI_DOCUMENT_UNSUPPORTED' }));
+    assert.equal(notice?.messageKey, 'expenses.free_multi_document_unsupported');
+    assert.equal(notice?.tone, 'info');
+  });
+
   it('says the file is saved while the reading is still running', () => {
     for (const status of ['QUEUED', 'PREPARING', 'READING'] as const) {
       const notice = captureReadNotice(statusFile({ status }));

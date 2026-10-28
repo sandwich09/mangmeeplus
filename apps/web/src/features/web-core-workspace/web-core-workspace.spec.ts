@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
-import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildAccountLinks, packageMenuTrailing, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, employeePageMenuKey, resolveMenuKey } from './web-core-workspace.logic';
+import { filterModulesByPermissions, filterModulesForSession, canAccessFreeExpenseWorkspacePath, companySwitcherTarget, getActiveModuleKey, groupNavItems, buildAccountLinks, packageMenuTrailing, buildLockedNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, employeePageMenuKey, resolveMenuKey } from './web-core-workspace.logic';
 import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER, SIDEBAR_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
@@ -10,6 +10,24 @@ import { isActiveNavSubItem } from '@/common/components/app-shell/app-sidebar.lo
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
+
+describe('free expense workspace routing', () => {
+  it('opens only expenses and routes eligible expired shops to drafts', () => {
+    const modules = filterModulesForSession(WORKSPACE_MODULES, ['expense.read_own', 'expense.receipt.upload'], true);
+    assert.deepEqual(modules.map((module) => module.key), ['expenses']);
+    const nav = buildNavItems(modules, 'co', 'th', {}, ['expense.read_own', 'expense.receipt.upload'], [], false, false, true, true);
+    assert.deepEqual(nav.map((item) => item.key), ['expenses']);
+    assert.deepEqual(nav[0]!.subItems?.map((item) => item.key), ['expenses.list', 'expenses.upload']);
+    assert.equal(canAccessFreeExpenseWorkspacePath('co', '/companies/co/expenses'), true);
+    assert.equal(canAccessFreeExpenseWorkspacePath('co', '/companies/co/expenses/upload'), true);
+    assert.equal(canAccessFreeExpenseWorkspacePath('co', '/companies/co/expenses/manual'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read_own'], 'co', '/companies/co/dashboard', true), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['company.plan.manage'], 'co', '/companies/co/billing', true), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'co', '/companies/co/billing', true), false);
+    assert.equal(companySwitcherTarget({ companyId: 'free', currentCompanyId: 'paid', expired: true, freeExpenseDrafts: true, currentPath: '/companies/paid/dashboard' }), '/companies/free/expenses');
+    assert.equal(companySwitcherTarget({ companyId: 'paid', currentCompanyId: 'free', expired: true, currentFreeExpenseDrafts: true, currentPath: '/companies/free/expenses' }), '/companies/paid/renew');
+  });
+});
 
 describe('disbursement-voucher web entrances', () => {
   it('shows the child only with read permission AND the setting, leaving the other children unchanged', () => {

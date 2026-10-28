@@ -49,6 +49,7 @@ export class ResolveRequestContextUseCase {
       permissions: resolved.permissions,
       availablePermissions: resolved.availablePermissions,
       entitledFeatureKeys: resolved.entitledFeatureKeys,
+      ...(resolved.freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       entitlementDeniedPermissions: resolved.entitlementDeniedPermissions,
       scopes: resolved.scopes,
       authProvider,

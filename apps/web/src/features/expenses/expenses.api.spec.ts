@@ -20,6 +20,7 @@ import {
   normalizeApiBase,
   recordExpensePayment,
   resolveUploadUrl,
+  uploadExpenseEvidenceFile,
   updateExpenseSourceDraft,
   uploadReceiptFile,
   reopenExpense, voidExpense, getExpenseCertificateHistory, correctSystemWhtCertificate,
@@ -270,6 +271,27 @@ describe('expenses.api URL helpers', () => {
       mimeType: 'image/png',
       byteSize: 4,
     });
+  });
+
+  it('links a generic evidence upload intent to the expense before upload', async () => {
+    const requests: Array<{ url: string; body?: BodyInit | null }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, body: init?.body });
+      if (url.endsWith('/attachments/upload-intent')) return new Response(JSON.stringify({
+        attachmentId: 'att-1', uploadUrl: 'https://storage.example.test/upload', uploadMethod: 'PUT', uploadHeaders: {},
+      }), { headers: { 'content-type': 'application/json' } });
+      if (url === 'https://storage.example.test/upload') return new Response(null, { status: 200 });
+      return new Response(JSON.stringify({}), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    await uploadExpenseEvidenceFile('co-1', 'exp-1', 'branch-1', new File([new Uint8Array([1])], 'receipt.pdf', { type: 'application/pdf' }), 'expense.receipt.primary');
+
+    assert.deepEqual(JSON.parse(String(requests[0]?.body)), {
+      originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
+      visibility: 'INTERNAL', branchId: 'branch-1', metadataJson: { expenseReceiptExpenseId: 'exp-1' },
+    });
+    assert.match(requests[2]?.url ?? '', /expenses\/exp-1\/receipt-uploads\/att-1\/complete$/);
   });
 
   it('loads LINE prefill by opaque path without putting accepted business values in the URL', async () => {

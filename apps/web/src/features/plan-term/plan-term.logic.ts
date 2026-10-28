@@ -12,11 +12,17 @@ export type PlanTermView = 'none' | 'warning-banner' | 'renewal-page';
  * - an ended term sends everyone to the renewal page, because no data operation is possible;
  * - no term row (`null`) is a grandfathered company with unlimited use, not an expiry.
  */
-export function planTermView(notice: PlanTermNotice | null, alreadyOnRenewalPage = false): PlanTermView {
+export function planTermView(notice: PlanTermNotice | null, alreadyOnRenewalPage = false, freeExpenseDrafts = false): PlanTermView {
   if (!notice) return 'none';
+  if (notice.derivedState === 'EXPIRED' && notice.freeExpenseDrafts === true && freeExpenseDrafts) return 'none';
   if (notice.derivedState === 'EXPIRED') return alreadyOnRenewalPage ? 'none' : 'renewal-page';
   if (notice.derivedState === 'WARNING' && (notice.canManagePlan ?? notice.isOwner)) return 'warning-banner';
   return 'none';
+}
+
+/** Free source-draft access is an explicit exception to the expired-term workspace lock. */
+export function shouldUseLockedWorkspace(notice: PlanTermNotice | null, sessionFreeExpenseDrafts = false): boolean {
+  return notice?.derivedState === 'EXPIRED' && !(notice.freeExpenseDrafts === true && sessionFreeExpenseDrafts);
 }
 
 /** `/companies/<id>/…` → the company's renewal page; null when the path names no company. */

@@ -114,6 +114,9 @@ async function build(options: {
   readResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; truncated?: boolean; text?: string }>;
   extractResults?: Array<{ status: 'ok' | 'failed'; errorCode?: string; observations?: ExpenseCaptureObservations }>;
   ocrAdmission?: { allowed: boolean; reason?: string };
+  free?: boolean;
+  observationFailure?: boolean;
+  workerAccess?: { permissions: string[]; scopes?: { branchIds?: string[] } };
   applyResult?: Record<string, unknown>;
   expense?: Record<string, unknown> | null;
   maxPages?: number;
@@ -165,10 +168,11 @@ async function build(options: {
     setFilePageCount: async () => undefined,
     nextObservationVersion: async () => observationsStored.length + 1,
     createObservation: async (_db: unknown, input: any) => {
+      if (options.observationFailure) throw new Error('storage unavailable');
       observationsStored.push(input);
       return input;
     },
-    findGroup: async () => ({ id: 'group-1', companyId: 'co-1', status: 'OPEN' }),
+    findGroup: async () => ({ id: 'group-1', companyId: 'co-1', createdByUserId: 'user-1', branchId: 'br-1', status: 'OPEN' }),
     findFile: async () => ({ id: 'file-1', uploadState: 'STORED' }),
     claimReadJob: async () => job,
     claimReadJobs: async () => [job],
@@ -262,12 +266,29 @@ async function build(options: {
   let usedCount = 0;
   const tx = {
     $executeRaw: async () => undefined,
+    $queryRaw: async () => [],
+    company: { findUnique: async () => options.free ? { status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0), billingReceiptAccountId: null, capacityOverride: null } } : null },
+    billingAccount: { findMany: async () => [] },
+    companyMembership: { findFirst: async () => ({ branchScopeMode: 'ALL_BRANCHES', branchScopes: [], roles: [{ role: { permissions: [{ permission: { key: 'expense.receipt.upload' } }] } }] }) },
+    branch: { findFirst: async () => ({ id: 'br-1' }) },
+    companyFeatureEntitlement: { findMany: async () => [] },
+    expenseCaptureObservation: capture.client.expenseCaptureObservation,
+    billingInvoice: { findFirst: async () => null },
+    billingReceiptGrant: { findFirst: async () => null },
+    packageChangeRequest: { findFirst: async () => null },
+    salesAttribution: { findUnique: async () => null },
     companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: options.ocrAdmission?.allowed !== false, ocrMonthlyLimit: 10 }) },
     companyOcrUsageEvent: {
       findUnique: async ({ where }: any) => {
         const key = where.companyId_sourceRoute_requestId;
         return admissions.find((event) => event.companyId === key.companyId
           && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
+      },
+      findMany: async ({ where }: any) => admissions.filter((event) => event.quotaSource === where.quotaSource).map((event) => ({ succeededAt: event.succeededAt ?? null })),
+      updateMany: async ({ where, data }: any) => {
+        const event = admissions.find((row) => row.id === where.id && !row.succeededAt);
+        if (event) Object.assign(event, data);
+        return { count: event ? 1 : 0 };
       },
       create: async ({ data }: any) => {
         const event = { id: `ocr-event-${admissions.length + 1}`, ...data };
@@ -287,7 +308,7 @@ async function build(options: {
     companyPlanTerm: { findUnique: async () => null },
     auditLog: { findFirst: async () => null, create: async () => ({}) },
   };
-  const prisma = { client: { $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx) } } as any;
+  const prisma = { client: { ...tx, $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx) } } as any;
   const config = {
     expenseCaptureReadConcurrency: 2,
     expenseCapturePdfMaxPages: options.maxPages ?? 60,
@@ -302,7 +323,8 @@ async function build(options: {
   );
   const runner = new ExpenseCaptureReadRunnerService(
     capture as any, attachments as any, expenses as any, storage as any, client as any,
-    applyService as any, outboxService as any, audit as any, prisma, config, autoSplit,
+    applyService as any, outboxService as any, audit as any, prisma, config, autoSplit, undefined,
+    { resolveAccess: async () => ({ companyId: 'co-1', permissions: options.workerAccess?.permissions ?? ['expense.ocr.request'], scopes: options.workerAccess?.scopes ?? {} }) } as any,
   );
 
   return {
@@ -1030,4 +1052,44 @@ for (const split of [false, true]) it(`U1 capture ${split ? 'auto-split' : 'merg
     if (!split) assert.equal(h.applyCalls[0]![3].sourceDocumentType, 'TRANSFER_SLIP');
     else assert.equal(h.applyCalls[1]![3].ocrDocumentType, 'RECEIPT');
   } finally { h.restore(); }
+});
+
+
+describe('free capture document boundary', () => {
+  it('rejects multiple business documents before observations or split writes and returns the slot', async () => {
+    const h = await build({ free: true, extractResults: [{ status: 'ok', observations: twoShops() }] });
+    await h.runner.runClaimed(h.job);
+    assert.equal(terminal(h).lastErrorCode, 'FREE_MULTI_DOCUMENT_UNSUPPORTED');
+    assert.equal(h.createdExpenses.length, 0);
+    assert.equal(h.applyCalls.length, 0);
+    assert.equal(h.observationsStored.length, 0);
+    assert.equal(h.released.length, 1);
+  });
+  it('counts a persisted usable document and does not count a result lost before persistence', async () => {
+    const h = await build({ free: true });
+    await h.runner.runClaimed(h.job);
+    assert.ok(h.admissions[0]?.succeededAt);
+    assert.equal(h.applyCalls[0]?.[0].userId, 'user-1');
+    assert.equal(h.applyCalls[0]?.[3].sourceOnly, true);
+    assert.equal(typeof h.applyCalls[0]?.[3].onUsablePersisted, 'function');
+    assert.equal(h.released.length, 0);
+    const failed = await build({ free: true, observationFailure: true, applyResult: { committedUpdatedAt: null } });
+    await failed.runner.runClaimed(failed.job);
+    assert.equal(failed.admissions.length, 0);
+    assert.equal(failed.released.length, 1);
+  });
+});
+
+it('rechecks the original free job owner permission/branch and refuses a promoted source before providers', async () => {
+  for (const over of [
+    { workerAccess: { permissions: [] } },
+    { workerAccess: { permissions: ['expense.ocr.request'], scopes: { branchIds: ['other-branch'] } } },
+    { expense: { id: 'exp-1', companyId: 'co-1', status: 'READY_FOR_CONFIRMATION', primaryAttachmentId: 'att-1', createdByUserId: 'user-1', branchId: 'br-1' } },
+  ]) {
+    const h = await build({ free: true, ...over });
+    await h.runner.runClaimed(h.job);
+    assert.equal(h.readCalls.length, 0);
+    assert.equal(h.extractCalls.length, 0);
+    assert.equal(h.released.length, 1);
+  }
 });

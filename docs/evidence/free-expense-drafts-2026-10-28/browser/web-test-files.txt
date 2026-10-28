@@ -1,0 +1,13 @@
+src/common/api/api-error-message.spec.ts
+src/common/auth/session-gate.logic.spec.ts
+src/features/expenses/ExpenseReviewPage.qa.spec.ts
+src/features/expenses/ExpensesPages.qa.spec.ts
+src/features/expenses/expense-capture-status.logic.spec.ts
+src/features/expenses/expense-capture-upload.logic.spec.ts
+src/features/expenses/expenses.api.spec.ts
+src/features/expenses/expenses.model.spec.ts
+src/features/plan-term/plan-term.logic.spec.ts
+src/features/web-core-workspace/workspace-scope.api.spec.ts
+src/features/web-core-workspace/web-core-workspace.spec.ts
+src/features/expenses/expense-notice.logic.spec.ts
+src/features/expenses/expense-upload.logic.spec.ts

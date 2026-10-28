@@ -35,6 +35,7 @@ import { Notice } from '@/common/components/notice';
 import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
 import { apiErrorCode } from '@/common/api/api-error-message';
+import { consumeStoredNoticeOnce } from './expense-notice.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
@@ -53,15 +54,15 @@ import {
   listWhtHandoffs, issueSystemWhtCertificate, downloadSystemWhtCertificate, correctSystemWhtCertificate, issueSystemWhtReplacementCopy,
 } from './expenses.api';
 import {
-  captureReadNoticeText, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
-  type ExpenseReadStatusFile,
+  captureReadNoticeText, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice, freeAllowanceNotice,
+  type ExpenseReadStatusFile, type ExpenseReadStatusResult,
 } from './expense-capture-status.logic';
 import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   expenseSourceDocumentLabel, expenseSubstituteReceiptStatus, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseDataStepBlocker, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
-  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptAction, expenseValueLabel,
+  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptAction, expenseValueLabel, expenseUiPermissions,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, claimExpenseRecordNote, expenseDeleteErrorMessage, firstFilled, isClaimExpenseRecord, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
@@ -129,12 +130,13 @@ function withUnit(text: string, part?: string | null) {
   return at < 0 ? text : <>{text.slice(0, at)}<span className="mangmee-unit">{part}</span>{text.slice(at + part!.length)}</>;
 }
 
-export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, disbursementEntryOpen = false, systemCertificatesAvailable = true }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean; systemCertificatesAvailable?: boolean; disbursementEntryOpen?: boolean }) {
+export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, freeExpenseDrafts = false, disbursementEntryOpen = false, systemCertificatesAvailable = true }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean; freeExpenseDrafts?: boolean; systemCertificatesAvailable?: boolean; disbursementEntryOpen?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const listBack = searchParams?.get('back') ?? null;
   const sectionLanding = searchParams?.get('section');
-  const caps = expenseCapabilities(permissions);
+  const uiPermissions = expenseUiPermissions(permissions, freeExpenseDrafts);
+  const caps = expenseCapabilities(uiPermissions);
   const { canReview, canConfirm } = caps;
   const locale = useWorkspaceLocale();
   const onRefresh = () => undefined;
@@ -188,6 +190,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   const extractionRequestRunningRef = useRef(false);
   const extractionRunIdRef = useRef(0);
   const [notice, setNotice] = useState<ExtractionNotice | null>(null);
+  const noticeConsumedRef = useRef<string | null>(null);
   const [dataErrorCount, setDataErrorCount] = useState<number | null>(null);
   const [dataErrorMessage, setDataErrorMessage] = useState<string | null>(null);
   const onDataValidationChange = useCallback((count: number, message: string | null) => {
@@ -276,6 +279,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   const fileOperationRef = useRef<{ key: string; operationId: string } | null>(null);
   const [conflictReload, setConflictReload] = useState(false);
   const [readState, setReadState] = useState<ExpenseReadStatusFile | null>(null);
+  const [freeAllowance, setFreeAllowance] = useState<ExpenseReadStatusResult['freeAllowance']>(undefined);
   const [preview, setPreview] = useState<ExpensePreviewSource | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSaving, setPreviewSaving] = useState(false);
@@ -458,11 +462,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   // and never asks for another read.
   useEffect(() => {
     setReadState(null);
+    setFreeAllowance(undefined);
     if (!detail?.primaryAttachmentId) return;
     let cancelled = false;
     const runId = extractionRunIdRef.current;
     void getExpenseReadStatus(companyId, expenseId)
-      .then((result) => { if (!cancelled && runId === extractionRunIdRef.current) setReadState(result.files[0] ?? null); })
+      .then((result) => { if (!cancelled && runId === extractionRunIdRef.current) { setReadState(result.files[0] ?? null); setFreeAllowance(result.freeAllowance); } })
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [companyId, expenseId, detail?.primaryAttachmentId]);
@@ -479,6 +484,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
         .then(async (result) => {
           if (cancelled) return;
           const file = result.files[0] ?? null;
+          setFreeAllowance(result.freeAllowance);
           // Keep the form locked until the applied full/partial result is on screen. If refreshing
           // fails, leave the running state intact so the next poll retries the read, never the OCR.
           if ((file?.status === 'DONE' || file?.status === 'PARTIAL') && file.applied !== false) {
@@ -495,12 +501,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   }, [companyId, expenseId, detail?.primaryAttachmentId, readRunning]);
 
   useEffect(() => {
-    setNotice(null);
-    try {
-      const stored = window.sessionStorage.getItem(expenseNoticeKey(expenseId));
-      window.sessionStorage.removeItem(expenseNoticeKey(expenseId));
-      setNotice(stored ? JSON.parse(stored) as ExtractionNotice : null);
-    } catch { /* storage may be disabled */ }
+    const stored = consumeStoredNoticeOnce<ExtractionNotice>(window.sessionStorage, expenseNoticeKey(expenseId), expenseId, noticeConsumedRef);
+    if (stored !== undefined) setNotice(stored);
   }, [expenseId]);
 
   // Initial step = first not-done step when the modal opens (READY_FOR_CONFIRMATION → review).
@@ -661,7 +663,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
 
   const doIssueWhtCertificate = async (selectedHandoff = whtHandoff, paymentId?: string) => {
     const whtHandoff = selectedHandoff;
-    if (!detail || !whtHandoff || !canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) || !!whtHandoff.payerMissing?.length || !whtPayeeAddress(whtHandoff.payeeAddress, whtHandoff.prefill.payeeSnapshot.address)) return;
+    if (!detail || !whtHandoff || !canIssueExpenseWhtCertificate(detail, whtHandoff, uiPermissions) || !!whtHandoff.payerMissing?.length || !whtPayeeAddress(whtHandoff.payeeAddress, whtHandoff.prefill.payeeSnapshot.address)) return;
     setWhtIssuing(true); setWhtIssueError(null);
     try {
       const result = await issueSystemWhtCertificate(companyId, whtHandoff.id, { paymentId });
@@ -1030,14 +1032,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   const isMutable = !claimedSource && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
   // Backend: PATCH/mark-ready require expense.review OR (expense.update AND owner) — ownership alone is not enough.
   const isOwnRecord = detail.createdByUserId === userId;
-  const canMutateDraft = isMutable && (canReview || (caps.canUpdate && isOwnRecord));
+  const canMutateDraft = !freeExpenseDrafts && isMutable && (canReview || (caps.canUpdate && isOwnRecord));
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
   const canExtract = !isCancelled && !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
   // Fixed correction marker: h-5 plus the stepper's gap-1.5 = 1.625rem.
   const viewerOffsetRem = (isMutable ? STEPPER_REM : 0) + (isMutable && detail.correctionOpenedAt ? 1.625 : 0);
   const viewerTop = `calc(var(--app-header-h) + ${viewerOffsetRem}rem)`;
   const isConfirmed = detail.status === 'CONFIRMED';
-  const expenseCertificate = currentExpenseCertificate(whtHandoff, detail.correctionCapabilities?.certificateOnExpense, permissions);
+  const expenseCertificate = currentExpenseCertificate(whtHandoff, detail.correctionCapabilities?.certificateOnExpense, uiPermissions);
   const correctionCertificate = correctionAction && !correctionAction.paymentId ? expenseCertificate : null;
   const certificateVoidOpen = showVoid && Boolean(expenseCertificate);
   const correctionAllowed = correctionAction?.paymentId
@@ -1055,10 +1057,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
   const isConfirmedDuplicate = detail.duplicateStatus === 'CONFIRMED_DUPLICATE';
-  const sourceDraftView = expenseSourceDraftViewState(detail, canMutateDraft && canReview);
+  const sourceDraftView = expenseSourceDraftViewState(detail, freeExpenseDrafts ? false : canMutateDraft && canReview);
   const visibleSourceDraft = sourceDraftView.sourceDraft;
   const sourceDraftIncomplete = sourceDraftView.incomplete;
-  const sourceOnlyDraft = sourceDraftView.sourceOnly && !(detail.status === 'READY_FOR_CONFIRMATION' && canConfirm);
+  const sourceOnlyDraft = freeExpenseDrafts || (sourceDraftView.sourceOnly && !(detail.status === 'READY_FOR_CONFIRMATION' && canConfirm));
   const financialTotalUnknown = sourceDraftView.financialTotalUnknown;
   const readySourceDraftMessage = detail.status === 'READY_FOR_CONFIRMATION' && sourceDraftIncomplete
     ? t(canReview ? 'expenses.source_draft_ready_reviewer_help' : 'expenses.source_draft_ready_waiting_help', locale)
@@ -1082,9 +1084,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   // The READ JOB is the authority whenever there is one, because the split ids come off the job
   // itself. A record with no job (the synchronous single-image lane) keeps its OCR classification,
   // which is all it has.
-  const multiDocumentDetected = readState
+  const multiDocumentDetected = !freeExpenseDrafts && (readState
     ? readState.multiDocument === true
-    : (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT';
+    : (aiMap?.['classification'] as { contentKind?: string } | undefined)?.contentKind === 'MULTI_DOCUMENT');
   const splitExpenseIds = readState?.splitExpenseIds ?? [];
   const autoSplitNotice = multiDocumentDetected && splitExpenseIds.length > 0
     ? t('expenses.capture.auto_split', locale).replace('{count}', String(readState?.documentCount ?? splitExpenseIds.length + 1))
@@ -1307,8 +1309,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
 
   // Guided review exposes cancellation on every step, then deletion for a cancelled record.
   // Existing permission checks and financial-void actions still apply.
-  const certificateCardVisible = isConfirmed && hasWht && permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
-  const certificateIssueButton = systemCertificatesAvailable && canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
+  const certificateCardVisible = !freeExpenseDrafts && isConfirmed && hasWht && uiPermissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
+  const certificateIssueButton = systemCertificatesAvailable && canIssueExpenseWhtCertificate(detail, whtHandoff, uiPermissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
     <WhtIssueButton handoff={whtHandoff} busy={whtIssuing} unpaid={detail.paymentStatus !== 'PAID'} label={t('wht.print_certificate', locale)} onIssue={() => doIssueWhtCertificate()} />
   );
   const changeCorrectForm = (changed: Partial<typeof correctForm>) => {
@@ -1317,23 +1319,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   };
   const correctionHasChanges = Object.keys(expenseCertificateCorrectionChanges(correctForm, correctForm.opened)).length > 0;
   const issuedCertificateActions = certificateCardVisible && (
-    <ExpenseCertificateCard systemCertificatesAvailable={systemCertificatesAvailable} key={`${companyId}-${expenseId}`} companyId={companyId} expenseId={expenseId} revision={detail.updatedAt} handoff={whtHandoff} permissions={permissions} issueButton={certificateIssueButton} onIssuePayment={doIssueWhtCertificate} onDownload={handoff => void downloadWht(handoff)} busy={whtIssuing} error={whtIssueError} primaryHidden={correctOpen && whtHandoff?.status === 'SYSTEM_ISSUED'} onChanged={next => setWhtHandoff(next)} onCoverageChanged={setWhtCertificatesComplete} onClearError={() => setWhtIssueError(null)}>
-      {systemCertificatesAvailable && whtHandoff && (canCorrectWhtCertificate(whtHandoff, permissions) || canIssueWhtReplacementCopy(whtHandoff, permissions)) && <>
+    <ExpenseCertificateCard systemCertificatesAvailable={systemCertificatesAvailable} key={`${companyId}-${expenseId}`} companyId={companyId} expenseId={expenseId} revision={detail.updatedAt} handoff={whtHandoff} permissions={uiPermissions} issueButton={certificateIssueButton} onIssuePayment={doIssueWhtCertificate} onDownload={handoff => void downloadWht(handoff)} busy={whtIssuing} error={whtIssueError} primaryHidden={correctOpen && whtHandoff?.status === 'SYSTEM_ISSUED'} onChanged={next => setWhtHandoff(next)} onCoverageChanged={setWhtCertificatesComplete} onClearError={() => setWhtIssueError(null)}>
+      {systemCertificatesAvailable && whtHandoff && (canCorrectWhtCertificate(whtHandoff, uiPermissions) || canIssueWhtReplacementCopy(whtHandoff, uiPermissions)) && <>
             {!correctOpen && replaceError && <ErrorBanner message={replaceError} />}
             {/* The two rarer actions under the download are one group: one size, no rule between them. */}
             <ActionGroup align="start">
-              {!correctOpen && canIssueWhtReplacementCopy(whtHandoff, permissions) && (
+              {!correctOpen && canIssueWhtReplacementCopy(whtHandoff, uiPermissions) && (
                 <button type="button" className={ghostClass} aria-busy={replaceBusy} disabled={replaceBusy} onClick={() => void doReplaceWht()}>
                   {t(replaceBusy ? 'expenses.certificates.replacement_busy' : 'expenses.certificates.replacement', locale)}
                 </button>
               )}
-              {canCorrectWhtCertificate(whtHandoff, permissions) && (
+              {canCorrectWhtCertificate(whtHandoff, uiPermissions) && (
                 <button type="button" className={ghostClass} aria-expanded={correctOpen} onClick={() => (correctOpen ? setCorrectOpen(false) : openCorrectForm())}>
                   {correctOpen ? 'ปิด' : 'แก้ไขหนังสือรับรอง'}
                 </button>
               )}
             </ActionGroup>
-            {canCorrectWhtCertificate(whtHandoff, permissions) && (
+            {canCorrectWhtCertificate(whtHandoff, uiPermissions) && (
               <div>
                 {correctOpen && (
                   <form className="mt-2 grid gap-2 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void doCorrectWht(); }}>
@@ -1399,7 +1401,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   ].filter(Boolean) : [];
   // The result reuses the list's permission and draft-state gate for deletion.
   const deleteShown = canDelete;
-  const certificateLineShown = systemCertificatesAvailable && !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
+  const certificateLineShown = !freeExpenseDrafts && systemCertificatesAvailable && !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
   const reviewNoticeClass = 'text-sm font-medium text-warning-700';
   // A bar with nothing to press is not drawn.
   const certificateBlock = <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{issuedCertificateActions}</div>;
@@ -1487,12 +1489,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
       {/* extraction/AI notices stay above the fold, like the old panel header banners.
           The info-tone one only restates what the AI strip and the form fields below already show,
           so it is kept for the no-summary case and dropped once a summary exists. */}
-      {notice && (notice.tone === 'error' ? <ErrorBanner message={notice.message} /> : !aiMap && <InfoBanner message={notice.message} />)}
+      {notice && (notice.tone === 'error' || notice.persistent || !aiMap) && (notice.tone === 'error' ? <ErrorBanner message={notice.message} /> : <InfoBanner message={notice.message} />)}
       {/* §17.6: the READ's own state, beside the file and persisted — not a toast that scrolls away.
           A terminal failure says the file is saved and points at this form; it offers no reread. */}
       {readNotice && (readNotice.tone === 'error'
         ? <ErrorBanner message={readNoticeText} />
         : <InfoBanner message={readNoticeText} />)}
+      {freeExpenseDrafts && freeAllowanceNotice(freeAllowance, locale) && <InfoBanner message={freeAllowanceNotice(freeAllowance, locale)!} />}
       {/* §16.4: values read from the file that was replaced, until a person confirms them here. */}
       {aiMap?.['sourceStale'] === true && <InfoBanner message={t('expenses.capture.source_stale', locale)} />}
       {autoSplitNotice
@@ -1513,7 +1516,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
         : multiDocumentDetected && <InfoBanner message={t('expenses.capture.multi_document', locale)} />}
       {!notice && storedNonExpenseNotice && <InfoBanner message={storedNonExpenseNotice.message} />}
       {storedClassificationOverrideNotice && <InfoBanner message={storedClassificationOverrideNotice} />}
-      <ForeignCurrencyNotice summary={aiMap} />
+      {!freeExpenseDrafts && <ForeignCurrencyNotice summary={aiMap} />}
     </>
   );
   const postingCard = isConfirmed && caps.canReadLedger ? (
@@ -1544,7 +1547,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
       </div>
     </MangmeeCard>
   ) : null;
-  const auditCard = (isMutable || auditChecks.some(check => check.status === 'warn')) && (
+  const auditCard = !freeExpenseDrafts && (isMutable || auditChecks.some(check => check.status === 'warn')) && (
     <div ref={auditRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1641,7 +1644,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={permissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={uiPermissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   // Vendor-address Slice 2, review fix 1: on a tax-code invoice the way forward is the line's Tax
@@ -1652,7 +1655,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
   const documentReviewCard = (
     <>
       {/* Vendor-address §8 Slice 2: sits with the document and tax-evidence decisions it informs. */}
-      <BuyerMatchBanner companyId={companyId} detail={detail} editable={isMutable} claimed={claimedSource} permissions={permissions} onSaved={load} onOpenLines={openReviewLines} />
+      <BuyerMatchBanner companyId={companyId} detail={detail} editable={isMutable && !freeExpenseDrafts} claimed={claimedSource} permissions={uiPermissions} onSaved={load} onOpenLines={openReviewLines} />
       <DocumentReviewSection
         companyId={companyId}
         detail={detail}
@@ -1668,8 +1671,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
           ? <button type="button" className={ghostClass} onClick={event => { rememberDialogOpener(event.currentTarget); setCorrectionError(null); setCorrectionAction({}); }}>แก้ไขเอกสาร</button>
           : <span>ให้ผู้ดูแลรายจ่ายตรวจข้อมูลที่ถูกล็อก</span>}
         canAnswerVatStatus={capture.canAnswerVatStatus}
-        canEditShopIdentity={permissions.includes('company.legal_identity.manage')}
-        canReadTaxPeriods={permissions.includes('tax.period.read')}
+        canEditShopIdentity={uiPermissions.includes('company.legal_identity.manage')}
+        canReadTaxPeriods={uiPermissions.includes('tax.period.read')}
       />
     </>
   );
@@ -1847,14 +1850,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
           <div key={payment.id} data-payment-id={payment.id} className={cx('grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-lg border p-3 text-xs', cancelled ? 'border-gray-100 bg-gray-50 text-gray-400' : 'border-gray-200 text-gray-600')}>
             <span className={cancelled ? 'line-through' : undefined}>{payment.paidAtConfirmed === false ? 'ยังไม่ทราบวันที่จ่ายจริง' : dateShort(payment.paidAt)} · <span className="whitespace-nowrap">{PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span></span>
             <span className={cx('text-right tabular-nums font-semibold', cancelled ? 'line-through' : 'text-gray-800')}>{baht(payment.amount)}</span>
-            {!cancelled && hasWht && payment.paidAtConfirmed === false && <div className="col-span-2"><PaymentDateConfirmation companyId={companyId} expenseId={expenseId} paymentId={payment.id} canRecord={permissions.includes('expense.payment.record')} onSaved={load} /></div>}
+            {!freeExpenseDrafts && !cancelled && hasWht && payment.paidAtConfirmed === false && <div className="col-span-2"><PaymentDateConfirmation companyId={companyId} expenseId={expenseId} paymentId={payment.id} canRecord={uiPermissions.includes('expense.payment.record')} onSaved={load} /></div>}
             {cancelled && <div className="col-span-2 space-y-1"><MangmeeBadge tone="slate">ยกเลิกแล้ว</MangmeeBadge>{payment.cancellationReason && <p>{payment.cancellationReason}</p>}</div>}
             {!cancelled && caps.canReadLedger && <span className="col-span-2">{expenseValueLabel(POSTING_STATUS_LABELS, payment.postingStatus, 'รอตรวจสถานะบัญชี')}</span>}
-            <ExpenseDisbursementPaymentEntry companyId={companyId} expenseId={expenseId} payment={payment} permissions={permissions} entryOpen={disbursementEntryOpen} renderActions={actions => <ActionGroup align="start" className="col-span-2 empty:hidden">
+            {!freeExpenseDrafts && <ExpenseDisbursementPaymentEntry companyId={companyId} expenseId={expenseId} payment={payment} permissions={uiPermissions} entryOpen={disbursementEntryOpen} renderActions={actions => <ActionGroup align="start" className="col-span-2 empty:hidden">
               {!isCancelled && !cancelled && paymentCapability?.canCancel && <button type="button" className={dangerClass} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={event => { rememberDialogOpener(event.currentTarget); setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
               {slip && <button type="button" className={ghostClass} disabled={previewLoading} aria-busy={previewLoading} onClick={() => void openPreview(slip)}>ดูหลักฐานการจ่าย</button>}
               {actions}
-            </ActionGroup>} />
+            </ActionGroup>} />}
             {!cancelled && paymentCapability?.cancelBlocker && <p className="col-span-2">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker, 'cancelPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>}
           </div>
         );
@@ -1907,13 +1910,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
           </form>
         )}
         </ExpenseDisbursementDirectPayment>
-        <ExpenseDisbursementPrepareEntry companyId={companyId} detail={detail} permissions={permissions} entryOpen={disbursementEntryOpen} canRecordPayment={!isCancelled && (Boolean(detail.correctionCapabilities?.canRecordPayment) || Boolean(paymentAttemptRef.current))}>
+        {!freeExpenseDrafts && <ExpenseDisbursementPrepareEntry companyId={companyId} detail={detail} permissions={uiPermissions} entryOpen={disbursementEntryOpen} canRecordPayment={!isCancelled && (Boolean(detail.correctionCapabilities?.canRecordPayment) || Boolean(paymentAttemptRef.current))}>
           <ExpenseDisbursementDirectPayment reservation={detail.correctionCapabilities?.disbursementReservation}>
             {!isCancelled && (detail.correctionCapabilities?.canRecordPayment || Boolean(paymentAttemptRef.current)) && (<><ActionGroup align="start"><button type="submit" form="expense-record-payment" className={btnClass} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : paymentFailure === 'conflict' ? 'ตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : paymentForm.label}</button></ActionGroup>
               {!hasPaymentHistory && !detail.paidAt && Number(detail.paidAmount ?? 0) === 0 && <p className="text-sm text-gray-500">จ่ายแล้วพิมพ์ใบสำคัญจ่ายได้จากประวัติการจ่าย</p>}
             </>)}
           </ExpenseDisbursementDirectPayment>
-        </ExpenseDisbursementPrepareEntry>
+        </ExpenseDisbursementPrepareEntry>}
         <ExpenseDisbursementDirectPayment reservation={detail.correctionCapabilities?.disbursementReservation}>
         {isConfirmed && detail.correctionCapabilities?.recordPaymentBlocker && detail.correctionCapabilities.recordPaymentBlocker !== 'no_balance' && (
           <p className="text-sm text-gray-600">{detail.correctionCapabilities.recordPaymentBlocker === 'permission_denied' ? 'คุณบันทึกจ่ายไม่ได้ ให้คนที่มีสิทธิ์จ่ายเงินของร้านบันทึกให้' : expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker, 'recordPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>
@@ -2206,6 +2209,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
                       readOnlyMessage={readySourceDraftMessage}
                       onSaved={setDetail}
                     />}
+                    {freeExpenseDrafts && !visibleSourceDraft && <InfoBanner message={t('expenses.source_draft_not_available', locale)} />}
                   </>
                 ) : guided ? (
                   <>
@@ -2272,7 +2276,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, d
             </div>
           </div>
 
-        {!certificateCardVisible && <ExpenseCertificateHistoryDisclosure />}
+        {!freeExpenseDrafts && !certificateCardVisible && <ExpenseCertificateHistoryDisclosure />}
         {checkBillSecondaryActions}
 
         {!checkBillBlocked && <>

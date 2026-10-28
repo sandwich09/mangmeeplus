@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
 import { GetExpenseReadStatusUseCase } from './expense-capture-read-status.use-case';
 import { ExpenseCaptureAccessService } from './expense-capture-group.use-case';
 
@@ -19,10 +20,14 @@ const job = (patch: Record<string, unknown> = {}) => ({
   ...patch,
 });
 
-function harness(options: { jobs?: unknown[]; expense?: Record<string, unknown> | null; related?: boolean; observation?: { payloadJson: unknown } | null } = {}) {
+function harness(options: { jobs?: unknown[]; expense?: Record<string, unknown> | null; related?: boolean; observation?: { payloadJson: unknown } | null; freeSuccesses?: number; eventSucceeded?: boolean } = {}) {
   const queries: any[] = [];
   const prisma = {
     client: {
+      companyOcrUsageEvent: {
+        findFirst: async () => options.eventSucceeded ? { id: 'free-event' } : null,
+        findMany: async () => Array.from({ length: options.freeSuccesses ?? 0 }, () => ({ succeededAt: new Date() })),
+      },
       expenseCaptureReadJob: {
         findMany: async (args: any) => { queries.push(args); return options.jobs ?? [job()]; },
       },
@@ -141,4 +146,21 @@ describe('read status (appendix §9)', () => {
     const result = await related.uc.expense({ ...ctx, permissions: ['expense.read_related'] }, 'expense-1');
     assert.equal(result.files.length, 1);
   });
+});
+
+it('projects successful free allowance only for the exact admitted event and current Bangkok month', async () => {
+  const checkpoint = { ocrQuotaSource: 'FREE_MONTHLY_3', ocrEventId: 'free-event', ocrMonthKey: bangkokMonthKey() };
+  const h = harness({ jobs: [job({ status: 'DONE', checkpointJson: checkpoint })], eventSucceeded: true, freeSuccesses: 3 });
+  const result = await h.uc.expense(ctx, 'expense-1');
+  assert.equal(result.freeAllowance?.usedCount, 3);
+  assert.equal(result.freeAllowance?.source, 'FREE_MONTHLY_3');
+  for (const over of [
+    { checkpointJson: { ...checkpoint, ocrMonthKey: '2000-01' } },
+    { checkpointJson: { ...checkpoint, ocrQuotaSource: null } },
+  ]) {
+    const stale = harness({ jobs: [job({ status: 'DONE', ...over })], eventSucceeded: true, freeSuccesses: 3 });
+    assert.equal((await stale.uc.expense(ctx, 'expense-1')).freeAllowance, undefined);
+  }
+  const pending = harness({ jobs: [job({ status: 'READING', checkpointJson: checkpoint })], eventSucceeded: false });
+  assert.equal((await pending.uc.expense(ctx, 'expense-1')).freeAllowance, undefined);
 });

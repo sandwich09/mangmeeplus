@@ -75,3 +75,8 @@ Removed 2026-10-05: the card reply is always on; there is no switch.
 - Production remains held until an explicit later owner instruction resumes it.
 
 Rollout: enable existing `LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED` and `LINE_AI_FLEX_TEXT_FALLBACK_ENABLED` through the shared deploy configuration and both workflow environments, alongside draft conversation/replay. These are existing capabilities, not new feature flags. UAT only is deployed in this task. Shared cards use the existing dark brand green with white headings and 16px body text for readability.
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+เปิดร้านสำเร็จแจ้งสถานะโดยไม่บังคับซื้อหรือเชิญรับสิทธิ์; eligible free ส่งเอกสารได้ทันที แจ้งครบเมื่อ third usable result และรักษา saved/result/delivery truth รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

@@ -83,6 +83,7 @@ function makePrismaResolver(
 ) {
   const prisma = {
     client: {
+      company: { findUnique: async () => null },
       companyMembership: {
         findFirst: mock.fn(async () => membership),
       },
@@ -203,7 +204,8 @@ describe('PrismaPermissionResolverRepository branch scopes', () => {
     });
     const prisma = {
       client: {
-        companyMembership: {
+        company: { findUnique: async () => null },
+      companyMembership: {
           findFirst: mock.fn(async (args: any) =>
             args.where.roles?.some?.role?.key === 'SYSTEM_ADMIN' ? systemMembership : customerMembership,
           ),
@@ -226,7 +228,8 @@ describe('PrismaPermissionResolverRepository branch scopes', () => {
     const calls: any[] = [];
     const prisma = {
       client: {
-        companyMembership: {
+        company: { findUnique: async () => null },
+      companyMembership: {
           findFirst: mock.fn(async (args: any) => {
             calls.push(args);
             return args.where.roles ? null : membership;
@@ -318,5 +321,42 @@ describe('PrismaPermissionResolverRepository feature entitlement gating (item 10
     const result = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
     assert.deepEqual(result.permissions, ['dashboard.read', 'expense.read', 'inventory.product.read', 'report.catalog.read']);
     assert.deepEqual(result.entitlementDeniedPermissions, {});
+  });
+});
+
+
+describe('free policy and platform recovery', () => {
+  it('keeps SYSTEM_ADMIN console access independent from customer free-policy evidence', async () => {
+    const { resolver, prisma } = makePrismaResolver(makeMembership({ roles: [{ role: { key: 'SYSTEM_ADMIN', status: 'ACTIVE',
+      permissions: [{ permission: { key: 'system.partner_dashboard.read' } }] } }] }));
+    prisma.client.company.findUnique = async () => { throw new Error('customer history unavailable'); };
+    const result = await resolver.resolveForUser({ userId: 'admin', companyId: 'co-1' });
+    assert.ok(result.permissions.includes('system.partner_dashboard.read'));
+    assert.equal(result.freeExpenseDrafts, undefined);
+  });
+});
+
+describe('free expense source access', () => {
+  it('resolves term-disabled membership without broad recovery and intersects branch/grants', async () => {
+    const term = { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0), termDisabledAt: new Date(0), billingReceiptAccountId: null, capacityOverride: null };
+    const membership = makeMembership({ company: { status: 'DISABLED', planTerm: term },
+      branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'branch-1' }],
+      roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: ['account.session.read', 'expense.update', 'expense.confirm', 'expense.create', 'expense.review', 'expense.receipt.upload'].map(key => ({ permission: { key } })) } }],
+    });
+    const { resolver, prisma } = makePrismaResolver(membership, ['branch-1']);
+    Object.assign(prisma.client, {
+      company: { findUnique: async () => ({ status: 'DISABLED', disabledAt: new Date(0), archivedAt: null, planTerm: term }) },
+      auditLog: { findFirst: async () => ({ actorUserId: null, metadataJson: { toStatus: 'DISABLED', reason: 'no_package' } }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+    });
+    const access = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
+    assert.equal(access.freeExpenseDrafts, true);
+    assert.deepEqual(access.permissions, ['account.session.read', 'expense.update', 'expense.receipt.upload']);
+    assert.deepEqual(access.scopes, { branchIds: ['branch-1'] });
+    prisma.client.companyFeatureEntitlement.findMany = async () => [{ featureKey: 'expenses', enabled: false }];
+    const denied = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
+    assert.equal(denied.freeExpenseDrafts, true);
+    assert.equal(denied.permissions.includes('expense.receipt.upload'), false, 'explicit feature deny remains authoritative');
   });
 });

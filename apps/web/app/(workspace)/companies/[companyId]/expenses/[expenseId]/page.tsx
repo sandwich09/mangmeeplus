@@ -11,5 +11,5 @@ export default async function ExpenseDetailPage({
 }) {
   const { companyId, expenseId } = await params;
   const session = await fetchServerSession(companyId);
-  return <ExpenseReviewPage systemCertificatesAvailable={shopHasSystemWhtCertificates(session?.entitledFeatureKeys)} companyId={companyId} expenseId={expenseId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} canSelfApprove={hasSelfApprovalExemptRole(session?.roles)} disbursementEntryOpen={canOpenDisbursementVoucherWeb(session, companyId)} />;
+  return <ExpenseReviewPage systemCertificatesAvailable={shopHasSystemWhtCertificates(session?.entitledFeatureKeys)} companyId={companyId} expenseId={expenseId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} freeExpenseDrafts={session?.freeExpenseDrafts === true} canSelfApprove={hasSelfApprovalExemptRole(session?.roles)} disbursementEntryOpen={canOpenDisbursementVoucherWeb(session, companyId)} />;
 }

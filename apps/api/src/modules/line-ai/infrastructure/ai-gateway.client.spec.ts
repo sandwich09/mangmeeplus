@@ -28,6 +28,7 @@ const baseTurnRequest: LineAiTurnRequest = {
 function governedPrisma() {
   return {
     client: {
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
       companyAiMonthlyBucketUsage: { findUnique: async () => null },
@@ -280,6 +281,7 @@ describe('AiGatewayClient OCR governance', () => {
     let usedCount = 0;
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
       companyOcrUsageEvent: {
         findUnique: async ({ where }: any) => {
@@ -309,6 +311,7 @@ describe('AiGatewayClient OCR governance', () => {
     };
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => ({ modelId: null, monthlyBudgetSatang: 1_000_000 }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         companyAiMonthlyBucketUsage: { findUnique: async () => null },
@@ -389,6 +392,7 @@ describe('AiGatewayClient OCR governance', () => {
     };
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
@@ -397,6 +401,7 @@ describe('AiGatewayClient OCR governance', () => {
     };
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
@@ -434,6 +439,7 @@ describe('AiGatewayClient OCR governance', () => {
     let quotaTransactions = 0;
     const prisma = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => ({ monthlyBudgetSatang: null }) },
         companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }) },
         companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }) },
@@ -763,6 +769,7 @@ describe('AiGatewayClient monthly budget', () => {
     let spend = initialSpend;
     const recorded: any[] = [];
     const client = {
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => null },
       companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: spend }) },
       companyAiMonthlyBucketUsage: { findUnique: async () => null },
@@ -810,6 +817,7 @@ describe('AiGatewayClient monthly budget', () => {
   it('uses AI_BUDGET_UNAVAILABLE when the meter itself cannot be read', async () => {
     const broken = {
       client: {
+        company: { findUnique: async () => null },
         companyAiConfiguration: { findUnique: async () => null },
         companyAiMonthlyUsage: { findUnique: async () => { throw new Error('DB_DOWN'); } },
       },
@@ -876,6 +884,7 @@ describe('AiGatewayClient monthly budget', () => {
 
   it('still refuses the drain retry when the meter itself cannot be read', async () => {
     const broken = { client: {
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => null },
       companyAiMonthlyUsage: { findUnique: async () => { throw new Error('DB_DOWN'); } },
     } };
@@ -1260,7 +1269,7 @@ describe('AiGatewayClient v2 transport', () => {
     let validated = 0;
     const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'synthetic' } as any,
       { issue: () => { throw new Error('no business delegation authorized'); } } as any, undefined,
-      { client: new Proxy({}, { get: () => { throw new Error('legacy budget/meter path must not run'); } }) } as any,
+      { client: new Proxy({}, { get: (_target, key) => { if (key === 'company') return { findUnique: async () => null }; throw new Error('legacy budget/meter path must not run'); } }) } as any,
       { validate: async (received: unknown, digest: string, scope: unknown) => { validated++; assert.deepEqual(received, grant);
         assert.equal(digest, built.inputEvidence.joinedSha256); assert.deepEqual(scope, { companyId: 'company-1', userId: 'user-1', membershipId: 'membership-1' }); return true; } } as any);
     const original = globalThis.fetch; let sent: any;
@@ -1418,4 +1427,30 @@ it('U1b runtime-unavailable and ROUTER_UNREACHABLE after a v2 grant still have z
       assert.equal(fixture.reservations.size, 0); assert.equal(fixture.events.size, 0); assert.deepEqual(fixture.monthUsage, before);
     }
   } finally { globalThis.fetch = original; }
+});
+
+describe('free company gateway boundary', () => {
+  it('refuses general turns and intake before model calls or budget holds', async () => {
+    let calls = 0;
+    let holds = 0;
+    const prisma = { client: {
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: {
+        tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0), billingReceiptAccountId: null, capacityOverride: null,
+      } }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null },
+      salesAttribution: { findUnique: async () => null },
+      $transaction: async () => { holds += 1; throw new Error('unexpected hold'); },
+    } } as any;
+    const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://synthetic.invalid', aiGatewayInternalSecret: 'synthetic' } as any,
+      { issue: () => 'synthetic' } as any, undefined, prisma);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { calls += 1; throw new Error('unexpected provider'); };
+    try {
+      await assert.rejects(client.requestLineTurn(baseTurnRequest), (error: any) => error.getResponse?.().code === 'FREE_CHAT_NOT_INCLUDED');
+      await assert.rejects(client.requestLineIntakeRoute({ companyId: 'company-1', userId: 'user-1', requestId: 'free-route', text: 'ถามธุรกิจ' } as any), (error: any) => error.getResponse?.().code === 'FREE_CHAT_NOT_INCLUDED');
+      assert.equal(calls, 0);
+      assert.equal(holds, 0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
 });

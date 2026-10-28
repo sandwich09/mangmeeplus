@@ -1,4 +1,6 @@
 import { WHT_EXTERNAL_FILE } from '@watchdog-bms/contracts';
+import { expenseDraftAccess } from '../../../expenses/application/expense-commercial-access';
+import { freeExpenseAttachmentSource } from './free-expense-attachment';
 import { Inject, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/ports/attachment-storage.port';
@@ -81,6 +83,16 @@ export class CreateDownloadUrlUseCase {
       void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
         requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'disbursement_voucher_file' } });
       throw new ForbiddenException(disbursementVoucherError('disbursement_file_general_download_denied'));
+    }
+    if (await expenseDraftAccess(ctx, this.attachments.commercialAccessDb)) {
+      const db = this.attachments.commercialAccessDb;
+      const link = await db.attachmentLink.findFirst({ where: { companyId: ctx.companyId, attachmentId: existing.id,
+        targetType: 'expense.record', purpose: { in: ['expense.receipt.primary', 'expense.receipt.supporting'] } }, select: { targetId: true } });
+      const file = link ? null : await db.expenseCaptureFile.findFirst({ where: { companyId: ctx.companyId, attachmentId: existing.id, detachedAt: null }, select: { groupId: true } });
+      const source = existing.metadataJson?.freeExpenseSource as { kind?: string; id?: string } | undefined;
+      const expenseId = link?.targetId ?? (existing.uploadedByUserId === ctx.userId && source?.kind === 'EXPENSE' ? source.id : undefined);
+      const groupId = file?.groupId ?? (existing.uploadedByUserId === ctx.userId && source?.kind === 'CAPTURE_GROUP' ? source.id : undefined);
+      await freeExpenseAttachmentSource(db, ctx, expenseId ? { expenseId } : { captureGroupId: groupId }, false);
     }
     if (await this.attachments.isSubstituteRawSignature({ id: existing.id, companyId: ctx.companyId })) {
       throw new ForbiddenException('Raw substitute-receipt signatures are never available through generic attachment downloads.');

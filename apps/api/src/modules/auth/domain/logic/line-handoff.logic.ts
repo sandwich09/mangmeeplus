@@ -140,13 +140,23 @@ export async function revokePendingLineHandoffTokens(
 export function resolveLineHandoffTarget(
   companyId: string,
   targetPath: string,
-  company: { status: string; planTerm?: { termEndsAt?: Date; termDisabledAt?: Date | null } | null },
+  company: { status: string; archivedAt?: Date | null; planTerm?: { termEndsAt?: Date; termDisabledAt?: Date | null } | null },
   now = new Date(),
+  freeExpenseDrafts = false,
 ): string | null {
-  if (!isSafeHandoffPath(targetPath, companyId)) return null;
+  if (!isSafeHandoffPath(targetPath, companyId) || company.archivedAt) return null;
   const renewal = `/companies/${companyId}/renew`;
   const path = new URL(targetPath, 'https://relative.invalid').pathname;
   const recoveryTarget = path === renewal || isBillingCustomerRecoveryPath(path,companyId) ? targetPath : renewal;
+  // This flag is supplied only after the caller re-reads authoritative free eligibility.
+  if (freeExpenseDrafts && (company.status === 'ACTIVE' || company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) {
+    const expenses = `/companies/${companyId}/expenses`;
+    const tail = path.startsWith(`${expenses}/`) ? path.slice(expenses.length + 1) : '';
+    const reserved = new Set(['manual', 'new', 'create', 'evidence', 'signatures', 'categories', 'substitute-receipts', 'capture', 'capture-groups']);
+    const sourceTarget = path === expenses || tail === 'upload' || /^[A-Za-z0-9_-]+$/.test(tail) && !reserved.has(tail);
+    return sourceTarget || path === renewal || isBillingCustomerRecoveryPath(path, companyId) ? targetPath : expenses;
+  }
+
   if (company.status === 'ACTIVE') {
     return company.planTerm?.termEndsAt && company.planTerm.termEndsAt <= now ? recoveryTarget : targetPath;
   }

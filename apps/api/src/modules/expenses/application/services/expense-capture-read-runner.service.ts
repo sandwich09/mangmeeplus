@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import {
   EXPENSE_CAPTURE_OBSERVATION_LIMITS,
   emptyExpenseCaptureReadManifest,
@@ -14,6 +14,7 @@ import {
   type ReceiptOcrFieldResult,
   EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE,
 } from '@watchdog-bms/contracts';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -22,13 +23,15 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
-import { admitCompanyOcr, companyOcrErrorCode, isSinglePageReceiptImage, releaseCompanyOcrAdmission, settleCompanyOcrAdmission, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
+import { admitCompanyOcr, companyOcrErrorCode, isSinglePageReceiptImage, settleCompanyOcrAdmission, releaseCompanyOcrAdmissionWithinTransaction, completeCompanyOcrAdmission, completeCompanyOcrAdmissionWithinTransaction, type CompanyOcrSourceRoute } from '../../../line-ai/application/company-ocr-governance';
+import { assertFreeExpenseSourceActor, isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
 import { assembleCaptureObservations, planWindows, priorDocuments } from '../../domain/logic/expense-capture-assembly.logic';
 import { isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import { captureFieldsFromObservations } from '../../domain/logic/expense-capture-fields.logic';
 import { planCaptureSinglePageChunk, planCapturePreprocessing, type CaptureChunkPlan } from '../../domain/logic/expense-capture-preprocess.logic';
-import { PrismaExpenseCaptureRepository, type CaptureReadJobRow } from '../../infrastructure/prisma-expense-capture.repository';
+import { PrismaExpenseCaptureRepository, type CaptureReadJobRow, type CaptureDb } from '../../infrastructure/prisma-expense-capture.repository';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ExpenseCaptureReadClient } from '../../infrastructure/expense-capture-read.client';
 import { ExpenseCaptureAutoSplitService } from './expense-capture-auto-split.service';
@@ -57,6 +60,9 @@ type CaptureCheckpoint = {
   windows: Record<string, ExpenseCaptureObservations>;
   /** The OCR read this job counted, so a resumed job releases the SAME event it admitted. */
   ocrEventId?: string;
+  ocrQuotaSource?: 'FREE_MONTHLY_3';
+  ocrMonthKey?: string;
+  usableResultStored?: boolean;
   /** Milliseconds every PREVIOUS run of this job spent. The budget is per job, not per attempt:
    *  without this a file that dies at 14 minutes gets a fresh 15 every time it is re-claimed. */
   runMillis?: number;
@@ -86,6 +92,7 @@ type RunOutcome = {
   applied?: boolean;
   multiDocument?: boolean;
   documentCount?: number;
+  usablePersisted?: boolean;
   /** Appendix §25: the drafts the auto-split created, in document order from the second on. */
   splitExpenseIds?: string[];
   /**
@@ -125,6 +132,7 @@ export class ExpenseCaptureReadRunnerService {
     private readonly config: AppConfigService,
     private readonly autoSplit: ExpenseCaptureAutoSplitService,
     private readonly shadow: LaunchShadowProbe = NOOP_SHADOW,
+    @Optional() private readonly permissions?: PermissionResolverService,
   ) {}
 
   /**
@@ -256,10 +264,12 @@ export class ExpenseCaptureReadRunnerService {
 
     const admitted = await this.admitOcrRead(job, checkpoint, isSinglePageReceiptImage(attachment.mimeType));
     if (!admitted.ok) return { status: 'PAUSED', pausedReason: 'ai_credit', errorCode: admitted.errorCode };
-    if (admitted.eventId && checkpoint.ocrEventId !== admitted.eventId) {
-      checkpoint = { ...checkpoint, ocrEventId: admitted.eventId };
+    if (admitted.eventId && (checkpoint.ocrEventId !== admitted.eventId || !checkpoint.ocrMonthKey)) {
+      checkpoint = { ...checkpoint, ocrEventId: admitted.eventId, ...(admitted.monthKey ? { ocrMonthKey: admitted.monthKey } : {}), ...(admitted.quotaSource ? { ocrQuotaSource: admitted.quotaSource } : {}) };
       save(checkpoint);
     }
+
+    if (!await this.freeOperationStillAllowed(job, checkpoint)) return { status: 'CANCELLED', errorCode: 'BILLING_ACCESS_INACTIVE' };
 
     let calls = job.providerCallCount;
     // Both ceilings count what the JOB has spent, not what this run has: the earlier runs' totals
@@ -284,11 +294,13 @@ export class ExpenseCaptureReadRunnerService {
         return { status: 'CANCELLED' };
       }
 
+      if (!await this.freeOperationStillAllowed(job, checkpoint)) return { status: 'CANCELLED', errorCode: 'BILLING_ACCESS_INACTIVE' };
       let result = await this.readChunk(job, chunk);
       calls += 1;
       // One retry for a timeout; a money refusal is NOT retried — it would refuse again
       // and each attempt is a fresh hold.
       if (result.status !== 'ok' && result.errorCode === 'PROVIDER_TIMEOUT' && calls < EXPENSE_CAPTURE_MAX_PROVIDER_CALLS) {
+        if (!await this.freeOperationStillAllowed(job, checkpoint)) return { status: 'CANCELLED', errorCode: 'BILLING_ACCESS_INACTIVE' };
         result = await this.readChunk(job, chunk, true);
         calls += 1;
       }
@@ -367,6 +379,7 @@ export class ExpenseCaptureReadRunnerService {
         if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) {
           return { status: 'CANCELLED' };
         }
+        if (!await this.freeOperationStillAllowed(job, checkpoint)) return { status: 'CANCELLED', errorCode: 'BILLING_ACCESS_INACTIVE' };
         const extract = (retry = false) => this.client.extractWindow({
           companyId: job.companyId,
           userId: 'system',
@@ -386,6 +399,7 @@ export class ExpenseCaptureReadRunnerService {
         if (result.status !== 'ok' && result.errorCode === 'PROVIDER_TIMEOUT'
           && calls < EXPENSE_CAPTURE_MAX_PROVIDER_CALLS && spentMs() <= EXPENSE_CAPTURE_MAX_RUN_MS) {
           if (!await this.capture.renewJobLease({ jobId: job.id, leaseOwner: owner, leaseMs: EXPENSE_CAPTURE_LEASE_MS })) return { status: 'CANCELLED' };
+          if (!await this.freeOperationStillAllowed(job, checkpoint)) return { status: 'CANCELLED', errorCode: 'BILLING_ACCESS_INACTIVE' };
           result = await extract(true);
           calls += 1;
         }
@@ -409,9 +423,20 @@ export class ExpenseCaptureReadRunnerService {
         ? [{ id: window.id, pageIndexes: window.pageIndexes, observations: checkpoint.windows[window.id]! }] : []),
       { pageCount: plan.pageCount },
     );
+    const free = checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3';
+    if (free && (assembled.multiDocument || assembled.documents.length > 1)) {
+      return { status: 'FAILED', errorCode: 'FREE_MULTI_DOCUMENT_UNSUPPORTED', documentCount: 0 };
+    }
+    const mapped = free ? captureFieldsFromObservations(assembled) : null;
+    if (free && (!mapped || !isExpenseExtractionEligible(mapped.classification, mapped.fields.grandTotalAmount, true))) {
+      return { status: 'FAILED', errorCode: 'FREE_EXPENSE_DOCUMENT_REQUIRED', documentCount: 0 };
+    }
+    if (!await this.freeOperationStillAllowed(job, checkpoint) || !await this.ownerStillValid(job)) return { status: 'CANCELLED' };
     const hasFacts = assembled.documents.length > 0;
-    if (hasFacts) {
-      await this.storeObservation(job, assembled, checkpoint.lineage ?? []);
+    const observationStored = hasFacts && await this.storeObservation(job, assembled, checkpoint.lineage ?? [], checkpoint);
+    if (free && observationStored) {
+      checkpoint = { ...checkpoint, usableResultStored: true };
+      save(checkpoint);
     }
 
     const failedChunks = Object.values(checkpoint.chunks).filter((state) => state === 'failed').length;
@@ -432,16 +457,16 @@ export class ExpenseCaptureReadRunnerService {
     const splitIds = Object.values(write.splitByRef ?? checkpoint.splitExpenseIds ?? {});
 
     if (pausedReason) {
-      return { status: 'PAUSED', pausedReason, ...common(assembled, write.applied, splitIds) };
+      return { status: 'PAUSED', pausedReason, ...common(assembled, write.applied, splitIds), usablePersisted: observationStored || write.applied };
     }
     if (plan.pagesBeyondLimit.length > 0) {
       // Never a silent cut: the declared page scope was read, the rest stay `pending` (§4.1).
-      return { status: 'PAUSED', pausedReason: 'page_limit', ...common(assembled, write.applied, splitIds) };
+      return { status: 'PAUSED', pausedReason: 'page_limit', ...common(assembled, write.applied, splitIds), usablePersisted: observationStored || write.applied };
     }
     if (failedChunks > 0 || unreadPages > 0 || manifest.windows.some(window => window.state !== 'done') || !hasFacts) {
-      return { status: 'PARTIAL', ...common(assembled, write.applied, splitIds) };
+      return { status: 'PARTIAL', ...common(assembled, write.applied, splitIds), usablePersisted: observationStored || write.applied };
     }
-    return { status: 'DONE', ...common(assembled, write.applied, splitIds) };
+    return { status: 'DONE', ...common(assembled, write.applied, splitIds), usablePersisted: observationStored || write.applied };
   }
 
   private async readChunk(job: CaptureReadJobRow, chunk: CaptureChunkPlan, retry = false) {
@@ -474,7 +499,7 @@ export class ExpenseCaptureReadRunnerService {
     job: CaptureReadJobRow,
     checkpoint: CaptureCheckpoint,
     singlePageImage: boolean,
-  ): Promise<{ ok: true; eventId?: string } | { ok: false; errorCode: string }> {
+  ): Promise<{ ok: true; eventId?: string; monthKey?: string; quotaSource?: 'FREE_MONTHLY_3' } | { ok: false; errorCode: string }> {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: job.companyId,
       sourceRoute: captureSourceRoute(job),
@@ -483,9 +508,43 @@ export class ExpenseCaptureReadRunnerService {
       // A PDF, whatever its page count, never draws an add-on lot (D4).
       singlePageImage,
     });
-    if (admission.allowed) return { ok: true, eventId: admission.eventId };
-    if (admission.reason === 'duplicate') return { ok: true, ...(checkpoint.ocrEventId ? { eventId: checkpoint.ocrEventId } : {}) };
+    if (admission.allowed) return { ok: true, eventId: admission.eventId, monthKey: admission.monthKey, ...(admission.quotaSource ? { quotaSource: admission.quotaSource } : {}) };
+    if (admission.reason === 'duplicate') {
+      const event = await this.prisma.client.$transaction((tx) => tx.companyOcrUsageEvent.findUnique({
+        where: { companyId_sourceRoute_requestId: { companyId: job.companyId, sourceRoute: captureSourceRoute(job), requestId: job.ocrAdmissionRequestId } },
+      }));
+      if (!event || (checkpoint.ocrEventId && checkpoint.ocrEventId !== event.id)) return { ok: false, errorCode: 'OCR_REQUEST_ALREADY_ADMITTED' };
+      return { ok: true, eventId: event.id, monthKey: event.monthKey, ...(event.quotaSource === 'FREE_MONTHLY_3' ? { quotaSource: event.quotaSource } : {}) };
+    }
     return { ok: false, errorCode: companyOcrErrorCode(admission) };
+  }
+
+  private async freeOperationStillAllowed(job: CaptureReadJobRow, checkpoint: CaptureCheckpoint): Promise<boolean> {
+    if (checkpoint.ocrQuotaSource !== 'FREE_MONTHLY_3') return true;
+    const currentFree = await isFreeExpenseDraftCompany(this.prisma.client, job.companyId);
+    if (!currentFree) {
+      // Buying during a read keeps its original free source; holds and expired paid access stop it.
+      const company = await this.prisma.client.company.findUnique({ where: { id: job.companyId }, select: { status: true, archivedAt: true, planTerm: true } });
+      if (company?.status !== 'ACTIVE' || company.archivedAt || !company.planTerm
+        || company.planTerm.termDisabledAt || company.planTerm.termEndsAt <= new Date()) return false;
+    }
+    const owner = job.ownerType === 'EXPENSE' && job.expenseId
+      ? await this.expenses.findById(job.companyId, job.expenseId)
+      : job.groupId ? await this.capture.findGroup(this.capture.client, job.companyId, job.groupId) : null;
+    if (!owner?.createdByUserId || !this.permissions) return false;
+    if (job.ownerType === 'EXPENSE' && owner.status !== 'DRAFT' && owner.status !== 'NEEDS_REVIEW') return false;
+    if (job.ownerType === 'CAPTURE_GROUP' && owner.status !== 'OPEN') return false;
+    try {
+      const access = await this.permissions.resolveAccess(owner.createdByUserId, job.companyId);
+      if (access.companyId !== job.companyId) return false;
+      if (access.scopes.branchIds && (!owner.branchId || !access.scopes.branchIds.includes(owner.branchId))) return false;
+      return access.permissions.includes('expense.ocr.request')
+        || access.permissions.includes(job.ownerType === 'CAPTURE_GROUP' || ('captureSource' in owner && owner.captureSource === 'LINE_UPLOAD')
+          ? 'expense.receipt.line_upload' : 'expense.receipt.upload');
+    } catch (error) {
+      if (error instanceof ForbiddenException) return false;
+      throw error;
+    }
   }
 
   /** The owner must still want this read: a replaced primary or a closed group cancels it (§4.5). */
@@ -511,21 +570,38 @@ export class ExpenseCaptureReadRunnerService {
     job: CaptureReadJobRow,
     assembled: ExpenseCaptureAssembledObservations,
     lineage: AiModelLineage[],
-  ): Promise<void> {
+    checkpoint: CaptureCheckpoint,
+  ): Promise<boolean> {
     try {
-      const version = await this.capture.nextObservationVersion(this.capture.client, job.companyId, { fileId: job.fileId, expenseId: job.expenseId });
-      await this.capture.createObservation(this.capture.client, {
-        companyId: job.companyId, groupId: job.groupId, expenseId: job.expenseId, fileId: job.fileId,
-        jobId: job.id, version, source: 'AI', payloadJson: assembled,
-      });
-      if (lineage.length > 0) {
-        await this.capture.client.expenseCaptureObservation.updateMany({
+      const write = async (db: CaptureDb) => {
+        const version = await this.capture.nextObservationVersion(db, job.companyId, { fileId: job.fileId, expenseId: job.expenseId });
+        await this.capture.createObservation(db, {
+          companyId: job.companyId, groupId: job.groupId, expenseId: job.expenseId, fileId: job.fileId,
+          jobId: job.id, version, source: 'AI', payloadJson: assembled,
+        });
+        if (lineage.length > 0) await db.expenseCaptureObservation.updateMany({
           where: { companyId: job.companyId, jobId: job.id, version },
           data: { modelLineageJson: lineage as never },
         });
-      }
+      };
+      if (checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3' && checkpoint.ocrEventId) {
+        const actor = job.ownerType === 'EXPENSE' && job.expenseId
+          ? await this.expenses.findById(job.companyId, job.expenseId)
+          : job.groupId ? await this.capture.findGroup(this.capture.client, job.companyId, job.groupId) : null;
+        if (!actor?.createdByUserId) return false;
+        await this.prisma.client.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${job.companyId}`}))`;
+          await lockPlanTermCompany(tx, job.companyId);
+          await assertFreeExpenseSourceActor(tx, { companyId: job.companyId, userId: actor.createdByUserId, branchId: actor.branchId });
+          await write(tx);
+          await completeCompanyOcrAdmissionWithinTransaction(tx, { companyId: job.companyId, sourceRoute: captureSourceRoute(job),
+            requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId! });
+        });
+      } else await write(this.capture.client);
+      return true;
     } catch (error) {
       this.logger.warn({ msg: 'capture.read.observation_not_stored', jobId: job.id, ...safeLineErrorDetails(error) });
+      return false;
     }
   }
 
@@ -542,6 +618,7 @@ export class ExpenseCaptureReadRunnerService {
     checkpoint: CaptureCheckpoint,
   ): Promise<{ applied: boolean; splitByRef?: Record<string, string> }> {
     if (job.ownerType !== 'EXPENSE' || !job.expenseId) return { applied: false };
+    if (checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3' && (assembled.multiDocument || assembled.documents.length > 1)) return { applied: false };
     if (assembled.documents.length > 1) {
       const split = await this.autoSplit.split({
         job: {
@@ -554,19 +631,22 @@ export class ExpenseCaptureReadRunnerService {
       });
       return { applied: split.applied, splitByRef: split.splitByRef };
     }
-    return { applied: await this.applyToExpense(job, assembled) };
+    return { applied: await this.applyToExpense(job, assembled, checkpoint) };
   }
 
   /** The single-document apply: `receipt-ocr-apply`, its fence, its duplicate check, unchanged. */
-  private async applyToExpense(job: CaptureReadJobRow, assembled: ExpenseCaptureAssembledObservations): Promise<boolean> {
+  private async applyToExpense(job: CaptureReadJobRow, assembled: ExpenseCaptureAssembledObservations, checkpoint: CaptureCheckpoint): Promise<boolean> {
     if (job.ownerType !== 'EXPENSE' || !job.expenseId) return false;
     if (assembled.multiDocument || assembled.documents.length !== 1) return false;
     const mapped = captureFieldsFromObservations(assembled);
     // The SAME eligibility gate the synchronous upload path uses: a quotation or an unpaid bill
     // read out of a PDF must not fill an expense draft just because it parsed cleanly.
     if (!mapped || !isExpenseExtractionEligible(mapped.classification, mapped.fields.grandTotalAmount, true)) return false;
+    const free = checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3';
+    const actor = free ? await this.expenses.findById(job.companyId, job.expenseId) : null;
+    if (free && !actor?.createdByUserId) return false;
     const outcome = await this.applyService.apply(
-      { companyId: job.companyId, userId: 'system' },
+      { companyId: job.companyId, userId: actor?.createdByUserId ?? 'system' },
       job.expenseId,
       mapped.fields,
       {
@@ -576,6 +656,10 @@ export class ExpenseCaptureReadRunnerService {
         sourceAttachmentId: job.attachmentId,
         ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(mapped.classification ?? null)),
         sourceDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(mapped.classification ?? null)),
+        ...(free ? { sourceOnly: true, onUsablePersisted: async (tx: Parameters<typeof completeCompanyOcrAdmissionWithinTransaction>[0]) => {
+          if (checkpoint.ocrEventId) await completeCompanyOcrAdmissionWithinTransaction(tx, { companyId: job.companyId, sourceRoute: captureSourceRoute(job),
+            requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId });
+        } } : {}),
       },
     );
     if (isStaleOcrApply(outcome) || !outcome.committedUpdatedAt) {
@@ -638,15 +722,13 @@ export class ExpenseCaptureReadRunnerService {
   ): Promise<void> {
     // "Usable" is FACTS, not a status: a PARTIAL that found the shop and the total is worth the
     // read the customer paid for, and a DONE that found nothing is not (§4.6).
-    const usable = (outcome.documentCount ?? 0) > 0;
-    // Nothing usable came back: hand the customer's read allowance back, exactly as the single
-    // receipt seam does. The provider spend stays on the AI ledger — those are separate meters.
-    if (!usable && checkpoint.ocrEventId) {
-      await releaseCompanyOcrAdmission(this.prisma, {
-        companyId: job.companyId, sourceRoute: captureSourceRoute(job),
-        requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId,
-        reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
-      });
+    const usable = checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3'
+      ? checkpoint.usableResultStored === true || outcome.usablePersisted === true : (outcome.documentCount ?? 0) > 0;
+    let freeAllowance: Awaited<ReturnType<typeof completeCompanyOcrAdmission>>['freeAllowance'];
+    if (usable && checkpoint.ocrEventId && checkpoint.ocrQuotaSource === 'FREE_MONTHLY_3') {
+      const completed = await completeCompanyOcrAdmission(this.prisma, { companyId: job.companyId, sourceRoute: captureSourceRoute(job),
+        requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId });
+      freeAllowance = completed.freeAllowance;
     }
     // Add-on plan PR B: facts on the job are the durable usable result — the reserved unit is used.
     if (usable && checkpoint.ocrEventId) {
@@ -655,47 +737,59 @@ export class ExpenseCaptureReadRunnerService {
         requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId,
       });
     }
-    const written = await this.capture.updateJobFenced({
-      jobId: job.id, leaseOwner: owner,
-      data: {
-        checkpointJson: checkpoint as never,
-        status: outcome.status,
-        pausedReason: outcome.pausedReason ?? null,
-        lastErrorCode: outcome.errorCode ?? null,
-        ...(outcome.errorCode ? { lastErrorAt: new Date() } : {}),
-        completedAt: new Date(),
-        leaseOwner: null,
-        leasedUntil: null,
-      },
+    const written = await this.prisma.client.$transaction(async (tx) => {
+      const changed = await this.capture.updateJobFenced({
+        jobId: job.id, leaseOwner: owner, db: tx,
+        data: {
+          checkpointJson: checkpoint as never,
+          status: outcome.status,
+          pausedReason: outcome.pausedReason ?? null,
+          lastErrorCode: outcome.errorCode ?? null,
+          ...(outcome.errorCode ? { lastErrorAt: new Date() } : {}),
+          completedAt: new Date(), leaseOwner: null, leasedUntil: null,
+        },
+      });
+      // Terminal state and exact compensation commit together. Lost owners never refund a live job.
+      if (changed && !usable && checkpoint.ocrEventId) {
+        await releaseCompanyOcrAdmissionWithinTransaction(tx, {
+          companyId: job.companyId, sourceRoute: captureSourceRoute(job),
+          requestId: job.ocrAdmissionRequestId, eventId: checkpoint.ocrEventId,
+          reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+        });
+      }
+      if (changed) {
+        await this.outbox.append(
+          EXPENSE_CAPTURE_READ_FINISHED_EVENT,
+          'expense_capture_read_job',
+          job.id,
+          {
+            schemaVersion: 1,
+            companyId: job.companyId,
+            requestId: `${job.id}:${job.attempts}`,
+            jobId: job.id,
+            ownerType: job.ownerType,
+            groupId: job.groupId,
+            expenseId: job.expenseId,
+            fileId: job.fileId,
+            status: outcome.status,
+            pausedReason: outcome.pausedReason ?? null,
+            errorCode: outcome.errorCode ?? null,
+            applied: outcome.applied ?? false,
+            multiDocument: outcome.multiDocument ?? false,
+            documentCount: outcome.documentCount ?? 0,
+            quotaSource: checkpoint.ocrQuotaSource ?? null,
+            ...(freeAllowance ? { freeAllowance } : {}),
+            // Appendix §25: both lanes link to what the split created, so no consumer has to re-derive it.
+            splitExpenseIds: outcome.splitExpenseIds ?? [],
+            classification: outcome.classification ?? null,
+            documentTotal: outcome.documentTotal ?? null,
+          } as never,
+          'HIGH', tx,
+        );
+      }
+      return changed;
     });
-    // A lost lease means another runner owns this job now: its own terminal write is the real one,
-    // and announcing this run's verdict would tell the customer about a result nobody stored.
     if (!written) return;
-    await this.outbox.append(
-      EXPENSE_CAPTURE_READ_FINISHED_EVENT,
-      'expense_capture_read_job',
-      job.id,
-      {
-        schemaVersion: 1,
-        companyId: job.companyId,
-        requestId: `${job.id}:${job.attempts}`,
-        jobId: job.id,
-        ownerType: job.ownerType,
-        groupId: job.groupId,
-        expenseId: job.expenseId,
-        fileId: job.fileId,
-        status: outcome.status,
-        pausedReason: outcome.pausedReason ?? null,
-        applied: outcome.applied ?? false,
-        multiDocument: outcome.multiDocument ?? false,
-        documentCount: outcome.documentCount ?? 0,
-        // Appendix §25: both lanes link to what the split created, so no consumer has to re-derive it.
-        splitExpenseIds: outcome.splitExpenseIds ?? [],
-        classification: outcome.classification ?? null,
-        documentTotal: outcome.documentTotal ?? null,
-      } as never,
-      'HIGH',
-    );
     this.logger.log({
       msg: 'capture.read.finished', jobId: job.id, companyId: job.companyId, ownerType: job.ownerType,
       status: outcome.status, pausedReason: outcome.pausedReason ?? null, errorCode: outcome.errorCode ?? null,
@@ -740,6 +834,9 @@ function readCheckpoint(value: unknown): CaptureCheckpoint {
     windows: raw.windows && typeof raw.windows === 'object' ? raw.windows : {},
     ...([2, 3].includes(raw.windowPlanVersion ?? 0) ? { windowPlanVersion: raw.windowPlanVersion } : {}),
     ...(raw.ocrEventId ? { ocrEventId: raw.ocrEventId } : {}),
+    ...(raw.ocrMonthKey ? { ocrMonthKey: raw.ocrMonthKey } : {}),
+    ...(raw.ocrQuotaSource === 'FREE_MONTHLY_3' ? { ocrQuotaSource: raw.ocrQuotaSource } : {}),
+    ...(raw.usableResultStored === true ? { usableResultStored: true } : {}),
     // The two per-JOB meters. A stored value that is not a finite number is treated as no value
     // rather than as zero of a budget — a corrupted checkpoint must not hand out a fresh run.
     ...(Number.isFinite(raw.runMillis) ? { runMillis: Math.max(0, raw.runMillis!) } : {}),

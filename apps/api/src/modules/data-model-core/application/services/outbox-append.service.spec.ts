@@ -124,3 +124,12 @@ describe('OutboxAppendService (L-10)', () => {
     );
   });
 });
+
+it('passes the owning transaction through and propagates failure so its state change rolls back', async () => {
+  const tx = { transactionMarker: true } as any;
+  const service = new OutboxAppendService({ append: async (_input: unknown, passedTx: unknown) => {
+    assert.equal(passedTx, tx);
+    throw new Error('transactional outbox unavailable');
+  } } as any, { error: () => undefined } as any);
+  await assert.rejects(service.append('expense.capture_read.finished', 'expense_capture_read_job', 'job-1', payload(), 'HIGH', tx), /transactional outbox unavailable/);
+});

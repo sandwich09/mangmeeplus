@@ -9,6 +9,28 @@ import { filterSettingsSidebarItems, PACKAGE_MENU } from './settings-menu.logic'
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 import { ACCOUNTING_UI_HIDDEN, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import { OWN_SIGNATURE_PERMISSIONS } from '@/features/company-profile/company-profile.logic';
+import { defaultCompanyLandingPath } from '@/common/auth/session-gate.logic';
+
+export function companySwitcherTarget(input: {
+  companyId: string;
+  currentCompanyId: string;
+  expired?: boolean;
+  canManagePlan?: boolean;
+  freeExpenseDrafts?: boolean;
+  currentFreeExpenseDrafts?: boolean;
+  currentPath: string;
+}): string | null {
+  const sameCompany = input.companyId === input.currentCompanyId;
+  const free = input.freeExpenseDrafts === true || (sameCompany && input.currentFreeExpenseDrafts === true);
+  const billingPath = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(input.currentPath);
+  if (sameCompany) {
+    if (free && !/^\/companies\/[^/]+\/expenses(?:\/|$)/.test(input.currentPath) && !billingPath) return defaultCompanyLandingPath(input.companyId, true);
+    return null;
+  }
+  if (billingPath && input.canManagePlan) return `/companies/${encodeURIComponent(input.companyId)}/billing`;
+  if (input.expired && !free) return `/companies/${encodeURIComponent(input.companyId)}/renew`;
+  return defaultCompanyLandingPath(input.companyId, free);
+}
 
 /** Accounting screens are closed this launch while the ledger keeps posting — see the constant. */
 function accountingUiHidden(moduleKey: string): boolean {
@@ -49,6 +71,18 @@ export function filterModulesByPermissions(
     }
     return true;
   });
+}
+
+export function filterModulesForSession(modules: WorkspaceModule[], permissions: string[], freeExpenseDrafts = false): WorkspaceModule[] {
+  const visible = filterModulesByPermissions(modules, permissions);
+  return freeExpenseDrafts ? visible.filter((module) => module.key === 'expenses') : visible;
+}
+
+export function canAccessFreeExpenseWorkspacePath(companyId: string, pathname: string): boolean {
+  const root = `/companies/${encodeURIComponent(companyId)}/expenses`;
+  if (pathname === root || pathname === `${root}/upload`) return true;
+  const detailId = pathname.startsWith(`${root}/`) ? pathname.slice(root.length + 1) : '';
+  return Boolean(detailId && !detailId.includes('/') && !['manual', 'categories', 'signatures', 'evidence', 'substitute-receipts'].includes(detailId));
 }
 
 function hasAnyPermission(userPermissions: string[], required: string[]): boolean {
@@ -138,7 +172,12 @@ export function canAccessWorkspacePath(
   userPermissions: string[],
   companyId: string,
   pathname: string,
+  freeExpenseDrafts = false,
 ): boolean {
+  if (freeExpenseDrafts) {
+    if (/^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && userPermissions.includes('company.plan.manage')) return true;
+    return canAccessFreeExpenseWorkspacePath(companyId, pathname);
+  }
   if (pathname === `/companies/${companyId}/account`) return true;
   const reportsBase = `/companies/${companyId}/reports`;
   // Retained history stays discoverable in navigation, but its narrow snapshot grant opens only
@@ -199,7 +238,9 @@ export function buildNavItems(
   canOpenManualExpense: boolean = userPermissions.includes('expense.create'),
   canOpenDisbursementVoucher: boolean = false,
   systemCertificatesAvailable: boolean = true,
+  freeExpenseDrafts = false,
 ): NavItem[] {
+  if (freeExpenseDrafts) modules = modules.filter((module) => module.key === 'expenses');
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
   // centre is reached from the header bell, not from the sidebar.
@@ -302,7 +343,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (canOpenManualExpense && hasAnyPermission(userPermissions, ['expense.create'])) {
+      if (!freeExpenseDrafts && canOpenManualExpense && hasAnyPermission(userPermissions, ['expense.create'])) {
         childItems.push({
           key: 'expenses.manual',
           label: t('expenses.tab_manual' as Parameters<typeof t>[0], locale),
@@ -312,7 +353,7 @@ export function buildNavItems(
         });
       }
       // The order of the work (2026-10-13): record, pay, the papers that follow a payment, then what is rarely opened.
-      if (canOpenDisbursementVoucher && userPermissions.includes('expense.disbursement.read')) {
+      if (!freeExpenseDrafts && canOpenDisbursementVoucher && userPermissions.includes('expense.disbursement.read')) {
         childItems.push({
           key: 'expenses.disbursement_vouchers',
           label: t('expenses.tab_disbursement_vouchers', locale),
@@ -321,11 +362,11 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'])) {
+      if (!freeExpenseDrafts && hasAnyPermission(userPermissions, ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'])) {
         childItems.push({ key: 'expenses.wht_certificates', label: t('expenses.certificates.title', locale),
           href: `/companies/${companyId}/expenses/wht-certificates`, icon: iconMap.DocsIcon, tone: 'slate' });
       }
-      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own'])) {
+      if (!freeExpenseDrafts && hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own'])) {
         childItems.push({
           key: 'expenses.substitute_receipt',
           label: t('expenses.tab_substitute_receipts' as Parameters<typeof t>[0], locale),
@@ -334,7 +375,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['expense.evidence.read'])) {
+      if (!freeExpenseDrafts && hasAnyPermission(userPermissions, ['expense.evidence.read'])) {
         childItems.push({
           key: 'expenses.evidence',
           label: t('expenses.tab_evidence' as Parameters<typeof t>[0], locale),
@@ -343,7 +384,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['expense.category.manage'])) {
+      if (!freeExpenseDrafts && hasAnyPermission(userPermissions, ['expense.category.manage'])) {
         childItems.push({
           key: 'expenses.categories',
           label: t('expenses.tab_categories' as Parameters<typeof t>[0], locale),
@@ -386,7 +427,7 @@ export function buildNavItems(
     moduleItems.push({ key: 'billing', label: PACKAGE_MENU.title, href: `/companies/${companyId}${PACKAGE_MENU.href}`,
       icon: iconMap.BoxIcon ?? null, group: 'admin' });
   }
-  return [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
+  return freeExpenseDrafts ? moduleItems : [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
 }
 
 /**

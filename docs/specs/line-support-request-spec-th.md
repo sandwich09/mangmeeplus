@@ -264,3 +264,8 @@ Owner กด "ติดต่อเจ้าหน้าที่" 10:58 แล�
 
 ## 5. ไม่ทำรอบนี้
 เปิด Chat ใน OA; SLA timer/escalation; แชทสองทางในเว็บ (ตอบทีละข้อความผ่านกล่องเดิมพอ)
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+free refusal อยู่หลัง public/support pause/resume และ security/identity/legal checks เดิม ไม่ใช้ข้อความสมัครแพ็กเกจกลบ support หรือ suspension รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

@@ -11,6 +11,18 @@ export type PlanTermDerivedState = 'ACTIVE' | 'WARNING' | 'EXPIRED';
  * sentence: `no_package` never had one (Owner 2026-09-20 closed the free trial for new signups),
  * `trial_ended` ran a real term to its end. Derived from the term row, never stored.
  */
+/** Additive server projection; an expired term can still allow only free source drafts. */
+export type FreeExpenseDraftAccess = { freeExpenseDrafts?: boolean };
+
+export type PlanTermNoticeDto = (FreeExpenseDraftAccess & {
+  derivedState: PlanTermDerivedState;
+  termEndsAt: string;
+  daysLeft: number;
+  isOwner: boolean;
+  canManagePlan: boolean;
+  lockReason?: PlanTermLockReason;
+}) | null;
+
 export type PlanTermLockReason = 'trial_ended' | 'no_package';
 
 /** Row shape every reader can hand in: Prisma rows carry Date, DTOs carry ISO strings. */

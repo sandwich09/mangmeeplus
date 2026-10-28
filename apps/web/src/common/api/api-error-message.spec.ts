@@ -661,3 +661,7 @@ test('input VAT decision refusals keep the fixed reason and the reason-field ins
 test('a posted expense journal has no reopen shortcut for its VAT decision', () => {
   assert.equal(apiErrorMessage({ code: 'input_vat_posted_journal_immutable' }), 'รายจ่ายนี้ลงบัญชีแล้ว จึงเปลี่ยนสิทธิภาษีซื้อไม่ได้ แม้กลับรายการบัญชีแล้ว');
 });
+
+test('free expense read-limit refusal explains that existing drafts remain editable', () => {
+  assert.equal(apiErrorMessage({ code: 'FREE_DOCUMENT_LIMIT_REACHED' }), 'ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้');
+});

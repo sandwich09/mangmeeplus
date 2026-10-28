@@ -192,3 +192,8 @@ Config write ถือ company advisory lock เดียวกับ admission 
 12. web transport retry ที่ไม่รับ response ใช้ request id เดิม; retry หลังได้รับ provider failure ใช้ request id ใหม่
 13. LINE router provider-disabled/config-missing คืน quota แล้ว receipt OCR แยกยังทำงานได้; router timeout/5xx
     ที่ไม่พิสูจน์ว่า provider ไม่ทำงานต้องไม่เรียก image provider รอบสอง
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+FREE_MONTHLY_3 ใช้ CompanyOcrUsageEvent เดิม แยก successful/in-flight และ freeze month/source; success ต้อง commit พร้อม usable source, failed ใช้ exact compensation และคง cost guards เดิม รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

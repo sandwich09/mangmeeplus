@@ -1,6 +1,9 @@
 import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../../reimbursements/domain/reimbursement.constants';
 import { looksLikeAccountNumber } from '@watchdog-bms/contracts';
+import { expenseDraftAccess, assertExpenseFinancialAccess } from '../expense-commercial-access';
+import { assertFreeExpenseUploadAvailable, verifyFreeExpenseUploadReservation, type FreeExpenseUploadReservation } from '../../../data-model-core/application/use-cases/free-expense-attachment';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
@@ -68,9 +71,33 @@ export class InitReceiptUploadUseCase {
         ownerBinding?: { conversationId: string; membershipId: string; channelId: string; ownerEpoch: number };
       };
     },
+    options?: { freeIntakeLocked?: boolean; freeOcrReservation?: FreeExpenseUploadReservation },
   ): Promise<InitReceiptUploadResult> {
     if (!ctx.permissions.includes('expense.receipt.upload') && !ctx.permissions.includes('expense.receipt.line_upload') && !ctx.permissions.includes('expense.create')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
+    }
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
+    const freeUpload = freeExpenseDrafts || Boolean(options?.freeOcrReservation);
+    if (options?.freeOcrReservation && (ctx.authProvider !== 'line' || cmd.captureSource !== 'LINE_UPLOAD'
+      || !cmd.lineCapture || options.freeOcrReservation.requestId !== cmd.lineCapture.lineMessageId)) {
+      throw new ForbiddenException('Invalid admitted LINE receipt identity.');
+    }
+    if (freeUpload && !options?.freeIntakeLocked) {
+      if (!this.prisma) throw new ForbiddenException('Receipt storage unavailable.');
+      return this.prisma.client.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`free-expense-upload:${ctx.companyId}`}))`;
+        return this.execute(ctx, cmd, { ...options, freeIntakeLocked: true });
+      });
+    }
+    if (freeUpload) {
+      const existing = cmd.lineCapture && await this.repo.findByLineMessageId(ctx.companyId, cmd.lineCapture.lineMessageId);
+      if (!existing) {
+        await assertFreeExpenseUploadAvailable({ client: this.repo.commercialAccessDb } as any, ctx.companyId,
+          options?.freeOcrReservation, cmd.lineCapture?.lineMessageId);
+      } else if (options?.freeOcrReservation) {
+        await verifyFreeExpenseUploadReservation({ client: this.repo.commercialAccessDb } as any, ctx.companyId,
+          options.freeOcrReservation, cmd.lineCapture?.lineMessageId);
+      }
     }
     // The other root of the expenses journey — the receipt upload. Guarded HERE, on the
     // expenses-specific entry, not in the shared `CreateUploadIntentUseCase`: that one also serves
@@ -88,9 +115,9 @@ export class InitReceiptUploadUseCase {
       originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize,
       ...(branchId ? { branchId } : {}),
       ...(expenseId ? { metadataJson: { lineReceiptExpenseId: expenseId } } : {}),
-    });
+    }, expenseId ? { expenseId, ...(options?.freeOcrReservation ? { freeOcrReservation: options.freeOcrReservation } : {}) } : undefined);
     if (cmd.lineCapture && (cmd.captureSource !== 'LINE_UPLOAD' || ctx.authProvider !== 'line')) throw new BadRequestException('Invalid LINE capture identity.');
-    const webIntent = cmd.lineCapture ? undefined : await createAttachment();
+    const webIntent = cmd.lineCapture || freeUpload ? undefined : await createAttachment();
 
     // A company that is not asked Thai VAT questions cannot answer a claimability review either,
     // so its uploads land NON_CLAIMABLE instead of filling the review queue with a decision
@@ -141,7 +168,8 @@ export class InitReceiptUploadUseCase {
       return winner;
     });
     if (cmd.lineCapture && (expense.createdByUserId !== ctx.userId || !isBranchInScope(ctx.scopes ?? {}, expense.branchId))) throw new ForbiddenException();
-    const intent: Omit<InitReceiptUploadResult, 'expenseId'> = webIntent ?? await this.reserveLineAttachment(ctx, expense.id, createAttachment);
+    const intent: Omit<InitReceiptUploadResult, 'expenseId'> = webIntent ?? (cmd.lineCapture
+      ? await this.reserveLineAttachment(ctx, expense.id, createAttachment) : await createAttachment(expense.id));
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -329,6 +357,7 @@ export class CompleteReceiptUploadUseCase {
     cmd: CompleteReceiptUploadCommand,
     options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     const expense = await this.repo.findById(ctx.companyId, cmd.expenseId);
     if (!expense) throw new NotFoundException(`Expense ${cmd.expenseId} not found`);
     if (!isBranchInScope(ctx.scopes ?? {}, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
@@ -342,6 +371,17 @@ export class CompleteReceiptUploadUseCase {
     // current primary and the current facts exactly as they were, and the uploaded object stays a
     // pending orphan for the existing cleanup rather than becoming evidence of anything.
     const purpose = cmd.purpose ?? (cmd.intent === 'append' ? 'expense.receipt.supporting' : 'expense.receipt.primary');
+    if (freeExpenseDrafts && (expense.createdByUserId !== ctx.userId || !['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)
+      || !['LINE_UPLOAD', 'WEB_UPLOAD'].includes(expense.captureSource) || purpose === 'expense.payment.evidence')) {
+      throw new ForbiddenException({ code: 'FREE_EXPENSE_DRAFTS_ONLY', message: 'เพิ่มไฟล์ได้เฉพาะร่างรายจ่ายของตนเอง' });
+    }
+    if (freeExpenseDrafts) {
+      const sourceFile = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
+      const source = sourceFile?.metadataJson?.freeExpenseSource as { kind?: string; id?: string } | undefined;
+      if (!sourceFile || sourceFile.uploadedByUserId !== ctx.userId || source?.kind !== 'EXPENSE' || source.id !== expense.id) {
+        throw new ForbiddenException('Attachment is not bound to this source draft.');
+      }
+    }
     if (!EXPENSE_ATTACHMENT_PURPOSES.includes(purpose)) {
       throw new BadRequestException('Unsupported expense attachment purpose.');
     }
@@ -403,6 +443,13 @@ export class CompleteReceiptUploadUseCase {
     // A late upload must not roll back human review or partially retire the previous receipt.
     let retiredAttachmentIds: string[] = [];
     const updated = await this.prisma.client.$transaction(async tx => {
+      if (this.repo.commercialAccessDb) {
+        await lockPlanTermCompany(tx, ctx.companyId);
+        const currentFree = await expenseDraftAccess(ctx, tx);
+        if (currentFree && (expense.createdByUserId !== ctx.userId || !['DRAFT', 'NEEDS_REVIEW'].includes(expense.status) || purpose === 'expense.payment.evidence')) {
+          throw new ForbiddenException({ code: 'FREE_EXPENSE_DRAFTS_ONLY' });
+        }
+      }
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
       await lockFundingEvidence(tx, ctx.companyId, { expenseIds: [cmd.expenseId], attachmentIds: [cmd.attachmentId] });
       await this.repo.updateExpense({
@@ -605,6 +652,7 @@ export class DuplicateCheckUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<{ candidatesCreated: number; openCandidates: number }> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (!ctx.permissions.includes('expense.review') && !ctx.permissions.includes('expense.duplicate.resolve')) {
       throw new ForbiddenException('Missing permission: expense.review');
     }
@@ -633,6 +681,7 @@ export class ResolveDuplicateUseCase {
   }
 
   async execute(ctx: RequestContext, expenseId: string, candidateId: string, action: 'dismiss' | 'confirm', reason?: string): Promise<void> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (!ctx.permissions.includes('expense.duplicate.resolve')) throw new ForbiddenException('Missing permission: expense.duplicate.resolve');
     const cleanReason = reason?.trim() ?? '';
     if (cleanReason.length < 3) throw new BadRequestException('Duplicate resolution reason must be at least 3 characters');
@@ -655,6 +704,7 @@ export class ConfirmBuyerMatchUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
 
   async execute(ctx: RequestContext, expenseId: string, reason?: string): Promise<void> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (!ctx.permissions.includes('expense.confirm')) throw new ForbiddenException('Missing permission: expense.confirm');
     const cleanReason = typeof reason === 'string' ? reason.trim() : '';
     if (!cleanReason || cleanReason.length > 500) {

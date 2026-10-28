@@ -1,7 +1,8 @@
+import { isFreeExpenseDraftCompany } from '../free-expense-access';
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   CompanyPlanTermViewDto,
-  PlanTermLockReason,
+  PlanTermNoticeDto,
   PlanTierKey,
   RenewCompanyPlanTermBody,
   SetCompanyPlanTermBody,
@@ -390,17 +391,7 @@ export class EndPlanTermWarmupUseCase {
   }
 }
 
-/** Minimal user-facing payload: state and deadline only, never limits or tier (spec §5). */
-export type PlanTermNoticeDto = {
-  derivedState: 'ACTIVE' | 'WARNING' | 'EXPIRED';
-  termEndsAt: string;
-  daysLeft: number;
-  isOwner: boolean;
-  /** Whether this membership can manage package renewal through company.plan.manage. */
-  canManagePlan: boolean;
-  /** R2: only ever present on an EXPIRED notice — a running term has nothing to explain. */
-  lockReason?: PlanTermLockReason;
-} | null;
+export type { PlanTermNoticeDto } from '@watchdog-bms/contracts';
 
 @Injectable()
 export class GetPlanTermNoticeUseCase {
@@ -415,6 +406,7 @@ export class GetPlanTermNoticeUseCase {
     const { derivedState, daysLeft } = derivePlanTermState(row.termEndsAt, row.warningDays, new Date());
     return {
       derivedState,
+      ...(derivedState === 'EXPIRED' && await isFreeExpenseDraftCompany(this.prisma.client, companyId) ? { freeExpenseDrafts: true } : {}),
       termEndsAt: row.termEndsAt.toISOString(),
       daysLeft,
       // R2: the locked shell needs to know whether to invite a purchase or a renewal, and only the

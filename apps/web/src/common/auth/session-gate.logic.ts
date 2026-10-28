@@ -27,6 +27,11 @@ export function isSystemAdmin(session: WebSession): boolean {
   return session.roles.includes(SYSTEM_ADMIN_ROLE);
 }
 
+/** A server-confirmed free shop starts at its only ordinary module; all others keep the dashboard. */
+export function defaultCompanyLandingPath(companyId: string, freeExpenseDrafts = false): string {
+  return `/companies/${encodeURIComponent(companyId)}/${freeExpenseDrafts ? 'expenses' : 'dashboard'}`;
+}
+
 /** The มั่งมี sales console's landing path (spec §12). `/sales` itself only redirects here. */
 export const SALES_HOME_PATH = '/sales/deals';
 
@@ -114,6 +119,13 @@ export function resolveLoginLanding(
 ): string | null {
   const explicit = usableLanding(sanitizeNextPath(next));
   const home = usableLanding(sanitizeNextPath(decodeCookie(homeCookie)));
+  const freeExpenseHome = session.freeExpenseDrafts && session.companyId
+    ? defaultCompanyLandingPath(session.companyId, true)
+    : null;
+  const savedFreeLanding = freeExpenseHome && home
+    ? (home === freeExpenseHome || home.startsWith(`${freeExpenseHome}/`) || home.startsWith(`/companies/${encodeURIComponent(session.companyId)}/billing`)
+      ? home : freeExpenseHome)
+    : freeExpenseHome;
   // S07/S29: a sales-only session owns exactly one area. Its remembered home is the platform
   // tenant's dashboard (the login BFF derives it from `companyId`), and following that would land
   // it on a workspace the shell immediately bounces — so anything outside /sales is dropped here.
@@ -122,11 +134,12 @@ export function resolveLoginLanding(
     : isSalesOnlySession(session)
     ? [explicit, home].find((path) => path?.startsWith('/sales')) ?? SALES_HOME_PATH
     : explicit
+      ?? savedFreeLanding
       ?? home
       ?? (isSystemAdmin(session)
         ? '/system/partners'
         : session.companyId
-          ? `/companies/${session.companyId}/dashboard`
+          ? defaultCompanyLandingPath(session.companyId)
           : null);
 
   // Only an explicit false from the current API proves the clickwrap is current. Missing fields
@@ -188,9 +201,15 @@ export function resolvePostLegalAcceptanceTarget(
   const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
   if (isExecutiveOnlySession(session)) return explicit && canOpenSystemExecutive(session, explicit) ? explicit : EXECUTIVE_HOME_PATH;
   if (isSalesOnlySession(session)) return explicit?.startsWith('/sales') ? explicit : SALES_HOME_PATH;
+  if (session.freeExpenseDrafts && session.companyId && explicit) {
+    const companyBase = `/companies/${encodeURIComponent(session.companyId)}`;
+    if (explicit === `${companyBase}/dashboard` || explicit === `${companyBase}/renew`) {
+      return defaultCompanyLandingPath(session.companyId, true);
+    }
+  }
   if (explicit) return explicit;
   if (isSystemAdmin(session)) return '/system/partners';
-  return session.companyId ? `/companies/${session.companyId}/dashboard` : '/';
+  return session.companyId ? defaultCompanyLandingPath(session.companyId, session.freeExpenseDrafts === true) : '/';
 }
 
 /** Query marker that spends the login page's single silent-recovery attempt. */

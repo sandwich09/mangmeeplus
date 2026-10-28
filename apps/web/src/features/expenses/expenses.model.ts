@@ -1617,6 +1617,25 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
   };
 }
 
+const FREE_EXPENSE_DRAFT_UI_PERMISSIONS = new Set([
+  'expense.read', 'expense.read_own', 'expense.read_related', 'expense.update',
+  'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.ocr.request',
+  'attachment.read', 'attachment.create',
+]);
+
+/** Client-side defense in depth; the server remains the authority for free-mode permissions. */
+export function expenseUiPermissions(permissions: readonly string[], freeExpenseDrafts = false): string[] {
+  return freeExpenseDrafts ? permissions.filter((permission) => FREE_EXPENSE_DRAFT_UI_PERMISSIONS.has(permission)) : [...permissions];
+}
+
+export function canExportExpenseList(freeExpenseDrafts: boolean, caps: ExpenseCapabilities): boolean {
+  return !freeExpenseDrafts && caps.canExportPackage;
+}
+
+export function isFreeExpenseListDraft(status: ExpenseStatus): boolean {
+  return status === 'DRAFT' || status === 'NEEDS_REVIEW';
+}
+
 /**
  * A record the system built for a line of a reimbursement claim. It ends with its claim: cancelling the
  * claim voids it. The API refuses to void, reject or delete it from the expense screen

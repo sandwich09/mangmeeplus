@@ -606,6 +606,8 @@ export class PrismaExpenseRepository {
     private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
   ) {}
 
+  get commercialAccessDb() { return this.prisma.client; }
+
   async inputVatRight(companyId: string, expenseId: string, db: any = this.prisma.client): Promise<ExpenseInputVatRightView> {
     const expense = await db.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
     const facts = await inputVatDecisionFacts(db, expense);
@@ -1259,6 +1261,7 @@ export class PrismaExpenseRepository {
     filter: ListExpensesFilter,
     scopes?: { branchIds?: string[] },
     relatedUserId?: string,
+    sourceDraftsOnly = false,
   ): Promise<PaginatedExpenses> {
     const { companyId, page = 1, pageSize = 20, ...rest } = filter;
     const skip = (page - 1) * pageSize;
@@ -1269,6 +1272,9 @@ export class PrismaExpenseRepository {
     // `sourceDocumentType` so it pins TAX_INVOICE itself — only a full tax invoice has to carry a
     // seller address, so combining it with another document type would answer an empty question.
     const where: any = { ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.vendorAddressMissing && { vendorAddressSnapshot: null, sourceDocumentType: 'TAX_INVOICE' }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.fromDate || rest.toDate ? { AND: [scopeWhere, documentDateWhere(rest.fromDate, rest.toDate)] } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
+    if (sourceDraftsOnly) {
+      where.AND = [...(where.AND ?? []), { status: { in: ['DRAFT', 'NEEDS_REVIEW'] }, captureSource: { in: ['WEB_UPLOAD', 'LINE_UPLOAD'] } }];
+    }
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
     const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([

@@ -24,6 +24,7 @@ export type RequestContext = {
   membershipId: string;
   roles: string[];
   permissions: string[];
+  freeExpenseDrafts?: boolean;
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: { branchIds?: string[]; locationIds?: string[]; teamIds?: string[] };
   authProvider: AuthProvider;

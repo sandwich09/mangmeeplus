@@ -101,7 +101,7 @@ export function sourceDraftState(expense: Expense, categories: ExpenseCategorySu
     return existing.targetRevision === expense.updatedAt.toISOString()
       ? existing : refreshExpenseSourceDraft(existing, expense, categories);
   }
-  if (expense.captureSource !== 'LINE_UPLOAD' || ![...SOURCE_DRAFT_MUTABLE_STATUSES, 'READY_FOR_CONFIRMATION'].includes(expense.status)) return null;
+  if (!['LINE_UPLOAD', 'WEB_UPLOAD'].includes(expense.captureSource) || ![...SOURCE_DRAFT_MUTABLE_STATUSES, 'READY_FOR_CONFIRMATION'].includes(expense.status)) return null;
   const recognized = expense.aiVerificationSummaryJson?.['recognizedFields'] as Record<string, any> | undefined;
   const missing = new Set(Array.isArray(expense.aiVerificationSummaryJson?.['missingFields']) ? expense.aiVerificationSummaryJson!['missingFields'] as string[] : []);
   const ocrItems = Array.isArray(recognized?.lines) ? recognized.lines : [];

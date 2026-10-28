@@ -1,3 +1,4 @@
+import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
 import { ForbiddenException, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -101,12 +102,14 @@ export class ExchangeLineHandoffTokenUseCase {
         where: { userId: record.userId, companyId: record.companyId, status: 'ACTIVE' },
         select: { id: true },
       }),
-      this.prisma.client.company.findUnique({ where: { id: record.companyId }, select: { status: true, planTerm: { select: { termEndsAt: true, termDisabledAt: true } } } }),
+      this.prisma.client.company.findUnique({ where: { id: record.companyId }, select: { status: true, archivedAt: true, planTerm: { select: { termEndsAt: true, termDisabledAt: true, tierKey: true } } } }),
     ]);
     if (!lineIdentity) throw this.refuse('line_identity_severed', record);
     if (!user || user.status !== 'ACTIVE') throw this.refuse('user_inactive', record);
     if (!membership) throw this.refuse('membership_inactive', record);
-    const targetPath = company && resolveLineHandoffTarget(record.companyId, record.targetPath, company, now);
+    const freeExpenseDrafts = company?.planTerm?.tierKey === 'FREE_TRIAL_15'
+      && await isFreeExpenseDraftCompany(this.prisma.client, record.companyId, now);
+    const targetPath = company && resolveLineHandoffTarget(record.companyId, record.targetPath, company, now, freeExpenseDrafts);
     if (!targetPath) throw this.refuse('company_inactive', record);
 
     // 4. Claim before issuing, exactly as complete-employee-line-link does. The loser of a race

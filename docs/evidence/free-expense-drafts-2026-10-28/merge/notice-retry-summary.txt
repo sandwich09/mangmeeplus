@@ -1,0 +1,10 @@
+✔ free source receipt cards never prepare confirmation or reimbursement actions (0.990625ms)
+✔ free receipt notice remains claimed when a durable delivery plan owns the failed send (1.90925ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1686.569083

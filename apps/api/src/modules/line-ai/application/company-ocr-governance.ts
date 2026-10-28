@@ -3,10 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, isReceiptOcrRetryableFailure, type BillingReceiptUsage } from '@watchdog-bms/contracts';
 import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
+import type { Prisma } from '../../../generated/prisma/client';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { effectiveMonthlySlipLimit } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokMonthKey } from './company-ai-usage-meter';
 import { packageReceiptBalance, paidReceiptBalance, RECEIPT_ADDON_KINDS } from '../../billing/application/billing-receipt-grants';
+import { isFreeExpenseDraftCompany } from '../../system-partner-management/application/free-expense-access';
+import { FREE_EXPENSE_QUOTA_SOURCE, readFreeExpenseAllowance, type FreeExpenseAllowance } from './free-expense-quota';
+export { completeCompanyOcrAdmission, completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot, claimFreeExpenseQuotaNotice, releaseFreeExpenseQuotaNotice } from './free-expense-quota';
 
 // Outlast one 55s media route plus the full receipt provider chain and upload bookkeeping.
 export const LINE_RECEIPT_RETRY_LEASE_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS + 105_000;
@@ -35,10 +39,10 @@ const PLAN_QUOTA_ROUTES = new Set<CompanyOcrSourceRoute>([
 /** The commercial allowance excludes bank statements; the operational aggregate still includes them. */
 export function countReceiptOcrAdmissions(db: Pick<PrismaService['client'], 'companyOcrUsageEvent'>, companyId: string, monthKey?: string, monthlyBaseOnly = false): Promise<number> {
   return db.companyOcrUsageEvent.count({ where: { companyId, ...(monthKey ? { monthKey } : {}),
-    ...(monthlyBaseOnly ? { billingReceiptGrantId: null } : {}), sourceRoute: { in: [...PLAN_QUOTA_ROUTES] } } });
+    ...(monthlyBaseOnly ? { billingReceiptGrantId: null, quotaSource: null } : {}), sourceRoute: { in: [...PLAN_QUOTA_ROUTES] } } });
 }
 
-export type CompanyOcrAdmissionIdentity = { eventId: string; monthKey: string };
+export type CompanyOcrAdmissionIdentity = { eventId: string; monthKey: string; quotaSource?: 'FREE_MONTHLY_3' };
 
 /** Fired once per company-month while the plan ceiling is measured but not enforced. */
 const PLAN_WOULD_BLOCK_ACTION = 'plan.receipt_quota.would_block';
@@ -50,6 +54,7 @@ export type CompanyOcrAdmission =
   /** The shop's plan ran out, not the platform's ops brake — a sales moment, not an outage. */
   | { allowed: false; reason: 'plan_exceeded'; usedCount: number; monthlyLimit: number; tierKey: string | null }
   | { allowed: false; reason: 'plan_inactive' }
+  | { allowed: false; reason: 'free_exceeded' | 'free_in_flight'; usedCount: number; monthlyLimit: number }
   | { allowed: false; reason: 'duplicate' }
   | { allowed: false; reason: 'unavailable' };
 
@@ -59,9 +64,13 @@ export type CompanyOcrErrorCode =
   | 'OCR_REQUEST_ALREADY_ADMITTED'
   | 'OCR_QUOTA_UNAVAILABLE'
   | 'RECEIPT_QUOTA_EXCEEDED'
-  | 'BILLING_ACCESS_INACTIVE';
+  | 'BILLING_ACCESS_INACTIVE'
+  | 'FREE_DOCUMENT_LIMIT_REACHED'
+  | 'FREE_DOCUMENTS_IN_FLIGHT';
 
 export function companyOcrErrorCode(decision: Exclude<CompanyOcrAdmission, { allowed: true }>): CompanyOcrErrorCode {
+  if (decision.reason === 'free_exceeded') return 'FREE_DOCUMENT_LIMIT_REACHED';
+  if (decision.reason === 'free_in_flight') return 'FREE_DOCUMENTS_IN_FLIGHT';
   if (decision.reason === 'disabled') return 'OCR_FEATURE_DISABLED';
   if (decision.reason === 'exceeded') return 'OCR_MONTHLY_LIMIT_EXCEEDED';
   if (decision.reason === 'plan_exceeded') return 'RECEIPT_QUOTA_EXCEEDED';
@@ -89,8 +98,12 @@ export async function receiptQuotaSnapshot(
   companyId: string,
   monthKey: string = bangkokMonthKey(),
   now: Date = new Date(),
-): Promise<{ usedCount: number; planLimit: number | null; tierKey: string | null; cadence?: 'PAID_GRANTS'; expiresAt?: string | null;
+): Promise<{ usedCount: number; planLimit: number | null; tierKey: string | null; cadence?: 'PAID_GRANTS' | 'FREE_MONTHLY_3'; expiresAt?: string | null; freeAllowance?: FreeExpenseAllowance;
   monthlyAllowance?: BillingReceiptUsage['monthlyAllowance'] }> {
+  if (await isFreeExpenseDraftCompany(prisma.client, companyId, now)) {
+    const freeAllowance = await readFreeExpenseAllowance(prisma.client, companyId, monthKey);
+    return { usedCount: freeAllowance.usedCount, planLimit: freeAllowance.limit, tierKey: null, cadence: FREE_EXPENSE_QUOTA_SOURCE, freeAllowance };
+  }
   const [usedCount, term] = await Promise.all([
     countReceiptOcrAdmissions(prisma.client, companyId, monthKey, true),
     prisma.client.companyPlanTerm.findUnique({
@@ -240,9 +253,21 @@ export async function admitCompanyOcr(
             requestId: input.requestId,
           },
         },
-        select: { id: true, monthKey: true, createdAt: true, billingReceiptGrantId: true },
+        select: { id: true, monthKey: true, createdAt: true, billingReceiptGrantId: true, quotaSource: true, succeededAt: true },
       });
       if (replay) {
+        if (replay.succeededAt) return { allowed: false, reason: 'duplicate' } as const;
+        if (!await isFreeExpenseDraftCompany(tx, input.companyId)) {
+          // Resuming an operation cannot bypass a hold or expiry that arrived after admission.
+          const [company, term] = await Promise.all([
+            tx.company.findUnique({ where: { id: input.companyId }, select: { status: true, archivedAt: true } }),
+            tx.companyPlanTerm.findUnique({ where: { companyId: input.companyId } }),
+          ]);
+          if (company && (company.status !== 'ACTIVE' || company.archivedAt)
+            || term && (term.termDisabledAt || term.termEndsAt <= new Date())
+            || replay.quotaSource === FREE_EXPENSE_QUOTA_SOURCE && (!company || !term))
+            return { allowed: false, reason: 'plan_inactive' } as const;
+        }
         const cutoff = new Date(Date.now() - LINE_RECEIPT_RETRY_LEASE_MS);
         if (input.sourceRoute !== 'receipt-ocr-line' || !input.retryWebhookEventId || replay.createdAt > cutoff) return { allowed: false, reason: 'duplicate' } as const;
         const owner = await tx.lineWebhookEventLog.findUnique({ where: { webhookEventId: input.retryWebhookEventId } });
@@ -286,7 +311,8 @@ export async function admitCompanyOcr(
           action: 'receipt.ocr.admission.resumed', targetType: 'company_ocr_usage_event', targetId: resumed.id,
           requestId: input.retryWebhookEventId, result: 'SUCCESS', riskLevel: 'LOW',
           metadataJson: { operationId: input.requestId, monthKey: replay.monthKey, previousEventId: replay.id } } });
-        return { allowed: true, eventId: resumed.id, monthKey: replay.monthKey, usedCount: usage.usedCount, monthlyLimit: policy?.ocrMonthlyLimit ?? null } as const;
+        return { allowed: true, eventId: resumed.id, monthKey: replay.monthKey, usedCount: usage.usedCount, monthlyLimit: policy?.ocrMonthlyLimit ?? null,
+          ...(replay.quotaSource === FREE_EXPENSE_QUOTA_SOURCE ? { quotaSource: FREE_EXPENSE_QUOTA_SOURCE } : {}) } as const;
       }
 
       const configuration = await tx.companyAiConfiguration.findUnique({
@@ -310,11 +336,24 @@ export async function admitCompanyOcr(
       // statements. No plan term row is unlimited — a company that predates P29 is grandfathered
       // (P29 spec §2 rule 7) and enforcing this ceiling must not be the day it notices.
       let billingReceiptGrantId: string | undefined;
-      if (PLAN_QUOTA_ROUTES.has(input.sourceRoute)) {
+      const free = await isFreeExpenseDraftCompany(tx, input.companyId);
+      if (!free) {
+        const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { status: true, archivedAt: true } });
+        if (company && (company.status !== 'ACTIVE' || company.archivedAt)) return { allowed: false, reason: 'plan_inactive' } as const;
+      }
+      if (free && !PLAN_QUOTA_ROUTES.has(input.sourceRoute)) return { allowed: false, reason: 'plan_inactive' } as const;
+      if (free) {
+        const allowance = await readFreeExpenseAllowance(tx, input.companyId, monthKey);
+        if (allowance.remainingCount === 0) return { allowed: false,
+          reason: allowance.usedCount >= allowance.limit ? 'free_exceeded' : 'free_in_flight',
+          usedCount: allowance.usedCount, monthlyLimit: allowance.limit } as const;
+      }
+      if (!free && PLAN_QUOTA_ROUTES.has(input.sourceRoute)) {
         const term = await tx.companyPlanTerm.findUnique({
           where: { companyId: input.companyId },
           select: { capacityOverride: true, tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
         });
+        if (term && (term.termDisabledAt || term.termEndsAt <= new Date())) return { allowed: false, reason: 'plan_inactive' } as const;
         if (term?.billingReceiptAccountId) {
           const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { status: true } });
           const now = new Date();
@@ -360,6 +399,7 @@ export async function admitCompanyOcr(
           sourceRoute: input.sourceRoute,
           requestId: input.requestId,
           ...(billingReceiptGrantId ? { billingReceiptGrantId, receiptUnitGeneration: generation } : {}),
+          ...(free ? { quotaSource: FREE_EXPENSE_QUOTA_SOURCE } : {}),
         },
         select: { id: true },
       });
@@ -371,7 +411,8 @@ export async function admitCompanyOcr(
         update: { usedCount: { increment: 1 } },
         select: { usedCount: true },
       });
-      return { allowed: true, eventId: event.id, monthKey, usedCount: aggregate.usedCount, monthlyLimit } as const;
+      return { allowed: true, eventId: event.id, monthKey, usedCount: aggregate.usedCount, monthlyLimit,
+        ...(free ? { quotaSource: FREE_EXPENSE_QUOTA_SOURCE } : {}) } as const;
     });
     if (wouldBlock) await recordPlanQuotaWouldBlock(prisma, input, monthKey, wouldBlock);
     return admission;
@@ -468,43 +509,7 @@ export async function releaseCompanyOcrAdmission(
   // event, which is already an idempotent success on the next attempt.
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     try {
-      return await prisma.client.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
-        const event = await tx.companyOcrUsageEvent.findUnique({
-          where: {
-            companyId_sourceRoute_requestId: {
-              companyId: input.companyId,
-              sourceRoute: input.sourceRoute,
-              requestId: input.requestId,
-            },
-          },
-          select: { id: true, monthKey: true, billingReceiptGrantId: true, receiptUnitGeneration: true },
-        });
-        if (!event) return true;
-        if (event.id !== input.eventId) return true;
-        if (event.billingReceiptGrantId && event.receiptUnitGeneration !== null) {
-          // Add-on plan PR B: the ledger keeps the release after the event row is gone. An outcome that
-          // is already written — a usable result, or a read that found no receipt — is final.
-          const unit = { companyId: input.companyId, operationKey: receiptUnitOperationKey(input.sourceRoute, input.requestId), generation: event.receiptUnitGeneration };
-          if (await tx.receiptUnitEntry.findFirst({ where: { ...unit, kind: { in: ['CONSUME', 'RELEASE'] } }, select: { id: true } })) return true;
-          await tx.receiptUnitEntry.create({ data: { ...unit, grantId: event.billingReceiptGrantId, kind: 'RELEASE', units: 1 } });
-        }
-
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${event.monthKey}`}))`;
-        const aggregate = await tx.companyOcrMonthlyUsage.updateMany({
-          where: { companyId: input.companyId, monthKey: event.monthKey, usedCount: { gt: 0 } },
-          data: { usedCount: { decrement: 1 } },
-        });
-        if (aggregate.count !== 1) throw new Error('OCR_QUOTA_AGGREGATE_MISSING');
-        if (input.reason) await tx.auditLog.create({
-          data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
-            action: 'receipt.ocr.admission.compensated', targetType: 'company_ocr_usage_event', targetId: event.id,
-            requestId: `ocr-compensation-${event.id}`, result: 'SUCCESS', riskLevel: 'LOW',
-            metadataJson: { sourceRoute: input.sourceRoute, operationId: input.requestId, monthKey: event.monthKey, reason: input.reason } },
-        });
-        await tx.companyOcrUsageEvent.delete({ where: { id: event.id } });
-        return true;
-      });
+      return await prisma.client.$transaction((tx) => releaseCompanyOcrAdmissionWithinTransaction(tx, input));
     } catch (error) {
       lastError = error;
       const retryDelayMs = retryDelaysMs[attempt];
@@ -565,4 +570,49 @@ export async function settleCompanyOcrAdmission(
       requestId: input.requestId, eventId: input.eventId, ...safeLineErrorDetails(error) });
     return false;
   }
+}
+
+/** Use with the owning job's terminal write, so a crash cannot strand a refunded/failed result. */
+export async function releaseCompanyOcrAdmissionWithinTransaction(
+  tx: Prisma.TransactionClient,
+  input: Parameters<typeof releaseCompanyOcrAdmission>[1],
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${input.companyId}`}))`;
+  const event = await tx.companyOcrUsageEvent.findUnique({
+    where: {
+      companyId_sourceRoute_requestId: {
+        companyId: input.companyId,
+        sourceRoute: input.sourceRoute,
+        requestId: input.requestId,
+      },
+    },
+    select: { id: true, monthKey: true, quotaSource: true, succeededAt: true, billingReceiptGrantId: true, receiptUnitGeneration: true },
+  });
+  if (!event) return true;
+  if (event.id !== input.eventId) return true;
+  // Delivery failures and late compensation cannot refund a persisted free result.
+  if (event.quotaSource === FREE_EXPENSE_QUOTA_SOURCE && event.succeededAt) return true;
+  if (event.billingReceiptGrantId && event.receiptUnitGeneration !== null) {
+    // Add-on plan PR B: the ledger keeps the release after the event row is gone. An outcome that
+    // is already written — a usable result, or a read that found no receipt — is final.
+    const unit = { companyId: input.companyId, operationKey: receiptUnitOperationKey(input.sourceRoute, input.requestId), generation: event.receiptUnitGeneration };
+    if (await tx.receiptUnitEntry.findFirst({ where: { ...unit, kind: { in: ['CONSUME', 'RELEASE'] } }, select: { id: true } })) return true;
+    await tx.receiptUnitEntry.create({ data: { ...unit, grantId: event.billingReceiptGrantId, kind: 'RELEASE', units: 1 } });
+  }
+
+
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${event.monthKey}`}))`;
+  const aggregate = await tx.companyOcrMonthlyUsage.updateMany({
+    where: { companyId: input.companyId, monthKey: event.monthKey, usedCount: { gt: 0 } },
+    data: { usedCount: { decrement: 1 } },
+  });
+  if (aggregate.count !== 1) throw new Error('OCR_QUOTA_AGGREGATE_MISSING');
+  if (input.reason) await tx.auditLog.create({
+    data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
+      action: 'receipt.ocr.admission.compensated', targetType: 'company_ocr_usage_event', targetId: event.id,
+      requestId: `ocr-compensation-${event.id}`, result: 'SUCCESS', riskLevel: 'LOW',
+      metadataJson: { sourceRoute: input.sourceRoute, operationId: input.requestId, monthKey: event.monthKey, reason: input.reason } },
+  });
+  await tx.companyOcrUsageEvent.delete({ where: { id: event.id } });
+  return true;
 }

@@ -1,3 +1,6 @@
+import { completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot } from '../../../line-ai/application/free-expense-quota';
+import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
+import { freeExpenseQuotaNoticeTextTh, FREE_EXPENSE_IN_FLIGHT_TEXT_TH } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import { randomUUID } from 'node:crypto';
 import { ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -6,7 +9,7 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '../services/receipt-ocr-apply.service';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
-import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
+import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, FreeExpenseAllowance, RequestContext } from '@watchdog-bms/contracts';
 import { emptyExpenseCaptureReadManifest, isAiBudgetRefusalCode } from '@watchdog-bms/contracts';
 import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
 import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
@@ -89,6 +92,7 @@ export class RequestReceiptExtractionUseCase {
   }
 
   private async extract(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
+    const freeExpenseDrafts = await isFreeExpenseDraftCompany(this.prisma.client, ctx.companyId);
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) {
       await this.auditOutcome(ctx, expenseId, 'not_found');
@@ -107,6 +111,9 @@ export class RequestReceiptExtractionUseCase {
       throw new ConflictException(`Cannot extract receipt for expense in ${expense.status} status`);
     }
 
+    if (freeExpenseDrafts && (expense.createdByUserId !== ctx.userId || !['DRAFT', 'NEEDS_REVIEW'].includes(expense.status))) {
+      throw new ForbiddenException('เปิดอ่านได้เฉพาะร่างที่คุณมีสิทธิ์ค่ะ');
+    }
     const attachment = await this.repo.findReceiptExtractionAttachment(ctx.companyId, expenseId, expense.primaryAttachmentId);
     if (!attachment) return this.finish(ctx, expenseId, 'no_attachment');
     const isPdf = attachment.mimeType === 'application/pdf';
@@ -119,6 +126,7 @@ export class RequestReceiptExtractionUseCase {
     if (isPdf) return this.queueCaptureRead(ctx, expense, attachment);
 
     let admission: CompanyOcrAdmissionIdentity | undefined;
+    let freeAllowance: FreeExpenseAllowance | undefined;
     let usablePersisted = false;
     let noReceipt = false;
     try {
@@ -162,6 +170,11 @@ export class RequestReceiptExtractionUseCase {
         });
       }
 
+      if (response.errorCode === 'FREE_DOCUMENT_LIMIT_REACHED' || response.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT') {
+        const allowance = await freeExpenseAllowanceSnapshot(this.prisma, ctx.companyId);
+        throw new ConflictException({ code: response.errorCode, message: response.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT'
+          ? FREE_EXPENSE_IN_FLIGHT_TEXT_TH : freeExpenseQuotaNoticeTextTh(allowance.resetAt), freeAllowance: allowance });
+      }
       if (response.status !== 'ok') {
         const status = response.status === 'not_configured' ? 'not_configured' : 'failed';
         // Spec §9.1: the money reason must survive a reload. It is written BESIDE whatever a previous
@@ -175,6 +188,9 @@ export class RequestReceiptExtractionUseCase {
       }
 
       if (!response.classification) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
+      if (freeExpenseDrafts && response.classification.contentKind === 'MULTI_DOCUMENT') {
+        return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage, 'FREE_MULTI_DOCUMENT_UNSUPPORTED');
+      }
 
       // Keep the user's evidence choice/history recoverable. The new extraction request
       // changes its fingerprint, so this does not approve the newly read facts.
@@ -207,7 +223,7 @@ export class RequestReceiptExtractionUseCase {
           },
         });
         if (!nonReceipt) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage, 'OCR_UNUSABLE_RESULT');
-        usablePersisted = true;
+        usablePersisted = !freeExpenseDrafts && admission?.quotaSource !== 'FREE_MONTHLY_3';
         noReceipt = true;
         await this.auditOutcome(ctx, expenseId, 'not_expense_document', attachment.id, 0, response.classification, response.modelLineage);
         return {
@@ -224,6 +240,13 @@ export class RequestReceiptExtractionUseCase {
         ocrDocumentType: suggestedDocType,
         ...(expense.sourceDocumentType === 'NEEDS_REVIEW' && suggestedDocType === 'TRANSFER_SLIP' ? { sourceDocumentType: suggestedDocType } : {}),
         ...(expense.updatedAt ? { expectedUpdatedAt: expense.updatedAt } : {}),
+        ...((freeExpenseDrafts || admission?.quotaSource === 'FREE_MONTHLY_3') ? { sourceOnly: true } : {}),
+        ...(admission?.quotaSource === 'FREE_MONTHLY_3' ? { onUsablePersisted: async (tx) => {
+          const completed = await completeCompanyOcrAdmissionWithinTransaction(tx, {
+            companyId: ctx.companyId, sourceRoute: 'receipt-ocr-web', requestId: ctx.requestId, eventId: admission!.eventId,
+          });
+          freeAllowance = completed.freeAllowance;
+        } } : {}),
       });
       if (isStaleOcrApply(applyOutcome) || !applyOutcome.committedUpdatedAt) {
         // A correction landed while the model was thinking. Writing this result — header, lines,
@@ -290,7 +313,8 @@ export class RequestReceiptExtractionUseCase {
       });
       usablePersisted = true;
       await this.auditOutcome(ctx, expenseId, 'ok', attachment.id, Object.keys(response.fields).length, response.classification, response.modelLineage);
-      return { status: 'ok', fields: response.fields, missingFields, classification: response.classification };
+      return { status: 'ok', fields: response.fields, missingFields, classification: response.classification,
+        ...(freeAllowance?.monthKey === bangkokMonthKey() ? { freeAllowance } : {}) };
     } catch (error) {
       // The quota answer is a decision, not a failure: letting it fall into `failed` below would
       // turn a 409 the upload screen acts on into "the read failed, try again".

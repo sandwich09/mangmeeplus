@@ -588,3 +588,8 @@ term หมด แล้วซื้อแพ็กเกจใหม่ (tier �
 ใช้ทั้งสี่จุดพร้อมกัน: pin ที่ `quote()`, ตรวจซ้ำสองจุดใน `checkout()`, และ `status()` (ร้านที่จะถูกปฏิเสธ
 ตอนชำระต้องเห็นตั้งแต่หน้าแพ็กเกจ). ตัวอย่างที่ต้องผ่าน: ENTERPRISE หมดอายุ → ซื้อ PRO แล้วเมนูเฉพาะ
 ENTERPRISE ปิด (ข้อมูลเดิมยังอยู่); PRO หมดอายุ → ซื้อ ENTERPRISE แล้วเมนูครบชุดเปิด.
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+ข้อกำหนดล็อกทุกงานจนซื้อมีข้อยกเว้นเฉพาะร้านเปิดแล้วและยังไม่เคยซื้อแพ็กเกจ: อ่านเอกสารรายจ่าย 3 ใบต่อเดือนและเก็บ/แก้ร่าง ไม่มี welcome sales pitch ไม่เปลี่ยน purchased flow หรือ admin hold รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

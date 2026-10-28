@@ -11,6 +11,8 @@ export type WebSession = {
   /** Company features, independent of roles; null is the server's legacy all-entitled sentinel. */
   entitledFeatureKeys?: string[] | null;
   permissions: string[];
+  /** Server-verified source-only expense draft mode; absent is false. */
+  freeExpenseDrafts?: boolean;
   scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';
   /** Set while a temporary password is pending: the API 403s this session out of every business route. */

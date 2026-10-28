@@ -1,4 +1,5 @@
 import { PERMISSIONS } from '../../auth/permission-registry';
+import { freeExpenseDraftPermissions, isFreeExpenseDraftCompany } from '../../system-partner-management/application/free-expense-access';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveBranchIds } from '../../data-model-core/domain/logic/branch.logic';
@@ -49,10 +50,10 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
           where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
           ...membershipInclude,
           orderBy: { createdAt: 'asc' },
-        }) ?? (input.allowTermRecovery ? await this.prisma.client.companyMembership.findFirst({
+        }) ?? await this.prisma.client.companyMembership.findFirst({
           where: { userId, status: 'ACTIVE', company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
           ...membershipInclude, orderBy: { createdAt: 'asc' },
-        }) : null);
+        });
 
     if (!membership) {
       const disabledMembership = companyId && await this.prisma.client.companyMembership.findFirst({ where: { userId, companyId, status: { in: ['DISABLED', 'SUSPENDED'] } }, select: { id: true } });
@@ -60,9 +61,11 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       throw new ForbiddenException('No active company membership.');
     }
 
+    const systemAdmin = membership.roles.some(link => link.role.status === 'ACTIVE' && link.role.key === 'SYSTEM_ADMIN');
+    const freeExpenseDrafts = !systemAdmin && await isFreeExpenseDraftCompany(this.prisma.client, membership.companyId);
     const isTermDisabled = membership.company.status === 'DISABLED' && Boolean(membership.company.planTerm?.termDisabledAt);
     const termRecovery = input.allowTermRecovery && isTermDisabled;
-    if (membership.company.status !== 'ACTIVE' && !termRecovery) {
+    if (membership.company.status !== 'ACTIVE' && !termRecovery && !freeExpenseDrafts) {
       // Sales/locked-signup spec §19: every non-recovery caller routes through this one gate, so
       // naming the reason here (rather than per-route) lets the web's authedApiFetch bounce a stale
       // tab or deep link to /renew instead of showing a dead-end 403. A DISABLED company that is NOT
@@ -124,7 +127,8 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       membershipId: membership.id,
       companyId: membership.companyId,
       roles,
-      permissions,
+      permissions: freeExpenseDrafts && !roles.includes('SYSTEM_ADMIN') ? freeExpenseDraftPermissions(permissions) : permissions,
+      ...(freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       entitlementDeniedPermissions,
       availablePermissions: filterPermissionsByEntitlement(PERMISSIONS.map(permission => permission.key), entitled),
       entitledFeatureKeys: entitled === null ? null : [...entitled],

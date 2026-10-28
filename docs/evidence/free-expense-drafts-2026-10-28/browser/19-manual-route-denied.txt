@@ -1,0 +1,82 @@
+- button "Open Next.js Dev Tools":
+- alert: รายการค่าใช้จ่าย
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "สลับเมนู":
+  - navigation:
+    - list:
+      - listitem "การเงินและบัญชี"
+      - button "ค่าใช้จ่ายและใบเสร็จ" [expanded]:
+        - generic: ค่าใช้จ่ายและใบเสร็จ
+      - list:
+        - link "รายการค่าใช้จ่าย":
+          - /url: /companies/free-ui-notice/expenses
+          - text: รายการค่าใช้จ่าย
+        - link "อัปโหลดใบเสร็จ":
+          - /url: /companies/free-ui-notice/expenses/upload
+          - text: อัปโหลดใบเสร็จ
+      - listitem "บุคลากรและการตั้งค่า"
+      - button "ตั้งค่าบริษัท ตั้งค่ายังไม่ครบ":
+        - generic: ตั้งค่าบริษัท
+        - img "ตั้งค่ายังไม่ครบ"
+      - list:
+        - link "แพ็กเกจและการชำระเงิน":
+          - /url: /companies/free-ui-notice/billing
+          - text: แพ็กเกจและการชำระเงิน
+  - button "เมนูผู้ใช้":
+    - generic: ทn
+    - generic: คุณทดสอบ notice
+    - generic: เจ้าของร้าน
+- banner:
+  - generic: ร้านทดสอบข้อความครบสิทธิ์
+  - button "เลือกสาขา":
+    - generic "ทุกสาขา (รวม)"
+- main:
+  - generic: การเงินและบัญชี
+  - heading "รายการค่าใช้จ่าย" [level=1]
+  - paragraph: เอกสารค่าใช้จ่ายและใบเสร็จทั้งหมด · คลิกเพื่อดูรายละเอียดและตรวจสอบ
+  - link "อัปโหลดใบเสร็จ":
+    - /url: /companies/free-ui-notice/expenses/upload
+  - button "รายวัน"
+  - button "รายเดือน"
+  - combobox:
+    - generic: ต.ค. 2569
+  - paragraph: รายการบนหน้าจอนี้กรองตามวันที่ส่งเข้าระบบ
+  - button "ทั้งหมด 2":
+    - text: ทั้งหมด
+    - generic: "2"
+  - button "ฉบับร่าง 2":
+    - text: ฉบับร่าง
+    - generic: "2"
+  - searchbox "ค้นหาผู้ขาย / เลขที่เอกสาร"
+  - generic: เลขรายจ่าย (EXP)
+  - generic: ผู้ขาย / หมวดหมู่
+  - generic: วันที่เอกสาร / เข้าระบบ
+  - generic: ยอดรวม
+  - generic: สถานะ
+  - generic: การทำงาน
+  - generic: ยังไม่มีเลขรายจ่าย
+  - generic: Synthetic Stationery Shop
+  - generic: "วันที่เอกสาร:"
+  - text: 28 ต.ค. 2569
+  - generic: "ส่งเข้าระบบ:"
+  - text: 28 ต.ค. 2569
+  - generic: อัปโหลดเว็บ
+  - generic: ฿103.00
+  - generic: ร่าง
+  - button "ดูรายละเอียด":
+  - generic: ยังไม่มีเลขรายจ่าย
+  - generic: ร้านกระดาษตัวอย่าง
+  - generic: "วันที่เอกสาร:"
+  - text: 28 ต.ค. 2569
+  - generic: "ส่งเข้าระบบ:"
+  - text: 28 ต.ค. 2569
+  - generic: อัปโหลดเว็บ
+  - generic: ฿120.00
+  - generic: ร่าง
+  - button "ดูรายละเอียด":
+  - generic: แสดง 1-2 จาก 2 รายการ

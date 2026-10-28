@@ -146,7 +146,7 @@ export const BILLING_DRAFT_POLICY: BillingPolicy = {
 };
 export type BillingReceiptUsage = {
   used: number; limit: number | null; remaining: number | null;
-  cadence: 'LEGACY_MONTH' | 'PAID_GRANTS'; resetsAt: string | null; expiresAt: string | null;
+  cadence: 'LEGACY_MONTH' | 'PAID_GRANTS' | 'FREE_MONTHLY_3'; resetsAt: string | null; expiresAt: string | null;
   /** Monthly base and fixed Admin gifts have separate clocks; absent for purchased allowances. */
   monthlyAllowance?: { limit: number | null; used: number; additionalRemaining: number; additionalExpiresAt: string | null };
 };

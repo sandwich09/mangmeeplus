@@ -169,9 +169,9 @@ describe('P10-L push delivery', () => {
     h.restore();
 
     const sent = JSON.stringify(h.pushes[0].body);
-    // R1: the first thing a new shop is told is the one step that unlocks it, never a free trial.
+    // Opening is confirmed without a paid prerequisite or an unsolicited free offer.
     assert.match(sent, /เปิดร้าน ร้านนิด ให้แล้ว/);
-    assert.match(sent, /เลือกแพ็กเกจเพื่อเริ่มใช้งาน/);
+    assert.doesNotMatch(sent, /เลือกแพ็กเกจ|ชำระเงิน|3 ใบ|ทดลองใช้ฟรี/);
     assert.equal(sent.includes('ทดลอง'), false);
     assert.match(sent, /https:\/\/liff\.line\.me\/1234567890-abcdef\/start/);
     // LINE-ONBOARD-01: nothing that could be a credential travels in a chat message.
@@ -179,7 +179,7 @@ describe('P10-L push delivery', () => {
     assert.equal(h.pushes[0].init.headers['X-Line-Retry-Key'], lineSignupPushRetryKey('r1', 'approved'));
     // R-C4: the card names the next step in both the bold title and the button, not "ready to use".
     assert.match(sent, /เปิดร้านแล้ว/);
-    assert.match(sent, /"label":"เลือกแพ็กเกจ"/);
+    assert.match(sent, /"label":"เปิดหน้าร้าน"/);
     assert.equal(sent.includes('พร้อมใช้งานแล้ว'), false);
     assert.equal(sent.includes('เริ่มใช้งาน"'), false);
     // The exit-point transform (line-reply.adapter.ts et al.) skips liff.line.me; the URL here is untouched.
@@ -193,7 +193,7 @@ describe('P10-L push delivery', () => {
 
     const sent = JSON.stringify(h.pushes[0].body);
     assert.match(sent, /เพิ่มร้านแล้ว/);
-    assert.match(sent, /"label":"เลือกแพ็กเกจ"/);
+    assert.match(sent, /"label":"เปิดหน้าร้าน"/);
     assert.match(sent, /https:\/\/liff\.line\.me\/1234567890-abcdef\/start/);
   });
 
@@ -209,7 +209,7 @@ describe('P10-L push delivery', () => {
       const [message] = h.pushes[0].body.messages;
       assert.equal(message.type, 'text');
       assert.doesNotMatch(message.text, /กดปุ่ม|ด้านล่าง/);
-      assert.match(message.text, /เลือกแพ็กเกจ/);
+      assert.match(message.text, /เข้าหน้าร้าน/);
       assert.match(message.text, /เว็บแอปมั่งมีพลัส/, 'and says where to go instead');
     });
   }

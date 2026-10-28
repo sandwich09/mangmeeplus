@@ -1,3 +1,5 @@
+import { expenseDraftAccess } from '../../../expenses/application/expense-commercial-access';
+import { freeExpenseAttachmentSource, assertFreeExpenseUploadAvailable, type FreeExpenseAttachmentSource } from './free-expense-attachment';
 import { Inject, Injectable, ForbiddenException, BadRequestException, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import {
@@ -47,6 +49,11 @@ export class CreateUploadIntentUseCase {
     if (!attachment) throw new NotFoundException('Attachment not found.');
     if (attachment.uploadedByUserId !== ctx.userId || !isBranchInScope(ctx.scopes ?? {}, attachment.branchId)) throw new ForbiddenException();
     if (attachment.status !== 'PENDING_UPLOAD' && attachment.status !== 'ACTIVE') throw new BadRequestException('Attachment cannot be resumed.');
+    if (await expenseDraftAccess(ctx, this.attachments.commercialAccessDb)) {
+      const source = attachment.metadataJson?.freeExpenseSource as { kind?: string; id?: string } | undefined;
+      await freeExpenseAttachmentSource(this.attachments.commercialAccessDb, ctx,
+        source?.kind === 'EXPENSE' ? { expenseId: source.id } : source?.kind === 'CAPTURE_GROUP' ? { captureGroupId: source.id } : {}, true);
+    }
     if (attachment.status === 'ACTIVE') {
       return { attachmentId, uploadUrl: '', uploadMethod: 'PUT', uploadHeaders: {}, expiresAt: new Date(), uploadRequired: false };
     }
@@ -62,7 +69,7 @@ export class CreateUploadIntentUseCase {
     return { attachmentId, uploadUrl: intent.uploadUrl, uploadMethod: intent.uploadMethod, uploadHeaders: intent.uploadHeaders, expiresAt: intent.expiresAt, uploadRequired: true };
   }
 
-  async execute(ctx: RequestContext, cmd: CreateUploadIntentCommand): Promise<CreateUploadIntentResult> {
+  async execute(ctx: RequestContext, cmd: CreateUploadIntentCommand, source?: FreeExpenseAttachmentSource): Promise<CreateUploadIntentResult> {
     if (!ctx.permissions.includes('attachment.create')) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -72,6 +79,18 @@ export class CreateUploadIntentUseCase {
       throw new ForbiddenException();
     }
 
+    let freeMetadata: Record<string, unknown> | undefined;
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.attachments.commercialAccessDb);
+    if (freeExpenseDrafts || source?.freeOcrReservation) {
+      const selected: FreeExpenseAttachmentSource = source ?? { expenseId: typeof cmd.metadataJson?.expenseReceiptExpenseId === 'string' ? cmd.metadataJson.expenseReceiptExpenseId : undefined };
+      const target = await freeExpenseAttachmentSource(this.attachments.commercialAccessDb, ctx, selected, true);
+      if (cmd.branchId && cmd.branchId !== target.branchId) throw new ForbiddenException('Attachment branch does not match its source.');
+      cmd = { ...cmd, branchId: target.branchId ?? undefined, visibility: 'INTERNAL' };
+      if (selected.freeOcrReservation && (ctx.authProvider !== 'line' || target.kind !== 'EXPENSE' || target.captureSource !== 'LINE_UPLOAD')) throw new ForbiddenException('Invalid admitted LINE receipt source.');
+      const uploadMonth = await assertFreeExpenseUploadAvailable({ client: this.attachments.commercialAccessDb } as any, ctx.companyId, selected.freeOcrReservation, target.lineMessageId);
+      freeMetadata = { freeExpenseSource: { kind: target.kind, id: target.id }, freeExpenseUploadMonth: uploadMonth,
+        ...(target.kind === 'EXPENSE' ? { lineReceiptExpenseId: target.id } : {}) };
+    }
     const metaErr = validateAttachmentMeta(cmd.mimeType, cmd.byteSize, this.config.uploadMaxBytes)
       ?? validateAttachmentFileName(cmd.originalFileName, cmd.mimeType);
     if (metaErr) throw new BadRequestException(metaErr);
@@ -107,7 +126,7 @@ export class CreateUploadIntentUseCase {
       byteSize: cmd.byteSize,
       visibility: cmd.visibility ?? 'INTERNAL',
       uploadedByUserId: ctx.userId,
-      metadataJson: cmd.metadataJson,
+      metadataJson: freeMetadata ?? cmd.metadataJson,
       pendingQuotaBytes: this.config.uploadPendingMaxBytesPerCompany,
       pendingCreatedAfter: new Date(Date.now() - PENDING_STORAGE_RETENTION_MS),
     });

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { Inject, Injectable } from '@nestjs/common';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { PrismaOutboxRepository } from '../../infrastructure/repositories/prisma-outbox.repository';
@@ -70,6 +71,7 @@ export class OutboxAppendService {
     aggregateId: string,
     payload: CoreOutboxPayload,
     priority: 'LOW' | 'NORMAL' | 'HIGH' = 'NORMAL',
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
     const idempotencyPart = payload.requestId ?? outboxEventFingerprint(eventType, aggregateType, aggregateId, payload);
     const eventKey = `${eventType}:${aggregateType}:${aggregateId}:${idempotencyPart}`;
@@ -82,8 +84,10 @@ export class OutboxAppendService {
         eventKey,
         payloadJson: payload as unknown as Record<string, unknown>,
         priority,
-      });
+      }, tx);
     } catch (error) {
+      // A caller-owned transaction must roll back its state change when its notification fails.
+      if (tx) throw error;
       // Callers `void` this today, so re-throwing would surface as an unhandled
       // rejection instead of a rollback. Make the loss investigable instead.
       this.logger.error(

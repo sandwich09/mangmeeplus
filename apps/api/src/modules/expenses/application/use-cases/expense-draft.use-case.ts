@@ -7,6 +7,7 @@ import type { Prisma } from '../../../../generated/prisma/client';
 import { EXPENSE_VOID_CERTIFICATE_WORDS } from '@watchdog-bms/contracts';
 import { maskAccountNumber } from '../../../banking/domain/logic/banking.logic';
 import { isCivilDate, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { assertExpenseFinancialAccess, expenseDraftAccess } from '../expense-commercial-access';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
 import { isSerializationFailure } from '../../../../common/database/prisma-error';
 import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
@@ -119,6 +120,7 @@ export class CreateExpenseDraftUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService, private readonly launchGate: LaunchGateGuardService) {}
 
   async execute(ctx: RequestContext, input: CreateExpenseDraftInput): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
       throw new BadRequestException('Invalid draft idempotency key');
     }
@@ -222,6 +224,7 @@ export class GetExpenseUseCase {
   }
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecordWithRelations> {
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review') || hasPerm(ctx, 'expense.confirm');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
     const canReadRelated = hasPerm(ctx, 'expense.read_related');
@@ -230,6 +233,7 @@ export class GetExpenseUseCase {
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
+    if (freeExpenseDrafts && !SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)) throw new ForbiddenException('Free access is limited to source drafts.');
     const canReadThisRelated = !canRead && canReadRelated
       && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
     const canReadThisOwn = canReadOwn
@@ -268,14 +272,15 @@ export class GetExpenseUseCase {
   }
 
   async sourceDraft(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
-    if (expense.captureSource !== 'LINE_UPLOAD') return null;
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
+    if (expense.captureSource !== 'LINE_UPLOAD' && !(freeExpenseDrafts && expense.captureSource === 'WEB_UPLOAD')) return null;
     const state = sourceDraftState(expense, await this.repo.listCategories(ctx.companyId));
     if (!state) return null;
     // Keep legacy read responses aligned with the current collection rule without writing on GET.
     // In particular, a retired D-PURPOSE question must not survive in the AI summary beside the
     // normalized source projection and re-arm a client-side blocker.
     expense.aiVerificationSummaryJson = sourceDraftSummary(expense.aiVerificationSummaryJson, state);
-    const permitted = hasPerm(ctx, 'expense.review') || (expense.createdByUserId === ctx.userId
+    const permitted = (!freeExpenseDrafts && hasPerm(ctx, 'expense.review')) || (expense.createdByUserId === ctx.userId
       && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission)));
     const active = permitted && await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
     return projectExpenseSourceDraft(state, Boolean(active) && SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status));
@@ -287,11 +292,12 @@ export class ListExpensesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
   async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>): Promise<PaginatedExpenses> {
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     const scope = this.readScope(ctx, filter.branchId);
     const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
     const pageSize = Number.isFinite(filter.pageSize) ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!))) : 20;
     const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize, ...scope.filter };
-    return this.repo.listExpenses(resolved, ctx.scopes, scope.scope.relatedUserId);
+    return this.repo.listExpenses(resolved, ctx.scopes, scope.scope.relatedUserId, freeExpenseDrafts);
   }
 
   async readReportSummary(ctx: RequestContext, filter: { fromDate?: string; toDate?: string; branchId?: string }) {
@@ -415,6 +421,7 @@ export class UpdateExpenseDraftUseCase {
     input: UpdateExpenseDraftInput,
     options: UpdateExpenseDraftOptions = {},
   ): Promise<ExpenseRecord | ExpenseDraftTotalsPreview> {
+    const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     // Capture explicit intent before source/financial synchronization can supply stored values.
     const dateReviewInput = input.sourceDraft?.expenseDate !== undefined ? input.sourceDraft.expenseDate : input.expenseDate || undefined;
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -422,8 +429,22 @@ export class UpdateExpenseDraftUseCase {
     assertBranchInScope(ctx, r.branchId);
     if (input.branchId !== undefined) assertBranchInScope(ctx, input.branchId);
 
-    const canReview = hasPerm(ctx, 'expense.review') || options.ownSubstituteReceiptReview === true;
+    const canReview = !freeExpenseDrafts && (hasPerm(ctx, 'expense.review') || options.ownSubstituteReceiptReview === true);
     const isOwner = r.createdByUserId === ctx.userId;
+    if (freeExpenseDrafts) {
+      const allowed = new Set(['expectedUpdatedAt', 'sourceDraft', 'expenseDate', 'vendorNameSnapshot', 'vendorTaxIdSnapshot',
+        'vendorBranchCodeSnapshot', 'vendorBranchNameSnapshot', 'vendorAddressSnapshot', 'note', 'lines', 'vatMode', 'vatSource', 'whtInput', 'receiptNumber']);
+      if (!isOwner || !SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
+        || !['LINE_UPLOAD', 'WEB_UPLOAD'].includes(r.captureSource)
+        || Object.keys(input).some((field) => !allowed.has(field))
+        || !await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, r.branchId)) {
+        throw new ForbiddenException({ code: 'FREE_EXPENSE_DRAFTS_ONLY', message: 'แก้ไขได้เฉพาะข้อมูลร่างรายจ่ายของตนเอง' });
+      }
+      if (input.lines?.some(line => hasSelectedTaxCode(taxSelection(line)))) {
+        throw new ForbiddenException('Free source drafts cannot select tax codes.');
+      }
+      options = { ...options, requireExpectedUpdatedAt: true };
+    }
     let combinedReviewSourceState: ReturnType<typeof sourceDraftState> = null;
     let combinedReviewSourceExpense: ExpenseRecordWithRelations | undefined;
     let combinedReviewSourceInput: UpdateExpenseDraftInput['sourceDraft'];
@@ -434,7 +455,7 @@ export class UpdateExpenseDraftUseCase {
       }
       const sourceStatusMutable = SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
         || (!sourceOnly && canReview && r.status === 'READY_FOR_CONFIRMATION');
-      if (r.captureSource !== 'LINE_UPLOAD' || !sourceStatusMutable
+      if (!(r.captureSource === 'LINE_UPLOAD' || freeExpenseDrafts && r.captureSource === 'WEB_UPLOAD') || !sourceStatusMutable
         || (!canReview && !(isOwner && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission))))
         || !await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, r.branchId)) {
         throw new ForbiddenException('Source draft editing requires an active originating uploader or reviewer.');
@@ -486,7 +507,7 @@ export class UpdateExpenseDraftUseCase {
     }
     const canCollectOwnLineDraft = Boolean(options.lineDraftCollection)
       && (ctx.authProvider === 'line' || options.webSourceDraft)
-      && r.captureSource === 'LINE_UPLOAD'
+      && (r.captureSource === 'LINE_UPLOAD' || freeExpenseDrafts && r.captureSource === 'WEB_UPLOAD')
       && SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
       && (isOwner || (options.webSourceDraft && canReview))
       && ((options.webSourceDraft && canReview) || hasPerm(ctx, 'expense.receipt.line_upload') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.create'));
@@ -950,7 +971,7 @@ export class UpdateExpenseDraftUseCase {
      * connection would survive that rollback and leave a shop nobody saved. That lane only patches
      * line amounts, never vendor identity, so nothing is lost by sitting it out.
      */
-    const vendorRegistry = [r.sourceDocumentType, nextSourceDocumentType, detectedDocumentKind].includes('TRANSFER_SLIP')
+    const vendorRegistry = freeExpenseDrafts || [r.sourceDocumentType, nextSourceDocumentType, detectedDocumentKind].includes('TRANSFER_SLIP')
       ? undefined : this.ensureVendorCounterparty;
     const receiptUploaderUserId = !options.db && vendorRegistry && r.primaryAttachmentId
       ? await this.repo.findPrimaryReceiptUploader(ctx.companyId, expenseId, r.primaryAttachmentId)
@@ -1312,6 +1333,7 @@ export class ConfirmExpenseUseCase {
     db?: ExpenseDb,
     lineConfirmation?: { previewOnly?: boolean; expectedUpdatedAt?: Date; evidenceReview?: ExpenseEvidenceAssessment; readyRevision?: Date; previewSource?: ExpenseRecordWithRelations },
   ): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (!authority) {
       requirePerm(ctx, 'expense.confirm', 'confirm expense');
       if (ctx.authProvider === 'line' && !lineConfirmation) throw new ForbiddenException('Expense confirmation is available on the authenticated web only.');
@@ -1604,6 +1626,7 @@ export class RejectExpenseUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
 
   async execute(ctx: RequestContext, expenseId: string, reason: string): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.reject', 'reject expense');
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -1679,6 +1702,7 @@ export class VoidExpenseUseCase {
     taxFilingAttested?: boolean,
     lineAction?: { previewOnly?: boolean; expectedUpdatedAt?: Date },
   ): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     if (!isExpenseVoidReason(reason)) throw new BadRequestException({ code: 'expense_void_reason_required', message: EXPENSE_VOID_CERTIFICATE_WORDS.reasonRequired });
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException({ code: 'expense_correction_not_found', message: EXPENSE_CORRECTION_WORDS.notFound });
@@ -1858,6 +1882,7 @@ export class MarkExpenseReadyUseCase {
   }
 
   async execute(ctx: RequestContext, expenseId: string, requestedReviewerUserId?: string, expectedUpdatedAt?: Date): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     const { record: r, target } = await this.previewLineAction(ctx, expenseId, undefined, requestedReviewerUserId);
     if (expectedUpdatedAt && r.updatedAt.getTime() !== expectedUpdatedAt.getTime()) throw new ConflictException('expense_source_version_changed');
     if (requestedReviewerUserId && r.status === 'READY_FOR_CONFIRMATION' && r.requestedReviewerUserId === requestedReviewerUserId && r.submittedByUserId === ctx.userId) return r;
@@ -1873,6 +1898,7 @@ export class MarkExpenseReadyUseCase {
   }
 
   async previewLineAction(ctx: RequestContext, expenseId: string, previewSource?: ExpenseRecordWithRelations, requestedReviewerUserId?: string) {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     let r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException();
     if (previewSource) {
@@ -1929,6 +1955,7 @@ export class RecordExpensePaymentUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, @Optional() private readonly linkAttachment?: LinkAttachmentUseCase) {}
 
   async confirmDate(ctx: RequestContext, expenseId: string, paymentId: string, paidAt: string) {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.payment.record', 'confirm expense payment date');
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException();
@@ -1947,6 +1974,7 @@ export class RecordExpensePaymentUseCase {
     input: RecordExpensePaymentInput,
     line?: { expectedUpdatedAt?: Date; evidenceAttachmentId?: string; beforeEvidence?: (tx: Prisma.TransactionClient) => Promise<void> },
   ): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.payment.record', 'record expense payment');
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -1986,6 +2014,7 @@ export class RecordExpensePaymentUseCase {
     return result.expense;
   }
   async previewLineAction(ctx: RequestContext, expenseId: string, input: RecordExpensePaymentInput): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.payment.record', 'record expense payment');
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException();
@@ -2012,6 +2041,7 @@ export class ReopenExpenseUseCase {
     private readonly notify?: CreateOrUpdateNotificationEventUseCase) {}
 
   async execute(ctx: RequestContext, expenseId: string, reason: string, taxFilingAttested?: boolean): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.confirm', 'reopen expense', { code: 'expense_correction_permission_missing', message: EXPENSE_CORRECTION_WORDS.permissionDenied });
     if (ctx.authProvider === 'line') throw new ForbiddenException({ code: 'expense_correction_web_required', message: EXPENSE_CORRECTION_WORDS.webRequired });
     const cleanReason = correctionReason(reason);
@@ -2060,6 +2090,7 @@ export class CancelExpensePaymentUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, @Optional() private readonly disbursementNotices?: DisbursementVoucherNoticeService) {}
 
   async execute(ctx: RequestContext, expenseId: string, paymentId: string, reason: string): Promise<ExpenseRecord> {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.payment.record', 'cancel expense payment');
     if (ctx.authProvider === 'line') throw new ForbiddenException('Expense payment correction requires authenticated web authority.');
     const cleanReason = correctionReason(reason);
@@ -2083,6 +2114,7 @@ export class CancelExpensePaymentUseCase {
 export class DecideExpenseInputVatUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
   async execute(ctx: RequestContext, expenseId: string, input: import('@watchdog-bms/contracts').DecideExpenseInputVatInput) {
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     requirePerm(ctx, 'expense.review', 'decide input VAT');
     return this.repo.decideInputVat(ctx, expenseId, input);
   }

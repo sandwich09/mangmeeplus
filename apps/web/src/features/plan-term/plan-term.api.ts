@@ -18,6 +18,8 @@ export type PlanTermNotice = {
   isOwner: boolean;
   /** This membership may manage package renewal through company.plan.manage. */
   canManagePlan?: boolean;
+  /** Server-verified source-only expense draft access; absent is false. */
+  freeExpenseDrafts?: boolean;
   /** Present only while EXPIRED. */
   lockReason?: PlanLockReason;
 };
@@ -37,7 +39,8 @@ export async function readPlanTermNotice(companyId?: string): Promise<PlanTermNo
   if (body === null) return null;
   if (!['ACTIVE', 'WARNING', 'EXPIRED'].includes(body?.derivedState) ||
       typeof body.isOwner !== 'boolean' || typeof body.termEndsAt !== 'string' ||
-      (body.canManagePlan !== undefined && typeof body.canManagePlan !== 'boolean')) {
+      (body.canManagePlan !== undefined && typeof body.canManagePlan !== 'boolean') ||
+      (body.freeExpenseDrafts !== undefined && typeof body.freeExpenseDrafts !== 'boolean')) {
     throw new PlanTermNoticeError(502);
   }
   return body as PlanTermNotice;

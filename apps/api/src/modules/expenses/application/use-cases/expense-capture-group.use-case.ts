@@ -428,7 +428,7 @@ export class AddExpenseCaptureFileUseCase {
       originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize,
       visibility: 'INTERNAL',
       ...(group.branchId ? { branchId: group.branchId } : {}),
-    });
+    }, { captureGroupId: groupId });
 
     const result = await this.capture.transaction(async (tx) => {
       await this.capture.lockGroup(tx, ctx.companyId, groupId);

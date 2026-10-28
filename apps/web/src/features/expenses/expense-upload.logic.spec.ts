@@ -16,6 +16,7 @@ import {
   RECEIPT_QUOTA_ERROR_CODE,
   RECEIPT_UPLOAD_ACCEPT,
   SIGNATURE_UPLOAD_ACCEPT,
+  shouldShowExtractionNotice,
 } from './expense-upload.logic';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { mapResponseToApiError } from '@/common/api/api-error.logic';
@@ -50,6 +51,14 @@ describe('classifyUploadFile', () => {
     for (const value of ['.pdf', '.png', '.jpg', '.jpeg', '.jpe', '.heic', '.heif', '.gif', 'image/gif']) {
       assert.ok(RECEIPT_UPLOAD_ACCEPT.split(',').includes(value));
     }
+  });
+});
+
+describe('extraction notice visibility', () => {
+  it('keeps persistent allowance notices visible after OCR details load', () => {
+    assert.equal(shouldShowExtractionNotice({ tone: 'info', persistent: true }, true), true);
+    assert.equal(shouldShowExtractionNotice({ tone: 'info' }, true), false);
+    assert.equal(shouldShowExtractionNotice({ tone: 'error' }, true), true);
   });
 });
 

@@ -4431,6 +4431,8 @@ model CompanyPlanTerm {
   warmupSlipLimit   Int?
   /// 'YYYY-MM' (Asia/Bangkok) of the month whose quota notice already went out — exactly-once.
   quotaNoticeSentMonthKey String?
+  /// Free source notice is separate from paid/trial notices.
+  freeQuotaNoticeSentMonthKey String?
   createdByUserId   String?
   updatedByUserId   String?
   createdAt         DateTime  @default(now())
@@ -4755,6 +4757,10 @@ model CompanyOcrUsageEvent {
   monthKey    String // 'YYYY-MM', Asia/Bangkok
   sourceRoute String // 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract'
   requestId   String
+  /// Null is the existing paid/trial/gift admission. Frozen for the life of this operation.
+  quotaSource String?
+  /// Only a usable result persisted by the owning route consumes the free monthly allowance.
+  succeededAt DateTime?
   billingReceiptGrantId String?
   billingReceiptGrant BillingReceiptGrant? @relation(fields: [billingReceiptGrantId, companyId], references: [id, companyId], onDelete: Restrict)
   /// Add-on plan PR B: the `ReceiptUnitEntry.generation` this admission reserved. Null = no lot, or an
@@ -4765,6 +4771,7 @@ model CompanyOcrUsageEvent {
 
   @@unique([companyId, sourceRoute, requestId])
   @@index([companyId, monthKey, sourceRoute])
+  @@index([companyId, monthKey, quotaSource, succeededAt])
   @@index([companyId, createdAt])
   @@index([billingReceiptGrantId])
 }

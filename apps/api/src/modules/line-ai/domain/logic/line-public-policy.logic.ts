@@ -3,24 +3,28 @@
 const ANSWERS = {
   trial: {
     title: 'การเริ่มใช้งานและการต่ออายุ',
-    text: 'สมัครแล้วร้านเปิดไว้ก่อนแบบยังไม่มีแพ็กเกจ ไม่บังคับซื้อทันที ใช้งานได้เมื่อเลือกและชำระแพ็กเกจแล้ว เริ่มต้น 249 บาท/เดือน ผ่านบัตรออนไลน์หรือพร้อมเพย์\n'
-      + 'ไม่เรียกเก็บเงินอัตโนมัติจนกว่าจะเลือกเอง ยังไม่ชำระข้อมูลยังอยู่ค่ะ\n'
-      + 'ร้านที่มีสิทธิ์ทดลองฟรีอยู่ก่อนใช้ต่อได้จนกว่าจะหมดช่วง แล้วเลือกแพ็กเกจต่อได้เองในแอปค่ะ',
+    text: 'ร้านที่เปิดสำเร็จและยังไม่เคยซื้อแพ็กเกจ ใช้สิทธิ์อ่านบิล ใบเสร็จ หรือสลิปที่เกี่ยวกับรายจ่ายรวม 3 ใบต่อเดือน ดูและแก้ร่างในเว็บได้ค่ะ สิทธิ์นี้ไม่รวมการถามตอบกับน้องมั่งมีหรือการยืนยันและจ่ายเงิน\n'
+      + 'ไม่บังคับซื้อหรือเรียกเก็บเงินอัตโนมัติจากการใช้สิทธิ์ฟรี ร้านที่เคยซื้อแพ็กเกจแล้วหมดอายุไม่อยู่ในสิทธิ์นี้ค่ะ\n'
+      + 'ร้านที่มีสิทธิ์ทดลองเดิมยังใช้ตามสิทธิ์เดิมจนหมดช่วง ทั้งหมดขึ้นกับสถานะร้านและสิทธิ์ของผู้ใช้งานค่ะ',
   },
   trial_limits: {
     title: 'เปิดร้านแล้วใช้อะไรได้บ้าง',
-    text: 'ก่อนชำระ ใช้ได้แค่ตั้งค่าข้อมูลร้านและบัญชี กับหน้าแพ็กเกจค่ะ\n'
-      + 'แพ็กเกจ 249 / 499 / 999 ได้เมนูหลักชุดเดียวกัน คือ ผู้ช่วย AI ทาง LINE หน้าแรก ค่าใช้จ่ายและใบเสร็จ การเบิกจ่าย พนักงานและสิทธิ์ และการแจ้งเตือน ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จค่ะ\n'
+    text: 'ร้านที่เปิดสำเร็จและยังไม่เคยซื้อแพ็กเกจ อ่านเอกสารรายจ่ายรวม 3 ใบต่อเดือน เปิดดู แก้ข้อมูลในเว็บ และเก็บร่างได้ค่ะ เมื่ออ่านครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้\n'
+      + 'ยังไม่รวมการถามตอบกับน้องมั่งมี การสร้างรายจ่ายเปล่า การยืนยัน อนุมัติ จ่ายเงิน ลงบัญชี หรือโมดูลอื่นค่ะ ร้านที่เคยซื้อแพ็กเกจแล้วหมดอายุไม่อยู่ในสิทธิ์นี้',
+  },
+  package_features: {
+    title: 'เมนูในแพ็กเกจ',
+    text: 'แพ็กเกจ 249 / 499 / 999 ได้เมนูหลักชุดเดียวกัน คือ ผู้ช่วย AI ทาง LINE หน้าแรก ค่าใช้จ่ายและใบเสร็จ การเบิกจ่าย พนักงานและสิทธิ์ และการแจ้งเตือน ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จค่ะ\n'
       + 'แพ็กเกจธุรกิจ 1,999 ได้เมนูเดียวกัน และเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ ที่ออกจากระบบค่ะ',
   },
   card: {
     title: 'เริ่มใช้งานอย่างไร',
-    text: 'กด "เปิดร้านใหม่" ใน LINE → กรอกข้อมูล → เลือกแพ็กเกจในหน้าเว็บ → ชำระ → ใช้งานได้ทันที\n'
-      + 'สมัครไม่ต้องผูกบัตร ใส่ชำระเงินเมื่อเลือกแพ็กเกจเท่านั้นค่ะ',
+    text: 'กด "เปิดร้านใหม่" ใน LINE → กรอกข้อมูล → รอเปิดร้านสำเร็จ → เข้าหน้าร้านค่ะ\n'
+      + 'สมัครไม่ต้องผูกบัตร เมื่อเปิดร้านสำเร็จจึงใช้ฟีเจอร์ตามสิทธิ์ของร้านและผู้ใช้งานได้ค่ะ',
   },
   data: {
     title: 'ข้อมูลเมื่อยังไม่มีแพ็กเกจหรือหมดอายุ',
-    text: 'เมื่อยังไม่มีแพ็กเกจหรือแพ็กเกจหมดอายุ การใช้งานส่วนธุรกิจจะหยุดไว้ แต่ข้อมูลไม่ได้ถูกลบทันทีค่ะ\nหากต้องการขอลบข้อมูล ต้องแจ้งคำขอทางอีเมลและยืนยันตัวตนกับทีมงานก่อน การถามในแชทนี้ยังไม่ได้ลบข้อมูลหรือเริ่มคำขอให้นะคะ ติดต่อทีมงานเพื่อรับขั้นตอนที่ถูกต้องได้ค่ะ',
+    text: 'ข้อมูลไม่ได้ถูกลบทันทีเพราะหมดช่วงทดลองค่ะ หากร้านยังไม่เคยซื้อแพ็กเกจและเข้าเกณฑ์สิทธิ์ฟรี ยังดูและแก้ร่างรายจ่ายได้ ส่วนฟีเจอร์อื่นเป็นไปตามสิทธิ์ปัจจุบัน\nหากต้องการขอลบข้อมูล ต้องแจ้งคำขอทางอีเมลและยืนยันตัวตนกับทีมงานก่อน การถามในแชทนี้ยังไม่ได้ลบข้อมูลหรือเริ่มคำขอให้นะคะ ติดต่อทีมงานเพื่อรับขั้นตอนที่ถูกต้องได้ค่ะ',
   },
   paid_renewal: {
     title: 'การต่ออายุแพ็กเกจที่ซื้อแล้ว',
@@ -96,9 +100,8 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
     || /^(?:แบบ)?หมดอายุฟรีแล้วบังคับสมัครต่อไหม$/u.test(text)) return answer('trial');
 
   const questions: ReadonlyArray<[PublicPolicyTopic, RegExp]> = [
-    // Owner 2026-09-21: "แพ็กเกจไหนได้เมนูอะไรบ้าง" is the same question as the one above, asked by
-    // someone who is already past the free-trial wording — same whole-string rule, same answer.
-    ['trial_limits', /^(?:(?:ทดลอง(?:ใช้)?ฟรี|ใช้ฟรี)(?:ได้)?(?:กี่วัน|นานแค่ไหน|กี่คน|กี่สาขา|กี่ใบ|กี่รายการ)|สิทธิ์ทดลองใช้ฟรี(?:มีอะไรบ้าง|ได้อะไรบ้าง)|แพ็กเกจ(?:ไหน|นี้|ธุรกิจ|แต่ละแบบ)?(?:ได้|มี|เปิด|ใช้)(?:เมนู)?อะไร(?:ได้)?บ้าง)$/u],
+    ['trial_limits', /^(?:(?:ทดลอง(?:ใช้)?ฟรี|ใช้ฟรี)(?:ได้)?(?:กี่วัน|นานแค่ไหน|กี่คน|กี่สาขา|กี่ใบ|กี่รายการ)|สิทธิ์ทดลองใช้ฟรี(?:มีอะไรบ้าง|ได้อะไรบ้าง))$/u],
+    ['package_features', /^แพ็กเกจ(?:ไหน|นี้|ธุรกิจ|แต่ละแบบ)?(?:ได้|มี|เปิด|ใช้)(?:เมนู)?อะไร(?:ได้)?บ้าง$/u],
     ['card', /^(?:(?:สมัคร)?(?:ทดลอง(?:ใช้)?ฟรี|ใช้ฟรี)(?:ต้อง)?(?:ผูก|ใช้|ใส่|กรอก)(?:บัตร|บัตรเครดิต)(?:ไหม|หรือเปล่า)|ไม่มีบัตรเครดิต(?:ทดลองฟรี|ใช้ฟรี)ได้ไหม)$/u],
     ['data', /^(?:(?:ถ้า)?(?:หมด(?:ช่วง)?(?:ทดลอง(?:ใช้)?ฟรี|โปรฟรี)|ไม่ต่อ(?:อายุ)?แพ็กเกจ)(?:แล้ว)?ข้อมูล(?:จะ)?(?:หาย|ถูกลบ|ยังอยู่)(?:ไหม|หรือเปล่า)|(?:นโยบาย|ขั้นตอน)(?:การ)?ลบข้อมูล(?:เป็นอย่างไร|มีอะไรบ้าง)?|ขอลบข้อมูล(?:ต้องทำยังไง|มีขั้นตอนยังไง))$/u],
     ['paid_renewal', /^(?:(?:ซื้อแพ็กเกจแล้ว|แพ็กเกจที่ซื้อแล้ว)(?:จะ)?(?:หักเงินอีก|ต่ออายุอัตโนมัติ|หักเงินอัตโนมัติ)ไหม|ต่ออายุแพ็กเกจ(?:เสียเงิน|อัตโนมัติ)ไหม)$/u],
@@ -124,10 +127,11 @@ export function resolvePublicPolicyAnswer(messageText: string, previous?: Public
 export function publicPolicyAnswerLanguage(answer: PublicPolicyAnswer, language: 'th' | 'en'): PublicPolicyAnswer {
   if (language === 'th') return answer;
   const copy: Record<PublicPolicyTopic, { title: string; text: string }> = {
-    trial: { title: 'Getting started and renewal', text: 'Registration opens a shop without forcing an immediate purchase; choose and pay for a package to use the service, from 249 THB per month by card or PromptPay, and existing trial access lasts until its original expiry.' },
-    trial_limits: { title: 'Available services', text: 'Before payment, shop/account setup and the package page remain available; the 249, 499 and 999 THB packages share core LINE AI, dashboard, expenses, claims, team and notification menus with different allowances, while the 1,999 THB business package adds supported PND53 and withholding certificates.' },
-    card: { title: 'Start using your shop', text: 'Choose Open new shop in LINE, enter the shop details, then choose and pay for a package on the web; no payment card is needed just to register.' },
-    data: { title: 'Data without an active package', text: 'Business access pauses without an active package, but data is not immediately deleted; a deletion request requires email and staff identity verification, and this chat has not deleted data or opened such a request.' },
+    trial: { title: 'Getting started and renewal', text: 'Opened shops that have never bought a package can read three expense documents per month and view or edit drafts on the web. This does not include open chat or financial actions, does not charge automatically, and excludes expired paid shops. Existing trials retain their original access until expiry; shop status and user permissions still apply.' },
+    trial_limits: { title: 'Available services', text: 'Opened shops that have never bought a package can read three expense documents per month and keep editing existing drafts after reaching the limit. Open chat, blank expense creation, confirmation, approval, payment, posting and other modules are excluded.' },
+    package_features: { title: 'Package menus', text: 'The 249, 499 and 999 THB packages share core LINE AI, home, expenses, claims, team and notification menus with different allowances, while the 1,999 THB business package adds supported PND53 and withholding certificates.' },
+    card: { title: 'Start using your shop', text: 'Choose Open new shop in LINE, enter the shop details, then wait for the shop to open and use its available features according to your permissions; no payment card is needed just to register.' },
+    data: { title: 'Data without an active package', text: 'Data is not immediately deleted when trial access ends; eligible shops that have never bought a package can still view and edit expense drafts; a deletion request requires email and staff identity verification, and this chat has not deleted data or opened such a request.' },
     paid_renewal: { title: 'Paid package renewal', text: 'A purchased package may renew and charge monthly or yearly under the terms you accepted; a shop without a purchased package is not charged automatically, and staff can check your actual renewal settings.' },
     buy_early: { title: 'Buying before current access ends', text: 'A package bought before the existing access period ends starts its service and payment cycle immediately; review the terms before confirming purchase.' },
     quota: { title: 'Receipt-reading allowance', text: 'An allowance is used when AI reading and result storage succeed; failed reads or storage return the reserved allowance, manual edits and repeated replies are not new reads, and annual packages provide the full twelve-month allowance at the start.' },

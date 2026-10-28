@@ -25,6 +25,10 @@ export const SIGNATURE_UPLOAD_ACCEPT = IMAGE_UPLOAD_ACCEPT;
 
 export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
 
+export function shouldShowExtractionNotice(notice: { tone: 'info' | 'error'; persistent?: boolean } | null | undefined, hasAiSummary: boolean): boolean {
+  return Boolean(notice && (notice.tone === 'error' || notice.persistent === true || !hasAiSummary));
+}
+
 /** Lost HTTP responses reuse the idempotency key; a received provider failure is a fresh attempt. */
 export function expenseExtractionRetryMode(
   result: ExpenseExtractionResult | null,

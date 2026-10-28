@@ -1,3 +1,6 @@
+import { ForbiddenException } from '@nestjs/common';
+import { isFreeExpenseDraftCompany } from '../../system-partner-management/application/free-expense-access';
+import { FREE_EXPENSE_CHAT_REPLY } from '../domain/logic/free-expense-line.logic';
 import { BillingService } from '../../billing/application/billing.service';
 import { knownAiBudgetResponse, knownAiBudgetRefusal } from '../domain/logic/line-ai-terminal-outcome.logic';
 /**
@@ -247,6 +250,9 @@ export class AiGatewayClient {
      *  `admitOverCap`: see `CompanyAiBudgetStep.admitOverCap` (owner 2026-09-30). */
     options: { busyWaitDeadlineMs?: number; retryOrdinal?: number; admitOverCap?: boolean } = {},
   ): Promise<LineAiTurnResponse> {
+    if (await isFreeExpenseDraftCompany(this.prisma.client, request.userContext.companyId)) {
+      throw new ForbiddenException({ code: 'FREE_CHAT_NOT_INCLUDED', message: FREE_EXPENSE_CHAT_REPLY });
+    }
     if (this.billing) request = { ...request, packageOffers: (await this.billing.catalog()).offers };
     const grant = await this.validateLineV2(request, { companyId: request.userContext.companyId, userId: request.userContext.internalUserId, membershipId: request.userContext.membershipId });
     if (request.retainedTaskSource !== undefined) {
@@ -438,6 +444,9 @@ export class AiGatewayClient {
       request.taskProjection = projection;
     }
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
+    if (await isFreeExpenseDraftCompany(this.prisma.client, companyId)) {
+      throw new ForbiddenException({ code: 'FREE_CHAT_NOT_INCLUDED', message: FREE_EXPENSE_CHAT_REPLY });
+    }
     await this.assertRateLimit('llm', companyId);
     const media = request.attachments?.find((attachment) =>
       Boolean(attachment.contentBase64)

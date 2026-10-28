@@ -154,6 +154,16 @@ describe('resolveLoginLanding', () => {
     assert.equal(resolveLoginLanding(null, undefined, session()), '/companies/c1/dashboard');
   });
 
+  it('defaults confirmed free shops to expenses while preserving draft and billing recovery homes', () => {
+    const free = session({ freeExpenseDrafts: true });
+    assert.equal(resolveLoginLanding(null, undefined, free), '/companies/c1/expenses');
+    assert.equal(resolveLoginLanding(null, '/companies/c1/dashboard', free), '/companies/c1/expenses');
+    assert.equal(resolveLoginLanding(null, '/companies/c1/renew', free), '/companies/c1/expenses');
+    assert.equal(resolveLoginLanding(null, '/companies/c1/expenses/exp-1', free), '/companies/c1/expenses/exp-1');
+    assert.equal(resolveLoginLanding(null, '/companies/c1/billing/recover', free), '/companies/c1/billing/recover');
+    assert.equal(resolveLoginLanding('/companies/c1/billing/recover', '/companies/c1/dashboard', free), '/companies/c1/billing/recover');
+  });
+
   it('refuses targets that would bounce straight back to /login', () => {
     // '/' redirects to /login, and /login itself would re-enter this gate — either one is a loop.
     assert.equal(resolveLoginLanding('/', undefined, session()), '/companies/c1/dashboard');
@@ -219,6 +229,14 @@ describe('legal acceptance redirects', () => {
       resolvePostLegalAcceptanceTarget(null, session({ roles: ['SYSTEM_ADMIN'] })),
       '/system/partners',
     );
+  });
+
+  it('uses expenses as the free-shop post-acceptance default and keeps billing recovery links', () => {
+    const free = session({ freeExpenseDrafts: true });
+    assert.equal(resolvePostLegalAcceptanceTarget(null, free), '/companies/c1/expenses');
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/c1/dashboard', free), '/companies/c1/expenses');
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/c1/renew', free), '/companies/c1/expenses');
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/c1/billing/recover', free), '/companies/c1/billing/recover');
   });
 });
 

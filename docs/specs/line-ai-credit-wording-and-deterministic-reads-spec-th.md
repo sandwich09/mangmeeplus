@@ -206,3 +206,8 @@ concept/หน่วย/การเติมเครดิต, การตร
 ## 10. ส่งมอบ
 
 ห้าม tick acceptance จาก unit test เพียงอย่างเดียวเมื่อเกณฑ์ระบุ corpus/browser/UAT; บันทึก commands, counts, source SHA และข้อจำกัดใน task memory `docs/agent-memory/line-ai-credit-wording-wave2-2026-09-18.md`
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+ร้านใน cohort ฟรีไม่มี open chat/semantic edit; exact public/support/menu handlers ไม่มี model ทั้งทาง รูปเข้า governed OCR โดยตรง ข้อความครบ3ไม่ใช้แทน budget/permission/security refusal รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

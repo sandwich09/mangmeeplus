@@ -1,0 +1,68 @@
+- button "Open Next.js Dev Tools":
+- alert: อัปโหลดใบเสร็จ
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "สลับเมนู":
+  - navigation:
+    - list:
+      - listitem "การเงินและบัญชี"
+      - button "ค่าใช้จ่ายและใบเสร็จ" [expanded]:
+        - generic: ค่าใช้จ่ายและใบเสร็จ
+      - list:
+        - link "รายการค่าใช้จ่าย":
+          - /url: /companies/free-ui-zero/expenses
+          - text: รายการค่าใช้จ่าย
+        - link "อัปโหลดใบเสร็จ":
+          - /url: /companies/free-ui-zero/expenses/upload
+          - text: อัปโหลดใบเสร็จ
+      - listitem "บุคลากรและการตั้งค่า"
+      - button "ตั้งค่าบริษัท ตั้งค่ายังไม่ครบ":
+        - generic: ตั้งค่าบริษัท
+        - img "ตั้งค่ายังไม่ครบ"
+      - list:
+        - link "แพ็กเกจและการชำระเงิน":
+          - /url: /companies/free-ui-zero/billing
+          - text: แพ็กเกจและการชำระเงิน
+  - button "เมนูผู้ใช้":
+    - generic: ทz
+    - generic: คุณทดสอบ zero
+    - generic: เจ้าของร้าน
+- banner:
+  - generic: ร้านใช้ฟรี เริ่มอ่าน 0 ใบ
+  - button "เลือกสาขา":
+    - generic "ทุกสาขา (รวม)"
+- main:
+  - generic: การเงินและบัญชี
+  - heading "อัปโหลดใบเสร็จ" [level=1]
+  - paragraph: ส่งรูปใบเสร็จให้ AI อ่านข้อมูลอัตโนมัติ แล้วสร้างเป็นฉบับร่าง
+  - generic: สาขาของรายการ *
+  - combobox "สาขาของรายการ":
+    - generic: สำนักงานใหญ่ (สำนักงานใหญ่)
+  - paragraph: ระบุว่ารายการนี้เป็นของสาขาใด ก่อนบันทึกหรืออัปโหลดเอกสาร
+  - heading "ส่งเอกสารรายจ่าย" [level=2]
+  - paragraph: ส่งบิล ใบเสร็จ หรือสลิปที่เกี่ยวกับรายจ่าย โดยแยกเอกสารหนึ่งฉบับต่อไฟล์ ระบบจะอ่านข้อมูลและเก็บเป็นร่างให้แก้ต่อได้ การส่งไฟล์ยังไม่ใช่การยืนยันรายการ
+  - list:
+    - generic: "1"
+    - generic: ส่งไฟล์
+    - generic: "2"
+    - generic: AI อ่านใบเสร็จ
+    - generic: "3"
+    - generic: แก้และเก็บร่าง
+  - alert:
+    - paragraph: ⚠ ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้
+    - link "เปิดดูและแก้ร่างเดิม":
+      - /url: /companies/free-ui-zero/expenses
+  - generic: 📤
+  - generic: ลากไฟล์มาวาง หรือคลิกเพื่อเลือก
+  - generic: รองรับ JPG/JPEG PNG HEIC (รูปจากไอโฟน) หรือ PDF · รูปใหญ่จะถูกย่ออัตโนมัติ · หรือส่งจาก LINE ได้เลย
+  - generic: ✓ receipt-4.png
+  - generic: หมายเหตุ (ไม่บังคับ)
+  - textbox "หมายเหตุ (ไม่บังคับ)":
+    - /placeholder: เช่น ค่ากาแฟทีมงาน
+  - paragraph: ระบบจะอ่านข้อมูลจากเอกสารและเก็บเป็นร่าง คุณเปิดกลับมาแก้ข้อมูลต้นทางได้
+  - button "ให้ AI อ่านใบเสร็จ" [disabled]:
+    - generic: ให้ AI อ่านใบเสร็จ

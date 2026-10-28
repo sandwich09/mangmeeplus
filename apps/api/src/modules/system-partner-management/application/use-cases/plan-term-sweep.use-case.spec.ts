@@ -45,6 +45,7 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
   const prisma = {
     client: {
       $queryRaw: async () => [],
+      company: { findUnique: async () => null },
       companyPlanTerm: {
         findUnique: async ({ where }: any) => {
           const row = state.find(item => item.companyId === where.companyId);

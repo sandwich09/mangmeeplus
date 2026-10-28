@@ -18,7 +18,7 @@ import { WORKSPACE_ICON_NODES as ICON_MAP } from './design-icons';
 import type { WebSession } from '@/common/models/web-session.model';
 import { WORKSPACE_MODULES, SIDEBAR_GROUP_ORDER } from './web-core-workspace.constants';
 import {
-  filterModulesByPermissions,
+  filterModulesForSession,
   buildAccountLinks,
   buildLockedNavItems,
   packageMenuTrailing,
@@ -155,7 +155,7 @@ function WorkspaceLayoutContent({ children, companyId, session }: Props) {
   if (!settled) return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้า…</p>;
 
   // Owner 2026-09-20: a shop with no usable package has no business shell at all, on any path.
-  if (notice?.derivedState === 'EXPIRED')
+  if (notice?.derivedState === 'EXPIRED' && !(session.freeExpenseDrafts === true && notice.freeExpenseDrafts === true))
     return <LockedWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</LockedWorkspaceLayout>;
   // Layouts survive client navigation; resolve billing access on both entry paths. The profile joins the recovery
   // frame only for someone who may open it: anyone else is refused in the business shell, like on any other page,
@@ -280,9 +280,10 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
     };
   }, [revalidateAccessContext]);
 
+  const freeExpenseDrafts = session.freeExpenseDrafts === true;
   const filteredModules = useMemo(
-    () => filterModulesByPermissions(WORKSPACE_MODULES, session.permissions),
-    [session.permissions],
+    () => filterModulesForSession(WORKSPACE_MODULES, session.permissions, freeExpenseDrafts),
+    [session.permissions, freeExpenseDrafts],
   );
 
   // A company setting, not a permission: it reaches the sidebar through the same predicate as every
@@ -291,9 +292,9 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
   const canOpenDisbursementVoucher = canOpenDisbursementVoucherWeb(session, companyId);
   const allNavItems = useMemo(
     () => canOpenDisbursementVoucher
-      ? buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, true, shopHasSystemWhtCertificates(session.entitledFeatureKeys))
-      : buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, false, shopHasSystemWhtCertificates(session.entitledFeatureKeys)),
-    [filteredModules, companyId, locale, session.permissions, session.roles, canOpenManual, canOpenDisbursementVoucher, session.entitledFeatureKeys],
+      ? buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, true, shopHasSystemWhtCertificates(session.entitledFeatureKeys), freeExpenseDrafts)
+      : buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual, false, shopHasSystemWhtCertificates(session.entitledFeatureKeys), freeExpenseDrafts),
+    [filteredModules, companyId, locale, session.permissions, session.roles, canOpenManual, canOpenDisbursementVoucher, session.entitledFeatureKeys, freeExpenseDrafts],
   );
 
   // §15.4.1 E: the Owner asked for a mark on ตั้งค่าบริษัท "จนกว่าจะตั้งครบ". Only the holder of the
@@ -322,15 +323,15 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
   // does not render still has to count as its own menu, or a filter would follow the user into it.
   const menuKey = useMemo(() => resolveMenuKey(pathname, collectMenuTargets(allNavItems)), [pathname, allNavItems]);
 
-  const canAccessCurrentPath = canAccessWorkspacePath(WORKSPACE_MODULES, session.permissions, companyId, pathname);
+  const canAccessCurrentPath = canAccessWorkspacePath(WORKSPACE_MODULES, session.permissions, companyId, pathname, freeExpenseDrafts);
 
   // Keep denied pages in the shell and offer a page this session can actually open, named after where it goes.
   const fallback = useMemo(() => {
     const target = filteredModules.find((module) => canAccessWorkspacePath(
-      WORKSPACE_MODULES, session.permissions, companyId, module.buildHref(companyId),
+      WORKSPACE_MODULES, session.permissions, companyId, module.buildHref(companyId), freeExpenseDrafts,
     ));
     return target ? { href: target.buildHref(companyId), label: t(target.labelKey as Parameters<typeof t>[0], locale) } : null;
-  }, [filteredModules, session.permissions, companyId, locale]);
+  }, [filteredModules, session.permissions, companyId, locale, freeExpenseDrafts]);
 
   const activeKey = getActiveModuleKey(filteredModules, companyId, pathname) ?? employeePageMenuKey(companyId, pathname, navItems) ?? resolveMenuKey(pathname, collectMenuTargets(navItems));
 
@@ -343,13 +344,13 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
           // A phone: the shop name is a small caption over the branch picker, so the top bar is 68 px at every width
           // (it was 112 px on phones). Two buttons (several shops, or the two retries) sit side by side instead.
           <div className="flex min-w-0 flex-1 flex-col items-stretch gap-0.5 has-[[data-company-switch]]:flex-row has-[[data-company-switch]]:items-center has-[[data-company-switch]]:gap-2 has-[[data-scope-retry]]:flex-row has-[[data-scope-retry]]:items-center has-[[data-scope-retry]]:gap-2 sm:flex-row sm:items-center sm:gap-2">
-            <CompanySwitcher companyId={companyId} fallbackName={companyName} />
+            <CompanySwitcher companyId={companyId} fallbackName={companyName} currentFreeExpenseDrafts={freeExpenseDrafts} />
             <BranchSelector />
           </div>
         }
-        headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
-        banner={<PlanTermBanner companyId={companyId} notice={notice} />}
-        sidebarFooter={<PlanTermSidebarCard companyId={companyId} />}
+        headerExtras={!freeExpenseDrafts && session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
+        banner={<PlanTermBanner companyId={companyId} notice={notice} freeExpenseDrafts={freeExpenseDrafts} />}
+        sidebarFooter={!freeExpenseDrafts ? <PlanTermSidebarCard companyId={companyId} /> : undefined}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.
@@ -369,7 +370,7 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
             <ForbiddenState
               titleAs="h1"
               description=""
-              packageAvailable={session.availablePermissions ? canAccessWorkspacePath(WORKSPACE_MODULES, session.availablePermissions, companyId, pathname) : undefined}
+              packageAvailable={session.availablePermissions ? canAccessWorkspacePath(WORKSPACE_MODULES, session.availablePermissions, companyId, pathname, freeExpenseDrafts) : undefined}
               isOwner={session.roles.includes('OWNER')}
               action={fallback && <Link className={secondaryButtonClass} href={fallback.href}>{`กลับไป${fallback.label}`}</Link>}
             />

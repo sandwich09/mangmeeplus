@@ -157,7 +157,7 @@ test('both confirm buttons call the shared doConfirm handler, not a duplicated i
 });
 
 test('the persistent WHT action uses the same server capability after confirmation and on later visits', () => {
-  assert.match(source, /canIssueExpenseWhtCertificate\(detail, whtHandoff, permissions\)/);
+  assert.match(source, /canIssueExpenseWhtCertificate\(detail, whtHandoff, uiPermissions\)/);
   assert.doesNotMatch(source, /whtIssuePrompt/);
 });
 
@@ -174,8 +174,8 @@ test('the handoff is re-read for every confirmed withholding revision and includ
 });
 
 test('the correction form and replacement button render through the shared accounts-payable-mirrored predicates', () => {
-  assert.match(source, /\{canCorrectWhtCertificate\(whtHandoff, permissions\) && \(/);
-  assert.match(source, /\{!correctOpen && canIssueWhtReplacementCopy\(whtHandoff, permissions\) && \(/);
+  assert.match(source, /\{canCorrectWhtCertificate\(whtHandoff, uiPermissions\) && \(/);
+  assert.match(source, /\{!correctOpen && canIssueWhtReplacementCopy\(whtHandoff, uiPermissions\) && \(/);
 });
 
 test('correcting calls the correction endpoint and downloads the returned PDF immediately, requiring a reason', () => {

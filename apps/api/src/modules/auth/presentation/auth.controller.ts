@@ -1,4 +1,5 @@
 import { SetMyDisplayNameDto } from './auth.dtos';
+import { isFreeExpenseDraftCompany } from '../../system-partner-management/application/free-expense-access';
 import { ConflictException } from '@nestjs/common';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
@@ -1058,6 +1059,7 @@ export class AuthController {
       entitledFeatureKeys: req.context.entitledFeatureKeys,
       roleNames: Object.fromEntries((membership?.roles ?? []).map(({ role }) => [role.key, role.name])),
       permissions,
+      ...(req.context.freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       scopes,
       authProvider,
       mustChangePassword: credential?.mustChangePassword ?? false,
@@ -1158,11 +1160,13 @@ export class AuthController {
     });
     const now = Date.now();
     return {
-      data: memberships.map((m) => ({
+      data: await Promise.all(memberships.map(async (m) => ({
         companyId: m.companyId,
         companyName: m.company.name,
         roles: m.roles.map((r) => r.role.key),
         roleNames: Object.fromEntries(m.roles.map(({ role }) => [role.key, role.name])),
+        ...(m.company.planTerm && m.company.planTerm.termEndsAt.getTime() <= now
+          && await isFreeExpenseDraftCompany(this.prisma.client, m.companyId) ? { freeExpenseDrafts: true } : {}),
         canManagePlan: m.roles.some((r) => r.role.permissions.some((rp) => rp.permission.key === 'company.plan.manage')),
         // Exact-hour truth, not sweep truth: an ACTIVE company past its term is already expired.
         expired:
@@ -1171,7 +1175,7 @@ export class AuthController {
         // R-C5/R-C7: the picker and the switcher say WHY the shop is locked, from the one helper.
         planState: planTermState(m.company.planTerm, new Date(now), m.company.status),
         ...(m.company.planTerm && m.company.planTerm.termEndsAt.getTime() <= now ? { lockReason: planTermLockReason(m.company.planTerm) } : {}),
-      })),
+      }))),
     };
   }
 }

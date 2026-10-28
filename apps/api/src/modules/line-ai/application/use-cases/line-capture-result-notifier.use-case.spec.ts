@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineCaptureResultNotifierUseCase, LINE_CAPTURE_READ_FINISHED_EVENT_TYPE } from './line-capture-result-notifier.use-case';
+import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { hashMessagePreview } from '../../domain/logic/line-ai-classifier.logic';
 import { buildExpenseDraftReviewCard, isCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
 import { linePushRetryKey } from '../../infrastructure/line-reply.adapter';
@@ -11,6 +12,7 @@ import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture'
 
 const LINE_USER = 'Ufake-line-user';
 const CHAT_HASH = hashMessagePreview(LINE_USER);
+const CURRENT_MONTH = bangkokMonthKey();
 
 it('Fix-up 10 P5: the capture notifier offers the signed chat confirmation first, with exact fallback and fresh preview guards', async () => {
   const payload = { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', jobId: 'job-1' }, h = makeNotifier({ payload }), notifier = h.notifier as any;
@@ -73,6 +75,9 @@ type Scenario = {
   /** NR07 cleanup: how many rows the guarded delete matches (0 = the draft is no longer empty). */
   draftDeleteCount?: number;
   retainedCertificateStatus?: string;
+  free?: boolean;
+  freeUsed?: number;
+  branchScope?: string[];
 };
 
 const intakeRevision = new Date('2026-07-25T00:00:00.000Z');
@@ -102,8 +107,16 @@ function makeNotifier(scenario: Scenario = {}) {
       : { groupId: 'group-1', ...(scenario.payload ?? {}) },
   }));
 
+  let freeNoticeMonth: string | null = null;
   const prisma = {
     client: {
+      $executeRaw: async () => undefined,
+      companyOcrUsageEvent: { findMany: async () => Array.from({ length: scenario.freeUsed ?? 3 }, () => ({ succeededAt: new Date() })) },
+      companyPlanTerm: { updateMany: async ({ where, data }: any) => {
+        if (where.freeQuotaNoticeSentMonthKey && freeNoticeMonth !== where.freeQuotaNoticeSentMonthKey) return { count: 0 };
+        if (data.freeQuotaNoticeSentMonthKey === freeNoticeMonth) return { count: 0 };
+        freeNoticeMonth = data.freeQuotaNoticeSentMonthKey; return { count: 1 };
+      } },
       user: { findUnique: async () => (scenario.linked === false ? null : { status: scenario.userStatus ?? 'ACTIVE', aiAssistantOptOutAt: null }) },
       externalIdentity: { findFirst: async () => (scenario.linked === false ? null : { providerUserId: LINE_USER }) },
       companyFeatureEntitlement: { findMany: async () => [] },
@@ -141,7 +154,7 @@ function makeNotifier(scenario: Scenario = {}) {
   const notifier = new LineCaptureResultNotifierUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
-    { resolveAccess: async () => ({ membershipId: 'm1', roles: ['STAFF'], permissions: scenario.permissions ?? ['expense.receipt.line_upload'], scopes: {} }) } as any,
+    { resolveAccess: async () => ({ membershipId: 'm1', roles: ['STAFF'], freeExpenseDrafts: scenario.free === true, permissions: scenario.permissions ?? ['expense.receipt.line_upload'], scopes: scenario.branchScope ? { branchIds: scenario.branchScope } : {} }) } as any,
     {
       readLineDeliveryOwner: async () => scenario.expenseSnapshot === null ? null : ({ createdByUserId: 'user-1', lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash, linePushTargetId: scenario.linePushTargetId ?? null, sourceIsLine: (scenario.intakeChannel ?? 'LINE') === 'LINE' && (scenario.captureSource ?? 'LINE_UPLOAD') === 'LINE_UPLOAD' }),
       readFinishedSnapshot: async (_companyId: string, groupId: string) => ({
@@ -160,7 +173,7 @@ function makeNotifier(scenario: Scenario = {}) {
             id: expenseId, status: 'NEEDS_REVIEW', captureSource: scenario.captureSource ?? 'LINE_UPLOAD',
             createdByUserId: 'user-1',
             lineChatKeyHash: scenario.lineChatKeyHash === undefined ? CHAT_HASH : scenario.lineChatKeyHash,
-            linePushTargetId: scenario.linePushTargetId ?? null,
+            linePushTargetId: scenario.linePushTargetId ?? null, branchId: 'branch-1',
             vendorNameSnapshot: 'ร้านค้าดี', grandTotalAmount: '250.0000', currency: 'THB',
             sourceDocumentType: 'RECEIPT', expenseDate: new Date('2026-07-25T00:00:00.000Z'),
             primaryAttachmentId: 'att-1',
@@ -195,7 +208,7 @@ function makeNotifier(scenario: Scenario = {}) {
     undefined,
     { log: async (entry: any) => { auditEntries.push(entry); } } as any,
   );
-  return { notifier, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
+  return { notifier, freeNoticeMonth: () => freeNoticeMonth, published, failed, pushes, attemptUpdates, closes, handoffCalls, expenses, draftDeletes, linkDeletes, attachmentDeletes, auditEntries };
 }
 
 const pushedText = (h: ReturnType<typeof makeNotifier>): string => h.pushes[0]?.messages[0]?.canonicalText ?? h.pushes[0]?.messages[0]?.text ?? '';
@@ -806,4 +819,86 @@ it('keeps persisted English capture language through the asynchronous result car
   assert.equal(h.pushes.length, 1);
   assert.doesNotMatch(JSON.stringify(h.pushes[0]!.messages), /[\u0E00-\u0E7F]/u);
   assert.match(JSON.stringify(h.pushes[0]!.messages), /draft|Draft/u);
+});
+
+
+describe('free capture completion notice', () => {
+  const allowance = { source: 'FREE_MONTHLY_3', monthKey: CURRENT_MONTH, usedCount: 3 };
+  const payload = { ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', applied: true,
+    quotaSource: 'FREE_MONTHLY_3', freeAllowance: allowance, documentCount: 1 };
+  it('appends the third successful result notice once, without a separate push', async () => {
+    const h = makeNotifier({ free: true, payload, events: 2 });
+    await h.notifier.execute();
+    assert.match(h.pushes[0]?.messages[0]?.text, /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
+    assert.doesNotMatch(JSON.stringify(h.pushes[1]?.messages ?? []), /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
+    assert.equal(h.freeNoticeMonth(), CURRENT_MONTH);
+    assert.equal(h.handoffCalls.length, 0);
+  });
+  it('does not send a success notice for pending/failed results or a company that upgraded', async () => {
+    for (const over of [
+      { free: true, payload: { ...payload, freeAllowance: { ...allowance, usedCount: 2 } } },
+      { free: true, payload: { ...payload, status: 'FAILED', freeAllowance: undefined } },
+      { free: false, payload },
+    ]) {
+      const h = makeNotifier(over);
+      await h.notifier.execute();
+      assert.doesNotMatch(pushedText(h), /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
+      assert.equal(h.freeNoticeMonth(), null);
+    }
+  });
+  it('releases only the notice claim and parks a failed free push, keeping saved results for delivery retry', async () => {
+    const h = makeNotifier({ free: true, payload, pushResult: 'failed_other' });
+    const result = await h.notifier.execute();
+    assert.equal(result.parked, 1);
+    assert.equal(h.freeNoticeMonth(), null);
+    assert.equal(h.failed.length, 1);
+    assert.equal(h.published.length, 0);
+    assert.equal(h.attemptUpdates[0]?.reasonCode, 'LINE_DELIVERY_FAILED');
+  });
+  it('does not auto-handoff a free source legacy group and names a multi-document refusal', async () => {
+    const h = makeNotifier({ free: true, payload: { quotaSource: 'FREE_MONTHLY_3', status: 'DONE', documentCount: 1 }, autoHandoff: 'expense' });
+    await h.notifier.execute();
+    assert.equal(h.handoffCalls.length, 0);
+    const rejected = makeNotifier({ free: true, payload: { ...payload, status: 'FAILED', freeAllowance: undefined, errorCode: 'FREE_MULTI_DOCUMENT_UNSUPPORTED' } });
+    await rejected.notifier.execute();
+    assert.match(pushedText(rejected), /ไฟล์นี้มีหลายเอกสาร/);
+  });
+});
+
+it('does not deliver a free result after branch scope is revoked', async () => {
+  const h = makeNotifier({ free: true, branchScope: ['other-branch'], payload: {
+    ownerType: 'EXPENSE', expenseId: 'expense-1', status: 'DONE', applied: true,
+    quotaSource: 'FREE_MONTHLY_3', freeAllowance: { source: 'FREE_MONTHLY_3', monthKey: CURRENT_MONTH, usedCount: 3 },
+  } });
+  const result = await h.notifier.execute();
+  assert.equal(result.skipped, 1);
+  assert.equal(h.pushes.length, 0);
+  assert.equal(h.freeNoticeMonth(), null);
+});
+
+
+it('free completion freezes its third-result notice in the guarded delivery plan without financial previews', async () => {
+  const now = new Date();
+  const h = makeNotifier({ free: true, payload: { ownerType: 'EXPENSE', expenseId: 'expense-1', jobId: 'job-1', status: 'DONE', applied: true,
+    quotaSource: 'FREE_MONTHLY_3', freeAllowance: { source: 'FREE_MONTHLY_3', monthKey: CURRENT_MONTH, usedCount: 3 } } });
+  const notifier: any = h.notifier, original = notifier.notifyExpense.bind(notifier);
+  notifier.notifyExpense = async (companyId: string, payload: object) => {
+    notifier.prepared.set(payload, { event: { id: 'outbox-1', claimToken: 'token-1', createdAt: now },
+      owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'm1', messagingChannelId: 'channel-1', chatKeyHash: CHAT_HASH },
+      epoch: 1, accessFingerprint: 'access', lineUserId: LINE_USER, context: { companyId: 'company-1', userId: 'user-1', requestId: 'outbox-1' } });
+    return original(companyId, payload);
+  };
+  notifier.captureLine.readFinishedDeliveryProof = async () => ({ records: [{ id: 'expense-1', createdAt: now, updatedAt: now }] });
+  notifier.contexts = { load: async () => ({ row: { id: 'line-v2:conversation-1', lifecycleEpoch: 1 } }) };
+  notifier.expenseActions = { preview: async () => assert.fail('free read cannot offer confirm') };
+  notifier.paymentEvidence = { forCapture: async () => assert.fail('free read cannot link payment evidence') };
+  let plan: any;
+  notifier.plans = { savePlan: async (_producer: unknown, value: unknown) => { plan = value; return { id: 'plan-1' }; } };
+  notifier.prisma.client.lineDeliveryPlan = { findUnique: async () => ({ id: 'plan-1' }) };
+  notifier.replayCapturePlan = async () => ({ kind: 'retryable', code: 'LINE_DELIVERY_NOT_ACCEPTED' });
+  const result = await h.notifier.execute();
+  assert.equal(result.parked, 1);
+  assert.match(JSON.stringify(plan), /ใช้สิทธิ์อ่านฟรีครบ 3 ใบ/);
+  assert.ok(!JSON.stringify(plan).includes('expense_action_confirm'));
+  assert.equal(h.freeNoticeMonth(), CURRENT_MONTH, 'the frozen retry plan retains its single notice claim');
 });

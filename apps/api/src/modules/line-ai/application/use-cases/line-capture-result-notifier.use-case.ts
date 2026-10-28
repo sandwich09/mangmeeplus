@@ -38,6 +38,8 @@ import {
 } from '../../domain/logic/line-non-receipt-reply.logic';
 import { LineReplyAdapter, type LineDeliveryResult, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
+import { claimFreeExpenseQuotaNotice, releaseFreeExpenseQuotaNotice, freeExpenseQuotaResetAt } from '../free-expense-quota';
+import { freeExpenseQuotaNoticeTextTh, FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH, FREE_EXPENSE_IN_FLIGHT_TEXT_TH } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 /** The outbox event a finished capture read emits (contracts owns the string; see appendix §3). */
 export const LINE_CAPTURE_READ_FINISHED_EVENT_TYPE = EXPENSE_CAPTURE_READ_FINISHED_EVENT_TYPE;
@@ -99,6 +101,7 @@ export class LineCaptureResultNotifierUseCase {
     for (const event of events) {
       try {
         const outcome = await this.notify(event.companyId, event.payloadJson, event);
+        if (outcome.kind !== 'accepted') await this.releaseUnplannedFreeNotice(event);
         const fence = { id: event.id, claimToken: event.claimToken ?? null, expectedEventType: LINE_CAPTURE_READ_FINISHED_EVENT_TYPE };
         if (outcome.kind === 'accepted' || outcome.kind === 'terminalSkip') {
           const settled = await this.outbox.markPublished(fence);
@@ -114,6 +117,7 @@ export class LineCaptureResultNotifierUseCase {
           } else await this.outbox.markFailed({ ...fence, error: outcome.code });
         }
       } catch (error) {
+        await this.releaseUnplannedFreeNotice(event);
         result.parked += 1;
         this.logger.warn({
           msg: 'line.capture_result.push_failed', outboxEventId: event.id,
@@ -185,10 +189,11 @@ export class LineCaptureResultNotifierUseCase {
     // NEEDS_REVIEW draft a LINE photo produces today, and the chat gets THAT summary. A classified
     // non-receipt (NR01–NR08) keeps its own sentence and never becomes an expense; everything the
     // use case refuses — multi-document, mismatch, unknown amounts — keeps the group link.
-    const handed = composed.done && !composed.nr && (readNumber(payload, 'documentCount') ?? 1) <= 1
+    const handed = !access.freeExpenseDrafts && readString(payload, 'quotaSource') !== 'FREE_MONTHLY_3' && composed.done && !composed.nr && (readNumber(payload, 'documentCount') ?? 1) <= 1
       ? await this.autoHandoffReply(companyId, groupId, snapshot.group.createdByUserId)
       : null;
     if (handed) text = handed.text;
+    text += await this.freeNotice(companyId, payload, access.freeExpenseDrafts);
 
     const source = handed?.message ?? (readString(payload, 'status') === 'FAILED'
       ? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId)
@@ -237,7 +242,7 @@ export class LineCaptureResultNotifierUseCase {
     const access = await this.resolveRecipient(companyId, {
       createdByUserId: snapshot.expense.createdByUserId,
       lineChatKeyHash: snapshot.expense.lineChatKeyHash,
-      linePushTargetId: snapshot.expense.linePushTargetId,
+      linePushTargetId: snapshot.expense.linePushTargetId, branchId: snapshot.expense.branchId,
     });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     if (!access) {
@@ -259,7 +264,7 @@ export class LineCaptureResultNotifierUseCase {
     }
 
     let evidenceRecordIds: string[] = [];
-    if (this.paymentEvidence && (readString(payload, 'status') ?? snapshot.jobs[0]?.status) === 'DONE'
+    if (!access.freeExpenseDrafts && readString(payload, 'quotaSource') !== 'FREE_MONTHLY_3' && this.paymentEvidence && (readString(payload, 'status') ?? snapshot.jobs[0]?.status) === 'DONE'
       && readBoolean(payload, 'applied') !== false && snapshot.expense.lineChatKeyHash) {
       const pairing = await this.paymentEvidence.forCapture({ requestId: readString(payload, 'jobId') ?? `capture:${expenseId}`,
         authSubject: snapshot.expense.createdByUserId, userId: snapshot.expense.createdByUserId, companyId,
@@ -273,10 +278,12 @@ export class LineCaptureResultNotifierUseCase {
       }
     }
 
+    const notice = await this.freeNotice(companyId, payload, access.freeExpenseDrafts);
+    if (notice) composed = { text: composed.text + notice, nr: composed.nr, message: this.lineReply.buildTextMessage(composed.text + notice) };
     const preparation = this.prepared.get(payload);
     if (preparation) {
       let confirmation: ExpenseActionPreview | undefined;
-      if (!evidenceRecordIds.length && composed.message?.type === 'flex' && composed.draft) {
+      if (!access.freeExpenseDrafts && readString(payload, 'quotaSource') !== 'FREE_MONTHLY_3' && !evidenceRecordIds.length && composed.message?.type === 'flex' && composed.draft) {
         try {
           const offered = await this.expenseActions?.preview(preparation.context, preparation.owner.chatKeyHash, { action: 'CONFIRM', expenseId }, true, undefined, language);
           if (offered?.preview) {
@@ -402,6 +409,29 @@ export class LineCaptureResultNotifierUseCase {
     return { kind: 'retryable', code: 'CAPTURE_MORE_BATCHES' };
   }
 
+  private readonly freeNoticeClaims = new WeakMap<object, string>();
+
+  private async freeNotice(companyId: string, payload: Record<string, unknown>, freeExpenseDrafts: boolean): Promise<string> {
+    const allowance = payload.freeAllowance ?? (payload.data as Record<string, unknown> | undefined)?.freeAllowance;
+    const raw = allowance && typeof allowance === 'object' ? allowance as Record<string, unknown> : null;
+    const monthKey = readString(payload, 'quotaSource') === 'FREE_MONTHLY_3' && freeExpenseDrafts
+      && raw?.source === 'FREE_MONTHLY_3' && raw.usedCount === 3 && typeof raw.monthKey === 'string'
+      && /^\d{4}-(0[1-9]|1[0-2])$/.test(raw.monthKey) ? raw.monthKey : null;
+    if (!monthKey || !await claimFreeExpenseQuotaNotice(this.prisma, companyId, monthKey)) return '';
+    this.freeNoticeClaims.set(payload, monthKey);
+    return `\n\n${freeExpenseQuotaNoticeTextTh(freeExpenseQuotaResetAt(monthKey))}`;
+  }
+
+  private async releaseUnplannedFreeNotice(event: OutboxEventRecord): Promise<void> {
+    const monthKey = this.freeNoticeClaims.get(event.payloadJson);
+    if (!monthKey || !event.companyId) return;
+    // A frozen plan owns its original text across retries; keep its claim until that text delivers.
+    if (this.prepared.has(event.payloadJson)
+      && await this.prisma.client.lineDeliveryPlan.findUnique({ where: { outboxEventId: event.id }, select: { id: true } })) return;
+    await releaseFreeExpenseQuotaNotice(this.prisma, event.companyId, monthKey);
+    this.freeNoticeClaims.delete(event.payloadJson);
+  }
+
   /** §3 / §17.6 / §18.4 / §25, for the expense lane. */
   private composeExpenseReply(
     companyId: string,
@@ -412,6 +442,8 @@ export class LineCaptureResultNotifierUseCase {
     const language = snapshot.expense.language ?? 'th';
     const status = readString(payload, 'status') ?? snapshot.jobs[0]?.status ?? null;
     if (!status) return null;
+    const refusal = freeCaptureRefusal(payload);
+    if (refusal) return { text: refusal, nr: null };
     if (status === 'FAILED') {
       const text = CAPTURE_READ_FAILED_REPLY(link, language);
       return { text, nr: null, message: buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, undefined, undefined, language) };
@@ -567,7 +599,7 @@ export class LineCaptureResultNotifierUseCase {
   private async resolveRecipient(
     companyId: string,
     group: { createdByUserId: string; lineChatKeyHash: string | null; linePushTargetId: string | null; branchId?: string | null; ownerBinding?: { channelId: string } },
-  ): Promise<{ pushTargetId: string; lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null; membershipId: string; fingerprint: string; scopes: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>['scopes'] } | null> {
+  ): Promise<{ pushTargetId: string; lineUserId: string; permissions: string[]; roles: string[]; entitledFeatureKeys: ReadonlySet<string> | null; membershipId: string; fingerprint: string; freeExpenseDrafts: boolean; scopes: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>['scopes'] } | null> {
     const userId = group.createdByUserId;
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId }, select: { status: true, aiAssistantOptOutAt: true },
@@ -597,7 +629,7 @@ export class LineCaptureResultNotifierUseCase {
     if (entitled && !entitled.has('expenses')) return null;
     return {
       pushTargetId, lineUserId: identity.providerUserId, permissions: access.permissions,
-      roles: access.roles, entitledFeatureKeys: entitled, membershipId: access.membershipId, scopes: access.scopes, fingerprint: resolvedLineDeliveryAccessFingerprint(userId, companyId, access, entitled),
+      roles: access.roles, freeExpenseDrafts: access.freeExpenseDrafts === true, entitledFeatureKeys: entitled, membershipId: access.membershipId, scopes: access.scopes, fingerprint: resolvedLineDeliveryAccessFingerprint(userId, companyId, access, entitled),
     };
   }
 
@@ -652,6 +684,8 @@ export class LineCaptureResultNotifierUseCase {
         : statuses.includes('PARTIAL') ? 'PARTIAL'
         : statuses.every((value) => value === 'DONE') && statuses.length > 0 ? 'DONE' : null);
     if (!status) return null;
+    const refusal = freeCaptureRefusal(payload);
+    if (refusal) return { text: refusal, nr: null, done: false };
     if (status === 'FAILED') return { text: CAPTURE_READ_FAILED_REPLY(link), nr: null, done: false };
     if (status === 'PARTIAL') return { text: CAPTURE_READ_PARTIAL_REPLY(link), nr: null, done: false };
     if (status === 'PAUSED') {
@@ -777,4 +811,13 @@ function readClassification(payload: Record<string, unknown>): any {
     missingRequiredSignals: Array.isArray(raw['missingRequiredSignals']) ? raw['missingRequiredSignals'] : [],
     contradictionSignals: Array.isArray(raw['contradictionSignals']) ? raw['contradictionSignals'] : [],
   };
+}
+
+
+function freeCaptureRefusal(payload: Record<string, unknown>): string | null {
+  const code = readString(payload, 'errorCode');
+  if (code === 'FREE_MULTI_DOCUMENT_UNSUPPORTED') return FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH;
+  if (code === 'FREE_DOCUMENTS_IN_FLIGHT') return FREE_EXPENSE_IN_FLIGHT_TEXT_TH;
+  if (code === 'FREE_DOCUMENT_LIMIT_REACHED') return 'เดือนนี้ใช้สิทธิ์อ่านฟรีครบ 3 ใบแล้วค่ะ จึงยังไม่ได้อ่านไฟล์นี้';
+  return null;
 }

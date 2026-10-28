@@ -1,0 +1,622 @@
+{
+  "task": "free-expense-drafts",
+  "status": "IMPLEMENTED_LOCALLY_NOT_DEPLOYED",
+  "recordedAt": "2026-10-28T22:02:09.051078+07:00",
+  "head": "4a5817b4238379c2e3e3a24df996dd7168411eda",
+  "sourceNote": "Full current working-tree hashes include pre-existing unrelated edits. This is not a commit or deployed-source assertion.",
+  "checks": {
+    "api": {
+      "command": [
+        "pnpm",
+        "--filter",
+        "@watchdog-bms/api",
+        "exec",
+        "tsx",
+        "--test",
+        "src/modules/access-control/permission-resolver.spec.ts",
+        "src/modules/auth/auth.guard.spec.ts",
+        "src/modules/auth/free-expense-handoff.spec.ts",
+        "src/modules/auth/free-expense-password-login.spec.ts",
+        "src/modules/banking/application/use-cases/statement-import.use-case.spec.ts",
+        "src/modules/data-model-core/application/services/outbox-append.service.spec.ts",
+        "src/modules/data-model-core/application/use-cases/free-expense-attachment.spec.ts",
+        "src/modules/expenses/application/services/expense-capture-read-runner.service.spec.ts",
+        "src/modules/expenses/application/services/receipt-ocr-apply.service.spec.ts",
+        "src/modules/expenses/application/use-cases/expense-capture-read-status.use-case.spec.ts",
+        "src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts",
+        "src/modules/expenses/application/use-cases/expense-free-access.use-case.spec.ts",
+        "src/modules/external-signup/application/line-signup-notify.service.spec.ts",
+        "src/modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.spec.ts",
+        "src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts",
+        "src/modules/line-ai/domain/logic/free-expense-line.logic.spec.ts",
+        "src/modules/line-ai/domain/logic/line-business-card.logic.spec.ts",
+        "src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts",
+        "src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts",
+        "src/modules/system-partner-management/application/free-expense-access.spec.ts",
+        "src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.spec.ts"
+      ],
+      "tests": 923,
+      "pass": 923,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "web": {
+      "command": [
+        "pnpm",
+        "--dir",
+        "apps/web",
+        "exec",
+        "tsx",
+        "--test",
+        "src/common/api/api-error-message.spec.ts",
+        "src/common/auth/session-gate.logic.spec.ts",
+        "src/features/expenses/ExpenseReviewPage.qa.spec.ts",
+        "src/features/expenses/ExpensesPages.qa.spec.ts",
+        "src/features/expenses/expense-capture-status.logic.spec.ts",
+        "src/features/expenses/expense-capture-upload.logic.spec.ts",
+        "src/features/expenses/expenses.api.spec.ts",
+        "src/features/expenses/expenses.model.spec.ts",
+        "src/features/plan-term/plan-term.logic.spec.ts",
+        "src/features/web-core-workspace/web-core-workspace.spec.ts",
+        "src/features/web-core-workspace/workspace-scope.api.spec.ts"
+      ],
+      "tests": 344,
+      "pass": 344,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "postgres": {
+      "requiredEnvironment": [
+        "FREE_EXPENSE_ACCESS_TEST_DATABASE_URL",
+        "FREE_EXPENSE_QUOTA_TEST_DATABASE_URL"
+      ],
+      "environment": "isolated disposable local PostgreSQL on loopback port 15433",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@watchdog-bms/api",
+        "exec",
+        "tsx",
+        "--test",
+        "src/modules/line-ai/application/free-expense-quota.pg.spec.ts",
+        "src/modules/system-partner-management/application/free-expense-access.pg.spec.ts"
+      ],
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "apiTypecheck": {
+      "command": "NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter @watchdog-bms/api exec tsc --noEmit",
+      "exitCode": 0
+    },
+    "webTypecheck": {
+      "command": "pnpm --dir apps/web exec tsc --noEmit",
+      "exitCode": 0
+    },
+    "contractsBuild": {
+      "command": "pnpm --filter @watchdog-bms/contracts build",
+      "exitCode": 0
+    },
+    "scopedWhitespace": {
+      "trackedDiffCheck": "PASS",
+      "untrackedFilesChecked": 20,
+      "untrackedDiffCheck": "PASS"
+    },
+    "taskDocs": {
+      "localLinks": 65,
+      "acceptanceCriteria": 20,
+      "testGroups": 20,
+      "gapIds": 32,
+      "result": "PASS"
+    }
+  },
+  "budgetReadiness": {
+    "provider": "mocked",
+    "policy": "existing shipped SHARED default",
+    "totalSatang": 200000,
+    "documents": 3,
+    "ocrCalls": 6,
+    "mockSettledCostSatang": 165,
+    "chatUsageCalls": 0,
+    "companyBudgetOrGrantWrites": 0,
+    "liveProviderOrPriceTested": false
+  },
+  "coverage": [
+    "historical paid/refunded/deal/admin hold excluded",
+    "exact action/source ownership with no financial or vendor-master mutations",
+    "four OCR routes racing the last slot",
+    "frozen source/month, pending, exact refunds/replacements",
+    "atomic source facts/completion rollback",
+    "atomic failure/refund/outbox recovery",
+    "third reserved LINE document through real intake and attachment use cases on PostgreSQL",
+    "no-model free text and original guard reasons",
+    "success notice and delivery retry without OCR replay",
+    "session/login/handoff/LIFF/target-company landing"
+  ],
+  "notRun": [
+    {
+      "item": "desktop/mobile browser with actual HTTP free-cohort journey",
+      "reason": "No free-cohort fixture in the available browser harness; executable web tests and server use-case/PG integration were run."
+    },
+    {
+      "item": "native LINE and real OCR/provider calls",
+      "reason": "No live external delivery/provider execution requested."
+    },
+    {
+      "item": "UAT/Production deploy, customer OPEN and rollout/rollback",
+      "reason": "No deployment requested; no cloud access performed."
+    }
+  ],
+  "migration": "apps/api/prisma/migrations/20261028090000_free_expense_monthly_documents/migration.sql",
+  "localDatabaseCleanup": "Disposable PostgreSQL container stopped after final tests. No live migration.",
+  "files": [
+    {
+      "path": "apps/api/prisma/migrations/20261028090000_free_expense_monthly_documents/migration.sql",
+      "sha256": "a5cb059a8bc9061fcf11c46a92ce8b3ff07d6c5da7f496a650db10df219895ae"
+    },
+    {
+      "path": "apps/api/prisma/schema.prisma",
+      "sha256": "263e13b7ee773323c454a8e74262102b658a5860ef687bb672a05944aa1292dd"
+    },
+    {
+      "path": "apps/api/src/modules/access-control/domain/ports/permission-resolver.port.ts",
+      "sha256": "5138d5e30e12ebf3af6653434db6cbc3279eb542bb32da3b872e275b63b93a83"
+    },
+    {
+      "path": "apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts",
+      "sha256": "dda5c099c22f0b147a0db51e1e91f774c97f81bb4f4d5514060790ff645eaed8"
+    },
+    {
+      "path": "apps/api/src/modules/access-control/permission-resolver.spec.ts",
+      "sha256": "1fbcf4f7083b1e49aa4786842e31f5deb0cc24a110b72213dd616744cf09a70d"
+    },
+    {
+      "path": "apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts",
+      "sha256": "6c3de6fcf171c7b4b1e051463ba07de6284b0425e932be9f835c2bd4f8d2cd5b"
+    },
+    {
+      "path": "apps/api/src/modules/auth/application/use-cases/exchange-line-handoff-token.use-case.ts",
+      "sha256": "06a18c05b96c713dcf297c8abd268465cfaaa6e4b1a6733a45dacc782f238ce1"
+    },
+    {
+      "path": "apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts",
+      "sha256": "76d602f59a7819aeee07237ebfe53995eb0528abcc0623664f180e680da24862"
+    },
+    {
+      "path": "apps/api/src/modules/auth/application/use-cases/resolve-request-context.use-case.ts",
+      "sha256": "0a23966242a89283c1443f48cfe050e4310cebf7790a1ea79b74b10b8b1358ca"
+    },
+    {
+      "path": "apps/api/src/modules/auth/auth.guard.spec.ts",
+      "sha256": "674e728eb6a5eb005cf0525365903a588eae8be2cf1765b7bce8cfaf4d9b109e"
+    },
+    {
+      "path": "apps/api/src/modules/auth/domain/logic/line-handoff.logic.ts",
+      "sha256": "a09bb100699c579dd7db6981c3b9b57e5cca4dbe83059f5a4efd9c7b1b4aa903"
+    },
+    {
+      "path": "apps/api/src/modules/auth/domain/models/request-context.model.ts",
+      "sha256": "e341b1ac0c019076699ee51d051154cac2902ebb19edbb2de44179d78f52663b"
+    },
+    {
+      "path": "apps/api/src/modules/auth/free-expense-handoff.spec.ts",
+      "sha256": "a97571ce50953530126e25432bdb4360ac69b0473b66057c635f41dd51379ba8"
+    },
+    {
+      "path": "apps/api/src/modules/auth/free-expense-password-login.spec.ts",
+      "sha256": "d766c1f248b6b63dede9ed252ea72ee2369de3dc315dc60cf2e00adb20c413e8"
+    },
+    {
+      "path": "apps/api/src/modules/auth/presentation/auth.controller.ts",
+      "sha256": "b3f7cef4d1cb95ca21c49fc4736b141efbeaaa772fa82cde5023cf965f706a74"
+    },
+    {
+      "path": "apps/api/src/modules/auth/presentation/auth.guard.ts",
+      "sha256": "ffe5f77dc6a11714d12ed36a061b67338c4dec95a7fe295c99f74e02a9e980b1"
+    },
+    {
+      "path": "apps/api/src/modules/banking/application/use-cases/statement-import.use-case.spec.ts",
+      "sha256": "399f52069a816edafc8bd9fd6a7cc05085b1335126da83e922c03b28832b62e4"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/services/outbox-append.service.spec.ts",
+      "sha256": "8f1ce1b8c109629b8b7c631941b1014e2e07d1e4a6094feea9b0141dce7fe8e3"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/services/outbox-append.service.ts",
+      "sha256": "49e8b5d5451287f7eb870e4626adfe5c45ed46b9221781a9bc2ab1b505cdf143"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/use-cases/create-download-url.use-case.ts",
+      "sha256": "79fa3264a2f54b0dab571b02b0421b91f00cbc46450d996fab5cb18500c9d911"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/use-cases/create-upload-intent.use-case.ts",
+      "sha256": "007c42bd1c6ceadcf28fe6e251efb16ba3a7a4d40ffaaa681f79bfd8f668de95"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/use-cases/free-expense-attachment.spec.ts",
+      "sha256": "2b178cf745c533d35dac98a22dbe9b0f010bb6a02095db0038bbd6c5089be239"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/application/use-cases/free-expense-attachment.ts",
+      "sha256": "815292293e49f5d56a32b3188d38e07924b52dfc9f20650eeb537a758a0d9c8c"
+    },
+    {
+      "path": "apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-attachment.repository.ts",
+      "sha256": "ede8fd60f0958da5ab1eef445ae5c8f7c43b236c9c269d72150655933b9e2066"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/expense-commercial-access.ts",
+      "sha256": "89d776f8fa893dec3e99f833c02bc19a9e63fa0ffb91d6825f30566d370d2858"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/services/expense-capture-read-runner.service.spec.ts",
+      "sha256": "d899b894fa403a57cafffc3584c946c9fd7ccde31b906567b09650d58c7a895e"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/services/expense-capture-read-runner.service.ts",
+      "sha256": "d9263373254062427b3704a161f2a98c0230279a4f8b786b8487e1ebdef1c55e"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts",
+      "sha256": "087dacdc886c247c73dbb4a4d92f87964856fb888bb278a9c3464ca0863fece6"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-capture-group.use-case.ts",
+      "sha256": "55b019c7f4e116a0e44ffa630e969a51eb848407043e7d97e7b9ac531b698be0"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-capture-line.use-case.ts",
+      "sha256": "aff9a6258954e7baf7ef791c219e8fc1426ece48584966ad74a635d50472a388"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-capture-read-status.use-case.spec.ts",
+      "sha256": "dc1f768fa251c0a7d63fc8c3909e86a14e108689a824fac85dd7ea41199e85f5"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-capture-read-status.use-case.ts",
+      "sha256": "1f665ecf010e6d0dee2a02cb1e3738da51c7b856cfecb0f90eb6bb2f81f9d57a"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts",
+      "sha256": "c6595ae99c8f6a3657403432de94ad01f2cc6f3502ada8997f3fa88d5c3c08b6"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts",
+      "sha256": "0a63e9bf3b251673ceb51092425584f27fa1de8c2a9c1c4a8c83dc95353c9e2b"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts",
+      "sha256": "839c60ba3ec9debccde6a8902182eb623a4b5166d9b564317485f5c89149d6ca"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-free-access.use-case.spec.ts",
+      "sha256": "092e9c4c683d7f740ede73f8e3bbcbfb545757afd2a078bd01a38e24ef508f25"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.ts",
+      "sha256": "f70aa04b1b6ff7f333e3faf8345ea7f22f10c7771334cbbe36ce100132a2d151"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/domain/logic/expense-source-draft.logic.ts",
+      "sha256": "4a3daf21462fd8a44fcb1b29d40002ad281bad9fdc30486c7eaf3718237ee26c"
+    },
+    {
+      "path": "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts",
+      "sha256": "9cc3901859a8d98ebb0e2de5b2af36e59bcf5eb13c843347247879e057b5d2e6"
+    },
+    {
+      "path": "apps/api/src/modules/external-signup/application/line-signup-notify.service.spec.ts",
+      "sha256": "7d3299c9cc3854d24b2f1c18ed51d859a6cb26d94f50ad5670eaabdf034589e8"
+    },
+    {
+      "path": "apps/api/src/modules/external-signup/application/line-signup-notify.service.ts",
+      "sha256": "6a3719e769ab7d650f44df4e2ab5fc4cc1d11434bb2d5b66108030236b2da3db"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/company-ai-budget-prisma.fixture.ts",
+      "sha256": "52aaa8981c672c8b9468da43e9bc903a1db917225b81565d68c90551aa902d82"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/company-ocr-governance.ts",
+      "sha256": "988466a8ce3471ac8d1f5b03370f77ccc0c0d56c534fbcd1b52b4bc19956bcbb"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/free-expense-quota.pg.spec.ts",
+      "sha256": "67789da40aec2db85d7622cad3cbfaddb03b8123a25156f09fa4a40234b81087"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/free-expense-quota.ts",
+      "sha256": "2b65c5d8e4662513589c371fa765faba101c9ee7407217a3692a62b82fcc7022"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.spec.ts",
+      "sha256": "3c1011c505aed4c7e90f30f54ef024224c1d7ab8aea5f6929f7bedcf93f4f48a"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.ts",
+      "sha256": "6ada44685c7d1e208c332ade03c15634c5485457939688e1e43475dcee80cf58"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts",
+      "sha256": "4b4dfc0b939fc5ea56690536cf250159af0da3f63fc59a7035c8d8ae6df8ef7a"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
+      "sha256": "435bac00271a35c8f4ff6649de615610a7a8483908f7fa42933f16d73a802d75"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/free-expense-line.logic.spec.ts",
+      "sha256": "75679610abf4e03646c5ca20abb2a8214e5f8783f83dd367f54a3e0e5bba71c5"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/free-expense-line.logic.ts",
+      "sha256": "a7ad320bda25a1a935c6518b91ea11a9d83db2fab571ba33a2827f635d45e415"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.ts",
+      "sha256": "d974292200725109aa6be8e5140feeac5a74217fe4b0d0acf4c738c199ddce13"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-public-policy.logic.ts",
+      "sha256": "f6491b79c928689d23e8f01eb71a62f2ebdf2527499c320cfd0cee33b836632a"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts",
+      "sha256": "5ad491725f8a0d003fb9b19902a852208fb14722c1c2f7f4c2780689e8170b57"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts",
+      "sha256": "1d045bf1d094bc1ea174a04611e3eca3b6518d82027a681570b4cf23099772a2"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts",
+      "sha256": "1fbc44b078f83870ba88c8114acd3e5b6d686da5e78d924242235bb17f7f3bb6"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/free-expense-access.pg.spec.ts",
+      "sha256": "0da7c117e678779b55ac6e9e3382ebff86b3de596d5b9af48a0727cd28e080ff"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/free-expense-access.spec.ts",
+      "sha256": "bbaa1df444a53af05aa922df1ed3ad3c2a6acceaf2b145f4a388420bd82328e7"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/free-expense-access.ts",
+      "sha256": "1154f69ac4510fe03e3be63d3770a9e75d0d5bd4d6d209bb2166469a42145c42"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts",
+      "sha256": "ced025e3b5f019696394f40e305f640346899dca185270454d7e83b139b22dab"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.spec.ts",
+      "sha256": "9ffff4c7f4c5e6429fd907ed3938e05630bb1aa6a4ba47854c31635a61f87aa9"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts",
+      "sha256": "36f4e1986d8d66226798878f288d726dc19d6c249cc4de9bd7022a848753badb"
+    },
+    {
+      "path": "apps/api/src/modules/system-partner-management/domain/logic/receipt-quota.logic.ts",
+      "sha256": "91c24f140f947c8d4bb6f84b7b96ab4b488a3426dbd93e794c049c47d669c52e"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/[expenseId]/page.tsx",
+      "sha256": "748bee6fdc97ca040235f3f274c13a710537989b46dbcf11c933ac9919d3318f"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/categories/page.tsx",
+      "sha256": "aa645916dcbf15f836005e366503f2afd67976d56dc3e7f64e3f60972e6478f2"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/evidence/page.tsx",
+      "sha256": "3dc6e872fc3d9511e1b741d83d2dc928e66ce0fff4163ab9b45a01f71738bf14"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/manual/page.tsx",
+      "sha256": "ab534567c11631091e2e1b81d19e8c19800c1293735d74677d3366132e8fc1b2"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/page.tsx",
+      "sha256": "313cbcdf99a3a03c5e88565413c2bf9ebc4f7b7ec9f3e92216a4a530687763dd"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/signatures/page.tsx",
+      "sha256": "c107dfa071efc7867f33a33adddfecbfa35b68c20d1fe4d80528c74d091dd7ee"
+    },
+    {
+      "path": "apps/web/app/(workspace)/companies/[companyId]/expenses/upload/page.tsx",
+      "sha256": "8f2a29e1423570bb9e50405c72c54b8fc3b295fd99847149ec7dc6c0ba46695c"
+    },
+    {
+      "path": "apps/web/src/common/api/api-error-message.spec.ts",
+      "sha256": "ae941da93094154584a756cc85a9d83980e790f574d5d0549dd282bd7e116917"
+    },
+    {
+      "path": "apps/web/src/common/api/api-error-message.ts",
+      "sha256": "7f7f4fe78293b253df09a858eb63bb67b2bfa017d47f0edb6fc55e9deac7436c"
+    },
+    {
+      "path": "apps/web/src/common/auth/session-gate.logic.spec.ts",
+      "sha256": "65fd41014a227c54fdb2d9af4a73601fbd16af933d074d625ea7ba4c8b03949b"
+    },
+    {
+      "path": "apps/web/src/common/auth/session-gate.logic.ts",
+      "sha256": "c53d7c3d67506e52eca5b3031264753e7e4fd0f306969c8218efc37794bef20d"
+    },
+    {
+      "path": "apps/web/src/common/i18n/workspace-dictionary.ts",
+      "sha256": "47bfd0f232916860b37bc27ffa2320deb670904d5281892d16083f595b40e6bf"
+    },
+    {
+      "path": "apps/web/src/common/models/web-session.model.ts",
+      "sha256": "83d74e161359d4e06fe782ef7e1545377438396699cb67cd7de4a7004616f685"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpenseReviewPage.qa.spec.ts",
+      "sha256": "cf7d3088a3b4feca912daff819c8ffe41971467c58956c4bfe585170f5a57c4d"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpenseReviewPage.tsx",
+      "sha256": "ee197b0533d9f0363106ee3d0469bf956933cbaf8d2be90b34e665161c37088e"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpensesPages.qa.spec.ts",
+      "sha256": "0f721e09bbeb60cf575941abc01e171fb8c174e43eab77b595d34efd4f2ac23c"
+    },
+    {
+      "path": "apps/web/src/features/expenses/ExpensesPages.tsx",
+      "sha256": "56455a83165345bbb6a28fed59151f81fff5cb2136c02b6f10f2886766515a5b"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-status.logic.spec.ts",
+      "sha256": "c56924455caa949a36d28ede769af359a8c4884bf16d0b0600457b706b90f3c7"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-status.logic.ts",
+      "sha256": "8306ab60e0595549217ba530898bfcb1b53f657524b5c6bfd3c53d9d9bfed99f"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-upload.logic.spec.ts",
+      "sha256": "49985a143efe793c96b127b0aa0e0fd54e2f43798499bb9354cbdd72f7b15a26"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expense-capture-upload.logic.ts",
+      "sha256": "e238ed55a089cd9c4519c2b1684412447f4b0e7201058300f62f935604503d86"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.api.spec.ts",
+      "sha256": "99304e1ac44d44c582f56cbf49e9294f05b06cce39d54f65542a22f0b03c932b"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.api.ts",
+      "sha256": "55cfb57289e99a8063d9aa6b4c4e37c215a00ec530e8eb10fe78d93d1483c77d"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.model.spec.ts",
+      "sha256": "c04227f139f09147a7afc6acaa2bb5e05c6c74c6f1f8b7ab5efc58b23cedba3d"
+    },
+    {
+      "path": "apps/web/src/features/expenses/expenses.model.ts",
+      "sha256": "fbdeb351b960712e9a2870a2a33738ee4bfd145e1d7c325a55a19d2517e415d2"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/PlanTermBanner.tsx",
+      "sha256": "0b4e05355cb77f0e91980e1ad1e9440379be710e627c2f222179b8c3c9c4e092"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.api.ts",
+      "sha256": "ac31506f3ea15814c05d122c48820f7a7d2fc43671cf0072e16f1681f191773d"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.logic.spec.ts",
+      "sha256": "d78505230b56c3d268d4f70ad3890b688ccbbf3282f5f43ab3d4c55576fc17de"
+    },
+    {
+      "path": "apps/web/src/features/plan-term/plan-term.logic.ts",
+      "sha256": "0e891b55a7fca833700db56091f58e5bbb62e1f4f8bdb73e9306ad97c607c9f6"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/WorkspaceLayout.tsx",
+      "sha256": "417d9f181573aeb9719ec37192bbdddb51e5d44506f5539ad4ba859056f55a5e"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/WorkspaceScope.tsx",
+      "sha256": "e214e4349d545578128c78bc17c9274d6fe1c0659f566d5bc57e9fa8c0bbac2b"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/web-core-workspace.logic.ts",
+      "sha256": "ee56d9763a366cf36580036ca6f301b0bedb930fbc0c25df78242ae1a4d602dc"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/web-core-workspace.spec.ts",
+      "sha256": "95499254ee968161187165177d8f7eb3f0db986c3339f1d4055c10370870139a"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/workspace-scope.api.spec.ts",
+      "sha256": "922fb978d5fc3c80ec9c5e73b1274af2a6422f1b65a480c579070db8b1b845d3"
+    },
+    {
+      "path": "apps/web/src/features/web-core-workspace/workspace-scope.api.ts",
+      "sha256": "881fa049dcdeea841f1e6358c507071f15bb0289908a798250aa38c558d2a88d"
+    },
+    {
+      "path": "docs/agent-memory/free-expense-drafts-quota.md",
+      "sha256": "d6f052ff2586eda2234343ba3ce418933317204987e032a2fd020cbf75301352"
+    },
+    {
+      "path": "docs/agent-memory/free-expense-drafts.md",
+      "sha256": "6ffe2ddd0fb5275e7e10857129fcc52a6b3d62521c29bd5442cbaa8b917aef99"
+    },
+    {
+      "path": "docs/plans/free-expense-drafts-plan-th.md",
+      "sha256": "bdbf8aab8f92d4c1a0b7c2c0d8a39844b714b48789ea16143bbbfda2932267f3"
+    },
+    {
+      "path": "docs/research/free-expense-drafts-impact-audit-2026-10-28-th.md",
+      "sha256": "5a312a5a33463596b04541bc26d71444f4ea75ebb254e0c94ee7c9d64e9293b3"
+    },
+    {
+      "path": "docs/specs/company-ocr-governance-spec-th.md",
+      "sha256": "4cd193a9c96b32d1d35dfb77ca71872120e226032471a2024612b9904a3f66d5"
+    },
+    {
+      "path": "docs/specs/free-expense-drafts-spec-th.md",
+      "sha256": "0db4465e37bae6557ab4b3745bdb696be0db91c5f7e18642f12bdb36db5a3d22"
+    },
+    {
+      "path": "docs/specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md",
+      "sha256": "6d20af513a34015feef24e06c6d886b28b3f46366c5409251747d5e3af3c9c0c"
+    },
+    {
+      "path": "docs/specs/line-receipt-ux-signup-reapply-spec.md",
+      "sha256": "732df625a7ab54be3801e02d544335b45e5f012f8b33015ea636a2a405175d69"
+    },
+    {
+      "path": "docs/specs/line-support-request-spec-th.md",
+      "sha256": "ac376b0102a5160e3747950a1199f85872f0b9f08c10af821745a42cf6fa7b75"
+    },
+    {
+      "path": "docs/specs/line-web-deeplink-handoff-spec.md",
+      "sha256": "7c27359bcdd7991a8d607eb2dcdfb7604331822ef4c72abeef0ef6ad0d35e330"
+    },
+    {
+      "path": "docs/specs/mangmee-company-plan-term-spec-th.md",
+      "sha256": "d554f2671190ec8a69a6c1fd4f85de598a5214ffb044cfe879d8a7687c4bc391"
+    },
+    {
+      "path": "docs/specs/mangmee-package-entitlements-spec-th.md",
+      "sha256": "be6756e33e1573a82f49a47502ab3cd679499b7518272f688a3e16fb149665cd"
+    },
+    {
+      "path": "docs/specs/mangmee-sales-deals-and-locked-signup-spec-th.md",
+      "sha256": "62cee259078577eee447f041261d46b97608158272761f7b10fb2e280a998558"
+    },
+    {
+      "path": "docs/specs/manual-expense-web-entry-flag-spec-th.md",
+      "sha256": "4e6001cccadd6b4c591aff72e51139f7f37c1ebe5b2c6caa3ab6cd522ee1b2e8"
+    },
+    {
+      "path": "packages/contracts/src/billing.ts",
+      "sha256": "b1e62761e9975f9dd2a0cb5a1262460aae4423be4e7fb74169972c217dbc361a"
+    },
+    {
+      "path": "packages/contracts/src/expenses.ts",
+      "sha256": "913f585c20e47767c451a9f4add2203ad51d2d88d3eb25bfec7677ad19e9c343"
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "sha256": "5fd82875358c7b180189af28ea482a64645d3edbd5fdeaa6e1168bca5f75c108"
+    },
+    {
+      "path": "packages/contracts/src/plan-term.ts",
+      "sha256": "958d0975736b8d8a6e9fb42639a6c8cdbe0aa59611452c35aac180489aaf7489"
+    }
+  ]
+}

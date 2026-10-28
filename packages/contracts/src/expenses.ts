@@ -28,12 +28,23 @@ export function hasExpenseCategory(expense: { expenseCategoryId?: string | null;
   return goods.length > 0 && goods.every(line => Boolean(line.expenseCategoryId));
 }
 export type ExtractionStatus = 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED';
+export type FreeExpenseAllowance = {
+  source: 'FREE_MONTHLY_3';
+  monthKey: string;
+  limit: number;
+  usedCount: number;
+  inFlightCount: number;
+  remainingCount: number;
+  resetAt: string;
+};
 export type ExpenseExtractionResult = {
   status: 'ok' | 'not_expense_document' | 'not_configured' | 'unsupported' | 'no_attachment' | 'failed';
   fields?: ReceiptOcrFieldResult;
   missingFields?: string[];
   classification?: BusinessDocumentClassification;
   errorCode?: string;
+  /** Server-confirmed monthly free read allowance, present on successful free reads only. */
+  freeAllowance?: FreeExpenseAllowance;
   /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). Never a money amount. */
   budgetScope?: AiBudgetScope;
   /**

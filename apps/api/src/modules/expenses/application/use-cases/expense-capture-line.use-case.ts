@@ -117,7 +117,7 @@ export class ExpenseCaptureLineUseCase {
 
   async readFinishedExpenseSnapshot(companyId: string, expenseId: string): Promise<{
     expense: {
-      id: string; status: string; captureSource: string; createdByUserId: string;
+      id: string; status: string; captureSource: string; createdByUserId: string; branchId: string | null;
       lineChatKeyHash: string | null; linePushTargetId: string | null; language?: 'th' | 'en';
       vendorNameSnapshot: string | null; grandTotalAmount: string | null; currency: string | null;
       sourceDocumentType: string | null; expenseDate: Date | null; primaryAttachmentId: string | null;
@@ -128,7 +128,7 @@ export class ExpenseCaptureLineUseCase {
     const expense = await this.prisma.client.expenseRecord.findFirst({
       where: { companyId, id: expenseId },
       select: {
-        id: true, status: true, captureSource: true, createdByUserId: true,
+        id: true, status: true, captureSource: true, createdByUserId: true, branchId: true,
         sourceChannelMetadataJson: true, vendorNameSnapshot: true, grandTotalAmount: true,
         currency: true, sourceDocumentType: true, expenseDate: true, aiVerificationSummaryJson: true, primaryAttachmentId: true,
         vendorDocumentNumber: true, expenseCategory: { select: { name: true } }, vatAmount: true, vatMode: true,
@@ -144,7 +144,7 @@ export class ExpenseCaptureLineUseCase {
     return {
       expense: {
         id: expense.id, status: expense.status, captureSource: expense.captureSource,
-        createdByUserId: expense.createdByUserId,
+        createdByUserId: expense.createdByUserId, branchId: expense.branchId,
         ...(channel?.language === 'th' || channel?.language === 'en' ? { language: channel.language } : {}),
         lineChatKeyHash: channel?.chatKeyHash ?? null,
         linePushTargetId: channel?.pushTargetId ?? null,

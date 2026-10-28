@@ -1,3 +1,4 @@
+import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { isBillingCustomerRecoveryPath, type PlanTermLockReason } from '@watchdog-bms/contracts';
@@ -149,7 +150,7 @@ export class ExchangeLiffSessionUseCase {
       orderBy: { createdAt: 'asc' },
       select: {
         companyId: true,
-        company: { select: { name: true, status: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } } } },
+        company: { select: { name: true, status: true, archivedAt: true, planTerm: { select: { termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true, tierKey: true } } } },
         roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { permissions: { select: { permission: { select: { key: true } } } } } } } },
       },
     });
@@ -164,14 +165,16 @@ export class ExchangeLiffSessionUseCase {
       canManagePlan: canManagePlan(membership.roles),
     } : {};
 
-    const destination = (membership: typeof memberships[number]) => {
+    const destination = async (membership: typeof memberships[number]) => {
+      const freeExpenseDrafts = membership.company.planTerm?.tierKey === 'FREE_TRIAL_15'
+        && await isFreeExpenseDraftCompany(this.prisma.client, membership.companyId, now);
       // R-C3: a locked shop lands its plan manager on the package page directly (Q5), and so does any
       // shop's plan manager when the sales-event page asks; everyone else keeps /renew or the
       // overview, which `resolveLineHandoffTarget` still enforces below.
-      const wanted = (isLocked(membership) || packageLanding) && canManagePlan(membership.roles)
+      const wanted = ((isLocked(membership) && !freeExpenseDrafts) || packageLanding) && canManagePlan(membership.roles)
         ? `/companies/${membership.companyId}/billing?channel=line`
         : openPath ?? `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
-      const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now);
+      const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now, freeExpenseDrafts);
       return targetPath ? { companyId: membership.companyId, targetPath } : { reason: 'suspended' as const };
     };
 

@@ -1,0 +1,38 @@
+{
+  "localDeterministicHttpFixture": true,
+  "actualExternalModelCalls": 0,
+  "actualCallsToLocalOcrFixture": 5,
+  "callsByCompany": {
+    "free-ui-zero": 3,
+    "free-ui-two": 1,
+    "free-ui-notice": 1
+  },
+  "calls": [
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "53f7518f-751a-4dea-af1c-61055310bf9a",
+      "documentNumber": "FREEUI-001"
+    },
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "5bfc421b-1d29-4834-bdf6-444149fa7ab9",
+      "documentNumber": "FREEUI-002"
+    },
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "bab70e95-a999-4278-a141-9adf12c8b1dd",
+      "documentNumber": "FREEUI-003"
+    },
+    {
+      "companyId": "free-ui-two",
+      "requestId": "698c02f3-6c29-4459-bde8-aaf89b534da6",
+      "documentNumber": "FREEUI-003"
+    },
+    {
+      "companyId": "free-ui-notice",
+      "requestId": "e5f653dc-dde4-46e5-b7d5-05d1439dd480",
+      "documentNumber": "FREEUI-003"
+    }
+  ],
+  "excludedSelfCheck": "free-ui-fixture-selfcheck"
+}

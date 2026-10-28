@@ -2,10 +2,13 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import {
   expenseCapturePagesRead,
   type ExpenseCapturePausedReason,
+  type FreeExpenseAllowance,
   type ExpenseCaptureReadManifest,
   type ExpenseCaptureReadStatus,
   type RequestContext,
 } from '@watchdog-bms/contracts';
+import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
+import { freeExpenseAllowanceSnapshot } from '../../../line-ai/application/free-expense-quota';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -47,7 +50,7 @@ export type ExpenseReadStatusFile = {
   applied?: boolean;
 };
 
-export type ExpenseReadStatusResult = { files: ExpenseReadStatusFile[] };
+export type ExpenseReadStatusResult = { files: ExpenseReadStatusFile[]; freeAllowance?: FreeExpenseAllowance };
 
 type ReadJobRow = {
   fileId: string | null;
@@ -145,6 +148,15 @@ export class GetExpenseReadStatusUseCase {
         applied: file.status === 'DONE' && !!expense.aiVerifiedAt,
       };
     }));
+    // The exact persisted operation, including its original Bangkok month, owns this projection.
+    const monthKey = bangkokMonthKey();
+    const checkpoint = jobs[0]?.checkpointJson as { ocrQuotaSource?: string; ocrEventId?: string; ocrMonthKey?: string } | undefined;
+    if (checkpoint?.ocrQuotaSource === 'FREE_MONTHLY_3' && checkpoint.ocrMonthKey === monthKey && checkpoint.ocrEventId) {
+      const succeeded = await this.prisma.client.companyOcrUsageEvent.findFirst({ where: {
+        id: checkpoint.ocrEventId, companyId: ctx.companyId, monthKey, quotaSource: 'FREE_MONTHLY_3', succeededAt: { not: null },
+      }, select: { id: true } });
+      if (succeeded) return { files, freeAllowance: await freeExpenseAllowanceSnapshot(this.prisma, ctx.companyId, monthKey) };
+    }
     return { files };
   }
 }

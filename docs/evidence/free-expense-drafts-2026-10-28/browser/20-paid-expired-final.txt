@@ -1,0 +1,41 @@
+- button "Open Next.js Dev Tools":
+- alert
+- link "ข้ามไปยังเนื้อหา":
+  - /url: "#workspace-main"
+- complementary:
+  - link "มั่งมี":
+    - /url: /
+    - generic: มั่งมี
+  - button "สลับเมนู":
+  - navigation:
+    - list:
+      - listitem "บุคลากรและการตั้งค่า"
+      - link "ตั้งค่า":
+        - /url: /companies/free-ui-paid-real/settings
+        - generic: ตั้งค่า
+      - link "แพ็กเกจ":
+        - /url: /companies/free-ui-paid-real/billing
+        - generic: แพ็กเกจ
+  - button "เมนูผู้ใช้":
+    - generic: ทp
+    - generic: คุณทดสอบ paid-real
+    - generic: เจ้าของร้าน
+- banner:
+  - generic: ร้านทดสอบแพ็กเกจหมดอายุ
+- status:
+  - paragraph: แพ็กเกจของร้านหมดอายุแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ
+  - link "เลือกแพ็กเกจ":
+    - /url: /companies/free-ui-paid-real/billing
+- main:
+  - alert:
+    - heading "แพ็กเกจหมดอายุแล้ว" [level=1]
+    - paragraph: ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที
+    - paragraph: หมดอายุเมื่อวันที่ 1 ก.พ. 2569
+    - link "เลือกแพ็กเกจ":
+      - /url: /companies/free-ui-paid-real/billing
+    - link "กรอกข้อมูลบริษัท":
+      - /url: /companies/free-ui-paid-real/settings/profile
+    - link "ติดต่อ 098-256-5628":
+      - /url: tel:0982565628
+    - link "อีเมล contact@mangmeeplus.com":
+      - /url: mailto:contact@mangmeeplus.com

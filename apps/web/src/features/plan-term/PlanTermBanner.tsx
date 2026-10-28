@@ -36,17 +36,18 @@ export const bannerSentence = (banner: string, place: BannerPlace): string => pl
  * The notice is a prop: the shell reads it once for the whole layout, and this component and the
  * locked sidebar must never disagree about the same company.
  */
-export function PlanTermBanner({ companyId, notice }: { companyId: string; notice: PlanTermNotice | null }) {
+export function PlanTermBanner({ companyId, notice, freeExpenseDrafts = false }: { companyId: string; notice: PlanTermNotice | null; freeExpenseDrafts?: boolean }) {
   const router = useRouter();
   const pathname = usePathname() ?? '';
 
-  const view = planTermView(notice, isLockedShellPath(pathname, companyId));
+  const freeDraftAccess = freeExpenseDrafts && notice?.freeExpenseDrafts === true;
+  const view = planTermView(notice, isLockedShellPath(pathname, companyId), freeDraftAccess);
 
   useEffect(() => {
     if (view === 'renewal-page') router.replace(`/companies/${companyId}/renew`);
   }, [view, companyId, router]);
 
-  if (notice?.derivedState !== 'EXPIRED') return null;
+  if (notice?.derivedState !== 'EXPIRED' || freeDraftAccess) return null;
 
   const copy = PLAN_LOCK_COPY[planLockReason(notice)];
   const canManagePlan = notice.canManagePlan ?? notice.isOwner;

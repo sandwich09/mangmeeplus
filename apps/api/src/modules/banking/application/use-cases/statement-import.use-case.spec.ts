@@ -348,6 +348,7 @@ describe('StatementAiExtractClient OCR governance', () => {
     let usedCount = 0;
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
       companyOcrUsageEvent: {
         findUnique: async ({ where }: any) => {
@@ -388,6 +389,7 @@ describe('StatementAiExtractClient OCR governance', () => {
     };
     const tx = {
       $executeRaw: async () => undefined,
+      company: { findUnique: async () => null },
       companyOcrUsageEvent: { findUnique: async () => null },
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 2 }) },
       companyOcrMonthlyUsage: { findUnique: async () => ({ usedCount: 2 }) },

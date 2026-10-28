@@ -1,3 +1,4 @@
+import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
 import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
@@ -77,12 +78,13 @@ export class PasswordLoginUseCase {
       select: {
         id: true,
         companyId: true,
+        company: { select: { planTerm: { select: { tierKey: true } } } },
         roles: { select: { role: { select: { key: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     }) ?? await this.prisma.client.companyMembership.findFirst({
       where: { userId: user.id, status: 'ACTIVE', company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
-      select: { id: true, companyId: true, roles: { select: { role: { select: { key: true } } } } },
+      select: { id: true, companyId: true, company: { select: { planTerm: { select: { tierKey: true } } } }, roles: { select: { role: { select: { key: true } } } } },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -104,6 +106,8 @@ export class PasswordLoginUseCase {
       });
     }
     const companyId = isSystemAdmin ? null : membership.companyId;
+    const freeExpenseDrafts = !isSystemAdmin && membership.company?.planTerm?.tierKey === 'FREE_TRIAL_15'
+      && await isFreeExpenseDraftCompany(this.prisma.client, membership.companyId);
     const legalAcceptance = await this.legalAcceptance.getStatus({
       userId: user.id,
       companyId: membership.companyId,
@@ -176,7 +180,7 @@ export class PasswordLoginUseCase {
       ...tokens,
       passwordChangeRequired,
       companyId,
-      redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/dashboard`,
+      redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/${freeExpenseDrafts ? 'expenses' : 'dashboard'}`,
       legalAcceptanceRequired: legalAcceptance.required,
     };
   }

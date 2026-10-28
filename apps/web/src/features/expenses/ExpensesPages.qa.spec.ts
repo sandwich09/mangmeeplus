@@ -7,7 +7,7 @@ const source = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'ut
 
 /** The `catch` inside `handleUpload` that decides what happens after a refused AI read. */
 function uploadCatchBlock(): string {
-  const start = source.indexOf('if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {');
+  const start = source.indexOf('if (code === RECEIPT_QUOTA_ERROR_CODE || (freeExpenseDrafts && code === \'FREE_DOCUMENT_LIMIT_REACHED\')) {');
   assert.notEqual(start, -1, 'the quota branch is gone — this guard needs rewriting, not deleting');
   const end = source.indexOf("t('expenses.upload_extract_failed_prefix', locale)", start);
   assert.notEqual(end, -1, 'the non-quota path no longer ends in the generic read-failure notice');

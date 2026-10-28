@@ -1,6 +1,9 @@
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import type { ExpenseCapturePausedReason, ExpenseCaptureReadStatus } from '@watchdog-bms/contracts';
+import { todayCivilDate, type ExpenseCapturePausedReason, type ExpenseCaptureReadStatus, type FreeExpenseAllowance } from '@watchdog-bms/contracts';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { bangkokMonthKey } from './expense-upload.logic';
+
+export type ExpenseReadStatusResult = { files: ExpenseReadStatusFile[]; freeAllowance?: FreeExpenseAllowance };
 
 /**
  * Read status → what the user is told (appendix §10, spec §17.2/§17.6).
@@ -36,6 +39,13 @@ export type ExpenseReadStatusFile = {
   /** Expense lane: the read really was written onto the draft the page is showing. */
   applied?: boolean;
 };
+
+export function freeAllowanceNotice(allowance: FreeExpenseAllowance | null | undefined, locale: SupportedLocale): string | null {
+  if (allowance?.source !== 'FREE_MONTHLY_3' || allowance.limit !== 3 || allowance.usedCount < 3
+    || allowance.monthKey !== bangkokMonthKey(todayCivilDate()) || Date.parse(allowance.resetAt) <= Date.now()) return null;
+  const date = new Intl.DateTimeFormat(locale === 'th' ? 'th-TH' : 'en-GB', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(allowance.resetAt));
+  return t('expenses.free_allowance_used', locale).replace('{used}', String(allowance.usedCount)).replace('{limit}', String(allowance.limit)).replace('{date}', date);
+}
 
 export type CaptureReadNotice = {
   tone: 'info' | 'error';
@@ -98,6 +108,7 @@ export function capturePausedReasonKey(reason: ExpenseCapturePausedReason | null
 /** The one persistent line shown beside the file. `null` while there is nothing to say. */
 export function captureReadNotice(file: ExpenseReadStatusFile | null | undefined): CaptureReadNotice | null {
   if (!file) return null;
+  if (file.lastErrorCode === 'FREE_MULTI_DOCUMENT_UNSUPPORTED') return { tone: 'info', messageKey: 'expenses.free_multi_document_unsupported', uxe: 'UXE-10' };
   if (file.status === 'FAILED') {
     return { tone: 'error', messageKey: 'expenses.capture.read_failed', uxe: 'UXE-10' };
   }

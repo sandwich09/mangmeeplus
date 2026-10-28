@@ -11,6 +11,7 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
 import { branchDisplayName, branchScopeLabel, branchStorageKeys } from './branch-scope-label.logic';
+import { companySwitcherTarget } from './web-core-workspace.logic';
 import {
   COMPANY_PROFILE_CHANGED_EVENT,
   fetchActiveBranches,
@@ -272,7 +273,7 @@ export function BranchSelector() {
 
 // ---- Company switcher ----
 
-export function CompanySwitcher({ companyId, fallbackName }: { companyId: string; fallbackName: string }) {
+export function CompanySwitcher({ companyId, fallbackName, currentFreeExpenseDrafts = false }: { companyId: string; fallbackName: string; currentFreeExpenseDrafts?: boolean }) {
   const pathname = usePathname();
   const locale = useWorkspaceLocale();
   const [companies, setCompanies] = useState<MyCompany[]>([]);
@@ -353,15 +354,8 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
               }`}
               onClick={() => {
                 setOpen(false);
-                // An expired shop routes to its renewal page — its business routes refuse anyway.
-                if (c.expired) {
-                  requestInAppNavigation(() => window.location.assign(`/companies/${c.companyId}/renew`));
-                  return;
-                }
-                if (c.companyId !== companyId) {
-                  const destination = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && c.canManagePlan ? 'billing' : 'dashboard';
-                  requestInAppNavigation(() => window.location.assign(`/companies/${c.companyId}/${destination}`));
-                }
+                const target = companySwitcherTarget({ companyId: c.companyId, currentCompanyId: companyId, currentFreeExpenseDrafts, freeExpenseDrafts: c.freeExpenseDrafts, expired: c.expired, canManagePlan: c.canManagePlan, currentPath: pathname ?? '' });
+                if (target) requestInAppNavigation(() => window.location.assign(target));
               }}
             >
               {c.companyName}

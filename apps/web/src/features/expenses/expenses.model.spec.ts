@@ -51,6 +51,10 @@ import {
   SUBSTITUTE_RECEIPT_STATUS_LABELS,
   expenseValueLabel,
   expenseCapabilities,
+  canExportExpenseList,
+  isFreeExpenseListDraft,
+  expenseUiPermissions,
+  expenseSourceDraftViewState,
   canDeleteExpense,
   canCancelExpenseInsteadOfDelete,
   canAccessExpenseTab,
@@ -1027,6 +1031,35 @@ describe('expenseCapabilities', () => {
     assert.equal(expenseDeleteTargetLabel({ ...unnamed, expenseNumber: '', vendorNameSnapshot: 'ร้านทดสอบ' }), 'ร้านทดสอบ');
     assert.equal(expenseDeleteTargetLabel({ ...unnamed, expenseNumber: '   ' }), undefined);
     assert.equal(expenseDeleteTargetLabel(unnamed), undefined);
+  });
+});
+
+describe('free expense draft UI access', () => {
+  it('counts mutable free source states as drafts', () => {
+    assert.equal(isFreeExpenseListDraft('DRAFT'), true);
+    assert.equal(isFreeExpenseListDraft('NEEDS_REVIEW'), true);
+    assert.equal(isFreeExpenseListDraft('CONFIRMED'), false);
+    assert.equal(isFreeExpenseListDraft('REJECTED'), false);
+  });
+
+  it('keeps a free expense editable only through its source card while paid permissions stay unchanged', () => {
+    const paidPermissions = ['expense.read', 'expense.update', 'expense.review', 'expense.confirm', 'expense.create', 'expense.export', 'expense.receipt.upload'];
+    const freePermissions = expenseUiPermissions(paidPermissions, true);
+    const freeCaps = expenseCapabilities(freePermissions);
+    const paidCaps = expenseCapabilities(expenseUiPermissions(paidPermissions));
+    const sourceDraft = {
+      status: 'OPEN' as const, canEdit: true,
+      header: { expenseDate: null, vendorName: null, businessPurpose: null }, items: [],
+      missingFields: [{ id: 'vendor', scope: 'DOCUMENT' as const, field: 'vendorName', prompt: 'vendor' }],
+    };
+    const detail = { status: 'DRAFT' as const, sourceDraft, lines: [] };
+
+    assert.equal(freeCaps.canReview || freeCaps.canConfirm || freeCaps.canCreate || freeCaps.canExportPackage, false);
+    assert.equal(paidCaps.canReview && paidCaps.canConfirm && paidCaps.canCreate && paidCaps.canExportPackage, true);
+    assert.equal(canExportExpenseList(true, expenseCapabilities(paidPermissions)), false);
+    assert.equal(canExportExpenseList(false, paidCaps), true);
+    assert.equal(expenseSourceDraftViewState(detail, false).sourceOnly, true);
+    assert.equal(expenseSourceDraftViewState(detail, true).sourceOnly, false);
   });
 });
 

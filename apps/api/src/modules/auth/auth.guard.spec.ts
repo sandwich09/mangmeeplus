@@ -483,6 +483,25 @@ describe('AuthGuard', () => {
     );
   });
 
+  it('free mode opens exact draft actions while preserving legal and final-action gates', async () => {
+    const freeResolve = { execute: async (...args: any[]) => ({ ...await noopResolve.execute(...args), freeExpenseDrafts: true }) } as any;
+    const expiredPrisma = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) });
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, freeResolve, localConfig, expiredPrisma, acceptedLegal);
+    for (const [method, path] of [['GET', '/v1/companies/c1/expenses'], ['PATCH', '/v1/companies/c1/expenses/draft'], ['POST', '/v1/companies/c1/expenses/receipt-uploads'], ['GET', '/v1/auth/me'], ['GET', '/v1/plan-term/notice']]) {
+      assert.equal(await guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', method, path })), true, path);
+    }
+    for (const [method, path] of [['POST', '/v1/companies/c1/expenses/draft/confirm'], ['POST', '/v1/companies/c1/expenses'], ['POST', '/v1/companies/c1/expenses/capture-groups/g/handoff'], ['GET', '/v1/companies/c1/ledger']]) {
+      await assert.rejects(() => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', method, path })),
+        (error: any) => error instanceof ForbiddenException && (error.getResponse() as any).code === 'FREE_EXPENSE_DRAFTS_ONLY');
+    }
+    const legalGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, freeResolve, localConfig, expiredPrisma,
+      { isRequired: async () => true } as any);
+    await assert.rejects(() => legalGuard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path: '/v1/companies/c1/expenses' })),
+      (error: any) => error instanceof ForbiddenException && (error.getResponse() as any).code === 'legal_acceptance_required');
+    await assert.rejects(() => legalGuard.canActivate(makeContext({ authHeader: 'Bearer valid.token', method: 'POST', path: '/v1/companies/c1/expenses/draft/confirm' })),
+      (error: any) => error instanceof ForbiddenException && (error.getResponse() as any).code === 'legal_acceptance_required');
+  });
+
   it('blocks on the exact hour: one millisecond before termEndsAt still passes', async () => {
     const notYet = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() + 1000) });
     const guard = new AuthGuard(

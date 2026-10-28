@@ -71,12 +71,14 @@ export async function runSingleFileUploads<T>(input: {
   retryIndex?: number;
   describeFailure?: (cause: unknown) => string;
   onChange?: (entries: CaptureUploadEntry[]) => void;
+  shouldStop?: () => boolean;
 }): Promise<{ entries: CaptureUploadEntry[]; created: Array<{ expenseId: string; result?: T }> }> {
   let entries = input.entries.map(({ entry }) => entry);
   const created: Array<{ expenseId: string; result?: T }> = [];
   const publish = () => input.onChange?.(entries);
 
   for (const [index, { file }] of input.entries.entries()) {
+    if (input.shouldStop?.()) break;
     const current = entries[index]!;
     if (current.expenseId || input.retryIndex !== undefined && input.retryIndex !== index) continue;
     if (!file) {

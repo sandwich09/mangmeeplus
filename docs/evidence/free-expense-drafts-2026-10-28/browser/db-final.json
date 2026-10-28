@@ -1,0 +1,1006 @@
+{
+  "stage": "after-browser-uploads",
+  "capturedAt": "2026-10-28T15:31:13.108Z",
+  "fixtureOnly": true,
+  "database": "127.0.0.1:15486/free_expense_ui_20261028",
+  "api": "http://127.0.0.1:3081",
+  "provider": "local deterministic HTTP fixture, zero actual model calls",
+  "providerCalls": [
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "53f7518f-751a-4dea-af1c-61055310bf9a",
+      "documentNumber": "FREEUI-001"
+    },
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "5bfc421b-1d29-4834-bdf6-444149fa7ab9",
+      "documentNumber": "FREEUI-002"
+    },
+    {
+      "companyId": "free-ui-zero",
+      "requestId": "bab70e95-a999-4278-a141-9adf12c8b1dd",
+      "documentNumber": "FREEUI-003"
+    },
+    {
+      "companyId": "free-ui-two",
+      "requestId": "698c02f3-6c29-4459-bde8-aaf89b534da6",
+      "documentNumber": "FREEUI-003"
+    },
+    {
+      "companyId": "free-ui-notice",
+      "requestId": "e5f653dc-dde4-46e5-b7d5-05d1439dd480",
+      "documentNumber": "FREEUI-003"
+    }
+  ],
+  "companies": [
+    {
+      "company": {
+        "id": "free-ui-zero",
+        "name": "ร้านใช้ฟรี เริ่มอ่าน 0 ใบ",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:14:22.661Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:14:22.676Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "events": [
+        {
+          "id": "cmvs9e149000orkk1eulrj6kp",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "53f7518f-751a-4dea-af1c-61055310bf9a",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:18:06.708Z",
+          "createdAt": "2026-10-28T15:18:06.633Z"
+        },
+        {
+          "id": "cmvs9ie9f0018rkk15i86ct7s",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "5bfc421b-1d29-4834-bdf6-444149fa7ab9",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:21:30.332Z",
+          "createdAt": "2026-10-28T15:21:30.291Z"
+        },
+        {
+          "id": "cmvs9iqch001qrkk17vbenzw6",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "bab70e95-a999-4278-a141-9adf12c8b1dd",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:21:46.000Z",
+          "createdAt": "2026-10-28T15:21:45.953Z"
+        }
+      ],
+      "expenses": [
+        {
+          "id": "free-ui-draft-zero",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-zero",
+          "branchId": "free-ui-branch-zero",
+          "vendorName": "ร้านกระดาษตัวอย่าง",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": null,
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:14:22.696Z",
+          "grandTotalAmount": "120",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:14:22.696Z",
+            "header": {
+              "vendorName": "ร้านกระดาษตัวอย่าง",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "กระดาษ A4",
+                "quantity": "1",
+                "unitPrice": "120",
+                "expenseCategoryId": "cmvs998bk00050jk1py8z13ho",
+                "lineId": "cmvs998c100060jk10o4taspk"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs998c100060jk10o4taspk",
+              "lineNumber": 1,
+              "description": "กระดาษ A4",
+              "quantity": "1",
+              "unitPrice": "120",
+              "lineTotalAmount": "120",
+              "expenseCategoryId": "cmvs998bk00050jk1py8z13ho"
+            }
+          ]
+        },
+        {
+          "id": "cmvs9e0v1000drkk14r4kny26",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-zero",
+          "branchId": "free-ui-branch-zero",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9e0vz000erkk1nfby7a52",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:18:06.719Z",
+          "grandTotalAmount": "101",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": null,
+          "lines": [
+            {
+              "id": "cmvs9e15s000qrkk1u6n5geid",
+              "lineNumber": 1,
+              "description": "Stationery pack 1",
+              "quantity": "1",
+              "unitPrice": "101",
+              "lineTotalAmount": "101",
+              "expenseCategoryId": null
+            }
+          ]
+        },
+        {
+          "id": "cmvs9ie3e000xrkk15wnbgqef",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-zero",
+          "branchId": "free-ui-branch-zero",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9ie43000yrkk10cp1dcgb",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:21:30.340Z",
+          "grandTotalAmount": "102",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": null,
+          "lines": [
+            {
+              "id": "cmvs9iea4001arkk1gbcuujbr",
+              "lineNumber": 1,
+              "description": "Stationery pack 2",
+              "quantity": "1",
+              "unitPrice": "102",
+              "lineTotalAmount": "102",
+              "expenseCategoryId": null
+            }
+          ]
+        },
+        {
+          "id": "cmvs9iq7t001frkk10f5agz0c",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-zero",
+          "branchId": "free-ui-branch-zero",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: แก้ร่างหลังครบ 3 ใบจากหน้าจอมือถือ",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9iq8g001grkk1ou6g2bgx",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:25:07.860Z",
+          "grandTotalAmount": "103",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:25:07.860Z",
+            "header": {
+              "vendorName": "Synthetic Stationery Shop",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "แก้ร่างหลังครบ 3 ใบจากหน้าจอมือถือ",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "Stationery pack 3",
+                "quantity": "1",
+                "unitPrice": "103",
+                "expenseCategoryId": null,
+                "lineId": "cmvs9iqda001srkk1r5432qqz"
+              }
+            ],
+            "unresolvedQuestions": [
+              {
+                "id": "I01-CATEGORY",
+                "field": "expenseCategoryId",
+                "scope": "ITEM",
+                "prompt": "I01 ต้องการจัดอยู่ในหมวดค่าใช้จ่ายใด?",
+                "itemRef": "I01"
+              }
+            ]
+          },
+          "lines": [
+            {
+              "id": "cmvs9iqda001srkk1r5432qqz",
+              "lineNumber": 1,
+              "description": "Stationery pack 3",
+              "quantity": "1",
+              "unitPrice": "103",
+              "lineTotalAmount": "103",
+              "expenseCategoryId": null
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "attachments": [
+        {
+          "id": "cmvs9e0vz000erkk1nfby7a52",
+          "status": "ACTIVE",
+          "byteSize": 47480,
+          "mimeType": "image/png",
+          "checksumSha256": "32f01ae8fc9bc994e4134769901f0099421487b99d84782d8feff751e3b0fe43",
+          "uploadedByUserId": "free-ui-user-zero",
+          "createdAt": "2026-10-28T15:18:06.335Z"
+        },
+        {
+          "id": "cmvs9ie43000yrkk10cp1dcgb",
+          "status": "ACTIVE",
+          "byteSize": 48535,
+          "mimeType": "image/png",
+          "checksumSha256": "f8e68814985c073dc0e155fecfece6412a523120b042c788bd0815c411b8b429",
+          "uploadedByUserId": "free-ui-user-zero",
+          "createdAt": "2026-10-28T15:21:30.099Z"
+        },
+        {
+          "id": "cmvs9iq8g001grkk1ou6g2bgx",
+          "status": "ACTIVE",
+          "byteSize": 48703,
+          "mimeType": "image/png",
+          "checksumSha256": "dc6a835882e52ebb182fd376a7e5342937a7879b92f7e0a15d8940420eb69396",
+          "uploadedByUserId": "free-ui-user-zero",
+          "createdAt": "2026-10-28T15:21:45.808Z"
+        }
+      ]
+    },
+    {
+      "company": {
+        "id": "free-ui-two",
+        "name": "ร้านฟรี อ่านแล้ว 2 ใบ",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:13:37.032Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:13:37.054Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "events": [
+        {
+          "id": "cmvs989570007x5k13fgooe3f",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-0",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:13:37.099Z",
+          "createdAt": "2026-10-28T15:13:37.099Z"
+        },
+        {
+          "id": "cmvs9895a0008x5k1ejj7sd4i",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-1",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:13:37.102Z",
+          "createdAt": "2026-10-28T15:13:37.102Z"
+        },
+        {
+          "id": "cmvs9nmtn002irkk1qujw9gsb",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "698c02f3-6c29-4459-bde8-aaf89b534da6",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:25:34.725Z",
+          "createdAt": "2026-10-28T15:25:34.667Z"
+        }
+      ],
+      "expenses": [
+        {
+          "id": "free-ui-draft-two",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-two",
+          "branchId": "free-ui-branch-two",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ทดสอบแก้ร่างผ่านหน้าจอจริง — ยังไม่ทราบรายละเอียดครบ",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9awaj00006wk1j1hqv72r",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:16:03.606Z",
+          "grandTotalAmount": "101",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:16:03.606Z",
+            "header": {
+              "vendorName": "Synthetic Stationery Shop",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ทดสอบแก้ร่างผ่านหน้าจอจริง — ยังไม่ทราบรายละเอียดครบ",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "Stationery pack 1",
+                "quantity": "1",
+                "unitPrice": null,
+                "expenseCategoryId": "cmvs9894c0005x5k1gtdqi1rj",
+                "lineId": "cmvs9894q0006x5k19fvgft62"
+              }
+            ],
+            "unresolvedQuestions": [
+              {
+                "id": "I01-PRICE",
+                "field": "price",
+                "scope": "ITEM",
+                "prompt": "I01 Stationery pack 1 ราคาต่อหน่วยหรือยอดรวมเท่าไร?",
+                "itemRef": "I01"
+              }
+            ]
+          },
+          "lines": [
+            {
+              "id": "cmvs9894q0006x5k19fvgft62",
+              "lineNumber": 1,
+              "description": "Stationery pack 1",
+              "quantity": "1",
+              "unitPrice": "101",
+              "lineTotalAmount": "101",
+              "expenseCategoryId": "cmvs9894c0005x5k1gtdqi1rj"
+            }
+          ]
+        },
+        {
+          "id": "cmvs9nmmq0027rkk17k5f9nxp",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-two",
+          "branchId": "free-ui-branch-two",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9nmnl0028rkk13dfgzmpr",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:25:34.735Z",
+          "grandTotalAmount": "103",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": null,
+          "lines": [
+            {
+              "id": "cmvs9nmun002krkk1x6bu23di",
+              "lineNumber": 1,
+              "description": "Stationery pack 3",
+              "quantity": "1",
+              "unitPrice": "103",
+              "lineTotalAmount": "103",
+              "expenseCategoryId": null
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "attachments": [
+        {
+          "id": "cmvs9awaj00006wk1j1hqv72r",
+          "status": "ACTIVE",
+          "byteSize": 47480,
+          "mimeType": "image/png",
+          "checksumSha256": "32f01ae8fc9bc994e4134769901f0099421487b99d84782d8feff751e3b0fe43",
+          "uploadedByUserId": "free-ui-user-two",
+          "createdAt": "2026-10-28T15:15:40.411Z"
+        },
+        {
+          "id": "cmvs9nmnl0028rkk13dfgzmpr",
+          "status": "ACTIVE",
+          "byteSize": 48703,
+          "mimeType": "image/png",
+          "checksumSha256": "dc6a835882e52ebb182fd376a7e5342937a7879b92f7e0a15d8940420eb69396",
+          "uploadedByUserId": "free-ui-user-two",
+          "createdAt": "2026-10-28T15:25:34.449Z"
+        }
+      ]
+    },
+    {
+      "company": {
+        "id": "free-ui-three",
+        "name": "ร้านฟรี อ่านครบ 3 ใบ",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:13:37.146Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:13:37.152Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "events": [
+        {
+          "id": "cmvs98970000ix5k1fsgw4dmc",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-0",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:13:37.164Z",
+          "createdAt": "2026-10-28T15:13:37.164Z"
+        },
+        {
+          "id": "cmvs98971000jx5k1so4jolj8",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-1",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:13:37.165Z",
+          "createdAt": "2026-10-28T15:13:37.165Z"
+        },
+        {
+          "id": "cmvs98972000kx5k18pdg65oa",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-2",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:13:37.166Z",
+          "createdAt": "2026-10-28T15:13:37.166Z"
+        }
+      ],
+      "expenses": [
+        {
+          "id": "free-ui-draft-three",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-three",
+          "branchId": "free-ui-branch-three",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9awcb00026wk1q4z63k0s",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:15:40.480Z",
+          "grandTotalAmount": "101",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:15:40.480Z",
+            "header": {
+              "vendorName": "Synthetic Stationery Shop",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "Stationery pack 1",
+                "quantity": "1",
+                "unitPrice": "101",
+                "expenseCategoryId": "cmvs9896s000gx5k1e627kai2",
+                "lineId": "cmvs9896v000hx5k1p7syyn93"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs9896v000hx5k1p7syyn93",
+              "lineNumber": 1,
+              "description": "Stationery pack 1",
+              "quantity": "1",
+              "unitPrice": "101",
+              "lineTotalAmount": "101",
+              "expenseCategoryId": "cmvs9896s000gx5k1e627kai2"
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "attachments": [
+        {
+          "id": "cmvs9awcb00026wk1q4z63k0s",
+          "status": "ACTIVE",
+          "byteSize": 47480,
+          "mimeType": "image/png",
+          "checksumSha256": "32f01ae8fc9bc994e4134769901f0099421487b99d84782d8feff751e3b0fe43",
+          "uploadedByUserId": "free-ui-user-three",
+          "createdAt": "2026-10-28T15:15:40.475Z"
+        }
+      ]
+    },
+    {
+      "company": {
+        "id": "free-ui-paid-expired",
+        "name": "ร้านเคยซื้อ แพ็กเกจหมดอายุ",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:13:37.199Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:13:37.205Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {},
+      "events": [],
+      "expenses": [
+        {
+          "id": "free-ui-draft-paid-expired",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-paid-expired",
+          "branchId": "free-ui-branch-paid-expired",
+          "vendorName": "ร้านกระดาษตัวอย่าง",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": null,
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:13:37.210Z",
+          "grandTotalAmount": "120",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:13:37.210Z",
+            "header": {
+              "vendorName": "ร้านกระดาษตัวอย่าง",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "กระดาษ A4",
+                "quantity": "1",
+                "unitPrice": "120",
+                "expenseCategoryId": "cmvs98988000sx5k1y91kvukr",
+                "lineId": "cmvs9898a000tx5k1ceazkpy0"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs9898a000tx5k1ceazkpy0",
+              "lineNumber": 1,
+              "description": "กระดาษ A4",
+              "quantity": "1",
+              "unitPrice": "120",
+              "lineTotalAmount": "120",
+              "expenseCategoryId": "cmvs98988000sx5k1y91kvukr"
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 1
+      },
+      "attachments": []
+    },
+    {
+      "company": {
+        "id": "free-ui-admin-held",
+        "name": "ร้านถูกปิดโดยผู้ดูแล",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:13:37.251Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": null,
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {},
+      "events": [],
+      "expenses": [
+        {
+          "id": "free-ui-draft-admin-held",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-admin-held",
+          "branchId": "free-ui-branch-admin-held",
+          "vendorName": "ร้านกระดาษตัวอย่าง",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": null,
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:13:37.262Z",
+          "grandTotalAmount": "120",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:13:37.262Z",
+            "header": {
+              "vendorName": "ร้านกระดาษตัวอย่าง",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "กระดาษ A4",
+                "quantity": "1",
+                "unitPrice": "120",
+                "expenseCategoryId": "cmvs9899p0011x5k10rxrorye",
+                "lineId": "cmvs9899r0012x5k1slb24b06"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs9899r0012x5k1slb24b06",
+              "lineNumber": 1,
+              "description": "กระดาษ A4",
+              "quantity": "1",
+              "unitPrice": "120",
+              "lineTotalAmount": "120",
+              "expenseCategoryId": "cmvs9899p0011x5k10rxrorye"
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "attachments": []
+    },
+    {
+      "company": {
+        "id": "free-ui-notice",
+        "name": "ร้านทดสอบข้อความครบสิทธิ์",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:28:17.971Z"
+      },
+      "term": {
+        "tierKey": "FREE_TRIAL_15",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-01-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:28:17.992Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {
+        "2026-10": {
+          "used": 3,
+          "inFlight": 0
+        }
+      },
+      "events": [
+        {
+          "id": "cmvs9r4w40007fhk16ywyb4ek",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-0",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:28:18.052Z",
+          "createdAt": "2026-10-28T15:28:18.053Z"
+        },
+        {
+          "id": "cmvs9r4w70008fhk1tmys69ps",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "local-ui-success-1",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:28:18.055Z",
+          "createdAt": "2026-10-28T15:28:18.055Z"
+        },
+        {
+          "id": "cmvs9slyk0036rkk114vpm1er",
+          "monthKey": "2026-10",
+          "sourceRoute": "receipt-ocr-web",
+          "requestId": "e5f653dc-dde4-46e5-b7d5-05d1439dd480",
+          "quotaSource": "FREE_MONTHLY_3",
+          "succeededAt": "2026-10-28T15:29:26.869Z",
+          "createdAt": "2026-10-28T15:29:26.828Z"
+        }
+      ],
+      "expenses": [
+        {
+          "id": "free-ui-draft-notice",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-notice",
+          "branchId": "free-ui-branch-notice",
+          "vendorName": "ร้านกระดาษตัวอย่าง",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": null,
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:28:18.021Z",
+          "grandTotalAmount": "120",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:28:18.021Z",
+            "header": {
+              "vendorName": "ร้านกระดาษตัวอย่าง",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "กระดาษ A4",
+                "quantity": "1",
+                "unitPrice": "120",
+                "expenseCategoryId": "cmvs9r4v10005fhk10efaj69i",
+                "lineId": "cmvs9r4vi0006fhk1s7luoynm"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs9r4vi0006fhk1s7luoynm",
+              "lineNumber": 1,
+              "description": "กระดาษ A4",
+              "quantity": "1",
+              "unitPrice": "120",
+              "lineTotalAmount": "120",
+              "expenseCategoryId": "cmvs9r4v10005fhk10efaj69i"
+            }
+          ]
+        },
+        {
+          "id": "cmvs9slt9002vrkk1i9hl3fni",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-notice",
+          "branchId": "free-ui-branch-notice",
+          "vendorName": "Synthetic Stationery Shop",
+          "vendorCounterpartyId": null,
+          "note": "",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": "cmvs9sltz002wrkk1qao9nsur",
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:29:26.878Z",
+          "grandTotalAmount": "103",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": null,
+          "lines": [
+            {
+              "id": "cmvs9slz90038rkk1l4ddlso9",
+              "lineNumber": 1,
+              "description": "Stationery pack 3",
+              "quantity": "1",
+              "unitPrice": "103",
+              "lineTotalAmount": "103",
+              "expenseCategoryId": null
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 0
+      },
+      "attachments": [
+        {
+          "id": "cmvs9sltz002wrkk1qao9nsur",
+          "status": "ACTIVE",
+          "byteSize": 48703,
+          "mimeType": "image/png",
+          "checksumSha256": "dc6a835882e52ebb182fd376a7e5342937a7879b92f7e0a15d8940420eb69396",
+          "uploadedByUserId": "free-ui-user-notice",
+          "createdAt": "2026-10-28T15:29:26.663Z"
+        }
+      ]
+    },
+    {
+      "company": {
+        "id": "free-ui-paid-real",
+        "name": "ร้านทดสอบแพ็กเกจหมดอายุ",
+        "status": "DISABLED",
+        "archivedAt": null,
+        "disabledAt": "2026-10-28T15:28:18.099Z"
+      },
+      "term": {
+        "tierKey": "STARTER_249",
+        "termStartAt": "2026-01-01T00:00:00.000Z",
+        "termEndsAt": "2026-02-01T00:00:00.000Z",
+        "termDisabledAt": "2026-10-28T15:28:18.107Z",
+        "billingReceiptAccountId": null,
+        "freeQuotaNoticeSentMonthKey": null
+      },
+      "quotaByMonth": {},
+      "events": [],
+      "expenses": [
+        {
+          "id": "free-ui-draft-paid-real",
+          "status": "NEEDS_REVIEW",
+          "captureSource": "WEB_UPLOAD",
+          "createdByUserId": "free-ui-user-paid-real",
+          "branchId": "free-ui-branch-paid-real",
+          "vendorName": "ร้านกระดาษตัวอย่าง",
+          "vendorCounterpartyId": null,
+          "note": "วัตถุประสงค์: ใช้ในสำนักงาน",
+          "expenseDate": "2026-10-28T00:00:00.000Z",
+          "primaryAttachmentId": null,
+          "reviewedAt": null,
+          "confirmedAt": null,
+          "expenseNumber": null,
+          "updatedAt": "2026-10-28T15:28:18.116Z",
+          "grandTotalAmount": "120",
+          "paidAmount": "0",
+          "paymentStatus": "UNPAID",
+          "postingStatus": "not_required",
+          "sourceDraft": {
+            "status": "PAUSED",
+            "targetRevision": "2026-10-28T15:28:18.116Z",
+            "header": {
+              "vendorName": "ร้านกระดาษตัวอย่าง",
+              "expenseDate": "2026-10-28",
+              "businessPurpose": "ใช้ในสำนักงาน",
+              "provisionalExpenseDate": "2026-10-28"
+            },
+            "items": [
+              {
+                "itemRef": "I01",
+                "description": "กระดาษ A4",
+                "quantity": "1",
+                "unitPrice": "120",
+                "expenseCategoryId": "cmvs9r4xt000gfhk1acm6c4im",
+                "lineId": "cmvs9r4xx000hfhk1vqnqz6lx"
+              }
+            ],
+            "unresolvedQuestions": []
+          },
+          "lines": [
+            {
+              "id": "cmvs9r4xx000hfhk1vqnqz6lx",
+              "lineNumber": 1,
+              "description": "กระดาษ A4",
+              "quantity": "1",
+              "unitPrice": "120",
+              "lineTotalAmount": "120",
+              "expenseCategoryId": "cmvs9r4xt000gfhk1acm6c4im"
+            }
+          ]
+        }
+      ],
+      "finance": {
+        "expensePayments": 0,
+        "accountingDocuments": 0,
+        "journalEntries": 0,
+        "counterparties": 0,
+        "paidReceiptGrants": 0,
+        "billingInvoices": 1
+      },
+      "attachments": []
+    }
+  ]
+}

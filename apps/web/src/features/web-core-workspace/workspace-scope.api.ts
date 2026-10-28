@@ -5,7 +5,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 import type { PlanTermLockReason, PlanTermState } from '@watchdog-bms/contracts';
 import { shopHasSystemWhtCertificates } from '../expenses/expense-wht-certificates.logic';
 
-export type MyCompany = { companyId: string; companyName: string; roles: string[]; roleNames?: Record<string, string>; canManagePlan?: boolean; expired?: boolean; planState?: PlanTermState; lockReason?: PlanTermLockReason };
+export type MyCompany = { companyId: string; companyName: string; roles: string[]; roleNames?: Record<string, string>; canManagePlan?: boolean; expired?: boolean; freeExpenseDrafts?: boolean; planState?: PlanTermState; lockReason?: PlanTermLockReason };
 
 export async function fetchMyCompanies(): Promise<MyCompany[]> {
   const body = await authedApiFetch<{ data: MyCompany[] }>('/v1/auth/me/companies');
@@ -21,10 +21,11 @@ export type MyContext = {
   scopes?: { branchIds?: string[] };
   manualExpenseWebEntry?: boolean;
   disbursementVoucherWebEntry?: boolean;
+  freeExpenseDrafts?: boolean;
   entitledFeatureKeys?: string[] | null;
 };
 
-type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry' | 'entitledFeatureKeys'>;
+type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry' | 'freeExpenseDrafts' | 'entitledFeatureKeys'>;
 
 export function accessContextFingerprint(context: AccessContext): string {
   const sorted = (items: readonly string[] | undefined) => [...new Set(items ?? [])].sort();
@@ -39,6 +40,7 @@ export function accessContextFingerprint(context: AccessContext): string {
     // A missing value reads as shown, exactly as `canOpenManualWeb` reads it.
     manualExpenseWebEntry: context.manualExpenseWebEntry !== false,
     disbursementVoucherWebEntry: context.disbursementVoucherWebEntry === true,
+    freeExpenseDrafts: context.freeExpenseDrafts === true,
     systemWhtCertificates: shopHasSystemWhtCertificates(context.entitledFeatureKeys),
   });
 }

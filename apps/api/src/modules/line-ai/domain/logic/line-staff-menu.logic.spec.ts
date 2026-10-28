@@ -908,10 +908,10 @@ describe('standalone trial pricing FAQ', () => {
       const answer = resolvePublicPolicyAnswer(text);
       assert.equal(answer?.topic, 'trial', text);
       const reply = { type: 'text', text: answer!.text };
-      assert.match(reply.text, /เลือกและชำระแพ็กเกจ/);
-      assert.match(reply.text, /ไม่เรียกเก็บเงินอัตโนมัติ/);
-      assert.match(reply.text, /มีสิทธิ์ทดลองฟรีอยู่ก่อน/);
-      assert.match(reply.text, /249/, 'R1: the locked shop now needs to hear the starting price');
+      assert.match(reply.text, /ยังไม่เคยซื้อแพ็กเกจ[\s\S]*3 ใบต่อเดือน/);
+      assert.match(reply.text, /ไม่บังคับซื้อหรือเรียกเก็บเงินอัตโนมัติ/);
+      assert.match(reply.text, /มีสิทธิ์ทดลองเดิม/);
+      assert.doesNotMatch(reply.text, /249/, 'free policy does not invite a purchase');
       assert.doesNotMatch(reply.text, /PRO|ฟรีตลอด|เปิดดูรายการ|นอกขอบเขต|ซื้อได้แล้ว/);
       // Owner 2026-09-30 (advisor spec §2.2): the answer ends at the staff door, never the package page.
       assert.doesNotMatch(reply.text, /https?:\/\/|ดูรายละเอียดแพ็กเกจ/);
@@ -943,7 +943,7 @@ describe('public policy conversation', () => {
       'แบบหมดอายุฟรีแล้วบังคับสมัครต่อไหม', 'ถามว่าบังคับไหม', 'แน่นะ']) {
       const answer = resolvePublicPolicyAnswer(text, topic);
       assert.equal(answer?.topic, 'trial', text);
-      assert.match(answer!.text, /ไม่บังคับซื้อทันที/);
+      assert.match(answer!.text, /ไม่บังคับซื้อ/);
       const card = buildPublicPolicyCardMessage(answer!);
       assert.equal(card.type, 'flex');
       assert.doesNotMatch(JSON.stringify(card), /expenses|เปิดดูรายการ|ทำผ่านLINEไม่ได้/);
@@ -967,11 +967,11 @@ describe('public policy conversation', () => {
 
   it('answers documented public policies without claiming an account action succeeded', () => {
     const cases = [
-      ['ทดลองฟรีกี่วัน', 'trial_limits', /ตั้งค่าข้อมูลร้านและบัญชี[\s\S]*249 \/ 499 \/ 999[\s\S]*แพ็กเกจธุรกิจ 1,999 ได้เมนูเดียวกัน/],
+      ['ทดลองฟรีกี่วัน', 'trial_limits', /ยังไม่เคยซื้อแพ็กเกจ[\s\S]*3 ใบต่อเดือน[\s\S]*ยังเปิดดูและแก้ร่างเดิมได้/],
       // Owner 2026-09-21: the menu question asked without the word "ทดลอง" reaches the same answer.
-      ['แพ็กเกจไหนได้เมนูอะไรบ้าง', 'trial_limits', /ผู้ช่วย AI ทาง LINE[\s\S]*ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จ/],
-      ['แพ็กเกจธุรกิจได้อะไรบ้าง', 'trial_limits', /ภ\.ง\.ด\.53 และ 50 ทวิ/],
-      ['แพ็คเกจธุรกิจมีอะไรบ้างคะ', 'trial_limits', /เพิ่มเอกสารภาษี/],
+      ['แพ็กเกจไหนได้เมนูอะไรบ้าง', 'package_features', /ผู้ช่วย AI ทาง LINE[\s\S]*ต่างกันที่จำนวนสาขา ผู้ใช้ และใบเสร็จ/],
+      ['แพ็กเกจธุรกิจได้อะไรบ้าง', 'package_features', /ภ\.ง\.ด\.53 และ 50 ทวิ/],
+      ['แพ็คเกจธุรกิจมีอะไรบ้างคะ', 'package_features', /เพิ่มเอกสารภาษี/],
       ['ทดลองใช้ฟรีต้องผูกบัตรไหม', 'card', /ไม่ต้องผูกบัตร/],
       ['หมดโปรฟรีแล้วข้อมูลหายไหม', 'data', /ไม่ได้ถูกลบทันที/],
       ['ขอลบข้อมูลต้องทำยังไง', 'data', /ยังไม่ได้ลบข้อมูล/],
@@ -1087,7 +1087,7 @@ describe('capability question (Owner 2026-08-27: only real features)', () => {
 
 it('the public package answer names the home menu as หน้าแรก', () => {
   const answer = resolvePublicPolicyAnswer('แพ็กเกจไหนได้เมนูอะไรบ้าง');
-  assert.equal(answer?.topic, 'trial_limits');
+  assert.equal(answer?.topic, 'package_features');
   assert.match(answer!.text, /ผู้ช่วย AI ทาง LINE หน้าแรก ค่าใช้จ่ายและใบเสร็จ/);
   assert.doesNotMatch(answer!.text, /แดชบอร์ด/);
 

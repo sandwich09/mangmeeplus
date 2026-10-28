@@ -1,7 +1,9 @@
 import { resetInputVatDecisionForType } from '../../infrastructure/expense-input-vat-decision';
 import { applyExpenseInputVatPreset } from '../../infrastructure/expense-input-vat';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { assertFreeExpenseSourceActor } from '../../../system-partner-management/application/free-expense-access';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
@@ -992,6 +994,10 @@ export class ReceiptOcrApplyService {
       fallbackCategorySuggestion?: ReceiptCategoryFallback; expectedUpdatedAt?: Date; todayIso?: string;
       /** The attachment these fields were read FROM (§16.4); see the `sourceStale` clear below. */
       sourceAttachmentId?: string;
+      /** Server-derived admission mode. An upgrade during a read must not add master-data writes. */
+      sourceOnly?: boolean;
+      /** Commit quota success with the usable source facts, or roll both back. */
+      onUsablePersisted?: (tx: Prisma.TransactionClient) => Promise<void>;
       /** Classification of this same successfully applied read, fenced with its facts. */
       sourceDocumentType?: ReturnType<typeof toSourceDocumentType>;
       /** This read's classification, independent of the reviewer's chosen document type. */
@@ -1030,6 +1036,11 @@ export class ReceiptOcrApplyService {
     const vatMode = validVatMode(completed.vatMode);
     if (vatMode) data['vatMode'] = vatMode;
     const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<ReceiptOcrApplyOutcome | { stale: ExpenseChargeSummary[] }> => {
+      if (options.sourceOnly) {
+        // Match OCR/admin lock order so a lifecycle hold cannot pass the source commit.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${ctx.companyId}`}))`;
+        await lockPlanTermCompany(tx, ctx.companyId);
+      }
       await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${ctx.companyId}:vat-registration`}))`;
       // Match correction/duplicate lock order before taking the record's write lock.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
@@ -1039,6 +1050,7 @@ export class ReceiptOcrApplyService {
         // Read inside the transaction that produced these facts. A later read could bless a
         // human edit with an old OCR summary; callers must fence their follow-up writes.
         const saved = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId: ctx.companyId }, select: { updatedAt: true } });
+        await options.onUsablePersisted?.(tx);
         return { ...result, candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt,
           ...(autoSave && autoSave.result.case !== 'SKIPPED' ? { vendorCounterpartyAutoSave: autoSave.result } : {}) };
       };
@@ -1083,6 +1095,12 @@ export class ReceiptOcrApplyService {
         return { stale: persistedCharges };
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
+      if (options.sourceOnly) {
+        if (currentExpense.createdByUserId !== ctx.userId || !['DRAFT', 'NEEDS_REVIEW'].includes(currentExpense.status)) {
+          throw new ForbiddenException('เปิดอ่านได้เฉพาะร่างที่คุณมีสิทธิ์ค่ะ');
+        }
+        await assertFreeExpenseSourceActor(tx, { companyId: ctx.companyId, userId: ctx.userId, branchId: currentExpense.branchId });
+      }
       const summary = currentExpense.aiVerificationSummaryJson as Record<string, unknown> | null;
       // §16.4: `sourceStale` means "these values were read from the file that was REPLACED". This
       // read is of the file the record carries NOW, so the warning it raised has been answered and
@@ -1135,7 +1153,7 @@ export class ReceiptOcrApplyService {
        */
       // Payment evidence identifies the payee, not a supplier purchase for the registry.
       const savedDocumentKind = (summary?.['classification'] as { documentKind?: string } | undefined)?.documentKind;
-      const vendorRegistry = [options.ocrDocumentType, options.sourceDocumentType, currentExpense.sourceDocumentType, savedDocumentKind].includes('TRANSFER_SLIP') ? undefined : this.ensureVendorCounterparty;
+      const vendorRegistry = options.sourceOnly || [options.ocrDocumentType, options.sourceDocumentType, currentExpense.sourceDocumentType, savedDocumentKind].includes('TRANSFER_SLIP') ? undefined : this.ensureVendorCounterparty;
       const receiptUploaderUserId = vendorRegistry && currentExpense.primaryAttachmentId
         ? await this.expenses.findPrimaryReceiptUploader(ctx.companyId, expenseId, currentExpense.primaryAttachmentId)
         : null;

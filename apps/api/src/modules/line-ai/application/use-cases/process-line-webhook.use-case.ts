@@ -33,6 +33,10 @@ import { LineLedgerDeliveryService } from '../line-ledger-delivery.service';
 import { buildLineDeliveryPlan, deliveryHash, lineDeliveryPlanId, parseLineDeliveryPlan, parseDeliveryBatchStates, type DeliveryAuthorizationV2, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
 import { parseAcceptedLedgerRequest } from '../line-ledger-accepted-request';
 import { LineConversationContextService, lineConversationId, type LineConversationOwner } from '../line-conversation-context.service';
+import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
+import { FREE_EXPENSE_CHAT_REPLY, FREE_EXPENSE_TEXT_EDIT_REPLY, freeExpenseMenuReply, isExplicitFinalFinancialRequest, isExplicitSourceEditRequest } from '../../domain/logic/free-expense-line.logic';
+import { completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot, claimFreeExpenseQuotaNotice, releaseFreeExpenseQuotaNotice } from '../free-expense-quota';
+import { freeExpenseQuotaNoticeTextTh, FREE_EXPENSE_IN_FLIGHT_TEXT_TH, FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 /**
  * Processes a verified LINE text message event end-to-end:
@@ -303,8 +307,7 @@ const UNLINKED_REPLY = { th: '🔗 กรุณาเชื่อมต่อบ
 const EMPLOYEE_DOOR_REPLY = { th: `👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เปิดเมนู "พนักงาน" ในเว็บแอป `
   + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)', en: "Ask the shop owner to open Employees on the web and send you a LINE linking code." };
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
-const WELCOME_BACK_REPLY = { th: '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
-  + 'ถ้าต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้เลยนะคะ', en: "Welcome back; send a receipt or ask about your shop here." };
+const WELCOME_BACK_REPLY = { th: 'ยินดีต้อนรับกลับมาค่ะ เลือกเมนูที่ต้องการใช้งานได้เลยค่ะ หากต้องการคุยกับทีมงาน พิมพ์ ติดต่อเจ้าหน้าที่ ได้ค่ะ', en: 'Welcome back; choose a menu to continue, or contact staff for help.' };
 /**
  * Owner copy 2026-09-21: the first hello, sent IN FRONT of the door card to someone who has just
  * added the OA. The card alone answered "which door" without ever answering "what is this and what
@@ -312,18 +315,7 @@ const WELCOME_BACK_REPLY = { th: '👋 ยินดีต้อนรับก�
  * The business-package line follows the Owner's sign-off of 2026-09-27 (purchase-without-setup G20:
  * the 1,999 package has the same menus as the others and adds ภ.ง.ด.53 and 50 ทวิ).
  */
-const FOLLOW_WELCOME_REPLY = { th: 'สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n'
-  + 'น้องมั่งมีเป็นผู้ช่วยบัญชี AI สำหรับร้านค้าและ SME ค่ะ\n'
-  + '📸 ถ่ายใบเสร็จส่งในแชทนี้ ระบบอ่านและบันทึกค่าใช้จ่ายให้เอง\n'
-  + '📊 ถามยอดขาย ค่าใช้จ่าย สรุปบัญชี ได้ทุกเมื่อ\n'
-  + '🧾 แพ็กเกจธุรกิจเพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ\n'
-  + '\n'
-  + 'เริ่มใช้งานง่าย ๆ 3 ขั้นค่ะ 👇\n'
-  + '1. กด "เปิดร้านใหม่" ในการ์ดด้านล่าง กรอกข้อมูลร้านไม่ถึง 2 นาที\n'
-  + '2. เลือกแพ็กเกจในแอป เริ่มต้น 249 บาท/เดือน แล้วชำระ\n'
-  + '3. ใช้งานได้ทันที ทั้งในแอปและในแชทนี้\n'
-  + '\n'
-  + 'อยากดูราคาก่อน กดช่อง "แพ็กเกจและราคา" ที่เมนูด้านล่างแชทได้เลยค่ะ', en: "Welcome to MangmeePlus; link your account or register your shop to get started." };
+const FOLLOW_WELCOME_REPLY = { th: 'สวัสดีค่ะ ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\nเลือกเปิดร้านใหม่ หรือเชื่อมบัญชีที่มีอยู่ในการ์ดด้านล่างได้ค่ะ หากเป็นพนักงาน ให้ใช้ลิงก์เชื่อม LINE จากเจ้าของกิจการค่ะ', en: 'Welcome to MangmeePlus; link your account or register your shop to get started.' };
 /** The way out of a support pause, as every reply that offers one prints it: the tile's own words,
  *  tapped or typed (Owner 2026-09-06). Built from the command so the hint and the matcher cannot
  *  drift — and never "AI": the customer knows her as น้องมั่งมี. */
@@ -533,7 +525,7 @@ const CAPABILITY_ENTITLEMENT_NOTE = '💡 ปุ่ม “บริการข�
 const CAPABILITY_ENTITLEMENT_STATUS = 'staff_menu_capability_entitlements';
 const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null, language: 'th' | 'en' = 'th'): LineReplyMessage[] =>
   [{ type: 'text', text: `${lead}\n${language === 'en' ? LEGACY_LINE_COPY_EN.CAPABILITY_ENTITLEMENT_NOTE : CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled, language)];
-const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
+const ASSISTANT_TALK_GREETING = 'น้องมั่งมีมาแล้วค่ะ เลือกเมนูที่ต้องการใช้งานได้เลยค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ', en: "You cannot manage signatures; ask the shop owner or an authorized administrator." };
 const SIGNATURE_NEED_IMAGE_REPLY = { th: '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ', en: "Please send a clear photo of your signature on a plain background." };
 const CLARIFY_REPLY = { th: '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"', en: "What would you like help with?" };
@@ -2013,6 +2005,18 @@ export async function resolveCompanyForLineUser(
     orderBy: { createdAt: 'asc' },
   });
 
+  const freeCandidates = await prisma.client.companyMembership.findMany({
+    where: { userId, status: 'ACTIVE', company: {
+      status: { in: ['ACTIVE', 'DISABLED'] },
+      planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: { lte: new Date() } },
+    } },
+    select: { companyId: true, roles: { select: { role: { select: { key: true } } } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  for (const candidate of freeCandidates) {
+    if (!memberships.some((member) => member.companyId === candidate.companyId)
+      && await isFreeExpenseDraftCompany(prisma.client, candidate.companyId)) memberships.push(candidate);
+  }
   if (memberships.length === 0) return null;
 
   // Expiry/revocation of selected B must never send the next message into the remaining ACTIVE A.
@@ -5347,7 +5351,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
   private async continueReimbursementQuestion(event: LineTextEvent, ctx: RequestContext, routePlan: GovernedLineIntakeRoutePlan,
     candidates: Awaited<ReturnType<ProcessLineWebhookUseCase['textValueCandidates']>>): Promise<boolean> {
     const text = event.messageText.trim();
-    const claimOwner = this.boundConversations.get(event);
+    const claimOwner = ctx.freeExpenseDrafts ? undefined : this.boundConversations.get(event);
     if (claimOwner && !event.reimbursementChoiceControl && text !== 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้'
       && this.budgetGrantsV2.has(event) && event.inputEvidence && routePlan.status === 'ROUTED'
       && candidates?.amounts.length === 0 && (routePlan.semanticSubrequests?.length ?? 0) <= 1
@@ -6689,6 +6693,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
       allowDuringSupportPause: deterministicCommand });
     await this.bindConversation(event);
+    if (!resolvedAccess.freeExpenseDrafts) {
     if (event.counterpartyControl) {
       const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
@@ -6791,6 +6796,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         scopes: resolvedAccess.scopes, authProvider: 'line' });
       return;
     }
+    }
     const menuCommand = staffMenuCommand(event.messageText);
     const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
       .some((permission) => resolvedAccess.permissions.includes(permission));
@@ -6798,6 +6804,11 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
 
     // These two cards are deterministic product entry points, not AI turns. They keep their own
     // feature/permission gates and remain available when the model provider or AI feature is off.
+    if (menuCommand === 'services' && resolvedAccess.freeExpenseDrafts) {
+      await this.deliverReply(event, freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions));
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
+      return;
+    }
     if (menuCommand === 'services') {
       await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys, replyLanguage(event))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
@@ -6858,7 +6869,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     // Gated on the flag, not just on the handler: with S-4 off these two phrases must behave the
     // way any other text did before S-4 — they fall through to the ordinary AI turn. Recognising
     // them as commands while the lane is dark would be a behaviour change a rollback cannot undo.
-    if (this.draftUpdate?.enabled && (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel')) {
+    if (!resolvedAccess.freeExpenseDrafts && this.draftUpdate?.enabled && (menuCommand === 'draft_update_confirm' || menuCommand === 'draft_update_cancel')) {
       await this.handleDraftUpdatePostback(event, {
         requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
@@ -6898,6 +6909,17 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       return;
     }
 
+    if (resolvedAccess.freeExpenseDrafts) {
+      const text = menuCommand === 'main' || isCapabilityQuestion(event.messageText)
+        ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
+        : isExplicitFinalFinancialRequest(event.messageText)
+          ? MUTATION_REFUSAL_REPLY.split('\n')[0]!
+          : isExplicitSourceEditRequest(event.messageText) ? FREE_EXPENSE_TEXT_EDIT_REPLY : FREE_EXPENSE_CHAT_REPLY;
+      await this.deliverReply(event, text);
+      await this.updateEventLog(event.webhookEventId, menuCommand === 'main' ? 'staff_menu_main' : 'free_chat_not_included', undefined, companyId);
+      return;
+    }
+
     if (this.paymentEvidence && (parseLinePaymentEvidenceControl(event.messageText) || isRecentPaymentEvidenceLinkText(event.messageText))) {
       await this.handlePaymentEvidenceText(event, { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
@@ -6918,7 +6940,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
     const counterpartyCommand = isLineCounterpartyCommand(event.messageText);
-    const expenseDraftConversationEnabled = !counterpartyCommand && this.config.lineExpenseDraftConversationEnabled === true
+    const expenseDraftConversationEnabled = !resolvedAccess.freeExpenseDrafts && !counterpartyCommand && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     if (!canQuery && !canCaptureExpense && !canSubmitSignature && !editCapabilityQuestion) {
@@ -9593,7 +9615,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
 
     const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
-      await this.deliverReply(event, RECEIPT_LINK_REPLY[replyLanguage(event)]);
+      await this.deliverRequiredMessages(event, await this.entryDoorMessages(event.lineUserId));
       await this.updateEventLog(event.webhookEventId, 'unlinked', LINE_AI_ERROR_CODES.UNLINKED_USER);
       return;
     }
@@ -9688,6 +9710,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       roles: access.roles,
       permissions: access.permissions,
       scopes: access.scopes,
+      ...(access.freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       authProvider: 'line' as const,
     };
     if (this.config.lineAiTerminalOutcomeReplayEnabled) {
@@ -9706,6 +9729,17 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     if (existingCapture) {
       await this.resumeCapturedReceipt(event, ctx, access, existingCapture);
       return;
+    }
+
+    if (access.freeExpenseDrafts) {
+      const allowance = await freeExpenseAllowanceSnapshot(this.prisma, companyId);
+      if (allowance.remainingCount === 0) {
+        await this.deliverReply(event, allowance.usedCount >= allowance.limit
+          ? `${freeExpenseQuotaNoticeTextTh(allowance.resetAt)}\nยังไม่ได้อ่านหรือสร้างร่างจากเอกสารนี้ค่ะ`
+          : FREE_EXPENSE_IN_FLIGHT_TEXT_TH);
+        await this.updateEventLog(event.webhookEventId, 'free_document_limit', undefined, companyId);
+        return;
+      }
     }
 
     // สัญญา v3: a live support case has already fetched these bytes for its thread (`storeSupportMedia`).
@@ -9762,7 +9796,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     const caption = captionText?.trim() ?? '';
     const captionSuffix = caption ? ` ${caption}` : '';
 
-    const claimOwner = this.boundConversations.get(event);
+    const claimOwner = ctx.freeExpenseDrafts ? undefined : this.boundConversations.get(event);
     const payoutPending = claimOwner && await this.expenseActions?.awaitingClaimSlip?.(ctx, chatKeyHashOf(event));
     const claimPhoto = claimOwner && !payoutPending && await this.reimbursementAdapter?.photoTarget?.({ ctx, owner: claimOwner.owner, ownerEpoch: claimOwner.epoch });
     if (claimOwner && (payoutPending || claimPhoto)) {
@@ -9794,7 +9828,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       return;
     }
 
-    if (this.substituteReceiptContinuation && canCaptureExpense && access.permissions.includes('expense.receipt.upload')
+    if (!access.freeExpenseDrafts && this.substituteReceiptContinuation && canCaptureExpense && access.permissions.includes('expense.receipt.upload')
       && event.messageType === 'image' && !isSignatureCaptionText(caption)) {
       const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event), replyLanguage(event));
       if (context?.paymentEvidenceRequestedAt && substituteAwaitsCaptionlessPhoto(context)
@@ -9805,7 +9839,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       }
     }
 
-    const evidenceTarget = event.messageType === 'image' ? await this.expenseActions?.evidencePhotoTarget?.(ctx, chatKeyHashOf(event), replyLanguage(event)) : null;
+    const evidenceTarget = !access.freeExpenseDrafts && event.messageType === 'image' ? await this.expenseActions?.evidencePhotoTarget?.(ctx, chatKeyHashOf(event), replyLanguage(event)) : null;
     if (evidenceTarget && 'reply' in evidenceTarget) {
       await this.deliverReply(event, evidenceTarget.reply!, { items: [{ type: 'action', action: { type: 'message', label: (replyLanguage(event) === 'en' ? "View latest record" : 'ดูรายการล่าสุด'), text: (replyLanguage(event) === 'en' ? "Show this record’s current status" : 'ดูรายการนี้ล่าสุด') } }] });
       return;
@@ -9827,7 +9861,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       return;
     }
 
-    const qaRoute = await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media, entitledFeatureKeys,
+    const qaRoute = access.freeExpenseDrafts ? null : await this.routeDocumentQuestionBeforeCapture(event, ctx, access, captionText ?? '', media, entitledFeatureKeys,
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
@@ -9891,7 +9925,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       ? await this.loadConversationContext(companyId, identity.userId, event)
       : undefined;
 
-    const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
+    const expenseDraftConversationEnabled = !access.freeExpenseDrafts && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && Boolean(this.expenseDraftConversation);
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
@@ -9900,7 +9934,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // gate and the draft — in a bound (v2) conversation too. Only a `file` (PDF/document) keeps v2.4's
     // no-implicit-capture lane (063b7f2a): no caption, no capture authority, ask what the file is for.
     const v2DocumentFile = this.boundConversations.has(event) && event.messageType === 'file';
-    const routerReason = qaRoute?.route ? 'caption' : await lineIntakeRouterReason({
+    const routerReason = access.freeExpenseDrafts ? null : qaRoute?.route ? 'caption' : await lineIntakeRouterReason({
       messageType: event.messageType, caption, canCaptureExpense,
       // Read only for a sender the substitute branch below acts for (§14 keeps `expense.receipt.upload`
       // its gate). A lookup that fails keeps the router: the reader-only lane is the one that must be safe.
@@ -9916,7 +9950,9 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       },
     });
     if (routerReason === null) this.logger.log({ msg: 'line.intake.router_skipped', webhookEventId: event.webhookEventId });
-    const routePlan: GovernedLineIntakeRoutePlan = v2DocumentFile && !caption
+    const routePlan: GovernedLineIntakeRoutePlan = access.freeExpenseDrafts
+      ? { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 1 }
+      : v2DocumentFile && !caption
       ? { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0 }
       // The reader decides alone: the ROUTED capture plan sends the photo down the same gates a router's
       // EXPENSE_DOCUMENT_CAPTURE takes — the reader's own classification, `decideLineBusinessDocument`.
@@ -10095,7 +10131,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // mutation refusals, business questions and reference documents were all answered above and
     // keep their behaviour — a substitute continuation must not swallow the reply a different
     // intent already earned.
-    if (this.substituteReceiptContinuation && canCaptureExpense
+    if (!access.freeExpenseDrafts && this.substituteReceiptContinuation && canCaptureExpense
       && access.permissions.includes('expense.receipt.upload')
       && (routePlan.status !== 'ROUTED' || routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE')) {
       try {
@@ -10166,7 +10202,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       });
       return;
     }
-    const utilityReceipt = canCaptureExpense ? priorUtilityReceipt(readOcr) : null;
+    const utilityReceipt = !access.freeExpenseDrafts && canCaptureExpense ? priorUtilityReceipt(readOcr) : null;
     const ocr: ReceiptOcrPreflight = utilityReceipt
       ? { ...readOcr, fields: utilityReceipt.fields, classification: utilityReceipt.classification }
       : readOcr;
@@ -10187,6 +10223,28 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // `tryExtractReceiptFields` forwards here as the same code — so this branch only has to answer,
     // never to count. Answered before `decideLineBusinessDocument` because the generic OCR-governance
     // clarify ("what is this picture?") is the wrong reply to a shop that needs a bigger package.
+    if (ocr.errorCode === 'FREE_DOCUMENT_LIMIT_REACHED' || ocr.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT') {
+      const allowance = await freeExpenseAllowanceSnapshot(this.prisma, companyId);
+      await this.deliverReply(event, ocr.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT'
+        ? FREE_EXPENSE_IN_FLIGHT_TEXT_TH
+        : `${freeExpenseQuotaNoticeTextTh(allowance.resetAt)}\nยังไม่ได้อ่านหรือสร้างร่างจากเอกสารนี้ค่ะ`);
+      await this.updateEventLog(event.webhookEventId, 'free_document_limit', ocr.errorCode, companyId);
+      return;
+    }
+    if (access.freeExpenseDrafts && (ocr.classification?.contentKind === 'MULTI_DOCUMENT'
+      || ocr.status !== 'OCR_EXTRACTED_NEEDS_REVIEW'
+      || !isExpenseExtractionEligible(ocr.classification ?? undefined, ocr.fields?.grandTotalAmount))) {
+      await this.deliverReply(event, ocr.classification?.contentKind === 'MULTI_DOCUMENT'
+        ? `${FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH}\nยังไม่ได้สร้างร่างจากไฟล์นี้ค่ะ`
+        : ocr.errorCode === 'OCR_FEATURE_DISABLED'
+          ? 'ร้านปิดการอ่านเอกสารด้วย AI ไว้ค่ะ ยังไม่ได้อ่านหรือสร้างร่างจากไฟล์นี้'
+          : isAiBudgetRefusalCode(ocr.errorCode)
+            ? `${aiBudgetReasonTh(ocr.errorCode)} ยังไม่ได้อ่านหรือสร้างร่างจากไฟล์นี้ค่ะ`
+            : 'ยังอ่านเอกสารนี้เป็นร่างรายจ่ายไม่ได้ค่ะ ยังไม่ได้สร้างร่างจากไฟล์นี้');
+      await this.updateEventLog(event.webhookEventId, 'free_document_not_saved', ocr.errorCode, companyId);
+      return;
+    }
+
     if (ocr.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
       const refusal = await this.deliverReceiptQuotaRefusal(event, companyId, identity.userId,
         access.permissions.includes(PLAN_MANAGE_PERMISSION_KEY));
@@ -10282,7 +10340,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     }
 
     const decision = decideLineBusinessDocument(expenseRoutePlan, ocr, caption.length > 0);
-    if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
+    if (!access.freeExpenseDrafts && ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
       admissionAttempt.noReceipt = true;
     }
@@ -10460,7 +10518,10 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       note: utilityReceipt ? `LINE utility receipt: ${utilityReceipt.receipt.period}` : 'LINE receipt upload',
       captureSource: 'LINE_UPLOAD',
       lineCapture: this.captureOwnerMetadata(event),
-    });
+    }, admissionAttempt.identity?.quotaSource === 'FREE_MONTHLY_3' ? {
+      freeOcrReservation: { eventId: admissionAttempt.identity.eventId, monthKey: admissionAttempt.identity.monthKey,
+        sourceRoute: 'receipt-ocr-line', requestId: event.lineMessageId },
+    } : undefined);
     if (intent.reusedCapture) {
       const captured = await this.expenseRepo!.findByLineMessageId(companyId, event.lineMessageId);
       if (!captured) throw new Error('LINE_RECEIPT_CAPTURE_NOT_FOUND');
@@ -10529,6 +10590,14 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
         expectedUpdatedAt: sourceUpdatedAt,
         ocrDocumentType: toSourceDocumentType(sourceDocumentTypeFromClassification(ocr.classification)),
         ...(hintedDocType === 'TRANSFER_SLIP' ? { sourceDocumentType: hintedDocType } : {}),
+        ...((access.freeExpenseDrafts || admissionAttempt.identity?.quotaSource === 'FREE_MONTHLY_3') ? { sourceOnly: true } : {}),
+        ...(admissionAttempt.identity?.quotaSource === 'FREE_MONTHLY_3' && ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
+          && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount, ocr.classification?.documentKind === 'TRANSFER_SLIP')
+          ? { onUsablePersisted: async (tx) => {
+              await completeCompanyOcrAdmissionWithinTransaction(tx, {
+                companyId, sourceRoute: 'receipt-ocr-line', requestId: event.lineMessageId, eventId: admissionAttempt.identity!.eventId,
+              });
+            } } : {}),
         ...(hintedCategory
           ? {
               fallbackCategorySuggestion: {
@@ -10671,7 +10740,9 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // What leads the summary in the text leads the review card's notes, in the same order.
     const leads = [utilityLead, nrOnExpense].filter((lead): lead is string => !!lead);
     if (leads.length) replyTexts[0] = [...leads, replyTexts[0]!].join('\n\n');
-    await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access, undefined,
+    if (access.freeExpenseDrafts) replyTexts[0] = await this.deliverSavedReceiptReply(event, replyTexts[0]!, companyId, access,
+      admissionAttempt.usablePersisted && admissionAttempt.identity?.quotaSource === 'FREE_MONTHLY_3' ? admissionAttempt.identity.monthKey : undefined);
+    else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access, undefined,
       await this.receiptReviewCard(event, replyTexts[0]!, saved.draft, companyId, leads));
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({ event,
@@ -10681,11 +10752,37 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
   }
 
+  /** Delivery retries reuse saved facts and may retry the same unsent quota note, never OCR. */
+  private async deliverSavedReceiptReply(event: LineReceiptUploadEvent, text: string, companyId: string,
+    access: { permissions: string[]; roles: string[] }, freeMonth?: string): Promise<string> {
+    let noticeMonth: string | undefined;
+    if (freeMonth) {
+      const allowance = await freeExpenseAllowanceSnapshot(this.prisma, companyId, freeMonth);
+      if (await claimFreeExpenseQuotaNotice(this.prisma, companyId, freeMonth)) {
+        noticeMonth = freeMonth;
+        text += `\n\n${freeExpenseQuotaNoticeTextTh(allowance.resetAt)}`;
+      }
+    }
+    try { await this.deliverCompletedReply(event, text, companyId, access); }
+    catch (error) {
+      if (noticeMonth) {
+        const plan = this.boundConversations.has(event) ? await this.prisma.client.lineDeliveryPlan.findUnique({
+          where: { id: lineDeliveryPlanId('WEBHOOK', deliveryHash(['line-outcome-v2', event.webhookEventId])) }, select: { id: true },
+        }) : null;
+        // A durable delivery plan owns the original note and replays it without claiming again.
+        if (!plan) await releaseFreeExpenseQuotaNotice(this.prisma, companyId, noticeMonth);
+      }
+      throw error;
+    }
+    return text;
+  }
+
   /** The saved receipt's summary as the locked review card. `leads` are what the caller put in front of
    *  the summary; `undefined` when the record is past review or the card cannot be drawn whole. */
   private async receiptReviewCard(event: LineTextEvent | LineReceiptUploadEvent, text: string, draft: LineExpenseDraftCardFacts | undefined, companyId: string, leads: readonly string[] = []): Promise<LineReplyMessage | undefined> {
     if (!draft) return undefined;
     const ctx = this.deliveryReceiptSources.get(event)?.context;
+    if (ctx?.freeExpenseDrafts) return undefined;
     const bound = this.boundConversations.get(event);
     const claim = ctx && bound && this.reimbursementDrafts
       ? await this.reimbursementDrafts.active({ ctx, owner: bound.owner, ownerEpoch: bound.epoch }) : null;
@@ -10725,7 +10822,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
         categoryName: category?.name,
         // §11.3: the draft conversation owns "already asked" — it retires the marker on the next
         // turn, so a redelivered card repeats the summary without repeating the question.
-        askVendorAddress: parseLineExpenseDraftContinuation(
+        askVendorAddress: !access.freeExpenseDrafts && parseLineExpenseDraftContinuation(
           expense.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY],
         )?.header.vendorAddressAsk === true && !expense.vendorAddressSnapshot,
         fields: { ...(summary?.recognizedFields as ReceiptOcrFieldResult | undefined),
@@ -11199,7 +11296,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = {
       expenseId: expense.id, companyId: ctx.companyId, uploaded: Boolean(expense.primaryAttachmentId),
     };
-    const canContinue = Boolean(expense.primaryAttachmentId) && this.config.lineExpenseDraftConversationEnabled === true
+    const canContinue = !ctx.freeExpenseDrafts && Boolean(expense.primaryAttachmentId) && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && (expense.status === 'DRAFT' || expense.status === 'NEEDS_REVIEW');
     if (canContinue) await this.expenseDraftConversation?.startFromReceipt(ctx, { language: replyLanguage(event),
@@ -11218,7 +11315,13 @@ ${link}`), ctx.companyId, access, undefined, undefined, 'stored');
     else {
       const summary = await this.savedReceiptReply(event, ctx.companyId, expense.id);
       const text = summary.texts.join('\n');
-      await this.deliverCompletedReply(event, text, ctx.companyId, access, undefined, await this.receiptReviewCard(event, text, summary.draft, ctx.companyId));
+      if (ctx.freeExpenseDrafts) {
+        const admitted = await this.prisma.client.companyOcrUsageEvent.findUnique({ where: {
+          companyId_sourceRoute_requestId: { companyId: ctx.companyId, sourceRoute: 'receipt-ocr-line', requestId: event.lineMessageId },
+        }, select: { quotaSource: true, monthKey: true, succeededAt: true } });
+        await this.deliverSavedReceiptReply(event, text, ctx.companyId, access,
+          admitted?.quotaSource === 'FREE_MONTHLY_3' && admitted.succeededAt ? admitted.monthKey : undefined);
+      } else await this.deliverCompletedReply(event, text, ctx.companyId, access, undefined, await this.receiptReviewCard(event, text, summary.draft, ctx.companyId));
     }
     await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expense.id, ctx.scopes);
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);

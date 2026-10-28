@@ -1,3 +1,4 @@
+import { isFreeExpenseDraftCompany } from '../free-expense-access';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -94,7 +95,7 @@ export class PlanTermSweepUseCase {
           await tx.companyPlanTerm.update({ where: { companyId: row.companyId }, data: {
             termDisabledAt: now, expiredNotifiedAt: now,
           } });
-          if (lockReason !== 'no_package') {
+          if (lockReason !== 'no_package' && !await isFreeExpenseDraftCompany(tx, row.companyId, now)) {
             // NotificationEvent/Recipient/Delivery are already a durable queue. Commit them
             // with the claim; the existing delivery worker owns all later network attempts.
             await this.notify(row.companyId, row.company.name, {

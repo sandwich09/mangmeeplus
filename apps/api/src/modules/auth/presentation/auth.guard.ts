@@ -1,5 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { isFreeExpenseDraftRoute } from '../../system-partner-management/application/free-expense-access';
 import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { IS_PUBLIC_ROUTE_KEY } from '../../../common/security/public.decorator';
@@ -291,7 +292,10 @@ export class AuthGuard implements CanActivate {
       const company = await this.prisma.client.company.findUnique({ where: { id: req.context.companyId }, select: { status: true } });
       if (company?.status !== 'ACTIVE') throw new ForbiddenException('ไม่มีสิทธิ์กู้คืนข้อมูลบริษัท');
     }
-    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath)
+    const freeExpenseRoute = req.context.freeExpenseDrafts === true && isFreeExpenseDraftRoute(req.method, reqPath);
+    const freeRecoveryRoute = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`)
+      || isBillingRecoveryRoute(req.method, reqPath) || isAccountEmailRecoveryRoute(req.method, reqPath) || authorizedProfileRecovery;
+    if (!req.context.freeExpenseDrafts && !isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath)
       && !authorizedProfileRecovery && !req.context.roles.includes('SYSTEM_ADMIN')) {
       const term = await this.prisma.client.companyPlanTerm.findUnique({
         where: { companyId: req.context.companyId },
@@ -318,6 +322,9 @@ export class AuthGuard implements CanActivate {
       }
     }
 
+    if (req.context.freeExpenseDrafts && !freeExpenseRoute && !freeRecoveryRoute && !req.context.roles.includes('SYSTEM_ADMIN')) {
+      throw new ForbiddenException({ code: 'FREE_EXPENSE_DRAFTS_ONLY', message: 'สิทธิ์นี้ใช้สำหรับอ่านเอกสารและเก็บร่างรายจ่ายเท่านั้น' });
+    }
     return true;
   }
 }

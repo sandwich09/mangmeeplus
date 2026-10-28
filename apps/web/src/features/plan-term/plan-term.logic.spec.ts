@@ -11,6 +11,7 @@ import {
   planLockReason,
   planTermView,
   renewalPathFor,
+  shouldUseLockedWorkspace,
 } from './plan-term.logic';
 import type { PlanTermNotice } from './plan-term.api';
 import { bannerPlace, bannerSentence } from './PlanTermBanner';
@@ -45,6 +46,17 @@ describe('plan term view', () => {
 
   it('does not bounce the renewal page onto itself', () => {
     assert.equal(planTermView(notice({ derivedState: 'EXPIRED' }), true), 'none');
+  });
+
+  it('keeps explicitly eligible free shops out of the locked shell and renewal redirect', () => {
+    const expiredPaid = notice({ derivedState: 'EXPIRED', daysLeft: 0 });
+    const expiredFree = notice({ derivedState: 'EXPIRED', daysLeft: 0, freeExpenseDrafts: true });
+    assert.equal(shouldUseLockedWorkspace(expiredPaid), true);
+    assert.equal(shouldUseLockedWorkspace(expiredFree, true), false);
+    assert.equal(planTermView(expiredPaid), 'renewal-page');
+    assert.equal(planTermView(expiredFree, false, true), 'none');
+    assert.equal(planTermView(expiredFree), 'renewal-page', 'notice alone does not bypass the lock');
+    assert.equal(shouldUseLockedWorkspace(notice({ derivedState: 'EXPIRED' })), true, 'missing server flag fails closed');
   });
 });
 

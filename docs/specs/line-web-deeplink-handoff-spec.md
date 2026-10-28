@@ -325,3 +325,8 @@ Existing back-navigation, `auto=0` and closed-platform guards remain.
 Acceptance: handoff network/429/5xx/malformed responses yield retry without redirects or cookie
 changes; 403 preserves only a safe destination; HEAD never exchanges; success forwards visitor IP
 and sets cookies; browser refresh 503 stays recoverable, and retry followed by 401 may start OAuth.
+
+
+## Amendment 2026-10-28 — free expense drafts
+
+handoff/LIFF/password/login landing ต้อง derive current free eligibility และเปิด source expense path ได้; default เป็น expenses โดยรักษา paid renewal, safe target, legal และ billing recovery รายละเอียดที่มีผลเฉพาะ cohort นี้อยู่ใน [free expense drafts spec](free-expense-drafts-spec-th.md); หลักฐาน local และข้อจำกัด live อยู่ใน [task memory](../agent-memory/free-expense-drafts.md).

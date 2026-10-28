@@ -44,6 +44,7 @@ import {
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, canCancelExpenseInsteadOfDelete, expenseDeleteErrorMessage,
   expenseListStatus, expenseListMonth, expenseDeleteTargetLabel, firstFilled, isExpensePendingReview, expenseReimbursementProgressLabel, summarizeExpenseKpis,
+  canExportExpenseList, isFreeExpenseListDraft, expenseUiPermissions,
   isBlockedCheckBillClassification, lateDocumentDays, EXPENSE_DATE_STATUS_LABELS, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
@@ -92,7 +93,7 @@ import {
   appendReceiptFiles, captureFileRejection, captureMegabytes, entryForFile, runSingleFileUploads,
   type CaptureUploadEntry, type CaptureUploadState,
 } from './expense-capture-upload.logic';
-import { captureReadJobNotice } from './expense-capture-status.logic';
+import { captureReadJobNotice, freeAllowanceNotice } from './expense-capture-status.logic';
 import { addressMissingListFilter } from './expense-address-missing-view.logic';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked,
@@ -152,7 +153,7 @@ function DocumentDateBadge({ expense }: { expense: ExpenseSummary }) {
     : null;
 }
 
-export type ExtractionNotice = { tone: 'info' | 'error'; message: string };
+export type ExtractionNotice = { tone: 'info' | 'error'; message: string; persistent?: boolean };
 
 const EXPENSE_NOTICE_PREFIX = 'expenses.extractionNotice.';
 
@@ -287,7 +288,10 @@ export function extractionNotice(result: ExpenseExtractionResult, locale: Suppor
   // way, and the review page follows the job from here.
   const jobNotice = captureReadJobNotice(result);
   if (jobNotice) return { tone: jobNotice.tone, message: t(jobNotice.messageKey, locale) };
+  if (result.errorCode === 'FREE_MULTI_DOCUMENT_UNSUPPORTED') return { tone: 'info', message: t('expenses.free_multi_document_unsupported', locale) };
   if (result.status === 'ok') {
+    const allowance = freeAllowanceNotice(result.freeAllowance, locale);
+    if (allowance) return { tone: 'info', message: allowance, persistent: true };
     const fields = result.fields;
     const summary = [
       fields?.vendorName && `${t('expenses.extract_vendor', locale)} ${fields.vendorName}`,
@@ -331,7 +335,7 @@ const CAPTURE_STATE_LABELS: Record<CaptureUploadState, DictionaryKey> = {
 };
 
 // ── Upload Panel (info strip + dropzone + LINE gradient card) ─────────────────
-export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, onSuccess, onBatchSuccess }: { companyId: string; branchId?: string; canManagePlan: boolean; userId: string; caps: ExpenseCapabilities; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void }) {
+export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, onSuccess, onBatchSuccess, freeExpenseDrafts = false }: { companyId: string; branchId?: string; canManagePlan: boolean; userId: string; caps: ExpenseCapabilities; onSuccess: (expenseId: string, notice: ExtractionNotice) => void; onBatchSuccess?: (created: Array<{ expenseId: string; notice: ExtractionNotice }>) => void; freeExpenseDrafts?: boolean }) {
   const locale = useWorkspaceLocale();
   const { confirm, confirmDialog } = useConfirm();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -355,13 +359,14 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
   // in, because the next image this month meets the same wall — but the ceiling resets on the 1st,
   // so a latch from last month must stop blocking without a reload.
   const [quotaLatch, setQuotaLatch] = useState<ReceiptQuotaLatch | null>(null);
+  const stopBatchRef = useRef(false);
   /** The draft the refused read left behind, so the shop can still go and type it in. */
   const [blockedExpenseId, setBlockedExpenseId] = useState<string | null>(null);
   const [sentExpenseIds, setSentExpenseIds] = useState<string[]>([]);
   const uploadPending = useRef(false);
   const uploadAttempts = useRef(new Map<File, { intent: Awaited<ReturnType<typeof initReceiptUpload>>; step: 'upload' | 'complete' | 'extract' }>());
   const sendAfterPreparation = useRef(false);
-  const senderOnly = !caps.canReview && !caps.canConfirm;
+  const senderOnly = !freeExpenseDrafts && !caps.canReview && !caps.canConfirm;
   const quotaBlocked = isReceiptQuotaBlocked(quotaLatch, todayCivilDate());
   // P4: past the advertised 10–20s read time, a spinner reads as "the system is down" when in fact
   // the queue is just long. Say which one it is.
@@ -520,8 +525,14 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
       // point: `onSuccess` routes to the review screen, which would unmount this panel and take
       // the banner and its way out with it — the shop would land on an empty draft with
       // no idea why nothing was read, and could walk straight back and upload again.
-      if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
+      const code = apiErrorCode(e);
+      if (freeExpenseDrafts && code === 'FREE_MULTI_DOCUMENT_UNSUPPORTED') {
         writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+        return { expenseId: intent.expenseId, notice: { tone: 'info', message: t('expenses.free_multi_document_unsupported', locale) } };
+      }
+      if (code === RECEIPT_QUOTA_ERROR_CODE || (freeExpenseDrafts && code === 'FREE_DOCUMENT_LIMIT_REACHED')) {
+        writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+        if (freeExpenseDrafts) stopBatchRef.current = true;
         setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
         setBlockedExpenseId(intent.expenseId);
         return { expenseId: intent.expenseId, notice: null };
@@ -544,13 +555,14 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
   const handleBatchUpload = async (files = selectedFiles, retryIndex?: number) => {
     if (uploadPending.current || quotaBlocked) return;
     uploadPending.current = true;
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); stopBatchRef.current = false;
     const entries = captureFiles.length > 0 ? captureFiles : files.map(entryForFile);
     setCaptureFiles(entries);
     try {
       const run = await runSingleFileUploads<ExtractionNotice | null>({
         entries: entries.map((entry, index) => ({ entry, file: files[index] ?? null })),
         retryIndex, onChange: setCaptureFiles, describeFailure: cause => err(cause, locale),
+        shouldStop: () => stopBatchRef.current,
         upload: async file => {
           const done = await uploadOneFile(file);
           if (done.notice) notices.current.set(done.expenseId, done.notice);
@@ -2675,13 +2687,14 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
 const GRID = 'grid grid-cols-[minmax(180px,1.6fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_44px] items-center gap-3';
 const LIST_PAGE_SIZE = 10;
 
-export function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
+export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpenseDrafts = false }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void; freeExpenseDrafts?: boolean }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialListState = readExpenseListState(searchParams, civilPeriodKey(todayCivilDate()));
   const restoringList = useRef(searchParams.has('month'));
   const listPath = `/companies/${companyId}/expenses`;
+  const gridClass = freeExpenseDrafts ? 'grid grid-cols-[minmax(180px,1.6fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_44px] items-center gap-3' : GRID;
   const requestedView = searchParams.get('view');
   const requestedFrom = searchParams.get('fromDate');
   const requestedTo = searchParams.get('toDate');
@@ -2701,7 +2714,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
   const [error, setError] = useState<string | null>(null);
   // The list URL owns the filters and page, including a detail → list return and a reload.
   const [chip, setChip] = useState(initialListState.chip);
-  const activeChip = chip;
+  const activeChip = freeExpenseDrafts ? 'all' : chip;
   const branchLabel = useBranchScopeLabel();
   // The backlog of tax invoices without a seller address matters only to a shop that records VAT.
   const listCapture = useExpenseCapturePolicy(companyId);
@@ -2808,16 +2821,16 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
       .finally(() => setCategoryNamesLoading(false));
   }, [companyId]);
 
-  const sourceRows = useMemo(() => rows.filter((row) => sourceView === 'pending' ? isExpensePendingReview(row)
-    : sourceView === 'unpaid' ? row.status === 'CONFIRMED' && ['UNPAID', 'PARTIALLY_PAID'].includes(row.paymentStatus) : true), [rows, sourceView]);
+  const sourceRows = useMemo(() => rows.filter((row) => freeExpenseDrafts ? isFreeExpenseListDraft(row.status) : sourceView === 'pending' ? isExpensePendingReview(row)
+    : sourceView === 'unpaid' ? row.status === 'CONFIRMED' && ['UNPAID', 'PARTIALLY_PAID'].includes(row.paymentStatus) : true), [rows, sourceView, freeExpenseDrafts]);
   const kpi = useMemo(() => summarizeExpenseKpis(sourceRows, todayCivilDate()), [sourceRows]);
 
   const chipCounts = useMemo(() => ({
     all: sourceRows.length,
-    pending: sourceRows.filter((r) => isExpensePendingReview(r)).length,
-    confirmed: sourceRows.filter((r) => r.status === 'CONFIRMED').length,
-    closed: sourceRows.filter((r) => isExpenseCancelled(r.status)).length,
-  }), [sourceRows]);
+    pending: sourceRows.filter((r) => freeExpenseDrafts ? isFreeExpenseListDraft(r.status) : isExpensePendingReview(r)).length,
+    confirmed: freeExpenseDrafts ? 0 : sourceRows.filter((r) => r.status === 'CONFIRMED').length,
+    closed: freeExpenseDrafts ? 0 : sourceRows.filter((r) => isExpenseCancelled(r.status)).length,
+  }), [sourceRows, freeExpenseDrafts]);
 
   // Owner 2026-10-15: the list is in date order, newest first; the date header turns it round.
   const [dateOrder, setDateOrder] = useState(initialListState.dateOrder);
@@ -2825,13 +2838,13 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
     const q = query.trim().toLowerCase();
     const day = (r: ExpenseSummary) => (r.dateStatus === 'unverified' ? r.uploadedAt : r.expenseDate) ?? r.uploadedAt ?? '';
     return sourceRows.filter((r) => {
-      if (activeChip === 'pending' && !isExpensePendingReview(r)) return false;
+      if (!freeExpenseDrafts && activeChip === 'pending' && !isExpensePendingReview(r)) return false;
       if (activeChip === 'confirmed' && r.status !== 'CONFIRMED') return false;
       if (activeChip === 'closed' && !isExpenseCancelled(r.status)) return false;
       if (!q) return true;
       return `${r.expenseNumber ?? ''} ${r.vendorNameSnapshot ?? ''} ${r.vendorDocumentNumber ?? ''}`.toLowerCase().includes(q);
     }).sort((a, b) => (dateOrder === 'newest' ? -1 : 1) * String(day(a)).localeCompare(String(day(b))));
-  }, [sourceRows, activeChip, query, dateOrder]);
+  }, [sourceRows, activeChip, query, dateOrder, freeExpenseDrafts]);
 
   const previousFilters = useRef<string | null>(null);
   useEffect(() => {
@@ -2951,15 +2964,16 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
       : <EmptyState title="ยังไม่มีรายจ่ายในช่วงที่เลือก" action={caps.canUploadReceipts ? <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link> : undefined} />;
   const openDelete = (id: string) => { setDeleteError(null); setDeleteRetentionLocked(false); setConfirmId(id); };
   const statusBadges = (e: ExpenseSummary) => {
+    if (freeExpenseDrafts) return <MangmeeBadge tone="amber">ร่าง</MangmeeBadge>;
     const status = expenseListStatus(e);
     return <><MangmeeBadge tone={status.tone}>{status.label}</MangmeeBadge>{!isExpenseCancelled(e.status) && showListedInputVatRight(e) && e.inputVatClaimStatus === 'NEEDS_REVIEW' && <MangmeeBadge tone="amber">ภาษีซื้อรอตรวจสอบ</MangmeeBadge>}</>;
   };
   const recordedOnAnotherDay = (e: ExpenseSummary) => dateShort(e.uploadedAt) !== dateShort(e.expenseDate);
-  const canExportHere = caps.canExportPackage && (!sourceView || sourceView === 'confirmed');
+  const canExportHere = canExportExpenseList(freeExpenseDrafts, caps) && (!sourceView || sourceView === 'confirmed');
 
   return (
     <div className="space-y-4">
-      {sourceView && (
+      {!freeExpenseDrafts && sourceView && (
         <Notice tone="info" action={<button type="button" className={ghostClass} onClick={() => router.replace(`/companies/${companyId}/expenses`)}>กลับไปดูรายการตามเดือน</button>}>
           {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
             : sourceView === 'pending' ? `${t('expenses.chip_pending', locale)} · ทุกเดือน`
@@ -2984,7 +2998,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
         {/* Owner 2026-10-15: the export sits next to the search. */}
         {canExportHere && <button type="button" className={ghostClass} aria-haspopup="dialog" onClick={() => setExportOpen(true)}>{EXPORT_FOR_ACCOUNTANT}</button>}
       </div>
-      <Modal open={exportOpen} onClose={() => setExportOpen(false)} title={EXPORT_FOR_ACCOUNTANT} size="sm"
+      {!freeExpenseDrafts && <Modal open={exportOpen} onClose={() => setExportOpen(false)} title={EXPORT_FOR_ACCOUNTANT} size="sm"
         footer={<button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
           {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
         </button>}>
@@ -3004,16 +3018,16 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
           {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}
           {exported && <p role="status" className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</p>}
         </div>
-      </Modal>
+      </Modal>}
 
       {error ? <ErrorState description={error} onRetry={() => void load()} /> : <>
       {/* The numbers of the rows below, once, in one card (owner 2026-10-15). */}
-      <section className="mangmee-card p-4 sm:px-6 sm:py-5" data-testid="expenses-summary">
+      {!freeExpenseDrafts && <section className="mangmee-card p-4 sm:px-6 sm:py-5" data-testid="expenses-summary">
         <MetricGrid columns={3} items={metricItems} className="gap-2.5" />
-      </section>
+      </section>}
 
       <MangmeeCard className="p-4">
-          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:max-w-3xl">
+          {!freeExpenseDrafts && <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:max-w-3xl">
             {chips.map((c) => (
               <button key={c.key} type="button" aria-pressed={activeChip === c.key} onClick={() => setChip(c.key)}
                 className="mangmee-home-tab min-h-10 min-w-0 gap-2">
@@ -3021,7 +3035,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                 <span className={cx('tabular-nums text-xs', activeChip === c.key ? 'text-white/85' : 'text-gray-500')}>{chipCounts[c.key]}</span>
               </button>
             ))}
-          </div>
+          </div>}
 
           {loading || categoryNamesLoading ? <LoadingState label="กำลังโหลด..." />
             : filtered.length === 0 ? emptyState
@@ -3029,14 +3043,14 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
           <div className="hidden xl:block">
           <div className="overflow-x-auto" data-testid="expenses-grid">
             <div className="min-w-[900px]">
-              <div className={cx(GRID, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold text-gray-500')}>
+              <div className={cx(gridClass, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold text-gray-500')}>
                 <div>ผู้ขาย</div><div><button type="button" className="inline-flex items-center gap-1 hover:text-gray-800" onClick={() => setDateOrder(order => order === 'newest' ? 'oldest' : 'newest')}
-                  aria-label={dateOrder === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า'}>วันที่ <span aria-hidden="true">{dateOrder === 'newest' ? '↓' : '↑'}</span></button></div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
+                  aria-label={dateOrder === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า'}>วันที่ <span aria-hidden="true">{dateOrder === 'newest' ? '↓' : '↑'}</span></button></div>{!freeExpenseDrafts && <div className="text-right">{t('expenses.col_total', locale)}</div>}<div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
               </div>
               {pagedRows.map((e) => (
                       <div key={e.id} onClick={() => openListRow(e.id)} data-testid="expenses-row"
                         {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
-                        className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
+                        className={cx(gridClass, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
                           e.id === highlightId && 'rounded-xl ring-2 ring-brand-500 bg-brand-25')}>
                         <div className="min-w-0">
                           <div className="text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
@@ -3051,12 +3065,12 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                             <DocumentDateBadge expense={e} />
                           </div>
                         </div>
-                        <div className="text-right text-[15px] font-bold text-gray-900"><span className="mangmee-unit">{amountText(e.grandTotalAmount)}</span></div>
+        {!freeExpenseDrafts && <div className="text-right text-[15px] font-bold text-gray-900"><span className="mangmee-unit">{amountText(e.grandTotalAmount)}</span></div>}
                         <div className="flex flex-col items-end gap-1">{statusBadges(e)}</div>
                         {/* A press on the row opens it; the only control of its own is the one that does something else. */}
                         <div className="flex items-center justify-end gap-1.5">
-                          {canCancelExpenseInsteadOfDelete(e, caps) && <IconBtn title="ยกเลิกรายการ" tone="danger" onClick={(event) => { event.stopPropagation(); openListRow(e.id); }}><CloseIcon aria-hidden="true" className="h-4 w-4" /></IconBtn>}
-                          {canDeleteExpense(e, userId, caps) && (
+                          {!freeExpenseDrafts && canCancelExpenseInsteadOfDelete(e, caps) && <IconBtn title="ยกเลิกรายการ" tone="danger" onClick={(event) => { event.stopPropagation(); openListRow(e.id); }}><CloseIcon aria-hidden="true" className="h-4 w-4" /></IconBtn>}
+                          {!freeExpenseDrafts && canDeleteExpense(e, userId, caps) && (
                             <IconBtn title="ลบ" tone="danger" onClick={(event) => { event.stopPropagation(); openDelete(e.id); }}>{ICON.trash}</IconBtn>
                           )}
                         </div>
@@ -3077,7 +3091,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                 >
                   <span className="flex items-start justify-between gap-3">
                     <span className="min-w-0 text-[15px] font-semibold text-gray-900 [overflow-wrap:anywhere]">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
-                    <span className="mangmee-unit shrink-0 text-base font-bold text-gray-900">{amountText(e.grandTotalAmount)}</span>
+                    {!freeExpenseDrafts && <span className="mangmee-unit shrink-0 text-base font-bold text-gray-900">{amountText(e.grandTotalAmount)}</span>}
                   </span>
                   <span className="mt-1 block text-sm text-gray-500">
                     <span className="mangmee-unit font-mono">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span>
@@ -3090,9 +3104,9 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect }: { company
                     <DocumentDateBadge expense={e} />
                   </span>
                 </button>
-                {canCancelExpenseInsteadOfDelete(e, caps) && <div className="flex justify-end border-t border-gray-100 px-2 py-1"><button type="button" className={quietButtonClass} onClick={() => openListRow(e.id)}>ยกเลิกรายการ</button></div>}
+                {!freeExpenseDrafts && canCancelExpenseInsteadOfDelete(e, caps) && <div className="flex justify-end border-t border-gray-100 px-2 py-1"><button type="button" className={quietButtonClass} onClick={() => openListRow(e.id)}>ยกเลิกรายการ</button></div>}
                 {/* On a phone the bin of the wide table does not exist; a draft the person may delete says so here. */}
-                {canDeleteExpense(e, userId, caps) && (
+                {!freeExpenseDrafts && canDeleteExpense(e, userId, caps) && (
                   <div className="flex justify-end border-t border-gray-100 px-2 py-1">
                     <button type="button" className={quietButtonClass} onClick={() => openDelete(e.id)}>ลบรายจ่ายนี้</button>
                   </div>
@@ -3387,8 +3401,9 @@ const TAB_META: Record<ExpensesTab, { labelKey: DictionaryKey; descKey: Dictiona
   evidence: { labelKey: 'expenses.tab_evidence', descKey: 'expenses.tab_evidence_desc' },
 };
 
-export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', manualEntryOpen, readerIsOwner = false }: {
+export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', manualEntryOpen, readerIsOwner = false, freeExpenseDrafts = false }: {
   companyId: string; userId: string; permissions: string[]; tab?: ExpensesTab;
+  freeExpenseDrafts?: boolean;
   /** `canOpenManualWeb` of the server session, from the list and the manual page. Left out, the permission decides. */
   manualEntryOpen?: boolean;
   /** The reader holds the OWNER role: whom the not-shown state of the manual page sends them to. */
@@ -3401,7 +3416,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
   const createBranchId = useTransactionCreateBranchId();
   const [branchTouched, setBranchTouched] = useState(false);
   const toast = useToast();
-  const caps = expenseCapabilities(permissions);
+  const caps = expenseCapabilities(expenseUiPermissions(permissions, freeExpenseDrafts));
   // The manual page's admission (spec §7.1): a state of this mounted page, taken from the prop the
   // server sent and never withdrawn — the server renders this hub whatever the setting says, so a
   // `router.refresh()` after the admin switches the menu off changes the prop and keeps the form.
@@ -3467,7 +3482,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
           : <Link className={ghostClass} href={`/companies/${companyId}/dashboard`}>กลับไปแดชบอร์ด</Link>} />
       ) : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} readerIsOwner={readerIsOwner} /> : (
         <>
-          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
+          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} freeExpenseDrafts={freeExpenseDrafts} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>
             {/* The branch field shares the edges of the cards under it. */}
             {tab === 'manual' && <TransactionBranchField fill value={createBranchId} invalid={!createBranchId && branchTouched} helpText={createBranchId ? null : t('transaction.source_branch_manual_required', locale)} />}
@@ -3488,7 +3503,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
               focusExpenseField(field);
             }}>
             <fieldset disabled={tab === 'manual' && !createBranchId} className={cx('min-w-0', tab === 'manual' && !createBranchId && 'pointer-events-none')}>
-              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} userId={userId} caps={caps} canManagePlan={permissions.includes('company.plan.manage')} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} userId={userId} caps={caps} canManagePlan={!freeExpenseDrafts && permissions.includes('company.plan.manage')} freeExpenseDrafts={freeExpenseDrafts} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
               {tab === 'manual' && <ManualExpensePanel permissions={permissions} companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} entryClosed={manualView === 'form_closed'} onSuccess={openListExpense} />}
             </fieldset>
             </div>

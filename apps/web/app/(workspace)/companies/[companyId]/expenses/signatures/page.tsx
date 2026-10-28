@@ -11,5 +11,5 @@ export default async function ExpensesSignaturesPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} tab="signatures" />;
+  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} freeExpenseDrafts={session?.freeExpenseDrafts === true} tab="signatures" />;
 }

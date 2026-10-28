@@ -466,6 +466,9 @@ const CODE_LABELS: Record<string, string> = {
   // read was refused — so the copy says what still works before it says what to do about the
   // ceiling. No number: the browser's ApiError keeps only `code`, and a wrong count is worse than none.
   receipt_quota_exceeded: 'โควตาให้ AI อ่านรูปของเดือนนี้ครบแล้ว (ใบเสร็จ 1 ใบ = 1 ครั้ง) ยังกรอกรายการเองได้ตามปกติ หรือขอเปลี่ยนแพ็กเกจเพื่อเพิ่มจำนวนครั้งได้เลย',
+  FREE_DOCUMENT_LIMIT_REACHED: 'ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้',
+  FREE_DOCUMENTS_IN_FLIGHT: 'ระบบกำลังอ่านเอกสารที่ส่งไปก่อนหน้า กรุณารอผลก่อนส่งไฟล์ใหม่',
+  FREE_MULTI_DOCUMENT_UNSUPPORTED: 'ไฟล์นี้มีเอกสารหลายฉบับ ระบบยังอ่านให้ไม่ได้ กรุณาส่งทีละฉบับ',
   entitlement_features_required: 'เลือกอย่างน้อยหนึ่งฟีเจอร์ก่อนบันทึก',
   entitlement_feature_invalid: 'ข้อมูลฟีเจอร์ไม่ถูกต้อง กรุณาโหลดหน้าใหม่',
   entitlement_feature_batch_too_large: 'จำนวนฟีเจอร์เกินรายการที่ระบบรองรับ กรุณาโหลดหน้าใหม่',

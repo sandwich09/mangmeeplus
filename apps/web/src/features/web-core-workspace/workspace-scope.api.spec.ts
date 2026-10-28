@@ -68,13 +68,19 @@ describe('accessContextFingerprint', () => {
     const unrelated = { ...base, displayName: 'ชื่อใหม่', legalAcceptanceRequired: true, entitledFeatureKeys: ['expenses', 'inventory'] };
     assert.equal(accessContextFingerprint(base), accessContextFingerprint(unrelated));
     assert.deepEqual(Object.keys(JSON.parse(accessContextFingerprint(base))).sort(),
-      ['branchIds', 'disbursementVoucherWebEntry', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles', 'systemWhtCertificates']);
+      ['branchIds', 'disbursementVoucherWebEntry', 'freeExpenseDrafts', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles', 'systemWhtCertificates']);
   });
 
   it('changes when the disbursement-voucher setting changes without a permission change', () => {
     const base = { roles: ['OWNER'], permissions: ['expense.disbursement.read'] };
     assert.notEqual(accessContextFingerprint({ ...base, disbursementVoucherWebEntry: true }),
       accessContextFingerprint({ ...base, disbursementVoucherWebEntry: false }));
+  });
+
+  it('changes when server-verified free draft access changes without changing role permissions', () => {
+    const base = { roles: ['OWNER'], permissions: ['expense.read_own', 'expense.update'] };
+    assert.equal(accessContextFingerprint(base), accessContextFingerprint({ ...base, freeExpenseDrafts: false }));
+    assert.notEqual(accessContextFingerprint(base), accessContextFingerprint({ ...base, freeExpenseDrafts: true }));
   });
 
   it('treats a missing disbursement-voucher setting as hidden in both fingerprint and menu predicate', () => {
