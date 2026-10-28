@@ -10,7 +10,30 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current UAT latest-main release — 2026-10-29 00:05 Bangkok
+## Current UAT and Production latest-main release — 2026-10-29 01:15 Bangkok
+
+UAT and Production now serve exact source `8c112ea70003057fa3063938e859de1b945747d1`, including the
+unusual expense-document-date discovery correction and every earlier latest-main feature. UAT
+`20261028T175531Z-b3c61d8a` completed signed/verified `ACCEPTED_LINE_DEFERRED` in277.510 seconds.
+Production `20261028T180841Z-982f399a` promoted the exact immutable UAT bundle without rebuild and
+completed signed/verified `ACCEPTED_LINE_DEFERRED` in445.030 seconds. All12 phases, deep readiness,
+customer `live`/`OPEN`, administrator identity/permission, logout/postlogout401, retirement19/19 and
+owned SSM cleanup (2 UAT,4 Production) passed. Workflow UAT/READY/PROD IDs are `NOT_DISPATCHED`.
+
+The first Production prepare `20261028T180203Z-17f9f69c` stopped before publication/mutation because
+the API host had3.07GB free. The documented bounded cleanup retained current+previous rollback
+releases, removed only older stopped containers/image tags, raised free space to27.89GB and closed4/4
+SSM sessions. Clean prepare `20261028T180652Z-51394b31` then passed; apply measured28.56GB available
+against5.08GB required. Actual UAT browser evidence proves receipt `OR670318000742` is now found in
+March2024 under its printed18March date while retaining its unusual-date warning.
+
+Fresh pre/post Alarm reads each have29OK, zero insufficient and the one unchanged9October API-security
+Alarm. The owner authorized root `thawatchai` only for current-release Alarm reads and explicitly
+accepted only that unchanged Alarm for this release; no Alarm or gate was changed. Production LINE,
+native LINE/LIFF and external providers were not exercised.
+[Exact operations, hashes, browser proof and limits](../agent-memory/latest-main-uat-production-2026-10-29.md).
+
+## Previous UAT latest-main release — 2026-10-29 00:05 Bangkok
 
 UAT now serves application source `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c`, which was exact
 main/develop at dispatch, while Production remains on the previous
