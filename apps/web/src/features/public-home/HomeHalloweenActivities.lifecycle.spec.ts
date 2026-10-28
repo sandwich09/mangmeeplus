@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as React from 'react';
 import { HomeHalloweenActivities } from './HomeHalloweenActivities';
+import { HALLOWEEN_GAME_DEADLINES } from './home-halloween-countdown';
 
 const runtime = require('react') as typeof React;
 
@@ -61,10 +62,19 @@ test('automatic chooser is silent, stays dismissed across renders, and gestures 
     assert.equal(starts, 0, 'automatic entry never requests audio');
     render(true);
     assert.equal(shows, 1, 'ordinary state renders do not open again');
+    states[2] = HALLOWEEN_GAME_DEADLINES.candy - 1000;
+    render(true);
+    assert.equal(control('button', 'data-halloween-door', 'ghost').disabled, false);
+    assert.equal(control('button', 'data-halloween-door', 'candy').disabled, true, 'upcoming door is natively disabled');
+    assert.equal(control('button', 'data-halloween-door', 'escape').disabled, true, 'later door is natively disabled');
+    states[2] = HALLOWEEN_GAME_DEADLINES.candy;
+    render(true);
+    assert.equal(control('button', 'data-halloween-door', 'candy').disabled, false, 'door unlocks at its deadline');
     control('button', 'data-halloween-door', 'candy').onClick();
     render(true);
     assert.equal(starts, 1, 'a door supplies the user gesture');
     control('button', 'className', 'home-halloween-back').onClick();
+    states[2] = HALLOWEEN_GAME_DEADLINES.escape;
     render(true);
     control('button', 'data-halloween-door', 'escape').onClick();
     render(true);

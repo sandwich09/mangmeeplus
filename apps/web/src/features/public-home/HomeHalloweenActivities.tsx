@@ -147,18 +147,21 @@ export function HomeHalloweenActivities({ autoOpen = false }: { autoOpen?: boole
             <button type="button" className="home-halloween-back" onClick={() => setSelected(null)}>เลือกประตูอื่น</button>
           </div>
         </section> : <div className="home-halloween-doors">
-          {activities.map((activity, index) => <button key={activity.id} ref={index === 0 ? firstDoor : undefined} type="button"
-            className={`home-halloween-choice home-halloween-${activity.id}`} data-halloween-door={activity.id}
-            aria-labelledby={`home-halloween-${activity.id}-title`} aria-describedby={activity.id === 'ghost' ? undefined : `home-halloween-${activity.id}-description home-halloween-${activity.id}-countdown`} onClick={() => { startAudio(); setSelected(activity); }}>
-            <DoorIllustration activity={activity} />
-            <span className="home-halloween-choice-copy">
-              <span className="home-halloween-door-label">ประตูสี{activity.color}</span>
-              <span className="home-halloween-choice-title" id={`home-halloween-${activity.id}-title`}>{activity.title}</span>
-              <span className="home-halloween-choice-description" id={`home-halloween-${activity.id}-description`}>{activity.description}</span>
-              {activity.id !== 'ghost' && <HalloweenCountdown activity={activity.id} now={countdownNow} />}
-              <span className="home-halloween-door-action" aria-hidden="true">{activity.id === 'ghost' ? 'เปิดกระจกเผยร่าง' : 'แอบดูหลังประตู'}</span>
-            </span>
-          </button>)}
+          {activities.map((activity, index) => {
+            const locked = activity.id !== 'ghost' && !!countdownParts(HALLOWEEN_GAME_DEADLINES[activity.id], countdownNow);
+            return <button key={activity.id} ref={index === 0 ? firstDoor : undefined} type="button" disabled={locked}
+              className={`home-halloween-choice home-halloween-${activity.id}`} data-halloween-door={activity.id}
+              aria-labelledby={`home-halloween-${activity.id}-title`} aria-describedby={activity.id === 'ghost' ? undefined : `home-halloween-${activity.id}-description home-halloween-${activity.id}-countdown`} onClick={() => { startAudio(); setSelected(activity); }}>
+              <DoorIllustration activity={activity} />
+              <span className="home-halloween-choice-copy">
+                <span className="home-halloween-door-label">ประตูสี{activity.color}</span>
+                <span className="home-halloween-choice-title" id={`home-halloween-${activity.id}-title`}>{activity.title}</span>
+                <span className="home-halloween-choice-description" id={`home-halloween-${activity.id}-description`}>{activity.description}</span>
+                {activity.id !== 'ghost' && <HalloweenCountdown activity={activity.id} now={countdownNow} />}
+                <span className="home-halloween-door-action" aria-hidden="true">{locked ? 'เปิดได้เมื่อครบเวลา' : activity.id === 'ghost' ? 'เปิดกระจกเผยร่าง' : 'เปิดประตู'}</span>
+              </span>
+            </button>;
+          })}
         </div>}
         {selected?.id !== 'ghost' && <p className="home-halloween-dialog-note">หลอนนิด ๆ น่ารักหน่อย ๆ แบบน้องมั่งมี</p>}
       </div>
