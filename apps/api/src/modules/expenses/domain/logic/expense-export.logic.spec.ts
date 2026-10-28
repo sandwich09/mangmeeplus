@@ -117,13 +117,24 @@ describe('accountant index is independent of expense capture mode', () => {
   });
 
   it('uses the sent month and a blank document date when the date was not read', () => {
-    for (const summary of [{ dateStatus: 'unverified' }, { dateStatus: 'implausible' }, { missingFields: ['expenseDate'] }]) {
+    for (const summary of [{ dateStatus: 'unverified' }, { missingFields: ['expenseDate'] }]) {
       const row = buildAccountantIndexRow({ ...nonVatExpense, expenseDate: '2026-09-30', uploadedAt: '2026-09-30T17:30:00Z', aiVerificationSummaryJson: summary });
       assert.equal(row.accounting_period, '2026-10');
       assert.equal(row.document_date, '');
     }
     const dated = buildAccountantIndexRow({ ...nonVatExpense, expenseDate: '2026-09-30', uploadedAt: '2026-10-02T03:00:00Z' });
     assert.equal(dated.accounting_period, '2026-09');
+  });
+
+  it('exports an unusual document in its printed month while retaining its review warning', () => {
+    for (const date of ['2024-03-18', '2028-03-18']) {
+      const row = buildAccountantIndexRow({ ...nonVatExpense, status: 'NEEDS_REVIEW', expenseDate: date,
+        uploadedAt: '2026-10-28T17:30:00Z', aiVerificationSummaryJson: { dateStatus: 'implausible', missingFields: ['expenseDate'] } });
+      assert.equal(row.accounting_period, date.slice(0, 7));
+      assert.equal(row.document_date, date);
+      assert.equal(row.document_date_status, 'implausible');
+      assert.equal(row.expense_status, 'NEEDS_REVIEW');
+    }
   });
 
   it('keeps vat_amount in the summary column set the UI downloads by default', () => {

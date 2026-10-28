@@ -709,17 +709,19 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       { summary: { dateStatus: 'verified', missingFields: ['expenseDate'] }, expected: '2026-09' },
       { summary: { dateStatus: 'assumed', missingFields: ['expenseDate'] }, expected: '2026-09' },
       { summary: { dateStatus: 'unverified' }, expected: '2026-10' },
-      { summary: { dateStatus: 'implausible' }, expected: '2026-10' },
+      { summary: { dateStatus: 'implausible', missingFields: ['expenseDate'] }, expected: '2026-09' },
       { summary: { missingFields: ['expenseDate'] }, expected: '2026-10' },
       { summary: { missingFields: [] }, expected: '2026-09' },
+      { summary: { dateStatus: 'implausible', missingFields: ['expenseDate'] }, expenseDate: '2024-03-18', expected: '2024-03' },
+      { summary: { dateStatus: 'implausible' }, expenseDate: '2028-03-18', expected: '2028-03' },
     ];
     const rows = [];
     for (const item of cases) rows.push(await client.expenseRecord.create({ data: {
       companyId, branchId, createdByUserId: userId, captureSource: 'WEB_UPLOAD', status: 'CONFIRMED',
-      expenseDate: new Date('2026-09-30'), uploadedAt: new Date('2026-10-01T17:30:00Z'), aiVerificationSummaryJson: item.summary,
+      expenseDate: new Date(item.expenseDate ?? '2026-09-30'), uploadedAt: new Date('2026-10-01T17:30:00Z'), aiVerificationSummaryJson: item.summary,
     } }));
     const ids = rows.map(row => row.id);
-    for (const month of ['2026-09', '2026-10']) {
+    for (const month of ['2024-03', '2026-09', '2026-10', '2028-03']) {
       const expected = rows.filter((_row, index) => cases[index]!.expected === month).map(row => row.id).sort();
       const evidence = await repo.listSharedEvidence(companyId, { expenseIds: ids, yearMonth: month });
       const list = await repo.listExpenses({ companyId, fromDate: `${month}-01`, toDate: `${month}-${month.endsWith('09') ? '30' : '31'}`, pageSize: 100 }, { branchIds: [branchId] });
@@ -727,7 +729,11 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       assert.deepEqual(list.data.filter(row => ids.includes(row.id)).map(row => row.id).sort(), expected);
     }
     const folders = await repo.summarizeSharedEvidenceFolders(companyId, { expenseIds: ids });
-    assert.deepEqual(folders.map(folder => [folder.yearMonth, folder.expenseCount]), [['2026-10', 3], ['2026-09', 4]]);
+    assert.deepEqual(folders.map(folder => [folder.yearMonth, folder.expenseCount]), [['2028-03', 1], ['2026-10', 2], ['2026-09', 5], ['2024-03', 1]]);
+    for (const day of ['2024-03-17', '2024-03-18', '2024-03-19']) {
+      const list = await repo.listExpenses({ companyId, fromDate: day, toDate: day }, { branchIds: [branchId] });
+      assert.deepEqual(list.data.filter(row => ids.includes(row.id)).map(row => row.id), day.endsWith('18') ? [rows[7]!.id] : []);
+    }
     const uploaded = await repo.listSharedEvidence(companyId, { expenseIds: ids, yearMonth: '2026-10', dateField: 'uploadedAt' });
     assert.equal(uploaded.total, cases.length);
   });

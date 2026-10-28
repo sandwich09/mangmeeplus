@@ -5,7 +5,7 @@ import { canEditSubstituteReceipt } from './substitute-receipt-wizard.model';
 import { showInputVatQuestion, showListedInputVatRight } from './expense-input-vat-right.logic';
 
 import { ExpenseInputVatRight } from './ExpenseInputVatRight';
-import { whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, civilDate } from '@watchdog-bms/contracts';
+import { whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, expenseDocumentDateStatus, civilDate } from '@watchdog-bms/contracts';
 import { mergeExpenseUnsavedFields, expenseTaxEvidenceReasonMessage } from './expenses.model';
 
 import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
@@ -2752,7 +2752,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
     void getExpense(companyId, highlightId)
       .then((expense) => {
         if (!active) return;
-        const documentDate = expenseDateIsReadable(expense.aiVerificationSummaryJson) ? expense.expenseDate.slice(0, 10) : civilDate(new Date(expense.uploadedAt));
+        const documentDate = expenseDocumentDateStatus(expense.aiVerificationSummaryJson) !== 'unverified' ? expense.expenseDate.slice(0, 10) : civilDate(new Date(expense.uploadedAt));
         if (isCivilDate(documentDate)) { setGran('month'); setMonth(civilPeriodKey(documentDate)); }
       })
       .catch(() => {}) // A stale or inaccessible highlight must not block the list.

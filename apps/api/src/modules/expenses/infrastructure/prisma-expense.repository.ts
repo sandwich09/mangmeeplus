@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { expenseWhtHeaderRate, expenseWhtIncomeBase } from '../domain/logic/expense-wht-input.logic';
 import { appendWhtCertificateHistory } from '../../tax/application/services/wht-certificate-history';
-import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview, expenseDateIsReadable } from '@watchdog-bms/contracts';
+import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
@@ -549,10 +549,11 @@ function documentDateWhere(fromDate?: string, toDate?: string): Record<string, u
   const status = (value: unknown) => ({ aiVerificationSummaryJson: { path: ['dateStatus'], equals: value } });
   const legacyStatus = { OR: [status(Prisma.AnyNull), { NOT: { OR: ['verified', 'assumed', 'unverified', 'implausible'].map(status) } }] };
   const missing = { aiVerificationSummaryJson: { path: ['missingFields'], array_contains: ['expenseDate'] } };
-  const readable = { OR: [status('verified'), status('assumed'), { AND: [legacyStatus, { OR: [
+  // An unusual reading still belongs to its document month; only an unread placeholder uses intake.
+  const readable = { OR: [status('verified'), status('assumed'), status('implausible'), { AND: [legacyStatus, { OR: [
     { aiVerificationSummaryJson: { path: ['missingFields'], equals: Prisma.AnyNull } }, { NOT: missing },
   ] }] }] };
-  const unreadable = { OR: [status('unverified'), status('implausible'), { AND: [legacyStatus, missing] }] };
+  const unreadable = { OR: [status('unverified'), { AND: [legacyStatus, missing] }] };
   return { OR: [
     { AND: [readable], expenseDate: civilDayRangeToUtc(fromDate, toDate) },
     { AND: [unreadable], uploadedAt: bangkokCivilDayRangeToUtc(fromDate, toDate) },
@@ -4893,7 +4894,7 @@ export class PrismaExpenseRepository {
     const evidencedIds = new Set([...evidence].filter(([, value]) => value.attachments.some(file => !file.isHistorical)).map(([id]) => id));
     const buckets = new Map<string, { count: number; evidenceCount: number; total: number }>();
     for (const row of rows as Array<Record<string, any>>) {
-      const hasDocumentDate = dateField === 'expenseDate' && expenseDateIsReadable(row.aiVerificationSummaryJson);
+      const hasDocumentDate = dateField === 'expenseDate' && expenseDocumentDateStatus(row.aiVerificationSummaryJson) !== 'unverified';
       const date = row[hasDocumentDate ? 'expenseDate' : 'uploadedAt'] as Date | null;
       if (!date) continue;
       const key = civilPeriodKey(hasDocumentDate ? coerceCivilDate(date) : civilDate(date));

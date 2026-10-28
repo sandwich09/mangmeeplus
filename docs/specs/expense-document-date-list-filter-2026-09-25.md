@@ -21,3 +21,9 @@ When a completed review or batch upload opens the list with `?highlight=<expense
 - No accounting, tax, approval, payment, or data mutation semantics change.
 
 This decision supersedes the main-list intake-date and export lens sections of [the 2026-08-15 spec](expense-upload-date-visibility-spec.md).
+
+## 2026-10-29: readable but unusual dates
+
+UAT receipt `OR670318000742` displays 18 March 2024 but appears only in October 2026 because `implausible` was grouped with unread dates. An unusual date is still a document date for discovery: list/day/month filtering, highlighted return, evidence folders and accountant export use it and retain `วันที่ผิดปกติ` / `document_date_status=implausible`. Only `unverified` (including legacy missing-date markers) falls back to the Bangkok intake day. A missing date must not become an invented document date.
+
+This changes discovery only. `expenseDateIsReadable`, date-review/confirmation guards, OCR plausibility thresholds, source drafts, tax/payment/posting rules and tenant/branch/actor scope remain unchanged. No migration or customer data rewrite is needed.

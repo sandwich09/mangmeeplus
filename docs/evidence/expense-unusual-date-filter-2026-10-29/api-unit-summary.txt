@@ -1,0 +1,9 @@
+✔ UAT-T1 evidence reads recognise categories on every goods line without inventing a document category (0.254042ms)
+ℹ tests 178
+ℹ suites 26
+ℹ pass 178
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 757.618666

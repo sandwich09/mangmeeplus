@@ -1,5 +1,5 @@
 import { webLink } from '../../../../common/http/web-link';
-import { expenseDocumentDateStatus, expenseDateIsReadable, expenseEvidenceAssessment, expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, civilDate } from '@watchdog-bms/contracts';
+import { expenseDocumentDateStatus, expenseEvidenceAssessment, expenseEvidenceImageMissing, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, civilDate } from '@watchdog-bms/contracts';
 import {
   ACCOUNTANT_INDEX_COLUMNS,
   ACCOUNTANT_INDEX_COLUMN_LABELS,
@@ -145,7 +145,7 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     ?? source.attachments.find((a) => a.purpose === 'expense.receipt.primary');
   const wetSignedScanIds = new Set(source.wetSignedScanAttachmentIds ?? []);
   const supporting = source.attachments.filter((a) => a.id !== primary?.id && !wetSignedScanIds.has(a.id));
-  const documentDate = expenseDateIsReadable(source.aiVerificationSummaryJson) ? source.expenseDate : null;
+  const documentDate = expenseDocumentDateStatus(source.aiVerificationSummaryJson) !== 'unverified' ? source.expenseDate : null;
   return {
     ...(noReceiptDocumentLabel(source) ? { sourceDocumentTypeLabel: noReceiptDocumentLabel(source) } : {}),
     ...(source.inputVatRecordedBeforeReview ? { inputVatRightLabel: 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)' } : {}),

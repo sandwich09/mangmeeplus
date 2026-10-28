@@ -1,0 +1,9 @@
+✔ LIST-1 keeps the overpayment warning and claim progress instead of inventing another action (0.070667ms)
+ℹ tests 130
+ℹ suites 14
+ℹ pass 130
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 399.510208

@@ -1,0 +1,59 @@
+{
+  "mobile": {
+    "buttons": [
+      {
+        "height": 36,
+        "text": "ทั้งหมด1",
+        "width": 159
+      },
+      {
+        "height": 36,
+        "text": "ยังไม่ยืนยัน1",
+        "width": 159
+      },
+      {
+        "height": 36,
+        "text": "ยืนยันแล้ว0",
+        "width": 159
+      },
+      {
+        "height": 36,
+        "text": "ยกเลิก/ปฏิเสธ0",
+        "width": 159
+      }
+    ],
+    "scrollWidth": 390,
+    "width": 390
+  },
+  "desktop": {
+    "buttons": [
+      {
+        "height": 36,
+        "text": "ทั้งหมด1",
+        "width": 186
+      },
+      {
+        "height": 36,
+        "text": "ยังไม่ยืนยัน1",
+        "width": 186
+      },
+      {
+        "height": 36,
+        "text": "ยืนยันแล้ว0",
+        "width": 186
+      },
+      {
+        "height": 36,
+        "text": "ยกเลิก/ปฏิเสธ0",
+        "width": 186
+      }
+    ],
+    "highlight": true,
+    "scrollWidth": 1280,
+    "width": 1280
+  },
+  "wide": {
+    "scrollWidth": 1536,
+    "width": 1536
+  }
+}
