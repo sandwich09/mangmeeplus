@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GhostCard } from './home-halloween-cards';
-import { HALLOWEEN_HOME_URL } from './home-halloween-cards';
+import { HALLOWEEN_URL } from './home-halloween-cards';
 import { copyText, halloweenCaption, prepareHalloweenImage, supportsFileShare, type PreparedHalloweenImage } from './home-halloween-share';
 
 type ShareState = { kind: 'sharing' | 'done' | 'cancelled' | 'failed' | 'share-failed'; message: string };
@@ -84,7 +84,7 @@ export function HalloweenCardShare({ card }: { card: GhostCard }) {
     failedShareTarget.current = undefined;
     try {
       // Call in this click handler before awaiting, while user activation is available.
-      const pending = navigator.share({ files: [prepared.file], title: `การ์ดของ${card.name}`, text: caption, url: HALLOWEEN_HOME_URL });
+      const pending = navigator.share({ files: [prepared.file], title: `การ์ดของ${card.name}`, text: caption, url: HALLOWEEN_URL });
       setState({ kind: 'sharing', message: forApp ? `เลือก ${forApp} จากเมนูแชร์` : 'เลือกแอปที่ต้องการแชร์' });
       await pending;
       if (generation.current !== current) return;

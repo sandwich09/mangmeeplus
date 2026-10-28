@@ -1,5 +1,14 @@
 # Halloween activity entrance plan
 
+## Campaign popup — 2026-10-28
+
+- [x] Render the real homepage at bare `/halloween`, open chooser once on entry only while active, and retain manual `/` entry and direct-card behavior.
+- [x] Update the approved chooser copy, caption/native share destination and QR; preserve visible domain-only branding.
+- [x] Verify lifecycle/theme gating, real 390/1280 layout and close/navigation/refresh; record focused tests and TypeScript in [memory](../agent-memory/halloween-event-popup.md).
+- [ ] Owner-authorized UAT release and exact signed-artifact Production promotion, with actual current administrator/OPEN/logout acceptance.
+
+Owner subsequently authorized UAT+Production. Historical statuses below refer to earlier increments.
+
 Status: COMPLETE — local first-screen preview, 2026-10-27. Not deployed.
 
 Spec: [activity entrance](../specs/halloween-activity-entry-spec.md).

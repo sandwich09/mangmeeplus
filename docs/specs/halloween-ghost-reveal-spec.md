@@ -1,5 +1,9 @@
 # Halloween mirror reveal and sharing
 
+## Campaign link refinement — approved 2026-10-28
+
+Supersedes the homepage-only sharing destination below: caption/copy text, native share URL and the story image QR now target `https://mangmeeplus.com/halloween`, which opens the three-door activity dialog over the real public homepage. The printed image address remains only `mangmeeplus.com`; pure saved card PNGs and origin metadata are unchanged. Bare inactive `/halloween` renders the normal homepage without the activity; active allowlisted card previews and inactive/unknown-card not-found behavior are preserved. See the activity spec's campaign popup refinement and current task memory.
+
 2026-10-28 superseding scope: approved card mapping is complete. See `halloween-signed-draw.md` for current server-side draws, immediate loading and concealed smoke reveal. Owner subsequently removed signature/key requirements; saved/shared images retain unsigned source/card labels. Earlier client-only/no-server-call statements below describe the historical implementation, not this newer contract.
 
 Status: first-door gameplay, embedded image-origin metadata, rapid spins and final temple bell locally verified 2026-10-27. New roster/copy/pose refresh remains a draft; no replacement artwork has been generated yet. Owner confirmed SECRET 1%, each of 22 ordinary cards 4.5%. Not deployed; physical-phone social posting remains unverified.

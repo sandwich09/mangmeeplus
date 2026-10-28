@@ -4,7 +4,6 @@ export type GhostCard = { id: string; name: string; region: GhostRegion; tag: st
 export const STANDARD_CARD_BACK = '/home/events/halloween/cards/back-standard.png';
 export const SECRET_CARD_BACK = '/home/events/halloween/cards/back-secret.png';
 export const HALLOWEEN_URL = 'https://mangmeeplus.com/halloween';
-export const HALLOWEEN_HOME_URL = 'https://mangmeeplus.com';
 export const HALLOWEEN_LINE_URL = 'https://line.me/R/ti/p/@mangmeeplus';
 
 export const GHOST_CARDS: readonly GhostCard[] = [

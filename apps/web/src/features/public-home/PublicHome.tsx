@@ -13,7 +13,7 @@ export function HomeStructuredData({ nonce }: { nonce?: string }) {
   return <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(HOME_JSON_LD).replace(/</g, '\\u003c') }} />;
 }
 
-export function PublicHome({ event = 'default', preview = false, palette = DEFAULT_HOME_EVENT_PALETTE }: { event?: HomeEvent; preview?: boolean; palette?: HomeEventPalette }) { return <div className="public-home" data-home-event={event === 'default' ? undefined : event} data-home-palette={event === 'halloween' ? palette : undefined}>
+export function PublicHome({ event = 'default', preview = false, palette = DEFAULT_HOME_EVENT_PALETTE, autoOpenHalloween = false }: { event?: HomeEvent; preview?: boolean; palette?: HomeEventPalette; autoOpenHalloween?: boolean }) { return <div className="public-home" data-home-event={event === 'default' ? undefined : event} data-home-palette={event === 'halloween' ? palette : undefined}>
 {preview && <HomeEventPreviewTools event={event} palette={palette} />}
 {event === 'halloween' && <HomeEventEffects />}
 <div className="pg">
@@ -50,7 +50,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <a className="btn btn-soft btn-lg" href="#pricing">ดูราคา</a>
 </div>
 <p className="after"><span className="free">เปิดร้านฟรี</span> <span className="nw">ไม่ต้องใส่บัตร</span><br />กดแล้วเข้า LINE ใส่ชื่อร้านกับ<span className="nw">เบอร์มือถือ</span> พร้อมใช้เมื่อเลือกและจ่าย<span className="nw">แพ็กเกจ</span> เริ่ม<span className="mangmee-unit">เดือนละ 249 บาท</span></p>
-{event === 'halloween' && <HomeHalloweenActivities />}
+{event === 'halloween' && <HomeHalloweenActivities autoOpen={autoOpenHalloween} />}
 </div>
 <div className="w">
 <figure className="stage">

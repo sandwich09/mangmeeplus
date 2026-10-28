@@ -1,7 +1,7 @@
 import * as ReactRuntime from 'react';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GHOST_CARDS, HALLOWEEN_HOME_URL } from './home-halloween-cards';
+import { GHOST_CARDS, HALLOWEEN_URL } from './home-halloween-cards';
 import { halloweenCaption, supportsFileShare } from './home-halloween-share';
 
 (globalThis as typeof globalThis & { React: typeof ReactRuntime }).React = ReactRuntime;
@@ -22,9 +22,9 @@ test('file sharing requires a positive canShare result and safely handles unsupp
   withNavigator({}, () => assert.equal(supportsFileShare(file), false));
 });
 
-test('caption uses the public homepage and official LINE link', () => {
+test('caption uses the campaign popup URL and official LINE link', () => {
   const card = GHOST_CARDS[0];
-  assert.ok(halloweenCaption(card).includes(HALLOWEEN_HOME_URL));
+  assert.ok(halloweenCaption(card).split('\n').includes('https://mangmeeplus.com/halloween'));
   assert.ok(!halloweenCaption(card).includes('/halloween/'));
   assert.ok(halloweenCaption(card).includes('https://line.me/R/ti/p/@mangmeeplus'));
 });
@@ -206,7 +206,7 @@ test('all four share clicks start clipboard then native JPEG sharing synchronous
     await withShareUi(async ui => {
       const pending = ui.click(trigger);
       assert.deepEqual(calls, ['copy', 'share']);
-      assert.deepEqual(payloads[0], { files: [ui.file], title: `การ์ดของ${GHOST_CARDS[0].name}`, text: halloweenCaption(GHOST_CARDS[0]), url: HALLOWEEN_HOME_URL });
+      assert.deepEqual(payloads[0], { files: [ui.file], title: `การ์ดของ${GHOST_CARDS[0].name}`, text: halloweenCaption(GHOST_CARDS[0]), url: HALLOWEEN_URL });
       await ui.click(trigger === 'แชร์ภาพ' ? 'กำลังเปิดเมนูแชร์…' : trigger);
       assert.equal(payloads.length, 1, 'duplicate click does not share or copy twice');
       copyDone(); await flushShare();

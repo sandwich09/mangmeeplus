@@ -1,0 +1,98 @@
+[
+  {
+    "Name": "mangmee-kamal-production-Ai-status",
+    "State": "OK",
+    "Updated": "2026-10-09T13:55:09.530000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 2 periods and 2 missing datapoints were treated as [NonBreaching]."
+  },
+  {
+    "Name": "mangmee-kamal-production-ApiA-status",
+    "State": "OK",
+    "Updated": "2026-10-09T13:55:12.520000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 2 periods and 2 missing datapoints were treated as [NonBreaching]."
+  },
+  {
+    "Name": "mangmee-kamal-production-ApiB-status",
+    "State": "OK",
+    "Updated": "2026-10-09T13:55:58.304000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 2 periods and 2 missing datapoints were treated as [NonBreaching]."
+  },
+  {
+    "Name": "mangmee-kamal-production-Workers-status",
+    "State": "OK",
+    "Updated": "2026-10-09T13:54:45.174000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 2 periods and 2 missing datapoints were treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_ai_gateway-security",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:41.582000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_api_web-security",
+    "State": "ALARM",
+    "Updated": "2026-10-09T14:54:12.224000+07:00",
+    "Reason": "Threshold Crossed: 1 out of the last 1 datapoints [2.0 (09/10/26 07:53:00)] was greater than or equal to the threshold (1.0) (minimum 1 datapoint for OK -> ALARM transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_workers-security",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:25.448000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-db-connections-high",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:43.334000+07:00",
+    "Reason": "Threshold Crossed: 2 out of the last 2 datapoints [1.0 (09/10/26 07:21:00), 1.0 (09/10/26 07:16:00)] were not greater than the threshold (150.0) (minimum 1 datapoint for ALARM -> OK transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-db-cpu-credits-low",
+    "State": "OK",
+    "Updated": "2026-10-09T17:01:46.982000+07:00",
+    "Reason": "Threshold Crossed: 1 out of the last 2 datapoints [51.01104615 (09/10/26 09:56:00)] was not less than the threshold (50.0) (minimum 1 datapoint for ALARM -> OK transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-db-memory-low",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:27.744000+07:00",
+    "Reason": "Threshold Crossed: 3 out of the last 3 datapoints [6.86444544E8 (09/10/26 07:21:00), 7.37787904E8 (09/10/26 07:16:00), 8.05249024E8 (09/10/26 07:11:00)] were not less than the threshold (2.0E8) (minimum 1 datapoint for ALARM -> OK transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-db-storage-low",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:11.574000+07:00",
+    "Reason": "Threshold Crossed: 2 out of the last 2 datapoints [1.8304794624E10 (09/10/26 07:21:00), 1.8900774912E10 (09/10/26 07:16:00)] were not less than the threshold (4.0E9) (minimum 1 datapoint for ALARM -> OK transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-log-ingest-ai-gateway",
+    "State": "OK",
+    "Updated": "2026-10-09T14:27:03.002000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-log-ingest-api-web",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:20.599000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-log-ingest-workers",
+    "State": "OK",
+    "Updated": "2026-10-09T14:27:01.060000+07:00",
+    "Reason": "Threshold Crossed: no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]."
+  },
+  {
+    "Name": "watchdog-bms-prod-redis-memory-high-001",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:16.771000+07:00",
+    "Reason": "Threshold Crossed: 2 out of the last 2 datapoints [7.163753112157186 (09/10/26 07:21:00), 7.162221272786458 (09/10/26 07:16:00)] were not greater than the threshold (75.0) (minimum 1 datapoint for ALARM -> OK transition)."
+  },
+  {
+    "Name": "watchdog-bms-prod-redis-memory-high-002",
+    "State": "OK",
+    "Updated": "2026-10-09T14:26:37.514000+07:00",
+    "Reason": "Threshold Crossed: 2 out of the last 2 datapoints [7.18996524810791 (09/10/26 07:21:00), 7.173945506413777 (09/10/26 07:16:00)] were not greater than the threshold (75.0) (minimum 1 datapoint for ALARM -> OK transition)."
+  }
+]

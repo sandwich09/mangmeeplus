@@ -1,5 +1,5 @@
 import type { GhostCard } from './home-halloween-cards';
-import { HALLOWEEN_HOME_URL, HALLOWEEN_LINE_URL } from './home-halloween-cards';
+import { HALLOWEEN_URL, HALLOWEEN_LINE_URL } from './home-halloween-cards';
 import { embedHalloweenProvenance, makeHalloweenImageProvenance } from './home-halloween-provenance';
 
 export type PreparedHalloweenImage = { cardId: string; file: File; url: string; name: string };
@@ -7,7 +7,7 @@ export type PreparedHalloweenImage = { cardId: string; file: File; url: string; 
 export const HALLOWEEN_QR_PATH = '/home/events/halloween/cards/play-qr.svg';
 
 export function halloweenCaption(card: GhostCard) {
-  return [`${card.name} · ${card.tag}`, ...card.quote, HALLOWEEN_HOME_URL, `LINE ${HALLOWEEN_LINE_URL}`].join('\n');
+  return [`${card.name} · ${card.tag}`, ...card.quote, HALLOWEEN_URL, `LINE ${HALLOWEEN_LINE_URL}`].join('\n');
 }
 
 function loadImage(src: string) {

@@ -1,5 +1,15 @@
 # Halloween activity entrance
 
+## Campaign popup refinement — approved 2026-10-28
+
+This supersedes the click-only entrance for the campaign URL. `/halloween` renders the actual public homepage and automatically opens the existing three-door native dialog when the server-resolved theme is Halloween. Ordinary `/` keeps its manual invitation. Closing by X, Escape or backdrop leaves the URL unchanged and the homepage usable; normal rerenders must not reopen it. Refresh or fresh entry opens it again. Do not add session/player storage.
+
+Bare `/halloween` with the theme off renders the normal homepage without the activity. Unknown card IDs and disabled direct-card URLs remain not-found; valid active card previews remain available. Preserve production rejection of development theme overrides.
+
+Chooser copy: eyebrow “กิจกรรมฮาโลวีนจากมั่งมีพลัส”; heading “ก๊อก ก๊อก… กล้าเปิดไหม?”; explanation “หลังประตูนี้มีเรื่องหลอนรออยู่ เลือกบานที่อยากลองได้เลย”. First-door description is “ฮาโลวีนนี้ คุณจะเป็นผีอะไร?”. Owner explicitly removed “เล่นฟรี ไม่ต้องสมัครสมาชิก”. No extra start step. Auto-open is silent until a user gesture; selecting a door starts the existing quiet ambience, with disposal on every close/unmount. Existing countdowns, game logic and accessibility stay intact.
+
+Acceptance: actual 390/1280 browser verifies auto-open, visible homepage after close, unchanged URL, no unsolicited reopening, refresh reopening, manual homepage entry, theme-off normal page and direct-card compatibility. Focused tests/TypeScript and caption/native URL/QR destination checks are required. See [current task memory](../agent-memory/halloween-event-popup.md); historical increment statuses below do not describe this change or the already completed prior release.
+
 Status: first-screen implementation complete and locally verified, 2026-10-27. The subsequent first-door gameplay/share increment is authorized in [mirror reveal spec](halloween-ghost-reveal-spec.md), which supersedes discussion-only boundaries below. Not deployed.
 
 ## Product
