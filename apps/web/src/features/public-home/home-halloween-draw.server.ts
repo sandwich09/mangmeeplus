@@ -1,12 +1,24 @@
 // Node-only implementation, reached through a server-only Route Handler.
 import { randomInt } from 'node:crypto';
 import { isSameOriginRequest } from '../../common/auth/middleware.logic';
-import { ghostCardForBucket } from './home-halloween-cards';
+import { GHOST_CARDS } from './home-halloween-cards';
 import { homeThemeForRequest } from './home-theme.server';
 
 const headers = { 'Cache-Control': 'private, no-store, max-age=0', 'X-Content-Type-Options': 'nosniff' };
+const ordinaryCards = GHOST_CARDS.filter(card => card.region !== 'secret');
+const secretCard = GHOST_CARDS.find(card => card.region === 'secret')!;
+const ordinaryIds = new Set(ordinaryCards.map(card => card.id));
 let tokens = 30;
 let lastRefill = performance.now();
+
+function seenCards(value: string | null) {
+  if (!value) return new Set<string>();
+  if (value.length > 512) throw new RangeError('Seen cards too long');
+  const ids = value.split(',');
+  const seen = new Set(ids);
+  if (ids.length > ordinaryCards.length || seen.size !== ids.length || ids.some(id => !ordinaryIds.has(id))) throw new RangeError('Invalid seen cards');
+  return seen;
+}
 
 async function emptyBody(request: Request) {
   if (request.headers.has('content-length') && request.headers.get('content-length') !== '0') return false;
@@ -21,7 +33,7 @@ async function emptyBody(request: Request) {
   finally { clearTimeout(timeout); void reader.cancel().catch(() => {}); }
 }
 
-export async function handleHalloweenDraw(request: Request, environment: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch) {
+export async function handleHalloweenDraw(request: Request, environment: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch, random: (max: number) => number = randomInt) {
   const fail = (status: number, code: string) => Response.json({ code }, { status, headers });
   if (request.method !== 'POST') return fail(405, 'METHOD_NOT_ALLOWED');
   const url = new URL(request.url);
@@ -31,6 +43,9 @@ export async function handleHalloweenDraw(request: Request, environment: NodeJS.
     void request.body?.cancel().catch(() => {});
     return fail(400, 'INVALID_DRAW_REQUEST');
   }
+  let seen: Set<string>;
+  try { seen = seenCards(request.headers.get('x-halloween-seen')); }
+  catch { return fail(400, 'INVALID_DRAW_REQUEST'); }
   // ponytail: one anonymous bucket per process, no player/IP records; edge protection remains a deployment concern.
   const now = performance.now();
   tokens = Math.min(30, tokens + (now - lastRefill) / 100);
@@ -42,7 +57,10 @@ export async function handleHalloweenDraw(request: Request, environment: NodeJS.
   if (theme.event !== 'halloween') return fail(404, 'HALLOWEEN_INACTIVE');
   if (request.signal.aborted) return fail(408, 'DRAW_CANCELLED');
   try {
-    return Response.json({ cardId: ghostCardForBucket(randomInt(1000)).id }, { headers });
+    const available = ordinaryCards.filter(card => !seen.has(card.id));
+    const choices = available.length ? available : ordinaryCards;
+    const card = random(100) === 0 ? secretCard : choices[random(choices.length)];
+    return Response.json({ cardId: card.id }, { headers });
   } catch {
     // No local-random fallback when the server cannot produce a result.
     return fail(503, 'DRAW_UNAVAILABLE');

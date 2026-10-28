@@ -127,3 +127,116 @@
 [data-halloween-game] .halloween-reveal-smoke i:nth-child(3){inset:-10% -20% 40%;opacity:.35}
 @media(prefers-reduced-motion:no-preference){[data-halloween-game][data-still=false] .halloween-reveal-smoke i{animation:halloween-smoke-flow 2.2s ease-in-out infinite alternate}[data-halloween-game][data-still=false] .halloween-reveal-smoke i:nth-child(2){animation-delay:-1.1s;animation-direction:alternate-reverse}[data-halloween-game][data-still=false] .halloween-reveal-smoke i:nth-child(3){animation-delay:-.6s}}
 @keyframes halloween-smoke-flow{from{transform:translate(-15%,15%) rotate(-12deg);opacity:.35}to{transform:translate(15%,-16%) rotate(15deg);opacity:.75}}
+
+/* Orange-door candy game. */
+[data-halloween-candy-game]{position:relative;isolation:isolate;min-width:0;min-height:520px;padding:28px 24px 26px;overflow:hidden;border:1px solid #d9945a55;border-radius:24px;background:radial-gradient(circle at 50% 28%,#8d3d5a55,transparent 50%),linear-gradient(145deg,#3b1a37,#170e25);color:#fff5ee;font-family:'Outfit','IBM Plex Sans Thai',sans-serif;text-align:center}
+[data-halloween-candy-game] *{box-sizing:border-box}
+[data-halloween-candy-game] :focus-visible{outline:3px solid #ffd58a;outline-offset:4px}
+[data-halloween-candy-game] .halloween-candy-heading>p{margin:0 0 3px;color:#ffc477;font-size:14px;font-weight:600;line-height:1.6}
+[data-halloween-candy-game] .halloween-candy-heading h2{margin:0;color:#fff5df;font-size:clamp(26px,3.7vw,36px);font-weight:700;line-height:1.55;text-wrap:balance}
+[data-halloween-candy-game] .halloween-candy-heading h2:focus{outline:none!important}
+[data-halloween-candy-game] .halloween-candy-heading>span{display:block;margin-top:4px;color:#e9cfdf;font-size:15px;line-height:1.7}
+[data-halloween-candy-game] .halloween-candy-heading>span b{color:#ffe19a;font-size:18px}
+[data-halloween-candy-game] .mangmee-btn{height:44px;min-height:44px;min-width:210px;border-radius:12px;font:600 15px/1.6 'Outfit','IBM Plex Sans Thai',sans-serif;box-shadow:none;white-space:nowrap}
+[data-halloween-candy-game] .mangmee-btn-quiet{border-color:transparent;background:transparent;color:#ead8e8}
+[data-halloween-candy-game] .mangmee-btn-secondary{border-color:#d9a27788;background:#ffffff0b;color:#fff3e7}
+[data-halloween-candy-game] .halloween-candy-primary{border:1px solid #ffe2a0;background:linear-gradient(105deg,#f2a94f,#ffe09a);color:#3b1d36;box-shadow:0 8px 28px #ee9f4438}
+[data-halloween-candy-game] .halloween-candy-ready-art{position:relative;width:min(330px,85%);height:230px;margin:5px auto 8px}
+[data-halloween-candy-game] .halloween-candy-ready-art img{display:block;width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 16px 24px #08040d66)}
+[data-halloween-candy-game] .halloween-candy-ready-art i{position:absolute;font-style:normal;font-size:32px;filter:drop-shadow(0 5px 8px #0008)}
+[data-halloween-candy-game] .halloween-candy-ready-art i:nth-of-type(1){left:2%;top:28%;transform:rotate(-18deg)}
+[data-halloween-candy-game] .halloween-candy-ready-art i:nth-of-type(2){right:4%;top:12%;transform:rotate(15deg)}
+[data-halloween-candy-game] .halloween-candy-ready-art i:nth-of-type(3){right:9%;bottom:3%;font-size:38px}
+[data-halloween-candy-game] .halloween-candy-rules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;width:min(650px,100%);margin:0 auto 18px;padding:0;list-style:none}
+[data-halloween-candy-game] .halloween-candy-rules li{display:flex;flex-direction:column;padding:9px 7px;border:1px solid #d9945a35;border-radius:13px;background:#ffffff0a}
+[data-halloween-candy-game] .halloween-candy-rules b{color:#ffe5af;font-size:16px;line-height:1.5}
+[data-halloween-candy-game] .halloween-candy-rules span{color:#dbc6d9;font-size:13px;line-height:1.6}
+[data-halloween-candy-game] .halloween-candy-rules strong{color:#ffe5af;font-weight:700}
+[data-halloween-candy-game] .halloween-candy-ready-actions{display:flex;flex-direction:column;align-items:center;gap:7px}
+[data-halloween-candy-game] .halloween-candy-ready-actions button{width:220px}
+[data-halloween-candy-game] .halloween-candy-countdown{display:grid;min-height:455px;place-content:center}
+[data-halloween-candy-game] .halloween-candy-countdown p{margin:0;color:#ffe2b3;font-size:20px;line-height:1.6}
+[data-halloween-candy-game] .halloween-candy-countdown strong{display:block;color:#fff2cd;font-size:150px;line-height:1;text-shadow:0 0 42px #ff9f50aa}
+[data-halloween-candy-game] .halloween-candy-scorebar{position:relative;z-index:4;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;width:min(650px,100%);margin:0 auto 12px}
+[data-halloween-candy-game] .halloween-candy-scorebar>span{display:flex;min-height:62px;align-items:center;justify-content:center;gap:8px;padding:8px 10px;border:1px solid #e1a77155;border-radius:14px;background:#23122ee8}
+[data-halloween-candy-game] .halloween-candy-scorebar small{color:#d9c1d8;font-size:13px;line-height:1.5}
+[data-halloween-candy-game] .halloween-candy-scorebar b{color:#ffe6a5;font-size:26px;line-height:1;font-variant-numeric:tabular-nums}
+[data-halloween-candy-game] .halloween-candy-scorebar .is-storm{border-color:#ffb15e;background:#702a3d;box-shadow:0 0 24px #ff77424d}
+[data-halloween-candy-game] .halloween-candy-stage{position:relative;width:min(760px,100%);height:450px;margin:auto}
+[data-halloween-candy-game] .halloween-candy-field{position:relative;width:100%;height:100%;overflow:hidden;border:2px solid #d9925655;border-radius:24px;background:radial-gradient(circle at 50% 0,#b34f6e55,transparent 55%),linear-gradient(#251333,#10091b);box-shadow:inset 0 0 40px #08030f99}
+[data-halloween-candy-game] .halloween-candy-sky{position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 15% 25%,#ffb65b17 0 2px,transparent 3px),radial-gradient(circle at 77% 18%,#ffe0a51c 0 2px,transparent 3px);background-size:71px 61px,83px 67px}
+[data-halloween-candy-game] .halloween-candy-sky i{position:absolute;bottom:-38px;width:145px;height:90px;border-radius:50% 50% 0 0;background:#32172d;box-shadow:inset 0 12px 0 #48213b}
+[data-halloween-candy-game] .halloween-candy-sky i:first-child{left:-25px}
+[data-halloween-candy-game] .halloween-candy-sky i:nth-child(2){left:calc(50% - 70px);height:62px}
+[data-halloween-candy-game] .halloween-candy-sky i:last-child{right:-25px}
+[data-halloween-candy-game] .halloween-candy-target{position:absolute;z-index:2;top:-70px;left:var(--candy-x);display:grid;place-items:center;width:58px;height:58px;padding:0;border:1px solid #ffffff4a;border-radius:50%;background:#ffffff14;box-shadow:0 8px 18px #0007;cursor:pointer;touch-action:manipulation;transform:translateX(-50%);animation:candy-target-fall var(--candy-duration) linear forwards}
+[data-halloween-candy-game] .halloween-candy-target span{font-size:39px;line-height:1;filter:drop-shadow(0 4px 5px #0007)}
+[data-halloween-candy-game] .halloween-candy-target.is-gold{width:66px;height:66px;border-color:#ffe070;background:#ffbe3d2b;box-shadow:0 0 22px #ffbe5b66}
+[data-halloween-candy-game] .halloween-candy-target.is-cursed{border-color:#cfa4e6;background:#5e287c44}
+[data-halloween-candy-game] .halloween-candy-target.is-thief{width:64px;height:64px;border-color:#ecdcff;background:#aa7ec53d}
+[data-halloween-candy-game] .halloween-candy-burst{position:absolute;z-index:5;top:var(--burst-y);left:var(--burst-x);width:1px;height:1px;pointer-events:none;animation:candy-burst-life .68s ease-out both}
+[data-halloween-candy-game] .halloween-candy-burst i{--burst-dx:0;--burst-dy:-48px;--burst-turn:0deg;position:absolute;left:0;top:0;font-style:normal;font-size:18px;line-height:1;transform:translate(-50%,-50%);filter:drop-shadow(0 3px 5px #0009)}
+[data-halloween-candy-game] .halloween-candy-burst.is-bat i{font-size:21px}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(1){--burst-dx:-54px;--burst-dy:-38px;--burst-turn:-32deg}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(2){--burst-dx:-17px;--burst-dy:-58px;--burst-turn:18deg}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(3){--burst-dx:34px;--burst-dy:-48px;--burst-turn:38deg}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(4){--burst-dx:52px;--burst-dy:1px;--burst-turn:65deg}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(5){--burst-dx:14px;--burst-dy:35px;--burst-turn:88deg}
+[data-halloween-candy-game] .halloween-candy-burst i:nth-child(6){--burst-dx:-40px;--burst-dy:22px;--burst-turn:-70deg}
+[data-halloween-candy-game] .halloween-candy-hit{position:absolute;z-index:3;left:0;right:0;bottom:25px;min-height:32px;margin:0;color:#ffe399;font-size:21px;font-weight:700;line-height:1.5;text-shadow:0 3px 8px #130719;pointer-events:none}
+[data-halloween-candy-game][data-still=false][data-shaking=true] .halloween-candy-field{animation:candy-field-shake .32s linear}
+[data-halloween-candy-game="finishing"] .halloween-candy-target{animation-play-state:paused}
+[data-halloween-candy-game] .halloween-candy-finale{position:absolute;z-index:8;inset:0;display:grid;place-items:center;pointer-events:none}
+[data-halloween-candy-game] .halloween-candy-finale img{display:block;width:min(275px,72%);max-height:94%;aspect-ratio:9/14;object-fit:cover;object-position:center 52%;border:2px solid #dfaa6a;border-radius:20px;opacity:1;box-shadow:0 18px 48px #06030bcc,0 0 40px #f3b86c55}
+[data-halloween-candy-game] .halloween-candy-result{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);align-items:center;gap:30px;max-width:850px;margin:22px auto 0;text-align:left}
+[data-halloween-candy-game] .halloween-candy-result-art{overflow:hidden;aspect-ratio:9/14;border:2px solid #dfaa6a;border-radius:20px;box-shadow:0 15px 42px #06030b99,0 0 35px #e89d4d22}
+[data-halloween-candy-game] .halloween-candy-result-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:center 52%}
+[data-halloween-candy-game] .halloween-candy-result-share{min-width:0}
+[data-halloween-candy-game] .halloween-candy-result-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid #dcaa7a33}
+[data-halloween-candy-game] .halloween-candy-result-actions button{width:100%;min-width:0}
+@keyframes candy-target-fall{to{transform:translate(-50%,540px) rotate(var(--candy-turn))}}
+@keyframes candy-target-wait{0%,99%{opacity:1}100%{opacity:.98}}
+@keyframes candy-field-shake{0%,100%{transform:none}20%{transform:translate(-7px,2px)}40%{transform:translate(6px,-2px)}60%{transform:translate(-4px,1px)}80%{transform:translate(3px,-1px)}}
+@keyframes candy-burst-life{0%,68%{opacity:1}100%{opacity:0}}
+@keyframes candy-burst-piece{from{transform:translate(-50%,-50%) scale(.45)}to{transform:translate(calc(var(--burst-dx) - 50%),calc(var(--burst-dy) - 50%)) rotate(var(--burst-turn)) scale(1)}}
+@media(prefers-reduced-motion:no-preference){
+  [data-halloween-candy-game] .halloween-candy-ready-art i{animation:candy-ready-float 2.6s ease-in-out infinite alternate}
+  [data-halloween-candy-game] .halloween-candy-ready-art i:nth-of-type(2){animation-delay:-.8s}
+  [data-halloween-candy-game] .halloween-candy-ready-art i:nth-of-type(3){animation-delay:-1.5s}
+  [data-halloween-candy-game] .halloween-candy-countdown strong{animation:candy-count-pop .65s ease-out both}
+  [data-halloween-candy-game][data-still=false] .halloween-candy-burst i{animation:candy-burst-piece .68s cubic-bezier(.18,.75,.2,1) both}
+  [data-halloween-candy-game][data-still=false][data-halloween-candy-game="finishing"] .halloween-candy-scorebar{animation:candy-finale-score 1.45s ease-in-out both}
+  [data-halloween-candy-game][data-still=false][data-halloween-candy-game="finishing"] .halloween-candy-field{animation:candy-finale-field 1.45s cubic-bezier(.22,.75,.2,1) both}
+  [data-halloween-candy-game][data-still=false][data-halloween-candy-game="finishing"] .halloween-candy-finale img{animation:candy-finale-card 1.45s cubic-bezier(.22,.75,.2,1) both}
+}
+@keyframes candy-ready-float{to{translate:0 -9px;rotate:7deg}}
+@keyframes candy-count-pop{from{opacity:.2;scale:.65}to{opacity:1;scale:1}}
+@keyframes candy-finale-score{0%,24%{opacity:1}58%,100%{opacity:0}}
+@keyframes candy-finale-field{0%,22%{opacity:1;transform:scale(1)}57%{opacity:1;transform:scale(1.14)}72%,100%{opacity:0;transform:scale(1.2)}}
+@keyframes candy-finale-card{0%,54%{opacity:0;transform:scale(1.24)}72%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){
+  [data-halloween-candy-game] .halloween-candy-target{top:var(--candy-y);animation:candy-target-wait var(--candy-duration) linear forwards}
+}
+[data-halloween-candy-game][data-still=true] .halloween-candy-target{top:var(--candy-y);animation:candy-target-wait var(--candy-duration) linear forwards}
+@media(min-width:640px){[data-halloween-candy-game] .mangmee-btn{height:40px;min-height:40px}}
+@media(max-width:700px){
+  [data-halloween-candy-game]{min-height:500px;padding:25px 14px 20px;border-radius:20px}
+  [data-halloween-candy-game] .halloween-candy-heading h2{font-size:27px}
+  [data-halloween-candy-game] .halloween-candy-heading>span{font-size:14px}
+  [data-halloween-candy-game] .halloween-candy-ready-art{height:205px}
+  [data-halloween-candy-game] .halloween-candy-rules{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+  [data-halloween-candy-game] .halloween-candy-rules li{padding-inline:3px}
+  [data-halloween-candy-game] .halloween-candy-rules b{font-size:14px}
+  [data-halloween-candy-game] .halloween-candy-rules span{font-size:12px}
+  [data-halloween-candy-game] .halloween-candy-scorebar{gap:5px;margin-bottom:8px}
+  [data-halloween-candy-game] .halloween-candy-scorebar>span{min-height:57px;flex-direction:column;gap:0;padding:6px 2px}
+  [data-halloween-candy-game] .halloween-candy-scorebar b{font-size:22px}
+  [data-halloween-candy-game] .halloween-candy-stage{height:420px}
+  [data-halloween-candy-game] .halloween-candy-field{border-radius:19px}
+  [data-halloween-candy-game] .halloween-candy-target{width:56px;height:56px}
+  [data-halloween-candy-game] .halloween-candy-target span{font-size:36px}
+  [data-halloween-candy-game] .halloween-candy-result{grid-template-columns:1fr;gap:22px;margin-top:17px}
+  [data-halloween-candy-game] .halloween-candy-result-art{width:min(255px,78vw);margin:auto}
+  [data-halloween-candy-game] .halloween-candy-result-actions{display:flex;flex-direction:column-reverse}
+  @keyframes candy-target-fall{to{transform:translate(-50%,510px) rotate(var(--candy-turn))}}
+}

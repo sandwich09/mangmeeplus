@@ -1,5 +1,18 @@
 # Halloween activity entrance plan
 
+## Game 2: คืนล่าลูกอมต้องสาป — 2026-10-28
+
+- [x] Keep the existing orange-door cutoff as the single unlock source; replace the expired placeholder with the real game while preserving the locked grey state before the cutoff.
+- [x] Implement the 30-second ready/countdown/play/result/replay state machine with ordinary, golden, cursed and thief targets, combo acceleration, final-five-second storm, cleanup and optional native Web Audio effects.
+- [x] Map the four exact score tiers to the approved clean Nong Mangmee artwork and create a deterministic 1080×1920 share JPEG with real Thai text and `mangmeeplus.com` branding.
+- [x] Add the mobile share/fallback actions without storage, server state, dependency, package manifest or unrelated screen changes.
+- [x] Sol implements the scoped game and focused logic tests. Luna checks lifecycle, mobile interaction, deadline integration and share fallback. Parent reviews design, accessibility and bugs.
+- [x] Verify focused tests and TypeScript, then inspect actual 390/1280 ready/play/result/replay and 9:16 output. Do not deploy until the owner has reviewed the completed game.
+
+Memory and evidence: [game 2 memory](../agent-memory/halloween-candy-game.md).
+
+Verification: 64/64 public-home tests, full web 5,090/0, Next type generation/TypeScript and production build pass. Real Chromium at 390/1280, Android Chromium Pixel profile and WebKit iPhone profile pass the grey/disabled state at 28 October 2026 23:59:59 Asia/Bangkok, exact unlock at 29 October 2026 00:00:00, ready/storm/result/replay/close journey, and unchanged later green-door lock without browser errors or horizontal overflow. Every downloaded JPEG is 1080×1920 and contains the invisible Mangmee provenance marker; simulated native sharing carries one image, exact tier caption and campaign URL. Browser profiles do not prove posting into installed social apps on physical phones. Evidence: `docs/evidence/halloween-candy-game-2026-10-28/`.
+
 ## Locked upcoming doors hotfix — 2026-10-28
 
 - [x] Disable the complete candy/escape door cards before their existing Bangkok deadlines; render them grey and replace the action copy with “เปิดได้เมื่อครบเวลา”. Keep ghost reveal enabled.

@@ -6,7 +6,7 @@ import { Button } from '@/common/components/button/Button';
 import { HalloweenCardShare } from './HalloweenCardShare';
 import { getGhostCard, SECRET_CARD_BACK, STANDARD_CARD_BACK, type GhostCard, type GhostRegion } from './home-halloween-cards';
 import { prepareHalloweenRevealAudio } from './home-halloween-reveal-audio';
-import { requestHalloweenDraw } from './home-halloween-draw';
+import { readHalloweenSeenCards, rememberHalloweenDraw, requestHalloweenDraw } from './home-halloween-draw';
 
 const worlds: Record<GhostRegion, { name: string; whisper: string; marks: string[] }> = {
   thai: { name: 'โลกวิญญาณ', whisper: 'ม่านหมอกสีทองกำลังเปิดทาง', marks: ['❧', '✧', '❧', '✧', '❧', '✧', '❧', '✧'] },
@@ -116,11 +116,14 @@ export function HalloweenGhostGame({ initialCardId, onBack }: { initialCardId?: 
     request.current = controller;
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const result = await requestHalloweenDraw(controller.signal, window.location.search);
+      let storage: Storage | undefined;
+      try { storage = window.sessionStorage; } catch {}
+      const result = await requestHalloweenDraw(controller.signal, window.location.search, readHalloweenSeenCards(storage));
       if (request.current !== controller) return;
       if (controller.signal.aborted) throw new Error('Draw aborted');
       request.current = undefined;
       const selected = getGhostCard(result.cardId)!;
+      rememberHalloweenDraw(storage, selected.id);
       const preload = new Image();
       preload.src = selected.image;
       activeCard.current = selected.id;

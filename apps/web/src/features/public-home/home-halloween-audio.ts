@@ -1,11 +1,12 @@
 // Original ambience: one quiet buffer loop, with no timers or external audio.
-export function startHalloweenAudio(): () => void {
+export function startHalloweenAudio(): (() => void) & { pause: () => void; resume: () => void } {
   let context: AudioContext | undefined;
   let source: AudioBufferSourceNode | undefined;
   let stopped = false;
+  let paused = false;
   const syncVisibility = () => {
     if (!context || stopped || context.state === 'closed') return;
-    void (document.hidden ? context.suspend() : context.resume()).catch(() => {});
+    void (document.hidden || paused ? context.suspend() : context.resume()).catch(() => {});
   };
   const stop = () => {
     if (stopped) return;
@@ -14,10 +15,13 @@ export function startHalloweenAudio(): () => void {
     source?.disconnect();
     if (context && context.state !== 'closed') void context.close().catch(() => {});
   };
+  const pause = () => { paused = true; syncVisibility(); };
+  const resume = () => { paused = false; syncVisibility(); };
+  const controller = Object.assign(stop, { pause, resume });
 
   try {
     const Audio = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Audio) return stop;
+    if (!Audio) return controller;
     context = new Audio();
     document.addEventListener('visibilitychange', syncVisibility);
     const resumed = document.hidden ? context.suspend() : context.resume();
@@ -54,5 +58,5 @@ export function startHalloweenAudio(): () => void {
   } catch {
     stop();
   }
-  return stop;
+  return controller;
 }

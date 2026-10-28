@@ -4,6 +4,7 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HalloweenGhostGame } from './HalloweenGhostGame';
 import { getGhostCard, SECRET_CARD_BACK, STANDARD_CARD_BACK } from './home-halloween-cards';
+import { HALLOWEEN_SEEN_STORAGE_KEY } from './home-halloween-draw';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 const runtime = require('react') as typeof React;
@@ -14,6 +15,7 @@ const words = (value: any): string => Array.isArray(value) ? value.map(words).jo
 type GameUi = {
   render: () => string; button: (name: string) => any; unmount: () => void;
   readonly calls: number; readonly signal: AbortSignal | undefined; readonly images: string[];
+  readonly stored: string | null;
   reducedMotion: () => void; respond: (cardId: string) => void; fail: () => void;
   fire: (delay: number) => void; readonly timerCount: number;
 };
@@ -30,9 +32,11 @@ async function withGame(run: (ui: GameUi) => Promise<void>) {
   const timers = new Map<number, { work: () => void; delay: number }>();
   let timerId = 0;
   let motionListener: (() => void) | undefined;
+  const stored = new Map<string, string>();
+  const sessionStorage = { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } };
   const motion = { matches: false, addEventListener: (_name: string, work: () => void) => { motionListener = work; }, removeEventListener: () => { motionListener = undefined; } };
   const setGlobal = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
-  setGlobal('window', { location: { search: '' } });
+  setGlobal('window', { location: { search: '' }, sessionStorage });
   setGlobal('document', { hidden: false, addEventListener() {}, removeEventListener() {} });
   setGlobal('Image', class { src = ''; });
   setGlobal('matchMedia', () => motion);
@@ -66,6 +70,7 @@ async function withGame(run: (ui: GameUi) => Promise<void>) {
       render, button, unmount,
       get calls() { return calls; }, get signal() { return signal; },
       get images() { return elements.filter(element => element.type === 'img').map(element => element.props.src as string); },
+      get stored() { return stored.get(HALLOWEEN_SEEN_STORAGE_KEY) ?? null; },
       reducedMotion() { motion.matches = true; motionListener?.(); },
       respond(cardId: string) {
         resolve(Response.json({ cardId }));
@@ -105,6 +110,7 @@ test('loading is immediate, duplicate clicks request once, and ordinary/SECRET s
       assert.equal(busy.disabled, true);
       assert.equal(busy['aria-busy'], true);
       ui.respond(cardId); await first;
+      assert.equal(ui.stored, cardId === '23-mangmee-secret' ? null : JSON.stringify([cardId]));
       assert.match(ui.render(), /data-halloween-game="drawing"/);
       assert.deepEqual(ui.images, [back, back]);
       ui.fire(duration);

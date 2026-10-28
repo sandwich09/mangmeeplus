@@ -14,7 +14,7 @@ test('automatic chooser is silent, stays dismissed across renders, and gestures 
   let stateCursor = 0, refCursor = 0, effectCursor = 0;
   let elements: { type: unknown; props: any }[] = [];
   let pending: (() => void)[] = [];
-  let starts = 0, stops = 0, shows = 0, focused = 0;
+  let starts = 0, stops = 0, suspends = 0, resumes = 0, shows = 0, focused = 0;
   const nativeDialog = { open: false, scrollTop: 0, showModal() { this.open = true; shows++; }, close() { this.open = false; control('dialog').onClose({ currentTarget: this }); } };
   function control(type: string, key?: string, value?: string) {
     const element = elements.find(element => element.type === type && (!key || element.props[key] === value));
@@ -30,7 +30,8 @@ test('automatic chooser is silent, stays dismissed across renders, and gestures 
     state = 'running';
     destination = {};
     constructor() { starts++; }
-    resume() { return Promise.resolve(); }
+    resume() { resumes++; this.state = 'running'; return Promise.resolve(); }
+    suspend() { suspends++; this.state = 'suspended'; return Promise.resolve(); }
     close() { this.state = 'closed'; stops++; return Promise.resolve(); }
     createBuffer(_channels: number, size: number) { return { getChannelData: () => new Float32Array(size) }; }
     createGain() { return { gain: { value: 0 }, connect() {} }; }
@@ -73,7 +74,19 @@ test('automatic chooser is silent, stays dismissed across renders, and gestures 
     control('button', 'data-halloween-door', 'candy').onClick();
     render(true);
     assert.equal(starts, 1, 'a door supplies the user gesture');
-    control('button', 'className', 'home-halloween-back').onClick();
+    const candyGame = elements.find(element => typeof element.type === 'function' && element.type.name === 'HalloweenCandyGame');
+    assert.ok(candyGame, 'the open candy door renders its game');
+    candyGame.props.onStart();
+    assert.equal(suspends, 1, 'starting a round pauses the quiet door ambience');
+    const beforeResult = resumes;
+    candyGame.props.onEnd();
+    assert.equal(resumes, beforeResult + 1, 'the result resumes the same quiet ambience');
+    candyGame.props.onStart();
+    assert.equal(suspends, 2, 'replay pauses the ambience again');
+    const beforeBack = resumes;
+    candyGame.props.onBack();
+    assert.equal(resumes, beforeBack + 1, 'returning to the doors resumes the ambience');
+    states[0] = null;
     states[2] = HALLOWEEN_GAME_DEADLINES.escape;
     render(true);
     control('button', 'data-halloween-door', 'escape').onClick();

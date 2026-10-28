@@ -1,0 +1,395 @@
+{
+  "status": "pass",
+  "base": "http://127.0.0.1:43841",
+  "results": [
+    {
+      "name": "chromium-390",
+      "version": "149.0.7827.55",
+      "reducedMotion": "no-preference",
+      "pacing": [
+        {
+          "seconds": 30,
+          "pace": "normal"
+        },
+        {
+          "seconds": 21,
+          "pace": "normal"
+        },
+        {
+          "seconds": 20,
+          "pace": "rush"
+        },
+        {
+          "seconds": 6,
+          "pace": "rush"
+        },
+        {
+          "seconds": 5,
+          "pace": "storm"
+        }
+      ],
+      "score": 50,
+      "playLayout": {
+        "viewport": 390,
+        "pageWidth": 390,
+        "root": {
+          "left": 11,
+          "right": 379
+        },
+        "targets": [
+          {
+            "width": 67.823974609375,
+            "height": 67.823974609375
+          },
+          {
+            "width": 67.34690856933594,
+            "height": 67.34689331054688
+          },
+          {
+            "width": 66.867919921875,
+            "height": 66.86795043945312
+          },
+          {
+            "width": 66.38165283203125,
+            "height": 66.38166809082031
+          }
+        ],
+        "social": []
+      },
+      "resultLayout": {
+        "viewport": 390,
+        "pageWidth": 390,
+        "root": {
+          "left": 11,
+          "right": 379
+        },
+        "targets": [],
+        "social": [
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Facebook"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Instagram"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย TikTok"
+          }
+        ]
+      },
+      "share": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-candy-game-2026-10-28/chromium-390-mangmee-candy-50-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 612103,
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "candy-royal-50",
+          "variant": "story"
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "chromium-1280",
+      "version": "149.0.7827.55",
+      "reducedMotion": "no-preference",
+      "pacing": [
+        {
+          "seconds": 30,
+          "pace": "normal"
+        },
+        {
+          "seconds": 21,
+          "pace": "normal"
+        },
+        {
+          "seconds": 20,
+          "pace": "rush"
+        },
+        {
+          "seconds": 6,
+          "pace": "rush"
+        },
+        {
+          "seconds": 5,
+          "pace": "storm"
+        }
+      ],
+      "score": 50,
+      "playLayout": {
+        "viewport": 1280,
+        "pageWidth": 1280,
+        "root": {
+          "left": 139,
+          "right": 1141
+        },
+        "targets": [
+          {
+            "width": 67.80328369140625,
+            "height": 67.80331420898438
+          },
+          {
+            "width": 67.3260498046875,
+            "height": 67.32608032226562
+          },
+          {
+            "width": 66.84515380859375,
+            "height": 66.84515380859375
+          },
+          {
+            "width": 66.38165283203125,
+            "height": 66.38166809082031
+          }
+        ],
+        "social": []
+      },
+      "resultLayout": {
+        "viewport": 1280,
+        "pageWidth": 1280,
+        "root": {
+          "left": 139,
+          "right": 1141
+        },
+        "targets": [],
+        "social": [
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Facebook"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Instagram"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย TikTok"
+          }
+        ]
+      },
+      "share": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-candy-game-2026-10-28/chromium-1280-mangmee-candy-50-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 612103,
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "candy-royal-50",
+          "variant": "story"
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "android-chromium",
+      "version": "149.0.7827.55",
+      "reducedMotion": "no-preference",
+      "pacing": [
+        {
+          "seconds": 30,
+          "pace": "normal"
+        },
+        {
+          "seconds": 21,
+          "pace": "normal"
+        },
+        {
+          "seconds": 20,
+          "pace": "rush"
+        },
+        {
+          "seconds": 6,
+          "pace": "rush"
+        },
+        {
+          "seconds": 5,
+          "pace": "storm"
+        }
+      ],
+      "score": 55,
+      "playLayout": {
+        "viewport": 412,
+        "pageWidth": 412,
+        "root": {
+          "left": 11,
+          "right": 401
+        },
+        "targets": [
+          {
+            "width": 67.8218994140625,
+            "height": 67.8218994140625
+          },
+          {
+            "width": 67.34478759765625,
+            "height": 67.34478759765625
+          },
+          {
+            "width": 66.86396789550781,
+            "height": 66.86396789550781
+          },
+          {
+            "width": 66.37953186035156,
+            "height": 66.37954711914062
+          }
+        ],
+        "social": []
+      },
+      "resultLayout": {
+        "viewport": 412,
+        "pageWidth": 412,
+        "root": {
+          "left": 11,
+          "right": 401
+        },
+        "targets": [],
+        "social": [
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Facebook"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Instagram"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย TikTok"
+          }
+        ]
+      },
+      "share": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-candy-game-2026-10-28/android-chromium-mangmee-candy-55-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 612020,
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "candy-royal-55",
+          "variant": "story"
+        }
+      },
+      "errors": []
+    },
+    {
+      "name": "webkit-iphone",
+      "version": "26.5",
+      "reducedMotion": "reduce",
+      "pacing": [
+        {
+          "seconds": 30,
+          "pace": "normal"
+        },
+        {
+          "seconds": 21,
+          "pace": "normal"
+        },
+        {
+          "seconds": 20,
+          "pace": "rush"
+        },
+        {
+          "seconds": 6,
+          "pace": "rush"
+        },
+        {
+          "seconds": 5,
+          "pace": "storm"
+        }
+      ],
+      "score": 60,
+      "playLayout": {
+        "viewport": 393,
+        "pageWidth": 393,
+        "root": {
+          "left": 11,
+          "right": 382
+        },
+        "targets": [
+          {
+            "width": 66,
+            "height": 66
+          },
+          {
+            "width": 66,
+            "height": 66
+          },
+          {
+            "width": 66,
+            "height": 66
+          },
+          {
+            "width": 66,
+            "height": 66
+          }
+        ],
+        "social": []
+      },
+      "resultLayout": {
+        "viewport": 393,
+        "pageWidth": 393,
+        "root": {
+          "left": 11,
+          "right": 382
+        },
+        "targets": [],
+        "social": [
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Facebook"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย Instagram"
+          },
+          {
+            "width": 48,
+            "height": 48,
+            "name": "แชร์ภาพด้วย TikTok"
+          }
+        ]
+      },
+      "share": {
+        "path": "/Users/thawatchai/.codex/worktrees/halloween-activity-entry/mangmeeplus/docs/evidence/halloween-candy-game-2026-10-28/webkit-iphone-mangmee-candy-60-story-9x16.jpg",
+        "dimensions": {
+          "width": 1080,
+          "height": 1920
+        },
+        "bytes": 844731,
+        "provenance": {
+          "version": 1,
+          "source": "https://mangmeeplus.com",
+          "event": "halloween",
+          "cardId": "candy-royal-60",
+          "variant": "story"
+        }
+      },
+      "errors": []
+    }
+  ],
+  "limitation": "Installed desktop WebKit with an iPhone profile and desktop Chromium with touch/mobile profiles; not physical phones or installed social apps."
+}
