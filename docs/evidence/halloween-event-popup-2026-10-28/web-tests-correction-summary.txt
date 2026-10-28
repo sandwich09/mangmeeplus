@@ -1,0 +1,10 @@
+  ...
+1..2781
+# tests 5084
+# suites 631
+# pass 5084
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 26123.372792

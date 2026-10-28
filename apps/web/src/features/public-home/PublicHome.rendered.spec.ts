@@ -26,6 +26,20 @@ test('HOME-PAGE server renders the owner H1, section outline, LINE handoffs and 
   assert.match(markup, /เปลี่ยนแพ็กเกจทีหลังได้ไหม/);
 });
 
+test('HOME-PAGE protects all three static contact links from edge rewriting without changing their text or destinations', () => {
+  const anchor = '<a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a>';
+  const protectedLink = `<span><!--email_off-->${anchor}<!--/email_off--></span>`;
+  const links = (markup: string) => [...markup.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1]);
+  for (const event of ['default', 'halloween'] as const) {
+    const markup = renderToStaticMarkup(React.createElement(PublicHome, { event }));
+    assert.equal(markup.split(protectedLink).length - 1, 3);
+    assert.equal(markup.split(anchor).length - 1, 3, 'no contact anchor is left outside the literal guards');
+    const withoutGuards = markup.replaceAll(protectedLink, anchor);
+    assert.equal(text(markup), text(withoutGuards));
+    assert.deepEqual(links(markup), links(withoutGuards));
+  }
+});
+
 test('HOME-PAGE JSON-LD parses, uses the request nonce, and FAQ answers equal the rendered FAQ exactly', () => {
   const script = renderToStaticMarkup(React.createElement(HomeStructuredData, { nonce: 'request-nonce' }));
   assert.match(script, /nonce="request-nonce"/);

@@ -9,6 +9,11 @@ import { HomeHalloweenActivities } from './HomeHalloweenActivities';
 
 function HomeFaq() { return <div className="faq">{HOME_FAQ.map(item => <details key={item.question}><summary>{item.question}</summary><p>{item.answer}</p></details>)}</div>; }
 
+function HomeContactEmail() {
+  // Cloudflare email rewriting changes the server HTML before React hydrates; keep this trusted static link intact.
+  return <span dangerouslySetInnerHTML={{ __html: '<!--email_off--><a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a><!--/email_off-->' }} />;
+}
+
 export function HomeStructuredData({ nonce }: { nonce?: string }) {
   return <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(HOME_JSON_LD).replace(/</g, '\\u003c') }} />;
 }
@@ -204,7 +209,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <div className="safe-i"><span className="ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 3l1.9 5 5 1.9-5 1.9L11 17l-1.9-5.2L4 9.9l5.1-1.9z"></path></svg></span><div><h4>คุณตรวจได้ก่อนบันทึกจริง</h4><p>น้องมั่งมีช่วยอ่านใบเสร็จด้วยบริการของ Amazon แล้วเตรียมรายการให้คุณตรวจ แก้ไข และกดยืนยัน ไม่กดยืนยันแทนคุณ</p></div></div>
 </div>
 </div>
-<p className="who-box"><span><b>ผู้ให้บริการ</b> บริษัท มั่งมียั่งยืน จำกัด</span><span><b>อีเมล</b> <a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a></span><span><b>โทร</b> <a className="mangmee-unit" href="tel:0982565628">098-256-5628</a></span><span><b>LINE</b> <a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">@mangmeeplus<span className="sr"> (เปิดแท็บใหม่)</span></a></span><span><a href="/privacy">นโยบายความเป็นส่วนตัว</a></span></p>
+<p className="who-box"><span><b>ผู้ให้บริการ</b> บริษัท มั่งมียั่งยืน จำกัด</span><span><b>อีเมล</b> <HomeContactEmail /></span><span><b>โทร</b> <a className="mangmee-unit" href="tel:0982565628">098-256-5628</a></span><span><b>LINE</b> <a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">@mangmeeplus<span className="sr"> (เปิดแท็บใหม่)</span></a></span><span><a href="/privacy">นโยบายความเป็นส่วนตัว</a></span></p>
 </div>
 </section>
 
@@ -226,7 +231,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <p className="ey">คำถามที่พบบ่อย</p>
 <h2>คำถามที่คนถามบ่อย</h2>
 <HomeFaq />
-<p className="ask">ไม่เจอคำตอบ <a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">ทักถามทีมงานใน LINE<span className="sr"> (เปิดแท็บใหม่)</span></a> หรือส่งอีเมล <a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a></p>
+<p className="ask">ไม่เจอคำตอบ <a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">ทักถามทีมงานใน LINE<span className="sr"> (เปิดแท็บใหม่)</span></a> หรือส่งอีเมล <HomeContactEmail /></p>
 </div>
 </div>
 </section>
@@ -260,7 +265,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 </div>
 <nav aria-label="รู้จักมั่งมีพลัส"><h3>รู้จักมั่งมีพลัส</h3><a href="#how">วิธีใช้</a><a href="#pricing">ราคา</a><a href="#use">ใช้ทำอะไรได้</a><a href="#line">น้องมั่งมี</a><a href="#faq">คำถามที่พบบ่อย</a></nav>
 <nav aria-label="สำหรับลูกค้า"><h3>สำหรับลูกค้า</h3><a href="/login">เข้าสู่ระบบ</a><a href="https://lin.ee/U5oRBx1" target="_blank" rel="noopener">เริ่มใช้งานผ่าน LINE<span className="sr"> (เปิดแท็บใหม่)</span></a></nav>
-<div><h3>ติดต่อทีมงานมั่งมี</h3><a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a><a className="mangmee-unit" href="tel:0982565628">098-256-5628</a><a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">LINE @mangmeeplus<span className="sr"> (เปิดแท็บใหม่)</span></a></div>
+<div><h3>ติดต่อทีมงานมั่งมี</h3><HomeContactEmail /><a className="mangmee-unit" href="tel:0982565628">098-256-5628</a><a href="https://line.me/R/ti/p/@695ultfm" target="_blank" rel="noopener">LINE @mangmeeplus<span className="sr"> (เปิดแท็บใหม่)</span></a></div>
 </div>
 <div className="foot-b">
 <span>© 2026 บริษัท มั่งมียั่งยืน จำกัด</span>

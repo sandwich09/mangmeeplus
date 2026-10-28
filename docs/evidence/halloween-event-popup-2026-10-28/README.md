@@ -10,3 +10,9 @@
 - `production-alarms-before.json`: current read-only Production alarm snapshot; owner permits root read only and accepts the unchanged October9 API security alarm for this release. Deployment remains scoped non-root.
 
 Release ledger and exact IDs: [task memory](../../agent-memory/halloween-event-popup.md).
+
+## UAT correction
+
+First UAT operation `20261028T062112Z-902951de` passed infrastructure signing/readiness but exposed React418 text hydration recovery on both `/` and `/halloween`. Browser initially saw three Cloudflare email-protection anchors, which React replaced on recovery. Retained actual error logs: `uat-hydration-before.json`. No Production promotion of this source.
+
+The [official per-email guard](https://developers.cloudflare.com/waf/tools/scrape-shield/email-address-obfuscation/#prevent-cloudflare-from-obfuscating-email) protects the entire static contact anchor from edge rewriting without changing Cloudflare configuration or weakening CSP. One trusted-literal helper is reused at all3sites; a rendered regression verifies exactly3guarded unchanged mailto links for both themes. Public-home58/58, fullweb5084/0 and TypeScript pass. Actual local DOM retains all guards. Full correction log `web-tests-correction.tap` remains local; compact summary committed. New UAT and live no-hydration-error proof still required before promotion.

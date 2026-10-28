@@ -1,0 +1,24 @@
+{
+  "campaign": [
+    {
+      "level": "error",
+      "message": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=text&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings.\n    at r4 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:37795)\n    at r6 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:38828)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:134629\n    at sC (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:139792)\n    at sE (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:131041)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125895\n    at sf (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125996)\n    at s1 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:152549)\n    at MessagePort.A (https://uat.mangmeeplus.com/_next/static/chunks/9322-d82d2081d968743b.js:31:11478)",
+      "timestamp": "2026-10-28T06:26:04.026Z",
+      "url": "https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js"
+    },
+    {
+      "level": "error",
+      "message": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=text&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings.\n    at r4 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:37795)\n    at r6 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:38828)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:134629\n    at sC (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:139792)\n    at sE (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:131041)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125895\n    at sf (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125996)\n    at s1 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:152549)\n    at MessagePort.A (https://uat.mangmeeplus.com/_next/static/chunks/9322-d82d2081d968743b.js:31:11478)",
+      "timestamp": "2026-10-28T06:26:42.015Z",
+      "url": "https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js"
+    }
+  ],
+  "homepage": [
+    {
+      "level": "error",
+      "message": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=text&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings.\n    at r4 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:37795)\n    at r6 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:38828)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:134629\n    at sC (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:139792)\n    at sE (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:131041)\n    at https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125895\n    at sf (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:125996)\n    at s1 (https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js:1:152549)\n    at MessagePort.A (https://uat.mangmeeplus.com/_next/static/chunks/9322-d82d2081d968743b.js:31:11478)",
+      "timestamp": "2026-10-28T06:27:52.227Z",
+      "url": "https://uat.mangmeeplus.com/_next/static/chunks/372b68b8-1aa04e0e1a1ca7be.js"
+    }
+  ]
+}
