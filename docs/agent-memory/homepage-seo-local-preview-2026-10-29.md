@@ -1,6 +1,6 @@
 # Agent Memory: homepage SEO local preview 2026-10-29
 
-Status: VERIFIED_FOR_DIRECT_INTEGRATION — owner approved direct integration into develop and main without a PR, with review red removed and Halloween included.
+Status: INTEGRATED — approved copy pushed directly to develop and main without a PR; review red removed and Halloween verified.
 Owner: Codex
 Scope: Help prospective shop owners connect MangmeePlus to บริษัท มั่งมียั่งยืน จำกัด and understand receipt AI, expense capture, accountant handoff and package-specific tax documents through visible homepage copy and matching metadata.
 
@@ -39,9 +39,10 @@ Verification:
 - One development hydration warning was caused by opening native details before initial React hydration finished. Reloaded, waited for network idle and repeated interaction; the warning did not recur on that fresh document. No business API, login submission, signup or payment tested; local API points to unused loopback ports and default theme uses the existing failure fallback.
 - No package.json/lockfile, backend, API contract, permission, schema or business-flow changes. Full production build and authenticated/payment flows were not run for this copy-only change. UAT/READY/Production NOT_DISPATCHED.
 - After the expense-workflow positioning refinement: focused suite still 23/23 passes; real browser 390/1280 screenshots inspected, no horizontal overflow, title updated and description still matches the visible introduction. Hero buttons match at 358×52 (mobile) and 220×52 (desktop). Current title: “มั่งมีพลัส (MangmeePlus) | จัดการรายจ่ายและเบิกจ่ายอย่างเป็นระบบ”. No new logic or capability added; reviewed wording against expense/claim/permission/export help contracts.
+- Integration: implementation commit `8157256e3ba92b76ce1ec80836200edf9fb389ee` was pushed atomically with normal fast-forward updates to origin/develop and origin/main. `git ls-remote --heads origin develop main` confirmed both remote branches at that exact commit. No force push, PR, CI dispatch or deployment. This follow-up only records the completed integration.
 
 Next:
-- Commit and push the verified scope to both approved branches; record remote verification. Keep the local preview available. No Google indexing/ranking outcome is implied by local checks.
+- No implementation or integration work remains. Keep the local preview available. Deployment is outside this request; UAT/READY/Production remain NOT_DISPATCHED. No Google indexing/ranking outcome is implied by local checks.
 
 Restart from this worktree root:
 
