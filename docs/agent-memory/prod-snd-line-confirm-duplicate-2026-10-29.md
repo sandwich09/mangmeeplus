@@ -1,6 +1,6 @@
 # Agent Memory: Production snd LINE confirmation duplication
 
-Status: Production cause verified; bounded delivery deduplication implemented, 944 regression tests and API typecheck passed locally. Owner requested merging into main and develop; integration in progress. Not deployed.
+Status: Production cause verified; bounded delivery deduplication implemented, 944 regression tests and API typecheck passed locally. Main/develop integration candidate and validation artifacts verified; atomic push and remote readback pending. Not deployed.
 Owner: Codex
 Scope: Stop duplicate “ค่าใช้จ่าย ยืนยัน” cards after a repeated confirmation event for the same action. The owner supplied two cards for one 2,508.00 THB tax invoice dated 29 October 2026. Preserve business idempotency, delivery recovery and the next payment step.
 
@@ -55,3 +55,12 @@ Next:
 - `pnpm --filter @watchdog-bms/api typecheck` passed (exit 0). Reviewed the final diff; only action delivery, no-answer fallback classification, focused tests and incident docs changed.
 - Read the Thai UX standard. No screen layout, button, Thai copy or rendered card changes; the fix is a server delivery decision, so 390/1280 browser screenshots would not exercise it. Native LINE acceptance of the patched code awaits a future authorized release.
 - Limit: this deliberately does not suppress results whose original delivery is still unknown/in-flight. Confirmed delivery is required to avoid silently losing a financial result. It fixes the observed sequence where the original acceptance already exists.
+
+## Main/develop integration — 2026-10-29
+
+- Owner explicitly requested merging into both branches. Fetched `origin/main` and `origin/develop`, both `6160fabe01adac120e74d7591925b6601cb22b90`, with zero divergence. Rebased the fix as `3f6db17298447c7186632ebae01c22a665b80de0`; resolved only the cloud runbook insertion, preserving the newer release and UAT pause entries. Application source was unchanged by the rebase.
+- Refreshed the W00 capability manifest. Reviewed changes are source hashes/provenance only: this webhook fix and the existing public-policy change from `049aa51de`. Registry, operations and capability shapes did not change.
+- CI's maintenance pin check exposed five stale hashes already present on main from `049aa51de` (password login, auth guard, session landing, upload and download). Reviewed those existing source diffs and regenerated their hashes plus the validator digest in the release workflow. No enforcement logic or workflow behavior changed.
+- Additional checks passed: capability manifest plus staff-menu/business-card suites **185 tests / 27 suites**; `node infra/security/sync-production-maintenance-release-pins.mjs --check`; maintenance validator and pin-sync shell specs; `bash infra/docker/production-image-security.spec.sh`; `git diff --check`. Logs retained under `/tmp/snd-line-confirm-20261029/`.
+- GitHub reports both branches unprotected. No protection or required check was removed or bypassed. There is no in-progress Actions run; the sole queued row is the documented stale READY `31611733340`, unchanged since 2026-08-12, freshly checked with zero jobs, check runs and pending deployments. It was not cancelled or retried.
+- Integration uses a fast-forward atomic push to both remote branches. Current CI has no push trigger; these are local verification results, not a claim of a successful new Actions run. UAT/READY/Production run IDs remain `NOT_DISPATCHED` for this task.

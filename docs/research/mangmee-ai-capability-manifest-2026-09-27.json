@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "a07c50fd07e961f471d548fec4e76cdd09415836",
-  "checkoutBranch": "codex/sec-int-20261021",
+  "baseRevision": "6160fabe01adac120e74d7591925b6601cb22b90",
+  "sourceRevision": "3f6db17298447c7186632ebae01c22a665b80de0",
+  "checkoutBranch": "codex/line-expense-duplicate-confirm-20261029",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -149,7 +149,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "38c721e9e370694f8965d38e6892d7349fe2d9119d6b65ec1c6dab1d12e04a3b"
+      "sha256": "24b614afdbb46adec88009fbddb980763d465660db2865c9dde25e5a710ee5b6"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -157,7 +157,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-public-policy.logic.ts",
-      "sha256": "90160fb150017e597111412672cef3f5cd656c615c8a9f8f4223f1f5553ebdf8"
+      "sha256": "febaa5c2c3d8f61a424f8f0c49dde7864cd7f6dc7b7a311b14f9835ead00da21"
     },
     {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
@@ -10171,6 +10171,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-21T16:06:52.680Z",
-  "manifestDigest": "f8bd8b7f46e2ed4d7c107649e76c7bdcf01d35fc15eeb6c39326a72e91d6f034"
+  "generatedAt": "2026-10-29T07:00:29.062Z",
+  "manifestDigest": "0a1f45c4da118e9d49bf5c8cf2a18fc2a816d841811cea7875f317c7fc1bdd4c"
 }
