@@ -46,6 +46,20 @@ accepted only that unchanged Alarm for this release; no Alarm or gate was change
 native LINE/LIFF and external providers were not exercised.
 [Exact operations, hashes, browser proof and limits](../agent-memory/latest-main-uat-production-2026-10-29.md).
 
+## Production LINE expense duplicate confirmation — 2026-10-29 (read-only)
+
+Owner reported one press producing two confirmation cards for snd. Scoped MFA + enrolled SSM/SSH
+readback verifies both API hosts on `8c112ea70003057fa3063938e859de1b945747d1`. The 13:13 Bangkok
+incident has two distinct inbound webhook events, 2.012 seconds apart, on different API hosts.
+The first applied the action; the second replayed its existing result. Both separate result plans
+were accepted via LINE REPLY, with zero push attempts/errors. One matching expense and one
+`expense.confirm` audit exist: duplicate presentation, not a second expense confirmation.
+The retained data does not establish why LINE emitted the second event from the reported one tap.
+The local fix suppresses an action replay only with prior accepted delivery for the exact
+actor/chat/channel/recipient/token/result. It is **not deployed**. No data/service/gate change;
+2/2 owned SSM sessions terminated. UAT/READY/Production run IDs: `NOT_DISPATCHED`.
+[Evidence and regression checks](../agent-memory/prod-snd-line-confirm-duplicate-2026-10-29.md).
+
 ## Previous UAT latest-main release — 2026-10-29 00:05 Bangkok
 
 UAT now serves application source `56cdb4ee50bedf3f0c22451faf1583ffb6ec252c`, which was exact

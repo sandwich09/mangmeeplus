@@ -112,6 +112,7 @@ export function classifyLineAiTerminalOutcome(
     status === 'rate_limited'
     || status === 'batched'
     || status === 'duplicate_media_pending'
+    || status === 'expense_action_duplicate'
     || status === 'safety_crisis'
     || status === 'privacy_rumor'
     // An intentional 24h AI pause the customer asked for by tapping "ติดต่อเจ้าหน้าที่". Nothing

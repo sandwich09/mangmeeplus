@@ -2187,6 +2187,7 @@ export class ProcessLineWebhookUseCase {
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
   private readonly deliveredTextTurns = new WeakSet<object>();
+  private readonly intentionalNoReplyTurns = new WeakSet<object>();
   private readonly boundConversations = new WeakMap<object, { owner: LineConversationOwner; id: string; epoch: number }>();
   @Inject(forwardRef(() => DrainLineLedgerUseCase)) private readonly ledgerDrain!: Pick<DrainLineLedgerUseCase, 'verifyLedgerDeliveryPlan'>;
   @Inject(LineCaptureResultNotifierUseCase) private readonly captureNotifier!: LineCaptureResultNotifierUseCase;
@@ -3711,6 +3712,25 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const result = await this.expenseActions.apply(ctx, chatKeyHashOf(event), control, replyLanguage(event));
+    // LINE can issue distinct events for the same action. Business idempotency already rechecked
+    // permission/revision; skip its second card only when LINE accepted this recipient's exact result.
+    if (control.action === 'expense_action_confirm' && result.status === 'replayed') {
+      const accepted = await this.prisma.client.lineDeliveryPlan.findFirst({ where: {
+        companyId: ctx.companyId, userId: ctx.userId, status: 'ACCEPTED', acceptedAt: { not: null },
+        AND: [
+          { planJson: { path: ['authorization', 'actor', 'chatKeyHash'], equals: chatKeyHashOf(event) } },
+          { planJson: { path: ['authorization', 'actor', 'channelId'], equals: event.messagingChannelId ?? '' } },
+          { planJson: { path: ['authorization', 'actor', 'recipientHash'], equals: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '') } },
+          { planJson: { path: ['authorization', 'proofs'], array_contains: [{ kind: 'EXPENSE_ACTION_PREVIEW', applied: true,
+            token: result.preview.token, previewHash: deliveryHash(result.preview) }] } },
+        ],
+      }, select: { id: true } });
+      if (accepted) {
+        await this.updateEventLog(event.webhookEventId, 'expense_action_duplicate', undefined, ctx.companyId);
+        this.intentionalNoReplyTurns.add(event);
+        return;
+      }
+    }
     if ('preview' in result) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview, applied: result.status !== 'prepared' });
     if ((result.status === 'applied' || result.status === 'replayed') && result.expenseIds?.length)
       await this.expenseSequenceTask(event, result.expenseIds, result.preview.action);
@@ -6406,7 +6426,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     finally {
       // A failed plan build used to leave delivery_pending with neither a reply nor recoverable bytes.
       // This plain failure contains no business facts; never replace an existing durable answer.
-      if (this.deliveryAccess.has(event) && !this.deliveredTextTurns.has(event) && !this.deliveryDenialNotified.has(event)) {
+      if (this.deliveryAccess.has(event) && !this.deliveredTextTurns.has(event) && !this.deliveryDenialNotified.has(event) && !this.intentionalNoReplyTurns.has(event)) {
         try {
           const saved = await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId } });
           if (!saved) {

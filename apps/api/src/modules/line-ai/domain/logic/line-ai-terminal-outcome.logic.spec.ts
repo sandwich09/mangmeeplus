@@ -25,6 +25,7 @@ describe('LINE AI terminal outcome logic', () => {
     assert.equal(classifyLineAiTerminalOutcome('rate_limited'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('batched'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('duplicate_media_pending'), 'intentional_noop');
+    assert.equal(classifyLineAiTerminalOutcome('expense_action_duplicate'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('safety_crisis'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('forbidden'), 'permission_refusal');
     // P29: an expired plan answered with the renewal invitation is a refusal, not an outage.

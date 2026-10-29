@@ -9340,15 +9340,22 @@ describe('Round 2 A expense action postback', () => {
   function actionPostbackHarness() {
     const flow: any = Object.create(ProcessLineWebhookUseCase.prototype), calls: any[] = [], replies: any[] = [];
     let plan: any = null;
-    flow.prisma = { client: { lineDeliveryPlan: { findFirst: async () => plan } } };
+    let acceptedResult = false;
+    const deliveryQueries: any[] = [], terminal: any[] = [];
+    flow.prisma = { client: { lineDeliveryPlan: { findFirst: async (query: any) => {
+      if (query.where.status === 'ACCEPTED') { deliveryQueries.push(query); return acceptedResult ? { id: 'accepted-result' } : null; }
+      return plan;
+    } } } };
     flow.deliveryExpenseActions = new WeakMap();
+    flow.intentionalNoReplyTurns = new WeakSet();
     flow.expenseActions = { apply: async (...args: any[]) => { calls.push(args); return { status: 'applied', reply: 'ยืนยันแล้วค่ะ',
       preview: { previewId: token.split('.')[0], token, action: 'CONFIRM', record: { vendorName: 'ร้านทดสอบ', amount: '100.00', currency: 'THB', date: '2026-10-14', status: 'ยืนยันแล้ว', nextStatus: 'ยืนยันแล้ว' } } }; } };
-    flow.deliverRequiredMessages = async (_e: any, messages: any) => { replies.push(...messages); };
+    flow.deliverRequiredMessages = async (event: any, messages: any) => { replies.push(...messages); flow.deliveredTextTurns?.add(event); };
     flow.deliverReply = async (_e: any, text: string) => { replies.push({ type: 'text', text }); };
-    flow.updateEventLog = async () => {};
+    flow.updateEventLog = async (...args: any[]) => { terminal.push(args); };
     const event: any = { ...BASE_EVENT, channelKind: 'USER', expenseActionControl: { action: 'expense_action_confirm', token } };
-    return { flow, calls, replies, event, setPlan: (value: any) => { plan = value; } };
+    return { flow, calls, replies, event, deliveryQueries, terminal, setPlan: (value: any) => { plan = value; },
+      setAcceptedResult: (value: boolean) => { acceptedResult = value; } };
   }
   it('applies with the exact resolved LINE RequestContext and returns the updated status card', async () => {
     const h = actionPostbackHarness();
@@ -9357,6 +9364,55 @@ describe('Round 2 A expense action postback', () => {
     assert.equal(h.calls[0][1], chatKeyHashOf(h.event)); assert.deepEqual(h.calls[0][2], h.event.expenseActionControl);
     assert.match(h.replies[0].canonicalText, /ยืนยันแล้วค่ะ/u);
     assert.equal(h.replies[0].contents.footer, undefined, 'completed cards offer no second mutation button');
+    assert.equal(h.deliveryQueries.length, 0, 'a new action must send its result');
+  });
+  it('snd: two confirmation events for one accepted action produce one card and no generic fallback', async () => {
+    const h = actionPostbackHarness();
+    const apply = h.flow.expenseActions.apply;
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    const firstResult = h.flow.deliveryExpenseActions.get(h.event).preview;
+    h.setAcceptedResult(true);
+    h.flow.expenseActions.apply = async (...args: any[]) => ({ ...await apply(...args), status: 'replayed', reply: 'รายการนี้ดำเนินการแล้วค่ะ' });
+    const repeated = { ...h.event, webhookEventId: 'second-line-event' };
+    h.flow.deliveryAccess = new WeakMap([[repeated, { companyId: actor.companyId }]]);
+    h.flow.deliveredTextTurns = new WeakSet(); h.flow.deliveryDenialNotified = new WeakSet();
+    let fallbackLookups = 0;
+    h.flow.prisma.client.lineTurnOutcome = { findUnique: async () => { fallbackLookups++; return null; } };
+    h.flow.executeText = (event: any) => h.flow.handleExpenseActionPostback(event, actor, new Set(['expenses']));
+    await h.flow.execute(repeated);
+    assert.equal(h.calls.length, 2, 'every event still rechecks the bound action and current permission');
+    assert.equal(h.replies.length, 1, 'an accepted confirmation must not produce a second success card');
+    assert.equal(fallbackLookups, 0, 'intentional silence must not trigger the generic error reply');
+    assert.equal(h.flow.deliveredTextTurns.has(repeated), false, 'do not claim a new message was delivered');
+    assert.deepEqual(h.terminal.at(-1), ['second-line-event', 'expense_action_duplicate', undefined, actor.companyId]);
+    const where = h.deliveryQueries[0].where;
+    assert.equal(where.companyId, actor.companyId); assert.equal(where.userId, actor.userId);
+    assert.equal(where.status, 'ACCEPTED'); assert.deepEqual(where.acceptedAt, { not: null });
+    const filters = new Map(where.AND.map((entry: any) => [entry.planJson.path.join('.'), entry.planJson]));
+    assert.equal((filters.get('authorization.actor.chatKeyHash') as any).equals, chatKeyHashOf(repeated));
+    assert.equal((filters.get('authorization.actor.channelId') as any).equals, repeated.messagingChannelId ?? '');
+    assert.equal((filters.get('authorization.actor.recipientHash') as any).equals,
+      lineDeliveryRecipientHash(repeated.lineUserId, repeated.pushTargetId ?? repeated.lineUserId, repeated.messagingChannelId ?? ''));
+    assert.deepEqual((filters.get('authorization.proofs') as any).array_contains,
+      [{ kind: 'EXPENSE_ACTION_PREVIEW', applied: true, token, previewHash: deliveryHash(firstResult) }]);
+  });
+  it('snd: a replay without accepted delivery still sends its result', async () => {
+    const h = actionPostbackHarness(), apply = h.flow.expenseActions.apply;
+    h.flow.expenseActions.apply = async (...args: any[]) => ({ ...await apply(...args), status: 'replayed', reply: 'รายการนี้ดำเนินการแล้วค่ะ' });
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.deliveryQueries.length, 1);
+    assert.equal(h.replies.length, 1); assert.match(h.replies[0].canonicalText, /รายการนี้ดำเนินการแล้วค่ะ/u);
+    assert.equal(h.flow.intentionalNoReplyTurns.has(h.event), false);
+  });
+  it('snd: opening payment after an accepted confirmation still delivers the payment preview', async () => {
+    const h = actionPostbackHarness(), apply = h.flow.expenseActions.apply;
+    h.setAcceptedResult(true); h.event.expenseActionControl.action = 'expense_action_payment';
+    h.flow.expenseActions.apply = async (...args: any[]) => { const result = await apply(...args); return {
+      ...result, status: 'prepared', preview: { ...result.preview, action: 'RECORD_PAYMENT', summary: 'กรุณาตรวจรายละเอียดแล้วกดบันทึกจ่ายค่ะ' },
+    }; };
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.deliveryQueries.length, 0); assert.equal(h.replies.length, 1);
+    assert.equal(h.flow.deliveryExpenseActions.get(h.event).applied, false);
   });
   it('H2: a refused payment gives the in-chat confirm next step without another mutation', async () => {
     const h = actionPostbackHarness();
