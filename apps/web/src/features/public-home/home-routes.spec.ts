@@ -46,7 +46,7 @@ test('HOME-PAGE sitemap contains only the public home, legal and AI-readable rou
   assert.deepEqual(sitemap().map(item => item.url), ['', 'privacy', 'terms', 'llms.txt', 'llms-full.txt'].map(path => `https://mangmeeplus.com/${path}`));
 });
 
-test('HOME-PAGE preserves nonce rendering and public access, with exact owner SEO copy scoped to the root', () => {
+test('HOME-PAGE preserves nonce rendering and public access, with brand and company SEO copy scoped to the root', () => {
   assert.equal(isProtectedPagePath('/'), false);
   assert.equal(isProtectedPagePath('/companies/shop/dashboard'), true);
   const page = readFileSync(new URL('../../../app/page.tsx', import.meta.url), 'utf8');
@@ -56,7 +56,7 @@ test('HOME-PAGE preserves nonce rendering and public access, with exact owner SE
   assert.match(page, /'text\/plain': '\/llms.txt'/);
   assert.match(page, /openGraph:/); assert.match(page, /twitter:/);
   assert.match(layout, /await connection\(\)/); assert.match(layout, /<html lang="th">/);
-  assert.equal(HOME_TITLE, 'มั่งมีพลัส (MangmeePlus) | มั่งมี Plus AI อ่านใบเสร็จและบันทึกค่าใช้จ่ายผ่าน LINE ผู้ช่วยร้านค้าและนักบัญชี');
-  assert.match(HOME_DESCRIPTION, /เริ่มเดือนละ 249 บาท$/);
+  assert.equal(HOME_TITLE, 'มั่งมีพลัส (MangmeePlus) | จัดการรายจ่ายและเบิกจ่ายอย่างเป็นระบบ');
+  assert.match(HOME_DESCRIPTION, /มั่งมีพลัส โดย บริษัท มั่งมียั่งยืน จำกัด.*ตรวจและอนุมัติตามสิทธิ์.*บันทึกการจ่าย.*สำนักงานบัญชี.*AI/);
   assert.doesNotMatch(page, /redirect\(|cookies\(|fetch\(/);
 });

@@ -1,0 +1,50 @@
+{
+  "desktop": {
+    "company": "บริษัท มั่งมียั่งยืน จำกัด",
+    "companyAliases": [
+      "มั่งมียั่งยืน",
+      "มั่งมีพลัส",
+      "MangmeePlus",
+      "มั่งมี Plus",
+      "มั่งมี-Plus",
+      "Mangmee Plus",
+      "mangmee_plus"
+    ],
+    "descriptionMatchesVisible": true,
+    "faqMatchesSchema": true,
+    "line": "https://lin.ee/U5oRBx1",
+    "login": "/login",
+    "opened": 3,
+    "overflow": false,
+    "productPublisherMatches": true,
+    "questions": 21,
+    "title": "มั่งมีพลัส (MangmeePlus) | AI อ่านใบเสร็จและบันทึกรายจ่ายผ่าน LINE",
+    "width": 1280
+  },
+  "viewports": [
+    {
+      "width": 390,
+      "height": 844,
+      "overflow": false,
+      "faqMouseAndKeyboard": "passed"
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "overflow": false
+    }
+  ],
+  "review": {
+    "changedColor": "rgb(180, 35, 24)",
+    "unchangedQuestionColor": "rgb(26, 46, 34)",
+    "taxPhrase": "ร้านหรือนักบัญชียื่นต่อกรมสรรพากรเอง",
+    "taxSurroundingColor": "rgb(71, 84, 103)"
+  },
+  "warnings": [
+    {
+      "message": "A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:\n\n- A server/client branch `if (typeof window !== 'undefined')`.\n- Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.\n- Date formatting in a user's locale which doesn't match the server.\n- External changing data without sending a snapshot of it along with the HTML.\n- Invalid HTML tag nesting.\n\nIt can also happen if the client has a browser extension installed which messes with the HTML before React loaded.\n\n%s%s https://react.dev/link/hydration-mismatch \n\n  ...\n    <HTTPAccessFallbackErrorBoundary pathname=\"/\" notFound={<SegmentViewNode>} forbidden={undefined} ...>\n      <RedirectBoundary>\n        <RedirectErrorBoundary router={{...}}>\n          <InnerLayoutRouter url=\"/?preview=...\" tree={[...]} params={{}} renderTree={{...}} segmentPath={[...]} ...>\n            <SegmentViewNode type=\"page\" pagePath=\"page.tsx\">\n              <SegmentTrieNode>\n              <HomePage>\n                <script>\n                <PublicHome>\n                  <div className=\"public-home\" data-seo-review={true}>\n                    <div className=\"pg\">\n                      <a>\n                      <header>\n                      <main id=\"main\">\n                        <section>\n                        <section>\n                        <HomePricing>\n                        <section>\n                        <section>\n                        <section className=\"sec alt\" id=\"faq\" aria-label=\"สรุปและคำถ...\">\n                          <div className=\"w faq-g\">\n                            <div>\n                            <div>\n                              <p>\n                              <h2>\n                              <HomeFaq>\n                                <div className=\"faq\">\n                                  <details\n-                                   open=\"\"\n                                  >\n                                  ...\n                              ...\n                        ...\n                      ...\n            ...\n          ...\n",
+      "timestamp": "2026-10-29T07:37:04.080Z"
+    }
+  ],
+  "note": "One early details click before hydration caused a dev warning; reloaded and repeated after networkidle."
+}

@@ -4,8 +4,8 @@ import faq from './home-faq.json';
 export const HOME_URL = 'https://mangmeeplus.com/';
 export const HOME_LINE_URL = 'https://lin.ee/U5oRBx1';
 export const HOME_CONTACT_URL = 'https://line.me/R/ti/p/@695ultfm';
-export const HOME_TITLE = 'มั่งมีพลัส (MangmeePlus) | มั่งมี Plus AI อ่านใบเสร็จและบันทึกค่าใช้จ่ายผ่าน LINE ผู้ช่วยร้านค้าและนักบัญชี';
-export const HOME_DESCRIPTION = 'ส่งรูปใบเสร็จให้น้องมั่งมี ผู้ช่วย AI ใน LINE อ่านและกรอกรายการค่าใช้จ่ายให้ เจ้าของร้านตรวจแล้วกดยืนยันเอง เบิกเงินคืนพนักงานได้ในที่เดียว เริ่มเดือนละ 249 บาท';
+export const HOME_TITLE = 'มั่งมีพลัส (MangmeePlus) | จัดการรายจ่ายและเบิกจ่ายอย่างเป็นระบบ';
+export const HOME_DESCRIPTION = 'มั่งมีพลัส โดย บริษัท มั่งมียั่งยืน จำกัด ช่วยรวมรายจ่ายและใบเบิก ตรวจและอนุมัติตามสิทธิ์ บันทึกการจ่ายพร้อมหลักฐานส่งสำนักงานบัญชี มี AI ช่วยอ่านใบเสร็จผ่าน LINE';
 export const HOME_FAQ = faq;
 export const HOME_PLANS = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const).map(tier => {
   const month = billingOffer(tier, 'month'), year = billingOffer(tier, 'year');
@@ -35,11 +35,12 @@ export const HOME_JSON_LD = {
   '@context': 'https://schema.org',
   '@graph': [
     { '@type': 'Organization', '@id': `${HOME_URL}#organization`, name: 'บริษัท มั่งมียั่งยืน จำกัด',
-      alternateName: HOME_NAMES, sameAs: HOME_SOCIAL, url: HOME_URL, email: 'contact@mangmeeplus.com',
+      alternateName: ['มั่งมียั่งยืน', ...HOME_NAMES], description: HOME_DESCRIPTION,
+      sameAs: HOME_SOCIAL, url: HOME_URL, email: 'contact@mangmeeplus.com',
       contactPoint: { '@type': 'ContactPoint', contactType: 'customer support', url: HOME_CONTACT_URL, availableLanguage: ['Thai', 'English'] } },
     { '@type': 'WebSite', '@id': `${HOME_URL}#website`, name: 'มั่งมีพลัส (MangmeePlus)', alternateName: HOME_NAMES, url: HOME_URL,
       inLanguage: 'th', publisher: { '@id': `${HOME_URL}#organization` } },
-    { '@type': 'SoftwareApplication', '@id': `${HOME_URL}#software`, name: 'มั่งมีพลัส (MangmeePlus)', url: HOME_URL,
+    { '@type': 'SoftwareApplication', '@id': `${HOME_URL}#software`, name: 'มั่งมีพลัส (MangmeePlus)', alternateName: HOME_NAMES, url: HOME_URL,
       applicationCategory: 'BusinessApplication', operatingSystem: 'Web, LINE', description: HOME_DESCRIPTION,
       publisher: { '@id': `${HOME_URL}#organization` },
       offers: HOME_PLANS.flatMap(plan => (['month', 'year'] as const).map(interval => ({

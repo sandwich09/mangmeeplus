@@ -1,0 +1,172 @@
+TAP version 13
+# Subtest: HOME-PAGE server renders the owner H1, section outline, LINE handoffs and unchanged login route
+ok 1 - HOME-PAGE server renders the owner H1, section outline, LINE handoffs and unchanged login route
+  ---
+  duration_ms: 11.041542
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE protects all three static contact links from edge rewriting without changing their text or destinations
+ok 2 - HOME-PAGE protects all three static contact links from edge rewriting without changing their text or destinations
+  ---
+  duration_ms: 15.584584
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE JSON-LD parses, uses the request nonce, and FAQ answers equal the rendered FAQ exactly
+ok 3 - HOME-PAGE JSON-LD parses, uses the request nonce, and FAQ answers equal the rendered FAQ exactly
+  ---
+  duration_ms: 7.478792
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE monthly and annual prices, allowances, user and branch limits match the billing catalog in HTML and offers
+ok 4 - HOME-PAGE monthly and annual prices, allowances, user and branch limits match the billing catalog in HTML and offers
+  ---
+  duration_ms: 5.94675
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE package chooser fits people, receipts, branches and system tax needs
+ok 5 - HOME-PAGE package chooser fits people, receipts, branches and system tax needs
+  ---
+  duration_ms: 0.065791
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE all 18 local images exist; informative pictures have Thai alternatives and fixed dimensions
+ok 6 - HOME-PAGE all 18 local images exist; informative pictures have Thai alternatives and fixed dimensions
+  ---
+  duration_ms: 5.693917
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE keeps the artboard phone columns, safe bottom CTA, reduced motion and a viewport-bound native gallery
+ok 7 - HOME-PAGE keeps the artboard phone columns, safe bottom CTA, reduced motion and a viewport-bound native gallery
+  ---
+  duration_ms: 0.694416
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE ability pop starts on visibility, disconnects and preserves content without an observer
+ok 8 - HOME-PAGE ability pop starts on visibility, disconnects and preserves content without an observer
+  ---
+  duration_ms: 0.64375
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE receipt story starts muted once on scroll, uses plain playback hints, and keeps two controls on the audio clock
+ok 9 - HOME-PAGE receipt story starts muted once on scroll, uses plain playback hints, and keeps two controls on the audio clock
+  ---
+  duration_ms: 21.293334
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE mascot asks one question at a time, preserves edits, and recommends only after completion
+ok 10 - HOME-PAGE mascot asks one question at a time, preserves edits, and recommends only after completion
+  ---
+  duration_ms: 11.98275
+  type: 'test'
+  ...
+# Subtest: event selection accepts registered IDs and falls back safely for missing, repeated and unknown inputs
+ok 11 - event selection accepts registered IDs and falls back safely for missing, repeated and unknown inputs
+  ---
+  duration_ms: 0.341208
+  type: 'test'
+  ...
+# Subtest: seasonal decoration preserves all content and links, and default mounts no event artwork
+ok 12 - seasonal decoration preserves all content and links, and default mounts no event artwork
+  ---
+  duration_ms: 44.925417
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles
+ok 13 - HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles
+  ---
+  duration_ms: 1.834292
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 catalog prices, receipt quotas, branches and users agree with package.compare
+ok 14 - HOME-WIKI-V6 catalog prices, receipt quotas, branches and users agree with package.compare
+  ---
+  duration_ms: 0.253083
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 keeps Enterprise issuing separate from an optional-file outside certificate
+ok 15 - HOME-WIKI-V6 keeps Enterprise issuing separate from an optional-file outside certificate
+  ---
+  duration_ms: 0.118209
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 claims are submitted, approved, reimbursed then signed by claimant and approver
+ok 16 - HOME-WIKI-V6 claims are submitted, approved, reimbursed then signed by claimant and approver
+  ---
+  duration_ms: 0.061709
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 never promises the report module in sold packs
+ok 17 - HOME-WIKI-V6 never promises the report module in sold packs
+  ---
+  duration_ms: 0.179709
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 expiry/refunds stay conditional and only spending follows the home date range
+ok 18 - HOME-WIKI-V6 expiry/refunds stay conditional and only spending follows the home date range
+  ---
+  duration_ms: 0.128
+  type: 'test'
+  ...
+# Subtest: HOME-WIKI-V6 shop opening distinguishes owners/staff, pending requests and existing trials
+ok 19 - HOME-WIKI-V6 shop opening distinguishes owners/staff, pending requests and existing trials
+  ---
+  duration_ms: 0.171208
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE llms.txt is a public cacheable bilingual plain-text wiki
+ok 20 - HOME-PAGE llms.txt is a public cacheable bilingual plain-text wiki
+  ---
+  duration_ms: 16.949959
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE llms-full.txt is a public cacheable bilingual plain-text wiki
+ok 21 - HOME-PAGE llms-full.txt is a public cacheable bilingual plain-text wiki
+  ---
+  duration_ms: 0.481333
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE robots explicitly admits search/AI crawlers and keeps private application areas out
+ok 22 - HOME-PAGE robots explicitly admits search/AI crawlers and keeps private application areas out
+  ---
+  duration_ms: 0.130875
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE robots: UAT and local are never indexed
+ok 23 - HOME-PAGE robots: UAT and local are never indexed
+  ---
+  duration_ms: 0.575958
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE sitemap contains only the public home, legal and AI-readable routes
+ok 24 - HOME-PAGE sitemap contains only the public home, legal and AI-readable routes
+  ---
+  duration_ms: 0.062125
+  type: 'test'
+  ...
+# Subtest: HOME-PAGE preserves nonce rendering and public access, with brand and company SEO copy scoped to the root
+ok 25 - HOME-PAGE preserves nonce rendering and public access, with brand and company SEO copy scoped to the root
+  ---
+  duration_ms: 0.567667
+  type: 'test'
+  ...
+# Subtest: production ignores preview overrides and fetches current persisted choice without cache or credentials
+ok 26 - production ignores preview overrides and fetches current persisted choice without cache or credentials
+  ---
+  duration_ms: 16.983042
+  type: 'test'
+  ...
+# Subtest: unavailable, malformed, removed and untrusted event values preserve the normal page
+ok 27 - unavailable, malformed, removed and untrusted event values preserve the normal page
+  ---
+  duration_ms: 1502.517875
+  type: 'test'
+  ...
+1..27
+# tests 27
+# suites 0
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1807.844

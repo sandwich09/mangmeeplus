@@ -1,0 +1,95 @@
+{
+  "checks": [
+    {
+      "buttons": [
+        {
+          "height": 52,
+          "text": "เริ่มใช้งานผ่าน LINE (เปิดแท็บใหม่)",
+          "width": 358
+        },
+        {
+          "height": 52,
+          "text": "ดูราคา",
+          "width": 358
+        }
+      ],
+      "height": 844,
+      "kicker": "คุมรายจ่ายเป็นระบบ ตั้งแต่เบิกจ่ายถึงส่งบัญชี",
+      "kickerColor": "rgb(220, 252, 231)",
+      "leadColor": "rgb(209, 250, 229)",
+      "overflow": false,
+      "review": 0,
+      "scrollY": 0,
+      "url": "http://127.0.0.1:43841/?preview=seo#top",
+      "width": 390
+    },
+    {
+      "buttons": [
+        {
+          "height": 52,
+          "width": 220
+        },
+        {
+          "height": 52,
+          "width": 220
+        }
+      ],
+      "overflow": false,
+      "review": 0,
+      "theme": "default",
+      "width": 1280
+    },
+    {
+      "buttons": [
+        {
+          "height": 52,
+          "width": 220
+        },
+        {
+          "height": 52,
+          "width": 220
+        }
+      ],
+      "description": "มั่งมีพลัส โดย บริษัท มั่งมียั่งยืน จำกัด ช่วยรวมรายจ่ายและใบเบิก ตรวจและอนุมัติตามสิทธิ์ บันทึกการจ่ายพร้อมหลักฐานส่งสำนักงานบัญชี มี AI ช่วยอ่านใบเสร็จผ่าน LINE",
+      "descriptionMatches": true,
+      "faqCount": 21,
+      "faqMatches": true,
+      "h1Count": 1,
+      "kickerColor": "rgb(244, 230, 249)",
+      "leadColor": "rgb(234, 221, 239)",
+      "overflow": false,
+      "review": 0,
+      "theme": "halloween",
+      "title": "มั่งมีพลัส (MangmeePlus) | จัดการรายจ่ายและเบิกจ่ายอย่างเป็นระบบ",
+      "width": 1280
+    },
+    {
+      "buttons": [
+        {
+          "height": 52,
+          "width": 358
+        },
+        {
+          "height": 52,
+          "width": 358
+        }
+      ],
+      "overflow": false,
+      "review": 0,
+      "theme": "halloween",
+      "width": 390
+    },
+    {
+      "descriptionMatches": true,
+      "faqCount": 21,
+      "faqMatches": true,
+      "overflow": false,
+      "review": 0,
+      "theme": "default",
+      "title": "มั่งมีพลัส (MangmeePlus) | จัดการรายจ่ายและเบิกจ่ายอย่างเป็นระบบ",
+      "width": 1280
+    }
+  ],
+  "halloweenFaqMouseOpens": true,
+  "halloweenFaqKeyboardCloses": true
+}

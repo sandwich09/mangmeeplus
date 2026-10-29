@@ -2,7 +2,7 @@ import * as React from 'react';
 import { HomePricing, HomeMenu, ChatReel, SignupReel, DocumentGallery, HomeAbilityPop } from './HomeInteractions';
 import { HomeSignupSteps } from './HomeSignupSteps';
 import { HomeReceiptStory } from './HomeReceiptStory';
-import { HOME_FAQ, HOME_JSON_LD } from './home-content';
+import { HOME_DESCRIPTION, HOME_FAQ, HOME_JSON_LD } from './home-content';
 import { DEFAULT_HOME_EVENT_PALETTE, HomeEventArtwork, HomeEventPreviewTools, type HomeEvent, type HomeEventPalette } from './HomeEventTheme';
 import { HomeEventEffects } from './HomeEventEffects';
 import { HomeHalloweenActivities } from './HomeHalloweenActivities';
@@ -47,9 +47,9 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <HomeEventArtwork event={event} placement="hero" />
 <div className="orb orb-a" aria-hidden="true"></div><div className="orb orb-b" aria-hidden="true"></div>
 <div className="w hero-c">
-<p className="kicker">มั่งมี Plus ส่งรูปใบเสร็จทาง LINE <span className="nw">ให้น้องมั่งมีช่วยอ่าน</span></p>
+<p className="kicker">คุมรายจ่ายเป็นระบบ <span className="nw">ตั้งแต่เบิกจ่ายถึงส่งบัญชี</span></p>
 <h1 id="hero-title">ขายได้ทุกวัน <span>แต่จ่ายไปเท่าไร<span className="nw">ไม่รู้?</span></span></h1>
-<p className="lead">เงินที่ขายได้ถูกหมุนจ่ายทุกวัน ใบเสร็จกองไว้<span className="nw">ไม่มีเวลาจด</span> สิ้นเดือนเงินหายไป<span className="nw">เหมือนตกหลุม</span> มั่งมีพลัสช่วยให้เห็น<span className="nw">ทุกบาทที่จ่ายออก</span></p>
+<p className="lead">รวมใบเสร็จและใบเบิกไว้ที่เดียว กำหนดได้ว่า<span className="nw">ใครส่ง ใครอนุมัติ</span> บันทึกการจ่ายพร้อมหลักฐาน แล้วส่งเอกสาร<span className="nw">ให้นักบัญชี</span></p>
 <div className="acts">
 <a className="btn btn-primary btn-lg" href="https://lin.ee/U5oRBx1" target="_blank" rel="noopener">เริ่มใช้งานผ่าน LINE<span className="sr"> (เปิดแท็บใหม่)</span></a>
 <a className="btn btn-soft btn-lg" href="#pricing">ดูราคา</a>
@@ -219,7 +219,7 @@ export function PublicHome({ event = 'default', preview = false, palette = DEFAU
 <div id="what">
 <p className="ey">รู้จักใน 1 นาที</p>
 <h2>มั่งมีพลัสคืออะไร</h2>
-<p className="answer">มั่งมีพลัส (มั่งมี Plus หรือ MangmeePlus) คือโปรแกรมช่วยร้านและธุรกิจเล็กในไทยเก็บใบเสร็จและค่าใช้จ่าย พนักงานถ่ายรูปใบเสร็จส่งให้น้องมั่งมี ผู้ช่วยใน LINE น้องอ่านแล้วกรอกรายการไว้ให้ เจ้าของร้านหรือคนที่ได้รับสิทธิ์ตรวจ แก้ และกดยืนยันเอง ระบบยังช่วยเรื่องเบิกเงินคืนพนักงาน และเก็บเอกสารไว้ส่งนักบัญชี</p>
+<p className="answer">{HOME_DESCRIPTION}</p>
 <dl className="card qf">
 <div><dt>เหมาะกับ</dt><dd>ร้านที่มีใบเสร็จทุกวัน หรือมีพนักงานสำรองจ่ายไปก่อน</dd></div>
 <div><dt>ราคา</dt><dd>เดือนละ <span className="nw">249 - 1,999</span> บาท มี 4 แพ็กเกจ</dd></div>
