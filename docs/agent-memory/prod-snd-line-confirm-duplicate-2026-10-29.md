@@ -1,6 +1,6 @@
 # Agent Memory: Production snd LINE confirmation duplication
 
-Status: Production cause verified; bounded delivery deduplication implemented, 944 regression tests and API typecheck passed locally. Main/develop integration candidate and validation artifacts verified; atomic push and remote readback pending. Not deployed.
+Status: Production cause verified; bounded delivery deduplication implemented, 944 regression tests and API typecheck passed locally. Merged into main and develop by atomic fast-forward push; both remote heads verified at integration commit `97573b50de6e524a805391146f0ceba8692fc585`. Not deployed.
 Owner: Codex
 Scope: Stop duplicate “ค่าใช้จ่าย ยืนยัน” cards after a repeated confirmation event for the same action. The owner supplied two cards for one 2,508.00 THB tax invoice dated 29 October 2026. Preserve business idempotency, delivery recovery and the next payment step.
 
@@ -33,7 +33,7 @@ Verification:
 - Focused existing tests passed (exit 0) against clean matching source in `/Users/thawatchai/.codex/worktrees/free-expense-merge/mangmeeplus` (the diagnostic worktree has no dependencies). Command: `pnpm --filter @watchdog-bms/api exec tsx --test --test-reporter=dot --test-name-pattern='Round 2 A expense action postback|freezes a bounded trusted Flex|bound path, context 4|bound path, contexts 5' src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts src/modules/line-ai/domain/logic/line-delivery-plan.logic.spec.ts`. These are source-level checks, not incident reproduction or live customer acceptance.
 
 Next:
-- Merge the scoped patch into main and develop, verify remote branch heads, and retain local verification evidence. Deployment remains a separate step under the deployment protocol.
+- Branch integration complete. Deployment remains a separate authorized step under the deployment protocol, followed by actual LINE acceptance of the patched behavior.
 
 ## Production readback after MFA — 2026-10-29
 
@@ -63,4 +63,4 @@ Next:
 - CI's maintenance pin check exposed five stale hashes already present on main from `049aa51de` (password login, auth guard, session landing, upload and download). Reviewed those existing source diffs and regenerated their hashes plus the validator digest in the release workflow. No enforcement logic or workflow behavior changed.
 - Additional checks passed: capability manifest plus staff-menu/business-card suites **185 tests / 27 suites**; `node infra/security/sync-production-maintenance-release-pins.mjs --check`; maintenance validator and pin-sync shell specs; `bash infra/docker/production-image-security.spec.sh`; `git diff --check`. Logs retained under `/tmp/snd-line-confirm-20261029/`.
 - GitHub reports both branches unprotected. No protection or required check was removed or bypassed. There is no in-progress Actions run; the sole queued row is the documented stale READY `31611733340`, unchanged since 2026-08-12, freshly checked with zero jobs, check runs and pending deployments. It was not cancelled or retried.
-- Integration uses a fast-forward atomic push to both remote branches. Current CI has no push trigger; these are local verification results, not a claim of a successful new Actions run. UAT/READY/Production run IDs remain `NOT_DISPATCHED` for this task.
+- Atomic fast-forward push succeeded for both remote branches; independent `git ls-remote` readback confirmed both at `97573b50de6e524a805391146f0ceba8692fc585`, containing fix `3f6db1729`. This final memory update follows as documentation only. Current CI has no push trigger; these are local verification results, not a claim of a successful new Actions run. UAT/READY/Production run IDs remain `NOT_DISPATCHED` for this task.
