@@ -1,6 +1,6 @@
 # Agent Memory: expense-activity-history
 
-Status: Current-main integration reviewed and verified (2026-10-30); direct main/develop push authorized without PR, no deployment.
+Status: Integrated into origin/main and origin/develop by atomic fast-forward push (2026-10-30); no PR and no deployment.
 Owner: Parent reviewer; Luna frontend; Sol backend.
 Scope: Expense detail → เพิ่มเติม → ดูประวัติ; who/what/when and recorded field changes.
 Decisions:
@@ -31,7 +31,7 @@ Verification:
 - Luna accidentally invoked the broader web suite while targeting one test: reported 2089 pass and 2 failures in untouched `api-error-coverage.spec.ts`; these are outside this task and not claimed fixed. Scoped final suites above pass.
 - Local QA servers stopped and Next's generated `next-env.d.ts` restored to its task-start contents after verification.
 - No-arrow follow-up: six targeted browser checks PASS (old/new labels, no arrow, desktop columns, mobile stack, overflow and close); `value-labels-result.json` records the result and screenshots were refreshed. No logic/API changes or new unit tests for this presentation-only edit.
-Next: Direct fast-forward integration to origin/main and origin/develop under user authorization; verify both remote refs after push. Deployment is separate work and requires the repository deployment protocol.
+Next: Integration complete. Deployment is separate work and requires the repository deployment protocol.
 
 ## Compact-table revision review — 2026-10-30
 
@@ -58,3 +58,4 @@ Next: Direct fast-forward integration to origin/main and origin/develop under us
 - Newer category/security/VAT/correction changes preserved. Web uses existing shared button classes, current action vocabulary and monetary formatting. No package/schema/lock changes; no PR or deploy dispatch.
 - Temporary QA services stopped; generated web metadata restored. Parent reviewed scoped diffs before commit.
 - Final current-base frontend suite (`expense-history.logic`, `ExpenseReviewPage.qa`, `expenses.api`) passed; full output saved as `integration-web-tests.log`.
+- Atomic push succeeded to both `origin/main` and `origin/develop`, advancing from `994a55fa1` to feature commit `1fbba874e`. Both remote refs independently verified with `git ls-remote`. This documentation commit records the completed integration. Frontend current-base suite:54/54 PASS.

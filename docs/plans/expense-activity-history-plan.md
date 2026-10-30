@@ -14,3 +14,9 @@ Date: 2026-10-30
 - [x] Sol: return the actual expense creator name and exclude automatic activity before pagination/count; focused query/contract checks.
 - [x] Luna: actor/action heading, creator in modal title, one compact three-column table per event; preserve loading/error/pagination/focus behavior.
 - [x] Parent: inspect query boundaries and complete desktop/mobile browser review; update evidence and memory.
+
+## Direct integration — 2026-10-30
+
+- [x] Port only history changes onto current main/develop, preserving unrelated local and newer mainline work.
+- [x] Verify current-base contracts/types, focused API tests19/19, web54/54, browser18 checks; record unchanged baseline fixture failures.
+- [x] Atomic fast-forward push of `1fbba874e` to origin/main and origin/develop, no PR. Verify both remote refs. No deployment.
