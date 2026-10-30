@@ -370,11 +370,12 @@ export class LineDraftUpdateUseCase {
         // update, then re-use this transaction during candidate reconciliation.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
       }
+      let historyChanges: import('../../domain/logic/expense-history.logic').ExpenseHistoryChanges = {};
       const updated = await this.updateDraft.execute(
         ctx,
         target.id,
         this.buildInput(target, stored.patch, projected.lines),
-        { db: tx, suppressGenericAudit: true, requireExpectedUpdatedAt: true },
+        { db: tx, suppressGenericAudit: true, requireExpectedUpdatedAt: true, onHistoryChanges: (changes) => { historyChanges = changes; } },
       );
       if (duplicateSensitive) {
         await reconcileExpenseDuplicateCandidates(this.repo, ctx.companyId, target.id, ctx.userId, ctx.scopes ?? {}, tx);
@@ -391,6 +392,7 @@ export class LineDraftUpdateUseCase {
         result: 'SUCCESS',
         riskLevel: 'MEDIUM',
         metadataJson: {
+          expenseHistoryChanges: historyChanges,
           previewId: stored.previewId,
           webhookEventId,
           tool: stored.patch.tool,

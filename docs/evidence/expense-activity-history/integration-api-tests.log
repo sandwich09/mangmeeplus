@@ -1,0 +1,623 @@
+▶ UpdateExpenseDraftUseCase optimistic concurrency
+  ✔ requires the loaded version on interactive routes before any mutation (1.251959ms)
+  ✔ persists replacement lines only inside the header CAS transaction (2.493709ms)
+✔ UpdateExpenseDraftUseCase optimistic concurrency (4.121625ms)
+▶ UpdateExpenseDraftUseCase LINE draft collection authority
+  ✔ lets the originating LINE user persist source facts and continuation state together (0.340125ms)
+  ✔ does not expose the internal authority to a watchdog-authenticated HTTP caller (0.104583ms)
+  ✔ does not let a different LINE user update another user’s draft (0.051334ms)
+  ✔ does not let LINE mutate the record after it leaves DRAFT (0.052125ms)
+  ✔ keeps reviewer-only tax fields closed during LINE collection (0.092541ms)
+✔ UpdateExpenseDraftUseCase LINE draft collection authority (0.845292ms)
+▶ expense activity persisted changes
+  ✔ normalizes equal decimals and dates, ignores private fields and snapshots absent in legacy rows (0.31175ms)
+  ✔ records added and removed line values without inventing an old value (0.08475ms)
+  ✔ captures persisted values after the header lock and replacement lines in the same transaction (0.856625ms)
+  ✔ includes printed vendor identity and resolved names, and ignores renames of unchanged references (0.069833ms)
+  ✔ keeps suppressed preview writes free of generic audit and history callbacks (0.061917ms)
+  ✔ passes persisted changes to the caller-owned LINE audit without writing a generic duplicate (0.668916ms)
+  ✔ propagates transactional audit failure through the write transaction (0.184417ms)
+  ✔ includes actual persisted generic update changes without moving the audit into the transaction (0.075583ms)
+✔ expense activity persisted changes (2.402625ms)
+[Nest] 90614  - 10/30/2026, 6:10:12 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:12 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:12 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:12 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:12 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+(node:90614) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ expense related-view ABAC
+  ✔ allows a persisted related actor and denies an unrelated member (1.012708ms)
+  ✔ does not offer a document reservation link or buttons to a LINE viewer (0.065334ms)
+  ✔ passes related-user scope to the list repository instead of widening to company rows (0.097083ms)
+  ✔ readAiSummary echoes accessScope: related for a read_related-only caller (same ctx as above) (0.046667ms)
+  ✔ readAiSummary echoes accessScope: own for a read_own-only caller (0.032833ms)
+  ✔ readAiSummary echoes accessScope: company for a full expense.read caller, even with read_own too (0.062959ms)
+  ✔ readAiBreakdown echoes the same accessScope classification as readAiSummary (0.041875ms)
+  ✔ scopes the substitute-receipt preparation hub to the reader’s own recorded expenses (0.214917ms)
+  ✔ covers direct, payment, substitute-receipt, and source-claim actors in the repository predicate (0.1715ms)
+  ✔ lets a related viewer load the category labels needed by the read-only detail (0.205791ms)
+  ✔ keeps branch, relation, and month OR clauses isolated under AND (0.5635ms)
+  ✔ orders upload-range lists by newest intake before applying the page limit (0.996875ms)
+  ✔ keeps document-date ordering for callers without a dedicated upload-date lens (0.28ms)
+✔ expense related-view ABAC (4.213833ms)
+▶ disbursement voucher drafts and visibility
+  ✖ expense reviewer candidates use effective confirm rights and branch scope and exclude the sender (1.207584ms)
+  ✔ reads each line withholding certificate state in one company-scoped query without a certificate permission (2.954666ms)
+  ✖ sends pending tasks only to the chosen active approver, never the actor or self-approval (2.2655ms)
+  ✖ notifies the preparer on approval and adds branch payers only when neither preparer nor approver can pay (2.314833ms)
+  ✔ sends return, withdraw, paid and cancelled notices only to the other active preparer, once after commit (9.339583ms)
+  ✔ does not notify an inactive preparer on return, withdraw, cancellation or payment (2.056541ms)
+  ✖ creates a new pending round after resubmit, skips removed preparers and preserves success on notice failure (0.363208ms)
+  ✖ limits reminders per recipient across A → B → A, replays truthfully and exposes the next reminder time (0.570375ms)
+  ✖ shows reminders only in their current revision while the hourly limit survives a return and resubmit (0.74525ms)
+  ✔ returns the typed payment cancellation reason on the detail without changing the frozen paid snapshot (1.060417ms)
+  ✖ distinguishes reminders, formats notice amounts and says just now during the first minute (0.362791ms)
+  ✔ notifies cancellation of covered documents after cancel-payment commits (0.177458ms)
+  ✔ cancellation after payment tells the other preparer what remains, once, and never rewrites payment history (1.529959ms)
+  ✔ describes earlier partial payments truthfully on a pre-payment cancel and omits an absent withdrawal reason (0.622834ms)
+  ✔ reminders roll back on collisions, send no notice and retain their own retry sentence (0.487625ms)
+  ✖ reminders require prepare, a visible pending document and an eligible branch approver (5.195125ms)
+  ✔ prefills only a visible same-payee account, ranks paid before newer drafts and never returns secrets (1.238709ms)
+  ✔ copies account ciphertext on create and update, checks source company and payee, and typed number wins (2.820208ms)
+  ✔ seals optional payee accounts, validates number and bank, preserves omitted values and clears an empty number (0.622916ms)
+  ✔ fingerprints account numbers as stable keyed hashes and refuses a changed-number replay (0.300292ms)
+  ✔ reveals to draft editors, approvers or payers after audit and keeps the number out of public JSON (2.455792ms)
+  ✔ draft account reveal reuses edit rights; later states require approve/pay unless revealing a readable prefill source (0.653375ms)
+  ✔ freezes the accounting print facts without full account numbers on submission and payment (1.372458ms)
+  ✔ audits full accounts on fresh PDF downloads only for reveal-authorized readers and never rewrites stored paid bytes (1608.3755ms)
+  ✔ prints submitted revisions only and hides PDFs outside the document read scope (670.390458ms)
+  ✔ serves a newly marked cancelled PDF while preserving the stored original and frozen snapshot (695.407834ms)
+  ✔ freezes only the payment evidence present when paid, despite a later replacement (2.236542ms)
+  ✔ masks PDF permission-guard refusals as the same missing document while retaining LINE refusal (0.110208ms)
+  ✖ retains each revision requested approver and returns null after that company member is removed (0.416083ms)
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+[Nest] 90614  - 10/30/2026, 6:10:16 PM    WARN [DisbursementVoucherNoticeService] Object(4) {
+  msg: 'disbursement_voucher_notice_failed',
+  companyId: 'company-1',
+  voucherId: 'dv-1',
+  action: 'approve'
+}
+  ✔ commits payment before file storage, answers success on storage failure and recovers from the frozen snapshot (358.888041ms)
+  ✔ creates an unnumbered unreserved draft from current snapshots, with exact amounts and first-line defaults (0.295875ms)
+  ✔ uses SINGLE, normalized TAX_ID and explicit PREPARER_CONFIRMED without trusting names or counterparty links (0.473666ms)
+  ✔ uses all four payee bases in order and requires a tick for mixed tax ids or empty/different names (1.754542ms)
+  ✔ requires confirmation when an edit adds a different name and clears the confirmer when names match again (0.612375ms)
+  ✔ detail returns the basis and confirmer display name only for preparer-confirmed documents (0.5235ms)
+  ✔ refuses empty, oversized, repeated and cross-branch selections with their own Thai sentences (0.209583ms)
+  ✔ prepares and pays the rounded legacy balance accepted by direct payment (0.9115ms)
+  ✔ voucher amount guards agree with satang settlement for 3000 seeded legacy balances (80.542334ms)
+  ✔ refuses zero, negative, excessive, fractional, malformed and overflow amounts with the expense and outstanding (0.620583ms)
+  ✔ refuses each shared selection blocker, naming the expense and retaining the B3 sentence (0.445ms)
+  ✔ refuses unreadable, cross-company and out-of-branch source expenses without revealing their facts (0.182625ms)
+  ✔ replays create and edit command ids, conflicts on changed bodies, and rejects stale versions (0.459125ms)
+  ✔ rechecks original source visibility before replaying or reporting a command conflict (0.189375ms)
+  ✔ registers draft and document routes with their permissions and delegates the parsed list query (0.108ms)
+  ✔ refuses deletion of a draft with a prior revision even without a number (0.280083ms)
+  ✔ deletes a never-sent draft and releases only its own expenses atomically (0.154125ms)
+  ✔ rolls draft deletion and expense release back when its audit fails (0.141041ms)
+  ✔ lets another preparer in scope edit/delete, preserves the author, and refuses numbered or non-draft deletion (0.389208ms)
+  ✔ returns vendor invoice numbers only through the scoped voucher detail read (0.295458ms)
+  ✔ freezes picker descriptions at submit, carries them through payment and leaves old snapshot lines null (1.840625ms)
+  ✔ VOUCH-LIST2 orders all statuses by paid, planned or created day with stable ties and server paging in both directions (2.416458ms)
+  ✔ returns effective cancelled payment amounts with one scoped aggregate for the visible list page (0.703291ms)
+  ✔ reads current draft descriptions and freezes them again at each submission (0.861541ms)
+  ✔ VOUCH-LIST returns scoped status sums, header creation date and authoritative delete capability (1.970583ms)
+  ✔ searches every list page by trimmed Thai payee or case-insensitive number and shares q with status counts (0.646667ms)
+  ✔ uses every source line for list/detail visibility and keeps counts consistent with the same company/branch/actor scope (0.791834ms)
+  ✔ computes lifecycle actions by status and permission, enabling approved payment and pending reminders (0.085708ms)
+  ✔ refuses LINE, missing command/read permission and inaccessible documents on every entry point (0.259916ms)
+  ✔ rolls the draft, lines and command journal back when the audit fails (0.119ms)
+  ✔ rejects malformed header fields and a total that exceeds the money column before writing (0.325375ms)
+  ✔ keeps both inactive authors named and refuses return while leaving approval available (0.493416ms)
+  ✔ allows only an owner to recover a document when both preparer and sender are inactive (9.894625ms)
+  ✔ keeps owner recovery unavailable while a different sender remains active and uses shop membership status (0.452375ms)
+  ✔ matches read actions and commands for approver, preparer and both on pending and approved documents (8.502042ms)
+  ✔ lets the sender withdraw and cancel another preparer’s document with either existing right (3.285709ms)
+  ✖ submits under ordered locks, reserves without changing expense versions and freezes the complete revision before numbering (0.36ms)
+  ✔ approveNow requires both rights and approves the new revision atomically with self-approval recorded (0.282333ms)
+  ✖ approves for any eligible actor and derives selfApproved from this revision submitter (0.274208ms)
+  ✔ refuses every approval source drift with the expense-specific remedy and keeps reservations (1.915875ms)
+  ✔ snapshots only the presser signature at submit and approve, and clears it on return (0.713ms)
+  ✔ return and resubmit retain the number, advance revisions, and preserve approval when later withdrawn or cancelled (1.156375ms)
+  ✔ prepare or approve holders cannot withdraw/cancel another author and leave histories unchanged (5.356167ms)
+  ✖ validates approver eligibility, trimmed reasons, versions, statuses and permissions with their Thai sentences (0.249833ms)
+  ✔ rechecks submit amounts, payee facts and reservations before allocating any number (0.621583ms)
+  ✔ replays current headers, rejects changed command bodies and refuses LINE on all new routes (0.857042ms)
+  ✔ maps serialization and lock timeouts to delivery ก retry words and rolls submission back on audit failure (0.516958ms)
+  ✔ keeps database failures from funding reads as retry refusals and always permits releasing a changed source (0.379917ms)
+  ✔ signs each act from only its owner library, keeps prior snapshots after replacement and signs nothing without an asset (1.665834ms)
+  ✔ supporting files reject unrelated uploads and direct file access outside the voucher scope (0.966542ms)
+  ✔ supporting files require prepare and a visible draft, freeze on submit and reopen on return (1.041ms)
+  ✔ Round 5 LINE previews reuse voucher source/permission/status guards without reservations, audits or document writes (2.019542ms)
+  ✔ LINE voucher previews keep the sold ownership and inactive-preparer recovery rules without writes (0.483625ms)
+  ✔ Round 5 LINE create preserves the user ctx and fences source revision under the existing source lock; ordinary HTTP LINE remains denied (0.269875ms)
+  ✔ Round 5 LINE slip uses upload, completion/scanning, and exclusive attach before pay; foreign/stale/inactive evidence refuses (2.454666ms)
+  ✔ allows slip uploads only for visible approved or paid documents with the pay right, never LINE (0.388916ms)
+  ✔ refuses another document’s slip at payment before creating any payment (0.327875ms)
+  ✔ requires the upload tag and document binding even when a payment slip pointer and link were forged (0.398916ms)
+  ✔ confirms only the payer’s upload for this document through the shared completion and propagates scan refusal (0.377ms)
+  ✔ attaches and replaces one exclusive slip, keeps the old file, records the attacher, and pays with the attached slip (1.612417ms)
+  ✔ refuses slips already used elsewhere, foreign uploads, pending files and wrong branches without changing the pointer (0.861666ms)
+  ✔ conceals both file endpoints when even one line is unreadable, and says when no slip exists (0.336208ms)
+  ✔ pays exact approved amounts with the pay right alone, one transaction, all locks before writes and direct payment effects (1.10375ms)
+  ✔ defaults to Bangkok today and the planned method, refuses future dates and requires a payment method (2.66725ms)
+  ✔ refuses payment source drift by expense number before any payment write (2.572333ms)
+  ✔ checks pay permission, status, version, LINE, tenant and every-line visibility and rejects client amounts (0.642792ms)
+  ✔ replays the current paid or cancelled header, conflicts on another body and rejects pre-existing line payment keys (1.372458ms)
+  ✔ refuses inconsistent approved totals before creating any payment (0.3145ms)
+  ✔ rolls back all document payments on payment, audit or outbox failure and maps timeouts to retry words (3.069291ms)
+  ✔ issues a numbered direct-payment document once, copies actual payment facts and replays its current header (1.09975ms)
+  ✔ refuses issuance for cancelled, missing, unconfirmed, claim and unreadable sources with actionable sentences (1.493042ms)
+  ✔ issues company-paid substitute payments and preserves the actual Thai paid day and expense version (0.394709ms)
+  ✔ reads an unchanged B6 paid snapshot with mixed tax ids without falsely reporting a source change (0.815ms)
+  ✔ issuance rolls back its document, coverage and number when audit fails and maps lock timeouts to retry words (0.367834ms)
+  ✔ refuses a busy cross-command id without waiting while holding expense locks (0.182125ms)
+  ✔ reissue freezes only its own slip evidence and never claims the cancelled document slip (1.034875ms)
+  ✔ paid notices use the same short Thai date as the document screens (0.592667ms)
+  ✔ reissues only uncovered live payments once, links both documents and refuses when none remain (1.598375ms)
+  ✔ detects changed paid sources without changing frozen snapshots and gives button instructions only to eligible callers (3.5915ms)
+  ✔ gives an eligible recovery owner their own way out when approved sources changed (0.396125ms)
+  ✔ registers approvers before the id reader and declares the five lifecycle permissions including either-right commands (0.064458ms)
+✖ disbursement voucher drafts and visibility (3548.101834ms)
+▶ disbursement voucher source readers
+  ✔ a payee with nothing payable is not offered (owner 2026-10-15) (0.239541ms)
+  ✔ reports excluded expense counts by existing blockers without hiding unnamed or partially paid bills (0.381459ms)
+  ✔ pages tied payees into disjoint stable ten-row pages of payable payees only (0.427667ms)
+  ✔ gives whitespace-only and absent payee names a readable fallback while retaining the tax ID (0.063625ms)
+  ✔ searches every typed payee-name word and puts a full prefix first before paging (0.154167ms)
+  ✔ filters the displayed newest payee name without dropping grouped expenses or changing eligibility (0.04475ms)
+  ✔ groups dashed and Thai tax digits across names and branches, with exact outstanding totals and newest name (0.060667ms)
+  ✔ returns the opaque payee group key and its kind on every payable row without normalizing away a typed tax id (0.246458ms)
+  ✔ keeps four fractional digits when over 200 maximum-sized expenses share a payee (0.549958ms)
+  ✔ normalizes names, keeps nameless expenses separate and pages groups by largest outstanding (0.100083ms)
+  ✔ F21 groups current vendor snapshots even when the OCR counterparty is stale (0.139792ms)
+  ✔ distinguishes same-shop expenses and reports zero selectable expenses when all are reserved (0.101417ms)
+  ✔ reports every selection refusal and reservation number/preparer without requiring payment authority (0.103ms)
+  ✔ uses the expense list own/related/all precedence, branch scope and caller company for both readers (0.129542ms)
+  ✔ refuses LINE and missing prepare/read authority before reading either source (0.066625ms)
+  ✔ rejects malformed search parameters without querying (0.048458ms)
+  ✔ registers both GET routes outside expenses with prepare permission and parses payee pagination (0.058375ms)
+  ✔ returns only confirmed positive balances in the caller company, own scope and readable branches (0.279958ms)
+  ✔ shares the direct-payment facts, including claim projections and personal advances (0.032209ms)
+  ✔ reads over 200 minimal rows and checks live claims through expense ids and shared attachments (0.428542ms)
+✔ disbursement voucher source readers (3.772833ms)
+✔ disbursement notice titles start with the event and keep the document number; reminders keep their own title (0.043708ms)
+▶ expense draft document read model
+  ✔ extends the reservation source with a draft and only exposes its link to a permitted viewer (7.247625ms)
+✔ expense draft document read model (7.291584ms)
+▶ voucher list query DTO
+  ✔ defaults newest, accepts oldest and refuses other directions at the HTTP boundary (121.379417ms)
+✔ voucher list query DTO (121.546334ms)
+▶ voucher account reveal HTTP boundary
+  ✔ allows prepare through the route guard and validates an explicit prefill purpose (1.412ms)
+✔ voucher account reveal HTTP boundary (1.44875ms)
+▶ expense activity history authorization and projection
+  ✔ reuses detail permission, branch, own/related and company checks before reading any audit rows (0.321916ms)
+  ✔ rejects commercial access loss before querying document activity (0.06025ms)
+  ✔ returns the actual expense creator independently of viewer, returned events, and empty history pages (0.074416ms)
+  ✔ bounds targets to this company and its persisted payment/substitute IDs, and strips private audit data (0.313708ms)
+✔ expense activity history authorization and projection (0.803125ms)
+ℹ tests 166
+ℹ suites 10
+ℹ pass 154
+ℹ fail 12
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5938.724833
+
+✖ failing tests:
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:25052
+✖ expense reviewer candidates use effective confirm rights and branch scope and exclude the sender (1.207584ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async MarkExpenseReadyUseCase.reviewers (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:1906:13)
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:358:24)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:28272
+✖ sends pending tasks only to the chosen active approver, never the actor or self-approval (2.2655ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:30232
+✖ notifies the preparer on approval and adds branch payers only when neither preparer nor approver can pay (2.314833ms)
+  TypeError: Cannot read properties of undefined (reading 'recipientUserIds')
+      at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:432:48)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7)
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:38326
+✖ creates a new pending round after resubmit, skips removed preparers and preserves success on notice failure (0.363208ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:39441
+✖ limits reminders per recipient across A → B → A, replays truthfully and exposes the next reminder time (0.570375ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:675:25)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.remind (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:674:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:42055
+✖ shows reminders only in their current revision while the hourly limit survives a return and resubmit (0.74525ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:675:25)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.remind (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:674:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:44494
+✖ distinguishes reminders, formats notice amounts and says just now during the first minute (0.362791ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:52872
+✖ reminders require prepare, a visible pending document and an eligible branch approver (5.195125ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:646:75)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+        at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+        at async Promise.all (index 0)
+        at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+        at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:675:25)
+        at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+        at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+        at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+        at async DisbursementVoucherUseCase.remind (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:674:20),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:78107
+✖ retains each revision requested approver and returns null after that company member is removed (0.416083ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:133920
+✖ submits under ordered locks, reserves without changing expense versions and freezes the complete revision before numbering (0.36ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:137901
+✖ approves for any eligible actor and derives selfApproved from this revision submitter (0.274208ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async repo.lifecycleAtomic.changed (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:601:49)
+      at async prisma.client.$transaction.isolationLevel (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:298:20)
+      at async Object.$transaction (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:276:22)
+      at async DisbursementVoucherUseCase.retryable (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:551:18)
+      at async DisbursementVoucherUseCase.command (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts:578:20) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+
+test at src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:2:145368
+✖ validates approver eligibility, trimmed reasons, versions, statuses and permissions with their Thai sentences (0.249833ms)
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+      at PrismaPermissionResolverRepository.resolveForUser (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:65:53)
+      at async <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:68:24)
+      at async Promise.all (index 0)
+      at async PrismaDisbursementVoucherRepository.membersWithPermission (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-disbursement-voucher.repository.ts:66:22)
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts:1516:22)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    response: { code: 'FREE_EXPENSE_ACCESS_UNAVAILABLE', message: 'ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่' },
+    status: 503,
+    options: {}
+  }
+undefined
+/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: tsx --test --test-reporter=spec src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts src/modules/expenses/application/use-cases/expense-draft-concurrency.use-case.spec.ts

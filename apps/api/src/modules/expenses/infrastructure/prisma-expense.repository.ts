@@ -1,3 +1,4 @@
+import { readExpenseHistoryChanges } from '../domain/logic/expense-history.logic';
 import { hasExpenseCategory } from '@watchdog-bms/contracts';
 import { withholdingPayerPrefill } from '../../tax/application/services/withholding-establishments';
 import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
@@ -101,6 +102,13 @@ export type AiExpenseGroupBy = 'category' | 'vendor' | 'day';
 
 export type ExpensePaymentResult = { expense: ExpenseRecord; payment: ExpensePaymentRecord; replayed: boolean };
 type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
+
+// Processing outcomes and workflow bookkeeping are not human document activity, even when
+// their writers carry the initiating user's identity. Keep the durable audit untouched.
+const AUTOMATIC_EXPENSE_HISTORY_ACTIONS = [
+  'tax.document_tax.finalize', 'expense.substitute_receipt.source_refreshed',
+  'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition',
+];
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
 const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
@@ -1875,13 +1883,27 @@ export class PrismaExpenseRepository {
     return db ? work(db) : (this.prisma.client as any).$transaction(work);
   }
 
+  private async historySnapshot(tx: any, companyId: string, id: string): Promise<Record<string, any>> {
+    const category = { select: { name: true, companyId: true } };
+    const row = await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId }, include: {
+      expenseCategory: category, lines: { orderBy: { lineNumber: 'asc' }, include: { expenseCategory: category } },
+    } });
+    const categoryName = (record: any) => record.expenseCategory
+      && (record.expenseCategory.companyId === null || record.expenseCategory.companyId === companyId)
+      ? record.expenseCategory.name : null;
+    const branch = row.branchId ? await tx.branch.findFirst({ where: { id: row.branchId, companyId }, select: { name: true } }) : null;
+    return { ...row, branchName: branch?.name ?? null, expenseCategoryName: categoryName(row),
+      lines: (row.lines ?? []).map((line: any) => ({ ...line, expenseCategoryName: categoryName(line) })) };
+  }
+
   /**
    * `withinTx` runs inside this method's existing transaction, after the row is written. It is
    * the seam LINE intake uses to commit its consumption markers atomically with the mutation —
    * an after-commit append would leave the exact window the markers exist to close. Throwing
    * from it rolls the update back.
    */
-  async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any): Promise<ExpenseRecord> {
+  async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any,
+    afterUpdate?: (tx: any, before: Record<string, any>, after: Record<string, any>) => Promise<void>): Promise<ExpenseRecord> {
     const { id, companyId, expectedUpdatedAt, refreshSubstituteEvidence, assignExpenseNumber, ...rest } = input;
     if (rest.branchId !== undefined) await assertActiveExpenseBranch(db ?? this.prisma.client, companyId, rest.branchId);
     // H-04: VOIDED is intentionally rejected here — voids must go through
@@ -1908,6 +1930,7 @@ export class PrismaExpenseRepository {
         }
         if (!current || validateStatusTransition(current.status, 'REJECTED')) throw new ConflictException('expense_correction_source_changed');
       }
+      const historyBefore = afterUpdate ? await this.historySnapshot(tx, companyId, id) : null;
       const beforeReview = refreshSubstituteEvidence ? await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }) : null;
       const evidenceRouteChanged = data.aiVerificationSummaryJson !== undefined && beforeReview
         && expenseEvidenceAssessment(beforeReview)?.route !== expenseEvidenceAssessment({ ...beforeReview, ...data })?.route;
@@ -2036,6 +2059,10 @@ export class PrismaExpenseRepository {
           action: 'expense.substitute_receipt.source_refreshed', targetType: 'expense_substitute_receipt', targetId: refreshed.evidenceId,
           requestId: refreshSubstituteEvidence.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId: id, ...refreshed } }, tx);
       }
+      if (afterUpdate && historyBefore) {
+        const historyAfter = await this.historySnapshot(tx, companyId, id);
+        await afterUpdate(tx, historyBefore, historyAfter);
+      }
       if (assignExpenseNumber) {
         const current = await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId } });
         if (await canNumberReviewedDraft(tx, current)) {
@@ -2046,6 +2073,46 @@ export class PrismaExpenseRepository {
       }
       return record;
     });
+  }
+
+  async listExpenseHistory(companyId: string, expenseId: string, page: number): Promise<Omit<import('@watchdog-bms/contracts').ExpenseHistoryResult, 'creatorDisplayName'>> {
+    return this.prisma.client.$transaction(async (client) => {
+      const [payments, substitutes] = await Promise.all([
+        client.expensePayment.findMany({ where: { companyId, expenseId }, select: { id: true } }),
+        client.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, expenseId }, select: { id: true } }),
+      ]);
+      const scope = { companyId, OR: [
+        { targetType: 'expense_record', targetId: expenseId },
+        { targetType: 'expense_payment', targetId: { in: payments.map((row) => row.id) } },
+        { targetType: 'expense_substitute_receipt', targetId: { in: substitutes.map((row) => row.id) } },
+      ] };
+      // A reimbursement approval/cancellation projects an expense change automatically. Match
+      // positive JSON authority values first: negating JSON paths would also lose absent keys.
+      const projected = await client.auditLog.findMany({ where: { ...scope,
+        action: { in: ['expense.confirm', 'expense.void'] },
+        AND: [{ OR: [
+          { metadataJson: { path: ['authority'], equals: 'REIMBURSEMENT_APPROVAL' } },
+          { metadataJson: { path: ['authority'], equals: 'REIMBURSEMENT_CANCELLATION' } },
+        ] }],
+      }, select: { id: true } });
+      const where = { ...scope,
+        actorType: { in: ['USER', 'CRM_CUSTOMER'] as Array<'USER' | 'CRM_CUSTOMER'> },
+        action: { notIn: AUTOMATIC_EXPENSE_HISTORY_ACTIONS },
+        NOT: { action: { startsWith: 'journey.' } },
+        ...(projected.length ? { id: { notIn: projected.map((row) => row.id) } } : {}),
+      };
+      const pageSize = 20;
+      const [rows, total] = await Promise.all([
+        client.auditLog.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize,
+          select: { id: true, action: true, result: true, actorType: true, createdAt: true, metadataJson: true, actor: { select: { displayName: true } } } }),
+        client.auditLog.count({ where }),
+      ]);
+      return { data: rows.map((row) => ({
+        id: row.id, action: row.action, result: row.result, actorType: row.actorType,
+        actorDisplayName: row.actorType === 'USER' ? row.actor?.displayName ?? null : null,
+        createdAt: row.createdAt.toISOString(), changes: readExpenseHistoryChanges(row.metadataJson),
+      })), total, page, pageSize };
+    }, { isolationLevel: 'RepeatableRead' });
   }
 
   async findExpenseIdForSubstituteReceipt(companyId: string, evidenceId: string): Promise<string | null> {

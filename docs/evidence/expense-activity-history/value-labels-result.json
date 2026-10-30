@@ -1,0 +1,11 @@
+{
+  "pass": true,
+  "checks": [
+    "explicit old/new labels",
+    "no arrows in history",
+    "desktop columns",
+    "mobile stacked values",
+    "no horizontal overflow",
+    "close"
+  ]
+}

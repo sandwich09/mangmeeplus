@@ -1,0 +1,35 @@
+▶ UpdateExpenseDraftUseCase optimistic concurrency
+  ✔ requires the loaded version on interactive routes before any mutation (1.165583ms)
+  ✔ persists replacement lines only inside the header CAS transaction (2.945875ms)
+✔ UpdateExpenseDraftUseCase optimistic concurrency (4.447084ms)
+▶ UpdateExpenseDraftUseCase LINE draft collection authority
+  ✔ lets the originating LINE user persist source facts and continuation state together (0.38975ms)
+  ✔ does not expose the internal authority to a watchdog-authenticated HTTP caller (0.125917ms)
+  ✔ does not let a different LINE user update another user’s draft (0.061916ms)
+  ✔ does not let LINE mutate the record after it leaves DRAFT (0.055375ms)
+  ✔ keeps reviewer-only tax fields closed during LINE collection (0.090542ms)
+✔ UpdateExpenseDraftUseCase LINE draft collection authority (0.957208ms)
+▶ expense activity persisted changes
+  ✔ normalizes equal decimals and dates, ignores private fields and snapshots absent in legacy rows (0.327292ms)
+  ✔ records added and removed line values without inventing an old value (0.086458ms)
+  ✔ captures persisted values after the header lock and replacement lines in the same transaction (0.886542ms)
+  ✔ includes printed vendor identity and resolved names, and ignores renames of unchanged references (0.077791ms)
+  ✔ keeps suppressed preview writes free of generic audit and history callbacks (0.066583ms)
+  ✔ passes persisted changes to the caller-owned LINE audit without writing a generic duplicate (0.667958ms)
+  ✔ propagates transactional audit failure through the write transaction (0.187166ms)
+  ✔ includes actual persisted generic update changes without moving the audit into the transaction (0.0765ms)
+✔ expense activity persisted changes (2.476958ms)
+▶ expense activity history authorization and projection
+  ✔ reuses detail permission, branch, own/related and company checks before reading any audit rows (0.847166ms)
+  ✔ rejects commercial access loss before querying document activity (0.178667ms)
+  ✔ returns the actual expense creator independently of viewer, returned events, and empty history pages (0.652792ms)
+  ✔ bounds targets to this company and its persisted payment/substitute IDs, and strips private audit data (0.559334ms)
+✔ expense activity history authorization and projection (3.31875ms)
+ℹ tests 19
+ℹ suites 4
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 506.968583

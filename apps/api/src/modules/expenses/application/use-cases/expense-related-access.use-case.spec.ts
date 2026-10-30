@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { DISBURSEMENT_VOUCHER_NOTICE_WORDS } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, NotFoundException, RequestMethod } from '@nestjs/common';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
-import { GetExpenseUseCase, ListExpensesUseCase, MarkExpenseReadyUseCase } from './expense-draft.use-case';
+import { GetExpenseUseCase, GetExpenseHistoryUseCase, ListExpensesUseCase, MarkExpenseReadyUseCase } from './expense-draft.use-case';
 import { ListCompanySubstituteReceiptsUseCase } from './substitute-receipt.use-case';
 import { expenseRelatedToUserWhere, PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ListExpenseCategoriesUseCase } from './expense-upload.use-case';
@@ -2502,3 +2502,132 @@ describe('voucher account reveal HTTP boundary', () => {
     for (const purpose of ['edit', '', ['prefill'], null]) await assert.rejects(pipe.transform({ purpose }, metadata), BadRequestException);
   });
 });
+
+describe('expense activity history authorization and projection', () => {
+  it('reuses detail permission, branch, own/related and company checks before reading any audit rows', async () => {
+    let historyReads = 0;
+    let related = false;
+    const repo = {
+      findByIdWithRelations: async (companyId: string) => companyId === 'company-1' ? detail : null,
+      isUserRelatedToExpense: async () => related,
+      findMemberDisplayName: async (companyId: string, userId: string) => {
+        assert.equal(companyId, 'company-1'); assert.equal(userId, detail.createdByUserId); return 'ผู้สร้าง';
+      },
+      listExpenseHistory: async (companyId: string, expenseId: string, page: number) => {
+        historyReads++;
+        assert.equal(companyId, 'company-1'); assert.equal(expenseId, detail.id);
+        return { data: [], total: 0, page, pageSize: 20 };
+      },
+    } as any;
+    const history = new GetExpenseHistoryUseCase(new GetExpenseUseCase(repo), repo);
+    await assert.rejects(() => history.execute(ctx, detail.id), ForbiddenException);
+    await assert.rejects(() => history.execute({ ...ctx, permissions: ['expense.read_own'] }, detail.id), ForbiddenException);
+    await assert.rejects(() => history.execute({ ...ctx, companyId: 'company-2', permissions: ['expense.read'] }, detail.id), NotFoundException);
+    await assert.rejects(() => history.execute({ ...ctx, scopes: { branchIds: ['branch-2'] }, permissions: ['expense.read'] }, detail.id), ForbiddenException);
+    await assert.rejects(() => history.execute({ ...ctx, permissions: [] }, detail.id), ForbiddenException);
+    assert.equal(historyReads, 0);
+    related = true;
+    assert.equal((await history.execute(ctx, detail.id, 2)).page, 2);
+    assert.equal((await history.execute({ ...ctx, userId: detail.createdByUserId, permissions: ['expense.read_own'] }, detail.id)).page, 1);
+    assert.equal((await history.execute({ ...ctx, permissions: ['expense.read'] }, detail.id)).pageSize, 20);
+    for (const page of [0, -1, NaN, Infinity, 1.5, 100_001]) await assert.rejects(() => history.execute(ctx, detail.id, page), BadRequestException);
+    assert.equal(historyReads, 3);
+  });
+
+  it('rejects commercial access loss before querying document activity', async () => {
+    let reads = 0;
+    const repo = {
+      commercialAccessDb: { company: { findUnique: async () => ({ status: 'DISABLED', planTerm: null }) } },
+      listExpenseHistory: async () => { reads++; },
+    } as any;
+    const history = new GetExpenseHistoryUseCase(new GetExpenseUseCase(repo), repo);
+    await assert.rejects(() => history.execute({ ...ctx, permissions: ['expense.read'] }, detail.id), ForbiddenException);
+    assert.equal(reads, 0);
+  });
+
+  it('returns the actual expense creator independently of viewer, returned events, and empty history pages', async () => {
+    let creatorName: string | null = 'ผู้สร้างจริง';
+    const creatorLookups: string[] = [];
+    const repo = {
+      findByIdWithRelations: async () => detail,
+      listExpenseHistory: async (_companyId: string, _expenseId: string, page: number) => ({
+        data: page === 1 ? [{ actorDisplayName: 'คนแก้ไขล่าสุด' }] : [], total: 1, page, pageSize: 20,
+      }),
+      findMemberDisplayName: async (companyId: string, userId: string) => {
+        assert.equal(companyId, 'company-1'); creatorLookups.push(userId); return creatorName;
+      },
+    } as any;
+    const history = new GetExpenseHistoryUseCase(new GetExpenseUseCase(repo), repo);
+    const viewer = { ...ctx, permissions: ['expense.read'] };
+    assert.equal((await history.execute(viewer, detail.id, 1)).creatorDisplayName, 'ผู้สร้างจริง');
+    assert.equal((await history.execute(viewer, detail.id, 4)).creatorDisplayName, 'ผู้สร้างจริง');
+    assert.deepEqual(creatorLookups, [detail.createdByUserId, detail.createdByUserId]);
+    assert.notEqual(detail.createdByUserId, viewer.userId);
+    creatorName = null;
+    assert.equal((await history.execute(viewer, detail.id, 4)).creatorDisplayName, null);
+  });
+
+  it('bounds targets to this company and its persisted payment/substitute IDs, and strips private audit data', async () => {
+    let query: any;
+    let countWhere: any;
+    const client: any = {
+      expensePayment: { findMany: async ({ where, select }: any) => {
+        assert.deepEqual(where, { companyId: 'company-1', expenseId: 'expense-1' }); assert.deepEqual(select, { id: true }); return [{ id: 'payment-1' }];
+      } },
+      expenseSubstituteReceiptEvidence: { findMany: async ({ where }: any) => {
+        assert.deepEqual(where, { companyId: 'company-1', expenseId: 'expense-1' }); return [{ id: 'evidence-1' }];
+      } },
+      auditLog: {
+        findMany: async (args: any) => {
+          if (Object.keys(args.select).length === 1) {
+            assert.equal(args.where.companyId, 'company-1');
+            assert.deepEqual(args.where.OR, [
+              { targetType: 'expense_record', targetId: 'expense-1' },
+              { targetType: 'expense_payment', targetId: { in: ['payment-1'] } },
+              { targetType: 'expense_substitute_receipt', targetId: { in: ['evidence-1'] } },
+            ]);
+            assert.deepEqual(args.where.action, { in: ['expense.confirm', 'expense.void'] });
+            assert.deepEqual(args.where.AND, [{ OR: [
+              { metadataJson: { path: ['authority'], equals: 'REIMBURSEMENT_APPROVAL' } },
+              { metadataJson: { path: ['authority'], equals: 'REIMBURSEMENT_CANCELLATION' } },
+            ] }]);
+            return [{ id: 'automatic-reimbursement' }];
+          }
+          query = args; return [
+          { id: 'audit-1', action: 'expense.review.update', result: 'SUCCESS', actorType: 'USER', actor: { displayName: 'ผู้ตรวจ', email: 'secret@example.com' },
+            createdAt: new Date(VERSION_FOR_HISTORY), requestId: 'private', metadataJson: { token: 'secret', expenseHistoryChanges: { note: { before: null, after: 'saved' } } } },
+          { id: 'audit-2', action: 'expense.upload.complete', result: 'FAILED', actorType: 'CRM_CUSTOMER', actor: { displayName: 'do not expose' }, createdAt: new Date(VERSION_FOR_HISTORY), metadataJson: { before: 'legacy' } },
+        ]; },
+        count: async ({ where }: any) => { countWhere = where; return 22; },
+      },
+      $transaction: async (read: (tx: any) => Promise<unknown>, options: unknown) => {
+        assert.deepEqual(options, { isolationLevel: 'RepeatableRead' });
+        return read(client);
+      },
+    };
+    const result = await new PrismaExpenseRepository({ client } as any).listExpenseHistory('company-1', 'expense-1', 2);
+    assert.deepEqual(query.where, { companyId: 'company-1', OR: [
+      { targetType: 'expense_record', targetId: 'expense-1' },
+      { targetType: 'expense_payment', targetId: { in: ['payment-1'] } },
+      { targetType: 'expense_substitute_receipt', targetId: { in: ['evidence-1'] } },
+    ], actorType: { in: ['USER', 'CRM_CUSTOMER'] },
+      action: { notIn: ['tax.document_tax.finalize', 'expense.substitute_receipt.source_refreshed', 'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition'] },
+      NOT: { action: { startsWith: 'journey.' } }, id: { notIn: ['automatic-reimbursement'] },
+    });
+    assert.deepEqual(countWhere, query.where);
+    for (const humanAction of ['expense.create', 'expense.line_draft.answer', 'expense.line_ai.draft_update',
+      'expense.evidence.review', 'expense.confirm', 'expense.void', 'expense.upload.complete', 'expense.substitute_receipt.certify']) {
+      assert.ok(!query.where.action.notIn.includes(humanAction), humanAction);
+    }
+    assert.deepEqual(query.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
+    assert.equal(query.skip, 20); assert.equal(query.take, 20);
+    assert.deepEqual(query.select.actor, { select: { displayName: true } });
+    assert.deepEqual(Object.keys(result.data[0]!).sort(), ['action', 'actorDisplayName', 'actorType', 'changes', 'createdAt', 'id', 'result']);
+    assert.deepEqual(result.data[0]!.changes, [{ field: 'note', before: null, after: 'saved' }]);
+    assert.equal(result.data[1]!.actorDisplayName, null); assert.deepEqual(result.data[1]!.changes, []);
+    assert.equal(result.total, 22); assert.equal(result.page, 2); assert.equal(result.pageSize, 20);
+    assert.ok(!JSON.stringify(result).includes('secret'));
+    assert.ok(!JSON.stringify(result).includes('private'));
+  });
+});
+const VERSION_FOR_HISTORY = '2026-10-30T10:00:00.000Z';

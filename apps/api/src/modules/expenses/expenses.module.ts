@@ -8,6 +8,7 @@ import { PrismaExpenseRepository } from './infrastructure/prisma-expense.reposit
 import {
   CreateExpenseDraftUseCase,
   GetExpenseUseCase,
+  GetExpenseHistoryUseCase,
   ListExpensesUseCase,
   UpdateExpenseDraftUseCase,
   DecideExpenseInputVatUseCase,
@@ -175,6 +176,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     RequestReceiptExtractionUseCase,
     CreateExpenseDraftUseCase,
     GetExpenseUseCase,
+    GetExpenseHistoryUseCase,
     ListExpensesUseCase,
     UpdateExpenseDraftUseCase,
     DecideExpenseInputVatUseCase,

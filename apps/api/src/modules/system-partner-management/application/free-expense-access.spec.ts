@@ -108,10 +108,10 @@ describe('free expense access', () => {
     assert.deepEqual(freeExpenseDraftPermissions(['expense.update', 'expense.confirm', 'expense.create', 'expense.review', 'expense.receipt.upload', 'ledger.read']),
       ['expense.update', 'expense.receipt.upload']);
     const prefix = '/v1/companies/co/expenses';
-    for (const [method, suffix] of [['GET', ''], ['GET', '/expense-id'], ['PATCH', '/expense-id'], ['POST', '/expense-id/totals-preview'], ['POST', '/receipt-uploads'], ['POST', '/capture-groups/group/files/file/complete'], ['POST', '/capture-groups/group/facts']]) {
+    for (const [method, suffix] of [['GET', ''], ['GET', '/expense-id'], ['GET', '/expense-id/history?page=2'], ['PATCH', '/expense-id'], ['POST', '/expense-id/totals-preview'], ['POST', '/receipt-uploads'], ['POST', '/capture-groups/group/files/file/complete'], ['POST', '/capture-groups/group/facts']]) {
       assert.equal(isFreeExpenseDraftRoute(method!, prefix + suffix), true, method + suffix);
     }
-    for (const [method, suffix] of [['POST', ''], ['POST', '/expense-id/confirm'], ['POST', '/expense-id/payment'], ['POST', '/expense-id/mark-ready'], ['POST', '/capture-groups/group/handoff'], ['POST', '/capture-groups/group/review'], ['POST', '/capture-groups/group/allocations/a/accept'], ['GET', '/shared-evidence'], ['POST', '/accountant-package'], ['PATCH', '/expense-id/review-fields'], ['DELETE', '/expense-id']]) {
+    for (const [method, suffix] of [['POST', ''], ['POST', '/expense-id/history'], ['GET', '/expense-id/history/extra'], ['POST', '/expense-id/confirm'], ['POST', '/expense-id/payment'], ['POST', '/expense-id/mark-ready'], ['POST', '/capture-groups/group/handoff'], ['POST', '/capture-groups/group/review'], ['POST', '/capture-groups/group/allocations/a/accept'], ['GET', '/shared-evidence'], ['POST', '/accountant-package'], ['PATCH', '/expense-id/review-fields'], ['DELETE', '/expense-id']]) {
       assert.equal(isFreeExpenseDraftRoute(method!, prefix + suffix), false, method + suffix);
     }
   });

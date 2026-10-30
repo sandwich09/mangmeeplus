@@ -75,7 +75,7 @@ export function isFreeExpenseDraftRoute(method: string, path: string): boolean {
   const expense = `${base}/expenses`;
   if (new RegExp(`^${expense}/(?:shared-evidence|accountant-package)$`).test(clean)) return false;
   if (method === 'GET') return new RegExp(`^${base}/(?:branches|expense-categories|identity|vat-registration|settings/address-master)$`).test(clean)
-    || new RegExp(`^${expense}(?:/(?:capture-policy|capture-capability|capture-groups(?:/[^/]+(?:/read-status)?)?|[^/]+(?:/read-status)?))?$`).test(clean)
+    || new RegExp(`^${expense}(?:/(?:capture-policy|capture-capability|capture-groups(?:/[^/]+(?:/read-status)?)?|[^/]+(?:/(?:read-status|history))?))?$`).test(clean)
     || new RegExp(`^${base}/attachments/[^/]+/download-url$`).test(clean);
   if (method === 'PATCH') return new RegExp(`^${expense}/[^/]+$`).test(clean);
   if (method !== 'POST') return false;

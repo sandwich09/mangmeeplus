@@ -41,6 +41,7 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { MangmeeBadge, MangmeeCard, MangmeePage, MetricGrid, cx } from '@/common/components/mangmee';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
+import { ExpenseHistoryModal } from './ExpenseHistoryModal';
 import { useToast } from '@/common/components/toast';
 import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
@@ -217,6 +218,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const [ocrTotalReason, setOcrTotalReason] = useState('');
   const [showReject, setShowReject] = useState(false);
   const [showVoid, setShowVoid] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [afterCorrectionFocus, setAfterCorrectionFocus] = useState<{ paymentId?: string } | null>(null);
   const dialogOpenerRef = useRef<HTMLElement | null>(null);
@@ -1381,7 +1383,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
     disabled={aiReading || stepSaving || actionLoading} aria-busy={Boolean(aiReading || stepSaving || actionLoading)}
     onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>;
   // The rare actions: the way back first, the red ones last. One entry is shown as itself, none draws nothing.
-  const menuEntries = guided || approverOnlyActions || canRestartReview || (canCancelFinancialExpense && caps.canVoid) ? [
+  const menuEntries = [
+    <button key="history" type="button" className={ghostClass} onClick={() => setShowHistory(true)}>ดูประวัติ</button>,
+    ...(guided || approverOnlyActions || canRestartReview || (canCancelFinancialExpense && caps.canVoid) ? [
     canEditLinkedSubstitute && <button key="substitute" type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt(true)}>{stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบรับรองแทนใบเสร็จ'}</button>,
     canCheckDuplicates && <button key="duplicates" type="button" className={ghostClass} onClick={checkDuplicates} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.check_duplicate', locale)}</button>,
     canRestartReview && <button key="restart" type="button" className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่แล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>,
@@ -1398,7 +1402,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
     // Invalid drafts remain cancellable on every step.
     (guided || approverOnlyActions) && canReject && <button key="reject" type="button" className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t(showReject && actionLoading ? 'expenses.rejecting' : 'expenses.reject', locale)}</button>,
     canCancelFinancialExpense && caps.canVoid && <button key="void" type="button" className={dangerClass} onClick={openVoid} disabled={actionLoading} aria-busy={false}>{t('expenses.void_document', locale)}</button>,
-  ].filter(Boolean) : [];
+  ] : []),
+  ].filter(Boolean);
   // The result reuses the list's permission and draft-state gate for deletion.
   const deleteShown = canDelete;
   const certificateLineShown = !freeExpenseDrafts && systemCertificatesAvailable && !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
@@ -1407,8 +1412,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const certificateBlock = <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{issuedCertificateActions}</div>;
   const secondaryActions = (menuEntries.length > 0 || deleteShown) && <>
       {/* Hand-made on purpose: the shared MoreActions brings a CSS module, and the pinned rendered spec loads this page without a loader for one. */}
-      {menuEntries.length > 1 || (canCancelFinancialExpense && caps.canVoid) ? (
-        <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+      {menuEntries.length > 0 ? (
+        <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
           <summary className={cx(ghostClass, 'h-11 sm:h-10 cursor-pointer list-none')} style={{ width: '100%' }}>เพิ่มเติม</summary>
           <div className="absolute right-0 top-full z-20 mt-2 flex min-w-48 flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">{menuEntries}</div>
         </details>
@@ -2011,6 +2016,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   return (
     <ExpenseCertificateHistory companyId={companyId} expenseId={expenseId} revision={`${detail.updatedAt}:${whtHandoff?.certificateId ?? ''}`} canRead={permissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission))} confirmed={isConfirmed}>
       {confirmDialog}
+      {showHistory && <ExpenseHistoryModal key={`${companyId}:${expenseId}`} companyId={companyId} expenseId={expenseId} expenseNumber={firstFilled(detail.expenseNumber) ?? 'ยังไม่มีเลขรายจ่าย'} onClose={() => setShowHistory(false)} />}
       <MangmeePage className="mangmee-flat" back={backLink} title={pageTitle} description={pageDescription}
         actions={<fieldset className="w-full min-w-0 sm:w-auto" disabled={aiReading} inert={aiReading}><ActionGroup className={cx('!grid !grid-flow-col !auto-cols-fr', isConfirmed && detail.correctionCapabilities?.canReopen && secondaryActions ? 'sm:min-w-72' : 'sm:min-w-32')}>
           {isConfirmed && detail.correctionCapabilities?.canReopen && <button type="button" className={ghostClass} disabled={actionLoading} aria-busy={Boolean(actionLoading)} onClick={event => { rememberDialogOpener(event.currentTarget); setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}

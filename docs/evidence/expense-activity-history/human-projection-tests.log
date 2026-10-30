@@ -1,0 +1,45 @@
+▶ UpdateExpenseDraftUseCase optimistic concurrency
+  ✔ requires the loaded version on interactive routes before any mutation (2.022125ms)
+  ✔ persists replacement lines only inside the header CAS transaction (6.444458ms)
+✔ UpdateExpenseDraftUseCase optimistic concurrency (9.150041ms)
+▶ UpdateExpenseDraftUseCase LINE draft collection authority
+  ✔ lets the originating LINE user persist source facts and continuation state together (0.974ms)
+  ✔ does not expose the internal authority to a watchdog-authenticated HTTP caller (0.285292ms)
+  ✔ does not let a different LINE user update another user’s draft (0.0745ms)
+  ✔ does not let LINE mutate the record after it leaves DRAFT (0.064ms)
+  ✔ keeps reviewer-only tax fields closed during LINE collection (0.104125ms)
+✔ UpdateExpenseDraftUseCase LINE draft collection authority (1.768375ms)
+▶ expense activity persisted changes
+  ✔ normalizes equal decimals and dates, ignores private fields and snapshots absent in legacy rows (0.514459ms)
+  ✔ records added and removed line values without inventing an old value (0.285208ms)
+  ✔ captures persisted values after the header lock and replacement lines in the same transaction (1.791917ms)
+  ✔ includes printed vendor identity and resolved names, and ignores renames of unchanged references (0.142417ms)
+  ✔ keeps suppressed preview writes free of generic audit and history callbacks (0.100625ms)
+  ✔ passes persisted changes to the caller-owned LINE audit without writing a generic duplicate (0.714375ms)
+  ✔ propagates transactional audit failure through the write transaction (0.371917ms)
+  ✔ includes actual persisted generic update changes without moving the audit into the transaction (0.087375ms)
+✔ expense activity persisted changes (4.278541ms)
+▶ expense related-view ABAC
+  ✔ allows a persisted related actor and denies an unrelated member (1.102041ms)
+  ✔ passes related-user scope to the list repository instead of widening to company rows (0.095291ms)
+  ✔ scopes the substitute-receipt hub to all persisted relations, not only the payer (0.107625ms)
+  ✔ covers direct, payment, substitute-receipt, and source-claim actors in the repository predicate (0.164833ms)
+  ✔ lets a related viewer load the category labels needed by the read-only detail (0.085ms)
+  ✔ keeps branch, relation, and month OR clauses isolated under AND (0.262083ms)
+  ✔ orders upload-range lists by newest intake before applying the page limit (0.423666ms)
+  ✔ keeps document-date ordering for callers without a dedicated upload-date lens (0.124375ms)
+✔ expense related-view ABAC (2.761459ms)
+▶ expense activity history authorization and projection
+  ✔ reuses detail permission, branch, own/related and company checks before reading any audit rows (0.488958ms)
+  ✔ rejects commercial access loss before querying document activity (0.242625ms)
+  ✔ returns the actual expense creator independently of viewer, returned events, and empty history pages (0.2355ms)
+  ✔ bounds targets to this company and its persisted payment/substitute IDs, and strips private audit data (0.63075ms)
+✔ expense activity history authorization and projection (1.778792ms)
+ℹ tests 27
+ℹ suites 5
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 692.971459

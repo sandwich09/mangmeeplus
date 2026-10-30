@@ -35,6 +35,7 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 import {
   CreateExpenseDraftUseCase,
   GetExpenseUseCase,
+  GetExpenseHistoryUseCase,
   ListExpensesUseCase,
   UpdateExpenseDraftUseCase,
   ConfirmExpenseUseCase,
@@ -117,6 +118,7 @@ export class ExpenseController {
   constructor(
     private readonly create: CreateExpenseDraftUseCase,
     private readonly get: GetExpenseUseCase,
+    private readonly history: GetExpenseHistoryUseCase,
     private readonly decideVat: DecideExpenseInputVatUseCase,
     private readonly list: ListExpensesUseCase,
     private readonly update: UpdateExpenseDraftUseCase,
@@ -325,6 +327,12 @@ export class ExpenseController {
   @RequireAnyPermission('expense.review')
   decideInputVat(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: DecideExpenseInputVatDto) {
     return this.decideVat.execute(ctx, expenseId, body);
+  }
+
+  @Get(':expenseId/history')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review', 'expense.confirm', 'expense.receipt.upload', 'expense.receipt.line_upload')
+  getHistory(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Query('page') page?: string) {
+    return this.history.execute(ctx, expenseId, page === undefined ? 1 : Number(page));
   }
 
   @Get(':expenseId/payment-voucher.pdf')

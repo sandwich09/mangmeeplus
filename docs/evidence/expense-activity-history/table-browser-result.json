@@ -1,0 +1,26 @@
+{
+  "pass": true,
+  "checks": [
+    "history loads only when opened",
+    "loading without premature unknown creator",
+    "actual creator in title independent of first history page",
+    "one three-column table per save with all three changed fields",
+    "no arrows or repeated old-new value labels",
+    "action-only event and denied result",
+    "page retry preserves entries and creator, deduplicates and reaches end",
+    "Escape and focus restore",
+    "first load error and retry",
+    "forbidden hides content and creator",
+    "empty feed retains actual creator",
+    "missing creator is explicit after successful response",
+    "permission revocation during pagination clears history and creator",
+    "mobile table fits 390px viewport",
+    "long names and unbroken cell values fit mobile; VAT still formatted",
+    "no mutation requests or page errors",
+    "history preserves unsaved expense edit",
+    "360/768/1536 layout bounds and shared button heights"
+  ],
+  "historyCalls": 26,
+  "mutations": [],
+  "errors": []
+}

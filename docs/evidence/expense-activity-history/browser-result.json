@@ -1,0 +1,24 @@
+{
+  "pass": true,
+  "checks": [
+    "lazy fetch",
+    "loading",
+    "actor/action/Bangkok time",
+    "before-after",
+    "failed event",
+    "pagination + dedup",
+    "next page error retains history + retry",
+    "Escape + focus restore",
+    "first load error + retry",
+    "forbidden",
+    "empty",
+    "mobile bounds",
+    "long text bounds",
+    "close",
+    "no mutation requests",
+    "no page errors"
+  ],
+  "historyCalls": 15,
+  "mutations": [],
+  "errors": []
+}

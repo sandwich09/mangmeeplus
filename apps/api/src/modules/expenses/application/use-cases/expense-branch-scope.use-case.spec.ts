@@ -657,6 +657,7 @@ describe('manual web upload non-expense workflow guard', () => {
     assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.sourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
     assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.reason, 'Verified against the final supplier bill.');
     assert.deepEqual(auditEntries[0].metadataJson, {
+      expenseHistoryChanges: {},
       classificationOverride: {
         detectedDocumentKind: 'QUOTATION',
         sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',

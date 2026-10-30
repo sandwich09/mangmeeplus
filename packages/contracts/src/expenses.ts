@@ -2052,3 +2052,16 @@ export type ExpenseInputVatRightView = {
   decisionBlocker?: 'tax_period_locked' | 'input_vat_posted_journal_immutable' | null;
   status: InputVatClaimStatus; fixed: boolean; reasonCode: string | null; latestDecision: ExpenseInputVatDecisionView | null;
 };
+
+/** Record-scoped activity; generic audit metadata and actor identifiers are never exposed. */
+export type ExpenseHistoryChange = { field: string; before: string | null; after: string | null };
+export type ExpenseHistoryEntry = {
+  id: string;
+  action: string;
+  result: 'SUCCESS' | 'DENIED' | 'FAILED';
+  actorType: 'USER' | 'SYSTEM' | 'SERVICE' | 'CRM_CUSTOMER';
+  actorDisplayName: string | null;
+  createdAt: string;
+  changes: ExpenseHistoryChange[];
+};
+export type ExpenseHistoryResult = { data: ExpenseHistoryEntry[]; total: number; page: number; pageSize: number; creatorDisplayName: string | null };

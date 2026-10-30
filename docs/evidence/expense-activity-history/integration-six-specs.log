@@ -1,0 +1,660 @@
+▶ ListExpensesUseCase branch scope
+  ✔ passes the caller scope to the repository (0.914375ms)
+  ✔ rejects an explicit branch filter outside the scope (0.248875ms)
+  ✔ allows an explicit branch filter inside the scope (0.056416ms)
+  ✔ clamps oversized pagination before querying the repository (0.044083ms)
+✔ ListExpensesUseCase branch scope (1.587042ms)
+▶ CreateExpenseDraftUseCase branch tagging
+  ✔ defaults the only available scoped branch (1.621292ms)
+  ✔ does not guess the first scoped branch when more than one is available (0.110083ms)
+  ✔ requires unrestricted creators to select a source branch (0.100709ms)
+  ✔ preserves an explicitly selected branch without inventing a reviewer VAT snapshot (0.284958ms)
+  ✔ stores a snapshot when the creator explicitly supplies the document VAT source (0.819208ms)
+  ✔ rejects an explicit branch outside the scope (0.16275ms)
+✔ CreateExpenseDraftUseCase branch tagging (3.303ms)
+▶ GetExpenseUseCase branch scope
+  ✔ hides a record from another branch (0.120542ms)
+  ✔ shows company-central records to restricted scopes (0.054292ms)
+  ✔ allows the exact selected payer to open a non-owned signing task (0.040375ms)
+  ✔ lets a creator reopen only the draft they created (0.058708ms)
+  ✔ lets an expense confirmer read the branch-scoped record needed for the decision (0.031ms)
+✔ GetExpenseUseCase branch scope (0.3515ms)
+▶ UpdateExpenseDraftUseCase branch scope
+  ✔ blocks mutating a record from another branch (0.709542ms)
+  ✔ blocks re-tagging a record to an out-of-scope branch (0.045791ms)
+  ✔ keeps document, tax, and accounting classification fields finance-only (0.132625ms)
+  ✔ blocks an API bypass that keeps a Tax Code while classifying the draft as a receipt (0.161125ms)
+  ✔ blocks a document-only API bypass when persisted Tax Code snapshots would become stale (0.094375ms)
+✔ UpdateExpenseDraftUseCase branch scope (1.183875ms)
+▶ expense Tax Code confirmation guard
+  ✔ confirms at NEEDS_REVIEW without requiring a shop VAT answer (1.406666ms)
+  ✔ confirms at NON_CLAIMABLE without requiring a shop VAT answer (0.151959ms)
+  ✔ refuses the same waiting expense at CLAIMABLE without the seller tax number (0.248792ms)
+  ✔ refuses CLAIMABLE confirmation when the dated shop VAT answer is unknown (0.177917ms)
+  ✔ requires a VAT Tax Code snapshot only when the right is CLAIMABLE (0.164375ms)
+  ✔ never confirms a CLAIMABLE substitute certificate even with supporting-only evidence (0.080084ms)
+  ✔ blocks confirmation while VAT source reconciliation needs review, naming the line to check (0.40925ms)
+  ✔ lets whoever may confirm accept the document VAT total, so nobody is stranded (0.626541ms)
+  ✔ refuses to hang the difference on a line that bears no VAT (0.760209ms)
+  ✔ lets a reviewer confirm on the document VAT total and writes the decision to audit (0.68925ms)
+  ✔ rejects confirmation when a receipt still has a Tax Code snapshot (0.303875ms)
+  ✔ emits the finalized tax source ledger metadata after confirmation (0.462959ms)
+  ✔ carries zero-treatment meaning into the final Tax Code resolution clone (0.439541ms)
+  ✔ emits a category override event when the confirmed category is not the AI suggestion (0.564917ms)
+  ✔ rejects a usable tax-invoice header while its domestic Tax Code evidence is not verified (0.150541ms)
+  ✔ rethrows the original atomic-confirmation failure without a second number mutation (0.1115ms)
+✔ expense Tax Code confirmation guard (6.961792ms)
+▶ manual web upload non-expense workflow guard
+  ✔ exposes the explicit override endpoint only to expense reviewers (0.079125ms)
+  ✔ guards shared accounting evidence with its dedicated permission (0.022208ms)
+  ✔ exposes a reviewer mark-ready route without weakening the own-update route (0.035958ms)
+  ✔ blocks sending an unresolved non-expense draft for confirmation (0.249791ms)
+  ✔ blocks direct confirmation for an unresolved non-expense classification (0.079625ms)
+  ✔ allows finance to explicitly override the classification while preserving its history (0.119834ms)
+  ✔ does not treat an incidental source document field as an override (0.053041ms)
+  ✔ requires reviewer permission, a reviewed document type, and a bounded reason for override (0.974417ms)
+  ✔ allows the reviewed draft to advance after the explicit override (0.206917ms)
+  ✔ allows confirmation after a valid finance resolution and emits one outbox event (0.308542ms)
+✔ manual web upload non-expense workflow guard (2.241458ms)
+▶ explicit document review acknowledgement
+  ✔ EVID-1 stores original-paper acknowledgement and note in review JSON and accepts a later selected image (0.7555ms)
+  ✔ persists an unchanged explicit review with source identity and audit; ordinary saves cannot create it (0.420375ms)
+  ✔ saves NOT_AVAILABLE without a document type and fixes supporting-only tax evidence (0.286833ms)
+  ✔ saves LOST without a document type and fixes supporting-only tax evidence (0.189709ms)
+  ✔ persists a pending draft without approving it, and permits review after completing its facts (0.326417ms)
+  ✔ rejects foreign or removed selected files, and invalidates review only after meaningful source edits (0.262833ms)
+  ✔ rejects unresolved/invalid classifications, missing revision, non-reviewers and stale saves without acknowledging (0.431625ms)
+✔ explicit document review acknowledgement (2.793042ms)
+▶ expense reviewer requests
+  ✔ reuses effective confirm permission and expense branch candidates, excluding the sender (0.106833ms)
+  ✔ stores the selected person, sender and time and sends exactly one web notice to that person (0.178334ms)
+  ✔ refuses an ineligible recipient or the sender before storing or notifying (0.085875ms)
+✔ expense reviewer requests (0.399584ms)
+▶ UpdateExpenseDraftUseCase optimistic concurrency
+  ✔ requires the loaded version on interactive routes before any mutation (1.271458ms)
+  ✔ persists replacement lines only inside the header CAS transaction (3.886792ms)
+✔ UpdateExpenseDraftUseCase optimistic concurrency (5.526834ms)
+▶ UpdateExpenseDraftUseCase LINE draft collection authority
+  ✔ lets the originating LINE user persist source facts and continuation state together (0.582875ms)
+  ✔ does not expose the internal authority to a watchdog-authenticated HTTP caller (0.136083ms)
+  ✔ does not let a different LINE user update another user’s draft (0.066459ms)
+  ✔ does not let LINE mutate the record after it leaves DRAFT (0.0605ms)
+  ✔ keeps reviewer-only tax fields closed during LINE collection (0.10375ms)
+✔ UpdateExpenseDraftUseCase LINE draft collection authority (1.193625ms)
+▶ expense activity persisted changes
+  ✔ normalizes equal decimals and dates, ignores private fields and snapshots absent in legacy rows (0.3525ms)
+  ✔ records added and removed line values without inventing an old value (0.091792ms)
+  ✔ captures persisted values after the header lock and replacement lines in the same transaction (0.903375ms)
+  ✔ includes printed vendor identity and resolved names, and ignores renames of unchanged references (0.073042ms)
+  ✔ keeps suppressed preview writes free of generic audit and history callbacks (0.068833ms)
+  ✔ passes persisted changes to the caller-owned LINE audit without writing a generic duplicate (0.665166ms)
+  ✔ propagates transactional audit failure through the write transaction (0.189708ms)
+  ✔ includes actual persisted generic update changes without moving the audit into the transaction (0.078958ms)
+✔ expense activity persisted changes (2.516584ms)
+▶ preview delivery cleanup across local and Redis stores
+  ✔ still checks the attached Redis preview after removing the matching local copy (0.42ms)
+✔ preview delivery cleanup across local and Redis stores (0.722916ms)
+▶ LINE draft edit — frozen security eval
+  ✔ does not return a stored preview after permission, branch or source revision changes (15.099166ms)
+  ✔ refuses an append that would exceed the note limit instead of previewing a truncated value (0.12725ms)
+  ✔ takes the duplicate lock before a confirmed write and remembers the post-reconciliation revision (10.635459ms)
+  ✔ rechecks applied-memory permission, source and exact committed revision without another write (0.590875ms)
+  ✔ keeps legacy and foreign applied memory from returning stored financial facts (0.359ms)
+  ✔ executes every frozen case, and none of them writes (5.243583ms)
+  ✔ keys the pending preview by company AND chat, and by nothing else (10.50225ms)
+  ✔ subtracts a charge line's own discount from the charges total (0.209334ms)
+  ✔ answers a second tap as already applied, not as expired (0.394ms)
+  ✔ has a runner for every frozen case and no runner without one (0.064542ms)
+✔ LINE draft edit — frozen security eval (43.494458ms)
+▶ SEC-04 exact preview binding
+  ✔ serializes preview replacement against claims across two store workers (0.161125ms)
+  ✔ refuses an old card confirm/cancel after a newer preview and accepts only the current id (0.351834ms)
+  ✔ prevents a new preview from replacing an atomically claimed card until mutation finishes (0.347208ms)
+  ✔ rechecks permission and record revision before canceling the exact preview (0.151416ms)
+✔ SEC-04 exact preview binding (1.054625ms)
+▶ LINE vendor counterparty autosave parity
+  ✔ runs eligible vendor autosave only after confirmed expense commit and links by committed revision (0.347917ms)
+  ✔ keeps the expense edit successful and labels a post-save link CAS failure accurately (0.235333ms)
+✔ LINE vendor counterparty autosave parity (0.6095ms)
+▶ Round 2 A expense final-action confirm boundary
+  ✔ MARK_READY: previews using web eligibility without business or audit writes, then applies once with the user context (2.997916ms)
+  ✔ MARK_READY: denies missing action permission and wrong status with plain Thai, without preparing a token (1.14025ms)
+  ✔ MARK_READY: rejects stale revision and permission revocation at press time (0.522292ms)
+  ✔ CONFIRM: previews using web eligibility without business or audit writes, then applies once with the user context (1.292125ms)
+  ✔ CONFIRM: denies missing action permission and wrong status with plain Thai, without preparing a token (0.66825ms)
+  ✔ CONFIRM: rejects stale revision and permission revocation at press time (0.272042ms)
+  ✔ DELETE_DRAFT: previews using web eligibility without business or audit writes, then applies once with the user context (1.227625ms)
+  ✔ DELETE_DRAFT: denies missing action permission and wrong status with plain Thai, without preparing a token (0.226875ms)
+  ✔ DELETE_DRAFT: rejects stale revision and permission revocation at press time (0.647291ms)
+  ✔ VOID: previews using web eligibility without business or audit writes, then applies once with the user context (0.598959ms)
+  ✔ VOID: denies missing action permission and wrong status with plain Thai, without preparing a token (0.20175ms)
+  ✔ VOID: rejects stale revision and permission revocation at press time (0.218ms)
+  ✔ allows own draft deletion with expense.update but not someone else’s draft (0.22ms)
+  ✔ uses the existing VOID reason rule and asks why before offering a button (0.126166ms)
+  ✔ refuses another user/company/membership/chat, tampering, expired cards, changed lifecycle and branch scope (0.30125ms)
+  ✔ cancel and group/private guards never execute; replacement retires an older card (0.356209ms)
+  ✔ server grounding accepts only shown expense records or active/captured drafts (0.4915ms)
+  ✔ registry and adapter are preview only and always on; card has bounded labels and opaque signed buttons (0.83075ms)
+✔ Round 2 A expense final-action confirm boundary (12.534292ms)
+✔ Round 2 A: final button and its text fallback follow all required facts in a valid durable plan (2.513959ms)
+✔ Round 2 A: concurrent presses claim one preview; source changes invalidate result delivery and replay (0.396833ms)
+▶ Round 3 reimbursement and payment confirm cards
+  ✔ REIMBURSEMENT_SUBMIT: previews, calls the matching existing use-case with user authority and revision only on press, and replays once (0.5435ms)
+  ✔ REIMBURSEMENT_SUBMIT: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes (1.211292ms)
+  ✔ REIMBURSEMENT_CANCEL: previews, calls the matching existing use-case with user authority and revision only on press, and replays once (0.164917ms)
+  ✔ REIMBURSEMENT_CANCEL: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes (0.875542ms)
+  ✔ REIMBURSEMENT_APPROVE: previews, calls the matching existing use-case with user authority and revision only on press, and replays once (0.161ms)
+  ✔ REIMBURSEMENT_APPROVE: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes (1.078167ms)
+  ✔ REIMBURSEMENT_REJECT: previews, calls the matching existing use-case with user authority and revision only on press, and replays once (0.217458ms)
+  ✔ REIMBURSEMENT_REJECT: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes (0.824375ms)
+  ✔ RECORD_PAYMENT: previews, calls the matching existing use-case with user authority and revision only on press, and replays once (0.774667ms)
+  ✔ RECORD_PAYMENT: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes (1.312959ms)
+  ✔ asks one short rejection-reason question, stores no confirmable card until answered, and refuses stale answers (0.455041ms)
+  ✔ refuses invented reimbursement ids and opens only server-signed queue/notice buttons before the final confirmation (0.289833ms)
+(node:90907) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✔ Fix-up 22A: signed saved-claim submit opens the existing preview and rechecks actor, company, action and signature (8.054875ms)
+  ✔ payment defaults to outstanding and Bangkok today without asking for an optional method (0.803208ms)
+  ✔ binds the displayed receiving-account attestation and third-party acceptance to approval (0.3755ms)
+✔ Round 3 reimbursement and payment confirm cards (17.34225ms)
+✔ Round 3 payment includes the one recent chat slip and refuses a changed or foreign-chat slip before payment (0.996875ms)
+✔ Z4: payment previews show the real payment transition for full and partial payments (0.659167ms)
+✔ Round 3 concurrent approval/payment presses execute only one action (0.303625ms)
+✔ Round 3 non-eligible approver refusal names the people this claim is waiting for (0.114584ms)
+▶ Round 4 signed LINE package purchase
+  ✔ resolves tier names and current catalog prices without inventing sale availability (1.892834ms)
+  ✔ asks only the missing method, defaults the web interval and never asks for missing address/email (0.790375ms)
+  ✔ confirms through the exact web Checkout with caller ctx and quoted consent, then returns a URI and provider expiry (0.650375ms)
+  ✔ reuses an open attempt and explains a held attempt instead of opening another purchase (0.206375ms)
+  ✔ uses real web authorization for custom roles and refuses a revoked role with who-can-buy text (0.432458ms)
+  ✔ retains web hold, stale-price and end rules without claiming payment success (0.4635ms)
+  ✔ binds tokens to actor, tenant, membership, private chat, conversation epoch, quote and expiry; cancellation retires the card (1.322458ms)
+  ✔ claims concurrent confirms only once and rejects malformed controls or price questions as purchases (0.295542ms)
+✔ Round 4 signed LINE package purchase (6.116667ms)
+✔ Round 4 durable confirmation and fallback follow every quoted fact, with an exact signed control (1.134292ms)
+✔ Round 4 web resume returns only the provider-supplied Checkout expiry (0.264875ms)
+✔ Round 4 payment button remains a URI in the durable primary and a usable URL in text fallback (0.815167ms)
+✔ Round 4 uses the web default promotion and displays only quoted totals and provider expiry (0.339125ms)
+✔ G2: real four-line source refusal names the missing category and offers bounded active company choices, suggestion first (3.136792ms)
+✔ G2: every structured missing-field refusal is translated and deduplicated without codes (0.437875ms)
+✔ G2: only the linked applied category edit can re-offer a fresh round-2 confirmation card (0.550292ms)
+✔ G2: category header/line edits use existing dry-run and confirm guards and preserve money/tax fields (0.477791ms)
+✔ G2: refuses unknown, ungrounded and archived category edits including archival before confirm (0.105917ms)
+✔ LINE certificate cards display the payment share validated by the sold issuer, without a write (0.734834ms)
+▶ Fix-up 17B: request-scoped read evidence can prepare voucher and certificate cards
+  ✔ C05 reaches the 50 ทวิ issue card through separate voucher confirmation presses (29.107083ms)
+  ✔ VOUCHER_CREATE/current: accepts only the API-owned matching read before the same web guards (0.646458ms)
+  ✔ VOUCHER_CREATE/other-request: accepts only the API-owned matching read before the same web guards (0.122875ms)
+  ✔ VOUCHER_CREATE/other-company: accepts only the API-owned matching read before the same web guards (0.05975ms)
+  ✔ VOUCHER_CREATE/other-user: accepts only the API-owned matching read before the same web guards (0.043916ms)
+  ✔ VOUCHER_CREATE/other-member: accepts only the API-owned matching read before the same web guards (0.039709ms)
+  ✔ VOUCHER_CREATE/other-chat: accepts only the API-owned matching read before the same web guards (0.038917ms)
+  ✔ VOUCHER_CREATE/wrong-tool: accepts only the API-owned matching read before the same web guards (0.037084ms)
+  ✔ VOUCHER_CREATE/invented-id: accepts only the API-owned matching read before the same web guards (0.111083ms)
+  ✔ VOUCHER_CREATE/expired: accepts only the API-owned matching read before the same web guards (0.082666ms)
+  ✔ WHT_CERTIFICATE_ISSUE/current: accepts only the API-owned matching read before the same web guards (0.389875ms)
+  ✔ WHT_CERTIFICATE_ISSUE/other-request: accepts only the API-owned matching read before the same web guards (0.046625ms)
+  ✔ WHT_CERTIFICATE_ISSUE/other-company: accepts only the API-owned matching read before the same web guards (0.034042ms)
+  ✔ WHT_CERTIFICATE_ISSUE/other-user: accepts only the API-owned matching read before the same web guards (0.03225ms)
+  ✔ WHT_CERTIFICATE_ISSUE/other-member: accepts only the API-owned matching read before the same web guards (0.03275ms)
+  ✔ WHT_CERTIFICATE_ISSUE/other-chat: accepts only the API-owned matching read before the same web guards (0.030959ms)
+  ✔ WHT_CERTIFICATE_ISSUE/wrong-tool: accepts only the API-owned matching read before the same web guards (0.031959ms)
+  ✔ WHT_CERTIFICATE_ISSUE/invented-id: accepts only the API-owned matching read before the same web guards (0.032208ms)
+  ✔ WHT_CERTIFICATE_ISSUE/expired: accepts only the API-owned matching read before the same web guards (0.035959ms)
+✔ Fix-up 17B: request-scoped read evidence can prepare voucher and certificate cards (31.082166ms)
+▶ Round 5 voucher and certificate signed cards
+  ✔ VOUCHER_CREATE: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.401916ms)
+  ✔ VOUCHER_CREATE: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.903125ms)
+  ✔ VOUCHER_SUBMIT: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.227042ms)
+  ✔ VOUCHER_SUBMIT: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.586834ms)
+  ✔ VOUCHER_APPROVE: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.198666ms)
+  ✔ VOUCHER_APPROVE: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.500333ms)
+  ✔ VOUCHER_RETURN: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.199833ms)
+  ✔ VOUCHER_RETURN: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (1.751458ms)
+  ✔ VOUCHER_PAY: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.558333ms)
+  ✔ VOUCHER_PAY: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.756083ms)
+  ✔ VOUCHER_CANCEL: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.217208ms)
+  ✔ VOUCHER_CANCEL: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.46425ms)
+  ✔ WHT_CERTIFICATE_ISSUE: previews with no mutation, dispatches the web use-case with exact user ctx, and double press replays once (0.481208ms)
+  ✔ WHT_CERTIFICATE_ISSUE: missing permission, wrong status, disabled feature, revoked press authority and stale revision refuse (0.514917ms)
+  ✔ binds voucher cards to actor, tenant, membership, branch, chat, epoch, signature and payload (0.645833ms)
+  ✔ accepts any voucher.* shown tool and rejects category, expense, capture and invented voucher references (0.308708ms)
+  ✔ asks only for missing payee address, saves through existing handoff path only on press, then issues (0.567333ms)
+  ✔ asks one return/cancel reason question and refuses a stale certificate handoff answer (0.438625ms)
+✔ Round 5 voucher and certificate signed cards (9.8505ms)
+✔ Round 5 payment asks only for its missing method, preserves the date, and waits for the signed press (0.561792ms)
+✔ Round 5 voucher payment copies only this chat’s unchanged slip through the existing attach path and pays with the destination attachment (0.649708ms)
+✔ Round 5 already-issued certificate replay refuses a changed handoff; opening controls never execute it (0.333959ms)
+✔ Round 5 mixed-payee confirmation is explicit on the card and forwarded only after the human press (0.295791ms)
+✔ Z4: category selection offers one signed confirm; its press runs real category → ready → review → confirm once (5.003875ms)
+✔ R10 Q5b: category plus pending row review shares the one signed evidence-confirm card (1.939792ms)
+✔ Z4: combined category confirm rejects archived category, changed source, tampering and lost permissions before writes (9.701833ms)
+✔ H1: live evidence-review dead end becomes a signed facts card; the real web review use-case saves before real confirmation (0.721917ms)
+✔ X2: payment on an unconfirmed expense offers the real confirmation card before any payment (0.426834ms)
+✔ 8A S2: confirmation states persisted full payment and offers no second payment (0.31775ms)
+✔ 8A S2: a PAID expense reports its amount/date before preparing or validating another payment (0.209625ms)
+✔ H1: review-only permission guidance, other blockers and changed signed facts cannot review or confirm (2.194166ms)
+✔ H1: a committed review followed by a confirmation conflict reports the partial result and cannot reuse the old card (0.297792ms)
+✔ H2: every enumerated confirmation/ready/void/payment refusal gives a Thai next step without exception passthrough (0.878167ms)
+✔ H5: live unavailable PRO copy has a space and offers the nearest sellable package or the existing web package page (0.498584ms)
+✔ H1: a repaired LINE receipt source keeps its completed source state through web review and confirmation (0.7805ms)
+✔ H2: grep inventory of thrown BadRequest/Conflict codes stays covered for all four expense action use-cases and repository guards (7.416834ms)
+▶ Round 7 B team and branch human confirmation
+  ✔ EMPLOYEE_CREATE: preview has no writes; confirm calls web use-cases with caller context, double press replays (2.965292ms)
+  ✔ EMPLOYEE_CREATE: rejects stale source and lost permission at press time (0.826125ms)
+  ✔ EMPLOYEE_CREATE: binds user, company, membership, chat, epoch, payload and expiry (2.054708ms)
+  ✔ EMPLOYEE_UPDATE: preview has no writes; confirm calls web use-cases with caller context, double press replays (0.35925ms)
+  ✔ EMPLOYEE_UPDATE: rejects stale source and lost permission at press time (0.330875ms)
+  ✔ EMPLOYEE_UPDATE: binds user, company, membership, chat, epoch, payload and expiry (0.723167ms)
+  ✔ EMPLOYEE_DISABLE: preview has no writes; confirm calls web use-cases with caller context, double press replays (0.1525ms)
+  ✔ EMPLOYEE_DISABLE: rejects stale source and lost permission at press time (0.131833ms)
+  ✔ EMPLOYEE_DISABLE: binds user, company, membership, chat, epoch, payload and expiry (0.277125ms)
+  ✔ EMPLOYEE_ENABLE: preview has no writes; confirm calls web use-cases with caller context, double press replays (0.131875ms)
+  ✔ EMPLOYEE_ENABLE: rejects stale source and lost permission at press time (0.178166ms)
+  ✔ EMPLOYEE_ENABLE: binds user, company, membership, chat, epoch, payload and expiry (0.2695ms)
+  ✔ BRANCH_CREATE: preview has no writes; confirm calls web use-cases with caller context, double press replays (0.291833ms)
+  ✔ BRANCH_CREATE: rejects stale source and lost permission at press time (0.22325ms)
+  ✔ BRANCH_CREATE: binds user, company, membership, chat, epoch, payload and expiry (0.490958ms)
+  ✔ BRANCH_UPDATE: preview has no writes; confirm calls web use-cases with caller context, double press replays (0.191083ms)
+  ✔ BRANCH_UPDATE: rejects stale source and lost permission at press time (0.166875ms)
+  ✔ BRANCH_UPDATE: binds user, company, membership, chat, epoch, payload and expiry (0.42925ms)
+  ✔ rejects employee and branch capacity at preview and delegates changed capacity at press (0.536708ms)
+  ✔ surfaces the actual last-owner status use-case guard in one Thai sentence (0.287667ms)
+  ✔ asks only missing web-required data and resumes without inventing phone/identity/date (0.310416ms)
+  ✔ rejects invalid DTO fields, out-of-scope targets and immutable branch fields (0.384542ms)
+  ✔ concurrent presses reserve one action and cancellation writes nothing (0.228834ms)
+✔ Round 7 B team and branch human confirmation (12.102708ms)
+✔ Round 7 B: the real update use-case refuses self-role changes and LINE surfaces the guard (0.432416ms)
+✔ Round 7 B: re-enabling checks plan limits again inside the actual status use-case (0.18125ms)
+✔ Round 7 B: stale applied results cannot be replayed or delivered after the employee changes (0.164ms)
+✔ Round 7 B: interrupted employee provisioning resumes the same draft without creating another employee (0.346958ms)
+✔ Round 7 B: narrowed caller scope blocks an all-branch employee create before any draft is written (0.693375ms)
+✔ Y1/Y4: one signed press runs ready → web evidence review → confirm with each committed revision and offers payment (4.423875ms)
+✔ Y1: ready, review, and confirm failures stop at that step; revocation and stale cards write nothing (1.127333ms)
+✔ Y1: a successful non-category repair immediately prepares the remaining confirmation chain (0.230042ms)
+✔ Y2: a text-only draft offers only contract-valid evidence routes and pins photo/substitute choices to this draft (0.391417ms)
+✔ Exam F2: WHT evidence offers a real review-and-confirm destination, then a native photo picker without a message loop (3.953417ms)
+✔ Fix-up 23 R2: waiting saves the web evidence draft without reviewing/confirming, then offers upload for the same record (0.326791ms)
+✔ Y2: alternative proof requires a user reason, reviews through the web use-case on press, then confirms (0.466042ms)
+✔ Y1: the durable delivery plan preserves the payment-opening button with the applied confirmation proof and refuses a forged proof (1.157209ms)
+✔ Y2: a receipt attached to a text draft returns a fresh source-document confirmation card without recording review early (0.313458ms)
+✔ Fix-up 9 R4: paid wording during substitute work offers continuation through the real action service and valid delivery plan (0.780667ms)
+✔ R11 T3: payment defaults to the known linked slip date, remains editable, and falls back to Bangkok today (63.848625ms)
+✔ U1 LINE post-commit autosave skips transfer-slip type and OCR classification (0.387417ms)
+✔ Fix-up 17A: claim payout captures a claim-bound slip and only the signed card calls the existing payment use-case (0.708916ms)
+✔ Fix-up 17A: claim payout with missing destination returns one web handoff without promising payment (0.091708ms)
+✔ Fix-up 17A C01: confirm then payment retains Bangkok today and the cash method through both cards (1.001583ms)
+✔ Fix-up 17A C01: confirm then payment retains 2026-10-10 and the cash method through both cards (0.581875ms)
+✔ Fix-up 17A C01: required evidence repair retains the pending payment date and method (0.34575ms)
+✔ Fix-up 17A: void asks one reason and binds the answer to the pending expense card (0.233209ms)
+▶ Fix-up 20B: every draft-tool caller keeps permission and finalized-status truth
+  ✔ DRAFT/permitted=true (0.438291ms)
+  ✔ DRAFT/permitted=false (0.030084ms)
+  ✔ NEEDS_REVIEW/permitted=true (0.179208ms)
+  ✔ NEEDS_REVIEW/permitted=false (0.025667ms)
+  ✔ READY_FOR_CONFIRMATION/permitted=true (0.163ms)
+  ✔ READY_FOR_CONFIRMATION/permitted=false (0.022375ms)
+  ✔ CONFIRMED/permitted=true (0.0785ms)
+  ✔ CONFIRMED/permitted=false (0.0205ms)
+✔ Fix-up 20B: every draft-tool caller keeps permission and finalized-status truth (1.019958ms)
+✔ Fix-up 21B B4: voucher confirmation forwards the source payee or the explicitly answered payee to the guarded create (0.754625ms)
+✔ Fix-up 22A: saved-claim submit opening survives delivery only with the applied receipt proof (0.592208ms)
+✔ Fix-up 22B: an old signed voucher card containing a command payee cannot create a voucher (0.243792ms)
+✔ Fix-up 24 D3/D4: each signed lifecycle offer prepares the next card and only its confirm press mutates through 50 ทวิ (2.96925ms)
+✔ Fix-up 24 D4: income category and expense category share one real rollback preview and signed confirmation without losing 3% WHT (2.595042ms)
+✔ Fix-up 24 D4: an empty income catalog keeps confirmation blocked and supplies the existing system settings handoff (0.184209ms)
+✔ EVID-1 th image-missing: the card and next step use the shared evidence contract (0.826208ms)
+✔ EVID-1 th missing: the card and next step use the shared evidence contract (0.133417ms)
+✔ EVID-1 th attached: the card and next step use the shared evidence contract (0.47325ms)
+✔ EVID-1 en image-missing: the card and next step use the shared evidence contract (0.921166ms)
+✔ EVID-1 en missing: the card and next step use the shared evidence contract (0.10375ms)
+✔ EVID-1 en attached: the card and next step use the shared evidence contract (0.535875ms)
+✔ EVID-1 th: a classified receipt offers original-in-hand through the existing signed web review use-case (0.471959ms)
+✔ EVID-1 en: a classified receipt offers original-in-hand through the existing signed web review use-case (0.387667ms)
+✔ EVID-1: LINE never infers source-document classification to set original-in-hand (0.126041ms)
+✔ EVID-1: a web-reviewed original confirms without attachment or an additional expense.review permission (0.172208ms)
+▶ LineExpenseDraftConversationUseCase
+  ✔ matches grounded answers only for a unique open questionnaire, preserving ambiguity and unrelated requests (A4) (47.18575ms)
+  ✔ returns the exact committed revision and only referenced category identities with its reply (9.9775ms)
+  ✔ binds multiple draft choices to the original ordered records without writing (1.997458ms)
+  ✔ initializes a passive draft from current saved facts when old OCR hints disagree (1.816833ms)
+  ✔ loads persistent route context without any AiTurn/Redis context (0.45725ms)
+  ✔ keeps passive uploads out of unrelated chat even when a model proposes their id; explicit edits still work (1.454666ms)
+  ✔ starts the same durable question workflow from validated receipt OCR fields (1.111792ms)
+  ✔ applies several answers with CAS, materializes valid lines, and returns all remaining questions (1.696833ms)
+  ✔ emits a category override event only when a stored answer replaces the AI suggestion (7.52425ms)
+  ✔ preserves policy-only missing evidence while recomputing collection questions (1.706417ms)
+  ✔ keeps pause and end-input distinct and never requests a final financial mutation (2.014416ms)
+  ✔ fails closed when several drafts exist and no exact target is selected (0.670292ms)
+  ✔ makes an explicit target durable by opening it and parking other open drafts (0.828833ms)
+  ✔ reports stale instead of overwriting a newer web revision (0.885083ms)
+  ✔ uses the revision of the loaded continuation snapshot for CAS, not a later detail read (1.054833ms)
+  ✔ parks one open draft silently for an unrelated request (1.1045ms)
+  ✔ parks every open draft before handing an unrelated request back to normal chat (0.678ms)
+✔ LineExpenseDraftConversationUseCase (83.212209ms)
+▶ the collected purpose does not evict the capture provenance
+  ✔ writes the purpose behind the provenance, never over it (1.564875ms)
+  ✔ replaces its own earlier answer instead of stacking a second purpose (1.06625ms)
+✔ the collected purpose does not evict the capture provenance (2.714166ms)
+✔ rejects an appended purpose exceeding note storage before any draft update, without truncating (0.666959ms)
+✔ Fix-up 17A C01: วันนี้ remains the grounded document date even when the router omitted its date hint (0.38325ms)
+▶ PrismaExpenseRepository tax snapshot mapping
+  ✔ round-trips WHT input with header money on create and version-checked update (2.937583ms)
+  ✔ round-trips explicit zero treatments on create/update and keeps historical zero unknown (1.535833ms)
+  ✔ round-trips the resolver rounding policy through ExpenseLine (0.323ms)
+  ✔ does not leak resolver-only tax fields into Prisma create or update data (0.223417ms)
+✔ PrismaExpenseRepository tax snapshot mapping (5.517416ms)
+▶ PrismaExpenseRepository expense category precedence
+  ✔ uses only company-owned active categories once the canonical set was bootstrapped (0.178791ms)
+  ✔ does not restore global defaults when every company-owned category is archived (0.041667ms)
+  ✔ keeps non-conflicting global fallback for a partial legacy set and prefers company collisions (0.190125ms)
+  ✔ keeps global defaults as a compatibility fallback for companies without their own rows (0.330084ms)
+✔ PrismaExpenseRepository expense category precedence (0.944667ms)
+▶ review save aligns the withholding income type with the payee kind
+  ✔ INDIVIDUAL: switches WHT_SERVICE_5 to WHT_SERVICE_3 at the same rate (0.521334ms)
+  ✔ JURISTIC: switches WHT_SERVICE_3 to WHT_SERVICE_5 at the same rate (0.256625ms)
+  ✔ INDIVIDUAL: switches WHT_RENT_JUR to WHT_RENT_IND at the same rate (0.085208ms)
+  ✔ JURISTIC: switches WHT_RENT_IND to WHT_RENT_JUR at the same rate (0.117208ms)
+  ✔ INDIVIDUAL: switches WHT_PROFESSIONAL_JUR to WHT_PROFESSIONAL_IND at the same rate (0.081292ms)
+  ✔ JURISTIC: switches WHT_PROFESSIONAL_IND to WHT_PROFESSIONAL_JUR at the same rate (0.089583ms)
+  ✔ INDIVIDUAL: switches WHT_ADVERTISING_JUR to WHT_ADVERTISING_IND at the same rate (0.05675ms)
+  ✔ JURISTIC: switches WHT_ADVERTISING_IND to WHT_ADVERTISING_JUR at the same rate (0.241834ms)
+  ✔ INDIVIDUAL: switches WHT_TRANSPORT_JUR to WHT_TRANSPORT_IND at the same rate (0.111958ms)
+  ✔ JURISTIC: switches WHT_TRANSPORT_IND to WHT_TRANSPORT_JUR at the same rate (0.060541ms)
+  ✔ INDIVIDUAL: switches WHT_PRIZE_JUR to WHT_PRIZE at the same rate (0.052208ms)
+  ✔ JURISTIC: switches WHT_PRIZE to WHT_PRIZE_JUR at the same rate (0.092917ms)
+  ✔ INDIVIDUAL: switches WHT_INTEREST_JUR to WHT_INTEREST at the same rate (0.0455ms)
+  ✔ JURISTIC: switches WHT_INTEREST to WHT_INTEREST_JUR at the same rate (0.073208ms)
+  ✔ INDIVIDUAL: switches WHT_DIVIDEND to WHT_DIVIDEND_IND at the same rate (0.043375ms)
+  ✔ JURISTIC: switches WHT_DIVIDEND_IND to WHT_DIVIDEND at the same rate (0.042708ms)
+  ✔ refuses a different rate, a missing or inactive twin, and an income with no twin before writing (0.671333ms)
+  ✔ checks incoming payee-kind fields even without the web review-refresh flag (0.091542ms)
+  ✔ normalizes an incoming mismatch even when its twin is already stored (0.078875ms)
+  ✔ keeps an individual PND2 type and refuses its unconfirmed company twin (0.094625ms)
+  ✔ leaves unknown payee kind and an already matching category untouched (0.114458ms)
+✔ review save aligns the withholding income type with the payee kind (3.194792ms)
+▶ one server VAT preset for all capture writers
+  ✔ applies dated presets for WEB_MANUAL without changing a human mark (0.147084ms)
+  ✔ applies dated presets for WEB_UPLOAD without changing a human mark (0.046667ms)
+  ✔ applies dated presets for LINE_UPLOAD without changing a human mark (0.099959ms)
+  ✔ applies dated presets for API_INTERNAL without changing a human mark (0.04825ms)
+  ✔ recomputes undecided open records when the shop answers REGISTERED (0.148167ms)
+  ✔ recomputes undecided open records when the shop answers NOT_REGISTERED (0.044334ms)
+✔ one server VAT preset for all capture writers (0.577209ms)
+✔ permits restoring CLAIMABLE only with the dated shop answer and usable evidence (0.346667ms)
+✔ WEB_MANUAL: persists the same preset per type on create and type changes (1.979792ms)
+✔ WEB_UPLOAD: persists the same preset per type on create and type changes (1.711708ms)
+✔ LINE_UPLOAD: persists the same preset per type on create and type changes (4.179333ms)
+✔ API_INTERNAL: persists the same preset per type on create and type changes (0.851458ms)
+▶ input VAT decision conditions
+  ✔ records system facts and all three reviewer answers (0.281375ms)
+  ✔ EVID-1 permits a VAT decision from the recorded original paper without an image, keeping all other conditions (0.175458ms)
+  ✔ refuses missing system condition input_vat_company_registration_unanswered (0.075833ms)
+  ✔ refuses missing system condition input_vat_attachment_required (0.10425ms)
+  ✔ refuses missing system condition input_vat_buyer_mismatch (0.03ms)
+  ✔ refuses missing system condition input_vat_buyer_confirmation_required (0.0225ms)
+  ✔ requires vendorTaxIdSnapshot (0.033709ms)
+  ✔ requires vendorDocumentNumber (0.017292ms)
+  ✔ requires reviewer tick BUSINESS_USE (0.032875ms)
+  ✔ requires reviewer tick NOT_PROHIBITED (0.017333ms)
+  ✔ requires reviewer tick ISSUER_ENTITLED (0.016958ms)
+  ✔ requires a trimmed reason for NON_CLAIMABLE and changes, with a 500-character maximum (0.052208ms)
+  ✔ fixed type RECEIPT refuses either decision (0.054875ms)
+  ✔ fixed type ABBREVIATED_TAX_INVOICE refuses either decision (0.019083ms)
+  ✔ fixed type TRANSFER_SLIP refuses either decision (0.017792ms)
+  ✔ fixed type HANDWRITTEN_CASH_BILL refuses either decision (0.018625ms)
+  ✔ fixed type SUPPLIER_BILL refuses either decision (0.067583ms)
+  ✔ fixed type MARKETPLACE_ORDER_SCREENSHOT refuses either decision (0.021042ms)
+  ✔ fixed type EXPENSE_NOTE_TEXT refuses either decision (0.018125ms)
+  ✔ fixed type SUBSTITUTE_RECEIPT refuses either decision (0.017833ms)
+  ✔ fixed type OTHER_EXPENSE_DOCUMENT refuses either decision (0.019792ms)
+  ✔ fixed type NEEDS_REVIEW refuses either decision (0.019209ms)
+  ✔ accepts an unread buyer block only with reviewer confirmation (0.021792ms)
+✔ input VAT decision conditions (1.325083ms)
+▶ input VAT decision transaction
+  ✖ refuses a non-reviewer before reading or writing (3.203416ms)
+  ✔ decides after confirmation, keeps money and status, and returns its audit facts (1.352375ms)
+  ✔ refuses period without a decision or mutation (0.267167ms)
+  ✔ refuses journal without a decision or mutation (0.151708ms)
+  ✔ a later type change resets the decision and records why (0.406542ms)
+  ✔ buyer mark and undo both record a decision (0.369292ms)
+✖ input VAT decision transaction (5.836041ms)
+▶ decision preservation and buyer compatibility integrity
+  ✔ does not overwrite a saved decision when the same type is saved or the shop answer changes (0.208625ms)
+  ✔ cannot use the buyer button to decide a fixed type (0.177584ms)
+  ✔ does not let undo restore CLAIMABLE while the printed buyer still mismatches (0.159125ms)
+✔ decision preservation and buyer compatibility integrity (0.574834ms)
+✔ a reader changing the type resets a prior decision in the same transaction (0.167792ms)
+✔ a readable buyer name without its tax number still needs reviewer confirmation (0.997458ms)
+✔ a type reset leaves waiting VAT eligible for the next shop answer (0.304041ms)
+✔ a certificate route presets NEEDS_REVIEW to NON_CLAIMABLE (0.043458ms)
+✔ a certificate route presets CLAIMABLE to NON_CLAIMABLE (0.046ms)
+✔ a certificate route presets NON_CLAIMABLE to NON_CLAIMABLE (0.040833ms)
+✔ usable evidence is required for CLAIMABLE, independently of the paper type (0.045875ms)
+✔ no VAT means no decision: {"vatAmount":"0"} (0.028625ms)
+✔ no VAT means no decision: {"vatMode":"NO_VAT"} (0.016584ms)
+✔ a shop not registered on the document date receives its fixed reason (0.027042ms)
+✔ a decision rebuilds an existing unposted journal in its transaction: cost, input VAT, cost (78.689333ms)
+✔ a posted journal refusal does not offer reopening or claim that reversal unlocks the right (0.184375ms)
+✔ reads current VAT decision conditions and posted/period restrictions without making a decision (0.169292ms)
+✔ reads auto-posting and fixed shop answers without changing any stored right (0.147083ms)
+✔ identifies old confirmed input VAT answers consistently in detail and list reads (0.028166ms)
+✖ UX8 decision refuses empty shop registeredName (null) even with every reviewer tick (0.184875ms)
+✖ UX8 decision refuses empty shop registeredName ("") even with every reviewer tick (0.094333ms)
+✖ UX8 decision refuses empty shop registeredName ("   ") even with every reviewer tick (0.11025ms)
+✖ UX8 decision refuses empty shop taxId (null) even with every reviewer tick (0.078708ms)
+✖ UX8 decision refuses empty shop taxId ("") even with every reviewer tick (0.075541ms)
+✖ UX8 decision refuses empty shop taxId ("   ") even with every reviewer tick (0.070292ms)
+▶ free expense access
+  ✔ opens no-package and expired trial drafts without changing the term-only lifecycle (2.064541ms)
+  ✔ preserves running trials, manual terms, grandfathered and capacity overrides (0.150583ms)
+  ✔ requires proven system term-disable and rejects stale markers with admin/security holds (0.131833ms)
+  ✔ rejects historical paid, refunded, disputed, deal, grant and unresolved recovery evidence (0.831375ms)
+  ✔ fails unavailable when policy evidence cannot be read (0.695041ms)
+  ✔ rechecks current source actor, feature and scope before persistence and permits a paid upgrade only as source (1.502083ms)
+  ✔ intersects granted permissions and allows only exact source-draft actions (0.785292ms)
+✔ free expense access (6.960209ms)
+ℹ tests 390
+ℹ suites 32
+ℹ pass 383
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1381.689167
+
+✖ failing tests:
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:31661
+✖ refuses a non-reviewer before reading or writing (3.203416ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /expense.review/. Input:
+
+  'ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่'
+
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:71)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:18)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    expected: /expense.review/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName (null) even with every reviewer tick (0.184875ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName ("") even with every reviewer tick (0.094333ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName ("   ") even with every reviewer tick (0.11025ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId (null) even with every reviewer tick (0.078708ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId ("") even with every reviewer tick (0.075541ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId ("   ") even with every reviewer tick (0.070292ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+undefined
+/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: tsx --test --test-reporter=spec src/modules/expenses/application/use-cases/expense-draft-concurrency.use-case.spec.ts src/modules/expenses/application/use-cases/expense-branch-scope.use-case.spec.ts src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.spec.ts src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts src/modules/system-partner-management/application/free-expense-access.spec.ts

@@ -1,0 +1,51 @@
+✔ expense confirmation toast does not promise ledger posting (0.488083ms)
+✔ substitute receipt waiting copy does not claim unverified LINE delivery (0.119792ms)
+✔ duplicate guidance does not tell a read-only resolver to click an unavailable action (0.053417ms)
+✔ confirmed duplicate copy distinguishes the final decision from an unresolved warning (0.136459ms)
+✔ neither reread button survives a terminal read failure or an error notice (0.175791ms)
+✔ the read state is shown beside the file, not only as a toast (0.0675ms)
+✔ polling follows the durable job and never starts a read of its own (0.042833ms)
+✔ replace carries the revision, the expected primary and a reused operation id (0.046ms)
+✔ append adds supporting evidence and never names a primary to swap (0.115ms)
+✔ a conflict offers the latest data instead of a silent retry (0.224709ms)
+✔ more than one document in a file says what was created, not where to go (appendix §25) (0.165292ms)
+✔ the money card shows the additional charges between the discount and the tax base (0.575167ms)
+✔ the money card warns when the stored record does not add up (0.114208ms)
+✔ free draft mode keeps detail editing source-only and fails closed without the server flag (0.054833ms)
+▶ expense history display labels
+  ✔ renders stored fractional rates and nested line enums in human-readable form (0.472875ms)
+  ✔ labels known actions and keeps unknown actions safe (0.115833ms)
+  ✔ labels only supported change fields and safe line fields (0.162042ms)
+  ✔ uses explicit actor labels when display names are missing (0.049708ms)
+✔ expense history display labels (1.157125ms)
+▶ expenses.api URL helpers
+  ✔ sends a source draft as the only update lane and keeps unknown values null (15.631625ms)
+  ✔ carries same-expense routing and renders one localized actionable toast from a coded prepare rejection (0.780416ms)
+  ✔ carries the selected source branch to the shared evidence endpoint (0.321167ms)
+  ✔ retries an expense payment with the exact intent and civil paid date, without browser UTC conversion (0.299375ms)
+  ✔ normalizes API base URL that already includes v1 (0.203292ms)
+  ✔ resolves local upload URL against API origin (0.117208ms)
+  ✔ forwards the signed create-only upload headers to storage (0.270791ms)
+  ✔ sends only the server-owned signature upload contract fields (0.219083ms)
+  ✔ links a generic evidence upload intent to the expense before upload (5.105333ms)
+  ✔ loads LINE prefill by opaque path without putting accepted business values in the URL (0.288542ms)
+  ✔ masks file-server failures behind upload-safe messages (0.411292ms)
+  ✔ fetches an attachment preview through the inline signed URL without browser credentials (0.629125ms)
+  ✔ uses the allowlisted storage response MIME when attachment metadata has no MIME type (0.139958ms)
+  ✔ cleans old substitute receipt display metadata from a retained SVG preview, preserving its source and reference (0.3305ms)
+  ✔ rejects empty, unsupported, mismatched, and failed attachment preview responses (0.430917ms)
+  ✔ rejects preview responses whose bytes do not match their allowlisted MIME type (0.582375ms)
+  ✔ accepts matching JPEG and system-generated XML/SVG signatures (0.292125ms)
+  ✔ fetches and validates the issued substitute receipt PDF through the authenticated API (0.098125ms)
+  ✔ keeps API metadata when a substitute receipt PDF request fails (0.357084ms)
+  ✔ appends the download anchor and delays object URL revocation for Safari (0.157375ms)
+  ✔ sends the reviewer reason to both duplicate-resolution actions (0.103042ms)
+✔ expenses.api URL helpers (27.308333ms)
+ℹ tests 39
+ℹ suites 2
+ℹ pass 39
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 214.048458

@@ -33,6 +33,7 @@ import type {
   UpdateExpenseDraftInput,
   ExpenseSourceDraftInput,
   ExpenseDraftTotalsPreview,
+  ExpenseHistoryResult,
   WhtCertificateHandoffDto,
   WhtCertificateHandoffPageDto,
   WhtCertificateDto,
@@ -128,6 +129,10 @@ export async function listExpenses(
 
 export async function getExpense(companyId: string, expenseId: string): Promise<ExpenseDetail> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`);
+}
+
+export async function getExpenseHistory(companyId: string, expenseId: string, page = 1): Promise<ExpenseHistoryResult> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/history${qs({ page })}`);
 }
 
 export async function removeExpenseReceipt(companyId: string, expenseId: string, attachmentId: string, body: RemoveExpenseReceiptInput): Promise<void> {

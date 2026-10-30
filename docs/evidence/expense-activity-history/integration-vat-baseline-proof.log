@@ -1,0 +1,218 @@
+DecideExpenseInputVatUseCase and remainder exactly equal HEAD: True
+apps/api/src/modules/expenses/application/expense-commercial-access.ts exactly equal HEAD: True
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts exactly equal HEAD: True
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts exactly equal HEAD: True
+isFreeExpenseDraftCompany code exactly equal HEAD: True
+▶ input VAT decision transaction
+  ✖ refuses a non-reviewer before reading or writing (2.739834ms)
+✖ input VAT decision transaction (3.026375ms)
+✖ UX8 decision refuses empty shop registeredName (null) even with every reviewer tick (0.212334ms)
+✖ UX8 decision refuses empty shop registeredName ("") even with every reviewer tick (0.141917ms)
+✖ UX8 decision refuses empty shop registeredName ("   ") even with every reviewer tick (0.09275ms)
+✖ UX8 decision refuses empty shop taxId (null) even with every reviewer tick (0.095917ms)
+✖ UX8 decision refuses empty shop taxId ("") even with every reviewer tick (0.089958ms)
+✖ UX8 decision refuses empty shop taxId ("   ") even with every reviewer tick (0.118292ms)
+ℹ tests 7
+ℹ suites 1
+ℹ pass 0
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 510.405375
+
+✖ failing tests:
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:31661
+✖ refuses a non-reviewer before reading or writing (2.739834ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /expense.review/. Input:
+
+  'ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่'
+
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1442:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:71)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:419:18)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    expected: /expense.review/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName (null) even with every reviewer tick (0.212334ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName ("") even with every reviewer tick (0.141917ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop registeredName ("   ") even with every reviewer tick (0.09275ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId (null) even with every reviewer tick (0.095917ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId ("") even with every reviewer tick (0.089958ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:2:46793
+✖ UX8 decision refuses empty shop taxId ("   ") even with every reviewer tick (0.118292ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+
+  Caught error:
+
+  ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+      at async TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:3)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: ServiceUnavailableException: ไม่สามารถตรวจสอบสิทธิ์ร้านได้ในขณะนี้ กรุณาลองใหม่
+        at isFreeExpenseDraftCompany (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/system-partner-management/application/free-expense-access.ts:54:11)
+        at expenseDraftAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:14:13)
+        at assertExpenseFinancialAccess (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/expense-commercial-access.ts:23:13)
+        at DecideExpenseInputVatUseCase.execute (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:2142:11)
+        at <anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:69)
+        at waitForActual (node:assert:630:21)
+        at Function.rejects (node:assert:767:31)
+        at TestContext.<anonymous> (/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts:596:16)
+        at Test.runInAsyncScope (node:async_hooks:214:14)
+        at Test.run (node:internal/test_runner/test:1047:25),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+undefined
+/Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: tsx --test --test-reporter=spec --test-name-pattern=refuses a non-reviewer before reading or writing|UX8 decision refuses empty shop src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts

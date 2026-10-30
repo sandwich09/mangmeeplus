@@ -1,3 +1,4 @@
+import { expenseHistoryChanges, type ExpenseHistoryChanges } from '../../domain/logic/expense-history.logic';
 import type { ExpenseDb } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository } from '../../infrastructure/prisma-disbursement-voucher.repository';
 import { EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
@@ -288,6 +289,23 @@ export class GetExpenseUseCase {
 }
 
 @Injectable()
+export class GetExpenseHistoryUseCase {
+  constructor(private readonly get: GetExpenseUseCase, private readonly repo: PrismaExpenseRepository) {}
+
+  async execute(ctx: RequestContext, expenseId: string, page = 1): Promise<import('@watchdog-bms/contracts').ExpenseHistoryResult> {
+    const expense = await this.get.execute(ctx, expenseId);
+    if (!Number.isSafeInteger(page) || page < 1 || page > 100_000) {
+      throw new BadRequestException('Invalid expense history page');
+    }
+    const [history, creatorDisplayName] = await Promise.all([
+      this.repo.listExpenseHistory(ctx.companyId, expenseId, page),
+      this.repo.findMemberDisplayName(ctx.companyId, expense.createdByUserId),
+    ]);
+    return { ...history, creatorDisplayName };
+  }
+}
+
+@Injectable()
 export class ListExpensesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
@@ -376,6 +394,8 @@ export class ListExpensesUseCase {
 type UpdateExpenseDraftOptions = {
       db?: any;
       suppressGenericAudit?: boolean;
+      /** Internal caller-owned transactional audits receive the same persisted field diff. */
+      onHistoryChanges?: (changes: ExpenseHistoryChanges) => void;
       requireExpectedUpdatedAt?: boolean;
       /** Internal authority, after the certificate use case checks creator and exact review-only payload. */
       ownSubstituteReceiptReview?: boolean;
@@ -1016,6 +1036,7 @@ export class UpdateExpenseDraftUseCase {
       marked: input.inputVatClaimStatus === 'NON_CLAIMABLE' && !disallowsTaxCode,
     }) : undefined;
 
+    let historyChanges: ExpenseHistoryChanges = {};
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
       assignExpenseNumber: Boolean(dateReviewInput) && expenseDraftNumberingEnabled()
@@ -1182,9 +1203,14 @@ export class UpdateExpenseDraftUseCase {
               metadataJson: { documentReview: nextSummaryJson.documentReview } }, tx);
           }
         }
-        if (options.transactionalAudit) await this.audit.log(options.transactionalAudit, tx);
       }
-      : undefined, options.db);
+      : undefined, options.db, !options.suppressGenericAudit || options.transactionalAudit || options.onHistoryChanges
+        ? async (tx, before, after) => {
+          historyChanges = expenseHistoryChanges(before, after);
+          options.onHistoryChanges?.(historyChanges);
+          if (options.transactionalAudit) await this.audit.log({ ...options.transactionalAudit,
+            metadataJson: { ...options.transactionalAudit.metadataJson, expenseHistoryChanges: historyChanges } }, tx);
+        } : undefined);
     if (nextSummaryJson) updated.aiVerificationSummaryJson = nextSummaryJson;
     // Before the `suppressGenericAudit` early return, so the LINE lanes carry it too. §8: when the
     // registry write failed the expense still saved, and the caller has to be able to say so.
@@ -1199,41 +1225,40 @@ export class UpdateExpenseDraftUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: classificationOverride ? 'HIGH' : 'MEDIUM',
-      ...((classificationOverride || input.vatSource || input.whtInput || input.documentReviewAcknowledged) && {
-        metadataJson: {
-          ...(input.documentReviewAcknowledged && { documentReview: nextSummaryJson?.documentReview }),
-          ...(input.whtInput && {
-            whtInput: { before: r.whtInputJson ?? null, after: { ...input.whtInput, origin: 'REVIEWER' } },
-          }),
-          ...(input.vatSource && {
-            vatSource: {
-              before: r.vatCaptureSnapshotJson ? {
-                origin: r.vatCaptureSnapshotJson.source.origin,
-                inputType: r.vatCaptureSnapshotJson.source.inputType,
-                vatRatePercent: r.vatCaptureSnapshotJson.source.vatRatePercent,
-                vatAmount: r.vatCaptureSnapshotJson.source.vatAmount,
-                lineSourceCount: r.vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
-                reconciliationStatus: r.vatCaptureSnapshotJson.reconciliation.status,
-              } : null,
-              after: vatCaptureSnapshotJson ? {
-                origin: vatCaptureSnapshotJson.source.origin,
-                inputType: vatCaptureSnapshotJson.source.inputType,
-                vatRatePercent: vatCaptureSnapshotJson.source.vatRatePercent,
-                vatAmount: vatCaptureSnapshotJson.source.vatAmount,
-                lineSourceCount: vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
-                reconciliationStatus: vatCaptureSnapshotJson.reconciliation.status,
-              } : null,
-            },
-          }),
-          ...(classificationOverride && {
-            classificationOverride: {
-              detectedDocumentKind,
-              sourceDocumentType: overrideSourceDocumentType,
-              reason: classificationOverrideReason,
-            },
-          }),
-        },
-      }),
+      metadataJson: {
+        expenseHistoryChanges: historyChanges,
+        ...(input.documentReviewAcknowledged && { documentReview: nextSummaryJson?.documentReview }),
+        ...(input.whtInput && {
+          whtInput: { before: r.whtInputJson ?? null, after: { ...input.whtInput, origin: 'REVIEWER' } },
+        }),
+        ...(input.vatSource && {
+          vatSource: {
+            before: r.vatCaptureSnapshotJson ? {
+              origin: r.vatCaptureSnapshotJson.source.origin,
+              inputType: r.vatCaptureSnapshotJson.source.inputType,
+              vatRatePercent: r.vatCaptureSnapshotJson.source.vatRatePercent,
+              vatAmount: r.vatCaptureSnapshotJson.source.vatAmount,
+              lineSourceCount: r.vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
+              reconciliationStatus: r.vatCaptureSnapshotJson.reconciliation.status,
+            } : null,
+            after: vatCaptureSnapshotJson ? {
+              origin: vatCaptureSnapshotJson.source.origin,
+              inputType: vatCaptureSnapshotJson.source.inputType,
+              vatRatePercent: vatCaptureSnapshotJson.source.vatRatePercent,
+              vatAmount: vatCaptureSnapshotJson.source.vatAmount,
+              lineSourceCount: vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
+              reconciliationStatus: vatCaptureSnapshotJson.reconciliation.status,
+            } : null,
+          },
+        }),
+        ...(classificationOverride && {
+          classificationOverride: {
+            detectedDocumentKind,
+            sourceDocumentType: overrideSourceDocumentType,
+            reason: classificationOverrideReason,
+          },
+        }),
+      },
     });
     return updated;
   }

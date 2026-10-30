@@ -1,0 +1,3 @@
+
+> @watchdog-bms/api@0.1.0 typecheck /Users/thawatchai/.codex/worktrees/expense-history-integration/mangmeeplus/apps/api
+> NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit
