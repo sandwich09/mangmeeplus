@@ -24,6 +24,7 @@ export const STAFF_OA_URL = 'https://lin.ee/6Sc38L6';
  * (POSTBACK_ACTIONS) and these words still resolve, so cards already in people's chats keep working.
  */
 export const PACKAGE_CALLBACK_COMMAND = 'ให้ทีมงานติดต่อกลับ';
+export const WELCOME_RECEIPT_COMMAND = 'ลองส่งใบเสร็จ';
 /**
  * The way BACK from a support pause (line-support-request-spec-th §2.4, §2.2 delta รอบ 6 ข้อ 6).
  * Without it the only exit from "a human is handling this" was waiting 24 hours — the customer had
@@ -612,6 +613,19 @@ export function buildReceiptCapturePrompt(_context: StaffMenuContext): LineReply
   };
 }
 
+/** Same receipt entry and permission gates, with the new shop's welcome voice. */
+export function buildWelcomeReceiptCapturePrompt(): LineReplyMessage {
+  return {
+    type: 'text',
+    text: 'ถ่ายรูปใบเสร็จให้เห็นทั้งใบ แล้วส่งในแชทนี้ได้เลยค่ะ เดี๋ยวมั่งมีช่วยอ่านและเตรียมข้อมูลให้คุณตรวจดู',
+    quickReply: { items: [
+      { type: 'action', action: { type: 'cameraRoll', label: 'แนบรูปใบเสร็จ' } },
+      { type: 'action', action: { type: 'camera', label: 'เปิดกล้อง' } },
+      messageAction('เมนูหลัก'),
+    ] },
+  };
+}
+
 /** One button per real approval queue the member can act on. Ordered as listed. `itemLabel` and
  *  `open` are the queue's words on the card of the locked design: what heads a waiting record, and
  *  what the button that opens the queue's own page is called. */
@@ -868,6 +882,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === 'ถามข้อมูล') return 'query';
   if (normalized === 'รายการรออนุมัติ') return 'approval';
   if (normalized === 'ถ่ายใบเสร็จ') return 'receipt';
+  if (normalized === WELCOME_RECEIPT_COMMAND) return 'receipt';
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
   if (normalized === RESUME_AI_COMMAND) return 'talk';

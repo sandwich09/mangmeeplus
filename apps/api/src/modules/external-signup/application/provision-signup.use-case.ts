@@ -305,6 +305,8 @@ export class ProvisionSignupUseCase {
         source: request.source,
         autoApproved: request.autoApproved,
         operatorResolvedFromDirectory: operator.fromDirectory,
+        // Committed with the new company; adopting a pre-existing shop never adds this marker.
+        ...(lineOa ? { newShopWelcomeVersion: 1 as const } : {}),
       },
       requestId: cmd.correlationRequestId,
       webBaseUrl: cmd.webBaseUrl,

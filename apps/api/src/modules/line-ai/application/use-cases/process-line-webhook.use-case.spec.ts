@@ -3830,6 +3830,31 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(sentMessages[0]?.type, 'flex');
   });
 
+  it('opens the warm welcome receipt prompt through the same deterministic access gates', async () => {
+    const { prisma } = makePrisma();
+    const allowed = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'] });
+    await allowed.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-welcome-receipt', messageText: 'ลองส่งใบเสร็จ' });
+    assert.match(allowed.sentMessages[0]?.text ?? '', /มั่งมีช่วยอ่านและเตรียมข้อมูลให้คุณตรวจดู/);
+    assert.doesNotMatch(JSON.stringify(allowed.sentMessages), /\p{Extended_Pictographic}|[←→]/u);
+    assert.deepEqual(allowed.sentMessages[0]?.quickReply?.items.slice(0, 2).map((item: any) => item.action.type), ['cameraRoll', 'camera']);
+    for (const item of allowed.sentMessages[0]?.quickReply?.items ?? []) {
+      assert.ok(item.action.label.length <= 20, item.action.label);
+    }
+    assert.equal(allowed.getAiGatewayCalled(), false);
+
+    const noPermission = makeUseCase(makePrisma().prisma, { permissions: ['line.ai.query'] });
+    await noPermission.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-welcome-receipt-denied', messageText: 'ลองส่งใบเสร็จ' });
+    assert.match(noPermission.replies[0] ?? '', /ไม่มีสิทธิ์อัปโหลด/);
+    assert.equal(noPermission.getAiGatewayCalled(), false);
+
+    const noFeature = makeUseCase(makePrisma({ entitlements: [
+      { featureKey: 'expenses', enabled: true }, { featureKey: 'expenses.upload', enabled: false },
+    ] }).prisma, { permissions: ['expense.receipt.line_upload'] });
+    await noFeature.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-welcome-receipt-feature-denied', messageText: 'ลองส่งใบเสร็จ' });
+    assert.match(noFeature.replies[0] ?? '', /ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่าย/);
+    assert.equal(noFeature.getAiGatewayCalled(), false);
+  });
+
   it('returns enabled services deterministically even when the AI feature is off', async () => {
     const { prisma } = makePrisma({ entitlements: [
       { featureKey: 'expenses', enabled: true },

@@ -30,6 +30,16 @@ function harness(options: {
   lineDelivered?: number;
   /** `false` = no mail provider, `throw` = SES refused. */
   emailSent?: boolean | 'throw';
+  newShop?: boolean;
+  freeState?: 'eligible' | 'paid' | 'held';
+  freeUsed?: number;
+  freeInFlight?: number;
+  identityActive?: boolean;
+  membershipActive?: boolean;
+  receiptPermission?: boolean;
+  receiptFeature?: boolean;
+  contextCompanyId?: string;
+  welcomeSignupRequestId?: string;
 } = {}) {
   const appended: any[] = [];
   const marks: any[] = [];
@@ -58,10 +68,28 @@ function harness(options: {
           return { count: options.markCount ?? 1 };
         },
       },
-      companyOcrUsageEvent: { count: async () => options.ocrUsed ?? 0 },
-      companyMembership: { findFirst: async () => (options.owner ? { user: options.owner } : null), findMany: async () => [] },
-      company: { findUnique: async () => ({ name: 'ร้านนิด' }) },
-      externalIdentity: { findMany: async () => [] },
+      companyOcrUsageEvent: { count: async () => options.ocrUsed ?? 0, findMany: async () => [
+        ...Array.from({ length: options.freeUsed ?? 0 }, () => ({ succeededAt: new Date() })),
+        ...Array.from({ length: options.freeInFlight ?? 0 }, () => ({ succeededAt: null })),
+      ] },
+      companyMembership: { findFirst: async () => (options.newShop
+        ? options.membershipActive === false ? null : { id: 'member-1', roles: [{ role: { permissions: options.receiptPermission === false
+          ? [] : [{ permission: { key: 'expense.receipt.line_upload' } }] } }] }
+        : options.owner ? { user: options.owner } : null), findMany: async () => [] },
+      company: { findUnique: async () => ({ name: 'ร้านนิด', status: options.freeState === 'held' ? 'SUSPENDED' : 'ACTIVE',
+        archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0), billingReceiptAccountId: null, capacityOverride: null } }) },
+      auditLog: { findFirst: async () => options.newShop ? { metadataJson: {
+        companyId: 'co-1', source: 'line-oa', newShopWelcomeVersion: 1,
+        newShopWelcomeSignupRequestId: options.welcomeSignupRequestId ?? 'r1',
+      } } : null },
+      billingAccount: { findMany: async () => options.freeState === 'paid'
+        ? [{ id: 'paid-account', baseSubscriptionId: 'sub-historical' }] : [] },
+      billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null },
+      salesAttribution: { findUnique: async () => null },
+      externalIdentity: { findMany: async () => [], findFirst: async () => options.identityActive === false ? null : { userId: 'owner-1' } },
+      companyFeatureEntitlement: { findMany: async () => [{ featureKey: 'expenses', enabled: true }, { featureKey: 'expenses.upload', enabled: options.receiptFeature !== false }] },
       lineSupportRequest: {
         findUnique: async () => (options.supportRequest === undefined
           ? { companyId: 'co-1', lineUserIdHash: 'deadbeefdeadbeef', lastMessageText: null, signupRequestId: null }
@@ -71,7 +99,7 @@ function harness(options: {
         updateMany: async (args: any) => { supportUpdates.push(args); return { count: (options.due ?? []).length }; },
         deleteMany: async (args: any) => { supportDeletes.push(args); return { count: (options.due ?? []).length }; },
       },
-      lineCompanyContext: { findMany: async () => options.stillPaused ?? [] },
+      lineCompanyContext: { findMany: async () => options.stillPaused ?? [], findUnique: async () => ({ companyId: options.contextCompanyId ?? 'co-1' }) },
     },
   } as any;
 
@@ -118,7 +146,79 @@ function harness(options: {
 
 const completed = (overrides: Record<string, unknown> = {}) => ({
   state: 'COMPLETED', source: 'line-oa', companyName: 'ร้านนิด', companyId: 'co-1',
-  lineProviderUserId: LINE_USER, lineDisplayName: 'นิด', attachUserId: null, ...overrides,
+  lineProviderUserId: LINE_USER, lineDisplayName: 'นิด', attachUserId: null,
+  lineChannelId: 'channel-1', ownerUserId: 'owner-1', ...overrides,
+});
+
+describe('new LINE shop welcome', () => {
+  it('replaces the ready message in its existing retry slot with the three warm actions', async () => {
+    const h = harness({ request: completed(), newShop: true });
+    try {
+      await h.service.deliver('r1', 'approved');
+      const sent = JSON.stringify(h.pushes[0].body);
+      assert.equal(h.pushes[0].body.messages.length, 1);
+      assert.match(sent, /ผู้ช่วยดูแลร้านของคุณ/);
+      assert.match(sent, /เดือนละ 3 ใบ/);
+      assert.match(sent, /ลองส่งใบเสร็จ/);
+      assert.match(sent, /https:\/\/liff.line.me\/1234567890-abcdef\/package-advisor/);
+      assert.match(sent, /https:\/\/lin.ee\/6Sc38L6/);
+      assert.doesNotMatch(sent, /\p{Extended_Pictographic}|[←→]/u);
+      for (const button of h.pushes[0].body.messages[0].contents.footer.contents) {
+        assert.ok(button.action.label.length <= 40, button.action.label);
+      }
+      assert.equal(h.pushes[0].init.headers['X-Line-Retry-Key'], lineSignupPushRetryKey('r1', 'approved'));
+    } finally { h.restore(); }
+  });
+
+  it('keeps the original welcome on recovery but never welcomes another request adopting that company', async () => {
+    const h = harness({ request: completed(), newShop: true, welcomeSignupRequestId: 'original-request' });
+    try {
+      await h.service.deliver('original-request', 'approved');
+      assert.match(JSON.stringify(h.pushes[0].body), /ผู้ช่วยดูแลร้านของคุณ/);
+      await h.service.deliver('adopted-request', 'approved');
+      const adopted = JSON.stringify(h.pushes[1].body);
+      assert.match(adopted, /เปิดร้าน ร้านนิด ให้แล้ว/);
+      assert.doesNotMatch(adopted, /ผู้ช่วยดูแลร้านของคุณ|ฟรี|package-advisor/);
+    } finally { h.restore(); }
+  });
+
+  it('reads used and in-flight slots without promising a new set of three', async () => {
+    for (const state of [{ freeUsed: 1, freeInFlight: 1, expected: /อีก 1 ใบ/ },
+      { freeUsed: 3, freeInFlight: 0, expected: /ใช้สิทธิ์อ่านใบเสร็จฟรีครบแล้ว/ },
+      { freeUsed: 2, freeInFlight: 1, expected: /กำลังอ่านอยู่/ }]) {
+      const h = harness({ request: completed(), newShop: true, ...state });
+      try {
+        await h.service.deliver('r1', 'approved');
+        const sent = JSON.stringify(h.pushes[0].body);
+        assert.match(sent, state.expected);
+        assert.doesNotMatch(sent, /เดือนละ 3 ใบ/);
+        if (state.freeUsed + state.freeInFlight === 3) assert.doesNotMatch(sent, /ลองส่งใบเสร็จ/);
+      } finally { h.restore(); }
+    }
+  });
+
+  it('keeps the existing opening confirmation for paid, held, and other-context shops', async () => {
+    for (const state of [{ freeState: 'paid' as const }, { freeState: 'held' as const }, { contextCompanyId: 'other-company' },
+      { receiptPermission: false }, { receiptFeature: false }]) {
+      const h = harness({ request: completed(), newShop: true, ...state });
+      try {
+        await h.service.deliver('r1', 'approved');
+        const sent = JSON.stringify(h.pushes[0].body);
+        assert.match(sent, /เปิดร้าน ร้านนิด ให้แล้ว/);
+        assert.doesNotMatch(sent, /ฟรี|package-advisor/);
+      } finally { h.restore(); }
+    }
+  });
+
+  it('sends nothing to a revoked LINE identity or inactive former owner', async () => {
+    for (const state of [{ identityActive: false }, { membershipActive: false }]) {
+      const h = harness({ request: completed(), newShop: true, ...state });
+      try {
+        await h.service.deliver('r1', 'approved');
+        assert.deepEqual(h.pushes, []);
+      } finally { h.restore(); }
+    }
+  });
 });
 
 describe('P10-L push queueing (§7)', () => {

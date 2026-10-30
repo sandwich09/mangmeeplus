@@ -42,7 +42,9 @@ import {
   LINE_ID_TOKEN_MAX_LENGTH,
   LINE_ID_TOKEN_PATTERN,
 } from '../../../common/security/liff-page.security';
-import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, planTermLockReason, planTermState, SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type BillingInterval, type PaidTier, CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, planTermLockReason, planTermState, SIGNUP_DISCOVERY_SOURCE_OPTIONS, SIGNUP_DISCOVERY_OTHER_MAX } from '@watchdog-bms/contracts';
+import { PACKAGE_ADVISOR_CONTENT, PACKAGE_ADVISOR_SCRIPT, PACKAGE_ADVISOR_STYLE } from '../../../common/security/line-package-advisor.page';
+import { STAFF_OA_URL } from '../../line-ai/domain/logic/line-staff-menu.logic';
 import { currentLegalRelease } from '../application/legal-acceptance.service';
 // The one place the signup form's length limit is decided; the input must not drift from it.
 import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
@@ -141,6 +143,8 @@ export class LineLinkDto {
 
 /** P10-L §4: the token is the credential; `companyId` is only ever an echo of a picker choice. */
 class LiffSessionDto {
+  @IsOptional() @IsIn(BILLING_PAID_TIERS) billingOffer?: PaidTier;
+  @IsOptional() @IsIn(['month', 'year']) billingInterval?: BillingInterval;
   @IsString() @IsNotEmpty() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
   @IsString() @IsOptional() @MaxLength(128) @Matches(COMPANY_ID_PATTERN) companyId?: string;
   /** Sales-event page (spec §3.3): a name from this list, never a path — the server builds the path. */
@@ -522,6 +526,34 @@ export class AuthController {
     return LIFF_PAGE_SCRIPT;
   }
 
+  @Public()
+  @Get(['line/link-page/package-advisor', 'line/package-advisor-page'])
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, max-age=0')
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Content-Security-Policy', LIFF_PAGE_CSP)
+  @ApiOperation({ summary: 'Read-only LIFF package advisor using the public catalog' })
+  async linePackageAdvisorPage(@Req() req: Request): Promise<string> {
+    return liffPageHtml({
+      title: 'ให้มั่งมีช่วยเลือกแพ็กเกจ', client: 'package-advisor',
+      data: {
+        'liff-mode': 'package-advisor', 'liff-id': this.config.lineLiffId ?? '',
+        'api-base': publicApiBase(req),
+        'web-base': requiredWebAppBase(this.config.sesWebBaseUrl).replace(/\/+$/, ''),
+        'oa-add-url': await this.getOaAddFriendUrl(),
+        'support-url': STAFF_OA_URL,
+      },
+      content: PACKAGE_ADVISOR_CONTENT, style: PACKAGE_ADVISOR_STYLE,
+    });
+  }
+
+  @Public()
+  @Get('line/package-advisor.js')
+  @Header('Content-Type', 'application/javascript; charset=utf-8')
+  @Header('Cache-Control', 'no-cache')
+  @Header('X-Content-Type-Options', 'nosniff')
+  linePackageAdvisorScript(): string { return PACKAGE_ADVISOR_SCRIPT; }
+
   /**
    * P10-L §3.2. The signup form, rendered by the API so the binding acceptance block is the release
    * the SERVER is serving right now — statement text, version and challenge all come off
@@ -721,6 +753,8 @@ export class AuthController {
     return this.exchangeLiffSession.execute({
       idToken: dto.idToken,
       ...(dto.companyId ? { companyId: dto.companyId } : {}),
+      ...(dto.billingOffer !== undefined ? { billingOffer: dto.billingOffer } : {}),
+      ...(dto.billingInterval !== undefined ? { billingInterval: dto.billingInterval } : {}),
       ...(dto.landing ? { landing: dto.landing } : {}),
       ...(dto.to ? { to: dto.to } : {}),
     });

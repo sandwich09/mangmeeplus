@@ -1,7 +1,7 @@
 import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { isBillingCustomerRecoveryPath, type PlanTermLockReason } from '@watchdog-bms/contracts';
+import { BILLING_PAID_TIERS, type BillingInterval, type PaidTier, isBillingCustomerRecoveryPath, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { requiredWebAppBase } from '../../../../common/http/public-api-base';
@@ -44,6 +44,9 @@ export type ExchangeLiffSessionCommand = {
   idToken: string;
   /** Echoed back from the picker on the second call. Validated against live memberships, never trusted. */
   companyId?: string;
+  /** A reviewed recommendation selects a catalog offer, never a caller-supplied URL. */
+  billingOffer?: PaidTier;
+  billingInterval?: BillingInterval;
   /**
    * `package`: the sales-event page (spec §3.3), whose point is using the discount — a plan manager
    * lands on the package page. A name, never a path: the path is built here and checked at mint.
@@ -77,6 +80,10 @@ export class ExchangeLiffSessionUseCase {
   ) {}
 
   async execute(cmd: ExchangeLiffSessionCommand): Promise<WithWebFallback<ExchangeLiffSessionResult>> {
+    if ((cmd.billingOffer !== undefined && !BILLING_PAID_TIERS.includes(cmd.billingOffer))
+      || (cmd.billingInterval !== undefined && (!cmd.billingOffer || !['month', 'year'].includes(cmd.billingInterval)))) {
+      throw new BadRequestException('line_billing_selection_invalid');
+    }
     // The handoff route is what this endpoint hands out. With it off there is no destination to
     // send anyone to, so it refuses rather than minting a token nothing will accept.
     if (!this.config.lineWebHandoffEnabled) throw new ForbiddenException('line_web_handoff_disabled');
@@ -102,7 +109,8 @@ export class ExchangeLiffSessionUseCase {
     if (!identity) return blocked({ needsSignup: true as const });
     if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') return blocked({ reason: 'suspended' as const });
 
-    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, open?.companyId ?? cmd.companyId, !open && cmd.landing === 'package', open?.path);
+    const decision = await this.resolveCompany(identity.userId, verified.providerUserId, open?.companyId ?? cmd.companyId, !open && cmd.landing === 'package', open?.path,
+      cmd.billingOffer ? { offer: cmd.billingOffer, interval: cmd.billingInterval ?? 'month' } : undefined);
     if ('companyId' in decision) {
       const targetPath = decision.targetPath;
       const { rawToken } = await this.mint.execute({
@@ -141,6 +149,7 @@ export class ExchangeLiffSessionUseCase {
     requestedCompanyId: string | undefined,
     packageLanding = false,
     openPath?: string,
+    billingSelection?: { offer: PaidTier; interval: BillingInterval },
   ): Promise<{ companyId: string; targetPath: string } | Exclude<ExchangeLiffSessionResult, { handoffUrl: string }>> {
     const memberships = await this.prisma.client.companyMembership.findMany({
       where: { userId, status: 'ACTIVE', OR: [
@@ -171,7 +180,9 @@ export class ExchangeLiffSessionUseCase {
       // R-C3: a locked shop lands its plan manager on the package page directly (Q5), and so does any
       // shop's plan manager when the sales-event page asks; everyone else keeps /renew or the
       // overview, which `resolveLineHandoffTarget` still enforces below.
-      const wanted = ((isLocked(membership) && !freeExpenseDrafts) || packageLanding) && canManagePlan(membership.roles)
+      const wanted = billingSelection
+        ? `/companies/${membership.companyId}/billing?offer=${billingSelection.offer}&interval=${billingSelection.interval}&channel=line`
+        : ((isLocked(membership) && !freeExpenseDrafts) || packageLanding) && canManagePlan(membership.roles)
         ? `/companies/${membership.companyId}/billing?channel=line`
         : openPath ?? `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`;
       const targetPath = resolveLineHandoffTarget(membership.companyId, wanted, membership.company, now, freeExpenseDrafts);

@@ -465,7 +465,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
     }
   });
 
-  it('audit log metadataJson does NOT contain temporaryPassword', async () => {
+  it('commits the welcome cohort with onboarding evidence without credential data', async () => {
     const prisma = makePrisma({});
     let auditArgs: any;
     prisma.client.$transaction = async (fn: (tx: any) => Promise<any>) => {
@@ -477,6 +477,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
         user: { create: async () => ({ id: 'owner-1' }) },
         userCredential: { create: async () => ({}) },
         companyMembership: { create: async () => ({ id: 'mem-1' }) },
+        companySignupRequest: { updateMany: async () => ({ count: 1 }) },
         membershipRole: { create: async () => ({}) },
         employeeLineLinkToken: { create: async () => ({}) },
         branch: { create: async () => ({}) },
@@ -491,9 +492,15 @@ describe('CreateCompanyOnboardingUseCase', () => {
     };
 
     const useCase = new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock);
-    await useCase.execute(makeCmd());
+    await useCase.execute(makeCmd({ linkSignupRequestId: 'signup-1', provisioningContext: {
+      source: 'line-oa', autoApproved: true, operatorResolvedFromDirectory: true, newShopWelcomeVersion: 1,
+    } }));
 
     const meta = auditArgs.data.metadataJson;
+    assert.equal(meta.companyId, 'co-1');
+    assert.equal(meta.source, 'line-oa');
+    assert.equal(meta.newShopWelcomeVersion, 1, 'the audit writer belongs to the same transaction as company and membership creation');
+    assert.equal(meta.newShopWelcomeSignupRequestId, 'signup-1');
     // temporaryPassword must never appear in audit metadata
     assert.ok(!('temporaryPassword' in meta), 'temporaryPassword must NOT appear in audit log');
     assert.ok(!('passwordHash' in meta), 'passwordHash must NOT appear in audit log');

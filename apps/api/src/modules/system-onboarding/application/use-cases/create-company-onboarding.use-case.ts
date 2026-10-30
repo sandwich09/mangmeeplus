@@ -142,7 +142,7 @@ export type CreateCompanyOnboardingCommand = {
    * Who/what decided this shop should exist, copied into the onboarding audit row. An operator id
    * alone cannot say "a machine approved this and the directory named me" (review MEDIUM-B).
    */
-  provisioningContext?: { source: string; autoApproved: boolean; operatorResolvedFromDirectory: boolean };
+  provisioningContext?: { source: string; autoApproved: boolean; operatorResolvedFromDirectory: boolean; newShopWelcomeVersion?: 1 };
   lineOaAddUrl?: string;
   lineLinkUrl?: string;
   requestingAdminUserId: string;
@@ -669,6 +669,8 @@ export class CreateCompanyOnboardingUseCase {
             // Review MEDIUM-B: without these the company's own trail says a named human created an
             // auto-approved shop, with nothing pointing at the machine decision behind it.
             ...(cmd.provisioningContext ?? {}),
+            ...(cmd.provisioningContext?.newShopWelcomeVersion === 1 && cmd.linkSignupRequestId
+              ? { newShopWelcomeSignupRequestId: cmd.linkSignupRequestId } : {}),
           },
         },
       });

@@ -2,13 +2,15 @@ import { lineMessagingCredentialsFixture } from '../../common/config/line-messag
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { HEADERS_METADATA } from '@nestjs/common/constants';
 import { LIFF_PAGE_SCRIPT } from '../../common/security/liff-page.security';
 import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { currentLegalRelease } from './application/legal-acceptance.service';
 import { AuthController } from './presentation/auth.controller';
 import { ExchangeLiffSessionUseCase } from './application/use-cases/exchange-liff-session.use-case';
+// Runs the advisor's browser-client checks in the existing LIFF test entrypoint.
+import '../../common/security/line-package-advisor.check';
 
 const WEB_BASE = 'https://app.example.test';
 const LINE_USER = 'Uabc123';
@@ -1630,4 +1632,72 @@ it('GW03 revoked LINE identity does not invite a replacement trial', async () =>
   const h = makeUseCase({ identity: { ...activeIdentity, status: 'DISABLED' }, memberships: [membership('co-1')] });
   assert.deepEqual(await h.useCase.execute({ idToken: 'test.id.token' }), { reason: 'suspended' });
   assert.equal(h.minted.length, 0);
+});
+
+describe('new-shop package advisor integration', () => {
+  it('serves a public, no-store page with its dedicated external client and the existing CSP', async () => {
+    const controller = makeController();
+    (controller as any).oaAddFriendUrl = 'https://line.me/R/ti/p/%40system-oa';
+    const html = await controller.linePackageAdvisorPage(request());
+    assertOnlyExternalScripts(html);
+    assert.match(html, /src="\/v1\/auth\/line\/package-advisor\.js"/);
+    assert.doesNotMatch(html, /src="\/v1\/auth\/line\/link-page\.js"/);
+    assert.ok(html.includes('data-api-base="https://api.example.test/v1"'));
+    assert.ok(html.includes(`data-web-base="${WEB_BASE}"`));
+    assert.ok(html.includes('data-oa-add-url="https://line.me/R/ti/p/%40system-oa"'));
+    assert.ok(html.includes('data-support-url="https://lin.ee/6Sc38L6"'));
+    assert.match(html, /data:image\/png;base64,/);
+    assert.deepEqual(Reflect.getMetadata('path', AuthController.prototype.linePackageAdvisorPage),
+      ['line/link-page/package-advisor', 'line/package-advisor-page']);
+    for (const method of [controller.linePackageAdvisorPage, controller.linePackageAdvisorScript]) {
+      assert.equal(Reflect.getMetadata(IS_PUBLIC_ROUTE_KEY, method), true);
+    }
+    const headers = responseHeaders(controller.linePackageAdvisorPage);
+    assert.equal(headers['cache-control'], 'no-store, max-age=0');
+    assert.equal(headers['referrer-policy'], 'no-referrer');
+    assert.match(headers['content-security-policy']!, /script-src 'self' https:\/\/static.line-scdn.net;/);
+    assert.equal(responseHeaders(controller.linePackageAdvisorScript)['x-content-type-options'], 'nosniff');
+    assert.match(controller.linePackageAdvisorScript(), /\/billing\/catalog/);
+  });
+
+  it('forwards only the reviewed billing selection and known identity fields', async () => {
+    const controller = makeController();
+    const calls: unknown[] = [];
+    (controller as any).exchangeLiffSession = { execute: async (cmd: unknown) => { calls.push(cmd); return { needsSignup: true }; } };
+    await controller.lineLiffSession({ idToken: 'a.b.c', companyId: 'co-2', billingOffer: 'BASIC_499', billingInterval: 'month',
+      targetPath: 'https://evil.test' } as any);
+    assert.deepEqual(calls, [{ idToken: 'a.b.c', companyId: 'co-2', billingOffer: 'BASIC_499', billingInterval: 'month' }]);
+  });
+
+  it('keeps the selected package through current company selection without accepting another tenant', async () => {
+    const h = makeUseCase({ identity: activeIdentity, memberships: [membership('co-1'), membership('co-2')] });
+    const selection = { idToken: 'a.b.c', billingOffer: 'BASIC_499' as const, billingInterval: 'month' as const };
+    assert.ok('needsSelection' in await h.useCase.execute(selection));
+    assert.equal(h.minted.length, 0);
+    assert.deepEqual(await h.useCase.execute({ ...selection, companyId: 'foreign' }), { reason: 'no_membership' });
+    assert.equal(h.minted.length, 0);
+    await h.useCase.execute({ ...selection, companyId: 'co-2' });
+    assert.equal(h.minted[0].targetPath, '/companies/co-2/billing?offer=BASIC_499&interval=month&channel=line');
+    assert.equal(h.minted[0].companyId, 'co-2');
+  });
+
+  it('refuses malformed billing selections before verification or minting', async () => {
+    for (const input of [{ billingOffer: 'https://evil.test' }, { billingOffer: 'FREE_TRIAL_15' },
+      { billingOffer: 'PRO_999', billingInterval: 'week' }, { billingInterval: 'month' }]) {
+      const h = makeUseCase({ identity: activeIdentity, memberships: [membership('co-1')] });
+      await assert.rejects(h.useCase.execute({ idToken: 'a.b.c', ...input } as any), BadRequestException);
+      assert.equal(h.minted.length, 0); assert.equal(h.buckets.length, 0);
+    }
+  });
+
+  it('retains suspended-identity and company-hold refusal for billing recommendations', async () => {
+    const selection = { idToken: 'a.b.c', billingOffer: 'STARTER_249' as const };
+    for (const h of [
+      makeUseCase({ identity: { ...activeIdentity, status: 'DISABLED' }, memberships: [membership('co-1')] }),
+      makeUseCase({ identity: activeIdentity, memberships: [{ companyId: 'co-1', company: { name: 'held', status: 'SUSPENDED' } }] }),
+    ]) {
+      assert.deepEqual(await h.useCase.execute(selection), { reason: 'suspended' });
+      assert.equal(h.minted.length, 0);
+    }
+  });
 });

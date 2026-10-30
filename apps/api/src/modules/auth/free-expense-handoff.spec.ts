@@ -42,6 +42,8 @@ describe('verified free expense LINE browser destinations', () => {
     assert.equal((await handoff.execute({ token: 'opaque' })).targetPath, `${expenses}/draft-1?channel=line#source`);
     await liff.execute({ idToken: 'signed-line-token', companyId });
     assert.equal(state.minted[0].targetPath, expenses);
+    await liff.execute({ idToken: 'signed-line-token', companyId, billingOffer: 'STARTER_249', billingInterval: 'month' });
+    assert.equal(state.minted[1].targetPath, `/companies/${companyId}/billing?offer=STARTER_249&interval=month&channel=line`);
     const dashboard = fixture(`/companies/${companyId}/dashboard`);
     assert.equal((await dashboard.handoff.execute({ token: 'opaque' })).targetPath, expenses);
   });

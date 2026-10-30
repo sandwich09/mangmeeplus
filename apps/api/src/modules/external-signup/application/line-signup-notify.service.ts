@@ -15,6 +15,12 @@ import {
   SUPPORT_MAILBOX_EMAIL, SUPPORT_QUEUE_PATH, SignupAdminNotifyService,
 } from './signup-admin-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
+import { isFreeExpenseDraftCompany } from '../../system-partner-management/application/free-expense-access';
+import { freeExpenseAllowanceSnapshot } from '../../line-ai/application/free-expense-quota';
+import { STAFF_OA_URL, WELCOME_RECEIPT_COMMAND } from '../../line-ai/domain/logic/line-staff-menu.logic';
+import type { FreeExpenseAllowance } from '@watchdog-bms/contracts';
+import { loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
+import { filterPermissionsByEntitlement } from '../../employee-access/domain/logic/feature-gate.logic';
 
 /**
  * Reserved for the signup drain, like its two siblings: the generic workflow drain must exclude
@@ -137,6 +143,7 @@ export class LineSignupNotifyService {
       select: {
         state: true, source: true, companyName: true, companyId: true,
         lineProviderUserId: true, lineDisplayName: true, attachUserId: true,
+        lineChannelId: true, ownerUserId: true,
         reviewResolution: true, resolutionNote: true, version: true,
       },
     });
@@ -157,13 +164,17 @@ export class LineSignupNotifyService {
       return;
     }
 
+    const readyMessage = kind === 'approved' || kind === 'attached'
+      ? await this.newShopReadyMessage(signupRequestId, request, kind) : undefined;
+    // A creation marker is not permission to send to a revoked identity or former owner.
+    if (readyMessage === null) return;
     const messages = kind === 'requested_info'
       ? [{ type: 'text', text: requestedInfoMessageTh(request.companyName, request.resolutionNote!) }]
       : kind === 'rejected'
       ? [{ type: 'text', text: rejectedMessageTh(request.lineDisplayName, request.companyName) }]
       : kind === 'profile_guard'
         ? [buildProfileGuardNudgeCard()]
-        : [this.readyMessage(kind, request.companyName)];
+        : [readyMessage ?? this.readyMessage(kind, request.companyName)];
 
     const outcome = await pushLineMessages({
       token,
@@ -371,6 +382,79 @@ export class LineSignupNotifyService {
         ] },
         footer: { type: 'box', layout: 'vertical', contents: [
           { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดหน้าร้าน', uri: `https://liff.line.me/${liffId}/start` } },
+        ] },
+      },
+    };
+  }
+
+  private async newShopReadyMessage(signupRequestId: string, request: {
+    companyId: string | null; companyName: string; ownerUserId: string | null;
+    lineProviderUserId: string | null; lineChannelId: string | null;
+  }, kind: LineSignupPushKind): Promise<unknown | null> {
+    if (!request.companyId) return this.readyMessage(kind, request.companyName);
+    const created = await this.prisma.client.auditLog.findFirst({
+      where: { action: 'system.company_onboarding.create', result: 'SUCCESS',
+        metadataJson: { path: ['companyId'], equals: request.companyId } },
+      select: { metadataJson: true },
+    });
+    const metadata = created?.metadataJson as Record<string, unknown> | null;
+    // Historical queued notifications and adopted companies retain their existing message.
+    if (metadata?.newShopWelcomeVersion !== 1 || metadata.source !== SIGNUP_SOURCE_LINE_OA
+      || metadata.newShopWelcomeSignupRequestId !== signupRequestId) {
+      return this.readyMessage(kind, request.companyName);
+    }
+    if (!request.ownerUserId || !request.lineChannelId || !request.lineProviderUserId) return null;
+    const identity = await this.prisma.client.externalIdentity.findFirst({ where: {
+      provider: 'LINE', providerChannelId: request.lineChannelId, providerUserId: request.lineProviderUserId,
+      status: 'ACTIVE', userId: request.ownerUserId, user: { status: 'ACTIVE' },
+    }, select: { userId: true } });
+    const member = identity && await this.prisma.client.companyMembership.findFirst({ where: {
+      companyId: request.companyId, userId: identity.userId, status: 'ACTIVE', user: { status: 'ACTIVE' },
+      roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },
+    }, select: { id: true, roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: {
+      permissions: { select: { permission: { select: { key: true } } } } },
+    } } } } });
+    if (!member) return null;
+    const context = await this.prisma.client.lineCompanyContext.findUnique({ where: { lineUserId: request.lineProviderUserId }, select: { companyId: true } });
+    if (context && context.companyId !== request.companyId) return this.readyMessage(kind, request.companyName);
+    if (!await isFreeExpenseDraftCompany(this.prisma.client, request.companyId)) return this.readyMessage(kind, request.companyName);
+    const entitled = await loadEntitledFeatureKeys(this.prisma, request.companyId);
+    const permissions = filterPermissionsByEntitlement(member.roles.flatMap(({ role }) => role.permissions.map(({ permission }) => permission.key)), entitled);
+    if (entitled && !entitled.has('expenses.upload')
+      || !['expense.receipt.upload', 'expense.receipt.line_upload'].some((key) => permissions.includes(key))) {
+      return this.readyMessage(kind, request.companyName);
+    }
+    const allowance = await freeExpenseAllowanceSnapshot(this.prisma, request.companyId);
+    return this.welcomeMessage(request.companyName, allowance);
+  }
+
+  private welcomeMessage(companyName: string, allowance: FreeExpenseAllowance): unknown {
+    const allowanceText = allowance.usedCount === 0 && allowance.inFlightCount === 0
+      ? 'เริ่มจากใบเสร็จสักใบก่อนก็ได้ค่ะ ลองส่งฟรีได้เดือนละ 3 ใบ โดยยังไม่ต้องซื้อแพ็กเกจ'
+      : allowance.remainingCount > 0
+        ? `เดือนนี้ยังส่งใบเสร็จฟรีได้อีก ${allowance.remainingCount} ใบค่ะ มั่งมีจะเตรียมรายการรายจ่ายไว้ให้คุณตรวจดู`
+        : allowance.inFlightCount > 0
+          ? 'ตอนนี้มีใบเสร็จที่กำลังอ่านอยู่ค่ะ รอผลแล้วเปิดร่างเพื่อตรวจดูได้เลยนะคะ'
+          : 'เดือนนี้ใช้สิทธิ์อ่านใบเสร็จฟรีครบแล้วค่ะ ยังเปิดร่างเดิมเพื่อตรวจดูและแก้ไขได้ตามสิทธิ์ของคุณ';
+    const lines = [
+      'สวัสดีค่ะ มั่งมีนะคะ ผู้ช่วยดูแลร้านของคุณ',
+      `ยินดีต้อนรับร้าน ${companyName} ค่ะ มั่งมีจะช่วยอ่านใบเสร็จและเตรียมรายการรายจ่ายไว้ให้คุณตรวจดู`,
+      allowanceText,
+      'ถ้ายังเลือกแพ็กเกจไม่ถูก ให้มั่งมีช่วยดูได้ค่ะ หรือจะคุยกับทีมดูแลก่อนก็ได้นะคะ',
+    ];
+    const liffId = this.config.lineLiffId;
+    return {
+      type: 'flex', altText: 'มั่งมี ผู้ช่วยดูแลร้านของคุณ ยินดีต้อนรับค่ะ',
+      contents: { type: 'bubble', size: 'mega',
+        body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '20px',
+          contents: lines.map((text, index) => ({ type: 'text', text, wrap: true, size: 'sm',
+            color: index === 0 ? '#101828' : '#475467', ...(index === 0 ? { weight: 'bold' } : {}) })) },
+        footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+          ...(allowance.remainingCount > 0 ? [{ type: 'button', style: 'primary', color: '#15803D',
+            action: { type: 'message', label: WELCOME_RECEIPT_COMMAND, text: WELCOME_RECEIPT_COMMAND } }] : []),
+          ...(liffId ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: 'ช่วยเลือกแพ็กเกจให้หน่อย',
+            uri: `https://liff.line.me/${liffId}/package-advisor` } }] : []),
+          { type: 'button', style: 'secondary', action: { type: 'uri', label: 'คุยกับทีมดูแล', uri: STAFF_OA_URL } },
         ] },
       },
     };

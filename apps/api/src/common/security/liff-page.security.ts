@@ -96,6 +96,8 @@ export function liffPageHtml(input: {
   content: string;
   /** Extra CSS rules for one page, appended to the shared block. */
   style?: string;
+  /** Trusted same-origin client choices only; existing pages retain their script and behavior. */
+  client?: 'package-advisor';
 }): string {
   const attrs = Object.entries(input.data)
     .map(([key, value]) => ` data-${key}="${escapeHtml(value)}"`)
@@ -119,7 +121,7 @@ ${input.content}
     </div>
   </main>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="${LIFF_PAGE_SCRIPT_URL}"></script>
+  <script src="${input.client === 'package-advisor' ? '/v1/auth/line/package-advisor.js' : LIFF_PAGE_SCRIPT_URL}"></script>
 </body>
 </html>`;
 }

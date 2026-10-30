@@ -1,0 +1,12 @@
+{
+  "head": "4a5817b4238379c2e3e3a24df996dd7168411eda",
+  "files": {
+    "apps/api/src/common/security/liff-page.security.ts": "14a164560e129856a9459fc4ab93abbc365e6f01a308f02360be18be32d704b6",
+    "apps/api/src/modules/auth/presentation/auth.controller.ts": "b3f7cef4d1cb95ca21c49fc4736b141efbeaaa772fa82cde5023cf965f706a74",
+    "apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts": "6c3de6fcf171c7b4b1e051463ba07de6284b0425e932be9f835c2bd4f8d2cd5b",
+    "docs/specs/free-expense-drafts-spec-th.md": "0db4465e37bae6557ab4b3745bdb696be0db91c5f7e18642f12bdb36db5a3d22",
+    "apps/api/src/modules/auth/line-liff-signup.spec.ts": "93d22aef546e3fa95720b6f1505cf8f31c3ae9f4356f0e4d77cb3e03e16dbdd4",
+    "apps/api/src/modules/auth/free-expense-handoff.spec.ts": "a97571ce50953530126e25432bdb4360ac69b0473b66057c635f41dd51379ba8"
+  },
+  "note": "Pre-existing changes preserved; hashes are task-entry baseline, not clean HEAD."
+}

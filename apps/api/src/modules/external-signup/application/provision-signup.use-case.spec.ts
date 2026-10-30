@@ -531,7 +531,7 @@ describe('ProvisionSignupUseCase — who counts as the operator', () => {
     assert.equal(metadata.operatorResolvedFromDirectory, true);
     // Onboarding's own audit carries the same three, so the company-side trail is not blind.
     assert.deepEqual(h.onboardingCalls[0].provisioningContext, {
-      source: 'line-oa', autoApproved: true, operatorResolvedFromDirectory: true,
+      source: 'line-oa', autoApproved: true, operatorResolvedFromDirectory: true, newShopWelcomeVersion: 1,
     });
   });
 });
@@ -562,6 +562,7 @@ describe('ProvisionSignupUseCase — recovering an already-created company', () 
     // The post-commit guards upsert FREE_TRIAL_15 themselves; a second preset here would race them.
     assert.equal(h.planTermUpserts.length, 1);
     assert.equal(h.planTermUpserts[0].create.tierKey, 'FREE_TRIAL_15');
+    assert.equal(h.onboardingCalls.length, 0, 'adoption cannot add the welcome creation marker');
   });
 });
 
@@ -592,6 +593,7 @@ describe('P10-L: the one push a new shop is owed (§3.4/§7)', () => {
     const h = harness();
     await h.useCase.execute(CMD);
     assert.deepEqual(h.linePushes, []);
+    assert.equal(h.onboardingCalls[0].provisioningContext.newShopWelcomeVersion, undefined);
   });
 });
 
