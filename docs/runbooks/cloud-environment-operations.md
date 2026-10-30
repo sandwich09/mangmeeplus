@@ -10,7 +10,26 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current Production release — 2026-10-30 19:27 Bangkok
+## Current UAT and Production — concise expense history, 2026-10-30 21:12 Bangkok
+
+UAT and Production serve exact source `884ba5307468111c48a2bd2c01a3c27c438d33a6`. Expense history
+now shows actor/action/time without field tables; upload bookkeeping is projected to one proven
+activity while preserving actual separate uploads and durable audits. UAT prepare
+`20261030T135245Z-27d48a21` passed in279.977s; UAT apply `20261030T135750Z-ad421006` completed
+signed/verified `ACCEPTED_LINE_DEFERRED` in287.233s. Production prepare
+`20261030T140338Z-402fb17c` passed in50.517s; apply `20261030T140443Z-887ba584` promoted the exact
+UAT images without rebuild and completed signed/verified acceptance in441.606s (website ready
+290.562s; browser stage122.628s). All12 phases, deep readiness, customer live/OPEN, current
+administrator identity/permission, login200/logout204/postlogout401, retirement19/19 and owned
+SSM cleanup (2 UAT,4 Production) passed. Workflow UAT/READY/PROD IDs are `NOT_DISPATCHED`.
+
+The owner authorized root `thawatchai` solely for this revision's read-only Alarm checks and
+retained the instruction to ignore unchanged old alarms. Pre/post/final reads show29OK and the
+same October9 API-security Alarm, no new/changed non-OK and no missing baseline alarms. No
+Alarm, gate or permission was changed. Native LINE/LIFF/provider messaging was not exercised.
+[Exact ledger, signed hashes, browser/status evidence and limits](../agent-memory/expense-activity-history-concise-release-2026-10-30.md).
+
+## Previous Production release — 2026-10-30 19:27 Bangkok
 
 Production and UAT now serve exact source `a02b9ccca8047caf951ff83dbc4f82e5bf3e062c`, including
 expense activity history and the new-shop LINE advisor. Preparation `20261030T120335Z-bc2072d4`
@@ -29,7 +48,7 @@ This is a scoped current-release exception, not authority for future releases. N
 external-provider messaging were not exercised.
 [Exact ledger, signatures, browser/status evidence and limits](../agent-memory/expense-activity-history-production-2026-10-30.md).
 
-## Current UAT release — 2026-10-30 18:43 Bangkok
+## Previous UAT release — 2026-10-30 18:43 Bangkok
 
 UAT is running and customer `OPEN`, serving exact source
 `a02b9ccca8047caf951ff83dbc4f82e5bf3e062c` (expense activity history and new-shop LINE advisor).

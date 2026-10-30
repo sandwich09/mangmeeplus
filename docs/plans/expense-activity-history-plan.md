@@ -26,4 +26,4 @@ Date: 2026-10-30
 - [x] Luna: remove change table/count and unused display helpers; short edit/upload labels, unchanged creator/title and loading/error/pagination behavior.
 - [x] Sol: project uploads to one actual activity before page/count, preserving standalone LINE uploads/text-note creation and durable audit; focused regressions.
 - [x] Parent: review scope/contract and real browser at 390/1280 (plus wide), including historical many-field edits, upload wording, pagination/error and unsaved form preservation.
-- [ ] Record evidence and carry the reviewed change through the existing direct main/develop and UAT/Production delivery path.
+- [x] Record evidence and carry the reviewed change through the existing direct main/develop and UAT/Production delivery path; signed/current-admin/OPEN acceptance complete. See `../agent-memory/expense-activity-history-concise-release-2026-10-30.md`.

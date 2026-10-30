@@ -1,7 +1,7 @@
 # Expense activity history
 
 Date: 2026-10-30
-Status: Approved for implementation in chat
+Status: Implemented and deployed on UAT/Production; concise revision accepted 2026-10-30
 Parent: `expense-receipt-upload-spec.md`
 
 ## Product and journey
@@ -20,7 +20,7 @@ Display latest human activities first: actor and a short Thai action together, B
 - Creator name comes from the authorized expense’s `createdByUserId` through the existing company-membership name lookup; an absent name remains null.
 - Human activity projection permits USER/CRM_CUSTOMER actors; excludes SYSTEM/SERVICE, `journey.*` telemetry, OCR processing, tax finalization, substitute source refresh, and LINE workflow initialization/transitions. Human creation (`expense.create`), direct edits/LINE answers and confirmed AI edits, uploads, payment and document operations remain visible. Automatic reimbursement confirmation/cancellation is identified by the existing positive authority metadata; direct human confirmation is retained. Scope resolution, authority lookup, page rows and count share a repeatable-read transaction.
 - Expose only safe fields above. No generic metadata, request IDs, email, service IDs, document payloads or raw OCR.
-- Add allowlisted before/after details at the existing expense update audit boundary, using actual persisted values. Reuse the same update path for WEB/LINE wherever possible and preserve transactional audit guarantees. Changes must not introduce extra financial mutations or alter existing validation/concurrency semantics.
+- Retain allowlisted before/after audit details at the existing expense update boundary, using actual persisted values; the concise UI does not render them. Reuse the same update path for WEB/LINE wherever possible and preserve transactional audit guarantees. Changes must not introduce extra financial mutations or alter existing validation/concurrency semantics.
 - History without field snapshots stays an action-only event. Never fabricate old values or guess missing actor identities. Unknown user/creator names use explicit unknown labels; system actions are omitted from this user-facing projection.
 
 ## Acceptance criteria

@@ -1,20 +1,20 @@
 # Agent Memory: expense-activity-history
 
-Status: Concise-history revision implemented and reviewed; local verification passed; direct main/develop integration and delivery in progress. Previous table version is deployed; see [UAT evidence](expense-activity-history-uat-2026-10-30.md) and [Production evidence](expense-activity-history-production-2026-10-30.md).
+Status: Complete. Concise actor/action/time history is integrated into main/develop and deployed on UAT/Production. See [signed release evidence](expense-activity-history-concise-release-2026-10-30.md).
 Owner: Parent reviewer; Luna frontend; Sol backend.
-Scope: Expense detail → เพิ่มเติม → ดูประวัติ; who/what/when and recorded field changes.
+Scope: Expense detail → เพิ่มเติม → ดูประวัติ; concise who/what/when, creator in title; durable field snapshots retained but not displayed.
 Decisions:
 - Follow `../specs/expense-activity-history-spec.md` and `../plans/expense-activity-history-plan.md`.
 - Prior premature changes were fully removed before approval. This is the approved implementation.
 - Preserve unrelated dirty-tree changes; task-start copies are in `/tmp/expense-activity-history-baseline`.
 - Ponytail full: existing audit, permissions, modal, API and date helpers; no dependencies/migrations/package.json edits.
 Open questions: None.
-Completed revision: User approved replacing repeated value cards with one change table per save (`ข้อมูล | ก่อนแก้ไข | หลังแก้ไข`), creator in modal title, actor/action together, automatic activities omitted from the user-facing feed before pagination. Durable audit stays intact.
+Previous revision (superseded by concise revision below): User approved replacing repeated value cards with one change table per save (`ข้อมูล | ก่อนแก้ไข | หลังแก้ไข`), creator in modal title, actor/action together, automatic activities omitted from the user-facing feed before pagination. Durable audit stays intact.
 Artifacts:
 - `ExpenseHistoryModal.tsx`, `expense-history.logic.ts`, detail header menu and API adapter.
 - Shared `ExpenseHistoryResult` contract, `GetExpenseHistoryUseCase`, scoped repository query, existing WEB/LINE audit enrichment.
 - `../evidence/expense-activity-history/desktop.png`, `mobile.png`, `browser-result.json`, `unsaved-edit-result.json`, backend/web test logs.
-Implementation/review evidence:
+Initial implementation/review evidence (historical):
 - Document history reuses all detail access checks; company-scoped record/payment/substitute targets. Free-draft GET route allowlist also permits history, while the existing use case still rejects final records without financial access.
 - Before/after snapshots run under existing expense locks, around the persisted header/line writes. Allowlisted fields include printed vendor identity, dates, document/tax status, notes, totals, line values and resolved company-scoped branch/category names. Line labels refer to displayed row numbers.
 - Existing audit failure semantics preserved: generic WEB log remains post-commit; LINE transactional audits still roll back on failure and do not produce duplicate generic events.
@@ -31,7 +31,7 @@ Verification:
 - Luna accidentally invoked the broader web suite while targeting one test: reported 2089 pass and 2 failures in untouched `api-error-coverage.spec.ts`; these are outside this task and not claimed fixed. Scoped final suites above pass.
 - Local QA servers stopped and Next's generated `next-env.d.ts` restored to its task-start contents after verification.
 - No-arrow follow-up: six targeted browser checks PASS (old/new labels, no arrow, desktop columns, mobile stack, overflow and close); `value-labels-result.json` records the result and screenshots were refreshed. No logic/API changes or new unit tests for this presentation-only edit.
-Next: Review the concise revision, verify current API projection and real browser, then deliver through the existing direct integration/release workflow.
+Next: None; concise revision and signed UAT/Production acceptance complete.
 
 ## Compact-table revision review — 2026-10-30
 
@@ -67,4 +67,4 @@ Next: Review the concise revision, verify current API projection and real browse
 - Upload-intent bookkeeping is hidden. Successful LINE follow-on is suppressed only with same company/expense/typed actor/nonempty request and canonical completion. Legacy text receive matches creation, with truthful creation fallback. Real distinct/standalone uploads and failed/denied attempts remain. Filtering/count/paging share one RepeatableRead snapshot. Audit data and API schema remain unchanged.
 - Web history/review/API suite52/52; backend focused authorization/projection5/5; API/web typechecks and diff check PASS.
 - Actual CUA browser at390/1280/1536 inspected inline; no table/count despite40 retained changes, creator/title/date/action correct, paging failure/retry and403 correct, Escape/menu focus and unsaved edit preservation PASS. Fixture setup issues were corrected in temporary fixture only. Evidence: `../evidence/expense-activity-history/concise-browser-result.json` and `concise-backend-tests.log`. No live database or provider journey claimed.
-- No dependencies/schema/package.json/controller edits. Next: direct integration per owner's no-PR instruction, new exact UAT build and promotion with signed/customer OPEN acceptance.
+- No dependencies/schema/package.json/controller edits. Delivery complete: source884ba5307, UAT20261030T135750Z-ad421006 and Production20261030T140443Z-887ba584; signed/customer OPEN acceptance passed.
