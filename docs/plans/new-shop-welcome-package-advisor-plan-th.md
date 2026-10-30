@@ -1,7 +1,7 @@
 # New-shop welcome and LINE package advisor implementation plan
 
 Date: 2026-10-30 (Asia/Bangkok)
-Status: COMPLETE — IMPLEMENTED / LOCALLY VERIFIED; NOT DEPLOYED
+Status: COMPLETE — MAIN/DEVELOP INTEGRATION; NOT DEPLOYED
 Spec: [product/architecture/acceptance](../specs/new-shop-welcome-package-advisor-spec-th.md)
 Memory: [task state](../agent-memory/new-shop-welcome-and-package-advisor-story.md)
 
@@ -43,3 +43,5 @@ Memory: [task state](../agent-memory/new-shop-welcome-and-package-advisor-story.
 ## Authorized direct integration
 
 Owner requested main/develop integration without PR on2026-10-30. Feature-only patch was adapted to current common baseline994a55fa1, preserving newer shared behavior. Fresh checks:1,094 tests passed, full API TypeScript and browser traversal passed. Deployment remains outside this request.
+
+Final application commit9036b8552 follows common main/develop baselinea68534385; the1,094 tests and full API TypeScript were rerun successfully after the baseline advance.

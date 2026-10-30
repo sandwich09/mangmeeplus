@@ -115,3 +115,5 @@ Provider checks used the official [LIFF API reference](https://developers.line.b
 - Current `STAFF_OA_URL` used for both welcome and advisor. New client validation/fallback follows the same exact URL. Shared LIFF client retains its current versioned URL and existing landing/deep-link behavior.
 - Browser rerun on integrated source completed all4 questions and rendered the current canonical BASIC fixture with green buttons, revised spreadsheet copy, no VAT, and current staff link. Screenshot: [integrated result](merge-result-desktop.jpg). No real LINE or checkout calls.
 - Owner requested direct merge/push without PR. No release workflow or cloud operation was invoked.
+
+Final integration rerun: destination branches advanced together toa68534385 during validation. Rebased the feature without conflict, rebuilt contracts, reran1,094 tests (117 suites,0 failures) and full API TypeScript successfully. Application commit9036b8552. Direct atomic push targets origin/main and origin/develop; no PR, force push or deployment.

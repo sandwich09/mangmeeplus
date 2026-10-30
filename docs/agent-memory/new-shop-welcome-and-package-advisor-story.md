@@ -1,6 +1,6 @@
 # Agent Memory: new-shop-welcome-and-package-advisor-story
 
-Status: IMPLEMENTED / VERIFIED FOR MAIN + DEVELOP INTEGRATION — 2026-10-30; not deployed or sent to real customers
+Status: MAIN + DEVELOP INTEGRATION — 2026-10-30; not deployed or sent to real customers
 Owner: thawatchai
 Scope: เฉพาะร้านที่เปิดใหม่สำเร็จและยังไม่เคยซื้อแพ็กเกจ; ต้อนรับด้วยน้องมั่งมี พร้อมทางลองใบเสร็จฟรี ทำแบบประเมินแพ็กเกจ และคุยทีมดูแลอีก LINE OA
 
@@ -163,3 +163,11 @@ Next:
 - Fresh-baseline verification: contracts build and Prisma client generation passed; 1,094 tests across117 suites passed; full API TypeScript with8GB heap passed; diff whitespace check passed.
 - Browser against the integrated source completed all four questions and produced BASIC for3–5 people/31–50 receipts/expense gathering/spreadsheet. Green theme, revised copy, no VAT and correct current support URL verified. Evidence: `merge-result-desktop.jpg`. Temporary verification tab/server closed.
 - Native LINE/provider acceptance and UAT/Production deployment remain separate; push does not trigger deployment in the current workflow configuration.
+
+
+## Main/develop delivery record
+
+- Application commit: `9036b8552`.
+- Latest common destination baseline advanced during verification from994a55fa1 toa68534385. Rebased only this feature on the new baseline without conflict; rebuilt contracts and reran the same1,094 tests and full8GB API TypeScript, all passed.
+- Delivery is a normal fast-forward push of this feature and its delivery record to both origin/main and origin/develop in one atomic update, without a PR or force push. No UAT/Production deployment.
+- No further implementation work remains for this request; native LINE/UAT acceptance requires a separate release task.

@@ -1,7 +1,7 @@
 # ต้อนรับร้านใหม่และช่วยเลือกแพ็กเกจใน LINE
 
 วันที่: 2026-10-30 (Asia/Bangkok)
-สถานะ: OWNER AUTHORIZED IMPLEMENTATION / LOCAL VERIFICATION
+สถานะ: IMPLEMENTED / VERIFIED FOR MAIN + DEVELOP; NOT DEPLOYED
 Owner: thawatchai
 แผน: [implementation plan](../plans/new-shop-welcome-package-advisor-plan-th.md)
 Memory: [story and task state](../agent-memory/new-shop-welcome-and-package-advisor-story.md)
