@@ -1,0 +1,27 @@
+{
+  "pass": true,
+  "surface": "actual Next page and BFF with isolated fixture API, CUA in-app browser",
+  "viewports": [
+    390,
+    1280,
+    1536
+  ],
+  "screenshots": "Viewed inline in task at each viewport; historical screenshot files are prior table revision.",
+  "checks": [
+    "creator and expense number in title",
+    "40 stored field changes render one concise edit row, no table or count",
+    "upload action reads อัปโหลดไฟล์",
+    "Thai Bangkok date/time",
+    "no horizontal dialog overflow at all three viewports",
+    "footer and load-more buttons 44px on phone / 40px on desktop",
+    "page-2 failure retains current rows and creator; retry loads remaining rows and ends paging",
+    "Escape restores menu focus",
+    "unsaved vendor name remains after history closes",
+    "403 hides creator and history; close action remains"
+  ],
+  "limitations": [
+    "fixture API, not live database or LINE provider",
+    "shared desktop icon-close button remains existing 36px; footer buttons meet 40px",
+    "fixture setup initially lacked reviewers response; fixed fixture before final visual checks"
+  ]
+}

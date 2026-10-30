@@ -1,6 +1,6 @@
 # Agent Memory: expense-activity-history
 
-Status: Integrated into origin/main and origin/develop without PR; deployed to UAT and Production on 2026-10-30, signed/verified and customer OPEN. See [UAT evidence](expense-activity-history-uat-2026-10-30.md) and [Production evidence](expense-activity-history-production-2026-10-30.md).
+Status: Concise-history revision implemented and reviewed; local verification passed; direct main/develop integration and delivery in progress. Previous table version is deployed; see [UAT evidence](expense-activity-history-uat-2026-10-30.md) and [Production evidence](expense-activity-history-production-2026-10-30.md).
 Owner: Parent reviewer; Luna frontend; Sol backend.
 Scope: Expense detail → เพิ่มเติม → ดูประวัติ; who/what/when and recorded field changes.
 Decisions:
@@ -31,7 +31,7 @@ Verification:
 - Luna accidentally invoked the broader web suite while targeting one test: reported 2089 pass and 2 failures in untouched `api-error-coverage.spec.ts`; these are outside this task and not claimed fixed. Scoped final suites above pass.
 - Local QA servers stopped and Next's generated `next-env.d.ts` restored to its task-start contents after verification.
 - No-arrow follow-up: six targeted browser checks PASS (old/new labels, no arrow, desktop columns, mobile stack, overflow and close); `value-labels-result.json` records the result and screenshots were refreshed. No logic/API changes or new unit tests for this presentation-only edit.
-Next: UAT and Production are ready for user testing/use. Deployment and final customer acceptance are complete.
+Next: Review the concise revision, verify current API projection and real browser, then deliver through the existing direct integration/release workflow.
 
 ## Compact-table revision review — 2026-10-30
 
@@ -59,3 +59,12 @@ Next: UAT and Production are ready for user testing/use. Deployment and final cu
 - Temporary QA services stopped; generated web metadata restored. Parent reviewed scoped diffs before commit.
 - Final current-base frontend suite (`expense-history.logic`, `ExpenseReviewPage.qa`, `expenses.api`) passed; full output saved as `integration-web-tests.log`.
 - Atomic push succeeded to both `origin/main` and `origin/develop`, advancing from `994a55fa1` to feature commit `1fbba874e`. Both remote refs independently verified with `git ls-remote`. This documentation commit records the completed integration. Frontend current-base suite:54/54 PASS.
+
+## Concise revision — 2026-10-30
+
+- Owner superseded the field table with actor/action/time only, upload wording อัปโหลดไฟล์, edit wording แก้ไขรายการจ่าย. Creator and expense number remain in title.
+- Luna changed frontend; Sol changed repository projection; parent traced writers and reviewed both. Preview is truthfully ดูตัวอย่างรายการจ่าย, not an edit.
+- Upload-intent bookkeeping is hidden. Successful LINE follow-on is suppressed only with same company/expense/typed actor/nonempty request and canonical completion. Legacy text receive matches creation, with truthful creation fallback. Real distinct/standalone uploads and failed/denied attempts remain. Filtering/count/paging share one RepeatableRead snapshot. Audit data and API schema remain unchanged.
+- Web history/review/API suite52/52; backend focused authorization/projection5/5; API/web typechecks and diff check PASS.
+- Actual CUA browser at390/1280/1536 inspected inline; no table/count despite40 retained changes, creator/title/date/action correct, paging failure/retry and403 correct, Escape/menu focus and unsaved edit preservation PASS. Fixture setup issues were corrected in temporary fixture only. Evidence: `../evidence/expense-activity-history/concise-browser-result.json` and `concise-backend-tests.log`. No live database or provider journey claimed.
+- No dependencies/schema/package.json/controller edits. Next: direct integration per owner's no-PR instruction, new exact UAT build and promotion with signed/customer OPEN acceptance.

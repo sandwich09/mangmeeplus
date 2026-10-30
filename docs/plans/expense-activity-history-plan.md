@@ -20,3 +20,10 @@ Date: 2026-10-30
 - [x] Port only history changes onto current main/develop, preserving unrelated local and newer mainline work.
 - [x] Verify current-base contracts/types, focused API tests19/19, web54/54, browser18 checks; record unchanged baseline fixture failures.
 - [x] Atomic fast-forward push of `1fbba874e` to origin/main and origin/develop, no PR. Verify both remote refs. No deployment.
+
+## Approved concise-history revision — 2026-10-30
+
+- [x] Luna: remove change table/count and unused display helpers; short edit/upload labels, unchanged creator/title and loading/error/pagination behavior.
+- [x] Sol: project uploads to one actual activity before page/count, preserving standalone LINE uploads/text-note creation and durable audit; focused regressions.
+- [x] Parent: review scope/contract and real browser at 390/1280 (plus wide), including historical many-field edits, upload wording, pagination/error and unsaved form preservation.
+- [ ] Record evidence and carry the reviewed change through the existing direct main/develop and UAT/Production delivery path.

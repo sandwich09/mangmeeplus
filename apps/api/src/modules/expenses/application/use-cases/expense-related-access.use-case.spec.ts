@@ -2593,6 +2593,11 @@ describe('expense activity history authorization and projection', () => {
             ] }]);
             return [{ id: 'automatic-reimbursement' }];
           }
+          if (args.where.action?.in?.includes('expense.upload.complete')) {
+            assert.deepEqual(args.where, { companyId: 'company-1', targetType: 'expense_record', targetId: 'expense-1', result: 'SUCCESS',
+              action: { in: ['expense.upload.complete', 'expense.create', 'expense.line_upload.receive'] } });
+            return [];
+          }
           query = args; return [
           { id: 'audit-1', action: 'expense.review.update', result: 'SUCCESS', actorType: 'USER', actor: { displayName: 'ผู้ตรวจ', email: 'secret@example.com' },
             createdAt: new Date(VERSION_FOR_HISTORY), requestId: 'private', metadataJson: { token: 'secret', expenseHistoryChanges: { note: { before: null, after: 'saved' } } } },
@@ -2611,7 +2616,7 @@ describe('expense activity history authorization and projection', () => {
       { targetType: 'expense_payment', targetId: { in: ['payment-1'] } },
       { targetType: 'expense_substitute_receipt', targetId: { in: ['evidence-1'] } },
     ], actorType: { in: ['USER', 'CRM_CUSTOMER'] },
-      action: { notIn: ['tax.document_tax.finalize', 'expense.substitute_receipt.source_refreshed', 'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition'] },
+      action: { notIn: ['tax.document_tax.finalize', 'expense.substitute_receipt.source_refreshed', 'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition', 'expense.upload_intent.create'] },
       NOT: { action: { startsWith: 'journey.' } }, id: { notIn: ['automatic-reimbursement'] },
     });
     assert.deepEqual(countWhere, query.where);
@@ -2629,5 +2634,80 @@ describe('expense activity history authorization and projection', () => {
     assert.ok(!JSON.stringify(result).includes('secret'));
     assert.ok(!JSON.stringify(result).includes('private'));
   });
+
+  it('projects one upload only on a proven completion match, before pagination/count, without losing standalone uploads or text creation', async () => {
+    const event = (id: string, action: string, requestId: string, extra: Record<string, unknown> = {}) => ({
+      id, companyId: 'company-1', targetType: 'expense_record', targetId: 'expense-1', action,
+      actorType: 'USER', actorUserId: 'user-1', actorRefId: null, requestId, result: 'SUCCESS', metadataJson: null,
+      actor: { displayName: 'ผู้ทำรายการ' }, createdAt: new Date(VERSION_FOR_HISTORY), ...extra,
+    });
+    const events = [
+      event('file-complete', 'expense.upload.complete', 'file-1'),
+      event('second-file-same-request', 'expense.upload.complete', 'file-1'),
+      event('file-follow-on', 'expense.line_upload.receive', 'file-1'),
+      event('standalone', 'expense.line_upload.receive', 'standalone'),
+      event('intent', 'expense.upload_intent.create', 'file-1'),
+      event('other-actor', 'expense.line_upload.receive', 'file-1', { actorUserId: 'user-2' }),
+      event('other-request', 'expense.line_upload.receive', 'other-request'),
+      event('create-text', 'expense.create', 'text-1'),
+      event('text-follow-on', 'expense.line_upload.receive', 'text-1', { metadataJson: { kind: 'text_note' } }),
+      event('legacy-text', 'expense.line_upload.receive', 'old-text', { metadataJson: { kind: 'text_note' } }),
+      event('failed-receive', 'expense.line_upload.receive', 'file-1', { result: 'FAILED' }),
+      event('denied-receive', 'expense.line_upload.receive', 'file-1', { result: 'DENIED' }),
+      event('unknown-actor', 'expense.line_upload.receive', 'file-1', { actorUserId: null }),
+      event('no-request', 'expense.line_upload.receive', ''),
+      event('crm-complete', 'expense.upload.complete', 'crm-file', { actorType: 'CRM_CUSTOMER', actorUserId: null, actorRefId: 'customer-1' }),
+      event('crm-follow-on', 'expense.line_upload.receive', 'crm-file', { actorType: 'CRM_CUSTOMER', actorUserId: null, actorRefId: 'customer-1' }),
+      event('other-crm', 'expense.line_upload.receive', 'crm-file', { actorType: 'CRM_CUSTOMER', actorUserId: null, actorRefId: 'customer-2' }),
+      event('other-actor-kind', 'expense.line_upload.receive', 'crm-file', { actorUserId: 'customer-1' }),
+      event('failed-complete', 'expense.upload.complete', 'failed-complete', { result: 'FAILED' }),
+      event('receive-after-failure', 'expense.line_upload.receive', 'failed-complete'),
+      event('other-company', 'expense.upload.complete', 'standalone', { companyId: 'company-2' }),
+      event('other-expense', 'expense.upload.complete', 'standalone', { targetId: 'expense-2' }),
+      // Same timestamp and actor, distinct actual uploads: both must survive, even across pages.
+      ...Array.from({ length: 22 }, (_, i) => event(`repeated-${String(i).padStart(2, '0')}`, 'expense.upload.complete', `request-${i}`)),
+    ];
+    const originalCount = events.length;
+    const queries: any[] = [];
+    const inExpense = (row: typeof events[number]) => row.companyId === 'company-1' && row.targetId === 'expense-1';
+    const visible = (where: any) => events.filter(row => inExpense(row) && where.actorType.in.includes(row.actorType)
+      && !where.action.notIn.includes(row.action) && !row.action.startsWith(where.NOT.action.startsWith) && !where.id?.notIn.includes(row.id));
+    const client: any = {
+      expensePayment: { findMany: async () => [] }, expenseSubstituteReceiptEvidence: { findMany: async () => [] },
+      auditLog: {
+        findMany: async (query: any) => {
+          if (Object.keys(query.select).length === 1) return [];
+          if (query.where.action.in) {
+            assert.equal(query.where.companyId, 'company-1'); assert.equal(query.where.targetId, 'expense-1');
+            assert.equal(query.where.targetType, 'expense_record'); assert.equal(query.where.result, 'SUCCESS');
+            return events.filter(row => inExpense(row) && row.result === 'SUCCESS' && query.where.action.in.includes(row.action));
+          }
+          queries.push(query);
+          assert.deepEqual(query.where.id.notIn.sort(), ['crm-follow-on', 'file-follow-on', 'text-follow-on']);
+          return visible(query.where).sort((a, b) => b.id.localeCompare(a.id)).slice(query.skip, query.skip + query.take);
+        },
+        count: async ({ where }: any) => { assert.deepEqual(where, queries.at(-1).where); return visible(where).length; },
+      },
+      $transaction: async (read: (tx: any) => Promise<unknown>, options: unknown) => {
+        assert.deepEqual(options, { isolationLevel: 'RepeatableRead' }); return read(client);
+      },
+    };
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const first = await repo.listExpenseHistory('company-1', 'expense-1', 1);
+    const second = await repo.listExpenseHistory('company-1', 'expense-1', 2);
+    assert.equal(first.total, originalCount - 6); assert.equal(second.total, first.total);
+    assert.equal(first.data.length, 20); assert.equal(second.data.length, first.total - 20);
+    const data = [...first.data, ...second.data];
+    assert.equal(new Set(data.map(row => row.id)).size, first.total);
+    for (const id of ['standalone', 'other-actor', 'other-request', 'unknown-actor', 'no-request', 'other-crm', 'other-actor-kind',
+      'failed-complete', 'receive-after-failure', 'failed-receive', 'denied-receive', 'second-file-same-request', 'repeated-00', 'repeated-21']) {
+      assert.ok(data.some(row => row.id === id), id);
+    }
+    assert.equal(data.find(row => row.id === 'legacy-text')!.action, 'expense.create');
+    assert.equal(data.find(row => row.id === 'standalone')!.action, 'expense.line_upload.receive');
+    assert.equal(data.filter(row => row.action === 'expense.create').length, 2);
+    assert.equal(events.length, originalCount);
+  });
+
 });
 const VERSION_FOR_HISTORY = '2026-10-30T10:00:00.000Z';

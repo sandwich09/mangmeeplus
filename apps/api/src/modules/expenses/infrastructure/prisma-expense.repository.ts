@@ -107,7 +107,7 @@ type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & {
 // their writers carry the initiating user's identity. Keep the durable audit untouched.
 const AUTOMATIC_EXPENSE_HISTORY_ACTIONS = [
   'tax.document_tax.finalize', 'expense.substitute_receipt.source_refreshed',
-  'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition',
+  'expense.ocr.request', 'expense.line_draft.start', 'expense.line_draft.transition', 'expense.upload_intent.create',
 ];
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
@@ -2095,11 +2095,30 @@ export class PrismaExpenseRepository {
           { metadataJson: { path: ['authority'], equals: 'REIMBURSEMENT_CANCELLATION' } },
         ] }],
       }, select: { id: true } });
+      // LINE has both a completion + receive lane and a standalone receive lane. A successful
+      // root must prove the same actor/request on this exact expense; timestamps prove nothing.
+      const uploads = await client.auditLog.findMany({ where: {
+        companyId, targetType: 'expense_record', targetId: expenseId, result: 'SUCCESS',
+        action: { in: ['expense.upload.complete', 'expense.create', 'expense.line_upload.receive'] },
+      }, select: { id: true, action: true, actorType: true, actorUserId: true, actorRefId: true, requestId: true, metadataJson: true } });
+      const uploadIdentity = (row: typeof uploads[number]) => {
+        const actor = row.actorType === 'USER' ? row.actorUserId : row.actorType === 'CRM_CUSTOMER' ? row.actorRefId : null;
+        return actor && row.requestId.trim() ? JSON.stringify([row.actorType, actor, row.requestId]) : null;
+      };
+      const completions = new Set(uploads.filter(row => row.action === 'expense.upload.complete').map(uploadIdentity).filter(Boolean));
+      const creations = new Set(uploads.filter(row => row.action === 'expense.create').map(uploadIdentity).filter(Boolean));
+      const uploadFollowOns = uploads.filter(row => {
+        if (row.action !== 'expense.line_upload.receive') return false;
+        const identity = uploadIdentity(row);
+        const isText = (row.metadataJson as { kind?: unknown } | null)?.kind === 'text_note';
+        return identity !== null && (isText ? creations : completions).has(identity);
+      });
+      const excludedIds = [...projected, ...uploadFollowOns].map(row => row.id);
       const where = { ...scope,
         actorType: { in: ['USER', 'CRM_CUSTOMER'] as Array<'USER' | 'CRM_CUSTOMER'> },
         action: { notIn: AUTOMATIC_EXPENSE_HISTORY_ACTIONS },
         NOT: { action: { startsWith: 'journey.' } },
-        ...(projected.length ? { id: { notIn: projected.map((row) => row.id) } } : {}),
+        ...(excludedIds.length ? { id: { notIn: excludedIds } } : {}),
       };
       const pageSize = 20;
       const [rows, total] = await Promise.all([
@@ -2108,7 +2127,8 @@ export class PrismaExpenseRepository {
         client.auditLog.count({ where }),
       ]);
       return { data: rows.map((row) => ({
-        id: row.id, action: row.action, result: row.result, actorType: row.actorType,
+        id: row.id, action: row.action === 'expense.line_upload.receive' && (row.metadataJson as { kind?: unknown } | null)?.kind === 'text_note'
+          ? 'expense.create' : row.action, result: row.result, actorType: row.actorType,
         actorDisplayName: row.actorType === 'USER' ? row.actor?.displayName ?? null : null,
         createdAt: row.createdAt.toISOString(), changes: readExpenseHistoryChanges(row.metadataJson),
       })), total, page, pageSize };

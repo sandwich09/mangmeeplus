@@ -8,7 +8,7 @@ Parent: `expense-receipt-upload-spec.md`
 
 On the expense detail screen, add `ดูประวัติ` under `เพิ่มเติม`. Open a shared modal over the same page, titled `ประวัติรายการจ่าย` with the expense number and creator display name (`สร้างโดย …`) in the modal title area. Resolve the creator from the expense record, independently of history pagination; never infer it from the current viewer or the first/oldest returned event. Desktop uses a centered modal; mobile fits the viewport. Existing cancellation and duplicate-check behavior remains available.
 
-Display latest human activities first: actor and Thai action together, Bangkok date/time once per event, and changed fields when recorded. Per the approved 2026-10-30 revision, each save is one event containing a compact semantic table with columns `ข้อมูล`, `ก่อนแก้ไข`, `หลังแก้ไข`. Only changed fields are rows; column headers appear once, with no arrows or per-value cards/labels. Events without changes remain plain activity rows. Tables fit narrow screens and wrap long values. Include human expense-record, payment and substitute-receipt activities; omit automatic system/service work and automatic follow-on events even when attributed to a user. Apply this projection before pagination/count; keep durable audit records intact. Mark failed/denied attempts distinctly. Offer `โหลดเพิ่มเติม` and `ปิด`; support Escape, loading, empty, permission-denied and retry states.
+Display latest human activities first: actor and a short Thai action together, Bangkok date/time once per event. The owner's latest 2026-10-30 revision supersedes the compact change table: show only who did what, to which kind of item, and when. The expense number and creator remain in the title. Show `แก้ไขรายการจ่าย` for expense edits; remove field lists, change counts and before/after tables entirely. Show one `อัปโหลดไฟล์` event per actual upload rather than intent/completion/LINE processing rows. Hide upload-start bookkeeping and suppress a LINE receive follow-on only when the same upload's completion is positively established; retain real standalone LINE uploads and distinguish legacy text-note creation from a file upload. Include human payment and substitute-receipt activities; omit automatic system/service work and follow-on events. Apply this projection before pagination/count; keep durable audit records and the existing API contract intact. Mark failed/denied attempts distinctly. Offer `โหลดเพิ่มเติม` and `ปิด`; support Escape, loading, empty, permission-denied and retry states.
 
 ## Data and boundaries
 
@@ -26,8 +26,8 @@ Display latest human activities first: actor and Thai action together, Bangkok d
 ## Acceptance criteria
 
 1. A permitted read-only viewer can open history; another tenant, unrelated own-only viewer, or out-of-branch user cannot read it.
-2. Creation, updates, confirmation/cancellation, payment and substitute events are visible when recorded; new updates show actual changed fields/values, with no false diff for untouched values.
+2. Creation, updates, confirmation/cancellation, payment and substitute events are visible when recorded as short actor/action/time rows; no changed field names/values or count is rendered, even for historical events with many snapshots.
 3. Events are bounded, latest first, and loading further pages works without duplicate UI entries.
 4. Opening/closing/retrying history does not save the current expense or discard edits. Error/empty states do not show stale data from another expense.
-5. Creator appears in the modal title, multiple changes saved together share one table, and automatic events do not consume history pages or counts.
+5. Creator appears in the modal title, each save remains a single short row, and upload bookkeeping/positively matched follow-ons do not consume history pages or counts. Two distinct uploads remain two events.
 6. Existing expense review journey and unrelated working-tree changes remain intact.

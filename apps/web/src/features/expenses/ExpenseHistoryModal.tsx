@@ -6,7 +6,7 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { Modal } from '@/common/components/modal';
 import { secondaryButtonClass, quietButtonClass } from '@/common/components/button/button-classes';
 import { getExpenseHistory } from './expenses.api';
-import { expenseHistoryActionLabel, expenseHistoryActorLabel, expenseHistoryFieldLabel, expenseHistoryValueLabel } from './expense-history.logic';
+import { expenseHistoryActionLabel, expenseHistoryActorLabel } from './expense-history.logic';
 
 type HistoryEntry = ExpenseHistoryResult['data'][number];
 
@@ -86,19 +86,10 @@ export function ExpenseHistoryModal({ companyId, expenseId, expenseNumber, onClo
             {entries.map(entry => <li key={entry.id} className="relative py-4 pl-5 first:pt-1 last:pb-1">
               <span aria-hidden="true" className="absolute left-0 top-6 h-2.5 w-2.5 rounded-full bg-brand-500" />
               <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-                <div className="font-semibold text-gray-900">{expenseHistoryActorLabel(entry.actorType, entry.actorDisplayName)} · {expenseHistoryActionLabel(entry.action)}{entry.changes.length > 0 && <span className="ml-1 font-normal text-gray-500">· {entry.changes.length} จุด</span>}</div>
+                <div className="font-semibold text-gray-900">{expenseHistoryActorLabel(entry.actorType, entry.actorDisplayName)} · {expenseHistoryActionLabel(entry.action)}</div>
                 <time dateTime={entry.createdAt} className="text-xs text-gray-500">{formatThaiDateTime(entry.createdAt, 'ไม่ทราบเวลา')}</time>
               </div>
               {entry.result !== 'SUCCESS' && <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-xs font-semibold ${entry.result === 'DENIED' ? 'bg-warning-50 text-warning-800' : 'bg-error-50 text-error-700'}`}>{entry.result === 'DENIED' ? 'ถูกปฏิเสธ' : 'ดำเนินการไม่สำเร็จ'}</span>}
-              {entry.changes.length > 0 && <div className="mt-2 overflow-hidden rounded-lg bg-gray-50 px-1 py-1 sm:px-2">
-                <table className="w-full table-fixed border-collapse text-left text-sm">
-                  <thead><tr className="border-b border-gray-200 text-xs font-semibold text-gray-600"><th scope="col" className="w-[30%] px-2 py-2">ข้อมูล</th><th scope="col" className="w-[35%] px-2 py-2">ก่อนแก้ไข</th><th scope="col" className="w-[35%] px-2 py-2">หลังแก้ไข</th></tr></thead>
-                  <tbody>{entry.changes.map((change, index) => {
-                    const amount = /(?:Amount|Price)$/.test(change.field);
-                    return <tr key={`${change.field}-${index}`} className="border-b border-gray-100 last:border-0 align-top"><th scope="row" className="break-words px-2 py-2 font-medium text-gray-700">{expenseHistoryFieldLabel(change.field)}</th><td className={`break-words px-2 py-2 text-gray-600 ${amount ? 'text-right tabular-nums' : ''}`}>{expenseHistoryValueLabel(change.field, change.before)}</td><td className={`break-words px-2 py-2 text-gray-800 ${amount ? 'text-right tabular-nums' : ''}`}>{expenseHistoryValueLabel(change.field, change.after)}</td></tr>;
-                  })}</tbody>
-                </table>
-              </div>}
             </li>)}
           </ol>
           {error && <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-error-700"><span>{errorMessage}</span>{!denied && <button type="button" className={secondaryButtonClass} onClick={() => void loadMore()}>ลองโหลดอีกครั้ง</button>}</div>}
