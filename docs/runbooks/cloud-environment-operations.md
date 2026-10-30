@@ -10,7 +10,30 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## Current UAT power state — paused 2026-10-29 01:26 Bangkok
+## Current UAT release — 2026-10-30 18:43 Bangkok
+
+UAT is running and customer `OPEN`, serving exact source
+`a02b9ccca8047caf951ff83dbc4f82e5bf3e062c` (expense activity history and new-shop LINE advisor).
+Local Kamal apply `20261030T113901Z-99a9da2f` completed signed/verified `ACCEPTED_LINE_DEFERRED`
+in 277.582 seconds. All 12 phases, exact source/image/config, API/DB/AI/workers/Redis/internal API,
+retirement 19/19 and owned SSM cleanup 2/2 passed. Public health/login and customer `OPEN` passed
+again after acceptance. Workflow UAT/READY/Production IDs are `NOT_DISPATCHED`; Production was
+not mutated. Login/logout and native LINE are outside the documented UAT smoke acceptance.
+
+Preparation `20261030T112603Z-3d7cab43` stopped before publication/deployment at API-host capacity.
+The documented cleanup removed 13 old unused tools tags, preserving current+previous tools and
+every container; free space rose from 3.55 GB to 27.10 GB (5.08 GB required). Preparation
+`20261030T113607Z-8daff7a6` then validated and published the same build without rebuilding.
+
+**Reusing a reused preparation:** the current controller copies `build/` but does not create a
+sibling `source/` in the second preparation directory. The apply loader requires that clean checkout.
+First apply `20261030T113747Z-9e276b76` stopped safely at this boundary; use the original validated
+build directory with its original `source/`, after verifying identical build/image identities.
+Do not copy source into the run, rebuild, delete locks or alter the controller to skip validation.
+The successful apply above used the original `20261030T112603Z-3d7cab43/build`.
+[Exact ledger, hashes and limits](../agent-memory/expense-activity-history-uat-2026-10-30.md).
+
+## Previous UAT power state — paused 2026-10-29 01:26 Bangkok
 
 UAT is intentionally paused by owner request. Canonical power operation
 `20261028T182046Z-2b8ad842` completed `UAT_POWER_PAUSED_WITH_DATABASE` in 338.118 seconds. Both
@@ -23,7 +46,7 @@ customer `OPEN` before and after the operation. Use the canonical `power-uat sta
 do not deploy directly while desired state is `paused`.
 [Exact power-operation evidence](../agent-memory/uat-power-pause-2026-10-29.md).
 
-## Current UAT and Production latest-main release — 2026-10-29 01:15 Bangkok
+## Previous UAT / current Production release — 2026-10-29 01:15 Bangkok
 
 UAT and Production now serve exact source `8c112ea70003057fa3063938e859de1b945747d1`, including the
 unusual expense-document-date discovery correction and every earlier latest-main feature. UAT
