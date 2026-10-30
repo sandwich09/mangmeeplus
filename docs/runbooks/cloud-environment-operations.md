@@ -10,6 +10,25 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Current Production release — 2026-10-30 19:27 Bangkok
+
+Production and UAT now serve exact source `a02b9ccca8047caf951ff83dbc4f82e5bf3e062c`, including
+expense activity history and the new-shop LINE advisor. Preparation `20261030T120335Z-bc2072d4`
+verified the signed UAT bundle and complete Production configuration/capacity in 48.532 seconds.
+Apply `20261030T121827Z-e64994ae` promoted the exact immutable UAT images without rebuilding and
+completed signed/verified `ACCEPTED_LINE_DEFERRED` in 520.362 seconds (website ready 302.541 seconds;
+browser acceptance stage 190.892 seconds). All 12 phases, exact runtime/config on four hosts, deep
+readiness, customer live/OPEN, current administrator/permissions, logout 204/post-logout 401,
+retirement 19/19 and owned SSM cleanup 4/4 passed. Workflow UAT/READY/Production IDs are
+`NOT_DISPATCHED`. No gate or Alarm was changed.
+
+The owner authorized root `thawatchai` only for this release's read-only Alarm checks, and expressly
+accepted unchanged old alarms while requiring checks for this release. Fresh pre/post/final reads
+show 29 OK and the one unchanged API-security Alarm from 9 October; no new/changed non-OK alarm.
+This is a scoped current-release exception, not authority for future releases. Native LINE/LIFF and
+external-provider messaging were not exercised.
+[Exact ledger, signatures, browser/status evidence and limits](../agent-memory/expense-activity-history-production-2026-10-30.md).
+
 ## Current UAT release — 2026-10-30 18:43 Bangkok
 
 UAT is running and customer `OPEN`, serving exact source
@@ -46,7 +65,7 @@ customer `OPEN` before and after the operation. Use the canonical `power-uat sta
 do not deploy directly while desired state is `paused`.
 [Exact power-operation evidence](../agent-memory/uat-power-pause-2026-10-29.md).
 
-## Previous UAT / current Production release — 2026-10-29 01:15 Bangkok
+## Previous UAT and Production release — 2026-10-29 01:15 Bangkok
 
 UAT and Production now serve exact source `8c112ea70003057fa3063938e859de1b945747d1`, including the
 unusual expense-document-date discovery correction and every earlier latest-main feature. UAT

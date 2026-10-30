@@ -40,4 +40,4 @@ Verification:
 - Final owned SSM session cleanup passed 2/2; local active guard absent. The controller released its owned remote lock normally. No Production deployment or customer-gate change.
 - Scope limit: UAT smoke acceptance, not an authenticated expense-history or native LINE journey. Feature browser/permission tests are the previously recorded local fixtures; login/logout is not required for this documented UAT path.
 
-Next: UAT ready for user testing at https://uat.mangmeeplus.com. Any Production promotion requires a separate user request and the mandatory protocol, using this signed UAT bundle without rebuilding.
+Next: UAT ready for user testing at https://uat.mangmeeplus.com. Owner subsequently requested Production promotion; the exact signed UAT bundle was promoted without rebuild under `20261030T121827Z-e64994ae`, signed/verified and live/OPEN. See [Production evidence](expense-activity-history-production-2026-10-30.md).

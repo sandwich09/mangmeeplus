@@ -1,6 +1,6 @@
 # Agent Memory: expense-activity-history
 
-Status: Integrated into origin/main and origin/develop without PR; deployed to UAT on 2026-10-30, signed/verified and customer OPEN. See [release evidence](expense-activity-history-uat-2026-10-30.md).
+Status: Integrated into origin/main and origin/develop without PR; deployed to UAT and Production on 2026-10-30, signed/verified and customer OPEN. See [UAT evidence](expense-activity-history-uat-2026-10-30.md) and [Production evidence](expense-activity-history-production-2026-10-30.md).
 Owner: Parent reviewer; Luna frontend; Sol backend.
 Scope: Expense detail → เพิ่มเติม → ดูประวัติ; who/what/when and recorded field changes.
 Decisions:
@@ -31,7 +31,7 @@ Verification:
 - Luna accidentally invoked the broader web suite while targeting one test: reported 2089 pass and 2 failures in untouched `api-error-coverage.spec.ts`; these are outside this task and not claimed fixed. Scoped final suites above pass.
 - Local QA servers stopped and Next's generated `next-env.d.ts` restored to its task-start contents after verification.
 - No-arrow follow-up: six targeted browser checks PASS (old/new labels, no arrow, desktop columns, mobile stack, overflow and close); `value-labels-result.json` records the result and screenshots were refreshed. No logic/API changes or new unit tests for this presentation-only edit.
-Next: UAT is ready for user testing. Production promotion is separate work requiring user authorization and the repository deployment protocol.
+Next: UAT and Production are ready for user testing/use. Deployment and final customer acceptance are complete.
 
 ## Compact-table revision review — 2026-10-30
 
