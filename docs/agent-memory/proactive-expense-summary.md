@@ -1,161 +1,57 @@
 # Agent Memory: proactive-expense-summary
 
-Status: READY (docs-first) — reviewed 3 rounds 2026-10-24, no HIGH open; see Must close before coding (spec §16.1 M1–M9)
-
-Owner: Expenses / Notifications lane (backlog ข้อ 14 of `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md`)
+Status: DRAFT — documents only; sold ceiling and traceability revised 2026-10-26; owner Q1–Q5/Q7 and remaining engineering proof open; Q6 removed (ceiling); Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R19 paid-only eligibility checked against free-expense-access.ts and BILLING_PAID_TIERS)
+Owner: Expenses / Notifications documents lane; controller assigns implementation
+Related: `docs/specs/proactive-expense-summary-spec.md`, `docs/plans/proactive-expense-summary-plan.md`, `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` ข14, `docs/guidelines/thai-ux-standard.md`
+Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, citations rechecked in this worktree 2026-11-04; original review/research dates remain historical
 
 Scope:
-- Weekly LINE summary on Mondays 08:00 (Asia/Bangkok), opt-in, sent only in weeks with something to report. Plain words and amounts, no %, ranks or multiples.
-- Four rule-based "ควรดู" signals: spike against the shop's own history, a new vendor with a high amount, possible duplicates, claims waiting more than 7 days to be paid.
-- ภ.ง.ด.3/53 and ภ.พ.30 due-date rows, shown only when true for the shop.
-- Menu "รายจ่ายตามหมวด" opening `/income-expense-ledger?side=expense` in an expense-only mode.
-- Retire `daily_owner_summary` through every path that can create it.
-- Zero AI calls. At most one push per **subscribed membership** per week: up to 5 a month in five-Monday months, and a person subscribed in two shops gets two.
+- Round 4, documents only: weekly spec/plan/memory and e-WHT spec/plan, re-anchored to develop e7c422802 on 2026-11-04. No code, corpus, package, schema, cloud or network change.
+- Weekly summary remains opt-in per membership, Monday 08:00 Bangkok, zero AI, sold destinations and expense-derived PND3/PND53 information only. Free source-drafts shops get no weekly summary, home/account invitation or tax reminder.
+- e-WHT changes are restricted to status/baseline citations, citation offsets and one free-path qualification in each document; the design, owner gates, tests and acceptance remain intact.
 
-Decisions (cited in the spec):
-- **Opt-in storage:** a new table keyed by `membershipId` (cascade). An account merge moves memberships (account-merge.use-case.ts:219), so the subscription follows with no extra code. The `close_duplicate` case moves or drops the row inside the merge transaction. `NotificationPreference` is not used, because creating a row freezes the trigger list (notification.use-cases.ts:366-372).
-- **Opt-in surface:** "บัญชีของฉัน". Sold packs cannot open notification settings (owner decision 2026-10-04).
-- **Eligibility:** `expense.read`. Unsubscribing never needs it.
-- **Rights are checked at three points:**
-  - Sweep: `resolveAccess` before building the card.
-  - Delivery, inside the push transaction, in this lock order with no shortcut: entitlement advisory (shared) → `Company FOR SHARE` → membership `FOR UPDATE` → read the subscription and current rights in the transaction → compare with the card's audience → SUPPRESSED `SUMMARY_AUDIENCE_CHANGED`, or push and commit.
-    - Rights writers take `Company FOR UPDATE` via `lockPlanTermCompany` (update-role.use-case.ts:71). A revocation either commits first or waits until the push has committed.
-    - Unsubscribe locks the same membership row.
-  - Bell: the list and the unread count filter before pagination.
-- **Number basis:**
-  - CONFIRMED expenses by `expenseDate`, with line-level categories as in income-expense-ledger.use-case.ts:161-165.
-  - Money is THB only, plus a count row for other currencies. The ledger page's expense side gets the same fix (B8, plan 1.2). The home page (B9) is owner-gated (M4).
-  - A2's "seen before" history check is company-wide with no branch filter. The amounts are scoped.
-  - Scope is `branchScopeWhere`: scoped branches plus central rows (branch.logic.ts:80-83), the same as the ledger page the card links to.
-  - The claim is "same basis", not "same numbers": the page is monthly and the card is weekly.
-- **Event creation:** `executeInTransaction` (the advisory lock per dedupKey) with a new `onlyIfAbsent` flag.
-  - Supersession matches the source (membership) and `createdAt < new`, through a new `resolveEarlier` option `matchBy: 'source'`.
-  - It never matches on the shared ledger URL, which prisma-notification.repository.ts:194 would otherwise use.
-- **Signals:**
-  - A2 vendor identity: the union of keys `cp:<counterpartyId>` and `tax:<13 digits>` (snapshot or the counterparty's taxId), so both directions of a later counterparty link count as the same vendor.
-  - A4 reuses one pure `claimPayableSince`, moved out of workflow-scan-candidates.use-case.ts:216-220, so a payment voided today does not count as already waiting. Claims whose duplicate block is CONFIRMED are excluded.
-- **Tax rows:**
-  - ภ.ง.ด. rows reuse the PND adapter `ExpenseSourceAdapter.findConfirmedWithWhtByCompany`, which keeps only `paidAtConfirmed` payments (expense-source.adapter.ts:111). One row per form.
-    - The form comes from a pure `withholdingFormType` extracted from sync-tax-events.use-case.ts:60-77. PND2 and unknown payee kinds give no row.
-    - Filed coverage is checked per payment with `withholdingPaperPayments` (withholding-filing-state.ts:73-76), never by `TaxPeriod` status.
-  - ภ.พ.30 needs a live REGISTERED fact whose period overlaps the tax month (Revenue Code §85, registration date). §83 says VAT is filed per establishment unless consolidated filing is approved; the row states only the due date.
-  - Showing tax rows only to unscoped subscribers is a product limitation, not a legal claim.
-  - The card says "ภายใน <base day>": 7 or 15 on paper, 15 or 23 online, with +8 days only while the statutory due date is on or before 2027-01-31.
-- **Retire the daily summary:**
-  - The use case becomes inert, `daily_owner_summary` leaves `IMPLEMENTED_TRIGGER_KEYS` and joins `RETIRED_TRIGGER_KEYS`, and the rule is hidden from the list with re-enabling rejected.
-  - A migration disables the rules, resolves the open events and suppresses queued deliveries.
-  - The cron stays.
-- **Retention:** no notification purge exists in the repo. The weekly sweep purges summary events older than 13 months for **every** company (Q7), independent of subscribers and company status, in batches, even when sends fail. The cascade removes recipients and deliveries.
-- **Account merge:**
-  - The subscription follows the membership, and pending summary recipients of moved memberships go to the surviving user in the merge transaction.
-  - `close_duplicate`: the closed membership's open summary is resolved if the surviving membership already has one for that week; otherwise its recipient moves.
-  - The sweep iterates subscription ids and, inside the create transaction, locks the subscription and membership rows (`FOR SHARE`) and re-reads the owner. This closes the merge/creation race that `onlyIfAbsent` would otherwise freeze.
-  - Guaranteed only once implemented and tested (spec AC21, AC29).
-- **Expired package:** GET/DELETE `expense-weekly-summary/me` only (PUT is not opened) must pass three separate gates:
-  - the term-expiry gate in auth.guard.ts:294-305;
-  - the term-recovery path at :245;
-  - the resolver's rejection when every selected branch is disabled (prisma-permission-resolver.repository.ts:108-109), which needs a narrow session-plus-membership context.
-  - Whether the guard supports that context is open: M7. AC28 covers all three cases.
-- **Deep link:** `#weekly-summary` is added to `COMPANY_PROFILE_SECTION_IDS` and scrolls after the card loads (cold open and hashchange).
-- **Wording:** the web never promises a send date ("ตรวจครั้งถัดไป…", "จะดูให้…และส่งถ้ามีเรื่องให้สรุป").
-- **UI evidence:** a real browser at 390 and 1280 (thai-ux-standard.md:110-117), plus about 1,556 for the owner. Measure the buttons.
+Decisions:
+- New R19/AC32–AC33 requires current active access and an unexpired/enabled paid catalog tier (`packages/contracts/src/billing.ts:9`), plus existing reader/branch rights, before opt-in, weekly reads and send. Use current resolver/term facts; missing/free/unknown/expired never qualifies from expense.read alone.
+- Reuse `isFreeExpenseDraftCompany` (`apps/api/src/modules/system-partner-management/application/free-expense-access.ts:10–54`) through the existing resolver (:65,130–131 in `prisma-permission-resolver.repository.ts`); permissions keep originally granted expense.read (:58–68 above), but free routes remain expense/source/history-only (:72–83), enforced by `auth.guard.ts:325–326`. Do not widen the free allowlist for summary routes or recovery.
+- One local `weeklySummaryPaidEligible` function in the already-planned pure logic file serves existing subscription/provider/sweep/delivery/list/unread boundaries. Provider reads current company/term facts before expense/claim/WHT queries; no new commercial-access service, DB port, permission, environment switch or stored flag.
+- Free UI never mounts/calls the summary card; pass existing server-session freeExpenseDrafts through account/settings-profile callers. Optional Q2 home invitation is positively paid-gated through the dashboard caller/wrapper. No loading/cache flash, zero summary requests or tax rows for free users. Existing paid branch scope and own expired-paid opt-out recovery remain.
+- R1–R8/R11–R15 remain paid-summary behaviour; R9 purge and R10 daily retirement still run across cohorts without granting access; R16–R18 remain removed tombstones; R19 covers paid/free. All earlier AC ids stay; AC32/AC33 add only commercial-boundary proof.
+- Goal 5 / 1.1–1.3, VAT/PP30 row and facts, ledger exports, AC11/AC13/AC30, M9 and Q6 remain removed 2026-10-26 (ceiling). No unsold module/UI/export/test work is restored.
+- Tax reminders remain expense-derived PND3/PND53 with confirmed paid dates and per-payment filing coverage, excluding explicit E_WHT once its source contract lands; lower packs get information only, no form-page button. No VAT fact read.
+- Money stays CONFIRMED/civil expense-date/THB-only plus other-currency counts; branch scope includes central rows. No promise that card totals equal the home/list view. Preserve subscription merge/dedup/source-supersession, tx-bound live rights checks, retention and exact own opt-out recovery.
+- e-WHT R1–R21 are qualified as paid-workflow design: free has no WHT/remittance choice or confirm; existing `assertExpenseFinancialAccess` (`apps/api/src/modules/expenses/application/expense-commercial-access.ts:22–25`) is called before confirmation (`expense-draft.use-case.ts:1361`). Existing free source facts, quota and routes stay unchanged; no e-WHT design or new guard implementation.
 
-Open questions (owner — business only, recommendation in brackets):
-- Q1: opt-in only? [yes]
-- Q2: a one-time offer line on the home page? [yes]
-- Q3: anomalies in the weekly card only? [yes]
-- Q4: send nothing in a quiet week? [yes]
-- Q5: which plan is the OA `@695ultfm` on, and what is the budget? [check; move to Basic 1,280 THB + VAT if it is Free]
-- Q6: show the ภ.พ.30 due-date row without a VAT screen? [yes, row only]
-- Q7: keep summaries 13 months? [yes]
+Develop already fixed/changed (local code, not live verification):
+- `049aa51de`: never-paid expired shops may use source drafts; the old uniformly-blocked statement is corrected. Free predicate/permissions/routes above are existing code. Three monthly source reads and pending/usable counts remain in `free-expense-quota.ts:9,21–29`; attachment ownership/state checks remain in `free-expense-attachment.ts:13–26`. No quota/source/commercial implementation is repeated.
+- `9036b8552`: welcome/cohort/package-advisor entry exists (`apps/api/src/modules/external-signup/application/line-signup-notify.service.ts:402–428,453–457`). It does not enroll a weekly summary or open typed free AI questions (D04). Preserve it unchanged.
+- `1fbba874e`/`884ba5307`: concise activity history exists (`apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:292–304,1207–1212`; `apps/web/src/features/expenses/ExpenseHistoryModal.tsx:77–96`). Summary reads add no expense save/activity row; no history implementation.
+- `3f6db1729`: accepted confirmation results are already suppressed for exact recipient/chat/proof (`process-line-webhook.use-case.ts:3717–3731`). `48295b57c`: picker command text survives display sanitization (`apps/api/src/modules/line-ai/domain/logic/line-language.logic.ts:7–14`). Preserve both. The picker fix is in the text transformer, while buffer ordering remains existing behaviour; no new webhook/buffer/sanitizer work.
+- Existing B1–B9 and e-WHT B1–B13 remain visible at the re-anchored evidence; those merged features do not fix them. e-WHT fields/settings still do not exist in apps/packages; no existing e-WHT implementation is claimed or repeated.
+
+Current bugs/gaps:
+- New G14, **out of scope for a daily eligibility repair**: daily sweep selects active companies/rules (`apps/api/src/modules/dashboard-notifications/application/use-cases/notification-sweeps.use-cases.ts:115–121`); creator reads a snapshot and selects OWNER/ADMIN (`notification.use-cases.ts:303–325`) with no explicit free-cohort exclusion at either boundary. This is static evidence, not proof of delivery to a free shop. Preserve existing R10 full retirement; add no daily free filter or daily test here.
+- G15, **in-scope former-design gap**: permission-only summary eligibility could qualify a free worker recipient with expense.read. R19 closes that design gap before opt-in/read/send; weekly summary is not implemented today, so no current weekly disclosure is claimed.
+- B1/B4 daily zero-widget/role broadcast, B6 URL supersession, B7 concurrent direct create, B8 unsold-ledger mixed currency and B9 home mixed currency remain; no ledger/home fix is added. Existing current delivery still checks active membership/event and entitlement without re-reading reader scope (`notification.use-cases.ts:498–530`), hence R7/19 live checks remain required.
+- B2 unsold ledger placeholder, B3 permanent quiet-hours suppression, B5 429 quota retry, other notice retention/merge gaps remain out of scope. G12 account hash still lacks weekly-summary (`company-profile.logic.ts:68–75`). M1/M8 writer locking, M2 tx-bound resolver and M5 adapter-volume proof remain; no speculative resolver API or cache is added.
+- M6 recovery now explicitly means expired previously-paid access; free-cohort permission filtering is separate. R19 cannot turn the narrow metadata/DELETE recovery path into free enrollment or summary reads.
+
+Open questions (unchanged, with recommendations):
+- Q1 opt-in only [yes]; Q2 once-only paid-home invitation [yes after owner approval, never free]; Q3 signals only in weekly card [yes]; Q4 quiet weeks silent [yes].
+- Q5 message budget [operator reconfirms OA plan/prices, budget covers five-Monday months plus other notices]; Q7 retention [13 months]. Q6 stays removed. Home B9 wording/placement remains a separate owner decision (M4).
+- e-WHT Q1–Q4 and existing engineering prerequisites remain unchanged; free-path clarification introduces no new owner question. Legal deadline/price research is not done in this no-network round.
 
 Artifacts:
-- docs/specs/proactive-expense-summary-spec.md
-- docs/plans/proactive-expense-summary-plan.md
-- Sources:
-  - https://lineforbusiness.com/th/service/line-oa-features
-  - https://lineforbusiness.com/th/news/20240619_1
-  - https://developers.line.biz/en/docs/messaging-api/pricing/
-  - https://www.rd.go.th/62348.html
-  - https://www.rd.go.th/39808.html
-  - https://www.rd.go.th/5207.html (§83)
-  - https://www.rd.go.th/5208.html (§85)
-  - MoF announcement No. 8 via https://www.ryt9.com/s/rdn/3502705 and the RD VAT-refund manual
+- Weekly spec: 19 R ids (16 retained, 3 removed), AC1–AC33 intact, R19 path applicability, concrete failure/impact/risks/first tests and trace row.
+- Weekly plan: R19 mapped into existing steps, exact registered first tests, commands/dependencies, three-width browser journey; no new step ids or migration for R19.
+- e-WHT spec/plan: all 21 R ids and A1–A44 retained; status/citation/free-path edits only; original B5 PP30-unsold side-effect note retained.
 
 Verification:
-- Docs only; no build and no tests (no node_modules).
-- The coordinator re-opened every code citation from the first draft, and all held.
-- I re-read every citation added in this revision against the worktree.
-- Not verified (owners and next steps in spec §16.1 M1–M6):
-  - M1: every rights writer locks `Company` or the entitlement advisory, in a compatible order.
-  - M2: the permission resolver can read inside the delivery transaction.
-  - M3: whether non-THB expenses can actually be created.
-  - M5: adapter cost per subscriber.
-  - M6: what the resolver grants during term recovery.
-  - M7: a narrow guard context for cancellation.
-  - M8: the role-disable race. `DisableRoleUseCase` counts assignments before its transaction without locking Company (disable-role.use-case.ts:24-33), while update-employee assigns roles at :288.
-  - M9: the currency column and totals in the ledger export.
-  - whether Production ever ran seed.ts;
-  - the OA plan and its monthly volume;
-  - the full text of MoF announcement No. 8 on rd.go.th (listing page returned HTTP 500);
-  - whether any other direct `execute` producer can overlap (B7);
-  - the holiday reason for the 26 Oct 2569 ภ.พ.30 date.
-
-Review 2026-10-24 (Codex gpt-6-astra review F1–F21 → where it is fixed):
-- F1 no revalidation before send → spec §8 (three check points), §7 Delivery; plan 3.5; AC7
-- F2 supersession via the shared URL → spec §7 Supersession (`matchBy: 'source'` + createdAt), B6; plan 3.3; AC5
-- F3 non-idempotent direct execute → spec §7 sweep step 4 (`executeInTransaction` + `onlyIfAbsent`), B7; plan 3.3; AC4
-- F4 unsold grants bypass presets → memo §3 and D4 (backend `set-partner-features.use-case.ts:75` and per-card switch `PartnerDetailPage.tsx:1346`)
-- F5 WHT basis without `paidAtConfirmed` → spec §5.3; plan 3.2; AC10
-- F6 central rows in scope → spec §5.1 (adopted `branchScopeWhere`), §10.5 label "รวมส่วนกลาง"; AC6; the memory claim corrected to "same basis"
-- F7 VAT status at send day → spec §5.3 (registration overlapping the tax month, §85); plan 3.1 `registeredDuringMonth`; AC11
-- F8 payable-since semantics → spec §5.2 A4 (`claimPayableSince` + duplicate block); plan 3.1/3.2; AC12
-- F9 counterparty identity transitions → spec §5.2 A2 (key union); AC9
-- F10 daily producer not retired → spec §7 "เลิกสรุปรายวันจริง", §6 migration; plan 2.3; AC15
-- F11 account merge → spec §6 (`membershipId` + close_duplicate); plan 2.5; AC17
-- F12 retention unverifiable → spec §1 (no purge exists), §5.6 (13-month purge in the sweep), G7, Q7; AC18
-- F13 guaranteed send dates → spec §10.3 wording ("ตรวจ", conditional toast)
-- F14 1280 px evidence → spec §14 Browser; plan header and every UI step; AC13
-- F15 "company-wide" filing claim → spec §5.3 (§83 per establishment; product limitation)
-- F16 invalid example → spec §10.1 regenerated from a fixture (mean 5,000, card dated 2 พ.ย. with October tax rows) and used as the test fixture
-- F17 BOT Your Data → memo §2 bank row (receiver eligibility not established; SME role-disclosure deferral ว. 2409/2569)
-- F18 RA-17 too broad → memo §2 thai_tax row (component events keep branchId at sync-tax-events.use-case.ts:157; the legacy header path at :207 omits it)
-- F19 CRM reports called a prototype → memo §2 CRM row (`CrmReportsPrototypePage.tsx:110` reads scoped backend data; binding still `planned`)
-- F20 wrong citation → spec §5.1 and plan 3.2 cite income-expense-ledger.use-case.ts:161-165
-- F21 4.35 is not a ceiling → spec §5.5 (up to 5 a month, plus other notices)
-
-Review Round 2 (2026-10-24, Codex ultra; 19/21 round-1 items RESOLVED, P1 and P12 PARTLY, 13 new):
-- P1 / R2-F1 (HIGH) delivery not synchronised with revocation → spec §8 point 2 a–e (lock order advisory → Company → membership; rights read inside the transaction; no shortcut); §16 shortcut removed; interleaving tests (i)–(iv) in spec §14; AC19; M1/M2 must close before plan 3.5
-- P12 / R2-F5 retention skipped companies with no subscribers or not ACTIVE → spec §5.6, §7 step 5 (global purge, always runs); plan 3.4; AC18
-- R2-F2 currency mixing → spec §5.1 (THB only + other-currency row), §13 B8 (ledger) and B9 (home), G10, M3/M4; plan 1.2 fixes the ledger; AC23
-- R2-F3 PND2 routing → spec §5.3 (adapter + `withholdingFormType`; PND2 and unknown give no row); AC22
-- R2-F4 filing coverage per form and payment → spec §5.3 (`withholdingPaperPayments`, no `TaxPeriod` status); AC22
-- R2-F6 pending recipients on merge → spec §6 (move `NotificationRecipient.userId` for summary events); plan 2.5; AC21; G9 for other notices
-- R2-F7 limit per subscribed membership → spec §2 goal 3 and §5.5; this memo's Scope; plan decision 1
-- R2-F8 unsubscribe after expiry → spec §7 GET/DELETE recovery route; plan 2.4; AC20; M6
-- R2-F9 A2 history check filtered by branch → spec §5.2 A2; plan 3.2 (history query exempt)
-- R2-F10 §83 exception in the memo → research memo thai_tax row (approved consolidated filing)
-- R2-F11 fragment scrolling → spec §10.3; plan 2.6; AC24
-- R2-F12 "เท่า" over-match → spec AC14 and §14 (multiplicative only; "เท่ากัน" passes)
-- R2-F13 ledger screens hidden by `ACCOUNTING_UI_HIDDEN` → research memo ledger row; spec §1 notes `/income-expense-ledger` is not hidden
-- No HIGH open. Open MEDIUM/LOW items that reading code could not settle are M1–M6 in spec §16.1.
-
-Review Round 3 (2026-10-24, Codex ultra; 29/34 RESOLVED, P25/P27/P28/P29/P30 PARTLY, 7 new, no HIGH → last round):
-- P25 legacy filing uncertainty → spec §5.3: no row when a paper has `rowsCertain=false` or a keyless line covers a document (`withholding-filing-state.ts:63`; `rowsUncertainNotice` at `generate-wht-report.use-case.ts:197`); AC27
-- P27 close_duplicate and the creation race → spec §6 (resolve or move; locked owner re-read in the sweep); plan 2.5 and 3.4; AC29
-- P28 budget per subscribed membership → spec §16 and plan 4.3
-- P29 independent expiry gate and disabled branches → spec §7 DELETE row (a)–(c); plan 2.4; M7; AC28
-- P30 A2 history exempt from scope in the test rule → spec §14 provider test line
-- R3-F1 role-disable race → M8 (and part of M1)
-- R3-F2/F3 D4 must derive from the purchased package or approved deal snapshot, and cover classification changes → research memo D4
-- R3-F4 map adapter rows to `expense.record` / `row.id` / `sourceLineKey` before the filing helper → spec §5.3; plan 3.2
-- R3-F5 ledger CSV/XLSX → spec §11 Export (keep other-currency rows, currency column, per-currency totals); plan 1.2; M9; AC30
-- R3-F6 a USD-only week is not quiet → spec §5.4; AC25
-- R3-F7 strict "over 7 days" → spec §5.2 A4 (`<`); AC26; plan test
+- Mandatory AGENTS, local ponytail full, Thai UX and owner decisions read; current code traced for free access/route/confirmation guards, daily producer/delivery, summary facts, auth/recovery, source history, welcome and picker/duplicate delivery. No network/cloud.
+- API test registrations rechecked with actual grep -c commands: all 10 weekly and 19 e-WHT listed files remain positive; no package or test edit. First R19 assertions live only in the existing registered weekly/API/auth files.
+- Final static checks passed: all five headers/current status, 40 requirement IDs (3 removed), weekly AC1–AC33 and e-WHT A1–A44, 60 literal evidence quotes, citation endpoint bounds, Markdown tables and git diff --check. e-WHT original design text matches after excluding status/baseline/citations/free-path notes. No runtime claim follows from registration or static checks.
+- No implementation, API/Gateway/PG/browser tests, build/typecheck, schema validate/generate/migration/reset, provider call, cloud operation, git write, commit/push or deploy. Browser checks remain planned at 390/1280/~1556 in existing e2e/journeys.
 
 Next:
-- Close M1–M9 before the phases named in plan (spec §16.1).
-- Then Phase 1.
-- Then Phase 1, which is independent.
-- Get the Q5 answer before any deploy.
-- B3, B5 and B7 are separate follow-ups.
+- Controller reviews the five scoped documents; retain existing owner gates and removed ids, then implement only separately authorized steps with tests first.
+- Keep the daily-cohort gap as a separate finding; R10 retirement remains the approved summary replacement. Preserve e-WHT design and downstream P04/P07/P10/P08/P11/P12 ownership.
+- Before any later release follow mandatory UAT/Production protocol and record UAT/READY/Production run ids, signed result and customer OPEN.

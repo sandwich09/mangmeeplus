@@ -1,9 +1,11 @@
 # e-Withholding Tax Payment Plan — จ่ายผ่าน e-WHT (ธนาคารนำส่ง อัตรา 1%)
 
-Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first) · **2026-10-26: steps 1.7 and 3.6 added for the owner's shop setting (spec §5.5); focused Codex review F1–F6 (MEDIUM) applied, not re-reviewed**
+Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first) · **2026-10-26: steps 1.7 and 3.6 added for the owner's shop setting (spec §5.5); focused Codex review F1–F6 (MEDIUM) applied, not re-reviewed**; Re-anchored to develop e7c422802 on 2026-11-04 (citations only; controller checked 2026-11-04)
 Owner: Expenses + Tax lane
 Related: `docs/specs/e-withholding-tax-payment-spec.md`, `docs/agent-memory/e-withholding-tax-payment.md`, `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` (ข้อ 7)
-Baseline: main 6c54ba208 (2026-10-23)
+Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, citations rechecked in this worktree 2026-11-04; original review/research dates remain historical
+
+Free path (R1–R21): these e-WHT requirements apply to paid-package workflows only; a free source-drafts shop has no WHT/remittance choice and cannot confirm, under `apps/api/src/modules/expenses/application/expense-commercial-access.ts:22–25` and its confirmation call at `apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:1361`; preserve the existing free route/permission allowlists (`apps/api/src/modules/system-partner-management/application/free-expense-access.ts:58–83`), source facts and three-read allowance without opening a tax workflow.
 หลักการ: ponytail full — ใช้สถานะ `EXCLUDED` ที่มีอยู่แทนคอลัมน์ใหม่ใน `TaxEvent`, ฟังก์ชันบังคับวิธีจ่ายฟังก์ชันเดียวเรียกจากทุกทางที่สร้าง/พรีวิวการจ่าย, endpoint ใหม่หนึ่งตัว (ไฟล์ e-WHT อ่านอย่างเดียว), ไม่มีสิทธิ์/feature key/สวิตช์ใหม่, ไม่มี dependency ใหม่, ทุกประโยคอยู่ใน `E_WHT_WORDS` ที่เดียว
 
 ## ลำดับและการพึ่งพา
@@ -40,7 +42,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 - `apps/api/prisma/schema.prisma`: `enum WhtRemittance { PAYER_FILES E_WHT }`; `ExpenseRecord.whtRemittance WhtRemittance?`
 - migration ใหม่ `apps/api/prisma/migrations/2026102412xxxx_expense_wht_remittance/migration.sql` (สองคำสั่ง ไม่ backfill)
 - `packages/contracts/src/tax.ts`: `WHT_REMITTANCES`, `WhtRemittance`; `packages/contracts/src/prisma-enum-parity.spec.ts` เพิ่มแถว
-- `packages/contracts/src/expenses.ts`: `ExpenseDetail.whtRemittance` (:1059), `CreateExpenseDraftInput.whtRemittance?` (:1141), `UpdateExpenseDraftInput` (:1189)
+- `packages/contracts/src/expenses.ts`: `ExpenseDetail.whtRemittance` (:1070), `CreateExpenseDraftInput.whtRemittance?` (:1152), `UpdateExpenseDraftInput` (:1200)
 - ตรวจ: `pnpm --filter @watchdog-bms/api prisma:validate`; contracts build; `cd packages/contracts && ../../node_modules/.bin/tsx --test src/prisma-enum-parity.spec.ts`; `prisma migrate deploy` บน Postgres เครื่อง
 
 ### 1.2 กติกา e-WHT + ถ้อยคำที่เดียว
@@ -52,23 +54,23 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 
 ### 1.3 Persistence ครบชั้น + ยืนยันโดยไม่สร้าง 50 ทวิ (F3)
 - `apps/api/src/modules/expenses/domain/models/expense.model.ts`: `ExpenseRecord.whtRemittance` + input types ของ repository (create/update)
-- `apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts`: `createExpense` data, `updateExpense` whitelist (:1885-1886 — เพิ่ม `'whtRemittance'`), `mapExpense` (:244); สองจุดยืนยัน `confirmExpenseCas` (:3522) และ `finalizeAndConfirmExpenseCas` (:3704) เรียก `createWhtHandoffForExpense` เฉพาะเมื่อไม่ใช่ `E_WHT`
+- `apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts`: `createExpense` data, `updateExpense` whitelist (:1914-1915 — เพิ่ม `'whtRemittance'`), `mapExpense` (:252); สองจุดยืนยัน `confirmExpenseCas` (:3616) และ `finalizeAndConfirmExpenseCas` (:3798) เรียก `createWhtHandoffForExpense` เฉพาะเมื่อไม่ใช่ `E_WHT`
 - `apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts`: `normalizeWhtRemittance(value, whtAmount)` → `null` เมื่อ 0; ค่าผิด → `expense_wht_remittance_invalid`
-- `apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts`: create (:118) และ update (ใกล้ :1018) ส่งค่าหลัง normalize
+- `apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts`: create (:120) และ update (ใกล้ :1060) ส่งค่าหลัง normalize
 - เทสต์: `src/modules/expenses/domain/logic/expense-status.logic.spec.ts`; PG `src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts` (บันทึก/อ่านคืนผ่าน create+update+map; E_WHT ไม่มี handoff; ร้านยื่นเอง `REQUIRED`)
 - ตรวจ: api typecheck; สอง spec
 
 ### 1.4 ห้ามเงินสด/บัตรทุกทางจ่าย (F1, F21)
-- `prisma-expense.repository.ts`: `export function assertEWhtPaymentMethod(expense, method)` ข้าง `assertExpensePaymentSource` (:539) → 409 `expense_ewht_payment_method`; เรียกใน `recordPaymentInTransaction` (:670 ก่อน create) — ครอบใบเตรียมจ่าย (`disbursement-voucher.use-case.ts:764`)
-- `expense-draft.use-case.ts`: `RecordExpensePaymentUseCase.previewLineAction` (:1988-1997)
+- `prisma-expense.repository.ts`: `export function assertEWhtPaymentMethod(expense, method)` ข้าง `assertExpensePaymentSource` (:547) → 409 `expense_ewht_payment_method`; เรียกใน `recordPaymentInTransaction` (:681 ก่อน create) — ครอบใบเตรียมจ่าย (`disbursement-voucher.use-case.ts:764`)
+- `expense-draft.use-case.ts`: `RecordExpensePaymentUseCase.previewLineAction` (:2041-2051)
 - `apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts`: พรีวิว pay ใช้ `payment.paymentMethod ?? voucher.plannedMethod` ตรวจทุก source (:149-153); สร้าง/แก้/ส่งร่างที่ `plannedMethod` เป็น CASH/CARD และมีรายการ `E_WHT` → 409 `disbursement_ewht_planned_method` (:57, :111, :184)
-- ช่องทางต้องมาถึงตัวตรวจ (review รอบ 2 F4/P21): `readDisbursementExpenseSources` (`prisma-expense.repository.ts:1295-1304`) เพิ่ม `whtRemittance: true` ใน `select`; `payableExpenses` (`apps/api/src/modules/expenses/application/use-cases/disbursement-voucher-read.use-case.ts:83-92`) ส่ง `whtRemittance`; `packages/contracts/src/disbursement-vouchers.ts` `DisbursementPayableExpense.whtRemittance` (:226)
+- ช่องทางต้องมาถึงตัวตรวจ (review รอบ 2 F4/P21): `readDisbursementExpenseSources` (`prisma-expense.repository.ts:1310-1319`) เพิ่ม `whtRemittance: true` ใน `select`; `payableExpenses` (`apps/api/src/modules/expenses/application/use-cases/disbursement-voucher-read.use-case.ts:83-92`) ส่ง `whtRemittance`; `packages/contracts/src/disbursement-vouchers.ts` `DisbursementPayableExpense.whtRemittance` (:226)
 - เทสต์: `src/modules/expenses/application/use-cases/record-expense-payment.use-case.spec.ts`; PG `src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts` (จ่ายใบด้วยเงินสด ⇒ ปฏิเสธ ไม่มีรายการจ่ายใหม่); `src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts` (พรีวิว VOUCHER_PAY plannedMethod CASH ⇒ 409 ก่อนการ์ด)
 - ตรวจ: api typecheck; สาม spec
 
 ### 1.5 ห้ามเปลี่ยนเป็น e-WHT เมื่อมีการจ่ายเงินสด/บัตร + ใบรับรองแทนใบเสร็จ (F1)
 - `expense-draft.use-case.ts` (`UpdateExpenseDraftUseCase`): ค่าที่จะบันทึกเป็น `E_WHT` และมี `ExpensePayment` `RECORDED` CASH/CARD → 409 `expense_ewht_cash_payment_exists`
-- `prisma-expense.repository.ts`: ตรวจซ้ำในธุรกรรมยืนยันข้าง `assertExpensePaidWithinPayable` (:3507 ใน `confirmExpenseCas`, :3632 ใน `finalizeAndConfirmExpenseCas`)
+- `prisma-expense.repository.ts`: ตรวจซ้ำในธุรกรรมยืนยันข้าง `assertExpensePaidWithinPayable` (:3601 ใน `confirmExpenseCas`, :3726 ใน `finalizeAndConfirmExpenseCas`)
 - `apps/api/src/modules/expenses/domain/logic/substitute-funding.logic.ts:19` `assertSubstitutePaymentDetails` (import ที่ `substitute-receipt.use-case.ts:36` — review รอบ 2 F10; รับ `whtRemittance` ของรายจ่ายเพิ่ม): รายจ่าย `E_WHT` และใบจะสร้างรายการจ่าย (`fundingSource='COMPANY'`) วิธีจ่าย CASH/CARD → 409 `substitute_receipt_ewht_payment_method` — ครอบ `substitute-receipt.use-case.ts:382`, :806 และ `issueSubstituteEvidence` (repository :2957-3098)
 - เทสต์: PG `prisma-expense.repository.atomic-confirm.spec.ts` (เปิดแก้รายจ่ายที่จ่ายเงินสดแล้วเลือก E_WHT ⇒ 409 ทั้งบันทึกและยืนยัน); `src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts`; PG `src/modules/expenses/infrastructure/prisma-expense.repository.substitute-payment.spec.ts` (ออกใบด้วยเงินสด ⇒ ไม่มีรายการจ่าย)
 - ตรวจ: api typecheck; สาม spec
@@ -76,7 +78,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 ### 1.6 คอลัมน์ไฟล์ส่งออก + ข้อความแจ้งเตือน (F25, F17, F10)
 - `packages/contracts/src/expenses.ts`: `wht_remittance` **ท้ายสุด** ของ `ACCOUNTANT_INDEX_COLUMNS` (หลัง `bundle_file_names`) และของ `ACCOUNTANT_INDEX_SUMMARY_COLUMNS` (หลัง `notes`), label W-X1
 - `apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts` (:152, :188): ค่า W-X2
-- `expense-draft.use-case.ts:2049`: ท้ายข้อความเปิดแก้ = N-1
+- `expense-draft.use-case.ts:2104`: ท้ายข้อความเปิดแก้ = N-1
 - `apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts:25` `AccountantIndexSource.whtRemittance`; ผู้เรียก `apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts:165-207` ส่งค่าจากแถว และ query ของหน้านั้น select ฟิลด์นี้ (review รอบ 2 F5)
 - เทสต์: `src/modules/expenses/domain/logic/expense-export.logic.spec.ts` (ค่าสี่กรณี, คอลัมน์สุดท้าย, ตำแหน่งเดิม, ผ่านผู้เรียกจริงได้ "ธนาคารนำส่ง (e-WHT)" ไม่ใช่ "ไม่ได้ระบุ"); `record-expense-payment.use-case.spec.ts` (assertion :259-264 เป็น N-1); PG `atomic-confirm.spec.ts` (ออกใบแล้ว → เปิดแก้ → E_WHT → ยืนยัน ⇒ ไม่มี `REQUIRED`; e-WHT จ่ายบางส่วน 5,000 → ร้านยื่นเอง 2% ⇒ ยืนยันได้; จ่ายครบ 10,600 → 2% ⇒ `expense_paid_exceeds_payable`)
 - ตรวจ: contracts build; api typecheck; specs
@@ -84,8 +86,8 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 ### 1.7 การตั้งค่า e-WHT ของร้าน + ตัวบังคับฝั่งเซิร์ฟเวอร์ (สเปก §5.5, §7.6)
 - `apps/api/prisma/schema.prisma`: `CompanyTaxProfile.eWhtUsed Boolean @default(false)`; เพิ่มคำสั่ง `ALTER TABLE "CompanyTaxProfile" ADD COLUMN "eWhtUsed" BOOLEAN NOT NULL DEFAULT false;` ใน migration เดียวกับ 1.1
 - `packages/contracts/src/expenses.ts`: `ExpenseEWhtSetting`, `UpdateExpenseEWhtSettingInput`; error `expense_e_wht_not_enabled`
-- ใหม่ `apps/api/src/modules/expenses/application/use-cases/expense-e-wht-setting.use-case.ts` (get/update แบบ `substitute-receipt-policy.use-case.ts`; upsert ตาม `companyId`; audit `company.e_wht_setting.updated` เฉพาะเมื่อค่าเปลี่ยน); ลงทะเบียนใน module และ `ExpenseSettingsController` (`expense.controller.ts:780`) — `GET`/`PATCH expense-settings/e-wht` ตาม guard ในสเปก §7.6; body เป็นคลาส `UpdateExpenseEWhtSettingDto` (`@IsBoolean()`) ใน `expense.dtos.ts` ไม่ใช่ interface (F6)
-- `apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts`: `eWhtRemittanceAllowed({ requested, stored, shopUsesEWht })`; เรียกใน create (:118) และ update (ใกล้ :1018) ของ `expense-draft.use-case.ts` ก่อนเขียน — อ่าน `eWhtUsed` เฉพาะเมื่อคำขอเป็น `E_WHT`; create ที่มี `draftIdempotencyKey` ซึ่งมีแถวเดิมแล้ว ให้ repository replay ตามเดิม (`prisma-expense.repository.ts:893-904`) ไม่ตรวจการตั้งค่า (F5)
+- ใหม่ `apps/api/src/modules/expenses/application/use-cases/expense-e-wht-setting.use-case.ts` (get/update แบบ `substitute-receipt-policy.use-case.ts`; upsert ตาม `companyId`; audit `company.e_wht_setting.updated` เฉพาะเมื่อค่าเปลี่ยน); ลงทะเบียนใน module และ `ExpenseSettingsController` (`expense.controller.ts:788`) — `GET`/`PATCH expense-settings/e-wht` ตาม guard ในสเปก §7.6; body เป็นคลาส `UpdateExpenseEWhtSettingDto` (`@IsBoolean()`) ใน `expense.dtos.ts` ไม่ใช่ interface (F6)
+- `apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts`: `eWhtRemittanceAllowed({ requested, stored, shopUsesEWht })`; เรียกใน create (`expense-draft.use-case.ts:120`) และ update (ใกล้ `expense-draft.use-case.ts:1060`) ของ `expense-draft.use-case.ts` ก่อนเขียน — อ่าน `eWhtUsed` เฉพาะเมื่อคำขอเป็น `E_WHT`; create ที่มี `draftIdempotencyKey` ซึ่งมีแถวเดิมแล้ว ให้ repository replay ตามเดิม (`prisma-expense.repository.ts:904-915`) ไม่ตรวจการตั้งค่า (F5)
 - เทสต์: `src/modules/expenses/domain/logic/expense-status.logic.spec.ts`, `src/modules/expenses/application/use-cases/expense-draft-amount-validation.use-case.spec.ts` (รวม replay — F5), `src/modules/expenses/application/use-cases/substitute-receipt-policy.use-case.spec.ts` (describe "e-WHT setting"), `src/modules/expenses/presentation/http/expense.dtos.spec.ts` (DTO — F6), `src/common/pipes/body-validation-coverage.spec.ts` — ทั้งหมดอยู่ใน `apps/api/package.json` แล้ว
 - ตรวจ: contracts build; api typecheck; ห้า spec
 
@@ -96,7 +98,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 - `apps/api/src/modules/tax/infrastructure/repositories/prisma-tax.repository.ts`: `findActiveEventBySourceComponent` (:200-205) รวม `EXCLUDED`; `upsertEvent` guard (:226-233) — `EXCLUDED` ตรวจแค่การจ่ายยัง `RECORDED`+`paidAtConfirmed` และไม่มีแถวแบบ FILED ครอบ (ไม่ใช้ล็อกเดือนแบบเก่า); `retireObsoleteExpenseWithholding` (:367-380) supersede `EXCLUDED` โดยไม่ตรวจล็อก + resolve `WHT_RATE_MISMATCH` ของ source+งวด; `resolveSourceIssues` (:395-400) รับตัวกรอง formType
 - `apps/api/src/modules/expenses/infrastructure/expense-void-blocker.ts` `retireExpenseTaxEvents` (:212-216): `ACTIVE|EXCLUDED` + resolve `WHT_RATE_MISMATCH` (งวด WHT)
 - `expense-void-blocker.ts` ตัวตรวจเปิดแก้ (:137, :196-208 — review รอบ 2 F7): เมื่อรายจ่าย `E_WHT` ใช้เฉพาะแถวแบบ FILED ที่ครอบจริง (ไม่ใช้ล็อกเดือนแบบเก่าใน `filedWithholdingPaymentPeriods` :206) และไม่นับงวดของ event `EXCLUDED` ใน `eventPeriodIds`; ล็อกงวดบัญชีและ ภ.พ.30 คงเดิม
-- `prisma-expense.repository.ts` ทาง void จาก CONFIRMED (:3476): supersede `EXCLUDED` ของรายจ่ายในธุรกรรมเดียวกัน + resolve `WHT_RATE_MISMATCH`
+- `prisma-expense.repository.ts` ทาง void จาก CONFIRMED (:3570): supersede `EXCLUDED` ของรายจ่ายในธุรกรรมเดียวกัน + resolve `WHT_RATE_MISMATCH`
 - เทสต์: `src/modules/tax/infrastructure/repositories/prisma-tax.repository.spec.ts`; PG `src/modules/expenses/infrastructure/prisma-expense.repository.void.spec.ts` (void จาก CONFIRMED ⇒ `SUPERSEDED` ก่อน sync; เปิดแก้ ⇒ เช่นกัน; เปิดแก้รายจ่าย e-WHT ที่จ่ายในเดือนล็อกแบบเก่า ⇒ ได้ แต่ร้านยื่นเองเดือนเดียวกัน ⇒ ยังบล็อก — รอบ 2 F7)
 - ตรวจ: api typecheck; สอง spec
 
@@ -153,7 +155,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 ### 3.2 หน้ารายจ่าย + ใบรับรองแทนใบเสร็จ (F11)
 - `apps/web/src/features/expenses/ExpenseReviewPage.tsx`: `certificateCardVisible` (:1310) → W-D1 เมื่อ e-WHT และมีการจ่าย `RECORDED`, W-D1u เมื่อยังไม่มี (review รอบ 3 F9); วิธีจ่ายตัดเงินสด/บัตร + W-P1, W-P2 (:246); W-C1 ในกล่องเปิดแก้/ยกเลิก/ยกเลิกรายการจ่าย; แสดง W-R2 จาก 409
 - `apps/web/src/features/expenses/SubstituteReceiptWizardPage.tsx` (:268, :532): ตัดเงินสด/บัตรเมื่อรายจ่าย e-WHT; แสดง W-R3; ช่องวันจ่ายเงินบริษัท (:2063) แสดง W-P2 เมื่อ e-WHT + `REDUCED` + อัตรา 1 + วันนอกช่วง (review รอบ 3 F8)
-- `apps/web/src/features/expenses/PaymentDateConfirmation.tsx` (:18, :26) + ผู้เรียกที่ `ExpenseReviewPage.tsx:1850` (review รอบ 2 F9): รับ `whtRemittance`/ประเภท/อัตรา; e-WHT ⇒ W-PD1 และ W-PD2 แทนข้อความ "…ยื่นภาษี"/"อยู่ในแบบเดือน…"; W-P2 เมื่อวันที่ที่กรอกอยู่นอกช่วง + อัตรา 1 + `REDUCED`; ร้านยื่นเอง/`null` ข้อความเดิม; เทสต์ `apps/web/src/features/expenses/PaymentDateConfirmation.spec.ts`
+- `apps/web/src/features/expenses/PaymentDateConfirmation.tsx` (:18, :26) + ผู้เรียกที่ `ExpenseReviewPage.tsx:1858` (review รอบ 2 F9): รับ `whtRemittance`/ประเภท/อัตรา; e-WHT ⇒ W-PD1 และ W-PD2 แทนข้อความ "…ยื่นภาษี"/"อยู่ในแบบเดือน…"; W-P2 เมื่อวันที่ที่กรอกอยู่นอกช่วง + อัตรา 1 + `REDUCED`; ร้านยื่นเอง/`null` ข้อความเดิม; เทสต์ `apps/web/src/features/expenses/PaymentDateConfirmation.spec.ts`
 - เทสต์: web spec ที่ทดสอบหน้ารายจ่าย/ใบรับรองแทนใบเสร็จอยู่แล้ว หรือไฟล์ใหม่ใต้ `src/`
 - ตรวจ: web typecheck; spec
 
@@ -225,7 +227,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 
 - สเปก/memory: สถานะ + คำสั่งที่รันจริง/ผล/สิ่งที่ไม่ได้รันพร้อมเหตุผล
 - `docs/plans/master-implementation-checklist.md`: Reorder Log ชี้สเปก/แผนนี้; backlog ข้อ 7 ชี้สเปก
-- ชุดย้อนกลับ R (review รอบ 3 F3 + รอบ 4 F1/P40 — สเปก §16, **BL1 ต้องผ่านการตรวจอิสระก่อน**): branch จากรุ่นก่อนหน้า + schema ที่มี `whtRemittance` + **ตัวป้องกันฝั่งเขียนทุกจุดที่อ่าน `whtRemittance`** (แผน 1.3 ไม่สร้าง handoff ตอนยืนยัน, 1.4 และ 1.5 จุดบังคับวิธีจ่ายทั้งหมดรวม `recordPaymentInTransaction` `prisma-expense.repository.ts:670-679` และการตรวจตอนยืนยันใหม่) + เงื่อนไขตัด `E_WHT` ใน `findConfirmedWithWhtByCompany` (`expense-source.adapter.ts:70-80`); ไม่ต้องคง UI; build/publish image ไว้; ซ้อมบน UAT: เปิดหน้า ภาษีหัก ณ ที่จ่าย (sync ทั้งบริษัท) ⇒ ไม่มี event `ACTIVE` ของรายจ่าย e-WHT, บันทึกจ่ายเงินสดให้รายจ่าย e-WHT ⇒ 409, เปิดแก้แล้วยืนยันใหม่ ⇒ ไม่มี handoff (สเปก A32); ห้ามย้อน API ด้วยรุ่นเก่าตรง ๆ
+- ชุดย้อนกลับ R (review รอบ 3 F3 + รอบ 4 F1/P40 — สเปก §16, **BL1 ต้องผ่านการตรวจอิสระก่อน**): branch จากรุ่นก่อนหน้า + schema ที่มี `whtRemittance` + **ตัวป้องกันฝั่งเขียนทุกจุดที่อ่าน `whtRemittance`** (แผน 1.3 ไม่สร้าง handoff ตอนยืนยัน, 1.4 และ 1.5 จุดบังคับวิธีจ่ายทั้งหมดรวม `recordPaymentInTransaction` `prisma-expense.repository.ts:681-690` และการตรวจตอนยืนยันใหม่) + เงื่อนไขตัด `E_WHT` ใน `findConfirmedWithWhtByCompany` (`expense-source.adapter.ts:70-80`); ไม่ต้องคง UI; build/publish image ไว้; ซ้อมบน UAT: เปิดหน้า ภาษีหัก ณ ที่จ่าย (sync ทั้งบริษัท) ⇒ ไม่มี event `ACTIVE` ของรายจ่าย e-WHT, บันทึกจ่ายเงินสดให้รายจ่าย e-WHT ⇒ 409, เปิดแก้แล้วยืนยันใหม่ ⇒ ไม่มี handoff (สเปก A32); ห้ามย้อน API ด้วยรุ่นเก่าตรง ๆ
 - ก่อน deploy (BL3): query อ่านอย่างเดียวหา `WhtFiling` สถานะ FILED ที่เดือน/แบบ/สาขาเดียวกันมี issue OPEN `WHT_PAYEE_KIND_UNKNOWN` หรือ `MISSING_TAX_ID` ของต้นทางที่ไม่มี event (กระดาษที่อาจยื่นไปโดยขาดรายการ) แล้วรายงานเจ้าของเป็นภาษาไทยง่าย ๆ ให้ผู้ทำบัญชีแก้ข้อมูลและยื่นแบบเพิ่มเติม
 - ก่อน deploy: query อ่านอย่างเดียวนับรายจ่าย CONFIRMED `whtAmount>0` + ประเภท `REDUCED` + อัตรา 1 (runbook bastion — แจ้งเจ้าของก่อน, SQL ทุกไฟล์ใน session เดียว) แล้วรายงานภาษาไทยง่าย ๆ
 - UAT ตาม `docs/runbooks/uat-production-v2-deployment.md`; Production เมื่อเจ้าของสั่งเท่านั้น
@@ -254,3 +256,63 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 19. `WHT_PAYEE_KIND_UNKNOWN` บล็อกกระดาษทั้ง ภ.ง.ด.3 และ 53 ของสาขาเดียวกัน ทั้งตอนดาวน์โหลดและตอนบันทึกว่ายื่นแล้ว ผ่าน `withholdingPaperBlockers` ฟังก์ชันเดียว; กระดาษที่ FILED แล้วไม่ถูกแก้ แต่ติดธง W-T6; หลังแก้ข้อมูล แบบเดิม ⇒ แบบเพิ่มเติม, อีกแบบที่ยังไม่ยื่น ⇒ แบบปกติ (อาจยื่นช้า — ข้อความ overdue เดิม) (รอบ 4 F3 / B12 + focused review + BL3 re-check)
 20. ทางผู้ทำบัญชีจัดทำเก็บ issue ต้นทางทั้ง BLOCKING และ WARNING; ตัวบล็อกของต้นทางที่ไม่ส่งผลแล้วถูก resolve ทุก sync (รอบ 4 F4, F8)
 21. (เจ้าของ 2026-10-26) ตัวเลือก e-WHT มีเฉพาะร้านที่ตอบ "สมัครแล้ว" ที่ตั้งค่าร้าน (`CompanyTaxProfile.eWhtUsed`, ค่าตั้งต้น false); เซิร์ฟเวอร์ปฏิเสธ E_WHT ใหม่เมื่อยังไม่ได้สมัคร; รายจ่ายที่เป็น E_WHT อยู่แล้วแสดงและแก้ได้เสมอ; การเปลี่ยนการตั้งค่าไม่แก้ข้อมูลเดิมและไม่เข้า sync
+
+## Traceability
+
+This section indexes the unchanged plan only. R1–R21 resolve to the spec's Traceability table, which provides code evidence, exact proposed test names and A1–A44 acceptance mapping. R16–R21 cover §5.5, plan 1.7/3.6 and A39–A44. Dependencies are a restatement of the existing sequence/guards; no implementation or owner decision is added. Existing blocker/number fixes integrate trust/money P11–P12/P08 rather than being implemented twice.
+
+Command notation for the listed checks: **API** = `pnpm --filter @watchdog-bms/api exec node --import tsx --test <listed file relative to apps/api>`; **TYPE_API/TYPE_WEB** = `bash scripts/local-proof/tsc.sh api` / `bash scripts/local-proof/tsc.sh web`; **WEB** = `pnpm --filter @watchdog-bms/web exec tsx --test <listed file relative to apps/web>`; **GATEWAY** = `pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test <listed file relative to apps/ai-gateway>`; **SCHEMA** = `pnpm --filter @watchdog-bms/api exec prisma validate --schema prisma/schema.prisma` then `pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma`, additive migrations on isolated local PostgreSQL only. **PG** means the listed registered API spec's real-database block with the documented local proof URL, never a skip. Browser checks preserve §3.5's 390/1280/~1556 requirement. No command ran in this documents round.
+
+Review in small rounds (up to five steps): 1.1–1.5; 1.6/1.7/2.1/2.2/2.3; 2.4/2.5/3.1/3.2/3.3; 3.4/3.6/3.5/4.1/4.2; 4.3/4.4/4.5/Phase 5. Original owner/proof gates and technical dependencies take precedence; these are review groupings, not a redesign.
+
+| Existing step | Requirement ids | Existing dependency / integration prerequisite | Exact test files, proposed names in spec trace | Verification |
+|---|---|---|---|---|
+| Phase 0 | R5/R13/R15–R21 | Original owner Q1–Q4 gates unchanged | No code test | Owner decisions only; no new question added |
+| 1.1 | R1/R16 | Existing Phase 0 gates; no new gate | packages/contracts/src/prisma-enum-parity.spec.ts | SCHEMA; contracts build; additive local migration |
+| 1.2 | R2/R3/R7/R11/R12 | 1.1 | apps/api/src/modules/tax/domain/logic/tax-period.logic.spec.ts | API; TYPE_API; contracts build |
+| 1.3 | R1/R5 | 1.2 + owner Q2 | apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; apps/api/src/modules/expenses/domain/logic/expense-status.logic.spec.ts | API; TYPE_API; PG |
+| 1.4 | R3 | 1.3 | apps/api/src/modules/expenses/application/use-cases/record-expense-payment.use-case.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts; apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts | API; TYPE_API; PG |
+| 1.5 | R4 | 1.3 | apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.substitute-payment.spec.ts | API; TYPE_API; PG |
+| 1.6 | R5/R9 | 1.3 | apps/api/src/modules/expenses/domain/logic/expense-export.logic.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts | API; TYPE_API |
+| 1.7 | R11/R16–R20 | 1.3 | apps/api/src/modules/expenses/domain/logic/expense-status.logic.spec.ts; apps/api/src/modules/expenses/application/use-cases/expense-draft-amount-validation.use-case.spec.ts; apps/api/src/modules/expenses/application/use-cases/substitute-receipt-policy.use-case.spec.ts; apps/api/src/modules/expenses/presentation/http/expense.dtos.spec.ts; apps/api/src/common/pipes/body-validation-coverage.spec.ts | API; TYPE_API; SCHEMA |
+| 2.1 | R6 | 1.1 | apps/api/src/modules/tax/infrastructure/repositories/prisma-tax.repository.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.void.spec.ts | API; TYPE_API; PG |
+| 2.2 | R6/R7 | 2.1 | apps/api/src/modules/tax/application/use-cases/sync-tax-events-wht-form.use-case.spec.ts | API; TYPE_API; B5 PP30 compatibility side effect only for unsold thai_tax |
+| 2.3 | R8/R10 | 2.2; reuse already-owned trust/money blocker result | apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.spec.ts; apps/api/src/modules/tax/presentation/http/tax.controller.spec.ts | API; TYPE_API; PG blocker regressions |
+| 2.4 | R10/R11 | 2.2 | apps/api/src/modules/tax/presentation/http/tax.controller.spec.ts | API; TYPE_API |
+| 2.5 | R5 | 1.1 | apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts | API; TYPE_API |
+| 3.1 | R2/R14 | All 1.x/2.x as original graph | apps/web/src/features/expenses/expense-withholding-ux.spec.ts | WEB; TYPE_WEB |
+| 3.2 | R3/R4/R5/R14 | All 1.x/2.x as original graph | apps/web/src/features/expenses/expense-withholding-ux.spec.ts | WEB; TYPE_WEB |
+| 3.3 | R3/R5/R14 | All 1.x/2.x as original graph | apps/web/src/features/expenses/disbursement-vouchers/disbursement-voucher-payment.logic.spec.ts; apps/web/src/features/expenses/disbursement-vouchers/DisbursementVoucherPayCard.qa.spec.ts | WEB; TYPE_WEB |
+| 3.4 | R8/R10/R11/R14 | All 1.x/2.x as original graph | apps/web/src/features/tax/WithholdingPage.spec.ts | WEB; TYPE_WEB |
+| 3.5 | R3/R10/R14/R15–R21 | 3.1–3.4/3.6 | e2e/journeys/e-wht-payment.journey.spec.ts (proposed); e2e/journeys/withholding-forms.journey.spec.ts | BROWSER at 390/1280/~1556; photos and measured buttons |
+| 3.6 | R11/R16–R21 | All 1.x/2.x as original graph | apps/web/src/features/expenses/expense-withholding-ux.spec.ts; apps/web/src/features/web-core-workspace/settings-menu.logic.spec.ts | WEB; TYPE_WEB |
+| 4.1 | R3/R5/R12 | All 1.x/2.x as original graph | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts | API; TYPE_API |
+| 4.2 | R3/R12 | All 1.x/2.x as original graph | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
+| 4.3 | R11/R13 | All 1.x/2.x; reuse prior trust/money number fix | apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/tool-availability.spec.ts | API; GATEWAY; TYPE_API |
+| 4.4 | R13 | Owner Q4, as original graph | apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.spec.ts; apps/ai-gateway/src/modules/line-ai/domain/logic/line-ai-scope-policy.logic.spec.ts; apps/web/src/features/user-guide/user-guide.content.spec.ts | GATEWAY; WEB; TYPE_WEB |
+| 4.5 | R13/R15 | 4.4; existing whole-chain gate | Existing W00 regression only; scripts/line-ai-whole-chain-acceptance.catalog.mjs | Existing whole-chain + manifest commands; no new unregistered API assertions |
+| Phase 5 | R14/R15 | All existing gates, rollback rehearsal, original owner release instruction | e2e/journeys/withholding-forms.journey.spec.ts; signed release results | Mandatory runbook UAT/READY/Production ids; signed result and customer OPEN |
+
+API registration checked locally on 2026-10-26 using `grep -c "<file>" apps/api/package.json`; counts below are not test execution. Existing manifest regression is not package-listed and gets no new test case; no package.json edit.
+
+| API file (relative to apps/api) | grep count |
+|---|---|
+| `src/common/pipes/body-validation-coverage.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/expense-draft-amount-validation.use-case.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/record-expense-payment.use-case.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/substitute-receipt-policy.use-case.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts` | 2 |
+| `src/modules/expenses/domain/logic/expense-export.logic.spec.ts` | 1 |
+| `src/modules/expenses/domain/logic/expense-status.logic.spec.ts` | 2 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts` | 2 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts` | 1 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.substitute-payment.spec.ts` | 1 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.void.spec.ts` | 1 |
+| `src/modules/expenses/presentation/http/expense.dtos.spec.ts` | 1 |
+| `src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts` | 3 |
+| `src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` | 2 |
+| `src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.spec.ts` | 2 |
+| `src/modules/tax/application/use-cases/sync-tax-events-wht-form.use-case.spec.ts` | 1 |
+| `src/modules/tax/domain/logic/tax-period.logic.spec.ts` | 1 |
+| `src/modules/tax/infrastructure/repositories/prisma-tax.repository.spec.ts` | 1 |
+| `src/modules/tax/presentation/http/tax.controller.spec.ts` | 2 |

@@ -1,154 +1,133 @@
-# Agent Memory: accountant exports (backlog ข้อ 25 + ข้อ 13)
+# Agent Memory: accountant exports (backlog 25 + 13)
 
-Status: cleanup spec/plan DRAFT — blocked on: RC-F2 (selection intersect) review before Phase 1.4; Phase S and 1.1–1.3 can start; accounting-software export spec/plan READY (docs-first) — reviewed 3 rounds + focused blocker checks 2026-10-24, no HIGH open; Phase S can ship first (docs only, ไม่มีโค้ด, ยังไม่ commit)
-Owner: Expenses lane (controller review); เขียนโดย docs lane ใน worktree `mangmee-worktrees/expense-specs-20261023` (branch `claude/expense-specs-20261023`, tree เดียวกับ main 6c54ba208)
+Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04
+Owner: Expenses documents lane (controller review)
+Related: `docs/specs/accountant-export-cleanup-spec.md`, `docs/plans/accountant-export-cleanup-plan.md`, `docs/specs/accounting-software-export-spec.md`, `docs/plans/accounting-software-export-plan.md`, `docs/guidelines/thai-ux-standard.md`, `docs/plans/sold-ux-owner-decisions-2026-10-13-plan.md`
+Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
+
 Scope:
-- ข้อ 25 ไฟล์ที่ส่งให้นักบัญชี (Excel หน้ารายการ/หน้าหลักฐาน, สารบัญใน ZIP, สมุดรายรับ–รายจ่าย, ไฟล์ ภ.ง.ด. ให้ผู้ทำบัญชี) + การตรวจเลขที่เอกสารฝั่ง LINE (B17) — `docs/specs/accountant-export-cleanup-spec.md`, `docs/plans/accountant-export-cleanup-plan.md`
-- ข้อ 13 ไฟล์ที่โปรแกรมบัญชีนำเข้าได้ (สมุดรายวันซื้อ + FlowAccount) — `docs/specs/accounting-software-export-spec.md`, `docs/plans/accounting-software-export-plan.md`
-- Amendment 2026-10-23 (+ รายการคำที่ล้าสมัย 2026-10-24) ท้าย `docs/specs/expense-receipt-upload-spec.md`
+- Documents only: the five files in this brief. No implementation, package.json change, migration, commit, push, network or deployment.
+- Free source drafts are inside the ceiling; no export entitlement, typed questions or financial actions are added. Both specs now require free denial on web/API/LINE.
+- Cleanup: sold expense workbook/ZIP + sold withholding-office workbook; keep existing expense-capture/handoff fixes in their separate steps. E5 income–expense ledger and new posting/JV workbook features are removed.
+- Software export: starter expense data → office file and later proven FlowAccount preset, using existing permissions. No internal ledger, VAT workspace/ภ.พ.30, procurement, CRM, bank reconciliation, inventory, sales documents, reports or shop LINE OA work.
+- Requirement inventory: cleanup R1–R22 (22); software R1–R17 (17). Each spec ends with one Traceability table including path coverage (free/paid), source document, evidence/short quote, plan step, test file/name and acceptance.
 
 Decisions:
-1. ชุดเต็มเดิม 56 คอลัมน์ (backlog เขียน 57)
-2. ไฟล์ให้นักบัญชี = workbook 5 แผ่น: `รายการค่าใช้จ่าย` (25 คอลัมน์ที่แสดงเสมอ + `ไฟล์เอกสาร` ใน ZIP + ไม่เกิน 3 ตามโครงสร้าง), `การจ่าย` (จากแถว `ExpensePayment`), `หัก ณ ที่จ่าย` (จาก projection ต่อการจ่ายของ ภ.ง.ด. + คอลัมน์ `สถานะ`), `ไฟล์ทั้งหมด` (ZIP), `เกี่ยวกับไฟล์นี้`
-3. ไม่มีลิงก์เข้าแอป; ลิงก์ได้แค่ path สัมพัทธ์ในชุด ZIP เดียวกัน; ข้อความเซลล์เป็น path เสมอ
-4. ซ่อนคอลัมน์ตามโครงสร้าง (แพ็ก/สาขา/สิทธิ์คนกด) ไม่ตามข้อมูลรายเดือน; แผ่นว่างไม่ใส่; VAT คงแม้ร้านไม่จด VAT
-5. CSV คีย์เครื่อง/`indexRows`/manifest คงไบต์ด้วย projection แยก (`legacyFileName` สำหรับ CSV, `fileName` ใหม่สำหรับ ZIP/workbook) — CSV จึงเก็บชื่อไฟล์รุ่นแรกที่ไม่ตรง ZIP ใหม่ (G8)
-6. ตัดชื่อพนักงาน เหลือผู้ขาย/ผู้รับเงิน และ `สำรองจ่ายโดย` (PDPA ม.22/27 ฉบับประกาศใช้)
-7. หัก ณ ที่จ่าย: แถวต่อการจ่าย × บรรทัด จาก `ExpenseSourceAdapter.findConfirmedWithWhtByCompany` (+ filter `expenseIds` = `page.rows` **หลังขยาย**ด้วยรายการเดือนก่อนที่จ่ายในช่วง, export จาก TaxModule); แถวที่ยื่นแล้ว: ใช้กติกาครอบเดิม `filedLineCoversPayment` (`withholding-filing-state.ts:60-65` — บรรทัดเก่าไม่มีคีย์ครอบทุกการจ่ายของเอกสาร, คีย์รวม `payment:<id>` ครอบ `:line:` ที่แยกภายหลัง) → **ตัดสินการครอบบนชุดเต็มก่อนกรองวันที่** (ชุดแหล่ง = `page.rows` หลังขยาย ∪ รายการในขอบเขตที่มีบรรทัดยื่นในเดือนของช่วง; projection ไม่กรองวันที่) แล้วกรองแต่ละแถวด้วยวันที่ของมันเอง — แถวที่ยื่นใช้ `payment[2]`, แถวสดใช้วันที่จ่าย; แถวสดที่ถูกครอบไม่แสดงเลย (นับใน `เกี่ยวกับไฟล์นี้`) (R3-F3 ปิดแล้ว); รายการจากบรรทัดที่ยื่นเข้า `extraIds` เดียวกับการจ่าย จึงถูกตัดทิ้งในคำขอแบ่งหน้าตามกติกาเดิม :372 (RC-F1 ปิดแล้ว) และถูกตัดให้เหลือเฉพาะ `request.expenseIds` เมื่อระบุ (`[]` = ไม่เพิ่มเลย) (RC-F2 รอรีวิว); ทุกแถวมี `สถานะ` (`ยื่นแล้ว` / `งวดปิดแล้ว ตรวจกับแบบที่ยื่น` / `ยังไม่ยื่น · ต้องตรวจ: <เหตุผล>` / `ยังไม่ยื่น · ข้อมูลครบตามแบบ`) — ความครบตรวจด้วย `withholdingRowFaults` ที่ยกจาก `withholding-filing-validation.ts:86-110`; ไม่ใช้คำ `พร้อมยื่น`; ไม่สัญญาว่าตรงกับ tax event ทุกแถว; แบบ ภ.ง.ด. จาก `withholdingFormFor` ที่ยกจาก sync — บุคคล → ภ.ง.ด.2 เมื่อหมวด `SEPARATE_PND2` มิฉะนั้น ภ.ง.ด.3; นิติบุคคล → ภ.ง.ด.53; ไม่รู้ → `ยังไม่ระบุ`
-8. ข้อ 13: สมุดรายวันซื้อก่อน (คงยอดที่บันทึก แยกแถวตามบัญชี × การใช้ VAT × สิทธิภาษีซื้อที่มีผลต่อบรรทัด (= ประตูเอกสารปัจจุบัน `inputVatClaimStatus === 'CLAIMABLE' && taxEvidenceStatus === 'USABLE_FOR_TAX'` **และ** ข้อจำกัดบรรทัด `claimabilitySnapshot` + `taxEvidenceReviewStatus` เมื่อมี `taxComponentsJson`; ผลเข้มที่สุดชนะ; การปฏิเสธของผู้ตรวจระดับเอกสารไม่ถูก snapshot ของบรรทัดฟื้น — R3-F2 ปิดแล้ว) × ชุดหัก ณ ที่จ่าย — แต่ละแถวมีหมวด/อัตราหักเดียว); FlowAccount หลังประตู Phase 0 และไม่ใส่เอกสารที่แทนไม่ได้พร้อมเหตุผลบนหน้าจอ (รวมหลายประเภทเงินได้ในเลขอ้างอิงเดียว และเอกสารมีหักที่ส่งวิธีการชำระไม่ได้); ตัวจำแนก `flowAccountEligibility` อยู่ใน Phase 1 เพื่อวัดก่อนลงทุน Phase 2; PEAK และ Express (มีโปรแกรมเสริมนำเข้าบิลซื้อ/ขาย ตามโพสต์ ESG 3 ม.ค. 2567 — แม่แบบยังไม่ยืนยัน) รอแม่แบบจริง; ไม่ทำ CSV
-9. รหัสบัญชีของสำนักงานบัญชี: ตารางใหม่ `ExpenseCategoryAccountantAccount` ต่อร้านต่อหมวด; ตั้งได้กับหมวดที่ร้านเห็น ∪ หมวดที่รายการของร้านอ้าง
-10. ไม่มี feature switch, ไม่มีคีย์ entitlement ใหม่ (คำแนะนำ ข้อ 13 Q1)
+1. **RC-F2 / first commit**: `bundleContents` must intersect the complete merged `extraIds` with a present selection before pagination/500-ID loads; filing-query-only filtering was insufficient. Keep every existing scope/filter check and full voucher lines/all-source artifact guards. Current-code hotfix is cleanup step **0.1**, an independent commit in the later implementation round, before S and workbook redesign.
+2. Phase 1.2 adds optional WHT filter semantics: `[]` returns no rows, omitted filter/IDs keeps today's projection. Update adapter and `ExpenseSourcePort`; sync still calls two arguments. Phase 1.4 adds the **new** two WHT reads in `createIndex`, both restricted to IDs of `page.rows` actually loaded. Do not union raw candidates after the scoped loader.
+3. `[]`: workbook no data, bundle 0 parts, download part 1 → 404, unchanged. Explicit workbook pages do not expand. ZIP reads the whole selection; bundle HTTP DTO does not accept page fields.
+4. Keep full V(A,B) lines. Select A → omit V PDF/slip/supporting files, not an A-labelled full A+B PDF. Omitted selection permits V only when every source is loaded and authorized.
+5. CSV/indexRows/manifest keep their schema/serializer and values for identical eligible rows/artifacts. R8 removes leaked B and combined V(A,B) artifacts, so A also loses V in voucher_numbers/bundle_file_names (expense-evidence.use-case.ts:234-237, :404); these intentional changes override blanket “same bytes” language. Workbook/ZIP use new file names; CSV keeps `legacyFileName`. Goldens pin time/URL when needed.
+6. Every sold tier uses starter (`packages/contracts/src/menu-entitlements.ts:432-450`, `:496-501`); 1,999 adds only WHT features. No new key, no environment feature switch. All sold workbooks omit posting status/error/JV, even with old values in data. Legacy CSV retains its old columns.
+7. **Cuts checked:** E5 step 3.1, its contracts/API/UI/tests and positive ledger acceptance removed; B14/B24 remain out-of-scope bug records. Posting columns, new posting label/error maps, ledger entitlement query and conditional ledger tests removed. No surviving step depends on them. Currency helper remains because E1–E3 and E6 use it. Main sheet = 25 fixed columns + ZIP file column + shop branch when needed (no other structural posting columns).
+8. Software mapping is a separate per-shop mapping, not a write to `ExpenseCategory.ledgerAccountCode`. Existing expense VAT/WHT snapshots remain valid input, without enabling/using an unsold workspace. No change to `posting-engine` is planned.
+9. Earlier WHT design protections retained: payment-level bases/tax; current document VAT gate AND line restriction; frozen FILED line coverage before date filtering; keyless/aggregate-key coverage; no duplicate filed rows across explicit pages.
+10. Screens/LINE/help use plain Thai; exact accounting names stay in exported/official documents. UI purchase_journal label = `ไฟล์แยกตามหมวด`, mapping fields = `รหัสหมวดในไฟล์`/`ชื่อหมวดในไฟล์`; file headings stay exact. Refusals have an action on the same screen. New notifications are not introduced; failed/unusable AI must not charge the customer.
+11. Corrected PG test plan: `prisma-expense.repository.tax-snapshot.spec.ts:21-36` is a mock. Use the existing registered real harness in `prisma-expense.repository.payment.spec.ts:415-443` for mapping unique/cascade/tenant assertions; require its existing local PG gate and zero skipped checks.
+12. FlowAccount still needs owner-authorized Phase 0 template access and test-company import. Prior external research is dated 2026-10-23/24 and was not re-opened in this no-network round. No live-company import or new vendor compatibility claim.
 
-Open questions (เจ้าของ; มีคำแนะนำในสเปก):
-- ข้อ 25 Q1 ตัดตัวเลือก "แบบย่อ/แบบเต็ม" → แนะนำ ตัด (ไม่ block)
-- ข้อ 13 Q1 ทุกแพ็กได้ไฟล์นำเข้า → แนะนำ ทุกแพ็ก
-- ข้อ 13 Q2 ดาวน์โหลดแม่แบบ FlowAccount (ดูอย่างเดียว) + ทดลองนำเข้าในบริษัททดลอง + นักบัญชียืนยัน VAT ต้องห้าม → แนะนำ ได้ (block เฉพาะ Phase 2)
-- ข้อ 13 Q3 PEAK/Express รอแม่แบบจากผู้ใช้จริง → แนะนำ รอ
-- ข้อ 13 Q4 สถานะ "ส่งออกแล้ว" → แนะนำ ยังไม่ทำ
+## 2026-11-04 re-anchor / ceil7 round 2
 
-Artifacts:
-- docs/specs/accountant-export-cleanup-spec.md
-- docs/plans/accountant-export-cleanup-plan.md
-- docs/specs/accounting-software-export-spec.md
-- docs/plans/accounting-software-export-plan.md
-- docs/specs/expense-receipt-upload-spec.md (Amendment 2026-10-23 ท้ายไฟล์ + "Known stale statements (review 2026-10-24)")
-- รีวิวอิสระ: `codex-review/review-exports.md` (F1–F33), `review-exports2.md` (รอบ 2), `review-exports3.md` (รอบ 3) — ไฟล์ชั่วคราวในโฟลเดอร์เดียวกัน
-- แหล่งต้นฉบับที่เปิดจริง: https://rd.go.th/3374.html , https://rd.go.th/27985.html , https://www.rd.go.th/fileadmin/images/image_law/images/vat-202-02.pdf (หน้า 1), buy.pdf เดิม, https://www.rd.go.th/fileadmin/tax_pdf/withhold/290360_attach53.pdf (หน้า 1), https://flowaccount.com/help-center/category/expense/import-expense , https://www.peakaccount.com/peak-manual/peak-others/import-documents/import-expense-record , https://intercom.help/peak/en/articles/7324017-import-expense-ne004 , https://support.microsoft.com/en-us/office/hyperlink-function-333c7ce6-c5ae-4164-9c47-7de9b76f577f , https://rd.go.th/3409.html , PDPA ม.22/27 https://www.mdes.go.th/law/detail/3541-พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล-พ-ศ--๒๕๖๒ (หน้า 9, 12); ผู้ประสานงานตรวจ 2026-10-24: FlowAccount AI Connector (ทุกแพ็กเกจ), ESG forum https://esg.co.th/phpBB3/viewtopic.php?f=1&t=18976 , SAP DTW txt/csv, AWS presigned URL
-- ยังยืนยันไม่ได้: หน้า 2 แบบรายงานภาษีซื้อ (*), ใบแนบ ภ.ง.ด.3, หัวคอลัมน์แม่แบบ FlowAccount/PEAK/Express, เพดาน/แพ็ก PEAK, FlowAccount OpenAPI แพ็ก Pro Business (รอบค้นคว้า), ลิงก์ path สัมพัทธ์บน Excel Windows/Mac/LibreOffice, วิธีปัด VAT ของ FlowAccount
+- Preserve the controller’s accepted RC-F2 design and first independent commit. `expense-evidence.use-case.ts`, `expense-document.use-case.ts` and the tax subtree have no tree diff against `0f938a361`; current selection remains at `apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts:359-375`, all-source guards at `:404`/`:421`. This round does not implement or reopen that decision.
+- Re-anchored existing citation locations, including repository, schema, contracts, extraction/upload, controller, webhook and web line shifts. `expense-export.logic.ts` line numbers did not move: its import and date condition changed. Repository diff is 99 additions/5 deletions (net 94), including a date predicate change, not only shifted lines.
+- **Already fixed — retain, do not implement again:** `8c112ea70` changed `documentDate` at `apps/api/src/modules/expenses/domain/logic/expense-export.logic.ts:148` and document-month filtering at `apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts:561-567`/`:4853`. An unusual printed March date stays March even when uploaded in October; `unverified` uses intake month and an unknown date. Existing `expense-export.logic.spec.ts:119-137` and `prisma-expense.repository.payment.spec.ts:711-716` cover the distinction. Cleanup R10/AC-23 and software R6/AC-20 preserve it in future builders; CSV compatibility now means the e7c422802 baseline. Do not relax software CONFIRMED-only eligibility or change payment/WHT dates.
+- **B26 adapted, still open:** `049aa51de` added free eligibility/creator/draft checks at `apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts:95-114`, but the initial load remains unscoped at `:96`. Cleanup S retains the source-only writer, quota callback and free restrictions while adding scope before storage/AI/queue on both paths. `receipt-ocr-apply.service.ts:1098-1103` checks the free source actor later; that does not substitute for the pre-read boundary.
+- **B23 adapted, still open:** `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:11136-11140` + `:11212` still promises reading after queue failure; free PDF uses the same path at `:9931-9939`. Cleanup 3.5 must preserve free admission/ownership, source identity and failed-result refund; intentional `read: 'none'` at `:11243-11244` is not a queue failure. No duplicate draft, paid/free read charge, or confirmation card from result-delivery retry.
+- **Free enforcement exists:** `apps/api/src/modules/system-partner-management/application/free-expense-access.ts:58-83`, `apps/api/src/modules/auth/presentation/auth.guard.ts:295-326`, `apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts:130`, `apps/web/src/features/expenses/expenses.model.ts:1631-1632`, and `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:6933-6941`. Free is the historical/lifecycle predicate, not every expired trial or every shop with no current paid account. D04 remains model-free; usable persisted results alone consume the existing three-read allowance (`free-expense-quota.ts:24-28`, `:44-57`).
+- **G13 / software S-G4 — new in-scope gap:** direct accountant use-case calls only check permission/scope before row loading (`expense-evidence.use-case.ts:317-324`), without current commercial-state verification. This is not an observed HTTP bypass. Cleanup **0.2** reuses `assertExpenseFinancialAccess` (`expense-commercial-access.ts:22-24`) for customer calls, preserving existing SYSTEM_ADMIN exemption (`auth.guard.ts:325`); software Phase 1.4 shares the guarded loader. No new permission, policy resolver or switch.
+- **G14 / software S-G5 — new in-scope wording gap:** free typed export request gets the generic D04 refusal (`free-expense-line.logic.ts:1`, `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:6938-6939`) without an action (`:543-549`). Cleanup 0.2 adds `เมนูหลัก` through existing `lineChoiceQuickReply`/`deliverReply` (`:2659-2669`), keeping the sentence and no-model early return. Same actor/company only; no welcome replay or owner notification.
+- **G15 / software S-G6 — new runner gap, out of code scope:** `free-expense-access.spec.ts:107-115` is unregistered (`grep -c` = 0). Planned regressions instead go into registered auth, expense-document and LINE webhook specs; no package.json edit.
+- **Existing integration to preserve:** welcome/advisor `9036b8552` rechecks marker/recipient/free allowance (`line-signup-notify.service.ts:402-428`) and is read-only (`auth.controller.ts:529-546`); history `1fbba874e`/`884ba5307` keeps actor/action/time and durable audit (`prisma-expense.repository.ts:2078-2135`, `ExpenseHistoryModal.tsx:85-93`); confirmation suppression `3f6db1729` requires an accepted exact result (`process-line-webhook.use-case.ts:3717-3731`). No implementation of these features is repeated.
+- **Brief nuance:** company-command ordering exists at `line-message-buffer.service.ts:506-516`, but that file has no diff from the old anchor. Treat it as an existing regression boundary, not newly merged behavior or a missing fix. The three named unchanged areas and the export date-condition change otherwise agree with the brief.
+- W00 integration adapts to new step 0.2 as well as 3.5: both change the hashed webhook (`apps/api/src/modules/line-ai/line-ai-capability-manifest.ts:232`), so future implementation updates the artifact and runs the existing manual check/whole-chain. No new tests in the unregistered manifest spec.
+- No new owner question. Retain only the four unanswered choices below; free export denial and three-read/D04 rules are already decided.
+
+## 2026-10-26 RC-F2 brief and current-code recheck
+
+Historical round-one evidence, line numbers re-anchored and rechecked on 2026-11-04:
+
+| Evidence opened | Result / scope |
+|---|---|
+| `apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts:359` “lines: { some:” | Paid V selected if any line is A. |
+| same file `:370` “paidVouchers.flatMap” and `:375` “expenseIds: extraIds.slice” | All V lines enter the candidate union and replace the original selection during extra load. **B29 current bug, in scope.** |
+| same file `:288-310` “paymentEvidenceRows” | B lands in payment-evidence workbook rows, manifest and ZIP; B does not enter the original main-sheet indexRows/count. This distinction does not remove the leak. |
+| same file `:404` “ids.some” and `:421` “ids.every” | Keep both guards and complete voucher lines to exclude full V when B is not loaded. |
+| same file `:445` “parts.push([])” and `:462` “throw new NotFoundException()” | Empty selection produces no parts and a 404 on download; preserved. |
+| same file `:137-310` (`createIndex`) | No live WHT projection or FILED-line read yet; both are new Phase 1.4 work. **G10 design/code distinction.** |
+| `apps/api/src/modules/tax/infrastructure/adapters/expense-source.adapter.ts:70` and `apps/api/src/modules/tax/domain/ports/source-reader.port.ts:127` | Both current signatures take two arguments; optional selection is a planned extension. |
+| `apps/api/src/modules/tax/application/use-cases/sync-tax-events.use-case.ts:277` “findConfirmedWithWhtByCompany(companyId, since)” | Sync omits selection and must remain unchanged. |
+| `apps/api/src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts:1295-1296` | Current voucher fixture has one expense per voucher. **G9 coverage gap; add A+B fixture first.** |
+
+Required test names (first):
+- `src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts`: **selection excludes an unselected co-voucher expense from workbook, WHT and ZIP**. First commit covers today's workbook/certificate/ZIP path; 1.4 extends the same regression to new WHT rows and both read arguments. Cover A-only, empty, omitted, explicit pages/empty page and scoped exclusions.
+- `src/modules/tax/application/use-cases/sync-tax-events-wht-form.use-case.spec.ts`: **WHT selection distinguishes empty from omitted IDs**. Guard test precedes adapter/port change in 1.2, includes unchanged no-selection sync.
+
+## Additional findings and limits
+
+- **G11 (in scope):** old spec called the list's empty sentence the evidence page's existing text. Actual evidence page says “ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้” at `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:773`; proposed shared message now says only “ไม่มีรายการตามที่เลือก” with a change-dates action. Success text must also work for a FILED-only workbook.
+- **S-G1 (in scope):** mock-versus-PG gap described in Decision 11; no current application bug alleged.
+- **S-G2 (in scope capability gap):** `prisma-expense.repository.ts:4066` category response has no per-office mapping; the internal ledger binding is not that mapping (`schema.prisma:2588`).
+- **G12 (runner gap, outside implementation scope):** `src/modules/line-ai/line-ai-capability-manifest.spec.ts` exists (`:71-78`, frozen-artifact check) but `grep -c` against `apps/api/package.json` is **0**. Existing manual W00 check may run separately; add no API tests to it and do not claim package test coverage. `thai-date.logic.spec.ts` has direct count 0, but registered `apps/api/src/modules/expenses/domain/logic/expense-export.logic.spec.ts:3` imports and executes it (`31ad07964`); the earlier compile-only claim was wrong. Update existing callers only; add new assertions in registered specs.
+- Historical current-code B1–B28 remain in cleanup spec, with B14/B24 explicitly out of scope. B26 extraction still uses unscoped `findById` (`expense-extraction.use-case.ts:96`); prior “closed” was design review, not shipped remediation.
+- **Prior-document correction:** B2 was too broad: `derivePostingStatus` returns `not_required` for `CONFIRMED_DUPLICATE`, not `pending` (`apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts:340`). The sold-export removal is unchanged.
+- **Brief contradictions:** none in its RC-F2 mechanics, empty-bundle behavior, two requested test registrations or sold preset ceiling. Nuances: B is in the payment-evidence worksheet, not main indexRows; createIndex's two WHT reads are future work. Both are recorded, not treated as implemented facts.
+
+Open questions (owner only; recommendations):
+- Cleanup Q1: one accountant workbook instead of summary/full selector? Recommend **remove the selector**; removal step depends on the answer, backend selector compatibility remains. No answer was invented in this round.
+- Software Q1: no longer open; owner ceiling means existing starter expense.export, no new entitlement.
+- Software Q2: permit template download from the owner's FlowAccount and import only in a test company, with accountant review of unclaimable VAT? Recommend **yes**; only Phase 0/2 depend on this access.
+- Software Q3: wait for actual PEAK/Express templates? Recommend **wait**.
+- Software Q4: store “already exported” state? Recommend **not yet**.
+
+Artifacts (only files changed this round):
+- `docs/specs/accountant-export-cleanup-spec.md`
+- `docs/plans/accountant-export-cleanup-plan.md`
+- `docs/specs/accounting-software-export-spec.md`
+- `docs/plans/accounting-software-export-plan.md`
+- `docs/agent-memory/accountant-exports.md`
 
 Verification:
-- เอกสารอย่างเดียว ไม่ได้รัน build/test (worktree ไม่มี node_modules); การอ้างโค้ดมาจากการอ่านไฟล์ที่ baseline นี้; ผู้ประสานงานเปิดทุก citation ของรีวิวแล้วว่าจริง
-- บั๊กที่บันทึก (อ่านโค้ด ยังไม่ได้รัน): B1–B28 ใน accountant-export-cleanup-spec §13 — **B26 ช่องโหว่ปัจจุบัน**: ขออ่านเอกสาร (`POST /expenses/:id/extraction-request`) ข้ามสาขาได้ (`expense-extraction.use-case.ts:92`, `:216`) → แผน Phase S ส่งเดี่ยวก่อนทุกเฟส; B27 รหัสสาขาที่ AI แต่งผ่านเพราะเป็นส่วนของเลขผู้เสียภาษี; B28 เลขผู้เสียภาษีผู้ขายท้ายใบหายหลังบรรทัด `ผู้ป่วย`; — ที่สำคัญ B1 ลิงก์ไปหน้าแอป, B2 `pending` ทุกแถว, B17 เลขที่เอกสารปลอมผ่าน (`FAKE`, `FAKE-180`), B18 เดือนที่มีแต่การจ่ายถูกปฏิเสธ, B19 วันที่จ่ายเก่า, B20 ไม่มีสกุลเงิน, B21 หัก ณ ที่จ่ายจ่ายสองงวดเหลือแถวเดียว, B22 handoff บุคคลเก็บ PND3 เสมอ, B23 PDF ทาง LINE สัญญาว่ากำลังอ่านทั้งที่ไม่มีงาน, B24/B25 ไฟล์ E5/E6 ไม่บอกสกุล
+- Read AGENTS.md, local ponytail full skill, Thai UX standard and owner decisions before editing; source trace is local only. No agents delegated.
+- Read-only `git rev-parse HEAD` recorded baseline; no writing git command.
+- `grep -c "<path>" apps/api/package.json` results below; positive counts mean registered occurrences, not passing tests. No package.json change.
 
-## Review 2026-10-24 (Codex, ultra — "unsafe to build") → สิ่งที่แก้
+| API spec path | Count |
+|---|---|
+| `src/modules/auth/auth.guard.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts` | 1 |
+| `src/modules/tax/application/use-cases/sync-tax-events-wht-form.use-case.spec.ts` | 1 |
+| `src/modules/expenses/domain/logic/expense-export.logic.spec.ts` | 1 |
+| `src/modules/expenses/domain/logic/expense-document.logic.spec.ts` | 1 |
+| `src/modules/expenses/presentation/http/expense.dtos.spec.ts` | 1 |
+| `src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts` | 1 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts` | 1 |
+| `src/modules/expenses/infrastructure/prisma-expense.repository.tax-snapshot.spec.ts` (existing mock evidence only) | 2 |
+| `src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.spec.ts` | 2 |
+| `src/modules/tax/application/use-cases/wht-certificate-handoff.use-case.spec.ts` | 1 |
+| `src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` | 2 |
+| `src/modules/line-ai/application/line-message-buffer.service.spec.ts` | 1 |
+| `src/modules/system-partner-management/application/free-expense-access.spec.ts` (read-only finding; no planned additions) | 0 |
+| `src/modules/line-ai/line-ai-capability-manifest.spec.ts` (existing manual check only) | 0 |
+| `src/common/export/thai-date.logic.spec.ts` (existing callers; runs through registered import) | 0 |
 
-| F | เรื่อง | แก้ที่ |
-|---|---|---|
-| F1 | ภ.ง.ด.2 สำหรับหมวด `SEPARATE_PND2` | cleanup spec §5.3, §7.3; software spec R4, §7.4 (`wht_form_not_supported`); cleanup plan 1.2 `withholdingFormFor`; Decision 7 |
-| F2 | หัก ณ ที่จ่ายต่อการจ่าย | cleanup spec §1.2 ข้อ 7, §5.3, แผ่น `หัก ณ ที่จ่าย` §7.2; B21; plan 1.2/1.4; AC-5 |
-| F3 | สกุลเงิน | cleanup spec R6, คอลัมน์ `สกุลเงิน` ทุกแผ่น, B20, G7; software spec R7 + `foreign_currency` |
-| F4 | ฐานหักต่างจากมูลค่า | cleanup spec §5.3 (ฐานจาก projection); software spec R4 + คอลัมน์ `ฐานหัก ณ ที่จ่าย`; FlowAccount exclude `wht_not_representable` |
-| F5 | VAT หลายแบบในบัญชีเดียว | software spec R2 แยกตามการใช้ VAT, คอลัมน์ `การใช้ VAT`, AC-3; plan 1.3 |
-| F6 | คงยอด VAT ที่กรอกตามใบ (21.01) | software spec R3, `vat_not_representable`, AC-4; Phase 0 ข้อ 3(ค) |
-| F7 | หักแบบยอดเงิน/หลายอัตรา | cleanup spec §5.3 (`ยังไม่ระบุ`); software spec R4 + `wht_not_representable` + fallback = สมุดรายวันซื้อ/ไฟล์นักบัญชี |
-| F8 | Express มีโปรแกรมเสริมนำเข้า | software spec §1.2–1.3, Q3; plan "PEAK / Express รอแม่แบบ"; Decision 8 |
-| F9 | presigned URL ใช้ได้จนหมดอายุ | Amendment "Signed links"; cleanup spec E3/E4, Non-goals, §8 |
-| F10 | คงข้อเท็จจริงหักรายบรรทัดเก่า | cleanup spec §5.3 (`split`); software spec R4 |
-| F11 | CSV คงไบต์ด้วย projection แยก | cleanup spec §7.1, §7.4, AC-7, G8, §16; plan 1.4 + locked 1; Amendment; Decision 5 |
-| F12 | `page`/`pageSize` ใน DTO | cleanup spec §7.5; plan 1.5 + test |
-| F13 | ย้ายเทสต์ที่เรียก builder/selector | cleanup spec §11, §14; plan 1.3 (รวม `thai-date.logic.spec.ts` ที่ไม่ได้ลงทะเบียน) และ 2.3 (EXP-20/21/22/23) |
-| F14 | เดือนที่มีแต่การจ่าย | cleanup spec §1.2 ข้อ 13, §10.1–10.2, B18, AC-10; plan 2.1/2.2 |
-| F15 | วันที่จ่ายจากแถวการจ่าย | cleanup spec `last_paid_at` + แผ่น `การจ่าย`, B19, AC-11; software spec คอลัมน์ 24 |
-| F16 | ฉบับใช้อยู่/ฉบับเดิมของใบรับรอง | cleanup spec แผ่น `ไฟล์ทั้งหมด` (`ฉบับ`/`แทนด้วย`), §7.4 |
-| F17 | FlowAccount วันที่ชำระต้องมีวิธี | software spec §7.4 (ว่างทั้งคู่ + `paymentNotExported`), T12, AC-8 |
-| F18 | คำอธิบายประเภทเงินได้ข้อ 6 ฯลฯ | software spec §1.2, §7.4 (`requiresDescription`), Phase 0 ข้อ 3(จ), plan 2.1 |
-| F19 | รายงานรายการที่ไม่ได้ใส่ใน API/UI | software spec §7.1 `excluded`, R10, T11, AC-10 |
-| F20 | หมวดที่เห็นหลัง bootstrap | software spec §1.1, §6 (scope ∪ ถูกอ้าง), §7.2, §10.2; plan 1.2 |
-| F21 | status ว่าง = CONFIRMED | software spec R1, §7.2, AC-7; plan 1.4 |
-| F22 | AI Connector ทุกแพ็กเกจ แยกจาก OpenAPI | software spec §1.2 แยกแถว, Q1 |
-| F23 | เลขที่เอกสารปลอมผ่าน (gateway) | cleanup spec B17 + plan Phase 3.3 + AC-13; Amendment แถว §19j |
-| F24 | สวิตช์บันทึกด้วยมือรายร้าน | Amendment "Known stale statements" (legacy ต้องเลิก) |
-| F25 | ขอบเขต LINE ปัจจุบัน (การ์ดยืนยัน) | Amendment แถว §13 |
-| F26 | ใบกำกับอย่างย่อเป็นหลักฐานใช้ได้ | Amendment แถว §19h |
-| F27 | ปีสองหลักบนใบเสร็จ | Amendment แถว §19k |
-| F28 | อ่าน PDF ด้วยงานคิว | Amendment แถว §19a |
-| F29 | รายการซ้ำที่สงสัยไม่ block | Amendment แถว §17 |
-| F30 | `WhtIncomeCategory` catalog กลาง | cleanup spec §6, §8; software spec §8; plan 1.4 |
-| F31 | ความหมายช่องว่าง | cleanup spec R5, §7.3 (`ยังไม่ระบุ` สำหรับข้อมูลที่ต้องใช้แต่ไม่มี) |
-| F32 | ข้ออ้าง xlsx เฉพาะเป้าหมายที่ยืนยัน | software spec §1.2 (SAP DTW txt/csv), §1.3 ข้อ 4 |
-| F33 | อักขระควบคุมทั้งค่า | software spec §7.2; plan 1.2 regex + test |
+- AI Gateway registration: `grep -c 'src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts' apps/ai-gateway/package.json` = 1.
+- Runtime tests/build/Prisma/browser/vendor imports **not run**: documents-only brief; runtime checks are outside this documents-only round. Plans record exact future node --import tsx, local-proof tsc, additive Prisma and browser commands. Browser proof remains at 390, 1280 and approximately 1556 px.
+- Re-anchor document integrity check (2026-11-04) PASS: all five Status lines retain the controller decision and contain the e7c422802 re-anchor; cleanup R1–R22 and software R1–R17 total **39 requirements**; final Traceability tables include free/paid path, plan/test/acceptance/source; **74 local evidence quotes match the cited lines exactly**, each at most 15 words; all referenced acceptance IDs exist. Local citation range check resolved 317 unique code ranges without an out-of-bounds line, followed by manual checks of changed flows and comma-separated caller lists.
+- Registration rechecked 2026-11-04 with `grep -c` for every planned API spec, including new auth and message-buffer regression locations (1 each); required RC-F2 files remain 1 / 1. No new tests are planned in the three direct-count-zero files. `rg` found no import of the free-access or W00 spec; it did find the Thai-date import documented above.
+- Re-anchor does not claim runtime test, browser or vendor-import results. Preserve the delivered welcome/advisor/history/confirmation features; current co-voucher leak, extraction boundary and failed-queue reply remain implementation risks.
+- Round-one document integrity check (2026-10-26) PASS: all five headers; three exact RC-F2 status lines; 21 cleanup + 16 software requirements; complete plan/test/acceptance/source cells; 66 exact local traceability quotes, each at most 15 words; all nine API files used for new traceability tests registered. Required RC-F2 spec counts rechecked with `grep -c`: 1 / 1.
+- Scoped `git diff --check -- docs/specs/accountant-export-cleanup-spec.md docs/plans/accountant-export-cleanup-plan.md docs/specs/accounting-software-export-spec.md docs/plans/accounting-software-export-plan.md docs/agent-memory/accountant-exports.md` PASS. Other lanes have concurrent changes; this lane wrote only the five authorized documents.
 
-### Round 2 (2026-10-24) — Codex ultra: 26/33 RESOLVED, 7 PARTLY, 18 ใหม่ (4 HIGH); ยัง "unsafe to build"
+## Historical provenance (not current implementation status)
 
-| รหัส | ระดับ | เรื่อง | แก้ที่ |
-|---|---|---|---|
-| F1 / P2 | HIGH | ค้น projection หัก ด้วย `page.rows` หลังขยาย (:376) ไม่ใช่ `expenseIds` (:339) — บิล ก.ย. ที่จ่าย ต.ค. ต้องอยู่ไฟล์ ต.ค. | cleanup spec §7.2 แผ่น 3, AC-5; plan 1.4 + test |
-| F2 / P7 | HIGH | สมุดรายวันซื้อเสียชุดหักต่อบรรทัด (RENT 5% + SERVICE 2%) | software spec R2/R4, AC-13, §14; plan 1.3 + test |
-| F3 | HIGH | FlowAccount: เลขอ้างอิงเดียวต้องประเภทเงินได้เดียว | software spec §1.2, §7.4 `wht_mixed_income_types`; plan 2.1; Phase 0 (ฌ) |
-| F4 | HIGH | projection ตรึงแค่ยอด; งวดปิด/แถวยื่นแล้วถูก sync ข้าม — "ตรงทุกแถว" ไม่จริง | cleanup spec เป้าหมาย 5, §5.3 (ภาพที่ยื่น + คอลัมน์ `สถานะ`), แผ่น 3 คอลัมน์ 14, AC-5; plan 1.4; Amendment "Replaced here" |
-| F5 | MED | ไม่รู้ประเภท / ไม่มีเลขผู้เสียภาษี / ต่างสกุล → sync ไม่สร้าง event | cleanup spec §5.3 สถานะ `ต้องตรวจ: …` |
-| P14 | — | ปุ่มหน้าหลักฐานปิดเมื่อตารางว่าง (:904) | cleanup spec §10.2, AC-10, §14; plan 2.2 |
-| P16 / F10 | MED | ใบรับรองถูกยกเลิกไม่มีใบใหม่ → ห้ามเขียน "มีฉบับใหม่แทนแล้ว" | cleanup spec แผ่น 4, AC-15; plan 1.4 |
-| P17 / F6 | MED | FlowAccount: เอกสารมีหักต้องมีวิธีการชำระ | software spec §7.4 (`wht_payment_method_not_supported` ฯลฯ); plan 2.1 |
-| P23 / F9 | MED | การแก้ B17 ต้องคงการประกอบเล่มที่/เลขที่ `12/345` | cleanup spec B17, AC-13; plan 3.3 + test; Amendment แถว §19j |
-| P28 | — | การอ่าน PDF: polling/retry/สเปกที่กำกับ | Amendment แถว §19a (read-status route, runner attempts, appendix spec) |
-| F7 | MED | handoff บุคคลธรรมดาเก็บ PND3 เสมอ (B22) | cleanup spec B22; plan 3.4; Amendment แถว §6 handoff |
-| F8 | MED | PDF ทาง LINE สร้างงานอ่านไม่สำเร็จแต่ตอบ "กำลังอ่าน" (B23) | cleanup spec B23; plan 3.5 (W00 regen + whole-chain); Amendment แถว §19a |
-| F11 | MED | สมุดรายรับ–รายจ่ายไม่มีสกุลเงิน (B24) | cleanup spec §1.3, B24, AC-11; plan 3.1 |
-| F12 | MED | ไฟล์ ภ.ง.ด. ให้ผู้ทำบัญชีบวกข้ามสกุล (B25) | cleanup spec §1.3, B25, AC-12; plan 3.2 |
-| F13 | MED | การจับเลขผู้เสียภาษีอ่านเฉพาะฝั่งผู้ออก | Amendment แถว §19j decisions 2–3 |
-| F14 | MED | LINE เก็บร่างก่อนจัดประเภท | Amendment แถว §5 step 4 / §5.1 / §19b |
-| F15 | MED | เหตุผลการจ่ายต้องจริง (ไม่ใช่ "แบ่งหลายงวด" ทุกกรณี); เอกสารไม่มีหักที่ยังไม่จ่ายไม่เตือน | software spec §7.4 เหตุผลแยก 5 แบบ + `paymentNotExported` เฉพาะที่จ่ายแล้ว |
-| F16 | MED | Phase 1 วัด FlowAccount ไม่ได้ | software spec §16 `flowAccountEligibility`; plan 1.3/1.4/2.3 |
-| F17 | LOW | CLDR 45 → 49 | Amendment แถว §19k research baseline (spot-check Buddhist formats; month tables ยังไม่อ่านซ้ำ) |
-| F18 | LOW | จำนวนคอลัมน์ 24 vs 25 | cleanup spec §7.2/AC-1/Q1 = 25; plan 1.1; Decision 2 |
-
-กติการอบ: เหลือรีวิวได้อีกครั้งเดียว (round 3); ข้อ HIGH ที่เหลือหลังรอบนั้นต้องเป็น blocker ชื่อชัดใน "Must close before coding" และสถานะเป็น "blocked on: …"
-
-### Round 3 (2026-10-24) — Codex ultra, รอบสุดท้าย; แก้แล้วแต่ข้อ HIGH ยังไม่ได้รีวิว
-
-| รหัส | ระดับ | เรื่อง | แก้ที่ |
-|---|---|---|---|
-| F1 | HIGH (ช่องโหว่ปัจจุบัน) | ขออ่านเอกสารข้ามสาขา ได้ `fields` ของสาขาอื่น (B26) | cleanup spec §0, §13 B26, AC-16, §14; plan Phase S (ส่งเดี่ยว, scoped load แบบ `GetExpenseUseCase` `expense-draft.use-case.ts:222-240`, NotFound + audit, เทสต์ใน spec ที่ลงทะเบียนแล้ว); Amendment แถว §16/§19a decision 2 |
-| F2 | HIGH | สมุดรายวันซื้อรวมบรรทัด V7 กับ ND ในบัญชีเดียว ติดป้ายเคลมได้ทั้งหมด | software spec §0, R2/R5, คอลัมน์ 16 + FlowAccount ภาษีต่อแถว, AC-14; plan 1.3–1.4 (โหลด snapshot ต่อบรรทัด, key + `flowAccountEligibility`) |
-| F3 / P37 | HIGH | บรรทัดที่ยื่นก่อนมีคีย์การจ่าย / คีย์รวมที่แยกภายหลัง → หา snapshot ไม่เจอ ใช้ข้อมูลสด และนับซ้ำ | cleanup spec §0, §5.3 ข้อ 1–3; plan 1.4 (`filedLineCoversPayment`) + test |
-| F4 / P41 | MED | ส่งไฟล์ซ้ำไม่ใช่ทางกู้ (dedupe ตาม message id `:11057` → ร่างใหม่ `expense-upload.use-case.ts:136`) | cleanup spec B23; plan 3.5 ปุ่ม `เริ่มอ่านอีกครั้ง` ผูกร่างเดิม + test สอง message id; Amendment แถว §19a |
-| F5 / P40 | MED | contract/หน้า handoff รู้แค่ PND3/PND53 แสดง `ยังไม่รู้แบบภาษี` (`tax.ts:55`, `:476`, `WhtCertificatesPage.tsx:43`) | cleanup spec B22; plan 3.4 `WhtHandoffFormType` (ไม่ขยาย type ของการออกใบ); Amendment แถว §6 |
-| F6 | MED | ไม่ใช่ทุกแถวที่ sync รับคือ "พร้อมยื่น" | cleanup spec §5.3 สถานะ + `withholdingRowFaults`; plan 1.2/1.4 |
-| F7 | MED | ใบแทนต่อกันหลายทอด A→B→C | cleanup spec แผ่น 4 กติกาสาย `correctionOfEvidenceId`, AC-15; plan 1.4 |
-| F8 | MED | หน้าสมุดรายรับ–รายจ่ายบวกข้ามสกุล (B24) | cleanup spec B24; plan 3.1 `otherCurrencies` + บรรทัดบนหน้า |
-| F9 | MED | รหัสสาขาแต่งผ่าน (B27) | cleanup spec B27; plan 3.6; Amendment แถว §19j |
-| F10 | MED | เลขผู้เสียภาษีท้ายใบหาย (B28) | cleanup spec B28; plan 3.6; Amendment แถว §19j footer |
-| F11 | LOW | ผู้อ่านเอกสารไม่ใช่ Typhoon อย่างเดียวแล้ว | Amendment แถว header/§19j/§20 (`createProvider` `:766`, ตัดสิน 2026-08-28 `:742-746`) |
-| F12 | LOW | ลายเซ็นเปิดใช้ทันทีโดยเจ้าของลายเซ็น ไม่มีตั๋วรออนุมัติ | Amendment แถวลายเซ็น (`signature-asset.use-case.ts:205-208`) |
-| F13 | LOW | กติกา W00 manifest | cleanup spec AC-14; plan 3.5 regen `UPDATE_LINE_AI_CAPABILITY_MANIFEST=1` + whole-chain |
-| P50 | LOW | research note ยังอ้าง CLDR 45 + LDML ฉบับ smoke | Amendment แถว §19k: แถวนี้มีผลจนเจ้าของไฟล์ research แก้ (CLDR 49 + TR35 ฉบับออก) |
-
-### Focused blocker review (2026-10-24) — Codex ultra เฉพาะ R3-F1/F2/F3 (`scratchpad/codex-review/review-exports-blockers.md`)
-
-| รหัส | ผล | ช่องที่พบ | แก้ที่ |
-|---|---|---|---|
-| R3-F1 | **CLOSED** | — (scoped load `prisma-expense.repository.ts:1111` ปฏิเสธข้ามสาขาก่อนอ่านไฟล์/เข้าคิว) | สถานะ §0 ทุกไฟล์; plan ลำดับ + Phase S เริ่มได้ทันที; spec B26; Amendment แถว §16/§19a |
-| R3-F2 | STILL OPEN → ออกแบบใหม่ | snapshot `CLAIMABLE` ของบรรทัดฟื้น VAT ที่ผู้ตรวจปฏิเสธ (`prisma-expense.repository.ts:644`, test `…tax-snapshot.spec.ts:541`; sync `:139` ต้องการ `CLAIMABLE`) | software spec §0, R2, R5, คอลัมน์ 16, `vat_not_representable`, tests, AC-15 ใหม่; plan 1.3 `effectiveInputVatRight` + tests, 1.4 อ่าน `inputVatClaimStatus`/`taxEvidenceStatus`/`taxEvidenceReviewStatus` ปัจจุบัน |
-| R3-F3 | STILL OPEN → ออกแบบใหม่ | กรองวันที่ก่อนแทนภาพที่ยื่น → แบบที่ยื่นกันยายนไม่มีคีย์ (`withholding-filing-state.ts:63`) ย้ายรายได้มาไฟล์ตุลาคม | cleanup spec §0, §5.3 ข้อ 0–1, แผ่น 3, แผ่น 5 (`รวมในแบบที่ยื่นแล้ว`), AC-5, §14; plan 1.4 ลำดับใหม่ + fixture ข้ามเดือน + fixture ไม่มีการจ่ายสดในช่วง + กันสาขาอื่น |
-
-### Focused re-check (2026-10-24) — Codex ultra (`scratchpad/codex-review/review-exports-blockers2.md`)
-
-| รหัส | ผล | เรื่อง | แก้ที่ |
-|---|---|---|---|
-| R3-F2 | **CLOSED** | — | software spec/plan → READY (docs-first) |
-| R3-F3 | **CLOSED** | — | — |
-| RC-F1 | HIGH → **CLOSED** (focused check ครั้งสุดท้าย, `review-exports-rcf1.md`) | การขยายชุดแหล่งด้วยบรรทัดที่ยื่น (`periodKey in monthsOf(range)`) ไม่เคารพการแบ่งหน้า (`expense-evidence.use-case.ts:372`, `prisma-expense.repository.ts:4779`) → A/B ยื่นตุลาคม `pageSize: 1` ได้ A+B ทั้งสองหน้า | ใส่ sourceId จากบรรทัดที่ยื่นเข้า `extraIds` (:369-371) ให้ :372 ตัดทิ้งพร้อมกัน; แผ่น 5 แถว `หน้า`; test A/B สองหน้า — cleanup spec §0, §5.3 ข้อ 0, แผ่น 3/5, AC-5, §14; plan 1.4 |
-
-| RC-F2 | HIGH ใหม่ → **ออกแบบแล้ว ต้องรีวิวก่อน Phase 1.4** (ไม่มี focused check รอบต่อไป) | ตัวโหลดรายการขยาย (`expense-evidence.use-case.ts:375`) แทนที่การเลือก → เลือก `['A']` หรือ `[]` แล้วได้ B ที่ยื่นเดือนเดียวกัน (`[]` = ไม่ตรงกับอะไร `contracts/src/expenses.ts:1663`) | ตัดผู้สมัครจากบรรทัดที่ยื่นด้วย `request.expenseIds` ก่อนเข้า `extraIds` (`[]` ข้ามคิวรี); test `['A']`/`[]` ทั้ง workbook และ ZIP — cleanup spec §0, §5.3 ข้อ 0, AC-5, §14; plan 1.4 |
-
-Must close before coding (สรุปจาก §0 ของสเปก):
-- R3-F1, R3-F2, R3-F3, RC-F1 → ปิดแล้ว; Phase S ส่งเดี่ยวได้ก่อนทุกอย่าง; cleanup 1.1–1.3 เริ่มได้
-- RC-F2 → รีวิวก่อน cleanup plan Phase 1.4 (และ 1.5 ที่ต่อท้าย)
+- 2026-10-23 backlog items 25/13 originated these two specs. Older external research and expense-receipt-upload Amendment remain separate sources; not edited this round.
+- Review 2026-10-24 F1/F2: PND2 routing and WHT per payment; F3–F7/F10: currency, explicit base, VAT grouping/rounding, amount-only/legacy per-line WHT; F11: separate CSV projection; F12: DTO pagination; F14/F15/F16: payment-only month, actual payment dates and certificate history; F17/F19/F20/F21/F33: vendor payment rules, exclusions, historical category scope, status default and input validation.
+- F31: blank means absent/inapplicable; missing required data remains explicit. Round 2 F2: preserve separate RENT/SERVICE WHT groups; F6: withholding requires a supported payment method; F15: distinguish actual payment exclusion reasons and do not warn unpaid no-WHT documents. Round 3 R3-F2: do not merge claimable and prohibited VAT. Focused recheck kept the **current document gate AND line restriction** design. These are requirement provenance, not claims that a new software-export endpoint exists.
+- R3-F1 extraction access design, R3-F3 filed coverage-before-date and RC-F1 pagination designs passed earlier document review. Their code still needs implementation/proof.
+- Old RC-F2 design restricted only filing candidates; superseded by the complete co-voucher intersect in this round. Old E5 and ledger-positive plans are superseded by the owner ceiling.
 
 Next:
-1. Phase S (B26) ทำได้ทันที แยก commit เดี่ยว; รีวิว RC-F2 ก่อน Phase 1.4 (สถานการณ์ที่พัง + การออกแบบอยู่ใน §0 ของ cleanup spec)
-2. ส่งสเปกให้เจ้าของ (ไทยง่าย ไม่มีรหัส) พร้อมคำถาม Q
-3. cleanup plan Phase 1.1–1.3 เริ่มได้ (ไม่ต้องรอคำตอบเจ้าของ); 1.4 และ 1.5 (ต่อท้าย 1.4) รอรีวิว RC-F2
-4. ถ้าเจ้าของตอบข้อ 13 Q2 = ได้ → Phase 0 FlowAccount ขนานกัน
-5. หลัง cleanup Phase 1 → accounting-software-export Phase 1
+1. Done 2026-11-04: controller checked the RC-F2 redesign against `expense-evidence.use-case.ts:359/370/372/404/421/445/462`. Only the paid-voucher branch widens the selection, since payments and handoffs already filter by `request.expenseIds`, so the intersect closes it. A-only drops the whole V(A,B) artifact by design. Both test files are registered. The removed E5/posting dependencies are confirmed unused.
+2. In the implementation round, write 0.1's regression then the independent hotfix commit, followed by free-boundary step 0.2; Phase S remains separately shippable. No implementation is performed here.
+3. RC-F2 design is already accepted. Phase 1.2/1.4 still need WHT filter/loaded-source implementation proof; do not confuse design acceptance with a shipped fix.
+4. Get only the still-open owner choices; software Phase 1 follows cleanup Phase 1, FlowAccount follows authorized Phase 0 proof.
