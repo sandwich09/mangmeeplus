@@ -1,6 +1,6 @@
 # Accounting Software Export Plan
 
-Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; FlowAccount Phase 0 still required; Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
+Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; owner 2026-11-04: FlowAccount is not being renewed (its import screen is locked behind renewal), so Phase 1 starts without Phase 0; Phase 0/2 wait for a real template from a customer or accounting office, like PEAK/Express; Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses documents lane (controller review)
 Related: `docs/specs/accounting-software-export-spec.md`, `docs/plans/accountant-export-cleanup-plan.md`, `docs/agent-memory/accountant-exports.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -21,12 +21,14 @@ The spec §0.1–0.2 records current findings/commits. Preserve the accepted RC-
 
 ## ลำดับ
 
-Phase 0 (Q2 answered 2026-11-04; ประตูแรกก่อนเริ่ม owner step 8) → Phase 1 (mapping + สมุดรายวันซื้อ) → Phase 2 (FlowAccount) → Phase 3 ปิดงาน
+Phase 1 (mapping + สมุดรายวันซื้อ) → Phase 3 ปิดงาน; Phase 0 → Phase 2 (FlowAccount) เมื่อได้แม่แบบจริงจากลูกค้าหรือสำนักงานบัญชี (เจ้าของตัดสิน 2026-11-04 ไม่ต่อ FlowAccount)
 PEAK / Express: Q3 **answered 2026-11-04** — รอแม่แบบจริงจากลูกค้าหรือสำนักงานบัญชี — เมื่อได้ ให้เขียนตารางคอลัมน์ลงสเปกก่อน แล้วทำเป็น preset ใน `accounting-software-export.logic.ts` แบบเดียวกับ FlowAccount
 
 ---
 
 ## Phase 0 — R13: ประตูตรวจ FlowAccount ของจริง (ไม่มีโค้ด; controller + เจ้าของ)
+
+**Waiting (2026-11-04):** the controller opened the owner's FlowAccount; นำเข้าจากไฟล์ .csv/.xls/.xlsx shows only a package-renewal popup, the help center publishes no column list, and the owner decided not to renew. Phase 0 now runs when a customer or accounting office that uses FlowAccount sends the real template; it gates Phase 2 only. Nothing was changed in the owner's FlowAccount.
 
 Q2 — **answered 2026-11-04**: อนุญาตให้ดาวน์โหลดแม่แบบ “นำเข้าบิลและใบเสร็จ” จากบริษัท FlowAccount ของเจ้าของแบบดูอย่างเดียว และทดลองนำเข้าเฉพาะบริษัททดลอง; ต้องผ่าน Phase 0 ก่อนเริ่ม owner step 8 โดยไม่ถามสิทธิ์นี้ซ้ำ.
 
@@ -42,7 +44,7 @@ Exit: memory มีหัวคอลัมน์จริง + ผลนำเ�
 
 ## Phase 1 — รหัสบัญชีของสำนักงานบัญชี + สมุดรายวันซื้อ
 
-### 1.1 Schema + contracts (R8/R11/R14; after Phase 0 gate and cleanup Phase 1)
+### 1.1 Schema + contracts (R8/R11/R14; after cleanup Phase 1)
 
 - `apps/api/prisma/schema.prisma`: model `ExpenseCategoryAccountantAccount` (สเปก §6) + back-relation ใน `Company` และ `ExpenseCategory`
 - migration ใหม่ `apps/api/prisma/migrations/2026102<ts>_expense_category_accountant_account/migration.sql` (CREATE TABLE, UNIQUE (companyId, expenseCategoryId), INDEX companyId, FK cascade ×2) — เลือก timestamp ใหม่หลัง migration ล่าสุดใน checkout ตอน implementation; additive only
@@ -73,7 +75,7 @@ Verify: สาม spec (V-DOC/V-DTO/V-PG ด้านล่าง; PG ตาม 
   - `groupExpenseLines(record, lines, mappingByCategory)` — กลุ่ม (บัญชี, การใช้ VAT, อัตรา VAT, **สิทธิภาษีซื้อที่มีผลของบรรทัด (R3-F2 — ปิดแล้ว §0)**: ฟังก์ชันบริสุทธิ์ `effectiveInputVatRight(record, line)` = ประตูเอกสารปัจจุบัน (`inputVatClaimStatus === 'CLAIMABLE' && taxEvidenceStatus === 'USABLE_FOR_TAX'`, แบบ `posting-engine.logic.ts:298-299`) **และ** ข้อจำกัดบรรทัดเมื่อ `taxComponentsJson` ไม่ว่าง (`claimabilitySnapshot` + `taxEvidenceReviewStatus ?? 'REVIEW_REQUIRED'`); ผลเข้มที่สุดชนะตามคอลัมน์ 16 ของสเปก; ใช้ค่าเดียวกันกับ key กลุ่ม ป้าย และ `flowAccountEligibility`, **หมวดเงินได้ + อัตราหักของบรรทัดเมื่อเป็นบรรทัดเก่าที่หักแยก**, หัก/ไม่หัก) R2 — แต่ละแถวมีชุดหักเดียว
   - `allocateToHeader(groups, header)` — R3 คงยอด VAT ที่บันทึก ส่วนต่างเข้าแถวมากสุดในกลุ่ม VAT เดียวกัน
   - `withholdingForGroups(record, lines, groups)` — R4: บรรทัดเก่า (`!whtInputJson && lines > 1`) → ฐาน/ยอดรวมของบรรทัดในแถว หมวด/อัตราของชุด; หักทั้งใบ → แถวมากสุด ฐาน `expenseWhtIncomeBase`, อัตรา `expenseWhtHeaderRate`; แบบ `withholdingFormFor`
-  - `flowAccountEligibility(record, lines, payments)` — ตัวจำแนกบริสุทธิ์ (สเปก §16): คืนรายการเหตุผลจากตาราง §7.4 ที่รู้ได้โดยไม่ต้องมีผล Phase 0 (สกุล, รูปหัก, ภ.ง.ด.2, ประเภทผู้รับเงิน, ไม่มีเลขผู้เสียภาษี, หลายประเภทเงินได้ — ใช้รหัสหมวดของเราแทนตัวเลือก FA, การจ่าย 5 แบบ) + ตัวแทน VAT (VAT ที่บันทึก ≠ round2(อัตรา × มูลค่า) ต่อแถว)
+  - (moved to Phase 2.1 on 2026-11-04 with the FlowAccount preset) `flowAccountEligibility(record, lines, payments)` — ตัวจำแนกบริสุทธิ์ (สเปก §16): คืนรายการเหตุผลจากตาราง §7.4 ที่รู้ได้โดยไม่ต้องมีผล Phase 0 (สกุล, รูปหัก, ภ.ง.ด.2, ประเภทผู้รับเงิน, ไม่มีเลขผู้เสียภาษี, หลายประเภทเงินได้ — ใช้รหัสหมวดของเราแทนตัวเลือก FA, การจ่าย 5 แบบ) + ตัวแทน VAT (VAT ที่บันทึก ≠ round2(อัตรา × มูลค่า) ต่อแถว)
   - `buildPurchaseJournalRows(records, …)` → คอลัมน์สเปก §7.3; ต่างสกุล → `excluded` (`foreign_currency`)
   - `buildPurchaseJournalWorkbook(rows, excluded, about)` → แผ่น `สมุดรายวันซื้อ` + `เกี่ยวกับไฟล์นี้` (มีรายการที่ไม่ได้ใส่); วันที่ style 4; เลขผู้เสียภาษี/สาขาเป็นข้อความ
 - Tests ใน `src/modules/expenses/domain/logic/expense-export.logic.spec.ts` (ลงทะเบียนแล้ว; import โมดูลใหม่): AC-2, AC-3 (7% + ยกเว้น → 2 แถว), VAT 21.01 คงอยู่, VAT_INCLUDED, ค่าบริการเพิ่ม, ส่วนต่าง 0.01 ในกลุ่ม VAT, **ค่าเช่า 5% + ค่าบริการ 2% บัญชีและ VAT เดียวกัน → 2 แถว (fixture `expense-source.adapter.spec.ts:100-109`)**, **100+7 `V7` + 100+7 `ND` บัญชีเดียว → 2 แถว สิทธิต่างกัน (R3-F2)**, **(R3-F2) `V7` + เอกสาร `CLAIMABLE` → `NON_CLAIMABLE` 'ใช้ส่วนตัว' (แบบ `prisma-expense.repository.tax-snapshot.spec.ts:541`) → `ใช้ไม่ได้` + `vat_not_representable`; กลับเป็น `CLAIMABLE` → `ใช้ได้ตามเงื่อนไข`; หลักฐาน `NEEDS_REVIEW` → `รอตรวจสอบ`; เอกสาร `CLAIMABLE` + `ND` → `ใช้ไม่ได้`; ผลตรวจบรรทัด `REVIEW_REQUIRED` → `รอตรวจสอบ`**, บรรทัดหักกับไม่หักบัญชีเดียว → 2 แถว, ฐานกรอกเอง 270.50, `flowAccountEligibility` ทุกเหตุผล, หักแบบยอดเงิน → อัตรา `ยังไม่ระบุ`, `SEPARATE_PND2` → `ภ.ง.ด.2`, ต่างสกุล excluded, ไม่มี cuid/URL, เซลล์วันที่เป็น serial
@@ -116,7 +118,7 @@ Verify: `bash scripts/local-proof/tsc.sh web && pnpm --filter @watchdog-bms/web 
 
 ---
 
-## Phase 2 — FlowAccount (หลัง Phase 0 ผ่านเท่านั้น)
+## Phase 2 — FlowAccount (หลัง Phase 0 ผ่านเท่านั้น; รอแม่แบบจริงจากลูกค้าหรือสำนักงานบัญชี)
 
 ### 2.1 Logic (R9/R10/R13; after Phase 0 and Phase 1)
 
@@ -155,7 +157,7 @@ Q4 — **answered 2026-11-04**: ไม่เพิ่มสถานะหรื
 
 ## Removal / dependency check
 
-Removing cleanup E5 and posting columns does not block any step here. After the Phase 0 proof gate, Phase 1 depends on cleanup's scoped loader, payment/currency labels, workbook primitives, DTO and `withholdingFormFor`; `ExpenseCategory.ledgerAccountCode` and stored VAT fields are source facts, not a dependency on the ledger or VAT workspace. No new calls/imports into those modules are planned. `sync-tax-events` and its procurement callers retain their existing side effects; exports only read. The optional FlowAccount vendor mapping remains a Phase 0 finding to design first, not permission to build CRM.
+Removing cleanup E5 and posting columns does not block any step here. Phase 1 depends on cleanup's scoped loader, payment/currency labels, workbook primitives, DTO and `withholdingFormFor`; `ExpenseCategory.ledgerAccountCode` and stored VAT fields are source facts, not a dependency on the ledger or VAT workspace. No new calls/imports into those modules are planned. `sync-tax-events` and its procurement callers retain their existing side effects; exports only read. The optional FlowAccount vendor mapping remains a Phase 0 finding to design first, not permission to build CRM.
 
 ## Execution / verification map
 
@@ -163,8 +165,8 @@ Test names are in spec Traceability. Write the money/tax/permission/mapping regr
 
 | Step | Requirements | Depends on | Verification |
 |---|---|---|---|
-| 0 | R13 | Q2 access answered 2026-11-04; first gate before owner step 8; no cleanup dependency | real template + nine import cases, evidence in memory, no production mutation |
-| 1.1 | R8/R11/R14 | Phase 0 proof + cleanup Phase 1 | V-PRISMA; additive migration on local DB; V-PG after repository is ready |
+| 0 | R13 | waits for a real FlowAccount template from a customer/accounting office (owner 2026-11-04, no renewal); gates Phase 2 only | real template + nine import cases, evidence in memory, no production mutation |
+| 1.1 | R8/R11/R14 | cleanup Phase 1 | V-PRISMA; additive migration on local DB; V-PG after repository is ready |
 | 1.2 | R11/R14 | 1.1 | V-DOC + V-DTO + V-PG + API tsc |
 | 1.3 | R2–R7/R10/R15 | 1.1 | V-LOGIC + API tsc |
 | 1.4 | R1/R6/R7/R8/R10/R14/R17 | 1.2–1.3; cleanup 0.2 | V-AUTH + V-DOC + V-DTO + API tsc |

@@ -1,6 +1,6 @@
 # Accounting Software Export Spec — ส่งออกไฟล์ที่โปรแกรมบัญชีนำเข้าได้
 
-Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; FlowAccount Phase 0 still required; Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
+Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; owner 2026-11-04: FlowAccount is not being renewed (its import screen is locked behind renewal), so Phase 1 starts without Phase 0; Phase 0/2 wait for a real template from a customer or accounting office, like PEAK/Express; Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses lane (controller review)
 Related: backlog ข้อ 13 ใน `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md`, `docs/specs/accountant-export-cleanup-spec.md` (ข้อ 25 — ทำก่อน), `docs/plans/accounting-software-export-plan.md`, `docs/agent-memory/accountant-exports.md`, `docs/specs/expense-category-default-tax-code-spec.md`, `docs/guidelines/thai-ux-standard.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -410,7 +410,7 @@ Phase 0 (มือ บันทึกใน memory): นำเข้าไฟล
 ## 17. Owner answers (เรื่องธุรกิจ)
 
 - Q1 **resolved by owner ceiling 2026-10-26**: ทุก sold tier ใช้ `expense.export` เดิม; ไม่มีทางเลือกเพิ่ม entitlement หรือเปิด ledger. ไม่ถามซ้ำ.
-- Q2 — **answered 2026-11-04**: อนุญาตให้ทีมดาวน์โหลดแม่แบบ FlowAccount “นำเข้าบิลและใบเสร็จ” จากบริษัทของเจ้าของแบบดูอย่างเดียว และทดลองนำเข้าในบริษัททดลอง; Phase 0 ยังคงเป็นประตูแรกที่ต้องผ่านก่อนเริ่ม owner step 8.
+- Q2 — **answered 2026-11-04, overtaken the same day**: the owner will not renew FlowAccount and its import screen is locked behind renewal, so the template comes from a customer or accounting office instead (Phase 0/2 wait; Phase 1 proceeds). Original answer: อนุญาตให้ทีมดาวน์โหลดแม่แบบ FlowAccount “นำเข้าบิลและใบเสร็จ” จากบริษัทของเจ้าของแบบดูอย่างเดียว และทดลองนำเข้าในบริษัททดลอง; Phase 0 ยังคงเป็นประตูแรกที่ต้องผ่านก่อนเริ่ม owner step 8.
 - Q3 — **answered 2026-11-04**: รอแม่แบบ PEAK และ Express จากลูกค้าหรือสำนักงานบัญชีก่อนเริ่มงาน preset เหล่านี้.
 - Q4 — **answered 2026-11-04**: ไม่เพิ่มสถานะหรือเครื่องหมาย “ส่งออกแล้ว”.
 
