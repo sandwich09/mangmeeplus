@@ -21,7 +21,7 @@ it('only shows the question for VAT papers outside a nonregistered shop', () => 
 it('names waiting, decided and legacy rights without inventing a decision', () => {
   assert.equal(inputVatRightLabel({ inputVatClaimStatus: 'NEEDS_REVIEW' } as any), 'รอตรวจสอบ');
   assert.equal(inputVatRightLabel({ inputVatClaimStatus: 'CLAIMABLE' } as any), 'ใช้ได้ตามเงื่อนไข');
-  assert.equal(inputVatRightLabel({ inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRight: { reasonCode: 'RECORDED_BEFORE_INPUT_VAT_DECISION' } } as any), 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)');
+  assert.equal(inputVatRightLabel({ inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRight: { reasonCode: 'RECORDED_BEFORE_INPUT_VAT_DECISION' } } as any), 'ไม่ได้ใช้ VAT ตอนยื่นภาษี เพราะบันทึกไว้ก่อนเริ่มตรวจ');
 });
 
 import { mock } from 'node:test';
@@ -52,15 +52,15 @@ it('plain shops have no new field; other readers and fixed types see facts', () 
   for (const vatStatus of ['NOT_REGISTERED', 'REGISTERED', 'UNKNOWN']) {
     const detail = { ...fixture, inputVatRight: { ...fixture.inputVatRight, vatStatus } };
     const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail, canReview: false }));
-    const html = view.render(); assert.doesNotMatch(html, /select|checkbox|textarea|ตรวจสิทธิภาษีซื้อ/);
-    if (vatStatus === 'NOT_REGISTERED') assert.equal(html, ''); else assert.match(html, /สิทธิภาษีซื้อ/);
+    const html = view.render(); assert.doesNotMatch(html, /select|checkbox|textarea|ตรวจ VAT สำหรับยื่นภาษี/);
+    if (vatStatus === 'NOT_REGISTERED') assert.equal(html, ''); else assert.match(html, /ใช้ VAT ตอนยื่นภาษี/);
   }
   const fixed = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail: { ...fixture, inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRight: { ...fixture.inputVatRight, status: 'NON_CLAIMABLE', fixed: true, reasonCode: 'ABBREVIATED_TAX_INVOICE_NOT_CREDITABLE' } }, canReview: true }));
   assert.match(fixed.render(), /ขอใบกำกับภาษีเต็มรูปจากผู้ขาย/); assert.doesNotMatch(fixed.render(), /select|checkbox/);
 });
 it('posted journals show the fact without a decision button or an impossible reopen remedy', () => {
   const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail: { ...fixture, inputVatRight: { ...fixture.inputVatRight, decisionBlocker: 'input_vat_posted_journal_immutable' } }, canReview: true }));
-  assert.match(view.render(), /แม้กลับรายการบัญชีแล้ว/); assert.doesNotMatch(view.render(), /<button|แก้ไขเอกสาร/);
+  assert.match(view.render(), /แก้คำตอบเรื่อง VAT ของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ/); assert.doesNotMatch(view.render(), /<button|แก้ไขเอกสาร/);
 });
 it('unknown shop and unread buyer facts expose their fix beside the failing condition', () => {
   const chooser = plainChooser();
@@ -77,10 +77,10 @@ it('server refusal stays at the field, and a confirmed decision saves through it
   const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail: fixture, canReview: true, onSaved: async () => { refreshed++; } }));
   try {
     view.render(); view.find('button').onClick(); view.render(); view.find('ThemedSelect').onChange({ target: { value: 'NON_CLAIMABLE' } }); view.render();
-    await view.find('button', p => p.children.includes('บันทึกสิทธิภาษีซื้อ')).onClick();
+    await view.find('button', p => p.children.includes('บันทึกคำตอบเรื่อง VAT')).onClick();
     assert.match(view.render(), /role="alert"/); assert.equal(refreshed, 0);
     view.find('textarea').onChange({ target: { value: 'ใช้ส่วนตัว' } }); fail = false; view.render();
-    await view.find('button', p => p.children.includes('บันทึกสิทธิภาษีซื้อ')).onClick(); assert.equal(refreshed, 1);
+    await view.find('button', p => p.children.includes('บันทึกคำตอบเรื่อง VAT')).onClick(); assert.equal(refreshed, 1);
   } finally { chooser.mock.restore(); decide.mock.restore(); }
 });
 it('UX6 hides summary and history for unregistered shops and VAT-free papers', () => {
@@ -93,7 +93,7 @@ it('UX6 hides summary and history for unregistered shops and VAT-free papers', (
         try {
           const html = view.render();
           if (vatStatus === 'NOT_REGISTERED' || vatAmount === '0') assert.equal(html, '');
-          else assert.match(html, /สิทธิภาษีซื้อ/);
+          else assert.match(html, /ใช้ VAT ตอนยื่นภาษี/);
         } finally { view.cleanup(); }
       }
     }
@@ -104,10 +104,10 @@ it('UX6 names a later decision change and asks its reason before the right and c
   const detail = { ...fixture, inputVatClaimStatus: 'CLAIMABLE', inputVatRight: { ...fixture.inputVatRight, status: 'CLAIMABLE', latestDecision: { decidedByName: 'ผู้ตรวจ', decidedAt: '2026-10-14T01:00:00Z', reason: 'ตรวจแล้ว' } } };
   const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail, canReview: true }));
   try {
-    assert.match(view.render(), />เปลี่ยนผลตรวจสิทธิภาษีซื้อ</);
+    assert.match(view.render(), />เปลี่ยนคำตอบเรื่อง VAT</);
     view.find('button').onClick(); const html = view.render();
-    assert.ok(html.indexOf('aria-label="เหตุผลสิทธิภาษีซื้อ"') < html.indexOf('<select'));
-    assert.ok(html.indexOf('aria-label="เหตุผลสิทธิภาษีซื้อ"') < html.indexOf('type="checkbox"'));
+    assert.ok(html.indexOf('aria-label="เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี"') < html.indexOf('<select'));
+    assert.ok(html.indexOf('aria-label="เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี"') < html.indexOf('type="checkbox"'));
   } finally { view.cleanup(); chooser.mock.restore(); }
 });
 
@@ -118,7 +118,7 @@ it('UX6 lists show only rights applicable on the document date, including before
   assert.equal(showListedInputVatRight({ vatAmount: '7' }), false);
   assert.match(source('ExpensesPages.tsx'), /showListedInputVatRight\(e\)/);
   assert.doesNotMatch(source('ExpensesPages.tsx'), /vatRightFilter|hasListedInputVatRights/);
-  assert.match(source('ExpensesPages.tsx'), /e.inputVatClaimStatus === 'NEEDS_REVIEW'.*ภาษีซื้อรอตรวจสอบ/);
+  assert.match(source('ExpensesPages.tsx'), /e.inputVatClaimStatus === 'NEEDS_REVIEW'.*รอตรวจ VAT สำหรับยื่นภาษี/);
 });
 
 it('UX7 changing a decision restores saved ticks and an unchanged reviewer-confirmed buyer', () => {
@@ -153,11 +153,11 @@ it('UX7 a changed buyer fact asks for a new check beside its explanation', () =>
 it('UX7 the change form leaves the fact row and uses one left-aligned full-width field label', () => {
   const chooser = plainChooser();
   const view = certificateHarness(() => h(ExpenseInputVatRight, { companyId: 'co', detail: fixture, canReview: true, showLabel: false,
-    renderReadOnly: (content: any) => h('dl', { 'data-fact-row': true }, h('dt', {}, 'สิทธิภาษีซื้อ'), h('dd', {}, content)) }));
+    renderReadOnly: (content: any) => h('dl', { 'data-fact-row': true }, h('dt', {}, 'ใช้ VAT ตอนยื่นภาษี'), h('dd', {}, content)) }));
   try {
     assert.match(view.render(), /data-fact-row/); view.find('button').onClick(); const html = view.render();
     assert.doesNotMatch(html, /data-fact-row/); assert.match(html, /w-full[^"<>]*text-left/);
-    assert.equal((html.match(/>สิทธิภาษีซื้อ</g) ?? []).length, 1);
+    assert.equal((html.match(/>ใช้ VAT ตอนยื่นภาษี</g) ?? []).length, 1);
   } finally { view.cleanup(); chooser.mock.restore(); }
 });
 

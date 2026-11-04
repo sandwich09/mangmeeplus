@@ -50,7 +50,7 @@ describe('buyerMatchBannerState — header path (no line carries a Tax Code)', (
     assert.equal(banner.restoreClaimStatus, null);
     assert.equal(t('expenses.buyer_match_title', 'th'), 'ชื่อ/ที่อยู่ผู้ซื้อบนใบไม่ตรงทะเบียนบริษัท');
     assert.equal(t('expenses.buyer_match_confirm', 'th'), 'ยืนยันว่าใช้ได้ พร้อมเหตุผล');
-    assert.equal(t('expenses.buyer_match_mark_non_claimable', 'th'), 'ทำเครื่องหมายใบนี้ใช้ภาษีซื้อไม่ได้');
+    assert.equal(t('expenses.buyer_match_mark_non_claimable', 'th'), 'ไม่นำ VAT ของใบนี้ไปใช้ตอนยื่นภาษี');
   });
 
   it('offers the confirm only to expense.confirm holders', () => {
@@ -96,7 +96,7 @@ describe('buyerMatchBannerState — review fix 2: the mark can be taken back', (
     assert.equal(banner.restoreClaimStatus, 'CLAIMABLE');
     assert.equal(banner.canMarkNonClaimable, false);
     assert.equal(banner.markHintKey, 'expenses.buyer_match_marked_non_claimable');
-    assert.equal(t('expenses.buyer_match_undo', 'th'), 'ยกเลิกเครื่องหมาย ใช้ภาษีซื้อได้ตามเดิม');
+    assert.equal(t('expenses.buyer_match_undo', 'th'), 'ยกเลิกเครื่องหมาย');
     const needsReview = state({ buyerAsPrinted: { ...marked, claimStatusBeforeMark: 'NEEDS_REVIEW' }, inputVatClaimStatus: 'NON_CLAIMABLE' });
     assert.equal(needsReview.kind !== 'none' && needsReview.restoreClaimStatus, 'NEEDS_REVIEW');
   });
@@ -133,8 +133,8 @@ describe('buyerMatchBannerState — review fix 1: a line Tax Code decides the cl
       assert.equal(banner.openLines, true);
       assert.equal(banner.canConfirm, true, 'the confirm-with-reason stays available');
     }
-    assert.match(t('expenses.buyer_match_change_line_tax_code', 'th'), /ประเภทภาษีของรายการ/);
-    assert.match(t('expenses.buyer_match_change_line_tax_code', 'th'), /ภาษีซื้อขอคืนไม่ได้/);
+    assert.match(t('expenses.buyer_match_change_line_tax_code', 'th'), /รูปแบบ VAT ของแต่ละรายการ/);
+    assert.match(t('expenses.buyer_match_change_line_tax_code', 'th'), /แก้รูปแบบ VAT ของแต่ละรายการให้ใช้ตอนยื่นภาษีไม่ได้ แล้วบันทึก/);
   });
 
   it('says so, and stops asking, once no line claims input VAT', () => {

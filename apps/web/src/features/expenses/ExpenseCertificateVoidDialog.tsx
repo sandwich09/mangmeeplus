@@ -63,7 +63,7 @@ export function ExpenseCertificateVoidDialog({ companyId, expenseId, certificate
       <button type="submit" form="expense-certificate-void-form" className={dangerClass} disabled={busy || !choice} aria-busy={busy}>{external ? 'ยกเลิกเอกสาร' : 'ยกเลิกเอกสารและหนังสือรับรอง'}</button>
     </>}>
     <form noValidate id="expense-certificate-void-form" className="space-y-3 text-sm leading-6 text-gray-700" onSubmit={event => { event.preventDefault(); void submit(successMessage); }}>
-      <p className="font-semibold">{external ? 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว' : 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></p>
+      <p className="font-semibold">{external ? 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว' : 'เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></p>
       {external && <p>ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}
       {error && <ErrorBanner message={error} />}
       {warning}

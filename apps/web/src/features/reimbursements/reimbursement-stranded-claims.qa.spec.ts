@@ -207,7 +207,7 @@ describe('a claim whose cancellation has not completed says so in the step card 
     const html = claimPage(cancelling(), owner);
     const card = stepCard(html);
     assert.deepEqual(card.buttons, ['ถอนการยกเลิก', 'ทำต่อเพื่อยกเลิก'], 'back-out first, the acting button last; printing sits with the document');
-    assert.equal(card.note, 'กำลังยกเลิกใบเบิก รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกใบเบิกนี้ เมื่อ 1 ต.ค. 2569 09:00 น. แต่ยังยกเลิกไม่เสร็จ'
+    assert.equal(card.note, 'กำลังยกเลิกใบเบิก รอระบบปรับสถานะ · พิม ใจดี เริ่มยกเลิกใบเบิกนี้ เมื่อ 1 ต.ค. 2569 09:00 น.'
       + ' · ระบบจะทำต่อให้เองภายในไม่กี่นาที หรือกดทำต่อเพื่อยกเลิกได้เลย · ถ้าไม่ต้องการยกเลิกแล้ว กดถอนการยกเลิก ใบจะกลับไปเดินต่อตามเดิม'
       + ' · ระหว่างนี้ยังอนุมัติ ส่งกลับให้แก้ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้');
     // The owner holds every right, and still gets no บันทึกจ่าย, no second ยกเลิกใบเบิก, no decision and no payment form anywhere on the page.
@@ -241,15 +241,17 @@ describe('a claim whose cancellation has not completed says so in the step card 
 
   it('says what stands in the way in words a person can act on', () => {
     const note = (blocker: Record<string, unknown>) => stepCard(claimPage(cancelling({}, { blocker }), owner)).note;
-    assert.match(note({ code: 'reason_too_short' }), /แต่ยังยกเลิกไม่เสร็จ เพราะเหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ · กดทำต่อเพื่อยกเลิก แล้วระบุเหตุผลใหม่อย่างน้อย 3 ตัวอักษร/u);
+    assert.match(note({ code: 'reason_too_short' }), / · เหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ · กดทำต่อเพื่อยกเลิก แล้วระบุเหตุผลใหม่อย่างน้อย 3 ตัวอักษร/u);
     assert.match(note({ code: 'accounting_period_locked', periodKey: '2026-09' }),
-      /เพราะงวดบัญชี ก\.ย\. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
-    assert.match(note({ code: 'tax_period_locked', periodKey: '2026-09', formType: 'PP30' }), /เพราะงวดภาษี ก\.ย\. 2569 ยื่นแบบหรือปิดแล้ว/u);
-    assert.match(note({ code: 'posting_unresolved' }), /ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
+      / · ยกเลิกใบเบิกไม่ได้ \(รายจ่ายเดือน ก\.ย\. 2569\) ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
+    assert.match(note({ code: 'tax_period_locked', periodKey: '2026-09', formType: 'PP30' }), / · ยกเลิกใบเบิกไม่ได้ \(ภ.พ.30\) \(รายจ่ายเดือน ก\.ย\. 2569\) ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ/u);
+    assert.match(note({ code: 'tax_period_locked', periodKey: '2026-09', formType: 'PND3' }), /ภ.ง.ด.3.*ก.ย. 2569.*ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ/u);
+    assert.doesNotMatch(note({ code: 'tax_period_locked', periodKey: '2026-09', formType: 'UNKNOWN' }), /UNKNOWN|ภ.พ.30|ภ.ง.ด.3/u);
+    assert.match(note({ code: 'posting_unresolved' }), /ยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ · เมื่อแก้ไขแล้ว กดทำต่อเพื่อยกเลิก/u);
     assert.match(note({ code: 'expense_not_voidable' }), /อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ ติดต่อผู้ดูแลระบบ/u);
     // A cancel refused up front for the same reason reads the same, period named in Thai.
     assert.equal(errorText(new Error('reimbursement_cancellation_accounting_period_locked:2026-09')),
-      'ยังยกเลิกใบเบิกนี้ไม่ได้ เพราะงวดบัญชี ก.ย. 2569 ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน');
+      'ยกเลิกใบเบิกไม่ได้ (รายจ่ายเดือน ก.ย. 2569) ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
     assert.equal(errorText(new Error('cancellation_reason_too_short')), 'เหตุผลที่ยกเลิกใบเบิกต้องยาวอย่างน้อย 3 ตัวอักษร');
     // Every state reads in plain Thai: no code, key or ISO period on the page.
     for (const blocker of [undefined, { code: 'reason_too_short' }, { code: 'accounting_period_locked', periodKey: '2026-09' },

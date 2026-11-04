@@ -55,6 +55,7 @@ test('@journey an owner reopens a paid company expense, adds evidence without re
   const paid = await readExpense();
   await expect(main.getByText('จ่ายแล้วพิมพ์ใบสำคัญจ่ายได้จากประวัติการจ่าย', { exact: true })).toHaveCount(0);
   await expect(main.getByTestId('expense-payment-history').getByRole('button', { name: 'ออกใบสำคัญจ่าย', exact: true })).toBeVisible();
+  await expect(main.getByText('หลักฐานว่าบันทึกจ่ายแล้ว', { exact: true })).toHaveCount(0);
   expect(paid.status).toBe('CONFIRMED');
   expect(paid.paymentStatus).toBe('PAID');
   expect(Number(paid.paidAmount)).toBe(970);

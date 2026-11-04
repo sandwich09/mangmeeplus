@@ -5,6 +5,7 @@ import {
   REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateWait, reimbursementDuplicateReasonText as sharedDuplicateReasonText, reimbursementDuplicateBlockNotice as sharedDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT,
+  TAX_FORM_SHORT_NAMES,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage, translateApiError as sharedTranslateApiError } from '@/common/api/api-error-message';
@@ -49,20 +50,22 @@ export function errorMessage(
 // ---- A cancellation that cannot go through, or has not completed (audit B3) ----
 
 /** "ก.ย. 2569" for an accounting period key such as 2026-09; nothing for a key this page cannot read. */
-const periodText = (periodKey: unknown) => (typeof periodKey === 'string' && /^\d{4}-\d{2}$/.test(periodKey) ? ` ${formatThaiMonth(`${periodKey}-01`)} ` : '');
+const periodText = (periodKey: unknown) => (typeof periodKey === 'string' && /^\d{4}-\d{2}$/.test(periodKey) ? ` (รายจ่ายเดือน ${formatThaiMonth(`${periodKey}-01`)})` : '');
 
 /**
  * What stands in the way of a cancellation, in words a person can act on. One text for the claim's
  * step note (a cancellation that was started) and for the refusal of a cancel that meets the same wall.
  */
-export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: unknown } | null | undefined): string | null {
+export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: unknown; formType?: unknown } | null | undefined): string | null {
   switch (blocker?.code) {
     case 'reason_too_short': return 'เหตุผลที่ระบุไว้สั้นเกินไป ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้';
     case 'accounting_period_locked':
-      return `งวดบัญชี${periodText(blocker.periodKey)}ปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้มีสิทธิ์เปิดงวดบัญชีนั้นก่อน`;
-    case 'tax_period_locked':
-      return `งวดภาษี${periodText(blocker.periodKey)}ยื่นแบบหรือปิดแล้ว ระบบจึงยกเลิกรายการค่าใช้จ่ายของใบนี้ไม่ได้ ต้องให้ผู้ดูแลบัญชีปรับปรุงรายการแทน`;
-    case 'posting_unresolved': return 'รายการบัญชีของค่าใช้จ่ายในใบนี้ยังลงบัญชีไม่เรียบร้อย ต้องให้ผู้ดูแลบัญชีตรวจการลงบัญชีก่อน';
+      return `ยกเลิกใบเบิกไม่ได้${periodText(blocker.periodKey)} ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ`;
+    case 'tax_period_locked': {
+      const form = Object.entries(TAX_FORM_SHORT_NAMES).find(([key]) => key === blocker.formType)?.[1];
+      return `ยกเลิกใบเบิกไม่ได้${form ? ` (${form})` : ''}${periodText(blocker.periodKey)} ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ`;
+    }
+    case 'posting_unresolved': return 'ยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ';
     case 'expense_not_voidable': return 'รายการค่าใช้จ่ายของใบนี้อยู่ในสถานะที่ระบบยกเลิกให้ไม่ได้ ติดต่อผู้ดูแลระบบ';
     default: return null;
   }
@@ -72,7 +75,7 @@ export function cancellationBlockerText(blocker: { code?: unknown; periodKey?: u
 function cancellationRefusalText(code: string): string | null {
   const match = /^reimbursement_cancellation_(accounting_period_locked|tax_period_locked|posting_unresolved|expense_not_voidable)(?::(.+))?$/.exec(code);
   const text = match && cancellationBlockerText({ code: match[1], periodKey: match[2] });
-  return text ? `ยังยกเลิกใบเบิกนี้ไม่ได้ เพราะ${text}` : null;
+  return text || null;
 }
 
 /**
@@ -95,7 +98,7 @@ export function pendingCancellationNote(pending: any, refusal?: string): string 
     : pending?.canResume === true ? 'ระบบยกเลิกรายการค่าใช้จ่ายไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้' : null;
   return [
     `กำลังยกเลิกใบเบิก ${REIMBURSEMENT_SYSTEM_WAIT_LABEL}`,
-    `${started} แต่ยังยกเลิกไม่เสร็จ${blocker ? attestationRequired ? ` · ${blocker}` : ` เพราะ${blocker}` : ''}`,
+    `${started}${blocker ? ` · ${blocker}` : ''}`,
     next, takeBack,
     'ระหว่างนี้ยังอนุมัติ ส่งกลับให้แก้ แก้ไข หรือบันทึกจ่ายใบนี้ไม่ได้',
   ].filter(Boolean).join(' · ');

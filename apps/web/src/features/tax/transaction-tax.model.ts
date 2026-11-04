@@ -149,8 +149,15 @@ const TRANSACTION_TAX_DIAGNOSTIC_MESSAGES: Record<string, string> = {
 };
 
 /** Success payloads carry stable diagnostic codes, not user-facing copy. */
-export function transactionTaxDiagnosticMessage(diagnostic: string): string {
+export function transactionTaxDiagnosticMessage(diagnostic: string, sourceType?: string, direction?: TransactionTaxDirection): string {
   const code = diagnostic.split(':', 1)[0] ?? '';
+  if (sourceType === 'expense.record' && direction === 'INPUT') {
+    if (code === 'tax_code_not_active_or_not_applicable') return 'รูปแบบ VAT นี้ใช้กับรายการหรือวันที่นี้ไม่ได้ เลือกรูปแบบอื่น';
+    if (code === 'tax_evidence_required') return 'แนบเอกสารประกอบรายการนี้ก่อนทำต่อ';
+    if (code === 'partial_deductibility_split_policy_required') return 'ยังตรวจยอด VAT ที่ใช้ตอนยื่นภาษีได้บางส่วนไม่ได้ ให้ผู้ทำบัญชีตรวจการตั้งค่า';
+    if (['tax_code_ambiguous', 'tax_account_rule_missing', 'tax_account_rule_ambiguous', 'tax_report_rule_missing'].includes(code)
+      || !TRANSACTION_TAX_DIAGNOSTIC_MESSAGES[code]) return 'ยังตรวจ VAT ของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจการตั้งค่า';
+  }
   return TRANSACTION_TAX_DIAGNOSTIC_MESSAGES[code]
     ?? 'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ ติดต่อผู้ดูแลการตั้งค่าภาษี';
 }
@@ -213,4 +220,16 @@ export function suggestedLineTaxCode(input: {
   return input.available.some((item) => item.externalCode === input.categoryDefaultInputTaxCode)
     ? input.categoryDefaultInputTaxCode
     : null;
+}
+
+
+/** Only the standard expense choices get plain display words; custom names remain data. */
+export function taxChoiceLabel(item: TaxCodeDefinitionDto, sourceType?: string, direction?: TransactionTaxDirection): string {
+  const rate = Number(item.rate);
+  if (sourceType === 'expense.record' && direction === 'INPUT' && item.direction === 'INPUT' && item.taxRegime === 'VAT' && Number.isFinite(rate)) {
+    if (item.externalCode === 'V7' && item.claimabilityDefault === 'CLAIMABLE' && item.displayName === `ภาษีซื้อขอคืนได้ ${rate}%`) return `ใช้ VAT ตอนยื่นภาษีได้ ${rate}%`;
+    if (item.externalCode === 'ND' && item.claimabilityDefault === 'NONDEDUCTIBLE_EXPENSE' && item.displayName === `ภาษีซื้อขอคืนไม่ได้ ${rate}%`) return `ใช้ VAT ตอนยื่นภาษีไม่ได้ ${rate}%`;
+  }
+  if (!Number.isFinite(rate) || item.displayName.includes(`${rate}%`)) return item.displayName;
+  return `${item.displayName} ${rate}%`;
 }

@@ -1142,7 +1142,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /Royal Pizza Bravo BKK/);
     assert.match(h.replies[0] ?? '', /2,890\.00 THB/);
     assert.match(h.replies[0] ?? '', /189\.07/);
-    assert.match(h.replies[0] ?? '', /ไม่ยืนยันนโยบายบริษัทหรือสิทธิเครดิต VAT/);
+    assert.match(h.replies[0] ?? '', /เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ/);
     assert.doesNotMatch(h.replies[0] ?? '', /ประชุม|รับรองลูกค้า|เคลมได้/);
   });
 
@@ -2684,11 +2684,11 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.createExpenseCalls[0].outstandingAmount, '110.0500');
     assert.equal(h.createExpenseCalls[0].lineMessageId, undefined);
     assert.equal(h.linkAttachmentCalls.length, 1);
-    assert.match(h.replies[0] ?? '', /ยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน/);
+    assert.match(h.replies[0] ?? '', /บันทึกร่างบิลค่าน้ำช่วง 09\/69 ยอด 110\.05 บาทแล้ว เปิดรายการเพื่อตรวจและแนบใบเสร็จค่ะ/);
     assert.doesNotMatch(h.replies[0] ?? '', /82\.28/);
     await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-text-retry', lineMessageId: 'msg-text-retry', messageText: command });
     assert.equal(h.linkAttachmentCalls.length, 1, 'retry must reuse the draft and original image');
-    assert.match(h.replies[1] ?? '', /มีร่างบิลค่าน้ำงวด 09\/69 110\.05 บาทอยู่แล้ว/);
+    assert.match(h.replies[1] ?? '', /มีร่างบิลค่าน้ำช่วง 09\/69 ยอด 110\.05 บาทอยู่แล้ว เปิดรายการเพื่อตรวจและแนบใบเสร็จค่ะ/);
     recentCaptures.unshift({ id: 'later-document', expenseDate: new Date(), grandTotalAmount: '50', sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT', createdAt: new Date() });
     await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrelated', lineMessageId: 'msg-unrelated', messageText: command });
     assert.match(h.replies[2] ?? '', /มีเอกสารอื่นส่งต่อจากรูปค่าน้ำแล้ว/);
@@ -2881,7 +2881,7 @@ describe('LINE intake dispatch – media path', () => {
     // The request is in the caption — a captioned photo keeps the router.
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'อนุมัติจ่ายบิลนี้ให้หน่อย');
     assert.equal(h.routeRequests.length, 1);
-    assert.match(h.replies[0] ?? '', /ไม่สามารถทำรายการอนุมัติ/);
+    assert.match(h.replies[0] ?? '', /เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ/);
     assert.equal(turnCreates[0].data.intent, 'MUTATION_REQUEST');
     assert.equal(turnCreates[0].data.refused, true);
   });
@@ -3467,7 +3467,7 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.equal(result.outcome, 'done');
     assert.equal(pendingMediaRows.length, 0);
     assert.equal(h.createUploadIntentCalls.length, 0);
-    assert.match(h.replies[0] ?? '', /ระบบรองรับ/);
+    assert.match(h.replies[0] ?? '', /เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ/);
   });
 
   it('BUSINESS_READ_QUESTION without caption keeps the media-unsupported reply (a sender who cannot capture keeps the router)', async () => {
@@ -3477,7 +3477,7 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     });
     const result = await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal(result.outcome, 'done');
-    assert.match(h.replies[0] ?? '', /ระบบรองรับ/);
+    assert.match(h.replies[0] ?? '', /เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ/);
   });
 });
 
@@ -4035,7 +4035,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     // The four routes that already have an answer keep it, context or no context.
     const routes: Array<[string, any, RegExp]> = [
       ['CLARIFY', { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.5, clarifyQuestion: 'ถามกลับ' }, /ถามกลับ/],
-      ['MUTATION_REQUEST_REFUSAL', { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.9 }, /ไม่สามารถทำรายการ/],
+      ['MUTATION_REQUEST_REFUSAL', { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.9 }, /เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ/],
       ['BUSINESS_READ_QUESTION', { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
       ['UNSUPPORTED', { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
     ];

@@ -116,8 +116,8 @@ export function moduleFeatureEnabled(featureKey: string | null, entitledFeatureK
 export function unsoldModuleReplyText(topic: UnsoldModuleTopic, language: ScopePolicyLanguage, offers?: readonly BillingOffer[]): string {
   if (topic.featureKey && featurePackageOffer(topic.featureKey, offers)) return featureLimitReplyText(topic.featureKey, language, undefined, offers);
   return language === 'en'
-    ? `Mangmee Plus does not offer ${topic.topicLabelEn} today; check the expense, receipt and reimbursement work available under your access.`
-    : `Mangmee Plus วันนี้ยังไม่มี${topic.topicLabelTh} ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ`;
+    ? 'This task is unavailable here, type ‘เมนูหลัก’ to see the work you can use.'
+    : 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ';
 }
 
 /** The same catalog builder and tier features used by billing; never invent a tier for an unsold module. */
@@ -437,7 +437,7 @@ export function documentExplanationReply(text: string, features: readonly string
       ? en ? 'PND3 reports withholding for individuals and PND53 for legal entities.' : 'ภ.ง.ด.3 ใช้นำส่งภาษีที่หักจากบุคคลธรรมดา ส่วน ภ.ง.ด.53 ใช้กับนิติบุคคลค่ะ'
       : topic.label === 'ใบสำคัญจ่าย'
         ? en ? 'A payment voucher records an actual payment; a prepared voucher is still awaiting payment.' : 'ใบสำคัญจ่ายเป็นหลักฐานหลังบันทึกว่าจ่ายเงินจริง ส่วนใบเตรียมจ่ายยังไม่ได้จ่ายค่ะ'
-        : topic.label === 'VAT' ? en ? 'VAT is value added tax; a receipt showing VAT is not by itself proof that it can be claimed.' : 'VAT คือภาษีมูลค่าเพิ่ม การพบยอด VAT บนเอกสารยังไม่ได้แปลว่าขอคืนได้ค่ะ'
+        : topic.label === 'VAT' ? en ? 'VAT is value added tax; a receipt showing VAT is not by itself proof that it can be claimed.' : 'VAT คือภาษีมูลค่าเพิ่ม ยอดบนเอกสารยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ'
         : topic.label === 'ภาษีหัก ณ ที่จ่าย' ? en ? 'Withholding tax is deducted by the payer and remitted on the recipient’s behalf.' : 'ภาษีหัก ณ ที่จ่ายคือภาษีที่ผู้จ่ายหักไว้เพื่อนำส่งกรมสรรพากรแทนผู้รับเงินค่ะ'
           : en ? 'A substitute receipt supports a real business expense when the recipient cannot provide a complete receipt.' : 'ใบรับรองแทนใบเสร็จใช้ประกอบรายจ่ายจริงของร้านเมื่อผู้รับเงินออกใบเสร็จที่ครบถ้วนให้ไม่ได้ค่ะ';
   const actionId = topic.featureKey === 'wht_50bis' ? 'wht_certificate' : topic.featureKey === 'wht_pnd53' ? 'pnd53' : topic.label === 'ใบสำคัญจ่าย' ? 'payment_voucher' : undefined;

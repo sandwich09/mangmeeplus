@@ -300,7 +300,7 @@ describe('S-3 explain lane — deterministic rendering', () => {
     assert.doesNotMatch(result.replyText, /\d+\s*%/u, 'no percentage literal is invented');
     assert.match(result.replyText, /บิล «BHC» 03\/09\/2569/, 'the OCR-read vendor is quoted, and the date is Buddhist-era');
     assert.match(result.replyText, /ค่าบริการ 152\.00/);
-    assert.match(result.replyText, /แยกเป็นช่องของตัวเอง/, 'it answers the "why separate" question');
+    assert.match(result.replyText, /ค่าใช้จ่ายเพิ่มแยกไว้เพื่อให้ตรวจกับบิลได้ค่ะ/, 'it answers the "why separate" question');
     assert.match(result.replyText, /แสดงตัวอย่างก่อน และจะบันทึกเมื่อกด “ยืนยัน” เท่านั้น/);
     // One card carrying the record link; the answer text itself never writes a URL.
     assert.equal(result.presentation?.kind, 'answer_cards');
@@ -619,4 +619,13 @@ describe('S-3 explain lane — security cases', () => {
       spec.assert(result.replyText);
     });
   }
+});
+
+
+it('PWS-FIXED-D bill explanation keeps every amount and uses the plain VAT base label', () => {
+  const reply = formatExpenseExplainReply(BHC_EXPLAIN)!;
+  assert.match(reply, /ยอดที่ใช้คิด VAT 1,672.00/);
+  assert.match(reply, /ค่าใช้จ่ายเพิ่มแยกไว้เพื่อให้ตรวจกับบิลได้ค่ะ/);
+  for (const amount of ['1,520.00', '152.00', '117.04', '1,789.04']) assert.ok(reply.includes(amount));
+  assert.doesNotMatch(reply, /ฐานภาษี/);
 });

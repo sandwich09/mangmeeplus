@@ -142,12 +142,12 @@ test('LIST-1 renders three metrics, 10 rows newest first, one work status and re
   assert.equal((html.match(/data-testid="expenses-row"/g) ?? []).length, 20, 'ten entries in each layout share the journey locator');
   assert.equal((html.match(/<button[^>]*data-testid="expenses-row"/g) ?? []).length, 10, 'phone entries remain actionable buttons');
   assert.equal((html.match(/>รอจ่าย</g) ?? []).length, 20);
-  assert.equal((html.match(/>ภาษีซื้อรอตรวจสอบ</g) ?? []).length, 20);
+  assert.equal((html.match(/>รอตรวจ VAT สำหรับยื่นภาษี</g) ?? []).length, 20);
   // Owner 2026-10-15: the seller cell shows the name and the expense number only.
   assert.ok(!html.includes('หมวดทดสอบ')); assert.ok(html.includes('EXP-0')); assert.ok(html.includes('30 ก.ย. 2569'));
   assert.ok(html.includes('21 รายการ รวมร่าง')); assert.ok(html.includes('เกินกำหนด 2,247.00 บาท · 21 ใบ'));
   assert.ok(html.includes('หน้า 1 จาก 3')); assert.ok(html.includes('VAT ตามเอกสาร')); assert.ok(html.includes('>ค้างจ่าย<')); assert.ok(html.includes('min-h-11 min-w-0 whitespace-nowrap px-3 sm:min-w-32'));
-  for (const removed of ['ค้างจ่ายที่ยืนยันแล้ว', 'เกินกำหนดจ่าย', 'อัปโหลดเว็บ', 'บันทึกด้วยมือ', 'อัปโหลดใบเสร็จ', 'ร้านยังไม่ตอบเรื่อง VAT', 'วันที่เอกสาร:', 'เลขรายจ่าย', 'แสดง 1-20', '>รายวัน<', '>รายเดือน<', 'aria-label="สิทธิภาษีซื้อ"']) assert.ok(!html.includes(removed), removed);
+  for (const removed of ['ค้างจ่ายที่ยืนยันแล้ว', 'เกินกำหนดจ่าย', 'อัปโหลดเว็บ', 'บันทึกด้วยมือ', 'อัปโหลดใบเสร็จ', 'ร้านยังไม่ตอบเรื่อง VAT', 'วันที่เอกสาร:', 'เลขรายจ่าย', 'แสดง 1-20', '>รายวัน<', '>รายเดือน<', 'aria-label="ใช้ VAT ตอนยื่นภาษี"']) assert.ok(!html.includes(removed), removed);
   const exportLabel = 'ส่งออก Excel ให้สำนักงานบัญชี';
   assert.equal(html.split(exportLabel).length - 1, 1);
   // Owner 2026-10-15: the export sits next to the search, above the numbers.

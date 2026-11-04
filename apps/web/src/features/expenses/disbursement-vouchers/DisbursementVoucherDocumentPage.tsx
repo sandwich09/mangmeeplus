@@ -155,6 +155,7 @@ export function DisbursementVoucherDocumentPage({ companyId, id, permissions, vi
       {returned ? <MangmeeBadge tone="amber">ส่งกลับให้แก้</MangmeeBadge> : <DisbursementVoucherStatusBadge status={header.status} />}
     </span>} back={back} actions={<div className={styles.more}>{more}</div>} className={cx(styles.page, styles.documentPage, 'mangmee-flat', (primary || hasSenderActions || canPay || header.status === 'PAID') && styles.journeyPage)}>
       <div className={styles.stack}>
+        {paid && <p className="text-sm text-gray-600">หลักฐานว่าบันทึกจ่ายแล้ว</p>}
         {orphaned && <Notice tone="warning" action={(detail.actions.withdraw || detail.actions.cancel) && <ActionGroup>
           {detail.actions.withdraw && <button type="button" className={ghostClass} onClick={() => setDialog('withdraw')}>กลับไปแก้</button>}
           {detail.actions.cancel && <button type="button" className={ghostClass} onClick={() => setDialog('cancel')}>ยกเลิกใบ</button>}

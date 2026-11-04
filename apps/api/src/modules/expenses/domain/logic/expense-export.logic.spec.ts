@@ -4,6 +4,8 @@ import '../../../../common/export/thai-date.logic.spec';
 import assert from 'node:assert/strict';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_WORKBOOK_COLUMNS } from '@watchdog-bms/contracts';
 import type { ExpenseAttachmentPurpose } from '@watchdog-bms/contracts';
+import { ACCOUNTANT_INDEX_COLUMN_LABELS, ACCOUNTANT_WORKBOOK_COLUMN_LABELS, INPUT_VAT_RIGHT_LABELS } from '@watchdog-bms/contracts';
+import { inputVatConditions } from '../../infrastructure/expense-input-vat-decision';
 import { buildAccountantWorkbook, buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, exportSourceChannel, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
 
 // The accountant export must NOT follow the expense capture mode.
@@ -32,6 +34,37 @@ const nonVatExpense = {
   substituteReceiptRef: null, primaryAttachmentId: null, attachments: [],
   webUrl: 'https://example.invalid/e/exp-1', notes: null,
 };
+
+describe('PWS-OUTPUT accountant words and saved decision facts stay formal', () => {
+  it('pins exact VAT export headers, status labels, legacy text and amounts', () => {
+    assert.equal(ACCOUNTANT_INDEX_COLUMN_LABELS.input_vat_right, 'สิทธิภาษีซื้อ');
+    assert.equal(ACCOUNTANT_INDEX_COLUMN_LABELS.taxable_amount, 'ฐานภาษี');
+    assert.equal(ACCOUNTANT_INDEX_COLUMN_LABELS.vat_amount, 'ภาษีมูลค่าเพิ่ม (VAT)');
+    assert.equal(ACCOUNTANT_WORKBOOK_COLUMN_LABELS.input_vat_right, 'สิทธิภาษีซื้อ');
+    assert.deepEqual(INPUT_VAT_RIGHT_LABELS, { NEEDS_REVIEW: 'รอตรวจสอบ', CLAIMABLE: 'ใช้ได้ตามเงื่อนไข', NON_CLAIMABLE: 'ใช้ไม่ได้' });
+    for (const [status, word] of Object.entries(INPUT_VAT_RIGHT_LABELS)) {
+      const row = buildAccountantIndexRow({ ...nonVatExpense, inputVatClaimStatus: status as keyof typeof INPUT_VAT_RIGHT_LABELS, vatAmount: '7.00' });
+      assert.equal(row.input_vat_right, status);
+      assert.equal(row.vat_amount, '7.00');
+      const xml = exportedSheet(buildAccountantWorkbook({ rows: [row], payments: [], withholding: [], visible: {}, about: {} }));
+      assert.ok(xml.includes('สิทธิภาษีซื้อ'));
+      assert.ok(xml.includes(word));
+    }
+    const legacy = buildAccountantIndexRow({ ...nonVatExpense, inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRecordedBeforeReview: true });
+    assert.equal(legacy.inputVatRightLabel, 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)');
+  });
+
+  it('pins reviewer condition codes, answers and stored fact labels independently of screen words', () => {
+    const conditions = inputVatConditions({ ...nonVatExpense, companyId: 'co' }, {
+      vatStatus: 'REGISTERED', attachmentIds: ['att'], buyer: { matchStatus: 'MATCH' }, registry: { registeredName: 'ร้าน', taxId: '0994000163011' },
+    }, { toStatus: 'CLAIMABLE', reviewerConditions: ['BUSINESS_USE', 'NOT_PROHIBITED', 'ISSUER_ENTITLED'] }, 'reviewer');
+    assert.deepEqual(conditions.filter(row => ['BUSINESS_USE', 'NOT_PROHIBITED', 'ISSUER_ENTITLED'].includes(row.code)), [
+      { code: 'BUSINESS_USE', answer: true, fact: { label: 'ซื้อเพื่อใช้ในกิจการ' }, source: 'REVIEWER', answeredByUserId: 'reviewer' },
+      { code: 'NOT_PROHIBITED', answer: true, fact: { label: 'ไม่ใช่ภาษีซื้อต้องห้าม เช่น ค่ารับรอง' }, source: 'REVIEWER', answeredByUserId: 'reviewer' },
+      { code: 'ISSUER_ENTITLED', answer: true, fact: { label: 'ผู้ออกใบมีสิทธิออกใบกำกับภาษี' }, source: 'REVIEWER', answeredByUserId: 'reviewer' },
+    ]);
+  });
+});
 
 describe('accountant workbook v2 pure projection', () => {
   it('accountant workbook contains only the defined sold-export columns', async () => {

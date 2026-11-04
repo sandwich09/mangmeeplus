@@ -381,7 +381,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
               {error && !invalidField && <div ref={errorRef} tabIndex={-1} className="scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={error} /></div>}
               <ActionGroup>
                 <button type="button" className={ghostClass} disabled={busy} onClick={() => { setEditing(false); setError(null); setInvalidField(undefined); }}>ยกเลิก</button>
-                <button type="submit" className={btnClass} disabled={busy} aria-busy={busy}>บันทึกบัญชี</button>
+                <button type="submit" className={btnClass} disabled={busy} aria-busy={busy}>บันทึกบัญชีรับเงินคืน</button>
               </ActionGroup>
             </form>
           ) : (

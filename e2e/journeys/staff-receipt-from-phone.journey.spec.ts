@@ -37,7 +37,7 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
   await test.step('staff, 390 wide: three-line button → อัปโหลดใบเสร็จ', async () => {
     await pressMenu(staff, 'อัปโหลดใบเสร็จ', 'ค่าใช้จ่ายและใบเสร็จ');
     await expect(main.getByRole('heading', { level: 1, name: 'อัปโหลดใบเสร็จ', exact: true })).toBeVisible(FIRST_SIGHT);
-    await expect(main.getByText('ถ่ายหรือเลือกรูปใบเสร็จ ระบบอ่านให้ แล้วเก็บเป็นร่างให้ตรวจ', { exact: true })).toBeVisible();
+    await expect(main.getByText('ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ', { exact: true })).toBeVisible();
     await expect(branch).toHaveText('เลือกสาขา', AFTER_PRESS);
     await expect(main.getByRole('textbox', { name: 'หมายเหตุ (ไม่บังคับ)', exact: true })).toBeVisible();
     await expect(main.getByRole('button', { name: '+ หมายเหตุ', exact: true })).toHaveCount(0);

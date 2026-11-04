@@ -133,7 +133,7 @@ export class WhtGetMonthSummaryTool implements ErpReadToolPort {
     const groups = new Map<string, { incomeCategoryName: string; itemCount: number; income: string[]; withheld: string[] }>();
     for (const { amounts, gross, withheld } of projected) {
       const key = amounts.incomeCategoryCode ?? '';
-      const group = groups.get(key) ?? { incomeCategoryName: amounts.incomeCategoryName ?? 'ยังไม่ระบุประเภทเงินได้', itemCount: 0, income: [], withheld: [] };
+      const group = groups.get(key) ?? { incomeCategoryName: amounts.incomeCategoryName ?? 'ยังไม่ได้เลือกว่าจ่ายค่าอะไร', itemCount: 0, income: [], withheld: [] };
       group.itemCount++; group.income.push(gross); group.withheld.push(withheld); groups.set(key, group);
     }
     const byIncomeType = [...groups.values()].map(g => ({ incomeCategoryName: g.incomeCategoryName, itemCount: g.itemCount, totalIncome: sum(g.income), totalDocumentWithholding: sum(g.withheld) }));
@@ -177,14 +177,14 @@ export class WhtCalculateWithholdingTool implements ErpReadToolPort {
       return result(ctx, this.toolName, { needsIncomeType: !category, needsAmount: !baseAmount, ...(baseAmount ? { baseAmount } : {}),
         catalog, readChoices: !category ? catalog.map(c => ({ label: Array.from(c.nameTh).slice(0, 20).join(''),
           text: `${c.nameTh}${baseAmount ? ` ฐานก่อนภาษี ${baseAmount} บาท` : ''} ต้องหักเท่าไหร่` })) : [],
-        ...(!catalog.length ? { readChoices: [{ label: 'ตั้งค่าประเภทเงินได้', text: 'ตั้งค่าประเภทเงินได้', webPath: '/system/wht-income-categories' }] } : {}),
-        message: !catalog.length ? 'ยังไม่มีประเภทเงินได้ที่เปิดใช้ค่ะ ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐานในหน้าตั้งค่าหัก ณ ที่จ่ายก่อนนะคะ' : !category
-          ? 'เป็นเงินได้ประเภทใดคะ เลือกจากปุ่มประเภทเงินได้ได้เลยค่ะ'
-          : 'ยอดที่ต้องการใช้เป็นฐานก่อนภาษีมูลค่าเพิ่มเท่าไหร่คะ กรุณาระบุพร้อมประเภทเงินได้ค่ะ' }, 'expenses', 'ประเภทเงินได้หัก ณ ที่จ่ายที่เปิดใช้');
+        ...(!catalog.length ? { readChoices: [{ label: 'ติดต่อทีมงานมั่งมี', text: 'ติดต่อเจ้าหน้าที่' }] } : {}),
+        message: !catalog.length ? 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ' : !category
+          ? 'จ่ายค่าอะไรคะ'
+          : 'ยอดที่ใช้คิดหัก ณ ที่จ่ายก่อน VAT เท่าไรคะ' }, 'expenses', 'รายการที่จ่ายที่เลือกได้');
     }
     const totals = calcLineTotals({ quantity: '1', unitPrice: baseAmount, vatMode: 'NO_VAT', whtRate: new Decimal(category.defaultRate).div(100).toString() });
     const withheldAmount = money(totals.whtAmount), netBeforeVat = new Decimal(baseAmount).minus(withheldAmount).toFixed(2);
     return result(ctx, this.toolName, { incomeCategoryName: category.nameTh, baseAmount, ratePercent: category.defaultRate, withheldAmount, netBeforeVat,
-      message: `ถ้าใช้ฐานก่อนภาษีมูลค่าเพิ่ม ${baseAmount} บาท สำหรับ${category.nameTh} อัตราที่ระบบเปิดใช้ ${new Decimal(category.defaultRate).toString()}% จะหัก ${withheldAmount} บาท เหลือ ${netBeforeVat} บาทก่อนรวมภาษีมูลค่าเพิ่มค่ะ` }, 'expenses', 'คำนวณจากประเภทเงินได้ที่เปิดใช้');
+      message: `ยอดก่อน VAT ${baseAmount} บาท หัก ${new Decimal(category.defaultRate).toString()}% เป็น ${withheldAmount} บาท เหลือ ${netBeforeVat} บาทก่อนบวก VAT ค่ะ` }, 'expenses', 'คำนวณจากรายการที่จ่ายที่เลือกไว้');
   }
 }

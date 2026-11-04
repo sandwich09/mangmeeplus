@@ -14,7 +14,7 @@ import { AFTER_PRESS, FIRST_SIGHT, idFromUrl, picture, pressForDownload, pressMe
 const SHOP = 'seed-local-input-vat-shop';
 const BRANCH = 'สำนักงานใหญ่ (สำนักงานใหญ่)';
 const scope = { headers: { 'X-Company-Id': SHOP } };
-const ticks = ['ซื้อเพื่อใช้ในกิจการ', 'ไม่ใช่ภาษีซื้อต้องห้าม เช่น ค่ารับรอง', 'ผู้ออกใบมีสิทธิออกใบกำกับภาษี'];
+const ticks = ['ซื้อเพื่อใช้ในกิจการ', 'VAT นี้ไม่ใช่รายการที่กฎห้ามใช้ เช่น ค่าเลี้ยงรับรอง', 'ผู้ออกใบมีสิทธิออกใบกำกับภาษี'];
 async function pick(page: Page, label: string, value: string) {
   const field = page.locator('main').getByRole('combobox', { name: label, exact: true });
   await expect(field).toBeVisible(AFTER_PRESS);
@@ -30,12 +30,12 @@ async function openFromList(page: Page, seller: string, waiting = false) {
   await pressMenu(page, 'รายการค่าใช้จ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
   const main = page.locator('main');
   await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
-  await expect(main.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('combobox', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true })).toHaveCount(0);
   await main.getByRole('searchbox', { name: 'ค้นหาผู้ขายหรือเลขที่', exact: true }).fill(seller);
   // Wide rows and phone buttons are separate renderings of the same source row.
   const row = main.getByTestId('expenses-row').filter({ hasText: seller }).filter({ visible: true });
   await expect(row).toBeVisible(AFTER_PRESS);
-  if (waiting) await expect(row.getByText('ภาษีซื้อรอตรวจสอบ', { exact: true })).toBeVisible();
+  if (waiting) await expect(row.getByText('รอตรวจ VAT สำหรับยื่นภาษี', { exact: true })).toBeVisible();
   await row.getByText(seller, { exact: true }).first().click();
   await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible(FIRST_SIGHT);
 }
@@ -70,7 +70,7 @@ async function reviewPaper(page: Page, invoice: boolean, originalNote?: string) 
   await pick(page, 'ประเภทเอกสาร', invoice ? 'ใบกำกับภาษี (เต็มรูป)' : 'ใบเสร็จรับเงิน');
   await expect(main.getByRole('combobox', { name: 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', exact: true }))
     .toHaveText(invoice ? 'ใช้ได้' : 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ');
-  if (invoice) await expect(main.getByText('มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ', { exact: true })).toBeVisible();
+  if (invoice) await expect(main.getByText('มีใบกำกับภาษีเต็มรูป รอตรวจ VAT สำหรับยื่นภาษี', { exact: true })).toBeVisible();
   await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
   if (originalNote !== undefined) {
     await main.getByRole('checkbox', { name: 'มีตัวจริง ยังไม่ได้แนบรูป', exact: true }).check();
@@ -81,7 +81,7 @@ async function reviewPaper(page: Page, invoice: boolean, originalNote?: string) 
 }
 async function assertPhoneConditions(page: Page) {
   await page.setViewportSize({ width: 390, height: 844 });
-  const conditions = page.locator('main').getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true });
+  const conditions = page.locator('main').getByRole('region', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true });
   await expect(conditions).toBeVisible();
   // Measured once the page has settled: for about 0.1 s after 1556 → 390 the header and title are still
   // laid out for the wide window (scrollWidth 396–405, seen 2026-10-14), then everything fits. A phone never resizes.
@@ -134,9 +134,9 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
   const invoiceId = await test.step('staff records the paper by hand without judging its VAT right', () => manualDraft(staff, invoiceSeller));
   await test.step('owner chooses full tax invoice; waiting is a fact, incomplete ticks refuse only the decision', async () => {
     await openFromList(owner, invoiceSeller); await reviewPaper(owner, true);
-    await expect(main.getByText('สิทธิภาษีซื้อ: รอตรวจสอบ', { exact: true })).toBeVisible();
+    await expect(summaryCard(owner).getByText('ใช้ VAT ตอนยื่นภาษี: รอตรวจสอบ', { exact: true })).toBeVisible();
     await main.getByRole('button', { name: 'กลับ', exact: true }).click();
-    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
+    await pick(owner, 'ใช้ VAT ตอนยื่นภาษี', 'ใช้ได้ตามเงื่อนไข');
     await expect(main.getByText('กรอกชื่อจดทะเบียนและเลขผู้เสียภาษีของร้านที่ข้อมูลร้าน', { exact: true })).toBeVisible();
     await expect(main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true })).toHaveCount(0);
     const shopLink = main.getByRole('link', { name: 'ตั้งค่าร้าน › ข้อมูลร้าน', exact: true });
@@ -152,17 +152,17 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     await main.getByRole('textbox', { name: 'ที่อยู่ (บ้านเลขที่ ถนน)', exact: true }).fill('88 ถนนพระราม 4');
     await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
     await expect(owner.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' }).first()).toBeVisible(AFTER_PRESS);
-    await main.getByRole('link', { name: 'กลับไปตรวจสิทธิภาษีซื้อ', exact: true }).last().click();
+    await main.getByRole('link', { name: 'กลับไปตรวจ VAT สำหรับยื่นภาษี', exact: true }).last().click();
     await expect(owner).toHaveURL(new RegExp(`/expenses/${invoiceId}#expense-input-vat-${invoiceId}$`));
-    await expect(main.getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true })).toBeVisible(AFTER_PRESS);
-    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
+    await expect(main.getByRole('region', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true })).toBeVisible(AFTER_PRESS);
+    await pick(owner, 'ใช้ VAT ตอนยื่นภาษี', 'ใช้ได้ตามเงื่อนไข');
     await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
     await expect(main.getByText('✓ ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toBeVisible();
     await expect(main.getByText('ยังไม่ครบ: ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toHaveCount(0);
     await assertPhoneConditions(owner);
     await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(main.getByRole('alert').filter({ hasText: 'ติ๊กเงื่อนไขให้ครบก่อนเลือก “ใช้ได้ตามเงื่อนไข”' })).toBeVisible(AFTER_PRESS);
-    await pick(owner, 'สิทธิภาษีซื้อ', 'รอตรวจสอบ');
+    await pick(owner, 'ใช้ VAT ตอนยื่นภาษี', 'รอตรวจสอบ');
     await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await owner.setViewportSize({ width: 390, height: 844 });
     const bar = main.locator('[data-form-action-bar]').filter({ has: owner.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }) });
@@ -177,30 +177,30 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     const detail = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${invoiceId}`, scope));
     expect(detail.status).toBe('CONFIRMED'); expect(detail.inputVatClaimStatus).toBe('NEEDS_REVIEW');
     expect(detail.inputVatRight?.latestDecision).toBeNull(); expect(detail.inputVatRight?.postsToLedger).toBe(false);
-    await expect(main.getByText('ภาษีซื้อรอตรวจสอบ', { exact: true })).toBeVisible();
+    await expect(main.locator('.mangmee-page-header').getByText('ใช้ VAT ตอนยื่นภาษี: รอตรวจสอบ', { exact: true })).toBeVisible();
   });
   await test.step('filter the waiting list, decide after confirmation, and read who and when', async () => {
     await owner.setViewportSize({ width: 1556, height: 1000 }); await openFromList(owner, invoiceSeller, true);
-    await main.getByRole('button', { name: 'ตรวจสิทธิภาษีซื้อ', exact: true }).click();
-    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข'); await assertPhoneConditions(owner);
+    await main.getByRole('button', { name: 'ตรวจ VAT สำหรับยื่นภาษี', exact: true }).click();
+    await pick(owner, 'ใช้ VAT ตอนยื่นภาษี', 'ใช้ได้ตามเงื่อนไข'); await assertPhoneConditions(owner);
     await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
     for (const label of ticks) await main.getByRole('checkbox', { name: label, exact: true }).check();
-    await main.getByRole('button', { name: 'บันทึกสิทธิภาษีซื้อ', exact: true }).click();
+    await main.getByRole('button', { name: 'บันทึกคำตอบเรื่อง VAT', exact: true }).click();
     const facts = main.locator(`#expense-document-review-${invoiceId}`);
-    await expect(main.locator('dt').filter({ hasText: /^สิทธิภาษีซื้อ$/ })).toHaveCount(1);
+    await expect(main.locator('dt').filter({ hasText: /^ใช้ VAT ตอนยื่นภาษี$/ })).toHaveCount(1);
     await expect(main.locator('dt').filter({ hasText: /^หลักฐานรายจ่าย$/ })).toHaveCount(1);
     await expect(facts.getByText('ใช้ได้ตามเงื่อนไข', { exact: true })).toBeVisible(AFTER_PRESS);
     await expect(facts.getByText(`ตรวจโดย ${QA_ACCOUNTS.OWNER.displayName}`, { exact: false })).toContainText(thaiDate());
     await expect(summaryCard(owner)).toHaveCount(0);
     await expect(main.getByRole('heading', { name: 'รายละเอียดเอกสาร', exact: true })).toBeVisible();
-    await facts.getByRole('button', { name: 'เปลี่ยนผลตรวจสิทธิภาษีซื้อ', exact: true }).click();
-    const reason = facts.getByRole('textbox', { name: 'เหตุผลสิทธิภาษีซื้อ', exact: true });
+    await facts.getByRole('button', { name: 'เปลี่ยนคำตอบเรื่อง VAT', exact: true }).click();
+    const reason = facts.getByRole('textbox', { name: 'เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี', exact: true });
     await expect(reason).toBeVisible();
     for (const label of ticks) await expect(facts.getByRole('checkbox', { name: label, exact: true })).toBeChecked();
     await expect(facts.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true })).toBeChecked();
     await expect(facts.getByText('ยังไม่ครบ: ชื่อและเลขผู้เสียภาษีของร้านบนใบตรงกับข้อมูลร้าน', { exact: true })).toHaveCount(0);
-    await expect(facts.locator('dt').filter({ hasText: /^สิทธิภาษีซื้อ$/ })).toHaveCount(0);
-    const form = facts.getByRole('region', { name: 'สิทธิภาษีซื้อ', exact: true });
+    await expect(facts.locator('dt').filter({ hasText: /^ใช้ VAT ตอนยื่นภาษี$/ })).toHaveCount(0);
+    const form = facts.getByRole('region', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true });
     for (const width of [390, 1556]) {
       await owner.setViewportSize({ width, height: 1000 });
       await expect(form).toHaveCSS('text-align', 'left');
@@ -208,11 +208,11 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
       await expect.poll(async () => form.evaluate((section, label) => {
         const field = section.querySelector(`textarea[aria-label="${label}"]`)!.getBoundingClientRect(), box = section.getBoundingClientRect();
         return field.x === box.x && field.width > box.width - 4;
-      }, 'เหตุผลสิทธิภาษีซื้อ')).toBe(true);
+      }, 'เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี')).toBe(true);
     }
 
     const reasonBox = await reason.boundingBox();
-    const rightBox = await facts.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true }).boundingBox();
+    const rightBox = await facts.getByRole('combobox', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true }).boundingBox();
     expect(reasonBox!.y).toBeLessThan(rightBox!.y);
     await facts.getByRole('button', { name: 'กลับ', exact: true }).click();
     const detail = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${invoiceId}`, scope));
@@ -225,21 +225,21 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     const sm = staff.locator('main'), facts = sm.locator(`#expense-document-review-${invoiceId}`);
     await expect(facts.locator('dt').filter({ hasText: /^หลักฐานรายจ่าย$/ }).locator('..').locator('dd')).toHaveText('ใช้ได้', AFTER_PRESS);
     await expect(facts.getByText('ใช้ได้ตามเงื่อนไข', { exact: true })).toBeVisible();
-    await expect(sm.getByRole('button', { name: 'ตรวจสิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
-    await expect(sm.getByRole('button', { name: 'เปลี่ยนผลตรวจสิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
-    await expect(sm.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await expect(sm.getByRole('button', { name: 'ตรวจ VAT สำหรับยื่นภาษี', exact: true })).toHaveCount(0);
+    await expect(sm.getByRole('button', { name: 'เปลี่ยนคำตอบเรื่อง VAT', exact: true })).toHaveCount(0);
+    await expect(sm.getByRole('combobox', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true })).toHaveCount(0);
     for (const label of ticks) await expect(sm.getByRole('checkbox', { name: label, exact: true })).toHaveCount(0);
   });
   let receiptId = '';
   await test.step('ordinary receipt with VAT is usable expense evidence, with a fixed nonclaimable right', async () => {
     await owner.setViewportSize({ width: 1556, height: 1000 }); receiptId = await manualDraft(owner, receiptSeller); await reviewPaper(owner, false);
     await expect(summaryCard(owner).getByText('หลักฐานรายจ่าย: ใช้ได้', { exact: true })).toBeVisible();
-    await expect(summaryCard(owner).getByText('สิทธิภาษีซื้อ: ใช้ไม่ได้', { exact: true })).toBeVisible();
+    await expect(summaryCard(owner).getByText('ใช้ VAT ตอนยื่นภาษี: ใช้ไม่ได้', { exact: true })).toBeVisible();
     await main.getByRole('button', { name: 'กลับ', exact: true }).click();
     const step2 = main.locator(`#expense-document-review-${receiptId}`);
-    await expect(step2.getByText('สิทธิภาษีซื้อ: ใช้ไม่ได้', { exact: true })).toBeVisible();
-    await expect(step2.getByText('ไม่ใช่ใบกำกับภาษี จึงใช้ภาษีซื้อไม่ได้ ไม่เกี่ยวกับการเป็นหลักฐานรายจ่าย', { exact: true })).toBeVisible();
-    await expect(main.getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await expect(step2.getByText('ใช้ VAT ตอนยื่นภาษี: ใช้ไม่ได้', { exact: true })).toBeVisible();
+    await expect(step2.getByText('เอกสารนี้ใช้ VAT ตอนยื่นภาษีไม่ได้', { exact: true })).toBeVisible();
+    await expect(main.getByRole('combobox', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true })).toHaveCount(0);
     await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
     await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
@@ -323,11 +323,11 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     await expect(summaryCard(owner)).toContainText('ยังไม่มีรูปเอกสาร');
     // Removing the primary file clears its review and tax selections; choose the code before claiming VAT.
     await main.getByRole('button', { name: '1 ตรวจข้อมูล', exact: true }).click();
-    await pick(owner, 'เลือกประเภทภาษีของรายการ', 'ภาษีซื้อขอคืนได้ 7%');
+    await pick(owner, 'รูปแบบ VAT ของรายการ', 'ใช้ VAT ตอนยื่นภาษีได้ 7%');
     await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(main.locator('[aria-current="step"]').filter({ hasText: 'ภาษีและเอกสาร' })).toBeVisible(AFTER_PRESS);
-    await pick(owner, 'สิทธิภาษีซื้อ', 'ใช้ได้ตามเงื่อนไข');
-    await main.getByRole('textbox', { name: 'เหตุผลสิทธิภาษีซื้อ', exact: true }).fill('ตรวจใบกำกับตัวจริงแล้ว ยังไม่ได้แนบรูป');
+    await pick(owner, 'ใช้ VAT ตอนยื่นภาษี', 'ใช้ได้ตามเงื่อนไข');
+    await main.getByRole('textbox', { name: 'เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี', exact: true }).fill('ตรวจใบกำกับตัวจริงแล้ว ยังไม่ได้แนบรูป');
     await expect(main.getByText('✓ มีเอกสารตัวจริง', { exact: true })).toBeVisible(AFTER_PRESS);
     await main.getByRole('checkbox', { name: 'ตรวจชื่อและเลขผู้เสียภาษีของร้านบนใบแล้ว ตรงกับข้อมูลร้าน', exact: true }).check();
     for (const label of ticks) await main.getByRole('checkbox', { name: label, exact: true }).check();
@@ -363,4 +363,21 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     expect(after.attachments).toHaveLength(1); expect(after.inputVatClaimStatus).toBe('CLAIMABLE');
   });
 
+});
+
+
+test('@journey PWS capture offers the expense guide when VAT options cannot be loaded', async ({ pageAs }) => {
+  const owner = await pageAs('OWNER');
+  await owner.setViewportSize({ width: 390, height: 844 });
+  await enter(owner);
+  const definitions = `**/companies/${SHOP}/tax/code-definitions*`;
+  await owner.route(definitions, route => route.fulfill({ status: 503, json: { message: 'โหลดรูปแบบ VAT ไม่สำเร็จ' } }));
+  try {
+    await pressMenu(owner, 'บันทึกด้วยมือ', 'ค่าใช้จ่ายและใบเสร็จ');
+    const selector = owner.getByTestId('transaction-tax-selector');
+    await expect(selector.getByRole('combobox', { name: 'รูปแบบ VAT ของรายการ', exact: true })).toBeVisible(AFTER_PRESS);
+    await expect(selector.locator('a[href*="accounting-tax-setup"]')).toHaveCount(0);
+    await selector.getByRole('link', { name: 'เปิดคู่มือค่าใช้จ่าย', exact: true }).click();
+    await expect(owner).toHaveURL(new RegExp(`/companies/${SHOP}/user-guide/expenses$`));
+  } finally { await owner.unroute(definitions); }
 });

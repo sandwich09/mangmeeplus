@@ -9,7 +9,8 @@ import {
   parseSelectedKnowledgeCardIds, renderApprovedKnowledge, validateKnowledgePack,
   type KnowledgeAccess, type ProductKnowledgePack,
 } from './approved-knowledge';
-import { activeProductHelpPack, PRODUCT_HELP_PACK } from './approved-product-help';
+import { activeProductHelpPack, PRODUCT_HELP_PACK, PRODUCT_HELP_V6_PACK } from './approved-product-help';
+import { PLAIN_WORDS_HELP_DRAFTS } from './product-help-draft-cards';
 
 const access = (): KnowledgeAccess => ({
   release: '2.4.0', permissions: ['expense.read', 'expense.read_own', 'expense.review', 'expense.export', 'reimbursement.read', 'report.catalog.read'],
@@ -65,10 +66,12 @@ describe('approved product knowledge eligibility, source integrity and rendering
     assert.equal(PRODUCT_HELP_PACK.cards.length, 12, 'refresh the existing pack without adding cards');
     assert.equal(PRODUCT_HELP_PACK.effectiveTo, '2026-12-27T00:00:00+07:00');
     assert.equal(PRODUCT_HELP_PACK.reviewDueAt, PRODUCT_HELP_PACK.effectiveTo);
+    assert.equal(PRODUCT_HELP_PACK.contentHash, 'd900b41d31287179551c270635e1333d56432b86627ce7f5b7ad3bfd2571ab14');
     const root = resolve(__dirname, '../../../../../..');
     for (const card of PRODUCT_HELP_PACK.cards) {
       assert.equal(card.version, /\/reimbursement-guide\.content\.ts$/.test(card.sourceFile) ? 4 : /\/expenses-guide\.content\.ts$/.test(card.sourceFile) ? 3 : /\/substitute-receipt-guide\.content\.ts$/.test(card.sourceFile) ? 2 : 1, card.id);
-      assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
+      const served = activeProductHelpPack().cards.find(current => current.id === card.id)!;
+      assert.equal(createHash('sha256').update(readFileSync(resolve(root, served.sourceFile))).digest('hex'), served.sourceHash, served.sourceFile);
       const guide = card.sourceURL.split('/user-guide/')[1]!.split('#')[0]!;
       assert.ok(readFileSync(resolve(root, `apps/web/app/(workspace)/companies/[companyId]/user-guide/${guide}/page.tsx`)), 'citation page exists');
     }
@@ -170,4 +173,66 @@ describe('approved product knowledge eligibility, source integrity and rendering
     const metadata = reviewed(); metadata.cards[0]!.summary = 'ก'.repeat(4097); rehash(metadata);
     assert.throws(() => validateKnowledgePack(metadata), /METADATA_LIMIT/);
   });
+});
+
+
+it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v6 history', () => {
+  const pack = activeProductHelpPack();
+  validateKnowledgePack(pack);
+  assert.equal(pack.version, 7);
+  assert.equal(pack.contentHash, 'fb42b47fae1b91cbf04d59c518236fe67ad7e89cba8cb5c9e7f0f899f63676c0');
+  assert.deepEqual(pack.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ']);
+  assert.equal(PRODUCT_HELP_V6_PACK.contentHash, '0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0');
+  validateKnowledgePack(PRODUCT_HELP_V6_PACK);
+  const approved = [
+  {
+    "id": "expense.vat-display",
+    "body": "ยอด VAT บนรายการคือยอดที่อ่านได้จากเอกสาร ยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ"
+  },
+  {
+    "id": "expense.export",
+    "body": "ตรวจรายการแล้วส่งออกไฟล์บนเว็บเพื่อให้ผู้ทำบัญชีตรวจต่อค่ะ"
+  },
+  {
+    "id": "wht.calculation",
+    "body": "ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ"
+  },
+  {
+    "id": "expense.vat-credit",
+    "body": "ขึ้นกับเอกสารและเงื่อนไขของรายการค่ะ ดูคำตอบ “ใช้ VAT ตอนยื่นภาษี” ในรายการนั้น ถ้ามีตัวจริงแต่ยังไม่มีรูป เลือก “มีตัวจริง ยังไม่ได้แนบรูป” แล้วแนบทีหลังได้ค่ะ"
+  }
+];
+  const root = resolve(__dirname, '../../../../../..');
+  const screenSources = ['packages/contracts/src/expenses.ts', 'apps/web/src/common/i18n/workspace-dictionary.ts', 'apps/web/src/features/tax/WithholdingPage.tsx', 'apps/web/src/features/expenses/ExpensesPages.tsx']
+    .map(path => readFileSync(resolve(root, path), 'utf8')).join('\n');
+  for (const expected of approved) {
+    const card = pack.cards.find(card => card.id === expected.id)!;
+    assert.equal(card.body, expected.body, card.id);
+    const permitted = { ...access(), permissions: card.permissionAnyOf, featureKeys: null };
+    const rendered = renderApprovedKnowledge(pack, [card.id], permitted, 'company-A')!;
+    assert.equal(rendered.replyText, `${card.title}\n${expected.body}`);
+    assert.deepEqual(rendered.webLinks, renderApprovedKnowledge(PRODUCT_HELP_V6_PACK, [card.id], permitted, 'company-A')!.webLinks.map(link => ({ ...link, label: card.title })));
+    const draft = PLAIN_WORDS_HELP_DRAFTS.find(draft => draft.channel === 'LINE' && draft.id === card.id)!;
+    assert.equal(card.body, draft.body);
+    for (const label of card.body.matchAll(/“([^”]+)”/gu)) assert.ok(screenSources.includes(label[1]!), `Missing screen label: ${label[1]}`);
+    assert.equal(renderApprovedKnowledge(pack, [card.id], { ...access(), permissions: [], featureKeys: [], capabilities: [] }, 'company-A'), null);
+    const prior = PRODUCT_HELP_V6_PACK.cards.find(prior => prior.id === card.id)!;
+    assert.deepEqual([card.permissionAnyOf, card.requiredPermissions, card.featureKeys, card.requiredCapabilities],
+      [prior.permissionAnyOf, prior.requiredPermissions, prior.featureKeys, prior.requiredCapabilities]);
+  }
+  const vat = pack.cards.find(card => card.id === 'expense.vat-credit')!;
+  assert.equal(vat.title, 'VAT นี้ใช้ตอนยื่นภาษีได้ไหม');
+  const priorVat = PRODUCT_HELP_V6_PACK.cards.find(card => card.id === vat.id)!;
+  for (const question of [...priorVat.questions, priorVat.title, vat.title]) assert.ok(vat.questions.includes(question), question);
+  assert.ok(vat.questions.some(question => question.includes('ภาษีซื้อ')));
+  for (const words of ['ภาษีซื้อ', 'สิทธิภาษีซื้อ', vat.title]) {
+    assert.ok(offeredKnowledgeMetadata(pack, { ...access(), permissions: ['expense.review'] }, words).some(card => card.id === vat.id), words);
+  }
+  // Item 3 is the Q3 data answer; the reviewed generic fallback stays intact.
+  assert.equal(pack.cards.find(card => card.id === 'wht.pnd53-due')!.body, PRODUCT_HELP_V6_PACK.cards.find(card => card.id === 'wht.pnd53-due')!.body);
+  for (const card of pack.cards) {
+    const prior = PRODUCT_HELP_V6_PACK.cards.find(prior => prior.id === card.id)!;
+    if (!approved.some(value => value.id === card.id)) assert.equal(card.body, prior.body, card.id);
+    assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
+  }
 });

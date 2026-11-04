@@ -162,7 +162,7 @@ test.describe('EXP — expenses + receipts', () => {
     // carries the same word, so the chip is matched from the start of its name.
     await expect(authedPage.getByRole('button', { name: /^ยืนยันแล้ว/ })).toBeVisible();
     for (const name of ['รายวัน', 'รายเดือน']) await expect(authedPage.locator('main').getByRole('button', { name, exact: true })).toHaveCount(0);
-    await expect(authedPage.locator('main').getByRole('combobox', { name: 'สิทธิภาษีซื้อ', exact: true })).toHaveCount(0);
+    await expect(authedPage.locator('main').getByRole('combobox', { name: 'ใช้ VAT ตอนยื่นภาษี', exact: true })).toHaveCount(0);
   });
 
   test('EXP-LIST-1 a legacy day URL opens the month with no day toggle', async ({ authedPage, companyId }) => {
@@ -208,7 +208,7 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toHaveCount(0);
     // This fixture carries no VAT (NO_VAT, nothing charged). Since 4361ed0b7 the tax-base and VAT rows
     // show only for money that carries VAT, whatever the company's capture mode (FULL or SIMPLE).
-    await expect(authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true })).toHaveCount(0);
+    await expect(authedPage.getByText('ยอดก่อน VAT', { exact: true })).toHaveCount(0);
     await expect(authedPage.getByTestId('expense-review-totals').getByText('ยอดรวม', { exact: true })).toBeVisible();
     // The stepper is display-only: reach the final step through ถัดไป.
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();

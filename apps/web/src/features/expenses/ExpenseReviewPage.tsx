@@ -72,7 +72,7 @@ import {
 } from './expenses.model';
 import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
-import { canVoidExpenseFinancialState, isExpenseVoidReason, todayCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput, type WhtCertificateHandoffDto } from '@watchdog-bms/contracts';
+import { INPUT_VAT_RIGHT_LABEL, canVoidExpenseFinancialState, isExpenseVoidReason, todayCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput, type WhtCertificateHandoffDto } from '@watchdog-bms/contracts';
 import {
   AiFieldMissingHint, BuyerMatchBanner, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseDocumentFacts, ExpenseReviewEditSection,
   InlineSpinner, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -1293,7 +1293,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
       {claimRecord && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/reimbursements/${detail.sourceReimbursementRequestId}`}>เปิดใบเบิก</Link>}
       {claimNote && <span className="w-full text-xs text-gray-500">{claimNote}</span>}
       {claimedSource && <span className="w-full text-xs text-gray-500">หลักฐานต้นทางของใบเบิก รายการนี้นับยอดครั้งเดียวร่วมกับรายการบัญชีจากใบเบิก การแก้ไขและจ่ายคืนให้ทำผ่านใบเบิก</span>}
-      {!sourceOnlyDraft && (isMutable || isConfirmed && detail.inputVatClaimStatus === 'NEEDS_REVIEW') && showInputVatQuestion(detail) && <MangmeeBadge tone={detail.inputVatClaimStatus === 'NEEDS_REVIEW' ? 'amber' : 'slate'}>{detail.inputVatRight?.reasonCode === 'RECORDED_BEFORE_INPUT_VAT_DECISION' ? inputVatRightLabel(detail) : `ภาษีซื้อ${inputVatRightLabel(detail)}`}</MangmeeBadge>}
+      {!sourceOnlyDraft && (isMutable || isConfirmed && detail.inputVatClaimStatus === 'NEEDS_REVIEW') && showInputVatQuestion(detail) && <MangmeeBadge tone={detail.inputVatClaimStatus === 'NEEDS_REVIEW' ? 'amber' : 'slate'}>{detail.inputVatRight?.reasonCode === 'RECORDED_BEFORE_INPUT_VAT_DECISION' ? inputVatRightLabel(detail) : `${INPUT_VAT_RIGHT_LABEL}: ${inputVatRightLabel(detail)}`}</MangmeeBadge>}
     </span>
   );
   const pageDescription = (
@@ -1563,7 +1563,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
           {isMutable && <>
             <div className="flex flex-wrap items-center gap-2 text-sm"><p>หลักฐานรายจ่าย: {TAX_EVIDENCE_STATUS_LABELS[detail.taxEvidenceStatus]}</p>{detail.taxEvidenceStatus === 'NEEDS_REVIEW' && auditFixAction('tax_evidence')}</div>
             <InputVatDecisionHistory detail={detail} />
-            {showInputVatQuestion(detail) && canReview && detail.inputVatClaimStatus === 'NEEDS_REVIEW' && !detail.inputVatRight?.fixed && <button type="button" className={ghostClass} onClick={() => void goToReviewField('evidence', `expense-input-vat-${detail.id}`)}>ตรวจสิทธิภาษีซื้อ</button>}
+            {showInputVatQuestion(detail) && canReview && detail.inputVatClaimStatus === 'NEEDS_REVIEW' && !detail.inputVatRight?.fixed && <button type="button" className={ghostClass} onClick={() => void goToReviewField('evidence', `expense-input-vat-${detail.id}`)}>ตรวจ VAT สำหรับยื่นภาษี</button>}
           </>}
           {auditChecks.filter(check => isMutable ? check.key !== 'tax_evidence' : check.status === 'warn').map((check) => (
             <div key={check.key} className="flex flex-wrap items-start gap-2.5 py-1.5 text-sm">
@@ -2241,7 +2241,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
                       {priceMismatchWarning}
                     </div>
                     <div className={cx('space-y-4', step === 'review' ? undefined : 'hidden')}>
-                      {showInputVatQuestion(detail) && canReview && detail.inputVatRight?.postsToLedger && detail.inputVatClaimStatus === 'NEEDS_REVIEW' && !detail.inputVatRight.fixed && <Notice tone="info" action={<button type="button" className={ghostClass} onClick={() => void goToReviewField('evidence', `expense-input-vat-${detail.id}`)}>ตรวจสิทธิภาษีซื้อ</button>}>{INPUT_VAT_LEDGER_BEFORE_CONFIRM}</Notice>}
+                      {showInputVatQuestion(detail) && canReview && detail.inputVatRight?.postsToLedger && detail.inputVatClaimStatus === 'NEEDS_REVIEW' && !detail.inputVatRight.fixed && <Notice tone="info" action={<button type="button" className={ghostClass} onClick={() => void goToReviewField('evidence', `expense-input-vat-${detail.id}`)}>ตรวจ VAT สำหรับยื่นภาษี</button>}>{INPUT_VAT_LEDGER_BEFORE_CONFIRM}</Notice>}
                       {/* The last step asks the reviewer to look at the whole summary: the amounts are part of it. */}
                       {step === 'review' && moneyCard}
                       {auditCard}

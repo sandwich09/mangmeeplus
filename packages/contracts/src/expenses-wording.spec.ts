@@ -22,7 +22,7 @@ test('VAT reviewer conditions are one data list with stable codes and Thai label
 
 import { INPUT_VAT_RIGHT_LABEL, TAX_EVIDENCE_LABEL, INPUT_VAT_RIGHT_LABELS, TAX_EVIDENCE_STATUS_LABELS, TAX_EVIDENCE_BADGE_LABELS } from './expenses.js';
 test('keeps evidence and input VAT right distinct in fields and named badges', () => {
-  assert.equal(INPUT_VAT_RIGHT_LABEL, 'สิทธิภาษีซื้อ'); assert.equal(TAX_EVIDENCE_LABEL, 'หลักฐานรายจ่าย');
+  assert.equal(INPUT_VAT_RIGHT_LABEL, 'ใช้ VAT ตอนยื่นภาษี'); assert.equal(TAX_EVIDENCE_LABEL, 'หลักฐานรายจ่าย');
   assert.deepEqual(INPUT_VAT_RIGHT_LABELS, { NEEDS_REVIEW: 'รอตรวจสอบ', CLAIMABLE: 'ใช้ได้ตามเงื่อนไข', NON_CLAIMABLE: 'ใช้ไม่ได้' });
   assert.deepEqual(TAX_EVIDENCE_STATUS_LABELS, { USABLE_FOR_TAX: 'ใช้ได้', SUPPORTING_ONLY: 'ใช้ได้เมื่อมีหลักฐานอื่นประกอบ', NOT_TAX_EVIDENCE: 'ใช้ไม่ได้', NEEDS_REVIEW: 'รอตรวจ' });
   assert.deepEqual(Object.values(TAX_EVIDENCE_BADGE_LABELS), ['หลักฐานรายจ่ายใช้ได้', 'หลักฐานรายจ่ายต้องมีเอกสารอื่นประกอบ', 'ไม่ใช่หลักฐานรายจ่าย', 'หลักฐานรายจ่ายรอตรวจ']);

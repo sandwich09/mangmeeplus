@@ -179,6 +179,16 @@ test('@journey an owner creates an expense-entry role and member, grants shop se
     await expect(main.getByRole('listbox').getByRole('option')).toHaveCount(1);
     await main.getByRole('button', { name: 'เปลี่ยนบทบาทพนักงาน', exact: true }).click();
     await expect(main.getByRole('switch', { name: 'ใช้งาน / ปิดใช้งาน', exact: true })).toBeChecked();
+    await main.getByRole('button', { name: 'แก้ไขข้อมูล', exact: true }).click();
+    await expect(heading(owner, `แก้ไขข้อมูล ${displayName}`)).toBeVisible(FIRST_SIGHT);
+    await main.getByRole('button', { name: 'ตั้งบัญชีรับเงินคืน', exact: true }).click();
+    for (const width of [390, 1280, 1556]) {
+      await owner.setViewportSize({ width, height: 1000 });
+      await expect(main.getByRole('button', { name: 'บันทึกบัญชีรับเงินคืน', exact: true })).toBeVisible();
+      await expect(main.getByText('หลังบันทึก คุณจะเห็นเฉพาะ 4 ตัวท้าย และเจ้าของบัญชีจะได้รับแจ้งเตือนให้ตรวจ', { exact: true })).toBeVisible();
+    }
+    await main.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
+    await main.getByRole('link', { name: 'กลับไปรายชื่อพนักงาน', exact: true }).click();
   });
 
   await test.step('an assigned role names its blocking count and opens the employees who must move', async () => {

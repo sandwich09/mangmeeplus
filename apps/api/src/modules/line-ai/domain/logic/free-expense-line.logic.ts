@@ -1,4 +1,4 @@
-export const FREE_EXPENSE_CHAT_REPLY = 'สิทธิ์ใช้ฟรีของร้านยังไม่รวมการถามตอบกับน้องมั่งมีค่ะ';
+export const FREE_EXPENSE_CHAT_REPLY = 'สิทธิ์ใช้ฟรียังไม่รวมคำถาม พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ';
 export const FREE_EXPENSE_TEXT_EDIT_REPLY = 'การแก้ข้อมูลผ่านข้อความยังไม่รวมในสิทธิ์ใช้ฟรีค่ะ เปิดร่างที่คุณมีสิทธิ์แล้วแก้ข้อมูลในเว็บได้ค่ะ';
 
 /** Denial-only recognition: this never selects a tool or grants an action. */

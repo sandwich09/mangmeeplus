@@ -1917,7 +1917,7 @@ describe('export cleanup 0.2 LINE refusal', () => {
     state.prisma.client.companyOcrUsageEvent.updateMany = forbidden;
     for (const messageText of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี']) {
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `free-export-${messageText}`, messageText });
-      assert.match(h.replies.at(-1)!, /สิทธิ์ใช้ฟรีของร้านยังไม่รวมการถามตอบ/);
+      assert.match(h.replies.at(-1)!, /สิทธิ์ใช้ฟรียังไม่รวมคำถาม.*เมนูหลัก/);
       const menu = h.sentMessages.at(-1)?.quickReply?.items.find((item: any) => item.action.label === 'เมนูหลัก');
       assert.ok(menu, 'refusal has a menu exit');
       await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `free-menu-${messageText}`, messageText: menu.action.text });
@@ -10559,7 +10559,7 @@ it('round 5A delivers only API-issued WHT catalog message buttons for this read 
   const h = makeUseCase(prisma, {
     permissions: ['line.ai.query', 'expense.create'], entitledFeatureKeys: ['expenses', 'wht_50bis'],
     intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
-    aiGatewayFn: (req: any) => ({ requestId: req.requestId, replyText: 'เป็นเงินได้ประเภทใดคะ เลือกจากปุ่มได้เลยค่ะ',
+    aiGatewayFn: (req: any) => ({ requestId: req.requestId, replyText: 'จ่ายค่าอะไรคะ',
       sourceRefs: [], sourceLabels: [], webLinks: [], intent: 'read_summary', agent: 'tax', refused: false,
       toolsInvoked: ['wht.calculate_withholding'], toolCalls: [{ name: 'wht.calculate_withholding', status: 'ok', durationMs: 1 }], durationMs: 1 }),
   });
@@ -12335,7 +12335,7 @@ it('Fix-up 21B C10: exact live unavailable package request offers AVAILABLE butt
   assert.ok(choices.every((choice: any) => !/1,?999|ธุรกิจ/.test(choice.text)), payload); assert.equal(quotes, 0);
 });
 
-for (const vendor of ['snapshot', 'counterparty', 'missing', 'trace24'] as const) it(vendor === 'trace24' ? 'Fix-up 24 D3: exact C04 Grab and approve-pay replay settles promptly and follows signed submit/approve/pay cards' : `Fix-up 22B C04: exact after-fx21 voucher input carries ${vendor} payee and rejects command answers`, async t => {
+for (const vendor of ['snapshot', 'counterparty', 'missing', 'trace24'] as const) it(vendor === 'trace24' ? 'PWS-LINE allowed signed payment: Fix-up 24 D3 exact C04 Grab and approve-pay replay settles promptly and follows signed submit/approve/pay cards' : `Fix-up 22B C04: exact after-fx21 voucher input carries ${vendor} payee and rejects command answers`, async t => {
   const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
   const { LineVoucherActionService } = await import('../line-voucher-action.service');
   const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
@@ -12421,6 +12421,7 @@ for (const vendor of ['snapshot', 'counterparty', 'missing', 'trace24'] as const
     assert.deepEqual(writes, ['create', 'submit', 'approve']);
     await h.execute('บันทึกจ่าย', button('บันทึกจ่าย'));
     assert.deepEqual(writes, ['create', 'submit', 'approve', 'pay']); assert.equal(header.status, 'PAID');
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /ไม่สามารถทำรายการอนุมัติ|ก่อนทำต่อ|ลงบัญชีขั้นสุดท้าย/);
     header.status = 'DRAFT';
     h.prisma.client.lineReadEvidence.findMany = async () => [{ toolName: 'voucher.list_recent', inputJson: { chatKeyHash: chatKeyHashOf(BASE_EVENT), readMemory: { tool: 'voucher.list_recent', shownItems: [{ id: header.id }] } } }];
     await h.execute(FX24_LIVE.C04.turns[4].body.events[0].message.text);
@@ -12466,7 +12467,7 @@ it('Fix-up 21B C05: the next untyped task keeps its goal and cannot create the e
   assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /หมดอายุ|เก็บร่าง/);
 });
 
-it('Fix-up 22B C05: exact after-fx21 untyped writes capture first and deliver the empty WHT catalog settings button', async t => {
+it('Fix-up 22B C05: exact after-fx21 untyped writes capture first and PWS-B6 deliver an empty WHT catalog support message choice', async t => {
   const { WhtCalculateWithholdingTool } = await import('./erp-advisor-document-tools.use-case');
   const { ListWhtIncomeCategoriesUseCase } = await import('../../../procurement/application/use-cases/wht-income-category.use-case');
   const { LineReadEvidenceService } = await import('../line-read-evidence.service');
@@ -12506,11 +12507,11 @@ it('Fix-up 22B C05: exact after-fx21 untyped writes capture first and deliver th
   assert.equal(captures, 1, payload); assert.ok(reads > 0); assert.equal(h.intakeRequests.length, 1);
   assert.match(payload, /เก็บร่างค่าจ้างทำป้าย/); assert.doesNotMatch(payload, /เลือกงานที่จะทำก่อน/);
   const choices = h.delivered.flat().flatMap((m: any) => m.quickReply?.items ?? []).map((c: any) => c.action);
-  assert.ok(choices.some((c: any) => c.type === 'uri' && c.label === 'ตั้งค่าประเภทเงินได้'
-    && c.uri === 'https://app.example.com/system/wht-income-categories'), payload);
+  assert.ok(choices.some((c: any) => c.type === 'message' && c.label === 'ติดต่อทีมงานมั่งมี' && c.text === 'ติดต่อเจ้าหน้าที่'), payload);
   assert.ok(choices.some((c: any) => c.text === 'ทำข้อ 2 ก่อน'), payload);
-  assert.match(payload, /ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐาน/);
-  assert.equal(stored.inputJson.whtReadChoices[0].webPath, '/system/wht-income-categories');
+  assert.match(payload, /ยังไม่มีรายการให้เลือก/);
+  assert.doesNotMatch(payload, /system\/wht-income-categories/);
+  assert.equal(stored.inputJson.whtReadChoices[0].webPath, undefined);
   assert.deepEqual(h.projection().tasks[0].subrequests.map((s: any) => s.status), ['handled', 'needs_user', 'needs_user']);
 });
 
@@ -12913,9 +12914,9 @@ for (const key of ['C05_passing', 'C05_earlier', 'C05-run2#1']) it(`${key.starts
     h.flow.expenseActions = actions;
   }
   // The earlier route also asks an independent WHT read; it must not affect the capture.
-  h.flow.aiGateway.requestLineTurn = async (request: any) => ({ requestId: request.requestId, replyText: 'เลือกประเภทเงินได้ค่ะ', sourceRefs: [], sourceLabels: [], webLinks: [],
+  h.flow.aiGateway.requestLineTurn = async (request: any) => ({ requestId: request.requestId, replyText: 'จ่ายค่าอะไรคะ', sourceRefs: [], sourceLabels: [], webLinks: [],
     intent: 'unknown', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [], durationMs: 0,
-    semanticCoverage: request.semanticSubrequests.map((item: any) => ({ index: item.index, status: 'needs_user', question: 'เลือกประเภทเงินได้ค่ะ' })) });
+    semanticCoverage: request.semanticSubrequests.map((item: any) => ({ index: item.index, status: 'needs_user', question: 'จ่ายค่าอะไรคะ' })) });
   await h.execute();
   const payload = JSON.stringify(h.delivered.at(-1));
   assert.equal(creates, 1, payload); assert.equal(Number(record.grandTotalAmount), 10000);
@@ -13655,7 +13656,7 @@ it('Exam G2: exact payment request, recorded reads and id-bearing question use t
   assert.match(JSON.stringify(h.delivered), /this record|ปั๊มน้ำมัน ปตท\./);
 });
 
-it('EVID-1: exact Exam F2 receipt-photo webhook on an original-in-hand WHT expense confirms and offers its voucher next step', async t => {
+it('PWS-LINE allowed signed confirm: EVID-1 exact Exam F2 receipt-photo webhook on an original-in-hand WHT expense confirms and offers its voucher next step', async t => {
   const { LineExpenseActionService } = await import('../line-expense-action.service');
   const { GetExpenseUseCase, MarkExpenseReadyUseCase, ConfirmExpenseUseCase, UpdateExpenseDraftUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
   const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
@@ -13708,7 +13709,7 @@ it('EVID-1: exact Exam F2 receipt-photo webhook on an original-in-hand WHT expen
   assert.ok(confirmButton, payload); assert.equal(writes, 0);
   await h.execute('ตรวจแล้ว ยืนยัน', confirmButton.action.data);
   payload = JSON.stringify(h.delivered.at(-1));
-  assert.match(payload, /สร้างใบเตรียมจ่าย/); assert.equal(writes, 1); assert.equal(record.status, 'CONFIRMED');
+  assert.match(payload, /สร้างใบเตรียมจ่าย/); assert.doesNotMatch(payload, /ไม่สามารถทำรายการอนุมัติ|ก่อนทำต่อ|ลงบัญชีขั้นสุดท้าย/); assert.equal(writes, 1); assert.equal(record.status, 'CONFIRMED');
   assert.equal(record.aiVerificationSummaryJson.documentReview.assessment.originalDocumentAvailable, true);
   assert.equal(record.attachments.length, 0); assert.equal(record.whtAmount, '300');
 });
@@ -14046,17 +14047,17 @@ describe('free expense LINE boundary', () => {
     const { prisma } = makePrisma();
     const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own'] });
     await h.useCase.execute({ ...BASE_EVENT, messageText: 'ช่วยอนุมัติแล้วจ่ายเงินบิลนี้' });
-    assert.match(h.replies.join(' '), /ไม่สามารถทำรายการอนุมัติ\/จ่ายเงิน\/ลงบัญชี/);
+    assert.match(h.replies.join(' '), /สิทธิ์ใช้ฟรียังยืนยัน อนุมัติ หรือจ่ายไม่ได้.*เมนูหลัก/);
     assert.doesNotMatch(h.replies.join(' '), /แพ็กเกจ|ถามตอบ|กรุณาทำรายการในเว็บ/);
     assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
   });
-  it('refuses open chat and semantic edits before every model seam', async () => {
-    for (const messageText of ['วันนี้ขายดีไหม', 'แก้ยอดบิลเมื่อกี้เป็น 500', 'บันทึกรายจ่าย 400 แล้ววิเคราะห์ให้ด้วย']) {
+  it('PWS-FREE-WORDS / PWS-LINE-SOURCE-AUDIT refuses open chat and semantic edits before every model seam', async () => {
+    for (const messageText of ['ขอดูบัญชีแยกประเภท', 'วันนี้ขายดีไหม', 'แก้ยอดบิลเมื่อกี้เป็น 500', 'บันทึกรายจ่าย 400 แล้ววิเคราะห์ให้ด้วย']) {
       const { prisma } = makePrisma();
       const h = makeUseCase(prisma, { freeExpenseDrafts: true,
         permissions: ['expense.read_own', 'expense.update', 'expense.receipt.line_upload'] });
       await h.useCase.execute({ ...BASE_EVENT, messageText });
-      assert.match(h.replies.join(' '), messageText.startsWith('แก้') ? /การแก้ข้อมูลผ่านข้อความยังไม่รวมในสิทธิ์ใช้ฟรี.*ในเว็บ/ : /สิทธิ์ใช้ฟรีของร้านยังไม่รวมการถามตอบ/);
+      assert.match(h.replies.join(' '), messageText.startsWith('แก้') ? /การแก้ข้อมูลผ่านข้อความยังไม่รวมในสิทธิ์ใช้ฟรี.*ในเว็บ/ : /สิทธิ์ใช้ฟรียังไม่รวมคำถาม.*เมนูหลัก/);
       assert.equal(h.intakeRequests.length, 0);
       assert.equal(h.getAiGatewayCalled(), false);
     }
@@ -14275,4 +14276,293 @@ it('R4 LINE XML receipt is refused by QA with an authorized receipt way out', as
     else assert.equal(replies[0][2], undefined);
     assert.equal(logs[0][2], 'EMBEDDED_FILE_REJECTED');
   }
+});
+
+
+it('PWS-B6 empty catalog confirm keeps a support exit despite retained repair choices without mutating or contacting support', async () => {
+  const { BadRequestException } = await import('@nestjs/common');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const action: any = Object.create(LineExpenseActionService.prototype);
+  const ctx: any = { companyId: 'company', userId: 'user', membershipId: 'member', permissions: ['expense.update', 'expense.create', 'expense.confirm'], scopes: {} };
+  const record = { updatedAt: new Date(), sourceChannelMetadataJson: null };
+  let mutations = 0, support = 0;
+  Object.assign(action, { config: { aiGatewayInternalSecret: 'secret' }, owner: async () => ({ id: 'chat', lifecycleEpoch: 1 }),
+    read: async () => { throw new BadRequestException({ missingFields: ['whtCategoryCode'] }); },
+    getExpense: { execute: async () => record }, prisma: { client: { whtIncomeCategory: { findMany: async () => [] } } },
+  });
+  Object.defineProperty(action, 'repairs', { value: { save: async () => { mutations++; } } });
+  const result = await action.preview(ctx, 'chat', { action: 'CONFIRM', expenseId: 'expense' }, true);
+  assert.equal(result.reply, 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ');
+  assert.equal(result.webPath, undefined);
+  const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(),
+    expenseActions: { preview: async () => result, repairChoices: async () => [{ label: 'เก่า', text: 'คำตอบเดิม' }] },
+    handleStaffContact: async () => { support++; } });
+  for (const language of ['th', 'en'] as const) for (const retained of [false, true]) {
+    handler.expenseActions.preview = async () => action.preview(ctx, 'chat', { action: 'CONFIRM', expenseId: 'expense' }, true, undefined, language);
+    handler.expenseActions.repairChoices = async () => retained ? [{ label: 'เก่า', text: 'คำตอบเดิม' }] : null;
+    const card = await handler.requestedCaptureConfirmation({ ...BASE_EVENT, messageText: language === 'en' ? 'confirm this expense' : 'ยืนยันเลย' }, ctx, 'expense', 'ยืนยันเลย', true);
+    assert.ok(card.quickReply.items.some((item: any) => item.action.type === 'message' && item.action.text === 'ติดต่อเจ้าหน้าที่'));
+    assert.doesNotMatch(JSON.stringify(card), /system\/wht-income-categories/);
+    assert.equal(mutations, 0); assert.equal(support, 0);
+  }
+});
+
+
+it('PWS-LINE-ACTION-NAME / PWS-LINE-MONTH-NAME keep opaque commands and render the plain action names', async () => {
+  const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
+  const { buildLineAssistantTextCardMessage } = await import('../../domain/logic/line-business-card.logic');
+  for (const [id, title, sentence, command] of [
+    ['payment_voucher', 'สร้างใบเตรียมจ่าย', 'เลือกรายจ่ายของผู้รับเงินคนเดียวกันที่ยืนยันแล้วเพื่อเตรียมใบให้ตรวจค่ะ', 'ช่วยสร้างใบเตรียมจ่ายให้หน่อย'],
+    ['pnd53', 'ดูสรุป ภ.ง.ด.53', 'น้องช่วยสรุปภาษีหัก ณ ที่จ่ายของเดือนที่ต้องการให้ตรวจได้ค่ะ', 'ขอสรุป ภ.ง.ด.53 เดือนนี้'],
+  ]) {
+    const action = LINE_CHAT_ACTIONS.find(row => row.id === id)!;
+    assert.equal(action.title, title); assert.equal(action.sentence, sentence); assert.equal(action.command, command);
+    const card = buildLineAssistantTextCardMessage(`${action.title}\n${action.sentence}`, 'https://app.example.com', 'company');
+    assert.match(JSON.stringify(card), new RegExp(title));
+  }
+});
+
+it('PWS-LINE raw evidence enum is mapped and a blocked action retains the same-card web exit', async () => {
+  const { formatGroundedReceiptFollowUp } = await import('./process-line-webhook.use-case');
+  const { EXPENSE_ACTION_REFUSALS } = await import('../line-expense-action.service');
+  const expense: any = { ...savedMediaFixture('plain-expense'), taxEvidenceStatus: 'USABLE_FOR_TAX' };
+  const text = formatGroundedReceiptFollowUp('https://app.example.com', 'company', expense);
+  assert.match(text, /หลักฐานรายจ่าย: ใช้ได้/); assert.doesNotMatch(text, /USABLE_FOR_TAX|เครดิต VAT/);
+  const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(),
+    expenseActions: { preview: async () => ({ reply: EXPENSE_ACTION_REFUSALS.tax_period_locked, webPath: '/companies/company/expenses/plain-expense' }), repairChoices: async () => null } });
+  const card = await handler.requestedCaptureConfirmation({ ...BASE_EVENT }, { companyId: 'company', permissions: ['expense.confirm'] }, expense.id, 'ยืนยันเลย', true);
+  assert.match(JSON.stringify(card), /รายการนี้ยังทำต่อไม่ได้ ให้ผู้ทำบัญชีตรวจจากหน้ารายการ/);
+  assert.ok(card.quickReply.items.some((item: any) => item.action.uri === 'https://app.example.com/companies/company/expenses/plain-expense'));
+});
+
+it('PWS-UTILITY-DRAFT-FACTS inserted and existing utility drafts describe only the saved draft and preserve its URL', async () => {
+  for (const inserted of [true, false]) {
+    const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const event = { ...BASE_EVENT };
+    const source: any = { ...savedMediaFixture('utility-source'), companyId: 'company', createdByUserId: 'user', captureSource: 'LINE_UPLOAD',
+      sourceDocumentType: 'RECEIPT', grandTotalAmount: '900', primaryAttachmentId: 'photo', attachments: [{ id: 'photo', purpose: 'expense.receipt.primary' }],
+      sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(event) }, aiVerificationSummaryJson: { utilityDocuments: [
+        { role: 'BILL_DUE', titleEvidence: 'ค่าน้ำ', period: '10/69', amount: '1000' },
+        { role: 'RECEIPT_PAID', titleEvidence: 'ใบเสร็จ', period: '09/69', amount: '900' },
+      ] } };
+    const saved: any = { ...source, id: 'saved-draft', status: 'DRAFT' };
+    const db: any = { $executeRaw: async () => {}, attachmentObject: { findFirst: async () => ({ id: 'photo' }) }, expenseRecord: { update: async () => {} } };
+    Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, audit: { log: async () => {} },
+      launchGate: { assertLaunchRouteOpen: async () => {} }, prisma: { client: { $transaction: async (work: any) => work(db) } }, rememberReceiptDeliverySource: () => {},
+      expenseRepo: { findByIdWithRelations: async (_company: any, id: string) => id === source.id ? source : saved,
+        linkAttachment: async () => {}, createExpense: async (_input: any, callback: any) => { if (inserted) await callback(db, saved); return saved; } } });
+    const text = await handler.saveRecentUtilityBill(event, { companyId: 'company', userId: 'user', scopes: {}, permissions: ['expense.create'] }, [{ id: source.id, sourceDocumentType: 'RECEIPT' }], 'บันทึกใบแจ้งค่าน้ำ');
+    assert.equal(text, `${inserted ? 'บันทึกร่าง' : 'มีร่าง'}บิลค่าน้ำช่วง 10/69 ยอด 1000 บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'} เปิดรายการเพื่อตรวจและแนบใบเสร็จค่ะ https://app.example.com/companies/company/expenses/saved-draft`);
+    assert.doesNotMatch(text, /ยังไม่ชำระ|ไม่บันทึกการจ่าย/);
+  }
+});
+
+it('PWS-LINE-PLAIN-BLOCKER retains known month and correction facts without ledger jargon', async () => {
+  const { expenseReopenBlockerMessages } = await import('@watchdog-bms/contracts');
+  const messages = expenseReopenBlockerMessages({ canReopen: false, reopenBlockers: ['accounting_period_locked'], lockedAccountingPeriodKey: '2026-10' } as any, false);
+  assert.ok(messages.length); assert.doesNotMatch(messages.join(' '), /งวดบัญชี|ลงบัญชี/);
+});
+
+
+it('PWS-LINE-SOURCE-AUDIT English VAT diff keeps the stored field and signed confirm controls', async () => {
+  const { buildDraftUpdatePreviewCard } = await import('../../domain/logic/line-draft-update-card.logic');
+  const preview: any = { previewId: 'plain-diff', record: { vendorName: 'Seller', expenseDate: '2026-10-01', statusLabel: 'ร่าง' },
+    totalsBefore: { grandTotalAmount: '1070' }, totalsAfter: { grandTotalAmount: '1070' }, warnings: [],
+    diff: [{ field: 'line.1.vatTreatment', label: 'รูปแบบ VAT', kind: 'plain', before: 'VAT_INCLUDED', after: 'VAT_EXCLUDED' }] };
+  const card: any = buildDraftUpdatePreviewCard(preview, 'https://app.example.com', 'en');
+  assert.match(card.canonicalText, /Item 1 VAT option: VAT included → VAT excluded/);
+  assert.match(card.canonicalText, /Seller/); assert.match(card.canonicalText, /1,070.00/);
+  assert.doesNotMatch(card.canonicalText, /VAT treatment/);
+  assert.match(JSON.stringify(card), /draft-update-confirm/);
+  assert.equal(preview.diff[0].field, 'line.1.vatTreatment');
+});
+
+
+it('PWS-LINE-D missing fields and VAT refusals follow the web labels without changing error keys', async () => {
+  const { BadRequestException } = await import('@nestjs/common');
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const service: any = Object.create(LineExpenseActionService.prototype);
+  const missing = service.refusal(new BadRequestException({ missingFields: ['inputVatClaimStatus', 'taxEvidenceStatus', 'whtCategoryCode'] }), 'CONFIRM');
+  assert.match(missing, /ใช้ VAT ตอนยื่นภาษี และ หลักฐานรายจ่าย และ จ่ายค่าอะไร/);
+  for (const code of ['input_vat_not_available_company_not_vat_registered', 'substitute_evidence_nonclaimable'])
+    assert.equal(service.refusal(new BadRequestException({ code }), 'CONFIRM'), 'ให้ผู้ตรวจรายจ่ายตรวจคำตอบเรื่อง VAT ที่หน้ารายการค่ะ');
+  assert.equal(service.refusal(new BadRequestException('The source cannot retain a Tax Code'), 'CONFIRM'), 'ให้ผู้ตรวจรายจ่ายตรวจคำตอบเรื่อง VAT ที่หน้ารายการค่ะ');
+  assert.equal(service.refusal(new BadRequestException('server-resolved Tax Code'), 'CONFIRM'), 'ให้ผู้ตรวจรายจ่ายแก้อัตราและรูปแบบ VAT ของรายการให้ตรงกันค่ะ');
+});
+
+async function pwsDueHelpWebhook(t: TestContext, options: {
+  kind?: 'help' | 'general'; status?: 'ok' | 'forbidden' | 'unsupported_module' | 'error' | 'unavailable'; tool?: string;
+  permissionChecked?: boolean; evidenceIds?: string[] | null; permissions?: readonly string[]; features?: readonly string[];
+  cardIds?: readonly string[]; missingToolCalls?: boolean; extraToolCall?: boolean; extraSubrequest?: boolean;
+} = {}) {
+  const { productHelpAction } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/approved-product-help');
+  const text = 'ภงด.53 ต้องยื่นเมื่อไหร่';
+  const permissions = [...(options.permissions ?? ['line.ai.query', 'ai.tool.invoke', 'wht.pnd53.read'])];
+  const features = options.features ?? ['ai_line_assistant', 'wht_pnd53'];
+  const status = options.status ?? 'ok', tool = options.tool ?? 'wht.get_month_summary';
+  const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 1,
+    selectedKnowledgeCardIds: options.cardIds ?? ['wht.pnd53-due'], semanticSubrequests: [
+      { index: 0, kind: options.kind ?? 'help', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [] },
+      ...(options.extraSubrequest ? [{ index: 1, kind: 'help', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] : []),
+    ] };
+  const h = await fx21bBoundWebhook(t, { source: 'pws-due-help', messageText: text, route }, permissions);
+  h.flow.config.lineAiApprovedKnowledgeEnabled = true;
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => features.map(featureKey => ({ featureKey, enabled: true }));
+  const replyText = 'ภ.ง.ด.53 ของเดือนตุลาคม 2569 ต้องยื่นภายใน 9 พ.ย. 2569 ค่ะ';
+  const sourceRefs = [{ module: 'tax', entityType: 'advisor_document_read', label: 'ภ.ง.ด.53', permissionChecked: options.permissionChecked ?? true,
+    webPath: '/companies/company-1/tax/pnd53' }];
+  const help = productHelpAction({ actionId: 'pnd53', companyId: 'company-1',
+    permissions: status === 'forbidden' ? permissions.filter(key => key !== 'wht.pnd53.read') : permissions,
+    featureKeys: status === 'unsupported_module' ? features.filter(key => key !== 'wht_pnd53') : features })!;
+  const refusal = status === 'forbidden' || status === 'unsupported_module';
+  const expectedText = refusal ? help.replyText : replyText;
+  const persisted: any[] = [];
+  h.flow.contextV2.createTurn = async (_owner: any, _epoch: any, data: any) => { persisted.push(data); return { id: 'pws-help-turn' }; };
+  h.flow.readEvidence = { forTurn: async () => options.evidenceIds === undefined ? ['due-read'] : options.evidenceIds, verify: async () => true };
+  h.flow.aiGateway.requestLineTurn = async (request: any) => ({ requestId: request.requestId, replyText: expectedText,
+    sourceRefs: refusal ? [] : sourceRefs, sourceLabels: [], webLinks: [], intent: 'help', agent: 'general', refused: false, durationMs: 1,
+    toolsInvoked: [tool], toolCalls: options.missingToolCalls ? [] : [{ name: tool, status, durationMs: 1 },
+      ...(options.extraToolCall ? [{ name: 'expense.list_recent', status: 'ok', durationMs: 1 }] : [])],
+    semanticCoverage: route.semanticSubrequests.map(item => ({ index: item.index, status: 'handled' })),
+    presentation: { ...help.presentation, cards: help.presentation.cards.map(card => ({ ...card, text: expectedText })) } });
+  const event = await h.execute();
+  return { ...h, event, replyText, expectedText, sourceRefs, persisted, payload: JSON.stringify(h.delivered.at(-1)) };
+}
+
+it('PWS-PND53-DUE help route delivers the ERP due date through the general path', async t => {
+  const h = await pwsDueHelpWebhook(t);
+  assert.ok(h.payload.includes(h.replyText), h.payload);
+  assert.ok(h.delivered.at(-1)!.flatMap(message => message.quickReply?.items ?? []).some(item => item.action.label === 'ให้น้องทำให้'
+    && item.action.text === 'ขอสรุป ภ.ง.ด.53 เดือนนี้'), h.payload);
+  const { event } = h;
+  assert.deepEqual(h.flow.deliverySources.get(event).ids, ['due-read']);
+  assert.deepEqual(h.persisted[0].sourceRefsJson, h.sourceRefs);
+  assert.equal(h.intakeRequests.length, 1);
+});
+
+for (const status of ['forbidden', 'unsupported_module'] as const) it(`PWS-PND53-DUE help route preserves the existing refusal card: ${status}`, async t => {
+  const h = await pwsDueHelpWebhook(t, { status, evidenceIds: [] });
+  assert.ok(h.payload.includes(h.expectedText), h.payload);
+  assert.ok(h.delivered.at(-1)!.flatMap(message => flexButtons(message)).some(button => button.action.type === 'uri'), h.payload);
+  assert.doesNotMatch(h.payload, /ต้องยื่นภายใน|ยังตรวจสอบคำตอบครบทุกส่วน/);
+});
+
+for (const [name, options] of [
+  ['another tool on a help route', { tool: 'expense.list_recent' }],
+  ['tools on a general route', { kind: 'general' }],
+  ['unchecked source refs', { permissionChecked: false }],
+  ['missing API evidence', { evidenceIds: null }],
+  ['missing tool outcomes', { missingToolCalls: true }],
+  ['an unreported extra tool outcome', { extraToolCall: true }],
+  ['multiple help subrequests', { extraSubrequest: true }],
+  ['an unrelated help card', { cardIds: ['expense.capture'] }],
+  ['an error outcome', { status: 'error' }],
+  ['an unavailable outcome', { status: 'unavailable' }],
+  ['certificate-only permission', { permissions: ['line.ai.query', 'ai.tool.invoke', 'wht.certificate.read'] }],
+  ['certificate-only feature', { features: ['ai_line_assistant', 'wht_50bis'] }],
+] as const) it(`PWS-PND53-DUE help route refuses ${name}`, async t => {
+  const h = await pwsDueHelpWebhook(t, options);
+  assert.match(h.payload, /ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้/);
+  assert.ok(!h.payload.includes(h.replyText), h.payload);
+});
+
+for (const access of ['allowed', 'permission-denied', 'feature-denied', 'free-drafts'] as const)
+  it(`PWS-PND53-DUE real semantic help through webhook preserves ${access} access`, async t => {
+    const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+    const { FREE_EXPENSE_CHAT_REPLY } = await import('../../domain/logic/free-expense-line.logic');
+    const text = 'ภงด.53 ต้องยื่นเมื่อไหร่';
+    const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 1,
+      selectedKnowledgeCardIds: ['wht.pnd53-due'], semanticSubrequests: [
+        { index: 0, kind: 'help', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [] },
+      ] };
+    const permissions = ['line.ai.query', 'ai.tool.invoke', ...(access === 'permission-denied' ? ['wht.certificate.read'] : ['wht.pnd53.read'])];
+    const h = await fx21bBoundWebhook(t, { source: `pws-due-${access}`, messageText: text, route }, permissions);
+    h.flow.config.lineAiApprovedKnowledgeEnabled = true;
+    const features = access === 'feature-denied' ? ['ai_line_assistant', 'wht_50bis'] : ['ai_line_assistant', 'wht_pnd53'];
+    h.prisma.client.companyFeatureEntitlement.findMany = async () => features.map(featureKey => ({ featureKey, enabled: true }));
+    if (access === 'free-drafts') {
+      const resolve = h.flow.permissionResolver.resolveAccess;
+      h.flow.permissionResolver.resolveAccess = async (...args: any[]) => ({ ...await resolve(...args),
+        freeExpenseDrafts: true, permissions: ['company.plan.manage', 'expense.read_own', 'expense.receipt.line_upload'] });
+    }
+    let turns = 0, reads = 0;
+    const replyText = 'ภ.ง.ด.53 ของเดือนตุลาคม 2569 ต้องยื่นภายใน 9 พ.ย. 2569 ค่ะ';
+    h.flow.readEvidence = { forTurn: async () => ['due-read'], verify: async () => true };
+    h.flow.aiGateway.requestLineTurn = async (req: any) => {
+      turns++;
+      const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false,
+        reimbursementDraftEnabled: false, publicLookupEnabled: false,
+        provider: { generateText: async () => assert.fail('no model call for the selected help card') },
+        invoke: async meta => {
+          reads++; assert.equal(access, 'allowed'); assert.equal(meta.name, 'wht.get_month_summary');
+          return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: { message: replyText },
+            sourceRefs: [{ module: 'tax', entityType: 'advisor_document_read', label: 'ภ.ง.ด.53', permissionChecked: true }] };
+        } });
+      return { ...result, requestId: req.requestId, intent: 'help', agent: 'general', refused: false, sourceLabels: [], durationMs: 1,
+        toolsInvoked: result.outputs.flatMap(output => output.toolCalls.map(call => call.name)),
+        toolCalls: result.outputs.flatMap(output => output.toolCalls) };
+    };
+    await h.execute();
+    const payload = JSON.stringify(h.delivered.at(-1));
+    assert.equal(reads, access === 'allowed' ? 1 : 0);
+    assert.equal(turns, access === 'free-drafts' ? 0 : 1);
+    if (access === 'allowed') assert.ok(payload.includes(replyText), payload);
+    else {
+      assert.ok(!payload.includes(replyText), payload);
+      assert.doesNotMatch(payload, /ยังตรวจสอบคำตอบครบทุกส่วน/);
+      if (access === 'free-drafts') assert.ok(payload.includes(FREE_EXPENSE_CHAT_REPLY), payload);
+      else assert.match(payload, /สิทธิ์|แพ็กเกจ/);
+      const messages = h.delivered.at(-1)!;
+      assert.ok(messages.some(message => flexButtons(message).length || message.quickReply?.items?.length), payload);
+    }
+  });
+
+for (const fixture of [
+  { ids: ['package.quota'], tool: 'billing.get_package_usage', permission: 'company.plan.manage', text: 'ใช้สิทธิ์ไปกี่ใบ',
+    data: { package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 12, resetsOn: '2026-12-01' } }, expected: /เหลือใบเสร็จ 12 ใบ/ },
+  { ids: ['package.renew'], tool: 'billing.get_package_usage', permission: 'company.plan.manage', text: 'ต่ออายุยังไง',
+    data: { package: { termEndsOn: '2026-12-31' } }, expected: /วันสิ้นสุดแพ็กเกจของร้านคือ 31 ธ.ค. 2569/ },
+  { ids: ['package.expiry'], tool: 'billing.get_package_usage', permission: 'company.plan.manage', text: 'แพ็กเกจหมดวันไหน',
+    data: { package: { termEndsOn: '2026-12-31' } }, expected: /วันสิ้นสุดแพ็กเกจของร้านคือ 31 ธ.ค. 2569/ },
+  { ids: ['package.quota', 'package.renew'], tool: 'billing.get_package_usage', permission: 'company.plan.manage', text: 'ใช้สิทธิ์ไปกี่ใบ ต่ออายุยังไง',
+    data: { package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 12, resetsOn: '2026-12-01' } }, expected: /เหลือใบเสร็จ 12 ใบ/ },
+  { ids: ['claim.approve'], tool: 'reimbursement.list_pending_approvals', permission: 'reimbursement.approve', text: 'มีใบเบิกรอฉันทำอะไร',
+    data: { accessScope: 'approver', total: 3 }, expected: /มีใบเบิกรอคุณอนุมัติ 3 ใบ/ },
+  { ids: ['notifications.read'], tool: 'notifications.list_open_alerts', permission: 'notification.read', text: 'ดูแจ้งเตือนตรงไหน',
+    data: { count: 3, hasMore: false }, expected: /มีการแจ้งเตือนที่ยังเปิดอยู่ 3 รายการ/ },
+  { ids: ['pnd53.prepare'], tool: 'wht.get_month_summary', permission: 'wht.pnd53.read', text: 'ทำ ภงด53 ยังไง',
+    data: { periodKey: '2026-11', dueDate: '2026-12-07', remittance: { status: 'OPEN' } }, expected: /ยังไม่ได้ยื่น.*7 ธ.ค. 2569/ },
+]) it(`PWS-LINE-HELP-DATA approved card delivers its own read through the general path: ${fixture.ids.join(', ')}`, async t => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
+  const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 1,
+    selectedKnowledgeCardIds: fixture.ids, semanticSubrequests: [
+      { index: 0, kind: 'help', goal: fixture.text, requiredEvidence: [], requestedFilters: {}, dependsOn: [] },
+    ] };
+  const h = await fx21bBoundWebhook(t, { source: `pws-data-${fixture.ids.join('-')}`, messageText: fixture.text, route },
+    ['line.ai.query', 'ai.tool.invoke', fixture.permission, ...(fixture.ids.includes('claim.approve') ? ['reimbursement.read'] : [])]);
+  h.flow.config.lineAiApprovedKnowledgeEnabled = true;
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['ai_line_assistant', 'wht_pnd53', 'reimbursement', 'dashboard_notifications'].map(featureKey => ({ featureKey, enabled: true }));
+  h.flow.readEvidence = { forTurn: async () => ['help-read'], verify: async () => true };
+  let reads = 0;
+  h.flow.aiGateway.requestLineTurn = async (req: any) => {
+    const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false,
+      provider: { generateText: async () => assert.fail('approved data help adds no model call') },
+      invoke: async meta => {
+        reads++; assert.equal(meta.name, fixture.tool);
+        return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(), data: fixture.data,
+          sourceRefs: [{ module: 'help', entityType: 'read', label: 'ข้อมูลของร้าน', permissionChecked: true }] };
+      } });
+    return { ...result, requestId: req.requestId, intent: 'help', agent: 'general', refused: false, sourceLabels: [], durationMs: 1,
+      toolsInvoked: result.outputs.flatMap(output => output.toolCalls.map(call => call.name)),
+      toolCalls: result.outputs.flatMap(output => output.toolCalls) };
+  };
+  const event = await h.execute();
+  const payload = JSON.stringify(h.delivered.at(-1));
+  assert.equal(reads, 1, payload); assert.match(payload, fixture.expected);
+  assert.doesNotMatch(payload, /ยังตรวจสอบคำตอบครบทุกส่วน/);
+  assert.deepEqual(h.flow.deliverySources.get(event).ids, ['help-read']);
 });

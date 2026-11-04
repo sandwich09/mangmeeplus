@@ -255,6 +255,7 @@ test('@journey a payment document is prepared by finance, approved by the manage
     // The same number, now the ใบสำคัญจ่าย.
     await expect(main.getByRole('heading', { level: 1, name: seller, exact: true })).toBeVisible();
     await expect(main.getByText(`ใบสำคัญจ่าย ${number}`, { exact: true })).toBeVisible();
+    await expect(main.getByText('หลักฐานว่าบันทึกจ่ายแล้ว', { exact: true })).toHaveCount(1);
     await expect(main.getByText('จ่ายแล้ว', { exact: true }).first()).toBeVisible();
     await expect(main.getByText(`จ่ายเมื่อ ${today}`, { exact: true })).toHaveCount(0);
     const paidCard = main.locator('section').filter({ has: finance.getByRole('heading', { name: 'ยอดที่จ่าย', exact: true }) });

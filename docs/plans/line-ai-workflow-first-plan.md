@@ -53,6 +53,32 @@ B5 + Q2 authorized 2026-11-04 + MC5 → C1 → C2 → C3 (MA4 + controller priva
 D หลังแต่ละ release
 ```
 
+**Owner order, 2026-11-04 (supersedes "measure first" for spending only).** The owner said "ก่อนทดสอบ ai ให้แก้เรื่อง ลดค่าใช้จ่ายเอไอ และ แคชก่อน", then "ทำตามที่แนะนำได้เลย". The order is:
+
+1. **No model spend.** Phase A (A1–A7) runs first, and A1 no longer waits for M4. In the same stretch:
+   - the 1-hour prompt-cache decision (CACHE-1 below);
+   - the LINE follow-up code (plain-words spec Q5).
+
+   M1b, M1c, M2 and M3 continue offline: corpus, scorer, seed and oracle, with no real-model run.
+2. **One real-model run.**
+   - It is M4's baseline for Phases B and C, measured after Phase A.
+   - It also serves as A8's typed-journey replay.
+   - It includes the follow-up conversations.
+3. **Then** Phase B, Phase C and their own runs, all inside the 2,000 THB programme cap.
+
+**CACHE-1.** Bedrock Converse accepts `cachePoint.ttl: "1h"` for `global.anthropic.claude-sonnet-4-6`. The trade-offs:
+- a 1-hour write costs 2× input ($6/MTok against $3.75 for 5 minutes);
+- the cold-cache hold rises from about 9 to about 13 THB per intake;
+- reads are unchanged.
+
+Decide from a read-only Production `AiUsageEvent` count of cold writes by gap since the previous call (under 5, 5–60, over 60 minutes). Turn it on only if the measured saving exceeds the extra write cost. Then the spec, the pricing (`ai-model-pricing.ts`, `LINE_V2_TARIFFS`) and the hold calibration change together.
+
+**CACHE-1 decided 2026-11-04: keep the 5-minute cache.** Production read-only count, 2026-10-20 to 2026-10-31: 126 model calls from 5 shops on 5 days.
+- `line.intake-route`: 15 calls and 9 cold writes of about 24,600 tokens. Their gaps since the previous call: 0 under 5 minutes, 1 at 5–60 minutes, 8 over 60 minutes. Cache writes are 27.9 of 36.8 THB, so about 2.45 THB per intake. With a 1-hour TTL the cache part would rise from 29.4 to 41.5 THB, even optimistically.
+- `ocr.receipt.extract`: 22.6 against 23.0 THB, no gain.
+
+The cost lever is therefore the **size** of the cached prefix and the **number** of calls: Phase A (Tier 0) and Phase B (a classifier prefix of about 2,500 tokens), not the TTL. Re-check CACHE-1 when traffic leaves fewer than one hour between calls.
+
 ---
 
 ## Phase M — วัดก่อนแก้
@@ -105,7 +131,7 @@ Owner Q1 — **answered 2026-11-04**: paid no-AI steps cost no credit and a task
 ### A9 — moved to expense-trust-and-money-fixes, step 2 / P07 (R6)
 No implementation here. P07 owns B6, all current v2 callers, settlement/repair/counters and AC6. B3 adds only the new classifier's acceptance predicate after that hook exists; A8 reruns the owned billing regressions.
 
-### A1 Budget amendment ส่วน Tier 0 (หลัง M4)
+### A1 Budget amendment ส่วน Tier 0 (before M4, owner order 2026-11-04)
 - `apps/api/src/modules/line-ai/application/line-ai-budget-authority.service.ts`: `serverRoute`; `narrow` (:274–303) ยอม ordinal 0 เฉพาะ `fixed_read` + `simple` + `['line-answer/2']`; `creditState()` อ่านอย่างเดียว
 - `apps/api/src/modules/line-ai/application/company-ai-budget-reservation.ts`: helper อ่านอย่างเดียว
 - `apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts`: ส่ง `serverRoute`

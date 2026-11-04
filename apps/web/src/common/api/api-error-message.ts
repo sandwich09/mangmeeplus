@@ -1,6 +1,6 @@
 import { REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE, DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
 import { WHT_EXTERNAL_FILE, whtPayerIdentityMissingMessage, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_EXTERNAL_RECORD_WORDS, EXPENSE_VOID_CERTIFICATE_WORDS, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS, reimbursementCertificateCancellationMessage } from '@watchdog-bms/contracts';
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
+import { isCivilPeriodKey, expenseCorrectionMonth, TAX_FORM_SHORT_NAMES, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, EXECUTIVE_REASON_CODES, executiveSourceReasonText, type ExecutiveCoverage } from '@watchdog-bms/contracts';
@@ -11,6 +11,18 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 // operator/log text). This is the single seam where those reach a Thai screen.
 // Reviewed mappings stay specific; unknown API diagnostics fail closed to an
 // actionable Thai fallback while UI-authored local errors keep their copy.
+
+function accountingPeriodRefusal(periodKey?: unknown): string {
+  const month = isCivilPeriodKey(periodKey) ? expenseCorrectionMonth(periodKey) : '';
+  return `ยกเลิกเอกสาร${month ? `ของเดือน ${month} ` : ''}ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ`;
+}
+
+function taxPeriodRefusal(formType?: unknown, periodKey?: unknown): string {
+  const form = Object.entries(TAX_FORM_SHORT_NAMES).find(([key]) => key === formType)?.[1];
+  const month = isCivilPeriodKey(periodKey) ? expenseCorrectionMonth(periodKey) : '';
+  const facts = [form, month && `เดือน ${month}`].filter(Boolean).join(' ');
+  return `แก้รายการในรอบภาษี${facts ? ` ${facts} ` : ''}ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ`;
+}
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
@@ -49,7 +61,7 @@ const CODE_LABELS: Record<string, string> = {
   PND3_FILING_PAYER: 'ข้อมูลร้านยังไม่ครบหรือยาวเกินช่องแบบภาษี เปิดข้อมูลร้านแล้วตรวจชื่อ เลขผู้เสียภาษี 13 หลัก สาขา 5 หลัก และที่อยู่',
   PND3_FILING_EVENT: 'รายการจ่ายไม่ตรงแบบหรือเดือนภาษี หรือไม่ได้ใช้เงินบาท เปิดรายจ่ายแล้วตรวจแบบ เดือน และสกุลเงิน',
   PND3_FILING_PAYEE: 'ข้อมูลผู้รับเงินยังไม่ครบหรือยาวเกินช่องแบบภาษี เปิดรายจ่ายแล้วตรวจชื่อ เลขผู้เสียภาษี 13 หลัก ที่อยู่ และสาขา 5 หลักถ้ามี',
-  PND3_FILING_CATEGORY: 'ยังไม่พบประเภทเงินได้ในรายการของระบบ เปิดรายจ่ายแล้วเลือกจ่ายค่าอะไรอีกครั้ง',
+  PND3_FILING_CATEGORY: 'เปิดรายจ่ายแล้วเลือก “จ่ายค่าอะไร” ให้ตรงกับรายการ',
   PND3_FILING_AMOUNT: 'ยอดหักภาษีไม่ตรงกับยอดจ่ายและอัตรา เปิดรายจ่ายแล้วตรวจยอดจ่าย อัตราภาษี และยอดหักภาษีให้ครบและตรงกัน',
   PND3_FILING_KIND: 'ยังไม่ได้ยืนยันว่าผู้รับเงินเป็นบุคคล เปิดคู่ค้าแล้วเลือกประเภทก่อน',
   PND3_FILING_SOURCE: 'รายการต้นทางยังใช้กับแบบนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการและจัดทำแบบยื่น',
@@ -62,7 +74,7 @@ const CODE_LABELS: Record<string, string> = {
   PND53_FILING_PAYER: 'ข้อมูลร้านยังไม่ครบหรือยาวเกินช่องแบบภาษี เปิดข้อมูลร้านแล้วตรวจชื่อ เลขผู้เสียภาษี 13 หลัก สาขา 5 หลัก และที่อยู่',
   PND53_FILING_EVENT: 'รายการจ่ายไม่ตรงแบบหรือเดือนภาษี หรือไม่ได้ใช้เงินบาท เปิดรายจ่ายแล้วตรวจแบบ เดือน และสกุลเงิน',
   PND53_FILING_PAYEE: 'ข้อมูลผู้รับเงินยังไม่ครบหรือยาวเกินช่องแบบภาษี เปิดรายจ่ายแล้วตรวจชื่อ เลขผู้เสียภาษี 13 หลัก ที่อยู่ และสาขา 5 หลักถ้ามี',
-  PND53_FILING_CATEGORY: 'ยังไม่พบประเภทเงินได้ในรายการของระบบ เปิดรายจ่ายแล้วเลือกจ่ายค่าอะไรอีกครั้ง',
+  PND53_FILING_CATEGORY: 'เปิดรายจ่ายแล้วเลือก “จ่ายค่าอะไร” ให้ตรงกับรายการ',
   PND53_FILING_AMOUNT: 'ยอดหักภาษีไม่ตรงกับยอดจ่ายและอัตรา เปิดรายจ่ายแล้วตรวจยอดจ่าย อัตราภาษี และยอดหักภาษีให้ครบและตรงกัน',
   PND53_FILING_KIND: 'ยังไม่ได้ยืนยันว่าผู้รับเงินเป็นบริษัท เปิดคู่ค้าแล้วเลือกประเภทก่อน',
   PND53_FILING_SOURCE: 'รายการต้นทางยังใช้กับแบบนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการและจัดทำแบบยื่น',
@@ -322,7 +334,7 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_source_not_issued: 'เซ็นและออกใบรับรองให้เสร็จก่อนนำมาเบิก',
   reimbursement_source_payer_unlinked: 'ผู้จ่ายบนกระดาษยังไม่ได้เชื่อมกับผู้เบิกในระบบ ตรวจผู้จ่ายก่อน',
   reimbursement_source_wrong_payer: 'ผู้เบิกต้องตรงกับพนักงานผู้สำรองจ่ายในหลักฐาน',
-  reimbursement_source_tax_review_required: 'รายการนี้มีภาษีหัก ณ ที่จ่าย หรือภาษีซื้อที่ต้องตรวจ ให้ผู้ทำบัญชีจัดการภาษีที่รายการค่าใช้จ่ายก่อน',
+  reimbursement_source_tax_review_required: 'ให้ผู้ตรวจรายจ่ายตรวจ VAT และหัก ณ ที่จ่ายที่รายจ่ายก่อนนำมาเบิก',
   reimbursement_source_ambiguous: 'ไฟล์นี้เชื่อมกับค่าใช้จ่ายมากกว่าหนึ่งรายการ ตรวจหลักฐานต้นทางก่อน',
   reimbursement_source_changed: 'ข้อมูลค่าใช้จ่ายต้นทางเปลี่ยนแล้ว เปิดหน้าร่างใบเบิกใหม่ แล้วตรวจก่อนส่งอีกครั้ง',
   reimbursement_source_fields_mismatch: 'ยอดเงินและวันที่ในใบเบิกต้องตรงกับค่าใช้จ่ายต้นทาง ดึงข้อมูลล่าสุดอีกครั้ง',
@@ -379,7 +391,7 @@ const CODE_LABELS: Record<string, string> = {
   // way out is to reopen the record. The third is a state that has to be handled where it happened.
   expense_revision_conflict: 'รายการนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่ก่อนทำต่อ',
   expense_receipt_replace_conflict: 'ไฟล์ใบเสร็จของรายการนี้ถูกเปลี่ยนไปแล้ว เปิดหน้านี้ใหม่ก่อนเปลี่ยนไฟล์อีกครั้ง',
-  expense_wht_category_payee_mismatch: 'จ่ายค่าอะไรไม่ตรงกับผู้รับเงิน เลือกประเภทเงินได้ให้ตรง หรือแก้ช่องผู้รับเงินเป็นใครให้ถูกต้อง',
+  expense_wht_category_payee_mismatch: 'เลือก “จ่ายค่าอะไร” ให้ตรงกับผู้รับเงิน หรือแก้ “ผู้รับเงินเป็นใคร”',
   expense_receipt_replace_locked: 'รายการนี้อยู่ในสถานะที่เปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ เปิดรายการเพื่อดูขั้นตอนที่ทำได้',
   expense_receipt_replace_operation_conflict: 'การเปลี่ยนไฟล์ครั้งนี้ถูกใช้กับไฟล์อื่นไปแล้ว เปิดหน้านี้ใหม่แล้วเลือกไฟล์อีกครั้ง',
   invalid_response: 'ระบบขัดข้องชั่วคราว ลองอีกครั้ง',
@@ -440,7 +452,7 @@ const CODE_LABELS: Record<string, string> = {
   // Onboarding bootstrap: the standard expense-category template names accounts the company's
   // chart does not offer, so no category was seeded. The operator cannot fix this from the screen.
   expense_category_account_unmapped:
-    'ผังบัญชีเริ่มต้นยังไม่มีบัญชีที่หมวดค่าใช้จ่ายมาตรฐานต้องใช้ ระบบจึงยังไม่ได้สร้างหมวดค่าใช้จ่าย ติดต่อผู้ดูแลระบบ',
+    'ยังสร้างหมวดค่าใช้จ่ายไม่ได้ ติดต่อทีมงานมั่งมี',
   platform_feature_not_disableable: 'ฟีเจอร์พื้นฐานของระบบปิดไม่ได้',
   feature_cascade_confirmation_required: 'ปิดฟีเจอร์นี้จะปิดฟีเจอร์ที่ต้องพึ่งพากันด้วย กรุณายืนยันก่อน',
   export_too_large: 'รายงานมีข้อมูลเกิน 5,000 แถว กรุณาลดช่วงข้อมูลแล้วลองใหม่',
@@ -537,10 +549,10 @@ const CODE_LABELS: Record<string, string> = {
   expense_confirmation_source_version_changed: 'เอกสารถูกแก้ไขระหว่างยืนยัน เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   expense_confirmation_source_checksum_changed: 'ข้อมูลเอกสารเปลี่ยนไประหว่างยืนยัน เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   expense_confirmation_substitute_evidence_changed: 'ใบรับรองแทนใบเสร็จเปลี่ยนไประหว่างยืนยัน เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
-  expense_confirmation_tax_line_changed: 'รายการภาษีเปลี่ยนไประหว่างยืนยัน ตรวจรหัสภาษีแล้วลองอีกครั้ง',
+  expense_confirmation_tax_line_changed: 'ข้อมูล VAT เปลี่ยนระหว่างยืนยัน ตรวจรายการแล้วลองอีกครั้ง',
   expense_confirmation_tax_evidence_changed: 'หลักฐานรายจ่ายเปลี่ยนไประหว่างยืนยัน ตรวจแล้วลองอีกครั้ง',
-  expense_confirmation_accounting_period_locked: 'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยืนยันได้',
-  expense_confirmation_tax_period_locked: 'งวดภาษีของเอกสารนี้ยื่นหรือปิดแล้ว จึงยืนยันเข้างวดนี้ไม่ได้',
+  expense_confirmation_accounting_period_locked: 'ยืนยันเอกสารของเดือนนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
+  expense_confirmation_tax_period_locked: 'ยืนยันเอกสารเข้ารอบภาษีนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   EXPENSE_UPDATE_VERSION_REQUIRED: 'บันทึกไม่สำเร็จ เปิดหน้านี้ใหม่ก่อนบันทึกอีกครั้ง',
   EXPENSE_UPDATE_VERSION_INVALID: 'บันทึกไม่สำเร็จ เปิดหน้านี้ใหม่ก่อนบันทึกอีกครั้ง',
   EXPENSE_UPDATE_CONFLICT: 'รายการถูกแก้ไขไปแล้ว เปิดหน้านี้ใหม่ ตรวจข้อมูล แล้วบันทึกอีกครั้ง',
@@ -591,13 +603,13 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_VAT_OVERRIDE_INVALID:
     'ยังใช้ยอด VAT ตามเอกสารไม่ได้ ตรวจยอดต้นฉบับและอัตรา VAT ให้ครบ บันทึกข้อมูลล่าสุด แล้วเลือกรายการที่มี VAT เพื่อรับส่วนต่างพร้อมระบุเหตุผล',
   EXPENSE_VAT_TAX_TOLERANCE_REQUIRED:
-    'VAT ตามเอกสารต่างเกินเกณฑ์ของรหัสภาษี ตรวจเอกสารและรหัสภาษีก่อนยืนยัน การเลือกใช้ยอดตามเอกสารข้ามเกณฑ์นี้ไม่ได้',
+    'ส่วนต่าง VAT เกินที่กำหนด ให้ผู้ตรวจรายจ่ายตรวจรายการก่อนยืนยัน',
   EXPENSE_VAT_TAX_RATE_CONFLICT:
-    'อัตรา VAT ของรายการไม่ตรงกับรหัสภาษี แก้อัตราหรือเลือกรหัสภาษีให้ตรงกับเอกสารก่อนยืนยัน',
+    'อัตราและรูปแบบ VAT ไม่ตรงกัน แก้ให้ตรงกับเอกสารก่อนยืนยัน',
   EXPENSE_VAT_OVERRIDE_STALE:
     'ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว เปิดหน้านี้ใหม่ ตรวจยอด VAT ล่าสุด แล้วเลือกใช้ยอดตามเอกสารอีกครั้ง',
   expense_confirmation_accepted_vat_changed:
-    'ยอด VAT ขั้นสุดท้ายไม่ตรงกับยอดที่ยอมรับ ตรวจเอกสารและรหัสภาษีอีกครั้ง รายการนี้ยังไม่ได้ยืนยัน',
+    'ยอด VAT ไม่ตรงกับยอดที่เลือกใช้ ตรวจรายการแล้วลองยืนยันอีกครั้ง',
   EXPENSE_CHANGED_DURING_DELETE: 'รายการถูกแก้ไขระหว่างการลบ เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   EXPENSE_NOT_DELETABLE: 'ลบได้เฉพาะรายการร่าง รายการที่ถูกปฏิเสธ หรือรายการรอยืนยันที่ยอดเป็น 0 และยังไม่จ่าย',
   EXPENSE_HAS_LINKED_DATA: 'ลบรายการไม่ได้ เพราะมีข้อมูลอื่นเชื่อมอยู่ ตรวจรายการที่เกี่ยวข้องก่อน',
@@ -718,7 +730,7 @@ const CODE_LABELS: Record<string, string> = {
   substitute_receipt_evidence_filename_too_long:
     `ชื่อไฟล์หลักฐานต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength} ตัวอักษร เปลี่ยนชื่อไฟล์ให้สั้นลงแล้วอัปโหลดใหม่`,
   // Void-path CAS guards
-  posting_state_changed: 'สถานะการลงบัญชีเปลี่ยนระหว่างยกเลิกเอกสาร ลองอีกครั้ง',
+  posting_state_changed: 'ข้อมูลเปลี่ยนระหว่างยกเลิกเอกสาร เปิดข้อมูลล่าสุดแล้วลองอีกครั้ง',
   expense_changed: 'เอกสารถูกแก้ไขก่อนยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   expense_changed_retry: EXPENSE_VOID_CERTIFICATE_WORDS.changedRetry,
   certificate_issued: EXPENSE_VOID_CERTIFICATE_WORDS.taxWorkspaceCertificate,
@@ -742,8 +754,8 @@ const CODE_LABELS: Record<string, string> = {
   expense_certificate_attestation_required: EXPENSE_VOID_CERTIFICATE_WORDS.attestationRequired,
   reimbursement_cancellation_wht_certificate_on_expense: reimbursementCertificateCancellationMessage(null),
   wht_certificate_on_expense: reimbursementCertificateCancellationMessage(null),
-  accounting_period_locked: 'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยกเลิกได้',
-  tax_period_locked: 'งวดภาษีของเอกสารนี้ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน',
+  accounting_period_locked: accountingPeriodRefusal(),
+  tax_period_locked: taxPeriodRefusal(),
 
   // ---- รายการเบิกจ่าย: ส่งใบเบิก ----
   missing_receipt:
@@ -1173,7 +1185,7 @@ const CODE_LABELS: Record<string, string> = {
   invalid_sortBy: 'ตัวเลือกเรียงลำดับไม่ถูกต้อง กรุณาเลือกใหม่',
   invalid_staff_booking_source: 'ข้อมูลพนักงานของการจองไม่ถูกต้อง กรุณาเลือกพนักงานใหม่',
   invalid_status: 'สถานะที่เลือกไม่ถูกต้อง กรุณาเลือกจากรายการ',
-  invalid_taxId: 'เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก',
+  invalid_taxId: 'เลขผู้เสียภาษีต้องมี 13 หลัก',
   invalid_tier: 'ระดับลูกค้าที่เลือกไม่ถูกต้อง กรุณาเลือกจากรายการ',
   lead_identity_required: 'กรุณาระบุชื่อหรือข้อมูลติดต่อของลีดอย่างน้อยหนึ่งรายการ',
   lead_not_converted: 'ลีดนี้ยังไม่ได้แปลงเป็นลูกค้า กรุณาแปลงลีดก่อนสร้างโอกาสขาย',
@@ -1207,7 +1219,7 @@ const CODE_LABELS: Record<string, string> = {
   expense_backfill_confirmation_required: 'ดูตัวอย่างและยืนยันก่อนลงบัญชีเอกสารย้อนหลัง',
   expense_not_confirmed: 'ลงบัญชีได้เฉพาะค่าใช้จ่ายที่ยืนยันแล้ว ยืนยันเอกสารก่อน',
   expense_payment_not_recorded: 'ยังลงบัญชีการจ่ายไม่ได้ เพราะรายการจ่ายค่าใช้จ่ายยังไม่ถูกบันทึก',
-  functional_currency_fx_required: 'รายการสกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยนที่ตรวจสอบแล้วก่อนลงบัญชี',
+  functional_currency_fx_required: 'ยังไม่พบอัตราแลกเปลี่ยนที่ตรวจแล้ว ให้ผู้ตรวจรายจ่ายตรวจเอกสาร',
   journal_already_reversed: 'รายการบัญชีนี้ถูกกลับรายการแล้ว กรุณาตรวจประวัติแทนการทำซ้ำ',
   ledger_account_not_postable: 'บัญชีที่เลือกลงรายการไม่ได้หรือไม่ได้ใช้งาน กรุณาเลือกบัญชีใหม่',
   legacy_o0_tax_review_required: 'รายการภาษีอัตรา 0% ต้องระบุเหตุผลและใช้รหัสภาษีที่ตรวจสอบแล้วก่อนลงบัญชี',
@@ -1218,10 +1230,10 @@ const CODE_LABELS: Record<string, string> = {
   posting_unbalanced: 'ยอดเดบิตและเครดิตไม่เท่ากัน ตรวจรายการบัญชีก่อนบันทึก',
   // บันทึกการจ่ายเงินคืนในเดือนที่ปิดงวดแล้วไม่ได้: บอกผู้จ่ายว่าต้องทำอะไรต่อ
   reimbursement_payment_accounting_period_locked:
-    'วันที่จ่ายอยู่ในงวดบัญชีที่ปิดแล้ว จึงบันทึกการจ่ายไม่ได้ ตรวจวันที่จ่ายอีกครั้ง หากจ่ายในวันนั้นจริง ให้ผู้มีสิทธิ์เปิดงวดบัญชีก่อนแล้วจึงบันทึกใหม่',
+    'บันทึกจ่ายในวันที่เลือกไม่ได้ ตรวจวันที่หรือให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   reimbursement_payment_not_recorded: 'ยังลงบัญชีการจ่ายไม่ได้ เพราะรายการจ่ายคืนพนักงานยังไม่ถูกบันทึก',
   tax_functional_currency_mismatch: 'สกุลเงินของข้อมูลภาษีไม่ตรงกับสกุลเงินหลักของบริษัท ตรวจรายการภาษี',
-  tax_period_filed: 'งวดภาษีนี้ยื่นแบบ ชำระ หรือปิดแล้ว ใช้ขั้นตอนปรับปรุงแบบก่อนเปิดงวดบัญชี',
+  tax_period_filed: 'แก้ข้อมูลภาษีของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   unsupported_posting_source: 'แหล่งที่มาของรายการนี้ไม่รองรับการลงบัญชีอัตโนมัติ กรุณาใช้เมนูบันทึกรายการบัญชีด้วยตนเอง',
 
   // ---- การตั้งค่าภาษี ----
@@ -1263,7 +1275,7 @@ const CODE_LABELS: Record<string, string> = {
   wht_handoff_not_issuable: workspaceDictionary.th['wht.print_certificate_not_issuable'],
   wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองในระบบ',
   wht_handoff_form_type_unresolved: 'ระบุแบบ ภ.ง.ด. ไม่ได้ ตรวจว่าผู้รับเงินเป็นบริษัทหรือบุคคลธรรมดาก่อนออกหนังสือรับรอง',
-  wht_handoff_income_category_missing: 'รายการนี้ยังไม่มีประเภทเงินได้หรืออัตราหัก ณ ที่จ่าย กรอกให้ครบก่อนออกหนังสือรับรอง',
+  wht_handoff_income_category_missing: 'เลือก “จ่ายค่าอะไร” และกรอกอัตราหัก ณ ที่จ่ายให้ครบก่อนออกหนังสือรับรอง',
   wht_certificate_issue_in_progress: 'กำลังออกเอกสารนี้อยู่ ลองอีกครั้ง',
   wht_certificate_not_correctable: 'แก้ไขหรือออกใบแทนไม่ได้ เพราะไม่ใช่หนังสือรับรองที่ระบบออกให้ เปิดหน้านี้ใหม่แล้วตรวจสถานะ',
   wht_certificate_already_superseded: 'หนังสือรับรองนี้ถูกแทนที่ไปแล้ว เปิดหน้านี้ใหม่',
@@ -1347,7 +1359,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Channel is disabled': 'ช่องทาง LINE นี้ปิดใช้งานอยู่ เปิดใช้งานก่อนทำต่อ',
   'Invalid quiet hours format': 'ช่วงเวลางดแจ้งเตือนไม่ถูกต้อง เลือกเวลาเริ่มและเวลาสิ้นสุดใหม่',
   'legalIdentityVersion is stale; reload and retry': 'ข้อมูลผู้เสียภาษีถูกแก้ไขแล้ว เปิดหน้านี้ใหม่ก่อนบันทึกอีกครั้ง',
-  'taxId must be 13 digits': 'เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก',
+  'taxId must be 13 digits': 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก',
   // Legal-identity PATCH validation (company-identity.use-case.ts), hit from both the shop's own
   // settings page and the admin partner console (item 7, 2026-09-29 review).
   'registeredName must be 1-255 characters': 'ชื่อจดทะเบียนต้องมีความยาว 1–255 ตัวอักษร',
@@ -1376,8 +1388,8 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Signature belongs to another owner.': 'บันทึกลายเซ็นนี้ไม่ได้ ใช้รูปที่คุณอัปโหลดเอง',
   'Expense revision unavailable. Reload before uploading.': 'ยังตรวจข้อมูลล่าสุดไม่ได้ เปิดหน้านี้ใหม่ก่อนอัปโหลดอีกครั้ง',
   'Expense changed. Reload and review before uploading again.': 'รายการถูกแก้ไขแล้ว เปิดหน้านี้ใหม่และตรวจข้อมูลก่อนอัปโหลดอีกครั้ง',
-  'WHT amount cannot exceed the accepted pre-VAT amount.': 'ยอดภาษีหัก ณ ที่จ่ายเกินฐานที่ใช้คำนวณ ตรวจยอดและฐานภาษี',
-  'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดภาษีหัก ณ ที่จ่ายเกินยอดเอกสาร ตรวจยอดและฐานภาษี',
+  'WHT amount cannot exceed the accepted pre-VAT amount.': 'ยอดหัก ณ ที่จ่ายเกินยอดที่ใช้คิด ตรวจยอดและช่อง “ยอดที่ใช้คิดหัก ณ ที่จ่าย”',
+  'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดหัก ณ ที่จ่ายเกินยอดเอกสาร ตรวจยอดที่หักอีกครั้ง',
   'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',
   'Tax branch code must be 5 digits.': 'รหัสสาขาภาษีต้องเป็นตัวเลข 5 หลัก หรือเว้นว่างหากไม่มี',
   'Branch code must be 1-20 uppercase alphanumeric characters, underscores, or hyphens.': 'รหัสสาขาต้องยาว 1–20 ตัว ใช้ตัวอักษรอังกฤษพิมพ์ใหญ่ ตัวเลข ขีดกลาง หรือขีดล่างเท่านั้น',
@@ -1391,13 +1403,13 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Expense requires a receipt attachment or a missing receipt reason.':
     'ต้องแนบไฟล์ใบเสร็จ หรือระบุเหตุผลที่ไม่มีใบเสร็จ ก่อนยืนยันเอกสาร',
   'Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.':
-    'ทุกรายการที่มี VAT ต้องเลือกรหัสภาษีก่อนยืนยันเอกสาร',
+    'เลือกรูปแบบ VAT ให้ครบทุกรายการที่มี VAT ก่อนยืนยันเอกสาร',
   'Expense confirmation is available on the authenticated web only.':
     'ยืนยันเอกสารได้จากหน้าเว็บที่เข้าสู่ระบบแล้วเท่านั้น',
   'A current issued ใบรับรองแทนใบเสร็จรับเงิน artifact is required; a text reason or legacy timestamp is not sufficient.':
     'ต้องมีใบรับรองแทนใบเสร็จฉบับที่ออกแล้ว การระบุเหตุผลเป็นข้อความอย่างเดียวยังไม่พอ',
   'Internal substitute evidence must remain supporting-only and non-claimable for input VAT.':
-    'เอกสารที่ใช้ใบรับรองแทนใบเสร็จ ต้องเป็นหลักฐานประกอบ และขอคืนภาษีซื้อไม่ได้',
+    'ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ เลือกใช้เป็นหลักฐานประกอบ',
   'A receipt or tax invoice is eligible only when it is unavailable or materially incomplete; a valid document must use the normal path.':
     'ใบเสร็จหรือใบกำกับภาษีที่สมบูรณ์อยู่แล้ว ใช้ใบรับรองแทนใบเสร็จไม่ได้ — ใบรับรองใช้เฉพาะกรณีขอใบเสร็จไม่ได้หรือใบเสร็จไม่ครบสาระสำคัญ',
   'Configure substitute-receipt approvers and cash evidence policy in company settings before preparation.':
@@ -1436,7 +1448,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'A reviewed expense category or account hint is required.': 'ต้องเลือกหมวดค่าใช้จ่ายที่ตรวจแล้วก่อน',
   'Tax evidence status must be reviewed first.': 'ต้องเลือกก่อนว่าใช้เป็นหลักฐานรายจ่ายได้ไหม',
   'Internal substitute evidence cannot preserve input VAT. Set it to supporting/non-claimable or request an issuer-created replacement tax invoice.':
-    'ใบรับรองแทนที่ออกภายในใช้รักษาภาษีซื้อไม่ได้ ให้ตั้งเป็นหลักฐานประกอบ/ขอคืนไม่ได้ หรือขอใบแทนใบกำกับภาษีจากผู้ขาย',
+    'เลือกใช้ใบรับรองแทนใบเสร็จเป็นหลักฐานประกอบ หรือขอใบแทนใบกำกับภาษีจากผู้ขาย',
   // Substitute-receipt prepare / certify / approve
   'Invalid substitute receipt reasonCode.': 'เลือกเหตุผลที่ออกใบรับรองแทนใบเสร็จจากรายการ',
   'Expense changed after review. Reload before preparing substitute evidence.':
@@ -1485,13 +1497,13 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Expense date is required for confirmation.': 'ต้องระบุวันที่ค่าใช้จ่ายก่อนยืนยันเอกสาร',
   'Grand total amount is invalid.': 'ยอดรวมต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป',
   'A receipt, substitute receipt, or supporting-only document cannot retain a Tax Code.':
-    'ใบเสร็จ ใบรับรองแทน หรือหลักฐานประกอบ ใช้รหัสภาษีไม่ได้ (ต้องเป็นใบกำกับภาษี)',
+    'รูปแบบ VAT นี้ใช้กับเอกสารชนิดนี้ไม่ได้ ตรวจประเภทเอกสารและรูปแบบ VAT',
   'A receipt, substitute receipt, or supporting-only document cannot claim input VAT.':
-    'ใบเสร็จ ใบรับรองแทน หรือหลักฐานประกอบ ขอคืนภาษีซื้อไม่ได้',
+    'ใบเสร็จหรือหลักฐานประกอบใช้ VAT ตอนยื่นภาษีไม่ได้ ตรวจประเภทเอกสารให้ตรงกับใบจริง',
   'Domestic input VAT requires a reviewed TAX_INVOICE with usable tax evidence.':
-    'ภาษีซื้อในประเทศต้องมีใบกำกับภาษีที่ตรวจแล้วและหลักฐานใช้ทางภาษีได้',
+    'ตรวจใบกำกับภาษีเต็มรูปและหลักฐานให้ครบก่อนใช้ VAT ตอนยื่นภาษี',
   'Domestic input VAT requires an attached tax invoice, supplier tax ID, and tax invoice number.':
-    'ภาษีซื้อในประเทศต้องแนบใบกำกับภาษี พร้อมเลขผู้เสียภาษีผู้ขายและเลขที่ใบกำกับภาษี',
+    'แนบใบกำกับภาษีแล้วกรอกเลขผู้เสียภาษีผู้ขายและเลขที่เอกสารให้ครบ',
   'This document is classified as non-expense. Finance must explicitly override the source document type before advancing.':
     'AI จัดเอกสารนี้เป็น "ไม่ใช่ค่าใช้จ่าย" การเงินต้องยืนยันประเภทเอกสารเองก่อนทำต่อ',
   // Non-expense classification override
@@ -1502,9 +1514,9 @@ const MESSAGE_LABELS: Record<string, string> = {
     'ต้องระบุเหตุผลการยืนยันประเภทเอกสาร ไม่เกิน 500 ตัวอักษร',
   'Re-run document classification before overriding this expense.': 'ให้ AI อ่านเอกสารใหม่ก่อนยืนยันประเภทเอกสาร',
   'Remove the existing Tax Code lines before classifying this document as a receipt, substitute receipt, or supporting-only evidence.':
-    'นำรหัสภาษีออกจากรายการก่อนจัดประเภทเอกสารเป็นใบเสร็จ/ใบรับรองแทน/หลักฐานประกอบ',
+    'นำรูปแบบ VAT ที่เลือกไว้ออกจากรายการก่อนเปลี่ยนเป็นใบเสร็จหรือหลักฐานประกอบ',
   // Void / payment
-  'Posting state changed while voiding. Retry the void.': 'สถานะการลงบัญชีเปลี่ยนระหว่างยกเลิกเอกสาร ลองอีกครั้ง',
+  'Posting state changed while voiding. Retry the void.': 'ข้อมูลเปลี่ยนระหว่างยกเลิกเอกสาร เปิดข้อมูลล่าสุดแล้วลองอีกครั้ง',
   'Expense changed before void. Reload and retry.': 'เอกสารถูกแก้ไขก่อนยกเลิก เปิดหน้านี้ใหม่แล้วลองอีกครั้ง',
   'Void reason must be at least 3 characters': 'เหตุผลการยกเลิกต้องยาวอย่างน้อย 3 ตัวอักษร',
   'Paid amount must be between 0 and net payable amount.': 'ยอดจ่ายต้องอยู่ระหว่าง 0 ถึงยอดสุทธิที่ต้องจ่าย',
@@ -1568,9 +1580,9 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
   [/^The VAT mode says VAT applies but line (\d+) has no VAT rate\./,
     (m) => `รายการที่ ${m[1]} ยังไม่ได้เลือกว่ามี VAT หรือไม่มี เลือกให้ครบทุกรายการก่อนยืนยัน`],
   [/^Accounting period (\S+) is not open; reopen it before voiding\.$/,
-    (m) => `งวดบัญชี ${m[1]} ปิดอยู่ ต้องเปิดงวดก่อนจึงจะยกเลิกเอกสารได้`],
+    (m) => accountingPeriodRefusal(m[1])],
   [/^(\S+)\/(\S+) is locked; use an adjustment or amended filing workflow\.$/,
-    (m) => `งวดภาษี ${m[1]} ${m[2]} ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน`],
+    (m) => taxPeriodRefusal(m[1], m[2])],
   // partner-lock.logic.ts: DISABLED/ARCHIVED companies freeze profile/features/AI model (item 7).
   [/^Company is (DISABLED|ARCHIVED): profile, features, and AI model are read-only\. Only lifecycle transitions are allowed\.$/,
     (m) => `บริษัทนี้อยู่ในสถานะ${m[1] === 'DISABLED' ? 'ปิดใช้งาน' : 'เก็บถาวร'} แก้ไขข้อมูลบริษัท สิทธิ์การใช้งาน และรุ่น AI ไม่ได้ ทำได้เฉพาะเปลี่ยนสถานะบริษัทเท่านั้น`],
@@ -1623,6 +1635,10 @@ export function translateApiError(raw: string): string | null {
   // Line validation can join multiple failures; the toast names the first date to fix.
   const incurredDate = /^(line_incurred_date_(?:invalid|in_future)):([1-9]\d?)(?:,|$)/.exec(text);
   if (incurredDate) return `รายการที่ ${incurredDate[2]}: ${CODE_LABELS[incurredDate[1]!]}`;
+  const accounting = /^accounting_period_locked:(.+)$/.exec(text);
+  if (accounting) return accountingPeriodRefusal(accounting[1]);
+  const tax = /^tax_period_locked:([^:]+)(?::([^:]+))?$/.exec(text);
+  if (tax) return taxPeriodRefusal(tax[2] ? tax[1] : undefined, tax[2] ?? tax[1]);
   // Conflicts carry their detail inline, e.g. `..._accounting_period_locked:2026-07`.
   const prefix = Object.keys(CODE_LABELS).find((code) => text.startsWith(`${code}:`));
   if (prefix) return CODE_LABELS[prefix]!;
@@ -1696,6 +1712,8 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     duplicatePhase?: unknown;
     claimStatus?: unknown;
     canCancel?: unknown;
+    periodKey?: unknown;
+    formType?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
@@ -1759,10 +1777,12 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     const payload = (details ?? error) as Partial<ExpenseCorrectionCapabilities> & { blockers?: unknown; blocker?: unknown } | undefined;
     const blockers = Array.isArray(payload?.blockers) ? payload.blockers : [payload?.blocker];
     const messages = code === 'expense_correction_blocked'
-      ? expenseReopenBlockerMessages({ ...payload, canReopen: false, reopenBlockers: blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string') } as ExpenseCorrectionCapabilities)
-      : blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string').map(b => expenseCorrectionBlockerMessage(b, 'cancelPayment'));
+      ? expenseReopenBlockerMessages({ ...payload, canReopen: false, reopenBlockers: blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string') } as ExpenseCorrectionCapabilities, false)
+      : blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string').map(b => expenseCorrectionBlockerMessage(b, 'cancelPayment', payload as ExpenseCorrectionCapabilities, false));
     return messages.length ? messages.join('\n') : EXPENSE_CORRECTION_WORDS.unavailable;
   }
+  if (code === 'accounting_period_locked') return accountingPeriodRefusal((details ?? error)?.periodKey);
+  if (code === 'tax_period_locked') return taxPeriodRefusal((details ?? error)?.formType, (details ?? error)?.periodKey);
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);

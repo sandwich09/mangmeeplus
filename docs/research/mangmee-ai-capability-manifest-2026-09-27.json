@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "2637be6a6de3b77d88040296ae2edf09b21cec8f",
-  "checkoutBranch": "codex/ex1-20261104",
+  "sourceRevision": "fdafd5dec900159c070f38fda56f124991f856fc",
+  "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -17,11 +17,11 @@
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
-      "sha256": "7b6430789522006e694f6620d1522144393da4193c2ae5153c6528463200040d"
+      "sha256": "f9ecb6c7f4f0212f15e9d83d9e9b03ce5f5ef5ca9c79699d529607323e7c01b6"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts",
-      "sha256": "7b6c968362bfcf7d4e517f0cd781f8c9acc888c9e0b41c13115a13adf47cf492"
+      "sha256": "0540753a9ffa04e24bfa8f8c883558f25e6ef289fba1ad64d4be1c4158861cc1"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "48ccd46551b3072424421f5debcfe0bdbfa117afd29772bda02df6c9abd4d638"
+      "sha256": "914cc777ff4bdab7fa7ee45ce1fae69d61b105e4fe13a461d047d4895017f711"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -69,11 +69,11 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
-      "sha256": "43a6bf5ee05c327f25d9ddb4f912c41a6c4de251d4ca186202f268979c1e7f6c"
+      "sha256": "8b274f5f9f6556f878ed09adf6528c5875ff3684f60e5e56e74838b552bee29c"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
-      "sha256": "12846d39452be003951c188f098902ab20fcc0978091a11508181b11b58a1a49"
+      "sha256": "63ec0d3b0a3b7110b92118b641ee857b381e0c15c8108bba7c7cdeca0e51af63"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -149,7 +149,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "b7d552e75827c1bb1e1837441654fedd377b370d13686e3ff5ab0eb01802e2c3"
+      "sha256": "6f3f610329737bf0d33888a82fdda1bcde9f848d4348c65ac40f94a9c8efc8c9"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -213,7 +213,7 @@
     },
     {
       "path": "apps/web/src/features/user-guide/getting-started-guide.content.ts",
-      "sha256": "ef93cde536758ee86211171fdc53abf7e7d291775c82527716b000a91edc8b8b"
+      "sha256": "458a4121921da6c0ddbcd14a9159c3918dbbb4a914038af8bc90e0d2607c32e8"
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
@@ -229,7 +229,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "455b5207e4dead01f81350c03a933bd6c1b172b70c61338a488417f036fcf9af"
+      "sha256": "c954c3d9bae83133f29b2375d7fdb332e941a7b968c90921567fc148e8272b17"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -10173,6 +10173,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-04T11:43:31.998Z",
-  "manifestDigest": "79765677252955e145d3f7ab032c68c81ce326db4ca8c8597f10ccbc8a754b4e"
+  "generatedAt": "2026-11-04T14:09:26.563Z",
+  "manifestDigest": "51a77b996eba369b92ed539bbc894890b4aca010b6c490d4ac998a3e3006a859"
 }

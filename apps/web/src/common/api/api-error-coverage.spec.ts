@@ -497,5 +497,21 @@ it('keeps the receipt file refusal specific to payment, posting, review permissi
 
 it('names both review fields and both ways to fix an incompatible withholding income type', () => {
   const text = apiErrorMessage({ code: 'expense_wht_category_payee_mismatch' });
-  assert.equal(text, 'จ่ายค่าอะไรไม่ตรงกับผู้รับเงิน เลือกประเภทเงินได้ให้ตรง หรือแก้ช่องผู้รับเงินเป็นใครให้ถูกต้อง');
+  assert.equal(text, 'เลือก “จ่ายค่าอะไร” ให้ตรงกับผู้รับเงิน หรือแก้ “ผู้รับเงินเป็นใคร”');
+});
+
+it('PWS-ERROR code and regex period refusals agree and unknown facts stay unknown', () => {
+  const accounting = 'ยกเลิกเอกสารของเดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ';
+  assert.equal(translateApiError('accounting_period_locked:2026-09'), accounting);
+  assert.equal(translateApiError('Accounting period 2026-09 is not open; reopen it before voiding.'), accounting);
+  assert.equal(apiErrorMessage({ code: 'accounting_period_locked', details: { periodKey: '2026-09' } }), accounting);
+  const tax = 'แก้รายการในรอบภาษี ภ.ง.ด.3 เดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ';
+  assert.equal(translateApiError('tax_period_locked:PND3:2026-09'), tax);
+  assert.equal(translateApiError('PND3/2026-09 is locked; use an adjustment or amended filing workflow.'), tax);
+  assert.equal(apiErrorMessage({ code: 'tax_period_locked', details: { formType: 'PND3', periodKey: '2026-09' } }), tax);
+  for (const raw of ['accounting_period_locked:unknown', 'tax_period_locked:UNKNOWN:unknown', 'tax_period_locked:UNKNOWN:2026-13', 'UNKNOWN/unknown is locked; use an adjustment or amended filing workflow.']) {
+    const message = translateApiError(raw)!;
+    assert.ok(message); assert.doesNotMatch(message, /UNKNOWN|unknown|ภ.ง.ด.3|ภ.ง.ด.53|2569|2026-13/);
+    assert.match(message, /ผู้ทำบัญชีตรวจ/);
+  }
 });

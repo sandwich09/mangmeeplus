@@ -24,6 +24,7 @@ test('@journey finance attaches payment instructions while preparing a voucher, 
   await supporting.getByRole('button', { name: 'เอาออก', exact: true }).last().click();
   await expect(supporting.getByRole('button', { name: 'ดูไฟล์', exact: true })).toHaveCount(1, AFTER_PRESS);
   await main.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
+  await expect(main.getByText('หลักฐานว่าบันทึกจ่ายแล้ว', { exact: true })).toHaveCount(0);
   await expect(supporting.getByText('ไฟล์ประกอบ 1 ไฟล์', { exact: true })).toBeVisible(AFTER_PRESS);
   await expect(supporting.getByRole('button', { name: 'เอาออก', exact: true })).toHaveCount(0);
   await supporting.getByRole('button', { name: 'ดูไฟล์', exact: true }).click();

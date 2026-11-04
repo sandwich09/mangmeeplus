@@ -57,7 +57,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
       status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
       refusals: [{ request: 'ของอะไรใกล้หมด', reason: 'feature_disabled' }],
     }, [], 'ของอะไรใกล้หมด', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
-    assert.match(reply.replyText, /Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ/);
+    assert.match(reply.replyText, /งานนี้ยังทำไม่ได้.*เมนูหลัก/);
     assert.equal(reply.replyText.includes('ไม่มีสิทธิ์'), false);
     assert.equal(reply.replyText.includes('inventory'), false);
     assert.deepEqual(reply.sourceRefs, []);
@@ -72,7 +72,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
         { request: 'ขอดูข้อมูลลูกค้า', reason: 'forbidden' },
       ],
     }, [], 'ของอะไรใกล้หมด และขอดูข้อมูลลูกค้า', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
-    assert.match(reply.replyText, /Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ/);
+    assert.match(reply.replyText, /งานนี้ยังทำไม่ได้.*เมนูหลัก/);
     assert.match(reply.replyText, /ไม่มีสิทธิ์/);
     assert.deepEqual(reply.sourceRefs, []);
     assert.deepEqual(reply.webLinks, []);
@@ -1285,5 +1285,29 @@ describe('exam A: current-message language survives Thai account defaults', () =
 it('U5 model formatter never delivers plan enums or em dashes in Thai or English', () => {
   for (const code of ['STARTER', 'BASIC', 'PRO', 'ENTERPRISE']) for (const text of [`แพ็กเกจ (${code}) — ดูได้ค่ะ`, `Your package is ${code} — check Packages.`]) {
     assert.doesNotMatch(safeModelLineText(text), /—|\b(?:STARTER|BASIC|PRO|ENTERPRISE)\b/);
+  }
+});
+
+
+it('PWS-PLAIN-SPOKEN-LABELS / PWS-FIXED-D keeps grounded money and paper names with the plain persona and joke', async () => {
+  const { MANGMEE_PERSONA_PROMPT } = await import('./mangmee-persona');
+  assert.ok(MANGMEE_PERSONA_PROMPT.includes('ค่าใช้จ่าย and ใบเบิก'));
+  assert.ok(JSON.stringify(MANGMEE_JOKE_BANK).includes('เก็บใบเสร็จครบเดือนเหมือนผ่านด่านจอมยุทธเลยค่ะ ⚔️'));
+  const facts = 'หนังสือรับรอง 50 ทวิ หัก ณ ที่จ่าย 30.02 บาท ภ.ง.ด.53 VAT 70.00';
+  assert.equal(safeModelLineText(facts), facts);
+});
+
+it('PWS-FIXED-D own payment says amount to pay and preserves paid and outstanding facts', async () => {
+  const { formatPreparedSimpleRead } = await import('./prepared-simple-read-formatter');
+  const sourceRef = { label: 'Expense', module: 'expenses', entityType: 'expense', entityId: 'expense', permissionChecked: true, webPath: '/companies/c1/expenses/expense' };
+  const data = { expenseDate: '2026-10-01', grandTotalAmount: '1070.00', status: 'CONFIRMED', paymentStatus: 'PARTIALLY_PAID', vendorName: 'Seller',
+    netPayableAmount: '1040.00', paidAmount: '400.00', outstandingAmount: '640.00', payments: { count: 1, lastPaidOn: '2026-10-02', methods: ['CASH'] } };
+  const output: any = { agent: 'accounting', status: 'SUCCEEDED', summary: '', facts: [{ label: 'Expense', value: '1070.00', sourceRef }], suggestions: [],
+    toolCalls: [{ name: 'expense.get_detail', status: 'ok', durationMs: 1 }], requiresHumanReview: false, toolData: [{ tool: 'expense.get_detail', data }], asOf: '2026-10-02T00:00:00Z' };
+  const reply = formatPreparedSimpleRead('expense.get_detail::single_metric', output, { language: 'en', locale: 'en-US', messageText: 'Has this expense been paid?' });
+  assert.equal(reply.kind, 'answer');
+  if (reply.kind === 'answer') {
+    assert.match(reply.replyText, /amount to pay 1,040.00 THB/); assert.match(reply.replyText, /Paid 400.00 THB · Outstanding 640.00 THB/);
+    assert.doesNotMatch(reply.replyText, /net payable/);
   }
 });

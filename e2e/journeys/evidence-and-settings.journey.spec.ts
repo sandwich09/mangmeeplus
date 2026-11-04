@@ -83,6 +83,8 @@ for (const width of [390, 1280, 1556]) test(`@journey free shops cannot open eit
     await expect(main.getByRole('button', { name: label, exact: true })).toHaveCount(0);
   }
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await pressMenu(page, 'อัปโหลดใบเสร็จ', 'ค่าใช้จ่ายและใบเสร็จ');
+  await expect(main.getByText('ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ', { exact: true })).toBeVisible();
   // A real BFF mutation carries the session's CSRF token and Origin, as the web app sends them.
   const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'watchdog_csrf')?.value;
   expect(csrf, 'watchdog_csrf cookie is present after sign-in').toBeTruthy();

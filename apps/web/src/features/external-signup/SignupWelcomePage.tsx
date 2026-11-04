@@ -22,7 +22,7 @@ const LINE_GREEN = '#06C755';
 const LINE_LINK_URL = `/api/auth/line-login/start?returnTo=${encodeURIComponent('/signup/welcome')}`;
 
 const BULLETS = [
-  'ถ่ายรูปใบเสร็จส่งในแชต ระบบลงบัญชีให้',
+  'ใช้มั่งมีพลัสบันทึกรายจ่ายและเก็บใบเสร็จให้ค้นหาได้ง่าย',
   'มีงานรออนุมัติ ระบบเตือนใน LINE',
   'ครั้งหน้าเข้าเว็บด้วย LINE ได้ ไม่ต้องพิมพ์รหัสผ่าน',
 ];

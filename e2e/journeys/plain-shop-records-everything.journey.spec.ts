@@ -100,12 +100,12 @@ async function manual(page: Page, branch: string, simple: boolean, invoice: bool
     await pick(page, 'บนใบพิมพ์ VAT ไว้แบบไหน', 'ทั้ง % และจำนวนเงิน');
     await main.getByRole('spinbutton', { name: 'อัตรา VAT จากเอกสาร (%)', exact: true }).fill('7');
     await main.getByRole('spinbutton', { name: 'VAT จากเอกสาร (บาท)', exact: true }).fill('7');
-    const shopLine = main.getByText('ร้านไม่ได้จด VAT: VAT ในใบนับเป็นต้นทุน ขอคืนไม่ได้', { exact: true });
+    const shopLine = main.getByText('ร้านไม่ได้จด VAT จึงนำ VAT ในใบนี้ไปใช้ตอนยื่นภาษีไม่ได้', { exact: true });
     // The answer, not the short-form mode, decides this sentence.
     if (simple && vatStatus === 'NOT_REGISTERED') await expect(shopLine).toBeVisible(); else await expect(shopLine).toHaveCount(0);
     if (vatStatus === 'UNKNOWN') await expect(main.getByText('ร้านยังไม่ตอบเรื่อง VAT บันทึกรายจ่ายได้ตามเดิม', { exact: false }).first()).toBeVisible();
     const totals = main.getByTestId('expense-review-totals');
-    const totalValue = metricValue(totals, 'ยอดรวม'), vatValue = metricValue(totals, 'ภาษีมูลค่าเพิ่ม');
+    const totalValue = metricValue(totals, 'ยอดรวม'), vatValue = metricValue(totals, 'VAT');
     await expect(totalValue).toBeVisible();
     await expect(vatValue).toBeVisible();
     await expect(totalValue).toHaveText(whole('107.00 บาท'), AFTER_PRESS);
@@ -113,7 +113,7 @@ async function manual(page: Page, branch: string, simple: boolean, invoice: bool
     // The base is no longer a separate line: the displayed total less displayed VAT must still be 100.
     const numberOn = async (value: Locator) => Number((await value.innerText()).replace(/[^\d.]/g, ''));
     expect(await numberOn(totalValue) - await numberOn(vatValue)).toBe(100);
-    await expect(totals.getByText(/^ฐานภาษี \(ยอดก่อน VAT\)|^VAT ที่คำนวณได้/)).toHaveCount(0);
+    await expect(totals.getByText(/^ยอดก่อน VAT|^VAT ที่คำนวณได้/)).toHaveCount(0);
     await expect(main.getByText(whole('VAT ที่คำนวณได้ 7.00 บาท'))).toBeVisible();
   }
   if (!invoice) {
@@ -124,6 +124,8 @@ async function manual(page: Page, branch: string, simple: boolean, invoice: bool
   await pick(page, 'ประเภทเอกสาร', invoice ? 'ใบกำกับภาษี (เต็มรูป)' : 'ใบเสร็จรับเงิน');
   await pick(page, 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ใช้ได้');
   await next(page, page.locator('main [aria-current="step"]').filter({ hasText: 'ตรวจสรุป' }));
+  // PWS-CHAIN: this is a review-screen answer, separate from the accountant export header.
+  if (invoice && vatStatus !== 'NOT_REGISTERED') await expect(main.getByText('ใช้ VAT ตอนยื่นภาษี: รอตรวจสอบ', { exact: true }).first()).toBeVisible();
   if (!invoice) {
     const summary = main.locator('.mangmee-card').filter({ has: page.getByRole('heading', { name: 'สรุปการตรวจ', exact: true }) });
     await expect(summary).toContainText('เลขผู้เสียภาษีผู้ขายครบ 13 หลัก แต่ดูไม่ถูกต้อง');
@@ -254,7 +256,7 @@ test(`@journey ${SHOP_NAME} records receipts, a VAT invoice, a phone upload, a s
     await expect(main.getByText(/^บันทึกร่างค่าใช้จ่าย EXP-.* แล้ว$/)).toBeVisible(AFTER_PRESS);
     await expect(main.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
     await expect(main.getByRole('status').filter({ hasText: 'ยังขาด:' })).toContainText('ติ๊กว่าเข้าใจแล้ว');
-    await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จไม่ใช่ใบกำกับภาษี ใช้ขอคืน VAT ไม่ได้', exact: true }).check();
+    await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้', exact: true }).check();
     await next(owner, 'ผู้รับเงิน');
     await main.getByRole('textbox', { name: /^ชื่อผู้รับเงิน/ }).fill(payee);
     await main.getByRole('textbox', { name: 'เหตุผลที่ไม่มีใบเสร็จรับเงิน', exact: true }).fill('ร้านตลาดสดไม่ได้ออกใบเสร็จ');

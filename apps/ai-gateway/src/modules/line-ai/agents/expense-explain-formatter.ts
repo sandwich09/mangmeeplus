@@ -195,10 +195,10 @@ export function formatExpenseExplainReply(data: unknown, lineDraftEditEnabled = 
 
   const lines = [
     `บิล ${vendor}${date ? ` ${date}` : ''}${docNumber ? ` เลขที่ ${docNumber}` : ''} ยอด ${grand} บาทค่ะ`,
-    `มาจาก ${terms.join(' + ')} = ฐานภาษี ${taxable} แล้วบวก VAT ${vat} เป็น ${grand}`,
+    `มาจาก ${terms.join(' + ')} = ยอดที่ใช้คิด VAT ${taxable} แล้วบวก VAT ${vat} เป็น ${grand}`,
   ];
   if (chargeRows.length > 0) {
-    lines.push('ค่าใช้จ่ายเพิ่มแยกเป็นช่องของตัวเอง เพื่อให้ยอดฐานภาษีและ VAT ถูกต้อง ไม่ได้นับซ้ำกับสินค้านะคะ');
+    lines.push('ค่าใช้จ่ายเพิ่มแยกไว้เพื่อให้ตรวจกับบิลได้ค่ะ');
   }
   // Slice B's stored-header-vs-stored-lines check. A record whose own totals do not reconcile is
   // warned about BEFORE anything else optional, so the arithmetic above is never read as verified.

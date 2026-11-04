@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { activeProductHelpPack, PRODUCT_HELP_PACK, PRODUCT_HELP_DRAFT_PACK } from './approved-product-help';
+import { activeProductHelpPack, PRODUCT_HELP_PACK, PRODUCT_HELP_DRAFT_PACK, PRODUCT_HELP_V6_PACK } from './approved-product-help';
 import { eligibleKnowledgeCards, knowledgeCardHash, knowledgePackHash, renderApprovedKnowledge, validateKnowledgePack, type KnowledgeAccess } from './approved-knowledge';
 const access = (): KnowledgeAccess => ({ release: '2.4.0', permissions: [], featureKeys: [], capabilities: [], member: true, now: new Date('2026-10-15T00:00:00Z') });
 const rehash = (pack: typeof PRODUCT_HELP_PACK) => { for (const card of pack.cards) card.contentHash = knowledgeCardHash(card); pack.contentHash = knowledgePackHash(pack); return pack; };
@@ -348,11 +348,11 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
   });
 });
 
-describe('owner-approved v6 product help and previous v4 record', () => {
-  it('serves all 68 owner-approved v6 cards and retains the previous approved v4 record', () => {
+describe('owner-approved v7 product help and previous v6/v4 records', () => {
+  it('serves all 68 owner-approved v7 cards and retains the previous approved v6/v4 records', () => {
     validateKnowledgePack(PRODUCT_HELP_DRAFT_PACK);
-    assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 6); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'APPROVED');
-    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, ['owner-review:2026-10-21']); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 68);
+    assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 7); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'APPROVED');
+    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ']); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 68);
     assert.equal(PRODUCT_HELP_PACK.cards.length, 12); assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
     assert.ok(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] }).some(card => card.id === 'wht.calculation'));
     const root = resolve(__dirname, '../../../../../..');
@@ -365,7 +365,7 @@ describe('owner-approved v6 product help and previous v4 record', () => {
       assert.ok(card.sourceFile.endsWith('getting-started-guide.content.ts') ? source.includes(`"${anchor}":`) : source.includes(`id: '${anchor}'`), card.id);
     }
   });
-  it('filters owner-approved v6 cards by their source permissions and sold features', () => {
+  it('filters owner-approved v7 cards by their source permissions and sold features', () => {
     const pack = activeProductHelpPack();
     const all = { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] };
     assert.deepEqual(eligibleKnowledgeCards(pack, all).filter(c => /^(voucher|wht)\./.test(c.id)).map(c => c.id), ['voucher.meaning', 'wht.certificate-meaning', 'wht.pnd53-due', 'wht.calculation']);
@@ -373,11 +373,12 @@ describe('owner-approved v6 product help and previous v4 record', () => {
     assert.equal(eligibleKnowledgeCards(pack, { ...all, permissions: [] }).some(c => c.id.startsWith('wht.')), false);
     assert.match(renderApprovedKnowledge(pack, ['wht.calculation'], all, 'company-A')!.replyText, /จ่ายค่าอะไร/);
   });
-  it('LINE-HELP-APPROVE serves reviewed v6 while preserving the previous v4 bytes', () => {
+  it('LINE-HELP-APPROVE serves reviewed v7 while preserving the previous v6/v4 bytes', () => {
     assert.equal(activeProductHelpPack(), PRODUCT_HELP_DRAFT_PACK);
+    assert.equal(PRODUCT_HELP_V6_PACK.contentHash, '0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0');
     assert.equal(PRODUCT_HELP_PACK.contentHash, 'd900b41d31287179551c270635e1333d56432b86627ce7f5b7ad3bfd2571ab14');
     for (const original of PRODUCT_HELP_PACK.cards) {
-      const draft = PRODUCT_HELP_DRAFT_PACK.cards.find(card => card.id === original.id)!;
+      const draft = PRODUCT_HELP_V6_PACK.cards.find(card => card.id === original.id)!;
       assert.notEqual(draft.body, original.body); assert.equal(draft.sourceHash, original.sourceHash);
       assert.equal(draft.version, original.version + 1);
     }
@@ -397,9 +398,11 @@ describe('owner-approved v6 product help and previous v4 record', () => {
     const allowedEmoji = new Set(['😊', '☺️', '🙂', '😄', '😁', '😆', '🥰', '😳', '🤗', '😉', '💚']);
     for (const card of PRODUCT_HELP_DRAFT_PACK.cards) {
       const emoji = [...graphemes.segment(card.body)].filter(part => /\p{Extended_Pictographic}/u.test(part.segment));
-      assert.ok(emoji.length >= 1 && emoji.length <= 2, card.id);
+      const exactOwnerCopy = ['expense.vat-display', 'expense.export', 'wht.calculation', 'expense.vat-credit'].includes(card.id);
+      if (exactOwnerCopy) assert.equal(emoji.length, 0, card.id);
+      else assert.ok(emoji.length >= 1 && emoji.length <= 2, card.id);
       for (const part of emoji) assert.ok(allowedEmoji.has(part.segment), `${card.id}: ${part.segment}`);
-      assert.ok(emoji.some(part => part.segment !== '💚'), `${card.id}: a warm face accompanies the answer`);
+      if (!exactOwnerCopy) assert.ok(emoji.some(part => part.segment !== '💚'), `${card.id}: a warm face accompanies the answer`);
       assert.match(card.body, /ค่ะ|นะคะ/, card.id);
       assert.doesNotMatch(card.body, /🤖|ครับ|อย่า(?!ง)|ห้าม|การถาม.*ยังไม่ได้|\*\*|```/, card.id);
       assert.ok(Buffer.byteLength(card.body) <= 4096, card.id);
@@ -424,6 +427,10 @@ describe('owner-approved v6 product help and previous v4 record', () => {
       assert.ok(source?.includes(label!), `${label}: ${file}:${line}`);
     }
     for (const card of PRODUCT_HELP_DRAFT_PACK.cards) for (const name of card.body.matchAll(/“([^”]+)”/gu)) {
+      if (name[1] === 'ใช้ VAT ตอนยื่นภาษี') {
+        assert.ok(readFileSync(resolve(root, 'packages/contracts/src/expenses.ts'), 'utf8').includes(name[1]));
+        continue;
+      }
       assert.ok(labels.has(name[1]!), `${card.id}: ${name[1]}`);
     }
     assert.ok(labels.has('เปิดร้านใหม่')); // The unchanged public-policy card uses the same LINE door.
@@ -432,7 +439,7 @@ describe('owner-approved v6 product help and previous v4 record', () => {
     const root = resolve(__dirname, '../../../../../..');
     const sheet = readFileSync(resolve(root, 'docs/agent-memory/line-help-cards-review-2026-10-20.md'), 'utf8');
     assert.match(sheet, /Status: APPROVED.*2026-10-21/);
-    for (const card of PRODUCT_HELP_DRAFT_PACK.cards) {
+    for (const card of PRODUCT_HELP_V6_PACK.cards) {
       const rows = sheet.split('\n').filter(line => line.startsWith(`| ${card.id} |`));
       assert.equal(rows.length, 1, card.id);
       assert.ok(rows[0]!.includes(card.body.replace(/\|/g, '\\|').replace(/\n/g, '<br>')), card.id);

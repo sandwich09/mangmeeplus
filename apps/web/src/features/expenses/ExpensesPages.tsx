@@ -10,7 +10,7 @@ import { ExpenseInputVatRight } from './ExpenseInputVatRight';
 import { whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, expenseDocumentDateStatus, civilDate } from '@watchdog-bms/contracts';
 import { mergeExpenseUnsavedFields, expenseTaxEvidenceReasonMessage } from './expenses.model';
 
-import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { INPUT_VAT_RIGHT_LABEL, THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
 import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
 
@@ -90,7 +90,7 @@ import {
   uploadErrorMessage,
 } from '@/common/files/upload-file.logic';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
-import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
+import { taxChoiceLabel, taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
   appendReceiptFiles, captureFileRejection, captureMegabytes, entryForFile, runSingleFileUploads,
   type CaptureUploadEntry, type CaptureUploadState,
@@ -1263,7 +1263,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             <Fact label="หลักฐานรายจ่าย">{!documentDetails && reviewTaxStatus === 'NEEDS_REVIEW' ? null : expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, reviewTaxStatus)}</Fact>
           </dl>
           {showInputVatQuestion(detail) && <ExpenseInputVatRight companyId={companyId} detail={detail} showLabel={false} canReview={!isMutable && canReview} onSaved={onSaved} fixAction={fixAction} canAnswerVatStatus={canAnswerVatStatus} canEditShopIdentity={canEditShopIdentity} canReadTaxPeriods={canReadTaxPeriods}
-            renderReadOnly={content => <dl><Fact label="สิทธิภาษีซื้อ">{content}</Fact></dl>} />}
+            renderReadOnly={content => <dl><Fact label={INPUT_VAT_RIGHT_LABEL}>{content}</Fact></dl>} />}
           <dl className="divide-y divide-gray-100">
             <Fact label={t('expenses.category', locale)}>{categoryName ?? lineCategoryName}</Fact>
             <Fact label="ใบเสร็จ">{assessment.receiptProblem === 'NONE' ? null : RECEIPT_PROBLEM_LABELS[assessment.receiptProblem]}</Fact>
@@ -1291,7 +1291,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             {/* In the certificate wizard the certificate itself is not a type to pick: before one exists it only blocks the wizard. A record already saved with it still shows it. */}
             {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).filter(([k]) => k !== 'NEEDS_REVIEW' && (!substituteReceiptFlow || k !== 'SUBSTITUTE_RECEIPT' || docType === k)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
-          {docType === 'TAX_INVOICE' && (docType !== detail.sourceDocumentType || detail.inputVatClaimStatus === 'NEEDS_REVIEW') && Number(detail.vatAmount) > 0 && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED' && <p className="mt-1 text-sm text-gray-600">มีใบกำกับภาษีเต็มรูป — รอตรวจสอบสิทธิภาษีซื้อ</p>}
+          {docType === 'TAX_INVOICE' && (docType !== detail.sourceDocumentType || detail.inputVatClaimStatus === 'NEEDS_REVIEW') && Number(detail.vatAmount) > 0 && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED' && <p className="mt-1 text-sm text-gray-600">มีใบกำกับภาษีเต็มรูป รอตรวจ VAT สำหรับยื่นภาษี</p>}
           {validationShown && docType === 'NEEDS_REVIEW' && <p role="alert" className="mt-1 text-sm text-error-700">เลือกประเภทเอกสาร</p>}
         </div>}
         {!noDocument && <div>
@@ -1304,7 +1304,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           {taxEvidenceReason && <p className="mt-1 text-sm text-gray-500">{t('expenses.reason_label', locale)}: {taxEvidenceReason}</p>}
         </div>}
         <div className="col-span-full">{docType !== detail.sourceDocumentType && !noDocument && Number(detail.vatAmount) > 0 && detail.inputVatRight?.vatStatus !== 'NOT_REGISTERED'
-          ? <p className="text-sm text-gray-600">กด “ถัดไป” เพื่อบันทึกประเภทเอกสาร แล้วดูสิทธิภาษีซื้อที่ระบบตอบ</p>
+          ? <p className="text-sm text-gray-600">กด “ถัดไป” เพื่อบันทึกประเภทเอกสารและตรวจ VAT</p>
           : <ExpenseInputVatRight companyId={companyId} detail={detail} canReview={canReview} saveRef={vatSaveRef} fixAction={key => key === 'receipt' ? attachFileButton('แนบเอกสาร') : fixAction?.(key)} canAnswerVatStatus={canAnswerVatStatus} canEditShopIdentity={canEditShopIdentity} canReadTaxPeriods={canReadTaxPeriods} onDirtyChange={setVatDirty} />}</div>
         <div>
           <div className={cx(FIELD_LABEL, 'min-h-6 whitespace-nowrap')}>
@@ -2199,7 +2199,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               suggestedTaxCode={detail.categoryDefaultInputTaxCode ?? null}
               onChange={(id, definition) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, lines: current.lines.map((item, lineIndex) => lineIndex === index ? { ...item, taxCodeDefinitionId: id || null, externalTaxCode: definition?.externalCode ?? null, vatRate: definition ? taxDefinitionRateForSource(definition.rate, 'expense') : '', vatTreatment: definition && Number(definition.rate) === 0 ? item.vatTreatment : null } : item) })); }}
             />
-          </div> : <p className="mt-3 text-xs text-gray-500">รหัสภาษีซื้อในประเทศเลือกได้เมื่อเอกสารถูกจัดประเภทเป็นใบกำกับภาษีเท่านั้น</p>}
+          </div> : <p className="mt-3 text-xs text-gray-500">เลือกใช้ VAT ตอนยื่นภาษีได้เมื่อเลือกประเภทเอกสารเป็นใบกำกับภาษี</p>}
         </div>
         );
       })}
@@ -2332,7 +2332,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {showsVatCard && (
           <div className="space-y-3 rounded-xl border border-brand-100 bg-brand-25 p-3 sm:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-semibold text-gray-800">ภาษีมูลค่าเพิ่ม (VAT)</p>
+              <p className="font-semibold text-gray-800">VAT</p>
               {!vatSourceDirty && vatSnapshot && (
                 <MangmeeBadge tone={['MATCHED', 'REVIEWER_ACCEPTED'].includes(vatSnapshot.reconciliation.status) ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
                   {vatStatusLabel}
@@ -2340,7 +2340,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               )}
             </div>
             {capture.vatStatus === 'NOT_REGISTERED' && (
-              <p className="rounded-lg bg-white px-3 py-2 text-sm text-gray-600">ร้านไม่ได้จด VAT: VAT ในใบนับเป็นต้นทุน ขอคืนไม่ได้</p>
+              <p className="rounded-lg bg-white px-3 py-2 text-sm text-gray-600">ร้านไม่ได้จด VAT จึงนำ VAT ในใบนี้ไปใช้ตอนยื่นภาษีไม่ได้</p>
             )}
             {capture.vatStatus === 'UNKNOWN' && <p className="text-sm">ร้านยังไม่ตอบเรื่อง VAT บันทึกรายจ่ายได้ตามเดิม · <>{capture.canAnswerVatStatus ? <Link href={`/companies/${companyId}/settings/profile#shop`} className="underline">ตั้งค่าร้าน › ข้อมูลร้าน</Link> : 'ให้เจ้าของกิจการหรือผู้ดูแลร้านตอบที่ตั้งค่าร้าน › ข้อมูลร้าน'}</></p>}
             <label className="block">
@@ -2453,7 +2453,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                     <p className="mt-1 text-sm text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
                   </> : <MoneyRow label="VAT ที่คำนวณได้" value={liveTotals?.totals?.vatAmount ?? detail.vatAmount} />}
                   {!collapsesVatBase && vatBaseGroups.map(([rate, amount]) => (
-                    <MoneyRow key={rate} label={`ฐาน VAT ${Number(rate)}% (ใช้จริง)`} value={amount.toFixed(4)} />
+                    <MoneyRow key={rate} label={`ยอดที่ใช้คิด VAT ${Number(rate)}% (ใช้จริง)`} value={amount.toFixed(4)} />
                   ))}
                 </div>
               )}
@@ -2521,7 +2521,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                     </label>
                     <p className="text-xs text-gray-500">
                       {vatOverrideReason.trim() !== '' && vatOverrideLineNumber !== null
-                        ? 'กด “ยืนยันและลงบัญชี” เพื่อบันทึกโดยใช้ยอดตามเอกสาร ระบบจะเก็บชื่อผู้ตัดสินใจและเหตุผลไว้ในประวัติการตรวจสอบ'
+                        ? 'กด “ยืนยันเอกสาร” เพื่อใช้ยอดตามเอกสารและเก็บเหตุผลไว้'
                         : 'เลือกรายการที่รับส่วนต่างและกรอกเหตุผลก่อน จึงจะยืนยันด้วยยอดตามเอกสารได้'}
                     </p>
                   </div>
@@ -2967,7 +2967,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const statusBadges = (e: ExpenseSummary) => {
     if (freeExpenseDrafts) return <MangmeeBadge tone="amber">ร่าง</MangmeeBadge>;
     const status = expenseListStatus(e);
-    return <><MangmeeBadge tone={status.tone}>{status.label}</MangmeeBadge>{!isExpenseCancelled(e.status) && showListedInputVatRight(e) && e.inputVatClaimStatus === 'NEEDS_REVIEW' && <MangmeeBadge tone="amber">ภาษีซื้อรอตรวจสอบ</MangmeeBadge>}</>;
+    return <><MangmeeBadge tone={status.tone}>{status.label}</MangmeeBadge>{!isExpenseCancelled(e.status) && showListedInputVatRight(e) && e.inputVatClaimStatus === 'NEEDS_REVIEW' && <MangmeeBadge tone="amber">รอตรวจ VAT สำหรับยื่นภาษี</MangmeeBadge>}</>;
   };
   const recordedOnAnotherDay = (e: ExpenseSummary) => dateShort(e.uploadedAt) !== dateShort(e.expenseDate);
   const canExportHere = canExportExpenseList(freeExpenseDrafts, caps) && (!sourceView || sourceView === 'confirmed');
@@ -3350,7 +3350,7 @@ export function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entr
         </MangmeeCard>
         {showsTaxCapture(capture.mode) && <MangmeeCard className="space-y-3 p-4">
           {sectionTitle('expenses.manual_tax_section', 'expenses.manual_tax_helper')}
-          <TransactionTaxLineSelector hideWhenNothingToChoose companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={String(totals.subtotal)} grossAmount={String(totals.grandTotal)} enteredTaxAmount={String(totals.vat)} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? `${definition.externalCode} · ${definition.displayName}` : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
+          <TransactionTaxLineSelector hideWhenNothingToChoose companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={String(totals.subtotal)} grossAmount={String(totals.grandTotal)} enteredTaxAmount={String(totals.vat)} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? taxChoiceLabel(definition, 'expense.record', 'INPUT') : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
           <div>
             <span className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
               <label htmlFor="manual-expense-vat-mode">{t('expenses.vat_mode', locale)}</label>

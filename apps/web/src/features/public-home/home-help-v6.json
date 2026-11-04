@@ -1,5 +1,5 @@
 {
-  "sourcePackHash": "0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0",
+  "sourcePackHash": "fb42b47fae1b91cbf04d59c518236fe67ad7e89cba8cb5c9e7f0f899f63676c0",
   "cards": [
     {
       "id": "expense.start",
@@ -32,7 +32,7 @@
     {
       "id": "expense.vat-display",
       "titleTh": "VAT ที่พบในเอกสารหมายถึงอะไร",
-      "answerTh": "VAT ที่พบยังไม่ใช่สิทธิ์ภาษีซื้อ ต้องตรวจประเภทและเงื่อนไขก่อนยื่น",
+      "answerTh": "ยอดที่อ่านได้จากเอกสาร ยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้",
       "titleEn": "VAT displayed on expenses",
       "answerEn": "Detected VAT is not automatically claimable input VAT; check document type and eligibility."
     },
@@ -109,7 +109,7 @@
     {
       "id": "wht.calculation",
       "titleTh": "หัก ณ ที่จ่ายคิดอย่างไร",
-      "answerTh": "ใช้ยอดก่อน VAT คูณอัตราประเภทเงินได้ ต้องเลือกจ่ายค่าอะไรให้ตรง",
+      "answerTh": "เลือก “จ่ายค่าอะไร” แล้วใช้ยอดก่อน VAT คูณอัตราที่แสดง",
       "titleEn": "Withholding calculation",
       "answerEn": "Multiply the pre-VAT amount by the selected income-type rate; choose the actual payment purpose."
     },
@@ -290,8 +290,8 @@
     },
     {
       "id": "expense.vat-credit",
-      "titleTh": "VAT ใช้เป็นภาษีซื้อได้ไหม",
-      "answerTh": "ตรวจประเภทและเงื่อนไขสิทธิ์ภาษีซื้อ มีตัวจริงแต่ไม่มีรูปเลือกไว้แล้วแนบทีหลังได้",
+      "titleTh": "VAT นี้ใช้ตอนยื่นภาษีได้ไหม",
+      "answerTh": "ขึ้นกับเอกสารและเงื่อนไขของรายการ ดูคำตอบ “ใช้ VAT ตอนยื่นภาษี” ในรายการนั้น มีตัวจริงแต่ยังไม่มีรูป เลือก “มีตัวจริง ยังไม่ได้แนบรูป” แล้วแนบทีหลังได้",
       "titleEn": "Input VAT eligibility",
       "answerEn": "Check document type and VAT eligibility; retain an original-paper declaration and attach its image later."
     },
@@ -452,7 +452,7 @@
     {
       "id": "pnd53.prepare",
       "titleTh": "เตรียม ภ.ง.ด.53 และบันทึกการยื่น",
-      "answerTh": "ร้านที่เปิดใช้ตรวจงวด ภ.ง.ด.53 และผู้รับเงินก่อนส่งออก การยื่นและนำส่งแยกจาก 50 ทวิ",
+      "answerTh": "ร้านที่มีเมนูภาษีหัก ณ ที่จ่าย เปิดเดือนที่ต้องการ ตรวจผู้รับเงินให้ครบ แล้วส่งออก ภ.ง.ด.53 ไปยื่น การยื่นแยกจากการออก 50 ทวิ",
       "titleEn": "Prepare PND 53",
       "answerEn": "Enabled, authorized shops review the period and payees before export; filing and remittance are separate from 50 bis."
     },

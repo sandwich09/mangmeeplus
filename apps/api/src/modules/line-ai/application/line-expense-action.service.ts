@@ -83,9 +83,9 @@ const MISSING_LABELS: Record<string, string> = {
   date: 'วันที่รายการ', expenseDate: 'วันที่รายการ', amount: 'ยอดเงิน', grandTotalAmount: 'ยอดเงิน', price: 'ราคาต่อหน่วยหรือยอดรวม', unitPrice: 'ราคาต่อหน่วย', totalAmount: 'ยอดรวม',
   items: 'รายการสินค้า/บริการ', lines: 'รายการสินค้า/บริการ', description: 'ชื่อสินค้า/บริการ', quantity: 'จำนวน',
   evidence: 'หลักฐาน', primaryAttachmentId: 'หลักฐาน', receipt: 'ใบเสร็จ', receipt_evidence: 'ใบเสร็จ', evidenceReview: 'การตรวจหลักฐาน', documentReview: 'การตรวจหลักฐาน', review: 'การตรวจรายการ',
-  vatRate: 'อัตรา VAT', rate: 'อัตรา VAT', vatMode: 'รูปแบบ VAT', inputVatClaimStatus: 'สิทธิ์ขอคืน VAT', taxEvidenceStatus: 'ประเภทหลักฐานภาษี',
+  vatRate: 'อัตรา VAT', rate: 'อัตรา VAT', vatMode: 'รูปแบบ VAT', inputVatClaimStatus: 'ใช้ VAT ตอนยื่นภาษี', taxEvidenceStatus: 'หลักฐานรายจ่าย',
   businessPurpose: 'วัตถุประสงค์ค่าใช้จ่าย', purpose: 'วัตถุประสงค์ค่าใช้จ่าย', vendorTaxId: 'เลขผู้เสียภาษีผู้ขาย', vendorAddress: 'ที่อยู่ผู้ขาย', paymentMethod: 'วิธีจ่าย',
-  vendorDocumentNumber: 'เลขที่เอกสาร', vatAmount: 'ยอด VAT', currency: 'สกุลเงิน', whtRate: 'อัตราหัก ณ ที่จ่าย', whtCategoryCode: 'ประเภทเงินได้', vendorEntityKindSnapshot: 'ประเภทผู้เสียภาษีผู้รับเงิน',
+  vendorDocumentNumber: 'เลขที่เอกสาร', vatAmount: 'ยอด VAT', currency: 'สกุลเงิน', whtRate: 'อัตราหัก ณ ที่จ่าย', whtCategoryCode: 'จ่ายค่าอะไร', vendorEntityKindSnapshot: 'ประเภทผู้เสียภาษีผู้รับเงิน',
 };
 const PAYMENT_LABELS = { UNPAID: 'ยังไม่จ่าย', PARTIALLY_PAID: 'จ่ายบางส่วนแล้ว', PAID: 'จ่ายแล้ว' };
 
@@ -110,14 +110,14 @@ export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
   EXPENSE_SOURCE_DRAFT_INCOMPLETE: 'ข้อมูลร่างยังไม่ครบค่ะ พิมพ์ข้อมูลที่ขาดในแชตเพื่อแก้ร่างก่อน',
   EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED: 'ยังขาดการตรวจวันที่รายการ ตรวจวันที่แล้วบอกวันที่ในแชตได้เลยค่ะ',
   EXPENSE_EVIDENCE_REVIEW_REQUIRED: 'เปิดหน้ารายการเพื่อตรวจประเภทเอกสารและหลักฐานให้ครบก่อนยืนยันค่ะ',
-  EXPENSE_DOCUMENT_REVIEW_INCOMPLETE: 'เลือกประเภทเอกสารและสถานะหลักฐานภาษีในหน้ารายการให้ครบก่อนค่ะ',
+  EXPENSE_DOCUMENT_REVIEW_INCOMPLETE: 'เลือกประเภทเอกสารและตรวจหลักฐานรายจ่ายให้ครบที่หน้ารายการค่ะ',
   EXPENSE_VAT_RECONCILIATION_REQUIRED: 'ให้ผู้ตรวจรายจ่ายเทียบยอด VAT กับเอกสารและบันทึกเหตุผลยอมรับส่วนต่างในหน้ารายการก่อนค่ะ',
   EXPENSE_VAT_OVERRIDE_INVALID: 'ระบุเหตุผลและบรรทัดที่มี VAT ในหน้ารายการก่อนยอมรับยอดตามเอกสารค่ะ',
   EXPENSE_VAT_OVERRIDE_STALE: EXPENSE_ACTION_CHANGED,
-  EXPENSE_VAT_TAX_RATE_CONFLICT: 'ให้ผู้ตรวจรายจ่ายแก้อัตรา VAT หรือรหัสภาษีให้ตรงกันในหน้ารายการก่อนค่ะ',
-  EXPENSE_VAT_TAX_TOLERANCE_REQUIRED: 'ให้ผู้ตรวจรายจ่ายตรวจยอด VAT และค่าคลาดเคลื่อนของรหัสภาษีในเว็บก่อนค่ะ',
-  transaction_tax_needs_review: 'ให้ผู้ตรวจรายจ่ายตรวจรหัสภาษีและหลักฐานภาษีในหน้ารายการก่อนค่ะ',
-  input_vat_not_available_company_not_vat_registered: 'บริษัทไม่ได้จด VAT ณ วันที่เอกสารค่ะ ให้ผู้ตรวจรายจ่ายแก้สิทธิ์เครดิต VAT ในหน้ารายการก่อน',
+  EXPENSE_VAT_TAX_RATE_CONFLICT: 'ให้ผู้ตรวจรายจ่ายแก้อัตราและรูปแบบ VAT ให้ตรงกันที่หน้ารายการค่ะ',
+  EXPENSE_VAT_TAX_TOLERANCE_REQUIRED: 'ให้ผู้ตรวจรายจ่ายตรวจส่วนต่าง VAT ที่หน้ารายการค่ะ',
+  transaction_tax_needs_review: 'ให้ผู้ตรวจรายจ่ายตรวจรูปแบบ VAT และหลักฐานที่หน้ารายการค่ะ',
+  input_vat_not_available_company_not_vat_registered: 'ให้ผู้ตรวจรายจ่ายตรวจคำตอบเรื่อง VAT ที่หน้ารายการค่ะ',
   expense_confirmation_source_status_changed: 'สถานะรายการเปลี่ยนแล้วค่ะ ขอเปิดรายการล่าสุดก่อนยืนยันอีกครั้ง',
   expense_confirmation_source_version_changed: EXPENSE_ACTION_CHANGED,
   expense_confirmation_source_checksum_changed: EXPENSE_ACTION_CHANGED,
@@ -129,7 +129,7 @@ export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
   EXPENSE_UPDATE_VERSION_REQUIRED: EXPENSE_ACTION_CHANGED,
   EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED: EXPENSE_ACTION_CHANGED,
   substitute_evidence_locks_expense: 'ให้ผู้ตรวจรายจ่ายจัดทำใบรับรองฉบับแก้ไขก่อนเปลี่ยนข้อมูลที่ลงนามแล้วค่ะ',
-  substitute_evidence_nonclaimable: 'ใบรับรองนี้ใช้เครดิต VAT ไม่ได้ค่ะ ให้ผู้ตรวจรายจ่ายแก้สิทธิ์ VAT ในหน้ารายการก่อน',
+  substitute_evidence_nonclaimable: 'ให้ผู้ตรวจรายจ่ายตรวจคำตอบเรื่อง VAT ที่หน้ารายการค่ะ',
   substitute_evidence_doc_type_locked: 'ให้ผู้ตรวจรายจ่ายจัดทำใบรับรองฉบับแก้ไขก่อนเปลี่ยนประเภทเอกสารค่ะ',
   pp36_historical_tax_snapshot_changed: EXPENSE_ACTION_CHANGED,
   TRANSACTION_BRANCH_REQUIRED: 'ยังขาดสาขาค่ะ พิมพ์ชื่อสาขาของรายการนี้ในแชตได้เลย',
@@ -142,9 +142,9 @@ export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
   expense_disbursement_reserved: 'ให้ผู้จัดทำใบเตรียมจ่ายนำรายการนี้ออกจากใบเตรียมจ่ายหรือยกเลิกใบนั้นก่อนค่ะ',
   expense_certificate_attestation_required: 'เปิดหน้ารายการเพื่อตรวจและรับรองการยกเลิกหนังสือหักภาษีก่อนค่ะ',
   certificate_issued: 'ให้ผู้ดูแลภาษีจัดการหนังสือรับรองที่ออกจากงานภาษีก่อนยกเลิกรายการค่ะ',
-  posting_unresolved: 'ให้ผู้ดูแลบัญชีจัดการรายการลงบัญชีที่ค้างอยู่ก่อนยกเลิกรายการค่ะ',
-  accounting_period_locked: 'ให้ผู้ดูแลบัญชีเปิดงวดบัญชีที่ปิดอยู่ก่อนทำรายการค่ะ',
-  tax_period_locked: 'ให้ผู้ดูแลภาษีเปิดงวดภาษีที่ล็อกอยู่ก่อนทำรายการค่ะ',
+  posting_unresolved: 'รายการนี้ยังทำต่อไม่ได้ ให้ผู้ทำบัญชีตรวจจากหน้ารายการค่ะ',
+  accounting_period_locked: 'รายการนี้ยังทำต่อไม่ได้ ให้ผู้ทำบัญชีตรวจจากหน้ารายการค่ะ',
+  tax_period_locked: 'รายการนี้ยังทำต่อไม่ได้ ให้ผู้ทำบัญชีตรวจจากหน้ารายการค่ะ',
   expense_belongs_to_reimbursement: 'รายการนี้อยู่ในใบเบิกค่ะ เปิดใบเบิกเดิมเพื่อดำเนินการต่อ',
   substitute_source_has_live_claim: 'หลักฐานนี้อยู่ในใบเบิกแล้วค่ะ เปิดใบเบิกเดิมเพื่อดำเนินการต่อ',
   substitute_personal_settles_via_reimbursement: 'รายการนี้ใช้เงินส่วนตัวสำรองจ่ายค่ะ ให้ทำใบเบิกเพื่อคืนเงินพนักงาน',
@@ -584,7 +584,7 @@ export class LineExpenseActionService {
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
         branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, awaitingField: awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
         ...(record.claim ? { claim: { ...(claimPayment ? { payment: claimPayment } : {}), payoutSubmitToken: record.claim.payout?.submitToken, hash: record.claim.approvalSnapshotHash, payoutVersion: record.claim.payout?.version, thirdParty: record.claim.payout?.holderType === 'THIRD_PARTY' } } : {}) };
-      if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'ประเภทเงินได้' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
+      if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'จ่ายค่าอะไร' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
       preview.token = `${entry.previewId}.${this.sign(entry)}`;
       if (!await this.store.save(entry)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
       if (awaitingReason || entry.awaitingField) return { reply: this.question(entry) };
@@ -607,7 +607,7 @@ export class LineExpenseActionService {
             const categoryMissing = fields.some(field => field === 'category' || field === 'expenseCategoryId');
             const categories = whtMissing ? (await new ListWhtIncomeCategoriesUseCase(this.prisma).execute(ctx)).map(row => ({ id: row.code, name: row.nameTh, kind: 'wht' as const })) : categoryMissing ? (await this.repo.listCategories(ctx.companyId)).filter(category => category.status === 'ACTIVE')
               .sort((a, b) => Number(suggested.has(b.id)) - Number(suggested.has(a.id))).map(({ id, name }) => ({ id, name })) : [];
-            if (whtMissing && !categories.length) return { reply: (en ? 'Ask the system administrator to enable income categories first.' : 'ยังไม่มีประเภทเงินได้ที่เปิดใช้งานค่ะ ให้ผู้ดูแลระบบเปิดประเภทเงินได้มาตรฐานก่อน'), webPath: '/system/wht-income-categories' };
+            if (whtMissing && !categories.length) return { reply: en ? 'No choices are available; type ‘ติดต่อเจ้าหน้าที่’ to ask the team for help.' : 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ' };
             if (categoryMissing && !categories.length) return { reply: language === 'en' ? 'Ask the shop administrator to add an active expense category first.' : `${reply.replace(/ค่ะ$/u, '')} ให้ผู้ดูแลเพิ่มหมวดที่ใช้งานก่อนค่ะ` };
             if (await this.repairs.save({ language, previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
               chatKeyHash: `expense-action-repair:${chat}`, conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,
@@ -615,7 +615,7 @@ export class LineExpenseActionService {
               priorCategory: preparedCategory?.category, evidenceAssessment: input.evidenceAssessment as ExpenseEvidenceAssessment | undefined,
               paymentIntent: action === 'CONFIRM' && input.recordPaymentAfterConfirm ? { paidAt: input.paidAt, paymentMethod: input.paymentMethod, paidAmount: input.paidAmount } : undefined,
               categoryOnly: fields.every(field => ['category', 'expenseCategoryId', 'review', 'whtCategoryCode'].includes(field)) })) {
-              return { reply: whtMissing ? (en ? 'Please choose the withholding income category.' : 'เลือกประเภทเงินได้สำหรับหัก ณ ที่จ่ายนี้ค่ะ') : categoryMissing ? `${reply.replace(/ค่ะ$/u, '')} เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ` : reply };
+              return { reply: whtMissing ? (en ? 'Please choose the withholding income category.' : 'เลือกว่ารายการนี้จ่ายค่าอะไรค่ะ') : categoryMissing ? `${reply.replace(/ค่ะ$/u, '')} เลือกหมวดด้านล่างหรือพิมพ์ชื่อหมวดได้เลยค่ะ` : reply };
             }
           }
         }
@@ -1055,13 +1055,13 @@ export class LineExpenseActionService {
     if (/classified as non-expense/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายตรวจประเภทเอกสารและรับรองว่าเป็นค่าใช้จ่ายในหน้ารายการก่อนค่ะ';
     if (/marked as a duplicate/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายตรวจและล้างเครื่องหมายรายการซ้ำในหน้ารายการก่อนยืนยันค่ะ';
     if (/payee taxpayer class/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเลือกผู้รับเงินเป็นบุคคลธรรมดาหรือนิติบุคคลในหน้ารายการก่อนค่ะ';
-    if (/income category/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเลือกประเภทเงินได้หักภาษีในหน้ารายการก่อนค่ะ';
+    if (/income category/iu.test(message)) return 'เลือกว่ารายการนี้จ่ายค่าอะไรค่ะ';
     if (/differs from the receipt OCR total/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเทียบยอดรวมกับใบเสร็จและบันทึกเหตุผลยอมรับส่วนต่างในหน้ารายการก่อนค่ะ';
-    if (/cannot retain a Tax Code|must remain supporting-only/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายแก้หลักฐานเป็นประกอบรายการและไม่ใช้เครดิต VAT พร้อมล้างรหัสภาษีในหน้ารายการค่ะ';
-    if (/requires a reviewed TAX_INVOICE/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเลือกใบกำกับภาษีเต็มรูปและตรวจหลักฐานภาษีในหน้ารายการก่อนค่ะ';
+    if (/cannot retain a Tax Code|must remain supporting-only/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายตรวจคำตอบเรื่อง VAT ที่หน้ารายการค่ะ';
+    if (/requires a reviewed TAX_INVOICE/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเลือกใบกำกับภาษีเต็มรูปและตรวจหลักฐานที่หน้ารายการค่ะ';
     if (/attached tax invoice, supplier tax ID/iu.test(message)) return 'แนบใบกำกับภาษีและเติมเลขผู้เสียภาษีผู้ขายกับเลขที่เอกสารในหน้ารายการให้ครบก่อนค่ะ';
-    if (/server-resolved Tax Code|VAT treatment.*(?:Tax Code|ZERO_RATED|explicit zero)/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายแก้รหัสภาษีและรูปแบบ VAT ของบรรทัดในหน้ารายการให้ตรงกันก่อนค่ะ';
-    if (/Verified evidence has conflicting .* amounts/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเทียบยอดหลักฐานภาษีที่ขัดกันในหน้ารายการก่อนค่ะ';
+    if (/server-resolved Tax Code|VAT treatment.*(?:Tax Code|ZERO_RATED|explicit zero)/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายแก้อัตราและรูปแบบ VAT ของรายการให้ตรงกันค่ะ';
+    if (/Verified evidence has conflicting .* amounts/iu.test(message)) return 'ให้ผู้ตรวจรายจ่ายเทียบยอดหลักฐานที่ขัดกันที่หน้ารายการค่ะ';
     if (/Attachment must be ACTIVE/iu.test(message)) return 'สลิปนี้ใช้ไม่ได้แล้วค่ะ ส่งสลิปใหม่ในแชตแล้วขอบันทึกจ่ายอีกครั้ง';
     if (/Attachment and expense must belong to the same branch/iu.test(message)) return 'ส่งสลิปของสาขาเดียวกับรายจ่ายในแชตแล้วขอบันทึกจ่ายอีกครั้งค่ะ';
     if (/Unsupported attachment target or purpose/iu.test(message)) return 'ขอเตรียมการ์ดบันทึกจ่ายพร้อมสลิปใหม่แล้วลองอีกครั้งค่ะ';

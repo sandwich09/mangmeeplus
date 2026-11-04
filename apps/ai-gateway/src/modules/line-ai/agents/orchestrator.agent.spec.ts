@@ -1902,7 +1902,7 @@ describe('approved knowledge orchestration', () => {
     assert.equal(calls(), 1);
     assert.equal(result.replyText, `${card.title}\n${card.body}`);
     assert.equal(result.sourceRefs[0]?.entityType, 'approved_product_help');
-    assert.match(result.sourceRefs[0]?.entityId ?? '', /:6:expense\.status:/);
+    assert.match(result.sourceRefs[0]?.entityId ?? '', /:7:expense\.status:5$/);
     assert.equal(result.webLinks[0]?.path, '/companies/company-1/user-guide/expenses#overview');
     assert.deepEqual(result.outputs.flatMap((entry) => entry.toolCalls), []);
   }));
@@ -2152,12 +2152,12 @@ describe('round 5A document advisor orchestrator', () => {
     const plan = { status: 'ROUTABLE', language: 'th', refusals: [], requiresHumanReview: false,
       intents: [{ intent: 'read_summary', subject: 'tax', agent: 'tax', priority: 1, requiredTools: ['wht.calculate_withholding'], missingContext: [] }] };
     globalThis.fetch = async () => new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify(plan) }), { status: 200, headers: { 'content-type': 'application/json' } });
-    const message = 'เป็นเงินได้ประเภทใดคะ เลือกจากปุ่มประเภทเงินได้ได้เลยค่ะ';
+    const message = 'จ่ายค่าอะไรคะ';
     let calls = 0;
     const orchestrator = new OrchestratorAgent({ invoke: async (tool: any, ctx: any) => {
       calls++; assert.equal(tool.name, 'wht.calculate_withholding'); assert.equal(ctx.companyId, 'company-1');
       return { toolName: tool.name, status: 'ok', data: { needsIncomeType: true, message },
-        sourceRefs: [{ label: 'ประเภทเงินได้ที่เปิดใช้', module: 'tax', entityType: 'advisor_document_read', permissionChecked: true }], asOf: '2026-10-15T00:00:00Z' };
+        sourceRefs: [{ label: 'รายการที่จ่ายที่เลือกได้', module: 'tax', entityType: 'advisor_document_read', permissionChecked: true }], asOf: '2026-10-15T00:00:00Z' };
     } } as any, makeConfig());
     const req = makeReq('จ่ายค่าจ้าง 1000 บาท ต้องหักเท่าไหร่');
     req.userContext.permissions = ['expense.create']; req.userContext.entitledFeatureKeys = ['wht_50bis'];
@@ -2343,8 +2343,8 @@ describe('Fix-up 17B: uncovered how-to answers select a checked action in the ex
         assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
         assert.equal(result.presentation?.cards[0]?.webLink?.path, '/companies/company-1/reimbursements/payout-account');
       } else assert.equal(result.presentation?.cards[0]?.chatActionId, allowed ? action.id : undefined);
-      if (!allowed) assert.match(result.replyText, /เจ้าของกิจการ|แพ็กเกจ|Mangmee Plus วันนี้ยังไม่มี/);
-      if (!allowed && access === 'feature-denied') assert.match(result.replyText, /แพ็กเกจ|Mangmee Plus วันนี้ยังไม่มี/);
+      if (!allowed) assert.match(result.replyText, /เจ้าของกิจการ|แพ็กเกจ|งานนี้ยังทำไม่ได้.*เมนูหลัก/);
+      if (!allowed && access === 'feature-denied') assert.match(result.replyText, /แพ็กเกจ|งานนี้ยังทำไม่ได้.*เมนูหลัก/);
     });
   }
   it('C11 bank details continuing personal payout setup go straight to the web page without asking purpose', async () => {
@@ -2686,7 +2686,7 @@ describe('Exam C2/C3: every sold pack × feature, from the real billing catalog'
         assert.equal(override!.webPage, 'packages');
         assert.doesNotMatch(override!.text, /ไม่มีสิทธิ์/u);
       } else {
-        assert.match(override!.text, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย.*ใบเบิก/u);
+        assert.match(override!.text, /งานนี้ยังทำไม่ได้.*เมนูหลัก.*งานที่ใช้ได้/u);
         assert.doesNotMatch(override!.text, /บาท|อัปเกรด|เร็ว.*นี้|บนเว็บ/u);
       }
     }
@@ -2737,7 +2737,7 @@ describe('Exam C: independent exam router conversation replays', () => {
     } else if (replay.intent === 'package_limit') {
       assert.match(result.replyText, /ธุรกิจ.*1,999.*บาท/u); assert.ok(result.webLinks.some(link => link.path.includes('/billing')));
     } else if (replay.intent === 'unsold') {
-      assert.match(result.replyText, /Mangmee Plus วันนี้ยังไม่มี.*รายจ่าย/u); assert.doesNotMatch(result.replyText, /อัปเกรด/u);
+      assert.match(result.replyText, /งานนี้ยังทำไม่ได้.*เมนูหลัก/u); assert.doesNotMatch(result.replyText, /อัปเกรด/u);
     } else if (actions[replay.id]) {
       assert.equal(result.presentation?.cards[0]?.chatActionId, actions[replay.id]); assert.equal(modelCalls, 1);
     } else if (replay.id === 'V055-A') {

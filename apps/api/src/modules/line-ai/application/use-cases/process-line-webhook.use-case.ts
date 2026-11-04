@@ -13,7 +13,7 @@ import { ListReimbursementsUseCase } from '../../../reimbursements/application/u
 import { GetCounterpartyUseCase, ListCounterpartiesUseCase } from '../../../accounting-documents/application/use-cases/counterparty.use-case';
 import { isRecentPaymentEvidenceLinkText } from '../../../expenses/domain/logic/line-payment-evidence.logic';
 import { linePaymentEvidenceReply, parseLinePaymentEvidenceControl, paymentEvidencePage } from '../../domain/logic/line-payment-evidence-reply.logic';
-import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL, SOURCE_DOCUMENT_TYPE_LABELS, expenseReopenBlockerMessages, scrubRecordText } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, expenseReopenBlockerMessages, scrubRecordText } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, lineAiReplyClarifications, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
@@ -536,8 +536,8 @@ const ASSISTANT_TALK_GREETING = 'น้องมั่งมีมาแล้�
 const SIGNATURE_FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ', en: "You cannot manage signatures; ask the shop owner or an authorized administrator." };
 const SIGNATURE_NEED_IMAGE_REPLY = { th: '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ', en: "Please send a clear photo of your signature on a plain background." };
 const CLARIFY_REPLY = { th: '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"', en: "What would you like help with?" };
-const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี หรือยื่นภาษีได้ค่ะ\nกรุณาทำรายการในเว็บมั่งมีนะคะ';
-const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อเก็บเป็นลายเซ็นประจำตัวค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
+const MUTATION_REFUSAL_REPLY = 'เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ';
+const MEDIA_UNSUPPORTED_REPLY = 'เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ';
 const MEDIA_SECURITY_REJECTED_REPLY = `⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ`;
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
@@ -1802,11 +1802,10 @@ return [ 'Details from the latest expense in this chat:', `Seller: ${fields.vend
     `• ประเภทเอกสาร – ${sourceType}`,
     `• ยอดรายการปัจจุบัน – ${amount} ${expense.currency}`,
     `• หมวดค่าใช้จ่าย – ${categoryName ?? 'ยังไม่ระบุ'}`,
-    `• สถานะหลักฐานภาษี – ${expense.taxEvidenceStatus}`,
+    `• หลักฐานรายจ่าย: ${TAX_EVIDENCE_STATUS_LABELS[expense.taxEvidenceStatus] ?? TAX_EVIDENCE_STATUS_LABELS.NEEDS_REVIEW}`,
     ...(missingFields.length ? ['', `ยังต้องตรวจ: ${missingFields.join(', ')}`] : []),
     '',
-    'การนำไปเป็นค่าใช้จ่ายบริษัท: ระบุวัตถุประสงค์/หมวด ตรวจยอดและหลักฐาน แล้วให้ผู้มีสิทธิ์ยืนยันในเว็บ',
-    'ข้อมูลบนใบเสร็จเพียงอย่างเดียวไม่ยืนยันนโยบายบริษัทหรือสิทธิเครดิต VAT; ใบรับรองแทนใบเสร็จภายในก็ไม่ใช่ใบกำกับภาษี',
+    'เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ',
     `เปิดตรวจสอบรายการ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`,
   ].join('\n');
 }
@@ -1827,7 +1826,7 @@ export function formatNextStepGuidanceReply(
   companyId: string,
   candidate: LineIntakeCorrectionCandidate, language: 'th' | 'en' = 'th'
 ): string {
-  if (language === 'en') { return [ `The latest expense, ${correctionCandidateLabel(candidate, language)}, needs review.`, 'Send supporting evidence here, review the expense on the web, or ask to prepare a substitute receipt if no receipt is available.', 'No approval, payment or final accounting entry was performed in LINE.', `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}` ].join('\n'); }
+  if (language === 'en') { return [ `The latest expense, ${correctionCandidateLabel(candidate, language)}, needs review.`, 'Send supporting evidence here, review the expense on the web, or ask to prepare a substitute receipt if no receipt is available.', 'Open the expense on the web to review the details before continuing.', `View expense: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}` ].join('\n'); }
 
   return [
     '🧭 รายการล่าสุดที่บันทึกไว้ในแชทนี้ยังรอตรวจสอบอยู่ค่ะ',
@@ -1839,7 +1838,7 @@ export function formatNextStepGuidanceReply(
     '• เปิดในเว็บเพื่อตรวจยอด หมวดค่าใช้จ่าย แล้วให้ผู้มีสิทธิ์ยืนยัน',
     '• ถ้าไม่มีใบเสร็จ พิมพ์ “ทำใบรับรองแทนใบเสร็จ” เพื่อจัดทำใบรับรองแทนใบเสร็จรับเงินให้รายการนี้',
     '',
-    'LINE ยังไม่ได้อนุมัติ จ่ายเงิน หรือลงบัญชีขั้นสุดท้ายให้นะคะ',
+    'เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ',
     `เปิดรายการนี้: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}`,
   ].join('\n');
 }
@@ -4534,13 +4533,38 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       }
       await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not finish this answer; please try again." : 'ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่')); await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_GENERAL_UNAVAILABLE', bound.owner.companyId); return;
     }
-    if (response.toolsInvoked.length || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
+    // Only the approved help card's own data read may accompany a single help answer.
+    const helpDataReads: Record<string, { tool: string; permission: string; feature?: string }> = {
+      'wht.pnd53-due': { tool: 'wht.get_month_summary', permission: 'wht.pnd53.read', feature: 'wht_pnd53' },
+      'pnd53.prepare': { tool: 'wht.get_month_summary', permission: 'wht.pnd53.read', feature: 'wht_pnd53' },
+      'package.quota': { tool: 'billing.get_package_usage', permission: 'company.plan.manage' },
+      'package.renew': { tool: 'billing.get_package_usage', permission: 'company.plan.manage' },
+      'package.expiry': { tool: 'billing.get_package_usage', permission: 'company.plan.manage' },
+      'claim.approve': { tool: 'reimbursement.list_pending_approvals', permission: 'reimbursement.approve', feature: 'reimbursement' },
+      'notifications.read': { tool: 'notifications.list_open_alerts', permission: 'notification.read' },
+    };
+    const cardReads = request.selectedKnowledgeCardIds?.map(id => helpDataReads[id]).filter(read => read !== undefined) ?? [];
+    const entitled = features === null ? null : new Set(features);
+    const helpDataRead = Boolean(request.approvedKnowledge && route.semanticSubrequests.length === 1
+      && route.semanticSubrequests[0]?.kind === 'help' && response.toolCalls?.length
+      && response.toolsInvoked.every(name => cardReads.some(read => read.tool === name) && response.toolCalls!.some(call => call.name === name))
+      && response.toolCalls.every(call => cardReads.some(read => read.tool === call.name
+        && (call.status !== 'ok' || !access.freeExpenseDrafts && access.permissions.includes(read.permission)
+          && (!read.feature || entitled === null || entitled.has(read.feature))))
+        && ['ok', 'forbidden', 'unsupported_module'].includes(call.status)
+        && (call.status !== 'ok' || LINE_TOOL_REGISTRY.some(tool => tool.name === call.name
+          && hasToolPermissions(tool, access.permissions) && hasToolFeature(tool, entitled))))
+      && response.sourceRefs.every(ref => ref.permissionChecked === true));
+    const evidenceIds = response.toolsInvoked.length && helpDataRead
+      ? await this.readEvidence.forTurn(request, response).catch(() => null) : [];
+    if (response.toolsInvoked.length && !helpDataRead || evidenceIds === null
+      || !response.semanticCoverage || response.semanticCoverage.length !== route.semanticSubrequests.length) {
       await this.deliverReply(event, (replyLanguage(event) === 'en' ? "I could not verify every part of the answer; please try again." : 'ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ กรุณาลองใหม่'));
       await this.updateEventLog(event.webhookEventId, 'provider_unavailable', 'AI_CONTRACT_UNSUPPORTED', bound.owner.companyId);
       return;
     }
     this.semanticDelivery.set(event, response.semanticCoverage);
-    this.deliverySources.set(event, { requestId, ids: [] });
+    this.deliverySources.set(event, { requestId, ids: evidenceIds });
     const turnId = await this.persistTurn(bound.owner.userId, bound.owner.companyId, event.webhookEventId, request.messagePreviewHash,
       event.messageText.slice(0, PREVIEW_MAX_CHARS), response, event);
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
@@ -6950,7 +6974,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       const text = showsMenu
         ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
         : isExplicitFinalFinancialRequest(event.messageText)
-          ? MUTATION_REFUSAL_REPLY.split('\n')[0]!
+          ? 'สิทธิ์ใช้ฟรียังยืนยัน อนุมัติ หรือจ่ายไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ'
           : isExplicitSourceEditRequest(event.messageText) ? FREE_EXPENSE_TEXT_EDIT_REPLY : FREE_EXPENSE_CHAT_REPLY;
       await this.deliverReply(event, text, showsMenu ? undefined : lineChoiceQuickReply([{ label: 'เมนูหลัก', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, menuCommand === 'main' ? 'staff_menu_main' : 'free_chat_not_included', undefined, companyId);
@@ -12810,11 +12834,13 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
     }
     const card = buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
     const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
-    if (choices?.length) card.quickReply = lineChoiceQuickReply(choices);
+    if (result.reply === 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ'
+      || result.reply === 'No choices are available; type ‘ติดต่อเจ้าหน้าที่’ to ask the team for help.') card.quickReply = lineChoiceQuickReply([{ label: replyLanguage(event) === 'en' ? 'Contact Mangmee team' : 'ติดต่อทีมงานมั่งมี', text: 'ติดต่อเจ้าหน้าที่' }]);
+    else if (choices?.length) card.quickReply = lineChoiceQuickReply(choices);
     else if (result.webPath) {
       const uri = absoluteWebLink(this.config.webBaseUrl, result.webPath);
       if (uri.startsWith('https://')) card.quickReply = { items: [{ type: 'action', action: { type: 'uri',
-        label: result.webPath === '/system/wht-income-categories' ? (replyLanguage(event) === 'en' ? "Set income category" : 'ตั้งค่าประเภทเงินได้') : (replyLanguage(event) === 'en' ? "Review record" : 'เปิดตรวจรายการ'), uri } }] };
+        label: (replyLanguage(event) === 'en' ? "Review record" : 'เปิดตรวจรายการ'), uri } }] };
     }
     return card;
   }
@@ -12898,7 +12924,7 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
         const capability = await this.getLinkedExpense.correctionCapabilities(ctx, id);
         reply = capability.canReopen
           ? (replyLanguage(event) === 'en' ? "This expense is confirmed; reopen its document on the web to review and confirm changes." : 'รายการนี้ยืนยันแล้ว ให้เปิดแก้ไขเอกสารบนเว็บเพื่อตรวจและยืนยันใหม่ค่ะ')
-          : (replyLanguage(event) === 'en' ? 'This record is locked; review the available correction options on the web.' : `${expenseReopenBlockerMessages(capability)[0] ?? 'รายการนี้ล็อกการแก้ไขแล้ว กรุณาเปิดตรวจสอบทางแก้บนเว็บ'}ค่ะ`);
+          : (replyLanguage(event) === 'en' ? 'This record is locked; review the available correction options on the web.' : `${expenseReopenBlockerMessages(capability, false)[0] ?? 'รายการนี้ล็อกการแก้ไขแล้ว กรุณาเปิดตรวจสอบทางแก้บนเว็บ'}ค่ะ`);
         label = capability.canReopen ? (replyLanguage(event) === 'en' ? "Edit on web" : 'แก้ไขเอกสารบนเว็บ') : (replyLanguage(event) === 'en' ? "Review options on web" : 'ตรวจทางแก้บนเว็บ');
         if (record.paymentStatus === 'PAID') reply = (replyLanguage(event) === 'en' ? "This expense is confirmed and paid; its original amount cannot be edited directly." : 'รายการนี้ยืนยันและจ่ายแล้ว จึงแก้ยอดเดิมโดยตรงไม่ได้ค่ะ');
         if (ctx.permissions.includes('expense.void') && this.previewEditVoid) {
@@ -13034,8 +13060,7 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
     if (!currentSource || !currentBill) throw new ConflictException('The saved bill is unavailable.');
     this.rememberReceiptDeliverySource(event, ctx, currentSource);
     this.rememberReceiptDeliverySource(event, ctx, currentBill);
-    return (replyLanguage(event) === 'en' ? `${inserted ? 'Saved' : 'Existing'} utility bill draft ${utilityKind} for period ${bill.period} ${bill.amount} THB${inserted ? '' : ''}.
-No payment was recorded; review the details and VAT on the web, and attach the period’s receipt to this draft before review to avoid duplicates: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}` : `${inserted ? '✅ บันทึก' : '✅ มี'}ร่างบิล${utilityKind}งวด ${bill.period} ${bill.amount} บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'}ค่ะ\nยังไม่ชำระและยังไม่บันทึกการจ่ายเงิน กรุณาตรวจข้อมูลและ VAT ในเว็บแอป หากจะเก็บใบเสร็จงวดนี้กับรายการเดิม ให้แนบขณะยังเป็นร่างก่อนส่งตรวจ เพื่อไม่ให้เกิดรายการซ้ำ: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}`);
+    return (replyLanguage(event) === 'en' ? `${inserted ? 'Saved' : 'Existing'} utility bill draft ${utilityKind} for ${bill.period}, ${bill.amount} THB; open it to review and attach the receipt: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}` : `${inserted ? 'บันทึกร่าง' : 'มีร่าง'}บิล${utilityKind}ช่วง ${bill.period} ยอด ${bill.amount} บาท${inserted ? 'แล้ว' : 'อยู่แล้ว'} เปิดรายการเพื่อตรวจและแนบใบเสร็จค่ะ ${absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${saved.id}`)}`);
   }
 
   /** Durably record which clarifications this terminal turn consumed, then let Redis catch up.
@@ -13597,8 +13622,8 @@ const LEGACY_LINE_COPY_EN = {
   "LAUNCH_ROUTE_CLOSED_REPLY": "The assistant is temporarily unavailable; you can continue using the web app.",
   "CAPABILITY_ENTITLEMENT_NOTE": "The Services and Contact buttons remain available in this chat.",
   "ASSISTANT_TALK_GREETING": "Hello, I’m Nong Mangmee; how can I help?",
-  "MUTATION_REFUSAL_REPLY": "Please complete approval, payment, final accounting entries or tax filing on the web.",
-  "MEDIA_UNSUPPORTED_REPLY": "Send expense evidence to prepare a draft, or a signature photo to save a reusable signature; review final actions on the web.",
+  "MUTATION_REFUSAL_REPLY": "Open the expense on the web to review the details before continuing.",
+  "MEDIA_UNSUPPORTED_REPLY": "Open the expense on the web to review the details before continuing.",
   "MEDIA_SECURITY_REJECTED_REPLY": "This file could not be accepted; send an undamaged PDF or supported image that passes the security check.",
   "LINE_AI_ROUTE_TRANSIENT_REPLY": "The answer is taking longer than usual; please send the same question again.",
   "LINE_AI_ROUTE_UNCLEAR_REPLY": "Please rephrase what you would like to check, such as monthly expenses or expenses by category.",

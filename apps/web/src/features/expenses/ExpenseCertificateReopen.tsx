@@ -55,8 +55,8 @@ function CertificateReopenAttestation({ certificate, busy, children, payments }:
   const number = certificate.number ? ` เลขที่ ${certificate.number}` : '';
   return children(Boolean(choice), <div className="space-y-3 text-sm leading-6 text-gray-700">
     <div className="font-semibold">{certificate.kind === 'SYSTEM'
-      ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) แล้ว'
-      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></div>
+      ? 'เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว'
+      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว'} <span className="whitespace-nowrap">{number.trim()}</span></div>
     {certificate.kind === 'EXTERNAL' && <p>ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง</p>}
     <ExpenseDisbursementReopenNotice payments={payments} />
   </div>, /* The buttons go to the window as they are: its shared footer gives them one width, stacked when the long name ("ยกเลิกหนังสือรับรองและแก้ไขเอกสาร") does not fit beside the other. */

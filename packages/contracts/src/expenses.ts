@@ -487,7 +487,7 @@ export const TAX_EVIDENCE_STATUS_LABELS: Record<TaxEvidenceStatus, string> = {
   NEEDS_REVIEW: 'รอตรวจ',
 };
 
-export const INPUT_VAT_RIGHT_LABEL = 'สิทธิภาษีซื้อ';
+export const INPUT_VAT_RIGHT_LABEL = 'ใช้ VAT ตอนยื่นภาษี';
 export const TAX_EVIDENCE_LABEL = 'หลักฐานรายจ่าย';
 export const INPUT_VAT_RIGHT_LABELS: Record<InputVatClaimStatus, string> = {
   NEEDS_REVIEW: 'รอตรวจสอบ', CLAIMABLE: 'ใช้ได้ตามเงื่อนไข', NON_CLAIMABLE: 'ใช้ไม่ได้',
@@ -732,7 +732,7 @@ export const EXPENSE_VOID_CERTIFICATE_WORDS = {
   permissionDenied: `คุณไม่มีสิทธิ์ยกเลิกเอกสาร ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ที่มีสิทธิ์เป็นผู้ยกเลิก`,
   reasonRequired: 'เหตุผลที่ยกเลิกเอกสารสั้นเกินไป กรอกอย่างน้อย 3 ตัวอักษร',
   numberUnavailable: `ระบบยังออกเลขสำหรับยกเลิกเอกสารไม่ได้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ตรวจการตั้งค่าเลขเอกสารก่อนแล้วลองอีกครั้ง`,
-  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของเอกสารนี้ไม่ได้ จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อนแล้วลองอีกครั้ง',
+  postingUnresolved: 'ยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   accountingPeriodLocked: (periodKey: string): string => `เอกสารอยู่ในเดือน ${expenseCorrectionMonth(periodKey)} ที่ปิดบัญชีแล้ว จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน`,
   taxPeriodLocked: (periodKey: string): string => `ภาษีของเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติม`,
 } as const;
@@ -808,8 +808,8 @@ export function expenseOverpaymentRemedy(hasRecordedPayments: boolean, canCancel
 export const EXPENSE_WITHHOLDING_WORDS = {
   /** `noLabel` is the decision option as printed on screen, so the way out always names a real control. */
   wayOut: (noLabel: string) => `เลือก “${noLabel}” ถ้ารายการนี้ไม่ต้องหัก ณ ที่จ่าย`,
-  percentHint: 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 หมายถึง 3% ของฐานหัก ณ ที่จ่าย',
-  amountHint: 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินฐานหักและยอดรวมเมื่อบันทึก',
+  percentHint: 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 คือหัก 3% จากยอดที่ใช้คิดหัก ณ ที่จ่าย',
+  amountHint: 'ยอดที่กรอกต้องไม่เกินยอดที่ใช้คิดหัก ณ ที่จ่ายและยอดรวมเมื่อบันทึก',
 } as const;
 /** Last review step: the sentence follows the button actually shown (ส่งให้ตรวจ keeps the dictionary's approver sentence). */
 export const EXPENSE_REVIEW_STEP_WORDS = {
@@ -826,7 +826,10 @@ export function expenseCorrectionMonth(periodKey?: string): string {
 }
 export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocker, operation: keyof typeof EXPENSE_CORRECTION_ACTIONS = 'reopen', facts?: ExpenseCorrectionCapabilities, showsLedger = true): string {
   const action = EXPENSE_CORRECTION_ACTIONS[operation];
-  if (!showsLedger && ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'].includes(blocker)) return `รายการนี้ถูกล็อกไว้ จึง${action}ไม่ได้ ติดต่อผู้ดูแลรายจ่าย`;
+  if (!showsLedger && ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'].includes(blocker)) {
+    const month = blocker === 'accounting_period_locked' ? expenseCorrectionMonth(facts?.lockedAccountingPeriodKey ?? undefined) : '';
+    return `${action}ไม่ได้${month ? ` (เดือน ${month})` : ''} ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ`;
+  }
   switch (blocker) {
     case 'disbursement_reserved': return expenseDisbursementReservationMessage(operation === 'recordPayment' ? 'recordPayment' : 'reopen', facts?.disbursementReservation?.documentNumber ?? null, facts?.disbursementReservation?.preparerName ?? null, facts?.disbursementReservation?.viewerMay ?? 'act', facts?.disbursementReservation?.viewerCanPay ?? true);
     case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กลับไปหน้ารายจ่าย`;

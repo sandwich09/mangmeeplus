@@ -13,6 +13,17 @@ import {
 import { canAccessWorkspacePath } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES } from './web-core-workspace.constants';
 import { findRoutePermissionRule } from './route-permissions';
+import { companyProfileReturnLabel } from '../company-profile/company-profile.logic';
+
+it('PWS-SETTINGS keeps the VAT return label and the sold settings wording tied to existing routes', () => {
+  assert.equal(companyProfileReturnLabel('/companies/shop/expenses/record#expense-input-vat-review'), 'กลับไปตรวจ VAT สำหรับยื่นภาษี');
+  const branches = readFileSync(new URL('../branch-settings/BranchSettingsPage.tsx', import.meta.url), 'utf8');
+  assert.match(branches, /5 หลักตามใบทะเบียนภาษี เว้นว่างได้/);
+  const payer = readFileSync(new URL('../branch-settings/WhtPayerModeSettings.tsx', import.meta.url), 'utf8');
+  assert.match(payer, /ใครจ่ายเงินและหักภาษี/);
+  assert.match(payer, /แบบภาษีหัก ณ ที่จ่ายยื่นในนามผู้ที่จ่ายจริง/);
+  assert.deepEqual(filterSettingsSidebarItems(['company.setup.read', 'company.branch.read']).map(item => item.title), ['ข้อมูลร้าน', 'สาขา']);
+});
 
 describe('settings menu', () => {
   it('WHT-OUTSIDE hides signature setup by shop availability even when the reader manages signatures', () => {

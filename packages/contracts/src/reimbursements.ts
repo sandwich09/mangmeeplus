@@ -919,7 +919,7 @@ export const REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS = {
   attestationRequired: 'ยังไม่ได้ยืนยันเรื่องการยื่นภาษี ติ๊กยืนยันก่อนยกเลิกใบเบิก',
   accountingPeriodLocked: (periodKey: string): string => `เดือน ${expenseCorrectionMonth(periodKey)} ของรายจ่ายในใบเบิกนี้ยังไม่เปิดให้ทำรายการ จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบและเปิดเดือนนั้นก่อน แล้วลองอีกครั้ง`,
   taxPeriodLocked: (periodKey: string): string => `ภาษีของรายจ่ายในใบเบิกนี้สำหรับเดือน ${expenseCorrectionMonth(periodKey)} ถูกล็อกแล้ว จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบเรื่องการยื่นแบบเพิ่มเติมก่อน แล้วลองอีกครั้ง`,
-  postingUnresolved: 'ยังตรวจสอบการลงบัญชีของรายจ่ายในใบเบิกนี้ไม่ได้ จึงยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจสอบการลงบัญชีก่อน แล้วลองอีกครั้ง',
+  postingUnresolved: 'ยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   expenseNotVoidable: 'รายจ่ายในใบเบิกนี้ยังไม่พร้อมให้ยกเลิก จึงยกเลิกใบเบิกไม่ได้ เปิดหน้านี้ใหม่ ถ้ายังยกเลิกไม่ได้ ให้แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   taxWorkspaceCertificate: 'ใบเบิกนี้มีรายจ่ายที่มีหนังสือรับรอง 50 ทวิที่ออกจากหน้าภาษี จึงยกเลิกใบเบิกจากหน้านี้ไม่ได้ แจ้งทีมงานมั่งมีเพื่อช่วยตรวจสอบ',
   permissionMissing: ({ kind, number }: Pick<ReimbursementCancellationCertificate, 'kind' | 'number'>): string =>

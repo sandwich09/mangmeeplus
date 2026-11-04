@@ -222,3 +222,13 @@ test('LIST-1 keeps a monthly list with three metrics and one export beside the s
   assert.match(list, /เกินกำหนด.*kpi.overdueCount/);
   assert.match(list, /LateDocumentBadge/); assert.match(list, /DocumentDateBadge/);
 });
+
+
+test('PWS-FREE-COPY free source capture prepares a draft and retains its existing read allowance', () => {
+  assert.equal(workspaceDictionary.th['expenses.free_upload_what_desc'], 'ส่งบิลหรือใบเสร็จทีละฉบับเพื่อเตรียมร่างให้ตรวจและแก้ไข');
+  assert.equal(workspaceDictionary.th['expenses.free_upload_ai_strip'], 'ส่งเอกสารเพื่อเตรียมร่างให้ตรวจ');
+  assert.match(workspaceDictionary.th['expenses.free_allowance_used'], /ยังแก้ร่างเดิมได้/);
+  assert.match(source, /freeExpenseDrafts/);
+  assert.equal(workspaceDictionary.th['expenses.tab_upload_desc'], 'ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ');
+  assert.match(source, /upload: \{ labelKey: 'expenses.tab_upload', descKey: 'expenses.tab_upload_desc' \}/);
+});

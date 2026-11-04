@@ -149,8 +149,8 @@ test('typing zero before a decimal keeps the chosen category and base for a frac
 test('empty, loading and failed catalogs have distinct shared Thai guidance for editable and read-only views', () => {
   const empty = words['expenses.wht_categories_empty'];
   assert.ok(empty, 'empty catalog has an explanation');
-  assert.match(empty, /ยังไม่มีประเภทเงินได้ที่เปิดใช้/);
-  assert.match(empty, /ติดต่อทีมมั่งมี/);
+  assert.match(empty, /ยังไม่มีรายการให้เลือก/);
+  assert.match(empty, /ติดต่อทีมงานมั่งมี/);
   for (const key of ['expenses.wht_categories_empty', 'expenses.wht_categories_loading', 'expenses.wht_categories_failed']) {
     assert.ok(words[key]);
     assert.doesNotMatch(words[key]!, /[A-Za-z]/);
@@ -162,7 +162,7 @@ test('empty, loading and failed catalogs have distinct shared Thai guidance for 
 });
 
 test('a saved category outside the current catalog displays a Thai label instead of its code', () => {
-  assert.equal(words['expenses.wht_category_recorded'], 'ประเภทเงินได้ที่บันทึกไว้');
+  assert.equal(words['expenses.wht_category_recorded'], 'รายการที่จ่ายที่บันทึกไว้');
   assert.match(block, /!isMutable && values.whtCategoryCode && !applicableWhtCategories.some/);
   assert.match(block, /<option value=\{values.whtCategoryCode\}>\{t\('expenses.wht_category_recorded', locale\)\}/);
   assert.match(block, /const picked = applicableWhtCategories.find\([\s\S]*?if \(!picked\) return;/, 're-selecting the recorded fallback must not replace its amount with an invented rate');

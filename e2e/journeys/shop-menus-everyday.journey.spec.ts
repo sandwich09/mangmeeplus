@@ -283,7 +283,7 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
       { slug: 'substitute-receipts', title: 'ใบรับรองแทนใบเสร็จ' },
       { slug: 'reimbursements', title: 'การเบิกจ่าย' },
     ];
-    for (const viewport of [WIDE, PHONE]) {
+    for (const viewport of [WIDE, { width: 1280, height: 1000 }, PHONE]) {
       await resize(page, viewport);
       for (const guide of guides) {
         // pressMenu deliberately excludes guide links, whose names repeat the sold menu names.
@@ -302,6 +302,9 @@ test('@journey owner adds and renames a category, fills a counterparty address, 
         await expect(main.getByText(/^คู่มือนี้มี \d+ หัวข้อ/)).toBeVisible();
         await main.getByRole('button', { name: 'เปิดอ่านทุกหัวข้อ', exact: true }).click();
         await expect(main.getByRole('button', { name: 'ย่อทุกหัวข้อ', exact: true })).toHaveAttribute('aria-expanded', 'true');
+        if (guide.slug === 'getting-started' || guide.slug === 'expenses') await expect(main).toContainText('หลักฐานว่าบันทึกจ่ายแล้ว');
+        if (guide.slug === 'getting-started') await expect(main).toContainText('ตรวจคำตอบ “ใช้ VAT ตอนยื่นภาษี” ให้ครบก่อนใช้ยื่น');
+        if (guide.slug === 'reimbursements') await expect(main).toContainText('เมื่อระบบกำลังยกเลิกใบเบิก อ่านเหตุผลที่ค้างอยู่ในหน้าใบเบิกก่อนทำต่อ');
         if (viewport.width === PHONE.width) {
           expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), `${guide.title}: no horizontal scroll at 390`).toBeLessThanOrEqual(1);
         }

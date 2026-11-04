@@ -158,6 +158,12 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
       await expect(formCard.getByRole('button', { name: 'บันทึกว่ายื่นแล้ว', exact: true })).toHaveCount(0);
     }
     // Each form has only its normal paper here, so the rows have no paper label.
+    const viewport = page.viewportSize();
+    for (const width of [390, 1280, 1556]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(main.locator('thead th').filter({ hasText: /^จ่ายค่าอะไร$/ })).toHaveCount(1);
+    }
+    if (viewport) await page.setViewportSize(viewport);
     const personRow = paymentRows(main).filter({ hasText: person }).filter({ hasText: 'ค่าบริการ (บุคคลธรรมดา)' });
     for (const text of [person, today, 'ภ.ง.ด.3', 'ค่าบริการ (บุคคลธรรมดา) · 3%', '4,000.00', '120.00', 'ยังไม่ออก']) await expect(personRow).toContainText(text);
     await expect(personRow.getByRole('link', { name: 'เปิดรายจ่าย', exact: true })).toHaveCount(0);

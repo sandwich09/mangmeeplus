@@ -105,7 +105,7 @@ export function SavedPayoutAccountsCard({ companyId, onDefaultChanged }: { compa
             value={label} onChange={event => { setLabel(event.target.value); setInvalidField(undefined); setError(null); }} />{invalidField === 'label' && error && <FieldError id={labelErrorId}>{error}</FieldError>}</label>
           <ActionGroup>
             <button type="button" className={ghostClass} disabled={cardBusy} onClick={() => { setAdding(false); setError(null); setInvalidField(undefined); }}>ยกเลิก</button>
-            <button type="submit" className={btnClass} disabled={cardBusy} aria-busy={busy === 'save'}>บันทึกบัญชี</button>
+            <button type="submit" className={btnClass} disabled={cardBusy} aria-busy={busy === 'save'}>บันทึกบัญชีรับเงินคืน</button>
           </ActionGroup>
         </form> : (
           // Never the page's main button: that is setting the standing account above, and only while there is none.

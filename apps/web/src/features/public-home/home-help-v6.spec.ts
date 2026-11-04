@@ -16,7 +16,7 @@ const summary = (id: string) => { const value = HOME_HELP_V6.cards.find(c => c.i
 const faq = (question: string) => { const value = HOME_FAQ.find(f => f.question === question); assert.ok(value, question); return value.answer; };
 
 test('HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles', () => {
-  assert.equal(pack.version, 6); assert.equal(pack.status, 'APPROVED'); assert.equal(pack.cards.length, 68);
+  assert.equal(pack.version, 7); assert.equal(pack.status, 'APPROVED'); assert.equal(pack.cards.length, 68);
   assert.equal(HOME_HELP_V6.sourcePackHash, pack.contentHash, 'Approved source changed: review website summaries before re-pinning');
   assert.deepEqual(HOME_HELP_V6.cards.map(c => [c.id, c.titleTh]), pack.cards.map(c => [c.id, c.title]));
   assert.match(LLMS_FULL, /## Common questions \/ คำถามที่พบบ่อยจากผู้ใช้/);
@@ -58,8 +58,8 @@ test('HOME-WIKI-V6 keeps Enterprise issuing separate from an optional-file outsi
   assert.match(card('wht.outside').body, /เลขที่และวันที่.*ได้ถ้ามี/);
   const answer = faq('ออก 50 ทวิ ภ.ง.ด.3 และ ภ.ง.ด.53 ได้ไหม?');
   assert.match(answer, /แพ็กเกจธุรกิจ.*ในระบบ.*แพ็กเกจอื่น.*นอกระบบ.*เลขที่และวันที่.*PDF ได้ถ้ามี/);
-  assert.match(LLMS_FULL, /Enterprise with issuing enabled and authorized staff/);
-  assert.match(LLMS_FULL, /Other packages record external certificates with required number\/date and an optional image or PDF/);
+  assert.match(LLMS_FULL, /Authorized shops on the 1,999 pack can issue a 50 bis/);
+  assert.match(LLMS_FULL, /Other packs record an external certificate’s number and date with an optional file/);
   assert.match(summary('wht.outside').answerTh, /เลขที่และวันที่.*ได้ถ้ามี/);
   assert.match(summary('wht.system').answerEn, /Enterprise with issuing enabled and authorized staff/);
   assert.deepEqual(HOME_PLANS.filter(p => p.systemTax).map(p => p.tier), ['ENTERPRISE_1999']);
@@ -105,4 +105,31 @@ test('HOME-WIKI-V6 shop opening distinguishes owners/staff, pending requests and
   assert.match(card('package.before-payment').body, /ตั้งค่าร้านและบัญชี.*งานธุรกิจเริ่มเมื่อเลือกและจ่าย.*ทดลองเดิม/);
   assert.match(faq('ราคาเท่าไร เปิดร้านเสียเงินไหม?'), /งานธุรกิจเริ่มหลังเลือกและจ่าย.*ทดลองเดิม.*วันสิ้นสุด/);
   assert.match(summary('shop.staff-open').answerEn, /Staff use.*แพ็กเกจและราคา.*โปรโมชั่น.*for owners/);
+});
+
+
+test('PWS-PUBLIC-WORDS / PWS-WIKI-FREE-PAID describes source drafts, paid work and VAT in plain words', () => {
+  const thai = LLMS_FULL.split('## ภาษาไทย')[1]!.split('## English')[0]!;
+  const english = LLMS_FULL.split('## English')[1]!.split('## Common questions')[0]!;
+  assert.ok(thai.includes('ร้านที่เข้าเกณฑ์ใช้ฟรีส่งเอกสารเพื่อเก็บร่างได้ตามสิทธิ์ งานอื่นใช้สิทธิ์ของแพ็กเกจปัจจุบัน'));
+  assert.ok(thai.includes('สิทธิ์ใช้ฟรีเก็บร่างรายจ่ายจากเอกสารเท่านั้น ยังยืนยันเอกสาร บันทึกจ่าย หรือส่งออกไม่ได้'));
+  assert.ok(thai.includes('ร้านที่เคยซื้อแพ็กเกจแล้วหมดอายุไม่อยู่ในสิทธิ์ใช้ฟรีนี้'));
+  assert.ok(english.includes('Eligible never-paid shops can send expense documents and keep drafts within their free allowance. Other work follows the shop’s current package and permissions.'));
+  assert.ok(english.includes('Free access covers source drafts only, without financial confirmation, payment recording or exports.'));
+  assert.ok(english.includes('Shops whose paid package has expired are outside this free allowance.'));
+  assert.ok(thai.includes('ร้านที่ใช้แพ็ก 1,999 และมีสิทธิ์ออกหนังสือรับรอง 50 ทวิ ตรวจข้อมูลผู้รับเงินและการจ่ายก่อนออกใบ'));
+  assert.ok(thai.includes('ตรวจ VAT ก่อนใช้ตอนยื่นภาษีและส่งภาษีให้กรมสรรพากรแยกจากการออกใบ'));
+  assert.ok(english.includes('Check VAT before using it when filing tax. The shop handles filing and sending tax to the Revenue Department separately.'));
+  assert.doesNotMatch(thai + english, /งานธุรกิจเริ่มหลังจ่ายแพ็กเกจ|business work starts after payment|สิทธิ์ภาษีซื้อ|claimable input VAT/);
+  assert.match(thai, /รายงานไม่รวมในแพ็กที่ขาย/);
+  assert.match(english, /Reports are not included in sold packages/);
+});
+
+
+test('PWS-PUBLIC-HELP-WORDS pins the four exact owner-approved Thai public summaries', () => {
+  assert.equal(summary('expense.vat-display').answerTh, "ยอดที่อ่านได้จากเอกสาร ยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้");
+  assert.equal(summary('wht.calculation').answerTh, "เลือก “จ่ายค่าอะไร” แล้วใช้ยอดก่อน VAT คูณอัตราที่แสดง");
+  assert.equal(summary('expense.vat-credit').answerTh, "ขึ้นกับเอกสารและเงื่อนไขของรายการ ดูคำตอบ “ใช้ VAT ตอนยื่นภาษี” ในรายการนั้น มีตัวจริงแต่ยังไม่มีรูป เลือก “มีตัวจริง ยังไม่ได้แนบรูป” แล้วแนบทีหลังได้");
+  assert.equal(summary('pnd53.prepare').answerTh, "ร้านที่มีเมนูภาษีหัก ณ ที่จ่าย เปิดเดือนที่ต้องการ ตรวจผู้รับเงินให้ครบ แล้วส่งออก ภ.ง.ด.53 ไปยื่น การยื่นแยกจากการออก 50 ทวิ");
+  assert.equal(summary('expense.vat-credit').titleTh, 'VAT นี้ใช้ตอนยื่นภาษีได้ไหม');
 });

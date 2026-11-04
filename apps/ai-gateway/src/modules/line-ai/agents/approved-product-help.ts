@@ -1,7 +1,7 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
 import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, productKnowledgeAccess, renderApprovedKnowledge, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
-import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES } from './product-help-draft-cards';
+import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES, PLAIN_WORDS_HELP_DRAFTS } from './product-help-draft-cards';
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, toolPermissionReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
@@ -110,7 +110,7 @@ const extraQuestions: Record<string, string[]> = {
 };
 
 /** Owner-approved v6; the previous v4 record above remains unchanged. */
-export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
+export const PRODUCT_HELP_V6_PACK: ProductKnowledgePack = {
   // Owner approved every v6 body as shown on the review page (2026-10-21: "อนุมัติคู่มือทั้งหมด").
   ...previousDraftPack, version: 6, status: 'APPROVED', reviewers: ['owner-review:2026-10-21'], contentHash: '',
   cards: [...previousDraftPack.cards.map(original => {
@@ -120,6 +120,34 @@ export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
     value.contentHash = knowledgeCardHash(value);
     return value;
   }), ...NEW_PRODUCT_HELP_CARDS],
+};
+PRODUCT_HELP_V6_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_V6_PACK);
+
+// Reviewed source hashes include getting-started independently of the legacy guide sources above.
+const reviewedSourceHashes: Record<string, string> = {
+  "apps/web/src/features/user-guide/disbursement-voucher-guide.content.ts": "9cdf7c46feaf3fd6231e43a954250ea0ab22b27d80ada9b897d4a3f9502d14f9",
+  "apps/web/src/features/user-guide/expenses-guide.content.ts": "3c35707f55bb4d9cc0850f3b7c7a4968590a6fc8b935f194d71535f07e7bc6d0",
+  "apps/web/src/features/user-guide/getting-started-guide.content.ts": "458a4121921da6c0ddbcd14a9159c3918dbbb4a914038af8bc90e0d2607c32e8",
+  "apps/web/src/features/user-guide/reimbursement-guide.content.ts": "6e65e4f84c78d933aaa64f342c9b5c0f18cc66ee1a70ea008b86d1ed2bd38e12",
+  "apps/web/src/features/user-guide/reports-guide.content.ts": "a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4",
+  "apps/web/src/features/user-guide/substitute-receipt-guide.content.ts": "c598503501db229e78f11edfe74c9dba5c485f6aeffb17b7b03e2fba0022f2f1",
+  "apps/web/src/features/user-guide/tax-guide.content.ts": "864e9afe7c289d756279b8566d9c7518cd77d2496d5ac14351912e732e077a27"
+};
+
+/** Owner approved all 21 recommendations on the review page in chat (2026-11-04: "ตามแนะนำ"). */
+export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
+  ...PRODUCT_HELP_V6_PACK, version: 7, reviewers: ['owner-review:2026-11-04:chat:ตามแนะนำ'], contentHash: '',
+  cards: PRODUCT_HELP_V6_PACK.cards.map(original => {
+    const approved = PLAIN_WORDS_HELP_DRAFTS.find(draft => draft.channel === 'LINE' && draft.change !== 'C55' && draft.id === original.id);
+    const sourceHash = reviewedSourceHashes[original.sourceFile]!;
+    if (!approved && sourceHash === original.sourceHash) return original;
+    const title = approved?.title ?? original.title;
+    const value = { ...original, version: original.version + 1, sourceHash,
+      title, summary: title, body: approved?.body ?? original.body,
+      questions: title === original.title ? original.questions : [...original.questions, original.title, title] };
+    value.contentHash = knowledgeCardHash(value);
+    return value;
+  }),
 };
 PRODUCT_HELP_DRAFT_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_DRAFT_PACK);
 

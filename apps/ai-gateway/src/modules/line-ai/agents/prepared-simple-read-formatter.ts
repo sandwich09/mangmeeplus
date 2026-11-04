@@ -674,7 +674,7 @@ function formatExpenseGetDetailSingleMetric(output: SpecialistOutput, ctx: Prepa
       methods ? (english ? `Method: ${methods.english}` : `วิธีชำระเงิน ${methods.thai}`) : undefined,
     ].filter((clause): clause is string => !!clause);
     const replyText = (english
-      ? `Payment: ${vendor}, net payable ${net} THB\nPaid ${paid} THB · Outstanding ${outstanding} THB\nPayment status: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`
+      ? `Payment: ${vendor}, amount to pay ${net} THB\nPaid ${paid} THB · Outstanding ${outstanding} THB\nPayment status: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`
       : `การชำระเงิน: ${vendor} ยอดสุทธิที่ต้องจ่าย ${net} บาท\nจ่ายแล้ว ${paid} บาท · ยอดคงค้าง ${outstanding} บาท\nสถานะชำระเงิน: ${paymentStatusLabel}${evidence.map((clause) => ` · ${clause}`).join('')}`)
       + `${evidenceText}${scopeText}${sourceText}${asOfLine(output.asOf, english)}`;
     const layout = english ? undefined : cardLayout({

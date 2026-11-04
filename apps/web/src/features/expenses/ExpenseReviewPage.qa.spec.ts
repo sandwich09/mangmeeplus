@@ -222,3 +222,26 @@ test('a claim\'s expense record offers no void, reject or delete here, and says 
     assert.doesNotMatch(text, /[A-Za-z_]{3,}/u, 'plain Thai: no code or key');
   }
 });
+
+
+test('PWS-WORDS accepted VAT differences name the actual confirm button without promising posting', () => {
+  const form = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
+  assert.match(form, /กด “ยืนยันเอกสาร” เพื่อใช้ยอดตามเอกสารและเก็บเหตุผลไว้/);
+  assert.doesNotMatch(form, /กด “ยืนยันและลงบัญชี”/);
+});
+
+
+test('PWS-MONEY names VAT and withholding calculation amounts without changing the fields', () => {
+  const words = workspaceDictionary.th;
+  assert.equal(words['expenses.taxable_base'], 'ยอดที่ใช้คิด VAT');
+  assert.equal(words['expenses.taxable_base_ex_vat'], 'ยอดก่อน VAT');
+  assert.equal(words['expenses.vat'], 'VAT');
+  assert.equal(words['expenses.wht_base'], 'ยอดที่ใช้คิดหัก ณ ที่จ่าย (บาท)');
+  assert.equal(words['expenses.v_wht_base'], 'กรอกยอดที่ใช้คิดหัก ณ ที่จ่ายตั้งแต่ 0 และทศนิยมไม่เกิน 2 ตำแหน่ง');
+});
+
+test('PWS-CAPTURE describes draft preparation without promising reading, accounting or a refund', () => {
+  assert.equal(workspaceDictionary.th['expenses.upload_what_desc'], 'ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ');
+  assert.equal(workspaceDictionary.th['expenses.check_bill_accounting_details'], 'ประเภทเอกสาร VAT และหมวดค่าใช้จ่าย');
+  assert.equal(workspaceDictionary.th['expenses.tab_categories_desc'], 'จัดกลุ่มค่าใช้จ่ายให้ค้นหาและส่งให้ผู้ทำบัญชี');
+});

@@ -1902,7 +1902,8 @@ it('credit P1/P2: approved-v6 offers stay bounded with the calibrated constant d
     const entry = INTAKE_CONSTANT_CALIBRATIONS.find(entry => entry.digest === parts?.digest);
     assert.ok(entry, `Uncalibrated current intake constant digest ${parts?.digest}. Recalibrate: pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx ../../scripts/recalibrate-line-intake.cjs ${INTAKE_CONSTANT_CALIBRATIONS[0].digest}; review character mix/semantic changes, update table and contract pins. Large changes or different models require paired live measurement.`);
     assert.equal(entry.bytes, parts!.bytes);
-    assert.equal(parts!.digest, row.constantDigest);
+    // Historical role-reach evidence keeps its measured reservation; C72 has this reviewed constant digest.
+    assert.equal(parts!.digest, '10a36aeb41e500cbac41dc6e4237b95ced82879366d6c2622e9fcbeab308f691');
     assert.equal(v2RenderedInput(input, creditModel).inputTokenBound, row.boundAfter);
     const offered = JSON.parse(input.messages[0]!.text).approvedKnowledge;
     assert.ok(offered.length <= 12 && Buffer.byteLength(JSON.stringify(offered)) <= 12 * 1024);

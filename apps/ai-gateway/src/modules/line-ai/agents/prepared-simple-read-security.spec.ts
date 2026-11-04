@@ -447,7 +447,7 @@ describe('item 1 (spec §2/§3 row 17, §8): the unsold-module scope policy runs
     assert.equal(calls.length, 0, 'the fast lane must never run for an unsold-module clause');
     assert.equal(fetchCalls, 0, 'no model call is needed either — a deterministic, code-side override');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('Mangmee Plus วันนี้ยังไม่มี'), result.replyText);
+    assert.ok(result.replyText.includes('งานนี้ยังทำไม่ได้'), result.replyText);
   });
 
   it('item 1: the same sales question is NOT blocked once sales_documents is entitled', async () => {

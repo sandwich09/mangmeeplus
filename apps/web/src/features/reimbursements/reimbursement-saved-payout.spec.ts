@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { REIMBURSEMENT_PAYOUT_HOLDER_WORDS as W, type SavedPayoutAccountSummary } from '@watchdog-bms/contracts';
@@ -19,6 +20,21 @@ const saved: SavedPayoutAccountSummary = { id: 'first', payoutKind: 'BANK_ACCOUN
 const other = { ...saved, id: 'second', holderType: 'THIRD_PARTY' as const, holderNote: 'คู่สมรสของผู้เบิก' };
 const typed = () => ({ ...logic.emptyClaimPayoutForm(), mode: 'SPECIFIED', account: { ...logic.emptyPayoutAccountForm(), bankChoice: saved.bankName, accountName: saved.accountName, accountNumber: '00123456789' } });
 const section = (props: object = {}) => render(h(ui.ClaimPayoutFormSection, { value: logic.emptyClaimPayoutForm(), onChange: noop, forSelf: true, canSaveAsDefault: true, payoutAccountHref: '/accounts', savedAccounts: [saved, other], ...props }));
+
+it('PWS-PAYOUT names saving a receiving account and preserves the submitted-account and owner notices', () => {
+  for (const file of ['ReimbursementPayout.tsx', 'SavedPayoutAccountsCard.tsx']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.match(source, />บันทึกบัญชีรับเงินคืน<\/button>/);
+    assert.doesNotMatch(source, />บันทึกบัญชี<\/button>/);
+  }
+  const source = readFileSync(new URL('./ReimbursementPayout.tsx', import.meta.url), 'utf8');
+  assert.match(source, /own \? 'บันทึกบัญชีรับเงินคืนแล้ว' : 'บันทึกบัญชีรับเงินคืนแล้ว ระบบแจ้งเจ้าของบัญชีให้ตรวจ'/);
+  assert.match(source, /replaced \? ' ใบเบิกที่ส่งไปแล้วยังใช้บัญชีเดิม'/);
+  const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts');
+  const html = render(h(ReimbursementSourceFacts, { source: { seller: { name: 'ร้านวัสดุ' }, expenseDate: '2026-11-04', currency: 'THB', totals: { netPayableAmount: '104', vatAmount: '7', whtAmount: '3' } } }));
+  assert.match(html, /VAT \/ หัก ณ ที่จ่าย ตามเอกสารเดิม/);
+  assert.match(html, /7\.00[\s\S]*3\.00/);
+});
 
 it('saved destinations send only their id, and an unselected destination cannot save', () => {
   assert.deepEqual(logic.claimPayoutInput({ ...typed(), mode: 'SAVED', savedAccountId: saved.id }), { mode: 'SAVED', savedAccountId: saved.id });

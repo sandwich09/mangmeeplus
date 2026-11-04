@@ -44,7 +44,7 @@ describe('deriveExpenseAuditChecks', () => {
     const invoice = check({ vendorTaxIdSnapshot: null }, 'vendor_tax_id');
     assert.equal(invoice?.status, 'warn');
     assert.equal(invoice?.label, 'ยังไม่มีเลขผู้เสียภาษีผู้ขาย');
-    assert.equal(invoice?.detail, 'ใบกำกับภาษีเต็มรูปต้องมีเลข 13 หลัก จึงจะใช้เครดิตภาษีซื้อได้');
+    assert.equal(invoice?.detail, 'กรอกเลขผู้เสียภาษีผู้ขายให้ครบ 13 หลักก่อนตรวจ VAT สำหรับยื่นภาษี');
 
     const receipt = check({ vendorTaxIdSnapshot: '', sourceDocumentType: 'RECEIPT' }, 'vendor_tax_id');
     assert.equal(receipt, undefined);

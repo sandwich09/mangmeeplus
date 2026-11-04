@@ -96,7 +96,7 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER, disburs
     try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: (route: string) => routes.push(route), replace: (route: string, options: unknown) => { routes.push(route); replacements.push({ route, options }); }, back: noop, prefetch: noop } as any },
       h(SearchParamsContext.Provider, { value: new URLSearchParams({ ...(back ? { back } : {}), ...(section ? { section } : {}) }) },
       h(ToastContext.Provider, { value: { success: (message: string) => successes.push(message), error: () => { throw Error('refusal must stay by its action'); }, warning: noop } },
-        h(ExpenseReviewPage, { companyId: 'co', expenseId: 'e1', userId: 'owner', permissions, canSelfApprove: true, disbursementEntryOpen }))))); }
+        h(ExpenseReviewPage, { companyId: 'co', expenseId: 'e1', userId: 'owner', permissions, canSelfApprove: true, disbursementEntryOpen, freeExpenseDrafts: initial.freeExpenseDrafts === true }))))); }
     finally { runtime.useEffect = realEffect; runtime.useState = realState; runtime.createElement = realCreate; modal.mock.restore(); capture.mock.restore(); confirm.mock.restore(); }
     focusEffects.forEach(fn => fn());
     return html;
@@ -275,7 +275,7 @@ test('C review footer keeps only ordered responsive actions; other actions and c
 test('B shops without accounting see no ledger wording on locked payment rows', () => {
   const html = harness({ detail: expense({ payments: [payment], correctionCapabilities: { ...allowed, payments: [{ id: 'p1', canCancel: false, cancelBlocker: 'ledger_posted' }] } }) }).render();
   assert.doesNotMatch(html, /ลงบัญชี|รอผ่านรายการ|สถานะบัญชี/);
-  assert.match(html, /รายการนี้ถูกล็อกไว้/);
+  assert.match(html, /ยกเลิกรายการจ่ายไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ/);
 });
 
 test('B guide renders the actual correction/payment buttons and their limits', () => {
@@ -905,19 +905,19 @@ test('UX6 confirmed answers appear once in document facts with decision attribut
     status: 'CLAIMABLE', vatStatus: 'REGISTERED', fixed: false,
     latestDecision: { decidedByName: 'ผู้ตรวจทดสอบ', decidedAt: '2026-10-14T01:00:00Z', reason: 'ใช้ในร้าน' },
   } }) }).render();
-  assert.equal((html.match(/>สิทธิภาษีซื้อ<\/dt>/g) ?? []).length, 1);
+  assert.equal((html.match(/>ใช้ VAT ตอนยื่นภาษี<\/dt>/g) ?? []).length, 1);
   assert.equal((html.match(/>หลักฐานรายจ่าย<\/dt>/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /สิทธิภาษีซื้อ:|หลักฐานรายจ่าย:/);
+  assert.doesNotMatch(html, /ใช้ VAT ตอนยื่นภาษี:|หลักฐานรายจ่าย:/);
   assert.equal((html.match(/ตรวจโดย ผู้ตรวจทดสอบ/g) ?? []).length, 1);
   assert.match(html, /เหตุผล: ใช้ในร้าน/);
   assert.match(html, /<dd[^>]*>ใช้ได้<\/dd>/);
-  assert.match(html, /เปลี่ยนผลตรวจสิทธิภาษีซื้อ/);
+  assert.match(html, /เปลี่ยนคำตอบเรื่อง VAT/);
 });
 test('UX6 review and confirmed pages omit the right for nonregistered shops and VAT-free papers', () => {
   for (const status of ['NEEDS_REVIEW', 'CONFIRMED']) for (const vatStatus of ['REGISTERED', 'UNKNOWN', 'NOT_REGISTERED']) for (const vatAmount of ['0', '7']) {
     const html = harness({ detail: expense({ status, vatAmount, inputVatClaimStatus: 'NEEDS_REVIEW', inputVatRight: { status: 'NEEDS_REVIEW', vatStatus, fixed: false } }), step: 'review' }).render();
-    if (vatStatus === 'NOT_REGISTERED' || vatAmount === '0') assert.doesNotMatch(html, /สิทธิภาษีซื้อ|ภาษีซื้อรอตรวจสอบ/);
-    else assert.match(html, /สิทธิภาษีซื้อ/);
+    if (vatStatus === 'NOT_REGISTERED' || vatAmount === '0') assert.doesNotMatch(html, /ใช้ VAT ตอนยื่นภาษี|รอตรวจ VAT สำหรับยื่นภาษี/);
+    else assert.match(html, /ใช้ VAT ตอนยื่นภาษี/);
   }
 });
 
@@ -944,7 +944,7 @@ test('UX8 confirmed waiting VAT keeps its header badge only for a VAT paper outs
   for (const vatStatus of ['REGISTERED', 'UNKNOWN', 'NOT_REGISTERED']) for (const vatAmount of ['0', '7']) {
     const page = harness({ detail: expense({ vatAmount, inputVatClaimStatus: 'NEEDS_REVIEW', inputVatRight: { status: 'NEEDS_REVIEW', vatStatus, fixed: false } }) });
     page.render();
-    const badge = page.nodes.some(node => node.tag === 'MangmeeBadge' && text(node.props.children) === 'ภาษีซื้อรอตรวจสอบ');
+    const badge = page.nodes.some(node => node.tag === 'MangmeeBadge' && text(node.props.children) === 'ใช้ VAT ตอนยื่นภาษี: รอตรวจสอบ');
     assert.equal(badge, vatAmount !== '0' && vatStatus !== 'NOT_REGISTERED');
   }
 });
@@ -1331,4 +1331,103 @@ test('EVID-1 confirmed original-paper expense shows the image to-do until its la
   assert.match(harness({ detail }).render(), /ยังไม่มีรูปเอกสาร/);
   assessment.attachmentIds = ['later']; review();
   assert.doesNotMatch(harness({ detail }).render(), /ยังไม่มีรูปเอกสาร/);
+});
+
+
+test('PWS-VAT renders the plain VAT question, reviewer condition and reason without changing codes', () => {
+  const { ExpenseInputVatRight } = require('./ExpenseInputVatRight');
+  const detail = expense({ sourceDocumentType: 'TAX_INVOICE', vatAmount: '7', inputVatClaimStatus: 'CLAIMABLE',
+    inputVatRight: { status: 'CLAIMABLE', vatStatus: 'REGISTERED', fixed: false, conditions: [{ code: 'CLAIMABLE_TYPE', answer: true }] } });
+  const html = renderToStaticMarkup(h(ExpenseInputVatRight, { companyId: 'co', detail, canReview: true, saveRef: { current: null } }));
+  assert.match(html, /aria-label="ใช้ VAT ตอนยื่นภาษี"/);
+  assert.match(html, /VAT นี้ไม่ใช่รายการที่กฎห้ามใช้ เช่น ค่าเลี้ยงรับรอง/);
+  assert.match(html, /ประเภทเอกสารใช้ VAT ตอนยื่นภาษีได้/);
+  assert.doesNotMatch(html, /ภาษีซื้อต้องห้าม|สิทธิภาษีซื้อ/);
+  const reason = renderToStaticMarkup(h(ExpenseInputVatRight, { companyId: 'co', detail: { ...detail, inputVatClaimStatus: 'NON_CLAIMABLE', inputVatRight: { ...detail.inputVatRight, status: 'NON_CLAIMABLE' } }, canReview: true, saveRef: { current: null } }));
+  assert.match(reason, /aria-label="เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี"/);
+  for (const canReview of [true, false]) {
+    const unclassified = renderToStaticMarkup(h(ExpenseInputVatRight, { companyId: 'co', detail: { ...detail, sourceDocumentType: 'NEEDS_REVIEW' }, canReview }));
+    assert.ok(unclassified.includes(canReview ? 'เลือกประเภทเอกสารแล้วกด “ถัดไป” เพื่อตรวจ VAT' : 'ผู้ตรวจจะเลือกประเภทเอกสารก่อนตรวจ VAT'));
+  }
+});
+
+
+test('PWS-VAT free source drafts keep financial VAT controls hidden while paid readers see only facts', () => {
+  const detail = expense({ status: 'NEEDS_REVIEW', sourceDocumentType: 'TAX_INVOICE', vatAmount: '7', inputVatClaimStatus: 'NEEDS_REVIEW',
+    inputVatRight: { status: 'NEEDS_REVIEW', vatStatus: 'REGISTERED', fixed: false } });
+  const free = harness({ detail, freeExpenseDrafts: true }).render();
+  assert.doesNotMatch(free, /ใช้ VAT ตอนยื่นภาษี|ตรวจ VAT สำหรับยื่นภาษี|บันทึกคำตอบเรื่อง VAT|เปลี่ยนคำตอบเรื่อง VAT/);
+  for (const permissions of [['expense.read'], ['expense.read', 'expense.confirm']]) {
+    const paid = harness({ detail: { ...detail, status: 'CONFIRMED' } }, permissions).render();
+    assert.match(paid, /ใช้ VAT ตอนยื่นภาษี/);
+    assert.doesNotMatch(paid, />ตรวจ VAT สำหรับยื่นภาษี<|>เปลี่ยนคำตอบเรื่อง VAT<|aria-label="ใช้ VAT ตอนยื่นภาษี"/);
+  }
+});
+
+test('PWS-DICTIONARY-EN buyer VAT guidance keeps undo neutral and directs line-owned VAT to its items', () => {
+  const { t } = require('@/common/i18n/workspace-i18n.logic');
+  assert.equal(t('expenses.buyer_match_undo', 'en'), 'Undo the mark');
+  assert.equal(t('expenses.buyer_match_change_line_tax_code', 'en'), 'Choose a VAT option that excludes each item from tax filing, then save.');
+  for (const suffix of ['hint', 'mark_non_claimable', 'mark_title', 'mark_message', 'marked_toast', 'marked_non_claimable', 'mark_needs_reviewer', 'undo', 'already_not_claimed', 'change_line_tax_code', 'line_tax_not_claimed']) {
+    assert.doesNotMatch(t(`expenses.buyer_match_${suffix}`, 'en'), /input VAT|claimable|tax settings/);
+  }
+});
+
+
+test('PWS-MONEY rendered override keeps document amounts, reason and the actual confirm action', () => {
+  const { certificateHarness } = require('./expense-certificate-test-harness');
+  const { ExpenseReviewEditSection } = require('./ExpensesPages');
+  const capture = stub(policy, 'useExpenseCapturePolicy', () => ({ mode: 'FULL', vatStatus: 'NOT_REGISTERED' }));
+  const d = recordingExpense();
+  d.vatMode = 'VAT_EXCLUDED'; d.taxableAmount = '100'; d.vatAmount = '7'; d.lines[0].vatRate = '0.07';
+  d.vatCaptureSnapshotJson = { version: 1, source: { inputType: 'BOTH', origin: 'REVIEWER', vatRatePercent: '7', vatAmount: '9', taxableAmount: '100', grossAmount: '109' },
+    calculation: { vatAmount: '7', vatBaseAmount: '100', lineResults: [] },
+    reconciliation: { status: 'MISMATCH', acceptedSource: null, differenceAmount: '2', toleranceAmount: '0.05', attentionLineNumbers: [1] } };
+  const view = certificateHarness(() => h(ToastContext.Provider, { value: { success: noop, error: noop, warning: noop } }, h(ExpenseReviewEditSection, { companyId: 'co', detail: d, isMutable: true, canReview: true, canConfirm: true, onSaved: async () => {} })));
+  try {
+    const html = view.render();
+    assert.match(html, /ร้านไม่ได้จด VAT จึงนำ VAT ในใบนี้ไปใช้ตอนยื่นภาษีไม่ได้/);
+    assert.match(html, /รายการที่รับส่วนต่าง VAT/);
+    assert.match(html, /เหตุผล \(จำเป็น\)/);
+    assert.match(html, /VAT จากเอกสาร/);
+    view.find('ThemedSelect', (props: any) => String(props.onChange).includes('setVatOverrideLineNumber')).onChange({ target: { value: '1' } });
+    view.find('textarea', (props: any) => props.placeholder?.startsWith('เช่น ใบเสร็จพิมพ์ VAT')).onChange({ target: { value: 'ตรวจบิลแล้ว' } });
+    assert.match(view.render(), /กด “ยืนยันเอกสาร” เพื่อใช้ยอดตามเอกสารและเก็บเหตุผลไว้/);
+    assert.equal(d.vatCaptureSnapshotJson.source.vatAmount, '9');
+    const missingCarrier = certificateHarness(() => h(ToastContext.Provider, { value: { success: noop, error: noop, warning: noop } }, h(ExpenseReviewEditSection, { companyId: 'co', detail: { ...d, lines: [{ ...d.lines[0], vatRate: '0' }] }, isMutable: true, canReview: true, canConfirm: true, onSaved: async () => {} })));
+    assert.match(missingCarrier.render(), /ยังเลือก “ใช้ยอดตามเอกสาร” ไม่ได้ เพราะไม่มีรายการไหนมี VAT/);
+    assert.doesNotMatch(missingCarrier.render(), /รายการที่รับส่วนต่าง VAT/);
+  } finally { view.cleanup(); capture.mock.restore(); }
+});
+
+test('PWS-CERTIFICATE names the paper plainly and lower packs retain only external recording', () => {
+  const { ExpenseCertificateReopen } = require('./ExpenseCertificateReopen');
+  const { WHT_CERTIFICATE_CORRECTION_WORDS, TIER_FEATURE_PRESETS } = require('@watchdog-bms/contracts');
+  const { shopHasSystemWhtCertificates } = require('./expense-wht-certificates.logic');
+  for (const kind of ['SYSTEM', 'EXTERNAL']) {
+    const html = renderToStaticMarkup(h(ExpenseCertificateReopen, { certificate: { kind, number: 'WHT-1' }, busy: false,
+      children: (_attested: boolean, notice: React.ReactNode, _footer: unknown, attestation: React.ReactNode) => h('div', null, notice, attestation) }));
+    assert.match(html, /หนังสือรับรอง 50 ทวิ/);
+    assert.match(html, /WHT-1/);
+    assert.match(html, /ยังไม่ได้ยื่นภาษีหัก ณ ที่จ่ายของรายการนี้/);
+    if (kind === 'EXTERNAL') assert.match(html, /ระบบยกเลิกใบที่ทำนอกระบบให้ไม่ได้ ร้านต้องยกเลิกเอง/);
+  }
+  assert.equal(WHT_CERTIFICATE_CORRECTION_WORDS.fieldLocked, 'แก้ยอด อัตรา รายการที่จ่าย หรือเลขผู้เสียภาษีที่รายจ่ายด้วย “แก้ไขเอกสาร”');
+  const handoff = { id: 'handoff', status: 'REQUIRED', systemIssuanceOpen: true, missing: [], payerMissing: [], payeeAddress: 'ที่อยู่',
+    prefill: { formType: 'PND53', incomeCategoryCode: '01', incomeCategoryName: 'ค่าบริการ', whtRate: '3', grossAmount: '100', withheldAmount: '3', payeeSnapshot: { name: 'ผู้รับ', address: 'ที่อยู่' } } };
+  const { certificateHarness } = require('./expense-certificate-test-harness');
+  const { ExpenseCertificateCard } = require('./ExpenseCertificateCard');
+  for (const tier of ['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999']) {
+    const available = shopHasSystemWhtCertificates(TIER_FEATURE_PRESETS[tier]);
+    assert.equal(available, tier === 'ENTERPRISE_1999', tier);
+    const view = certificateHarness(() => h(ToastContext.Provider, { value: { success: noop, error: noop } as any }, h(ExpenseCertificateCard, {
+      companyId: 'co', expenseId: 'e1', handoff, permissions: ['wht.certificate.issue', 'wht.external_certificate.link'], systemCertificatesAvailable: available,
+      issueButton: h('button', null, 'ออกหนังสือรับรอง 50 ทวิ'), busy: false, onChanged: noop, onDownload: noop,
+    })), [{ row: handoff, loading: false, error: null }]);
+    try {
+      const html = view.render();
+      assert.equal(html.includes('>ออกหนังสือรับรอง 50 ทวิ</button>'), available, tier);
+      assert.match(html, /จดเลขที่ใบ 50 ทวิ/);
+    } finally { view.cleanup(); }
+  }
 });

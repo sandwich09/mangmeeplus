@@ -9,7 +9,7 @@ import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { decideExpenseInputVat } from './expenses.api';
 import { btnClass, ghostClass, inputClass, err } from './ExpensesUi';
 import type { ExpenseDetail } from './expenses.model';
-import { inputVatRightLabel, showInputVatQuestion, inputVatChangedConditions, savedInputVatAnswers, INPUT_VAT_FIXED_REASONS, INPUT_VAT_POSTED_NOTICE } from './expense-input-vat-right.logic';
+import { inputVatRightLabel, inputVatReviewerConditionLabel, showInputVatQuestion, inputVatChangedConditions, savedInputVatAnswers, INPUT_VAT_FIXED_REASONS, INPUT_VAT_POSTED_NOTICE } from './expense-input-vat-right.logic';
 
 export function InputVatDecisionHistory({ detail, showLabel = true }: { detail: ExpenseDetail; showLabel?: boolean }) {
   if (!showInputVatQuestion(detail)) return null;
@@ -74,21 +74,21 @@ export function ExpenseInputVatRight({ companyId, detail, canReview, saveRef, on
     return () => { saveRef.current = null; };
   });
   if (!showInputVatQuestion(detail)) return null;
-  if (detail.sourceDocumentType === 'NEEDS_REVIEW') return <p className="text-sm">{canReview ? 'เลือกประเภทเอกสารแล้วกด “ถัดไป” เพื่อดูสิทธิภาษีซื้อ' : 'ผู้ตรวจจะเลือกประเภทเอกสารก่อนตรวจสิทธิภาษีซื้อ'}</p>;
+  if (detail.sourceDocumentType === 'NEEDS_REVIEW') return <p className="text-sm">{canReview ? 'เลือกประเภทเอกสารแล้วกด “ถัดไป” เพื่อตรวจ VAT' : 'ผู้ตรวจจะเลือกประเภทเอกสารก่อนตรวจ VAT'}</p>;
   if (!canReview || right?.fixed) return renderReadOnly(<div id={anchor} tabIndex={-1} className="space-y-1 text-sm"><InputVatDecisionHistory detail={detail} showLabel={showLabel} />
     {right?.reasonCode && INPUT_VAT_FIXED_REASONS[right.reasonCode] && <p>{INPUT_VAT_FIXED_REASONS[right.reasonCode]}</p>}
   </div>);
   const blocked = serverBlocker ?? right?.decisionBlocker;
   if (blocked) return renderReadOnly(<div id={anchor} tabIndex={-1} className="space-y-2 text-sm"><InputVatDecisionHistory detail={detail} showLabel={showLabel} />
-    <p>{blocked === 'input_vat_posted_journal_immutable' ? INPUT_VAT_POSTED_NOTICE : 'งวดภาษีของเอกสารนี้ถูกล็อกแล้ว ให้ใช้การปรับปรุงหรือยื่นแบบเพิ่มเติมแทน'}</p>
+    <p>{blocked === 'input_vat_posted_journal_immutable' ? INPUT_VAT_POSTED_NOTICE : 'แก้คำตอบเรื่อง VAT ของเดือนนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ'}</p>
     {blocked === 'tax_period_locked' && (canReadTaxPeriods ? <Link href={`/companies/${companyId}/tax`} className="underline">เปิดงานภาษี</Link> : <p>ให้ผู้ทำบัญชีของร้านตรวจการปรับปรุงหรือยื่นแบบเพิ่มเติม</p>)}
   </div>);
   if (!editing) return renderReadOnly(<div id={anchor} tabIndex={-1} className="space-y-2"><InputVatDecisionHistory detail={detail} showLabel={showLabel} />
-    <button type="button" className={ghostClass} onClick={() => setEditing(true)}>{right?.latestDecision ? 'เปลี่ยนผลตรวจสิทธิภาษีซื้อ' : 'ตรวจสิทธิภาษีซื้อ'}</button>
+    <button type="button" className={ghostClass} onClick={() => setEditing(true)}>{right?.latestDecision ? 'เปลี่ยนคำตอบเรื่อง VAT' : 'ตรวจ VAT สำหรับยื่นภาษี'}</button>
   </div>);
   const conditionLabels: Record<string, [string, string]> = {
     SHOP_REGISTERED: ['ร้านจด VAT ณ วันที่ของเอกสาร', 'shop'],
-    CLAIMABLE_TYPE: ['ประเภทเอกสารใช้ภาษีซื้อได้', 'evidence'],
+    CLAIMABLE_TYPE: ['ประเภทเอกสารใช้ VAT ตอนยื่นภาษีได้', 'evidence'],
     PAPER_ATTACHED: [(right?.conditions?.find(condition => condition.code === 'PAPER_ATTACHED')?.fact as { originalDocumentAvailable?: boolean } | undefined)?.originalDocumentAvailable ? 'มีเอกสารตัวจริง' : 'แนบเอกสารแล้ว', 'receipt'],
     SELLER_TAX_ID: ['เลขผู้เสียภาษีผู้ขายครบ 13 หลัก', 'vendor_tax_id'],
     DOCUMENT_NUMBER: ['มีเลขที่เอกสาร', 'document_number'],
@@ -97,7 +97,7 @@ export function ExpenseInputVatRight({ companyId, detail, canReview, saveRef, on
   };
   const changedConditions = inputVatChangedConditions(right);
   const reasonField = status !== 'NEEDS_REVIEW' && (status === 'NON_CLAIMABLE' || right?.latestDecision) && <label className="block"><span className="mb-1 block text-sm font-medium">เหตุผล</span>
-      <textarea aria-label="เหตุผลสิทธิภาษีซื้อ" className={inputClass} rows={2} maxLength={500} value={reason} disabled={busy} onChange={event => { setReason(event.target.value); setChanged(true); }} />
+      <textarea aria-label="เหตุผลที่เลือกใช้ VAT ตอนยื่นภาษี" className={inputClass} rows={2} maxLength={500} value={reason} disabled={busy} onChange={event => { setReason(event.target.value); setChanged(true); }} />
     </label>;
   return <section id={anchor} tabIndex={-1} aria-label={INPUT_VAT_RIGHT_LABEL} className="w-full space-y-3 border-t border-gray-200 pt-3 text-left">
     {right?.latestDecision && reasonField}
@@ -123,14 +123,14 @@ export function ExpenseInputVatRight({ companyId, detail, canReview, saveRef, on
         </div>;
       })}
       {INPUT_VAT_REVIEWER_CONDITIONS.map(condition => <label key={condition.code} className="flex items-start gap-2 text-sm">
-        <input type="checkbox" disabled={busy} checked={ticks.includes(condition.code)} onChange={event => { setChanged(true); setTicks(value => event.target.checked ? [...value, condition.code] : value.filter(code => code !== condition.code)); }} />{condition.label}
+        <input type="checkbox" disabled={busy} checked={ticks.includes(condition.code)} onChange={event => { setChanged(true); setTicks(value => event.target.checked ? [...value, condition.code] : value.filter(code => code !== condition.code)); }} />{inputVatReviewerConditionLabel(condition)}
       </label>)}
     </div>}
     {!right?.latestDecision && reasonField}
     {error && <p role="alert" className="text-sm text-error-700">{error}</p>}
     {!saveRef && <FormActionBar><ActionGroup>
       <button type="button" className={ghostClass} disabled={busy} aria-busy={busy} onClick={() => { setEditing(false); setChanged(false); setError(''); }}>กลับ</button>
-      <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={async () => { if (await save()) { setEditing(false); await onSaved?.(); } }}>บันทึกสิทธิภาษีซื้อ</button>
+      <button type="button" className={btnClass} disabled={busy} aria-busy={busy} onClick={async () => { if (await save()) { setEditing(false); await onSaved?.(); } }}>บันทึกคำตอบเรื่อง VAT</button>
     </ActionGroup></FormActionBar>}
   </section>;
 }

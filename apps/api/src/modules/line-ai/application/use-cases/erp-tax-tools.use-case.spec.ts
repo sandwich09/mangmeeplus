@@ -412,6 +412,19 @@ describe('round 5A sold-pack document advisor reads', () => {
     assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569/); assert.doesNotMatch(r.message, /2026-10|2026-11-09/);
   });
 
+  it('PWS-WHT-LINE-D keeps unknown and custom payment labels and never describes unpaid work as paid', async () => {
+    const missing = handoff('missing', 'REQUIRED', '1000.50', '30.02');
+    missing.prefill.incomeCategoryName = null;
+    const custom = handoff('custom', 'REQUIRED', '2000.50', '60.02');
+    custom.prefill.incomeCategoryCode = 'CUSTOM'; custom.prefill.incomeCategoryName = 'คำที่ร้านตั้งเอง';
+    const r = data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [missing, custom], total: 2, pageSize: 100 }) } as any, {} as any)
+      .execute({ ...ctx, permissions: ['wht.certificate.read'] }, { periodKey: '2026-10' }));
+    assert.equal(r.totalIncome, '3001.00'); assert.equal(r.totalDocumentWithholding, '90.04');
+    assert.deepEqual(r.byIncomeType.map((row: any) => row.incomeCategoryName), ['ยังไม่ได้เลือกว่าจ่ายค่าอะไร', 'คำที่ร้านตั้งเอง']);
+    assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569 รวม 3,001.00 บาท หักไว้ 90.04 บาท/);
+    assert.equal(r.dueDate, null); assert.doesNotMatch(r.message, /ยอดที่จ่าย|จ่ายแล้ว|กำหนดยื่น/);
+  });
+
   it('refuses an outside branch before reads and keeps missing remittance separate from its calendar deadline', async () => {
     let calls = 0;
     const tool = new WhtGetMonthSummaryTool({ listPaged: async () => { calls++; return { rows: [], pageSize: 100, total: 0 }; } } as any,
@@ -442,7 +455,7 @@ describe('round 5A sold-pack document advisor reads', () => {
     assert.equal(verified.withheldAmount, '30.02', 'semantic v2 grounds against API-verified input evidence');
     assert.equal(data(await tool.execute({ ...ctx, groundingText: 'ค่าบริการมาตรฐาน 1000.50 บาท' }, { baseAmount: '1000.50' })).withheldAmount, '30.02', 'exact explicit catalog name resolves without a model-proposed code');
     assert.equal(r.ratePercent, '3.0000'); assert.equal(r.withheldAmount, '30.02'); assert.equal(r.netBeforeVat, '970.48');
-    assert.match(r.message, /ถ้าใช้ฐานก่อนภาษีมูลค่าเพิ่ม/); assert.equal(seen.companyId, ctx.companyId); assert.deepEqual(seen.scopes.branchIds, ctx.branchIds);
+    assert.match(r.message, /ยอดก่อน VAT 1000\.50 บาท หัก 3% เป็น 30\.02 บาท เหลือ 970\.48 บาทก่อนบวก VAT ค่ะ/); assert.equal(seen.companyId, ctx.companyId); assert.deepEqual(seen.scopes.branchIds, ctx.branchIds);
     const changed = new WhtCalculateWithholdingTool({ execute: async () => [{ ...catalog[0], defaultRate: '5' }] } as any);
     assert.equal(data(await changed.execute({ ...ctx, groundingText: 'ค่าบริการมาตรฐาน 1000' }, { incomeCategoryCode: 'CAT_SERVICE', baseAmount: '1000' })).withheldAmount, '50.00');
   });
@@ -587,4 +600,26 @@ describe('PWS-PND53-DUE', () => {
     for (const permissions of [['wht.certificate.read'], ['expense.read_own', 'expense.receipt.line_upload']])
       assert.equal((await tool.execute({ ...ctx, permissions }, { dueDateOnly: true })).status, 'forbidden');
   });
+});
+
+
+it('PWS-B6 calculator empty catalog offers a support message choice without a staff URI', async () => {
+  const r = await new WhtCalculateWithholdingTool({ execute: async () => [] } as any).execute({ ...baseCtx, permissions: ['expense.create'] }, {});
+  const data = r.data as any;
+  assert.equal(data.message, 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ');
+  assert.deepEqual(data.readChoices, [{ label: 'ติดต่อทีมงานมั่งมี', text: 'ติดต่อเจ้าหน้าที่' }]);
+  assert.doesNotMatch(JSON.stringify(r), /system\/wht-income-categories/);
+});
+
+
+it('PWS-WHT-LINE asks plain category/base questions and preserves exact grounded calculator amounts', async () => {
+  const ctx = { ...baseCtx, permissions: ['expense.create'] };
+  const tool = new WhtCalculateWithholdingTool({ execute: async () => [{ code: 'CAT', nameTh: 'ค่าบริการ', defaultRate: '3' }] } as any);
+  const ask = (await tool.execute(ctx)).data as any;
+  assert.equal(ask.message, 'จ่ายค่าอะไรคะ');
+  assert.equal(((await tool.execute({ ...ctx, groundingText: 'ค่าบริการ' })).data as any).message, 'ยอดที่ใช้คิดหัก ณ ที่จ่ายก่อน VAT เท่าไรคะ');
+  const r = (await tool.execute({ ...ctx, groundingText: 'ค่าบริการ 1000.50' }, { baseAmount: '1000.50' })).data as any;
+  assert.equal(r.message, 'ยอดก่อน VAT 1000.50 บาท หัก 3% เป็น 30.02 บาท เหลือ 970.48 บาทก่อนบวก VAT ค่ะ');
+  assert.equal(r.baseAmount, '1000.50'); assert.equal(r.withheldAmount, '30.02'); assert.equal(r.netBeforeVat, '970.48');
+  assert.equal(r.dueDate, undefined);
 });

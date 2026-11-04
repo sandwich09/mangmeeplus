@@ -14,6 +14,17 @@ export const INTAKE_CONSTANT_CALIBRATIONS = [
     "digest": "8fdc539be3ca76063b05343c87cbf7b633a4f105834f2ba3cc5df8ac5fddf9aa",
     "bytes": 61057,
     "tokenBound": 26681
+  },
+  // C72 plain-word maintenance: +11 bytes per mode, same model and catalogue vocabulary.
+  {
+    "digest": "10a36aeb41e500cbac41dc6e4237b95ced82879366d6c2622e9fcbeab308f691",
+    "bytes": 66620,
+    "tokenBound": 26686
+  },
+  {
+    "digest": "b0faf4398de09ccc8811e2e4e2e9d2f0ebbe1c2fba530179f4d368e633bbe607",
+    "bytes": 61068,
+    "tokenBound": 26686
   }
 ] as const;
 // Exact reviewed catalogue vocabulary; new/edited entries retain their full byte bound.

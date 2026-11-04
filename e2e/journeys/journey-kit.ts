@@ -315,7 +315,7 @@ export async function recordExpenseByHand(page: Page, expense: HandExpense) {
     // run, 2026-10-14). A person reads the page first: wait for the card where the shop has one.
     const shop = new URL(page.url()).pathname.split('/')[2]!;
     const capture = await json<{ mode: string }>(await page.request.get(`/api/v1/companies/${shop}/expenses/capture-policy`, { headers: { 'X-Company-Id': shop } }));
-    if (capture.mode === 'FULL') await expect(main.getByText('ภาษีมูลค่าเพิ่ม (VAT)', { exact: true })).toBeVisible(AFTER_PRESS);
+    if (capture.mode === 'FULL') await expect(main.locator('p.font-semibold').filter({ hasText: /^VAT$/ })).toBeVisible(AFTER_PRESS);
     await pick('รายการนี้หักภาษี ณ ที่จ่ายไหม', 'หัก');
     const block = main.getByRole('group', { name: 'รายการนี้หักภาษี ณ ที่จ่ายไหม' }).first();
     await expect(block.getByText('เลือกให้ครบเพื่อคำนวณยอดหัก', { exact: true })).toBeVisible();

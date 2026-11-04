@@ -64,6 +64,12 @@ async function fileClaim(page: Page, claim: { reason: string; amount: string; pr
     main.getByRole('link', { name: 'จัดการบัญชีรับเงินคืนของฉัน', exact: true }).click(),
   ]);
   await expect(accountPage.getByRole('heading', { level: 1, name: 'บัญชีรับเงินคืนของฉัน', exact: true })).toBeVisible(FIRST_SIGHT);
+  await accountPage.getByRole('button', { name: /^(แก้ไขบัญชี|ตั้งบัญชีรับเงินคืน)$/ }).click();
+  for (const width of [390, 1280, 1556]) {
+    await accountPage.setViewportSize({ width, height: 1000 });
+    await expect(accountPage.getByRole('button', { name: 'บันทึกบัญชีรับเงินคืน', exact: true })).toBeVisible();
+  }
+  await accountPage.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
   await accountPage.close();
   await expect(main.getByRole('textbox', { name: 'เหตุผล', exact: true })).toHaveValue(claim.reason);
   await expect(main.getByRole('textbox', { name: 'จำนวนเงิน', exact: true })).toHaveValue(claim.amount);

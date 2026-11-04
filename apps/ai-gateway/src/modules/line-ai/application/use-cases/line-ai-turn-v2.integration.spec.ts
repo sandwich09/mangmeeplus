@@ -534,7 +534,7 @@ it('answers pure help from the deterministic guide boundary without control or c
   assert.equal(run.response.semanticCoverage?.[0]?.reasonCode, undefined);
   assert.match(run.response.replyText, /เอกสารยืนยันแล้วอาจรอจ่าย/);
   assert.equal(run.response.sourceRefs[0]?.entityType, 'approved_product_help');
-  assert.match(run.response.sourceRefs[0]?.entityId ?? '', /:6:expense\.status:/);
+  assert.match(run.response.sourceRefs[0]?.entityId ?? '', /:7:expense\.status:5$/);
   assert.equal(run.response.sourceRefs[0]?.permissionChecked, true);
   assert.deepEqual(run.steps, []);
   assert.deepEqual(run.providerRequests, []);

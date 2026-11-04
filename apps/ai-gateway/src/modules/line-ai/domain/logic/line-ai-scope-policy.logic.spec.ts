@@ -89,19 +89,19 @@ describe('item 1: moduleFeatureEnabled fail-open/entitlement convention', () => 
     assert.equal(moduleFeatureEnabled('sales_documents', ['expenses', 'reimbursement', 'sales_documents']), true);
   });
 
-  it('produces the spec §8 copy naming the exact topic, plus two example questions', () => {
+  it('PWS-PLAIN-UNSOLD-REFUSAL offers the main menu without unsold topic jargon', () => {
     const topic = unsoldModuleTopicFor('ขอดูยอดขายเดือนนี้หน่อยจ้ะ')!;
     const text = unsoldModuleReplyText(topic, 'th');
-    assert.ok(text.includes('Mangmee Plus วันนี้ยังไม่มี'), text);
-    assert.ok(text.includes(topic.topicLabelTh), text);
-    assert.ok(text.includes('รายจ่าย'), text);
+    assert.equal(text, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
+    assert.equal(unsoldModuleReplyText(topic, 'en'), 'This task is unavailable here, type ‘เมนูหลัก’ to see the work you can use.');
+    assert.ok(!text.includes(topic.topicLabelTh));
     assert.doesNotMatch(text, /อัปเกรด|บาท|\n/);
   });
 
-  it('produces an English reply naming the topic when the turn is in English', () => {
+  it('produces an English menu exit when the turn is in English', () => {
     const topic = unsoldModuleTopicFor('inventory stock check please')!;
     const text = unsoldModuleReplyText(topic, 'en');
-    assert.ok(text.includes(topic.topicLabelEn), text);
+    assert.equal(text, 'This task is unavailable here, type ‘เมนูหลัก’ to see the work you can use.');
   });
 });
 
@@ -273,7 +273,7 @@ describe('advisor S1: signing or approving a substitute receipt from LINE', () =
 // Advisor S0 (R1 integrated G run 2026-10-01, G-09/G-16/G-24): stock asked without the exact word got a planner
 // sentence or the dead-end line. The fixed reply and its wording are unchanged; only what counts as stock widened.
 describe('advisor S0: stock asked without the exact word still gets the fixed unsold-module reply', () => {
-  const FIXED = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ';
+  const FIXED = 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ';
 
   for (const text of ['ของอะไรใกล้หมดบ้าง', 'ร้านเรามีของเหลือเท่าไหร่', 'สต๊อกเหลือเท่าไหร่อะ', 'สินค้าคงเหลือมีเท่าไหร่',
     'น้ำปลาเหลือกี่ขวด', 'เหลือกี่ชิ้น', 'เช็คสตอกต่ำที', 'สินค้าที่เหลือมีอะไรบ้าง', 'ของใกล้จะหมดมีอะไรบ้าง', 'Stock เหลือเท่าไหร่']) {
@@ -307,7 +307,7 @@ it('Exam D4: unavailable-module wording follows every purchasable billing offer'
     const text = unsoldModuleReplyText({ featureKey: featureKey!, topicLabelTh: topicLabelTh!, topicLabelEn: featureKey! }, 'th');
     assert.equal(featurePackageOffer(featureKey!)?.offerKey, offer?.offerKey);
     if (offer) { assert.match(text, /แพ็กเกจ/u); assert.ok(text.includes(offer.label.replace(/ \(.+\)$/u, ''))); assert.doesNotMatch(text, /วันนี้ยังไม่มี/u); }
-    else { assert.match(text, /Mangmee Plus วันนี้ยังไม่มี/u); assert.doesNotMatch(text, /อัปเกรด|บาทต่อเดือน/u); }
+    else { assert.match(text, /งานนี้ยังทำไม่ได้.*เมนูหลัก/u); assert.doesNotMatch(text, /อัปเกรด|บาทต่อเดือน/u); }
   }
 });
 
@@ -355,5 +355,14 @@ it('U6 absent active offers never falls back to a catalog selling price', async 
   for (const language of ['th', 'en'] as const) {
     const reply = featureLimitReplyText('wht_50bis', language);
     assert.doesNotMatch(reply, /1,999|1999|249|ENTERPRISE/); assert.match(reply, /ตรวจราคาปัจจุบัน|current price/);
+  }
+});
+
+it('PWS-VAT-TRUTH defines VAT without promising eligibility after review for any paid reader', async () => {
+  const { documentExplanationReply } = await import('./line-ai-scope-policy.logic');
+  const { TIER_FEATURE_PRESETS } = await import('@watchdog-bms/contracts');
+  for (const tier of testPaidTiers) for (const permissions of [[], ['expense.read'], ['expense.review']]) {
+    assert.equal(documentExplanationReply('VAT คืออะไร', TIER_FEATURE_PRESETS[tier], permissions, 'th'),
+      'VAT คือภาษีมูลค่าเพิ่ม ยอดบนเอกสารยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ');
   }
 });

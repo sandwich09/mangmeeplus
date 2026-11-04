@@ -42,9 +42,9 @@ Owner Q1–Q7 answered 2026-11-04 (spec §17). Owner default/personal off replac
 ```
 1.1–1.3 removed (ceiling)
 Core A: 2.1–2.5 (five items): explicit choices, contracts, daily retirement, personal stop, merge
-Core B: 2.6 + 3.1–3.4 (five): account + core digest/provider/events/sweep
+Core B: 3.1–3.4 (four): core digest/provider/events/sweep — 2.6 moved after 5.1 (controller 2026-11-04: its R19 free check needs the 5.1 `weeklySummaryAccess` session bridge)
 Core C: 3.5–3.8 (four): live gates, daily worker, sold filter, local digest proof
-Round 5: 5.1–5.5 (five): day/cursor schema, settings API, settings UI, period rule, combined proof
+Round 5: 5.1, then 2.6 + 5.2–5.5: day/cursor schema and session bridge, account card, settings API, settings UI, period rule, combined proof
 Release: 4.1/4.3/4.4 after 5.5; 4.2 is separate approved-help-pack follow-up
 ```
 

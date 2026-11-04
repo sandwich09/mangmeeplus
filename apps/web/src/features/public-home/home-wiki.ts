@@ -48,7 +48,8 @@ Facts aligned with owner-approved LINE help v6 (2026-10-21). Current shop offers
 มั่งมีพลัสช่วยร้านและธุรกิจเล็กเก็บใบเสร็จและค่าใช้จ่ายผ่าน LINE และเว็บ AI เตรียมร่างให้คนตรวจ ไม่แทนนักบัญชี ไม่โอนเงิน ไม่ยื่นภาษี และไม่ให้สินเชื่อ
 
 ### เริ่มใช้งาน
-เริ่มที่ ${HOME_LINE_URL} เมื่อช่องทางสมัครเปิด เจ้าของกิจการที่เป็นสมาชิกพิมพ์ “เปลี่ยนบริษัท” แล้วกด “เปิดร้านใหม่” ตรวจคำขอค้างเดิมก่อน พนักงานใช้ “แพ็กเกจและราคา” หรือพิมพ์ “โปรโมชั่น” สมัครแล้วตั้งค่าร้านและบัญชีได้ งานธุรกิจเริ่มหลังจ่ายแพ็กเกจ สิทธิ์ทดลองเดิมใช้ได้ถึงวันสิ้นสุด เข้าระบบที่ ${HOME_URL}login หรือลิงก์ส่วนตัว “เปิดเว็บบริษัทนี้”
+เริ่มที่ ${HOME_LINE_URL} เมื่อเปิดรับสมัคร เจ้าของกิจการพิมพ์ “เปลี่ยนบริษัท” แล้วกด “เปิดร้านใหม่” พนักงานเลือก “แพ็กเกจและราคา” ร้านที่เข้าเกณฑ์ใช้ฟรีส่งเอกสารเพื่อเก็บร่างได้ตามสิทธิ์ งานอื่นใช้สิทธิ์ของแพ็กเกจปัจจุบัน เข้าระบบที่ ${HOME_URL}login หรือลิงก์ส่วนตัว “เปิดเว็บบริษัทนี้”
+สิทธิ์ใช้ฟรีเก็บร่างรายจ่ายจากเอกสารเท่านั้น ยังยืนยันเอกสาร บันทึกจ่าย หรือส่งออกไม่ได้ ร้านที่เคยซื้อแพ็กเกจแล้วหมดอายุไม่อยู่ในสิทธิ์ใช้ฟรีนี้
 
 ### แพ็กเกจมาตรฐาน
 ${thaiPackages}
@@ -62,14 +63,15 @@ ${thaiPackages}
 - ขั้นตอนรายจ่าย การจ่าย ใบเตรียมจ่าย ใบรับรองแทนใบเสร็จ ส่งออกให้นักบัญชี ลายเซ็นและการแจ้งเตือนอยู่ในคำถามด้านล่าง ตามช่องทางและสิทธิ์ของร้าน
 
 ### 50 ทวิและข้อมูล
-Enterprise ที่เปิดใช้และผู้มีสิทธิ์ออกใบตรวจผู้รับเงิน เลขภาษี ที่อยู่และการจ่ายก่อนออก 50 ทวิ แพ็กอื่นทำใบนอกระบบแล้วจดเลขที่และวันที่ แนบรูปหรือ PDF ได้ถ้ามี การยื่นและนำส่งภาษีแยกจากออกใบ ร้านยื่นเอง VAT ที่พบยังไม่ใช่สิทธิ์ภาษีซื้อ
+ร้านที่ใช้แพ็ก 1,999 และมีสิทธิ์ออกหนังสือรับรอง 50 ทวิ ตรวจข้อมูลผู้รับเงินและการจ่ายก่อนออกใบ แพ็กอื่นจดเลขที่และวันที่ของใบนอกระบบและแนบไฟล์ถ้ามี ตรวจ VAT ก่อนใช้ตอนยื่นภาษีและส่งภาษีให้กรมสรรพากรแยกจากการออกใบ
 ใช้ AWS และ AI บน AWS Bedrock เว็บ HTTPS เข้ารหัสระหว่างทาง ตรวจสิทธิ์และขอบเขตทั้งเว็บกับ LINE เก็บประวัติรายการสำคัญ นโยบายความเป็นส่วนตัวกำกับการใช้และเก็บข้อมูล รูปเบลอ ใบยับและลายมืออาจอ่านผิด ต้องตรวจก่อนยืนยัน ไม่รับรองความถูกต้องทางภาษี
 
 ## English
 MangmeePlus helps Thai shops, employees and accountants manage receipts and expenses. AI prepares drafts for human review; it does not replace an accountant, transfer money, file taxes or provide loans.
 
 ### Getting started
-Use ${HOME_LINE_URL} when signup is open. Linked owners type “เปลี่ยนบริษัท”, then select “เปิดร้านใหม่”; check pending requests first. Staff use “แพ็กเกจและราคา” or type “โปรโมชั่น” for signup. Set up the shop/account before buying; business work starts after payment. Existing trials retain their expiry. Sign in at ${HOME_URL}login or use the personal “เปิดเว็บบริษัทนี้” link.
+Start at ${HOME_LINE_URL} when signup is open. Linked owners choose a shop or open a new one. Staff can view packages and prices. Eligible never-paid shops can send expense documents and keep drafts within their free allowance. Other work follows the shop’s current package and permissions. Sign in at ${HOME_URL}login or use the personal shop link.
+Free access covers source drafts only, without financial confirmation, payment recording or exports. Shops whose paid package has expired are outside this free allowance.
 
 ### Standard packages
 ${englishPackages}
@@ -81,7 +83,7 @@ Renewal, changes, cancellation, refunds and expiry follow current shop terms and
 LINE drafts, totals and branches follow permissions. Confirmation and payment are separate. Claims follow submit → approve → reimburse → sign; claimant and approver sign after reimbursement or provide fully signed paper. The shop pays itself.
 Payment preparation groups one payee's expenses; after approval and actual payment, recording it creates a payment voucher with the same number. Substitute receipts document actual payments with incomplete payee evidence; check purchase/payment evidence and read the full document before signing or approving, including all uploaded paper pages. Registering a signature or reading a notification does not perform the document action.
 Home custom dates initially select last month; only spending follows the range. Pending receipts and total unpaid cover all dates. Authorized accountant exports of reviewed, confirmed records are distinct from reports.
-Enterprise with issuing enabled and authorized staff may issue 50 bis after checking payee, tax ID, address and payment. Other packages record external certificates with required number/date and an optional image or PDF. Tax filing/remittance is separate; the shop files itself. Detected VAT is not automatically claimable input VAT.
+Authorized shops on the 1,999 pack can issue a 50 bis after checking the payee and payment. Other packs record an external certificate’s number and date with an optional file. Check VAT before using it when filing tax. The shop handles filing and sending tax to the Revenue Department separately.
 AWS and AWS Bedrock are used; HTTPS encrypts traffic. Web and LINE check permissions/scope and retain important-action history. The privacy policy governs processing/retention. Blurry or handwritten evidence can need correction; AI does not guarantee tax accuracy.
 
 ## Common questions / คำถามที่พบบ่อยจากผู้ใช้

@@ -1405,3 +1405,22 @@ it('LIST-1 keeps the overpayment warning and claim progress instead of inventing
   assert.equal(expenseModel.expenseListStatus({ status: 'CONFIRMED', paymentStatus: 'PAID', paidAmount: '700', netPayableAmount: '500' }).label, 'จ่ายเกินยอดสุทธิ');
   assert.equal(expenseModel.expenseListStatus({ status: 'DRAFT', paymentStatus: 'UNPAID', reimbursementProgress: { status: 'PAID' } }).label, 'จ่ายคืนแล้ว');
 });
+
+
+it('PWS-MONEY plain field names retain included, excluded, mixed, custom and zero VAT plus an explicit withholding base', () => {
+  for (const [vatMode, rates] of [
+    ['VAT_INCLUDED', ['0.07']], ['VAT_EXCLUDED', ['0.07']], ['VAT_EXCLUDED', ['0.065']],
+    ['VAT_EXCLUDED', ['0.07', '0.065', '0']], ['NO_VAT', ['0']], ['EXEMPT', ['0']],
+  ] as const) {
+    const detail = { expenseDate: '2026-11-04', vatMode, whtInputJson: { inputType: 'RATE', value: '3', baseAmount: '37.25' },
+      lines: rates.map(vatRate => ({ description: 'ตามบิล', quantity: '1', unitPrice: '100', discountAmount: '0', vatRate, whtRate: null,
+        vatTreatment: vatRate === '0' ? vatMode === 'EXEMPT' ? 'EXEMPT' : vatMode === 'NO_VAT' ? 'NON_VAT' : 'ZERO_RATED' : null,
+        expenseCategoryId: null, accountHintKey: null, taxCategory: null })) } as ExpenseDetail;
+    const before = JSON.stringify(detail);
+    const payload = buildExpenseDraftReviewPayload(reviewValues(detail));
+    assert.equal(payload.vatMode, vatMode);
+    assert.deepEqual(payload.lines!.map(line => line.vatRate), [...rates]);
+    assert.deepEqual(payload.whtInput, { inputType: 'RATE', value: '3', baseAmount: '37.25' });
+    assert.equal(JSON.stringify(detail), before);
+  }
+});

@@ -47,3 +47,19 @@ describe('page words shared with the report rows come from contracts', () => {
     assert.equal(PAYMENT_STATUS_LABELS, list('ACCOUNTING_PAYMENT_STATUS_LABELS'));
   });
 });
+
+// PWS-WORDS: the screen title changes independently of accountant output labels.
+it('PWS-WORDS uses one plain VAT title while retaining status and output words', () => {
+  assert.equal(shared.INPUT_VAT_RIGHT_LABEL, 'ใช้ VAT ตอนยื่นภาษี');
+  assert.deepEqual(shared.INPUT_VAT_RIGHT_LABELS, { NEEDS_REVIEW: 'รอตรวจสอบ', CLAIMABLE: 'ใช้ได้ตามเงื่อนไข', NON_CLAIMABLE: 'ใช้ไม่ได้' });
+  assert.equal(shared.ACCOUNTANT_WORKBOOK_COLUMN_LABELS.input_vat_right, 'สิทธิภาษีซื้อ');
+  const buyerWords = {
+    'expenses.buyer_match_hint': 'ตรวจกับใบจริงแล้วเลือกวิธีแก้ด้านล่าง',
+    'expenses.buyer_match_mark_message': 'หากเลือกผิด ใช้ “ยกเลิกเครื่องหมาย” ได้ขณะที่รายการยังแก้ไขได้',
+    'expenses.buyer_match_marked_toast': 'ทำเครื่องหมายแล้ว ไปขั้น “ภาษีและเอกสาร” แล้วกด “ถัดไป”',
+    'expenses.buyer_match_mark_locked': 'แก้คำตอบเรื่อง VAT ที่หน้านี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
+    'expenses.buyer_match_mark_needs_reviewer': 'ให้ผู้มีสิทธิ์ตรวจรายจ่ายแก้คำตอบเรื่อง VAT ของใบนี้',
+    'expenses.buyer_match_already_not_claimed': 'ใบนี้ไม่ได้เลือกใช้ VAT ตอนยื่นภาษีอยู่แล้ว',
+  } as const;
+  for (const [key, word] of Object.entries(buyerWords)) assert.equal(t(key as Parameters<typeof t>[0], 'th'), word);
+});

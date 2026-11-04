@@ -157,7 +157,7 @@ const DESIGN_ROW_CHARS = 200;
 function englishDiffLabel(entry: LineDraftUpdateDiffField): string {
   const fields: Record<string, string> = { expenseDate: 'Document date', vendorName: 'Seller / payee', documentNumber: 'Document number', note: 'Add note', vatMode: 'VAT mode', vatRate: 'VAT rate' };
   const line = /^line\.(\d+)\.(.+)$/u.exec(entry.field);
-  if (line) return `Item ${line[1]} ${({ category: 'category', description: 'description', amount: 'amount', quantity: 'quantity', discount: 'discount to clear', vatTreatment: 'VAT treatment', chargeKind: 'additional charge' } as Record<string, string>)[line[2]!] ?? 'change'}`;
+  if (line) return `Item ${line[1]} ${({ category: 'category', description: 'description', amount: 'amount', quantity: 'quantity', discount: 'discount to clear', vatTreatment: 'VAT option', chargeKind: 'additional charge' } as Record<string, string>)[line[2]!] ?? 'change'}`;
   if (entry.field.startsWith('charge.')) return lineUiLabel(entry.label, 'en');
   return fields[entry.field] ?? lineUiLabel(entry.label, 'en');
 }

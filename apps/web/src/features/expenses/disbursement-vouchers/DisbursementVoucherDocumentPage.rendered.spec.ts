@@ -33,6 +33,7 @@ for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLE
   assert.match(html, /mangmee-flat/); assert.match(html, /<h1[^>]*>ร้านวัสดุ<\/h1>/);
   assert.match(html, new RegExp({ DRAFT: 'ร่าง', PENDING_APPROVAL: 'รออนุมัติ', APPROVED: 'รอจ่าย', PAID: 'จ่ายแล้ว', CANCELLED: 'ยกเลิกแล้ว' }[status]!));
   assert.match(html, /กลับไปรายการ/); assert.match(html, /รายการในใบนี้ \(1\)/);
+  assert.equal((html.match(/หลักฐานว่าบันทึกจ่ายแล้ว/g) ?? []).length, status === 'PAID' ? 1 : 0);
   assert.match(html, /aria-label="เปิดรายจ่าย EXP-1"/);
   const main = html.match(/<section class="[^"]*mainCard[^"]*">([\s\S]*?)<\/section>/)![1];
   assert.ok(html.indexOf('PV-1') < html.indexOf('<h1'));

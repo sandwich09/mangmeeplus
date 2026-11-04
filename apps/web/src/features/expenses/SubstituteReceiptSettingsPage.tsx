@@ -179,7 +179,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
           </fieldset>
 
           <Notice tone="info" action={<a className={secondaryButtonClass} href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">คู่มือกรมสรรพากร</a>}>
-            ใบรับรองแทนใบเสร็จไม่ใช่ใบกำกับภาษี ใช้ขอคืนภาษีซื้อไม่ได้
+            ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้
           </Notice>
 
           {error && <Notice tone="error">{error}</Notice>}

@@ -1,7 +1,7 @@
 import * as evidenceUseCases from './expense-evidence.use-case';
 import * as documentUseCases from './expense-document.use-case';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { GetExpenseUseCase } from './expense-draft.use-case';
+import { GetExpenseUseCase, GetExpenseHistoryUseCase } from './expense-draft.use-case';
 import { inflateRawSync } from 'node:zlib';
 import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
 import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
@@ -2086,4 +2086,47 @@ describe('purchase journal endpoint', () => {
     assert.equal(f.queries[0].where.companyId, 'company-1'); assert.deepEqual(f.queries[0].where.expenseId.in, ['expense']);
     for (const field of ['claimabilitySnapshot', 'taxEvidenceReviewStatus', 'externalTaxCodeSnapshot', 'taxTreatmentSnapshot', 'taxComponentsJson']) assert.equal(f.queries[0].select[field], true);
   });
+});
+
+it('PWS-HISTORY-FREE-ACCESS preserves source-draft own, branch and tenant gates and paid financial history', async () => {
+  for (const free of [true, false]) {
+    let reads = 0;
+    const record = { id: 'history-expense', createdByUserId: 'user-1', branchId: 'branch-1', status: 'DRAFT' };
+    const repo = {
+      commercialAccessDb: {
+        company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: {
+          tierKey: free ? 'FREE_TRIAL_15' : 'STARTER', termEndsAt: new Date(free ? 0 : '2099-01-01'),
+          billingReceiptAccountId: null, capacityOverride: null,
+        } }) },
+        billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+        billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null },
+        salesAttribution: { findUnique: async () => null },
+      },
+      findByIdWithRelations: async (companyId: string) => companyId === 'company-1' ? record : null,
+      listExpenseHistory: async (companyId: string, expenseId: string, page: number) => {
+        reads++;
+        assert.equal(companyId, 'company-1'); assert.equal(expenseId, record.id);
+        return { data: [{ action: 'expense.update' }], total: 1, page, pageSize: 20 };
+      },
+      findMemberDisplayName: async () => 'ผู้ส่งเอกสาร',
+    } as any;
+    const history = new GetExpenseHistoryUseCase(new GetExpenseUseCase(repo), repo);
+    const actor = { ...ctx(['expense.read_own']), freeExpenseDrafts: free, scopes: { branchIds: ['branch-1'] } };
+    const result = await history.execute(actor, record.id);
+    assert.deepEqual(result.data, [{ action: 'expense.update' }]);
+    assert.equal(result.creatorDisplayName, 'ผู้ส่งเอกสาร');
+    for (const [viewer, expectedStatus] of [
+      [{ ...actor, userId: 'another-user' }, 403],
+      [{ ...actor, scopes: { branchIds: ['branch-2'] } }, 403],
+      [{ ...actor, companyId: 'another-company' }, 404],
+      [{ ...actor, permissions: [] }, 403],
+    ] satisfies Array<[RequestContext, number]>) {
+      await assert.rejects(() => history.execute(viewer, record.id), (error: any) => error.getStatus() === expectedStatus);
+    }
+    assert.equal(reads, 1, 'refused reads never load activity');
+    record.status = 'CONFIRMED';
+    if (free) await assert.rejects(() => history.execute(actor, record.id), (error: any) => error.getStatus() === 403);
+    else await history.execute(actor, record.id);
+    assert.equal(reads, free ? 1 : 2);
+  }
 });

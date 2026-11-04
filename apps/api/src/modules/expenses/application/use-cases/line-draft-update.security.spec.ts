@@ -1426,7 +1426,7 @@ it('LINE certificate cards display the payment share validated by the sold issue
   h.issue.previewLineAction = async () => ({ prefill: { ...h.handoff.prefill, grossAmount: '500.0000', withheldAmount: '25.0000' } });
   const proposed = await h.preview();
   assert.ok(proposed.preview, proposed.reply);
-  assert.ok(proposed.preview.details?.includes('เงินได้ 500.0000 บาท · หักภาษี 25.0000 บาท'));
+  assert.ok(proposed.preview.details?.includes('ยอดที่จ่าย 500.0000 บาท · หักภาษี 25.0000 บาท'));
   assert.deepEqual(h.state5.writes, []);
 });
 
@@ -1887,15 +1887,16 @@ it('H2: every enumerated confirmation/ready/void/payment refusal gives a Thai ne
     }
   }
   for (const code of ['expense_confirmation_accounting_period_locked:2026-10', 'expense_confirmation_tax_period_locked:PP30:2026-10']) {
-    assert.match((h.actions as any).refusal(new ConflictException(code), 'CONFIRM'), /ผู้ดูแล.*เปิดงวด/u);
+    const reply = (h.actions as any).refusal(new ConflictException(code), 'CONFIRM');
+    assert.match(reply, /ให้ผู้ทำบัญชีตรวจจากหน้ารายการ/u); assert.doesNotMatch(reply, /เปิดงวด/u);
   }
   for (const [message, next] of [
     ['Cannot confirm expense in status DRAFT.', 'ส่งตรวจ'],
     ['Expense is marked as a duplicate. Clear the duplicate mark before confirming.', 'ล้างเครื่องหมายรายการซ้ำ'],
     ['Withholding tax requires the payee taxpayer class (บุคคลธรรมดา / นิติบุคคล) before confirmation.', 'บุคคลธรรมดาหรือนิติบุคคล'],
-    ['Withholding tax requires the income category (ประเภทเงินได้) before confirmation.', 'ประเภทเงินได้'],
+    ['Withholding tax requires the income category (ประเภทเงินได้) before confirmation.', 'จ่ายค่าอะไร'],
     ['Grand total differs from the receipt OCR total. Finance must acknowledge the difference before confirmation.', 'เทียบยอดรวม'],
-    ['Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.', 'รหัสภาษี'],
+    ['Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.', 'รูปแบบ VAT'],
     ['This document is classified as non-expense. Finance must explicitly override the source document type before advancing.', 'ตรวจประเภทเอกสาร'],
   ]) assert.ok((h.actions as any).refusal(new BadRequestException(message), 'CONFIRM').includes(next), message);
   for (const code of ['expense_payment_not_confirmed', 'expense_changed', 'expense_belongs_to_reimbursement', 'expense_source_version_changed']) {
@@ -2584,7 +2585,7 @@ it('Fix-up 24 D4: income category and expense category share one real rollback p
   service.prisma.client.whtIncomeCategory = { findMany: async () => [{ code: 'WHT_SERVICE_5', nameTh: 'ค่าบริการ (นิติบุคคล)', formType: 'PND53', defaultRate: '3' }] };
   await h.preview();
   const first = await h.actions.answerCategory(h.ctx, 'private-action', 'ค่าบริการ');
-  assert.match(JSON.stringify(first), /เลือกประเภทเงินได้/); assert.equal(h.record.whtCategoryCode, undefined);
+  assert.match(JSON.stringify(first), /เลือกว่ารายการนี้จ่ายค่าอะไร/); assert.equal(h.record.whtCategoryCode, undefined);
   assert.deepEqual(await h.actions.repairChoices(h.ctx, 'private-action'), [{ label: 'ค่าบริการ (นิติบุคคล', text: 'ค่าบริการ (นิติบุคคล)' }, { label: 'อื่นๆ', text: 'เลือกหมวดอื่น' }]);
   const second = await h.actions.answerCategory(h.ctx, 'private-action', 'ค่าบริการ (นิติบุคคล)');
   assert.ok(second && 'preview' in second && second.preview, JSON.stringify(second)); assert.deepEqual(h.steps, []);
@@ -2598,12 +2599,12 @@ it('Fix-up 24 D4: income category and expense category share one real rollback p
   assert.ok('preview' in applied); assert.equal(applied.preview.offerNext, 'VOUCHER_CREATE');
 });
 
-it('Fix-up 24 D4: an empty income catalog keeps confirmation blocked and supplies the existing system settings handoff', async () => {
+it('Fix-up 24 D4: an empty income catalog keeps confirmation blocked and offers the support command, not a staff-console link', async () => {
   const h = evidenceReviewActionHarness(), service = h.actions as any;
   h.ctx.permissions.push('expense.create'); h.record.whtAmount = '3'; h.record.vendorEntityKindSnapshot = 'JURISTIC';
   service.prisma.client.whtIncomeCategory = { findMany: async () => [] };
   const result = await h.preview(); assert.equal(result.preview, undefined);
-  assert.equal(result.webPath, '/system/wht-income-categories'); assert.match(result.reply, /ผู้ดูแลระบบ/);
+  assert.equal(result.webPath, undefined); assert.match(result.reply, /ติดต่อเจ้าหน้าที่/u);
   assert.equal(h.state.writes.length, 0); assert.equal(h.reviews.length, 0);
 });
 

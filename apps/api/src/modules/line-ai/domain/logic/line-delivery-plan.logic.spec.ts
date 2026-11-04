@@ -295,7 +295,7 @@ test('bound path, context 3: capability, small talk and an explained bill are ea
     intent: 'casual_conversation', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1 }, replyText, WEB, 'company', question);
   assertCardIsPrimary(general('น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น\n• ค่าใช้จ่ายและใบเสร็จ\n• งานค้างและการแจ้งเตือน', 'ทำอะไรได้บ้าง'), ['ทำอะไร', 'ได้บ้าง'], 'capability');
   assertCardIsPrimary(general('เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊', 'วันนี้เหนื่อยจัง'), ['วันนี้', 'เหนื่อยจัง'], 'small talk');
-  const explain = 'บิล «BHC» 03/09/2569 เลขที่ A0042 ยอด 1,789.04 บาทค่ะ\nมาจาก สินค้า 1,520.00 + ค่าบริการ 152.00 = ฐานภาษี 1,672.00 แล้วบวก VAT 117.04 เป็น 1,789.04\nสถานะตอนนี้: รอตรวจสอบ';
+  const explain = 'บิล «BHC» 03/09/2569 เลขที่ A0042 ยอด 1,789.04 บาทค่ะ\nมาจาก สินค้า 1,520.00 + ค่าบริการ 152.00 = ยอดที่ใช้คิด VAT 1,672.00 แล้วบวก VAT 117.04 เป็น 1,789.04\nสถานะตอนนี้: รอตรวจสอบ';
   assertCardIsPrimary(gatewayAnswer(explain, undefined, { label: 'BHC', path: '/companies/company/expenses/e1' }, 'ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?', 'BHC'), ['ทำไม', 'service charge…'], 'explain');
 });
 
@@ -562,7 +562,10 @@ test('reply surface × th/en/mixed: primary and fallback delivered payloads foll
           const walk = (value: any): void => { if (!value || typeof value !== 'object') return; for (const [key, child] of Object.entries(value)) { if (['text', 'label', 'altText', 'displayText'].includes(key) && typeof child === 'string') visible.push(child); else if (typeof child === 'object') walk(child); } };
           walk(payload);
           assert.ok(visible.length, id);
-          if (en) assert.doesNotMatch(visible.join('\n'), /[\u0E00-\u0E7F]/u, id);
+          if (en) {
+            if (id === 'en-limit-unsold') assert.ok(visible.some(text => text.includes('This task is unavailable here, type ‘เมนูหลัก’ to see the work you can use.')), id);
+            assert.doesNotMatch(visible.join('\n').replaceAll(id === 'en-limit-unsold' ? 'เมนูหลัก' : '\0', ''), /[\u0E00-\u0E7F]/u, id);
+          }
           else assert.match(visible.join('\n'), /[\u0E00-\u0E7F]/u, id);
           assert.ok(!JSON.stringify(payload).includes('canonicalText'), id);
           for (const msg of payload) for (const item of msg.quickReply?.items ?? []) if (item.action.type === 'postback' && en) assert.equal(lineControlLanguage(item.action.data).language, 'en', id);

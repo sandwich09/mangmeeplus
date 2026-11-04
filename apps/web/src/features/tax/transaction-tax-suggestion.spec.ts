@@ -48,3 +48,26 @@ describe('suggestedLineTaxCode (spec §7, §12)', () => {
     }), null);
   });
 });
+
+
+import { mock } from 'node:test';
+import { certificateHarness, h, mutable } from '../expenses/expense-certificate-test-harness';
+const chooser = mutable('@/common/components/field/ThemedSelect');
+const { TransactionTaxLineSelector } = require('./TransactionTaxLineSelector');
+it('PWS-VAT-CHOICE renders expense labels and a safe guide exit while preserving non-expense copy', () => {
+  const select = mock.method(chooser, 'ThemedSelect', (props: any) => h('select', props, props.children));
+  const props = { companyId: 'co', sourceType: 'expense.record', sourceId: 'e1', sourceLineId: 'l1', transactionContext: 'DOMESTIC_PURCHASE', direction: 'INPUT', documentDate: '2026-11-04', netAmount: '100', grossAmount: '107', onChange() {}, canConfigureTax: true };
+  const preview = { warnings: [], errors: ['tax_account_rule_missing'], components: [] };
+  const view = certificateHarness(() => h(TransactionTaxLineSelector, props), [[], preview, false, '']);
+  try {
+    const html = view.render();
+    assert.match(html, /aria-label="รูปแบบ VAT ของรายการ"/);
+    assert.match(html, /เลือกตามใบกำกับภาษี โดยใช้ VAT ตอนยื่นภาษีได้ตามเงื่อนไขของรายการ/);
+    assert.match(html, /ยังตรวจ VAT ของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจการตั้งค่า/);
+    assert.match(html, /href="\/companies\/co\/user-guide\/expenses"/);
+    assert.doesNotMatch(html, /accounting-tax-setup|Tax Code|ขอคืนได้/);
+    const other = certificateHarness(() => h(TransactionTaxLineSelector, { ...props, sourceType: 'procurement.vendor_bill' }), [[], preview, false, '']);
+    assert.match(other.render(), /aria-label="เลือกประเภทภาษีของรายการ"/);
+    assert.match(other.render(), /ผูกบัญชี/);
+  } finally { view.cleanup(); select.mock.restore(); }
+});

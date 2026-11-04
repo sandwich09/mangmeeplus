@@ -28,6 +28,8 @@ test('the guide explains both journeys, direct payments, waiting to pay, cancell
   assert.ok(table?.kind === 'table');
   assert.equal(table.rows.length, 5);
   const text = JSON.stringify(section);
+  assert.equal(section.summary, 'รวมรายการให้ตรวจและอนุมัติก่อนจ่าย');
+  assert.equal((text.match(/หลักฐานว่าบันทึกจ่ายแล้ว/g) ?? []).length, 1);
   for (const phrase of ['ทำสองคน', 'รอจ่ายหมายถึงอะไร', 'ออกใบสำคัญจ่าย', 'การกดซ้ำได้ใบเดิม', 'ออกใบใหม่', 'ขอบเขตของสิทธิ์']) assert.ok(text.includes(phrase), phrase);
 });
 

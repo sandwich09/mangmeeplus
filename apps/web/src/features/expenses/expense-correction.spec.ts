@@ -4,9 +4,32 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as model from './expenses.model';
 import * as correction from '@watchdog-bms/contracts';
+import { buyerMatchBannerState } from './expense-buyer-match.logic';
+import { t } from '../../common/i18n/workspace-i18n.logic';
 
 const page = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
 const caps = { canReopen: true, reopenBlockers: [], canRecordPayment: true, recordPaymentBlocker: null, payments: [] };
+
+test('PWS-LOCK sold refusals name the requested action and retain known months without unlocking it', () => {
+  const blocked: correction.ExpenseCorrectionCapabilities = { ...caps, disbursementReservation: null, canReopen: false, reopenBlockers: ['accounting_period_locked'], lockedAccountingPeriodKey: '2026-08' };
+  const before = structuredClone(blocked);
+  for (const operation of ['reopen', 'recordPayment', 'cancelPayment', 'reject'] as const) {
+    for (const blocker of ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'] as const) {
+      const text = correction.expenseCorrectionBlockerMessage(blocker, operation, blocked, false);
+      assert.match(text, /ไม่ได้.*ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ/);
+      assert.doesNotMatch(text, /ลงบัญชี|ผ่านรายการ|งวดบัญชี/);
+      if (blocker === 'accounting_period_locked') assert.match(text, /08\/2569/);
+    }
+  }
+  assert.deepEqual(blocked, before);
+  for (const periodKey of [undefined, 'unknown']) {
+    assert.equal(correction.expenseCorrectionBlockerMessage('accounting_period_locked', 'reopen', { ...blocked, lockedAccountingPeriodKey: periodKey }, false), 'เปิดแก้ไขเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
+  }
+  const filed = correction.expenseReopenBlockerMessages({ ...blocked, reopenBlockers: ['tax_period_filed'], lockedTaxPeriods: [{ formType: 'PND3', periodKey: '2026-08' }] }, false);
+  assert.match(filed[0]!, /ภ.ง.ด.3.*ส.ค. 2569.*ผู้ทำบัญชี/);
+  assert.equal(correction.EXPENSE_VOID_CERTIFICATE_WORDS.postingUnresolved, 'ยกเลิกเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
+  assert.equal(correction.REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS.postingUnresolved, 'ยกเลิกใบเบิกไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
+});
 
 test('payment prefills the outstanding satang and names recording the remainder; invalid fields explain the disabled action', () => {
   const form = (model as any).expensePaymentFormState;
@@ -86,8 +109,8 @@ test('50 ทวิ issuance remains available across visits from server capabili
 
 
 test('a blocker appearing after page load keeps its factual Thai remedy in API error handling', () => {
-  assert.match(apiErrorMessage({ code: 'expense_correction_blocked', details: { blockers: ['ledger_posted', 'certificate_issued'] } }), /ลงบัญชีแล้ว[\s\S]*50 ทวิ/);
-  assert.match(apiErrorMessage({ code: 'expense_payment_correction_blocked', details: { blocker: 'ledger_posted' } }), /ลงบัญชีแล้ว/);
+  assert.match(apiErrorMessage({ code: 'expense_correction_blocked', details: { blockers: ['ledger_posted', 'certificate_issued'] } }), /เปิดแก้ไขเอกสารไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ[\s\S]*50 ทวิ/);
+  assert.match(apiErrorMessage({ code: 'expense_payment_correction_blocked', details: { blocker: 'ledger_posted' } }), /ยกเลิกรายการจ่ายไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ/);
   assert.match(apiErrorMessage({ code: 'expense_paid_exceeds_payable' }), /ยอดที่จ่ายแล้วเกิน/);
   for (const code of ['expense_wht_source_changed', 'expense_posting_source_changed', 'expense_correction_source_changed']) assert.match(apiErrorMessage({ code }), /ข้อมูล.*เปลี่ยน.*เปิดหน้านี้ใหม่/);
   assert.match(apiErrorMessage({ code: 'wht_certificate_download_unavailable' }), /ยังไม่มีหนังสือรับรอง.*ดาวน์โหลด/);
@@ -121,4 +144,24 @@ test('small controls on the expense screens keep 44 px of tappable height on a p
   assert.match(page, /\{guided && <><div id="expense-review-start" tabIndex=\{-1\} ref=\{reviewStartRef\}/, 'the review stepper remains on review-mode expenses only');
   const pages = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
   assert.equal((pages.match(/cx\(tapTargetClass, 'flex h-8 w-8/g) ?? []).length, 2, 'remove-line on products and on charges');
+});
+
+test('PWS-VAT-UNDO restores the recorded answer without promising eligibility and keeps line-owned VAT off the header mark', () => {
+  assert.equal(t('expenses.buyer_match_undo', 'th'), 'ยกเลิกเครื่องหมาย');
+  assert.equal(t('expenses.buyer_match_change_line_tax_code', 'th'), 'แก้รูปแบบ VAT ของแต่ละรายการให้ใช้ตอนยื่นภาษีไม่ได้ แล้วบันทึก');
+  for (const prior of ['NEEDS_REVIEW', 'CLAIMABLE'] as const) {
+    const detail = { sourceDocumentType: 'TAX_INVOICE' as const, status: 'NEEDS_REVIEW' as const, postingStatus: 'not_required' as const,
+      inputVatClaimStatus: 'NON_CLAIMABLE' as const, buyerAsPrinted: { matchStatus: 'MISMATCH' as const, checkedAt: '2026-11-04T00:00:00Z', reasons: [], claimStatusBeforeMark: prior }, lines: [] };
+    const state = buyerMatchBannerState({ companyId: 'co', detail, permissions: ['expense.review'], editable: true, claimed: false });
+    assert.equal(state.kind === 'mismatch' && state.restoreClaimStatus, prior);
+    assert.equal(state.kind === 'mismatch' && state.canMarkNonClaimable, false);
+  }
+  for (const claimability of ['CLAIMABLE', 'NONDEDUCTIBLE_EXPENSE'] as const) {
+    const state = buyerMatchBannerState({ companyId: 'co', permissions: ['expense.review'], editable: true, claimed: false, detail: {
+      sourceDocumentType: 'TAX_INVOICE', status: 'NEEDS_REVIEW', postingStatus: 'not_required', inputVatClaimStatus: 'NEEDS_REVIEW',
+      buyerAsPrinted: { matchStatus: 'MISMATCH', checkedAt: '2026-11-04T00:00:00Z', reasons: [] }, lines: [{ taxSnapshot: { taxCodeDefinitionId: 'vat-7', externalTaxCode: 'V7', claimability } }],
+    } });
+    assert.equal(state.kind === 'mismatch' && state.canMarkNonClaimable, false);
+    assert.equal(state.kind === 'mismatch' && state.openLines, claimability === 'CLAIMABLE');
+  }
 });

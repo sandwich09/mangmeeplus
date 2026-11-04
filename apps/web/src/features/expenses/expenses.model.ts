@@ -1385,7 +1385,7 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
         key: 'vendor_tax_id',
         status: detail.sourceDocumentType === 'TAX_INVOICE' ? 'warn' : 'info',
         label: taxIdRaw ? 'เลขผู้เสียภาษีผู้ขายไม่ครบ 13 หลัก — ตรวจทานจากเอกสาร' : 'ยังไม่มีเลขผู้เสียภาษีผู้ขาย',
-        detail: 'ใบกำกับภาษีเต็มรูปต้องมีเลข 13 หลัก จึงจะใช้เครดิตภาษีซื้อได้',
+        detail: 'กรอกเลขผู้เสียภาษีผู้ขายให้ครบ 13 หลักก่อนตรวจ VAT สำหรับยื่นภาษี',
       });
     }
   }
@@ -1418,12 +1418,12 @@ export function deriveExpenseAuditChecks(detail: Pick<ExpenseDetail,
         key: 'vat_check',
         status: 'warn',
         label: 'โหมดเอกสารระบุว่ามี VAT แต่ยังไม่ได้ระบุอัตรา VAT',
-        detail: 'กรอกอัตราตามใบเสร็จ หรือกรอกยอด VAT ที่พิมพ์บนเอกสาร แล้วระบบจะคำนวณฐานภาษีให้',
+        detail: 'กรอกอัตราหรือยอด VAT ตามใบเสร็จ',
       });
     } else if (Math.abs(expected - Number(detail.vatAmount)) > 0.05) {
       checks.push({ key: 'vat_check', status: 'warn', label: 'ยอด VAT ไม่ตรงกับอัตราที่ระบุไว้ — ตรวจทานอีกครั้ง' });
     } else if (rates.every((rate) => Math.abs(Number(rate) - 0.07) <= 0.0002)) {
-      checks.push({ key: 'vat_check', status: 'pass', label: 'VAT ตรงกับฐานภาษี 7%' });
+      checks.push({ key: 'vat_check', status: 'pass', label: 'ยอด VAT ตรงกับยอดที่ใช้คำนวณและอัตรา 7%' });
     } else {
       checks.push({
         key: 'vat_check',

@@ -734,7 +734,7 @@ it('UX8 shop settings keep the expense VAT anchor and name the return destinatio
   const { companyProfileReturnPath, companyProfileReturnLabel } = await import('./company-profile.logic');
   const path = '/companies/co/expenses/e1#expense-input-vat-e1';
   assert.equal(companyProfileReturnPath('co', `?${new URLSearchParams({ returnTo: path })}`), path);
-  assert.equal(companyProfileReturnLabel(path), 'กลับไปตรวจสิทธิภาษีซื้อ');
+  assert.equal(companyProfileReturnLabel(path), 'กลับไปตรวจ VAT สำหรับยื่นภาษี');
   assert.equal(companyProfileReturnLabel('/companies/co/expenses/substitute-receipts/new'), 'กลับไปทำใบรับรอง');
   assert.equal(companyProfileReturnLabel('/companies/co/expenses/e1#wht-certificate'), 'กลับไปออกหนังสือรับรอง');
 });

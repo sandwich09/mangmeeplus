@@ -43,3 +43,10 @@ test('no signup page renders a "+" in customer copy', () => {
     }
   }
 });
+
+
+test('PWS-WELCOME-D welcome describes expense records without automatic accounting', () => {
+  const welcome = pages.find(page => page.name === 'SignupWelcomePage.tsx')!.source;
+  assert.match(welcome, /ใช้มั่งมีพลัสบันทึกรายจ่ายและเก็บใบเสร็จให้ค้นหาได้ง่าย/);
+  assert.doesNotMatch(welcome, /ระบบลงบัญชีให้/);
+});

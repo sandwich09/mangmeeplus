@@ -54,7 +54,7 @@ import { EvidenceBundleDownload } from './EvidenceBundleDownload';
 import { ClaimPaymentPosting } from './ClaimPaymentPosting';
 import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
-import { availableTaxDefinitions } from '../tax/transaction-tax.model';
+import { availableTaxDefinitions, taxChoiceLabel } from '../tax/transaction-tax.model';
 import { useBranchFilter, useBranchScopeLabel } from '../web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
@@ -156,7 +156,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
         if (cancelled) return;
         setTaxCodes(availableTaxDefinitions(items, {
           context: 'DOMESTIC_PURCHASE', direction: 'INPUT', documentDate: todayCivilDate(),
-        }).map((item) => ({ externalCode: item.externalCode, displayName: item.displayName })));
+        }).map((item) => ({ externalCode: item.externalCode, displayName: taxChoiceLabel(item, 'expense.record', 'INPUT') })));
       })
       // An empty list must not stand in for a failed read: with the codes swallowed, the Tax Code
       // column silently collapses to "ไม่กำหนด" only, which is indistinguishable from a company
@@ -316,7 +316,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
                       <Fragment key={c.id}>{c.id === firstHistorical && <tr><th colSpan={showsTax ? 6 : 5}>{t('expenses.category_historical', locale)}</th></tr>}<tr className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
                         <td className="font-semibold text-gray-900">{c.name}</td>
                         {showsTax && <td className="whitespace-nowrap text-sm">
-                          {owned ? taxCodeSelect(c) : <span className="text-gray-500">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รหัสภาษีเดิม' : 'ไม่กำหนด'}</span>}
+                          {owned ? taxCodeSelect(c) : <span className="text-gray-500">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รูปแบบ VAT ที่บันทึกไว้' : 'ไม่กำหนด'}</span>}
                         </td>}
                         <td colSpan={2}>{accountFields(c)}</td>
                         {owned ? <>
@@ -347,7 +347,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
               <option value="">ไม่กำหนด</option>
               {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
             </ThemedSelect>
-            <p className="text-sm text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือกรหัสภาษี เปลี่ยนได้ก่อนยืนยันเอกสาร</p>
+            <p className="text-sm text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือกรูปแบบ VAT และแก้ได้ก่อนยืนยันเอกสาร</p>
           </>}
           </div>
       </Modal>

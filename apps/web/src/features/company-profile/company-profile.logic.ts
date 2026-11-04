@@ -20,7 +20,7 @@ export function withholdingProfileReturnPath(companyId: string, search: string):
 }
 
 export function companyProfileReturnLabel(path: string | null): string {
-  if (path?.includes('#expense-input-vat-')) return 'กลับไปตรวจสิทธิภาษีซื้อ';
+  if (path?.includes('#expense-input-vat-')) return 'กลับไปตรวจ VAT สำหรับยื่นภาษี';
   return path?.includes('/expenses/substitute-receipts/') ? 'กลับไปทำใบรับรอง' : 'กลับไปออกหนังสือรับรอง';
 }
 

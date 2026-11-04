@@ -35,6 +35,17 @@ const OWNER = [
   'tax.period.read', 'report.catalog.read',
 ];
 
+it('PWS-GUIDE payment and claim explanations use the current plain screen words', () => {
+  const starting = sentences(buildGettingStartedGuide('co', [...OWNER, 'expense.disbursement.pay'], [...TIER_FEATURE_PRESETS.STARTER_249])).join(' ');
+  assert.match(starting, /VAT นี้ใช้ตอนยื่นภาษีได้ไหม/);
+  assert.match(starting, /ตรวจคำตอบ “ใช้ VAT ตอนยื่นภาษี” ให้ครบก่อนใช้ยื่น/);
+  assert.match(starting, /ใบสำคัญจ่ายเลขที่เดิม เป็นหลักฐานว่าบันทึกจ่ายแล้ว/);
+  const claim = sentences(buildReimbursementGuide('co')).join(' ');
+  assert.match(claim, /ใบเบิกเก่าที่ถูกยกเลิกทั้งใบแล้วทำต่อไม่ได้/);
+  assert.match(claim, /เมื่อระบบกำลังยกเลิกใบเบิก อ่านเหตุผลที่ค้างอยู่ในหน้าใบเบิกก่อนทำต่อ/);
+  assert.match(claim, /เจ้าของบัญชีที่ยังใช้งานอยู่ได้รับแจ้งให้ตรวจ/);
+});
+
 it('LINE-HELP-ALL-2 keeps the web guide neutral and names current LINE commands and web buttons', () => {
   const text = sentences(buildGettingStartedGuide('co', ['line.ai.query', 'company.plan.manage', 'company.legal_identity.manage',
     'reimbursement.cancel_own', 'wht.external_certificate.link'])).join(' ');
@@ -715,8 +726,7 @@ describe('guides after the sold-screen changes', () => {
 
   it('explains review defaults, saving with Next, missing-receipt answers and a named checker', () => {
     const text = sentences(buildExpensesGuide('co')).join(' ');
-    for (const phrase of ['ขั้นแรกที่ยังขาดข้อมูล', 'ถ้าครบแล้วเปิดขั้นสุดท้าย', 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'สิทธิภาษีซื้อ',
-      'ใช้ได้ตามเงื่อนไข', 'ตรวจเงื่อนไขและติ๊กให้ครบ', '“ถัดไป” เพื่อบันทึก', '“ไม่มีใบเสร็จ” หรือ “ใบเสร็จหาย”',
+    for (const phrase of ['ขั้นแรกที่ยังขาดข้อมูล', 'ถ้าครบแล้วเปิดขั้นสุดท้าย', 'ใช้เป็นหลักฐานรายจ่ายได้ไหม', 'ผู้ตรวจเลือก “ใช้ VAT ตอนยื่นภาษี” และตรวจเงื่อนไขให้ครบ แล้วกด “ถัดไป”', '“ไม่มีใบเสร็จ” หรือ “ใบเสร็จหาย”',
       'ไม่ต้องเลือกประเภทเอกสารหรือตอบเรื่องภาษี', '“ส่งให้ตรวจ” เลือกหนึ่งคนใน “ส่งให้ใครตรวจ”', 'ชื่อผู้ขาย', 'เลือกจากคู่ค้าหรือพิมพ์ชื่อใหม่ได้',
       'วิธีจ่ายเริ่มที่ “โอนเงิน”', 'เปิดร่าง']) assert.ok(text.includes(phrase), phrase);
     assert.doesNotMatch(text, /บันทึกการตรวจ|ตรวจครบทุกข้อแล้ว รอกดยืนยัน|ส่งตรวจสอบ|ส่งให้คนอื่นตรวจ/u);
@@ -787,4 +797,44 @@ it('CLAIM-STEPS guide keeps signing after payment and offers either system or pa
   assert.match(text, /แนบใบที่เซ็นแล้ว/);
   assert.match(text, /กด “เพิ่มเติม” ของรายการจ่าย แล้วเลือก “แนบหลักฐานการจ่ายเพิ่ม”/);
   assert.doesNotMatch(text, /พร้อมจ่าย ให้เซ็น|กลับมาพร้อมจ่ายก่อน/);
+});
+
+
+it('PWS-GUIDE-D expense and substitute guides use plain capture, category and VAT instructions', () => {
+  const expenses = sentences(buildExpensesGuide('co', OWNER)).join(' ');
+  assert.match(expenses, /จัดกลุ่มค่าใช้จ่ายให้ค้นหาและส่งให้ผู้ทำบัญชี/);
+  assert.match(expenses, /ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ/);
+  assert.match(expenses, /ถ้าแก้เอกสารไม่ได้ ให้อ่านเหตุผลและใช้ทางแก้ที่หน้ารายจ่ายแสดง/);
+  const substitute = sentences(buildSubstituteReceiptGuide('co', OWNER)).join(' ');
+  assert.match(substitute, /ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ และยังต้องตรวจหัก ณ ที่จ่ายตามรายการ/);
+  assert.match(substitute, /ใช้ไม่ได้ ถ้าต้องการใช้ VAT ให้ขอใบกำกับภาษีจากผู้ขายที่จด VAT/);
+  assert.doesNotMatch(substitute, /ขอคืนภาษีมูลค่าเพิ่ม|เครดิตภาษีซื้อ/);
+});
+
+it('PWS-WHT-GUIDE quotes the plain payment column and monthly filing entry', () => {
+  const guide = buildTaxGuide('co', ['wht.pnd53.read']);
+  const section = guide.sections.find(item => item.id === 'wht')!;
+  const table = section.blocks.find(block => block.kind === 'table');
+  assert.ok(table?.kind === 'table');
+  assert.equal(table.headers[0], 'จ่ายค่าอะไร');
+  const starting = sentences(buildGettingStartedGuide('co', ['wht.pnd53.read'], [...TIER_FEATURE_PRESETS.ENTERPRISE_1999]));
+  assert.ok(starting.includes('เลือกเดือนที่หน้า “ภาษีหัก ณ ที่จ่าย” เพื่อตรวจรายการก่อนยื่น'));
+});
+
+
+it('PWS-GUIDE-OWNER pins every owner-approved guide sentence from items 10–21', () => {
+  const expenses = sentences(buildExpensesGuide('co', OWNER));
+  const substitute = sentences(buildSubstituteReceiptGuide('co', OWNER));
+  assert.ok(expenses.some(text => text.includes("จัดกลุ่มค่าใช้จ่ายให้ค้นหาและส่งให้ผู้ทำบัญชี")), "item 10");
+  assert.ok(expenses.some(text => text.includes("เลือก “ประเภทเอกสาร” ตอบ “ใช้เป็นหลักฐานรายจ่ายได้ไหม” แล้วเลือกหมวดหมู่ ผู้ตรวจเลือก “ใช้ VAT ตอนยื่นภาษี” และตรวจเงื่อนไขให้ครบ แล้วกด “ถัดไป”")), "item 11");
+  assert.ok(expenses.some(text => text.includes("ถ้าแก้เอกสารไม่ได้ ให้อ่านเหตุผลและใช้ทางแก้ที่หน้ารายจ่ายแสดง")), "item 12");
+  assert.ok(expenses.some(text => text.includes("ส่งใบเสร็จให้ระบบอ่านและเก็บเป็นร่างเพื่อตรวจ")), "item 13");
+  assert.ok(expenses.some(text => text.includes("ยอด VAT ตามเอกสารยังไม่ยืนยันว่าใช้ตอนยื่นภาษีได้ ให้ผู้ทำบัญชีตรวจเอกสารจากชุดที่ส่งออก")), "item 14");
+  assert.ok(expenses.some(text => text.includes("จัดกลุ่มค่าใช้จ่ายให้ค้นหาและส่งให้ผู้ทำบัญชีตามสิทธิ์ของคุณ")), "item 15");
+  assert.ok(expenses.some(text => text.includes("ยอด VAT ตามเอกสารใช้ตอนยื่นภาษีได้ไหม")), "item 16");
+  assert.ok(expenses.some(text => text.includes("ยังไม่แน่ ให้ผู้ทำบัญชีตรวจเงื่อนไขและหลักฐานจากชุดที่ส่งออกก่อนนำ VAT ไปใช้ตอนยื่นภาษี")), "item 17");
+  assert.ok(expenses.some(text => text.includes("กรอกเลขผู้เสียภาษีผู้ขาย 13 หลักจากใบกำกับภาษีเต็มรูป ถ้าผู้ขายไม่ได้จด VAT ให้เปลี่ยนประเภทเอกสารให้ตรงความจริง")), "item 18");
+  assert.ok(substitute.some(text => text.includes("ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ และยังต้องตรวจหัก ณ ที่จ่ายตามรายการ")), "item 19");
+  assert.ok(substitute.some(text => text.includes("ใช้ VAT จากใบรับรองแทนใบเสร็จตอนยื่นภาษีได้ไหม")), "item 20");
+  assert.ok(substitute.some(text => text.includes("ใช้ไม่ได้ ถ้าต้องการใช้ VAT ให้ขอใบกำกับภาษีจากผู้ขายที่จด VAT")), "item 21");
 });

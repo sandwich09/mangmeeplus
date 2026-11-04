@@ -10,7 +10,7 @@ import type {
 } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { listTaxCodeDefinitions, resolveTransactionTaxPreview } from './transaction-tax.api';
-import { availableTaxDefinitions, suggestedLineTaxCode, transactionTaxDiagnosticMessage, transactionTaxErrorMessage } from './transaction-tax.model';
+import { taxChoiceLabel, availableTaxDefinitions, suggestedLineTaxCode, transactionTaxDiagnosticMessage, transactionTaxErrorMessage } from './transaction-tax.model';
 
 type Props = {
   companyId: string;
@@ -48,20 +48,13 @@ type Props = {
   hideWhenNothingToChoose?: boolean;
 };
 
-// Most display names already carry the rate ("ภาษีซื้อขอคืนได้ 7%"), so appending
-// it again read as "7% · 7%". Append only when the name doesn't say the rate.
-function taxChoiceLabel(item: TaxCodeDefinitionDto) {
-  const rate = Number(item.rate);
-  if (!Number.isFinite(rate) || item.displayName.includes(`${rate}%`)) return item.displayName;
-  return `${item.displayName} ${rate}%`;
-}
-
 export function TransactionTaxLineSelector({
   companyId, sourceType, sourceId, sourceLineId, transactionContext, direction,
   documentDate, currency = 'THB', netAmount, grossAmount, enteredTaxAmount, branchId, value = '',
   onChange, disabled = false, allowNoTax = true,
   labelAddon, canConfigureTax = false, suggestedTaxCode = null, hideWhenNothingToChoose = false,
 }: Props) {
+  const expenseInput = sourceType === 'expense.record' && direction === 'INPUT';
   const [definitions, setDefinitions] = useState<TaxCodeDefinitionDto[]>([]);
   const [preview, setPreview] = useState<ResolveTransactionTaxPreviewDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,7 +83,7 @@ export function TransactionTaxLineSelector({
   });
   const suggested = suggestedCode ? choices.find((item) => item.externalCode === suggestedCode) ?? null : null;
   const effectiveValue = value || suggested?.id || '';
-  const setupHref = canConfigureTax && sourceType === 'expense.record'
+  const setupHref = !expenseInput && canConfigureTax && sourceType === 'expense.record'
     ? `/companies/${companyId}/settings/accounting-tax-setup?returnTo=${encodeURIComponent(
       sourceId.startsWith('new-')
         ? `/companies/${companyId}/expenses/manual`
@@ -127,11 +120,11 @@ export function TransactionTaxLineSelector({
 
   return (
     <div className="space-y-2" data-testid="transaction-tax-selector">
-      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-600">ประเภทภาษีของรายการ {labelAddon}</div>
+      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-600">{expenseInput ? 'รูปแบบ VAT ของรายการ' : 'ประเภทภาษีของรายการ'} {labelAddon}</div>
       <ThemedSelect
         value={effectiveValue}
         disabled={disabled || loading}
-        aria-label="เลือกประเภทภาษีของรายการ"
+        aria-label={expenseInput ? 'รูปแบบ VAT ของรายการ' : 'เลือกประเภทภาษีของรายการ'}
         onChange={(event) => {
           const definition = choices.find((item) => item.id === event.target.value);
           setPreview(null);
@@ -139,28 +132,29 @@ export function TransactionTaxLineSelector({
         }}
       >
         {allowNoTax && <option value="">รายการนี้ไม่มี VAT</option>}
-        {!allowNoTax && <option value="">เลือกประเภทภาษี</option>}
+        {!allowNoTax && <option value="">{expenseInput ? 'เลือกรูปแบบ VAT' : 'เลือกประเภทภาษี'}</option>}
         {choices.map((item) => (
           <option key={item.id} value={item.id}>
-            {taxChoiceLabel(item)}
+            {taxChoiceLabel(item, sourceType, direction)}
           </option>
         ))}
       </ThemedSelect>
       {suggested && <p className="text-xs text-brand-700">ค่าตั้งต้นจากหมวดหมู่ค่าใช้จ่าย · เปลี่ยนได้ และจะบันทึกเมื่อคุณกดบันทึกรายการ</p>}
       <p className="text-xs leading-relaxed text-gray-500">
-        {direction === 'INPUT'
+        {expenseInput ? 'เลือกตามใบกำกับภาษี โดยใช้ VAT ตอนยื่นภาษีได้ตามเงื่อนไขของรายการ' : direction === 'INPUT'
           ? 'ภาษีซื้อ “ขอคืนได้” คือการนำ VAT ไปหักตอนยื่นภาษี · “ขอคืนไม่ได้” คือ VAT ที่รวมเป็นค่าใช้จ่าย'
           : 'เลือกรหัสภาษีให้ตรงกับเอกสารภาษีของรายการนี้'}
       </p>
-      {loading && <p className="text-xs text-gray-500">กำลังโหลดประเภทภาษีที่ใช้ได้...</p>}
+      {loading && <p className="text-xs text-gray-500">{expenseInput ? 'กำลังโหลดรูปแบบ VAT…' : 'กำลังโหลดประเภทภาษีที่ใช้ได้...'}</p>}
       {!loading && choices.length === 0 && !error && (
         <p className="text-xs text-amber-700">
-          ยังไม่มีประเภทภาษีที่ใช้ได้กับรายการและวันที่นี้
-          {setupHref
+          {expenseInput ? 'ยังตรวจ VAT ของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจการตั้งค่า' : 'ยังไม่มีประเภทภาษีที่ใช้ได้กับรายการและวันที่นี้'}
+          {!expenseInput && (setupHref
             ? <> · <Link className="font-bold underline" href={setupHref}>ตั้งค่าภาษี</Link></>
-            : ' ให้ผู้ดูแลการตั้งค่าภาษีของร้านเพิ่มให้'}
+            : ' ให้ผู้ดูแลการตั้งค่าภาษีของร้านเพิ่มให้')}
         </p>
       )}
+      {expenseInput && (error || preview?.errors.length || preview?.warnings.length || !loading && choices.length === 0) && <Link className="inline-flex min-h-11 items-center text-sm underline" href={`/companies/${companyId}/user-guide/expenses`}>เปิดคู่มือค่าใช้จ่าย</Link>}
       {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
       {preview && (sourceType !== 'expense.record' || preview.warnings.length > 0 || preview.errors.length > 0) && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${preview.errors.length ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
@@ -174,8 +168,8 @@ export function TransactionTaxLineSelector({
               <span>{component.reportContributions.length ? `${component.reportContributions.length} ช่องรายงาน` : 'ยังไม่ผูกรายงาน'}</span>
             </div>
           ))}
-          {preview.warnings.map((warning) => <p key={warning} className="mt-1 text-amber-700">{transactionTaxDiagnosticMessage(warning)}</p>)}
-          {preview.errors.map((message) => <p key={message} className="mt-1 text-red-700">{transactionTaxDiagnosticMessage(message)}</p>)}
+          {preview.warnings.map((warning) => <p key={warning} className="mt-1 text-amber-700">{transactionTaxDiagnosticMessage(warning, sourceType, direction)}</p>)}
+          {preview.errors.map((message) => <p key={message} className="mt-1 text-red-700">{transactionTaxDiagnosticMessage(message, sourceType, direction)}</p>)}
         </div>
       )}
     </div>

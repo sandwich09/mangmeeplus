@@ -3,7 +3,7 @@ import test from 'node:test';
 import { FREE_EXPENSE_CHAT_REPLY, freeExpenseMenuReply } from './free-expense-line.logic';
 
 test('free refusal names the missing chat entitlement, never says credit depleted or shop unopened', () => {
-  assert.match(FREE_EXPENSE_CHAT_REPLY, /ยังไม่รวมการถามตอบ/);
+  assert.match(FREE_EXPENSE_CHAT_REPLY, /สิทธิ์ใช้ฟรียังไม่รวมคำถาม พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ/);
   assert.doesNotMatch(FREE_EXPENSE_CHAT_REPLY, /เครดิต|ครบ|เปิดร้าน|ซื้อ|เก็บแล้ว/);
 });
 test('deterministic free menu only offers actual read, upload and edit capabilities', () => {

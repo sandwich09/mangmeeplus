@@ -1466,11 +1466,11 @@ describe('delivery plan guard: every card carries its text, or says why it never
 
 it('Fix-up 22B: quick choices preserve API-built web links alongside message buttons', () => {
   const choices = cardBuilders.lineChoiceQuickReply([
-    { label: 'ตั้งค่าประเภทเงินได้', text: 'ตั้งค่าประเภทเงินได้', uri: 'https://app.example.com/system/wht-income-categories?openExternalBrowser=1' },
+    { label: 'เปิดตรวจรายการ', text: 'เปิดตรวจรายการ', uri: 'https://app.example.com/companies/company/expenses/expense?openExternalBrowser=1' },
     { label: 'บริษัท ป้ายสวย จำกัด', text: 'บริษัท ป้ายสวย จำกัด' },
   ]);
   assert.deepEqual(choices.items.map(item => item.action.type), ['uri', 'message']);
-  assert.equal((choices.items[0]!.action as any).uri, 'https://app.example.com/system/wht-income-categories?openExternalBrowser=1');
+  assert.equal((choices.items[0]!.action as any).uri, 'https://app.example.com/companies/company/expenses/expense?openExternalBrowser=1');
 });
 
 

@@ -152,8 +152,8 @@ export class LineVoucherActionService {
         }
         // The web issuer owns every precondition. A placeholder lets us check the remaining fields while asking for the missing address.
         const previews = await Promise.all(handoffs.map(row => this.issue.previewLineAction(ctx, row.id, payload.payeeAddress ?? (awaitingField ? (en ? 'Payee address required' : 'รอที่อยู่ผู้รับเงิน') : undefined))));
-        details.push(...previews.map(row => `${en ? 'Payee' : 'ผู้รับเงิน'}: ${scrubRecordText(row.prefill.payeeSnapshot.name, 80)} · ${en ? 'Income category' : 'ประเภทเงินได้'}: ${scrubRecordText(row.prefill.incomeCategoryName, 80)}`));
-        details.push(...previews.map(row => `${en ? 'Gross income' : 'เงินได้'} ${row.prefill.grossAmount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${row.prefill.withheldAmount} ${en ? 'THB' : 'บาท'}`));
+        details.push(...previews.map(row => `${en ? 'Payee' : 'ผู้รับเงิน'}: ${scrubRecordText(row.prefill.payeeSnapshot.name, 80)} · ${en ? 'What was paid for' : 'จ่ายค่าอะไร'}: ${scrubRecordText(row.prefill.incomeCategoryName, 80)}`));
+        details.push(...previews.map(row => `${en ? 'Amount before withholding' : 'ยอดที่จ่าย'} ${row.prefill.grossAmount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${row.prefill.withheldAmount} ${en ? 'THB' : 'บาท'}`));
         const address = payload.payeeAddress ?? whtPayeeAddress(handoffs[0]!.payeeAddress, handoffs[0]!.prefill.payeeSnapshot.address);
         if (address) details.push(`${en ? 'Payee address' : 'ที่อยู่ผู้รับเงิน'}: ${address.replace(/[\u0000-\u001f\u007f]/gu, ' ').slice(0, 500)}`);
       } else {

@@ -17,8 +17,8 @@ test('reopen identifies SYSTEM and EXTERNAL effects with exact copy and omits a 
     const certificate = { kind, number, date: null, canCancel: true };
     const html = render(certificate).render();
     assert.match(html, new RegExp(kind === 'SYSTEM'
-      ? 'เอกสารนี้ออกหนังสือรับรองหัก ณ ที่จ่าย \\(50 ทวิ\\) แล้ว'
-      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรองหัก ณ ที่จ่ายนอกระบบแล้ว'));
+      ? 'เอกสารนี้ออกหนังสือรับรอง 50 ทวิแล้ว'
+      : 'เอกสารนี้บันทึกไว้ว่าออกหนังสือรับรอง 50 ทวินอกระบบแล้ว'));
     assert.ok(html.includes('ยังไม่ได้ยื่นภาษีหัก ณ ที่จ่ายของรายการนี้')); assert.ok(html.includes('ยื่นไปแล้ว จะแจ้งคนที่ยื่นภาษีให้ร้านยื่นแบบแก้ไข'));
     assert.doesNotMatch(html, /ข้อมูลที่ยื่นไว้ไม่เปลี่ยนตาม/);
     assert.match(html, /type="radio" required=""/);

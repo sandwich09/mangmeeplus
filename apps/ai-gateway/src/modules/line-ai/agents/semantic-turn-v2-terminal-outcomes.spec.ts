@@ -529,9 +529,9 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     const coverage = result.semanticCoverage?.[0];
     assert.equal(coverage?.status, 'unsupported');
     assert.equal(coverage?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.startsWith('Mangmee Plus วันนี้ยังไม่มี'), result.replyText);
-    assert.ok(result.replyText.includes('ยอดขาย') || result.replyText.includes('รายได้'), result.replyText);
-    assert.ok(result.replyText.includes('รายจ่าย หลักฐานใบเสร็จ และใบเบิก'), result.replyText);
+    assert.ok(result.replyText.startsWith('งานนี้ยังทำไม่ได้'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
+    assert.doesNotMatch(result.replyText, /ยอดขาย|รายได้|รายจ่าย หลักฐานใบเสร็จ และใบเบิก/);
   });
 
   it('P&L/profit: no tool call, even via reimbursement.get_summary (eval T-136)', async () => {
@@ -548,7 +548,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for an unsold-module clause'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('กำไรขาดทุน'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('receivables: no tool call (eval T-138)', async () => {
@@ -565,7 +565,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for an unsold-module clause'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('ลูกหนี้') || result.replyText.includes('ลูกค้าค้างชำระ'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('payroll: no tool call, regardless of entitlement (no such feature exists)', async () => {
@@ -582,7 +582,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool for payroll'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('เงินเดือน'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('invoice/issuing: no tool call (eval T-130)', async () => {
@@ -599,7 +599,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('ใบแจ้งหนี้'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('bank balance: no tool call (eval T-137)', async () => {
@@ -616,7 +616,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('บัญชีธนาคาร'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('stock/inventory: no tool call (eval T-131)', async () => {
@@ -633,7 +633,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('สต็อก'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('purchase orders: no tool call', async () => {
@@ -650,7 +650,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
       async invoke(): Promise<ToolResult> { throw new Error('must never call a tool'); },
     });
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
-    assert.ok(result.replyText.includes('ใบสั่งซื้อ'), result.replyText);
+    assert.equal(result.replyText, 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ');
   });
 
   it('mixed message: answers the expense part and states the limit for the unsold part, in one reply', async () => {
@@ -699,7 +699,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     assert.deepEqual(invoked, ['expense.list_recent'], 'only the expense clause ever reaches a tool call');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
     assert.equal(result.semanticCoverage?.[1]?.status, 'handled');
-    assert.ok(result.replyText.includes('Mangmee Plus วันนี้ยังไม่มี'), result.replyText);
+    assert.ok(result.replyText.includes('งานนี้ยังทำไม่ได้'), result.replyText);
     assert.ok(result.replyText.includes('1,000'), result.replyText);
   });
 
@@ -769,7 +769,7 @@ describe('item 1: a question about an unsold module never gets an expense/reimbu
     });
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, undefined);
-    assert.match(result.replyText, /VAT คือภาษีมูลค่าเพิ่ม/);
+    assert.match(result.replyText, /VAT คือภาษีมูลค่าเพิ่ม ยอดบนเอกสารยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ/);
     assert.doesNotMatch(result.replyText, /ทำได้เลย/);
   });
 });
@@ -1109,7 +1109,7 @@ describe('H3: one call failing to bind never sinks an index a sibling call alrea
 // message. Each case is one the real model produced in that run.
 describe('advisor S0: general answers are shaped in code, and a stock clause is answered before any planning', () => {
   const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
-  const FIXED_STOCK = 'Mangmee Plus วันนี้ยังไม่มีสต็อกสินค้าคงเหลือ ตรวจงานรายจ่าย หลักฐานใบเสร็จ และใบเบิกที่ร้านเปิดใช้ตามสิทธิ์ได้ค่ะ';
+  const FIXED_STOCK = 'งานนี้ยังทำไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูงานที่ใช้ได้ค่ะ';
 
   function recording(responses: string[]) {
     const queue = [...responses];

@@ -55,6 +55,7 @@ const EN_LABELS: Record<string, string> = {
   'ใบเสร็จรับเงิน ภ.พ.36': 'PP36 receipt', 'ใบกำกับภาษี (เต็มรูป)': 'Full tax invoice', 'ใบกำกับภาษีอย่างย่อ': 'Abbreviated tax invoice',
   'บิลเงินสดเขียนมือ': 'Handwritten cash bill', 'บิลผู้ขาย': 'Supplier bill', 'สกรีนช็อตคำสั่งซื้อ': 'Order screenshot',
   'สกรีนช็อตคำสั่งซื้อ (Shopee/Lazada/TikTok)': 'Marketplace order screenshot', 'โน้ตค่าใช้จ่าย (ข้อความ)': 'Expense note',
+  'จ่ายค่าอะไร': 'What was paid for', 'หลักฐานรายจ่าย': 'Expense evidence', 'ใช้ VAT ตอนยื่นภาษี': 'Use VAT when filing tax',
   'ใบแทนใบเสร็จ': 'Substitute receipt', 'ใบรับรองแทนใบเสร็จรับเงิน': 'Substitute receipt',
   'เอกสารค่าใช้จ่ายอื่น': 'Other expense document', 'รอตรวจประเภทเอกสาร': 'Document type needs review',
   'ค่าบริการ': 'Service charge', 'ส่วนลด': 'Discount', 'วันที่': 'Date', 'ชื่อผู้ขาย': 'Seller name', 'เลขที่เอกสาร': 'Document number',

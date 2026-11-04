@@ -129,7 +129,7 @@ describe('CorrectWhtCertificateUseCase', () => {
       const h = harness();
       await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1', corrected as any, 'แก้ข้อมูล'), (error: any) => {
         assert.equal(error.getStatus(), 409); assert.equal(error.getResponse().code, 'wht_correction_field_locked');
-        assert.equal(error.getResponse().message, 'ยอดเงิน อัตราภาษี แบบที่ยื่น ประเภทเงินได้ และเลขผู้เสียภาษีของผู้รับเงิน แก้ในหน้านี้ไม่ได้ เพราะต้องตรงกับรายจ่ายและแบบที่ยื่นภาษี ให้กด “แก้ไขเอกสาร” ที่รายจ่าย ระบบจะยกเลิกใบนี้และออกใบใหม่ได้หลังยืนยันอีกครั้ง'); return true;
+        assert.equal(error.getResponse().message, 'แก้ยอด อัตรา รายการที่จ่าย หรือเลขผู้เสียภาษีที่รายจ่ายด้วย “แก้ไขเอกสาร”'); return true;
       });
       assert.equal(h.periodWrites.length + h.reservations.length + h.history.length + h.commits.length + h.audits.length + h.renders.length, 0);
       assert.equal(h.certificates.length, 1); assert.equal(h.certificates[0].status, 'ISSUED'); assert.equal(h.handoff.certificateId, 'cert-1');

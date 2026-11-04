@@ -170,6 +170,48 @@ describe('new LINE shop welcome', () => {
     } finally { h.restore(); }
   });
 
+  it('PWS-WELCOME-SOURCE pins the current free allowance cases and paid opening confirmation', async () => {
+    for (const state of [
+      { freeUsed: 0, freeInFlight: 0, expected: 'เริ่มจากใบเสร็จสักใบก่อนก็ได้ค่ะ ลองส่งฟรีได้เดือนละ 3 ใบ โดยยังไม่ต้องซื้อแพ็กเกจ' },
+      { freeUsed: 1, freeInFlight: 1, expected: 'เดือนนี้ยังส่งใบเสร็จฟรีได้อีก 1 ใบค่ะ มั่งมีจะเตรียมรายการรายจ่ายไว้ให้คุณตรวจดู' },
+      { freeUsed: 3, freeInFlight: 0, expected: 'เดือนนี้ใช้สิทธิ์อ่านใบเสร็จฟรีครบแล้วค่ะ ยังเปิดร่างเดิมเพื่อตรวจดูและแก้ไขได้ตามสิทธิ์ของคุณ' },
+      { freeUsed: 2, freeInFlight: 1, expected: 'ตอนนี้มีใบเสร็จที่กำลังอ่านอยู่ค่ะ รอผลแล้วเปิดร่างเพื่อตรวจดูได้เลยนะคะ' },
+      { freeState: 'paid' as const },
+    ]) {
+      const h = harness({ request: completed(), newShop: true, ...state });
+      try {
+        await h.service.deliver('r1', 'approved');
+        assert.equal(h.pushes.length, 1);
+        const message = h.pushes[0].body.messages[0];
+        const lines = message.contents.body.contents.map((line: { text: string }) => line.text);
+        if (state.freeState === 'paid') {
+          assert.deepEqual(lines, ['เปิดร้านแล้ว', 'เปิดร้าน ร้านนิด ให้แล้วค่ะ เปิดหน้าร้านได้จากปุ่มด้านล่างค่ะ']);
+          assert.deepEqual(message.contents.footer.contents.map((button: any) => button.action), [
+            { type: 'uri', label: 'เปิดหน้าร้าน', uri: 'https://liff.line.me/1234567890-abcdef/start' },
+          ]);
+          assert.doesNotMatch(JSON.stringify(message), /ฟรี|package-advisor/);
+        } else {
+          assert.deepEqual(lines, [
+            'สวัสดีค่ะ มั่งมีนะคะ ผู้ช่วยดูแลร้านของคุณ',
+            'ยินดีต้อนรับร้าน ร้านนิด ค่ะ มั่งมีจะช่วยอ่านใบเสร็จและเตรียมรายการรายจ่ายไว้ให้คุณตรวจดู',
+            state.expected,
+            'ถ้ายังเลือกแพ็กเกจไม่ถูก ให้มั่งมีช่วยดูได้ค่ะ หรือจะคุยกับทีมดูแลก่อนก็ได้นะคะ',
+          ]);
+          const actions = message.contents.footer.contents.map((button: any) => button.action);
+          assert.deepEqual(actions.slice(-2), [
+            { type: 'uri', label: 'ช่วยเลือกแพ็กเกจให้หน่อย', uri: 'https://liff.line.me/1234567890-abcdef/package-advisor' },
+            { type: 'uri', label: 'คุยกับทีมดูแล', uri: 'https://lin.ee/6Sc38L6' },
+          ]);
+          const remaining = 3 - state.freeUsed! - state.freeInFlight!;
+          assert.equal(actions.length, remaining > 0 ? 3 : 2);
+          if (remaining > 0) assert.deepEqual(actions[0], { type: 'message', label: 'ลองส่งใบเสร็จ', text: 'ลองส่งใบเสร็จ' });
+          if (state.freeUsed || state.freeInFlight) assert.doesNotMatch(JSON.stringify(message), /เดือนละ 3 ใบ/);
+        }
+        assert.equal(h.pushes[0].init.headers['X-Line-Retry-Key'], lineSignupPushRetryKey('r1', 'approved'));
+      } finally { h.restore(); }
+    }
+  });
+
   it('keeps the original welcome on recovery but never welcomes another request adopting that company', async () => {
     const h = harness({ request: completed(), newShop: true, welcomeSignupRequestId: 'original-request' });
     try {

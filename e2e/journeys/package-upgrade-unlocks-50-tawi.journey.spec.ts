@@ -112,6 +112,7 @@ test('@journey a 999 shop records a withheld payment; after the package becomes 
     const dialog = page.getByRole('dialog', { name: 'ออกหนังสือรับรอง 50 ทวิ ให้ผู้รับเงิน' });
     // The payee and amounts recorded on 999 are carried into the certificate as they are.
     await expect(dialog).toContainText(payee, AFTER_PRESS);
+    await expect(dialog.getByText('จ่ายค่าอะไร', { exact: true })).toBeVisible();
     for (const fact of ['0-1055-64000-12-8', '2,000.00 บาท', '60.00 บาท']) await expect(dialog).toContainText(fact);
     const issue = dialog.getByRole('button', { name: 'ออกเลขที่และดาวน์โหลด', exact: true });
     await expect(issue).toBeEnabled(AFTER_PRESS);
@@ -135,6 +136,12 @@ test('@journey a 999 shop records a withheld payment; after the package becomes 
     await expect(main.getByRole('heading', { level: 1, name: 'ภาษีหัก ณ ที่จ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
     const row = main.locator('tr[data-href], div[data-href]').filter({ visible: true }).filter({ hasText: payee });
     await expect(row).toContainText('ออกแล้ว', AFTER_PRESS);
+    const viewport = page.viewportSize();
+    for (const width of [390, 1280, 1556]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(main.locator('thead th').filter({ hasText: /^จ่ายค่าอะไร$/ })).toHaveCount(1);
+    }
+    if (viewport) await page.setViewportSize(viewport);
   });
 
   await test.step('ลายเซ็นบน 50 ทวิ (menu) opens', async () => {

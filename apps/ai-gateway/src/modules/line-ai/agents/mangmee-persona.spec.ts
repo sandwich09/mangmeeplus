@@ -36,10 +36,10 @@ describe('persona prompt content', () => {
   });
 
   it('tuning-3 item 3: forbids English business/system jargon in favor of the Thai word customers see', () => {
-    const jargonLine = MANGMEE_PERSONA_LINES.find((line) => line.includes('Sales/AR'));
-    assert.ok(jargonLine, 'expected a persona line naming the forbidden English jargon');
-    assert.match(jargonLine!, /Expense/);
-    assert.match(jargonLine!, /Reimbursement/);
+    const jargonLine = MANGMEE_PERSONA_LINES.find((line) => line.includes('In Thai replies'));
+    assert.ok(jargonLine, 'expected the plain Thai control-name instruction');
+    assert.match(jargonLine!, /everyday words/);
+    assert.match(jargonLine!, /ใบเบิก/);
     assert.match(jargonLine!, /ค่าใช้จ่าย/);
   });
 
@@ -292,4 +292,11 @@ describe('thaiForEnglishBusinessWords: two English business words in a Thai repl
     assert.equal(sanitizeMangmeeComposedText('จะ reset ใหม่ 1 พ.ย. ครับ', true, usage), 'จะเริ่มนับใหม่ 1 พ.ย. ค่ะ');
     assert.equal(sanitizeMangmeeComposedText('จะ reset ใหม่ 1 พ.ย. ครับ'), 'จะ reset ใหม่ 1 พ.ย. ค่ะ');
   });
+});
+
+
+it('PWS-PLAIN-PERSONA uses everyday control names while retaining exact tax paper names', () => {
+  const instruction = MANGMEE_PERSONA_LINES.find(line => line.startsWith('In Thai'))!;
+  assert.ok(instruction.length <= 232, 'C72 must fit the 232-character develop instruction');
+  assert.equal(instruction, 'In Thai replies, use plain control names ค่าใช้จ่าย and ใบเบิก and everyday words for accounting ideas. Use paper names หัก ณ ที่จ่าย, VAT, ภ.ง.ด.3, ภ.ง.ด.53 and หนังสือรับรอง 50 ทวิ only when the user needs the paper.');
 });

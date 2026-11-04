@@ -40,7 +40,7 @@ test.describe('no-receipt certificate', () => {
       await expect(main.getByRole('heading', { level: 1, name: 'สร้างใบรับรองแทนใบเสร็จ', exact: true })).toBeVisible(FIRST_SIGHT);
       const steps = main.getByRole('navigation', { name: 'เส้นทางการจัดทำเอกสาร' }).getByRole('listitem');
       await expect(steps).toHaveText([/^1\s*ค่าใช้จ่าย$/, /^2\s*รายละเอียด$/, /^3\s*เซ็น$/, /^4\s*เสร็จ$/]);
-      await expect(main.getByText('⚠ เอกสารนี้ไม่ใช่ใบกำกับภาษี จึงใช้ขอคืน VAT ไม่ได้ และไม่ยกเว้นหน้าที่ภาษีหัก ณ ที่จ่าย', { exact: true })).toBeVisible();
+      await expect(main.getByText('⚠ ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ และยังต้องตรวจหัก ณ ที่จ่ายตามรายการ', { exact: true })).toBeVisible();
       await expect(main.getByRole('group', { name: 'ค่าใช้จ่ายนี้บันทึกไว้หรือยัง' })).toBeVisible();
     });
 
@@ -67,7 +67,7 @@ test.describe('no-receipt certificate', () => {
       // Off, and the reason is on the screen.
       await expect(next).toBeDisabled();
       await expect(main.getByRole('status').filter({ hasText: 'ยังขาด:' })).toContainText('ติ๊กว่าเข้าใจแล้ว');
-      await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จไม่ใช่ใบกำกับภาษี ใช้ขอคืน VAT ไม่ได้', exact: true }).check();
+      await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้', exact: true }).check();
       await expect(next).toBeEnabled();
       await next.click();
     });
@@ -312,7 +312,7 @@ test.describe('no-receipt certificate', () => {
       await expect(missing).toContainText('ยังขาด: หมวดหมู่ของรายการ');
 
       // Ticking what she can tick does not open the step: she is not let through to be refused later.
-      await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จไม่ใช่ใบกำกับภาษี ใช้ขอคืน VAT ไม่ได้', exact: true }).check();
+      await main.getByRole('checkbox', { name: 'เข้าใจแล้วว่าใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้', exact: true }).check();
       await expect(missing).toHaveText('ยังขาด: หมวดหมู่ของรายการ');
       await expect(next).toBeDisabled();
     });

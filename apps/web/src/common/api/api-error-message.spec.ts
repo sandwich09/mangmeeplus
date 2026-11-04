@@ -65,8 +65,8 @@ test('resend and recipient-code limits keep their own sentence and add only a sh
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
 test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {
-  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED' })), /เกินเกณฑ์ของรหัสภาษี/);
-  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_RATE_CONFLICT' })), /อัตรา VAT ของรายการไม่ตรง/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED' })), /ส่วนต่าง VAT เกินที่กำหนด/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_RATE_CONFLICT' })), /อัตราและรูปแบบ VAT ไม่ตรงกัน/);
   assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_OVERRIDE_INVALID' })), /ตรวจยอดต้นฉบับและอัตรา VAT/);
 });
 
@@ -149,12 +149,12 @@ test('prefers the error code over the message', () => {
 test('matches a conflict code that carries its detail inline', () => {
   assert.equal(
     translateApiError('expense_confirmation_accounting_period_locked:2026-07'),
-    'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยืนยันได้',
+    'ยืนยันเอกสารของเดือนนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ',
   );
 });
 
 test('a claim payment dated in a closed period tells the payer what to do, whatever the month', () => {
-  const label = 'วันที่จ่ายอยู่ในงวดบัญชีที่ปิดแล้ว จึงบันทึกการจ่ายไม่ได้ ตรวจวันที่จ่ายอีกครั้ง หากจ่ายในวันนั้นจริง ให้ผู้มีสิทธิ์เปิดงวดบัญชีก่อนแล้วจึงบันทึกใหม่';
+  const label = 'บันทึกจ่ายในวันที่เลือกไม่ได้ ตรวจวันที่หรือให้ผู้ทำบัญชีตรวจรายการนี้ต่อ';
   assert.equal(translateApiError('reimbursement_payment_accounting_period_locked:2026-08'), label);
   // As the API answers it: a 409 whose message is the code with the month attached.
   assert.equal(apiErrorMessage(apiError('reimbursement_payment_accounting_period_locked:2026-08', { status: 409 })), label);
@@ -314,8 +314,8 @@ test('keeps human period references while hiding expense status enums', () => {
     translateApiError('Cannot confirm expense in status DRAFT.'),
     'ยืนยันค่าใช้จ่ายไม่ได้ในสถานะปัจจุบัน เปิดหน้านี้ใหม่เพื่อดูสถานะล่าสุด',
   );
-  assert.match(translateApiError('Accounting period 2026-07 is not open; reopen it before voiding.')!, /2026-07/);
-  assert.match(translateApiError('PP30/2026-07 is locked; use an adjustment or amended filing workflow.')!, /PP30 2026-07/);
+  assert.match(translateApiError('Accounting period 2026-07 is not open; reopen it before voiding.')!, /07\/2569/);
+  assert.match(translateApiError('PP30/2026-07 is locked; use an adjustment or amended filing workflow.')!, /ภ.พ.30 เดือน 07\/2569/);
 });
 
 test('translates the substitute-receipt eligibility refusals', () => {
@@ -671,4 +671,46 @@ test('R4 uninspectable and embedded PDFs give truthful recovery', () => {
   assert.equal(apiErrorMessage({ code: 'CONTENT_UNINSPECTABLE' }), 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น');
   assert.equal(apiErrorMessage({ code: 'EMBEDDED_FILE_REJECTED' }), 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ เลือกไฟล์อื่น');
   assert.equal(translateApiError('PDF could not be inspected.'), 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น');
+});
+
+const plainWordsErrors = [
+  ["PND3_FILING_CATEGORY", "เปิดรายจ่ายแล้วเลือก “จ่ายค่าอะไร” ให้ตรงกับรายการ"],
+  ["PND53_FILING_CATEGORY", "เปิดรายจ่ายแล้วเลือก “จ่ายค่าอะไร” ให้ตรงกับรายการ"],
+  ["reimbursement_source_tax_review_required", "ให้ผู้ตรวจรายจ่ายตรวจ VAT และหัก ณ ที่จ่ายที่รายจ่ายก่อนนำมาเบิก"],
+  ["expense_wht_category_payee_mismatch", "เลือก “จ่ายค่าอะไร” ให้ตรงกับผู้รับเงิน หรือแก้ “ผู้รับเงินเป็นใคร”"],
+  ["expense_category_account_unmapped", "ยังสร้างหมวดค่าใช้จ่ายไม่ได้ ติดต่อทีมงานมั่งมี"],
+  ["expense_confirmation_tax_line_changed", "ข้อมูล VAT เปลี่ยนระหว่างยืนยัน ตรวจรายการแล้วลองอีกครั้ง"],
+  ["expense_confirmation_accounting_period_locked", "ยืนยันเอกสารของเดือนนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ"],
+  ["expense_confirmation_tax_period_locked", "ยืนยันเอกสารเข้ารอบภาษีนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ"],
+  ["EXPENSE_VAT_TAX_TOLERANCE_REQUIRED", "ส่วนต่าง VAT เกินที่กำหนด ให้ผู้ตรวจรายจ่ายตรวจรายการก่อนยืนยัน"],
+  ["EXPENSE_VAT_TAX_RATE_CONFLICT", "อัตราและรูปแบบ VAT ไม่ตรงกัน แก้ให้ตรงกับเอกสารก่อนยืนยัน"],
+  ["expense_confirmation_accepted_vat_changed", "ยอด VAT ไม่ตรงกับยอดที่เลือกใช้ ตรวจรายการแล้วลองยืนยันอีกครั้ง"],
+  ["invalid_taxId", "เลขผู้เสียภาษีต้องมี 13 หลัก"],
+  ["functional_currency_fx_required", "ยังไม่พบอัตราแลกเปลี่ยนที่ตรวจแล้ว ให้ผู้ตรวจรายจ่ายตรวจเอกสาร"],
+  ["reimbursement_payment_accounting_period_locked", "บันทึกจ่ายในวันที่เลือกไม่ได้ ตรวจวันที่หรือให้ผู้ทำบัญชีตรวจรายการนี้ต่อ"],
+  ["tax_period_filed", "แก้ข้อมูลภาษีของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ"],
+  ["wht_handoff_income_category_missing", "เลือก “จ่ายค่าอะไร” และกรอกอัตราหัก ณ ที่จ่ายให้ครบก่อนออกหนังสือรับรอง"],
+  ["taxId must be 13 digits", "เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก"],
+  ["WHT amount cannot exceed the accepted pre-VAT amount.", "ยอดหัก ณ ที่จ่ายเกินยอดที่ใช้คิด ตรวจยอดและช่อง “ยอดที่ใช้คิดหัก ณ ที่จ่าย”"],
+  ["WHT amount cannot exceed the document total or leave a negative payable.", "ยอดหัก ณ ที่จ่ายเกินยอดเอกสาร ตรวจยอดที่หักอีกครั้ง"],
+  ["Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.", "เลือกรูปแบบ VAT ให้ครบทุกรายการที่มี VAT ก่อนยืนยันเอกสาร"],
+  ["Internal substitute evidence must remain supporting-only and non-claimable for input VAT.", "ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ เลือกใช้เป็นหลักฐานประกอบ"],
+  ["Internal substitute evidence cannot preserve input VAT. Set it to supporting/non-claimable or request an issuer-created replacement tax invoice.", "เลือกใช้ใบรับรองแทนใบเสร็จเป็นหลักฐานประกอบ หรือขอใบแทนใบกำกับภาษีจากผู้ขาย"],
+  ["A receipt, substitute receipt, or supporting-only document cannot retain a Tax Code.", "รูปแบบ VAT นี้ใช้กับเอกสารชนิดนี้ไม่ได้ ตรวจประเภทเอกสารและรูปแบบ VAT"],
+  ["A receipt, substitute receipt, or supporting-only document cannot claim input VAT.", "ใบเสร็จหรือหลักฐานประกอบใช้ VAT ตอนยื่นภาษีไม่ได้ ตรวจประเภทเอกสารให้ตรงกับใบจริง"],
+  ["Domestic input VAT requires a reviewed TAX_INVOICE with usable tax evidence.", "ตรวจใบกำกับภาษีเต็มรูปและหลักฐานให้ครบก่อนใช้ VAT ตอนยื่นภาษี"],
+  ["Domestic input VAT requires an attached tax invoice, supplier tax ID, and tax invoice number.", "แนบใบกำกับภาษีแล้วกรอกเลขผู้เสียภาษีผู้ขายและเลขที่เอกสารให้ครบ"],
+  ["Remove the existing Tax Code lines before classifying this document as a receipt, substitute receipt, or supporting-only evidence.", "นำรูปแบบ VAT ที่เลือกไว้ออกจากรายการก่อนเปลี่ยนเป็นใบเสร็จหรือหลักฐานประกอบ"],
+  ["posting_state_changed", "ข้อมูลเปลี่ยนระหว่างยกเลิกเอกสาร เปิดข้อมูลล่าสุดแล้วลองอีกครั้ง"],
+  ["Posting state changed while voiding. Retry the void.", "ข้อมูลเปลี่ยนระหว่างยกเลิกเอกสาร เปิดข้อมูลล่าสุดแล้วลองอีกครั้ง"],
+] as const;
+
+test('PWS-ERROR sold codes and exact messages use the approved plain Thai', () => {
+  for (const [message, expected] of plainWordsErrors) {
+    assert.equal(translateApiError(message), expected, message);
+    assert.equal(apiErrorMessage(new Error(message)), expected, message);
+    assert.equal(apiErrorMessage({ code: message }), expected, message);
+  }
+  assert.equal(translateApiError('Accounting period 2026-09 is not open; reopen it before voiding.'), 'ยกเลิกเอกสารของเดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
+  assert.equal(translateApiError('PND3/2026-09 is locked; use an adjustment or amended filing workflow.'), 'แก้รายการในรอบภาษี ภ.ง.ด.3 เดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ');
 });

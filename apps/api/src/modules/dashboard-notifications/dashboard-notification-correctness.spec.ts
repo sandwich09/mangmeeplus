@@ -769,7 +769,7 @@ describe('waiting notifications on PostgreSQL', { skip: !process.env.NOTIFICATIO
       const events = new PrismaNotificationEventRepository({ client: db } as any);
       assert.equal((await events.list(companyId, userId, { waiting: true })).items.length, 0);
       assert.ok((await db.notificationRecipient.findUniqueOrThrow({ where: { id: reminder.id } })).finishedAt);
-      assert.equal((await events.list(companyId, userId, {})).items.find(row => row.id === reminder.eventId)?.title, 'อนุมัติแล้ว: ใบเตรียมจ่ายเลขที่ PV-1');
+      assert.equal((await events.list(companyId, userId, {})).items.find(row => row.id === reminder.eventId)?.title, `${sourceType === 'disbursement_voucher' ? 'อนุมัติแล้ว รอจ่าย' : 'อนุมัติแล้ว'}: ใบเตรียมจ่ายเลขที่ PV-1`);
       assert.equal((await db.notificationEvent.findUniqueOrThrow({ where: { id: reminder.eventId } })).title, 'รออนุมัติ: ใบเตรียมจ่ายเลขที่ PV-1');
     } finally { await db.notificationEvent.deleteMany({ where: { companyId } }); await db.disbursementVoucher.deleteMany({ where: { companyId } }); await db.reimbursementRequest.deleteMany({ where: { companyId } }); await db.branch.deleteMany({ where: { companyId } }); await db.company.deleteMany({ where: { id: companyId } }); await db.user.deleteMany({ where: { id: userId } }); await db.$disconnect(); }
   });

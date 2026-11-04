@@ -1701,3 +1701,17 @@ describe('new-shop package advisor integration', () => {
     }
   });
 });
+
+it('PWS-ADVISOR-WORDS pins the current advisor introduction and result reason with the existing secure entry', async () => {
+  const controller = makeController();
+  const html = await controller.linePackageAdvisorPage(request());
+  assert.match(html, /มั่งมีขอรู้จักร้านอีกนิดนะคะ มีคำถามสั้น ๆ 4 ข้อ จะได้ช่วยดูว่าแพ็กเกจไหนเหมาะกับงานที่ร้านใช้จริง/);
+  assert.match(html, /กลับไปส่งใบเสร็จ/);
+  assert.equal(responseHeaders(controller.linePackageAdvisorPage)['cache-control'], 'no-store, max-age=0');
+  assert.ok(responseHeaders(controller.linePackageAdvisorPage)['content-security-policy']);
+  const script = controller.linePackageAdvisorScript();
+  assert.ok(script.includes("resultReason.textContent = 'จากที่คุณเล่า มั่งมีแนะนำแพ็กเกจนี้ค่ะ ' + reasonText(result.input)\n      + (note ? ' ' + note : '');"));
+  assert.ok(script.includes("return 'เพราะร้านอยาก' + goalName + ' และมีผู้ดูแลอยู่ในช่วง '"));
+  assert.match(script, /ยังไม่ระบุจำนวนใบเสร็จ/);
+  assert.match(script, /เริ่มจากถ่ายใบเสร็จและเก็บรายการไว้ดูในที่เดียว/);
+});

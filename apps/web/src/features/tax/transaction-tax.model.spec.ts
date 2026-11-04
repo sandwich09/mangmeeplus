@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { TaxCodeDefinitionDto } from '@watchdog-bms/contracts';
 import {
   availableTaxDefinitions,
+  taxChoiceLabel,
   deriveTaxHeaderSummary,
   isReceiptTaxCodeAllowed,
   isTaxSourceLocked,
@@ -113,4 +114,39 @@ describe('transaction tax web model', () => {
     assert.equal(pp30SalesSideRecorded({ ...purchasesOnly, box2ZeroRatedSales: '100.00' }), true);
     assert.equal(pp30SalesSideRecorded({ ...purchasesOnly, box5OutputTax: '7.00' }), true);
   });
+});
+
+
+it('PWS-VAT-CHOICE changes only standard expense INPUT labels and preserves custom names and stored values', () => {
+  for (const [externalCode, word, claimabilityDefault] of [['V7', 'ได้', 'CLAIMABLE'], ['ND', 'ไม่ได้', 'NONDEDUCTIBLE_EXPENSE']] as const) {
+    const item = definition({ externalCode, displayName: `ภาษีซื้อขอคืน${word} 7%`, direction: 'INPUT', claimabilityDefault });
+    const before = JSON.stringify(item);
+    assert.equal(taxChoiceLabel(item, 'expense.record', 'INPUT'), `ใช้ VAT ตอนยื่นภาษี${word} 7%`);
+    for (const source of ['procurement.vendor_bill', 'sales.invoice', 'tax.configuration']) assert.equal(taxChoiceLabel(item, source, 'INPUT'), item.displayName);
+    assert.equal(taxChoiceLabel(item, 'expense.record', 'OUTPUT'), item.displayName);
+    assert.equal(taxChoiceLabel({ ...item, displayName: 'รูปแบบพิเศษของร้าน 7%' }, 'expense.record', 'INPUT'), 'รูปแบบพิเศษของร้าน 7%');
+    assert.equal(JSON.stringify(item), before);
+  }
+  for (const rate of ['0', '6.5', 'unknown']) {
+    const item = definition({ displayName: 'รูปแบบของร้าน', rate });
+    assert.equal(taxChoiceLabel(item, 'expense.record', 'INPUT'), rate === 'unknown' ? item.displayName : `${item.displayName} ${rate}%`);
+  }
+});
+
+it('PWS-VAT-CHOICE expense diagnostics stay plain while other callers retain their words', () => {
+  assert.equal(transactionTaxDiagnosticMessage('tax_code_not_active_or_not_applicable:V7', 'expense.record', 'INPUT'), 'รูปแบบ VAT นี้ใช้กับรายการหรือวันที่นี้ไม่ได้ เลือกรูปแบบอื่น');
+  for (const code of ['tax_code_ambiguous', 'tax_account_rule_missing', 'tax_account_rule_ambiguous', 'tax_report_rule_missing']) {
+    assert.equal(transactionTaxDiagnosticMessage(code, 'expense.record', 'INPUT'), 'ยังตรวจ VAT ของรายการนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจการตั้งค่า');
+  }
+  assert.equal(transactionTaxDiagnosticMessage('tax_evidence_required', 'expense.record', 'INPUT'), 'แนบเอกสารประกอบรายการนี้ก่อนทำต่อ');
+  assert.match(transactionTaxDiagnosticMessage('tax_account_rule_missing'), /ผูกบัญชี/);
+});
+
+
+import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
+it('PWS-DICTIONARY-AUDIT capture copy distinguishes VAT and withholding amounts without changing stored tax words', () => {
+  assert.equal(workspaceDictionary.en['expenses.wht_base'], 'Amount used to calculate withholding (THB)');
+  assert.equal(workspaceDictionary.en['expenses.manual_tax_section'], 'VAT details');
+  assert.equal(workspaceDictionary.en['expenses.manual_no_tax_code'], 'No VAT option selected');
+  assert.equal(workspaceDictionary.th['expenses.buyer_match_undo'], 'ยกเลิกเครื่องหมาย');
 });

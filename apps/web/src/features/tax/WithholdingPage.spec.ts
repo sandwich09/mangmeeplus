@@ -47,6 +47,22 @@ test('WHT-OUTSIDE hides system certificate downloads in withholding rows when th
 
 const { WithholdingFormCard, withholdingPaymentPage, withholdingState, withholdingErrorMessage } = require('./WithholdingPage');
 const form = (over: any = {}) => ({ formType: 'PND3', periodId: 'p', status: 'OPEN', paymentCount: 2, totalPaid: '1000', totalWithheld: '30', dueDate: '2026-11-07', issues: [], ...over });
+test('PWS-WHT uses plain payment labels while distinguishing downloads, filings, additional and accountant papers', () => {
+  const { WithholdingPayments } = require('./WithholdingPage');
+  const html = renderToStaticMarkup(h(WithholdingPayments, { rows: [{ id: 'pay', payeeName: 'ผู้รับ', formType: 'PND3', paid: '1000', withheld: '30', incomeCategoryLabel: null }, { id: 'custom', payeeName: 'ผู้รับ', formType: 'PND3', paid: '1000', withheld: '30', incomeCategoryLabel: 'ประเภทเงินได้ตามเอกสารเดิมของร้าน' }], month: { forms: [] }, companyId: 'co', order: 'newest', onOrder() {}, onOpen() {}, onCertificate() {}, certificateBusy: null }));
+  assert.match(html, /<th>จ่ายค่าอะไร<\/th>/);
+  assert.match(html, /ยังไม่ได้เลือกว่าจ่ายค่าอะไร/);
+  assert.match(html, /ประเภทเงินได้ตามเอกสารเดิมของร้าน/);
+  assert.match(card(form({ status: 'EXPORTED' })), /ดาวน์โหลดแบบแล้ว[\s\S]*บันทึกว่ายื่นแล้ว/);
+  assert.match(card(form({ status: 'FILED' })), /ยื่นแล้ว[\s\S]*ดาวน์โหลดแบบที่ยื่น/);
+  assert.match(card(form({ sequence: 1 })), /ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ 1/);
+  assert.match(card(form({ accountantPrepared: true })), /ผู้ทำบัญชีจัดทำแบบนี้เอง[\s\S]*ดาวน์โหลดรายการให้ผู้ทำบัญชี/);
+  const view = pageView();
+  try {
+    (view.state[2] as any).separatePnd2 = [{ id: 'pnd2', payeeName: 'ผู้รับรางวัล', incomeCategoryLabel: 'รางวัลพิเศษ', paid: '1000', withheld: '30', expenseId: 'expense' }];
+    assert.match(view.render(), /ต้องจัดทำ ภ.ง.ด.2 แยก[\s\S]*รางวัลพิเศษ[\s\S]*เปิดรายจ่าย/);
+  } finally { view.cleanup(); }
+});
 function card(data: any, rights = ['wht.pnd53.prepare'], error?: string) {
   return renderToStaticMarkup(React.createElement(WithholdingFormCard, { form: data, companyId: 'co', periodKey: '2026-10', permissions: rights, busy: false, error, onDownload: () => {}, onFiled: () => {} }));
 }
@@ -147,7 +163,7 @@ test('one sync refreshes the month; official downloads dispatch each form; filin
 test('payment rows show missing categories, certificate visibility and source links; layout fills the screen', () => {
   const payment = { id: 'e', paymentDate: '2026-10-01', payeeName: 'สมชาย', formType: 'PND3', incomeCategoryLabel: null, rate: '3', paid: '1000', withheld: '30', expenseId: 'ex', certificate: { handoffId: 'h', state: 'SYSTEM_ISSUED', number: 'WT-1', canDownload: true } };
   const view = pageView(undefined, [payment]);
-  const html = view.render(); assert.match(html, /ยังไม่ได้เลือกประเภทเงินได้/); assert.match(html, /expenses\/ex/); assert.match(html, /WT-1/); assert.match(html, /ดาวน์โหลดหนังสือรับรอง/);
+  const html = view.render(); assert.match(html, /ยังไม่ได้เลือกว่าจ่ายค่าอะไร/); assert.match(html, /expenses\/ex/); assert.match(html, /WT-1/); assert.match(html, /ดาวน์โหลดหนังสือรับรอง/);
   payment.certificate.canDownload = false; assert.doesNotMatch(view.render(), /ดาวน์โหลดหนังสือรับรอง/); view.cleanup();
   const source = readFileSync(new URL('./WithholdingPage.tsx', import.meta.url), 'utf8');
   assert.match(source, /lg:grid-cols-2/); assert.match(source, /table className=\{styles.table\}/); assert.doesNotMatch(source, /max-w-/);
