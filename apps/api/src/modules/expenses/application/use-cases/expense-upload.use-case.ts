@@ -403,7 +403,7 @@ export class CompleteReceiptUploadUseCase {
     if (resumed && cmd.checksumSha256 && reserved.checksumSha256 !== cmd.checksumSha256) throw new BadRequestException('Receipt checksum changed.');
     if (!resumed) await this.completeUpload.execute(ctx, {
       attachmentId: cmd.attachmentId, checksumSha256: cmd.checksumSha256, byteSize: cmd.byteSize,
-    });
+    }, { inspectionPolicy: 'RECEIPT' });
 
     const current = await this.permissionResolver.resolveAccess(ctx.userId, ctx.companyId);
     const activeUser = await this.prisma.client.user.findFirst({ where: { id: ctx.userId, status: 'ACTIVE' }, select: { id: true } });

@@ -40,7 +40,7 @@ import {
   type AiUsageEntry,
   type ProviderError,
 } from '@watchdog-bms/contracts';
-import type { IModelProvider, ProviderInput, ProviderToolsInput } from '../../modules/line-ai/infrastructure/provider/provider.port';
+import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolsInput } from '../../modules/line-ai/infrastructure/provider/provider.port';
 import type { AiBudgetSeam } from './ai-budget-seam';
 import { beginGuardedProviderCall, endGuardedProviderCall } from './ai-budget-durability';
 import {
@@ -418,6 +418,8 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
       const fromIndex = usageEntryCount();
       let timedOut: ProviderInput | ProviderToolsInput | undefined;
       let failure: ProviderError | undefined;
+      let outputUnusable = false;
+      let providerThrew = false;
       // Process-wide gauge, so a SIGTERM waits for this call and its settlement instead of killing
       // them (hold spec §3). Only under an envelope: a SHARED request never reaches this line.
       beginGuardedProviderCall();
@@ -426,7 +428,9 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
           ? { ...input, deadlineAt: Math.min(input.deadlineAt ?? Infinity, state.grant.workDeadlineAtMs,
               (admission as { envelope?: AiBudgetEnvelopeV2 }).envelope?.profileId === 'document-qa/2' ? Date.now() + 45_000 : Infinity) }
           : input;
-        const output = await call(bounded);
+        // The callback stays in this process, outside adapter payload construction.
+        const { acceptOutput: _acceptOutput, ...providerInput } = bounded;
+        const output = await call(providerInput as I);
         if (state.status === 'active-v2' && (Date.now() >= bounded.deadlineAt! || input.signal?.aborted)) {
           timedOut = input;
           failure = { code: 'PROVIDER_TIMEOUT', message: 'Admitted work deadline elapsed.', retryable: false };
@@ -443,11 +447,28 @@ export function withAiBudgetEnvelope(inner: IModelProvider, opts: AiBudgetProvid
             && ['PROVIDER_OUTPUT_INCOMPLETE', 'PROVIDER_TOOL_ARGUMENT_INVALID'].includes(String((output as { error?: ProviderError }).error?.code))))) {
           state.repairPending = true;
         }
+        if (state.status === 'active-v2' && (output as { ok?: boolean }).ok === true) {
+          const result = output as Extract<ProviderOutput, { ok: true }>;
+          outputUnusable = result.completion === 'output_limit' || result.completion === 'blocked' || result.stopReason === 'max_tokens';
+          if (!outputUnusable && input.acceptOutput) {
+            try { outputUnusable = !input.acceptOutput(result); } catch { outputUnusable = true; }
+          }
+        }
         return output;
+      } catch (error) {
+        providerThrew = true;
+        failure = { code: 'PROVIDER_UNKNOWN', message: 'Provider call failed.', retryable: false };
+        throw error;
       } finally {
+        if (state.status === 'active-v2' && (failure || outputUnusable)) {
+          for (const entry of tagUsageInvocation(fromIndex, admission.invocationKey)) {
+            entry.ok = false;
+            entry.errorCode = outputUnusable ? 'OUTPUT_UNUSABLE' : failure!.code;
+          }
+        }
         // A known refusal/timeout before the adapter logged counters still releases its hold.
         // A thrown/lost transport with no result retains the existing unresolved path.
-        if (failure && usageEntryCount() === fromIndex) appendUsage({
+        if (failure && !providerThrew && usageEntryCount() === fromIndex) appendUsage({
           tag: input.usageTag ?? 'untagged', modelId: opts.modelId, ok: false, errorCode: failure.code,
           inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 0,
         });

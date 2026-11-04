@@ -135,6 +135,7 @@ import {
   canonicalAttachmentExtension,
   inspectAttachmentBytes,
   attachmentInspectionFailureCode,
+  type AttachmentInspectionPolicy,
   normalizeAttachmentMimeType,
   validateAttachmentFileName,
   validateAttachmentMeta,
@@ -9784,7 +9785,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       return;
     }
     const media = downloaded.media;
-    const mediaRejectionReason = await this.lineMediaRejectionReason(media);
+    const mediaRejectionReason = await this.lineMediaRejectionReason(media, 'RECEIPT');
     if (mediaRejectionReason) {
       const riskLevel = ['CONTENT_REJECTED', 'MALWARE_DETECTED'].includes(mediaRejectionReason) ? 'HIGH' : 'MEDIUM';
       const inspectionReply = fileInspectionRefusalReply(mediaRejectionReason, replyLanguage(event));
@@ -11309,7 +11310,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
           throw new Error('LINE_RECEIPT_MEDIA_UNAVAILABLE');
         }
         media = resumed.media;
-        const rejection = await this.lineMediaRejectionReason(media);
+        const rejection = await this.lineMediaRejectionReason(media, 'RECEIPT');
         if (rejection) {
           await this.recordIntakeAttempt(event, {
             companyId: ctx.companyId, stage: 'SECURITY', reasonCode: rejection, outcome: 'REJECTED',
@@ -11379,6 +11380,16 @@ ${link}`), ctx.companyId, access, undefined, undefined, 'stored');
       : { channelKind: null, messagingChannelId: null, chatKeyHash: null, membershipId: null };
   }
 
+  private async refuseEmbeddedDocumentQa(event: LineTextEvent | LineReceiptUploadEvent, companyId: string, permissions: readonly string[]) {
+    await this.deliverReply(event, replyLanguage(event) === 'en'
+      ? 'File questions do not support attachments inside PDFs; choose another file.'
+      : 'การถามจากไฟล์ยังไม่รองรับไฟล์แนบใน PDF เลือกไฟล์อื่นได้ค่ะ',
+    permissions.some(permission => ['expense.receipt.upload', 'expense.receipt.line_upload'].includes(permission))
+      ? { items: [{ type: 'action', action: { type: 'uri', label: replyLanguage(event) === 'en' ? 'Upload receipt' : 'ส่งใบเสร็จ',
+        uri: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/upload`) } }] } : undefined);
+    await this.updateEventLog(event.webhookEventId, 'input_rejected', 'EMBEDDED_FILE_REJECTED', companyId);
+  }
+
   private async routeDocumentQuestionBeforeCapture(event: LineReceiptUploadEvent, ctx: RequestContext,
     access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>, caption: string, media: DownloadedLineMedia,
     entitledFeatureKeys: ReadonlySet<string> | null,
@@ -11424,6 +11435,13 @@ ${link}`), ctx.companyId, access, undefined, undefined, 'stored');
     if (route.semanticSubrequests.some(item => !['file', 'general', 'help'].includes(item.kind))) {
       await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Choose whether to read the file for a question or keep it as expense evidence; no expense has been created." : 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้'), undefined, undefined, 'question');
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId); return { handled: true };
+    }
+    // Only the embedded-file case gets its receipt-upload exit here; every other refusal keeps the
+    // existing completion path (STRICT inspection there) and its recorded reply.
+    const inspectionError = inspectAttachmentBytes(media.mimeType, media.bytes);
+    if (inspectionError && attachmentInspectionFailureCode(inspectionError) === 'EMBEDDED_FILE_REJECTED') {
+      await this.refuseEmbeddedDocumentQa(event, ctx.companyId, ctx.permissions);
+      return { handled: true };
     }
     const grant = this.budgetGrantsV2.get(textEvent);
     if (!grant || !textEvent.inputEvidence || !this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('QA_ADMISSION_UNAVAILABLE');
@@ -11491,7 +11509,7 @@ ${link}`), ctx.companyId, access, undefined, undefined, 'stored');
       lineMessageId: event.lineMessageId, attachmentId: intent.attachmentId, caption, mimeType: media.mimeType, status: 'PENDING', ...binding,
       expiresAt: new Date(Date.now() + 86400000), askedQuestionJson: { kind: 'LINE_REIMBURSEMENT_DRAFT', webhookEventId: event.webhookEventId } } });
     if (!('uploadRequired' in intent) || intent.uploadRequired) await this.uploadLineMedia(intent, media);
-    await this.completeAttachmentUpload.execute(ctx, { attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize });
+    await this.completeAttachmentUpload.execute(ctx, { attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize }, { inspectionPolicy: 'RECEIPT' });
     // The attachment is retained for the reimbursement picker, never passed through expense capture.
     await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { companyId: ctx.companyId, lineMessageId: event.lineMessageId, ...binding },
       data: { status: 'RESOLVED_RECEIPT', revision: { increment: 1 } } });
@@ -11561,6 +11579,10 @@ ${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true, replyLanguage(eve
         question: event.messageText, originalBudgetGrantV2: grant, originalInputDigest: event.inputEvidence.joinedSha256,
         questions: this.documentQaQuestions(event, route.semanticSubrequests), attachments });
     } catch (error) {
+      if (error instanceof LineDocumentQaError && error.code === 'EMBEDDED_FILE_REJECTED') {
+        await this.refuseEmbeddedDocumentQa(event, bound.owner.companyId, access.permissions);
+        return true;
+      }
       if (!(error instanceof LineDocumentQaError) || !['QA_PAGE_OUT_OF_RANGE', 'QA_ATTACHMENT_UNAVAILABLE', 'QA_SOURCE_CHANGED'].includes(error.code)) throw error;
       await this.deliverReply(event, error.code === 'QA_PAGE_OUT_OF_RANGE'
         ? (replyLanguage(event) === 'en' ? "The requested page is not in this file; check the page number, and no expense has been created." : 'ไฟล์นี้ไม่มีหน้าที่ขอค่ะ กรุณาตรวจสอบเลขหน้า ยังไม่ได้สร้างรายการ')
@@ -11769,7 +11791,7 @@ Read ${result.coverage.read.length}/${result.coverage.requested.length} pages${f
     await this.uploadLineMedia(intent, media);
     await this.completeAttachmentUpload.execute(ctx, {
       attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize,
-    });
+    }, { inspectionPolicy: 'RECEIPT' });
     const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
     // Rendered from the SAME ordered query `handlePendingMediaControl` resolves the tapped words against.
     if (open && pending && this.boundConversations.has(event)) this.pendingMediaNotices.set(event, this.pendingMediaSelectionMessage(
@@ -13285,10 +13307,10 @@ No payment was recorded; review the details and VAT on the web, and attach the p
       .catch((error) => this.logger.warn({ msg: 'line_intake_attempt_not_updated', ...safeLineErrorDetails(error) }));
   }
 
-  private async lineMediaRejectionReason(media: DownloadedLineMedia): Promise<string | null> {
+  private async lineMediaRejectionReason(media: DownloadedLineMedia, policy: AttachmentInspectionPolicy = 'STRICT'): Promise<string | null> {
     if (validateAttachmentMeta(media.mimeType, media.byteSize, this.config.uploadMaxBytes)) return 'METADATA_REJECTED';
     if (validateAttachmentFileName(media.fileName, media.mimeType)) return 'EXTENSION_MIME_MISMATCH';
-    const inspectionError = inspectAttachmentBytes(media.mimeType, media.bytes);
+    const inspectionError = inspectAttachmentBytes(media.mimeType, media.bytes, policy);
     if (inspectionError) return attachmentInspectionFailureCode(inspectionError);
     try {
       await this.malwareScanner.assertClean(media.bytes);

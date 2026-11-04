@@ -1935,3 +1935,115 @@ it('Z2 claim submit uses reimbursement.submit without treating receipt or reason
   }
   for (const text of ['ส่งรูปใบเสร็จสำหรับใบเบิกนี้', 'ส่งเหตุผลใบเบิก', 'ใบเบิกส่งอนุมัติหรือยัง']) assert.equal(lineActionRuleFor(text), undefined);
 });
+
+
+it('R6 invalid router and QA outputs preserve repair', async () => {
+  const accepted: boolean[] = [];
+  const request = await creditRequest('สวัสดี');
+  const valid = JSON.stringify({ intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95,
+    decisionV1: { subrequests: [] } });
+  const router = new IntentRouterAgent({ generateText: async input => {
+    const output = { ok: true as const, text: valid, completion: 'complete' as const };
+    assert.equal(typeof input.acceptOutput, 'function');
+    accepted.push(input.acceptOutput!({ ok: true, text: '{bad' }));
+    accepted.push(input.acceptOutput!(output));
+    return output;
+  } }, true, {}, false, []);
+  const result = await router.routeIntake(request);
+  assert.deepEqual(accepted, [false, true]);
+  assert.equal(result.status, 'ROUTED');
+});
+
+import { runSemanticTurnV2 } from './semantic-turn-v2';
+import { extractValueCandidates, type LineAiTurnRequest, type ToolResult } from '@watchdog-bms/contracts';
+const r6MESSAGE_TEXT = 'ขอดู confirmed เดือนนี้หน่อยค่ะ';
+const r6TODAY = '2026-09-28';
+
+const r6SOURCE_REF = {
+  label: 'รายการค่าใช้จ่าย', module: 'expenses', entityType: 'expense_summary',
+  asOf: '2026-09-27T18:20:29.656Z', permissionChecked: true as const,
+  webPath: '/companies/company/expenses',
+};
+
+/** The real tool result: `facts` carries ONLY the grand total (erp-tools.use-case.ts's own
+ *  behavior) — everything else (count, per-item amounts/dates, the paid/unpaid split) lives only
+ *  in `data`, which is exactly the gap C1(a)/(b) closes. */
+function r6listRecentConfirmedResult(): ToolResult {
+  return {
+    toolName: 'expense.list_recent', status: 'ok', asOf: '2026-09-27T18:20:29.656Z',
+    sourceRefs: [r6SOURCE_REF],
+    queryApplied: {
+      timezone: 'Asia/Bangkok', period: { startDate: '2026-09-01', endDate: '2026-09-28', timezone: 'Asia/Bangkok', defaulted: false },
+      dateBasis: 'expense_incurred_date', statusBasis: 'CONFIRMED', dataset: 'operational_expense_records',
+    },
+    facts: [{
+      id: 'expense.total.THB', metric: 'expense_total', value: '8703', unit: 'money', currency: 'THB',
+      period: { startDate: '2026-09-01', endDate: '2026-09-28', timezone: 'Asia/Bangkok' },
+      dateBasis: 'expense_incurred_date', statusBasis: 'CONFIRMED',
+      sourceRefIds: ['expenses:expense_summary:summary'], asOf: '2026-09-27T18:20:29.656Z', state: 'known',
+    }],
+    data: {
+      total: 8,
+      period: { fromDate: '2026-09-01', toDate: '2026-09-28', defaultedToCurrentMonth: false },
+      summary: {
+        countedItems: 8, cancelledCount: 0, totalAmount: '8703', pendingAmount: '0', draftAmount: '0',
+        confirmedAmount: '8703', paidAmount: '5255.5', unpaidAmount: '3447.5',
+      },
+      totalsByCurrency: [{ currency: 'THB', count: 8, totalAmount: '8703', paidAmount: '5255.5', outstandingAmount: '3447.5' }],
+      items: [
+        { id: 'e1', expenseDate: '2026-09-01T00:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', paymentStatus: 'PAID', grandTotalAmount: '300.5' },
+        { id: 'e2', expenseDate: '2026-09-02T00:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจการค้า', status: 'CONFIRMED', paymentStatus: 'PARTIALLY_PAID', grandTotalAmount: '437' },
+        { id: 'e3', expenseDate: '2026-09-03T00:00:00.000Z', vendorNameSnapshot: 'ปั๊มน้ำมัน ปตท.', status: 'CONFIRMED', paymentStatus: 'UNPAID', grandTotalAmount: '574' },
+        { id: 'e4', expenseDate: '2026-09-06T00:00:00.000Z', vendorNameSnapshot: 'Grab', status: 'CONFIRMED', paymentStatus: 'UNPAID', grandTotalAmount: '985' },
+        { id: 'e5', expenseDate: '2026-09-07T00:00:00.000Z', vendorNameSnapshot: null, status: 'CONFIRMED', paymentStatus: 'PAID', grandTotalAmount: '1122' },
+        { id: 'e6', expenseDate: '2026-09-08T00:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', paymentStatus: 'PARTIALLY_PAID', grandTotalAmount: '1259' },
+        { id: 'e7', expenseDate: '2026-09-13T00:00:00.000Z', vendorNameSnapshot: 'Grab', status: 'CONFIRMED', paymentStatus: 'PAID', grandTotalAmount: '1944.5' },
+        { id: 'e8', expenseDate: '2026-09-14T00:00:00.000Z', vendorNameSnapshot: null, status: 'CONFIRMED', paymentStatus: 'PARTIALLY_PAID', grandTotalAmount: '2081' },
+      ],
+    },
+  };
+}
+
+function r6request(): LineAiTurnRequest {
+  const valueCandidates = extractValueCandidates(r6MESSAGE_TEXT, r6TODAY);
+  return {
+    requestId: 'r6request-1', webhookEventId: 'event-1', messageText: r6MESSAGE_TEXT,
+    messagePreviewHash: 'd'.repeat(16), valueCandidates,
+    semanticSubrequests: [{
+      index: 0, kind: 'read', goal: 'รายการค่าใช้จ่ายที่ยืนยันแล้วเดือนนี้', requiredEvidence: [], dependsOn: [], evidenceRefs: [],
+      requestedFilters: { fromDate: '2026-09-01', toDate: '2026-09-28', documentStatus: 'CONFIRMED' },
+    }],
+    userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership',
+      permissions: ['expense.read'], roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' },
+  };
+}
+
+const r6CONTROL_CALL = JSON.stringify({
+  calls: [{ index: 0, toolName: 'expense.list_recent', input: { fromDate: '2026-09-01', toDate: '2026-09-28', documentStatus: 'CONFIRMED' } }],
+  // deliberately no "questions" key — see C2 test below
+});
+
+function r6answerEnvelope(text: string, opts: { status?: string; sourceRefIds?: string[] } = {}) {
+  return JSON.stringify({ answers: [{ index: 0, status: opts.status ?? 'handled', text, sourceRefIds: opts.sourceRefIds ?? ['expenses:expense_summary:summary'] }] });
+}
+
+
+it('R6 planner and compose acceptance reuses shape, source and number grounding including prose', async () => {
+  for (const [text, expected] of [
+    [r6answerEnvelope('ยอดรวม 8,703 บาท'), true],
+    [r6answerEnvelope('ยอดรวม 999,999 บาท'), false],
+    [r6answerEnvelope('ยอดรวม 8,703 บาท', { sourceRefIds: ['invented'] }), false],
+    ['ยอดรวม 8,703 บาท', true], ['ยอดรวม 999,999 บาท', false], ['{"answers":[]}', false],
+  ] as const) {
+    const checks: Array<[string | undefined, boolean]> = [];
+    await runSemanticTurnV2({ req: r6request(), draftEditEnabled: false, reimbursementDraftEnabled: false,
+      publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      provider: { generateText: async input => {
+        const output = { ok: true as const, text: input.usageTag === 'line.loop' ? r6CONTROL_CALL : text };
+        assert.equal(typeof input.acceptOutput, 'function');
+        checks.push([input.usageTag, input.acceptOutput!(output)]);
+        return output;
+      } }, invoke: async () => r6listRecentConfirmedResult() });
+    assert.deepEqual(checks, [['line.loop', true], ['line.compose', expected]], text);
+  }
+});

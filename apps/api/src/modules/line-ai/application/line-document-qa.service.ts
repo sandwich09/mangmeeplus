@@ -28,7 +28,7 @@ import {
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort, type StoredObject } from '../../data-model-core/domain/ports/attachment-storage.port';
-import { inspectAttachmentBytes } from '../../data-model-core/domain/logic/attachment.logic';
+import { inspectAttachmentBytes, attachmentInspectionFailureCode } from '../../data-model-core/domain/logic/attachment.logic';
 
 export const LINE_DOCUMENT_QA_FOREGROUND_MS = 40_000;
 export const LINE_DOCUMENT_QA_JOB_MS = 15 * 60_000;
@@ -485,7 +485,8 @@ export class LineDocumentQaService {
       }
       return 1;
     }
-    if (inspectAttachmentBytes(mimeType, bytes)) throw new LineDocumentQaError('QA_MAGIC_INVALID');
+    const inspectionError = inspectAttachmentBytes(mimeType, bytes);
+    if (inspectionError) throw new LineDocumentQaError(attachmentInspectionFailureCode(inspectionError) === 'EMBEDDED_FILE_REJECTED' ? 'EMBEDDED_FILE_REJECTED' : 'QA_MAGIC_INVALID');
     try {
       const pdf = await PDFDocument.load(bytes, { ignoreEncryption: false });
       const pages = pdf.getPageCount();

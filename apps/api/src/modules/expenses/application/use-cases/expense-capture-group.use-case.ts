@@ -528,7 +528,7 @@ export class CompleteExpenseCaptureFileUseCase {
       attachmentId: existing.attachmentId,
       ...(cmd.checksumSha256 ? { checksumSha256: cmd.checksumSha256 } : {}),
       ...(cmd.byteSize !== undefined ? { byteSize: cmd.byteSize } : {}),
-    });
+    }, { inspectionPolicy: 'RECEIPT' });
 
     return this.capture.transaction(async (tx) => {
       // §2.4 order: the evidence keys first (this attachment may already be a claim's evidence),

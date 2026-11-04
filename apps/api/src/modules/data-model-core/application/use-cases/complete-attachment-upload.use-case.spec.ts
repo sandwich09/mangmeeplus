@@ -261,3 +261,29 @@ it('R4 inspection failures have truthful severity', async () => {
     assert.equal((storage.putObject as any).mock.callCount(), 0);
   }
 });
+
+
+it('R4 receipt policy preserves original XML PDF bytes while generic completion stays strict', async () => {
+  const { PDFDocument } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  pdf.addPage();
+  await pdf.attach(Buffer.from('<Receipt_CrossIndustryInvoice xmlns="urn:etda:uncefact:data:standard:Receipt_CrossIndustryInvoice:2"/>'), 'receipt.xml', { mimeType: 'application/xml' });
+  const content = Buffer.from(await pdf.save());
+  for (const freeExpenseDrafts of [false, true]) for (const receipt of [false, true]) {
+    const repo = makeRepo();
+    repo.findById = mock.fn(async () => ({ ...attachment, byteSize: content.length, metadataJson: { inspectionPolicy: 'RECEIPT' } }));
+    const storage = makeStorage({ getObjectMetadata: mock.fn(async () => ({ exists: true, byteSize: content.length })), getObject: mock.fn(async () => ({ bytes: content })),
+      putObject: mock.fn(async (input: any) => ({ objectKey: input.objectKey, byteSize: content.length, checksumSha256: createHash('sha256').update(input.bytes).digest('hex') })) });
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
+    const run = () => (uc.execute as any)({ ...ctx, freeExpenseDrafts }, { attachmentId: 'att-1', inspectionPolicy: 'RECEIPT' }, receipt ? { inspectionPolicy: 'RECEIPT' } : undefined);
+    if (receipt) {
+      assert.equal((await run()).status, 'ACTIVE');
+      assert.deepEqual((storage.putObject as any).mock.calls[0].arguments[0].bytes, content);
+      assert.equal(repo.markQuarantined.mock.callCount(), 0);
+    } else {
+      await assert.rejects(run, (error: any) => error.getResponse().code === 'EMBEDDED_FILE_REJECTED');
+      assert.equal(repo.markActive.mock.callCount(), 0);
+      assert.equal((storage.putObject as any).mock.callCount(), 0);
+    }
+  }
+});

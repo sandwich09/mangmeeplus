@@ -2793,3 +2793,94 @@ describe('Fix-up 18 printed money evidence', () => {
     }
   });
 });
+
+
+import { createHash } from 'node:crypto';
+import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, LINE_DOCUMENT_QA_READER_VERSION, createLineAiInputEvidence, lineDocumentQaInputEvidenceText,
+  type AiBudgetGrantV2, type LineDocumentQaGatewayRequest } from '@watchdog-bms/contracts';
+import { DocumentQaUseCase } from '../../application/document-qa.use-case';
+import { runWithUsageContext } from '../../../../common/usage/usage-context';
+const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
+const r6QaConfig: any = { lineAiDocumentQaEnabled: true, modelProvider: 'openai', openAiApiKey: 'synthetic', openAiModel: 'gpt-4.1-mini',
+  openAiProcessingRegion: 'US', approvedAiProviders: ['openai'], approvedAiModelIds: ['gpt-4.1-mini'], approvedAiRegions: ['US'],
+  erpCoreInternalUrl: 'http://api.test/v1', aiGatewayInternalSecret: 'synthetic', aiToolTimeoutMs: 1000 };
+const output = () => ({ version: 1, readerVersion: LINE_DOCUMENT_QA_READER_VERSION, answer: 'ยอดรวม1177จากหน้า2',
+  answerPageRefs: [{ attachmentId: 'file-1', page: 2 }], pages: [{ attachmentId: 'file-1', page: 2, visibleText: 'TOTAL 1177',
+    facts: [{ attachmentId: 'file-1', page: 2, text: '1177', role: 'total', localSpan: { start: 6, end: 10 } }],
+    evidence: [{ attachmentId: 'file-1', page: 2, role: 'visible_text', text: 'TOTAL 1177', localSpan: { start: 0, end: 10 } }] }],
+  coverage: { requested: [{ attachmentId: 'file-1', page: 2 }], read: [{ attachmentId: 'file-1', page: 2 }], failed: [] } });
+async function r6QaRequest(cursor = 1, questions?: Array<{subrequestIndex:number;question:string}>): Promise<LineDocumentQaGatewayRequest & { budgetGrantV2: AiBudgetGrantV2 }> {
+  const source = Buffer.from('synthetic-rendered-page');
+  const pages = [{ attachmentId: 'file-1', page: 2, mimeType: 'image/png' as const, sourceMimeType: 'application/pdf' as const,
+    contentHash: sha('original-pdf'), renderedSha256: sha(source), contentBase64: source.toString('base64') }];
+  const question = 'หน้า2ยอดรวมเท่าไร', text = lineDocumentQaInputEvidenceText(question, pages, questions), now = Date.now();
+  const evidence = await createLineAiInputEvidence({ turnKey: 'turn-1', parts: [{ partId: 'qa-manifest', eventIdHash: sha('event'), rawText: text, acceptedAtMs: now }] }); assert.ok(evidence);
+  return { requestId: 'request', companyId: 'company', userId: 'user', jobId: 'job', jobRevision: 1, turnId: 'turn-1', question, pages, ...(questions ? { questions } : {}),
+    messageText: evidence.messageText, inputEvidence: evidence.inputEvidence, inputDigest: evidence.inputEvidence.joinedSha256,
+    inputSetHash: sha('set'), questionDigest: sha(question), readerVersion: LINE_DOCUMENT_QA_READER_VERSION,
+    contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'], budgetGrantV2: { version: 2, authorityKind: 'qa_job', authorityId: 'job',
+      turnKey: 'turn-1', channelOwnerDigest: sha('owner'), attemptKey: 'attempt', monthKey: '2026-09', payerCompanyId: 'company',
+      model: { provider: 'openai', modelId: 'gpt-4.1-mini', region: 'US' }, allowedProfileIds: ['document-qa/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
+      maxTurnSlots: 2, maxRepairs: 1, admittedAtMs: now, workDeadlineAtMs: now + 897000, finalDeadlineAtMs: now + 900000,
+      nonce: 'nonce', issuerVersion: 'fixture:1', nextOrdinal: cursor, membershipEpoch: 0, signature: sha('synthetic-signature') } };
+}
+async function r6QaExecute(input: Awaited<ReturnType<typeof r6QaRequest>>, responses: unknown[]) {
+  const original = globalThis.fetch, reservations: any[] = [], vendor: any[] = [], settlements: any[] = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(url).endsWith('/budget-step')) {
+      reservations.push(body);
+      return new Response(JSON.stringify({ ok: true, envelope: { ...body.invocation, version: 2, reservationId: `reservation-${body.invocation.ordinal}`,
+        invocationKey: `company#attempt#provider-v2#${body.invocation.ordinal}`, tariffVersion: 'fixture:1' } }));
+    }
+    if (String(url).endsWith('/budget-settle')) { settlements.push(body); return new Response(JSON.stringify({ result: 'settled' })); }
+    assert.equal(String(url), 'https://api.openai.com/v1/responses'); vendor.push(body);
+    const answer = responses[Math.min(vendor.length - 1, responses.length - 1)];
+    return new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 100, output_tokens: 50 },
+      output: [{ type: 'message', status: 'completed', content: [{ type: 'output_text', text: typeof answer === 'string' ? answer : JSON.stringify(answer) }] }] }));
+  };
+  try {
+    const result = await runWithUsageContext({ companyId: input.companyId, budget: { status: 'active-v2', grant: input.budgetGrantV2,
+      inputDigest: input.inputDigest, sourceRoute: 'line-document-qa', calls: input.budgetGrantV2.nextOrdinal!, repairCount: 0 } },
+    () => new DocumentQaUseCase(r6QaConfig).execute(input));
+    return { result, reservations, vendor, settlements };
+  } finally { globalThis.fetch = original; }
+}
+
+it('R6 invalid router and QA outputs preserve repair', async () => {
+  const actual = await r6QaExecute(await r6QaRequest(0), ['{bad', output()]);
+  assert.equal(actual.result.status, 'ok');
+  assert.equal(actual.vendor.length, 2);
+  assert.deepEqual(actual.settlements.map(row => [row.usage.ok, row.usage.errorCode]), [[false, 'OUTPUT_UNUSABLE'], [true, undefined]]);
+  assert.deepEqual(actual.settlements.map(row => [row.usage.inputTokens, row.usage.outputTokens]), [[100, 50], [100, 50]]);
+  const missing = output(); missing.coverage.read = [];
+  const rejected = await r6QaExecute(await r6QaRequest(1), [missing]);
+  assert.equal(rejected.result.status, 'failed');
+  assert.equal(rejected.settlements[0].usage.ok, false);
+});
+
+it('R6 public general rejects are absorbed', async () => {
+  for (const text of ['', '{"answer":"hello"}', 'x'.repeat(8001), 'สวัสดีค่ะ']) {
+    const qa = await r6QaRequest(0), grant = { ...qa.budgetGrantV2, authorityKind: 'webhook_event' as const, allowedProfileIds: ['line-answer/2' as const] };
+    const body = { requestId: 'public-r6', webhookEventId: 'event', kind: 'PUBLIC_GENERAL' as const, messageText: qa.messageText,
+      inputEvidence: qa.inputEvidence, contractCapabilities: qa.contractCapabilities, budgetGrantV2: grant,
+      publicAdmission: { channelKind: 'USER' as const, channelKeyHash: sha('channel'), payerCompanyId: 'company', admissionId: 'admission' } };
+    const original = globalThis.fetch, settlements: any[] = [];
+    globalThis.fetch = async (url, init) => {
+      const payload = JSON.parse(String(init?.body));
+      if (String(url).endsWith('/budget-step')) return new Response(JSON.stringify({ ok: true, envelope: { ...payload.invocation, version: 2,
+        reservationId: 'reservation', invocationKey: 'company#attempt#provider-v2#0', tariffVersion: 'fixture:1' } }));
+      if (String(url).endsWith('/budget-settle')) { settlements.push(payload); return new Response(JSON.stringify({ result: 'settled' })); }
+      assert.equal(payload.acceptOutput, undefined);
+      return new Response(JSON.stringify({ status: 'completed', usage: { input_tokens: 100, output_tokens: 50 },
+        output: [{ type: 'message', status: 'completed', content: [{ type: 'output_text', text }] }] }));
+    };
+    try {
+      await runWithUsageContext({ companyId: 'company', budget: { status: 'active-v2', grant, inputDigest: qa.inputDigest,
+        sourceRoute: 'line-public-general', calls: 0, repairCount: 0 } },
+        () => new LineAiInternalController(r6QaConfig, {} as any).linePublicGeneral('synthetic', body as any));
+      assert.equal(settlements.length, 1);
+      assert.equal(settlements[0].usage.ok, text === 'สวัสดีค่ะ');
+    } finally { globalThis.fetch = original; }
+  }
+});

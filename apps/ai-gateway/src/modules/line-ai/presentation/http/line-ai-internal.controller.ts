@@ -434,7 +434,13 @@ export class LineAiInternalController {
         language: /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en', errorCode: 'AI_CONTRACT_UNSUPPORTED' };
     }
     const language = /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en';
+    let replyText = '';
+    const acceptOutput = (output: { text: string; stopReason?: string }) => {
+      replyText = output.text.trim();
+      return output.stopReason !== 'max_tokens' && replyText.length > 0 && replyText.length <= 8_000 && !/^[\[{]/u.test(replyText);
+    };
     const result = await createProvider(this.config).generateText({
+      acceptOutput,
       systemPrompt: CASUAL_CONVERSATION_SYSTEM_PROMPT,
       messages: [{ role: 'user', text: JSON.stringify({ messageText: request.messageText, language }) }],
       maxTokens: 1_536,
@@ -444,7 +450,7 @@ export class LineAiInternalController {
       return { requestId: request.requestId, status: 'unavailable', replyText: '', language,
         errorCode: result.ok ? 'PUBLIC_GENERAL_INCOMPLETE' : (result.error.budgetCode ?? result.error.code) };
     }
-    const replyText = result.text.trim();
+    if (!replyText) acceptOutput(result);
     if (replyText.length > 8_000 || /^[\[{]/u.test(replyText)) {
       return { requestId: request.requestId, status: 'unavailable', replyText: '', language, errorCode: 'PUBLIC_GENERAL_SCHEMA_INVALID' };
     }

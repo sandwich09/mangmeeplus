@@ -717,7 +717,22 @@ export class IntentRouterAgent {
         budget.repairPending = true;
       }
       lastAttempt = attempt + 1;
+      let checked = false;
+      let observationLog: Record<string, unknown> | undefined;
+      const acceptOutput = (output: { text: string }) => {
+        checked = true;
+        parsed = parseIntakePlan(
+        output.text, request.messageText, request.valueCandidates, request.openClarifications,
+        request.recentCapturedExpenses, request.activeExpenseDrafts, caps, request.inputEvidence, request.taskProjection,
+        retainedTaskSource, retainedText, retainedValueCandidates, intakeTools, preparedFamilies, readGroundingCandidates,
+        (observation) => { lastCompactRejection = observation.rejection;
+          observationLog = { msg: 'line.intake_route.compact_decode', requestId: request.requestId, attempt: lastAttempt, ...observation }; },
+        conversationContext, request.permissions, hasAttachment,
+      );
+        return parsed !== null;
+      };
       result = await this.provider.generateText({
+        acceptOutput,
         systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource, preparedFamilies)
           + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : '')
           + (semanticV2 && !caps.fusedPlan ? `\n${JSON.stringify({
@@ -738,14 +753,9 @@ export class IntentRouterAgent {
         usageTag: 'line.intake-route',
       });
       if (!result.ok) break;
-      parsed = parseIntakePlan(
-        result.text, request.messageText, request.valueCandidates, request.openClarifications,
-        request.recentCapturedExpenses, request.activeExpenseDrafts, caps, request.inputEvidence, request.taskProjection,
-        retainedTaskSource, retainedText, retainedValueCandidates, intakeTools, preparedFamilies, readGroundingCandidates,
-        (observation) => { lastCompactRejection = observation.rejection;
-          this.logger.log({ msg: 'line.intake_route.compact_decode', requestId: request.requestId, attempt: lastAttempt, ...observation }); },
-        conversationContext, request.permissions, hasAttachment,
-      );
+      if (!checked) acceptOutput(result);
+      if (observationLog) this.logger.log(observationLog);
+      parsed = parsed as LineIntakeRoutePlan | null;
       if (parsed) break;
     }
 

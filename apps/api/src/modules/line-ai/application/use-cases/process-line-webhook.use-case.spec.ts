@@ -8617,6 +8617,35 @@ describe('receipt reliability: saved facts, notification and provider-input cont
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
 
+  it('R6 free unusable OCR preserves allowance and usable persistence consumes once', async () => {
+    for (const usable of [false, true]) {
+      const h = receiptHarness({ free: true });
+      const flow = h.useCase as any;
+      let succeededAt: Date | null = null, deleted = 0;
+      const reservation = { eventId: 'free-event', monthKey: '2026-10', sourceRoute: 'receipt-ocr-line', requestId: 'receipt-message', quotaSource: 'FREE_MONTHLY_3' };
+      const event = () => ({ id: reservation.eventId, companyId: 'company-1', ...reservation, succeededAt });
+      const quota = { findUnique: async () => deleted ? null : event(), findMany: async () => deleted ? [] : [event()],
+        updateMany: async () => { succeededAt ??= new Date(); return { count: 1 }; }, delete: async () => { deleted++; } };
+      const transaction = flow.prisma.client.$transaction;
+      flow.prisma.client.$transaction = async (run: any) => transaction((tx: any) => run({ ...tx, $executeRaw: async () => {}, companyOcrUsageEvent: quota,
+        companyOcrMonthlyUsage: { updateMany: async () => ({ count: 1 }) }, auditLog: { create: async () => ({}) } }));
+      const read = flow.aiGateway.requestReceiptOcr;
+      flow.aiGateway.requestReceiptOcr = async (request: any, options: any) => {
+        options.onAdmitted(reservation);
+        return usable ? read(request, options) : { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
+      };
+      const apply = flow.receiptOcrApply.apply;
+      flow.receiptOcrApply.apply = async (...args: any[]) => {
+        const result = await apply(...args);
+        await flow.prisma.client.$transaction((tx: any) => args[3].onUsablePersisted(tx));
+        return result;
+      };
+      await h.useCase.executeReceiptUpload(h.event());
+      assert.equal(!!succeededAt, usable);
+      assert.equal(deleted, usable ? 0 : 1, JSON.stringify({ usable, counts: h.counts(), replies: h.replies }));
+    }
+  });
+
   it('R11 admitted free LINE receipt preserves branch identity and reservation', async () => {
     const h = receiptHarness({ free: true });
     const flow = h.useCase as any;
@@ -8654,6 +8683,35 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.deepEqual(calls[0][2], { freeOcrReservation: reservation });
     assert.equal(h.counts().completed, 1);
     assert.equal(h.counts().applied, 1);
+  });
+
+  it('R4 LINE resumed receipt preflight retains the XML exception', async () => {
+    const media = await receiptXmlPdfForLine();
+    for (const free of [false, true]) {
+      const h = receiptHarness({ free });
+      const flow = h.useCase as any;
+      flow.downloadLineMedia = async () => ({ ok: true, media });
+      await flow.initReceiptUpload.execute({}, { lineCapture: { lineMessageId: 'receipt-message' } });
+      const saved = h.expense();
+      const policies: any[] = [];
+      const usageLookups: any[] = [];
+      flow.prisma.client.companyOcrUsageEvent.findUnique = async ({ where }: any) => {
+        usageLookups.push(where);
+        // Upload recovery precedes a usable OCR result, so no consumed allowance exists yet.
+        return null;
+      };
+      const inspect = flow.lineMediaRejectionReason.bind(flow);
+      flow.lineMediaRejectionReason = async (value: any, policy: any) => { policies.push(policy); return inspect(value, policy); };
+      flow.deliverSavedReceiptReply = async () => {};
+      await flow.resumeCapturedReceipt(h.event('resume'), { companyId: 'company-1', userId: 'user-1', scopes: {}, freeExpenseDrafts: free },
+        { permissions: ['expense.receipt.upload'], roles: [] }, { ...saved, primaryAttachmentId: null,
+          sourceChannelMetadataJson: { receiptCapturePending: true, receiptUpload: { originalFileName: media.fileName, mimeType: media.mimeType, byteSize: media.byteSize } } });
+      assert.deepEqual(policies, ['RECEIPT']);
+      assert.equal(h.counts().completed, 1);
+      assert.deepEqual(usageLookups, free ? [{ companyId_sourceRoute_requestId: {
+        companyId: 'company-1', sourceRoute: 'receipt-ocr-line', requestId: 'receipt-message',
+      } }] : []);
+    }
   });
 
   it('R4 LINE inspection refusal preserves truthful severity and recovery', async () => {
@@ -13482,7 +13540,7 @@ it('R11 upload callers preserve branch and identity', async () => {
       assert.equal(calls[0][2].branchId, 'branch-a');
       assert.deepEqual(calls[0][2].metadataJson.lineReimbursementOwner, owner);
     }
-    assert.deepEqual(calls[1], ['complete', actor, { attachmentId: 'attachment', checksumSha256: 'sha', byteSize: 10 }]);
+    assert.deepEqual(calls[1], ['complete', actor, { attachmentId: 'attachment', checksumSha256: 'sha', byteSize: 10 }, { inspectionPolicy: 'RECEIPT' }]);
     assert.equal(uploads, resumed ? 0 : 1);
   }
 });
@@ -13500,4 +13558,104 @@ it('R5 delivery source forwards the offered FORM decision', async () => {
   await flow.rememberSubstituteDeliverySource(event, context, { status: 'READY_FOR_WEB', expenseId: 'expense-1', decisionOffered: 'FORM', replyText: '', blockers: [] });
   assert.deepEqual(calls[0], [context, chatKeyHashOf(event), 'expense-1', 'th', 'FORM']);
   assert.equal(flow.deliverySubstituteActions.has(event), true);
+});
+
+async function receiptXmlPdfForLine() {
+  const { PDFDocument } = await import('pdf-lib');
+  const pdf = await PDFDocument.create();
+  pdf.addPage();
+  await pdf.attach(Buffer.from('<Receipt_CrossIndustryInvoice xmlns="urn:etda:uncefact:data:standard:Receipt_CrossIndustryInvoice:2"/>'), 'receipt.xml', { mimeType: 'application/xml' });
+  const bytes = Buffer.from(await pdf.save());
+  return { bytes, fileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: bytes.length };
+}
+
+it('R4 LINE receipt policies survive parking and resume', async () => {
+  const { inspectAttachmentBytes } = await import('../../../data-model-core/domain/logic/attachment.logic');
+  const media = await receiptXmlPdfForLine();
+  for (const freeExpenseDrafts of [false, true]) {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const actor = { companyId: 'company', userId: 'uploader', membershipId: 'membership', scopes: {}, freeExpenseDrafts,
+      permissions: ['attachment.create', 'expense.receipt.line_upload'] };
+    const event = { ...BASE_EVENT, lineMessageId: 'xml-message', messageType: 'file' };
+    const owner = { ...actor, channelKind: 'USER', messagingChannelId: 'channel', chatKeyHash: 'chat', channel: 'line' };
+    const bound = { owner, id: 'conversation', epoch: 3 };
+    flow.boundConversations = new WeakMap([[event, bound]]);
+    flow.config = { uploadMaxBytes: 25 * 1024 * 1024 };
+    let scanned = 0;
+    flow.malwareScanner = { assertClean: async (bytes: Buffer) => { assert.deepEqual(bytes, media.bytes); scanned++; } };
+    assert.equal(await flow.lineMediaRejectionReason(media), 'EMBEDDED_FILE_REJECTED', 'support/default stays strict');
+    assert.equal(await flow.lineMediaRejectionReason(media, 'RECEIPT'), null);
+    assert.equal(scanned, 1);
+    const calls: any[] = [];
+    let pending: any;
+    const delegate = {
+      findUnique: async () => pending ?? null, findFirst: async () => null,
+      findMany: async () => pending ? [pending] : [],
+      create: async ({ data }: any) => { pending = { id: 'pending', revision: 1, createdAt: new Date(), ...data }; return pending; },
+      updateMany: async ({ data }: any) => { Object.assign(pending, data, { revision: pending.revision + 1 }); return { count: 1 }; },
+    };
+    flow.prisma = { client: { lineIntakePendingMedia: delegate, $transaction: async (fn: any) => fn({ lineIntakePendingMedia: delegate }) } };
+    flow.createUploadIntent = { execute: async (ctx: any) => { assert.equal(ctx, actor); return { attachmentId: 'attachment' }; },
+      resume: async (ctx: any, id: string) => { assert.equal(ctx, actor); assert.equal(id, pending.attachmentId); return { attachmentId: id, uploadRequired: false }; } };
+    flow.uploadLineMedia = async (_intent: any, uploaded: any) => assert.deepEqual(uploaded.bytes, media.bytes);
+    flow.completeAttachmentUpload = { execute: async (ctx: any, cmd: any, policy: any) => {
+      assert.equal(ctx, actor); calls.push(policy);
+      assert.equal(inspectAttachmentBytes(media.mimeType, media.bytes, policy?.inspectionPolicy), null);
+      assert.equal(cmd.attachmentId, 'attachment');
+    } };
+    const parked = await flow.ensurePendingMedia(actor, event, actor.companyId, actor.userId, '', media, { kind: 'FILE_FIRST' });
+    assert.equal(parked.created, true);
+    assert.equal(parked.pending.askedQuestionJson.pageCount, 1);
+    const selection = { ...event, messageText: '/media select attachment' };
+    flow.boundConversations.set(selection, bound);
+    const replies: any[] = [];
+    flow.deliverReply = async (...args: any[]) => { replies.push(args); };
+    flow.updateEventLog = async () => {};
+    assert.equal(await flow.handlePendingMediaControl(selection), true);
+    assert.deepEqual(pending.askedQuestionJson.selectedAttachmentIds, ['attachment']);
+    flow.expenseRepo = {
+      resolveCreateBranchId: async () => 'branch',
+      createExpense: async (command: any) => { assert.equal(command.createdByUserId, actor.userId); return { id: 'expense' }; },
+    };
+    flow.resolveLineCaptureBranchId = async () => 'branch';
+    let linked = 0;
+    flow.completeReceiptDraft = async (_expenseId: string, file: any, companyId: string, userId: string) => {
+      assert.equal(file.attachmentId, parked.pending.attachmentId);
+      assert.equal(companyId, actor.companyId); assert.equal(userId, actor.userId);
+      linked++; return false;
+    };
+    flow.audit = { log: async () => {} };
+    const completed = await flow.createReceiptDraftFromPendingMedia('request', actor.userId, actor.companyId, event.webhookEventId, pending, actor.scopes, 'chat', actor.membershipId);
+    assert.equal(completed.expenseId, 'expense');
+    assert.equal(linked, 1);
+    assert.deepEqual(calls, [{ inspectionPolicy: 'RECEIPT' }]);
+    assert.match(replies[0][1], /เลือกไฟล์นี้ไว้แล้ว/);
+  }
+});
+
+it('R4 LINE XML receipt is refused by QA with an authorized receipt way out', async () => {
+  const { LineDocumentQaService, LineDocumentQaError } = await import('../line-document-qa.service');
+  const media = await receiptXmlPdfForLine();
+  await assert.rejects(() => (LineDocumentQaService.prototype as any).validateBytes.call({}, media.mimeType, media.bytes),
+    (error: any) => error instanceof LineDocumentQaError && error.code === 'EMBEDDED_FILE_REJECTED');
+  for (const canUpload of [false, true]) {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const event = { ...BASE_EVENT, lineMessageId: 'qa-xml' };
+    const permissions = ['line.ai.query', ...(canUpload ? ['expense.receipt.upload'] : [])];
+    flow.documentQa = { admit: async () => assert.fail('embedded files must not enter QA') };
+    flow.config = { lineAiDocumentQaEnabled: true, webBaseUrl: 'https://app.example.com' };
+    flow.boundConversations = new WeakMap([[event, { owner: { companyId: 'company' } }]]);
+    flow.deliveryAccess = new WeakMap();
+    flow.prisma = { client: { lineIntakePendingMedia: { findUnique: async () => null } } };
+    flow.textValueCandidates = async () => [];
+    flow.tryRouteIntake = async () => ({ status: 'ROUTED', semanticSubrequests: [{ kind: 'file' }] });
+    const replies: any[] = [], logs: any[] = [];
+    flow.deliverReply = async (...args: any[]) => { replies.push(args); };
+    flow.updateEventLog = async (...args: any[]) => { logs.push(args); };
+    assert.deepEqual(await flow.routeDocumentQuestionBeforeCapture(event, { companyId: 'company', permissions }, { permissions }, 'อ่านไฟล์นี้', media, null), { handled: true });
+    assert.match(replies[0][1], /เลือกไฟล์อื่น/);
+    if (canUpload) assert.match(JSON.stringify(replies[0][2]), /\/companies\/company\/expenses\/upload/);
+    else assert.equal(replies[0][2], undefined);
+    assert.equal(logs[0][2], 'EMBEDDED_FILE_REJECTED');
+  }
 });

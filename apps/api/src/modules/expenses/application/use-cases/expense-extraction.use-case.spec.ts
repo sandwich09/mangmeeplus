@@ -682,6 +682,35 @@ describe('ReceiptOcrClient failure boundary', () => {
     return { prisma, events, providerUsage, usedCount: () => usedCount };
   }
 
+  it('R6 free unusable OCR preserves allowance and usable persistence consumes once', async () => {
+    for (const scenario of ['unusable', 'stale', 'usable'] as const) {
+      const state = readyPrisma();
+      const monthKey = '2026-10';
+      const event: any = { id: 'free-event', companyId: 'company-1', monthKey, sourceRoute: 'receipt-ocr-web', requestId: 'request-1', quotaSource: 'FREE_MONTHLY_3', succeededAt: null };
+      state.events.push(event);
+      const tx: any = await state.prisma.client.$transaction(async (tx: any) => tx);
+      tx.companyOcrUsageEvent.findMany = async () => state.events;
+      tx.companyOcrUsageEvent.updateMany = async () => { if (!event.succeededAt) event.succeededAt = new Date(); return { count: 1 }; };
+      const h = makeUseCase({ free: true, expense: { ...baseExpense, status: 'DRAFT' } });
+      const extract = { extract: async (_request: any, options: any) => {
+        options.onAdmitted({ ...event, eventId: event.id });
+        return scenario === 'unusable' ? { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }
+          : { status: 'ok', classification: classification(), fields: { grandTotalAmount: '321.00' } };
+      } };
+      h.applyService.apply.mock.mockImplementation(async (...args: any[]): Promise<any> => {
+        if (scenario === 'stale') return { staleSkipped: true };
+        await args[3].onUsablePersisted(tx);
+        return { committedUpdatedAt: new Date(), reviewReasons: [], dateVerified: true, dateStatus: 'verified' };
+      });
+      const useCase = new RequestReceiptExtractionUseCase(h.repo as any, h.storage as any, extract as any, h.applyService as any,
+        h.audit as any, state.prisma, h.capture as any, h.runner as any, new GetExpenseUseCase(h.repo as any));
+      for (const key of ['company', 'billingAccount', 'billingInvoice', 'billingReceiptGrant', 'packageChangeRequest', 'salesAttribution']) state.prisma.client[key] = (h.repo as any).commercialAccessDb[key];
+      await useCase.execute(ctx(['expense.receipt.upload'], 'uploader-1'), 'expense-1');
+      assert.equal(state.events.length, scenario === 'usable' ? 1 : 0, JSON.stringify({ scenario, audits: h.audits, calls: h.applyService.apply.mock.calls.length }));
+      assert.equal(!!event.succeededAt, scenario === 'usable', scenario);
+    }
+  });
+
   for (const scenario of ['empty', 'malformed', 'missing_classification', 'missing_fields', 'unreadable', 'apply_failure', 'summary_failure', 'stale_apply', 'success', 'notification_failure', 'generic_image'] as const) {
     it(`real web client + use case admission settles ${scenario} by the persisted result`, async () => {
       __resetCompanyAiBudgetCache();

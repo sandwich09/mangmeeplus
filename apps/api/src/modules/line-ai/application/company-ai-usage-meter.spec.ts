@@ -2298,3 +2298,139 @@ it('budget info logs follow committed holds and settlements without user text or
   assert.equal(await settleAiBudgetStep(loggingFailure.prisma, { invocationKey: reserved.reservation.invocationKey,
     meta: { sourceRoute: 'line-ai-v2' }, entry: usage({ modelId }) }), 'settled-anomaly');
 });
+
+
+it('R6 unusable calls charge zero and settle once', async t => {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+    return t.skip('DATABASE_URL is not set');
+  }
+  const clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) }));
+  let companyId = '';
+  try {
+    const unreachable = await pgSpecUnreachableReason(() => Promise.all(clients.map(client => client.$queryRaw`SELECT 1`)), 'OCR_REQUIRE_POSTGRES');
+    if (unreachable) return t.skip(unreachable);
+    companyId = (await clients[0]!.company.create({ data: { name: `r6-settle-${randomUUID()}`, status: 'ACTIVE' } })).id;
+    const { settleAiBudgetStep, readAiBudgetMonthSnapshot } = await import('./company-ai-budget-reservation');
+    const { priceRenderedAiInvocationV2, computePinnedAiCostV2 } = await import('./ai-model-pricing');
+    const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0', monthKey = '2099-08';
+    const price = priceRenderedAiInvocationV2({ version: 'r6:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+      usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, 4096, 2048)!;
+    const { aiCreditLotBalances, writeAiCreditHold } = await import('./ai-credit-ledger');
+    const lot = await clients[0]!.aiCreditGrant.create({ data: { companyId, sourceKind: 'ADD_ON_ADMIN', sourceKey: `r6-${randomUUID()}`,
+      sourceHash: 'r6', units: 10000, availableAt: new Date('2099-01-01'), expiresAt: new Date('2100-01-01') } });
+    for (const errorCode of ['OUTPUT_UNUSABLE', 'PROVIDER_TIMEOUT', 'PROVIDER_UNAVAILABLE', undefined]) {
+      const failed = errorCode !== undefined, invocationKey = `r6-${randomUUID()}`;
+      const hold = await clients[0]!.aiBudgetReservation.create({ data: { companyId, monthKey, bucket: 'CHAT', policyRevision: 'r6',
+        sourceRoute: 'line-ai-v2', stepKind: 'provider-v2', attemptKey: invocationKey, invocationKey,
+        upperBoundSatang: price.upperBoundSatang, pricingSnapshot: { ...price.snapshot, aiCredit: { cycleKey: 'r6-cycle' } } as any, status: 'DISPATCHED', ownerToken: randomUUID() } });
+      const before = (await aiCreditLotBalances(clients[0], companyId, [lot])).get(lot.id)!;
+      await writeAiCreditHold(clients[0], { companyId, reservationId: hold.id, allocations: [{ grantId: lot.id, units: price.upperBoundSatang }] });
+      assert.equal((await aiCreditLotBalances(clients[0], companyId, [lot])).get(lot.id), before - price.upperBoundSatang);
+      const entry = usage({ modelId, tag: 'line.compose', ok: !failed, ...(errorCode ? { errorCode } : {}),
+        inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 20, cacheWriteInputTokens: 30, usageBasis: 'PROVIDER_REPORTED' });
+      const input = { invocationKey, meta: { sourceRoute: 'line-ai-v2' }, entry };
+      const outcomes = await Promise.all(clients.map(client => settleAiBudgetStep({ client } as any, input)));
+      assert.deepEqual(outcomes.sort(), ['duplicate', 'settled']);
+      assert.equal(await settleAiBudgetStep({ client: clients[0] } as any, input), 'duplicate');
+      const event = await clients[0]!.aiUsageEvent.findUniqueOrThrow({ where: { invocationKey } });
+      const final = await clients[0]!.aiBudgetReservation.findUniqueOrThrow({ where: { id: hold.id } });
+      const cost = computePinnedAiCostV2(price.snapshot, entry)!.costSatang;
+      assert.ok(cost > 0);
+      assert.equal(event.costSatang, cost);
+      assert.equal((await aiCreditLotBalances(clients[0], companyId, [lot])).get(lot.id), before - (failed ? 0 : cost));
+      assert.deepEqual([event.inputTokens, event.outputTokens, event.cacheReadInputTokens, event.cacheWriteInputTokens], [1000, 100, 20, 30]);
+      assert.equal(event.usageBasis, failed ? 'COMPANY_ABSORBED' : 'PROVIDER_REPORTED');
+      assert.deepEqual([(final.evidenceJson as any).customerChargedSatang, (final.evidenceJson as any).companyAbsorbedSatang], failed ? [0, cost] : [cost, 0]);
+      assert.equal(final.status, failed ? 'CANCELLED' : 'SETTLED');
+      assert.equal((await readAiBudgetMonthSnapshot(clients[0], companyId, monthKey)).reserved.TOTAL, 0);
+      assert.equal(await clients[0]!.aiUsageEvent.count({ where: { invocationKey } }), 1);
+    }
+  } finally {
+    if (companyId) await clients[0]!.company.deleteMany({ where: { id: companyId } });
+    await Promise.all(clients.map(client => client.$disconnect().catch(() => undefined)));
+  }
+});
+
+
+it('R6 free unusable OCR preserves allowance and usable persistence consumes once', async t => {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+    return t.skip('DATABASE_URL is not set');
+  }
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  let companyId = '';
+  const monthKey = '2026-12', prisma = { client: db } as any;
+  const { claimFreeExpenseQuotaNotice, completeCompanyOcrAdmission, completeCompanyOcrAdmissionWithinTransaction,
+    freeExpenseAllowanceSnapshot, freeExpenseQuotaResetAt } = await import('./free-expense-quota');
+  try {
+    const unreachable = await pgSpecUnreachableReason(() => db.$queryRaw`SELECT 1`, 'OCR_REQUIRE_POSTGRES');
+    if (unreachable) return t.skip(unreachable);
+    companyId = (await db.company.create({ data: { name: `r6-free-${randomUUID()}`, status: 'ACTIVE' } })).id;
+    await db.companyPlanTerm.create({ data: { companyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 1,
+      monthlySlipLimit: 0, termStartAt: new Date(0), termEndsAt: new Date(0) } });
+    const routes: Array<'receipt-ocr-web' | 'receipt-ocr-line' | 'receipt-capture-web' | 'receipt-capture-line'> = ['receipt-ocr-web', 'receipt-ocr-line', 'receipt-capture-web', 'receipt-capture-line'];
+    const inputs = routes.map((sourceRoute, index) => ({ companyId, sourceRoute, requestId: `race-${index}`, monthKey, enforceReceiptQuota: false }));
+    const decisions = await Promise.all(inputs.map((input) => admitCompanyOcr(prisma, input)));
+    const accepted = decisions.flatMap((decision, index) => decision.allowed ? [{ input: inputs[index]!, admission: decision }] : []);
+    assert.equal(accepted.length, 3, 'shadow rollout cannot exceed the free ceiling');
+    assert.equal(decisions.filter((d) => !d.allowed && d.reason === 'free_in_flight').length, 1);
+    assert.equal((await freeExpenseAllowanceSnapshot(prisma, companyId, monthKey)).usedCount, 0);
+    assert.equal(await claimFreeExpenseQuotaNotice(prisma, companyId, monthKey, new Date('2026-12-15')), false);
+    const first = accepted[0]!;
+    assert.equal(await releaseCompanyOcrAdmission(prisma, { ...first.input, eventId: first.admission.eventId }), true);
+    assert.equal(await releaseCompanyOcrAdmission(prisma, { ...first.input, eventId: first.admission.eventId }), true);
+    const replacement = await admitCompanyOcr(prisma, first.input);
+    assert.ok(replacement.allowed);
+    assert.notEqual(replacement.eventId, first.admission.eventId);
+    await assert.rejects(completeCompanyOcrAdmission(prisma, { ...first.input, eventId: first.admission.eventId }),
+      (error: any) => error.getResponse?.().code === 'OCR_ADMISSION_STALE');
+    await releaseCompanyOcrAdmission(prisma, { ...first.input, eventId: first.admission.eventId });
+    assert.equal((await freeExpenseAllowanceSnapshot(prisma, companyId, monthKey)).inFlightCount, 3, 'delayed old refund cannot refund new attempt');
+    for (const current of [{ input: first.input, admission: replacement }, ...accepted.slice(1)]) {
+      const completed = await completeCompanyOcrAdmission(prisma, { ...current.input, eventId: current.admission.eventId });
+      assert.equal(completed.completed, true);
+    }
+    const blocked = await admitCompanyOcr(prisma, { ...inputs[3]!, requestId: 'fourth-after-success' });
+    assert.ok(!blocked.allowed && blocked.reason === 'free_exceeded');
+    assert.equal(await claimFreeExpenseQuotaNotice(prisma, companyId, monthKey, new Date('2027-01-01T00:00:00Z')), false, 'old-month completion cannot announce a new-month limit');
+    assert.equal((await Promise.all([claimFreeExpenseQuotaNotice(prisma, companyId, monthKey, new Date('2026-12-15')), claimFreeExpenseQuotaNotice(prisma, companyId, monthKey, new Date('2026-12-15'))])).filter(Boolean).length, 1);
+    // A successful free operation stays charged after upgrade and cannot be refunded by a delivery failure.
+    await db.companyPlanTerm.update({ where: { companyId }, data: { tierKey: 'STARTER_249', monthlySlipLimit: 30, termEndsAt: new Date('2099-01-01') } });
+    await releaseCompanyOcrAdmission(prisma, { ...first.input, eventId: replacement.eventId });
+    const frozen = await db.companyOcrUsageEvent.findUniqueOrThrow({ where: { id: replacement.eventId } });
+    assert.equal(frozen.quotaSource, 'FREE_MONTHLY_3');
+    assert.ok(frozen.succeededAt);
+    assert.equal((await receiptQuotaSnapshot(prisma, companyId, monthKey)).usedCount, 0, 'free reads never consume upgraded monthly base');
+    const nextMonth = await freeExpenseAllowanceSnapshot(prisma, companyId, '2027-01');
+    assert.equal(nextMonth.usedCount, 0);
+    assert.equal(nextMonth.remainingCount, 3);
+    assert.equal(freeExpenseQuotaResetAt('2026-12'), '2026-12-31T17:00:00.000Z');
+    assert.equal((await db.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey } } })).usedCount, 3);
+    // A failed source transaction cannot publish success; a later commit consumes once.
+    const pending = await db.companyOcrUsageEvent.create({ data: { companyId, monthKey: '2026-11', sourceRoute: 'receipt-capture-web',
+      requestId: 'rollback-source', quotaSource: 'FREE_MONTHLY_3' } });
+    const identity = { companyId, eventId: pending.id, requestId: pending.requestId, sourceRoute: 'receipt-capture-web' as const };
+    const job = await db.expenseCaptureReadJob.create({ data: { companyId, ownerType: 'EXPENSE', attachmentId: 'synthetic',
+      attachmentChecksum: 'synthetic', ocrAdmissionRequestId: pending.requestId, manifestJson: {} } });
+    await assert.rejects(db.$transaction(async tx => {
+      await tx.expenseCaptureReadJob.update({ where: { id: job.id }, data: { checkpointJson: { usable: true } } });
+      await completeCompanyOcrAdmissionWithinTransaction(tx, identity);
+      throw new Error('source transaction rollback');
+    }), /source transaction rollback/);
+    assert.equal((await db.companyOcrUsageEvent.findUniqueOrThrow({ where: { id: pending.id } })).succeededAt, null);
+    assert.deepEqual((await db.expenseCaptureReadJob.findUniqueOrThrow({ where: { id: job.id } })).checkpointJson, {});
+    await db.$transaction(async tx => {
+      await tx.expenseCaptureReadJob.update({ where: { id: job.id }, data: { checkpointJson: { usable: true } } });
+      await completeCompanyOcrAdmissionWithinTransaction(tx, identity);
+    });
+    await completeCompanyOcrAdmission(prisma, identity);
+    await releaseCompanyOcrAdmission(prisma, identity);
+    assert.equal((await freeExpenseAllowanceSnapshot(prisma, companyId, '2026-11')).usedCount, 1);
+  } finally {
+    if (companyId) await db.company.deleteMany({ where: { id: companyId } });
+    await db.$disconnect().catch(() => undefined);
+  }
+});

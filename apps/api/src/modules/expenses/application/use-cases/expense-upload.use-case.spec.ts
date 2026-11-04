@@ -446,6 +446,7 @@ describe('receipt upload use cases', () => {
       const audits: any[] = [];
       const updates: any[] = [];
       const completionActors: any[] = [];
+      const completionPolicies: any[] = [];
       const retirement = receiptRetirement({ primaries: ['att-old', 'att-new'] });
       const expense = {
         id: 'expense-1', updatedAt: NOW, status: 'NEEDS_REVIEW', createdByUserId: 'user-1',
@@ -486,7 +487,7 @@ describe('receipt upload use cases', () => {
             return { id: input.id };
           },
         } as any,
-        { execute: async (actor: any) => { completionActors.push(actor); return { id: 'att-new', uploadedByUserId: actor.userId }; } } as any,
+        { execute: async (actor: any, _cmd: any, policy: any) => { completionPolicies.push(policy); completionActors.push(actor); return { id: 'att-new', uploadedByUserId: actor.userId }; } } as any,
         { log: async (entry: any) => { audits.push(entry); } } as any,
         { append: async () => undefined } as any,
         retirement.attachments,
@@ -496,7 +497,7 @@ describe('receipt upload use cases', () => {
       const run = (cmd: Record<string, unknown>) => uc.execute(ctxWithPermissions, {
         expenseId: 'expense-1', attachmentId: 'att-new', byteSize: 123, ...cmd,
       } as any);
-      return { run, updates, audits, retirement, completionActors, ctxWithPermissions };
+      return { run, updates, audits, retirement, completionActors, completionPolicies, ctxWithPermissions };
     }
 
     const conflictCode = async (run: Promise<unknown>) => run.then(
@@ -522,6 +523,13 @@ describe('receipt upload use cases', () => {
         assert.equal(await conflictCode(run(cmd)), 'expense_revision_conflict');
         assert.deepEqual(updates, []);
       }
+    });
+
+    it('R4 receipt completion uses receipt policy', async () => {
+      const h = intentHarness();
+      await h.run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' });
+      assert.deepEqual(h.completionPolicies, [{ inspectionPolicy: 'RECEIPT' }]);
+      assert.deepEqual(h.completionActors, [h.ctxWithPermissions]);
     });
 
     it('R1 reviewer completes their own receipt upload', async () => {

@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -255,7 +256,7 @@ const ctx = (over: Record<string, unknown> = {}) => ({
   scopes: {}, authProvider: 'watchdog', ...over,
 } as any);
 
-function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}) {
+function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo; rejectFile?: boolean } = {}) {
   const capture = options.repo ?? new FakeCaptureRepo();
   const appConfig = config(options.intakeEnabled ?? true);
   const access = new ExpenseCaptureAccessService(capture as any, appConfig);
@@ -277,6 +278,7 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
   const intentActors: any[] = [];
   const intentSources: any[] = [];
   const completionActors: any[] = [];
+  const completionPolicies: any[] = [];
   // The attachment row has a lifecycle here, because the fix under test turns on reading it back:
   // PENDING_UPLOAD after the intent, ACTIVE once the shared completion has verified the bytes.
   const objects = capture.objects;
@@ -296,13 +298,18 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
   const completed: any[] = [];
   let onCompleteUpload: (() => void) | undefined;
   const completeUpload = {
-    execute: async (actor: any, cmd: any) => {
+    execute: async (actor: any, cmd: any, policy: any) => {
+      completionPolicies.push(policy);
       completed.push(cmd);
       completionActors.push(actor);
       const object = objects.get(cmd.attachmentId);
       // The real one refuses anything that is not PENDING_UPLOAD; a fake that forgives that would
       // hide the exact stranding this fix exists for.
       if (!object || object.status !== 'PENDING_UPLOAD') throw new Error('Attachment is not in PENDING_UPLOAD state.');
+      if (options.rejectFile) {
+        object.status = 'QUARANTINED';
+        throw new BadRequestException({ code: 'EMBEDDED_FILE_REJECTED' });
+      }
       Object.assign(object, { status: 'ACTIVE', checksumSha256: 'sha-1', byteSize: 1_000, objectVersionId: 'v1' });
       onCompleteUpload?.();
       return { ...object };
@@ -320,7 +327,7 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
   const runner = { kicked: [] as string[], kick(jobId: string) { this.kicked.push(jobId); } };
 
   return {
-    capture, access, intents, completed, objects, runner, intentActors, intentSources, completionActors,
+    capture, access, intents, completed, objects, runner, intentActors, intentSources, completionActors, completionPolicies,
     duringCompleteUpload: (hook: () => void) => { onCompleteUpload = hook; },
     capability: new GetExpenseCaptureCapabilityUseCase(access),
     create: new CreateExpenseCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate),
@@ -927,4 +934,25 @@ it('R11 upload callers preserve branch and identity', async () => {
   assert.equal(app.intents[0].branchId, 'branch-1');
   assert.deepEqual(app.intentSources, [{ captureGroupId: group.groupId }]);
   assert.equal([...app.capture.files.values()][0].addedByUserId, actor.userId);
+});
+
+
+it('R4 capture completion uses receipt policy and retains refusal recovery', async () => {
+  for (const freeExpenseDrafts of [false, true]) {
+    const options = { rejectFile: true };
+    const app = build(options);
+    const actor = ctx({ freeExpenseDrafts, permissions: ['expense.receipt.upload', 'expense.update', 'attachment.create'] });
+    const group = await app.create.execute(actor, { branchId: 'branch-1' });
+    const added = await app.addFile.execute(actor, group.groupId, { originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1_000, expectedRevision: 1 });
+    await assert.rejects(() => app.completeFile.execute(actor, group.groupId, added.fileId, { expectedRevision: added.revision }), (error: any) => error.getResponse().code === 'EMBEDDED_FILE_REJECTED');
+    assert.deepEqual(app.completionPolicies, [{ inspectionPolicy: 'RECEIPT' }]);
+    assert.equal(app.capture.jobs.length, 0);
+    assert.equal(app.capture.groups.get(group.groupId).status, 'OPEN');
+    await assert.rejects(() => app.completeFile.execute(actor, group.groupId, added.fileId, { expectedRevision: added.revision }), (error: any) => error.getResponse().code === 'expense_capture_file_state_invalid');
+    options.rejectFile = false;
+    const replacement = await app.addFile.execute(actor, group.groupId, { originalFileName: 'other.pdf', mimeType: 'application/pdf', byteSize: 1_000, expectedRevision: added.revision });
+    const completed = await app.completeFile.execute(actor, group.groupId, replacement.fileId, { expectedRevision: replacement.revision });
+    assert.equal(completed.uploadState, 'STORED');
+    assert.equal(app.capture.jobs.length, 1);
+  }
 });

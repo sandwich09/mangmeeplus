@@ -192,7 +192,10 @@ async function makeScenario(scenario: Scenario) {
       const key = `${COMPANY}#${grant.attemptKey}#provider-v2#${step.invocation.ordinal}`;
       const settlement = settlements.find((item) => item.invocationKey === key);
       assert.ok(settlement, `missing settlement for ordinal ${step.invocation.ordinal}`);
-      assert.equal(settlement.usage.ok, true);
+      const evidence = result.usage.find(entry => entry.invocationKey === key);
+      assert.ok(evidence);
+      assert.equal(settlement.usage.ok, evidence.ok);
+      if (!evidence.ok) assert.equal(settlement.usage.errorCode, 'OUTPUT_UNUSABLE');
       assert.ok(settlement.usage.inputTokens <= step.invocation.inputTokenBound, `input usage exceeded ordinal ${step.invocation.ordinal} reservation`);
       assert.ok(settlement.usage.outputTokens <= step.invocation.requestedOutputTokens, `output usage exceeded ordinal ${step.invocation.ordinal} reservation`);
     }

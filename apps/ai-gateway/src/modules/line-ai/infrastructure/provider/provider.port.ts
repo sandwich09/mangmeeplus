@@ -23,6 +23,8 @@ export type ProviderInput = {
   signal?: AbortSignal;
   /** Absolute Unix deadline carried in process memory, never as provider metadata. */
   deadlineAt?: number;
+  /** Local, synchronous parser/acceptance only: no business writes, tools or I/O. Never sent to the provider. */
+  acceptOutput?: (output: Extract<ProviderOutput, { ok: true }>) => boolean;
 };
 
 export type ProviderCompletion = 'complete' | 'output_limit' | 'blocked' | 'unknown';
@@ -74,6 +76,8 @@ export type ProviderToolsInput = {
   /** Local-only cancellation/deadline. */
   signal?: AbortSignal;
   deadlineAt?: number;
+  /** Local, synchronous parser/acceptance only: no business writes, tools or I/O. Never sent to the provider. */
+  acceptOutput?: (output: Extract<ProviderOutput, { ok: true }>) => boolean;
 };
 
 export type ProviderToolsOutput =

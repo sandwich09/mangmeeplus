@@ -1174,3 +1174,37 @@ describe('graceful drain on SIGTERM', () => {
     resetSettleEvidence();
   });
 });
+
+
+describe('R6 unusable output is classified before settlement', () => {
+  for (const tools of [false, true]) for (const scenario of ['valid', 'invalid', 'throw-validator', 'output_limit', 'blocked', 'provider-failed', 'provider-throws']) {
+    it(`${tools ? 'tools' : 'text'}: ${scenario} preserves real evidence and isolates the invocation`, async () => {
+      const log = trace(), seam = v2Seam(log), settled: AiUsageEntry[] = [];
+      seam.settle = async input => { settled.push({ ...input.entry }); return 'recorded'; };
+      const real = { ...entry('line.loop'), inputTokens: 123, outputTokens: 45, cacheReadInputTokens: 67, cacheWriteInputTokens: 89,
+        usageBasis: 'PROVIDER_REPORTED' as const, externalUnits: 2 };
+      const run = async () => {
+        appendUsage({ ...real });
+        if (scenario === 'provider-throws') throw new Error('transport lost');
+        if (scenario === 'provider-failed') return { ok: false as const, error: { code: 'PROVIDER_TIMEOUT' as const, message: 'timeout', retryable: false } };
+        return { ok: true as const, text: scenario === 'invalid' ? '{bad' : 'answer', toolCalls: [], stopReason: 'end_turn' as const,
+          completion: scenario === 'output_limit' ? 'output_limit' as const : scenario === 'blocked' ? 'blocked' as const : 'complete' as const };
+      };
+      const provider = guarded({ generateText: run, generateWithTools: run }, seam, log);
+      await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, async () => {
+        appendUsage({ ...entry('unrelated'), invocationKey: 'earlier' });
+        const input = textInput({ usageTag: 'line.loop', maxTokens: 1024, acceptOutput: output => {
+          if (scenario === 'throw-validator') throw new Error('bad parser');
+          return output.text !== '{bad';
+        } });
+        const call = () => tools ? provider.generateWithTools!({ ...input, tools: [] }) : provider.generateText(input);
+        if (scenario === 'provider-throws') await assert.rejects(call, /transport lost/); else await call();
+        const rows = drainUsage();
+        assert.equal(rows[0]?.ok, true, 'unrelated call is never refunded');
+        assert.equal(settled.length, 1);
+        assert.deepEqual(settled[0], { ...real, invocationKey: 'co-1#attempt-v2#provider-v2#0',
+          ...(scenario === 'valid' ? {} : { ok: false, errorCode: scenario.startsWith('provider-') ? (scenario === 'provider-failed' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNKNOWN') : 'OUTPUT_UNUSABLE' }) });
+      });
+    });
+  }
+});

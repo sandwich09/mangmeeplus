@@ -6,7 +6,7 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/sec
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/ports/attachment-storage.port';
-import { generateImmutableObjectKey, inspectAttachmentBytes, attachmentInspectionFailureCode } from '../../domain/logic/attachment.logic';
+import { generateImmutableObjectKey, inspectAttachmentBytes, attachmentInspectionFailureCode, type AttachmentInspectionPolicy } from '../../domain/logic/attachment.logic';
 import type { AttachmentRecord } from '../../domain/models/attachment.model';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -76,7 +76,7 @@ export class CompleteAttachmentUploadUseCase {
     private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
-  async execute(ctx: RequestContext, cmd: CompleteAttachmentUploadCommand): Promise<AttachmentRecord> {
+  async execute(ctx: RequestContext, cmd: CompleteAttachmentUploadCommand, options?: { inspectionPolicy: AttachmentInspectionPolicy }): Promise<AttachmentRecord> {
     if (!ctx.permissions.includes('attachment.create')) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -125,7 +125,7 @@ export class CompleteAttachmentUploadUseCase {
     if (uploaded.mimeType && uploaded.mimeType !== existing.mimeType) {
       await this.rejectUpload(ctx, existing.id, 'Uploaded bytes have an unexpected MIME type.');
     }
-    const contentError = inspectAttachmentBytes(existing.mimeType, uploaded.bytes);
+    const contentError = inspectAttachmentBytes(existing.mimeType, uploaded.bytes, options?.inspectionPolicy);
     if (contentError) await this.rejectUpload(ctx, existing.id, contentError, attachmentInspectionFailureCode(contentError));
     try {
       await this.malwareScanner.assertClean(uploaded.bytes);

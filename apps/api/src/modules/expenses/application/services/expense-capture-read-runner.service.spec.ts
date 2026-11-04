@@ -1065,7 +1065,7 @@ describe('free capture document boundary', () => {
     assert.equal(h.observationsStored.length, 0);
     assert.equal(h.released.length, 1);
   });
-  it('counts a persisted usable document and does not count a result lost before persistence', async () => {
+  it('R6 free unusable OCR preserves allowance and usable persistence consumes once', async () => {
     const h = await build({ free: true });
     await h.runner.runClaimed(h.job);
     assert.ok(h.admissions[0]?.succeededAt);

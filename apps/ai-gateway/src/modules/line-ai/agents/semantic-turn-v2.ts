@@ -735,7 +735,19 @@ export async function runSemanticTurnV2(input: {
     // H6 (tuning-7): `hintedCalls` fully replaces what this round would have planned — skip the
     // model call (usageTag `line.loop`) entirely, and never build its payload either.
     const skipPlanner = controlRound === 0 && hintedCalls;
-    const control = skipPlanner ? undefined : await provider.generateText({ usageTag: 'line.loop', systemPrompt: CONTROL_PROMPT, maxTokens: 2048,
+    const parseControl = (text: string) => {
+      const proposed = json(text);
+      const calls = proposed?.calls ?? (Array.isArray(proposed?.questions) ? [] : undefined), rawQuestions = proposed?.questions ?? [];
+      const valid = Array.isArray(calls) && calls.length <= 8 && Array.isArray(rawQuestions) && rawQuestions.length <= inventory.length
+      && calls.every(call => object(call) && Object.keys(call).every(key => ['index', 'toolName', 'input'].includes(key))
+        && Number.isSafeInteger(call.index) && inventory.some(item => item.index === call.index) && typeof call.toolName === 'string' && object(call.input))
+      && rawQuestions.every(q => object(q) && Number.isSafeInteger(q.index) && inventory.some(item => item.index === q.index)
+        && typeof q.text === 'string' && q.text.length > 0 && q.text.length <= 500);
+      return valid ? { calls: calls as Array<Record<string, any>>, rawQuestions: rawQuestions as Array<Record<string, any>>, valid: true }
+        : { calls: [], rawQuestions: [], valid: false };
+    };
+    let checkedControl: ReturnType<typeof parseControl> | undefined;
+    const control = skipPlanner ? undefined : await provider.generateText({ acceptOutput: output => { checkedControl = parseControl(output.text); return checkedControl.valid; }, usageTag: 'line.loop', systemPrompt: CONTROL_PROMPT, maxTokens: 2048,
       messages: [{ role: 'user', text: JSON.stringify({ messageText: req.messageText, semanticSubrequests: inventory,
         inputEvidence: req.inputEvidence, valueCandidates: req.valueCandidates, taskProjection: req.taskProjection,
         conversationContext: req.conversationContext,
@@ -753,21 +765,8 @@ export async function runSemanticTurnV2(input: {
           limits: 'No invented IDs, values, receipts or source revisions. Only API choices. Missing evidence => ask once for missing fields. Never confirm/apply/submit/pay.' } } : {}),
         tools: offered.map(meta => ({ name: meta.name, description: meta.description, requiredInputFields: meta.requiredInputFields,
           optionalInputFields: meta.optionalInputFields, inputEnumValues: meta.inputEnumValues })) }) }] });
-    const proposed: Record<string, unknown> | undefined = skipPlanner ? { calls: hintedCalls, questions: [] }
-      : (control && control.ok ? json(control.text) : undefined);
-    // C2 root cause: a control round with nothing to ask legitimately omits `questions` entirely
-    // rather than echoing an empty array — that omission used to fail `Array.isArray(rawQuestions)`
-    // and reject an otherwise perfectly valid `calls` array, forcing SEMANTIC_CONTROL_UNAVAILABLE
-    // with zero tool calls. Default the missing key to `[]`; every other shape/authorization check
-    // below is unchanged.
-    // Advisor S3 eval (2026-09-30, "อนุมัติให้หมดเลย"): a round that only asks the user a question omits `calls` the
-    // same way a round with nothing to ask omits `questions`; that question is the answer, not a planning failure.
-    const calls = proposed?.calls ?? (Array.isArray(proposed?.questions) ? [] : undefined), rawQuestions = proposed?.questions ?? [];
-    const valid = Array.isArray(calls) && calls.length <= 8 && Array.isArray(rawQuestions) && rawQuestions.length <= inventory.length
-      && calls.every(call => object(call) && Object.keys(call).every(key => ['index', 'toolName', 'input'].includes(key))
-        && Number.isSafeInteger(call.index) && inventory.some(item => item.index === call.index) && typeof call.toolName === 'string' && object(call.input))
-      && rawQuestions.every(q => object(q) && Number.isSafeInteger(q.index) && inventory.some(item => item.index === q.index)
-        && typeof q.text === 'string' && q.text.length > 0 && q.text.length <= 500);
+    const { calls, rawQuestions, valid } = skipPlanner ? { calls: hintedCalls, rawQuestions: [], valid: true }
+      : checkedControl ?? parseControl(control?.ok ? control.text : '');
     // C2/R-L2/R-L3: an unusable control round is a system-side planning outcome, not a customer
     // question — `unsupported` closes the task as `completed`; `needs_user` would leave a phantom
     // wait with no question the customer could ever answer.
@@ -945,14 +944,19 @@ export async function runSemanticTurnV2(input: {
           if (admission.status !== 'ok' || !approvedRequest || !policy || canonical(policy) !== canonical(approved!.policy)
             || publicQueryNeedsRephrase(approvedRequest.publicQuestion, [...canaries])) result = { ...admission, status: 'unavailable', data: undefined, sourceRefs: [], errorCode: 'PUBLIC_POLICY_UNAVAILABLE' };
           else {
-            const answer = await provider.generateText({ usageTag: 'line.public.lookup', systemPrompt: PUBLIC_LOOKUP_SYSTEM_PROMPT,
-              messages: [{ role: 'user', text: JSON.stringify({ request: approvedRequest, policy }) }], maxTokens: 4096 });
-            const lookup = answer.ok ? json(answer.text) as PublicLookupResult | undefined : undefined;
+            const parseLookup = (text: string) => {
+            const lookup = json(text) as PublicLookupResult | undefined;
             const validLookup = lookup && ['verified', 'partial', 'conflict', 'unavailable'].includes(lookup.status) && Array.isArray(lookup.sources)
               && lookup.sources.length <= 5 && Array.isArray(lookup.claims) && lookup.claims.length <= 5
               && lookup.claims.every(claim => typeof claim.text === 'string' && Array.isArray(claim.sourceIds) && claim.sourceIds.length > 0
                 && claim.sourceIds.every(id => lookup.sources.some(source => source.id === id)));
-            result = validLookup && lookup.status !== 'unavailable'
+              return validLookup && lookup.status !== 'unavailable' ? lookup : undefined;
+            };
+            let lookup: PublicLookupResult | undefined, checkedLookup = false;
+            const answer = await provider.generateText({ acceptOutput: output => { checkedLookup = true; lookup = parseLookup(output.text); return !!lookup; }, usageTag: 'line.public.lookup', systemPrompt: PUBLIC_LOOKUP_SYSTEM_PROMPT,
+              messages: [{ role: 'user', text: JSON.stringify({ request: approvedRequest, policy }) }], maxTokens: 4096 });
+            if (!checkedLookup && answer.ok) lookup = parseLookup(answer.text);
+            result = lookup
               ? { toolName: meta.name, status: 'ok', data: lookup, asOf: lookup.asOf, sourceRefs: lookup.sources.map(source => ({ id: source.id, label: source.publisher,
                 module: 'public', entityType: 'public_source', permissionChecked: true, asOf: source.retrievedAt, webPath: source.url })) }
               : { toolName: meta.name, status: 'unavailable', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'PUBLIC_LOOKUP_UNAVAILABLE' };
@@ -1175,29 +1179,46 @@ export async function runSemanticTurnV2(input: {
   const needsComposition = inventory.some(item => !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
+  const sourcesCover = (answer: { sourceRefIds?: string[] }, good: ToolResult[]) => {
+    const allowed = new Set(good.flatMap(result => result.sourceRefs.map(sourceId)));
+    return good.length > 0 && !!answer.sourceRefIds?.length && answer.sourceRefIds.every(id => allowed.has(id));
+  };
+  const ungroundedNumbers = (index: number, text: string, good: ToolResult[]) => {
+    const facts = [...good.map(factText).filter(Boolean), derivedFactsByIndex.get(index)].filter((line): line is string => !!line).join('\n');
+    const allowed = allowedAnswerNumbers(good, facts, req.messageText);
+    return [...new Set(decimals(text).filter(value => !allowed.has(value)))];
+  };
+  const composeGrounded = (candidate: Record<string, unknown> | undefined) => {
+    if (!candidate || !Array.isArray(candidate.answers)) return false;
+    return candidate.answers.every(answer => {
+      if (!object(answer)) return false;
+      const item = inventory.find(item => item.index === answer.index);
+      if (!item) return false;
+      if (!['read', 'write', 'public', 'file'].includes(item.kind) || answer.status !== 'handled') return true;
+      const good = results.filter(entry => entry.index === item.index && entry.result.status === 'ok').map(entry => entry.result);
+      return sourcesCover(answer as { sourceRefIds?: string[] }, good)
+        && (item.kind !== 'read' || ungroundedNumbers(item.index, String(answer.text), good).length === 0);
+    });
+  };
+  let lastProse: Record<string, unknown> | undefined;
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
     if (attempt) {
       const state = currentBudgetState();
       if (state?.status !== 'active-v2' || state.repairCount >= state.grant.maxRepairs || state.calls >= aiBudgetV2OrdinalCeiling(state.grant)) break;
       state.repairPending = true;
     }
-    const answer = await provider.generateText({ usageTag: 'line.compose', systemPrompt: ANSWER_PROMPT
-      + `\n${JSON.stringify({ ...LINE_CHAT_ACTIONS_CONTEXT,
-        conversationGuidance: ADVISOR_CONVERSATION_GUIDANCE,
-        ...(taxGuidance ? { taxGuidance } : {}),
-        productOfferRule: 'Only offer product actions present in productActionFacts. A general explanation never implies the shop can perform that action. Do not invent package prices or instructions.' })}`,
-      maxTokens: req.responsePreferences?.detail === 'detailed' ? 4096 : 1536,
-      messages: [{ role: 'user', text: JSON.stringify({ ...answerInput, ...(attempt ? { repair: 'Return all indexed answers once and helpActions for every help index: select the matching chatActions actionId for an action how-to, or null for a definition/status explanation; use the exact schema and supplied source IDs.' } : {}) }) }] });
-    const candidate = answer.ok ? json(answer.text) : undefined;
+    const parseCompose = (text: string) => {
+      const candidate = json(text);
+      const helps = new Map(actionHelps);
     if (Array.isArray(candidate?.helpActions)) for (const selection of candidate.helpActions) {
       if (!object(selection) || !inventory.some(item => item.index === selection.index && ['help', 'general'].includes(item.kind))
         || capabilityIndices.has(Number(selection.index)) || scopePolicyForcedIndices.has(Number(selection.index))
         || documentExplanationTopic(itemText.get(Number(selection.index)) ?? '')) continue;
       const help = helpFor(selection.actionId, undefined, itemText.get(Number(selection.index)),
         inventory.find(item => item.index === selection.index)?.toolHint);
-      if (help) actionHelps.set(Number(selection.index), help);
+      if (help) helps.set(Number(selection.index), help);
     }
-    if (inventory.every(item => actionHelps.has(item.index) || forced.has(item.index) || capabilityIndices.has(item.index))) break;
+      const helpOnly = inventory.every(item => helps.has(item.index) || forced.has(item.index) || capabilityIndices.has(item.index));
     // Owner eval 2026-09-29 ("VAT คืออะไร", "ทำไมท้องฟ้าสีฟ้า" → "ยังตอบข้อนี้ไม่ได้"): the model volunteers an optional
     // reasonCode such as "general_knowledge", which the coverage contract rejects, and a correct answer was thrown away.
     // Drop a code the contract would reject; keep the answer.
@@ -1205,13 +1226,35 @@ export async function runSemanticTurnV2(input: {
     for (const item of Array.isArray(composedAnswers) ? composedAnswers : []) {
       if (object(item) && item.reasonCode !== undefined && !(typeof item.reasonCode === 'string' && REASON_CODE.test(item.reasonCode))) delete item.reasonCode;
     }
-    lastComposeText = answer.ok && candidate === undefined ? answer.text : undefined;
-    const helpSelectionComplete = selectedHelp.every(item => knowledge || actionHelps.has(item.index) || documentExplanationTopic(itemText.get(item.index) ?? '')
+
+    const helpSelectionComplete = selectedHelp.every(item => knowledge || helps.has(item.index) || documentExplanationTopic(itemText.get(item.index) ?? '')
       || Array.isArray(candidate?.helpActions) && candidate.helpActions.some(selection => object(selection) && selection.index === item.index && selection.actionId === null));
-    if (candidate && Array.isArray(candidate.answers) && candidate.answers.length === inventory.length && candidate.answers.every(a => object(a)
+      const shapeValid = !!(candidate && Array.isArray(candidate.answers) && candidate.answers.length === inventory.length && candidate.answers.every(a => object(a)
       && typeof a.text === 'string' && a.text.length > 0 && a.text.length <= 12_000 && Object.keys(a).every(key => ['index', 'status', 'text', 'sourceRefIds', 'reasonCode', 'question', 'topic'].includes(key)))
       // Advisor S0: "topic" is the composer's own class for a general answer; it never joins the coverage contract.
-      && parseLineAiSemanticCoverage(candidate.answers.map(a => { const { text: _text, topic: _topic, ...coverage } = a as Record<string, unknown>; return coverage; }), inventory)) { parsed = candidate; if (helpSelectionComplete) break; }
+      && parseLineAiSemanticCoverage(candidate.answers.map(a => { const { text: _text, topic: _topic, ...coverage } = a as Record<string, unknown>; return coverage; }), inventory));
+      const proseText = candidate === undefined && text.trim() && !/^(?:```|\{|\[)/u.test(text.trim()) && !text.includes('"answers"') ? text.trim() : undefined;
+      const item = inventory.length === 1 ? inventory[0] : undefined;
+      const prose = proseText && item && ['read', 'general'].includes(item.kind) ? { answers: [{ index: item.index, status: 'handled', text: proseText,
+        sourceRefIds: item.kind === 'read' ? results.filter(entry => entry.index === item.index && entry.result.status === 'ok').flatMap(entry => entry.result.sourceRefs.map(sourceId)) : [] }] } : undefined;
+      return { candidate, helps, helpOnly, shapeValid, helpSelectionComplete, prose,
+        accepted: helpOnly || !!helpSelectionComplete && (shapeValid && composeGrounded(candidate) || !!prose && composeGrounded(prose)) };
+    };
+    let checkedCompose: ReturnType<typeof parseCompose> | undefined;
+    const answer = await provider.generateText({ acceptOutput: output => { checkedCompose = parseCompose(output.text); return checkedCompose.accepted; }, usageTag: 'line.compose', systemPrompt: ANSWER_PROMPT
+      + `\n${JSON.stringify({ ...LINE_CHAT_ACTIONS_CONTEXT,
+        conversationGuidance: ADVISOR_CONVERSATION_GUIDANCE,
+        ...(taxGuidance ? { taxGuidance } : {}),
+        productOfferRule: 'Only offer product actions present in productActionFacts. A general explanation never implies the shop can perform that action. Do not invent package prices or instructions.' })}`,
+      maxTokens: req.responsePreferences?.detail === 'detailed' ? 4096 : 1536,
+      messages: [{ role: 'user', text: JSON.stringify({ ...answerInput, ...(attempt ? { repair: 'Return all indexed answers once and helpActions for every help index: select the matching chatActions actionId for an action how-to, or null for a definition/status explanation; use the exact schema and supplied source IDs.' } : {}) }) }] });
+    const accepted = checkedCompose ?? parseCompose(answer.ok ? answer.text : '');
+    for (const [index, help] of accepted.helps) actionHelps.set(index, help);
+    if (accepted.helpOnly) break;
+    lastComposeText = answer.ok && accepted.candidate === undefined ? answer.text : undefined;
+    lastProse = accepted.prose;
+    if (accepted.shapeValid) { parsed = accepted.candidate; if (accepted.helpSelectionComplete) break; }
+
   }
   // E3 (tuning-6a, run 5 nonJsonCompose: 24/77 compose calls): a real model sometimes answers a
   // SIMPLE turn in plain prose instead of the required JSON envelope even after a repair attempt —
@@ -1228,11 +1271,8 @@ export async function runSemanticTurnV2(input: {
   if (!parsed && needsComposition && inventory.length === 1 && rescuableProse) {
     const item = inventory[0]!;
     if (item.kind === 'read' || item.kind === 'general') {
-      const sourceRefIds = item.kind === 'read'
-        ? results.filter(entry => entry.index === item.index && entry.result.status === 'ok').flatMap(entry => entry.result.sourceRefs.map(sourceId))
-        : [];
       logger.log({ msg: 'line.ai.semantic_turn.compose_plain_text_rescued', requestId: req.requestId, kind: item.kind });
-      parsed = { answers: [{ index: item.index, status: 'handled', text: rescuableProse, sourceRefIds }] };
+      parsed = lastProse;
     }
   }
   // A6 (batch5): sanitizeMangmeeComposedText (persona backstop + Markdown/status-key/CE-year fixes)
@@ -1368,8 +1408,7 @@ export async function runSemanticTurnV2(input: {
       modelComposed = !knowledge && answer === composed;
     }
     else if (['read', 'write', 'public', 'file'].includes(item.kind) && answer.status === 'handled') {
-      const allowed = new Set(good.flatMap(result => result.sourceRefs.map(sourceId)));
-      if (!good.length || !answer.sourceRefIds?.length || answer.sourceRefIds.some(id => !allowed.has(id))) {
+      if (!sourcesCover(answer, good)) {
         // Item 6: the composer's answer could not be tied to a real, permission-checked source — a
         // system composition gap, not a customer question. Same recovery as the numeric-grounding
         // fallback below: try the verified, model-free formatter on this item's own good tool
@@ -1385,9 +1424,7 @@ export async function runSemanticTurnV2(input: {
       else if (item.kind === 'read') {
         // Item 3(a)/(b): derived comparison/share facts join the same tool-derived text that already
         // grounds factText's numbers — computed once above, never per compose attempt.
-        const facts = [...good.map(factText).filter(Boolean), derivedFactsByIndex.get(item.index)].filter((line): line is string => !!line).join('\n');
-        const allowedNumbers = allowedAnswerNumbers(good, facts, req.messageText);
-        const offending = [...new Set(decimals(answer.text).filter(value => !allowedNumbers.has(value)))];
+        const offending = ungroundedNumbers(item.index, answer.text, good);
         if (offending.length > 0) {
           // C1(e): keep the real rejection reason and the offending values in the log — never the
           // generic AI_CONTRACT_UNSUPPORTED code — so a genuine grounding gap is diagnosable.

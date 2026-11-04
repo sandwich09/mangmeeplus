@@ -204,6 +204,8 @@ const CONTENT_ACTIVE = 'Active content is not allowed in attachments.';
 const PDF_MAX_OBJECT_STREAM_BYTES = 8 * 1024 * 1024;
 const PDF_MAX_EXPANDED_BYTES = 32 * 1024 * 1024;
 
+export type AttachmentInspectionPolicy = 'STRICT' | 'RECEIPT';
+
 type PdfAtom = { kind: 'name' | 'string' | 'word'; value: string };
 type PdfReference = { kind: 'reference'; key: string };
 type PdfDictionary = { kind: 'dictionary'; entries: Map<string, PdfValue> };
@@ -224,6 +226,7 @@ function checkPdfText(value: string): void {
 }
 
 class PdfInspectionBudget {
+  embeddedFileNames = 0;
   private readonly startedAt = performance.now();
   objects = 0;
   objectStreams = 0;
@@ -235,14 +238,156 @@ class PdfInspectionBudget {
   }
 }
 
+const RECEIPT_XML_MAX_BYTES = 3 * 1024 * 1024;
+const ETDA_RECEIPT_NAMESPACE = /^urn:etda:uncefact:data:standard:(TaxInvoice|Receipt|DebitCreditNote|AbbreviatedTaxInvoice|Invoice|CancellationNote)_CrossIndustryInvoice:2$/;
+const XML_NAME = /^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?/;
+
+function xmlText(value: string): string {
+  const entity = /&(?:#x[\da-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g;
+  if (value.replace(entity, '').includes('&')) pdfInspectionFailure();
+  const decoded = value.replace(entity, (reference) => {
+    const named: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'" };
+    if (named[reference]) return named[reference];
+    const code = parseInt(reference.slice(reference[2] === 'x' ? 3 : 2, -1), reference[2] === 'x' ? 16 : 10);
+    if (![9, 10, 13].includes(code) && !(code >= 0x20 && code <= 0xd7ff || code >= 0xe000 && code <= 0xfffd || code >= 0x10000 && code <= 0x10ffff)) pdfInspectionFailure();
+    return String.fromCodePoint(code);
+  });
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/.test(decoded)) pdfInspectionFailure();
+  checkPdfText(decoded);
+  return decoded;
+}
+
+/** Recognize one bounded XML document and its root namespace, without resolving entities. */
+function inspectReceiptXml(bytes: Buffer, budget: PdfInspectionBudget) {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  checkPdfText(text);
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]/.test(text)) pdfInspectionFailure();
+  const stack: Array<{ name: string; namespaces: Map<string, string> }> = [];
+  let position = 0;
+  let rootSeen = false;
+  const attributes = (body: string) => {
+    const values = new Map<string, string>();
+    let rest = body;
+    while (!/^[ \t\r\n]*$/.test(rest)) {
+      budget.check();
+      const match = /^[ \t\r\n]+([A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?)[ \t\r\n]*=[ \t\r\n]*(["'])([^<]*?)\2/.exec(rest);
+      if (!match || values.has(match[1]!)) pdfInspectionFailure();
+      values.set(match[1]!, xmlText(match[3]!));
+      rest = rest.slice(match[0].length);
+    }
+    return values;
+  };
+  while (position < text.length) {
+    budget.check();
+    if (text[position] !== '<') {
+      const end = text.indexOf('<', position);
+      const value = text.slice(position, end < 0 ? text.length : end);
+      if ((!stack.length && /[^ \t\r\n]/.test(value)) || value.includes(']]>')) pdfInspectionFailure();
+      xmlText(value);
+      position += value.length;
+      continue;
+    }
+    if (text.startsWith('<!--', position)) {
+      const end = text.indexOf('-->', position + 4);
+      if (end < 0 || text.slice(position + 4, end).includes('--')) pdfInspectionFailure();
+      position = end + 3;
+      continue;
+    }
+    if (text.startsWith('<![CDATA[', position)) {
+      const end = text.indexOf(']]>', position + 9);
+      if (!stack.length || end < 0) pdfInspectionFailure();
+      checkPdfText(text.slice(position + 9, end));
+      position = end + 3;
+      continue;
+    }
+    if (text.startsWith('<?', position)) {
+      const end = text.indexOf('?>', position + 2);
+      if (end < 0) pdfInspectionFailure();
+      const body = text.slice(position + 2, end);
+      const target = XML_NAME.exec(body)?.[0];
+      if (!target || (body.length > target.length && !/\s/.test(body[target.length]!))) pdfInspectionFailure();
+      if (target.toLowerCase() === 'xml') {
+        if (position !== 0 || target !== 'xml') pdfInspectionFailure();
+        const declaration = attributes(body.slice(3));
+        const order = [...declaration.keys()];
+        if (order[0] !== 'version' || order.includes('encoding') && order.includes('standalone') && order.indexOf('encoding') > order.indexOf('standalone')
+          || declaration.get('version') !== '1.0' || [...declaration.keys()].some(key => !['version', 'encoding', 'standalone'].includes(key))
+          || declaration.has('encoding') && declaration.get('encoding')!.toLowerCase() !== 'utf-8'
+          || declaration.has('standalone') && !['yes', 'no'].includes(declaration.get('standalone')!)) pdfInspectionFailure();
+      }
+      position = end + 2;
+      continue;
+    }
+    // DTD, ENTITY and all other declarations are unsupported. Nothing is resolved or fetched.
+    if (text.startsWith('<!', position)) pdfInspectionFailure();
+    let end = position + 1;
+    let quote = '';
+    for (; end < text.length; end++) {
+      if ((end & 4095) === 0) budget.check();
+      const character = text[end]!;
+      if (quote) { if (character === quote) quote = ''; }
+      else if (character === '"' || character === "'") quote = character;
+      else if (character === '>') break;
+      else if (character === '<') pdfInspectionFailure();
+    }
+    if (end === text.length || quote) pdfInspectionFailure();
+    let body = text.slice(position + 1, end);
+    position = end + 1;
+    if (body.startsWith('/')) {
+      const closed = stack.pop();
+      if (!closed || body.slice(1).replace(/[ \t\r\n]+$/, '') !== closed.name) pdfInspectionFailure();
+      continue;
+    }
+    const empty = body.endsWith('/');
+    if (empty) body = body.slice(0, -1);
+    const name = XML_NAME.exec(body)?.[0];
+    if (!name) pdfInspectionFailure();
+    const values = attributes(body.slice(name.length));
+    const namespaces = new Map(stack.at(-1)?.namespaces ?? [['xml', 'http://www.w3.org/XML/1998/namespace']]);
+    for (const [attribute, value] of values) {
+      if (attribute !== 'xmlns' && !attribute.startsWith('xmlns:')) continue;
+      const prefix = attribute === 'xmlns' ? '' : attribute.slice(6);
+      if (prefix === 'xmlns' || !value || value === 'http://www.w3.org/2000/xmlns/'
+        || namespaces.has(prefix) && namespaces.get(prefix) !== value) pdfInspectionFailure();
+      namespaces.set(prefix, value);
+    }
+    const split = name.split(':');
+    const prefix = split.length === 2 ? split[0]! : '';
+    const local = split.at(-1)!;
+    if (prefix && !namespaces.has(prefix)) pdfInspectionFailure();
+    checkPdfText(`<${local} >`);
+    const expandedAttributes = new Set<string>();
+    for (const attribute of values.keys()) {
+      if (attribute === 'xmlns' || attribute.startsWith('xmlns:')) continue;
+      const parts = attribute.split(':');
+      const uri = parts.length === 2 ? namespaces.get(parts[0]!) : '';
+      if (uri === undefined) pdfInspectionFailure();
+      const identity = `${uri}\0${parts.at(-1)}`;
+      if (expandedAttributes.has(identity)) pdfInspectionFailure();
+      expandedAttributes.add(identity);
+    }
+    if (!stack.length) {
+      if (rootSeen) pdfInspectionFailure();
+      const namespace = ETDA_RECEIPT_NAMESPACE.exec(namespaces.get(prefix) ?? '');
+      if (!namespace || local !== `${namespace[1]}_CrossIndustryInvoice`) pdfInspectionFailure();
+      rootSeen = true;
+    }
+    if (!empty) stack.push({ name, namespaces });
+    if (stack.length > 64) pdfInspectionFailure();
+  }
+  if (!rootSeen || stack.length) pdfInspectionFailure();
+  budget.check();
+}
+
 /** A bounded lexer/parser. Only dictionaries with an exact stream boundary may hide opaque bytes. */
 class PdfSafetyReader {
   private position = 0;
   private readonly lookahead: PdfToken[] = [];
-  readonly objects = new Map<string, PdfValue>();
   private readonly streams: PdfStream[] = [];
 
-  constructor(private readonly bytes: Buffer, private readonly budget: PdfInspectionBudget) {}
+  constructor(private readonly bytes: Buffer, private readonly budget: PdfInspectionBudget,
+    private readonly policy: AttachmentInspectionPolicy = 'STRICT', readonly objects = new Map<string, PdfValue>(),
+    private readonly dictionaries: PdfDictionary[] = []) {}
 
   private checkpoint() { if ((this.position & 4095) === 0) this.budget.check(); }
 
@@ -268,7 +413,10 @@ class PdfSafetyReader {
         return decoded;
       });
       if (/^(javascript|js|openaction|launch|richmedia|xfa)$/i.test(value)) throw new Error(PDF_ACTIVE);
-      if (/^embeddedfile$/i.test(value)) throw new Error(PDF_EMBEDDED_REJECTED);
+      if (/^embeddedfile$/i.test(value)) {
+        if (this.policy !== 'RECEIPT') throw new Error(PDF_EMBEDDED_REJECTED);
+        this.budget.embeddedFileNames++;
+      }
       if (/^encrypt$/i.test(value)) pdfInspectionFailure();
       checkPdfText(value);
       return result('name', value);
@@ -357,7 +505,9 @@ class PdfSafetyReader {
         entries.set(key.value, this.value(depth + 1));
       }
       this.take();
-      return { kind: 'dictionary', entries };
+      const dictionary: PdfDictionary = { kind: 'dictionary', entries };
+      this.dictionaries.push(dictionary);
+      return dictionary;
     }
     if (token.kind === 'delimiter') pdfInspectionFailure();
     if (token.kind === 'number') {
@@ -461,6 +611,7 @@ class PdfSafetyReader {
       const header = new PdfSafetyReader(expanded.subarray(0, first), this.budget);
       let lastOffset = -1;
       const offsets: number[] = [];
+      const ids: number[] = [];
       for (let index = 0; index < count; index++) {
         const id = header.value();
         const offset = header.value();
@@ -468,17 +619,117 @@ class PdfSafetyReader {
           || !Number.isSafeInteger(offset) || offset <= lastOffset || first + offset >= expanded.length) pdfInspectionFailure();
         lastOffset = offset;
         offsets.push(offset);
+        ids.push(id);
       }
       if (header.peek()) pdfInspectionFailure();
       if (count === 0 && first !== expanded.length) pdfInspectionFailure();
       for (let index = 0; index < offsets.length; index++) {
         const object = new PdfSafetyReader(expanded.subarray(first + offsets[index]!,
-          index + 1 < offsets.length ? first + offsets[index + 1]! : expanded.length), this.budget);
-        object.value(1);
+          index + 1 < offsets.length ? first + offsets[index + 1]! : expanded.length), this.budget, this.policy, this.objects, this.dictionaries);
+        const value = object.value(1);
+        this.objects.set(`${ids[index]} 0`, value);
         if (object.peek()) pdfInspectionFailure();
       }
     }
+    if (this.policy === 'RECEIPT') this.inspectEmbeddedFiles();
   }
+  private required(value: PdfValue | undefined): PdfValue {
+    if (value === undefined) pdfInspectionFailure();
+    const resolved = this.resolve(value);
+    if (typeof resolved === 'object' && !Array.isArray(resolved) && resolved.kind === 'reference') pdfInspectionFailure();
+    return resolved;
+  }
+
+  private dictionary(value: PdfValue | undefined): PdfDictionary {
+    const resolved = this.required(value);
+    if (typeof resolved !== 'object' || Array.isArray(resolved) || resolved.kind !== 'dictionary') pdfInspectionFailure();
+    return resolved;
+  }
+
+  private array(value: PdfValue | undefined): PdfValue[] {
+    const resolved = this.required(value);
+    if (!Array.isArray(resolved)) pdfInspectionFailure();
+    return resolved;
+  }
+
+  private inspectEmbeddedFiles() {
+    if (!this.budget.embeddedFileNames) return;
+    const embedded = this.streams.filter(stream => {
+      const type = stream.dictionary.entries.get('Type');
+      return type && typeof type === 'object' && !Array.isArray(type) && type.kind === 'name' && type.value === 'EmbeddedFile';
+    });
+    if (embedded.length < 1 || embedded.length > 2 || embedded.length !== this.budget.embeddedFileNames) throw new Error(PDF_EMBEDDED_REJECTED);
+    const specifications = new Set<PdfDictionary>();
+    const add = (value: PdfValue) => { specifications.add(this.dictionary(value)); };
+    const names = (value: PdfValue, ancestors = new Set<PdfDictionary>()) => {
+      this.budget.check();
+      const node = this.dictionary(value);
+      if (ancestors.size >= 64 || ancestors.has(node)) pdfInspectionFailure();
+      const path = new Set(ancestors).add(node);
+      if (node.entries.has('Names')) {
+        const pairs = this.array(node.entries.get('Names'));
+        if (pairs.length % 2) pdfInspectionFailure();
+        for (let index = 0; index < pairs.length; index += 2) {
+          const label = this.required(pairs[index]);
+          if (typeof label !== 'object' || Array.isArray(label) || label.kind !== 'string') pdfInspectionFailure();
+          add(pairs[index + 1]!);
+        }
+      }
+      if (node.entries.has('Kids')) for (const child of this.array(node.entries.get('Kids'))) names(child, path);
+    };
+    for (const dictionary of this.dictionaries) {
+      const type = dictionary.entries.get('Type');
+      if (typeof type === 'object' && !Array.isArray(type) && type.kind === 'name' && type.value === 'Catalog') {
+        if (dictionary.entries.has('AF')) for (const specification of this.array(dictionary.entries.get('AF'))) add(specification);
+        if (dictionary.entries.has('Names')) {
+          const tree = this.dictionary(dictionary.entries.get('Names'));
+          if (tree.entries.has('EmbeddedFiles')) names(tree.entries.get('EmbeddedFiles')!);
+        }
+      }
+      const subtype = dictionary.entries.get('Subtype');
+      if (typeof subtype === 'object' && !Array.isArray(subtype) && subtype.kind === 'name' && subtype.value === 'FileAttachment') add(dictionary.entries.get('FS')!);
+    }
+    const inspected = new Set<PdfStream>();
+    for (const specification of specifications) {
+      this.budget.check();
+      const type = specification.entries.get('Type');
+      if (type && (typeof type !== 'object' || Array.isArray(type) || type.kind !== 'name' || type.value !== 'Filespec')) throw new Error(PDF_EMBEDDED_REJECTED);
+      const files = this.dictionary(specification.entries.get('EF'));
+      if ([...files.entries.keys()].some(key => key !== 'F' && key !== 'UF')) throw new Error(PDF_EMBEDDED_REJECTED);
+      const file = files.entries.get('F');
+      const unicodeFile = files.entries.get('UF');
+      const references = [file, unicodeFile].filter((value): value is PdfReference => value !== undefined && typeof value === 'object' && !Array.isArray(value) && value.kind === 'reference');
+      if (!references.length || references.length !== Number(file !== undefined) + Number(unicodeFile !== undefined)
+        || references.some(reference => reference.key !== references[0]!.key)) throw new Error(PDF_EMBEDDED_REJECTED);
+      const streamDictionary = this.dictionary(references[0]);
+      const stream = embedded.find(item => item.dictionary === streamDictionary);
+      if (!stream) throw new Error(PDF_EMBEDDED_REJECTED);
+      const storedMime = streamDictionary.entries.get('Subtype');
+      const mime = storedMime === undefined ? undefined : this.required(storedMime);
+      const xmlMime = typeof mime === 'object' && !Array.isArray(mime) && mime.kind === 'name' && ['text/xml', 'application/xml'].includes(mime.value.toLowerCase());
+      const xmlName = ['F', 'UF'].some(key => {
+        const storedName = specification.entries.get(key);
+        const name = storedName === undefined ? undefined : this.required(storedName);
+        if (name !== undefined && (typeof name !== 'object' || Array.isArray(name) || name.kind !== 'string')) pdfInspectionFailure();
+        return name && typeof name === 'object' && !Array.isArray(name) && name.kind === 'string' && name.value.replace(/\0/g, '').toLowerCase().endsWith('.xml');
+      });
+      if (!xmlMime && !xmlName) throw new Error(PDF_EMBEDDED_REJECTED);
+      if (inspected.has(stream)) continue;
+      inspected.add(stream);
+      if (streamDictionary.entries.has('DecodeParms')) pdfInspectionFailure();
+      const filter = streamDictionary.entries.get('Filter');
+      const decodedFilter = filter === undefined ? undefined : this.required(filter);
+      const single = Array.isArray(decodedFilter) && decodedFilter.length === 1 ? decodedFilter[0] : decodedFilter;
+      if (single !== undefined && (typeof single !== 'object' || Array.isArray(single) || single.kind !== 'name' || single.value !== 'FlateDecode')) throw new Error(PDF_EMBEDDED_REJECTED);
+      const bytes = single === undefined ? stream.bytes : inflateSync(stream.bytes, { maxOutputLength: RECEIPT_XML_MAX_BYTES });
+      if (bytes.length > RECEIPT_XML_MAX_BYTES) throw new Error(PDF_EMBEDDED_REJECTED);
+      this.budget.expandedBytes += bytes.length;
+      this.budget.check();
+      inspectReceiptXml(bytes, this.budget);
+    }
+    if (inspected.size !== embedded.length || this.dictionaries.some(dictionary => dictionary.entries.has('EF') && !specifications.has(dictionary))) throw new Error(PDF_EMBEDDED_REJECTED);
+  }
+
 }
 
 export function attachmentInspectionFailureCode(message: string): 'CONTENT_UNINSPECTABLE' | 'EMBEDDED_FILE_REJECTED' | 'CONTENT_REJECTED' {
@@ -487,11 +738,11 @@ export function attachmentInspectionFailureCode(message: string): 'CONTENT_UNINS
   return 'CONTENT_REJECTED';
 }
 
-export function inspectAttachmentBytes(mimeType: string, bytes: Buffer): string | null {
+export function inspectAttachmentBytes(mimeType: string, bytes: Buffer, policy: AttachmentInspectionPolicy = 'STRICT'): string | null {
   if (detectAttachmentMimeType(bytes) !== mimeType) return 'File signature does not match the declared MIME type.';
   if (bytes.toString('latin1').toLowerCase().includes('eicar-standard-antivirus-test-file')) return 'Malware test signature detected.';
   try {
-    if (mimeType === 'application/pdf') new PdfSafetyReader(bytes, new PdfInspectionBudget()).inspect();
+    if (mimeType === 'application/pdf') new PdfSafetyReader(bytes, new PdfInspectionBudget(), policy).inspect();
     else checkPdfText(bytes.toString('latin1'));
     return null;
   } catch (error) {

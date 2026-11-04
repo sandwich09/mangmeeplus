@@ -82,7 +82,15 @@ export class DocumentQaUseCase {
     if (!capacity) return { status: 'failed', errorCode: 'QA_MODEL_UNAVAILABLE' };
     const images = request.pages.map(page => ({ mimeType: page.mimeType as 'image/jpeg' | 'image/png', contentBase64: page.contentBase64 }));
     const question = JSON.stringify({ question: request.question, ...(request.questions ? { questions: request.questions } : {}), selectedPagesInImageOrder: request.pages.map(({ attachmentId, page }) => ({ attachmentId, page })) });
+    let parsed: LineDocumentQaResult | undefined;
+    let checked = false;
+    const acceptOutput = (output: { text: string }) => {
+      checked = true;
+      parsed = parseLineDocumentQaResult(parseJson(output.text));
+      return !!parsed && resultCovers(parsed, request);
+    };
     const input = {
+      acceptOutput,
       messages: [{ role: 'user' as const, text: question }],
       images,
       systemPrompt: QA_SYSTEM_PROMPT, maxTokens: Math.min(MAX_OUTPUT_TOKENS, capacity.maxOutputTokens), usageTag: 'line.document.qa',
@@ -90,18 +98,20 @@ export class DocumentQaUseCase {
     };
     const provider = createProvider(this.config, { modelId: grant.model.modelId, timeoutMs: PROVIDER_TIMEOUT_MS });
     let response = await provider.generateText(input);
-    let parsed = response.ok ? parseLineDocumentQaResult(parseJson(response.text)) : undefined;
+    if (response.ok && !checked) acceptOutput(response);
     if (parsed && resultCovers(parsed, request)) return { status: 'ok', result: parsed };
     if (!response.ok) return { status: 'failed', ...providerErrorEnvelope(response.error) };
     // A direct accepted QA may repair once. An intake+reader turn has no third slot.
     if (state.calls >= grant.maxTurnSlots || state.repairCount >= grant.maxRepairs) return { status: 'failed', errorCode: 'QA_RESULT_INVALID' };
     state.repairPending = true;
+    checked = false;
+    parsed = undefined;
     try {
       response = await provider.generateText({ ...input, messages: [
         { role: 'user', text: `${question}\nThe prior result failed the contract. Return complete JSON with verbatim page-text claims and full requested/read/failed coverage.` },
       ] });
     } finally { state.repairPending = false; }
-    parsed = response.ok ? parseLineDocumentQaResult(parseJson(response.text)) : undefined;
+    if (response.ok && !checked) acceptOutput(response);
     if (parsed && resultCovers(parsed, request)) return { status: 'ok', result: parsed };
     return response.ok ? { status: 'failed', errorCode: 'QA_RESULT_INVALID' } : { status: 'failed', ...providerErrorEnvelope(response.error) };
   }
