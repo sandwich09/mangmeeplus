@@ -1,6 +1,6 @@
 # e-Withholding Tax Payment Spec — จ่ายผ่าน e-WHT (ธนาคารนำส่ง อัตรา 1%)
 
-Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first) · **2026-10-26 owner decision added (§5.5): e-WHT is opened per shop in ตั้งค่าร้าน; focused Codex review the same day (no HIGH, 6 MEDIUM F1–F6) applied; the fixes have not been re-reviewed**; Re-anchored to develop e7c422802 on 2026-11-04 (citations only; controller checked 2026-11-04)
+Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 answered 2026-11-04; engineering gates remain) · **2026-10-26 owner decision added (§5.5): e-WHT is opened per shop in ตั้งค่าร้าน; focused Codex review the same day (no HIGH, 6 MEDIUM F1–F6) applied; the fixes have not been re-reviewed**; Re-anchored to develop e7c422802 on 2026-11-04 (citations only; controller checked 2026-11-04); owner answers recorded 2026-11-04
 Owner: Expenses + Tax lane
 Related: `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` (ข้อ 7), `docs/plans/e-withholding-tax-payment-plan.md`, `docs/agent-memory/e-withholding-tax-payment.md`, `docs/specs/wht-settlement-capture-spec.md`, `docs/specs/wht-certificate-system-issuance-spec.md`, `docs/specs/withholding-returns-complete-spec.md`, `docs/research/rd-filing-and-data-intake-research.md` (RA-24), `docs/guidelines/thai-ux-standard.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, citations rechecked in this worktree 2026-11-04; original review/research dates remain historical
@@ -649,22 +649,22 @@ A1–A38b ถือว่าร้านตอบ "สมัครแล้ว" 
   3. ถ้าต้องย้อน: deploy R (ไม่ใช่รุ่นเก่าตรง ๆ); รายการ e-WHT ที่บันทึกระหว่างนั้นคงเป็น `EXCLUDED`/ไม่มี event; ช่องเลือกบนเว็บหายไปแต่ค่าในฐานข้อมูลยังอยู่
   4. ถ้าเคยมีรุ่นที่ไม่มีเงื่อนไขนี้ทำงานไปแล้ว: deploy รุ่นนี้หรือ R แล้ว sync ⇒ event `ACTIVE` ที่รุ่นเก่าเขียนจะถูก supersede (hash ต่างเพราะรวม remittance); จากนั้น query อ่านอย่างเดียวหา `WhtFilingLine` ที่อ้างรายจ่าย e-WHT ในแบบที่ยื่นระหว่างนั้น แล้วแจ้งผู้ทำบัญชีให้จัดการกับกรมสรรพากร (ระบบไม่แก้แบบที่ FILED)
 
-## 17. Open questions (เฉพาะเรื่องธุรกิจของเจ้าของ)
+## 17. Owner answers — answered 2026-11-04
 
-| # | คำถาม | คำแนะนำ |
+| # | คำถาม | คำตอบเจ้าของ |
 |---|---|---|
-| Q1 | เปิดให้เลือก "ธนาคารนำส่ง (e-WHT)" ในรายจ่ายทุกแพ็ก (249/499/999/1,999) ใช่ไหม | **ใช่ ทุกแพ็ก** — การหักภาษีในรายจ่ายอยู่ในชุดเริ่มต้นแล้ว การกันยื่นซ้ำเป็นเรื่องความถูกต้อง — **2026-10-26 เจ้าของ:** ทุกแพ็กเห็นได้ แต่เฉพาะร้านที่ตอบ "สมัครแล้ว" ที่ตั้งค่าร้าน (§5.5) |
-| Q2 | ผู้รับเงินขอกระดาษ 50 ทวิ สำหรับการจ่ายผ่าน e-WHT จะให้ระบบออกได้ไหม | **ไม่ให้ออก** — กรมสรรพากรบอกว่าไม่ต้องออก ผู้รับเงินตรวจบนเว็บกรมได้ |
-| Q3 | ค่าตั้งต้นของรายจ่ายใหม่ที่หักภาษี: "ร้านยื่นแบบเอง" ทุกครั้ง หรือจำตามร้าน/ผู้รับเงิน | **"ร้านยื่นแบบเอง" ทุกครั้งรอบแรก** — ค่าตั้งต้นที่ผิดเงียบ ๆ เสี่ยงกว่าการกดเลือกหนึ่งครั้ง |
-| Q4 | อนุมัติข้อความน้องมั่งมีและคู่มือ L-7, L-8, H-1, H-2 (§10.1) — บล็อกเฉพาะแผน §4.4 | **อนุมัติตามที่เขียน** — ผ่านตาราง §10.2 และอ้างแหล่ง §5.1 |
+| Q1 | เปิดให้เลือก "ธนาคารนำส่ง (e-WHT)" ในรายจ่ายทุกแพ็ก (249/499/999/1,999) ใช่ไหม | **answered 2026-11-04:** ทุกแพ็ก (249/499/999/1,999); คงเงื่อนไขร้านตอบ "สมัครแล้ว" ในตั้งค่าร้านตาม §5.5 (owner decision 2026-10-26) |
+| Q2 | ผู้รับเงินขอกระดาษ 50 ทวิ สำหรับการจ่ายผ่าน e-WHT จะให้ระบบออกได้ไหม | **answered 2026-11-04:** ไม่ออกกระดาษ 50 ทวิ สำหรับรายการ e-WHT; แผน 1.3 ไม่รอคำตอบเจ้าของแล้ว |
+| Q3 | ค่าตั้งต้นของรายจ่ายใหม่ที่หักภาษี: "ร้านยื่นแบบเอง" ทุกครั้ง หรือจำตามร้าน/ผู้รับเงิน | **answered 2026-11-04:** รอบ 1 ตั้งต้นเป็น "ร้านยื่นแบบเอง" ทุกครั้ง |
+| Q4 | อนุมัติข้อความน้องมั่งมีและคู่มือ L-7, L-8, H-1, H-2 (§10.1) สำหรับแผน §4.4 | **answered 2026-11-04:** อนุมัติข้อความ L-7, L-8, H-1, H-2 (§10.1) ตามที่เขียน; แผน 4.4 ไม่รอคำตอบเจ้าของแล้ว |
 
 ## 18. Must close before coding
 
-ข้อที่ปิดด้วยการอ่านโค้ดไม่ได้ (ทุกข้อ MEDIUM/LOW; ไม่มี HIGH ค้าง) — ปิดก่อนเริ่มขั้นที่ระบุ
+MC1 ปิดแล้ว: Q1–Q4 **answered 2026-11-04**; ไม่รอคำตอบเจ้าของก่อนเขียนโค้ด — MC2/MC3 ยังต้องปิดก่อนเริ่มขั้นที่ระบุ (ทุกข้อ MEDIUM/LOW; ไม่มี HIGH ค้าง)
 
 | # | เรื่อง | ระดับ | เจ้าของ | ขั้นต่อไป | บล็อกขั้นไหน |
 |---|---|---|---|---|---|
-| MC1 | คำตอบเจ้าของ Q1–Q4 (§17) | MEDIUM | เจ้าของ (ผ่าน coordinator) | ส่ง §17 เป็นภาษาไทยง่าย ๆ | Q2 → แผน 1.3 (การข้าม handoff); Q4 → แผน 4.4 |
+| MC1 — **CLOSED; answered 2026-11-04** | คำตอบเจ้าของ Q1–Q4 (§17) | MEDIUM | เจ้าของ (ผ่าน coordinator) | บันทึกคำตอบแล้ว; คงแบบที่ออกแบบไว้ | ไม่บล็อกแผน 1.3/4.4 ด้วยคำตอบเจ้าของ; MC2/MC3 คงเดิม |
 | MC2 | ตัวประกาศอธิบดีฯ ตามมาตรา 3 ปัณรส ที่เป็นฐานของ "ไม่ต้องยื่นแบบ/ไม่ต้องออก 50 ทวิ" (G1) | LOW | research lane | ค้นบน rd.go.th และราชกิจจานุเบกษา; ถ้าเนื้อความต่างจาก ปชส. 5/2564 ให้แก้ W-F4, W-D1, W-V1, L-7, H-1 | แผน 3.1 (ข้อความเว็บ) และ 4.4 |
 | MC3 | ธนาคารใดรับการจ่ายด้วยเช็ค/ช่องทางอื่นผ่าน e-WHT | LOW | research lane | อ่านหน้าบริการ e-WHT ของธนาคารหลัก (กสิกร, SCB, กรุงเทพ, กรุงศรี); ถ้าไม่มี ให้ `eWhtPaymentMethodAllowed` รับเฉพาะ `BANK_TRANSFER`/`OTHER`/ไม่ระบุ | แผน 1.2 |
 | MC5 | review รอบ 4 (รอบสุดท้าย) เสร็จ 2026-10-24: HIGH ใหม่ 3 ข้อแก้ในเอกสารแล้วแต่ไม่มีรอบตรวจต่อ ⇒ ตาราง "Unreviewed fixes from round 4" ด้านล่าง | — | coordinator | — | ดูด้านล่าง |

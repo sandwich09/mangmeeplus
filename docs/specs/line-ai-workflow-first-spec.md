@@ -1,6 +1,6 @@
 # LINE AI Workflow-First Spec — งานซ้ำเดินตามขั้นตอน, AI แยกงานครั้งเดียว
 
-Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 and MC1 remain open; A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code)
+Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 answered 2026-11-04; MC1 CLOSED (existing R21/AC11 design); A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code); owner answers recorded 2026-11-04
 Owner: LINE AI documents lane; controller assigns implementation after the documents round
 Related: `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` (ค 16–24), `docs/specs/line-ai-measurement-and-eval-spec.md`, `docs/plans/line-ai-workflow-first-plan.md`, `docs/agent-memory/line-ai-workflow-first.md`, `docs/specs/mangmee-ai-input-provider-budget-contract-2026-09-27.md`, `docs/specs/line-ai-credit-wording-and-deterministic-reads-spec-th.md` (เส้นทางไม่ใช้โมเดลที่ถอนออก 2026-10-05), `docs/specs/line-ai-credit-levers-20261019.md`, `docs/specs/mangmee-ai-expense-advisor-spec-th.md`, `docs/specs/mangmee-brain-answer-architecture-assessment.md`
 Baseline: HEAD `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, re-opened in this worktree 2026-11-04; earlier measurements and review dates remain historical
@@ -103,7 +103,7 @@ Baseline: HEAD `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b4
 4. คำถามเปิด/อ่าน ใช้เส้นทางเดิม (Tier 2) — invariant ของ grant/slot ของ turn ไม่เปลี่ยน
 5. ต้นทุนรวมของชุดงานคงที่ลด และต้นทุนต่องานซ้ำที่เสร็จ (รวมความพยายามที่ล้ม) ลด ≥ 70% จาก baseline; wrong-action = 0
 6. **ผลที่ใช้ไม่ได้ไม่คิดเงินลูกค้า** (R12): prerequisite owned by expense-trust-and-money-fixes R6 / P07 (owner step 2); this lane integrates it without repeating the fix
-7. ขั้นที่ไม่เรียก AI ไม่คิดเครดิต งานที่เริ่มแล้วทำต่อจนจบได้แม้เครดิตหมด ข้อความพิมพ์ใหม่ยังผ่านประตูเครดิต (รอ Owner §17 Q1)
+7. บน paid path ขั้นที่ไม่เรียก AI ไม่คิดเครดิต งานที่เริ่มแล้วทำต่อจนจบได้แม้เครดิตหมด ข้อความพิมพ์ใหม่ยังผ่านประตูเครดิต (Owner §17 Q1 answered 2026-11-04; free D04 คงเดิม)
 8. ทดลองโมเดลเล็กกับ Tier 1 หลัง eval ผ่านเท่านั้น
 
 ## 3. Non-goals
@@ -153,7 +153,7 @@ New/changed UI, LINE replies and help use plain Thai, one short sentence and a s
 | R10 | provider บังคับ schema: Converse `outputConfig.textFormat` หรือ tool `strict: true`; ไม่มี `minimum/maximum/minLength/maxLength`; `additionalProperties` ต้อง false; compile ครั้งแรก "may take up to a few minutes"; grammar "cached for 24 hours from first access" | https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html |
 | R11 | ขีดจำกัด: strict tools ≤ 20, optional ≤ 24, union ≤ 16; Sonnet 4.6 และ Haiku 5.5 อยู่ในรายการที่รองรับ; Converse กับ `global.anthropic.claude-sonnet-4-6` **ยังไม่ยืนยัน** → probe (plan B1) | https://platform.claude.com/docs/en/build-with-claude/structured-outputs |
 | R12 | ผลล้มเหลวหรือใช้ไม่ได้คิดลูกค้าเป็นศูนย์; A9/B6 moved to expense-trust-and-money-fixes, step 2 / P07 (R6); classifier ใหม่ต้องใช้ acceptance hook เดียวกัน | `apps/ai-gateway/src/common/usage/ai-budget-provider.ts:459` — `await settleV2`; trust/money spec R6 |
-| R13 | ข้อความพิมพ์ใหม่ผ่านประตูเครดิตแม้ไม่เรียกโมเดล; ปุ่มและคำตอบของงานที่เริ่มแล้วไม่ถูกเครดิตหมดขวาง | ข้อเสนอ — รอ Owner §17 Q1 |
+| R13 | ข้อความพิมพ์ใหม่ผ่านประตูเครดิตแม้ไม่เรียกโมเดล; ปุ่มและคำตอบของงานที่เริ่มแล้วไม่ถูกเครดิตหมดขวาง | Owner §17 Q1 — answered 2026-11-04; paid no-AI steps cost zero |
 | R14 | ไม่มีสวิตช์พฤติกรรม; สวิตช์ทักทายถูกลบ | Owner rule; `packages/config/src/index.ts:322–326` |
 | R15 | คำที่ลูกค้าเห็นมาจากค่าคงที่ ผ่านตัวตรวจบุคลิก | `apps/api/src/modules/line-ai/domain/logic/line-advisor-direct-answer.logic.ts:32–47` |
 | R16 | แจ้งเตือนเฉพาะคนที่เกี่ยว — เพิ่มปุ่มบนแจ้งเตือนเดิม ไม่เพิ่มผู้รับ | Owner 2026-10-01 |
@@ -270,7 +270,7 @@ model LineWebhookEventLog {
 - การตัดสินเก็บใน `classifyAuthorityJson.decision`: event ที่เล่นซ้ำใช้ผลเดิม ไม่จ่ายซ้ำ; authority ใช้แล้วไม่มี decision → Tier 2
 - ประตูเครดิต: การจองของ classifier ตรวจเครดิตเหมือน intake วันนี้; ปฏิเสธด้วยเหตุเครดิต → `answerAiCreditRefusal` (pwu:7060)
 
-- **model ของ classify grant** (แก้รอบ 4 F5): capability request ของ classifier ส่ง `modelPolicy: { modelId: LINE_CLASSIFY_MODEL_ID }` (ค่าคงที่ในโค้ด: Phase B = `global.anthropic.claude-sonnet-4-6`, Phase C = `global.anthropic.claude-haiku-5-5` เมื่อ Owner Q2 อนุมัติ) แทน model ของบริษัท; บริษัทที่มี model policy ของ partner (`resolveCompanyAiModelPolicy` `ai-gateway.client.ts:162`) ใช้ model ของ policy นั้น ไม่ข้ามนโยบายบริษัท; model ต้องผ่าน `REVIEWED_LINE_MODEL_CAPACITY` (`apps/ai-gateway/src/modules/line-ai/infrastructure/provider/reviewed-line-model-capacity.ts`) + approved lists (`line-reliability-capabilities.controller.ts:24–37`, `ai-gateway.client.ts:171–178`) — วันนี้ตารางไม่มี Haiku 5.5 จึงต้องเพิ่มพร้อมหลักฐานจาก AWS model card และ ceiling 100,000 โทเคนให้ตรง tariff ≤ 100k prompt (§17.1 MC10); `provider.factory.ts:21–29` ใช้ `grant.model` อยู่แล้ว
+- **model ของ classify grant** (แก้รอบ 4 F5): capability request ของ classifier ส่ง `modelPolicy: { modelId: LINE_CLASSIFY_MODEL_ID }` (ค่าคงที่ในโค้ด: Phase B = `global.anthropic.claude-sonnet-4-6`, Phase C = `global.anthropic.claude-haiku-5-5` ตาม Q2 answered 2026-11-04; release เมื่อผ่าน MA4 และ privacy gate ใน C3) แทน model ของบริษัท; บริษัทที่มี model policy ของ partner (`resolveCompanyAiModelPolicy` `ai-gateway.client.ts:162`) ใช้ model ของ policy นั้น ไม่ข้ามนโยบายบริษัท; model ต้องผ่าน `REVIEWED_LINE_MODEL_CAPACITY` (`apps/ai-gateway/src/modules/line-ai/infrastructure/provider/reviewed-line-model-capacity.ts`) + approved lists (`line-reliability-capabilities.controller.ts:24–37`, `ai-gateway.client.ts:171–178`) — วันนี้ตารางไม่มี Haiku 5.5 จึงต้องเพิ่มพร้อมหลักฐานจาก AWS model card และ ceiling 100,000 โทเคนให้ตรง tariff ≤ 100k prompt (§17.1 MC10); `provider.factory.ts:21–29` ใช้ `grant.model` อยู่แล้ว
 
 ### 6.5 API-side authority field
 
@@ -565,12 +565,12 @@ assertion ใหม่ของ API ทั้งหมดอยู่ในไ�
 | AC3 | "อนุมัติใบเบิกของสมชาย" (มีสิทธิ์ / assignment ตรึง) — 1 / 2 / 0 (≤ 300) / > 300 ใบ | การ์ด / ปุ่ม 2 ใบ / "ไม่พบใบเบิกของสมชายที่รอคุณอนุมัติค่ะ" / "มีรายการมากเกินจะค้นในแชตค่ะ" |
 | AC4 | ข้อความกำกวม — ทั้งสี่แถวของ §7.2.1 | การ์ดตามตาราง; กดตัวเลือก 0 call เพิ่ม; `อย่างอื่น` = Tier 2 ด้วยข้อความเดิมและ deadline ใหม่ |
 | AC5 | คำถามเปิด/อ่าน (advisor held-out) | A2 ≥ 90%, A3 ≥ baseline; turn grant/slot เหมือนเดิม |
-| AC6 | เครดิตหมดกลางใบเบิก (ถ้า Q1 ตามข้อเสนอ) | ปุ่ม/คำตอบช่อง/ยืนยัน 0 reservation; ข้อความพิมพ์ใหม่ได้การ์ดเครดิตเดิม |
+| AC6 | เครดิตหมดกลางใบเบิกบน paid path (Q1 answered 2026-11-04) | ปุ่ม/คำตอบช่อง/ยืนยัน 0 reservation; ข้อความพิมพ์ใหม่ได้การ์ดเครดิตเดิม |
 | AC7 | "สวัสดีค่ะ" ไม่มีงานค้าง | 0 call; ไม่มีสวิตช์ทักทายในโค้ด |
 | AC8 | Sold fixed read `expense_month` only (`ค่าใช้จ่ายเดือนนี้`) | Prepared success or unavailable recovery both make 0 model calls; button opens sold expense list; unsold QUERY_ACTIONS receive no conversion, formatter or new tests |
 | AC9 | B1/B4 — รวม VOUCHER_SUBMIT → APPROVE → PAY และบันทึกจ่ายที่มีวิธีจ่ายเดิม | กดหลัง 30 นาทีได้การ์ดถัดไปพร้อมวิธีจ่าย/วันที่/ยอดเดิม (จ่ายบางส่วน 400 จาก 1,000 → การ์ดใหม่ 400 ไม่ใช่ 1,000); การ์ดหมดเวลา → ปุ่มเตรียมใหม่ 0 call |
 | AC10 | B2 | คำถามไม่ถูกจับเป็นค่า ไม่ลบงานค้าง; ชื่อที่พิมพ์ต่อเติมงานเดิม |
-| AC11 | สิทธิ์ | ไม่มีทางอนุญาต → คำปฏิเสธเดิม; ผู้สร้างที่มี `expense.create` + `expense.update` แต่ไม่มีสิทธิ์อ่าน: picker เห็นเฉพาะร่างของตัวเอง และลบ/ส่งตรวจได้ (ถ้า MC1 อนุมัติ); token ข้ามคน/บริษัท/สาขาถูกปฏิเสธ |
+| AC11 | สิทธิ์ | ไม่มีทางอนุญาต → คำปฏิเสธเดิม; ผู้สร้างที่มี `expense.create` + `expense.update` แต่ไม่มีสิทธิ์อ่าน: picker เห็นเฉพาะร่างของตัวเอง และลบ/ส่งตรวจได้ (MC1 answered 2026-11-04); token ข้ามคน/บริษัท/สาขาถูกปฏิเสธ |
 | AC12 | B5 | ระหว่าง support pause ปุ่ม workflow ทำงาน |
 | AC13 | held-out ของ measurement spec | ตาม MA3 |
 | AC14 | เวลา | Tier 0 p50 ≤ 1.5 วิ p95 ≤ 3 วิ; Tier 1 ที่เริ่ม workflow p50 ≤ 3.5 วิ p95 ≤ 6 วิ ไม่มี > 15 วิ; ข้อความที่ fallback ไป Tier 2 ตาม A7 (full path p95 ≤ 15 วิ, ไม่มี > 30 วิ) โดยเวลาของ classifier รวมอยู่ด้วย และไม่เกิน deadline เดิมของ turn |
@@ -601,19 +601,19 @@ assertion ใหม่ของ API ทั้งหมดอยู่ในไ�
 - digest เปลี่ยน → release เดียว; rollback ทั้งชุด; migration additive
 - Rollout: Phase A → Phase B; proof stack → UAT ตาม runbook → Owner เดินจริง → Production เมื่อ Owner สั่ง; ไม่มีสวิตช์
 
-## 17. Open questions (เรื่องเงิน/ธุรกิจของ Owner เท่านั้น)
+## 17. Owner answers (เรื่องเงิน/ธุรกิจของ Owner เท่านั้น)
 
-| # | คำถาม | คำแนะนำ |
+| # | สถานะคำตอบ | คำตอบเจ้าของ |
 |---|---|---|
-| Q1 | เฉพาะทาง paid: ขั้นที่ไม่เรียก AI คิดเครดิตไหม และถ้าเครดิตหมดระหว่างงาน ให้ทำต่อจนจบไหม | **ไม่คิด และให้ทำต่อจนจบ**; ข้อความพิมพ์ใหม่ยังเจอการ์ดเครดิตหมด |
-| Q2 | ถ้าผลวัดผ่าน MA4 ให้ย้าย Tier 1 ไป Haiku 5.5 แบบ Global ได้เลยไหม | **ได้เลยเมื่อผ่านเกณฑ์** — Tier 2/OCR ยังเป็น Sonnet |
-| Q3 | งบวัดผลทั้งโปรแกรม | measurement spec §17 (แนะนำ 2,000 บาท) |
+| Q1 | **answered 2026-11-04** | Paid path only: a step that calls no AI costs no credit, and a task that runs out of credit midway finishes; free D04 remains unchanged. |
+| Q2 | **answered 2026-11-04** | Allow the Tier 1 Global model switch when MA4 passes, with the controller checking the privacy policy’s sub-processor and cross-border text covers a Global inference profile before switching (plan C3); Tier 2/OCR stays as designed. |
+| Q3 | **answered 2026-11-04** | The budget for the whole program is 2,000 THB, shared with measurement Q1; M4 no longer waits for budget approval. |
 
 ### 17.1 Must close before coding
 
 | # | เรื่อง | ใครปิด | ขั้นถัดไป/คำแนะนำ |
 |---|---|---|---|
-| MC1 | ผู้สร้างที่ไม่มีสิทธิ์อ่านรายการ (มีแค่ `expense.create`/`expense.update`) เห็น picker ของรายการตัวเองใน LINE ได้ไหม (กติกาสิทธิ์) | Owner | แนะนำ **ได้** — ตรงกับที่ `permitted` ให้ผู้สร้างลบ/ส่งตรวจของตัวเองอยู่แล้ว (lea:1010–1011) |
+| MC1 — CLOSED; **answered 2026-11-04** | Creator without list-read rights may see only their own LINE items to send for review or delete a draft | Owner | Existing design: R21, §6.1 picker, AC11 and §14/Traceability test `R21 picker isolates creator tenant branch and frozen assignment`; reuse own-record filtering at `apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts:384` and existing action rights at `apps/api/src/modules/line-ai/application/line-expense-action.service.ts:1010`–1011; implementation/proof remains A4b, no new requirement ID. |
 | MC2 | เปิดทางอ่านใน LINE ของรายการใบเตรียมจ่าย (`lineConfirmed` ฝั่ง read) และรายการที่ทำใบทดแทนได้ (ข้าม `assertWeb` ฝั่ง read) | Controller (security review) | แนะนำเปิดเฉพาะการอ่าน + ตรวจสิทธิ์เดิม + test ว่าทางเขียนยังปิด |
 | MC3 | Sonnet 4.6 บน Converse รองรับ structured outputs หรือไม่ | Controller | probe (plan B1) ก่อน B2 |
 | MC4 | SDK 3.1075.0 มี type `outputConfig` หรือไม่ | Lane B1 | ตรวจใน node_modules; ไม่มี → อัปเดต dependency |
@@ -627,7 +627,7 @@ assertion ใหม่ของ API ทั้งหมดอยู่ในไ�
 
 ### 17.2 Focused review results — CLOSED
 
-R4-F1's design review closed 2026-10-24; implementation moved to trust/money R9 / P10. **R4-F2 CLOSED by focused review 2026-10-26**: the proposed controls are commands, excluded from the menu fast path, dispatched by the awaited worker as singleton groups; frozen replay preserves their envelope. This closes the design-review blocker, not an implementation/runtime claim. Q1–Q3, MC1 and per-step engineering proofs remain.
+R4-F1's design review closed 2026-10-24; implementation moved to trust/money R9 / P10. **R4-F2 CLOSED by focused review 2026-10-26**: the proposed controls are commands, excluded from the menu fast path, dispatched by the awaited worker as singleton groups; frozen replay preserves their envelope. This closes the design-review blocker, not an implementation/runtime claim. Q1–Q3 are answered 2026-11-04 and MC1 is closed through the existing design; per-step engineering proofs remain.
 
 | Review id | Opened evidence | Disposition / regression |
 |---|---|---|
@@ -685,7 +685,7 @@ R1–R21 retain their original ids. R22 is the sold ceiling (§3/§7.1), R23 is 
 | R18 — pinned cost/rounding | `apps/api/src/modules/line-ai/application/ai-model-pricing.ts:223` — `Decimal.ROUND_HALF_UP` | C1, M1b | `apps/api/src/modules/line-ai/application/ai-model-pricing.spec.ts` — `R18 classifier tariff rounds once and preserves exact report cost` | AC13; measurement MA4 | `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` ค23 |
 | R19 — reviewed small model | `apps/ai-gateway/src/modules/line-ai/infrastructure/provider/reviewed-line-model-capacity.ts:8` — `'global.anthropic.claude-sonnet-4-6'` | C1–C3 | `apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts` — `R19 classify model respects partner policy and reviewed capacity` | AC13/AC15 | `docs/specs/line-ai-workflow-first-spec.md` §6.4; MC5/MC10 |
 | R20 — closed relevant tool set | https://arxiv.org/abs/2505.03275 (historical research; not re-fetched) | B3, B6 (only after evidence) | `apps/ai-gateway/src/modules/line-ai/agents/line-intake-router.agent.spec.ts` — `R20 classifier labels contain only the sold workflow catalog` | AC13 | `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` ค24 |
-| R21 — record/read permission | `apps/api/src/modules/expenses/application/expense-list-read-scope.ts:4` — `export function expenseListReadScope`; `apps/api/src/modules/line-ai/application/line-expense-action.service.ts:1010` — `ctx.permissions.includes('expense.delete')` | A4a, A4b (MC1/MC2) | `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` — `R21 picker isolates creator tenant branch and frozen assignment` | AC11/AC17/AC23 | `docs/specs/line-ai-workflow-first-spec.md` §5 R21 |
+| R21 — record/read permission | `apps/api/src/modules/expenses/application/expense-list-read-scope.ts:4` — `export function expenseListReadScope`; `apps/api/src/modules/line-ai/application/line-expense-action.service.ts:1010` — `ctx.permissions.includes('expense.delete')` | A4a, A4b (MC1 closed; MC2 remains) | `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` — `R21 picker isolates creator tenant branch and frozen assignment` | AC11/AC17/AC23 | `docs/specs/line-ai-workflow-first-spec.md` §5 R21 |
 | R22 — sold conversion ceiling | `packages/contracts/src/menu-entitlements.ts:500` — `'wht_pnd53', 'wht_50bis'`; `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:155` — `['ค่าใช้จ่ายเดือนนี้'` | A6a, A6b; M1b/M3 | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts` — `R22 expense month is the single fixed-read entry` | AC8/AC18 | `docs/specs/line-ai-workflow-first-spec.md` §1.2 G5/G6; owner ceiling 2026-10-26 |
 | R23 — ordered durable controls | `apps/api/src/modules/line-ai/application/line-message-buffer.service.ts:707` — `await this.dispatchBatch`; `apps/api/src/modules/line-ai/domain/logic/line-message-buffer.logic.ts:401` — `groups.push({ kind: 'command', item })` | A2 | `apps/api/src/modules/line-ai/application/line-message-buffer.service.spec.ts` — `R23 fresh frozen replay and company switch retain control order`; `apps/api/src/modules/line-ai/domain/logic/line-message-buffer.logic.spec.ts` — `R23 control is a singleton command` | AC22 | `docs/specs/line-ai-workflow-first-spec.md` §17.2 R4-F2, focused review 2026-10-26 |
 | R24 — task/cost telemetry | `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts:9395` — `costSatang: null` | A7; M1a–M4 | `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` — `R24 task run links reservations without user text` | AC1/AC13; measurement MA5 | `docs/specs/line-ai-workflow-first-spec.md` §12 G9 |

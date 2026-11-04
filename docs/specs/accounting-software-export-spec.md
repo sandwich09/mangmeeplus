@@ -1,6 +1,6 @@
 # Accounting Software Export Spec — ส่งออกไฟล์ที่โปรแกรมบัญชีนำเข้าได้
 
-Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; FlowAccount Phase 0 still required; Re-anchored to develop e7c422802 on 2026-11-04
+Status: DRAFT — sold-feature ceiling and traceability updated 2026-10-26; controller checked 2026-11-04; FlowAccount Phase 0 still required; Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses lane (controller review)
 Related: backlog ข้อ 13 ใน `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md`, `docs/specs/accountant-export-cleanup-spec.md` (ข้อ 25 — ทำก่อน), `docs/plans/accounting-software-export-plan.md`, `docs/agent-memory/accountant-exports.md`, `docs/specs/expense-category-default-tax-code-spec.md`, `docs/guidelines/thai-ux-standard.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -404,15 +404,15 @@ Phase 0 (มือ บันทึกใน memory): นำเข้าไฟล
 - FlowAccount เปลี่ยนแม่แบบ → หัวคอลัมน์อยู่ที่เดียวใน contracts; ขั้นจับคู่คอลัมน์ลดผลกระทบ
 - นำเข้าซ้ำ (G2) — Q4
 - สัดส่วนเอกสารที่ถูก exclude สูง (เช่น ร้านที่หักแบบยอดเงินบ่อย จ่ายหลายงวด) จะทำให้ FlowAccount preset มีประโยชน์น้อย — **Phase 1 จึงมีตัวจำแนก `flowAccountEligibility(record, lines, payments)`** (ฟังก์ชันบริสุทธิ์ ใช้เฉพาะข้อเท็จจริงในมั่งมี: สกุล, รูปหัก ณ ที่จ่าย, การจ่าย, ภ.ง.ด.2, ประเภทผู้รับเงิน, หลายประเภทเงินได้; VAT ใช้ตัวแทนคือ "VAT ที่บันทึก ≠ round2(อัตรา × มูลค่า) ต่อแถว") และบันทึกจำนวนต่อเหตุผลใน audit ของการส่งออกสมุดรายวันซื้อ (`flowAccountIneligibleByReason`) — ข้อมูลนี้ใช้ตัดสินลงทุน Phase 2; Phase 2 ปรับเฉพาะส่วนที่ขึ้นกับผล Phase 0 (วิธีปัด VAT, ค่าที่รับ)
-- ไม่มี feature switch: Phase 1 ออกได้หลังสเปกข้อ 25 Phase 1; ตัวเลือก FlowAccount ใส่ในโค้ดเมื่อ Phase 0 ผ่านเท่านั้น
+- ไม่มี feature switch: Phase 0 ต้องผ่านก่อนเริ่ม owner step 8 (Q2 answered 2026-11-04); Phase 1 ยังต้องผ่านสเปกข้อ 25 Phase 1 และตัวเลือก FlowAccount ใส่ในโค้ดหลังพิสูจน์แม่แบบจริงเท่านั้น
 - migration additive; revert โค้ดไม่ต้องลบตาราง
 
-## 17. Open questions (เรื่องธุรกิจ)
+## 17. Owner answers (เรื่องธุรกิจ)
 
 - Q1 **resolved by owner ceiling 2026-10-26**: ทุก sold tier ใช้ `expense.export` เดิม; ไม่มีทางเลือกเพิ่ม entitlement หรือเปิด ledger. ไม่ถามซ้ำ.
-- Q2 อนุญาตให้ทีมดาวน์โหลดแม่แบบ "นำเข้าบิลและใบเสร็จ" จาก FlowAccount ของบริษัทคุณ (ดูอย่างเดียว) ทดลองนำเข้าใน **บริษัททดลอง** ของ FlowAccount และให้นักบัญชีของคุณดูวิธีบันทึก VAT ที่ใช้สิทธิไม่ได้? — **แนะนำ: ได้** (block เฉพาะ Phase 2)
-- Q3 PEAK และ Express: รอให้ลูกค้า/สำนักงานบัญชีที่ใช้ส่งไฟล์แม่แบบ (PEAK) หรือแม่แบบโปรแกรมเสริม (Express) มาก่อน? — **แนะนำ: รอ**
-- Q4 ต้องการให้ระบบจำว่ารายการไหน "ส่งออกไปโปรแกรมบัญชีแล้ว"? — **แนะนำ: ยังไม่ต้อง**
+- Q2 — **answered 2026-11-04**: อนุญาตให้ทีมดาวน์โหลดแม่แบบ FlowAccount “นำเข้าบิลและใบเสร็จ” จากบริษัทของเจ้าของแบบดูอย่างเดียว และทดลองนำเข้าในบริษัททดลอง; Phase 0 ยังคงเป็นประตูแรกที่ต้องผ่านก่อนเริ่ม owner step 8.
+- Q3 — **answered 2026-11-04**: รอแม่แบบ PEAK และ Express จากลูกค้าหรือสำนักงานบัญชีก่อนเริ่มงาน preset เหล่านี้.
+- Q4 — **answered 2026-11-04**: ไม่เพิ่มสถานะหรือเครื่องหมาย “ส่งออกแล้ว”.
 
 **Runner limitation rechecked 2026-11-04:** `grep -c 'src/modules/line-ai/line-ai-capability-manifest.spec.ts' apps/api/package.json` = 0. W00 here means the existing separately invoked frozen-artifact check (`apps/api/src/modules/line-ai/line-ai-capability-manifest.spec.ts:72`), not new API tests or package-suite coverage. New API assertions go only in the registered files named above; no package.json edit. Correction on re-anchor: `thai-date.logic.spec.ts` has no direct registration, but registered `apps/api/src/modules/expenses/domain/logic/expense-export.logic.spec.ts:3` imports and executes it (introduced by `31ad07964`); update existing callers only, with new assertions in registered specs.
 

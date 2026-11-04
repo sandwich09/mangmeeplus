@@ -1,6 +1,6 @@
 # Agent Memory: accountant exports (backlog 25 + 13)
 
-Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04
+Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses documents lane (controller review)
 Related: `docs/specs/accountant-export-cleanup-spec.md`, `docs/plans/accountant-export-cleanup-plan.md`, `docs/specs/accounting-software-export-spec.md`, `docs/plans/accounting-software-export-plan.md`, `docs/guidelines/thai-ux-standard.md`, `docs/plans/sold-ux-owner-decisions-2026-10-13-plan.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -24,7 +24,7 @@ Decisions:
 9. Earlier WHT design protections retained: payment-level bases/tax; current document VAT gate AND line restriction; frozen FILED line coverage before date filtering; keyless/aggregate-key coverage; no duplicate filed rows across explicit pages.
 10. Screens/LINE/help use plain Thai; exact accounting names stay in exported/official documents. UI purchase_journal label = `ไฟล์แยกตามหมวด`, mapping fields = `รหัสหมวดในไฟล์`/`ชื่อหมวดในไฟล์`; file headings stay exact. Refusals have an action on the same screen. New notifications are not introduced; failed/unusable AI must not charge the customer.
 11. Corrected PG test plan: `prisma-expense.repository.tax-snapshot.spec.ts:21-36` is a mock. Use the existing registered real harness in `prisma-expense.repository.payment.spec.ts:415-443` for mapping unique/cascade/tenant assertions; require its existing local PG gate and zero skipped checks.
-12. FlowAccount still needs owner-authorized Phase 0 template access and test-company import. Prior external research is dated 2026-10-23/24 and was not re-opened in this no-network round. No live-company import or new vendor compatibility claim.
+12. FlowAccount Phase 0 template access and trial-company import are authorized (Q2 answered 2026-11-04); the proof still must pass before owner step 8 starts. Prior external research is dated 2026-10-23/24 and was not re-opened in this no-network round. No live-company import or new vendor compatibility claim.
 
 ## 2026-11-04 re-anchor / ceil7 round 2
 
@@ -40,7 +40,7 @@ Decisions:
 - **Existing integration to preserve:** welcome/advisor `9036b8552` rechecks marker/recipient/free allowance (`line-signup-notify.service.ts:402-428`) and is read-only (`auth.controller.ts:529-546`); history `1fbba874e`/`884ba5307` keeps actor/action/time and durable audit (`prisma-expense.repository.ts:2078-2135`, `ExpenseHistoryModal.tsx:85-93`); confirmation suppression `3f6db1729` requires an accepted exact result (`process-line-webhook.use-case.ts:3717-3731`). No implementation of these features is repeated.
 - **Brief nuance:** company-command ordering exists at `line-message-buffer.service.ts:506-516`, but that file has no diff from the old anchor. Treat it as an existing regression boundary, not newly merged behavior or a missing fix. The three named unchanged areas and the export date-condition change otherwise agree with the brief.
 - W00 integration adapts to new step 0.2 as well as 3.5: both change the hashed webhook (`apps/api/src/modules/line-ai/line-ai-capability-manifest.ts:232`), so future implementation updates the artifact and runs the existing manual check/whole-chain. No new tests in the unregistered manifest spec.
-- No new owner question. Retain only the four unanswered choices below; free export denial and three-read/D04 rules are already decided.
+- No new owner question. The four choices below are answered 2026-11-04; free export denial and three-read/D04 rules are already decided.
 
 ## 2026-10-26 RC-F2 brief and current-code recheck
 
@@ -72,12 +72,12 @@ Required test names (first):
 - **Prior-document correction:** B2 was too broad: `derivePostingStatus` returns `not_required` for `CONFIRMED_DUPLICATE`, not `pending` (`apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts:340`). The sold-export removal is unchanged.
 - **Brief contradictions:** none in its RC-F2 mechanics, empty-bundle behavior, two requested test registrations or sold preset ceiling. Nuances: B is in the payment-evidence worksheet, not main indexRows; createIndex's two WHT reads are future work. Both are recorded, not treated as implemented facts.
 
-Open questions (owner only; recommendations):
-- Cleanup Q1: one accountant workbook instead of summary/full selector? Recommend **remove the selector**; removal step depends on the answer, backend selector compatibility remains. No answer was invented in this round.
+Owner answers (recorded 2026-11-04):
+- Cleanup Q1 — **answered 2026-11-04**: remove the brief/full selector; one accountant file; cleanup Phase 2.1–2.2 no longer waits on an owner answer, and backend compatibility remains.
 - Software Q1: no longer open; owner ceiling means existing starter expense.export, no new entitlement.
-- Software Q2: permit template download from the owner's FlowAccount and import only in a test company, with accountant review of unclaimable VAT? Recommend **yes**; only Phase 0/2 depend on this access.
-- Software Q3: wait for actual PEAK/Express templates? Recommend **wait**.
-- Software Q4: store “already exported” state? Recommend **not yet**.
+- Software Q2 — **answered 2026-11-04**: team may view/download the owner-company FlowAccount “นำเข้าบิลและใบเสร็จ” template and try imports in a trial company; Phase 0 remains the first proof gate before owner step 8 starts.
+- Software Q3 — **answered 2026-11-04**: wait for PEAK/Express templates from customers or accounting offices.
+- Software Q4 — **answered 2026-11-04**: no “exported” marker or stored export state.
 
 Artifacts (only files changed this round):
 - `docs/specs/accountant-export-cleanup-spec.md`
@@ -130,4 +130,4 @@ Next:
 1. Done 2026-11-04: controller checked the RC-F2 redesign against `expense-evidence.use-case.ts:359/370/372/404/421/445/462`. Only the paid-voucher branch widens the selection, since payments and handoffs already filter by `request.expenseIds`, so the intersect closes it. A-only drops the whole V(A,B) artifact by design. Both test files are registered. The removed E5/posting dependencies are confirmed unused.
 2. In the implementation round, write 0.1's regression then the independent hotfix commit, followed by free-boundary step 0.2; Phase S remains separately shippable. No implementation is performed here.
 3. RC-F2 design is already accepted. Phase 1.2/1.4 still need WHT filter/loaded-source implementation proof; do not confuse design acceptance with a shipped fix.
-4. Get only the still-open owner choices; software Phase 1 follows cleanup Phase 1, FlowAccount follows authorized Phase 0 proof.
+4. Owner answers are recorded; software owner step 8 starts only after authorized Phase 0 proof, and software Phase 1 also depends on cleanup Phase 1.

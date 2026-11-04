@@ -1,6 +1,6 @@
 # Accountant Export Cleanup Plan
 
-Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04
+Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses documents lane (controller review)
 Related: `docs/specs/accountant-export-cleanup-spec.md`, `docs/agent-memory/accountant-exports.md`, `docs/plans/accounting-software-export-plan.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -145,7 +145,7 @@ Verify: spec + `pnpm --filter @watchdog-bms/api lint`
 
 ## Phase 2 — เว็บ + journey
 
-### 2.1 หน้ารายการ (R14; after 1.5)
+### 2.1 หน้ารายการ (R14; after 1.5; Q1 answered 2026-11-04 — ไฟล์เดียวสำหรับนักบัญชี)
 
 - `apps/web/src/features/expenses/ExpensesPages.tsx`: ลบ `columnSet` state (:2739) + select (:3008-3013) + ส่ง `columnSet` (:2927); เงื่อนไขว่าง (:2931) → `rowCount + paymentRowCount + withholdingRowCount === 0`; ลบข้อความข้ามไฟล์ (:2935-2937); `downloadIndexXlsx(result, result.indexFileName)`; T1 ผ่าน `EvidenceBundleDownload`
 - `apps/web/src/common/i18n/workspace-dictionary.ts`: ลบ `expenses.export_columns*` (th/en) ถ้าไม่มีผู้ใช้อื่น
@@ -257,7 +257,7 @@ All API money/tax/permission regressions below are written first. Each command r
 | 1.3 | R1–R7/R10–R12 | 1.1 | V-LOGIC + V-DOCLOGIC + API tsc |
 | 1.4 | R8–R13/R22 | 0.1, 0.2, 1.1–1.3 | V-DOC + V-WHT + API tsc |
 | 1.5 | R13 | 1.4 | V-DTO + API tsc |
-| 2.1, 2.2 | R14 | 1.5; owner Q1 for removing the selector | named web specs in those steps + `bash scripts/local-proof/tsc.sh web` |
+| 2.1, 2.2 | R14 | 1.5; Q1 answered 2026-11-04 — remove brief/full selector, one accountant file | named web specs in those steps + `bash scripts/local-proof/tsc.sh web` |
 | 2.3, 2.4 | R14/R21 | 2.1, 2.2 | V-BROWSER + desktop spreadsheet checks; V-W00 |
 | 3.2 | R6/R15 | 1.1 currency helper | V-FILING + API tsc |
 | 3.3 | R17 | S | V-GATEWAY + whole-chain |

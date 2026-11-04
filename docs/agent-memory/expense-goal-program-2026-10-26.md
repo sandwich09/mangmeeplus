@@ -1,6 +1,6 @@
 # Agent Memory: expense-goal-program-2026-10-26
 
-Status: SPECS + PLANS ACCEPTED 2026-11-04 for steps 1–4 and 6–11 (step 5 is owner-present ops). All are re-anchored to develop e7c422802. No code until the owner says so; the owner's answers to the summary questions are pending.
+Status: SPECS + PLANS ACCEPTED 2026-11-04 for steps 1–4 and 6–11 (step 5 is owner-present ops). All are re-anchored to develop e7c422802. Owner answered every summary question on 2026-11-04 (see Owner answers). No code until the owner says so.
 Owner: platform (owner sets order and business answers; Codex writes; controller reviews and lands)
 Scope:
 - Owner 2026-10-26 instruction: "จากข้อ 1-11 ให้ ทำ spec + plan อย่างละเอียดสามารถ ตรวจสอบย้อนกลับได้ และ implement ตามได้เลย ระวัง bug gap impact ทุกฟีเจอร์โมดูลที่เกี่ยวข้อง อย่าทำเกินฟีเจอร์ที่เปิดขายอยู่ ทำแค่สูงสุดคือตามฟีเจอร์ pack 1999 ให้ codex ช่วยทำ และคุณรีวิวให้คำปรึกษา".
@@ -23,7 +23,7 @@ Scope:
 | 7 | Accountant export cleanup | `docs/specs/accountant-export-cleanup-spec.md` + plan | accepted 2026-11-04: RC-F2 intersect first; 0.2 free-export guard; Phase S handed to trust/money P03; E5/posting cut |
 | 8 | Accounting-software export (FlowAccount first) | `docs/specs/accounting-software-export-spec.md` + plan | accepted 2026-11-04; FlowAccount Phase 0 needs owner OK |
 | 9 | LINE AI workflow-first | `docs/specs/line-ai-workflow-first-spec.md`, `docs/specs/line-ai-measurement-and-eval-spec.md` + plan | accepted 2026-11-04: R4-F2 closed; 19 eval conversations restored; R26 package/knowledge fallback; R27 free no-AI |
-| 10 | Weekly LINE summary | `docs/specs/proactive-expense-summary-spec.md` + plan | accepted 2026-11-04: ledger menu and ภ.พ.30 row cut (ceiling); R19 paid-only eligibility, free shops get no weekly summary |
+| 10 | Weekly LINE summary | `docs/specs/proactive-expense-summary-spec.md` + plan | accepted 2026-11-04: ledger menu and ภ.พ.30 row cut (ceiling); R19 paid-only eligibility, free shops get no weekly summary; owner 2026-11-04 redesign (ceil9:5/6): shop-chosen day (R20, membership cursor, no seven-day cap for continuing recipients, C1 closed by controller), owner on by default, others picked in shop settings under company.setup.manage (R21), home invite removed |
 | 11 | e-WHT incl. per-shop setting | `docs/specs/e-withholding-tax-payment-spec.md` + plan | READY; traceability, B5 note and free-path note added; citations re-anchored 2026-11-04 |
 
 ## Ceiling findings (controller, 2026-10-26)
@@ -41,8 +41,21 @@ Scope:
   - Daily summary has no free-cohort exclusion.
   - Four free-mode spec files are unregistered.
 
+## Owner answers (2026-11-04)
+- Step 2, past charges: "ข้อ 2 ไม่ต้องคืน". No historical credit or refund; the forward-only R6/P07 fix stays.
+- Step 10, weekly summary: "ควรเปลี่ยนวันได้และคนที่ได้รับแจ้งเตือนให้ set ตามสิทธิ์ได้และเจ้าของกิจการเป็น default เสมอ".
+  - The shop picks the send day.
+  - Recipients are picked in shop settings from the people who hold the read right.
+  - The business owner is on by default.
+  - This is an owner exception to "notify only the person concerned", for this notice only.
+  - Redesign in ceil9:5.
+- Everything else: "ที่เหลือทำตามแนะนำได้เลย". Every other question takes the recommended answer, recorded in each spec by fixdoc:4.
+  - B18: the daily summary keeps its recipients until R10 retires it.
+  - B23: the deal-ending notice keeps going to OWNER. This is an owner exception.
+
 ## Open questions
-- Owner answers already pending: see `docs/research/owner-decisions-expense-specs-2026-10-24-th.md`. That file lives in the shared checkout, untracked.
+- None waiting on the owner, except the go to start coding.
+- Q5 LINE budget: the controller checks the OA package before release and proposes a figure.
 
 ## Artifacts
 - Codex lane logs (local, not in git): `mangmee-worktrees/codex/lane-{fixdoc,wordsdoc,blkrev,ceil7,ceil9}/`; briefs in `codex/briefs/` (`goal-*-2b.md`, `goal-wordsdoc-3b.md`, `goal-ceil7-2.md`, `reanchor-20261104.md`).
@@ -52,6 +65,7 @@ Scope:
 
 ## Next
 - Done 2026-11-04: reviewed fixdoc:3, ceil9:3/4, wordsdoc:4 and ceil7:2 against e7c422802; landed on develop and main.
+- Done 2026-11-04 (later): owner answers recorded (fixdoc:4) and weekly summary redesigned (ceil9:5/6); controller reviewed and landed docs only.
 - Owner reading file (untracked, shared checkout): `docs/research/owner-summary-expense-steps-1-11-2026-11-04-th.md`, with 22 decisions and recommendations.
 - On the owner's go: implement in order, starting with trust/money P01–P14 round 1 (Codex lanes; controller reviews, runs real-PG/journey/browser checks, lands).
 - **No code until the owner says so.** Owner, 2026-10-26: "ยังไม่ต้องโค้ดนะ spec และ plan. เสร็จแล้วสรุปให้ฉันอ่านเป็นภาษาไทย เข้าใจง่ายก่อน".

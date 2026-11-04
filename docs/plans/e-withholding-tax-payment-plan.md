@@ -1,6 +1,6 @@
 # e-Withholding Tax Payment Plan — จ่ายผ่าน e-WHT (ธนาคารนำส่ง อัตรา 1%)
 
-Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 first) · **2026-10-26: steps 1.7 and 3.6 added for the owner's shop setting (spec §5.5); focused Codex review F1–F6 (MEDIUM) applied, not re-reviewed**; Re-anchored to develop e7c422802 on 2026-11-04 (citations only; controller checked 2026-11-04)
+Status: READY (docs-first) — reviewed 4 rounds + focused blocker checks 2026-10-24, no HIGH open; see Must close before coding (owner Q1–Q4 answered 2026-11-04; engineering gates remain) · **2026-10-26: steps 1.7 and 3.6 added for the owner's shop setting (spec §5.5); focused Codex review F1–F6 (MEDIUM) applied, not re-reviewed**; Re-anchored to develop e7c422802 on 2026-11-04 (citations only; controller checked 2026-11-04); owner answers recorded 2026-11-04
 Owner: Expenses + Tax lane
 Related: `docs/specs/e-withholding-tax-payment-spec.md`, `docs/agent-memory/e-withholding-tax-payment.md`, `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md` (ข้อ 7)
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, citations rechecked in this worktree 2026-11-04; original review/research dates remain historical
@@ -11,11 +11,11 @@ Free path (R1–R21): these e-WHT requirements apply to paid-package workflows o
 ## ลำดับและการพึ่งพา
 
 ```
-Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉพาะ 4.4)
+Phase 0 (Q1–Q4 answered 2026-11-04; MC1 CLOSED)
 1.1 ─▶ 1.2 ─▶ 1.3 ─▶ { 1.4, 1.5, 1.6, 1.7 }  (API + contracts)
 1.1 ─▶ 2.1 ─▶ 2.2 ─▶ { 2.3, 2.4 } ; 1.1 ─▶ 2.5
 {1.x, 2.x} ─▶ 3.1..3.4, 3.6 ─▶ 3.5          (เว็บ + browser)
-{1.x, 2.x} ─▶ 4.1, 4.2, 4.3 ; Q4 ─▶ 4.4 ─▶ 4.5   (LINE/AI/คู่มือ)
+{1.x, 2.x} ─▶ 4.1, 4.2, 4.3 ; MC2 ─▶ 4.4 ─▶ 4.5   (LINE/AI/คู่มือ)
 ทั้งหมด ─▶ Phase 5
 ```
 
@@ -30,11 +30,13 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 
 ---
 
-## Phase 0 — คำตอบเจ้าของ
+## Phase 0 — คำตอบเจ้าของ (answered 2026-11-04)
 
-- ส่ง §17 ของสเปก (Q1 ทุกแพ็ก, Q2 ไม่ออก 50 ทวิให้ e-WHT, Q3 ค่าตั้งต้น "ร้านยื่นแบบเอง", Q4 อนุมัติ L-7/L-8/H-1/H-2) เป็นภาษาไทยง่าย ๆ
-- ประตูของแต่ละขั้น (review รอบ 4 F9 — ให้ตรงกับสเปก §18): **1.3 รอ Q2** (Q2 "ให้ออกได้" = ไม่ข้าม handoff); **4.4 รอ Q4**; Q1/Q3 ไม่บล็อกโค้ด (พฤติกรรมที่สร้างคือคำแนะนำ — ถ้าเจ้าของตอบต่าง Q3 "จำตามร้าน" เป็นงานเพิ่มหลัง Phase 3, Q1 ไม่มี gate ให้เปลี่ยน); ขั้นอื่นของ Phase 1–3 เริ่มได้
-- ประตูจากการตรวจอิสระ (สเปก §18): BL1 และ BL2 ปิดแล้ว (focused review 2026-10-24) ⇒ Phase 5 และส่วนผูกตามสาขาของ 2.3 ไม่ถูกบล็อกจากข้อนี้แล้ว; BL3 ปิดโดย focused re-check 2026-10-24 ⇒ ไม่มีประตูจากการตรวจเหลือ; ประตูที่เหลือคือคำตอบเจ้าของ (1.3 รอ Q2, 4.4 รอ Q4) และ MC2/MC3 ในสเปก §18
+- **Q1 — answered 2026-11-04:** ทุกแพ็ก; คงเงื่อนไขเปิดใช้ที่ตั้งค่าร้านตามสเปก §5.5
+- **Q2 — answered 2026-11-04:** ไม่ออกกระดาษ 50 ทวิ สำหรับรายการ e-WHT; ขั้น 1.3 ไม่รอคำตอบเจ้าของแล้ว
+- **Q3 — answered 2026-11-04:** รอบ 1 ตั้งต้นเป็น "ร้านยื่นแบบเอง" ทุกครั้ง
+- **Q4 — answered 2026-11-04:** อนุมัติ L-7/L-8/H-1/H-2 ตามที่เขียน; ขั้น 4.4 ไม่รอคำตอบเจ้าของแล้ว
+- MC1 ปิดแล้วตามสเปก §18; ประตูเดิมจาก review รอบ 4 F9 ปรับตามคำตอบข้างต้น โดยไม่เปลี่ยนแบบ: BL1/BL2/BL3 ปิดแล้วจาก focused checks 2026-10-24; ประตูที่ยังเหลือคือ MC2 (3.1/4.4) และ MC3 (1.2) ไม่ใช่คำตอบเจ้าของ
 
 ## Phase 1 — ข้อมูล กติกา และการบันทึก (API + contracts)
 
@@ -208,13 +210,13 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 - เทสต์: `erp-tax-tools.use-case.spec.ts` ("ค่าโฆษณา" ⇒ ปุ่ม; เลือกชื่อเต็ม ⇒ 200 + L-5 100; ขนส่ง/2028 ⇒ ไม่ต่อท้าย; สรุปเดือน e-WHT ล้วน ⇒ L-12 ศูนย์ + L-11; สาขานอกขอบเขต; ผู้มีแค่ `wht.certificate.read` ⇒ ไม่มี L-11; สองสกุลเงิน ⇒ แยกยอด; ใบแจ้งหนี้ยังไม่จ่าย ⇒ L-12 ไม่เรียกว่าการจ่าย; ภาษาอังกฤษ L-12en/L-13en และชื่อฟิลด์ใหม่ + `countBasis`); `apps/ai-gateway/src/modules/line-ai/agents/tool-availability.spec.ts` (แพ็ก starter ไม่ได้เครื่องคิดเลข)
 - ตรวจ: api typecheck; ai-gateway typecheck; specs
 
-### 4.4 แพ็กคำตอบ + คู่มือ (รอ Q4; F24)
+### 4.4 แพ็กคำตอบ + คู่มือ (Q4 answered 2026-11-04; ยังต้องผ่าน MC2; F24)
 - `apps/web/src/features/user-guide/tax-guide.content.ts`: H-1 ในแท็บ WHT (:107-133), H-2 แทน :109
 - `apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts:8`: `sources.tax.hash` ใหม่
 - `apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts`: `wht.e-wht` สร้างเป็น object ตรง (ไม่ใช้ `card()` :3-12 ที่ตรึง getting-started): `sourceURL '/companies/{companyId}/user-guide/tax#wht'`, `sourceFile 'apps/web/src/features/user-guide/tax-guide.content.ts'`, `sourceHash` = sha256 ไฟล์คู่มือภาษีใหม่, `featureKeys: []`, `permissionAnyOf: ['expense.read','expense.read_own']`, คำถาม "e-WHT คืออะไร", "จ่ายผ่าน e-WHT ต้องยื่น ภงด53 ไหม", "e-WHT หักกี่เปอร์เซ็นต์", "จ่ายผ่าน e-WHT ต้องออก 50 ทวิไหม", body L-7, `contentHash` คำนวณ; `V6_REVISED_BODIES['wht.calculation']` = L-8 (:138); reviewers v6 + บันทึกอนุมัติเจ้าของพร้อมวันที่
 - v4 ไม่เพิ่มการ์ด (`approved-knowledge.spec.ts:64`)
 - `apps/ai-gateway/src/modules/line-ai/domain/logic/line-ai-scope-policy.logic.ts` (review รอบ 4 F6): ใน `documentExplanationTopic` (:355-365) จับ `e-?wht|e-?withholding` ก่อนทาง `หัก ณ ที่จ่าย|withhold|wht` และให้ `documentExplanationReply` (:429-441) ตอบ L-14 (= L-7 จาก `E_WHT_WORDS`) แทนคำอธิบายทั่วไปที่บอกว่าผู้จ่ายนำส่ง; เทสต์ `line-ai-scope-policy.logic.spec.ts` + spec semantic-turn-v2 ในชุด gateway ของ whole-chain (คำตอบที่ส่งจริงผ่าน `semantic-turn-v2.ts:1510`)
-- `apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts` (:351-362 — review รอบ 2 F11): v6 จาก 68 เป็น 69 การ์ด, `reviewers` เพิ่มบันทึกอนุมัติเจ้าของ (Q4), assertion ของ v4 คงเดิม; ไฟล์นี้อยู่ในสคริปต์ `test` และ `test:line-ai-business-coverage` ของ ai-gateway แล้ว
+- `apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts` (:351-362 — review รอบ 2 F11): v6 จาก 68 เป็น 69 การ์ด, `reviewers` เพิ่มบันทึกอนุมัติเจ้าของ (Q4 answered 2026-11-04), assertion ของ v4 คงเดิม; ไฟล์นี้อยู่ในสคริปต์ `test` และ `test:line-ai-business-coverage` ของ ai-gateway แล้ว
 - เทสต์: `apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts`; `apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.spec.ts` (source ของ `wht.e-wht` คือ tax-guide และ hash ตรง); `apps/web/src/features/user-guide/user-guide.content.spec.ts`
 - ตรวจ: สอง spec; web typecheck
 
@@ -237,7 +239,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 
 1. ช่องทางอยู่ที่ `ExpenseRecord` ไม่ใช่ต่อการจ่าย
 2. e-WHT ใช้ `TaxEvent.status = EXCLUDED` + `sourceEventType = 'expense.wht.e_wht'`; `EXCLUDED` ไม่เคยอยู่ในแบบ จึงไม่ถูกล็อกเดือนแบบเก่าบล็อก และไม่เปลี่ยนสถานะงวด
-3. ไม่สร้าง 50 ทวิ handoff ให้ e-WHT (รอ Q2 ยืนยัน)
+3. ไม่สร้าง 50 ทวิ handoff ให้ e-WHT (Q2 answered 2026-11-04: ไม่ออกกระดาษ 50 ทวิ)
 4. เซิร์ฟเวอร์ไม่บังคับอัตรา; บังคับข้อเดียว "e-WHT ห้ามเงินสด/บัตร" ทุกทางที่สร้างหรือพรีวิวการจ่าย และตอนเปลี่ยน/ยืนยันช่องทาง
 5. กติกา 1% เป็นค่าคงที่ใน contracts พร้อม URL
 6. แถวเก่า `null` = ร้านยื่นเอง ไม่ backfill; ไฟล์ส่งออก "ไม่ได้ระบุ"; คอลัมน์ใหม่อยู่ท้ายสุด
@@ -259,7 +261,7 @@ Phase 0 (คำตอบเจ้าของ Q1–Q4; Q4 บล็อกเฉ�
 
 ## Traceability
 
-This section indexes the unchanged plan only. R1–R21 resolve to the spec's Traceability table, which provides code evidence, exact proposed test names and A1–A44 acceptance mapping. R16–R21 cover §5.5, plan 1.7/3.6 and A39–A44. Dependencies are a restatement of the existing sequence/guards; no implementation or owner decision is added. Existing blocker/number fixes integrate trust/money P11–P12/P08 rather than being implemented twice.
+This section indexes the existing design with owner-answer gates updated on 2026-11-04. R1–R21 resolve to the spec's Traceability table, which provides code evidence, exact proposed test names and A1–A44 acceptance mapping. R16–R21 cover §5.5, plan 1.7/3.6 and A39–A44. Dependencies retain the existing engineering guards; owner Q1–Q4 are answered 2026-11-04, with no implementation redesign. Existing blocker/number fixes integrate trust/money P11–P12/P08 rather than being implemented twice.
 
 Command notation for the listed checks: **API** = `pnpm --filter @watchdog-bms/api exec node --import tsx --test <listed file relative to apps/api>`; **TYPE_API/TYPE_WEB** = `bash scripts/local-proof/tsc.sh api` / `bash scripts/local-proof/tsc.sh web`; **WEB** = `pnpm --filter @watchdog-bms/web exec tsx --test <listed file relative to apps/web>`; **GATEWAY** = `pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test <listed file relative to apps/ai-gateway>`; **SCHEMA** = `pnpm --filter @watchdog-bms/api exec prisma validate --schema prisma/schema.prisma` then `pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma`, additive migrations on isolated local PostgreSQL only. **PG** means the listed registered API spec's real-database block with the documented local proof URL, never a skip. Browser checks preserve §3.5's 390/1280/~1556 requirement. No command ran in this documents round.
 
@@ -267,10 +269,10 @@ Review in small rounds (up to five steps): 1.1–1.5; 1.6/1.7/2.1/2.2/2.3; 2.4/2
 
 | Existing step | Requirement ids | Existing dependency / integration prerequisite | Exact test files, proposed names in spec trace | Verification |
 |---|---|---|---|---|
-| Phase 0 | R5/R13/R15–R21 | Original owner Q1–Q4 gates unchanged | No code test | Owner decisions only; no new question added |
+| Phase 0 | R5/R13/R15–R21 | Q1–Q4 answered 2026-11-04; MC1 CLOSED | No code test | Owner decisions only; no new question added |
 | 1.1 | R1/R16 | Existing Phase 0 gates; no new gate | packages/contracts/src/prisma-enum-parity.spec.ts | SCHEMA; contracts build; additive local migration |
 | 1.2 | R2/R3/R7/R11/R12 | 1.1 | apps/api/src/modules/tax/domain/logic/tax-period.logic.spec.ts | API; TYPE_API; contracts build |
-| 1.3 | R1/R5 | 1.2 + owner Q2 | apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; apps/api/src/modules/expenses/domain/logic/expense-status.logic.spec.ts | API; TYPE_API; PG |
+| 1.3 | R1/R5 | 1.2; Q2 answered 2026-11-04 | apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; apps/api/src/modules/expenses/domain/logic/expense-status.logic.spec.ts | API; TYPE_API; PG |
 | 1.4 | R3 | 1.3 | apps/api/src/modules/expenses/application/use-cases/record-expense-payment.use-case.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts; apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts | API; TYPE_API; PG |
 | 1.5 | R4 | 1.3 | apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts; apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.substitute-payment.spec.ts | API; TYPE_API; PG |
 | 1.6 | R5/R9 | 1.3 | apps/api/src/modules/expenses/domain/logic/expense-export.logic.spec.ts; apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts | API; TYPE_API |
@@ -289,7 +291,7 @@ Review in small rounds (up to five steps): 1.1–1.5; 1.6/1.7/2.1/2.2/2.3; 2.4/2
 | 4.1 | R3/R5/R12 | All 1.x/2.x as original graph | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts | API; TYPE_API |
 | 4.2 | R3/R12 | All 1.x/2.x as original graph | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
 | 4.3 | R11/R13 | All 1.x/2.x; reuse prior trust/money number fix | apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/tool-availability.spec.ts | API; GATEWAY; TYPE_API |
-| 4.4 | R13 | Owner Q4, as original graph | apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.spec.ts; apps/ai-gateway/src/modules/line-ai/domain/logic/line-ai-scope-policy.logic.spec.ts; apps/web/src/features/user-guide/user-guide.content.spec.ts | GATEWAY; WEB; TYPE_WEB |
+| 4.4 | R13 | MC2; Q4 answered 2026-11-04 | apps/ai-gateway/src/modules/line-ai/agents/agent-tools.registry.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.spec.ts; apps/ai-gateway/src/modules/line-ai/domain/logic/line-ai-scope-policy.logic.spec.ts; apps/web/src/features/user-guide/user-guide.content.spec.ts | GATEWAY; WEB; TYPE_WEB |
 | 4.5 | R13/R15 | 4.4; existing whole-chain gate | Existing W00 regression only; scripts/line-ai-whole-chain-acceptance.catalog.mjs | Existing whole-chain + manifest commands; no new unregistered API assertions |
 | Phase 5 | R14/R15 | All existing gates, rollback rehearsal, original owner release instruction | e2e/journeys/withholding-forms.journey.spec.ts; signed release results | Mandatory runbook UAT/READY/Production ids; signed result and customer OPEN |
 

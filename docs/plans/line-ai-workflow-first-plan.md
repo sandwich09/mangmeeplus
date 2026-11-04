@@ -1,6 +1,6 @@
 # LINE AI Workflow-First Plan
 
-Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 and MC1 remain open; A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code)
+Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 answered 2026-11-04; MC1 CLOSED (existing R21/AC11 design); A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code); owner answers recorded 2026-11-04
 Owner: LINE AI documents lane; controller assigns implementation
 Related: `docs/specs/line-ai-workflow-first-spec.md`, `docs/specs/line-ai-measurement-and-eval-spec.md`
 Memory: `docs/agent-memory/line-ai-workflow-first.md`
@@ -43,13 +43,13 @@ Each step uses workflow §5 path applicability: paid workflow/classifier steps r
 ## ลำดับที่บังคับ
 
 ```
-M1a → M1b → M1c → M2 → M3 → M4 (baseline; ต้องได้งบ Q1 ของ measurement spec)
+M1a → M1b → M1c → M2 → M3 → M4 (baseline; measurement Q1/workflow Q3 answered 2026-11-04: 2,000 THB ทั้งโปรแกรม)
 A9 → moved to expense-trust-and-money-fixes, step 2 / P07 (R6); no duplicate implementation
-A2 → A3a → A3c → A3b ; A1 → A3b ; A2 → A4a → A4b (ต้องปิด MC1, MC2) ; A10 → A4b (ใบทดแทน) ; A2 → A5 ; A1 + A2 → A6b ; A2 → A6a ; A6c อิสระ ; A7 อิสระ
+A2 → A3a → A3c → A3b ; A1 → A3b ; A2 → A4a → A4b (MC1 closed 2026-11-04; ต้องปิด MC2) ; A10 → A4b (ใบทดแทน) ; A2 → A5 ; A1 + A2 → A6b ; A2 → A6a ; A6c อิสระ ; A7 อิสระ
 A10 → moved to expense-trust-and-money-fixes, step 1 / P04 (R5) + step 3 / P10 (R9)
 (A1..A10) → A8 (release Phase A)
 B1 (probe, MC3/MC4) ขนานกับ A ; B1(ผ่าน) → B2 → B3 → B4 ; A3c + A4b + A8 → B4 ; M3 + B4 → B5
-B5 + Owner Q2 + MC5 → C1 → C2 → C3
+B5 + Q2 authorized 2026-11-04 + MC5 → C1 → C2 → C3 (MA4 + controller privacy gate before switch)
 D หลังแต่ละ release
 ```
 
@@ -91,12 +91,14 @@ D หลังแต่ละ release
 - ชุดเก็บไว้ทดสอบ ≥ 150 turn / ≥ 50 บทสนทนา ตาม §15.1 โดย lane แยก เก็บนอก repo
 - ตรวจ: validator; preflight oracle ผ่านทุกเฉลย
 
-### M4 Baseline บน main (ขึ้นกับ M3 + งบ)
+### M4 Baseline บน main (ขึ้นกับ M3; Q3/measurement Q1 answered 2026-11-04 — 2,000 THB ทั้งโปรแกรม)
 - typed journey ทั้งสองชุด + retained advisor held-out (knowledge/package boundaries included) (measurement §3) บน commit ของ main ที่ระบุ
 - บันทึกใน `docs/research/line-ai-workflow-baseline-2026-10.md` และ memory
 - ตรวจ: รายงานครบ; ledger ≤ เพดาน
 
 ---
+
+Owner Q1 — **answered 2026-11-04**: paid no-AI steps cost no credit and a task finishes after credit runs out midway; A1/A3b no longer await an owner answer, and free D04 is unchanged. MC1 is **closed, answered 2026-11-04** through existing R21/AC11/§14 tests; A4b retains MC2 and implementation proof.
 
 ## Phase A — งานซ้ำไม่เรียกโมเดล (Tier 0) + ขอบเขตการคิดเงิน
 
@@ -145,7 +147,7 @@ No implementation here. P07 owns B6, all current v2 callers, settlement/repair/c
 - `apps/api/src/modules/dashboard-notifications/application/use-cases/notification.use-cases.ts:551, 656`: ปุ่ม `บันทึกจ่ายคืน`
 - ตรวจ: `process-line-webhook.use-case.spec.ts`, `line-business-card.logic.spec.ts`, `reimbursement-request.use-case.spec.ts`, `erp-reimbursement-tools.use-case.spec.ts`
 
-### A4b picker — รายจ่าย ใบเตรียมจ่าย 50 ทวิ ใบทดแทน (ขึ้นกับ A4a; ต้องปิด MC1, MC2 ก่อน)
+### A4b picker — รายจ่าย ใบเตรียมจ่าย 50 ทวิ ใบทดแทน (ขึ้นกับ A4a; MC1 closed 2026-11-04; ต้องปิด MC2 ก่อน)
 - `line-workflow-target.service.ts`: `ListExpensesUseCase` (`expense-draft.use-case.ts:309–319`, `readScope` :379–391) ส่ง `pageSize: 100` เอง (ค่าตั้งต้น 20, :316), ≤ 3 หน้า, ไม่มีช่วงวันที่, `expense_pay` สองชุด UNPAID/PARTIALLY_PAID, exhaustive = Σ `total` ≤ 300 และอ่านครบ (spec §6.1 P11); ผู้สร้างที่ไม่มี read scope → รายการ `createdByUserId = ตัวเอง` สำหรับ MARK_READY/DELETE_DRAFT (MC1); ผู้ขาย → `ListCounterpartiesUseCase.execute(ctx, page, 100, { search })` (`counterparty.use-case.ts:266–272`) ≤ 3 หน้า, หลายราย → ปุ่มเลือก, ไม่มี `accounting.counterparty.read` → รายการล่าสุดไม่กรอง
 - `apps/api/src/modules/expenses/application/use-cases/disbursement-voucher.use-case.ts`: `listForLine(ctx, query)` = `list` ที่ใช้ `scope(ctx, 'read', branchId, true)` (:74–78) — อ่านอย่างเดียว (MC2)
 - `apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.ts:471–496`: `ListSubstituteReceiptCandidatesUseCase.execute(ctx, filter, { channel: 'line' })` ข้าม `assertWeb` (:474) เฉพาะการอ่าน (MC2)
@@ -238,7 +240,7 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 
 ---
 
-## Phase C — Haiku 5.5 ให้ classifier (หลัง B5 + Owner Q2)
+## Phase C — Haiku 5.5 ให้ classifier (หลัง B5; Q2 answered 2026-11-04; switch gated by MA4 and privacy review)
 
 ### C1 โมเดลของ classify grant
 - `apps/ai-gateway/src/modules/line-ai/infrastructure/provider/provider.factory.ts:21–29`: ใช้ `grant.model` ของ classify grant (ไม่กระทบ turn)
@@ -255,7 +257,7 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 - ตรวจ: `bedrock.provider.spec.ts`
 
 ### C3 Eval + release
-- held-out เดิม → MA4 (ต้นทุน provider ไม่ปัด); ผ่าน → release; ไม่ผ่าน → คง Sonnet
+- held-out เดิม → MA4 (ต้นทุน provider ไม่ปัด); ก่อน switch controller ต้องตรวจและบันทึกว่า privacy policy เรื่อง sub-processor และ cross-border ครอบคลุม Global inference profile ตาม Q2 answered 2026-11-04; ผ่านทั้งสอง gate → release ตามขั้นเดิม; ถ้า gate ใดยังไม่ผ่าน → คง Sonnet โดยไม่ขอคำตอบ Q2 ซ้ำ.
 
 ---
 
@@ -270,7 +272,7 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 2. ไม่มีตารางสถานะ workflow ใหม่; ตารางใหม่ไว้วัดผลเท่านั้น
 3. classifier ไม่เห็นข้อมูลร้าน; ตัวเลข/วันที่จากตัวอ่านค่าเดิม; รายละเอียดรายการต้องเป็น span ของข้อความจริง
 4. classifier มี authority/attempt/grant ของตัวเอง — invariant ของ turn grant ไม่เปลี่ยน
-5. การอนุญาตต่อรายการ = โค้ดเดิม; การอ่านเพื่อ picker = scope ของ use-case รายการ (+ ผู้สร้างเห็นของตัวเองถ้า MC1 อนุมัติ)
+5. การอนุญาตต่อรายการ = โค้ดเดิม; การอ่านเพื่อ picker = scope ของ use-case รายการ (+ ผู้สร้างเห็นเฉพาะของตัวเองสำหรับส่งตรวจ/ลบร่างตาม MC1 answered 2026-11-04)
 6. picker ใช้ use-case รายการที่แบ่งหน้า (+ ทางอ่าน LINE ที่ตรวจสิทธิ์เดิม); ห้ามพูด "ไม่พบ" ถ้าค้นไม่ครบ
 7. provider ต้องบังคับ schema ได้ ไม่งั้นไม่ปล่อย Tier 1
 8. ผลที่ใช้ไม่ได้ตรวจก่อน settle และไม่คิดเงินลูกค้า
@@ -305,15 +307,15 @@ Command notation (execute only during implementation, from this worktree):
 | M1c | M-R2/M-R3/M-R9/M-R11/M-R13 | M1a/M1b | scripts/line-ai-expense-advisor/run-rescore.spec.ts; scripts/line-ai-reliability-runtime.spec.ts | HARNESS; existing reliability-postgres command (eval guard) |
 | M2 | M-R5/M-R6/M-R8/M-R13; R27 | M1b | scripts/line-ai-expense-advisor/oracle.spec.ts | HARNESS; preflight/oracle isolated DB |
 | M3 | M-R1/M-R8/M-R14; R26/R27 | M2 | scripts/line-ai-expense-advisor/types.spec.ts | HARNESS; retained-behaviour validator/preflight |
-| M4 | M-R9/M-R10/M-R14; R26/R27 | M3 + owner Q3 | scripts/line-ai-expense-advisor/report.spec.ts | HARNESS; §7.2 real-run commands with approved budget |
+| M4 | M-R9/M-R10/M-R14; R26/R27 | M3; Q3/measurement Q1 answered 2026-11-04, whole-program budget 2,000 THB | scripts/line-ai-expense-advisor/report.spec.ts | HARNESS; §7.2 real-run commands with approved budget |
 | A9 (moved) | R12 | Trust/money owner step 2/P07 (R6) | apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts | No implementation here; run owned R6 regressions via API/realpg |
-| A1 | R13/R22; R27 | M4 + owner Q1 | apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts; apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts; apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API; realpg.sh |
+| A1 | R13/R22; R27 | M4; Q1 answered 2026-11-04 (paid no-AI step zero credit; started task finishes) | apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts; apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts; apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API; realpg.sh |
 | A2 | R3/R23 | No R4-F2 review dependency (CLOSED) | apps/api/src/modules/line-ai/application/line-message-buffer.service.spec.ts; apps/api/src/modules/line-ai/domain/logic/line-message-buffer.logic.spec.ts; apps/api/src/modules/auth/line-webhook.controller.spec.ts | API; TYPE_API |
 | A3a | R2/R3/R22 | A2 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
 | A3c | R2/R5/R8 | A3a | apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts; apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
-| A3b | R1/R2/R6/R13 | A1/A3c; Q1 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
+| A3b | R1/R2/R6/R13 | A1/A3c; Q1 answered 2026-11-04 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
 | A4a | R16/R21 | A2 | apps/api/src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts; apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
-| A4b | R17/R21 | A4a + MC1/MC2; substitute only after P04/P10 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts | API; TYPE_API |
+| A4b | R17/R21 | A4a + MC2; MC1 closed 2026-11-04; substitute only after P04/P10 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts | API; TYPE_API |
 | A5 | R3/R15/R25 | A2 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts | API; TYPE_API |
 | A6a | R15/R21/R22; R27 | A2 | apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.spec.ts; apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts | API; TYPE_API |
 | A6b | R14/R22/R23; R27 | A1/A2 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts; apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts | API; TYPE_API; realpg.sh |
@@ -327,9 +329,9 @@ Command notation (execute only during implementation, from this worktree):
 | B4 | R1/R7/R9/R13; R26/R27 | B3/A3c/A4b/A8 | apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts; apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts; apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.spec.ts | API; TYPE_API; realpg.sh; GATEWAY |
 | B5 | R9/R10/R20/R22; M-R10/M-R14; R26/R27 | M3/B4 | scripts/line-ai-expense-advisor/scorer.spec.ts; scripts/line-ai-expense-advisor/report.spec.ts | HARNESS; MA3/MA6 with R26/R27; whole-chain |
 | B6 (conditional) | R20 | Two weeks of telemetry proves need | apps/ai-gateway/src/modules/line-ai/agents/line-intake-router.agent.spec.ts | GATEWAY; W11 retained advisor corpus; rebuild artifact if changed |
-| C1 | R18/R19 | B5 + owner Q2 | apps/api/src/modules/line-ai/application/ai-model-pricing.spec.ts; apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts | API; GATEWAY; realpg.sh |
+| C1 | R18/R19 | B5; Q2 answered 2026-11-04, final switch remains gated in C3 | apps/api/src/modules/line-ai/application/ai-model-pricing.spec.ts; apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts | API; GATEWAY; realpg.sh |
 | C2 | R11/R19; M-R2 | C1 + MC5 | apps/ai-gateway/src/modules/line-ai/infrastructure/provider/bedrock.provider.spec.ts | GATEWAY; Bedrock-only probe in implementation |
-| C3 | R18/R19; M-R10 | C2 | scripts/line-ai-expense-advisor/scorer.spec.ts; scripts/line-ai-expense-advisor/report.spec.ts | HARNESS; MA4; release gates |
+| C3 | R18/R19; M-R10 | C2 + MA4 + controller verification of Global sub-processor/cross-border privacy coverage before switch | scripts/line-ai-expense-advisor/scorer.spec.ts; scripts/line-ai-expense-advisor/report.spec.ts | HARNESS; MA4; release gates |
 | D | R1/R15/R18–R20/R22/R24 | After each implementation release | scripts/line-ai-expense-advisor/report.spec.ts | Docs evidence and signed release result; no extra feature build |
 
 API registration rechecked 2026-11-04 with `grep -c "<file>" apps/api/package.json` for each exact relative path below. Positive counts are static registration evidence only. Existing W00/PG regression files with count 0 receive **no new assertions** here; run them only through their existing whole-chain paths. No package.json edits.

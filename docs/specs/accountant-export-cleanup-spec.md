@@ -1,6 +1,6 @@
 # Accountant Export Cleanup Spec — ไฟล์ที่ส่งให้นักบัญชี มีแค่ที่จำเป็น อ่านเข้าใจ และไม่มีลิงก์ที่เปิดไม่ได้
 
-Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04
+Status: DRAFT — RC-F2 co-voucher intersect redesigned 2026-10-26; controller checked the design against code 2026-11-04 (accepted; implementation pending); Re-anchored to develop e7c422802 on 2026-11-04; owner answers recorded 2026-11-04
 Owner: Expenses lane (controller review)
 Related: backlog ข้อ 25 ใน `docs/research/expense-leadership-verified-backlog-2026-10-23-th.md`, `docs/specs/expense-receipt-upload-spec.md` (Amendment 2026-10-23 ชี้มาที่นี่), `docs/specs/vat-registration-aware-expense-capture-spec.md` §12.1, `docs/specs/accounting-software-export-spec.md` (ข้อ 13), `docs/plans/accountant-export-cleanup-plan.md`, `docs/agent-memory/accountant-exports.md`, `docs/guidelines/thai-ux-standard.md`
 Baseline: develop `e7c4228026eec3c696fa76986420d2c97cb26676`, re-read 2026-11-04 in this worktree; supersedes citation baseline `0f938a361` (2026-10-26).
@@ -356,7 +356,7 @@ contracts (`packages/contracts/src/expenses.ts`): `ACCOUNTANT_WORKBOOK_SHEETS`, 
 
 ### 10.1 หน้ารายการ — dialog "ส่งออก Excel ให้สำนักงานบัญชี"
 
-- ตัด select "รายละเอียดในไฟล์" ([ExpensesPages.tsx:3008-3013](../../apps/web/src/features/expenses/ExpensesPages.tsx)) และ state `expenses.list.columnSet` ([:2739](../../apps/web/src/features/expenses/ExpensesPages.tsx)) (ถ้า Q1 = คงไว้: "แบบย่อ" = แผ่นหลักคอลัมน์ 1, 3, 6, 10, 11, 12, 14, 15, 24, 25 ไม่มีลิงก์)
+- ตัด select "รายละเอียดในไฟล์" ([ExpensesPages.tsx:3008-3013](../../apps/web/src/features/expenses/ExpensesPages.tsx)) และ state `expenses.list.columnSet` ([:2739](../../apps/web/src/features/expenses/ExpensesPages.tsx)) (Q1 answered 2026-11-04: ไฟล์เดียวสำหรับนักบัญชี)
 - ลำดับ (390 px ซ้อน; 1280/~1,556 px กล่อง `sm` เดิม): บรรทัดสรุป → นับไฟล์ → ปุ่มชุดเอกสาร → T1 → ผล → ท้ายกล่อง "ดาวน์โหลด Excel"
 - ดาวน์โหลดได้เมื่อ `rowCount + paymentRowCount + withholdingRowCount > 0` (แก้ [:2931](../../apps/web/src/features/expenses/ExpensesPages.tsx)); ศูนย์ทั้งหมด → `ไม่มีรายการตามที่เลือก` + ปุ่ม `เปลี่ยนช่วงวันที่` ในหน้าหรือกล่องเดิม
 - ลบ `ข้ามไฟล์แนบ N ไฟล์ที่คุณไม่มีสิทธิ์เปิด` ([:2935-2937](../../apps/web/src/features/expenses/ExpensesPages.tsx))
@@ -562,9 +562,9 @@ API (ไฟล์ที่ลงทะเบียนใน `apps/api/package.js
 - B17 แก้ฝั่ง gateway อาจทำให้เลขที่จริงบางแบบหลุดไปรอตรวจ — เทสต์รูปแบบเลขที่จริง (`INV-0012`, `123/2569`, สลิป) ก่อนปล่อย
 - ไม่มี feature switch; rollback แยกตาม commit (0.1 เป็น hotfix เดี่ยว); ไม่มี migration ใน cleanup
 
-## 17. Open questions (เรื่องธุรกิจเท่านั้น)
+## 17. Owner answer (เรื่องธุรกิจเท่านั้น)
 
-- Q1 ตัดตัวเลือก "แบบย่อ/แบบเต็ม" ให้เหลือไฟล์เดียวสำหรับนักบัญชี? — **แนะนำ: ตัด** (แผ่นหลักเหลือ 25 คอลัมน์ หัก ณ ที่จ่ายและการจ่ายแยกแผ่น) — ไม่ block backend; การถอด selector ใน Phase 2 รอคำตอบนี้
+- Q1 — **answered 2026-11-04**: ตัดตัวเลือก “แบบย่อ/แบบเต็ม”; เหลือไฟล์เดียวสำหรับนักบัญชี; Phase 2.1–2.2 ไม่รอคำตอบเจ้าของแล้ว โดยคง backend selector compatibility ตามแบบเดิม.
 
 **Runner limitation rechecked 2026-11-04:** `grep -c 'src/modules/line-ai/line-ai-capability-manifest.spec.ts' apps/api/package.json` = 0. W00 here means the existing separately invoked frozen-artifact check (`apps/api/src/modules/line-ai/line-ai-capability-manifest.spec.ts:72`), not new API tests or package-suite coverage. New API assertions go only in the registered files named above; no package.json edit. Correction on re-anchor: `thai-date.logic.spec.ts` has no direct registration, but registered `apps/api/src/modules/expenses/domain/logic/expense-export.logic.spec.ts:3` imports and executes it (introduced by `31ad07964`); update existing callers only, with new assertions in registered specs.
 

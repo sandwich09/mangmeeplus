@@ -1,6 +1,6 @@
 # Expense trust and money fixes — owner steps 1–4
 
-Status: DRAFT — Re-anchored to develop e7c422802 on 2026-11-04; controller accepted R1–R12 against code 2026-11-04 (R11 upload-intent branch, R12 signature-fill detail boundary verified); no implementation or runtime proof in this documents round
+Status: DRAFT — Re-anchored to develop e7c422802 on 2026-11-04; controller accepted R1–R12 against code 2026-11-04 (R11 upload-intent branch, R12 signature-fill detail boundary verified); no implementation or runtime proof in this documents round; owner answers recorded 2026-11-04
 Owner: Expense trust and money documents lane; implementation owner to be assigned by controller
 Related: `docs/plans/expense-trust-and-money-fixes-plan.md`; `docs/agent-memory/expense-leadership-specs-2026-10-23.md` §Owner order (2026-10-26); source documents in §2
 Baseline: worktree HEAD `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, read locally on 2026-11-04; replaces `0f938a361`; code citations refer to current develop, while source documents are identified by section because other documents lanes are editing them
@@ -349,7 +349,7 @@ These are static findings, not claims of an executed exploit. R1–R12 retain cu
 
 ## 9. Owner questions, remaining proof and handoff
 
-**Q1 (non-blocking for prospective fixes):** should customers charged for historically unusable LINE calls receive credits? Recommendation: yes, after a read-only audit identifies invocation-level evidence; credit only proven affected charges through an audited correction mechanism verified in that separate task, with one receipt to the affected account contact. Do not guess amounts from generic error counts or rewrite original usage events. The audit/remediation is a separate authorized task; this round designs the forward fix only.
+**Q1 — answered 2026-11-04:** No historical credit or refund for past unusable AI charges; no separate audit/remediation task or data correction; the forward-only R6/P07 fix remains as written.
 
 Uploader completion, signed confirmation, no-charge behavior, branch redaction and filing safety are already decided by owner rules/existing source designs; they are not questions to ask again. No tax-rate or legal interpretation is introduced. No network research was performed or required for this code-fix consolidation.
 

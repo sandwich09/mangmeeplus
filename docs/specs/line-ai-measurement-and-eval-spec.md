@@ -1,6 +1,6 @@
 # LINE AI Measurement & Eval Spec — ต้นทุนต่องานที่เสร็จ และความแม่นยำ
 
-Status: DRAFT — documents only; R4-F2 CLOSED by focused review 2026-10-26; owner Q1–Q3 and MC1 remain in workflow spec; Phase M1a–M3 independent, M4 waits Q3 budget; knowledge/package-reply eval coverage restored; free D04 isolated; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code)
+Status: DRAFT — documents only; R4-F2 CLOSED by focused review 2026-10-26; owner Q1–Q3 answered 2026-11-04 and MC1 closed in workflow spec; Phase M1a–M3 independent, M4 has the approved 2,000 THB whole-program budget; knowledge/package-reply eval coverage restored; free D04 isolated; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code); owner answers recorded 2026-11-04
 Owner: LINE AI lane (controller = main thread; ผู้เขียนชุดเก็บไว้ทดสอบ = lane แยกที่ไม่เห็นพรอมต์/ชุดจูน)
 Related: `docs/specs/line-ai-workflow-first-spec.md`, `docs/plans/line-ai-workflow-first-plan.md` (Phase M), `docs/agent-memory/line-ai-workflow-first.md`, `docs/qa/line-ai-expense-advisor-eval.md` (harness เดิม), `docs/specs/mangmee-ai-expense-advisor-spec-th.md` §1, §10, §13 (A1–A8), `docs/research/line-ai-intake-cost-benchmark-2026-09-17.md`, `docs/agent-memory/line-ai-credit-cost-analysis-20261019.md`
 Baseline: HEAD `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, re-opened in this worktree 2026-11-04; earlier measurements and review dates remain historical
@@ -62,7 +62,7 @@ Path applicability: M-R1/M-R4–M-R11/M-R13/M-R14 cover both the paid corpus and
 
 | ผู้ใช้ | journey |
 |---|---|
-| Owner | อ่านสรุปไทยหนึ่งหน้า (§10); อนุมัติงบ (§17) |
+| Owner | อ่านสรุปไทยหนึ่งหน้า (§10); งบอนุมัติแล้ว 2,000 THB ทั้งโปรแกรม (§17, answered 2026-11-04) |
 | Controller | preflight → oracle → real run (checkpoint, ledger) → rescore → รายงาน; ตัดสินตาม §15 |
 | ผู้เขียนชุดเก็บไว้ทดสอบ (lane แยก) | ได้แค่ §6.1 รูปแบบ + §6.4 seed + รายชื่อ workflow |
 | ผู้อ่านรายงาน Production | สคริปต์รายสัปดาห์ (§7.3) read-only |
@@ -357,11 +357,11 @@ Product B6/B7/B8 are recorded in workflow spec §13 but owned by expense-trust-a
 - trigger ของเพดานปฏิเสธการจองท้ายรัน → แยกเป็น `CAP_REACHED` ไม่ให้คะแนน (M-R9); trigger อยู่ใน eval DB ที่แยกแล้วเท่านั้น
 - การเปลี่ยน `rt` กระทบ harness อื่น → ค่าตั้งต้นของความสามารถใหม่ = พฤติกรรมเดิม; spec เดิมต้องผ่าน
 
-## 17. Open questions (เรื่องเงินของ Owner)
+## 17. Owner answer (เรื่องเงินของ Owner)
 
-| # | คำถาม | คำแนะนำ |
+| # | คำถาม | คำตอบเจ้าของ |
 |---|---|---|
-| Q1 | เพดานงบวัดผลด้วยโมเดลจริงทั้งโปรแกรม | **2,000 บาท** — ประมาณ (FX 33): baseline ชุดจูน 240 × ~1.5 ≈ 360 + held-out 150 × ~1.5 ≈ 225; candidate 3 รอบชุดจูน ≈ 290 + held-out ≈ 60; retained advisor held-out (knowledge and package boundaries included) (§3) ≈ 90; โมเดลเล็ก ≈ 60 → ≈ 1,085 บาท + เผื่อรันซ้ำ/cold cache |
+| Q1 | **answered 2026-11-04** — whole-program evaluation budget | **2,000 THB total for the whole program**, shared with workflow Q3, not a fresh allowance per run; M4’s owner-budget gate is satisfied while existing spend caps and engineering gates remain. |
 
 ## Traceability
 

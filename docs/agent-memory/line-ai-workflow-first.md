@@ -1,6 +1,6 @@
 # Agent Memory: line-ai-workflow-first
 
-Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 and MC1 remain open; A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code)
+Status: DRAFT — documents only; R4-F2 CLOSED (focused review 2026-10-26); owner Q1–Q3 answered 2026-11-04; MC1 CLOSED (existing R21/AC11 design); A9/A10 moved to expense-trust-and-money-fixes; per-step engineering prerequisites remain; Re-anchored to develop e7c422802 on 2026-11-04; controller accepted 2026-11-04 (R26 package/knowledge fallback and R27 free no-AI admission checked against code); owner answers recorded 2026-11-04
 Owner: LINE AI documents lane; controller assigns implementation after documents review
 Related: `docs/specs/line-ai-workflow-first-spec.md`, `docs/specs/line-ai-measurement-and-eval-spec.md`, `docs/plans/line-ai-workflow-first-plan.md`, `docs/specs/expense-trust-and-money-fixes-spec.md`, `docs/plans/expense-trust-and-money-fixes-plan.md`
 Baseline: HEAD `e7c4228026eec3c696fa76986420d2c97cb26676`, tree `1034bf4789c15b460ff2e293be912142f62954c9`, re-opened in this worktree 2026-11-04; earlier measurements and review dates remain historical
@@ -42,11 +42,11 @@ Weekly-summary handoff (outside this turn's four-file edit allowlist):
 - The unchanged summary spec §1 still says never-paid expired shops are uniformly blocked, which `049aa51de` changed; §4 admits `expense.read` actors without a free-cohort qualification, but that key can survive the free intersection (:61,:67–68 above). Controller/summary lane must add explicit paid eligibility before opt-in/read/send. No summary files were edited here.
 - Current daily-summary sweep selects active companies (`apps/api/src/modules/dashboard-notifications/application/use-cases/notification-sweeps.use-cases.ts:115–121`) and its creator selects owner/admin recipients and dashboard links (`notification.use-cases.ts:303–325`); no explicit free-cohort exclusion appears at those boundaries. This is an out-of-scope static gap for the summary lane, not proof that a free shop received a notice. Do not expand this LINE plan into notification implementation.
 
-Open questions:
-- Q1: paid zero-AI steps free and started tasks continue after credit exhaustion? Recommend yes; free D04 remains unchanged.
-- Q2: move only the classifier to Haiku 5.5 after MA4? Recommend measured/provider-proven pass first.
-- Q3 / measurement Q1: evaluation budget? Recommend 2,000 THB; historical estimates are not current quotes.
-- MC1: creator-only draft picker without read scope? Recommend existing creator-limited action rights; owner must decide.
+Owner answers (2026-11-04):
+- Q1 — **answered 2026-11-04**: paid path only; no-AI steps cost no credit and started tasks finish after mid-task credit exhaustion; A1/A3b owner-answer gates are satisfied, free D04 unchanged.
+- Q2 — **answered 2026-11-04**: allow the Global classifier switch when MA4 passes; before C3 switches, controller verifies privacy-policy sub-processor/cross-border coverage of a Global inference profile; technical gates remain.
+- Q3 / measurement Q1 — **answered 2026-11-04**: 2,000 THB for the whole program; M4 no longer waits for budget approval, existing spend/proof gates remain.
+- MC1 — **CLOSED; answered 2026-11-04**: creator without read rights sees only own LINE items for review submission or draft deletion; already designed in workflow R21/AC11/§14 and plan A4b, with `line-expense-action.service.ts:1010–1011` action rights and `expense-draft.use-case.ts:384` own filter; no new IDs/design needed.
 - No new owner-policy question: free D04 and retained knowledge/package coverage are explicit instructions, not inferred preferences.
 
 Artifacts:
@@ -61,5 +61,5 @@ Verification:
 - No API/Gateway/harness/PG/browser tests, schema commands, provider calls, cloud operations, builds, commits, pushes or deploys. Browser checks remain planned at 390, 1280 and about 1556, using existing `e2e/journeys/*.journey.spec.ts` handoffs.
 
 Next:
-- Controller reviews these four docs; summary lane handles the explicit free-cohort handoff in its own files. Preserve Q1–Q3/MC1, R4-F2 closed and external P04/P07/P10 ownership.
+- Controller reviews these four docs; summary lane handles the explicit free-cohort handoff in its own files. Preserve the recorded Q1–Q3 answers and MC1 closure, R4-F2 closed and external P04/P07/P10 ownership.
 - Implement only separately authorized steps after prerequisites; current free/source/welcome/dedupe/history behaviour is preserved, not reimplemented.
