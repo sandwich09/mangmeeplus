@@ -884,7 +884,8 @@ describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
 
   it('keeps running numbers that are not dates, including the carbon-book composition', () => {
     for (const documentNumber of ['123/2569', '12/345']) {
-      const out = applyOcrValueCrossCheck({ documentNumber }, HOSPITAL_TEXT);
+      const text = documentNumber === '123/2569' ? `${HOSPITAL_TEXT}\nเลขที่ 123/2569` : HOSPITAL_TEXT;
+      const out = applyOcrValueCrossCheck({ documentNumber }, text);
       assert.equal(out.documentNumber, documentNumber);
     }
   });
@@ -901,9 +902,54 @@ describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
     const branchText = 'ร้านสะดวกซื้อ สาขาที่ 3 ใบกำกับภาษีอย่างย่อ รวม 60.00';
     const branch = applyOcrValueCrossCheck({ vendorBranchCode: 'สาขาที่ 3' }, branchText);
     assert.equal(branch.vendorBranchCode, '00003');
-    const invented = applyOcrValueCrossCheck({ vendorBranchCode: '00007' }, HOSPITAL_TEXT);
+    const invented = applyOcrValueCrossCheck({ vendorBranchCode: '00007' }, HOSPITAL_TEXT.replace('(สำนักงานใหญ่)', ''));
     assert.equal(invented.vendorBranchCode, undefined, 'a branch the text never shows is dropped');
     assert.ok(invented.missingFields?.includes('vendorBranchCode'));
+  });
+});
+
+describe('export cleanup receipt identity evidence', () => {
+  it('document numbers require source evidence and preserve book-number composition', () => {
+    const cases: Array<[string, string, string | undefined]> = [
+      ['FAKE', 'เลขที่ FAKE รวม 180.00', undefined],
+      ['FAKE-180', 'รวม 180.00 บาท', undefined],
+      ['INV-0012', 'เลขที่ INV - 0012 รวม 180.00', 'INV-0012'],
+      ['INV_0012', 'เลขที่ INV . 0012 รวม 180.00', 'INV_0012'],
+      ['12/345', 'เล่มที่ 12 เลขที่ 345 รวม 180.00', '12/345'],
+      ['12/345', 'เล่มที่ 13 เลขที่ 345 รวม 12.00', undefined],
+      ['12/345', 'จำนวน 12 ยอด 345.00', undefined],
+      ['123/2569', 'เลขที่ 123/2569 รวม 180.00', '123/2569'],
+      ['10/08/2569', 'เลขที่ 10/08/2569', undefined],
+      ['2026-08-10', 'เลขที่ 2026-08-10', undefined],
+      ['A'.repeat(256) + '1', 'A'.repeat(256) + '1', undefined],
+    ];
+    for (const [documentNumber, text, expected] of cases) {
+      const result = applyOcrValueCrossCheck({ documentNumber }, text, '2026-11-04', 'RECEIPT');
+      assert.equal(result.documentNumber, expected, `${documentNumber}: ${text}`);
+      if (expected === undefined) assert.ok(result.missingFields?.includes('documentNumber'));
+    }
+    assert.equal(applyOcrValueCrossCheck({ documentNumber: 'FAKE' }, 'รหัสอ้างอิง FAKE', '2026-11-04', 'TRANSFER_SLIP').documentNumber, 'FAKE');
+  });
+
+  it('issuer branch and footer cannot be inferred from buyer or patient identifiers', () => {
+    const header = 'โรงพยาบาลทดสอบราษฎร์';
+    const noBranch = `${header}\nเลขประจำตัวผู้เสียภาษี 0994000163011`;
+    assert.equal(applyOcrValueCrossCheck({ vendorBranchCode: '00016' }, noBranch).vendorBranchCode, undefined);
+    assert.equal(applyOcrValueCrossCheck({ vendorBranchCode: '00016' }, `${noBranch} สำนักงานใหญ่`).vendorBranchCode, '00000');
+    for (const label of ['สาขาที่', 'สาขา', 'Branch']) {
+      assert.equal(applyOcrValueCrossCheck({ vendorBranchCode: '00016' }, `${header} ${label} 16`).vendorBranchCode, '00016');
+      assert.equal(applyOcrValueCrossCheck({ vendorBranchCode: '00016' }, `${header} ${label} 0994000163011`).vendorBranchCode, undefined);
+    }
+    const patient = `${header}\nผู้ป่วย นายทดสอบ\nเลขประจำตัวผู้เสียภาษี 1100700000001`;
+    for (const footer of [`${header}\nเลขประจำตัวผู้เสียภาษี 0994000163011`, 'เลขประจำตัวผู้เสียภาษีอากรของโรงพยาบาล 0994000163011']) {
+      const text = `${patient}\nรวม 180.00\n${footer}`;
+      assert.equal(applyOcrValueCrossCheck({}, text).vendorTaxId, '0994000163011');
+      assert.equal(applyOcrValueCrossCheck({ vendorTaxId: '0994000163011' }, text).vendorTaxId, '0994000163011');
+    }
+    for (const tail of ['\n\n1100700000001', '\n\nเลขประจำตัวผู้เสียภาษี 1100700000001', `\nรับการรักษาที่ ${header}\nเลขประจำตัวผู้เสียภาษี 1100700000001`, '\nBranch 16']) {
+      const result = applyOcrValueCrossCheck({ vendorTaxId: '1100700000001', vendorBranchCode: '00016' }, patient + tail);
+      assert.equal(result.vendorTaxId, undefined); assert.equal(result.vendorBranchCode, undefined);
+    }
   });
 });
 

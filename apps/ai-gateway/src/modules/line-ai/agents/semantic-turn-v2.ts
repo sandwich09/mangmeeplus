@@ -1,5 +1,5 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
-import { documentAdvisorReadText, pnd53DueHelp } from './document-advisor-read';
+import { documentAdvisorReadText, productHelpWithData } from './document-advisor-read';
 import { Logger } from '@nestjs/common';
 import { LINE_CHAT_ACTIONS, canUseLineChatAction, lineCustomerWording, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
@@ -677,6 +677,10 @@ export async function runSemanticTurnV2(input: {
       scopePolicyForcedIndices.add(item.index);
       continue;
     }
+    const generalHelp = item.kind === 'help' && productHelpAction({ text, actionId: req.howToActionId, selectedKnowledgeCardIds: req.selectedKnowledgeCardIds,
+      generalHelpEnabled: input.approvedKnowledgeEnabled && req.approvedKnowledge === true, permissions: req.userContext.permissions,
+      featureKeys: entitledFeatureKeys ?? null, companyId: req.userContext.companyId, language })?.generalHelp;
+    if (generalHelp) continue;
     const lifecycle = item.kind === 'write' ? undefined : packageLifecycleReply(text, language);
     if (lifecycle) {
       forced.set(item.index, { status: 'handled', reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', text: lifecycle });
@@ -1128,7 +1132,7 @@ export async function runSemanticTurnV2(input: {
       req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId) : null;
   const actionHelps = new Map<number, NonNullable<ReturnType<typeof productHelpAction>>>();
   const helpFor = (actionId?: unknown, selectedKnowledgeCardIds?: readonly string[], text?: string, toolHint?: string) => productHelpAction({ actionId, language, text, toolHint,
-    packageOffers: req.packageOffers, selectedKnowledgeCardIds, permissions: req.userContext.permissions, companyId: req.userContext.companyId,
+    generalHelpEnabled: input.approvedKnowledgeEnabled && req.approvedKnowledge === true, packageOffers: req.packageOffers, selectedKnowledgeCardIds, permissions: req.userContext.permissions, companyId: req.userContext.companyId,
     featureKeys: entitledFeatureKeys ?? null, availableToolNames: offered.map(tool => tool.name) });
   for (const [index, actionId] of followupActions) {
     const help = helpFor(actionId);
@@ -1138,12 +1142,12 @@ export async function runSemanticTurnV2(input: {
   if (selectedHelp.length === 1) {
     const help = helpFor(req.howToActionId, req.selectedKnowledgeCardIds, itemText.get(selectedHelp[0]!.index) ?? selectedHelp[0]!.goal, selectedHelp[0]!.toolHint);
     if (help && !scopePolicyForcedIndices.has(selectedHelp[0]!.index) && !documentExplanationTopic(itemText.get(selectedHelp[0]!.index) ?? '')) {
-      const due = await pnd53DueHelp(req, help, ctx, input.invoke);
-      if (due.result) results.push({ index: selectedHelp[0]!.index, result: due.result });
+      const due = await productHelpWithData(req, help, ctx, input.invoke);
+      results.push(...due.results.map(result => ({ index: selectedHelp[0]!.index, result })));
       actionHelps.set(selectedHelp[0]!.index, due.help);
     }
   }
-  const sources = [...results.flatMap(entry => entry.result.status === 'ok' ? entry.result.sourceRefs : []), ...(knowledge?.sourceRefs ?? [])];
+  const sources = [...results.flatMap(entry => entry.result.status === 'ok' ? entry.result.sourceRefs : []), ...[...actionHelps.values()].flatMap(help => help.sourceRefs), ...(knowledge?.sourceRefs ?? [])];
   const capabilityHelp = buildCapabilityHelp(language, { permissions: req.userContext.permissions,
     entitledFeatureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [] });
   // A5 (batch5): today's civil date in the company timezone, in the PAYLOAD (never the system
@@ -1180,7 +1184,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && (object(entry.result.data.reimbursementDraft) || ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(entry.result.toolName)))).map(item => item.index));
-  const needsComposition = inventory.some(item => !(req.selectedKnowledgeCardIds?.includes('wht.pnd53-due') && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => !(req.selectedKnowledgeCardIds?.length && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   const sourcesCover = (answer: { sourceRefIds?: string[] }, good: ToolResult[]) => {
@@ -1319,7 +1323,7 @@ export async function runSemanticTurnV2(input: {
     const actionHelp = actionHelps.get(item.index);
     if (actionHelp) {
       answer = { index: item.index, status: actionHelp.allowed ? 'handled' : 'denied', text: actionHelp.replyText,
-        sourceRefIds: [...good.flatMap(result => result.sourceRefs.map(sourceId)), ...(knowledge?.sourceRefs.map(sourceId) ?? [])] };
+        sourceRefIds: [...new Set([...good.flatMap(result => result.sourceRefs.map(sourceId)), ...actionHelp.sourceRefs.map(sourceId), ...(knowledge?.sourceRefs.map(sourceId) ?? [])])].slice(0, 8) };
       modelComposed = false;
     }
     else if (forced.has(item.index)) { answer = { index: item.index, ...forced.get(item.index)! }; modelComposed = false; }

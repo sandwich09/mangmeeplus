@@ -67,11 +67,31 @@ Scope:
   - Step 9: M1a `97097c31b`.
   - Test-only repairs of develop drift: `4cb980091`, `2846c00de`, `3d55d9a40`, `99f127a64`.
   - Free draft shop seed and journey: `86c96153a`. Pins: `28719e37b`.
+- **Batches 2–5, landed 2026-11-04.**
+  - Batch 2 (`86712e40b`): step 7 Phase 1.1–1.5.
+  - Batch 3 (`e0af66dd2`): P06, P07, QA refusal fix.
+  - Batch 4 (`6fdfb9807`): step 3 P08–P10, step 7 Phase 2, journey fixes.
+  - Batch 5 (`ad611aa61`): step 8 Phase 1.1–1.3, including the migration.
+  - M1b part 1 + M1c (`dbf2f5982`).
+- **Batch 6, landed 2026-11-04.** develop `fd46cc2e2`, main `c2da8c2ff`. Step 4 P11+P12, plus:
+  - the legacy frozen-paper PG test, rewritten against real payments;
+  - controller fixes: the who-can-fix tail only on visible items, and the R10 journey setup.
+- **Batch 7, landed 2026-11-04.** develop `3c23aab83`, main `316dac214`.
+  - Step 8 Phase 1.4–1.5. The controller restored the deprecated `columnSet` API compatibility.
+  - Step 7 Phase 3.2+3.4. The repair script writes only with `--apply`.
+  - Owner Q3: LINE answers the ภ.ง.ด.53 due date.
+- **Held:** plain-words rounds 1–3 plus P5.3 drafts (lane pw1). They land with P5.4 after the owner approves the rendered help cards; the approval page was sent 2026-11-04.
+  - On approval, the getting-started VAT FAQ answer takes the approved C62 wording.
 - **In progress (Codex lanes):**
-  - step 1 P06 (receipt XML);
-  - step 7 Phase 1.4/1.5 (committed 1.1–1.3 `163869f24` in the lane worktree);
-  - step 9 M1c (M1b part 1 committed in the lane worktree).
-- **Later:** steps 2–4 (P07–P12), then 6, 8, 10, 11; step 5 last with the owner.
+  - pw1 words Round 4;
+  - ld1 owner Q4 "answer whenever possible" (spec §9 Q4);
+  - ex1 step 7 Phase 3.3+3.6;
+  - step 9 M2 committed in lm1 (`4f2ee2601`, `db5407d41`). Its PG preflight needs a local secrets file. Real writes are proven by run-real (M4), since the oracle pass runs gold calls only.
+- **Later:**
+  - step 7 Phase 3.5 and Phase 4;
+  - step 9 M3/M4;
+  - steps 10 and 11;
+  - step 5 last, with the owner.
 
 ## Verification
 - Batch 1 checks:

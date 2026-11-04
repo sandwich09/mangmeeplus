@@ -1915,7 +1915,7 @@ describe('approved knowledge orchestration', () => {
       if (variant === 'permission-revoked') req.userContext.permissions = [];
       if (variant === 'feature-off') req.entitledFeatureKeys = [];
       const result = await new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiApprovedKnowledgeEnabled: variant !== 'gateway-off' })).run(req);
-      assert.ok(result.sourceRefs.every((source) => source.entityType !== 'approved_product_help'), variant);
+      assert.ok(result.sourceRefs.every(source => source.entityType !== 'approved_product_help'), variant);
     }
   }));
   it('retains the business read and appends the reviewed guide in a mixed question', async () => withReviewedPack(async () => {
@@ -3064,4 +3064,196 @@ it('PWS-PND53-DUE English selected card keeps the language and single-use delega
         sourceRefs: [{ module: 'tax', entityType: 'advisor_document_read', label: 'PND53', permissionChecked: true }] };
     } });
   assert.equal(result.replyText, message); assert.equal(result.presentation?.cards[0]?.text, message);
+});
+
+// Q4 keeps reviewed explanations separate from the action the reader may choose next.
+describe('PWS-LINE-HELP-ANSWER Q4', () => {
+  const card = (id: string) => require('./approved-product-help').activeProductHelpPack().cards.find((c: any) => c.id === id)!;
+  const permissions = [...new Set(['ai.tool.invoke', 'company.plan.manage', 'reimbursement.approve', ...LINE_TOOL_REGISTRY.flatMap(t => [...t.requiredPermissions, ...(t.anyOfPermissions ?? [])]), ...LINE_CHAT_ACTIONS.map(a => a.permission)])];
+  const features = ['expenses', 'expenses.upload', 'reimbursement', 'reports', 'dashboard_notifications', 'wht_pnd53', 'wht_50bis', ...LINE_CAPABILITY_GROUPS.flatMap(g => [...g.featureKeys])];
+  function request(id: string, text = card(id).questions[0]) {
+    const req = { ...makeReq(text), approvedKnowledge: true, selectedKnowledgeCardIds: [id], entitledFeatureKeys: features,
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: text, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+    req.userContext.permissions = permissions;
+    return req;
+  }
+  const run = (req: LineAiTurnRequest, invoke: any = async () => assert.fail('general help does not read ERP')) => runSemanticTurnV2({ req,
+    draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('selected help needs no model call') }, invoke });
+  for (const [id, actionId, questions] of [
+    ['reimbursement.meaning', 'reimbursement_claim', ['ใบเบิกคืออะไร', 'คำขอเบิกกับใบเบิกต่างกันยังไง', 'ฉันสำรองเงินเองแล้วต้องใช้เมนูไหน']],
+    ['reimbursement.roles', 'reimbursement_claim', ['ทำไมเห็นแท็บเบิกจ่ายไม่เหมือนกัน', 'เพื่อนเห็นแท็บแต่ฉันไม่เห็น', 'หาเมนูเบิกจ่ายไม่เจอ']],
+    ['report.access', 'finance', ['รายงานที่แต่ละคนเรียกดูได้', 'ทำไมฉันเห็นรายงานน้อยกว่าเจ้าของ', 'ส่งออกแล้วตรวจสิทธิ์อีกไหม']],
+    ['expense.start', 'expense_capture', ['เริ่มลงค่าใช้จ่ายยังไง', 'รายจ่ายเข้าระบบแล้วทำอะไรต่อ']],
+    ['expense.find', 'expense_search', ['หาบิลร้านเดิมยังไง', 'ดูรายการตามสถานะที่ไหน']],
+  ] as const) {
+    for (const question of questions) it(`table A ${id}: ${question}`, async () => {
+      const result = await run(request(id, question));
+      assert.ok(result.replyText.includes(card(id).body));
+      assert.equal(result.presentation?.cards[0]?.text, card(id).body);
+      assert.equal(result.presentation?.cards[0]?.chatActionId, actionId);
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    });
+    for (const text of [LINE_CHAT_ACTIONS.find(a => a.id === actionId)!.command, `ช่วย${LINE_CHAT_ACTIONS.find(a => a.id === actionId)!.title}ให้หน่อย`])
+      it(`table A do-request ${id}: ${text}`, async () => {
+        const result = await run(request(id, text));
+        assert.equal(result.replyText, LINE_CHAT_ACTIONS.find(a => a.id === actionId)!.sentence);
+        assert.equal(result.presentation?.cards[0]?.chatActionId, actionId);
+      });
+  }
+  const fixtures: Record<string, { tool: string; args: object; data: object; zero: object; permission: string; feature?: string; sentence: RegExp; empty: RegExp }> = {
+    'package.quota': { tool: 'billing.get_package_usage', args: {}, permission: 'company.plan.manage',
+      data: { package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 12, resetsOn: '2026-12-01' } },
+      zero: { package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 0, resetsOn: '2026-12-01' } }, sentence: /เหลือ.*12.*1 ธ.ค. 2569/, empty: /เหลือ.*0.*1 ธ.ค. 2569/ },
+    'package.renew': { tool: 'billing.get_package_usage', args: {}, permission: 'company.plan.manage', data: { package: { termEndsOn: '2026-12-31' } }, zero: { package: { termEndsOn: null } }, sentence: /31 ธ.ค. 2569/, empty: /ยังไม่มีแพ็กเกจ/ },
+    'package.expiry': { tool: 'billing.get_package_usage', args: {}, permission: 'company.plan.manage', data: { package: { termEndsOn: '2026-12-31' } }, zero: { package: { termEndsOn: null } }, sentence: /31 ธ.ค. 2569/, empty: /ยังไม่มีแพ็กเกจ/ },
+    'claim.approve': { tool: 'reimbursement.list_pending_approvals', args: { approver: 'me' }, permission: 'reimbursement.approve', feature: 'reimbursement', data: { accessScope: 'approver', total: 3 }, zero: { accessScope: 'approver', total: 0 }, sentence: /มีใบเบิกรอคุณอนุมัติ 3 ใบค่ะ/, empty: /ไม่มีใบเบิกรอคุณอนุมัติค่ะ/ },
+    'voucher.approve': { tool: '', args: {}, permission: 'expense.disbursement.approve', feature: 'expenses', data: {}, zero: {}, sentence: /ผู้อนุมัติเปิดใบที่รอตนเอง/, empty: /ผู้อนุมัติเปิดใบที่รอตนเอง/ },
+    'notifications.read': { tool: 'notifications.list_open_alerts', args: {}, permission: 'notification.read', feature: 'dashboard_notifications', data: { count: 3, hasMore: false }, zero: { count: 0, hasMore: false }, sentence: /3 รายการค่ะ/, empty: /ไม่มี.*แจ้งเตือน.*ค่ะ/ },
+    'pnd53.prepare': { tool: 'wht.get_month_summary', args: { periodKey: '2026-11' }, permission: 'wht.pnd53.read', feature: 'wht_pnd53', data: { periodKey: '2026-11', dueDate: '2026-12-07', remittance: { status: 'OPEN' } }, zero: { periodKey: '2026-11', dueDate: '2026-12-07', remittance: null }, sentence: /ภ.ง.ด.53.*พฤศจิกายน 2569.*ยังไม่ได้ยื่น.*7 ธ.ค. 2569/, empty: /ยังไม่มีรายการ.*7 ธ.ค. 2569/ },
+  };
+  for (const [id, fixture] of Object.entries(fixtures)) for (const access of ['data', 'zero', 'no-permission', 'no-feature', 'unavailable'] as const)
+    it(`table B ${id}, ${access}`, async t => {
+      t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
+      const req = request(id);
+      if (access === 'no-permission') req.userContext.permissions = permissions.filter(p => p !== fixture.permission);
+      if (access === 'no-feature') req.entitledFeatureKeys = [];
+      let reads = 0;
+      const result = await run(req, async (meta: any, ctx: any, args: any) => {
+        reads++; assert.equal(meta.name, fixture.tool); assert.equal(ctx.userId, req.userContext.internalUserId); assert.deepEqual(args, fixture.args);
+        return { toolName: meta.name, status: access === 'unavailable' ? 'unavailable' : 'ok', asOf: '2026-11-04T00:00:00Z',
+          data: access === 'zero' ? fixture.zero : fixture.data, sourceRefs: [{ module: 'help', entityType: 'read', label: 'ข้อมูลของร้าน', permissionChecked: true }] };
+      });
+      const knowledge = require('./approved-knowledge');
+      const eligible = knowledge.eligibleKnowledgeCards(require('./approved-product-help').activeProductHelpPack(),
+        knowledge.productKnowledgeAccess(req.userContext.permissions, req.entitledFeatureKeys, true, 'th')).some((candidate: any) => candidate.id === id);
+      const readable = eligible && !!fixture.tool && access !== 'no-permission' && !(access === 'no-feature' && fixture.feature);
+      assert.equal(reads, readable ? 1 : 0);
+      if (!eligible) {
+        assert.match(result.replyText, /สิทธิ์|แพ็กเกจ/);
+        assert.ok(result.webLinks.length || result.presentation?.cards.some(card => card.webLink), 'ineligible card retains its way out');
+        assert.ok(!result.replyText.includes(card(id).body));
+      } else if (!readable || access === 'unavailable') assert.ok(result.replyText.includes(card(id).body));
+      else {
+        assert.match(result.replyText, access === 'zero' ? fixture.empty : fixture.sentence);
+        if (id === 'package.renew' || id === 'package.expiry') assert.ok(result.replyText.includes(card(id).body), 'date then the card rule');
+      }
+      if (eligible) assert.equal(result.semanticCoverage?.[0]?.status, 'handled', 'an eligible card answers when its figures cannot be read');
+      else assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled', 'card eligibility remains enforced');
+    });
+  it('does not turn a company claim count or a malformed result into the reader approval queue', async () => {
+    const result = await run(request('claim.approve'), async (meta: any) => ({ toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data: { accessScope: 'company', total: 23 }, sourceRefs: [] }));
+    assert.ok(result.replyText.includes(card('claim.approve').body)); assert.doesNotMatch(result.replyText, /23/);
+  });
+  it('states a lower bound for a notification page with more results', async () => {
+    const req = request('notifications.read');
+    const result = await run(req, async (meta: any) => ({ toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data: { count: 10, hasMore: true },
+      sourceRefs: Array.from({ length: 10 }, (_, i) => ({ module: 'notifications', entityType: 'notice', entityId: `notice-${i}`, label: 'แจ้งเตือน', permissionChecked: true })) }));
+    assert.match(result.replyText, /อย่างน้อย 10 รายการ/);
+    assert.ok(require('@watchdog-bms/contracts').parseLineAiSemanticCoverage(result.semanticCoverage, req.semanticSubrequests));
+  });
+  for (const [data, expected] of [
+    [{ package: { termEndsOn: '2026-12-31' }, receipts: { limit: null, remaining: null, resetsOn: null } }, /ไม่จำกัดจำนวน/],
+    [{ package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 7, resetsOn: null } }, /เหลือ.*7.*ยังไม่มีวันเริ่มนับใหม่/],
+    [{ package: { termEndsOn: null }, receipts: { limit: 0, remaining: 0, resetsOn: null } }, /ยังไม่มีแพ็กเกจ/],
+  ] as const) it(`quota handles its actual allowance shape: ${JSON.stringify(data)}`, async () => {
+    const result = await run(request('package.quota'), async (meta: any) => ({ toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data, sourceRefs: [] }));
+    assert.match(result.replyText, expected);
+  });
+  for (const [id, fixture] of Object.entries(fixtures)) it(`table B English data sentence uses tool facts: ${id}`, t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
+    const { helpDataSentence } = require('./document-advisor-read');
+    for (const data of [fixture.data, fixture.zero]) {
+      const sentence = helpDataSentence(id, data, 'en');
+      if (id === 'voucher.approve') assert.equal(sentence, undefined, 'the tool has no reader queue filter');
+      else { assert.ok(sentence); assert.doesNotMatch(sentence, /[\u0E00-\u0E7F]/); }
+    }
+  });
+});
+
+
+it('PWS-LINE-HELP-ANSWER combines quota and renewal from one permission-checked snapshot', async () => {
+  const req = { ...makeReq('ใช้สิทธิ์ไปกี่ใบ ต่ออายุยังไง'), approvedKnowledge: true, selectedKnowledgeCardIds: ['package.quota', 'package.renew'],
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'แพ็กเกจของร้าน', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  req.userContext.permissions = ['ai.tool.invoke', 'company.plan.manage'];
+  let calls = 0;
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('no extra model call') }, invoke: async meta => {
+      calls++; return { toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', sourceRefs: [],
+        data: { package: { termEndsOn: '2026-12-31' }, receipts: { remaining: 12, limit: 30, resetsOn: '2026-12-01' } } };
+    } });
+  assert.equal(calls, 1); assert.match(result.replyText, /เหลือใบเสร็จ 12 ใบ/); assert.match(result.replyText, /31 ธ.ค. 2569/);
+  assert.equal(new Set(result.semanticCoverage?.[0]?.sourceRefIds).size, result.semanticCoverage?.[0]?.sourceRefIds?.length);
+});
+
+for (const language of ['th', 'en'] as const) it(`PWS-LINE-HELP-ANSWER expiry states remain factual in ${language}`, async () => {
+  const req = { ...makeReq(language === 'th' ? 'ต่ออายุยังไง' : 'renew a package'), approvedKnowledge: true, selectedKnowledgeCardIds: ['package.renew'],
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'package renewal', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  req.userContext.permissions = ['ai.tool.invoke', 'company.plan.manage'];
+  if (language === 'en') {
+    assert.match(require('./document-advisor-read').helpDataSentence('package.renew', { package: { termEndsOn: '2026-09-30' } }, 'en'), /package end date is 30 Sept 2026/);
+    return;
+  }
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('no model call') }, invoke: async meta => ({ toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z',
+      sourceRefs: [], data: { package: { termEndsOn: '2026-09-30' } } }) });
+  assert.match(result.replyText, language === 'th' ? /วันสิ้นสุดแพ็กเกจของร้านคือ 30 ก.ย. 2569/ : /package end date is 30 Sept 2026/);
+});
+
+for (const id of ['package.quota', 'package.renew', 'package.expiry', 'claim.approve', 'voucher.approve', 'notifications.read', 'pnd53.prepare'])
+  it(`PWS-LINE-HELP-ANSWER a free-source-draft permission snapshot cannot read ${id}`, async () => {
+    const card = require('./approved-product-help').activeProductHelpPack().cards.find((c: any) => c.id === id)!;
+    const req = { ...makeReq(card.questions[0]), approvedKnowledge: true, selectedKnowledgeCardIds: [id], entitledFeatureKeys: ['expenses'],
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: card.title, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+    req.userContext.permissions = ['company.plan.manage', 'expense.read_own', 'expense.receipt.line_upload'];
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      provider: { generateText: async () => assert.fail('no model call') }, invoke: async () => assert.fail('free snapshot must not read business figures') });
+    const knowledge = require('./approved-knowledge');
+    const eligible = knowledge.eligibleKnowledgeCards(require('./approved-product-help').activeProductHelpPack(),
+      knowledge.productKnowledgeAccess(req.userContext.permissions, req.entitledFeatureKeys, true, 'th')).some((candidate: any) => candidate.id === id);
+    if (eligible) assert.ok(result.replyText.includes(card.body));
+    else { assert.match(result.replyText, /สิทธิ์|แพ็กเกจ/); assert.ok(!result.replyText.includes(card.body)); }
+  });
+
+it('PWS-LINE-HELP-ANSWER a malformed reset date keeps the general card', async () => {
+  const req = { ...makeReq('ใช้สิทธิ์ไปกี่ใบ'), approvedKnowledge: true, selectedKnowledgeCardIds: ['package.quota'],
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'ใบเสร็จที่เหลือ', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  req.userContext.permissions = ['ai.tool.invoke', 'company.plan.manage'];
+  const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('no repair model call') }, invoke: async meta => ({ toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z',
+      sourceRefs: [], data: { package: { termEndsOn: '2026-12-31' }, receipts: { limit: 30, remaining: 12, resetsOn: 'invalid-date' } } }) });
+  assert.ok(result.replyText.includes(require('./approved-product-help').activeProductHelpPack().cards.find((c: any) => c.id === 'package.quota').body));
+});
+
+
+describe('PWS-LINE-HELP-ANSWER Q4 card eligibility', () => {
+  const pack = () => require('./approved-product-help').activeProductHelpPack();
+  function request(id: string, permissions: string[], features: string[]) {
+    const card = pack().cards.find((card: any) => card.id === id)!;
+    return { ...makeReq(card.questions[0]), approvedKnowledge: true, selectedKnowledgeCardIds: [id], entitledFeatureKeys: features,
+      userContext: { ...makeReq('').userContext, permissions },
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: card.title, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  }
+  const run = (req: LineAiTurnRequest) => runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true,
+    publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+    provider: { generateText: async () => assert.fail('selected card eligibility is deterministic') },
+    invoke: async () => assert.fail('ineligible cards and missing data permission never read ERP') });
+  for (const id of ['wht.pnd53-due', 'pnd53.prepare']) it(`a lower-pack WHT question keeps the package-limit reply and way out: ${id}`, async () => {
+    const result = await run(request(id, ['ai.tool.invoke', 'wht.pnd53.read'], ['expenses']));
+    assert.match(result.replyText, /แพ็กเกจ/);
+    assert.ok(result.webLinks.length || result.presentation?.cards.some(card => card.webLink));
+    assert.doesNotMatch(result.replyText, /ต้องยื่นภายใน|เปิดงวด/);
+  });
+  it('staff outside the card permission keeps the existing refusal and way out', async () => {
+    const req = request('reimbursement.meaning', ['ai.tool.invoke'], ['reimbursement']);
+    const result = await run(req);
+    const expected = require('../domain/logic/line-ai-scope-policy.logic').permissionLimitReplyText('th', 'สร้างใบเบิก', req.userContext.permissions);
+    assert.equal(result.replyText, expected);
+    assert.ok(result.webLinks.length || result.presentation?.cards.some(card => card.webLink));
+  });
+  it('an eligible quota card without package-data permission keeps its reviewed answer', async () => {
+    const result = await run(request('package.quota', ['ai.tool.invoke'], []));
+    const card = pack().cards.find((card: any) => card.id === 'package.quota')!;
+    assert.ok(result.replyText.includes(card.body)); assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+  });
 });

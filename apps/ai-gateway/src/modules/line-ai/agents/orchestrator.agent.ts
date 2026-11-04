@@ -1,5 +1,5 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
-import { documentAdvisorOutputText, pnd53DueHelp } from './document-advisor-read';
+import { documentAdvisorOutputText, productHelpWithData } from './document-advisor-read';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 /**
  * OrchestratorAgent – feature-flagged entry point for item 10B local agent flow.
@@ -1167,7 +1167,10 @@ export class OrchestratorAgent {
       const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
       const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
         req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint, req.packageOffers);
-      if (override) {
+      const generalHelp = soleItem.kind === 'help' && productHelpAction({ text, actionId: req.howToActionId, selectedKnowledgeCardIds: req.selectedKnowledgeCardIds,
+        generalHelpEnabled: req.approvedKnowledge === true, permissions: req.userContext.permissions,
+        featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null, companyId: req.userContext.companyId, language })?.generalHelp;
+      if (override && !generalHelp) {
         // Advisor S1: "sign it on the web" comes with the page to sign on (spec §2.6).
         const webLinks = scopePolicyWebLinks(override, req.userContext.permissions, req.userContext.companyId, language);
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
@@ -1621,15 +1624,15 @@ export class OrchestratorAgent {
       const knowledgeAnswer = knowledgeEnabled
         ? renderApprovedKnowledge(activeProductHelpPack(), knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
           knowledgeAccess(plan.language), req.userContext.companyId) : null;
-      const actionHelp = productHelpAction({ actionId: req.howToActionId, text: req.messageText, language: plan.language === 'en' ? 'en' : 'th', companyId: req.userContext.companyId,
+      const actionHelp = productHelpAction({ generalHelpEnabled: knowledgeEnabled, actionId: req.howToActionId, text: req.messageText, language: plan.language === 'en' ? 'en' : 'th', companyId: req.userContext.companyId,
         selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
         packageOffers: req.packageOffers, permissions: req.userContext.permissions, featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null });
       if (actionHelp) {
-        const due = await pnd53DueHelp({ ...req, selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds }, actionHelp, ctx,
+        const due = await productHelpWithData({ ...req, selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds }, actionHelp, ctx,
           (meta, context, args) => this.erpTools.invoke(meta, context, args));
         replyText = due.help.replyText;
-        finalSourceRefs = [...(due.result?.status === 'ok' ? due.result.sourceRefs : []), ...(knowledgeAnswer?.sourceRefs ?? [])];
-        finalWebLinks = knowledgeAnswer?.webLinks ?? [];
+        finalSourceRefs = [...due.results.flatMap(result => result.status === 'ok' ? result.sourceRefs : []), ...due.help.sourceRefs, ...(knowledgeAnswer?.sourceRefs ?? [])];
+        finalWebLinks = [...due.help.webLinks, ...(knowledgeAnswer?.webLinks ?? [])];
         expensePresentation = due.help.presentation;
       } else if (knowledgeAnswer) {
         replyText = knowledgeAnswer.replyText;

@@ -1700,11 +1700,15 @@ export function applyOcrValueCrossCheck(
     const value = documentKind === 'TRANSFER_SLIP'
       ? compactReference(mapThaiDigits(out.documentNumber)) : mapThaiDigits(out.documentNumber).trim();
     const digitRuns = value.match(/\d+/g) ?? [];
+    const compactNumber = (text: string) => text.replace(/[\s._-]/g, '');
+    const bookParts = value.split('/');
+    const bookNumber = bookParts.length === 2 && bookParts.every((part, index) => part.trim()
+      && new RegExp(`${index === 0 ? 'เล่มที่' : 'เลขที่'}\\s*[:：]?\\s*${part.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`).test(mappedText));
     const invalid = value.length > MAX_DOCUMENT_NUMBER_CHARS
       || isFullSpanDate(value)
       || (documentKind === 'TRANSFER_SLIP'
         ? !compactReference(mappedText).includes(value)
-        : !digitRuns.every((run) => collapsedText.includes(run)));
+        : digitRuns.length === 0 || !(compactNumber(collapsedText).includes(compactNumber(value)) || bookNumber));
     if (invalid) {
       delete out.documentNumber;
       missing.add('documentNumber');
@@ -1714,11 +1718,11 @@ export function applyOcrValueCrossCheck(
   }
   if (out.vendorBranchCode) {
     const raw = mapThaiDigits(out.vendorBranchCode).trim();
-    const digits = raw.replace(/\D/g, '');
-    const isHeadOffice = HQ_BRANCH_LABEL_RE.test(raw) || (digits.length > 0 && /^0+$/.test(digits));
-    if (isHeadOffice && (HQ_BRANCH_LABEL_RE.test(issuerText) || collapsedIssuer.includes('00000'))) {
+    const digits = HQ_BRANCH_LABEL_RE.test(raw) ? '00000' : raw.replace(/\D/g, '');
+    const labelledBranches = [...collapsedIssuer.matchAll(/(?:สาขา(?:ที่)?|\bBranch\b)(?:\s*(?:No\.?|เลขที่))?\s*[:：#]?\s*(\d{1,5})(?!\d)/gi)];
+    if (HQ_BRANCH_LABEL_RE.test(issuerText)) {
       out.vendorBranchCode = '00000';
-    } else if (!isHeadOffice && digits.length >= 1 && digits.length <= 5 && collapsedIssuer.includes(digits)) {
+    } else if (digits.length >= 1 && digits.length <= 5 && labelledBranches.some(match => match[1]!.padStart(5, '0') === digits.padStart(5, '0'))) {
       out.vendorBranchCode = digits.padStart(5, '0');
     } else {
       delete out.vendorBranchCode;

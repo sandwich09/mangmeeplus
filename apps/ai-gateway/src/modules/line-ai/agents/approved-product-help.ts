@@ -1,8 +1,8 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
 import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
-import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
+import { knowledgeCardHash, knowledgePackHash, productKnowledgeAccess, renderApprovedKnowledge, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES } from './product-help-draft-cards';
-import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
+import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, toolPermissionReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
   'tax': { file: 'tax-guide.content.ts', hash: '1eac64225f803d0e436138261b81ff3d33a55c6d54bbd557843a7b733f4a8319' },
@@ -162,9 +162,15 @@ const ACTION_HELP_EN: Record<(typeof LINE_CHAT_ACTIONS)[number]["id"], string> =
   "team": "Tell me the team details to search within your access."
 };
 
+function requestsProductAction(text: string): boolean {
+  if (text.trim() && LINE_CHAT_ACTIONS.some(action => action.command === text.trim())) return true;
+  return !/อธิบาย|คืออะไร|\b(?:explain|what is|why|how)\b/iu.test(text)
+    && (/ช่วย.+ให้หน่อย/u.test(text) || /\b(?:please|can you|could you)\b/iu.test(text));
+}
+
 /** The semantic selector names a registry entry; neither its prose nor a guide can grant action access. */
 export function productHelpAction(input: { actionId?: unknown; text?: string; toolHint?: string; selectedKnowledgeCardIds?: readonly string[];
-  packageOffers?: import('@watchdog-bms/contracts').BillingOffer[];
+  packageOffers?: import('@watchdog-bms/contracts').BillingOffer[]; generalHelpEnabled?: boolean;
   permissions: readonly string[]; featureKeys: readonly string[] | null; availableToolNames?: readonly string[]; companyId?: string; language?: ScopePolicyLanguage }) {
   const mapped = LINE_CHAT_ACTIONS.filter(action => action.helpTopics.some(topic => input.selectedKnowledgeCardIds?.includes(topic)));
   const text = input.text ?? '';
@@ -185,12 +191,43 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
             : /ยืนยัน|confirm/iu.test(text) ? 'expense_confirm' : undefined : undefined;
   const action = lineChatAction(input.actionId || mapped.length || input.toolHint === 'reimbursement.list_pending_approvals' ? operation : undefined)
     ?? lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
+  const actionAllowed = (candidate: (typeof LINE_CHAT_ACTIONS)[number]) => canUseLineChatAction(candidate.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
+    && (!candidate.tool || !input.availableToolNames || input.availableToolNames.includes(candidate.tool));
+  const language = input.language ?? 'th';
+  const pack = activeProductHelpPack();
+  const access = productKnowledgeAccess(input.permissions, input.featureKeys, true, language);
+  const selectedHelp = input.generalHelpEnabled !== false && !requestsProductAction(text) && !input.selectedKnowledgeCardIds?.includes('wht.pnd53-due');
+  const deniedCard = selectedHelp ? pack.cards.find(card => input.selectedKnowledgeCardIds?.includes(card.id) && (
+    !card.requiredPermissions.every(permission => input.permissions.includes(permission))
+    || card.permissionAnyOf.length > 0 && !card.permissionAnyOf.some(permission => input.permissions.includes(permission))
+    || input.featureKeys !== null && !card.featureKeys.every(key => input.featureKeys!.includes(key))
+    || !card.requiredCapabilities.every(capability => access.capabilities.includes(capability)))) : undefined;
+  if (deniedCard) {
+    const missingFeature = input.featureKeys === null ? undefined : deniedCard.featureKeys.find(key => !input.featureKeys!.includes(key));
+    const replyText = missingFeature ? featureLimitReplyText(missingFeature, language, undefined, input.packageOffers, input.featureKeys, input.permissions)
+      : action ? permissionLimitReplyText(language, language === 'en' ? 'perform this action' : action.title, input.permissions)
+        : toolPermissionReplyText(language, input.permissions);
+    const alternative = permissionAlternative(input.permissions, language);
+    const link = input.companyId ? scopePolicyWebLinks({ reasonCode: missingFeature ? 'PACKAGE_FEATURE_NOT_ENABLED' : 'ROLE_PERMISSION_REQUIRED', text: replyText,
+      webPage: missingFeature && featurePackageOffer(missingFeature, input.packageOffers) ? 'packages' : alternative.page }, input.permissions, input.companyId, language)[0] : undefined;
+    const presentation: LineAiAnswerPresentation = { kind: 'answer_cards', cards: [{ text: replyText, ...(link ? { webLink: link } : {}) }] };
+    return { replyText, presentation, allowed: false, generalHelp: false, sourceRefs: [], webLinks: link ? [link] : [] };
+  }
+  const general = selectedHelp
+    ? renderApprovedKnowledge(pack, input.selectedKnowledgeCardIds, access, input.companyId ?? 'shop') : null;
+  if (general) {
+    const cards = general.presentation.cards.map((card, index) => {
+      const id = input.selectedKnowledgeCardIds![index]!;
+      const linked = LINE_CHAT_ACTIONS.find(candidate => candidate.helpTopics.some(topic => topic === id));
+      return { ...card,
+        ...(linked && actionAllowed(linked) ? { chatActionId: linked.id } : {}) };
+    });
+    return { ...general, replyText: cards.map(card => `${card.title}\n${card.text}`).join('\n\n'), presentation: { ...general.presentation, cards }, allowed: true, generalHelp: true };
+  }
   if (!action || action.id === 'approvals' && text && operation !== 'approvals') return null;
-  const allowed = canUseLineChatAction(action.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
-    && (!action.tool || !input.availableToolNames || input.availableToolNames.includes(action.tool));
+  const allowed = actionAllowed(action);
   const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
   const entitled = input.featureKeys === null ? null : new Set(input.featureKeys);
-  const language = input.language ?? 'th';
   const missingFeature = entitled === null ? undefined
     : action.id === 'expense_capture' && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY) ? LINE_RECEIPT_CAPTURE_FEATURE_KEY
       : action.id === 'wht_certificate' && !entitled.has('wht_50bis') ? 'wht_50bis'
@@ -203,5 +240,5 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
     webPage: missingFeature && featurePackageOffer(missingFeature, input.packageOffers) ? 'packages' : alternative.page }, input.permissions, input.companyId, language)[0] : undefined;
   const presentation: LineAiAnswerPresentation = { kind: 'answer_cards', cards: [{ text: replyText,
     ...(allowed ? 'webPath' in action ? { webLink: { label: language === 'en' ? 'My payout account' : 'บัญชีรับเงินคืนของฉัน', path: action.webPath.replace('{companyId}', input.companyId ?? '') } } : { chatActionId: action.id } : limitLink ? { webLink: limitLink } : {}) }] };
-  return { replyText, presentation, allowed };
+  return { replyText, presentation, allowed, generalHelp: false, sourceRefs: [], webLinks: [] };
 }

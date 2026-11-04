@@ -28,7 +28,7 @@ import {
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
 import {
-  CAPTURE_BLANK_PAGE_MARKER, CAPTURE_EXTRACT_PROMPT, CAPTURE_PARTIAL_KEY, captureReadPrompt,
+  CAPTURE_BLANK_PAGE_MARKER, CAPTURE_EXTRACT_PROMPT, CAPTURE_PARTIAL_KEY, captureReadPrompt, receiptIssuerText,
   parseCaptureNaturalText, parseCaptureObservationsJson, parseCaptureReadPages,
 } from '../../domain/logic/expense-capture-read.logic';
 
@@ -149,6 +149,29 @@ it('OCR-C admits the benchmark formatted issuer IDs and address, never a changed
     assert.equal(parse('0105912524204')!.documents[0]!.issuer.taxId, undefined);
     assert.equal(parse('9999999999999')!.documents[0]!.issuer.taxId, undefined);
   }
+});
+
+describe('receiptIssuerText identified seller footers', () => {
+  const header = 'โรงพยาบาลทดสอบราษฎร์';
+  const patient = `${header}\nผู้ป่วย นายทดสอบ\nเลขประจำตัวผู้เสียภาษี 1100700000001`;
+  it('recovers an identified hospital footer while excluding patient identity', () => {
+    for (const footer of [`${header}\nเลขประจำตัวผู้เสียภาษี 0994000163011`, 'เลขประจำตัวผู้เสียภาษีอากรของโรงพยาบาล 0994000163011', 'เลขประจำตัวผู้เสียภาษีอากร ของ โรงพยาบาล 0994000163011']) {
+      const text = receiptIssuerText(`${patient}\nรวม 180.00\n${footer}`);
+      assert.ok(text.includes('0994000163011')); assert.ok(!text.includes('1100700000001'));
+      const parsed = parseCaptureObservationsJson(observationsJson({ documents: [{ ref: 'd1', pageIndexes: [0],
+        issuer: { name: header, taxId: '0994000163011' }, classification: classification() }] }), `${patient}\n${footer}`);
+      assert.equal(parsed!.documents[0]!.issuer.taxId, '0994000163011');
+    }
+  });
+  it('blank lines and stray patient tax IDs cannot reopen an issuer block', () => {
+    for (const tail of ['\n\n1100700000001', '\n\nเลขประจำตัวผู้เสียภาษี 1100700000001', `\nรับการรักษาที่ ${header}\nเลขประจำตัวผู้เสียภาษี 1100700000001`]) {
+      assert.equal(receiptIssuerText(patient + tail), header);
+    }
+    for (const label of ['ชื่อผู้ป่วย', 'Patient']) {
+      assert.equal(receiptIssuerText(`${header}\n${label} นายทดสอบ\n\nเลขประจำตัวผู้เสียภาษี 1100700000001`), header);
+    }
+
+  });
 });
 
 describe('capture read pages', () => {

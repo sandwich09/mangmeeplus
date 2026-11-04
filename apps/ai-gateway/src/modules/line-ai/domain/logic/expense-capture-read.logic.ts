@@ -562,9 +562,18 @@ export function receiptIssuerText(documentText: string): string {
   const marked = [...documentText.matchAll(/\[SELLER\]([\s\S]*?)\[\/SELLER\]/gi)].map((match) => match[1]);
   return (marked.length ? marked : [documentText]).map((block) => {
     let otherParty = false;
+    const issuerNames = new Set<string>();
     return block!.split('\n').filter((line) => {
-      if (/^\s*(?:[#*|]+\s*)?(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ผู้ป่วย|ผู้รับสินค้า)(?:\s|[:：])|ชื่อ\s*\/\s*Patient)/i.test(line)) otherParty = true;
-      if (/^\s*(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร)(?:\s|[:：]))/i.test(line)) otherParty = false;
+      if (/^\s*(?:[#*|]+\s*)?(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ชื่อผู้ป่วย|ผู้ป่วย|ผู้รับสินค้า)(?:\s|[:：])|ชื่อ\s*\/\s*Patient)/i.test(line)) {
+        otherParty = true;
+        return false;
+      }
+      const name = line.trim().replace(/^[#*|]+\s*/, '').replace(/\s+/g, ' ').toUpperCase();
+      const identifiedFooter = [...issuerNames].some(issuer => name === issuer || name.startsWith(`${issuer} `))
+        || [...issuerNames].some(issuer => issuer.startsWith('โรงพยาบาล'))
+          && /^\s*เลข(?:ประจำตัว)?ผู้เสียภาษี(?:อากร)?\s*ของ\s*โรงพยาบาล(?:\s|[:：])/.test(line);
+      if (identifiedFooter || /^\s*(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร)(?:\s|[:：]))/i.test(line)) otherParty = false;
+      if (!otherParty && /^(?:โรงพยาบาล|บริษัท|ห้างหุ้นส่วน|HOSPITAL\b)/i.test(name)) issuerNames.add(name);
       return !otherParty;
     }).join('\n');
   }).join('\n');
