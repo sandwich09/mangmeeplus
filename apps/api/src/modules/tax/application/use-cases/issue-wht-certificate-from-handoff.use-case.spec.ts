@@ -446,6 +446,15 @@ describe('C9 payer identity before issue', () => {
   });
 });
 
+it('refuses an explicit PND2 form with its outside-system way out and no issue writes', async () => {
+  const h = harness({ handoff: { prefillSnapshotJson: prefill({ formType: 'PND2', incomeCategoryCode: 'SYNTHETIC_SEPARATE' }) } });
+  await assert.rejects(h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (error: any) => {
+    assert.equal(error.getResponse().code, 'wht_certificate_income_unsupported');
+    assert.equal(error.getResponse().message, 'ประเภทนี้ยื่น ภ.ง.ด.2 ระบบยังออกหนังสือรับรอง 50 ทวิให้ไม่ได้ ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้'); return true;
+  });
+  for (const rows of [h.periods, h.reservations, h.certificates, h.history, h.renders, h.audits]) assert.equal(rows.length, 0);
+});
+
 it('refuses PND2 and dividend system issuance before any number or certificate write', async () => {
   for (const incomeCategoryCode of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND']) {
     const h = harness({ handoff: { prefillSnapshotJson: prefill({ incomeCategoryCode }) } });

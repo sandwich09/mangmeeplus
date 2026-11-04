@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, mock, after } from 'node:test';
 import { readFileSync } from 'node:fs';
 import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { SearchParamsContext, PathnameContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
 import { ToastContext } from '@/common/components/toast/use-toast';
@@ -490,4 +491,24 @@ test('WHT-OUTSIDE-2 recorded rows show an outside badge and the optional file in
     assert.match(html, /ทำนอกระบบ/);
     assert.equal((html.match(/>ดูไฟล์</g) ?? []).length, 2);
   } finally { view.cleanup(); }
+});
+
+
+test('PND2 handoff offers the supported next action and retains its label filter and URL', async () => {
+  const request = mock.method(taxApi, 'listWithholdingCertificates', async () => data());
+  const view = setup({ rows: [row({ formType: 'PND2', prefill: { ...row().prefill, formType: 'PND2' }, systemIssuanceOpen: false })] });
+  view.query.set('formType', 'PND2'); view.query.set('periodKey', '2026-10');
+  try {
+    const html = view.render(true); await view.settle();
+    assert.match(html, /ภ.ง.ด.2/); assert.doesNotMatch(html, /ยังไม่รู้แบบภาษี/);
+    assert.equal(request.mock.calls[0]!.arguments[1].formType, 'PND2');
+    const filter = view.find('SelectField', props => props.label === 'แบบภาษี');
+    assert.equal(filter.value, 'PND2');
+    assert.match(renderToStaticMarkup(filter.children), /value="PND2"/);
+    filter.onChange({ target: { value: 'PND2' } });
+    assert.match(view.replaced.at(-1)!, /formType=PND2/);
+    view.find('article').onClick();
+    assert.equal(view.pushed.at(-1), '/companies/co/expenses/expense-private?section=certificate');
+    assert.equal(view.nodes.some(node => node.tag === 'WhtIssueButton'), false);
+  } finally { request.mock.restore(); view.cleanup(); }
 });

@@ -53,6 +53,7 @@ export type TaxType = 'VAT' | 'WHT' | 'CIT' | 'CUSTOMS';
 
 export type VatFormType = 'PP30' | 'PP36';
 export type WhtFormType = 'PND3' | 'PND53';
+export type WhtHandoffFormType = 'PND2' | WhtFormType;
 export type CitFormType = 'PND50' | 'PND51';
 export type CustomsFormType = 'CUSTOMS_SUPPORT';
 export type TaxFormType = 'PND2' | VatFormType | WhtFormType | CitFormType | CustomsFormType;
@@ -473,7 +474,7 @@ export type WhtHandoffPrefillDto = {
   expenseTotals?: { grossAmount: string; withheldAmount: string };
   payerSnapshot: PayerSnapshot;
   payeeSnapshot: PayeeSnapshot;
-  formType: WhtFormType | null;
+  formType: WhtHandoffFormType | null;
   incomeCategoryCode: string | null;
   incomeCategoryName: string | null;
   whtRate: string | null;
@@ -561,7 +562,7 @@ export const WHT_HANDOFF_MISSING_LABELS: Record<WhtHandoffMissingReason, string>
 };
 
 export type WhtCertificateHandoffListRowDto = WhtCertificateHandoffDto & {
-  formType: WhtFormType | null;
+  formType: WhtHandoffFormType | null;
   matchedPreviousNumber: string | null;
   expenseDescription: string | null;
   payeeName: string;
@@ -577,7 +578,7 @@ export type WhtCertificateHandoffListRowDto = WhtCertificateHandoffDto & {
 
 export type WhtCertificateHandoffListQuery = {
   status?: string; branchId?: string; sourcePaymentId?: string;
-  periodKey?: string; formType?: string; search?: string;
+  periodKey?: string; formType?: WhtHandoffFormType; search?: string;
   page?: number; pageSize?: number; order?: 'newest' | 'oldest';
 };
 

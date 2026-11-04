@@ -21,7 +21,7 @@ import type {
   SetWhtHandoffPayeeAddressDto as SetWhtHandoffPayeeAddressContract,
   UpdateCompanyTaxSignatureDto as UpdateCompanyTaxSignatureContract,
   WhtCertificateCorrectionInput as WhtCertificateCorrectionInputContract,
-  WhtFormType,
+  WhtFormType, WhtHandoffFormType,
 } from '@watchdog-bms/contracts';
 import { WHT_HANDOFF_PAYEE_ADDRESS_MAX } from '@watchdog-bms/contracts';
 import { WHT_LINK_ISSUED_DATE, WHT_LINK_LIMITS } from '../../domain/logic/wht-link-evidence.logic';
@@ -34,7 +34,7 @@ export class WhtCertificateHandoffListQueryDto {
   @IsOptional() @IsString() pageSize?: string;
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() periodKey?: string;
-  @IsOptional() @IsString() formType?: string;
+  @IsOptional() @IsString() formType?: WhtHandoffFormType;
   @IsOptional() @IsIn(['newest', 'oldest']) order?: 'newest' | 'oldest';
 }
 

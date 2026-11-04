@@ -1,3 +1,4 @@
+import { withholdingFormFor } from '../../tax/domain/logic/expense-payment-withholding.logic';
 import type { SetExpenseCategoryAccountantAccountInput } from '@watchdog-bms/contracts';
 import { readExpenseHistoryChanges } from '../domain/logic/expense-history.logic';
 import { hasExpenseCategory } from '@watchdog-bms/contracts';
@@ -5070,7 +5071,7 @@ async function createWhtHandoffForExpense(tx: any, input: {
   const grossAmount = expenseWhtIncomeBase(expense);
   const [company, category] = await Promise.all([
     tx.company.findUnique({ where: { id: companyId }, select: { name: true, registeredName: true, taxId: true, addressJson: true } }),
-    expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true } }) : Promise.resolve(null),
+    expense.whtCategoryCode ? tx.whtIncomeCategory.findUnique({ where: { code: expense.whtCategoryCode }, select: { nameTh: true, filingRoute: true } }) : Promise.resolve(null),
   ]);
   const payerBranch = await withholdingPayerPrefill(tx, companyId, expense.expenseDate.toISOString().slice(0, 7), expense.branchId, company?.addressJson);
   const prefill = {
@@ -5086,10 +5087,7 @@ async function createWhtHandoffForExpense(tx: any, input: {
       address: expense.vendorAddressSnapshot ?? null,
       branchCode: expense.vendorBranchCodeSnapshot ?? null,
     },
-    // Same RD-form mapping rule as the AP side (spec §6) — BuyerEntityKind uses 'JURISTIC', not
-    // supplierType's 'JURISTIC_PERSON', but the certificate meaning is identical.
-    formType: expense.vendorEntityKindSnapshot === 'JURISTIC' ? 'PND53'
-      : expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : null,
+    formType: withholdingFormFor(expense.vendorEntityKindSnapshot, category?.filingRoute),
     incomeCategoryCode: expense.whtCategoryCode ?? null,
     incomeCategoryName: category?.nameTh ?? null,
     whtRate,

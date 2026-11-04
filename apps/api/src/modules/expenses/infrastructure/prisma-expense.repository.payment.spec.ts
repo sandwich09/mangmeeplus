@@ -55,7 +55,7 @@ function expense(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function harness(overrides: Record<string, unknown> = {}) {
+function harness(overrides: Record<string, unknown> = {}, filingRoute = 'SYSTEM_FILLS') {
   const state = { filedSourceIds: ['expense-1'], files: [] as any[], links: [] as any[], vouchers: [] as any[], voucherLines: [] as any[], expense: expense(overrides), payments: [] as any[], journals: [] as any[], handoffs: [] as any[], taxEvents: [] as any[], certificates: [] as any[], taxPeriods: [] as any[], accountingPeriod: null as any, claim: null as any, certificateHistory: [] as any[], audits: [] as any[], events: [] as any[] };
   let forceCasFailure = false;
   let failingWrite: 'audit' | 'outbox' | undefined;
@@ -98,7 +98,7 @@ function harness(overrides: Record<string, unknown> = {}) {
         company: { findUnique: async () => ({ name: 'ร้านทดสอบ', taxId: '1234567890123' }) },
         branch: { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [] },
         whtPayerModeFact: { findMany: async () => [] },
-        whtIncomeCategory: { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) },
+        whtIncomeCategory: { findUnique: async () => ({ nameTh: 'ค่าบริการ', filingRoute }) },
         documentNumber: { findFirst: async () => null },
         accountingPeriod: { findUnique: async () => draft.accountingPeriod },
         taxPeriod: { findMany: async ({ where }: any) => draft.taxPeriods.filter(row => {
@@ -1670,7 +1670,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
       if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
       const handoffs = useCases().handoffs;
       for (const status of statuses) {
-        const query = { status, periodKey: '2026-07', formType: 'PND53', search: 'ผู้รับเงิน', pageSize: 1 };
+        const query = { status, periodKey: '2026-07', formType: 'PND53' as const, search: 'ผู้รับเงิน', pageSize: 1 };
         const first = await handoffs.listPaged(branchActor(), query);
         const second = await handoffs.listPaged(branchActor(), { ...query, page: 2 });
         const expected = catalog.filter(row => !row.label.startsWith('B-') && row.label !== 'STALE-VOID' && row.handoff.status === status);
@@ -1679,7 +1679,7 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
         assert.equal(first.rows.length, 1);
         assert.notEqual(first.rows[0].id, second.rows[0].id);
       }
-      for (const query of [{ periodKey: '2026-08' }, { formType: 'PND3' }, { branchId: branchB }, { search: 'not-present' }]) {
+      for (const query of [{ periodKey: '2026-08' }, { formType: 'PND3' as const }, { branchId: branchB }, { search: 'not-present' }]) {
         assert.deepEqual((await handoffs.listPaged(branchActor(), query)).sums, { withheld: '0.00' });
       }
       const system = catalog.find(row => row.label === 'A-SYSTEM_ISSUED')!;
@@ -3028,6 +3028,19 @@ describe('A2 reopen cancels the expense certificate', () => {
   });
 });
 
+describe('separate PND2 expense handoff prefill', () => {
+  it('uses the category filing route for an individual handoff when confirming', async () => {
+    const h = harness({ status: 'READY_FOR_CONFIRMATION', expenseNumber: 'EXP-PND2', whtAmount: '1', whtRate: '1',
+      whtCategoryCode: 'WHT_INTEREST', taxableAmount: '100', grandTotalAmount: '100', netPayableAmount: '99', outstandingAmount: '99',
+      vendorEntityKindSnapshot: 'INDIVIDUAL', vendorNameSnapshot: 'ผู้รับเงิน' }, 'SEPARATE_PND2');
+    h.state.handoffs.push({ id: 'handoff-pnd2', companyId: 'company-1', creationCommandId: 'wht-cert:company-1:expense.record:expense-1',
+      status: 'CANCELLED', prefillSnapshotJson: { payeeSnapshot: { name: 'ผู้รับเงิน' } } });
+    await h.repo.confirmExpenseCas({ companyId: 'company-1', id: 'expense-1', actorUserId: 'user-1', expectedUpdatedAt: VERSION,
+      expenseNumber: 'EXP-PND2', postingStatus: 'not_required', vendorSnapshotJson: null, outboxEvent: { eventKey: 'confirm-pnd2', payloadJson: {} } });
+    assert.equal(h.state.handoffs[0].prefillSnapshotJson.formType, 'PND2');
+  });
+});
+
 describe('frozen withholding papers (real PostgreSQL)', () => {
   const required = process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES === 'true';
   const companyId = `wht-filing-pg-${randomUUID()}`;
@@ -3058,6 +3071,35 @@ describe('frozen withholding papers (real PostgreSQL)', () => {
         await client.company.delete({ where: { id: companyId } });
       }
     } finally { await client.$disconnect(); }
+  });
+  it('individual separate-PND2 handoff retains its filing route', async t => {
+    if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
+    // This confirmation and projection get their own tenant, as the R10 frozen-paper case does.
+    const own = `pnd2-handoff-pg-${randomUUID()}`, categoryCode = `PND2_${randomUUID()}`;
+    await client!.company.create({ data: { id: own, name: 'Synthetic separate PND2' } });
+    await client!.whtIncomeCategory.create({ data: { code: categoryCode, nameTh: 'เงินได้แยก ภ.ง.ด.2', formType: 'PND2', filingRoute: 'SEPARATE_PND2', defaultRate: '1', status: 'ACTIVE' } });
+    try {
+      const expense = await client!.expenseRecord.create({ data: { companyId: own, status: 'READY_FOR_CONFIRMATION', expenseNumber: 'EXP-PND2',
+        expenseDate: new Date('2026-09-10'), createdByUserId: 'synthetic-actor', vendorEntityKindSnapshot: 'INDIVIDUAL',
+        vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '1100700000001', vendorAddressSnapshot: 'กรุงเทพมหานคร',
+        whtCategoryCode: categoryCode, whtAmount: '10', whtRate: '1', taxableAmount: '1000', grandTotalAmount: '1000', netPayableAmount: '990', outstandingAmount: '990' } });
+      await new PrismaExpenseRepository({ client } as any).confirmExpenseCas({ companyId: own, id: expense.id, actorUserId: 'synthetic-actor',
+        expectedUpdatedAt: expense.updatedAt, expenseNumber: 'EXP-PND2', postingStatus: 'not_required', vendorSnapshotJson: null,
+        outboxEvent: { eventKey: `${own}:confirmed`, payloadJson: {} } });
+      const handoff = await client!.whtCertificateHandoff.findFirstOrThrow({ where: { companyId: own, sourcePaymentId: expense.id } });
+      assert.equal((handoff.prefillSnapshotJson as any).formType, 'PND2');
+      assert.equal(handoff.status, 'REQUIRED'); assert.equal(handoff.certificateId, null);
+      await client!.expensePayment.create({ data: { companyId: own, expenseId: expense.id, amount: '990', paidAt: new Date('2026-09-10'), paidAtConfirmed: true, createdByUserId: 'synthetic-actor' } });
+      const projection = await new ExpenseSourceAdapter({ client } as any).findConfirmedWithWhtByCompany(own);
+      assert.equal(projection.length, 1); assert.equal(projection[0]!.incomeCategoryCode, categoryCode);
+      const read = await new WhtCertificateHandoffUseCase(new PrismaTaxRepository({ client } as any), {} as any,
+        { assertLaunchRouteOpen: async () => undefined } as any, {} as any).list({ companyId: own, userId: 'synthetic-actor', permissions: ['expense.read'], scopes: {} } as any, { formType: 'PND2' });
+      assert.equal(read.length, 1); assert.equal(read[0]!.systemIssuanceOpen, false);
+    } finally {
+      await client!.outboxEvent.deleteMany({ where: { companyId: own } });
+      await client!.company.delete({ where: { id: own } });
+      await client!.whtIncomeCategory.delete({ where: { code: categoryCode } });
+    }
   });
   it('MONEY-T1 persisted certificate and filing payments share the withheld-line income and captured rate', async t => {
     if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }

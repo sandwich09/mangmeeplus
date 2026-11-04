@@ -2976,3 +2976,92 @@ it('credit X2: semantic cached prefix is identical across tenants while the last
     assert.equal(payload.conversationContext.recentTurns[0].userMessagePreview.endsWith('11'), true);
   }
 });
+
+
+describe('PWS-PND53-DUE selected help card', () => {
+  for (const access of ['allowed', 'permission-denied', 'feature-denied', 'free-drafts'] as const) it(`answers the date or preserves the refusal without a model call: ${access}`, async () => {
+    const req = { ...makeReq('ภงด.53 ต้องยื่นเมื่อไหร่'), approvedKnowledge: true, selectedKnowledgeCardIds: ['wht.pnd53-due'],
+      semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'ภงด.53 ต้องยื่นเมื่อไหร่', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+    req.userContext.permissions = access === 'permission-denied' ? ['ai.tool.invoke', 'wht.certificate.read'] : access === 'free-drafts' ? ['expense.read_own'] : ['ai.tool.invoke', 'wht.pnd53.read'];
+    req.entitledFeatureKeys = access === 'feature-denied' ? ['wht_50bis'] : access === 'free-drafts' ? ['expenses'] : ['wht_pnd53'];
+    const expected = productHelpAction({ selectedKnowledgeCardIds: req.selectedKnowledgeCardIds, permissions: req.userContext.permissions,
+      featureKeys: req.entitledFeatureKeys, companyId: req.userContext.companyId, packageOffers: req.packageOffers })!;
+    const message = 'ภ.ง.ด.53 ของเดือนตุลาคม 2569 ต้องยื่นภายใน 9 พ.ย. 2569 ค่ะ';
+    let reads = 0;
+    const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false,
+      provider: { generateText: async () => assert.fail('selected due-date card needs no model call') },
+      invoke: async (meta, ctx, args) => {
+        reads++; assert.equal(meta.name, 'wht.get_month_summary'); assert.deepEqual(args, { dueDateOnly: true });
+        assert.equal(ctx.companyId, req.userContext.companyId); assert.equal(ctx.groundingText, req.messageText);
+        return { toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data: { periodKey: '2026-10', dueDate: '2026-11-09', message },
+          sourceRefs: [{ module: 'tax', entityType: 'advisor_document_read', label: 'ภ.ง.ด.53', permissionChecked: true, webPath: '/companies/company-1/tax/pnd53' }] };
+      } });
+    assert.equal(reads, access === 'allowed' ? 1 : 0);
+    const override = scopePolicyOverride(req.messageText, 'help', req.userContext.permissions, req.entitledFeatureKeys, 'th', undefined, req.packageOffers);
+    assert.equal(result.replyText, access === 'allowed' ? message : override?.text ?? expected.replyText);
+    if (override) assert.ok(result.webLinks.length, 'the unchanged scope refusal retains its way out');
+    else {
+      assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+      if (access !== 'allowed') assert.deepEqual(result.presentation, expected.presentation);
+      else assert.equal(result.sourceRefs[0]?.permissionChecked, true);
+    }
+  });
+});
+
+
+it('PWS-PND53-DUE legacy help route reads the date without adding a composition call', async () => {
+  const req = { ...makeReq('ภงด.53 ต้องยื่นเมื่อไหร่'), approvedKnowledge: true, selectedKnowledgeCardIds: ['wht.pnd53-due'], entitledFeatureKeys: ['wht_pnd53'] };
+  req.userContext.permissions = ['wht.pnd53.read'];
+  let modelCalls = 0, reads = 0;
+  globalThis.fetch = async () => {
+    modelCalls++; assert.equal(modelCalls, 1, 'only the existing route selection call');
+    return jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({
+      status: 'ROUTABLE', language: 'th', selectedKnowledgeCardIds: ['wht.pnd53-due'], refusals: [], requiresHumanReview: false,
+      intents: [{ intent: 'capability_help', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }],
+    }) }) });
+  };
+  const message = 'ภ.ง.ด.53 ของเดือนตุลาคม 2569 ต้องยื่นภายใน 7 พ.ย. 2569 ค่ะ';
+  const result = await new OrchestratorAgent({ invoke: async (meta: any, ctx: any, args: any) => {
+    reads++; assert.equal(meta.name, 'wht.get_month_summary'); assert.deepEqual(args, { dueDateOnly: true });
+    assert.equal(ctx.groundingText, req.messageText);
+    return { toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data: { message },
+      sourceRefs: [{ module: 'tax', entityType: 'advisor_document_read', label: 'ภ.ง.ด.53', permissionChecked: true }] };
+  } } as any, makeConfig()).run(req);
+  assert.equal(modelCalls, 1); assert.equal(reads, 1); assert.equal(result.replyText, message);
+  assert.equal(result.presentation?.cards[0]?.text, message); assert.equal(result.sourceRefs[0]?.permissionChecked, true);
+});
+
+for (const outcome of ['forbidden', 'unsupported_module', 'unavailable', 'throw'] as const) it(`PWS-PND53-DUE rechecks ERP access and gives a way out when the date read fails: ${outcome}`, async () => {
+  const req = { ...makeReq('ภงด.53 ต้องยื่นเมื่อไหร่'), approvedKnowledge: true, selectedKnowledgeCardIds: ['wht.pnd53-due'], entitledFeatureKeys: ['wht_pnd53'],
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: 'ภงด.53 ต้องยื่นเมื่อไหร่', requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  req.userContext.permissions = ['wht.pnd53.read'];
+  const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false,
+    provider: { generateText: async () => assert.fail('no model retry') },
+    invoke: async meta => {
+      if (outcome === 'throw') throw new Error('offline');
+      return { toolName: meta.name, status: outcome, asOf: '2026-11-04T00:00:00Z', sourceRefs: [] };
+    } });
+  assert.doesNotMatch(result.replyText, /ต้องยื่นภายใน|2569|2026/);
+  assert.match(result.replyText, /ไม่มีสิทธิ์|แพ็กเกจ|ลองอีกครั้ง/);
+  const card = result.presentation?.cards[0];
+  assert.ok(card?.webLink || card?.chatActionId, 'the refusal or retry retains an action');
+});
+
+
+it('PWS-PND53-DUE English selected card keeps the language and single-use delegation path', async () => {
+  const text = 'when is PND53 for October 2026 due?';
+  const req = { ...makeReq(text), approvedKnowledge: true, selectedKnowledgeCardIds: ['wht.pnd53-due'], entitledFeatureKeys: ['wht_pnd53'],
+    actorDelegations: { 'wht.get_month_summary': ['single-use-pnd53'] },
+    semanticSubrequests: [{ index: 0, kind: 'help' as const, goal: text, requiredEvidence: [], requestedFilters: {}, evidenceRefs: [], dependsOn: [] }] };
+  req.userContext.permissions = ['ai.tool.invoke', 'wht.pnd53.read'];
+  const message = 'PND53 for October 2026 is due by 7 Nov 2026.';
+  const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false,
+    provider: { generateText: async () => assert.fail('no model translation call') },
+    invoke: async (meta, ctx, args) => {
+      assert.equal(meta.name, 'wht.get_month_summary'); assert.deepEqual(args, { dueDateOnly: true });
+      assert.equal(ctx.locale, 'en-GB'); assert.equal(ctx.groundingText, text); assert.equal(ctx.actorDelegations, req.actorDelegations);
+      return { toolName: meta.name, status: 'ok', asOf: '2026-11-04T00:00:00Z', data: { message },
+        sourceRefs: [{ module: 'tax', entityType: 'advisor_document_read', label: 'PND53', permissionChecked: true }] };
+    } });
+  assert.equal(result.replyText, message); assert.equal(result.presentation?.cards[0]?.text, message);
+});

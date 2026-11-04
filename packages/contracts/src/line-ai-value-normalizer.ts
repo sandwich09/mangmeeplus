@@ -1590,6 +1590,7 @@ export function resolvePeriodCandidates(
   todayIso: string,
   dates: LineAiDateCandidate[] = [],
   scan?: CandidateScan,
+  options: { allowFuture?: boolean } = {},
 ): LineAiPeriodCandidate[] {
   if (!CIVIL_DATE_PATTERN.test(todayIso)) return [];
   const mapped = mapThaiDigits(text);
@@ -1598,8 +1599,8 @@ export function resolvePeriodCandidates(
   const out: LineAiPeriodCandidate[] = [];
 
   const push = (span: string, reading: PeriodReading, start: number, end: number): void => {
-    if (reading.fromDate > todayIso) return; // wholly future: there is nothing to read
-    const clamped = reading.toDate > todayIso;
+    if (!options.allowFuture && reading.fromDate > todayIso) return; // ordinary reads have no future data
+    const clamped = !options.allowFuture && reading.toDate > todayIso;
     const toDate = clamped ? todayIso : reading.toDate;
     const assumptions = clamped ? [...reading.assumptions, PERIOD_ASSUMPTIONS.clampedToToday] : reading.assumptions;
     const range = formatThaiPeriodRange(reading.fromDate, toDate);

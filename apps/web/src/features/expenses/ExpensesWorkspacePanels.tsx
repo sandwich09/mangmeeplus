@@ -1,10 +1,13 @@
 'use client';
 
+import { AccountingExportFormatSelect, AccountingExportFeedback, type AccountingExportFormat } from './AccountingExportControls';
+import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
+import type { AccountingSoftwareExportResult, SharedEvidenceFilter } from '@watchdog-bms/contracts';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { IMAGE_SOURCE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
 
-import { useState, useEffect, useCallback, useRef, type MouseEventHandler, type ReactNode } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef, type MouseEventHandler, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { FilterTabs } from '@/common/components/tabs';
@@ -14,7 +17,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { EmptyState, ErrorState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
 import {
-  listManageCategories, createExpenseCategory, updateExpenseCategory,
+  listManageCategories, createExpenseCategory, updateExpenseCategory, setCategoryAccountantAccount, clearCategoryAccountantAccount, createAccountingSoftwareExport, downloadAccountingSoftwareExport,
   listSignatureAssets, initSignatureUpload, createSignatureAsset,
   archiveSignatureAsset, setSignatureDerivedAsset, uploadReceiptFile,
   getSharedEvidence, createAccountantPackage, downloadIndexXlsx,
@@ -104,7 +107,7 @@ export function IconBtn({ title, tone, disabled, loading = false, onClick, child
 }
 
 // ── Category management ───────────────────────────────────────────────────────
-export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreateOpenChange: setShowCreate }: { companyId: string; createOpen: boolean; onCreateOpenChange: (open: boolean) => void }) {
+export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreateOpenChange: setShowCreate, freeExpenseDrafts = false }: { companyId: string; createOpen: boolean; onCreateOpenChange: (open: boolean) => void; freeExpenseDrafts?: boolean }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   // Company-level screen with no document date, so the policy is read for today.
@@ -126,11 +129,14 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
   const [editId, setEditId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const loadRequest = useRef(0);
+  const [accountDrafts, setAccountDrafts] = useState<Record<string, { accountCode: string; accountName: string }>>({});
+  const [accountErrors, setAccountErrors] = useState<Record<string, boolean>>({});
 
   // `keepVisible` for the refresh that follows a write: `loading` swaps the whole table for the
   // spinner, so re-reading the list after one selection unmounted all eighteen rows and remounted
   // them, which is the jump users see. Only the first load has nothing to keep on screen.
   const load = useCallback(async (keepVisible = false) => {
+    if (freeExpenseDrafts) return;
     const request = ++loadRequest.current;
     if (!keepVisible) setLoading(true);
     setError(null);
@@ -140,10 +146,10 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
     }
     catch (e) { if (request === loadRequest.current) setError(err(e)); }
     finally { if (request === loadRequest.current) setLoading(false); }
-  }, [companyId]);
+  }, [companyId, freeExpenseDrafts]);
   useEffect(() => { void load(); return () => { loadRequest.current++; }; }, [load]);
   useEffect(() => {
-    if (!showsTax) return;
+    if (!showsTax || freeExpenseDrafts) return;
     let cancelled = false;
     listTaxCodeDefinitions(companyId, { transactionContext: 'DOMESTIC_PURCHASE', sourceType: 'expense.record' })
       .then((items) => {
@@ -158,7 +164,7 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
       // legal acceptance (403 legal_acceptance_required) reaches here exactly that way.
       .catch((cause) => { if (!cancelled) { setTaxCodes([]); setActionError(err(cause)); } });
     return () => { cancelled = true; };
-  }, [companyId, showsTax]);
+  }, [companyId, showsTax, freeExpenseDrafts]);
 
   // The page header opens the dialog; each opening starts without the last refusal.
   useEffect(() => { if (showCreate) setCreateError(null); }, [showCreate]);
@@ -225,11 +231,52 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
       {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
     </ThemedSelect>
   );
+  const saveAccount = async (category: ExpenseCategorySummary) => {
+    if (updating || freeExpenseDrafts) return;
+    const draft = accountDrafts[category.id] ?? category.accountantAccount ?? { accountCode: '', accountName: '' };
+    const input = { accountCode: draft.accountCode.trim(), accountName: draft.accountName.trim() };
+    if (Boolean(input.accountCode) !== Boolean(input.accountName)) return;
+    if (input.accountCode === (category.accountantAccount?.accountCode ?? '') && input.accountName === (category.accountantAccount?.accountName ?? '')) return;
+    const version = loadRequest.current;
+    setUpdatingId(category.id); setAccountErrors(previous => ({ ...previous, [category.id]: false }));
+    try {
+      if (input.accountCode) await setCategoryAccountantAccount(companyId, category.id, input);
+      else await clearCategoryAccountantAccount(companyId, category.id);
+      if (version !== loadRequest.current) return;
+      setCategories(previous => previous.map(row => row.id === category.id ? { ...row, accountantAccount: input.accountCode ? input : null } : row));
+      setAccountDrafts(previous => ({ ...previous, [category.id]: input }));
+      toast.success('บันทึกแล้ว');
+    } catch { if (version === loadRequest.current) setAccountErrors(previous => ({ ...previous, [category.id]: true })); }
+    finally { if (version === loadRequest.current) setUpdatingId(null); }
+  };
+  const accountFields = (category: ExpenseCategorySummary) => {
+    const value = accountDrafts[category.id] ?? category.accountantAccount ?? { accountCode: '', accountName: '' };
+    return <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[8rem_minmax(0,1fr)]">
+        {(['accountCode', 'accountName'] as const).map(field => <label key={field} className="block min-w-0 space-y-1">
+          <span className="block text-sm text-gray-700 sm:sr-only">{t(field === 'accountCode' ? 'expenses.category_account_code' : 'expenses.category_account_name', locale)}</span>
+          <input className={`${inputClass} w-full`} aria-label={`${t(field === 'accountCode' ? 'expenses.category_account_code' : 'expenses.category_account_name', locale)} ${category.name}`}
+            maxLength={field === 'accountCode' ? 20 : 120} value={value[field]} disabled={updating}
+            onChange={event => { setAccountDrafts(previous => ({ ...previous, [category.id]: { ...value, [field]: event.target.value } })); setAccountErrors(previous => ({ ...previous, [category.id]: false })); }}
+            onBlur={field === 'accountName' ? () => void saveAccount(category) : undefined} />
+        </label>)}
+      </div>
+      {updatingId === category.id && <p className="text-sm text-gray-500" role="status">{t('expenses.saving', locale)}</p>}
+      {accountErrors[category.id] && <div className="space-y-2" role="alert"><p>{t('expenses.category_account_failed', locale)}</p>
+        <ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => void saveAccount(category)} disabled={updating} aria-busy={updating}>{t('expenses.export_retry', locale)}</button></ActionGroup>
+      </div>}
+    </div>;
+  };
+  const orderedCategories = [...categories.filter(category => !category.referencedOnly), ...categories.filter(category => category.referencedOnly)];
+  const firstHistorical = orderedCategories.find(category => category.referencedOnly)?.id;
+  if (freeExpenseDrafts) return <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>กลับไปรายการค่าใช้จ่าย</Link>;
+
   // No controls on a built-in row already says it cannot be changed; the note only says where it came from.
   const builtInNote = <span className="text-sm text-gray-500">มากับระบบ</span>;
 
   return (
     <div>
+      <p className="mb-3 text-sm text-gray-600">{t('expenses.category_account_hint', locale)}</p>
       <MangmeeCard className="overflow-hidden">
         {actionError && !editTarget && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
         {error ? <ErrorState description={error} onRetry={() => void load()} /> : loading ? (
@@ -241,40 +288,42 @@ export function CategoryManagePanel({ companyId, createOpen: showCreate, onCreat
                 the row's buttons off the screen (2026-10-13). */}
             <ul className="divide-y divide-gray-100 sm:hidden" data-category-rows>
               {categories.length === 0 && <li className="px-4 py-8 text-center text-sm text-gray-500">ยังไม่มีหมวดหมู่</li>}
-              {categories.map((c) => {
-                const owned = !!c.companyId;
+              {orderedCategories.map((c) => {
+                const owned = !!c.companyId && !c.referencedOnly;
                 return (
-                  <li key={c.id} className={cx('space-y-2 px-4 py-3', c.status !== 'ACTIVE' && 'opacity-60')}>
+                  <Fragment key={c.id}>{c.id === firstHistorical && <li className="px-4 py-3 font-semibold">{t('expenses.category_historical', locale)}</li>}<li className={cx('space-y-2 px-4 py-3', c.status !== 'ACTIVE' && 'opacity-60')}>
                     <div className="min-w-0 flex-1 font-semibold text-gray-900">{c.name}</div>
                     {showsTax && owned && <div>{taxCodeSelect(c)}</div>}
+                    {accountFields(c)}
                     {owned ? (
                       <div className="flex items-center justify-between gap-3">
                         <button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button>
                         {switchWithWord(c)}
                       </div>
                     ) : <div>{builtInNote}</div>}
-                  </li>
+                  </li></Fragment>
                 );
               })}
             </ul>
             <div className="mangmee-table-scroll hidden sm:block">
               <table className="mangmee-table">
-                <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), 'ใช้งาน', ''].map((h) => <th key={h} className={cx('!text-[13px]', h === 'ใช้งาน' && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+                <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), t('expenses.category_account_code', locale), t('expenses.category_account_name', locale), 'ใช้งาน', ''].map((h) => <th key={h} className={cx('!text-[13px]', h === 'ใช้งาน' && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {categories.length === 0 && <tr><td colSpan={showsTax ? 4 : 3} className="py-8 text-center text-gray-500">ยังไม่มีหมวดหมู่</td></tr>}
-                  {categories.map((c) => {
-                    const owned = !!c.companyId;
+                  {categories.length === 0 && <tr><td colSpan={showsTax ? 6 : 5} className="py-8 text-center text-gray-500">ยังไม่มีหมวดหมู่</td></tr>}
+                  {orderedCategories.map((c) => {
+                    const owned = !!c.companyId && !c.referencedOnly;
                     return (
-                      <tr key={c.id} className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
+                      <Fragment key={c.id}>{c.id === firstHistorical && <tr><th colSpan={showsTax ? 6 : 5}>{t('expenses.category_historical', locale)}</th></tr>}<tr className={c.status === 'ACTIVE' ? '' : 'opacity-60'}>
                         <td className="font-semibold text-gray-900">{c.name}</td>
                         {showsTax && <td className="whitespace-nowrap text-sm">
                           {owned ? taxCodeSelect(c) : <span className="text-gray-500">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รหัสภาษีเดิม' : 'ไม่กำหนด'}</span>}
                         </td>}
+                        <td colSpan={2}>{accountFields(c)}</td>
                         {owned ? <>
                           <td className="whitespace-nowrap">{switchWithWord(c)}</td>
                           <td className="w-px whitespace-nowrap text-right"><button type="button" className={ghostClass} onClick={() => openRename(c)}>แก้ชื่อ</button></td>
                         </> : <td colSpan={2} className="whitespace-nowrap">{builtInNote}</td>}
-                      </tr>
+                      </tr></Fragment>
                     );
                   })}
                 </tbody>
@@ -682,9 +731,10 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   );
 }
 // ── Accountant shared evidence + export package ───────────────────────────────
-export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false }: {
+export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false, freeExpenseDrafts = false }: {
   companyId: string;
   canExport: boolean;
+  freeExpenseDrafts?: boolean;
   canReadLedger: boolean;
   canPostLedger: boolean;
   /** May post to the ledger AND read the claim payout worklist (`reimbursement.finance_review`). */
@@ -721,10 +771,14 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const setPage = (page: number) => update({ page });
   const [packageResult, setPackageResult] = useState<AccountantPackageResult | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [exportEmpty, setExportEmpty] = useState(false);
   const [backfillPreview, setBackfillPreview] = useState<ExpenseBackfillPreview | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  const locale = useWorkspaceLocale();
+  const [softwareResult, setSoftwareResult] = useState<AccountingSoftwareExportResult | null>(null);
+  const [exportFormat, setExportFormat] = useMenuFilterState<AccountingExportFormat>('expenses.export.format', () => 'accountant');
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportEmpty, setExportEmpty] = useState(false);
 
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
@@ -759,14 +813,20 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     exportScopeVersion.current += 1;
-    setPackageResult(null); setExportEmpty(false);
-  }, [branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter]);
+    setPackageResult(null); setSoftwareResult(null); setExportError(null); setExportEmpty(false);
+  }, [branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter, exportFormat]);
 
-  const exportPackage = async () => {
+  const exportPackage = async (forceAccountant = false) => {
+    if (exporting || freeExpenseDrafts || !canExport) return;
     const version = loadVersion.current;
     const scopeVersion = exportScopeVersion.current;
-    setExporting(true); setError(null); setExportEmpty(false); setPackageResult(null);
+    setExporting(true); setExportError(null); setSoftwareResult(null); setExportEmpty(false); setPackageResult(null);
     try {
+      if (exportFormat === 'purchase_journal' && !forceAccountant) {
+        const result = await createAccountingSoftwareExport(companyId, { ...(exportFilters as SharedEvidenceFilter), preset: 'purchase_journal' });
+        if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
+        setSoftwareResult(result); downloadAccountingSoftwareExport(result); return;
+      }
       const result = await createAccountantPackage(companyId, exportFilters);
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       if (result.rowCount + (result.paymentRowCount ?? 0) + (result.withholdingRowCount ?? 0) === 0) { setExportEmpty(true); return; }
@@ -777,7 +837,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
     } catch (e) {
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
-      setError(err(e));
+      setExportError(err(e));
     }
     finally { setExporting(false); }
   };
@@ -897,14 +957,23 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
 
           {/* The export: one line says what the file holds (the filters above say which month), and the result is said right here.
               A download can be repeated and undone by deleting a file, so it asks nothing first. */}
-          {canExport && !error && (
+          {canExport && !freeExpenseDrafts && !error && (
             <MangmeeCard className="space-y-3 p-4">
+              <div className="w-full sm:w-72"><AccountingExportFormatSelect value={exportFormat} disabled={exporting} onChange={setExportFormat} /></div>
               <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])}
                 excelAction={<button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting || loading} aria-busy={Boolean(exporting || loading)}>{exporting ? 'กำลังสร้าง...' : 'ดาวน์โหลด Excel'}</button>} />
               {exportEmpty && <div className="space-y-2">
                 <p role="status" className="text-sm text-gray-700">ไม่มีรายการตามที่เลือก</p>
                 <button type="button" className={ghostClass} onClick={() => document.getElementById('evidence-export-month')?.focus()}>เปลี่ยนช่วงวันที่</button>
               </div>}
+              {exportError && <div className="space-y-2"><ErrorBanner message={exportError} />
+                <ActionGroup align="start">
+                  <button type="button" className={ghostClass} onClick={() => setDocumentStatus('CONFIRMED')}>{t('expenses.export_view_confirmed', locale)}</button>
+                  <button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting} aria-busy={exporting}>{t('expenses.export_retry', locale)}</button>
+                </ActionGroup>
+              </div>}
+              {exportFormat === 'purchase_journal' && documentStatus !== 'CONFIRMED' && !exportError && <div className="space-y-2"><p className="text-sm">{t('expenses.export_confirmed_only', locale)}</p><ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => setDocumentStatus('CONFIRMED')}>{t('expenses.export_view_confirmed', locale)}</button></ActionGroup></div>}
+              {softwareResult && <AccountingExportFeedback result={softwareResult} busy={exporting} onFallback={() => void exportPackage(true)} onChangeDates={() => document.getElementById('evidence-export-month')?.focus()} />}
               {exportAttentionCount > 0 && <p className="text-sm text-gray-500">มี {exportAttentionCount} รายการต้องแก้ ดาวน์โหลดได้ แต่ควรแก้ก่อนส่ง</p>}
               {packageResult && (
                 <div className="space-y-1 rounded-xl border border-brand-100 bg-brand-25 p-3 text-sm" role="status">

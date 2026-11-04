@@ -1,3 +1,5 @@
+import { buildPurchaseJournalRows, buildPurchaseJournalWorkbook } from '../../domain/logic/accounting-software-export.logic';
+import type { AccountingSoftwareExportRequest, AccountingSoftwareExportResult } from '@watchdog-bms/contracts';
 import { ExpenseSourceAdapter } from '../../../tax/infrastructure/adapters/expense-source.adapter';
 import { withholdingFormFor } from '../../../tax/domain/logic/expense-payment-withholding.logic';
 import { filedLineCoversPayment } from '../../../tax/application/services/withholding-filing-state';
@@ -5,7 +7,7 @@ import { withholdingRowFaults } from '../../../tax/application/services/withhold
 import { formPeriodKey, withholdingIssueDescription, makeReviewIssue } from '../../../tax/domain/logic/tax-period.logic';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 import { civilDayRangeToUtc, civilInstantDayRangeToUtc, expenseDocumentDateStatus, civilDate, expenseEvidenceAssessment, expenseEvidenceImageMissing, TAX_EVIDENCE_REASON_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
-import { Injectable, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException, Logger } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/use-cases/create-download-url.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -78,6 +80,28 @@ function legacyBundleFileName(folder: string, expenseNumber: string, extension: 
       : `${folder}/${bundleName(expenseNumber)}-${bundleName(options.id!)}`;
   return `${stem}.${extension ?? 'bin'}`;
 }
+
+async function readPackageRows(repo: PrismaExpenseRepository, prisma: PrismaService, ctx: RequestContext, request: AccountantPackageRequest, bundle = false) {
+    if (!hasPerm(ctx, 'expense.export')) throw new ForbiddenException('Missing permission: expense.export');
+    if (!hasPerm(ctx, 'expense.read')) throw new ForbiddenException('Missing permission: expense.read');
+    if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (!ctx.roles.includes('SYSTEM_ADMIN')) await assertExpenseFinancialAccess(ctx, prisma.client);
+    const filter = { ...request, status: request.status ?? 'CONFIRMED' as const, dateField: request.dateField ?? 'expenseDate' as const };
+    const pageSize = !bundle && request.pageSize && request.pageSize > 0 && request.pageSize <= 500 ? request.pageSize : 500;
+    // Keep unavailable metadata in both exports so an omitted file cannot renumber the ZIP links.
+    const page = await repo.listSharedEvidence(ctx.companyId, { ...filter, page: bundle ? 1 : request.page ?? 1, pageSize }, ctx.scopes, true);
+    // Explicit pagination remains available to existing consumers. The page exports the whole selection.
+    if (bundle || (request.page === undefined && request.pageSize === undefined)) {
+      let count = page.rows.length;
+      for (let next = 2; count === pageSize && page.rows.length < page.total; next += 1) {
+        const more = await repo.listSharedEvidence(ctx.companyId, { ...filter, page: next, pageSize }, ctx.scopes, true);
+        count = more.rows.length;
+        page.rows.push(...more.rows);
+      }
+    }
+    return page;
+  }
+
 
 /**
  * Accountant/auditor shared evidence view: DB-backed virtual year/month
@@ -454,29 +478,9 @@ export class CreateAccountantPackageUseCase {
       indexFileName: `รายจ่าย-${shop}-${period}.xlsx`, paymentRowCount: paymentRows.length, withholdingRowCount: withholding.length };
   }
 
-  private async readPackageRows(ctx: RequestContext, request: AccountantPackageRequest, bundle = false) {
-    if (!hasPerm(ctx, 'expense.export')) throw new ForbiddenException('Missing permission: expense.export');
-    if (!hasPerm(ctx, 'expense.read')) throw new ForbiddenException('Missing permission: expense.read');
-    if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    if (!ctx.roles.includes('SYSTEM_ADMIN')) await assertExpenseFinancialAccess(ctx, this.prisma.client);
-    const filter = { ...request, status: request.status ?? 'CONFIRMED' as const, dateField: request.dateField ?? 'expenseDate' as const };
-    const pageSize = !bundle && request.pageSize && request.pageSize > 0 && request.pageSize <= 500 ? request.pageSize : 500;
-    // Keep unavailable metadata in both exports so an omitted file cannot renumber the ZIP links.
-    const page = await this.repo.listSharedEvidence(ctx.companyId, { ...filter, page: bundle ? 1 : request.page ?? 1, pageSize }, ctx.scopes, true);
-    // Explicit pagination remains available to existing consumers. The page exports the whole selection.
-    if (bundle || (request.page === undefined && request.pageSize === undefined)) {
-      let count = page.rows.length;
-      for (let next = 2; count === pageSize && page.rows.length < page.total; next += 1) {
-        const more = await this.repo.listSharedEvidence(ctx.companyId, { ...filter, page: next, pageSize }, ctx.scopes, true);
-        count = more.rows.length;
-        page.rows.push(...more.rows);
-      }
-    }
-    return page;
-  }
 
   private async bundleContents(ctx: RequestContext, request: AccountantPackageRequest, bundle = true) {
-    const page = await this.readPackageRows(ctx, request, bundle);
+    const page = await readPackageRows(this.repo, this.prisma, ctx, request, bundle);
     const expenseIds = new Set(page.rows.map(row => row.id));
     const db = this.prisma.client;
     let from = request.fromDate, to = request.toDate;
@@ -658,5 +662,54 @@ export class CreateAccountantPackageUseCase {
       metadataJson: { workbook: 'accountant-v2', yearMonth: request.yearMonth ?? 'all', dateField: request.dateField ?? 'expenseDate', branchId: request.branchId ?? null, part, fileCount, skippedCount: skipped.length },
     });
     return { bytes, fileName: index.indexFileName!.replace(/^รายจ่าย-/, 'หลักฐาน-').replace(/\.xlsx$/, `${parts.length > 1 ? `-ชุดที่-${part}` : ''}.zip`) };
+  }
+}
+
+@Injectable()
+export class CreateAccountingSoftwareExportUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, request: AccountingSoftwareExportRequest): Promise<AccountingSoftwareExportResult> {
+    const status = request.status || 'CONFIRMED';
+    if (status !== 'CONFIRMED') throw new UnprocessableEntityException({ code: 'accounting_export_confirmed_only' });
+    const page = await readPackageRows(this.repo, this.prisma, ctx, { ...request, status });
+    const db = this.prisma.client, ids = page.rows.map(row => row.id);
+    const [lines, payments] = ids.length ? await Promise.all([
+      db.expenseLine.findMany({ where: { companyId: ctx.companyId, expenseId: { in: ids } }, orderBy: { lineNumber: 'asc' },
+        select: { expenseId: true, lineNumber: true, description: true, expenseCategoryId: true, taxableAmount: true, vatAmount: true, vatRate: true,
+          vatTreatment: true, whtAmount: true, whtRate: true, whtCategoryCode: true, chargeKind: true, claimabilitySnapshot: true,
+          taxEvidenceReviewStatus: true, externalTaxCodeSnapshot: true, taxTreatmentSnapshot: true, taxComponentsJson: true } }),
+      db.expensePayment.findMany({ where: { companyId: ctx.companyId, expenseId: { in: ids }, status: 'RECORDED' }, select: { expenseId: true, paidAt: true, paidAtConfirmed: true, status: true } }),
+    ]) : [[], []];
+    const categoryIds = [...new Set([...page.rows.flatMap(row => row.expenseCategoryId ? [row.expenseCategoryId] : []), ...lines.flatMap(line => line.expenseCategoryId ? [line.expenseCategoryId] : [])])];
+    const incomeCodes = [...new Set([...page.rows.flatMap(row => row.whtCategoryCode ? [row.whtCategoryCode] : []), ...lines.flatMap(line => line.whtCategoryCode ? [line.whtCategoryCode] : [])])];
+    const vendorIds = [...new Set(page.rows.flatMap(row => !row.vendorEntityKindSnapshot && row.vendorCounterpartyId ? [row.vendorCounterpartyId] : []))];
+    const [mappings, names, incomeCategories, vendors, company] = await Promise.all([
+      categoryIds.length ? this.repo.findCategoryAccountantAccounts(ctx.companyId, categoryIds) : [],
+      categoryIds.length ? this.repo.listCategoryNames(ctx.companyId, categoryIds) : [],
+      incomeCodes.length ? db.whtIncomeCategory.findMany({ where: { code: { in: incomeCodes } }, select: { code: true, nameTh: true, filingRoute: true } }) : [],
+      vendorIds.length ? db.accountingCounterparty.findMany({ where: { companyId: ctx.companyId, id: { in: vendorIds } }, select: { id: true, entityKind: true } }) : [],
+      db.company.findUnique({ where: { id: ctx.companyId }, select: { name: true, registeredName: true } }),
+    ]);
+    const categoryNames = new Map(names.map(category => [category.id, category.name]));
+    const built = buildPurchaseJournalRows(page.rows.map(row => {
+      const cert = row.evidenceSources?.certificates.slice().reverse().find(certificate => certificate.status === 'ISSUED');
+      return { ...row, vendorEntityKindSnapshot: row.vendorEntityKindSnapshot ?? vendors.find(vendor => vendor.id === row.vendorCounterpartyId)?.entityKind,
+        categoryName: categoryNames.get(row.expenseCategoryId ?? '') ?? row.categoryName,
+        lines: lines.filter(line => line.expenseId === row.id).map(line => ({ ...line, categoryName: categoryNames.get(line.expenseCategoryId ?? '') })),
+        payments: payments.filter(payment => payment.expenseId === row.id),
+        advancedBy: row.evidenceSources?.requesterName ?? (cert?.fundingSource === 'PERSONAL_ADVANCE' ? cert.payerName : '') };
+    }), new Map(mappings.map(mapping => [mapping.expenseCategoryId, mapping])), new Map(incomeCategories.map(category => [category.code, category])));
+    const range = accountantRange(request), period = request.yearMonth ?? (range.from || range.to ? `${range.from ?? ''}_${range.to ?? ''}` : 'ทุกเดือน');
+    const shop = company?.registeredName?.trim() || company?.name || 'ร้าน';
+    const files = built.rows.length ? [{ fileName: `สมุดรายวันซื้อ-${bundleName(shop).slice(0, 40)}-${period}.xlsx`,
+      xlsxBase64: buildPurchaseJournalWorkbook(built.rows, built.excluded, { ร้าน: shop, ช่วงวันที่: period }).toString('base64'), rowCount: built.rows.length }] : [];
+    const excludedByReason: Record<string, number> = {};
+    for (const entry of built.excluded) excludedByReason[entry.reason] = (excludedByReason[entry.reason] ?? 0) + 1;
+    void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.accounting_software_export.create',
+      targetType: 'expense_export', targetId: ctx.requestId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { preset: request.preset, documentCount: page.rows.length, rowCount: built.rows.length, excludedCount: built.excluded.length, excludedByReason } });
+    return { preset: request.preset, files, documentCount: page.rows.length, rowCount: built.rows.length, excluded: built.excluded,
+      paymentNotExported: [], unmappedCategories: built.unmappedCategories };
   }
 }

@@ -72,7 +72,7 @@ import {
 } from './application/use-cases/signature-asset.use-case';
 import {
   GetSharedEvidenceViewUseCase,
-  CreateAccountantPackageUseCase,
+  CreateAccountantPackageUseCase, CreateAccountingSoftwareExportUseCase,
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
 import { ExpenseCaptureController } from './presentation/http/expense-capture.controller';
@@ -237,7 +237,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     ListSignatureAssetsUseCase,
     GetSignatureImageUseCase,
     GetSharedEvidenceViewUseCase,
-    CreateAccountantPackageUseCase,
+    CreateAccountantPackageUseCase, CreateAccountingSoftwareExportUseCase,
   ],
   exports: [
     DisbursementVoucherUseCase,

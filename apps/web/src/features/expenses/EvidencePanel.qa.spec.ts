@@ -13,7 +13,7 @@ test('evidence export and totals use all filtered rows, not just the current pag
 test('changing any export filter clears old package results and ignores late export responses', () => {
   assert.match(source, /exportScopeVersion\.current \+= 1/);
   assert.match(source, /scopeVersion !== exportScopeVersion\.current/);
-  assert.match(source, /\[branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter\]/);
+  assert.match(source, /\[branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter, exportFormat\]/);
   assert.match(source, /สร้างเมื่อ \{formatThaiDateTime\(packageResult\.generatedAt\)\}/);
 });
 
@@ -48,6 +48,7 @@ test('the permission-gated export area makes the bundle primary, shows Excel bes
   assert.match(exportArea, /canExport &&/);
   assert.doesNotMatch(exportArea, /MoreActions/);
   assert.match(exportArea, /excelAction=/);
+  assert.match(exportArea, /<AccountingExportFormatSelect/);
   assert.doesNotMatch(exportArea, /ไฟล์ Excel สรุปรายการ/);
   assert.match(exportArea, /EvidenceBundleDownload accountant showCounts companyId=\{companyId\} request=\{exportFilters\} enabled=\{!loading && !!view\}/);
   assert.match(source, /createAccountantPackage\(companyId, exportFilters\)/);
@@ -90,12 +91,12 @@ const { EvidencePanel } = require('./ExpensesWorkspacePanels');
 for (const [ext, loader] of loaders) { if (loader) require.extensions[ext] = loader; else delete require.extensions[ext]; }
 after(() => policyMock.mock.restore());
 const clean = (id: number) => ({ expenseId: `e${id}`, expenseNumber: `EXP-${id}`, expenseDate: `2026-10-${String(id).padStart(2, '0')}`, uploadedAt: '2026-10-16', grandTotalAmount: '100.00', vendorNameSnapshot: `ร้าน ${id}`, sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'USABLE_FOR_TAX', categoryName: 'สำนักงาน', attachments: [{ id: 'file' }] });
-function panel(query = 'yearMonth=2026-10', rows = [clean(1)], canExport = true) {
+function panel(query = 'yearMonth=2026-10', rows = [clean(1)], canExport = true, freeExpenseDrafts = false) {
   const params = new URLSearchParams(query), pushed: string[] = [], replaced: string[] = [];
   const data = { dateField: 'expenseDate', folders: [{ yearMonth: '2026-10', expenseCount: rows.length }], rows, total: rows.length, page: 1, pageSize: 200 };
   const page = certificateHarness(() => h(AppRouterContext.Provider, { value: { push: (url: string) => pushed.push(url), replace: (url: string) => replaced.push(url), prefetch() {} } as any },
     h(SearchParamsContext.Provider, { value: params }, h(ToastContext.Provider, { value: { success() {}, warning() {}, error() {} } },
-      h(EvidencePanel, { companyId: 'co', canExport, canReadLedger: false, canPostLedger: false })))), [data, false, null]);
+      h(EvidencePanel, { companyId: 'co', canExport, freeExpenseDrafts, canReadLedger: false, canPostLedger: false })))), [data, false, null]);
   return { ...page, pushed, replaced, params };
 }
 
@@ -127,6 +128,7 @@ test('EVIDENCE-1 tabs include every failing check, exports use the entire select
   assert.equal(bundle.accountant, true); assert.equal(bundle.enabled, true);
   assert.deepEqual(bundle.request.expenseIds, ['e3', 'e2']);
   assert.equal(view.find('EvidenceBundleDownload').excelAction.props.children, 'ดาวน์โหลด Excel');
+  assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'รูปแบบไฟล์').value, 'accountant');
   const noExport = panel('yearMonth=2026-10', rows, false); noExport.render();
   assert.equal(noExport.nodes.some(node => node.tag === 'EvidenceBundleDownload'), false);
   view.cleanup(); noExport.cleanup();
@@ -177,6 +179,7 @@ test('EVIDENCE-1 empty months retain the phone list and no export becomes an equ
   assert.match(html, /ไม่มีรายการที่ตรงกับตัวกรอง/);
   assert.equal(view.nodes.some(node => node.tag === 'Pagination'), false);
   assert.equal(view.find('EvidenceBundleDownload').excelAction.props.disabled, false);
+  assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'รูปแบบไฟล์').value, 'accountant');
   assert.equal(view.nodes.filter(node => node.tag === 'button' && node.props.className?.includes('primary')).length, 0);
   view.cleanup();
 });
@@ -260,4 +263,47 @@ test('payment-only and filed-only exports download with truthful feedback', asyn
     assert.equal(downloads.length, 2);
     assert.ok(downloads.every(args => args[1] === result.indexFileName));
   } finally { request.mock.restore(); download.mock.restore(); }
+});
+
+test('software export keeps exclusions visible with a fallback, preserves filters and hides formats for stale free capabilities', async () => {
+  const response = { preset: 'purchase_journal', files: [], documentCount: 1, rowCount: 0,
+    excluded: [{ expenseNumber: 'EXP-1', reason: 'foreign_currency', detail: 'ยอดเป็นสกุลเงินอื่น นำเข้าได้เฉพาะเงินบาท' }], paymentNotExported: [], unmappedCategories: [] };
+  const requests: any[] = [];
+  const write = mock.method(api, 'createAccountingSoftwareExport', async (_company: string, request: any) => { requests.push(request); return response; });
+  const download = mock.method(api, 'downloadAccountingSoftwareExport', () => {});
+  const fallback = mock.method(api, 'createAccountantPackage', async () => ({ rowCount: 0 }));
+  const view = panel('yearMonth=2026-10&flagFilter=ok');
+  try {
+    view.render(); view.find('ThemedSelect', p => p['aria-label'] === 'รูปแบบไฟล์').onChange({ target: { value: 'purchase_journal' } }); view.render();
+    view.find('button', p => p.children.includes('ดาวน์โหลด Excel')).onClick(); await view.settle();
+    assert.match(view.render(), /มี 1 รายการที่ใส่ในไฟล์นี้ไม่ได้/);
+    assert.equal(requests[0].preset, 'purchase_journal'); assert.equal(requests[0].yearMonth, '2026-10'); assert.deepEqual(requests[0].expenseIds, ['e1']);
+    view.find('button', p => p.children.includes('ดูรายการ')).onClick(); assert.match(view.render(), /EXP-1.*ยอดเป็นสกุลเงินอื่น/);
+    view.find('button', p => p.children.includes('ดาวน์โหลด Excel สำหรับสำนักงานบัญชี')).onClick(); await view.settle(); assert.equal(fallback.mock.callCount(), 1);
+    const free = panel('yearMonth=2026-10', [clean(1)], true, true); assert.doesNotMatch(free.render(), /รูปแบบไฟล์|ไฟล์แยกตามหมวด/); free.cleanup();
+  } finally { view.cleanup(); write.mock.restore(); download.mock.restore(); fallback.mock.restore(); }
+});
+
+test('empty Excel exports offer changing dates without claiming a download or hiding the filters', async () => {
+  const write = mock.method(api, 'createAccountantPackage', async () => ({ rowCount: 0 }));
+  const view = panel('yearMonth=2026-10', []);
+  try {
+    view.render(); view.find('button', p => p.children.includes('ดาวน์โหลด Excel')).onClick(); await view.settle();
+    const html = view.render(); assert.match(html, /ไม่มีรายการตามที่เลือก/); assert.match(html, /เปลี่ยนช่วงวันที่/);
+    assert.equal((html.match(/ไม่มีรายการตามที่เลือก/g) ?? []).length, 1);
+    assert.doesNotMatch(html, /ดาวน์โหลดไฟล์แล้ว 0|ดาวน์โหลด Excel แล้ว 0/);
+    assert.equal(view.find('ThemedSelect', p => p['aria-label'] === 'เดือน').value, '2026-10');
+  } finally { view.cleanup(); write.mock.restore(); }
+});
+
+test('purchase journal empty feedback is the sole empty notice on the evidence card', async () => {
+  const write = mock.method(api, 'createAccountingSoftwareExport', async () => ({ preset: 'purchase_journal', files: [], documentCount: 0, rowCount: 0, excluded: [], paymentNotExported: [], unmappedCategories: [] }));
+  const download = mock.method(api, 'downloadAccountingSoftwareExport', () => {});
+  const view = panel('yearMonth=2026-10', []);
+  try {
+    view.render(); view.find('ThemedSelect', p => p['aria-label'] === 'รูปแบบไฟล์').onChange({ target: { value: 'purchase_journal' } }); view.render();
+    await view.find('EvidenceBundleDownload').excelAction.props.onClick(); await view.settle();
+    const html = view.render(); assert.equal((html.match(/ไม่มีรายการตามที่เลือก/g) ?? []).length, 1);
+    assert.match(html, /เปลี่ยนช่วงวันที่/); assert.doesNotMatch(html, /ดาวน์โหลดไฟล์แล้ว 0/);
+  } finally { view.cleanup(); write.mock.restore(); download.mock.restore(); }
 });

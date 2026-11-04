@@ -98,7 +98,7 @@ export class IssueWhtCertificateFromHandoffUseCase {
 
     const prefill = await certificatePayment(this.taxRepo.prisma.client, ctx.companyId, row, paymentId);
     const unsupported = whtCertificateUnsupportedReason(prefill.incomeCategoryCode, prefill.formType);
-    if (unsupported) throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupported });
+    if (unsupported || prefill.formType === 'PND2') throw new ConflictException({ code: 'wht_certificate_income_unsupported', message: unsupported });
     // AP's `createWhtHandoffForPayment` leaves `formType` null when the payee's taxpayer class maps
     // to neither ภ.ง.ด.3 nor ภ.ง.ด.53 (e.g. FOREIGN) — a real, if rare, state a REQUIRED handoff can
     // be in. `TaxPeriod`/`WhtCertificate` both require a resolved form, so this must refuse cleanly

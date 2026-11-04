@@ -84,6 +84,9 @@ test('one accountant file downloads payment-only and filed-only results under th
     assert.ok(downloaded.every(args => args[1] === result.indexFileName));
     render([], { exportOpen: true, exportNotice: 'ไม่มีรายการตามที่เลือก' });
     assert.match(renderToStaticMarkup(body), /เปลี่ยนช่วงวันที่/);
+    assert.equal((renderToStaticMarkup(body).match(/ไม่มีรายการตามที่เลือก/g) ?? []).length, 1);
+    render([], { exportOpen: true, exportFormat: 'purchase_journal', softwareResult: { preset: 'purchase_journal', files: [], documentCount: 0, rowCount: 0, excluded: [], paymentNotExported: [], unmappedCategories: [] } });
+    assert.equal((renderToStaticMarkup(body).match(/ไม่มีรายการตามที่เลือก/g) ?? []).length, 1);
   } finally { create.mock.restore(); request.mock.restore(); download.mock.restore(); }
 });
 
@@ -102,7 +105,7 @@ function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '',
       const pair = realState(init); const name = names[index++];
       return name && name in state ? [state[name], noop] : pair;
     }),
-    mock.method(filters, 'useMenuFilterState', (key: string, initial: () => unknown) => [key === 'expenses.list.month' ? '2026-09' : initial(), noop]),
+    mock.method(filters, 'useMenuFilterState', (key: string, initial: () => unknown) => [key === 'expenses.list.month' ? '2026-09' : key === 'expenses.export.format' && state.exportFormat ? state.exportFormat : initial(), noop]),
     mock.method(capture, 'useExpenseCapturePolicy', () => ({ mode: 'FULL', vatStatus: 'UNKNOWN', canAnswerVatStatus: true })),
   ];
   try {
@@ -227,4 +230,29 @@ test('export failure retains filters and offers retry or change dates', async ()
     render([], { exportOpen: true, exportNotice: 'ไม่มีรายการตามที่เลือก' }, query);
     assert.match(source, /เปลี่ยนช่วงวันที่/);
   } finally { create.mock.restore(); request.mock.restore(); }
+});
+
+test('export format uses plain Thai and free shops never see the format selector', () => {
+  let content: React.ReactNode;
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => { if (tag?.name === 'Modal' && props.open) content = children; return realCreate(tag, props, ...children); });
+  try {
+    render([row(1)], { exportOpen: true });
+    const html = renderToStaticMarkup(content);
+    for (const text of ['รูปแบบไฟล์', 'Excel สำหรับสำนักงานบัญชี']) assert.ok(html.includes(text), text);
+    render([row(1)], { exportOpen: true, exportFormat: 'purchase_journal' });
+    assert.match(renderToStaticMarkup(content), /ไฟล์แยกตามหมวด|แยกรายการตามหมวดสำหรับส่งเข้าโปรแกรมบัญชี/);
+    assert.doesNotMatch(html, /สมุดรายวันซื้อ|FlowAccount|รายละเอียดในไฟล์/);
+    assert.doesNotMatch(render([row(1)], { exportOpen: true }, '', noop, {}, true), /รูปแบบไฟล์/);
+  } finally { create.mock.restore(); }
+});
+
+test('a refused non-confirmed software export keeps the confirmed-list exit beside the error', () => {
+  let content: React.ReactNode;
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => { if (tag?.name === 'Modal' && props.open) content = children; return realCreate(tag, props, ...children); });
+  try {
+    render([row(1, { status: 'VOIDED' })], { exportOpen: true, chip: 'closed', exportFormat: 'purchase_journal', exportError: 'ไฟล์นำเข้าใช้ได้กับรายการที่ยืนยันแล้วเท่านั้น เลือกดูรายการที่ยืนยันแล้ว' });
+    assert.match(renderToStaticMarkup(content), />ดูรายการที่ยืนยันแล้ว<\/button>/);
+  } finally { create.mock.restore(); }
 });

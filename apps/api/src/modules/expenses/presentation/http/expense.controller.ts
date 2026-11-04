@@ -8,6 +8,7 @@ import {
   SetExpenseCategoryAccountantAccountDto,
   AccountantEvidenceBundleDto,
   AccountantPackageDto,
+  AccountingSoftwareExportDto,
   AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
@@ -100,6 +101,7 @@ import {
 import {
   GetSharedEvidenceViewUseCase,
   CreateAccountantPackageUseCase,
+  CreateAccountingSoftwareExportUseCase,
 } from '../../application/use-cases/expense-evidence.use-case';
 import { GetExpenseCapturePolicyUseCase } from '../../application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from '../../application/use-cases/expense-extraction.use-case';
@@ -159,6 +161,7 @@ export class ExpenseController {
     private readonly signatureFill: FillSignatureUseCase,
     private readonly sharedEvidence: GetSharedEvidenceViewUseCase,
     private readonly accountantPackage: CreateAccountantPackageUseCase,
+    private readonly softwareExport: CreateAccountingSoftwareExportUseCase,
     private readonly requestExtraction: RequestReceiptExtractionUseCase,
     private readonly deleteExpense: DeleteExpenseUseCase,
     private readonly removeReceipt: RemoveExpenseReceiptUseCase,
@@ -273,6 +276,13 @@ export class ExpenseController {
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('Content-Disposition', `attachment; filename="evidence.zip"; filename*=UTF-8''${encodeURIComponent(result.fileName)}`);
     return new StreamableFile(result.bytes, { type: 'application/zip' });
+  }
+
+  @Post('accounting-software-export')
+  @HttpCode(200)
+  @RequirePermissions('expense.export')
+  createAccountingSoftwareExport(@ReqCtx() ctx: RequestContext, @Body() body: AccountingSoftwareExportDto) {
+    return this.softwareExport.execute(ctx, body);
   }
 
   @Post('accountant-package')

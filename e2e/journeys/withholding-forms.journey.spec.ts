@@ -286,6 +286,14 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     await expect(main.getByRole('link', { name: 'ดูหนังสือรับรอง 50 ทวิ', exact: true })).toBeInViewport({ ratio: 1 });
     await main.getByRole('link', { name: 'ดูหนังสือรับรอง 50 ทวิ', exact: true }).click();
     await expect(main.getByRole('heading', { level: 1, name: 'หนังสือรับรอง 50 ทวิ', exact: true })).toBeVisible(FIRST_SIGHT);
+    const formFilter = main.getByRole('combobox', { name: 'แบบภาษี', exact: true });
+    await chooseThemedOption(page, formFilter, 'ภ.ง.ด.2');
+    await expect(page).toHaveURL(/formType=PND2/, AFTER_PRESS);
+    await page.reload();
+    await expect(formFilter).toHaveText('ภ.ง.ด.2', FIRST_SIGHT);
+    await chooseThemedOption(page, formFilter, 'ภ.ง.ด.3');
+    await expect(page).toHaveURL(/formType=PND3/, AFTER_PRESS);
+
     await main.getByRole('button', { name: /^ออกแล้ว/ }).click();
     await main.getByRole('searchbox', { name: 'ค้นชื่อผู้รับเงิน เลขผู้เสียภาษี เลขที่ใบ หรือเลขที่รายจ่าย', exact: true }).fill(certificateNumber);
     const certificate = main.locator('tr, article[data-testid="wht-certificate-card"]').filter({ hasText: certificateNumber }).filter({ visible: true });

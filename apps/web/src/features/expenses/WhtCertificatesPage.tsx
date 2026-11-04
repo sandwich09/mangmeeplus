@@ -40,7 +40,7 @@ function paymentDate(row: WhtCertificateRow) {
   return formatThaiDate(row.currentCertificate?.paymentDate ?? row.externalPaymentDate ?? row.prefill.paymentDate ?? row.documentDate, '-');
 }
 function formName(row: WhtCertificateRow) {
-  return row.formType === 'PND3' ? 'ภ.ง.ด.3' : row.formType === 'PND53' ? 'ภ.ง.ด.53' : 'ยังไม่รู้แบบภาษี';
+  return row.formType === 'PND2' ? 'ภ.ง.ด.2' : row.formType === 'PND3' ? 'ภ.ง.ด.3' : row.formType === 'PND53' ? 'ภ.ง.ด.53' : 'ยังไม่รู้แบบภาษี';
 }
 function CertificateDetails(props: Pick<RowProps, 'row' | 'companyId' | 'permissions' | 'locale'>) {
   const { row, locale } = props;
@@ -86,7 +86,7 @@ export function WhtCertificatesPage({ companyId, permissions, systemCertificates
   };
 
   const periodKey = params.get('periodKey') ?? '';
-  const formType = params.get('formType') === 'PND3' ? 'PND3' : params.get('formType') === 'PND53' ? 'PND53' : undefined;
+  const formType = params.get('formType') === 'PND2' ? 'PND2' : params.get('formType') === 'PND3' ? 'PND3' : params.get('formType') === 'PND53' ? 'PND53' : undefined;
   function filterMonthOrForm(key: string, value: string) {
     const next = new URLSearchParams(pendingQuery.current.value);
     if (value) next.set(key, value); else next.delete(key);
@@ -162,7 +162,7 @@ export function WhtCertificatesPage({ companyId, permissions, systemCertificates
           <option value="">ทุกเดือน</option>
           {(data?.months ?? []).map(month => <option key={month} value={month}>{formatThaiMonth(month)}</option>)}
         </SelectField>
-        <SelectField id="certificate-form" label="แบบภาษี" value={formType ?? ''} disabled={loading} onChange={e => filterMonthOrForm('formType', e.target.value)}><option value="">ทั้งหมด</option><option value="PND3">ภ.ง.ด.3</option><option value="PND53">ภ.ง.ด.53</option></SelectField>
+        <SelectField id="certificate-form" label="แบบภาษี" value={formType ?? ''} disabled={loading} onChange={e => filterMonthOrForm('formType', e.target.value)}><option value="">ทั้งหมด</option><option value="PND2">ภ.ง.ด.2</option><option value="PND3">ภ.ง.ด.3</option><option value="PND53">ภ.ง.ด.53</option></SelectField>
       <input type="search" className={`${inputClass} ${styles.search}`} aria-label={word('expenses.certificates.search')} placeholder={word('expenses.certificates.search_short')}
         value={searchInput} onChange={event => setSearchInput(event.target.value)} />
       </div>

@@ -1,5 +1,5 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
-import { documentAdvisorReadText } from './document-advisor-read';
+import { documentAdvisorReadText, pnd53DueHelp } from './document-advisor-read';
 import { Logger } from '@nestjs/common';
 import { LINE_CHAT_ACTIONS, canUseLineChatAction, lineCustomerWording, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
@@ -1137,7 +1137,11 @@ export async function runSemanticTurnV2(input: {
   const selectedHelp = inventory.filter(item => item.kind === 'help');
   if (selectedHelp.length === 1) {
     const help = helpFor(req.howToActionId, req.selectedKnowledgeCardIds, itemText.get(selectedHelp[0]!.index) ?? selectedHelp[0]!.goal, selectedHelp[0]!.toolHint);
-    if (help && !scopePolicyForcedIndices.has(selectedHelp[0]!.index) && !documentExplanationTopic(itemText.get(selectedHelp[0]!.index) ?? '')) actionHelps.set(selectedHelp[0]!.index, help);
+    if (help && !scopePolicyForcedIndices.has(selectedHelp[0]!.index) && !documentExplanationTopic(itemText.get(selectedHelp[0]!.index) ?? '')) {
+      const due = await pnd53DueHelp(req, help, ctx, input.invoke);
+      if (due.result) results.push({ index: selectedHelp[0]!.index, result: due.result });
+      actionHelps.set(selectedHelp[0]!.index, due.help);
+    }
   }
   const sources = [...results.flatMap(entry => entry.result.status === 'ok' ? entry.result.sourceRefs : []), ...(knowledge?.sourceRefs ?? [])];
   const capabilityHelp = buildCapabilityHelp(language, { permissions: req.userContext.permissions,
@@ -1176,7 +1180,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && (object(entry.result.data.reimbursementDraft) || ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(entry.result.toolName)))).map(item => item.index));
-  const needsComposition = inventory.some(item => !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => !(req.selectedKnowledgeCardIds?.includes('wht.pnd53-due') && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   const sourcesCover = (answer: { sourceRefIds?: string[] }, good: ToolResult[]) => {
@@ -1315,7 +1319,7 @@ export async function runSemanticTurnV2(input: {
     const actionHelp = actionHelps.get(item.index);
     if (actionHelp) {
       answer = { index: item.index, status: actionHelp.allowed ? 'handled' : 'denied', text: actionHelp.replyText,
-        ...(knowledge ? { sourceRefIds: knowledge.sourceRefs.map(sourceId) } : {}) };
+        sourceRefIds: [...good.flatMap(result => result.sourceRefs.map(sourceId)), ...(knowledge?.sourceRefs.map(sourceId) ?? [])] };
       modelComposed = false;
     }
     else if (forced.has(item.index)) { answer = { index: item.index, ...forced.get(item.index)! }; modelComposed = false; }

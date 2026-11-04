@@ -1352,7 +1352,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['tax', 'payment'], questionKinds: ['summary', 'list', 'breakdown'], category: 'read_summary',
     requiredPermissions: [], anyOfPermissions: ['wht.certificate.read', 'wht.pnd53.read'],
     featureKeys: ['wht_50bis', 'wht_pnd53'], sourceModule: 'tax', supportedAgents: ['accounting', 'tax', 'general'],
-    sensitiveAudit: true, requiresErpPermissionCheck: true, optionalInputFields: ['periodKey', 'branchId'],
+    sensitiveAudit: true, requiresErpPermissionCheck: true, optionalInputFields: ['periodKey', 'branchId', 'dueDateOnly'],
   },
   {
     name: 'wht.calculate_withholding', description: 'Explain a hypothetical payment using only the ACTIVE system income-category catalog and existing money rounding. Pass baseAmount copied from user amount. Select incomeCategoryCode ONLY when the user explicitly chose the exact catalog income name; never infer from ค่าจ้าง or a generic payment description. With unknown income type call with no category to ask with catalog buttons. The amount is explicitly a conditional pre-VAT base; never guess a VAT rate.',

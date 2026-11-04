@@ -596,7 +596,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [correctForm, setCorrectForm] = useState({
     incomeCategoryCode: '', incomeCategoryName: '', whtRate: '', grossAmount: '', withheldAmount: '',
-    paymentDate: '', formType: 'PND53' as 'PND3' | 'PND53',
+    paymentDate: '', formType: 'PND53' as ExpenseCertificateCorrectionValues['formType'],
     payeeName: '', payeeTaxId: '', payeeAddress: '', payeeBranchCode: '', reason: '',
     opened: null as ExpenseCertificateCorrectionValues | null,
   });

@@ -2,7 +2,7 @@ import { lineReplyLanguage, lineDisplayDate, lineUiLabel } from '../../domain/lo
 /** Sold-pack document reads. No preparation, issuance, filing or payment. */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, resolvePeriodCandidates, PERIOD_ASSUMPTIONS, isAmbiguousPeriodCandidate, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
 import { DisbursementVoucherUseCase } from '../../../expenses/application/use-cases/disbursement-voucher.use-case';
 import { calcLineTotals } from '../../../expenses/domain/logic/expense-totals.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../../procurement/application/use-cases/wht-income-category.use-case';
@@ -63,14 +63,39 @@ export class VoucherGetDetailTool implements ErpReadToolPort {
 export class WhtGetMonthSummaryTool implements ErpReadToolPort {
   toolName = 'wht.get_month_summary';
   constructor(private readonly handoffs: WhtCertificateHandoffUseCase, private readonly taxRepo: PrismaTaxRepository) {}
-  async execute(ctx: ErpToolContext, input: { periodKey?: string; branchId?: string } = {}): Promise<ToolResult> {
+  async execute(ctx: ErpToolContext, input: { periodKey?: string; branchId?: string; dueDateOnly?: boolean } = {}): Promise<ToolResult> {
     const certificatesReadable = ctx.permissions.includes('wht.certificate.read');
     const pnd53Readable = ctx.permissions.includes('wht.pnd53.read');
-    if (!certificatesReadable && !pnd53Readable) return denied(this.toolName);
+    if ((!certificatesReadable && !pnd53Readable) || (input.dueDateOnly === true && !pnd53Readable)) return denied(this.toolName);
     if (input.branchId !== undefined && (typeof input.branchId !== 'string' || !input.branchId.trim())) throw new BadRequestException('กรุณาเลือกสาขาที่ต้องการค่ะ');
     if (input.branchId && !isBranchInScope(requestContext(ctx).scopes, input.branchId)) return denied(this.toolName);
-    const periodKey = input.periodKey ?? civilPeriodKey(todayCivilDate());
+    const today = todayCivilDate();
+    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
+    let periodKey = input.periodKey;
+    if (input.dueDateOnly === true && periodKey === undefined) {
+      const text = ctx.inputEvidence?.parts.map(part => part.rawText).join('\n') ?? ctx.groundingText ?? '';
+      // A deadline is a calendar question, so a named future month is meaningful too.
+      const periods = resolvePeriodCandidates(text, today, [], undefined, { allowFuture: true }).filter(p => p.monthKey);
+      const months = [...new Set(periods.map(p => p.source === 'named_month' && p.assumptions.includes(PERIOD_ASSUMPTIONS.yearAssumedLatest)
+        ? `${today.slice(0, 4)}${p.monthKey!.slice(4)}` : p.monthKey!))];
+      if (months.length > 1 || periods.some(isAmbiguousPeriodCandidate)) throw new BadRequestException('กรุณาระบุเดือนและปีที่ต้องการค่ะ');
+      periodKey = months[0];
+    }
+    let period;
+    if (input.dueDateOnly === true && periodKey === undefined) {
+      const previous = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
+      period = await this.taxRepo.findPeriod(ctx.companyId, 'PND53', previous);
+      if (today <= pnd53PaperDueDay(previous, period?.dueDate)) periodKey = previous;
+      else period = undefined;
+    }
+    periodKey ??= civilPeriodKey(today);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodKey)) throw new BadRequestException('กรุณาระบุเดือนและปีที่ต้องการค่ะ');
+    if (period === undefined) period = pnd53Readable ? await this.taxRepo.findPeriod(ctx.companyId, 'PND53', periodKey) : null;
+    const dueDate = pnd53Readable ? pnd53PaperDueDay(periodKey, period?.dueDate) : null;
+    const monthLabel = new Date(`${periodKey}-01T00:00:00Z`).toLocaleDateString(language === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+    if (input.dueDateOnly === true) return result(ctx, this.toolName, { periodKey, dueDate,
+      message: language === 'en' ? `PND53 for ${monthLabel} is due by ${lineDisplayDate(dueDate!, language)}.`
+        : `ภ.ง.ด.53 ของเดือน${monthLabel} ต้องยื่นภายใน ${lineDisplayDate(dueDate!, language)} ค่ะ` }, 'tax/pnd53', 'วันยื่น ภ.ง.ด.53');
     // Reuse the web's complete permission/source-state/branch boundary, including source expense ABAC.
     const rows: WhtCertificateHandoffListRowDto[] = [];
     if (certificatesReadable) {
@@ -112,27 +137,25 @@ export class WhtGetMonthSummaryTool implements ErpReadToolPort {
       group.itemCount++; group.income.push(gross); group.withheld.push(withheld); groups.set(key, group);
     }
     const byIncomeType = [...groups.values()].map(g => ({ incomeCategoryName: g.incomeCategoryName, itemCount: g.itemCount, totalIncome: sum(g.income), totalDocumentWithholding: sum(g.withheld) }));
-    const period = pnd53Readable ? await this.taxRepo.findPeriod(ctx.companyId, 'PND53', periodKey) : null;
     const events = period ? (await this.taxRepo.findEventsByPeriod(ctx.companyId, period.id, 'ACTIVE')).filter(event => event.eventType === 'WHT_PND53'
       && isBranchInScope(requestContext(ctx).scopes, event.branchId) && (!input.branchId || event.branchId === input.branchId)) : [];
     const remittance = period ? { totalWithheld: sum(events.map(e => e.taxAmount)), eventCount: events.length, status: period.status,
       dueDate: pnd53PaperDueDay(periodKey, period.dueDate), dueDateBasis: period.dueDate ? 'configured_period' : 'paper_filing_rule' } : null;
     const totalIncome = sum(byIncomeType.map(g => g.totalIncome)), totalDocumentWithholding = sum(byIncomeType.map(g => g.totalDocumentWithholding));
-    const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
-    const monthLabel = new Date(`${periodKey}-01T00:00:00Z`).toLocaleDateString(language === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
+    const dueText = dueDate ? language === 'en' ? `, due ${lineDisplayDate(dueDate, language)}` : ` กำหนดยื่น ${lineDisplayDate(dueDate, language)} ` : '';
     const displayMoney = (value: string) => new Decimal(value).toNumber().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const message = certificatesReadable
-      ? language === 'en' ? `${monthLabel}: records within your access total ${displayMoney(totalIncome)} THB, withheld ${displayMoney(totalDocumentWithholding)} THB.`
-        : `รายการที่คุณดูได้เดือน ${monthLabel} รวม ${displayMoney(totalIncome)} บาท หักไว้ ${displayMoney(totalDocumentWithholding)} บาทค่ะ`
+      ? language === 'en' ? `${monthLabel}: records within your access total ${displayMoney(totalIncome)} THB, withheld ${displayMoney(totalDocumentWithholding)} THB${dueText}.`
+        : `รายการที่คุณดูได้เดือน ${monthLabel} รวม ${displayMoney(totalIncome)} บาท หักไว้ ${displayMoney(totalDocumentWithholding)} บาท${dueText}ค่ะ`
       : remittance ? language === 'en' ? `${monthLabel}: PND53 period total ${displayMoney(remittance.totalWithheld)} THB, due ${lineDisplayDate(remittance.dueDate, language)}.`
         : `ยอดที่รวบรวมไว้เดือน ${monthLabel} หักไว้ ${displayMoney(remittance.totalWithheld)} บาท กำหนดยื่น ${lineDisplayDate(remittance.dueDate, language)} ค่ะ`
-        : language === 'en' ? 'No collected data is available for this month.' : 'ยังไม่มีข้อมูลที่รวบรวมไว้สำหรับเดือนนี้ค่ะ';
+        : language === 'en' ? `No collected data is available for this month${dueText}.` : `ยังไม่มีข้อมูลที่รวบรวมไว้สำหรับเดือนนี้${dueText}ค่ะ`;
     return result(ctx, this.toolName, { periodKey, certificateCount: certificatesReadable ? issued.length : null, certificateItemCount: certificatesReadable ? projected.length : null,
       countBasis: 'certificate_worklist_including_unpaid', totalIncome: certificatesReadable ? totalIncome : null,
       totalDocumentWithholding: certificatesReadable ? totalDocumentWithholding : null, byIncomeType,
       issuedCertificates: issued.slice(0, 10).map(r => ({ number: r.currentCertificate?.number ?? r.externalCertificateNumber ?? r.certificateNumber, payeeName: r.currentCertificate?.payee.name ?? r.prefill.payeeSnapshot.name,
         grossAmount: (r.currentCertificate ?? r.prefill).grossAmount, withheldAmount: (r.currentCertificate ?? r.prefill).withheldAmount })),
-      remittance, message }, pnd53Readable ? 'tax/pnd53' : 'expenses/wht-certificates', 'สรุป 50 ทวิและภาษีหัก ณ ที่จ่ายรายเดือน');
+      remittance, dueDate, message }, pnd53Readable ? 'tax/pnd53' : 'expenses/wht-certificates', 'สรุป 50 ทวิและภาษีหัก ณ ที่จ่ายรายเดือน');
   }
 }
 

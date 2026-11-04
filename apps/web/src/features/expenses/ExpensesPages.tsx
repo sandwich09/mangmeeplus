@@ -1,4 +1,6 @@
 'use client';
+import { AccountingExportFormatSelect, AccountingExportFeedback, type AccountingExportFormat } from './AccountingExportControls';
+import type { AccountingSoftwareExportResult } from '@watchdog-bms/contracts';
 import { focusExpenseField } from './expense-focus.logic';
 import { canEditSubstituteReceipt } from './substitute-receipt-wizard.model';
 
@@ -30,7 +32,7 @@ import {
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
   uploadReceiptFile, updateExpenseDraft, listExpenseCategories, listExpenseWhtIncomeCategories,
   updateExpenseReviewFields, uploadExpenseEvidenceFile,
-  createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
+  createAccountingSoftwareExport, downloadAccountingSoftwareExport, createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
   createExpenseDraft, deleteExpense, confirmExpenseBuyerMatch,
 } from './expenses.api';
 import type { WhtIncomeCategoryOption } from './expenses.api';
@@ -2736,6 +2738,8 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [softwareResult, setSoftwareResult] = useState<AccountingSoftwareExportResult | null>(null);
+  const [exportFormat, setExportFormat] = useMenuFilterState<AccountingExportFormat>('expenses.export.format', () => 'accountant');
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -2851,7 +2855,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
     if (requestedBranchId && branchFilter && !branchFilter.locked && branchId !== requestedBranchId && branchFilter.branches.some(b => b.id === requestedBranchId)) return;
     const key = JSON.stringify([chip, query, month, branchId, dateOrder]);
     if (previousFilters.current !== null && previousFilters.current !== key) setPage(1);
-    previousFilters.current = key; setExportNotice(null);
+    previousFilters.current = key; setExportNotice(null); setSoftwareResult(null); setExported(false);
   }, [chip, query, month, branchId, dateOrder, requestedBranchId, branchFilter]);
   const listQuery = new URLSearchParams(searchParams.toString());
   if (branchId) listQuery.set('branchId', branchId); else listQuery.delete('branchId');
@@ -2918,11 +2922,16 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
     finally { setDeleting(false); }
   };
 
-  const exportExcel = async () => {
-    if (exporting) return;
+  const exportExcel = async (forceAccountant = false) => {
+    if (exporting || freeExpenseDrafts || !caps.canExportPackage) return;
     const version = loadVersion.current;
-    setExporting(true); setExportError(null); setExportNotice(null); setExported(false);
+    setExporting(true); setExportError(null); setExportNotice(null); setExported(false); setSoftwareResult(null);
     try {
+      if (exportFormat === 'purchase_journal' && !forceAccountant) {
+        const result = await createAccountingSoftwareExport(companyId, { preset: 'purchase_journal', status: activeChip === 'closed' ? 'VOIDED' : activeChip === 'pending' ? 'NEEDS_REVIEW' : 'CONFIRMED', dateField: 'expenseDate', fromDate, toDate, ...(branchId ? { branchId } : {}) });
+        if (version !== loadVersion.current) return;
+        setSoftwareResult(result); downloadAccountingSoftwareExport(result); return;
+      }
       const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
       if (result.rowCount + (result.paymentRowCount ?? 0) + (result.withholdingRowCount ?? 0) === 0) { setExportNotice('ไม่มีรายการตามที่เลือก'); return; }
@@ -2993,15 +3002,18 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
       {!freeExpenseDrafts && <Modal open={exportOpen} onClose={() => setExportOpen(false)} title={EXPORT_FOR_ACCOUNTANT} size="sm"
         footer={exportError ? <>
           <button type="button" className={ghostClass} onClick={() => setExportOpen(false)}>กลับไปรายการค่าใช้จ่าย</button>
-          <button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+          <button type="button" className={btnClass} onClick={() => exportExcel()} aria-disabled={exporting} aria-busy={exporting}>
             {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
           </button>
-        </> : <button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+        </> : <button type="button" className={btnClass} onClick={() => exportExcel()} aria-disabled={exporting} aria-busy={exporting}>
           {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
         </button>}>
         <div className="space-y-4">
           {/* What will be in the file, in one line: how many, which dates, which branch. */}
           <p className="text-sm text-gray-700">รายการที่ยืนยันแล้ว {chipCounts.confirmed} รายการ ตามวันที่เอกสาร · <span className="mangmee-unit">{dateShort(fromDate)}</span> – <span className="mangmee-unit">{dateShort(toDate)}</span>{branchLabel ? ` · ${branchLabel}` : ''}</p>
+          <AccountingExportFormatSelect value={exportFormat} disabled={exporting} onChange={value => { setExportFormat(value); setSoftwareResult(null); setExportNotice(null); setExportError(null); setExported(false); }} />
+          {exportFormat === 'purchase_journal' && !['all', 'confirmed'].includes(activeChip) && <div className="space-y-2">{!exportError && <p className="text-sm">{t('expenses.export_confirmed_only', locale)}</p>}<ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => { setChip('confirmed'); setExportError(null); }}>{t('expenses.export_view_confirmed', locale)}</button></ActionGroup></div>}
+          {softwareResult && <AccountingExportFeedback result={softwareResult} busy={exporting} onFallback={() => void exportExcel(true)} onChangeDates={() => setExportOpen(false)} />}
           <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts onReturnToExpenses={() => setExportOpen(false)}
             request={{ fromDate, toDate, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
@@ -3475,7 +3487,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
           : <Link className={ghostClass} href={`/companies/${companyId}/dashboard`}>กลับไปแดชบอร์ด</Link>} />
       ) : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} readerIsOwner={readerIsOwner} /> : (
         <>
-          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} freeExpenseDrafts={freeExpenseDrafts} onSelect={openListExpense} />}
+          {tab === 'list' && <ExpenseListPage companyId={companyId} key={companyId} caps={caps} userId={userId} freeExpenseDrafts={freeExpenseDrafts} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>
             {/* The branch field shares the edges of the cards under it. */}
             {tab === 'manual' && <TransactionBranchField fill value={createBranchId} invalid={!createBranchId && branchTouched} helpText={createBranchId ? null : t('transaction.source_branch_manual_required', locale)} />}
@@ -3501,9 +3513,9 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
             </fieldset>
             </div>
           </>}
-          {tab === 'categories' && <CategoryManagePanel companyId={companyId} createOpen={categoryCreateOpen} onCreateOpenChange={setCategoryCreateOpen} />}
+          {tab === 'categories' && <CategoryManagePanel companyId={companyId} key={companyId} freeExpenseDrafts={freeExpenseDrafts} createOpen={categoryCreateOpen} onCreateOpenChange={setCategoryCreateOpen} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}
-          {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} canPostClaimPayments={caps.canPostLedger && permissions.includes('reimbursement.finance_review')} />}
+          {tab === 'evidence' && <EvidencePanel companyId={companyId} key={companyId} freeExpenseDrafts={freeExpenseDrafts} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} canPostClaimPayments={caps.canPostLedger && permissions.includes('reimbursement.finance_review')} />}
         </>
       )}
     </MangmeePage>

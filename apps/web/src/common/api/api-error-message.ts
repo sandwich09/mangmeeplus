@@ -469,6 +469,7 @@ const CODE_LABELS: Record<string, string> = {
   // read was refused — so the copy says what still works before it says what to do about the
   // ceiling. No number: the browser's ApiError keeps only `code`, and a wrong count is worse than none.
   receipt_quota_exceeded: 'โควตาให้ AI อ่านรูปของเดือนนี้ครบแล้ว (ใบเสร็จ 1 ใบ = 1 ครั้ง) ยังกรอกรายการเองได้ตามปกติ หรือขอเปลี่ยนแพ็กเกจเพื่อเพิ่มจำนวนครั้งได้เลย',
+  accounting_export_confirmed_only: 'ไฟล์นำเข้าใช้ได้กับรายการที่ยืนยันแล้วเท่านั้น เลือกดูรายการที่ยืนยันแล้ว',
   FREE_EXPENSE_DRAFTS_ONLY: 'ร้านนี้ใช้ได้เฉพาะอ่านเอกสารและเก็บร่างรายจ่าย',
   FREE_DOCUMENT_LIMIT_REACHED: 'ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้',
   FREE_DOCUMENTS_IN_FLIGHT: 'ระบบกำลังอ่านเอกสารที่ส่งไปก่อนหน้า กรุณารอผลก่อนส่งไฟล์ใหม่',

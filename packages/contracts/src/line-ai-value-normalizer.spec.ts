@@ -1263,3 +1263,10 @@ it('Exam G4: abbreviated and continuing month words produce current deterministi
     assert.ok(result.periods?.some(period => period.monthKey === month), text);
   }
 });
+
+
+it('PWS-PND53-DUE calendar queries can retain an explicitly future named month without changing read defaults', () => {
+  const text = 'ภงด.53 เดือนมกราคม 2570 ต้องยื่นเมื่อไหร่';
+  assert.equal(normalizer.resolvePeriodCandidates(text, '2026-11-04').length, 0);
+  assert.equal(normalizer.resolvePeriodCandidates(text, '2026-11-04', [], undefined, { allowFuture: true })[0]?.monthKey, '2027-01');
+});

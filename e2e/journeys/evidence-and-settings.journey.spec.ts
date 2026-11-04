@@ -87,12 +87,13 @@ for (const width of [390, 1280, 1556]) test(`@journey free shops cannot open eit
   const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'watchdog_csrf')?.value;
   expect(csrf, 'watchdog_csrf cookie is present after sign-in').toBeTruthy();
   const mutation = { 'X-Company-Id': free.companyId, Origin: new URL(page.url()).origin, 'x-csrf-token': csrf! };
-  for (const endpoint of ['accountant-package', 'accountant-package/bundle-plan', 'accountant-package/bundle/1']) {
-    const result = await page.request.post(`/api/v1/companies/${free.companyId}/expenses/${endpoint}`, { data: {}, headers: mutation });
+  for (const endpoint of ['accountant-package', 'accountant-package/bundle-plan', 'accountant-package/bundle/1', 'accounting-software-export']) {
+    const result = await page.request.post(`/api/v1/companies/${free.companyId}/expenses/${endpoint}`, { data: endpoint === 'accounting-software-export' ? { preset: 'purchase_journal' } : {}, headers: mutation });
     expect(result.status()).toBe(403);
     expect((await result.json()).code).toBe('FREE_EXPENSE_DRAFTS_ONLY');
   }
-  // Software export is added by its own Phase 1.6; it is not an endpoint in this step.
+  await expect(main.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('textbox', { name: /^รหัสหมวดในไฟล์/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true }).click();
   await page.locator('[data-company-switch]').getByRole('button').filter({ hasText: paid.companyName }).click();
   await expect(page).toHaveURL(new RegExp(`/companies/${paid.companyId}/`), AFTER_PRESS);
@@ -118,6 +119,38 @@ for (const width of [390, 1280, 1556]) test(`@journey free shops cannot open eit
   await dialog.getByRole('button', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).click();
   await expect(dialog).toHaveCount(0, AFTER_PRESS);
   await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible();
+});
+
+for (const width of [390, 1280, 1556]) test(`@journey office category mapping survives refresh and clears (${width}px)`, async ({ pageAs, apiAs, companyId }) => {
+  const page = await pageAs('OWNER'), api = await apiAs('OWNER');
+  await page.setViewportSize({ width, height: 1000 });
+  type Category = { id: string; name: string; referencedOnly?: true; accountantAccount?: { accountCode: string; accountName: string } | null };
+  const categories = await json<Category[]>(await api.get(`companies/${companyId}/expense-categories/manage`));
+  const category = categories.find(row => !row.referencedOnly);
+  expect(category, 'At least one visible category is required').toBeTruthy();
+  if (!category) throw new Error('No category fixture');
+  const endpoint = `companies/${companyId}/expense-categories/${category.id}/accountant-account`;
+  const original = category.accountantAccount;
+  try {
+    await page.goto(`/companies/${companyId}/expenses/categories`, FIRST_SIGHT);
+    const code = page.getByRole('textbox', { name: `รหัสหมวดในไฟล์ ${category.name}`, exact: true });
+    const name = page.getByRole('textbox', { name: `ชื่อหมวดในไฟล์ ${category.name}`, exact: true });
+    await expect(code).toBeVisible(FIRST_SIGHT);
+    const enteredCode = `J${Date.now()}`, enteredName = unique('หมวดสำนักงานบัญชี');
+    await code.fill(enteredCode); await name.fill(enteredName);
+    const saved = page.waitForResponse(response => response.url().includes(endpoint) && response.request().method() === 'PUT');
+    await name.blur(); expect((await saved).status()).toBe(200);
+    await page.reload(FIRST_SIGHT);
+    await expect(code).toHaveValue(enteredCode, FIRST_SIGHT); await expect(name).toHaveValue(enteredName);
+    await code.fill(''); await name.fill('');
+    const cleared = page.waitForResponse(response => response.url().includes(endpoint) && response.request().method() === 'DELETE');
+    await name.blur(); expect((await cleared).status()).toBe(204);
+    await page.reload(FIRST_SIGHT);
+    await expect(code).toHaveValue('', FIRST_SIGHT); await expect(name).toHaveValue('');
+  } finally {
+    const restored = original ? await api.put(endpoint, { data: original }) : await api.delete(endpoint);
+    expect(restored.status()).toBe(original ? 200 : 204);
+  }
 });
 
 test('@journey an owner downloads the accounting files, switches a branch off and no longer finds it in the upload chooser; a staff name change shows under ประวัติการแก้ชื่อ on her card', async ({ pageAs, api, apiAs, companyId }) => {
@@ -186,7 +219,7 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await owner.waitForURL(url => url.pathname.endsWith('/expenses/evidence'));
     for (const [key, value] of new URL(listUrl).searchParams) expect(new URL(owner.url()).searchParams.get(key)).toBe(value);
     await expect(row).toBeVisible(AFTER_PRESS);
-
+    await chooseThemedOption(owner, main.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true }), 'Excel สำหรับสำนักงานบัญชี');
     const excel = main.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true });
     await expect(excel).toBeEnabled(AFTER_PRESS);
     const workbook = await pressForDownloadBuffer(owner, () => excel.click());
@@ -198,7 +231,6 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     expect(withheld.map(row => [row[0], row[8], row[9], row[10]])).toEqual([1, 2].map(day => [thaiDate(dayOfLastMonth(day)), '3', '500', '15']));
     await expect(owner.getByText(/ดาวน์โหลด Excel แล้ว/).first()).toBeVisible(AFTER_PRESS);
     await expect(main.getByText(/^สร้างเมื่อ /)).toBeVisible();
-
     await expect(main.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true })).toHaveCount(0);
     const bundles = main.getByRole('button', { name: /^ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี( ชุดที่ \d+ จาก \d+)?$/ });
     await expect(bundles.first()).toBeEnabled(AFTER_PRESS);
@@ -211,6 +243,13 @@ test('@journey an owner downloads the accounting files, switches a branch off an
       for (const name of files.keys()) expect(name).not.toMatch(/c[a-z0-9]{24}/i);
       workbookSheets(files.get('สารบัญ.xlsx')!, true, count);
     }
+    await chooseThemedOption(owner, main.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true }), 'ไฟล์แยกตามหมวด');
+    const journal = await pressForDownloadBuffer(owner, () => excel.click());
+    expect(journal.name).toMatch(/^สมุดรายวันซื้อ-.*\.xlsx$/);
+    const journalFiles = unzip(journal.buffer);
+    expect(journalFiles.get('xl/workbook.xml')!.toString()).toContain('สมุดรายวันซื้อ');
+    expect(journalFiles.get('xl/worksheets/sheet1.xml')!.toString()).toContain('รหัสบัญชี');
+    await expect(main.getByText(/ดาวน์โหลดไฟล์แล้ว \d+ รายการ/)).toBeVisible(AFTER_PRESS);
   });
 
   await test.step('คู่ค้า: search, open a row with Enter, open its recent expense and return to the same counterparty', async () => {

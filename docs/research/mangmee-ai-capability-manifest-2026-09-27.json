@@ -3,8 +3,8 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "1db9daa99c785b9b33baeb8c220aaaa63391b2ca",
-  "checkoutBranch": "land/expense-goal-20261104",
+  "sourceRevision": "d7c0e8892afba2251e0be6371bb7bead518325bf",
+  "checkoutBranch": "codex/ld1-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
     {
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
-      "sha256": "52db252d71f6627b4b28904bbb64c04f71ecf9d43c7bb3e4ced735920b3770ef"
+      "sha256": "12846d39452be003951c188f098902ab20fcc0978091a11508181b11b58a1a49"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -229,7 +229,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "b2f84a7a1258dbe36a02da770c32891600441e350bd21a7379c848e7b735120c"
+      "sha256": "455b5207e4dead01f81350c03a933bd6c1b172b70c61338a488417f036fcf9af"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -6837,10 +6837,12 @@
         "required": [],
         "optional": [
           "branchId",
+          "dueDateOnly",
           "periodKey"
         ],
         "allowed": [
           "branchId",
+          "dueDateOnly",
           "periodKey"
         ]
       },
@@ -10171,6 +10173,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-04T07:37:20.637Z",
-  "manifestDigest": "2eebcbb5f9f1c29b9f992be4e39bc6a88dff19ff5117ec0747068b46d49959aa"
+  "generatedAt": "2026-11-04T09:52:35.836Z",
+  "manifestDigest": "e332e171647e1373dbe5bc0888ade135e995a91dcedaafd3ec5b9b35571ae8f0"
 }

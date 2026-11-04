@@ -1,5 +1,5 @@
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
-import { documentAdvisorOutputText } from './document-advisor-read';
+import { documentAdvisorOutputText, pnd53DueHelp } from './document-advisor-read';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 /**
  * OrchestratorAgent – feature-flagged entry point for item 10B local agent flow.
@@ -1625,10 +1625,12 @@ export class OrchestratorAgent {
         selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds,
         packageOffers: req.packageOffers, permissions: req.userContext.permissions, featureKeys: req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? null });
       if (actionHelp) {
-        replyText = actionHelp.replyText;
-        finalSourceRefs = knowledgeAnswer?.sourceRefs ?? [];
+        const due = await pnd53DueHelp({ ...req, selectedKnowledgeCardIds: knowledgeRequest.selectedKnowledgeCardIds ?? routedPlan.selectedKnowledgeCardIds }, actionHelp, ctx,
+          (meta, context, args) => this.erpTools.invoke(meta, context, args));
+        replyText = due.help.replyText;
+        finalSourceRefs = [...(due.result?.status === 'ok' ? due.result.sourceRefs : []), ...(knowledgeAnswer?.sourceRefs ?? [])];
         finalWebLinks = knowledgeAnswer?.webLinks ?? [];
-        expensePresentation = actionHelp.presentation;
+        expensePresentation = due.help.presentation;
       } else if (knowledgeAnswer) {
         replyText = knowledgeAnswer.replyText;
         finalSourceRefs = knowledgeAnswer.sourceRefs;

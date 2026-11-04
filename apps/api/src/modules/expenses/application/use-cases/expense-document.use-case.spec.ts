@@ -1,3 +1,4 @@
+import * as evidenceUseCases from './expense-evidence.use-case';
 import * as documentUseCases from './expense-document.use-case';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { GetExpenseUseCase } from './expense-draft.use-case';
@@ -2014,5 +2015,75 @@ describe('accountant office mapping', () => {
       await assert.rejects(action, (e: any) => e.getStatus() === 403 && e.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
     }
     assert.equal(f.writes.length, 0); assert.equal(f.logs.length, 0);
+  });
+});
+
+describe('purchase journal endpoint', () => {
+  function fixture(free = false, records: any[] = []) {
+    const reads: any[] = [], logs: any[] = [], queries: any[] = [];
+    const db: any = {
+      company: { findUnique: async () => ({ name: 'ร้านทดสอบ', status: 'ACTIVE', planTerm: { tierKey: free ? 'FREE_TRIAL_15' : 'STARTER', termEndsAt: new Date(free ? '2020-01-01' : '2099-01-01') } }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null }, billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      expenseLine: { findMany: async (q: any) => { queries.push(q); return records.flatMap(r => r.lines.map((l: any) => ({ ...l, expenseId: r.id }))); } },
+      expensePayment: { findMany: async () => [] }, whtIncomeCategory: { findMany: async () => [] }, accountingCounterparty: { findMany: async () => [] },
+    };
+    const repo: any = { listSharedEvidence: async (...args: any[]) => { reads.push(args); return { rows: records, total: records.length }; },
+      listCategoryNames: async () => [{ id: 'cat', name: 'ค่าใช้จ่าย' }], findCategoryAccountantAccounts: async () => [] };
+    const UseCase = (evidenceUseCases as any).CreateAccountingSoftwareExportUseCase;
+    assert.equal(typeof UseCase, 'function');
+    return { useCase: new UseCase(repo, { client: db }, { log: async (e: any) => { logs.push(e); } }), reads, logs, queries };
+  }
+  const record = (patch: any = {}) => ({ id: 'expense', expenseNumber: 'EXP-1', currency: 'THB', status: 'CONFIRMED', expenseDate: new Date('2026-09-30'),
+    expenseCategoryId: 'cat', taxableAmount: '100', vatAmount: '7', whtAmount: '0', inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX',
+    sourceDocumentType: 'TAX_INVOICE', lines: [{ lineNumber: 1, description: 'ค่าใช้จ่าย', expenseCategoryId: 'cat', taxableAmount: '100', vatAmount: '7', vatRate: '0.07', whtAmount: '0',
+      claimabilitySnapshot: 'CLAIMABLE', taxComponentsJson: [{ componentKey: 'VAT' }], taxEvidenceReviewStatus: 'VERIFIED' }], ...patch });
+  const request = { preset: 'purchase_journal' };
+  it('software export rechecks free access before loading rows despite stale trial permissions; paid controls reach the scoped loader', async () => {
+    for (const freeExpenseDrafts of [true, undefined]) {
+      const f = fixture(true, [record()]);
+      await assert.rejects(() => f.useCase.execute({ ...ctx(['expense.export', 'expense.read']), freeExpenseDrafts }, request), (e: any) => e.getStatus() === 403 && e.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
+      assert.equal(f.reads.length, 0); assert.equal(f.queries.length, 0); assert.equal(f.logs.length, 0);
+    }
+    const f = fixture(); await f.useCase.execute(ctx(['expense.export', 'expense.read']), request);
+    assert.equal(f.reads.length, 1); assert.equal(f.reads[0][1].status, 'CONFIRMED');
+  });
+  it('requires export/read permissions and branch scope on paid shops and rejects non-confirmed selection', async () => {
+    const f = fixture();
+    for (const permissions of [['expense.read'], ['expense.export'], []]) await assert.rejects(() => f.useCase.execute(ctx(permissions), request), (e: any) => e.getStatus() === 403);
+    await assert.rejects(() => f.useCase.execute({ ...ctx(['expense.export', 'expense.read']), scopes: { branchIds: ['allowed'] } }, { ...request, branchId: 'other' }), (e: any) => e.getStatus() === 403);
+    for (const status of ['VOIDED', 'NEEDS_REVIEW']) await assert.rejects(() => f.useCase.execute(ctx(['expense.export', 'expense.read']), { ...request, status }), (e: any) => e.getStatus() === 422 && e.getResponse().code === 'accounting_export_confirmed_only');
+    assert.equal(f.reads.length, 0);
+  });
+  it('returns no files for empty or all-excluded selection and audits the exact owner payload', async () => {
+    for (const records of [[], [record({ currency: 'USD' })]]) {
+      const f = fixture(false, records); const result = await f.useCase.execute(ctx(['expense.export', 'expense.read']), request);
+      assert.deepEqual(result.files, []); assert.equal(result.excluded.length, records.length);
+      assert.equal(f.logs[0].riskLevel, 'MEDIUM');
+      assert.deepEqual(f.logs[0].metadataJson, { preset: 'purchase_journal', documentCount: records.length, rowCount: 0, excludedCount: records.length, excludedByReason: records.length ? { foreign_currency: 1 } : {} });
+    }
+  });
+  it('loads tenant-scoped line snapshots and projects the current header VAT refusal with unmapped categories and document dates', async () => {
+    const current = record(); const f = fixture(false, [current]); const result = await f.useCase.execute(ctx(['expense.export', 'expense.read']), request);
+    assert.equal(result.files.length, 1); assert.equal(result.rowCount, 1); assert.equal(result.unmappedCategories[0].id, 'cat');
+    assert.ok(result.files[0].fileName.startsWith('สมุดรายวันซื้อ-'));
+    const sheet = (result: any) => {
+      const bytes = Buffer.from(result.files[0].xlsxBase64, 'base64'); let offset = 0;
+      while (bytes.readUInt32LE(offset) === 0x04034b50) {
+        const size = bytes.readUInt32LE(offset + 18), length = bytes.readUInt16LE(offset + 26), start = offset + 30 + length + bytes.readUInt16LE(offset + 28);
+        const name = bytes.subarray(offset + 30, offset + 30 + length).toString();
+        const data = bytes.subarray(start, start + size);
+        if (name === 'xl/worksheets/sheet1.xml') return (bytes.readUInt16LE(offset + 8) === 8 ? inflateRawSync(data) : data).toString();
+        offset = start + size;
+      }
+      assert.fail('purchase journal sheet missing');
+    };
+    assert.match(sheet(result), /ใช้ไม่ได้/); assert.doesNotMatch(sheet(result), /ใช้ได้ตามเงื่อนไข/);
+    assert.match(sheet(result), /s="4"><v>46295<\/v>/);
+    current.inputVatClaimStatus = 'CLAIMABLE';
+    assert.match(sheet(await f.useCase.execute(ctx(['expense.export', 'expense.read']), request)), /ใช้ได้ตามเงื่อนไข/);
+
+    assert.equal(f.queries[0].where.companyId, 'company-1'); assert.deepEqual(f.queries[0].where.expenseId.in, ['expense']);
+    for (const field of ['claimabilitySnapshot', 'taxEvidenceReviewStatus', 'externalTaxCodeSnapshot', 'taxTreatmentSnapshot', 'taxComponentsJson']) assert.equal(f.queries[0].select[field], true);
   });
 });

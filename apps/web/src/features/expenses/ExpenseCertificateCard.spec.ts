@@ -537,8 +537,8 @@ test('a cleared typed address explains the tax-number change only beside the mis
 });
 
 test('PND2 and dividends explain why the system cannot issue and keep the shop-issued record action', () => {
-  for (const code of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND']) {
-    const view = setup(row({ systemIssuanceOpen: false, prefill: { ...row().prefill, incomeCategoryCode: code } }), [...issue, ...link]);
+  for (const code of ['WHT_INTEREST', 'WHT_DIVIDEND_IND', 'WHT_DIVIDEND', 'SYNTHETIC_SEPARATE']) {
+    const view = setup(row({ systemIssuanceOpen: false, prefill: { ...row().prefill, incomeCategoryCode: code, formType: code === 'SYNTHETIC_SEPARATE' ? 'PND2' : 'PND53' } }), [...issue, ...link]);
     assert.match(visible(view.render()), /ให้ผู้ทำบัญชีทำนอกระบบแล้วจดเลขที่ไว้/);
     assert.match(visible(view.render()), /จดเลขที่ใบ 50 ทวิ/);
     assert.equal(view.render().includes('>ออกหนังสือรับรอง 50 ทวิ</button>'), false);

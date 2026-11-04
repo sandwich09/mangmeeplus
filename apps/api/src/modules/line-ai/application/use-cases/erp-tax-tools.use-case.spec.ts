@@ -412,7 +412,7 @@ describe('round 5A sold-pack document advisor reads', () => {
     assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569/); assert.doesNotMatch(r.message, /2026-10|2026-11-09/);
   });
 
-  it('refuses an outside branch before reads and never invents a missing period or deadline', async () => {
+  it('refuses an outside branch before reads and keeps missing remittance separate from its calendar deadline', async () => {
     let calls = 0;
     const tool = new WhtGetMonthSummaryTool({ listPaged: async () => { calls++; return { rows: [], pageSize: 100, total: 0 }; } } as any,
       { findPeriod: async () => { calls++; return null; } } as any);
@@ -427,8 +427,10 @@ describe('round 5A sold-pack document advisor reads', () => {
     const repo = { findPeriod: async () => null };
     assert.equal(data(await new WhtGetMonthSummaryTool(noRead as any, repo as any).execute({ ...ctx, permissions: ['wht.pnd53.read'] }, {})).certificateCount, null);
     const noTax = { findPeriod: async () => { throw new Error('no remittance permission'); } };
-    assert.equal(data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, noTax as any)
-      .execute({ ...ctx, permissions: ['wht.certificate.read'] }, {})).remittance, null);
+    const certificateOnly = data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, noTax as any)
+      .execute({ ...ctx, permissions: ['wht.certificate.read'] }, {}));
+    assert.equal(certificateOnly.remittance, null); assert.equal(certificateOnly.dueDate, null);
+    assert.doesNotMatch(certificateOnly.message, /กำหนดยื่น|due/);
   });
 
   it('uses the live catalog rate and existing half-up satang arithmetic, never a model rate', async () => {
@@ -525,4 +527,64 @@ it('Exam G3: every server-worded document summary follows th/en before card deli
       assert.doesNotMatch(message, /2026-10-01|\n\d+[.)]/);
     }
   }
+});
+
+
+describe('PWS-PND53-DUE', () => {
+  const ctx = { ...baseCtx, permissions: ['wht.pnd53.read', 'wht.certificate.read'], groundingText: 'ภงด.53 ต้องยื่นเมื่อไหร่' };
+  const noCertificates = { listPaged: async () => assert.fail('due-date help does not read certificates') };
+  const data = (result: any) => result.data as any;
+  for (const configured of [true, false]) it(`uses the configured date or default 7th, configured=${configured}`, async () => {
+    const tool = new WhtGetMonthSummaryTool(noCertificates as any, {
+      findPeriod: async () => ({ id: 'period', status: 'OPEN', dueDate: configured ? new Date('2026-11-09Z') : null }),
+      findEventsByPeriod: async () => assert.fail('due-date help does not read amounts'),
+    } as any);
+    const result = data(await tool.execute(ctx, { periodKey: '2026-10', dueDateOnly: true }));
+    assert.equal(result.dueDate, configured ? '2026-11-09' : '2026-11-07');
+    assert.equal(result.message, `ภ.ง.ด.53 ของเดือนตุลาคม 2569 ต้องยื่นภายใน ${configured ? '9' : '7'} พ.ย. 2569 ค่ะ`);
+  });
+  it('computes a date without a period row', async () => {
+    const result = data(await new WhtGetMonthSummaryTool(noCertificates as any, { findPeriod: async () => null } as any)
+      .execute(ctx, { periodKey: '2026-12', dueDateOnly: true }));
+    assert.equal(result.dueDate, '2027-01-07');
+    assert.equal(result.message, 'ภ.ง.ด.53 ของเดือนธันวาคม 2569 ต้องยื่นภายใน 7 ม.ค. 2570 ค่ะ');
+  });
+  for (const configured of [true, false]) for (const offset of [-1, 0, 1]) it(`chooses the Bangkok month before/on/after the due date, configured=${configured}, offset=${offset}`, async t => {
+    const day = (configured ? 9 : 7) + offset;
+    // At 00:30 Bangkok it is still the previous day in UTC.
+    t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, day - 1, 17, 30) });
+    const seen: string[] = [];
+    const tool = new WhtGetMonthSummaryTool(noCertificates as any, { findPeriod: async (_company: string, _form: string, key: string) => {
+      seen.push(key); return configured && key === '2026-10' ? { id: 'period', dueDate: new Date('2026-11-09Z') } : null;
+    } } as any);
+    const result = data(await tool.execute(ctx, { dueDateOnly: true }));
+    assert.equal(result.periodKey, offset <= 0 ? '2026-10' : '2026-11');
+    assert.equal(result.dueDate, offset <= 0 ? `2026-11-${configured ? '09' : '07'}` : '2026-12-07');
+    assert.deepEqual(seen, offset <= 0 ? ['2026-10'] : ['2026-10', '2026-11']);
+  });
+  for (const [question, expected] of [
+    ['ภงด.53 เดือนมีนาคมต้องยื่นเมื่อไหร่', '2026-03'],
+    ['ภงด.53 เดือนธันวาคมต้องยื่นเมื่อไหร่', '2026-12'],
+    ['ภงด.53 เดือนมกราคม 2570 ต้องยื่นเมื่อไหร่', '2027-01'],
+    ['when is PND53 for October 2026 due?', '2026-10'],
+  ]) it(`uses a named month with this year as default: ${question}`, async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 4) });
+    const result = data(await new WhtGetMonthSummaryTool(noCertificates as any, { findPeriod: async () => null } as any)
+      .execute({ ...ctx, groundingText: question }, { dueDateOnly: true }));
+    assert.equal(result.periodKey, expected);
+    if (question.startsWith('when')) assert.equal(result.message, 'PND53 for October 2026 is due by 7 Nov 2026.');
+  });
+  for (const periodExists of [true, false]) for (const certificatesReadable of [true, false]) it(`a certificate reader still gets the summary due date, periodExists=${periodExists}, certificatesReadable=${certificatesReadable}`, async () => {
+    const result = data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any,
+      { findPeriod: async () => periodExists ? { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') } : null,
+        findEventsByPeriod: async () => [] } as any)
+      .execute({ ...ctx, permissions: ['wht.pnd53.read', ...(certificatesReadable ? ['wht.certificate.read'] : [])] }, { periodKey: '2026-10' }));
+    assert.match(result.message, new RegExp(`กำหนดยื่น ${periodExists ? '9' : '7'} พ.ย. 2569`));
+  });
+  it('denies due-date help to certificate-only and free-draft permission sets before reading', async () => {
+    const noRead = new Proxy({}, { get: () => assert.fail('no source read without PND53 permission') });
+    const tool = new WhtGetMonthSummaryTool(noRead as any, noRead as any);
+    for (const permissions of [['wht.certificate.read'], ['expense.read_own', 'expense.receipt.line_upload']])
+      assert.equal((await tool.execute({ ...ctx, permissions }, { dueDateOnly: true })).status, 'forbidden');
+  });
 });

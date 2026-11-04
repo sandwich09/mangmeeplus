@@ -840,3 +840,19 @@ export async function uploadExternalWhtFile(companyId: string, handoffId: string
 export function getExternalWhtFile(companyId: string, handoffId: string, attachmentId: string): Promise<{ downloadUrl: string; name: string; mimeType: string }> {
   return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/external-certificate/files/${attachmentId}`);
 }
+
+export function setCategoryAccountantAccount(companyId: string, categoryId: string, input: import('@watchdog-bms/contracts').SetExpenseCategoryAccountantAccountInput) {
+  return apiFetch<import('@watchdog-bms/contracts').ExpenseCategoryAccountantAccount>(`/v1/companies/${companyId}/expense-categories/${categoryId}/accountant-account`, { method: 'PUT', body: JSON.stringify(input), suppressErrorToast: true });
+}
+export function clearCategoryAccountantAccount(companyId: string, categoryId: string): Promise<void> {
+  return apiFetch(`/v1/companies/${companyId}/expense-categories/${categoryId}/accountant-account`, { method: 'DELETE', suppressErrorToast: true });
+}
+export function createAccountingSoftwareExport(companyId: string, input: import('@watchdog-bms/contracts').AccountingSoftwareExportRequest) {
+  return apiFetch<import('@watchdog-bms/contracts').AccountingSoftwareExportResult>(`/v1/companies/${companyId}/expenses/accounting-software-export`, { method: 'POST', body: JSON.stringify(input), suppressErrorToast: true });
+}
+export function downloadAccountingSoftwareExport(result: import('@watchdog-bms/contracts').AccountingSoftwareExportResult): void {
+  for (const file of result.files) {
+    const bytes = Uint8Array.from(atob(file.xlsxBase64), character => character.charCodeAt(0));
+    downloadBlob(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), file.fileName);
+  }
+}

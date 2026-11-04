@@ -471,3 +471,10 @@ it('office mapping trims values and rejects formula prefixes and controls anywhe
     }
   }
 });
+
+it('software export DTO requires purchase_journal and preserves accountant filters and pagination', async () => {
+  const dto = (expenseDtos as any).AccountingSoftwareExportDto; assert.equal(typeof dto, 'function');
+  const result = await run(dto, { preset: 'purchase_journal', page: 2, pageSize: 100, status: '', yearMonth: '2026-09' });
+  assert.equal(result.page, 2); assert.equal(result.status, undefined);
+  for (const preset of [undefined, 'flowaccount', 'unknown']) await assert.rejects(() => run(dto, { preset }), BadRequestException);
+});

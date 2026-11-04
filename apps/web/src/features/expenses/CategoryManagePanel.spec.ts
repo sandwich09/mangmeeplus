@@ -80,3 +80,40 @@ test('category load failures offer retry, keep typed input and recover the list'
     assert.doesNotMatch(html, /เชื่อมต่อไม่ได้|โหลดไม่สำเร็จ/);
   } finally { view.cleanup(); read.mock.restore(); capture.mock.restore(); notifications.mock.restore(); }
 });
+
+test('office mapping shows plain Thai fields and historical categories without switches, and free shops see no fields', () => {
+  const categories = [{ id: 'old', companyId: null, name: 'หมวดเก่า', status: 'ACTIVE', referencedOnly: true }];
+  const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
+  const notifications = mock.method(toast, 'useToast', () => ({ success: noop, warning: noop, error: noop }));
+  try {
+    for (const freeExpenseDrafts of [false, true]) {
+      const view = certificateHarness(() => h(CategoryManagePanel, { companyId: 'co', createOpen: false, onCreateOpenChange: noop, freeExpenseDrafts }), [[], '', categories, false, null, null, null]);
+      const html = view.render();
+      if (freeExpenseDrafts) assert.doesNotMatch(html, /รหัสหมวดในไฟล์|ชื่อหมวดในไฟล์/);
+      else { for (const text of ['รหัสหมวดในไฟล์', 'ชื่อหมวดในไฟล์', 'หมวดเก่าที่ยังมีรายการ']) assert.ok(html.includes(text)); assert.equal(view.nodes.some(n => n.tag === 'button' && n.props.role === 'switch'), false); }
+      view.cleanup();
+    }
+  } finally { capture.mock.restore(); notifications.mock.restore(); }
+});
+
+test('office mapping keeps input after failure, retries the same values and clears only when both fields are empty', async () => {
+  const categories = [{ id: 'a', companyId: 'co', name: 'หมวดทดสอบ', status: 'ACTIVE' }];
+  let attempts = 0; const calls: any[] = [];
+  const write = mock.method(api, 'setCategoryAccountantAccount', async (...args: any[]) => { calls.push(args); if (++attempts === 1) throw new Error('unavailable'); return args[2]; });
+  const clear = mock.method(api, 'clearCategoryAccountantAccount', async () => undefined);
+  const capture = mock.method(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE' }));
+  const notifications = mock.method(toast, 'useToast', () => ({ success: noop, warning: noop, error: noop }));
+  const view = certificateHarness(() => h(CategoryManagePanel, { companyId: 'co', createOpen: false, onCreateOpenChange: noop }), [[], '', categories, false, null, null, null]);
+  const field = (name: string) => view.find('input', p => p['aria-label'] === name + ' หมวดทดสอบ');
+  try {
+    view.render(); field('รหัสหมวดในไฟล์').onChange({ target: { value: '52031' } }); view.render();
+    field('ชื่อหมวดในไฟล์').onChange({ target: { value: 'ค่าเช่า' } }); view.render(); field('ชื่อหมวดในไฟล์').onBlur();
+    await view.settle(); assert.match(view.render(), /บันทึกไม่ได้ ข้อมูลยังอยู่/);
+    assert.equal(field('รหัสหมวดในไฟล์').value, '52031'); assert.equal(field('ชื่อหมวดในไฟล์').value, 'ค่าเช่า');
+    view.find('button', p => p.children.includes('ลองอีกครั้ง')).onClick(); await view.settle(); view.render();
+    assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]);
+    field('รหัสหมวดในไฟล์').onChange({ target: { value: '' } }); view.render(); assert.equal(clear.mock.callCount(), 0);
+    field('ชื่อหมวดในไฟล์').onChange({ target: { value: '' } }); view.render(); field('ชื่อหมวดในไฟล์').onBlur(); await view.settle();
+    assert.equal(clear.mock.callCount(), 1);
+  } finally { view.cleanup(); write.mock.restore(); clear.mock.restore(); capture.mock.restore(); notifications.mock.restore(); }
+});

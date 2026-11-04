@@ -1,5 +1,6 @@
 import { expenseSourceForEvent } from '../../testing/withholding-source.fixture';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
+import { withholdingAccountantExport } from '../services/withholding-accountant-export';
 import { inflateRawSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -78,6 +79,54 @@ function harness(reconciliation: any, issues: any[] = []) {
   } as any;
   return new GenerateTaxFilingPackageUseCase(taxRepo, { execute: async () => ({ id: 'seq1', documentNumber: 'TX-1' }) } as any, { execute: async () => undefined } as any, { log: async () => undefined } as any, {} as any);
 }
+
+describe('accountant export currency and separate PND2', () => {
+  function worksheets(base64: string) {
+    const file = Buffer.from(base64, 'base64'), files = new Map<string, string>();
+    for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+      const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+      const start = offset + 30 + length + file.readUInt16LE(offset + 28), bytes = file.subarray(start, start + size);
+      files.set(file.subarray(offset + 30, offset + 30 + length).toString(), (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString());
+      offset = start + size;
+    }
+    const names = [...files.get('xl/workbook.xml')!.matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map(match => match[1]!);
+    return new Map(names.map((name, index) => [name, [...files.get(`xl/worksheets/sheet${index + 1}.xml`)!.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row =>
+      [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell => cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(value => value !== undefined) ?? ''))]));
+  }
+  const event = (id: string, currency: string, grossAmount: string, withheldAmount: string) => ({ id, sourceType: 'expense.record', sourceId: id,
+    sourceLineKey: `payment:${id}`, eventDate: new Date('2026-09-10'), branchId: null, currency,
+    payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1100700000001', branchCode: null, address: 'กรุงเทพมหานคร' },
+    incomeCategoryCode: 'WHT_INTEREST', whtRate: '1', grossAmount, withheldAmount });
+  const db = (separate: ReturnType<typeof event>[]) => ({
+    taxEvent: { findMany: async ({ where }: any) => {
+      assert.deepEqual(where, { companyId: 'c1', periodKey: '2026-09', eventType: 'WHT_PND2', status: 'ACTIVE' });
+      return separate.map(row => ({ ...row, payeeSnapshotJson: row.payeeSnapshot }));
+    } },
+    expenseRecord: { findMany: async ({ where }: any) => separate.filter(row => where.companyId === 'c1' && where.status === 'CONFIRMED' && where.id.in.includes(row.id)) },
+    expensePayment: { findMany: async ({ where }: any) => separate.filter(row => where.companyId === 'c1' && where.status === 'RECORDED' && where.paidAtConfirmed === true && where.id.in.includes(row.id)) },
+    whtIncomeCategory: { findMany: async () => [{ code: 'WHT_INTEREST', nameTh: 'ดอกเบี้ย (บุคคลธรรมดา)', filingRoute: 'SEPARATE_PND2' }] },
+    whtCertificateHandoff: { findMany: async () => [] }, whtCertificate: { findMany: async () => [] },
+  } as any);
+  it('accountant workbook omits empty PND2 and preserves frozen payment facts', async () => {
+    const main = event('main', 'THB', '1000', '10');
+    const result = await withholdingAccountantExport(db([]), 'c1', 'PND3', '2026-09', [main]);
+    assert.deepEqual([...worksheets(result.contentBase64).keys()], ['ภ.ง.ด.3']);
+    assert.equal((result.filingLines[0]!.lineJson as any).payment[4], 'THB');
+  });
+  it('accountant export labels and totals each currency separately', async () => {
+    const separate = [event('thb-1', 'THB', '1000', '10'), event('usd', 'USD', '200', '2'), event('thb-2', 'THB', '3000', '30')];
+    const result = await withholdingAccountantExport(db(separate), 'c1', 'PND53', '2026-09', []);
+    const sheets = worksheets(result.contentBase64);
+    assert.deepEqual([...sheets.keys()], ['ภ.ง.ด.53', 'ภ.ง.ด.2']);
+    const [header, ...rows] = sheets.get('ภ.ง.ด.2')!;
+    assert.ok(header!.includes('อัตรา (%)')); assert.ok(header!.includes('สกุลเงิน'));
+    const column = (name: string) => header!.indexOf(name);
+    assert.deepEqual(rows.slice(0, 3).map(row => row[column('สกุลเงิน')]), ['บาท', 'ดอลลาร์สหรัฐ', 'บาท']);
+    assert.deepEqual(rows.filter(row => row[0] === 'รวม').map(row => [row[column('สกุลเงิน')], row[column('ยอดจ่าย')], row[column('ภาษีที่หักไว้')]]),
+      [['บาท', '4000', '40'], ['ดอลลาร์สหรัฐ', '200', '2']]);
+    assert.equal(result.filingLines.length, 0, 'separate PND2 rows never enter the selected PND53 paper');
+  });
+});
 
 describe('GenerateTaxFilingPackageUseCase reconciliation gate', () => {
   it('blocks export when there is no current reconciliation', async () => {

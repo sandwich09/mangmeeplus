@@ -17,7 +17,7 @@
  * getting 400s the moment this deploys.
  */
 import { Transform, Type } from 'class-transformer';
-import { INPUT_VAT_REVIEWER_CONDITIONS, EXPENSE_STATUSES, EXPENSE_PAYMENT_STATUSES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, type SharedEvidenceFilter, normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
+import { ACCOUNTING_SOFTWARE_EXPORT_PRESETS, INPUT_VAT_REVIEWER_CONDITIONS, EXPENSE_STATUSES, EXPENSE_PAYMENT_STATUSES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, type SharedEvidenceFilter, normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
 import {
   IsInt,
   IsBoolean,
@@ -284,6 +284,13 @@ export class AccountantPackageDto extends AccountantEvidenceBundleDto {
   @IsOptional() @IsIn(['csv']) format?: 'csv';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) pageSize?: number;
+}
+
+
+export class AccountingSoftwareExportDto extends AccountantPackageDto {
+  @IsIn(ACCOUNTING_SOFTWARE_EXPORT_PRESETS) preset!: 'purchase_journal';
+  @Transform(({ value }) => value === '' ? undefined : value)
+  override status: SharedEvidenceFilter['status'] = undefined;
 }
 
 

@@ -140,6 +140,67 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
   return { rows, audits, saves, history, table, client, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
 }
 
+describe('PND2 handoff filtering and unsupported issuance', () => {
+  it('PND2 handoff filtering preserves unsupported-issuance refusal', async () => {
+    const h = makeStore();
+    h.client.whtCertificate = { findMany: async () => [] };
+    for (const formType of ['PND2', 'PND3', 'PND53']) await h.value.createOrReplay({ ...baseInput, creationCommandId: formType,
+      sourcePaymentType: 'expense.record', sourcePaymentId: formType, prefill: { ...prefill, formType: formType as any,
+        incomeCategoryCode: 'SYNTHETIC_SEPARATE', incomeCategoryName: 'เงินได้แยก ภ.ง.ด.2', whtRate: '1' } });
+    const rows = await h.value.list(ctx, { formType: 'PND2' });
+    assert.deepEqual(rows.map(row => row.prefill.formType), ['PND2']);
+    assert.equal(rows[0]!.systemIssuanceOpen, false);
+    const page = await h.value.listPaged(ctx, { formType: 'PND2' });
+    assert.deepEqual(page.rows.map(row => row.formType), ['PND2']);
+    assert.equal(page.total, 1);
+    await assert.rejects(h.value.list(ctx, { formType: 'invalid' }), /เลือก ภ.ง.ด.2 ภ.ง.ด.3 หรือ ภ.ง.ด.53/);
+  });
+});
+
+describe('one-time REQUIRED PND2 repair', () => {
+  it('dry-runs and repairs only individual separate-PND2 expense handoffs, never issued rows', async () => {
+    const { repairPnd2Handoffs } = await import('../../../../scripts/repair-pnd2-handoffs');
+    const statuses = ['REQUIRED', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED', 'CANCELLED'];
+    const rows = statuses.map((status, index) => ({ id: `h${index}`, companyId: 'company-1', status, certificateId: null,
+      sourcePaymentType: 'expense.record', sourcePaymentId: `e${index}`, externalCertificateNumber: null,
+      updatedAt: new Date('2026-10-01'), prefillSnapshotHash: 'old', payloadFingerprint: 'old',
+      prefillSnapshotJson: { ...prefill, formType: 'PND3', incomeCategoryCode: 'SEPARATE' } }));
+    rows.push(...['juristic', 'normal', 'foreign-source', 'certificate-pointer', 'already-pnd2'].map(id => ({ ...structuredClone(rows[0]!), id, sourcePaymentId: id })));
+    rows.find(row => row.id === 'normal')!.prefillSnapshotJson.incomeCategoryCode = 'NORMAL';
+    rows.find(row => row.id === 'certificate-pointer')!.certificateId = 'issued' as any;
+    rows.find(row => row.id === 'already-pnd2')!.prefillSnapshotJson.formType = 'PND2';
+    const expenses = rows.map(row => ({ id: row.sourcePaymentId, companyId: row.id === 'foreign-source' ? 'company-2' : 'company-1',
+      vendorEntityKindSnapshot: row.id === 'juristic' ? 'JURISTIC' : 'INDIVIDUAL' }));
+    const writes: any[] = [];
+    const db: any = {
+      whtIncomeCategory: { findMany: async ({ where }: any) => [{ code: 'SEPARATE', filingRoute: 'SEPARATE_PND2' }, { code: 'NORMAL', filingRoute: 'SYSTEM_FILLS' }].filter(row => matches(row, where)) },
+      expenseRecord: { findFirst: async ({ where }: any) => expenses.find(row => matches(row, where)) ?? null },
+      whtCertificateHandoff: {
+        findMany: async ({ where }: any) => rows.filter(row => matches(row, where)).map(row => structuredClone(row)),
+        updateMany: async ({ where, data }: any) => {
+          writes.push({ where, data });
+          const row = rows.find(row => row.id === where.id && row.companyId === where.companyId && row.status === where.status && row.certificateId === null && row.updatedAt.getTime() === where.updatedAt.getTime());
+          if (!row) return { count: 0 }; Object.assign(row, data); return { count: 1 };
+        },
+      },
+    };
+    const before = structuredClone(rows);
+    assert.deepEqual(await repairPnd2Handoffs(db, true), { matched: 1, updated: 0 });
+    assert.deepEqual(rows, before); assert.equal(writes.length, 0);
+    assert.deepEqual(await repairPnd2Handoffs(db, false), { matched: 1, updated: 1 });
+    assert.equal(rows[0]!.prefillSnapshotJson.formType, 'PND2');
+    assert.deepEqual(rows.slice(1), before.slice(1));
+    assert.notEqual(rows[0]!.prefillSnapshotHash, 'old');
+    assert.deepEqual(await repairPnd2Handoffs(db, false), { matched: 0, updated: 0 });
+    Object.assign(rows[0]!, structuredClone(before[0]!));
+    const update = db.whtCertificateHandoff.updateMany;
+    db.whtCertificateHandoff.updateMany = async (input: any) => { rows[0]!.status = 'SYSTEM_ISSUED'; return update(input); };
+    assert.deepEqual(await repairPnd2Handoffs(db, false), { matched: 1, updated: 0 });
+    assert.equal(rows[0]!.prefillSnapshotJson.formType, 'PND3', 'a handoff issued after the read cannot be repaired');
+
+  });
+});
+
 /** A registry row with an address already on it, so cases c and d have something to compare to. */
 function registryRow(billingAddressJson?: Record<string, unknown>) {
   return { id: 'counterparty-1', displayName: 'ร้านค้า', type: 'VENDOR', ...(billingAddressJson ? { billingAddressJson } : {}) };
@@ -1426,7 +1487,7 @@ describe('withholding certificate month and form filters', () => {
     assert.equal((await h.value.listPaged(ctx, { periodKey: '2026-07' })).total, 2);
     assert.equal((await h.value.list(ctx, { periodKey: '2026-08', formType: 'PND3' })).length, 1);
     await assert.rejects(h.value.listPaged(ctx, { periodKey: '2026-13' }), (e: any) => e.getStatus() === 400);
-    await assert.rejects(h.value.listPaged(ctx, { formType: 'PP30' }), (e: any) => e.getStatus() === 400);
+    await assert.rejects(h.value.listPaged(ctx, { formType: 'PP30' as any }), (e: any) => e.getStatus() === 400);
   });
 });
 

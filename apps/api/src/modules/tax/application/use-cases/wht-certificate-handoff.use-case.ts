@@ -208,7 +208,7 @@ export class WhtCertificateHandoffUseCase {
 
   private listWhere(ctx: RequestContext, filters: { status?: string; branchId?: string; sourcePaymentId?: string; periodKey?: string; formType?: string }): Prisma.WhtCertificateHandoffWhereInput {
     if (filters.periodKey && !/^\d{4}-(0[1-9]|1[0-2])$/.test(filters.periodKey)) throw new BadRequestException('เดือนภาษีไม่ถูกต้อง เลือกเดือนอีกครั้ง');
-    if (filters.formType && !['PND3', 'PND53'].includes(filters.formType)) throw new BadRequestException('ไม่พบแบบภาษีที่เลือก เลือก ภ.ง.ด.3 หรือ ภ.ง.ด.53');
+    if (filters.formType && !['PND2', 'PND3', 'PND53'].includes(filters.formType)) throw new BadRequestException('ไม่พบแบบภาษีที่เลือก เลือก ภ.ง.ด.2 ภ.ง.ด.3 หรือ ภ.ง.ด.53');
     return {
       AND: [handoffBranchWhere(ctx),
         ...(filters.periodKey ? [{ prefillSnapshotJson: { path: ['paymentDate'], string_starts_with: `${filters.periodKey}-` } }] : []),

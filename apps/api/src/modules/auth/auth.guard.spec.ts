@@ -488,7 +488,7 @@ describe('AuthGuard', () => {
       const freeResolve = { execute: async (...args: any[]) => ({ ...await noopResolve.execute(...args), freeExpenseDrafts: true }) } as any;
       const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, freeResolve, localConfig,
         prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) }), acceptedLegal);
-      for (const suffix of ['accountant-package', 'accountant-package/bundle-plan', 'accountant-package/bundle/1', 'software-export', 'software-export/bundle/1']) {
+      for (const suffix of ['accountant-package', 'accountant-package/bundle-plan', 'accountant-package/bundle/1', 'software-export', 'software-export/bundle/1', 'accounting-software-export']) {
         await assert.rejects(() => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', method: 'POST', path: `/v1/companies/c1/expenses/${suffix}` })),
           (e: any) => e instanceof ForbiddenException && (e.getResponse() as { code?: string }).code === 'FREE_EXPENSE_DRAFTS_ONLY');
       }

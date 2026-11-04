@@ -1227,7 +1227,7 @@ for (const width of [390, 1280, 1556]) {
   test(`EXP-EXPORT @p1 export dialog keeps layout and offers one accountant file at ${width}px`, async ({ authedPage: page, companyId }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests: Array<Record<string, unknown>> = [];
-    await page.route('**/expenses/accountant-package', async (route) => {
+    await page.route('**/expenses/accounting-software-export', async (route) => {
       requests.push(route.request().postDataJSON());
       await route.fulfill({ status: 503, json: { message: 'ทดสอบส่งออกไม่สำเร็จ กรุณาลองอีกครั้ง' } });
     });
@@ -1246,9 +1246,12 @@ for (const width of [390, 1280, 1556]) {
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(requests).toHaveLength(0);
     await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveCount(0);
+    await dialog.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true }).click();
+    await page.getByRole('option', { name: 'ไฟล์แยกตามหมวด', exact: true }).click();
     await dialog.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click();
     await expect(dialog.getByRole('alert')).toBeVisible();
     expect(requests).toHaveLength(1);
+    expect(requests[0].preset).toBe('purchase_journal');
     expect(requests[0]).not.toHaveProperty('columnSet');
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
@@ -1256,6 +1259,7 @@ for (const width of [390, 1280, 1556]) {
     expect(await trigger.boundingBox()).toEqual(before.trigger);
     await trigger.click();
     await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('combobox', { name: 'รูปแบบไฟล์', exact: true })).toHaveText('ไฟล์แยกตามหมวด');
     await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
