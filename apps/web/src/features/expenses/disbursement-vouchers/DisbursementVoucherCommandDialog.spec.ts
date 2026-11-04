@@ -348,7 +348,7 @@ test('sole-self send keeps the existing money question before submitting', async
 test('pay confirmation shows the personal signature notice only when present, with no amount in the pay button', () => {
   for (const hasOwnSignature of [false, true]) {
     const html = renderToStaticMarkup(React.createElement(ToastContext.Provider, { value: { success() {}, error() {}, warning() {} } }, React.createElement(DisbursementVoucherPayCard, {
-      companyId: 'shop', detail: { header: { ...header, status: 'APPROVED', plannedMethod: 'CASH', totalAmount: '1940.00', payeeName: 'ร้าน ก' }, hasOwnSignature, actions: { pay: true }, slip: null }, onReload: async () => {},
+      companyId: 'shop', detail: { header: { ...header, status: 'APPROVED', plannedMethod: 'CASH', totalAmount: '1940.00', payeeName: 'ร้าน ก' }, lines: [], hasOwnSignature, actions: { pay: true }, slip: null }, onReload: async () => {},
     })));
     assert.equal(html.includes('ลายเซ็นของคุณจะอยู่ในใบนี้'), hasOwnSignature);
     assert.match(html, /<button[^>]*type="submit"[^>]*>บันทึกว่าจ่ายแล้ว<\/button>/);

@@ -1,4 +1,4 @@
-import { ACCOUNTANT_WORKBOOK_SHEETS, ACCOUNTANT_WORKBOOK_COLUMNS, ACCOUNTANT_WORKBOOK_COLUMN_LABELS,
+import { E_WHT_WORDS, type WhtRemittance, ACCOUNTANT_WORKBOOK_SHEETS, ACCOUNTANT_WORKBOOK_COLUMNS, ACCOUNTANT_WORKBOOK_COLUMN_LABELS,
   ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS, ACCOUNTANT_PAYMENT_SHEET_COLUMNS, ACCOUNTANT_PAYMENT_SHEET_COLUMN_LABELS,
   ACCOUNTANT_WITHHOLDING_SHEET_COLUMNS, ACCOUNTANT_WITHHOLDING_SHEET_COLUMN_LABELS, ACCOUNTANT_FILES_SHEET_COLUMNS, ACCOUNTANT_FILES_SHEET_COLUMN_LABELS,
   EXPENSE_PAYMENT_METHOD_LABELS, expenseCurrencyLabel } from '@watchdog-bms/contracts';
@@ -21,7 +21,13 @@ import { formatThaiExportDate } from '../../../../common/export/thai-date.logic'
 import { buildWorkbook, type WorkbookCell, type WorkbookSheet } from '../../../../common/export/xlsx.logic';
 import { safeCsvCell } from '../../../../common/export/csv.logic';
 
+export function accountantWhtRemittance(amount: string, remittance?: WhtRemittance | null): string {
+  if (!(Number(amount) > 0)) return E_WHT_WORDS['W-X2'].noWithholding;
+  return E_WHT_WORDS['W-X2'][remittance ?? 'unspecified'];
+}
+
 export type AccountantIndexSource = {
+  whtRemittance?: WhtRemittance | null;
   /** Spec §5.2: the source of `document_date_status`. Optional — a caller that has no AI summary
    *  (a manual entry) yields `verified`, which is what a hand-typed date is. */
   aiVerificationSummaryJson?: Record<string, unknown> | null;

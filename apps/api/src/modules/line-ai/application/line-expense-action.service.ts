@@ -2,7 +2,7 @@ import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic
 import type { LineWorkflowControl } from '@watchdog-bms/contracts';
 import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
-import { LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
 import { RecordReimbursementPaymentUseCase } from '../../reimbursements/application/use-cases/reimbursement-finance.use-case';
@@ -47,7 +47,7 @@ class CategoryPreviewRollback extends Error {
 export const EXPENSE_ACTIONS = LINE_WORKFLOW_OPEN_ACTIONS;
 export type ExpenseAction = typeof EXPENSE_ACTIONS[number] | TeamAction;
 export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งอนุมัติ', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
-export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next'; token: string };
+export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next' | 'expense_action_transfer' | 'expense_action_cheque'; token: string };
 export type ExpenseActionPreview = {
   resultId?: string;
   language?: LineReplyLanguage;
@@ -62,6 +62,7 @@ type StoredAction = {
   previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; expenseId: string; revision: string; digest: string;
   branchId: string | null; createdByUserId: string; requestId: string; preview: ExpenseActionPreview; claim?: { payoutSubmitToken?: string; hash?: string; payoutVersion?: number; thirdParty?: boolean; payment?: RecordReimbursementPaymentInput }; paymentIntent?: Record<string, unknown>; awaitingReason?: boolean; evidence?: { id: string; revision: string; attachmentId: string; paidAt?: string };
+  allowedPaymentMethods?: Array<'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'>; paymentMethodQuestion?: boolean;
   voucher?: VoucherActionPayload; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod' | 'claimSlip';
   applied?: { nextVoucherId?: string; revision: string | null; digest?: string; preview: ExpenseActionPreview };
   markReady?: boolean;
@@ -112,6 +113,8 @@ export type ExpenseActionResult = { status: 'applied' | 'replayed' | 'prepared';
 export const EXPENSE_ACTION_CHANGED = 'รายการเปลี่ยนไปแล้วค่ะ ขอเตรียมการ์ดใหม่ก่อนยืนยันอีกครั้ง';
 // Confirm/ready/void/payment and their repository guards: customer text never echoes an exception.
 export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
+  expense_ewht_payment_method: E_WHT_WORDS['L-1'],
+  disbursement_ewht_planned_method: E_WHT_WORDS['L-1'],
   EXPENSE_SOURCE_DRAFT_INCOMPLETE: 'ข้อมูลร่างยังไม่ครบค่ะ พิมพ์ข้อมูลที่ขาดในแชตเพื่อแก้ร่างก่อน',
   EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED: 'ยังขาดการตรวจวันที่รายการ ตรวจวันที่แล้วบอกวันที่ในแชตได้เลยค่ะ',
   EXPENSE_EVIDENCE_REVIEW_REQUIRED: 'เปิดหน้ารายการเพื่อตรวจประเภทเอกสารและหลักฐานให้ครบก่อนยืนยันค่ะ',
@@ -208,7 +211,7 @@ export function parseExpenseActionControl(raw: unknown): ExpenseActionControl | 
   const p = new URLSearchParams(raw), keys = [...p.keys()];
   const action = p.get('action'), token = p.get('token');
   if (keys.length !== 2 || new Set(keys).size !== 2 || keys.some(k => !['action', 'token'].includes(k))
-    || !['expense_action_confirm', 'expense_action_cancel', 'expense_action_approve', 'expense_action_reject', 'expense_action_submit', 'expense_action_wht', 'expense_action_payment', 'expense_action_next'].includes(action ?? '')
+    || !['expense_action_confirm', 'expense_action_cancel', 'expense_action_approve', 'expense_action_reject', 'expense_action_submit', 'expense_action_wht', 'expense_action_payment', 'expense_action_next', 'expense_action_transfer', 'expense_action_cheque'].includes(action ?? '')
     || !token || !/^[A-Za-z0-9_-]{1,200}\.[A-Za-z0-9_-]{43}$/u.test(token)) return null;
   return { action: action as ExpenseActionControl['action'], token };
 }
@@ -257,7 +260,7 @@ export class LineExpenseActionService {
       .update(canonicalDeliveryJson({ id: entry.previewId, company: entry.companyId, user: entry.userId, membership: entry.membershipId,
         chat: entry.chatKeyHash, conversation: entry.conversationId, epoch: entry.ownerEpoch, expense: entry.expenseId,
         revision: entry.revision, digest: entry.digest, branch: entry.branchId, creator: entry.createdByUserId, action: entry.preview.action, reason: entry.preview.reason ?? null,
-        record: entry.preview.record, details: entry.preview.details, documentImageUrl: entry.preview.documentImageUrl, review: entry.review, markReady: entry.markReady, category: entry.category, evidenceReview: entry.preview.evidenceReview, payment: entry.preview.payment, claim: entry.claim, paymentIntent: entry.paymentIntent, evidence: entry.evidence, voucher: entry.voucher, awaitingField: entry.awaitingField, awaitingReason: entry.awaitingReason, expires: entry.preview.expiresAt })).digest('base64url');
+        record: entry.preview.record, details: entry.preview.details, documentImageUrl: entry.preview.documentImageUrl, review: entry.review, markReady: entry.markReady, category: entry.category, evidenceReview: entry.preview.evidenceReview, payment: entry.preview.payment, claim: entry.claim, paymentIntent: entry.paymentIntent, evidence: entry.evidence, voucher: entry.voucher, ...(entry.allowedPaymentMethods ? { allowedPaymentMethods: entry.allowedPaymentMethods, paymentMethodQuestion: entry.paymentMethodQuestion ?? false } : {}), awaitingField: entry.awaitingField, awaitingReason: entry.awaitingReason, expires: entry.preview.expiresAt })).digest('base64url');
   }
   private async bound(ctx: RequestContext, chat: string, entry: StoredAction, token?: string): Promise<boolean> {
     if (entry.companyId !== ctx.companyId || entry.userId !== ctx.userId || entry.membershipId !== ctx.membershipId
@@ -333,6 +336,7 @@ export class LineExpenseActionService {
   private isClaim(action: ExpenseAction | string) { return typeof action === 'string' && action.startsWith('REIMBURSEMENT_'); }
   private isVoucher(action: string): action is VoucherAction { return (VOUCHER_ACTIONS as readonly string[]).includes(action); }
   private question(entry: StoredAction, language: LineReplyLanguage = entry.preview.language ?? 'th') {
+    if (entry.allowedPaymentMethods) return E_WHT_WORDS['L-10'];
     if (language === 'en') return entry.awaitingField === 'payeeName' ? 'Who is the payee for this voucher?'
       : entry.awaitingField === 'claimSlip' ? 'Please send the transfer slip to prepare reimbursement confirmation.'
         : entry.awaitingField === 'paymentMethod' ? 'Was payment by cash, bank transfer, card or cheque?'
@@ -513,7 +517,7 @@ export class LineExpenseActionService {
               chatKeyHash: `expense-action-evidence:${chat}`, conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: id,
               revision: expense.updatedAt.toISOString(), digest: expenseTaxSourceChecksum(expense), requestId: ctx.requestId, stage: 'choice', paymentIntent })) throw error;
             return { reply: new Decimal(expense.whtAmount).gt(0)
-              ? (en ? 'Review the evidence to confirm this expense before preparing its payment voucher and withholding certificate.' : 'ตรวจหลักฐานเพื่อยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่ายและออกหนังสือรับรอง 50 ทวิค่ะ')
+              ? expense.whtRemittance === 'E_WHT' ? E_WHT_WORDS['L-3'] : (en ? 'Review the evidence to confirm this expense before preparing its payment voucher and withholding certificate.' : 'ตรวจหลักฐานเพื่อยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่ายและออกหนังสือรับรอง 50 ทวิค่ะ')
               : (en ? 'Please choose the evidence for this expense.' : 'เลือกหลักฐานที่ใช้กับรายการนี้ได้เลยค่ะ') };
           }
           // All confirmation validators must pass; evidence review must be the only remaining blocker.
@@ -527,6 +531,8 @@ export class LineExpenseActionService {
       if (action === 'VOID') await this.voidExpense.previewLineAction(ctx, record.id, awaitingReason ? 'รอเหตุผลจากผู้ใช้' : reason ?? '');
       if (record.claim && action !== 'REIMBURSEMENT_RECORD_PAYMENT') await this.validateClaim(ctx, record.claim, action, awaitingReason ? 'รอเหตุผลจากผู้อนุมัติ' : reason);
       let payment: RecordExpensePaymentInput | undefined, evidence: StoredAction['evidence'];
+      let allowedPaymentMethods = voucher?.allowedPaymentMethods;
+      const paymentDetails: string[] = [];
       let claimPayment: RecordReimbursementPaymentInput | undefined;
       const awaitingClaimSlip = action === 'REIMBURSEMENT_RECORD_PAYMENT' && typeof input.slipAttachmentId !== 'string';
       if (action === 'REIMBURSEMENT_RECORD_PAYMENT') {
@@ -553,8 +559,16 @@ export class LineExpenseActionService {
         const slipDate = evidence?.paidAt;
         payment = { paidAmount: typeof input.paidAmount === 'string' ? input.paidAmount : new Decimal(calcPaymentAmounts(expense.netPayableAmount, expense.paidAmount).outstandingAmount).toFixed(2),
           paidAt: typeof input.paidAt === 'string' ? input.paidAt : slipDate ?? todayCivilDate('Asia/Bangkok'),
-          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as RecordExpensePaymentInput['paymentMethod'] } : {}) };
-        await this.payment!.previewLineAction(ctx, id, payment);
+          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as RecordExpensePaymentInput['paymentMethod'] } : expense.whtRemittance === 'E_WHT' ? { paymentMethod: 'BANK_TRANSFER' as const } : {}) };
+        try { await this.payment!.previewLineAction(ctx, id, payment); }
+        catch (error) {
+          if (!(error instanceof ConflictException) || (error.getResponse() as { code?: string }).code !== 'expense_ewht_payment_method') throw error;
+          allowedPaymentMethods = ['BANK_TRANSFER', 'CHEQUE', 'OTHER'];
+        }
+        if (expense.whtRemittance === 'E_WHT') {
+          paymentDetails.push(E_WHT_WORDS['L-2']);
+          if (eWhtRateKind(expense.whtCategoryCode) === 'REDUCED' && Number(expense.whtRate) === 1 && !eWhtReducedRateOn(expense.whtCategoryCode, payment.paidAt ?? '')) paymentDetails.push(E_WHT_WORDS['L-9']);
+        }
         paymentChange = { status: PAYMENT_LABELS[derivePaymentStatus(expense.netPayableAmount, expense.paidAmount)],
           nextStatus: PAYMENT_LABELS[derivePaymentStatus(expense.netPayableAmount, new Decimal(expense.paidAmount).plus(payment.paidAmount).toString())] };
         if (evidence) {
@@ -563,6 +577,7 @@ export class LineExpenseActionService {
         nextStatus = 'CONFIRMED';
       }
       if (voucher) nextStatus = voucher.nextStatus;
+      if (action === 'VOUCHER_PAY' && voucher?.payload.payment) payment = { paidAmount: record.grandTotalAmount, paidAt: voucher.payload.payment.paidDate, paymentMethod: voucher.payload.payment.paymentMethod };
       if (action === 'VOUCHER_PAY') { evidence = await this.recentSlip(ctx, chat, id); if (evidence) await this.checkSlip(ctx, chat, evidence); }
       if (record.claim) nextStatus = action === 'REIMBURSEMENT_RECORD_PAYMENT' ? 'PAID' : action === 'REIMBURSEMENT_REJECT' ? 'REJECTED' : action === 'REIMBURSEMENT_CANCEL' ? 'CANCELLED' : action === 'REIMBURSEMENT_SUBMIT' ? 'PENDING_APPROVAL' : 'APPROVED';
       // A fresh, explicit preview cannot claim an already completed action is pending.
@@ -589,6 +604,7 @@ export class LineExpenseActionService {
           currency: record.currency, date: record.expenseDate.toISOString().slice(0, 10), status: lineUiLabel(this.status(action, record.status), language),
           nextStatus: record.claim ? record.claim.payoutCorrection && action === 'REIMBURSEMENT_REJECT' ? (en ? 'Awaiting payout correction' : 'รอผู้เบิกแก้บัญชี') : en ? lineUiLabel(EXPENSE_ACTION_LABELS[action], language) : `${EXPENSE_ACTION_LABELS[action]}แล้ว` : nextStatus === 'DELETED' ? (en ? 'Deleted' : 'ลบแล้ว') : lineUiLabel(this.status(action, nextStatus), language) } };
       if (paymentChange) Object.assign(preview.record, paymentChange);
+      if (paymentDetails.length) preview.details = [...(preview.details ?? []), ...paymentDetails];
       const evidenceSource = 'attachments' in record ? { ...record, aiVerificationSummaryJson: review ? { ...record.aiVerificationSummaryJson, documentEvidenceDraft: review.assessment } : record.aiVerificationSummaryJson } : undefined;
       if (action === 'CONFIRM' && evidenceSource && expenseEvidenceImageMissing(evidenceSource)) {
         preview.details = [...(preview.details ?? []), ...lineExpenseEvidenceNotes(evidenceSource, language)];
@@ -597,7 +613,7 @@ export class LineExpenseActionService {
       if (paymentIntent) preview.details = [...(preview.details ?? []), en ? `After confirming, record payment for ${lineDisplayDate(String(paymentIntent.paidAt), language)}.` : `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
       const entry: StoredAction = { previewId: preview.previewId, companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
-        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}), ...(typeof input.paidAmount === 'string' ? { paidAmount: input.paidAmount } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, awaitingField: awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
+        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}), ...(typeof input.paidAmount === 'string' ? { paidAmount: input.paidAmount } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, allowedPaymentMethods, awaitingField: allowedPaymentMethods ? 'paymentMethod' : awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
         ...(record.claim ? { claim: { ...(claimPayment ? { payment: claimPayment } : {}), payoutSubmitToken: record.claim.payout?.submitToken, hash: record.claim.approvalSnapshotHash, payoutVersion: record.claim.payout?.version, thirdParty: record.claim.payout?.holderType === 'THIRD_PARTY' } } : {}) };
       if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'จ่ายค่าอะไร' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
       preview.token = `${entry.previewId}.${this.sign(entry)}`;
@@ -607,7 +623,7 @@ export class LineExpenseActionService {
         ...(typeof input.paidAt === 'string' ? { pd: input.paidAt } : preview.payment?.paidAt ? { pd: preview.payment.paidAt } : {}),
         ...(typeof input.paidAmount === 'string' ? { pa: input.paidAmount } : preview.payment?.paidAmount ? { pa: preview.payment.paidAmount } : {}) };
       if (!await this.store.save(entry, recovery)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
-      if (awaitingReason || entry.awaitingField) return { reply: this.question(entry) };
+      if (awaitingReason || entry.awaitingField) return { reply: allowedPaymentMethods ? E_WHT_WORDS['L-1'] : this.question(entry) };
       return { preview, reply: preview.summary };
     } catch (error) {
       if (action === 'REIMBURSEMENT_SUBMIT') return this.claimSubmitRefusal(error, ctx, id as string, language);
@@ -653,6 +669,22 @@ export class LineExpenseActionService {
   }
   async repairChoices(ctx: RequestContext, chat: string, requestId?: string, language: LineReplyLanguage = 'th') {
     const pending = await this.store.load(ctx.companyId, this.key(chat));
+    if (pending?.awaitingField === 'paymentMethod' && pending.allowedPaymentMethods
+      && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending)) {
+      const record = await this.read(ctx, pending.expenseId, pending.preview.action, pending.voucher).catch(() => null);
+      if (!record || record.updatedAt.toISOString() !== pending.revision || record.digest !== pending.digest || !await this.permitted(ctx, pending)) return [];
+      const methods = pending.paymentMethodQuestion ? ['BANK_TRANSFER', 'CHEQUE'] as const : ['BANK_TRANSFER'] as const;
+      const choices: Array<{ label: string; text: string; data?: string; uri?: string }> = methods.map(method => {
+        const selected = { ...pending, preview: { ...pending.preview, payment: { ...pending.preview.payment!, paymentMethod: method } } };
+        const label = method === 'BANK_TRANSFER' ? 'โอนเงิน' : 'เช็ค';
+        return { label, text: label, data: new URLSearchParams({ action: method === 'BANK_TRANSFER' ? 'expense_action_transfer' : 'expense_action_cheque', token: `${pending.previewId}.${this.sign(selected)}` }).toString() };
+      });
+      if (!pending.paymentMethodQuestion && this.config.webBaseUrl?.startsWith('https://')) {
+        const path = pending.voucher ? 'expenses/disbursement-vouchers' : 'expenses';
+        choices.push({ label: 'เปิดรายการ', text: 'เปิดรายการ', uri: `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${ctx.companyId}/${path}/${pending.expenseId}` });
+      }
+      return choices;
+    }
     if (pending?.awaitingField === 'payeeName' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
       return this.vouchers!.payeeChoices(ctx, language);
     if (pending?.awaitingField === 'claimSlip' && (!requestId || pending.requestId === requestId) && await this.bound(ctx, chat, pending))
@@ -879,6 +911,15 @@ export class LineExpenseActionService {
       const result = await this.preview(ctx, chat, { reimbursementId: control.token.split('.')[0], action: control.action === 'expense_action_submit' ? 'REIMBURSEMENT_SUBMIT' : control.action === 'expense_action_approve' ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT' }, true, undefined, language);
       return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', ...result };
     }
+    if (control.action === 'expense_action_transfer' || control.action === 'expense_action_cheque') {
+      const entry = await this.store.load(ctx.companyId, this.key(chat));
+      const paymentMethod = control.action === 'expense_action_transfer' ? 'BANK_TRANSFER' as const : 'CHEQUE' as const;
+      const selected = entry && { ...entry, preview: { ...entry.preview, payment: { ...entry.preview.payment!, paymentMethod } } };
+      if (!entry || entry.awaitingField !== 'paymentMethod' || !entry.allowedPaymentMethods?.includes(paymentMethod)
+        || !selected || !await this.bound(ctx, chat, selected, control.token)) return { status: 'blocked', reply: EXPIRED };
+      const result = await this.answerReason(ctx, chat, paymentMethod);
+      return result?.preview ? { status: 'prepared', ...result, preview: result.preview } : { status: 'blocked', reply: result?.reply ?? EXPIRED };
+    }
     const id = control.token.split('.')[0]!;
     const applied = await this.store.loadApplied(ctx.companyId, this.key(chat));
     if (applied?.previewId === id && applied.applied && await this.bound(ctx, chat, applied, control.token)) {
@@ -1043,10 +1084,16 @@ export class LineExpenseActionService {
     }
     if (entry.awaitingField === 'claimSlip') return { reply: this.question(entry) };
     const paymentMethod = entry.awaitingField === 'paymentMethod' ? /เงินสด|^CASH$/iu.test(reason) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(reason) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(reason) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(reason) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(reason) ? 'OTHER' : undefined : undefined;
+    if (entry.allowedPaymentMethods && (!paymentMethod || !entry.allowedPaymentMethods.includes(paymentMethod as 'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'))) {
+      entry.paymentMethodQuestion = !paymentMethod;
+      entry.preview.token = `${entry.previewId}.${this.sign(entry)}`;
+      await this.store.save(entry);
+      return { reply: paymentMethod ? E_WHT_WORDS['L-1'] : E_WHT_WORDS['L-10'] };
+    }
     if (entry.awaitingField === 'paymentMethod' && !paymentMethod) return { reply: this.question(entry) };
     return this.preview(ctx, chat, { action: entry.preview.action, expenseId: entry.expenseId, reimbursementId: entry.expenseId, voucherId: entry.voucher?.id, handoffId: entry.voucher?.handoffs?.[0]?.id,
       ...(entry.voucher?.expenseIds ? { expenseIds: entry.voucher.expenseIds.join(',') } : {}),
-      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAt: entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th');
+      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAmount: entry.preview.payment?.paidAmount, paidAt: entry.preview.payment?.paidAt ?? entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th');
   }
   async permitted(ctx: RequestContext, entry: Pick<StoredAction, 'voucher' | 'createdByUserId' | 'expenseId'> & { preview: Pick<ExpenseActionPreview, 'action'> }): Promise<boolean> {
     if (entry.voucher) { try { await this.vouchers!.authorize(ctx, entry.voucher.action); return true; } catch (error) { if (error instanceof HttpException) return false; throw error; } }
@@ -1069,6 +1116,7 @@ export class LineExpenseActionService {
     if (!(error instanceof HttpException)) throw error;
     if (this.isClaim(action) && error.getStatus() === 404) return REIMBURSEMENT_DRAFT_CHANGED[language];
     const response = error.getResponse(), code = typeof response === 'object' ? String((response as any).code ?? error.message) : response;
+    if (code === 'expense_ewht_payment_method' || code === 'disbursement_ewht_planned_method') return E_WHT_WORDS['L-1'];
     if (language === 'en') {
       if (code === 'feature_not_enabled') return 'Your package does not include this feature.';
       if (error instanceof ForbiddenException) return approvers?.length ? `This claim awaits approval by ${approvers.map(name => scrubRecordText(name, 60)).join(' or ')}.` : 'Ask the shop owner or an authorized user to perform this action.';

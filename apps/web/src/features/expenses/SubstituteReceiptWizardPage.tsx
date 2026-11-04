@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { E_WHT_WORDS, eWhtPaymentMethodAllowed } from '@watchdog-bms/contracts';
+import { expenseEWhtPaymentWarning } from './expenses.model';
 import { FormActionBar } from '@/common/components/actions/FormActionBar';
 import { SubstitutePaperDocumentPreview, SubstitutePaperSigningPanel } from './SubstitutePaperSigningPanel';
 import { SubstituteSignerPositionField } from './SubstituteSignerPositionField';
@@ -541,6 +543,9 @@ export function SubstituteReceiptWizardPage({
   const [manualValidationAttempted, setManualValidationAttempted] = useState(false);
   const [manualAnnouncement, setManualAnnouncement] = useState('');
   const [fundingSource, setFundingSource] = useState<'' | 'COMPANY' | 'PERSONAL_ADVANCE'>('');
+  useEffect(() => {
+    if (detail?.whtRemittance === 'E_WHT' && fundingSource === 'COMPANY' && !eWhtPaymentMethodAllowed(paymentMethod)) setPaymentMethod('BANK_TRANSFER');
+  }, [detail?.whtRemittance, fundingSource, paymentMethod]);
   const [paidInFullAcknowledged, setPaidInFullAcknowledged] = useState(false);
   const [signerPosition, setSignerPosition] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
@@ -2055,12 +2060,13 @@ export function SubstituteReceiptWizardPage({
               <label className="block text-sm font-semibold text-gray-700">
                 <span className="mb-1 block">{t('expenses.substitute_wizard.payment_method', locale)}<RequiredMark /></span>
                 <ThemedSelect className={inputClass} required disabled={factsDisabled || busy || (companyPaymentRecorded && Boolean(detail.paymentMethod))} value={paymentMethod} aria-label={t('expenses.substitute_wizard.payment_method', locale)} onChange={(event) => setPaymentMethod(event.target.value as ExpensePaymentMethod)}>
-                  {Object.entries(PAYMENT_KEYS).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
+                  {Object.entries(PAYMENT_KEYS).filter(([method]) => detail.whtRemittance !== 'E_WHT' || fundingSource !== 'COMPANY' || eWhtPaymentMethodAllowed(method)).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
                 </ThemedSelect>
               </label>
               <label className="block text-sm font-semibold text-gray-700">
                 <span className="mb-1 block">{t('expenses.substitute_wizard.payment_date', locale)}<RequiredMark /></span>
                 <ThemedDate className={inputClass} required disabled={factsDisabled || busy || (companyPaymentRecorded && Boolean(detail.paidAt))} value={paymentDate} aria-label={t('expenses.substitute_wizard.payment_date', locale)} onChange={(event) => void changePaymentDate(event.target.value)} />
+                {fundingSource === 'COMPANY' && expenseEWhtPaymentWarning(detail.whtRemittance, detail.whtCategoryCode, detail.whtRate, paymentDate) && <span role="status" className="mt-1 block text-sm font-normal text-warning-700">{E_WHT_WORDS['W-P2']}</span>}
                 <span className="mt-1 block text-sm font-normal text-gray-500">วันที่ในค่าใช้จ่าย: <span className="mangmee-unit">{dateShort(detail.expenseDate)}</span></span>
               </label>
             </div>

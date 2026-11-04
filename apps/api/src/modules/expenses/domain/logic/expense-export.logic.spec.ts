@@ -73,7 +73,7 @@ describe('accountant workbook v2 pure projection', () => {
     const workbook = logic.buildAccountantWorkbook({ rows: [{ expense_number: 'EXP-1', grand_total_amount: '100', currency: 'THB', expense_status: 'CONFIRMED' }],
       payments: [], withholding: [], visible: { shopBranch: false, vouchers: false, certificates: false }, about: { ร้าน: 'ร้านทดสอบ' } });
     const xml = exportedSheet(workbook);
-    assert.equal((xml.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, 25);
+    assert.equal((xml.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, 26);
     for (const forbidden of ['posting_status', 'posting_error', 'journal_entry_number', 'เปิดไฟล์', 'ชื่อผู้ส่ง', 'ผู้ตรวจสิทธิภาษีซื้อ']) assert.ok(!xml.includes(forbidden));
     const sheets = exportedSheet(workbook, 'xl/workbook.xml');
     assert.match(sheets, /รายการค่าใช้จ่าย/); assert.match(sheets, /เกี่ยวกับไฟล์นี้/);
@@ -579,5 +579,36 @@ describe('general purchase journal', () => {
     assert.match(exportedSheet(file, 'xl/workbook.xml'), /สมุดรายวันซื้อ/); assert.match(exportedSheet(file, 'xl/workbook.xml'), /เกี่ยวกับไฟล์นี้/);
     const excludedFile = buildPurchaseJournalWorkbook([], [{ expenseNumber: 'USD-1', reason: 'foreign_currency', detail: 'ยอดเป็นสกุลเงินอื่น นำเข้าได้เฉพาะเงินบาท' }], {});
     assert.match(exportedSheet(excludedFile, 'xl/worksheets/sheet2.xml'), /USD-1/);
+  });
+});
+
+describe('R9 e-WHT in the current expense workbook', () => {
+  it('appends the remittance column without moving any existing expense column', () => {
+    const previous = ['document_date', 'uploaded_at', 'expense_number', 'vendor_document_number', 'source_document_type', 'vendor_name', 'vendor_tax_id', 'vendor_branch', 'vendor_address', 'category_name', 'description', 'currency', 'taxable_amount', 'vat_amount', 'grand_total_amount', 'input_vat_right', 'tax_evidence_status', 'wht_amount', 'net_payable_amount', 'paid_amount', 'outstanding_amount', 'last_paid_at', 'advanced_by', 'expense_status', 'notes', 'primary_file'];
+    assert.deepEqual(ACCOUNTANT_WORKBOOK_COLUMNS.slice(0, -1), previous);
+    assert.equal(ACCOUNTANT_WORKBOOK_COLUMNS.at(-1), 'wht_remittance');
+  });
+  it('uses the four approved values, including blank when nothing is withheld', async () => {
+    const { accountantWhtRemittance } = await import('./expense-export.logic');
+    assert.equal(accountantWhtRemittance('3', 'PAYER_FILES'), 'ร้านยื่นแบบเอง');
+    assert.equal(accountantWhtRemittance('3', 'E_WHT'), 'ธนาคารนำส่ง (e-WHT)');
+    assert.equal(accountantWhtRemittance('3', null), 'ไม่ได้ระบุ');
+    assert.equal(accountantWhtRemittance('0', 'E_WHT'), '');
+  });
+  it('keeps E_WHT through the actual workbook caller rather than exporting unspecified', async () => {
+    const { CreateAccountantPackageUseCase } = await import('../../application/use-cases/expense-evidence.use-case');
+    const db: any = { branch: { count: async () => 1 }, expensePayment: { findMany: async () => [] }, whtFilingLine: { findMany: async () => [] } };
+    const uc: any = new CreateAccountantPackageUseCase({} as any, {} as any, {} as any, { client: db } as any, {} as any, {} as any,
+      { findConfirmedWithWhtByCompany: async () => [] } as any);
+    const source = { ...nonVatExpense, id: 'exp-1', branchId: null, note: '', expenseDate: new Date('2026-11-04'), uploadedAt: new Date('2026-11-04'), whtAmount: '3', whtRemittance: 'E_WHT',
+      evidenceSources: { certificates: [] }, aiVerificationSummaryJson: null };
+    const result = await uc.workbookProjection({ companyId: 'company-1', permissions: [], scopes: {} }, {},
+      { page: { rows: [source], total: 1 }, files: [], expenseIds: new Set(['exp-1']) }, { name: 'ร้านทดสอบ' }, []);
+    const xml = exportedSheet(result.data);
+    assert.match(xml, /วิธีนำส่งภาษีหัก ณ ที่จ่าย/);
+    assert.match(xml, /ธนาคารนำส่ง \(e-WHT\)/);
+    assert.doesNotMatch(xml, /ไม่ได้ระบุ/);
+    const header = xml.match(/<row r="1"[^>]*>(.*?)<\/row>/s)![1];
+    assert.match(header, /วิธีนำส่งภาษีหัก ณ ที่จ่าย<\/t><\/is><\/c>$/);
   });
 });

@@ -2,6 +2,7 @@ import { isSerializationFailure } from '../../../../common/database/prisma-error
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { PrismaTaxRepository } from './prisma-tax.repository.js';
+import { filedWithholdingPaymentPeriods } from '../../application/services/filed-withholding-payment';
 
 const issueInput = {
   companyId: 'company-1',
@@ -101,7 +102,7 @@ it('removes only unlocked active withholding fallbacks when a source kind is unk
   const repo = new PrismaTaxRepository({ client: { taxPeriod: { findMany: async () => [] }, taxEvent: { updateMany: async (input: any) => { query = input; return { count: 1 }; } } } } as any);
   await repo.supersedeUnclassifiedWithholding('c', 'expense.record', 'expense');
   assert.deepEqual(query, { where: { companyId: 'c', sourceType: 'expense.record', sourceId: 'expense',
-    eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, status: 'ACTIVE', OR: [{ eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, { taxPeriod: { status: { notIn: ['FILED', 'PAID', 'CLOSED'] } } }] },
+    eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, status: { in: ['ACTIVE', 'EXCLUDED'] }, OR: [{ eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, { taxPeriod: { status: { notIn: ['FILED', 'PAID', 'CLOSED'] } } }, { status: 'EXCLUDED' }] },
     data: { status: 'SUPERSEDED' } });
 });
 
@@ -423,4 +424,70 @@ describe('R10 filing checks source blockers in its transaction (real PostgreSQL)
       }
     } finally { await Promise.all(clients.map(client => client.$disconnect())); }
   });
+});
+
+describe('R6 e-WHT excluded event lifecycle', () => {
+  it('finds ACTIVE and EXCLUDED source components', async () => {
+    let where: any;
+    const repo = new PrismaTaxRepository({ client: { taxEvent: { findFirst: async (query: any) => { where = query.where; return null; } } } } as any);
+    await repo.findActiveEventBySourceComponent('c', 'expense.record', 'e', 'payment:p', null, 'WHT_PND3');
+    assert.deepEqual(where.status, { in: ['ACTIVE', 'EXCLUDED'] });
+  });
+  it('writes EXCLUDED in a legacy locked month without reopening it, but rejects a frozen filed payment', async () => {
+    let writes = 0, covered = false;
+    const tx: any = { $executeRaw: async () => 0, $queryRaw: async () => [],
+      expenseRecord: { findFirst: async () => ({ id: 'e', status: 'CONFIRMED' }) },
+      expensePayment: { findFirst: async () => ({ id: 'p', status: 'RECORDED', paidAtConfirmed: true }) },
+      whtFiling: { findMany: async () => covered ? [{ formType: 'PND3', periodKey: '2026-11', lines: [{ sourceType: 'expense.record', sourceId: 'e', lineJson: { payment: [...Array(13).fill(null), 'payment:p'] } }] }] : [] },
+      taxPeriod: { findMany: async () => [{ formType: 'PND3', periodKey: '2026-11', status: 'FILED', whtFilings: [] }], updateMany: async () => assert.fail('EXCLUDED must not reopen the period') },
+      taxEvent: { upsert: async ({ create }: any) => { writes++; return { id: 'event', ...create }; } } };
+    const repo = new PrismaTaxRepository({ client: { $transaction: async (work: any) => work(tx) } } as any);
+    const input: any = { companyId: 'c', sourceType: 'expense.record', sourceId: 'e', sourceLineKey: 'payment:p', taxPeriodId: 'period', periodKey: '2026-11',
+      eventType: 'WHT_PND3', whtFormType: 'PND3', status: 'EXCLUDED', idempotencyKey: 'excluded-1', eventDate: new Date('2026-11-04'), taxableBase: '100', taxAmount: '1', currency: 'USD' };
+    assert.equal((await repo.upsertEvent(input)).status, 'EXCLUDED'); assert.equal(writes, 1);
+    covered = true;
+    await assert.rejects(() => repo.upsertEvent(input), (e: any) => e.getResponse().code === 'expense_tax_source_changed');
+    assert.equal(writes, 1);
+  });
+  it('keeps the form filter even with an explicit period when resolving source issues', async () => {
+    let where: any;
+    const repo = new PrismaTaxRepository({ client: { taxReviewIssue: { updateMany: async (query: any) => { where = query.where; } } } } as any);
+    await repo.resolveSourceIssues('c', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'expense.record', 'e', 'period', ['PND2', 'PND3', 'PND53']);
+    assert.deepEqual(where.taxPeriod, { formType: { in: ['PND2', 'PND3', 'PND53'] } });
+    assert.equal(where.taxPeriodId, 'period');
+  });
+});
+
+it('R6 retires EXCLUDED without a legacy period check and resolves only its WHT warning', async () => {
+  let retired: any, resolved: any;
+  const tx: any = { $executeRaw: async () => 0, $queryRaw: async () => assert.fail('EXCLUDED does not take the legacy period gate'),
+    taxEvent: { updateMany: async (input: any) => { retired = input; } }, taxReviewIssue: { updateMany: async (input: any) => { resolved = input; } } };
+  const db: any = { taxReviewIssue: { findMany: async () => [] }, taxEvent: { findMany: async () => [{ id: 'excluded', status: 'EXCLUDED', sourceId: 'e', sourceType: 'expense.record', sourceLineKey: 'payment:p', taxPeriodId: 'p', eventDate: new Date() }] },
+    $transaction: async (work: any) => work(tx) };
+  await new PrismaTaxRepository({ client: db } as any).retireObsoleteExpenseWithholding('c', []);
+  assert.equal(retired.data.status, 'SUPERSEDED'); assert.equal(resolved.where.issueCode, 'WHT_RATE_MISMATCH');
+  assert.deepEqual(resolved.where.taxPeriod.formType.in, ['PND2', 'PND3', 'PND53']); assert.equal(resolved.where.taxPeriodId, 'p');
+});
+
+it('R7 stale issue cleanup preserves desired pairs and PP30 issues', async () => {
+  let update: any;
+  const issues = [{ id: 'keep', sourceId: 'e', taxPeriodId: 'p', issueCode: 'MISSING_TAX_ID', formType: 'PND3' },
+    { id: 'old', sourceId: 'gone', taxPeriodId: 'p', issueCode: 'WHT_RATE_MISMATCH', formType: 'PND3' },
+    { id: 'vat', sourceId: 'gone', taxPeriodId: 'vat', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', formType: 'PP30' }];
+  const db: any = { taxReviewIssue: { findMany: async ({ where }: any) => {
+    assert.equal(where.companyId, 'c'); assert.equal(where.sourceType, 'expense.record');
+    return issues.filter(issue => where.taxPeriod.formType.in.includes(issue.formType));
+  }, updateMany: async (input: any) => { update = input; } } };
+  await new PrismaTaxRepository({ client: db } as any).resolveStaleExpenseWithholdingIssues('c', new Set([JSON.stringify(['e', 'p', 'MISSING_TAX_ID'])]));
+  assert.deepEqual(update.where.id.in, ['old']); assert.equal(update.where.companyId, 'c'); assert.equal(update.data.status, 'RESOLVED');
+});
+
+it('R6 e-WHT reopen ignores a FILED line for a different payment but locks its current split payment', async () => {
+  let key = 'payment:old';
+  const db: any = { expensePayment: { findMany: async () => [{ id: 'current' }] },
+    whtFiling: { findMany: async () => [{ formType: 'PND3', periodKey: '2026-09', lines: [{ sourceType: 'expense.record', sourceId: 'e', lineJson: { payment: [...Array(13).fill(null), key] } }] }] } };
+  const read = () => filedWithholdingPaymentPeriods(db, 'c', 'expense.record', 'e', undefined, undefined, true);
+  assert.deepEqual(await read(), []);
+  key = 'payment:current:line:service';
+  assert.deepEqual(await read(), [{ formType: 'PND3', periodKey: '2026-09' }]);
 });

@@ -1,3 +1,4 @@
+import { GetExpenseEWhtSettingUseCase, UpdateExpenseEWhtSettingUseCase } from './application/use-cases/expense-e-wht-setting.use-case';
 import { ExpensePaymentSlipUploadUseCase } from './application/use-cases/expense-upload.use-case';
 import { Module } from '@nestjs/common';
 import { LinkLinePaymentEvidenceUseCase } from './application/use-cases/link-line-payment-evidence.use-case';
@@ -222,6 +223,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     DownloadSubstituteReceiptPdfUseCase,
     DownloadSubstituteReceiptFormPdfUseCase,
     SupersedeSubstituteReceiptUseCase,
+    GetExpenseEWhtSettingUseCase, UpdateExpenseEWhtSettingUseCase,
     GetSubstituteReceiptPolicyUseCase,
     UpdateSubstituteReceiptPolicyUseCase,
     SetExpenseCategoryAccountantAccountUseCase,

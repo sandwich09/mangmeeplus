@@ -2,14 +2,15 @@ import { lineReplyLanguage, lineDisplayDate, lineUiLabel } from '../../domain/lo
 /** Sold-pack document reads. No preparation, issuance, filing or payment. */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, resolvePeriodCandidates, PERIOD_ASSUMPTIONS, isAmbiguousPeriodCandidate, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, eWhtReducedRateOn, DISBURSEMENT_VOUCHER_STATUS_LABELS, civilPeriodKey, todayCivilDate, resolvePeriodCandidates, PERIOD_ASSUMPTIONS, isAmbiguousPeriodCandidate, type RequestContext, type ToolResult, type WhtCertificateHandoffListRowDto } from '@watchdog-bms/contracts';
 import { DisbursementVoucherUseCase } from '../../../expenses/application/use-cases/disbursement-voucher.use-case';
 import { calcLineTotals } from '../../../expenses/domain/logic/expense-totals.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../../procurement/application/use-cases/wht-income-category.use-case';
 import { WhtCertificateHandoffUseCase } from '../../../tax/application/use-cases/wht-certificate-handoff.use-case';
 import { PrismaTaxRepository } from '../../../tax/infrastructure/repositories/prisma-tax.repository';
 import { pnd53PaperDueDay } from '../../../tax/domain/logic/tax-period.logic';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { currentWithholdingPayments } from '../../../tax/application/services/withholding-filing-state';
+import { isBranchInScope, branchScopeWhere } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 
 function requestContext(ctx: ErpToolContext): RequestContext {
@@ -144,18 +145,30 @@ export class WhtGetMonthSummaryTool implements ErpReadToolPort {
     const totalIncome = sum(byIncomeType.map(g => g.totalIncome)), totalDocumentWithholding = sum(byIncomeType.map(g => g.totalDocumentWithholding));
     const dueText = dueDate ? language === 'en' ? `, due ${lineDisplayDate(dueDate, language)}` : ` กำหนดยื่น ${lineDisplayDate(dueDate, language)} ` : '';
     const displayMoney = (value: string) => new Decimal(value).toNumber().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const message = certificatesReadable
-      ? language === 'en' ? `${monthLabel}: records within your access total ${displayMoney(totalIncome)} THB, withheld ${displayMoney(totalDocumentWithholding)} THB${dueText}.`
-        : `รายการที่คุณดูได้เดือน ${monthLabel} รวม ${displayMoney(totalIncome)} บาท หักไว้ ${displayMoney(totalDocumentWithholding)} บาท${dueText}ค่ะ`
+    let eWht: { paymentCount: number; withheldByCurrency: { currency: string; amount: string }[] } | null = null;
+    if (pnd53Readable) {
+      const db = this.taxRepo.prisma.client;
+      const excluded = await db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'EXCLUDED',
+        eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, ...branchScopeWhere(requestContext(ctx).scopes), ...(input.branchId ? { branchId: input.branchId } : {}) } });
+      const payments = await currentWithholdingPayments(db, ctx.companyId, excluded.filter(event => isBranchInScope(requestContext(ctx).scopes, event.branchId)
+        && (!input.branchId || event.branchId === input.branchId)), requestContext(ctx).scopes);
+      const totals = new Map<string, Decimal>();
+      for (const payment of payments) totals.set(payment.currency, (totals.get(payment.currency) ?? new Decimal(0)).plus((payment.withheldAmount ?? payment.taxAmount).toString()));
+      eWht = { paymentCount: payments.length, withheldByCurrency: [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, amount]) => ({ currency, amount: amount.toFixed(2) })) };
+    }
+    let message = certificatesReadable
+      ? language === 'en' ? `${monthLabel}: records within your access, unpaid items included, total ${displayMoney(totalIncome)} THB; withholding per documents ${displayMoney(totalDocumentWithholding)} THB${dueText}.`
+        : `รายการที่คุณดูได้เดือน ${monthLabel} (นับรายการที่ยังไม่จ่ายด้วย) รวม ${displayMoney(totalIncome)} บาท ยอดหักตามเอกสาร ${displayMoney(totalDocumentWithholding)} บาท${dueText}ค่ะ`
       : remittance ? language === 'en' ? `${monthLabel}: PND53 period total ${displayMoney(remittance.totalWithheld)} THB, due ${lineDisplayDate(remittance.dueDate, language)}.`
         : `ยอดที่รวบรวมไว้เดือน ${monthLabel} หักไว้ ${displayMoney(remittance.totalWithheld)} บาท กำหนดยื่น ${lineDisplayDate(remittance.dueDate, language)} ค่ะ`
         : language === 'en' ? `No collected data is available for this month${dueText}.` : `ยังไม่มีข้อมูลที่รวบรวมไว้สำหรับเดือนนี้${dueText}ค่ะ`;
+    if (eWht?.paymentCount) message += `\n${E_WHT_WORDS['L-11'](eWht.paymentCount, eWht.withheldByCurrency.map(({ currency, amount }) => `${displayMoney(amount)} ${currency === 'THB' ? 'บาท' : currency}`).join(' และ '))}`;
     return result(ctx, this.toolName, { periodKey, certificateCount: certificatesReadable ? issued.length : null, certificateItemCount: certificatesReadable ? projected.length : null,
       countBasis: 'certificate_worklist_including_unpaid', totalIncome: certificatesReadable ? totalIncome : null,
       totalDocumentWithholding: certificatesReadable ? totalDocumentWithholding : null, byIncomeType,
       issuedCertificates: issued.slice(0, 10).map(r => ({ number: r.currentCertificate?.number ?? r.externalCertificateNumber ?? r.certificateNumber, payeeName: r.currentCertificate?.payee.name ?? r.prefill.payeeSnapshot.name,
         grossAmount: (r.currentCertificate ?? r.prefill).grossAmount, withheldAmount: (r.currentCertificate ?? r.prefill).withheldAmount })),
-      remittance, dueDate, message }, pnd53Readable ? 'tax/pnd53' : 'expenses/wht-certificates', 'สรุป 50 ทวิและภาษีหัก ณ ที่จ่ายรายเดือน');
+      remittance, eWht, dueDate, message }, pnd53Readable ? 'tax/pnd53' : 'expenses/wht-certificates', 'สรุป 50 ทวิและภาษีหัก ณ ที่จ่ายรายเดือน');
   }
 }
 
@@ -184,7 +197,10 @@ export class WhtCalculateWithholdingTool implements ErpReadToolPort {
     }
     const totals = calcLineTotals({ quantity: '1', unitPrice: baseAmount, vatMode: 'NO_VAT', whtRate: new Decimal(category.defaultRate).div(100).toString() });
     const withheldAmount = money(totals.whtAmount), netBeforeVat = new Decimal(baseAmount).minus(withheldAmount).toFixed(2);
+    const eWhtRatePercent = eWhtReducedRateOn(category.code, todayCivilDate());
+    const eWhtWithheldAmount = eWhtRatePercent ? money(calcLineTotals({ quantity: '1', unitPrice: baseAmount, vatMode: 'NO_VAT', whtRate: new Decimal(eWhtRatePercent).div(100).toString() }).whtAmount) : undefined;
     return result(ctx, this.toolName, { incomeCategoryName: category.nameTh, baseAmount, ratePercent: category.defaultRate, withheldAmount, netBeforeVat,
-      message: `ยอดก่อน VAT ${baseAmount} บาท หัก ${new Decimal(category.defaultRate).toString()}% เป็น ${withheldAmount} บาท เหลือ ${netBeforeVat} บาทก่อนบวก VAT ค่ะ` }, 'expenses', 'คำนวณจากรายการที่จ่ายที่เลือกไว้');
+      ...(eWhtRatePercent ? { eWhtRatePercent, eWhtWithheldAmount } : {}),
+      message: `ยอดก่อน VAT ${baseAmount} บาท หัก ${new Decimal(category.defaultRate).toString()}% เป็น ${withheldAmount} บาท เหลือ ${netBeforeVat} บาทก่อนบวก VAT ค่ะ${eWhtWithheldAmount ? `\n${E_WHT_WORDS['L-5'](eWhtWithheldAmount)}` : ''}` }, 'expenses', 'คำนวณจากรายการที่จ่ายที่เลือกไว้');
   }
 }

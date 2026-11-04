@@ -59,6 +59,8 @@ function harness(paidAmount: string, fundingSource: 'COMPANY' | 'PERSONAL_ADVANC
   };
   return {
     repo: new PrismaExpenseRepository({ client } as any),
+    expense,
+    evidence,
     payments,
     expenseUpdate: () => expenseUpdate,
   };
@@ -79,6 +81,13 @@ function issue(repo: PrismaExpenseRepository) {
 }
 
 describe('substitute receipt payment history', () => {
+  it('R4 rejects company-funded e-WHT cash/card on the actual issue path without any payment', async () => {
+    for (const paymentMethod of ['CASH', 'CARD']) {
+      const h = harness('0'); h.expense.whtRemittance = 'E_WHT'; h.evidence.paymentMethod = paymentMethod;
+      await assert.rejects(() => issue(h.repo), (e: any) => e.getStatus() === 409 && e.getResponse().code === 'substitute_receipt_ewht_payment_method');
+      assert.equal(h.payments.length, 0); assert.equal(h.expenseUpdate(), undefined);
+    }
+  });
   it('records a full company payment exactly once and leaves accrual posting alone', async () => {
     const { repo, payments, expenseUpdate } = harness('0.0000');
     await issue(repo);
@@ -236,13 +245,13 @@ describe('substitute approval reservations and cancelled personal receipts (real
     assert.equal((await client!.expenseRecord.findUniqueOrThrow({ where: { id: second.id } })).expenseCategoryId, categories[2]!.id, 'duplicate apply cannot overwrite a newer edit');
   });
 
-  async function source(fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE') {
-    const expense = await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: 'payer', expenseDate: PAID_AT,
+  async function source(fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE', sourceCompanyId = companyId, sourceBranchId = branchId) {
+    const expense = await client!.expenseRecord.create({ data: { companyId: sourceCompanyId, branchId: sourceBranchId, createdByUserId: 'payer', expenseDate: PAID_AT,
       expenseNumber: `EXP-${randomUUID()}`, status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'EXPENSE_NOTE_TEXT', postingStatus: 'not_required',
       taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', netPayableAmount: '100', outstandingAmount: '100' } });
-    const artifact = await client!.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'LOCAL', bucket: 'local', objectKey: `substitute-reservation/${randomUUID()}`,
+    const artifact = await client!.attachmentObject.create({ data: { companyId: sourceCompanyId, branchId: sourceBranchId, storageProvider: 'LOCAL', bucket: 'local', objectKey: `substitute-reservation/${randomUUID()}`,
       originalFileName: 'certified.svg', mimeType: 'image/svg+xml', byteSize: 1, checksumSha256: 'a'.repeat(64), status: 'ACTIVE', uploadedByUserId: 'payer' } });
-    const evidence = await client!.expenseSubstituteReceiptEvidence.create({ data: { companyId, branchId, expenseId: expense.id, version: 1,
+    const evidence = await client!.expenseSubstituteReceiptEvidence.create({ data: { companyId: sourceCompanyId, branchId: sourceBranchId, expenseId: expense.id, version: 1,
       status: 'PAYER_CERTIFIED', fundingSource, documentNumber: `SUB-${randomUUID()}`, idempotencyKey: randomUUID(),
       originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'RECEIPT_UNAVAILABLE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ', businessPurpose: 'ซื้อของใช้ในกิจการ',
       preparedByUserId: 'payer', preparedAt: VERSION, expenseUpdatedAtAtPreparation: expense.updatedAt, payerUserId: 'payer', payerName: 'ผู้จ่าย', payeeName: 'ผู้ขาย',
@@ -253,6 +262,37 @@ describe('substitute approval reservations and cancelled personal receipts (real
       certifiedArtifactAttachmentId: artifact.id, certifiedArtifactChecksumSha256: 'a'.repeat(64) } });
     return { expense, evidence };
   }
+  it('R4 company-funded e-WHT cash/card issue creates no payment or issued artifact', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const companyId = `ewht-substitute-${randomUUID()}`;
+    await client!.company.create({ data: { id: companyId, name: 'e-WHT substitute guard fixture' } });
+    const ownBranch = await client!.branch.create({ data: { companyId, code: 'HO', name: 'สำนักงานใหญ่' } });
+    try {
+      for (const paymentMethod of ['CASH', 'CARD'] as const) {
+        const { expense, evidence } = await source('COMPANY', companyId, ownBranch.id);
+        const changed = await client!.expenseRecord.update({ where: { id: expense.id }, data: { whtRemittance: 'E_WHT' } });
+        const certificate = await client!.expenseSubstituteReceiptEvidence.update({ where: { id: evidence.id }, data: { paymentMethod } });
+        const repo = new PrismaExpenseRepository({ client } as any);
+        const before = await client!.attachmentObject.count({ where: { companyId } });
+        await assert.rejects(() => repo.issueSubstituteEvidence({ companyId, expenseId: expense.id, evidenceId: evidence.id,
+          approverUserId: 'approver', approverName: 'ผู้อนุมัติ', approverPosition: 'เจ้าของกิจการ', allowSelfApproval: false,
+          approverSignatureAttachmentId: evidence.payerSignatureAttachmentId!, approvedAt: VERSION, expectedExpenseUpdatedAt: changed.updatedAt,
+          referencedAttachmentIds: [evidence.payerSignatureAttachmentId!], expectedVersion: certificate.version, expectedEvidenceUpdatedAt: certificate.updatedAt,
+          artifact: { storageProvider: 'LOCAL', bucket: 'local', objectKey: `${companyId}/${randomUUID()}`, objectVersionId: 'v1', byteSize: 1,
+            checksumSha256: 'a'.repeat(64), originalFileName: 'issued.svg' } }),
+        (e: any) => e.getStatus() === 409 && e.getResponse().code === 'substitute_receipt_ewht_payment_method');
+        assert.equal(await client!.expensePayment.count({ where: { companyId, expenseId: expense.id } }), 0);
+        assert.equal(await client!.attachmentObject.count({ where: { companyId } }), before);
+        assert.equal((await client!.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } })).status, 'PAYER_CERTIFIED');
+      }
+    } finally {
+      await client!.expenseSubstituteReceiptEvidence.deleteMany({ where: { companyId } });
+      await client!.attachmentObject.deleteMany({ where: { companyId } });
+      await client!.expenseRecord.deleteMany({ where: { companyId } });
+      await client!.company.delete({ where: { id: companyId } });
+    }
+  });
+
   it('candidate paging finds sources older than 200 rows, searches items, and respects creator and branch scope', async (t) => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const ids = Array.from({ length: 205 }, () => randomUUID());

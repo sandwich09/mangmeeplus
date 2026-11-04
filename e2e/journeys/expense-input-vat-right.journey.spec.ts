@@ -259,7 +259,8 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click());
     const [headers, ...rows] = sheetRows(await readFile((await file.download.path())!));
     expect(headers).toContain('สิทธิภาษีซื้อ');
-    expect(headers!.slice(-4)).toEqual(['วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ']);
+    // e-WHT plan 1.x appends its remittance column last; the earlier columns keep their places.
+    expect(headers!.slice(-5)).toEqual(['วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ', 'วิธีนำส่งภาษีหัก ณ ที่จ่าย']);
     for (const removed of ['ผู้ตรวจสิทธิภาษีซื้อ', 'วันเวลาที่ตรวจสิทธิภาษีซื้อ', 'เหตุผลสิทธิภาษีซื้อ', 'เลขใบสำคัญจ่าย', 'เลขหนังสือรับรอง 50 ทวิ', 'ชื่อไฟล์ในชุดเอกสาร']) expect(headers).not.toContain(removed);
     expect(headers).toContain('หมายเหตุ');
     const cell = (row: string[], label: string) => row[headers!.indexOf(label)];

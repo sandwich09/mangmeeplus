@@ -98,6 +98,16 @@ export class TaxController {
     return this.generateWht.getMonth(ctx, periodKey);
   }
 
+  @Get('tax/withholding/months/:periodKey/e-wht-export')
+  @RequirePermissions('wht.pnd53.read')
+  async exportEWht(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('periodKey') periodKey: string, @Query('establishmentCode') establishmentCode?: string) {
+    assertRouteCompany(ctx, companyId);
+    const artifact = await this.generateWht.eWhtExport(ctx, periodKey, establishmentCode);
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.withholding.e_wht_export', targetType: 'tax_period', targetId: periodKey,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { periodKey, establishmentCode: establishmentCode ?? null, checksum: artifact.checksum } });
+    return artifact;
+  }
+
   private withholdingForm(formType?: string): 'PND3' | 'PND53' {
     if (formType === undefined) return 'PND53';
     if (formType !== 'PND3' && formType !== 'PND53') throw new BadRequestException('ไม่พบแบบภาษีที่เลือก เลือก ภ.ง.ด.3 หรือ ภ.ง.ด.53');

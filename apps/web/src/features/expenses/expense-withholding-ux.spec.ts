@@ -94,7 +94,7 @@ test('R3: หัก with a missing payee type, category or value is refused in b
 });
 
 test('R4 and R5: choosing หัก starts clean, and the footer and totals card only point to a withholding problem', () => {
-  assert.match(block, /else setValues\(\(current\) => \(\{ \.\.\.current, whtInput: \{ inputType: 'RATE', value: '' \} \}\)\)/, 'empty, never the "0" that ไม่หัก stored');
+  assert.match(block, /else setValues\(\(current\) => \(\{ \.\.\.current, whtRemittance: current\.whtRemittance \?\? 'PAYER_FILES', whtInput: \{ inputType: 'RATE', value: '' \} \}\)\)/, 'empty, never the "0" that ไม่หัก stored');
   assert.match(block, /setWhtReveal\(!enabled\)/, 'no red until the reviewer leaves a field or presses ถัดไป');
   assert.match(edit, /onValidationChange\?\.\(validationRevealed \? blockingIssueCount : 0, null\)/);
   assert.match(edit, /useExpenseReviewTotals\([\s\S]*?previewBlocker, totalsRetry/);
@@ -117,8 +117,9 @@ test('choosing no withholding clears category/rate/base/legacy rates and issues 
 });
 
 test('choosing a category fills the actual percent input as well as certificate metadata', () => {
-  assert.match(block, /whtInput: \{ inputType: 'RATE', value: rate/);
-  assert.match(block, /whtCategoryCode: code, whtRate: rate/);
+  assert.match(block, /changeExpenseReviewWhtCategory\(v, code, rate\)/);
+  const changed = model.changeExpenseReviewWhtCategory(values(), 'WHT_SERVICE_3', '3');
+  assert.equal(changed.whtCategoryCode, 'WHT_SERVICE_3'); assert.equal(changed.whtRate, '3'); assert.equal(changed.whtInput?.value, '3');
 });
 
 test('totals preview omits certificate classification fields rejected by the existing DTO', () => {
@@ -126,6 +127,7 @@ test('totals preview omits certificate classification fields rejected by the exi
   const removed = hook.slice(hook.indexOf('const {'), hook.indexOf('...reviewPayload }'));
   assert.match(removed, /whtCategoryCode: _whtCategory/);
   assert.match(removed, /whtRate: _whtRate/);
+  assert.match(removed, /whtRemittance: _whtRemittance/);
   assert.doesNotMatch(removed, /whtInput:/, 'the actual withholding money input still reaches the calculator');
   const dto = readFileSync(new URL('../../../../api/src/modules/expenses/presentation/http/expense.dtos.ts', import.meta.url), 'utf8');
   const preview = dto.slice(dto.indexOf('export class ExpenseTotalsPreviewDto'), dto.indexOf('/** Shared upload-intent'));
@@ -245,4 +247,61 @@ test('income routes explain the accountant hand-off and keep PND2 choices with i
   assert.match(whtFilingRouteHint({ code: 'WHT_INTEREST_JUR', formType: 'PND53', filingRoute: 'ACCOUNTANT_PREPARES' })!, /ภ.ง.ด.53/);
   assert.equal(whtFilingRouteHint({ code: 'WHT_PRIZE', formType: 'PND3', filingRoute: 'SYSTEM_FILLS' }), null);
   assert.match(block, /whtFilingRouteHint/);
+});
+
+test('e-WHT category/channel changes autofill RATE only and clearing withholding sends null', () => {
+  const change = (model as any).changeExpenseReviewRemittance;
+  const category = (model as any).changeExpenseReviewWhtCategory;
+  assert.equal(typeof change, 'function'); assert.equal(typeof category, 'function');
+  const rate = { ...values(), whtCategoryCode: 'WHT_ADVERTISING_IND', whtInput: { inputType: 'RATE', value: '2' } } as ExpenseDraftReviewValues;
+  assert.equal(change(rate, 'E_WHT', '2').whtInput.value, '1');
+  assert.equal(change({ ...rate, expenseDate: '2028-01-01' }, 'E_WHT', '2').whtInput.value, '2');
+  const amount = { ...rate, whtInput: { inputType: 'AMOUNT', value: '45' } } as ExpenseDraftReviewValues;
+  assert.equal(change(amount, 'E_WHT', '2').whtInput.value, '45');
+  assert.equal(category(amount, 'WHT_RENT_IND', '5').whtInput.value, '45');
+  assert.equal(category({ ...rate, whtRemittance: 'E_WHT' } as any, 'WHT_RENT_IND', '5').whtInput.value, '1');
+  assert.equal(model.buildExpenseDraftReviewPayload({ ...rate, whtRemittance: 'E_WHT' } as any).whtRemittance, 'E_WHT');
+  assert.equal(model.buildExpenseDraftReviewPayload({ ...values(), lines: values().lines.map(line => ({ ...line, whtRate: null })), whtRemittance: 'E_WHT' } as any).whtRemittance, 'E_WHT', 'legacy amount-only withholding retains its saved channel');
+  assert.equal(model.buildExpenseDraftReviewPayload(changeInput(rate, { inputType: 'RATE', value: '' })).whtRemittance, null);
+});
+
+test('e-WHT surface table uses one conditional hint and payment warnings never infer the channel', () => {
+  const hint = (model as any).expenseRemittanceHint;
+  const warning = (model as any).expenseEWhtPaymentWarning;
+  assert.equal(typeof hint, 'function'); assert.equal(typeof warning, 'function');
+  for (const [code, mode, date, expected] of [
+    ['WHT_SERVICE_3', 'RATE', '2026-01-01', 'W-F5'], ['WHT_RENT_IND', 'RATE', '2026-01-01', 'W-F6'],
+    ['WHT_RENT_IND', 'AMOUNT', '2026-01-01', null], ['WHT_TRANSPORT_IND', 'AMOUNT', '2026-01-01', 'W-F7'],
+    ['WHT_OTHER_IND', 'RATE', '2026-01-01', 'W-F8'], ['WHT_RENT_IND', 'AMOUNT', '2028-01-01', 'W-F9'],
+  ] as const) assert.equal(hint({ ...values(), expenseDate: date, whtCategoryCode: code, whtRemittance: 'E_WHT', whtInput: { inputType: mode, value: '1' } }), expected ? require('@watchdog-bms/contracts').E_WHT_WORDS[expected] : null);
+  assert.equal(warning('E_WHT', 'WHT_ADVERTISING_IND', '1', '2028-01-01'), require('@watchdog-bms/contracts').E_WHT_WORDS['W-P2']);
+  for (const args of [['PAYER_FILES', 'WHT_ADVERTISING_IND', '1', '2028-01-01'], ['E_WHT', 'WHT_TRANSPORT_IND', '1', '2028-01-01'], ['E_WHT', 'WHT_ADVERTISING_IND', '2', '2028-01-01'], ['E_WHT', 'WHT_ADVERTISING_IND', '1', '2026-01-01']]) assert.equal(warning(...args), null);
+});
+
+test('paid remittance controls stay out of free source drafts and hide the payer filing hint for bank remittance', () => {
+  assert.match(block, /showRemittance && <label/);
+  assert.match(block, /values.whtRemittance !== 'E_WHT' \? whtFilingRouteHint/);
+  assert.equal(words['expenses.wht_remittance'], require('@watchdog-bms/contracts').E_WHT_WORDS['W-F1']);
+});
+
+test('cash-payment and substitute refusals retain the specified Thai recovery sentence', () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  assert.equal(apiErrorMessage({ code: 'expense_ewht_cash_payment_exists' }), E_WHT_WORDS['W-R2']);
+  assert.equal(apiErrorMessage({ code: 'substitute_receipt_ewht_payment_method' }), E_WHT_WORDS['W-R3']);
+});
+
+test('R18-R21 settings rows keep hidden-field defaults and replace the low-rate hint by authority', () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  const payer = { ...values(), whtRemittance: 'PAYER_FILES', whtCategoryCode: 'WHT_ADVERTISING_IND', whtInput: { inputType: 'RATE', value: '1' } } as ExpenseDraftReviewValues;
+  for (const canManage of [true, false]) {
+    assert.equal((model.expenseRemittanceHint as any)(payer, { used: false, canManage }), E_WHT_WORDS[canManage ? 'W-F10o' : "W-F10o'"]);
+    assert.equal((model.expenseRemittanceHint as any)(payer, { used: true, canManage }), E_WHT_WORDS['W-F10']);
+  }
+  assert.equal(model.buildExpenseDraftReviewPayload({ ...payer, whtRemittance: null }).whtRemittance, 'PAYER_FILES');
+  assert.equal(model.buildExpenseDraftReviewPayload(changeInput(payer, { inputType: 'RATE', value: '' })).whtRemittance, null);
+  assert.match(edit, /!freeExpenseDrafts && \(eWhtUsed \|\| detail.whtRemittance === 'E_WHT'\)/);
+  assert.match(edit, /if \(freeExpenseDrafts\) return;/);
+  assert.match(edit, /getExpenseEWhtSetting\(companyId\)/);
+  assert.match(edit, /catch\(\(\) => \{ if \(active\) setEWhtUsed\(false\)/);
+  assert.match(block, /E_WHT_WORDS\['W-F10o-link'\]/);
 });

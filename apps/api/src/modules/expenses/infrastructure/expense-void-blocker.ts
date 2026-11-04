@@ -203,7 +203,7 @@ export async function readExpensePeriodLocks(db: any, expense: any, eventPeriodI
       ...(eventPeriodIds.length ? [{ id: { in: eventPeriodIds } }] : []),
     ],
   }, select: { formType: true, periodKey: true, status: true } }) : [];
-  const filedPayments = withholdingForms && (Number(expense.whtAmount) > 0 || eventPeriodIds.length) ? await filedWithholdingPaymentPeriods(db, expense.companyId, 'expense.record', expense.id, Number(expense.whtAmount) > 0 ? { formType: expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : 'PND53', periodKey } : undefined) : [];
+  const filedPayments = withholdingForms && (Number(expense.whtAmount) > 0 || eventPeriodIds.length) ? await filedWithholdingPaymentPeriods(db, expense.companyId, 'expense.record', expense.id, Number(expense.whtAmount) > 0 ? { formType: expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : 'PND53', periodKey } : undefined, undefined, expense.whtRemittance === 'E_WHT') : [];
   return { lockedAccountingPeriodKey: accounting && !['OPEN', 'REOPENED'].includes(accounting.status) ? periodKey : null,
     lockedTaxPeriods: [...periods.filter((p: any) => !['PND3', 'PND53'].includes(p.formType) && isPeriodLocked(p.status)).map((p: any) => ({ formType: p.formType as TaxFormType, periodKey: p.periodKey })), ...filedPayments] };
 }
@@ -212,7 +212,10 @@ export async function readExpensePeriodLocks(db: any, expense: any, eventPeriodI
 export async function retireExpenseTaxEvents(tx: any, companyId: string, expenseId: string): Promise<void> {
   const events = await tx.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId }, select: { id: true } });
   await tx.whtCertificateHandoff.updateMany({ where: { ...expenseWhtHandoffWhere(companyId, expenseId, events.map((e: any) => e.id)), status: 'REQUIRED' }, data: { status: 'CANCELLED' } });
-  await tx.taxEvent.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'ACTIVE' }, data: { status: 'SUPERSEDED', sourceHash: null } });
+  await tx.taxEvent.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: { in: ['ACTIVE', 'EXCLUDED'] } }, data: { status: 'SUPERSEDED', sourceHash: null } });
+  await tx.taxReviewIssue.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'OPEN',
+    issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'WHT_RATE_MISMATCH'] },
+    taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางเปลี่ยนแล้ว' } });
 }
 
 /**

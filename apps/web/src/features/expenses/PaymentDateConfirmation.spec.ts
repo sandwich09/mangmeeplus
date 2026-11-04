@@ -39,3 +39,15 @@ test('confirmed month reaches the page notice after refresh, even if refresh fai
     } finally { request.mock.restore(); view.cleanup(); }
   }
 });
+
+test('e-WHT date confirmation uses bank sentences and warns only for an expired reduced 1%', async () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  const success = mock.fn(); const request = mock.method(api, 'confirmExpensePaymentDate', async () => ({}));
+  const view = certificateHarness(() => h(ToastContext.Provider, { value: { success, warning: mock.fn(), error: mock.fn() } },
+    h(PaymentDateConfirmation, { companyId: 'co', expenseId: 'e', paymentId: 'p', canRecord: true, whtRemittance: 'E_WHT', whtCategoryCode: 'WHT_ADVERTISING_IND', whtRate: '1', onSaved: () => {} })));
+  try {
+    assert.ok(view.render().includes(E_WHT_WORDS['W-PD1']));
+    view.find('ThemedDate').onChange({ target: { value: '2022-12-31' } }); assert.ok(view.render().includes(E_WHT_WORDS['W-P2']));
+    await view.find('form').onSubmit({ preventDefault() {} }); assert.equal(success.mock.calls[0].arguments[0], E_WHT_WORDS['W-PD2']);
+  } finally { request.mock.restore(); view.cleanup(); }
+});

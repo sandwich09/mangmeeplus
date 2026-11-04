@@ -26,7 +26,7 @@ export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail,
   // seller address, branch code nor certificate classification moves a single satang, so they are
   // dropped here rather than widening a money DTO to carry fields it would never read.
   const { vendorAddressSnapshot: _address, vendorBranchCodeSnapshot: _branch,
-    whtCategoryCode: _whtCategory, whtRate: _whtRate, ...reviewPayload } =
+    whtCategoryCode: _whtCategory, whtRate: _whtRate, whtRemittance: _whtRemittance, ...reviewPayload } =
     buildExpenseDraftReviewPayload(disallowsTaxCode ? { ...values, lines: clearExpenseTaxSelections(values.lines) } : values,
       { sourceDraft: detail.sourceDraft, originalLines: detail.lines });
   const payload = JSON.stringify({ expectedUpdatedAt: detail.updatedAt,

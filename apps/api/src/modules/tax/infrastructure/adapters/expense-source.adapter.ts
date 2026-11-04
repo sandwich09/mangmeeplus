@@ -116,6 +116,7 @@ export class ExpenseSourceAdapter {
       companyId: r.companyId,
       branchId: r.branchId ?? null,
       paymentId: payment.id,
+      whtRemittance: r.whtRemittance ?? null,
       paymentAmount: String(payment.amount),
       documentDate: r.expenseDate,
       expenseDate: civilDateToUtcDate(civilDate(payment.paidAt, company?.timezone ?? 'Asia/Bangkok')),

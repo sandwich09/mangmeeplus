@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { DISBURSEMENT_VOUCHER_ERROR_WORDS, todayCivilDate } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtPaymentMethodAllowed, todayCivilDate } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { SelectField, TextField } from '@/common/components/field';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
@@ -20,7 +20,7 @@ import { DisbursementVoucherAccount } from './DisbursementVoucherAccount';
 import { DisbursementVoucherSlip } from './DisbursementVoucherSlip';
 import { attachDisbursementVoucherSlip, payDisbursementVoucher } from './disbursement-vouchers.api';
 import { nextDraftCommand } from './disbursement-voucher-form.logic';
-import { disbursementPaymentCorrectionHint, disbursementPaymentBody, disbursementPaymentDateError, disbursementPaymentMethodError, initialDisbursementPayment } from './disbursement-voucher-payment.logic';
+import { disbursementPaymentCorrectionHint, disbursementEWhtPaymentWarning, disbursementPaymentBody, disbursementPaymentDateError, disbursementPaymentMethodError, initialDisbursementPayment } from './disbursement-voucher-payment.logic';
 import type { DisbursementPaymentFields, DisbursementVoucherDetail, DisbursementVoucherHeader } from './disbursement-vouchers.model';
 import styles from './disbursement-vouchers.module.css';
 
@@ -48,6 +48,7 @@ export function DisbursementVoucherPayCard({ companyId, detail, onReload, onWith
   const attachedSlip = useRef({ id: detail.slip?.attachmentId, version: detail.header.version });
   const refusalBox = useRef<HTMLDivElement>(null);
   const today = todayCivilDate('Asia/Bangkok');
+  const eWht = detail.lines.some(line => line.whtRemittance === 'E_WHT');
   const dateError = disbursementPaymentDateError(fields.paidDate);
   const methodError = disbursementPaymentMethodError(fields.paymentMethod);
   const code = apiErrorCode(error);
@@ -81,6 +82,9 @@ export function DisbursementVoucherPayCard({ companyId, detail, onReload, onWith
   const change = (patch: Partial<DisbursementPaymentFields>) => {
     commandId.current = null; setError(null); setFields(current => ({ ...current, ...patch }));
   };
+  useEffect(() => {
+    if (eWht && !eWhtPaymentMethodAllowed(fields.paymentMethod)) change({ paymentMethod: 'BANK_TRANSFER' });
+  }, [eWht, fields.paymentMethod]);
   const reload = async () => {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true);
@@ -137,11 +141,12 @@ export function DisbursementVoucherPayCard({ companyId, detail, onReload, onWith
                 <ThemedDate id="disbursement-paid-date" name="paidDate" className={inputClass} value={fields.paidDate} max={today} today={today}
                   aria-invalid={Boolean(dateError)} aria-describedby={dateError ? 'disbursement-paid-date-error' : undefined}
                   disabled={busy || needsRefresh} onChange={event => change({ paidDate: event.target.value })} />
+                {disbursementEWhtPaymentWarning(detail, fields.paidDate) && <p role="status" className="text-sm text-warning-700">{E_WHT_WORDS['W-P2']}</p>}
                 {dateError && <p id="disbursement-paid-date-error" role="alert" className={styles.error}>{dateError}</p>}
               </div>
-              <SelectField label={word('paid_method')} value={fields.paymentMethod} disabled={busy || needsRefresh}
+              <SelectField label={word('paid_method')} hint={eWht ? E_WHT_WORDS['W-P1'] : undefined} value={fields.paymentMethod} disabled={busy || needsRefresh}
                 onChange={event => change({ paymentMethod: event.target.value as DisbursementPaymentFields['paymentMethod'] })}>
-                {Object.entries(PAYMENT_METHOD_LABELS).map(([method, label]) => <option key={method} value={method}>{label}</option>)}
+                {Object.entries(PAYMENT_METHOD_LABELS).filter(([method]) => !eWht || eWhtPaymentMethodAllowed(method)).map(([method, label]) => <option key={method} value={method}>{label}</option>)}
               </SelectField>
               <TextField className={inputClass} label="จ่ายจาก (ถ้ามี)" value={fields.paidFromRef} maxLength={128}
                 placeholder={word('paid_from_placeholder')} onChange={event => change({ paidFromRef: event.target.value })} />

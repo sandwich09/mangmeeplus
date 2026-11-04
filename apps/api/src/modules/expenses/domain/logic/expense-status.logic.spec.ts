@@ -12,7 +12,36 @@ import {
   hasUnknownVatRateLine,
   expenseTaxSourceChecksum,
   readAiCategorySuggestion,
+  normalizeWhtRemittance,
+  eWhtRemittanceAllowed,
 } from './expense-status.logic';
+
+describe('R19 shop e-WHT setting', () => {
+  it('allows existing e-WHT after disabling and requires enablement only for a new e-WHT choice', () => {
+    for (const requested of ['PAYER_FILES', null, undefined]) for (const shopUsesEWht of [true, false]) {
+      assert.equal(eWhtRemittanceAllowed({ requested, stored: null, shopUsesEWht }), true);
+    }
+    assert.equal(eWhtRemittanceAllowed({ requested: 'E_WHT', stored: null, shopUsesEWht: false }), false);
+    assert.equal(eWhtRemittanceAllowed({ requested: 'E_WHT', stored: 'PAYER_FILES', shopUsesEWht: false }), false);
+    assert.equal(eWhtRemittanceAllowed({ requested: 'E_WHT', stored: null, shopUsesEWht: true }), true);
+    assert.equal(eWhtRemittanceAllowed({ requested: 'E_WHT', stored: 'E_WHT', shopUsesEWht: false }), true);
+  });
+});
+
+describe('normalizeWhtRemittance (R1)', () => {
+  it('keeps explicit remittance and legacy null only when tax is withheld', () => {
+    for (const value of ['PAYER_FILES', 'E_WHT', null, undefined]) {
+      assert.equal(normalizeWhtRemittance(value, '0.0000'), null);
+      assert.equal(normalizeWhtRemittance(value, '3.00'), value ?? null);
+    }
+  });
+  it('rejects unsupported values, including on a zero-WHT expense', () => {
+    for (const value of ['', 'BANK', 1, {}, ['E_WHT']]) for (const amount of ['0', '3']) {
+      assert.throws(() => normalizeWhtRemittance(value, amount), (error: any) =>
+        error.getStatus() === 400 && error.getResponse().code === 'expense_wht_remittance_invalid');
+    }
+  });
+});
 
 describe('expenseTaxSourceChecksum', () => {
   it('protects WHT source units and accepted line money at confirmation', () => {
@@ -21,6 +50,7 @@ describe('expenseTaxSourceChecksum', () => {
       lines: [{ id: 'line-1', lineNumber: 1, taxableAmount: '100', whtRate: '0.03', whtAmount: '3' }],
     } as any;
     const token = expenseTaxSourceChecksum(expense);
+    assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, whtRemittance: 'E_WHT' }));
     assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, whtInputJson: { ...expense.whtInputJson, inputType: 'AMOUNT' } }));
     assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], whtAmount: '3.01' }] }));
     assert.notEqual(token, expenseTaxSourceChecksum({ ...expense, lines: [{ ...expense.lines[0], whtCategoryCode: 'WHT_RENT' }] }));

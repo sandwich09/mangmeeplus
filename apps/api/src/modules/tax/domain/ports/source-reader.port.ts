@@ -66,6 +66,7 @@ export type ExpenseSourceRow = {
 
 // WHT events are derived from confirmed expenses with whtAmount > 0
 export type ExpenseWhtSourceRow = {
+  whtRemittance?: import('@watchdog-bms/contracts').WhtRemittance | null;
   paymentId?: string;
   sourceLineKey?: string;
   paymentAmount?: string;

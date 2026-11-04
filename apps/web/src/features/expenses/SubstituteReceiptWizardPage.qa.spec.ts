@@ -158,3 +158,9 @@ test('SUB-DOC signing stays pressable and invalid presses focus inline reasons a
   assert.match(paper, /if \(samePersonRefused \|\| acceptMissing.length > 0 \|\| !viewedHash\)/);
   assert.doesNotMatch(paper, /disabled=\{busy \|\| samePersonRefused\}/);
 });
+
+test('company-funded e-WHT restricts payment methods and uses the same conditional date warning', () => {
+  assert.match(source, /detail.whtRemittance !== 'E_WHT' \|\| fundingSource !== 'COMPANY' \|\| eWhtPaymentMethodAllowed\(method\)/);
+  assert.match(source, /fundingSource === 'COMPANY' && expenseEWhtPaymentWarning\(detail.whtRemittance, detail.whtCategoryCode, detail.whtRate, paymentDate\)/);
+  assert.match(source, /E_WHT_WORDS\['W-P2'\]/);
+});

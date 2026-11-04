@@ -7,6 +7,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 (globalThis as any).React = React;
 require.extensions['.svg'] = m => { m.exports = () => null; };
 require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
+const RealWithholding = require('./DisbursementVoucherWithholding').DisbursementVoucherWithholding;
 for (const name of ['DisbursementVoucherPayCard', 'DisbursementVoucherSlip', 'DisbursementVoucherAccount', 'DisbursementVoucherDocumentFile', 'DisbursementVoucherWithholding']) {
   const path = require.resolve(`./${name}`); require(path);
   require.cache[path]!.exports = { [name]: () => React.createElement('div', { 'data-component': name }) };
@@ -87,4 +88,14 @@ test('VOUCH-DOC3 pending decision and reminder share the main card; cancelled pa
   assert.doesNotMatch(render(cancelled), /DisbursementVoucherSlip|14 ต.ค. 2569|เงินสดย่อย/);
   const history = render(cancelled, true).split('data-testid="history"')[1]!;
   assert.match(history, /14 ต.ค. 2569[\s\S]*เงินสด[\s\S]*เงินสดย่อย[\s\S]*DisbursementVoucherSlip/);
+});
+
+test('e-WHT statements distinguish paid from planned and never offer a certificate action', () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  for (const status of ['PENDING_APPROVAL', 'APPROVED', 'PAID']) {
+    const line = { ...base.lines[0], whtRemittance: 'E_WHT', eWhtReducedRateApplied: true, withholdingCertificate: { state: 'E_WHT', number: null } };
+    const html = renderToStaticMarkup(React.createElement(RealWithholding, { companyId: 'shop', detail: { ...base, header: { ...base.header, status }, lines: [line] }, line, canIssue: true }));
+    assert.ok(html.includes(E_WHT_WORDS[status === 'PAID' ? 'W-V1' : 'W-V1u']));
+    assert.doesNotMatch(html, /section=wht-certificate|ไปออกหนังสือรับรอง|ยังไม่ได้ออกหนังสือรับรอง/);
+  }
 });

@@ -41,10 +41,11 @@ const ANSWER_CARD_SOURCE_LIMIT = 5;
 const ANSWER_CARD_SOURCE_LABEL_LIMIT = 60;
 const completeBusinessAnswerPresentations = new WeakMap<object, string>();
 
-export function lineChoiceQuickReply(choices: readonly { label: string; text: string; uri?: string; cameraRoll?: boolean }[]): NonNullable<LineReplyMessage['quickReply']> {
+export function lineChoiceQuickReply(choices: readonly { label: string; text: string; uri?: string; cameraRoll?: boolean; data?: string }[]): NonNullable<LineReplyMessage['quickReply']> {
   return { items: choices.slice(0, 13).map(choice => ({ type: 'action', action: choice.uri
     ? { type: 'uri', label: Array.from(choice.label).slice(0, 20).join(''), uri: choice.uri }
     : choice.cameraRoll ? { type: 'cameraRoll', label: Array.from(choice.label).slice(0, 20).join('') }
+    : choice.data ? { type: 'postback', label: Array.from(choice.label).slice(0, 20).join(''), data: choice.data, displayText: choice.text }
     : { type: 'message', label: Array.from(choice.label).slice(0, 20).join(''), text: choice.text } })) };
 }
 

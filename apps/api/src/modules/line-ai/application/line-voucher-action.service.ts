@@ -2,7 +2,7 @@ import { lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-la
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { WHT_HANDOFF_PAYEE_ADDRESS_MAX, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, E_WHT_REDUCED_RATE, WHT_HANDOFF_PAYEE_ADDRESS_MAX, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { assertFeatureEnabled, loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
@@ -100,11 +100,12 @@ export class LineVoucherActionService {
       vendorNameSnapshot: handoffs?.[0]?.prefill.payeeSnapshot.name ?? voucher.header.payeeName, grandTotalAmount: handoffs?.[0]?.prefill.grossAmount ?? voucher.header.totalAmount, currency: voucher.header.currency, status: voucher.header.status,
       claim: undefined as ReimbursementRequestDetail | undefined, digest: deliveryHash({ voucher, handoffs }) };
   }
-  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>, language: LineReplyLanguage = 'th'): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
+  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>, language: LineReplyLanguage = 'th'): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; allowedPaymentMethods?: Array<'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'>; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
     const en = language === 'en';
     await this.authorize(ctx, action);
     const payload: VoucherActionPayload = { action, id, ...(typeof input.reason === 'string' ? { reason: input.reason.trim() } : {}) };
     const details: string[] = [];
+    let allowedPaymentMethods: Array<'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'> | undefined;
     let awaitingField: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod' | undefined;
     if (action === 'VOUCHER_CREATE') {
       payload.expenseIds = typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
@@ -124,9 +125,10 @@ export class LineVoucherActionService {
           await this.vouchers.previewLineAction(ctx, 'create', { draft: payload.draft });
         } else throw error;
       }
-      details.push(...sources.map(row => `${scrubRecordText(row.vendorNameSnapshot, 60)} · ${en ? 'Payment' : 'จ่าย'} ${payload.draft!.lines.find(line => line.expenseId === row.id)!.amount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${new Decimal(row.whtAmount).toFixed(2)} ${en ? 'THB' : 'บาท'}`));
+      details.push(...sources.map(row => `${scrubRecordText(row.vendorNameSnapshot, 60)} · ${en ? 'Payment' : 'จ่าย'} ${payload.draft!.lines.find(line => line.expenseId === row.id)!.amount} ${en ? 'THB · ' : 'บาท · '}${E_WHT_WORDS['L-4'](new Decimal(row.whtAmount).toFixed(2), row.whtRemittance === 'E_WHT')}`));
     } else {
       const voucher = await this.vouchers.get(ctx, id, true);
+      const eWht = voucher.lines.some(line => line.whtRemittance === 'E_WHT');
       if ((action === 'VOUCHER_APPROVE' || action === 'VOUCHER_PAY') && ['DRAFT', 'PENDING_APPROVAL'].includes(voucher.header.status)) {
         const next = await this.nextAction(ctx, id);
         if (next && next !== action) return this.prepare(ctx, next, id, input);
@@ -160,14 +162,25 @@ export class LineVoucherActionService {
         if ((action === 'VOUCHER_RETURN' || action === 'VOUCHER_CANCEL') && !payload.reason) awaitingField = 'reason';
         if (action === 'VOUCHER_PAY') payload.payment = { commandId: 'line-preview', expectedVersion: voucher.header.version,
           paidDate: typeof input.paidAt === 'string' ? input.paidAt : todayCivilDate('Asia/Bangkok'),
-          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as PayDisbursementVoucherInput['paymentMethod'] } : {}) };
+          ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod as PayDisbursementVoucherInput['paymentMethod'] } : eWht && !voucher.header.plannedMethod ? { paymentMethod: 'BANK_TRANSFER' as const } : {}) };
         if (payload.payment && !payload.payment.paymentMethod && !voucher.header.plannedMethod) awaitingField = 'paymentMethod';
-        await this.vouchers.previewLineAction(ctx, operation(action), { id, reason: awaitingField === 'reason' ? 'รอเหตุผลจากผู้ใช้' : payload.reason, payment: awaitingField === 'paymentMethod' ? { ...payload.payment!, paymentMethod: 'CASH' } : payload.payment });
-        details.push(...voucher.lines.map(line => `${scrubRecordText(line.vendorName, 60)} · ${en ? 'Payment' : 'จ่าย'} ${line.amount} ${en ? 'THB · Withholding' : 'บาท · หักภาษี'} ${line.whtAmount} ${en ? 'THB' : 'บาท'}`));
+        try {
+          await this.vouchers.previewLineAction(ctx, operation(action), { id, reason: awaitingField === 'reason' ? 'รอเหตุผลจากผู้ใช้' : payload.reason, payment: awaitingField === 'paymentMethod' ? { ...payload.payment!, paymentMethod: 'CASH' } : payload.payment });
+        } catch (error) {
+          const code = error instanceof ConflictException ? (error.getResponse() as { code?: string }).code : undefined;
+          if (action !== 'VOUCHER_PAY' || !['expense_ewht_payment_method', 'disbursement_ewht_planned_method'].includes(code ?? '')) throw error;
+          awaitingField = 'paymentMethod'; allowedPaymentMethods = ['BANK_TRANSFER', 'CHEQUE', 'OTHER'];
+        }
+        details.push(...voucher.lines.map(line => `${scrubRecordText(line.vendorName, 60)} · ${en ? 'Payment' : 'จ่าย'} ${line.amount} ${en ? 'THB · ' : 'บาท · '}${E_WHT_WORDS['L-4'](new Decimal(line.whtAmount).toFixed(2), line.whtRemittance === 'E_WHT')}`));
+        if (payload.payment && eWht) {
+          details.push(E_WHT_WORDS['L-2']);
+          if (voucher.lines.some(line => line.whtRemittance === 'E_WHT' && line.eWhtReducedRateApplied)
+            && !E_WHT_REDUCED_RATE.windows.some(({ from, to }) => payload.payment!.paidDate! >= from && payload.payment!.paidDate! <= to)) details.push(E_WHT_WORDS['L-9']);
+        }
         if (payload.payment) details.push(`${en ? 'Payment date' : 'วันที่จ่าย'} ${lineDisplayDate(payload.payment.paidDate!, language)} · ${((payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CASH' ? (en ? 'Cash' : (en ? 'Cash' : 'เงินสด')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'BANK_TRANSFER' ? (en ? 'Bank transfer' : (en ? 'Bank transfer' : 'โอนเงิน')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CARD' ? (en ? 'Card' : (en ? 'Card' : 'บัตร')) : (payload.payment.paymentMethod ?? voucher.header.plannedMethod) === 'CHEQUE' ? (en ? 'Cheque' : (en ? 'Cheque' : 'เช็ค')) : (en ? 'Other' : 'วิธีอื่น'))}`);
       }
     }
-    return { payload, details, awaitingField, record: await this.read(ctx, payload), nextStatus: action === 'VOUCHER_CREATE' || action === 'VOUCHER_RETURN' ? 'DRAFT' : action === 'VOUCHER_SUBMIT' ? 'PENDING_APPROVAL' : action === 'VOUCHER_APPROVE' ? 'APPROVED' : action === 'VOUCHER_PAY' ? 'PAID' : action === 'VOUCHER_CANCEL' ? 'CANCELLED' : 'PAID' };
+    return { payload, details, awaitingField, allowedPaymentMethods, record: await this.read(ctx, payload), nextStatus: action === 'VOUCHER_CREATE' || action === 'VOUCHER_RETURN' ? 'DRAFT' : action === 'VOUCHER_SUBMIT' ? 'PENDING_APPROVAL' : action === 'VOUCHER_APPROVE' ? 'APPROVED' : action === 'VOUCHER_PAY' ? 'PAID' : action === 'VOUCHER_CANCEL' ? 'CANCELLED' : 'PAID' };
   }
   async apply(ctx: RequestContext, payload: VoucherActionPayload, commandId: string, evidence?: { id: string; revision: string; attachmentId: string; chat: string }) {
     await this.authorize(ctx, payload.action);

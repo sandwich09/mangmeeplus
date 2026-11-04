@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -349,10 +350,10 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
 });
 
 describe('owner-approved v7 product help and previous v6/v4 records', () => {
-  it('serves all 68 owner-approved v7 cards and retains the previous approved v6/v4 records', () => {
+  it('serves all 69 owner-approved v7 cards and retains the previous approved v6/v4 records', () => {
     validateKnowledgePack(PRODUCT_HELP_DRAFT_PACK);
     assert.equal(PRODUCT_HELP_DRAFT_PACK.version, 7); assert.equal(PRODUCT_HELP_DRAFT_PACK.status, 'APPROVED');
-    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ']); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 68);
+    assert.deepEqual(PRODUCT_HELP_DRAFT_PACK.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ', 'owner-review:2026-11-04:Q4:e-WHT']); assert.equal(PRODUCT_HELP_DRAFT_PACK.cards.length, 69);
     assert.equal(PRODUCT_HELP_PACK.cards.length, 12); assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
     assert.ok(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: ['expense.disbursement.read', 'wht.certificate.read', 'wht.pnd53.read', 'expense.create'], featureKeys: ['expenses', 'wht_50bis', 'wht_pnd53'] }).some(card => card.id === 'wht.calculation'));
     const root = resolve(__dirname, '../../../../../..');
@@ -384,7 +385,7 @@ describe('owner-approved v7 product help and previous v6/v4 records', () => {
     }
     for (const card of PRODUCT_HELP_DRAFT_PACK.cards) assert.ok(card.questions.length >= 4, card.id);
     assert.equal(eligibleKnowledgeCards(PRODUCT_HELP_DRAFT_PACK, { ...access(), permissions: PRODUCT_HELP_DRAFT_PACK.cards.flatMap(c => c.permissionAnyOf),
-      featureKeys: null, capabilities: LINE_TOOL_REGISTRY.map(t => t.name) }).length, 68);
+      featureKeys: null, capabilities: LINE_TOOL_REGISTRY.map(t => t.name) }).length, 69);
     const oversized = structuredClone(PRODUCT_HELP_DRAFT_PACK);
     oversized.cards[0]!.summary = 'ก'.repeat(11000); rehash(oversized);
     assert.throws(() => validateKnowledgePack(oversized), /METADATA_LIMIT/);
@@ -406,7 +407,9 @@ describe('owner-approved v7 product help and previous v6/v4 records', () => {
       assert.match(card.body, /ค่ะ|นะคะ/, card.id);
       assert.doesNotMatch(card.body, /🤖|ครับ|อย่า(?!ง)|ห้าม|การถาม.*ยังไม่ได้|\*\*|```/, card.id);
       assert.ok(Buffer.byteLength(card.body) <= 4096, card.id);
-      assert.ok([...words.segment(card.body)].filter(part => part.isWordLike).length <= 85, card.id);
+      // Q4's verbatim L-7 and E44 have their own reviewed word bounds.
+      const wordLimit = card.id === 'wht.e-wht' ? 99 : card.id === 'wht.calculation' ? 87 : 85;
+      assert.ok([...words.segment(card.body)].filter(part => part.isWordLike).length <= wordLimit, card.id);
       assert.ok(card.body.split('\n').length <= 6, card.id);
       for (const name of card.body.matchAll(/“([^”]+)”/gu)) assert.doesNotMatch(name[1]!, /\p{Extended_Pictographic}/u, card.id);
     }
@@ -429,6 +432,11 @@ describe('owner-approved v7 product help and previous v6/v4 records', () => {
     for (const card of PRODUCT_HELP_DRAFT_PACK.cards) for (const name of card.body.matchAll(/“([^”]+)”/gu)) {
       if (name[1] === 'ใช้ VAT ตอนยื่นภาษี') {
         assert.ok(readFileSync(resolve(root, 'packages/contracts/src/expenses.ts'), 'utf8').includes(name[1]));
+        continue;
+      }
+      if (name[1] === E_WHT_WORDS['W-F3']) {
+        assert.ok(readFileSync(resolve(root, 'packages/contracts/src/tax.ts'), 'utf8').includes(name[1]));
+        assert.ok(readFileSync(resolve(root, 'apps/web/src/common/i18n/workspace-dictionary.ts'), 'utf8').includes("'expenses.wht_remittance_bank': E_WHT_WORDS['W-F3']"));
         continue;
       }
       assert.ok(labels.has(name[1]!), `${card.id}: ${name[1]}`);

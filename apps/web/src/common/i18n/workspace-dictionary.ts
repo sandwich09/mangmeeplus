@@ -1,9 +1,18 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { WHT_PRINT_CERTIFICATE_LABEL, WHT_PRINT_CERTIFICATE_BUSY_LABEL, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_SAVED_MANUAL_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH, ATTACHMENT_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
 
 const savedExpenseManualHelp = `เก็บเอกสารแล้ว ${EXPENSE_MANUAL_EDIT_HELP_TH}`;
+
+const expenseEWhtWords = {
+  'expenses.wht_remittance': E_WHT_WORDS['W-F1'],
+  'expenses.wht_remittance_payer': E_WHT_WORDS['W-F2'],
+  'expenses.wht_remittance_bank': E_WHT_WORDS['W-F3'],
+  'expenses.wht_remittance_hint': E_WHT_WORDS['W-F4'],
+  'expenses.wht_payee_bank_hint': E_WHT_WORDS['W-F11'],
+};
 
 const disbursementVoucherWords = {
   'expenses.disbursement.pay_review': 'กลับไปตรวจ',
@@ -360,6 +369,7 @@ export type SupportedLocale = 'th' | 'en';
 export const workspaceDictionary = {
   th: {
     ...disbursementVoucherWords,
+    ...expenseEWhtWords,
     'expenses.certificate_issue.name': 'ผู้รับเงิน',
     'expenses.certificate_issue.tax_id': 'เลขผู้เสียภาษี',
     'expenses.certificate_issue.address': 'ที่อยู่',
@@ -2221,6 +2231,7 @@ export const workspaceDictionary = {
   },
   en: {
     ...disbursementVoucherWords,
+    ...expenseEWhtWords,
     'expenses.certificate_issue.name': 'ผู้รับเงิน',
     'expenses.certificate_issue.tax_id': 'เลขผู้เสียภาษี',
     'expenses.certificate_issue.address': 'ที่อยู่',

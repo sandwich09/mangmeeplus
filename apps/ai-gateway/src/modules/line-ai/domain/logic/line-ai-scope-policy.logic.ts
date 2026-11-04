@@ -17,7 +17,7 @@
  * eligible subrequest) and runSemanticTurnV2 (every subrequest, so a mixed message still answers
  * its allowed part) apply BEFORE any tool is offered or called.
  */
-import { BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, canUseLineChatAction, customerPackageName, type BillingOffer, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, canUseLineChatAction, customerPackageName, type BillingOffer, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, hasToolFeature, hasToolPermissions } from '@watchdog-bms/contracts';
 import type { LineAiSemanticSubrequestV2, LineAiWebLink } from '@watchdog-bms/contracts';
 
 export type ScopePolicyLanguage = 'th' | 'en';
@@ -352,11 +352,14 @@ const NAMED_WRITE_ACTIONS = [
 export function documentExplanationTopic(text: string): { featureKey: string; label: string } | undefined {
   text = text.trim().replace(/^(?:แล้ว|งั้น|และ|so\s+|and\s+)/iu, '').replace(/ทวิ\s*50/gu, '50 ทวิ');
   // Definitions/comparisons never require permission to the shop's records or an action button.
+  if (/e-?wht|e-?withholding/iu.test(text)
+    && /(?:หักกี่เปอร์เซ็นต์|ต้องยื่น\s*ภ\.?\s*ง\.?\s*ด\.?\s*53\s*ไหม|ต้องออก\s*50\s*ทวิ\s*ไหม)[?？]*$/iu.test(text)) return { featureKey: 'expenses', label: 'e-WHT' };
   const explanationRequest = /อธิบาย|\bexplain\b/iu.test(text);
   const conceptual = explanationRequest || /คือ(?:อะไร|ไร)|หมายถึง|ใช้(?:ทำอะไร|ตอนไหน)|แตกต่าง|ต่าง(?:กัน|จาก)|\bwhat\s+(?:is|are|does)\b|\bdifference\b|\bwhy\b/iu.test(text);
   const actionHowTo = /ทำ(?:ยังไง|อย่างไร)|ทำไง|how\s+(?:do|can|to)|(?:แล้ว|และ).*(?:ทำ|ออก|สร้าง|ยื่น).*ให้/iu.test(text);
   if (conceptual && !actionHowTo && !/แล้ว|มีกี่|เท่าไหร่|เดือนนี้|\b(?:our|my|this\s+month)\b/iu.test(text)
     && (explanationRequest || !/ช่วย|ให้หน่อย/iu.test(text))) {
+    if (/e-?wht|e-?withholding/iu.test(text)) return { featureKey: 'expenses', label: 'e-WHT' };
     if (/ภ\.?\s*ง\.?\s*ด\.?\s*(?:3|53)|pnd\s*(?:3|53)/iu.test(text)) return { featureKey: 'wht_pnd53', label: 'ภ.ง.ด.3 และ ภ.ง.ด.53' };
     if (/50\s*(?:ทวิ|bis|tawi)/iu.test(text)) return { featureKey: 'wht_50bis', label: '50 ทวิ' };
     if (/หัก\s*ณ\s*ที่จ่าย|withhold|\bwht\b/iu.test(text)) return { featureKey: 'expenses', label: 'ภาษีหัก ณ ที่จ่าย' };
@@ -430,6 +433,7 @@ export function documentExplanationReply(text: string, features: readonly string
   permissions: readonly string[], language: ScopePolicyLanguage, offers?: readonly BillingOffer[]): string | undefined {
   const topic = documentExplanationTopic(text);
   if (!topic) return undefined;
+  if (topic.label === 'e-WHT') return E_WHT_WORDS['L-14'];
   const en = language === 'en';
   const definition = topic.featureKey === 'wht_50bis'
     ? en ? 'A withholding certificate records the amount paid and tax withheld for the recipient.' : 'หนังสือรับรอง 50 ทวิบอกยอดที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินค่ะ'

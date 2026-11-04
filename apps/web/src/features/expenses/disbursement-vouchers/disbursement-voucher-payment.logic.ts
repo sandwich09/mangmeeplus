@@ -1,4 +1,4 @@
-import { THAI_SYSTEM_ROLE_NAMES, DISBURSEMENT_VOUCHER_ERROR_WORDS, todayCivilDate } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, E_WHT_REDUCED_RATE, todayCivilDate } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import type { DisbursementPaymentFields, DisbursementVoucherCommandInput, DisbursementVoucherDetail, PayDisbursementVoucherInput } from './disbursement-vouchers.model';
 
@@ -14,7 +14,8 @@ export function canPayDisbursementVoucher(detail: DisbursementVoucherDetail): bo
   return detail.header.status === 'APPROVED' && detail.actions.pay;
 }
 export function disbursementWithholdingLines(detail: DisbursementVoucherDetail): DisbursementVoucherDetail['lines'] {
-  return detail.header.status === 'PAID' ? detail.lines.filter(line => Number(line.whtAmount) > 0) : [];
+  return detail.lines.filter(line => Number(line.whtAmount) > 0 && (detail.header.status === 'PAID'
+    || ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'].includes(detail.header.status) && line.withholdingCertificate?.state === 'E_WHT'));
 }
 export function initialDisbursementPayment(header: Pick<DisbursementVoucherDetail['header'], 'plannedMethod'>, now = new Date()): DisbursementPaymentFields {
   return { paidDate: todayCivilDate('Asia/Bangkok', now), paymentMethod: header.plannedMethod ?? 'BANK_TRANSFER', paidFromRef: '' };
@@ -40,7 +41,12 @@ export function disbursementVoucherDocumentHref(companyId: string, row: { id: st
 }
 
 export function disbursementWithholdingGroups(detail: DisbursementVoucherDetail) {
-  return (['PENDING', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED'] as const).map(state => ({ state,
+  return (['E_WHT', 'PENDING', 'SYSTEM_ISSUED', 'EXTERNAL_LINKED'] as const).map(state => ({ state,
     lines: disbursementWithholdingLines(detail).filter(line => line.withholdingCertificate?.state === state),
   })).filter(group => group.lines.length > 0);
+}
+
+export function disbursementEWhtPaymentWarning(detail: Pick<DisbursementVoucherDetail, 'lines'>, date: string): string | null {
+  return date && detail.lines.some(line => line.whtRemittance === 'E_WHT' && line.eWhtReducedRateApplied)
+    && !E_WHT_REDUCED_RATE.windows.some(window => date >= window.from && date <= window.to) ? E_WHT_WORDS['W-P2'] : null;
 }

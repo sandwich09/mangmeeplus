@@ -1,3 +1,5 @@
+import { expenseWhtHeaderRate } from '../../domain/logic/expense-wht-input.logic';
+import { eWhtRateKind, type ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Optional, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -9,7 +11,7 @@ import { DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYM
   type DisbursementVoucherCommandInput, type SubmitDisbursementVoucherInput, type EndDisbursementVoucherInput, type DisbursementVoucherLifecycleAction, type PayDisbursementVoucherInput, type IssueDisbursementVoucherInput, type ReissueDisbursementVoucherInput, type RemindDisbursementVoucherInput,
   civilDate, civilPeriodKey, todayCivilDate,
 } from '@watchdog-bms/contracts';
-import { PrismaExpenseRepository, assertActiveExpenseBranch, assertExpensePaymentSource, type ExpensePaymentResult } from '../../infrastructure/prisma-expense.repository';
+import { PrismaExpenseRepository, assertEWhtPaymentMethod, assertActiveExpenseBranch, assertExpensePaymentSource, type ExpensePaymentResult } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository, type DisbursementReadScope, type DisbursementDraftData, type DisbursementLifecycleVoucher, disbursementVoucherReadWhere } from '../../infrastructure/prisma-disbursement-voucher.repository';
 import { lockExpenseCorrection, disbursementExpenseSelectionReason } from '../../infrastructure/expense-void-blocker';
 import { assertDisbursementVoucherAction, disbursementPayeeIdentity, disbursementVoucherActions, disbursementVoucherHeader, disbursementVoucherPrimaryAction, disbursementVoucherSourceHash } from '../../domain/logic/disbursement-voucher.logic';
@@ -20,6 +22,7 @@ import { normalizeVendorName, toAsciiDigits } from '../../../accounting-document
 import { POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { Prisma } from '../../../../generated/prisma/client';
 import { isSerializationFailure } from '../../../../common/database/prisma-error';
+import { eWhtPaymentMethodAllowed } from '@watchdog-bms/contracts';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
@@ -81,6 +84,9 @@ export class DisbursementVoucherUseCase {
     validateInput(body, 'expectedVersion' in body);
     const sources = currentSources ?? await this.expenseRepo.readDisbursementExpenseSources({ companyId: scope.companyId, createdByUserId: scope.createdByUserId, expenseIds: body.lines.map(l => l.expenseId) }, scope.scopes, scope.relatedUserId, tx);
     if (sources.length !== body.lines.length) throw new UnprocessableEntityException(disbursementVoucherError('disbursement_expense_unreadable'));
+    if (!eWhtPaymentMethodAllowed(body.plannedMethod) && sources.some(source => source.whtRemittance === 'E_WHT')) {
+      throw new ConflictException(disbursementVoucherError('disbursement_ewht_planned_method'));
+    }
     const byId = new Map(sources.map(e => [e.id, e]));
     const ordered = body.lines.map(l => byId.get(l.expenseId)!);
     let total = new Decimal(0);
@@ -144,13 +150,16 @@ export class DisbursementVoucherUseCase {
       const preparersInactive = (action === 'return' || action === 'cancel') && await this.repo.canOwnerRecover(voucher, true, tx);
       assertDisbursementVoucherAction(voucher, action, ctx.permissions, ctx.userId, ctx.roles.includes('OWNER') && preparersInactive, preparersInactive);
       if ((action === 'return' || action === 'cancel') && (!input.reason || input.reason.trim().length < 3)) throw new BadRequestException(disbursementVoucherError(action === 'return' ? 'disbursement_return_reason_required' : 'disbursement_cancel_reason_required'));
-      if (action === 'submit') await this.prepare(ctx, { commandId: 'line-preview', lines: voucher.lines.map(l => ({ expenseId: l.expenseId, amount: new Decimal(String(l.amount)).toString() })), payeeName: voucher.payeeName, payeeConfirmed: voucher.payeeBasis === 'PREPARER_CONFIRMED' }, scope, tx);
+      if (action === 'submit') await this.prepare(ctx, { commandId: 'line-preview', lines: voucher.lines.map(l => ({ expenseId: l.expenseId, amount: new Decimal(String(l.amount)).toString() })), payeeName: voucher.payeeName, payeeConfirmed: voucher.payeeBasis === 'PREPARER_CONFIRMED', plannedMethod: voucher.plannedMethod ?? undefined }, scope, tx);
       if (action === 'approve' || action === 'pay') await this.verifiedSources(tx, scope, voucher, ctx, action === 'pay');
       if (action === 'pay') {
         const payment = input.payment!;
         if (!payment.paymentMethod && !voucher.plannedMethod) throw new BadRequestException(disbursementVoucherError('disbursement_payment_method_required'));
         if (payment.paymentMethod !== undefined && !EXPENSE_PAYMENT_METHODS.includes(payment.paymentMethod) || payment.paidDate !== undefined && !isCivilDate(payment.paidDate)) throw invalid();
-        for (const source of (await this.sources(tx, scope, voucher))) assertExpensePaymentSource(source, payment.paidDate ?? todayCivilDate('Asia/Bangkok'));
+        for (const source of (await this.sources(tx, scope, voucher))) {
+          assertExpensePaymentSource(source, payment.paidDate ?? todayCivilDate('Asia/Bangkok'));
+          assertEWhtPaymentMethod(source, payment.paymentMethod ?? voucher.plannedMethod);
+        }
       }
       return disbursementVoucherHeader(voucher);
     });
@@ -276,6 +285,9 @@ export class DisbursementVoucherUseCase {
       lines: voucher.lines.map(line => ({ expenseId: line.expenseId, expenseNumber: line.expense.expenseNumber, expenseDate: coerceCivilDate(line.expense.expenseDate),
         vendorInvoiceNumber: line.expense.vendorDocumentNumber ?? null,
         vendorName: line.expense.vendorNameSnapshot, vendorTaxId: line.expense.vendorTaxIdSnapshot, branchId: line.expense.branchId,
+        whtRemittance: line.expense.whtRemittance ?? null,
+        eWhtReducedRateApplied: line.expense.whtRemittance === 'E_WHT' && eWhtRateKind(line.expense.whtCategoryCode) === 'REDUCED'
+          && Number(expenseWhtHeaderRate(line.expense.whtInputJson as ExpenseWhtInput | null, line.expense.lines, line.expense.whtRate)) === 1,
         grandTotalAmount: new Decimal(String(line.expense.grandTotalAmount)).toFixed(4), whtAmount: new Decimal(String(line.expense.whtAmount)).toFixed(4),
         netPayableAmount: new Decimal(String(line.expense.netPayableAmount)).toFixed(4), outstandingAmount: new Decimal(String(line.expense.outstandingAmount)).toFixed(4),
         amount: new Decimal(String(line.amount)).toFixed(4), position: line.position, expensePaymentId: line.expensePaymentId,

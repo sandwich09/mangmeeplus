@@ -7,7 +7,7 @@ import { canEditSubstituteReceipt } from './substitute-receipt-wizard.model';
 import { showInputVatQuestion, showListedInputVatRight } from './expense-input-vat-right.logic';
 
 import { ExpenseInputVatRight } from './ExpenseInputVatRight';
-import { whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, expenseDocumentDateStatus, civilDate } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, whtFilingRouteHint, isExpenseCancelled, thaiTaxIdChecksumValid, expenseDateIsReadable, expenseDocumentDateStatus, civilDate } from '@watchdog-bms/contracts';
 import { mergeExpenseUnsavedFields, expenseTaxEvidenceReasonMessage } from './expenses.model';
 
 import { INPUT_VAT_RIGHT_LABEL, THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
@@ -27,7 +27,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { CoverLoader, EmptyState, ErrorState, LoadingState } from '@/common/components/state';
 import { Pagination } from '@/common/components/data-table/Pagination';
 import {
-  getExpenseCaptureCapability,
+  getExpenseEWhtSetting, getExpenseCaptureCapability,
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
   uploadReceiptFile, updateExpenseDraft, listExpenseCategories, listExpenseWhtIncomeCategories,
@@ -55,7 +55,7 @@ import {
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
   insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
-  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, sanitizeExpenseWhtTyping, normalizeExpenseWhtValue, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
+  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, changeExpenseReviewRemittance, changeExpenseReviewWhtCategory, expenseRemittanceHint, sanitizeExpenseWhtTyping, normalizeExpenseWhtValue, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
@@ -1506,9 +1506,10 @@ export function ExpenseDocumentFacts({ companyId, detail }: { companyId: string;
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onBusyChange, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [], onDirtyChange }: {
+export function ExpenseReviewEditSection({ companyId, detail, freeExpenseDrafts = false, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onBusyChange, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [], onDirtyChange }: {
   companyId: string;
   detail: ExpenseDetail;
+  freeExpenseDrafts?: boolean;
   isMutable: boolean;
   canReview: boolean;
   /** Vendor-address §8: decides only whether the registry notices may carry their "ดู" link. */
@@ -1926,6 +1927,19 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     saveRef.current = isMutable ? save : null;
     return () => { saveRef.current = null; };
   });
+
+  const [eWhtUsed, setEWhtUsed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    setEWhtUsed(false);
+    if (freeExpenseDrafts) return;
+    void getExpenseEWhtSetting(companyId).then(setting => { if (active) setEWhtUsed(setting.used); })
+      .catch(() => { if (active) setEWhtUsed(false); });
+    return () => { active = false; };
+  }, [companyId, freeExpenseDrafts]);
+  const showRemittance = !freeExpenseDrafts && (eWhtUsed || detail.whtRemittance === 'E_WHT');
+  const canManageEWht = !freeExpenseDrafts && permissions.includes('company.setup.manage');
+  const remittanceHint = expenseRemittanceHint({ ...values, whtInput }, { used: eWhtUsed, canManage: canManageEWht });
 
   return (
     <div id={`expense-review-fields-${detail.id}`}><MangmeeCard className="space-y-4 p-4 text-sm">
@@ -2549,7 +2563,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             // R1: the only place the decision changes. R4: หัก starts clean — empty value, no category, no red.
             setWithholdingEnabled(enabled); setWhtReveal(!enabled); setTaxFactsDirty(true); setError(null);
             if (!enabled) setValues((current) => changeExpenseReviewWhtInput(current, { inputType: 'RATE', value: '' }));
-            else setValues((current) => ({ ...current, whtInput: { inputType: 'RATE', value: '' } }));
+            else setValues((current) => ({ ...current, whtRemittance: current.whtRemittance ?? 'PAYER_FILES', whtInput: { inputType: 'RATE', value: '' } }));
           }} disabled={!isMutable || busy}>
           <option value="NO">{t('expenses.wht_no', locale)}</option>
           <option value="YES">{t('expenses.wht_yes', locale)}</option>
@@ -2557,6 +2571,20 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <p id={`expense-wht-choice-hint-${detail.id}`} className="mt-1 text-xs text-gray-500 [text-wrap:pretty]">{t('expenses.wht_choice_hint', locale)}</p>
         {withholdingEnabled && (
           <div className="mt-3 grid grid-cols-1 gap-3">
+            {showRemittance && <label className="block text-sm font-medium text-gray-700">
+              <span className="mb-1 block">{t('expenses.wht_remittance', locale)}</span>
+              <ThemedSelect aria-label={t('expenses.wht_remittance', locale)} value={values.whtRemittance ?? 'PAYER_FILES'} disabled={!isMutable || busy} onChange={event => {
+                setTaxFactsDirty(true); setError(null);
+                setValues(current => {
+                  const category = whtCategories.find(item => item.code === current.whtCategoryCode);
+                  return changeExpenseReviewRemittance(current, event.target.value as 'PAYER_FILES' | 'E_WHT', category ? String(Number(category.defaultRate)) : current.whtInput?.value ?? current.whtRate ?? '');
+                });
+              }}>
+                <option value="PAYER_FILES">{t('expenses.wht_remittance_payer', locale)}</option>
+                <option value="E_WHT">{t('expenses.wht_remittance_bank', locale)}</option>
+              </ThemedSelect>
+              {values.whtRemittance === 'E_WHT' && <span className="mt-1 block text-sm font-normal text-gray-500">{t('expenses.wht_remittance_hint', locale)}</span>}
+            </label>}
             <div>
               <span className="mb-1 block text-sm font-medium text-gray-700">
                 <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
@@ -2565,7 +2593,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
                 {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </ThemedSelect>
-              <p id={`expense-payee-kind-hint-${detail.id}`} className="mt-1 text-xs text-gray-500 [text-wrap:pretty]">{t('expenses.payee_entity_kind_hint', locale)}</p>
+              <p id={`expense-payee-kind-hint-${detail.id}`} className="mt-1 text-xs text-gray-500 [text-wrap:pretty]">{t(values.whtRemittance === 'E_WHT' ? 'expenses.wht_payee_bank_hint' : 'expenses.payee_entity_kind_hint', locale)}</p>
               <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
               {whtWayOut(payeeEntityKindIssue)}
             </div>
@@ -2579,14 +2607,13 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 if (!picked) return;
                 const rate = String(Number(picked.defaultRate));
                 setTaxFactsDirty(true);
-                setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: rate,
-                  whtInput: { inputType: 'RATE', value: rate, ...(v.whtInput?.baseAmount !== undefined && { baseAmount: v.whtInput.baseAmount }) } }));
+                setValues((v) => changeExpenseReviewWhtCategory(v, code, rate));
               }} disabled={!isMutable || busy}>
                 <option value="">{t('expenses.category_unspecified', locale)}</option>
                 {!isMutable && values.whtCategoryCode && !applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
                 {expenseWhtCategoryOptions(applicableWhtCategories).map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
               </ThemedSelect>
-              {isMutable && <p id={`expense-wht-category-hint-${detail.id}`} className="mt-1 text-xs text-gray-500">{whtFilingRouteHint(whtCategories.find(category => category.code === values.whtCategoryCode)) ?? t('expenses.wht_income_category_editable_hint', locale)}</p>}
+              {isMutable && <p id={`expense-wht-category-hint-${detail.id}`} className="mt-1 text-xs text-gray-500">{remittanceHint ?? (values.whtRemittance !== 'E_WHT' ? whtFilingRouteHint(whtCategories.find(category => category.code === values.whtCategoryCode)) ?? t('expenses.wht_income_category_editable_hint', locale) : null)}{remittanceHint === E_WHT_WORDS['W-F10o'] && canManageEWht && <> <Link className="underline" href={`/companies/${companyId}/settings/e-wht`}>{E_WHT_WORDS['W-F10o-link']}</Link></>}</p>}
               <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
               {whtWayOut(whtCategoryIssue)}
             </div>

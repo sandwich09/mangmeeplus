@@ -1,3 +1,4 @@
+import { E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn } from '@watchdog-bms/contracts';
 import { TAX_EVIDENCE_REASON_LABELS, EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, thaiTaxIdChecksumValid, todayCivilDate, canVoidExpenseFinancialState } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL } from '@watchdog-bms/contracts';
@@ -426,6 +427,7 @@ export type ExpenseDetail = ExpenseSummary & {
   whtCategoryCode: string | null;
   whtRate: string | null;
   whtInputJson?: ExpenseWhtCapture | null;
+  whtRemittance?: 'PAYER_FILES' | 'E_WHT' | null;
   paymentMethod: ExpensePaymentMethod | null;
   paidAt: string | null;
   accountHintKey: string | null;
@@ -543,6 +545,7 @@ export type ExpenseDraftReviewValues = {
   vatMode: ExpenseVatMode;
   vatSource?: ExpenseVatSourceInput;
   whtInput?: ExpenseWhtInput;
+  whtRemittance?: 'PAYER_FILES' | 'E_WHT' | null;
   lines: Array<{
     /** Existing rows keep their server identity; newly inserted review rows omit it. */
     id?: string;
@@ -640,6 +643,7 @@ export function reviewValues(detail: ExpenseDetail, prefillCertificatePayee = fa
     vendorAddressSnapshot: detail.vendorAddressSnapshot ?? '',
     vendorBranchCodeSnapshot: detail.vendorBranchCodeSnapshot ?? '',
     vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
+    whtRemittance: detail.whtRemittance ?? (Number(detail.whtAmount) > 0 ? 'PAYER_FILES' : null),
     whtCategoryCode: detail.whtCategoryCode ?? '',
     whtRate: detail.whtRate ?? '',
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
@@ -869,6 +873,7 @@ export function buildExpenseDraftReviewPayload(
     ...(includeTaxFacts && payloadValues.vatSource && { vatSource: payloadValues.vatSource }),
     // A half-typed value ("03", "") never reaches the API malformed; a blank one is refused before any save
     // while หัก is chosen (ExpenseReviewEditSection.save), so "0" here only feeds the totals preview.
+    whtRemittance: expenseReviewWithholdsTax(values) || (!values.whtInput && values.whtRemittance) ? values.whtRemittance ?? 'PAYER_FILES' : null,
     ...(includeTaxFacts && values.whtInput && { whtInput: { ...values.whtInput, value: normalizeExpenseWhtValue(values.whtInput.value) || '0' } }),
     ...(options.partial && options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
     ...(includeLines && { lines: payloadValues.lines.map((line, index) => ({
@@ -1225,7 +1230,7 @@ export function changeExpenseReviewWhtInput(values: ExpenseDraftReviewValues, in
   if (input.value.trim() !== '') return { ...values, whtInput: input };
   return {
     ...values,
-    whtInput: { inputType: input.inputType, value: '0' },
+    whtInput: { inputType: input.inputType, value: '0' }, whtRemittance: null,
     whtCategoryCode: '', whtRate: '',
     lines: values.lines.map((line) => ({ ...line, whtRate: null })),
   };
@@ -2035,4 +2040,26 @@ export function expenseWhtCategoryOptions<T extends { nameTh: string; defaultRat
   };
   return [...categories].sort((a, b) => order(a.nameTh) - order(b.nameTh))
     .map(item => ({ ...item, label: `${item.nameTh} · หัก ${Number(item.defaultRate)}%` }));
+}
+
+export function changeExpenseReviewRemittance(values: ExpenseDraftReviewValues, whtRemittance: 'PAYER_FILES' | 'E_WHT', defaultRate: string): ExpenseDraftReviewValues {
+  const rate = whtRemittance === 'E_WHT' ? eWhtReducedRateOn(values.whtCategoryCode, values.expenseDate) ?? defaultRate : defaultRate;
+  return { ...values, whtRemittance, ...(values.whtInput?.inputType === 'AMOUNT' ? {} : { whtRate: rate,
+    whtInput: { ...values.whtInput, inputType: 'RATE', value: rate } }) };
+}
+export function changeExpenseReviewWhtCategory(values: ExpenseDraftReviewValues, code: string, defaultRate: string): ExpenseDraftReviewValues {
+  return changeExpenseReviewRemittance({ ...values, whtCategoryCode: code }, values.whtRemittance ?? 'PAYER_FILES', defaultRate);
+}
+export function expenseRemittanceHint(values: ExpenseDraftReviewValues, setting = { used: true, canManage: false }): string | null {
+  const code = values.whtCategoryCode;
+  if (!code) return null;
+  const kind = eWhtRateKind(code), reduced = eWhtReducedRateOn(code, values.expenseDate);
+  if (values.whtRemittance !== 'E_WHT') return reduced && values.whtInput?.inputType === 'RATE' && Number(values.whtInput.value) === 1 ? E_WHT_WORDS[setting.used ? 'W-F10' : setting.canManage ? 'W-F10o' : "W-F10o'"] : null;
+  if (kind === 'UNKNOWN') return E_WHT_WORDS['W-F8'];
+  if (kind === 'NOT_REDUCED') return E_WHT_WORDS['W-F7'];
+  if (!reduced) return E_WHT_WORDS['W-F9'];
+  return values.whtInput?.inputType === 'AMOUNT' ? null : E_WHT_WORDS[code === 'WHT_SERVICE_3' || code === 'WHT_SERVICE_5' ? 'W-F5' : 'W-F6'];
+}
+export function expenseEWhtPaymentWarning(remittance: string | null | undefined, code: string | null | undefined, rate: string | null | undefined, date: string): string | null {
+  return remittance === 'E_WHT' && eWhtRateKind(code) === 'REDUCED' && Number(rate) === 1 && date && !eWhtReducedRateOn(code, date) ? E_WHT_WORDS['W-P2'] : null;
 }

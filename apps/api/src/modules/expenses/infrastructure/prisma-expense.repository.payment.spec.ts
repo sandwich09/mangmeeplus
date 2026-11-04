@@ -85,7 +85,8 @@ function harness(overrides: Record<string, unknown> = {}, filingRoute = 'SYSTEM_
             return { count: rows.length };
           },
         },
-        taxEvent: { findMany: async () => draft.taxEvents, updateMany: async ({ where, data }: any) => { const rows = draft.taxEvents.filter(row => row.status === where.status && (!where.eventType || where.eventType.in.includes(row.eventType))); rows.forEach(row => Object.assign(row, data)); return { count: rows.length }; } },
+        taxReviewIssue: { updateMany: async () => ({ count: 0 }) },
+        taxEvent: { findMany: async () => draft.taxEvents, updateMany: async ({ where, data }: any) => { const rows = draft.taxEvents.filter(row => (typeof where.status === 'string' ? row.status === where.status : where.status.in.includes(row.status)) && (!where.eventType || where.eventType.in.includes(row.eventType))); rows.forEach(row => Object.assign(row, data)); return { count: rows.length }; } },
         whtCertificate: {
           findFirst: async ({ where }: any) => draft.certificates.find(row => (!where.status || row.status === where.status) && (!where.id || row.id === where.id) && (!where.OR || where.OR.some((part: any) => part.taxEventIdsJson.array_contains.some((id: string) => row.taxEventIdsJson?.includes(id))))) ?? null,
           updateMany: async ({ where, data }: any) => { const rows = draft.certificates.filter(row => row.id === where.id && row.companyId === where.companyId && row.status === where.status); rows.forEach(row => Object.assign(row, data)); return { count: rows.length }; },
@@ -178,6 +179,17 @@ function paymentInput(amount: string, overrides: Record<string, unknown> = {}) {
 function pay(repo: PrismaExpenseRepository, amount: string, overrides: Record<string, unknown> = {}) {
   return repo.recordPaymentAtomic(paymentInput(amount, overrides));
 }
+
+describe('R3 e-WHT transaction payment guard (paid path)', () => {
+  it('refuses cash and card without payments, totals, audit or outbox writes', async () => {
+    for (const paymentMethod of ['CASH', 'CARD']) {
+      const h = harness({ whtRemittance: 'E_WHT' });
+      await assert.rejects(() => pay(h.repo, '10', { paymentMethod }), (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_payment_method');
+      assert.equal(h.state.payments.length, 0); assert.equal(h.state.expense.paidAmount, '0.0000');
+      assert.equal(h.state.audits.length, 0); assert.equal(h.state.events.length, 0);
+    }
+  });
+});
 
 for (const inputVatClaimStatus of ['NON_CLAIMABLE', 'NEEDS_REVIEW', 'CLAIMABLE']) it(`payment never waits for the input VAT right ${inputVatClaimStatus}`, async () => {
   const h = harness({ inputVatClaimStatus, postingStatus: 'not_required' });
@@ -2116,6 +2128,29 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     status: 'CONFIRMED', expenseDate: new Date('2026-10-01'), vendorNameSnapshot: 'ร้านทดสอบ',
     grandTotalAmount: '107', whtAmount: '3', netPayableAmount: '104', outstandingAmount: '104' } });
 
+  it('R3 an e-WHT voucher cash payment rolls back without any new payment or totals', async t => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!, source = await createExpense();
+    await client.expenseRecord.update({ where: { id: source.id }, data: { whtRemittance: 'E_WHT' } });
+    const uc = useCase(client);
+    const draft = await uc.create(context(), { commandId: randomUUID(), plannedMethod: 'BANK_TRANSFER', lines: [{ expenseId: source.id, amount: '104' }] });
+    await client.expenseRecord.update({ where: { id: source.id }, data: { reservedByDisbursementVoucherId: draft.id } });
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const row = (await repo.readDisbursementExpenseSources({ companyId, expenseIds: [source.id] }, {}))[0]!;
+    assert.equal(row.whtRemittance, 'E_WHT');
+    const { disbursementVoucherSourceHash } = await import('../domain/logic/disbursement-voucher.logic');
+    await client.disbursementVoucherLine.updateMany({ where: { voucherId: draft.id }, data: { sourceHashAtSubmit: disbursementVoucherSourceHash(row) } });
+    const approved = await client.disbursementVoucher.update({ where: { id: draft.id }, data: { status: 'APPROVED', documentNumber: `PV-${randomUUID()}` } });
+    const actor = { ...context(), permissions: ['expense.disbursement.pay', 'expense.read'] };
+    for (const paymentMethod of ['CASH', 'CARD'] as const) {
+      await assert.rejects(() => uc.pay(actor, draft.id, { commandId: randomUUID(), expectedVersion: approved.version, paymentMethod, paidDate: '2026-10-01' }),
+        (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_payment_method');
+      assert.equal(await client.expensePayment.count({ where: { companyId, expenseId: source.id } }), 0);
+      assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: source.id } })).paidAmount.toString(), '0');
+      assert.equal((await client.disbursementVoucher.findUniqueOrThrow({ where: { id: draft.id } })).status, 'APPROVED');
+    }
+  });
+
   it('supporting-file links are idempotent, roll back with audit failure and serialize against submission', async t => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
     const expense = await createExpense();
@@ -2780,12 +2815,12 @@ describe('controller correction boundaries 2026-10-04', () => {
       assert.equal(h.state.expense.status, 'CONFIRMED');
     });
   }
-  it('retires legacy VAT, finalized line events and withholding atomically; excluded events stay excluded', async () => {
+  it('retires legacy VAT, finalized line events and excluded withholding atomically', async () => {
     const h = harness({ postingStatus: 'pending' });
-    h.state.taxEvents.push(...['VAT_INPUT', 'VAT_INPUT', 'WHT_PND3'].map((eventType, i) => ({ id: `e${i}`, eventType, status: 'ACTIVE', sourceLineKey: i === 1 ? 'old-line' : '__HEADER__', sourceHash: 'old' })), { id: 'excluded', status: 'EXCLUDED', eventType: 'VAT_INPUT' });
+    h.state.taxEvents.push(...['VAT_INPUT', 'VAT_INPUT', 'WHT_PND3'].map((eventType, i) => ({ id: `e${i}`, eventType, status: 'ACTIVE', sourceLineKey: i === 1 ? 'old-line' : '__HEADER__', sourceHash: 'old' })), { id: 'excluded', status: 'EXCLUDED', eventType: 'WHT_PND3' });
     h.state.handoffs.push({ status: 'REQUIRED' });
     await h.repo.reopenExpenseAtomic(command);
-    assert.deepEqual(h.state.taxEvents.map(e => e.status), ['SUPERSEDED', 'SUPERSEDED', 'SUPERSEDED', 'EXCLUDED']);
+    assert.deepEqual(h.state.taxEvents.map(e => e.status), ['SUPERSEDED', 'SUPERSEDED', 'SUPERSEDED', 'SUPERSEDED']);
     assert.equal(h.state.handoffs[0].status, 'CANCELLED');
   });
   it('blocks rejection of retained payments atomically and reports a cancellation remedy, then permits rejection', async () => {
@@ -3412,4 +3447,74 @@ it('Round 3 payment card revision is rechecked under the existing payment/source
   const h = harness();
   await assert.rejects(() => h.repo.recordPaymentAtomic(paymentInput('10.00', { expectedUpdatedAt: new Date(0) })), /version_changed/);
   assert.equal(h.state.payments.length, 0);
+});
+
+it('R10 voucher bank state wins over stale handoffs and loads every withholding line', async () => {
+  const expense: any = { id: 'e', whtAmount: '1', whtRemittance: 'E_WHT' };
+  const voucher: any = { id: 'v', lines: [{ expenseId: 'e', expense }], revisions: [] };
+  let projection: any;
+  const db: any = { user: { findMany: async () => [] }, disbursementVoucher: { findFirst: async ({ include }: any) => { projection = include.lines.include.expense.select; return voucher; }, findMany: async () => [] },
+    $queryRaw: async () => [{ sourcePaymentId: 'e', status: 'SYSTEM_ISSUED', certificateNumber: 'OLD' }] };
+  const repo = new PrismaDisbursementVoucherRepository({ client: db } as any);
+  const result = await repo.findVisible({ companyId: 'c', scopes: {} }, 'v');
+  assert.deepEqual(result?.withholdingCertificates.get('e'), { state: 'E_WHT', number: null });
+  assert.equal(projection.whtRemittance, true); assert.equal(projection.lines.take, undefined);
+  assert.equal(projection.lines.select.whtAmount, true); assert.equal(projection.lines.select.whtRate, true); assert.equal(projection.lines.select.taxableAmount, true);
+});
+
+it('R10 voucher mapper derives reduced 1% from all legacy lines, never from header alone or transport', async () => {
+  const now = new Date('2026-09-10');
+  const expenses = ['WHT_ADVERTISING_IND', 'WHT_TRANSPORT_IND', 'WHT_ADVERTISING_IND'].map((whtCategoryCode, index) => ({ id: `e${index}`, expenseDate: now, whtRemittance: 'E_WHT', whtCategoryCode,
+    whtInputJson: null, whtRate: '3', grandTotalAmount: '100', whtAmount: '1', netPayableAmount: '99', outstandingAmount: '99',
+    lines: [{ description: 'รายการแรก', whtAmount: '0', whtRate: null, taxableAmount: '0' }, { whtAmount: '1', whtRate: index === 2 ? '0.03' : '0.01', taxableAmount: '100' }] }));
+  const voucher: any = { id: 'v', status: 'DRAFT', currency: 'THB', createdAt: now, updatedAt: now, totalAmount: '297', names: new Map(), related: [], revisions: [],
+    lines: expenses.map((expense, position) => ({ expense, expenseId: expense.id, amount: '99', position })), livePayments: new Set(), withholdingCertificates: new Map() };
+  const repo: any = { findVisible: async () => voucher, activeMemberIds: async () => [], supportingFiles: async () => [], memberNames: async () => new Map() };
+  const uc = new DisbursementVoucherUseCase(repo, { findReusableSignatureAsset: async () => null } as any, { readScope: () => ({ filter: {}, scope: {} }) } as any, {} as any, {} as any);
+  const detail = await uc.get({ companyId: 'c', userId: 'u', permissions: ['expense.disbursement.read'], roles: [], scopes: {} } as any, 'v');
+  assert.deepEqual(detail.lines.map(line => [line.whtRemittance, line.eWhtReducedRateApplied]), [['E_WHT', true], ['E_WHT', false], ['E_WHT', false]]);
+  assert.equal(detail.lines[0].description, 'รายการแรก');
+});
+
+describe('R10 e-WHT voucher detail (real PostgreSQL, owned paid tenant)', () => {
+  const companyId = `ewht-voucher-${randomUUID()}`, userId = `${companyId}-user`;
+  let client: PrismaClient | undefined, ready = false, created = false, branchId: string, unavailable: string | null = null;
+  before(async () => {
+    const url = process.env.DATABASE_URL;
+    if (!url) { assert.notEqual(process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES, 'true', 'PostgreSQL required'); return; }
+    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+    unavailable = await pgSpecUnreachableReason(() => client!.$queryRaw`SELECT "whtRemittance" FROM "ExpenseRecord" LIMIT 0`, 'EXPENSE_PAYMENT_REQUIRE_POSTGRES');
+    if (unavailable) return;
+    await client.company.create({ data: { id: companyId, name: 'e-WHT voucher fixture' } }); created = true;
+    await client.user.create({ data: { id: userId, displayName: 'ผู้ตรวจทดสอบ' } });
+    await client.companyMembership.create({ data: { companyId, userId } });
+    branchId = (await client.branch.create({ data: { companyId, code: 'HO', type: 'HEAD_OFFICE', name: 'สำนักงานใหญ่' } })).id; ready = true;
+  });
+  after(async () => {
+    if (!client) return;
+    try { if (created) {
+      await client.disbursementVoucher.deleteMany({ where: { companyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.company.delete({ where: { id: companyId } });
+      await client.user.delete({ where: { id: userId } });
+    } } finally { await client.$disconnect(); }
+  });
+  it('reads advertising 1% as reduced and transport 1% as ordinary using the second legacy line', async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL is not set');
+    const expenses = [];
+    for (const whtCategoryCode of ['WHT_ADVERTISING_IND', 'WHT_TRANSPORT_IND']) {
+      expenses.push(await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'CONFIRMED', expenseDate: new Date('2026-09-10'),
+        vendorNameSnapshot: 'ผู้รับเงินทดสอบ', whtRemittance: 'E_WHT', whtCategoryCode, whtRate: '3', grandTotalAmount: '100', whtAmount: '1', netPayableAmount: '99', outstandingAmount: '99',
+        lines: { create: [{ companyId, lineNumber: 1, description: 'รายการแรก', quantity: 1, unitPrice: 0, taxableAmount: 0, whtAmount: 0 },
+          { companyId, lineNumber: 2, description: 'รายการที่หัก', quantity: 1, unitPrice: 100, taxableAmount: 100, whtAmount: 1, whtRate: '0.01' }] } } }));
+    }
+    const voucher = await client!.disbursementVoucher.create({ data: { companyId, branchId, origin: 'PREPARED', status: 'DRAFT', payeeName: 'ผู้รับเงินทดสอบ', payeeBasis: 'SAME_NAME',
+      preparedByUserId: userId, totalAmount: '198' } });
+    await client!.disbursementVoucherLine.createMany({ data: expenses.map((expense, position) => ({ companyId, voucherId: voucher.id, expenseId: expense.id, position, amount: '99' })) });
+    const repo = new PrismaDisbursementVoucherRepository({ client } as any), expenseRepo = new PrismaExpenseRepository({ client } as any);
+    const uc = new DisbursementVoucherUseCase(repo, expenseRepo, new ListExpensesUseCase(expenseRepo), { log: async () => undefined } as any);
+    const detail = await uc.get({ companyId, userId, roles: [], scopes: {}, permissions: ['expense.disbursement.read', 'expense.read'] } as any, voucher.id);
+    assert.deepEqual(detail.lines.map(line => [line.withholdingCertificate.state, line.whtRemittance, line.eWhtReducedRateApplied]), [['E_WHT', 'E_WHT', true], ['E_WHT', 'E_WHT', false]]);
+    assert.equal(detail.lines[0].description, 'รายการแรก');
+  });
 });

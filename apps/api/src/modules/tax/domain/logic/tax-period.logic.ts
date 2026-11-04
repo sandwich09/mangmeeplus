@@ -1,5 +1,5 @@
 import type { TaxFormType, TaxPeriodStatus } from '@watchdog-bms/contracts';
-import { civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, E_WHT_WORDS } from '@watchdog-bms/contracts';
 
 // ─── Period key helpers ───────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ export function makeReviewIssue(
     case 'INPUT_VAT_NOT_CLAIMABLE':
       return { code, severity: 'INFO', description: `Input VAT not claimable${details.context ? `: ${details.context}` : ''}` };
     case 'WHT_RATE_MISMATCH':
-      return { code, severity: 'WARNING', description: `WHT rate mismatch${details.context ? `: ${details.context}` : ''}` };
+      return { code, severity: 'WARNING', description: E_WHT_WORDS['W-T4'](details.context?.trim() || 'ผู้รับเงิน') };
     case 'MISSING_TAX_INVOICE':
       return { code, severity: 'BLOCKING', description: `Missing tax invoice reference${details.context ? `: ${details.context}` : ''}` };
     case 'DUPLICATE_SOURCE':
@@ -139,6 +139,7 @@ export function makeReviewIssue(
 
 /** Review descriptions are also the download refusal, so the page can point at the source to fix. */
 export const PND3_FILING_REVIEW_MESSAGES = {
+  bank_remitted_only: E_WHT_WORDS['W-T3']('ภ.ง.ด.3'),
   review: 'ยังมีรายการที่ต้องแก้ไข เปิดรายการที่แจ้งไว้แล้วแก้ไขก่อนดาวน์โหลดแบบ',
   empty: 'เดือนนี้ไม่มีรายการหักภาษี ดึงรายการล่าสุดก่อนดาวน์โหลดแบบ',
   month: 'เดือนภาษีไม่ถูกต้อง เลือกเดือนแล้วดึงรายการล่าสุดอีกครั้ง',
@@ -154,7 +155,7 @@ export const PND3_FILING_REVIEW_MESSAGES = {
   source: 'รายการต้นทางยังใช้กับแบบนี้ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการและจัดทำแบบยื่น',
 } as const;
 
-export function withholdingIssueDescription(code: string, description: string, payee?: string | null, fixAtExpense = false): string {
+export function withholdingIssueDescription(code: string, description: string, payee?: string | null, fixAtExpense = false, branchName?: string | null): string {
   if (fixAtExpense && /KIND/.test(code)) return withholdingIssueDescription(code, description, payee).replace('เปิดคู่ค้าแล้วเลือกประเภทก่อน', 'เปิดรายจ่ายแล้วเลือกว่าผู้รับเงินเป็นบริษัทหรือบุคคล');
   if (code === 'WHT_PAYEE_KIND_UNKNOWN' && payee?.trim()) return makeReviewIssue(code, { context: payee }).description;
   if (code === 'MISSING_TAX_ID') return makeReviewIssue('MISSING_TAX_ID', { context: payee || description.match(/^Missing tax ID for (.+)$/)?.[1] }).description;
@@ -162,6 +163,7 @@ export function withholdingIssueDescription(code: string, description: string, p
   const match = code.match(/^(PND3|PND53)_FILING_(.+)$/);
   if (match) {
     const reason = match[2].toLowerCase() as keyof typeof PND3_FILING_REVIEW_MESSAGES;
+    if (reason === 'bank_remitted_only') return E_WHT_WORDS['W-T3'](match[1] === 'PND53' ? 'ภ.ง.ด.53' : 'ภ.ง.ด.3', branchName);
     let text: string = PND3_FILING_REVIEW_MESSAGES[reason] ?? description;
     if (match[1] === 'PND53') text = text.replace('ของบุคคล', 'ของบริษัท').replace('เป็นบุคคล', 'เป็นบริษัท');
     return payee ? `${payee}: ${text}` : text;

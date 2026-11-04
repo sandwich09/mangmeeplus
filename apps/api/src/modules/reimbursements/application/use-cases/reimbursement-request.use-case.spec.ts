@@ -821,7 +821,7 @@ describe('claim certificate cancellation (A7)', () => {
       reimbursementRequest: table(() => [state.request]), reimbursementPayment: table(() => []), reimbursementApprovalStep: table(() => []),
       expenseRecord: table(() => [expense]), expensePayment: table(() => []), journalEntry: table(() => []),
       whtCertificateHandoff: table(() => handoffs), whtCertificate: table(() => certificates), whtCertificateHistory: table(() => history),
-      taxPeriod: table(() => periods.map(p => ({ ...p, whtFilings: p.whtFilings ?? [] }))), whtFilingLine: table(() => []), taxEvent: table(() => events), accountingPeriod: table(() => []),
+      taxPeriod: table(() => periods.map(p => ({ ...p, whtFilings: p.whtFilings ?? [] }))), whtFilingLine: table(() => []), taxEvent: table(() => events), taxReviewIssue: table(() => []), accountingPeriod: table(() => []),
       expenseSubstituteReceiptEvidence: table(() => []), attachmentLink: table(() => []), reimbursementLine: table(() => []),
       auditLog: table(() => audits), documentNumber: table(() => []), outboxEvent: fakeTx(state.calls.outbox).outboxEvent,
       companyMembership: { findFirst: async ({ where }: any) => ({ user: { displayName: where.userId === 'staff-1' ? 'สมชาย' : 'คนดำเนินการต่อ' } }) },

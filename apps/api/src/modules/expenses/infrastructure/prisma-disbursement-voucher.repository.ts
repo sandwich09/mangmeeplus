@@ -34,8 +34,8 @@ export function disbursementVoucherReadWhere(scope: DisbursementReadScope, branc
 
 const detailInclude = { lines: { orderBy: { position: 'asc' as const }, include: { expense: { select: {
   id: true, status: true, currency: true, expenseNumber: true, expenseDate: true, vendorDocumentNumber: true, vendorAddressSnapshot: true, vendorBranchCodeSnapshot: true, vendorNameSnapshot: true, vendorTaxIdSnapshot: true, branchId: true,
-  grandTotalAmount: true, whtAmount: true, netPayableAmount: true, outstandingAmount: true,
-  lines: { orderBy: { lineNumber: 'asc' as const }, take: 1, select: { description: true } },
+  grandTotalAmount: true, whtAmount: true, whtRemittance: true, whtCategoryCode: true, whtRate: true, whtInputJson: true, netPayableAmount: true, outstandingAmount: true,
+  lines: { orderBy: { lineNumber: 'asc' as const }, select: { description: true, whtAmount: true, whtRate: true, taxableAmount: true } },
 } } } }, revisions: { orderBy: { revision: 'asc' as const } } };
 export type DisbursementLifecycleVoucher = Prisma.DisbursementVoucherGetPayload<{ include: typeof detailInclude }>;
 
@@ -127,8 +127,9 @@ export class PrismaDisbursementVoucherRepository {
       WHERE h."companyId" = ${scope.companyId} AND h."sourcePaymentType" = 'expense.record'
         AND h."sourcePaymentId" IN (${Prisma.join(withholdingIds)})
       ORDER BY h."sourcePaymentId", h."updatedAt" DESC, h."id" DESC` : [];
-    const withholdingCertificates = new Map<string, DisbursementVoucherDetail['lines'][number]['withholdingCertificate']>(withholdingIds.map(id => [id, { state: 'PENDING', number: null }]));
+    const withholdingCertificates = new Map<string, DisbursementVoucherDetail['lines'][number]['withholdingCertificate']>(withholdingIds.map(id => [id, { state: voucher.lines.some(line => line.expenseId === id && line.expense.whtRemittance === 'E_WHT') ? 'E_WHT' : 'PENDING', number: null }]));
     for (const h of handoffs) {
+      if (withholdingCertificates.get(h.sourcePaymentId)?.state === 'E_WHT') continue;
       if (h.status === 'SYSTEM_ISSUED' && h.certificateNumber) withholdingCertificates.set(h.sourcePaymentId, { state: 'SYSTEM_ISSUED', number: h.certificateNumber });
       else if (h.status === 'EXTERNAL_LINKED') withholdingCertificates.set(h.sourcePaymentId, { state: 'EXTERNAL_LINKED', number: h.externalCertificateNumber });
     }

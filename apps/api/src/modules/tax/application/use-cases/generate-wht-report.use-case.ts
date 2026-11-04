@@ -1,6 +1,9 @@
-import { civilDate } from '@watchdog-bms/contracts';
+import { buildWorkbook, XLSX_MIME_TYPE } from '../../../../common/export/xlsx.logic';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
+import { printablePnd53PayeeAddress } from '../../domain/logic/pnd53-official-form.logic';
+import { E_WHT_WORDS, expenseCurrencyLabel, civilDate } from '@watchdog-bms/contracts';
 import { cancelledWithholdingRows, cancelledPayeeNames } from '../services/withholding-filing-history';
-import { partitionWithholdingPayments } from '../services/withholding-establishments';
+import { loadWithholdingEstablishments, partitionWithholdingPayments } from '../services/withholding-establishments';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { filedLineCoversPayment, openWithholdingSequence, withholdingPaperPayments, currentWithholdingPayments } from '../services/withholding-filing-state';
 import { resolveWhtEstablishment, whtPayerModeInForce } from '../../domain/logic/wht-payer-mode.logic';
@@ -40,7 +43,7 @@ export class GenerateWhtReportUseCase {
   async getMonth(ctx: RequestContext, periodKey: string): Promise<WithholdingMonthDto> {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodKey)) throw new BadRequestException('เดือนภาษีไม่ถูกต้อง เลือกเดือนอีกครั้ง');
     return this.taxRepo.prisma.client.$transaction(async db => {
-      const [periods, events, categories, branches, payerFacts] = await Promise.all([
+      const [periods, events, categories, branches, payerFacts, excluded] = await Promise.all([
         db.taxPeriod.findMany({ where: { companyId: ctx.companyId, periodKey, formType: { in: ['PND2', 'PND3', 'PND53'] } } }),
         db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'ACTIVE', eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] },
           ...branchScopeWhere(ctx.scopes ?? {}) }, orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }] }),
@@ -48,7 +51,9 @@ export class GenerateWhtReportUseCase {
         // Include inactive branches: an old payment still belongs to its branch.
         db.branch.findMany({ where: { companyId: ctx.companyId }, select: { id: true, name: true, type: true, status: true, taxBranchCode: true } }),
         db.whtPayerModeFact.findMany({ where: { companyId: ctx.companyId, supersededAt: null, effectiveFromPeriodKey: { lte: periodKey } } }),
+        db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'EXCLUDED', eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, ...branchScopeWhere(ctx.scopes ?? {}) }, orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }] }),
       ]);
+      const bankPayments = await currentWithholdingPayments(db, ctx.companyId, excluded.filter(e => e.status === 'EXCLUDED'), ctx.scopes ?? {});
       const undatedSources = await db.expenseRecord.findMany({ where: { companyId: ctx.companyId, status: 'CONFIRMED', whtAmount: { gt: 0 }, ...branchScopeWhere(ctx.scopes ?? {}) },
         select: { id: true, expenseDate: true, netPayableAmount: true, whtAmount: true, vendorNameSnapshot: true, payments: { where: { status: 'RECORDED' }, select: { id: true, amount: true, paidAtConfirmed: true, createdAt: true, createdByUserId: true } } } });
       const undatedPayments = undatedSources.flatMap(e => (e.payments ?? []).filter(p => p.paidAtConfirmed === false).map(p => ({ paymentId: p.id, expenseId: e.id, payeeName: e.vendorNameSnapshot ?? '', amount: p.amount.toString(), recordedAt: p.createdAt.toISOString(), recordedByUserId: p.createdByUserId })));
@@ -59,7 +64,7 @@ export class GenerateWhtReportUseCase {
       }, orderBy: { createdAt: 'asc' } }) : [];
       // Old expense events have no branch attribution. Read the source branch too, including
       // unknown-kind issues which deliberately have no tax event yet.
-      const refs = [...events, ...issues];
+      const refs = [...events, ...bankPayments, ...issues];
       const ids = (type: string) => [...new Set(refs.filter(row => row.sourceType === type).flatMap(row => row.sourceId ? [row.sourceId] : []))];
       const expenseIds = ids('expense.record'), paymentIds = ids('procurement.supplier_payment');
       const [expenses, supplierPayments] = await Promise.all([
@@ -111,7 +116,7 @@ export class GenerateWhtReportUseCase {
         }
       }
       const payerMode = whtPayerModeInForce(payerFacts, periodKey);
-      const rows: WithholdingMonthDto['payments'] = payments.map(event => {
+      const mapPayment = (event: (typeof events)[number]): WithholdingMonthDto['payments'][number] & { sourceLineKey: string } => {
         const paymentKey = event.sourceLineKey?.match(/^payment:[^:]+/)?.[0];
         const handoff = (paymentKey ? handoffBySource.get(`${event.sourceType}:${event.sourceId}:${paymentKey}`) : undefined)
           ?? handoffBySource.get(`${event.sourceType}:${event.sourceId}`) ?? handoffByEvent.get(event.id);
@@ -124,11 +129,13 @@ export class GenerateWhtReportUseCase {
           sourceLineKey: event.sourceLineKey, paymentId: event.sourceLineKey?.startsWith('payment:') ? event.sourceLineKey.slice(8).split(':line:')[0] : null, id: event.id, paymentDate: event.eventDate.toISOString().slice(0, 10), payeeName: (event.payeeSnapshotJson as { name?: string } | null)?.name ?? '',
           formType: event.eventType === 'WHT_PND2' ? 'PND2' : event.eventType === 'WHT_PND3' ? 'PND3' : 'PND53', incomeCategoryCode: categoryCode,
           incomeCategoryLabel: categoryNames.get(categoryCode ?? '') ?? null, rate: event.whtRate?.toString() ?? null,
-          paid: String(event.grossAmount ?? event.taxableBase), withheld: String(event.withheldAmount ?? event.taxAmount),
+          paid: String(event.grossAmount ?? event.taxableBase), withheld: String(event.withheldAmount ?? event.taxAmount), currency: event.currency,
           sourceType: event.sourceType, sourceId: event.sourceId, expenseId: event.sourceType === 'expense.record' ? event.sourceId : null,
           certificate: handoff ? { handoffId: handoff.id, state: handoff.status, number,
             canDownload: handoff.status === 'SYSTEM_ISSUED' && number !== null && readableIds.has(handoff.id) } : null };
-      });
+      };
+      const rows = payments.map(mapPayment);
+      const bankRemitted = bankPayments.map(event => ({ ...mapPayment(event), certificate: null }));
       const completePayments = await currentWithholdingPayments(db, ctx.companyId, ctx.scopes?.branchIds
         ? await db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'ACTIVE', eventType: { in: ['WHT_PND3', 'WHT_PND53'] } } })
         : payments.filter(event => event.eventType !== 'WHT_PND2'));
@@ -145,7 +152,8 @@ export class GenerateWhtReportUseCase {
       }))];
       const confirmationNames = new Map((confirmationIds.length ? await db.user.findMany({ where: { id: { in: confirmationIds } }, select: { id: true, displayName: true } }) : []).map(user => [user.id, user.displayName]));
       const cancellations = await cancelledWithholdingRows(db, ctx.companyId, frozenPapers);
-      const establishments = partition.papers.map(p => p.establishment);
+      const bankPartition = partitionWithholdingPayments(bankPayments, branches, payerFacts, periodKey);
+      const establishments = [...new Map([...partition.papers, ...bankPartition.papers].map(p => [p.establishment.code, p.establishment])).values()];
       for (const paper of frozenPapers) if (!establishments.some(e => e.code === paper.establishmentCode)) {
         const branch = branches.find(b => b.id === paper.establishmentBranchId);
         establishments.push({ kind: 'ESTABLISHMENT', code: paper.establishmentCode, branchId: paper.establishmentBranchId,
@@ -176,13 +184,17 @@ export class GenerateWhtReportUseCase {
 
         if (preserved && frozen.rowsCertain) {
           const omittedIssueIds = new Set(projection.sourcePayments.filter(payment => !frozen.lines.some(line => filedLineCoversPayment(line, payment))).map(payment => payment.issueId));
-          validation.issues = periodIssues.filter(issue => omittedIssueIds.has(issue.id)).map(issue => ({ ...issue, severity: 'WARNING' as const }));
+          const omittedIssues = periodIssues.filter(issue => omittedIssueIds.has(issue.id));
+          validation.issues = omittedIssues.map(issue => ({ ...issue, severity: 'WARNING' as const }));
+          const omittedPayees = omittedIssues.map(issue => issue.sourceId
+            ? projection.sourcePayments.find(payment => payment.issueId === issue.id)?.payeeSnapshot.name || 'ผู้รับเงิน'
+            : 'รายการของสาขาที่คุณไม่ได้ดูแล');
           if (omittedIssueIds.size) validation.issues.push({ id: `omitted:${frozen.id}`, issueCode: 'WHT_FILED_PAYMENT_OMITTED', severity: 'WARNING',
-            description: 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null });
+            description: E_WHT_WORDS['W-T6']([...new Set(omittedPayees)].join(', ')), sourceType: null, sourceId: null, expenseId: null, counterpartyId: null });
         }
 
         // Empty establishment forms have no paper to validate; retain source review issues.
-        if (!paperPayments.length && !preserved) validation.issues = validation.issues.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode) || periodIssues.some(p => p.id === i.id));
+        if (!paperPayments.length && !preserved) validation.issues = validation.issues.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode) || i.issueCode.endsWith('_FILING_BANK_REMITTED_ONLY') || periodIssues.some(p => p.id === i.id));
         const status = frozen?.status ?? (sequence > 0 ? 'OPEN' : frozenPapers.length ? (paperPayments.length ? 'OPEN' : null) : period?.status ?? null);
         const stale = status === 'EXPORTED' && !await isWithholdingDownloadCurrent(db, ctx.companyId, period!.id,
           paperPayments.map(event => ({ ...event, payeeSnapshot: event.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
@@ -248,10 +260,42 @@ export class GenerateWhtReportUseCase {
           paymentCount: group.length, totalPaid: group.reduce((n, e) => n.plus(String(e.grossAmount ?? e.taxableBase)), new Prisma.Decimal(0)).toFixed(4),
           totalWithheld: group.reduce((n, e) => n.plus(String(e.withheldAmount ?? e.taxAmount)), new Prisma.Decimal(0)).toFixed(4) };
       });
-      return { unpaidExpenses, paidWithoutWithholding: paidWithoutWithholding.filter(e => rows.some(row => row.expenseId === e.expenseId)), undatedPayments, periodKey, establishments: establishmentCards, establishmentIssues,
+      return { bankRemitted, unpaidExpenses, paidWithoutWithholding: paidWithoutWithholding.filter(e => rows.some(row => row.expenseId === e.expenseId)), undatedPayments, periodKey, establishments: establishmentCards, establishmentIssues,
         payments: rows.filter(row => row.formType !== 'PND2'), separatePnd2: rows.filter(row => row.formType === 'PND2'),
         forms: establishmentCards[0]?.forms ?? (establishments.length ? [] : await buildForms()) };
 
+    }, { isolationLevel: 'RepeatableRead' });
+  }
+
+  async eWhtExport(ctx: RequestContext, periodKey: string, establishmentCode?: string) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodKey)) throw new BadRequestException('เดือนภาษีไม่ถูกต้อง เลือกเดือนอีกครั้ง');
+    if (establishmentCode !== undefined && !/^\d{5}$/.test(establishmentCode)) throw new BadRequestException({ code: 'WHT_ESTABLISHMENT_INVALID', message: 'รหัสสาขาภาษีไม่ถูกต้อง เลือกสาขาอีกครั้ง' });
+    return this.taxRepo.prisma.client.$transaction(async db => {
+      const events = await db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'EXCLUDED',
+        eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, ...branchScopeWhere(ctx.scopes ?? {}) }, orderBy: [{ eventDate: 'asc' }, { id: 'asc' }] });
+      let payments = await currentWithholdingPayments(db, ctx.companyId, events, ctx.scopes ?? {});
+      if (establishmentCode) {
+        const context = await loadWithholdingEstablishments(db, ctx.companyId, periodKey);
+        payments = partitionWithholdingPayments(payments, context.branches, context.facts, periodKey).papers.find(paper => paper.establishment.code === establishmentCode)?.events ?? [];
+      }
+      const categories = await db.whtIncomeCategory.findMany({ where: { code: { in: [...new Set(payments.flatMap(row => row.incomeCategoryCode ? [row.incomeCategoryCode] : []))] } } });
+      const names = new Map(categories.map(row => [row.code, row.nameTh]));
+      const buffer = buildWorkbook([{ name: E_WHT_WORDS['W-X3'], freezeRows: 1, rows: [
+        ['วันที่จ่าย', 'ผู้รับเงิน', 'เลขผู้เสียภาษี', 'สาขา', 'ที่อยู่', 'ประเภทเงินได้', 'อัตรา (%)', 'สกุลเงิน', 'ยอดจ่าย', 'ภาษีที่หักไว้'],
+        ...payments.map(row => {
+          const payee = row.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null;
+          return [formatThaiExportDate(row.eventDate.toISOString()), payee?.name ?? '', payee?.taxId ?? '', payee?.branchCode ?? '', printablePnd53PayeeAddress(payee?.address) ?? '',
+            names.get(row.incomeCategoryCode ?? '') ?? '', row.whtRate == null ? '' : Number(row.whtRate), expenseCurrencyLabel(row.currency), Number(row.grossAmount ?? row.taxableBase), Number(row.withheldAmount ?? row.taxAmount)];
+        }),
+        ...[...new Set(payments.map(row => row.currency))].map(currency => {
+          const same = payments.filter(row => row.currency === currency);
+          return ['รวม', '', '', '', '', '', '', expenseCurrencyLabel(currency),
+            Number(same.reduce((sum, row) => sum.add(String(row.grossAmount ?? row.taxableBase)), new Prisma.Decimal(0)).toFixed(2)),
+            Number(same.reduce((sum, row) => sum.add(String(row.withheldAmount ?? row.taxAmount)), new Prisma.Decimal(0)).toFixed(2))];
+        }),
+      ] }]);
+      return { fileName: `${E_WHT_WORDS['W-X3']}-${periodKey}.xlsx`, mimeType: XLSX_MIME_TYPE, contentBase64: buffer.toString('base64'),
+        checksum: crypto.createHash('sha256').update(buffer).digest('hex'), byteLength: buffer.length };
     }, { isolationLevel: 'RepeatableRead' });
   }
 

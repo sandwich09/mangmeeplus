@@ -14,6 +14,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   { path: '/settings/roles', anyOf: ['access.role.manage'] },
   { path: '/settings/po-approval', anyOf: ['procurement.purchase_order.manage'] },
   { path: '/settings/discount-policy', anyOf: ['crm.customer.update'] },
+  { path: '/settings/e-wht', anyOf: ['company.setup.manage'] },
   { path: '/settings/substitute-receipt', anyOf: ['company.setup.manage'] },
   // Read also accepts legacy manage-only roles, without changing their saved grants. A
   // manager can open the page and read the masked shop block plus their own account section; the

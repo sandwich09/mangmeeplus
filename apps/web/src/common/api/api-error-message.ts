@@ -1,4 +1,4 @@
-import { REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE, DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, REIMBURSEMENT_PROJECTION_VOIDED_MESSAGE, DISBURSEMENT_VOUCHER_ERROR_WORDS, REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
 import { WHT_EXTERNAL_FILE, whtPayerIdentityMissingMessage, WHT_HANDOFF_PAYEE_ADDRESS_MISSING_MESSAGE, WHT_EXTERNAL_RECORD_WORDS, EXPENSE_VOID_CERTIFICATE_WORDS, REIMBURSEMENT_CERTIFICATE_CANCELLATION_WORDS, WHT_CERTIFICATE_CORRECTION_WORDS, reimbursementCertificateCancellationMessage } from '@watchdog-bms/contracts';
 import { isCivilPeriodKey, expenseCorrectionMonth, TAX_FORM_SHORT_NAMES, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
@@ -26,6 +26,10 @@ function taxPeriodRefusal(formType?: unknown, periodKey?: unknown): string {
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  expense_e_wht_not_enabled: E_WHT_WORDS['S-8'],
+  expense_ewht_payment_method: E_WHT_WORDS['W-R1'],
+  expense_ewht_cash_payment_exists: E_WHT_WORDS['W-R2'],
+  substitute_receipt_ewht_payment_method: E_WHT_WORDS['W-R3'],
   CONTENT_UNINSPECTABLE: 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น',
   EMBEDDED_FILE_REJECTED: 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ เลือกไฟล์อื่น',
   WHT_ESTABLISHMENT_FORBIDDEN: 'ไม่มีสิทธิ์เปิดแบบของสาขานี้ เลือกสาขาที่เปิดได้',
@@ -391,6 +395,7 @@ const CODE_LABELS: Record<string, string> = {
   // way out is to reopen the record. The third is a state that has to be handled where it happened.
   expense_revision_conflict: 'รายการนี้เปลี่ยนไปแล้ว เปิดหน้านี้ใหม่ก่อนทำต่อ',
   expense_receipt_replace_conflict: 'ไฟล์ใบเสร็จของรายการนี้ถูกเปลี่ยนไปแล้ว เปิดหน้านี้ใหม่ก่อนเปลี่ยนไฟล์อีกครั้ง',
+  expense_wht_remittance_invalid: 'วิธีนำส่งภาษีไม่ถูกต้อง เลือกวิธีนำส่งภาษีอีกครั้ง',
   expense_wht_category_payee_mismatch: 'เลือก “จ่ายค่าอะไร” ให้ตรงกับผู้รับเงิน หรือแก้ “ผู้รับเงินเป็นใคร”',
   expense_receipt_replace_locked: 'รายการนี้อยู่ในสถานะที่เปลี่ยนหรือแนบไฟล์ตรงนี้ไม่ได้ เปิดรายการเพื่อดูขั้นตอนที่ทำได้',
   expense_receipt_replace_operation_conflict: 'การเปลี่ยนไฟล์ครั้งนี้ถูกใช้กับไฟล์อื่นไปแล้ว เปิดหน้านี้ใหม่แล้วเลือกไฟล์อีกครั้ง',

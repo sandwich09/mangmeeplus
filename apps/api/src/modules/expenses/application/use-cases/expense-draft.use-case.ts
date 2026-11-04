@@ -1,7 +1,9 @@
+import { assertEWhtPaymentMethod } from '../../infrastructure/prisma-expense.repository';
+import { eWhtRemittanceAllowed, normalizeWhtRemittance } from '../../domain/logic/expense-status.logic';
 import { expenseHistoryChanges, type ExpenseHistoryChanges } from '../../domain/logic/expense-history.logic';
 import type { ExpenseDb } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository } from '../../infrastructure/prisma-disbursement-voucher.repository';
-import { EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
 import { LinkAttachmentUseCase } from '../../../data-model-core/application/use-cases/link-attachment.use-case';
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
 import type { Prisma } from '../../../../generated/prisma/client';
@@ -181,6 +183,7 @@ export class CreateExpenseDraftUseCase {
       ...(input.vatSource !== undefined && { vatCaptureSnapshotJson: vat.snapshot }),
       ...(input.whtInput !== undefined && { whtInputJson: { ...input.whtInput, origin: 'REVIEWER' as const } }),
       ...totals,
+      whtRemittance: normalizeWhtRemittance(input.whtRemittance, totals.whtAmount),
       outstandingAmount: totals.netPayableAmount,
     }, async (tx, record) => {
       if (lines.length > 0) {
@@ -206,7 +209,12 @@ export class CreateExpenseDraftUseCase {
       }
 
       await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.create', targetType: 'expense_record', targetId: record.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { captureSource: input.captureSource, grandTotalAmount: totals.grandTotalAmount } }, tx);
-    });
+    }, undefined, input.whtRemittance === 'E_WHT' ? async (tx) => {
+      const setting = await this.repo.getEWhtSetting(ctx.companyId, tx);
+      if (!eWhtRemittanceAllowed({ requested: input.whtRemittance, shopUsesEWht: setting.used })) {
+        throw new UnprocessableEntityException({ code: 'expense_e_wht_not_enabled', message: E_WHT_WORDS['S-8'] });
+      }
+    } : undefined);
     return record;
   }
 }
@@ -556,7 +564,7 @@ export class UpdateExpenseDraftUseCase {
     }
     const financeOnlyFields: Array<keyof UpdateExpenseDraftInput> = [
       'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'inputVatClaimStatus',
-      'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride', 'documentReviewAcknowledged', 'evidenceAssessment',
+      'whtRemittance', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride', 'documentReviewAcknowledged', 'evidenceAssessment',
     ];
     if (!canReview && !canCollectOwnLineDraft && financeOnlyFields.some((field) => input[field] !== undefined)) {
       throw new ForbiddenException('Missing permission: expense.review for document, tax, or accounting classification fields.');
@@ -811,6 +819,18 @@ export class UpdateExpenseDraftUseCase {
     } else if (input.vatSource !== undefined || input.whtInput !== undefined
       || (whtInput && input.vatMode !== undefined && input.vatMode !== r.vatMode)) {
       throw new BadRequestException('lines are required when updating vatSource or whtInput.');
+    }
+
+    const whtRemittance = input.whtRemittance !== undefined || totals ? normalizeWhtRemittance(
+      input.whtRemittance === undefined ? r.whtRemittance : input.whtRemittance, totals?.whtAmount ?? r.whtAmount,
+    ) : undefined;
+    const nextWhtRemittance = whtRemittance === undefined ? r.whtRemittance : whtRemittance;
+    if (nextWhtRemittance === 'E_WHT') await this.repo.assertEWhtRemittancePayments(ctx.companyId, expenseId, nextWhtRemittance, options.db);
+    if (input.whtRemittance === 'E_WHT') {
+      const setting = await this.repo.getEWhtSetting(ctx.companyId, options.db);
+      if (!eWhtRemittanceAllowed({ requested: input.whtRemittance, stored: r.whtRemittance, shopUsesEWht: setting.used })) {
+        throw new UnprocessableEntityException({ code: 'expense_e_wht_not_enabled', message: E_WHT_WORDS['S-8'] });
+      }
     }
 
     // Read-only preview shares all calculation/permission guards above and exits BEFORE any write,
@@ -1096,6 +1116,7 @@ export class UpdateExpenseDraftUseCase {
       }),
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
+      ...(whtRemittance !== undefined && { whtRemittance }),
       ...(totals ? { ...calcPaymentAmounts(totals.netPayableAmount, r.paidAmount ?? '0'), paymentStatus: derivePaymentStatus(totals.netPayableAmount, r.paidAmount ?? '0') } : {}),
     }, resolvedLines || options.transactionalAudit || hasSourceDraft || input.evidenceAssessment || input.documentReviewAcknowledged
       ? async (tx) => {
@@ -2046,6 +2067,7 @@ export class RecordExpensePaymentUseCase {
     assertBranchInScope(ctx, r.branchId);
     assertExpensePaymentSource(r, input.paidAt);
     const { amount } = validateExpensePaymentInput({ amount: input.paidAmount, paidAt: input.paidAt, paymentMethod: input.paymentMethod, bankAccountRef: input.bankAccountRef });
+    assertEWhtPaymentMethod(r, input.paymentMethod);
     assertExpensePaymentOutstanding(r, amount);
     return r;
   }
@@ -2101,7 +2123,7 @@ async function notifyExpenseCertificateCancelled(
       companyId: ctx.companyId, triggerKey: 'expense.wht_certificate_cancelled', sourceModule: 'expenses',
       sourceType: 'expense_record', sourceId: expenseId, periodKey: String(certificate.certificateRound), severity: 'info',
       title: `${title}${number}`,
-      body: `${actorName} ${action === 'reopen' ? 'แก้ไขเอกสารรายจ่ายนี้' : 'ยกเลิกเอกสารรายจ่ายนี้'} ${cancellation} เหตุผล: ${reason}${action === 'reopen' ? ' เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่' : ''}`,
+      body: `${actorName} ${action === 'reopen' ? 'แก้ไขเอกสารรายจ่ายนี้' : 'ยกเลิกเอกสารรายจ่ายนี้'} ${cancellation} เหตุผล: ${reason}${action === 'reopen' ? ` ${E_WHT_WORDS['N-1']}` : ''}`,
       deepLinkHref: `/companies/${ctx.companyId}/expenses/${expenseId}#wht-certificate`, recipientUserIds: [certificate.issuerUserId],
     });
   } catch (error) {

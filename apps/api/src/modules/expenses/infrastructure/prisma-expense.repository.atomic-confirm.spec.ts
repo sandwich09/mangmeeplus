@@ -1,5 +1,10 @@
+import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../../../generated/prisma/client';
+import { pgSpecUnreachableReason } from '../../../common/database/pg-spec-guard';
 import { expenseEvidenceFingerprint, expenseEvidenceImageMissing, isBlockingExpenseVatReconciliation, type ExpenseVatMode, type TransactionTaxComponentPreview, type TransactionTaxSnapshot } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic.js';
 import { PrismaExpenseRepository } from './prisma-expense.repository.js';
@@ -90,6 +95,7 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
       if (!line) return { count: 0 };
       writes.line++; Object.assign(line, data); return { count: 1 };
     } },
+    expensePayment: { findFirst: async () => null },
     expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
     reimbursementLine: { findFirst: async () => null },
     attachmentLink: {
@@ -445,6 +451,41 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
 // payee a 50 ทวิ, recorded as a durable REQUIRED handoff in the SAME final-mutation transaction —
 // mirroring what `createWhtHandoffForPayment` already does on the AP settlement path.
 describe('WHT certificate handoff at expense confirmation', () => {
+  for (const path of ['confirmExpenseCas', 'finalizeAndConfirmExpenseCas'] as const) {
+    it(`R4 ${path} refuses a recorded cash or card payment before confirmation`, async () => {
+      for (const paymentMethod of ['CASH', 'CARD']) {
+        const h = harness(); h.row.whtRemittance = 'E_WHT';
+        h.client.expensePayment = { findFirst: async ({ where }: any) => {
+          assert.equal(where.companyId, 'company-1'); assert.equal(where.expenseId, 'expense-1');
+          assert.equal(where.status, 'RECORDED'); assert.deepEqual(where.paymentMethod.in, ['CASH', 'CARD']);
+          return { id: 'paid-cash', paymentMethod };
+        } };
+        const input = await inputFor(h.repo, h.updatedAt);
+        await assert.rejects(() => path === 'confirmExpenseCas' ? h.repo.confirmExpenseCas(input) : h.repo.finalizeAndConfirmExpenseCas(input, finalize),
+          (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_cash_payment_exists');
+        assert.equal(h.writes.header, 0); assert.equal(h.writes.outbox, 0);
+      }
+    });
+  }
+  for (const path of ['confirmExpenseCas', 'finalizeAndConfirmExpenseCas'] as const) {
+    it(`R5 ${path} creates no certificate handoff for E_WHT`, async () => {
+      const h = harness();
+      Object.assign(h.row, { whtRemittance: 'E_WHT', whtAmount: '3', whtRate: '3',
+        whtCategoryCode: 'WHT_SERVICE_3', vendorEntityKindSnapshot: 'INDIVIDUAL' });
+      Object.assign(h.row.lines[0], { whtAmount: '3', whtRate: '3' });
+      h.client.company = { findUnique: async () => ({ ...ACTIVE_COMPANY, name: 'ร้านผู้จ่าย', taxId: '9999999999999' }) };
+      h.client.branch = { findUnique: async () => ({ taxBranchCode: '00000' }), findMany: async () => [{ id: 'branch-1', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }] };
+      h.client.whtIncomeCategory = { findUnique: async () => ({ code: 'WHT_SERVICE_3', formType: 'PND3', defaultRate: '3', status: 'ACTIVE' }) };
+      h.client.whtCertificateHandoff = { findFirst: async () => assert.fail('e-WHT must not read a handoff'),
+        create: async () => assert.fail('e-WHT must not create a handoff') };
+      const args = await inputFor(h.repo, h.updatedAt);
+      const saved = path === 'confirmExpenseCas' ? await h.repo.confirmExpenseCas(args)
+        : (await h.repo.finalizeAndConfirmExpenseCas(args, async () => (await finalize()).map(line => ({ ...line, whtAmount: '3', whtRate: '3' })))).expense;
+      assert.equal(saved.status, 'CONFIRMED');
+      assert.equal(saved.whtRemittance, 'E_WHT');
+      assert.equal(h.writes.outbox, 1);
+    });
+  }
   it('creates a REQUIRED handoff, prefilled from the row, when the confirmed expense withheld tax', async () => {
     const { repo, updatedAt, row, client } = harness();
     row.whtAmount = 30;
@@ -482,6 +523,164 @@ describe('WHT certificate handoff at expense confirmation', () => {
     const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
     assert.equal(result.expense.status, 'CONFIRMED');
   });
+});
+
+describe('e-WHT remittance persistence and handoffs (real PostgreSQL, paid path)', () => {
+  const required = process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES === 'true';
+  const companyId = `ewht-confirm-pg-${randomUUID()}`;
+  const actorUserId = `${companyId}-actor`;
+  const branchId = `${companyId}-branch`;
+  let client: PrismaClient | undefined;
+  let repo: PrismaExpenseRepository;
+  let fixtureCreated = false;
+  let ready = false;
+  let unavailable: string | null = null;
+
+  before(async () => {
+    if (!process.env.DATABASE_URL) { assert.equal(required, false, 'PostgreSQL required'); return; }
+    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+    unavailable = await pgSpecUnreachableReason(() => client!.$queryRaw`SELECT "whtRemittance" FROM "ExpenseRecord" LIMIT 0`, 'EXPENSE_PAYMENT_REQUIRE_POSTGRES');
+    if (unavailable) return;
+    await client.company.create({ data: { id: companyId, name: 'ร้านทดสอบวิธีนำส่ง', registeredName: 'บริษัททดสอบวิธีนำส่ง จำกัด' } });
+    fixtureCreated = true;
+    await client.user.create({ data: { id: actorUserId, displayName: 'ผู้ตรวจทดสอบ' } });
+    await client.branch.create({ data: { id: branchId, companyId, code: 'HO', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', taxBranchCode: '00000', createdByUserId: actorUserId } });
+    repo = new PrismaExpenseRepository({ client } as any);
+    ready = true;
+  });
+  after(async () => {
+    if (!client) return;
+    try {
+      if (fixtureCreated) {
+        await client.whtCertificateHandoff.deleteMany({ where: { companyId } });
+        await client.whtCertificateHistory.deleteMany({ where: { companyId } });
+        await client.whtCertificate.deleteMany({ where: { companyId } });
+        await client.expensePayment.deleteMany({ where: { companyId } });
+        await client.outboxEvent.deleteMany({ where: { companyId } });
+        await client.expenseRecord.deleteMany({ where: { companyId } });
+        await client.company.delete({ where: { id: companyId } });
+        await client.user.deleteMany({ where: { id: actorUserId } });
+      }
+    } finally { await client.$disconnect(); }
+  });
+
+  async function roundTwoSource(remittance: 'PAYER_FILES' | 'E_WHT', paidAmount = '0') {
+    return client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: actorUserId,
+      expenseDate: new Date('2026-11-04'), expenseNumber: `EXP-${randomUUID()}`, status: 'READY_FOR_CONFIRMATION', captureSource: 'WEB_MANUAL',
+      sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', vatMode: 'VAT_EXCLUDED', inputVatClaimStatus: 'NON_CLAIMABLE',
+      vendorNameSnapshot: 'ผู้รับเงินทดสอบ', vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'WHT_SERVICE_3', whtRate: '1', whtRemittance: remittance,
+      subtotalAmount: '10000', taxableAmount: '10000', vatAmount: '700', whtAmount: '100', grandTotalAmount: '10700', netPayableAmount: '10600',
+      paidAmount, outstandingAmount: String(10600 - Number(paidAmount)),
+      lines: { create: { companyId, lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '10000', taxableAmount: '10000',
+        vatRate: '0.07', vatAmount: '700', whtCategoryCode: 'WHT_SERVICE_3', whtRate: '1', whtAmount: '100', lineSubtotalAmount: '10000', lineTotalAmount: '10700' } } } });
+  }
+  const roundTwoConfirm = (row: { id: string; updatedAt: Date; expenseNumber: string | null }) => ({ companyId, id: row.id, actorUserId,
+    expectedUpdatedAt: row.updatedAt, expenseNumber: row.expenseNumber!, postingStatus: 'not_required' as const, vendorSnapshotJson: null,
+    outboxEvent: { eventKey: `ewht-round-two:${randomUUID()}`, payloadJson: {} } });
+  const reviewer = () => ({ companyId, userId: actorUserId, requestId: randomUUID(), authProvider: 'watchdog', permissions: ['expense.review'], scopes: {} } as any);
+
+  it('R4 recorded CASH/CARD prevents the paid update and both confirmation transactions', async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL not set');
+    const { UpdateExpenseDraftUseCase } = await import('../application/use-cases/expense-draft.use-case');
+    for (const paymentMethod of ['CASH', 'CARD'] as const) {
+      const source = await roundTwoSource('PAYER_FILES', '40');
+      await client!.expensePayment.create({ data: { companyId, expenseId: source.id, amount: '40', currency: 'THB', paidAt: new Date('2026-11-04'),
+        paymentMethod, status: 'RECORDED', createdByUserId: actorUserId, idempotencyKey: randomUUID(), payloadFingerprint: canonicalFingerprint({ expenseId: source.id, amount: '40', paymentMethod }) } });
+      const uc = new UpdateExpenseDraftUseCase(repo, { log: async () => undefined } as any, {} as any);
+      const denied = (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_cash_payment_exists';
+      await assert.rejects(() => uc.execute(reviewer(), source.id, { whtRemittance: 'E_WHT', expectedUpdatedAt: source.updatedAt.toISOString() }), denied);
+      assert.equal((await repo.findById(companyId, source.id))!.whtRemittance, 'PAYER_FILES');
+      const unsafe = await client!.expenseRecord.update({ where: { id: source.id }, data: { whtRemittance: 'E_WHT' } });
+      await assert.rejects(() => repo.confirmExpenseCas(roundTwoConfirm(unsafe)), denied);
+      await assert.rejects(() => repo.finalizeAndConfirmExpenseCas({ ...roundTwoConfirm(unsafe), expectedSourceChecksum: 'not-reached' }, async () => []), denied);
+      assert.equal((await repo.findById(companyId, source.id))!.status, 'READY_FOR_CONFIRMATION');
+      assert.equal(await client!.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: source.id } }), 0);
+    }
+  });
+
+  it('R5 issued certificate is voided on reopen and handoff remains cancelled after e-WHT confirmation', async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL not set');
+    const source = await roundTwoSource('PAYER_FILES');
+    await repo.confirmExpenseCas(roundTwoConfirm(source));
+    const period = await client!.taxPeriod.upsert({ where: { companyId_formType_periodKey: { companyId, formType: 'PND3', periodKey: '2026-11' } },
+      create: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2026-11' }, update: {} });
+    const certificate = await client!.whtCertificate.create({ data: { companyId, taxPeriodId: period.id, periodKey: '2026-11',
+      certificateNumber: `WHT-${randomUUID()}`, status: 'ISSUED', issuedAt: new Date(), issuedByUserId: actorUserId,
+      payeeSnapshotJson: { name: 'ผู้รับเงินทดสอบ' }, payerSnapshotJson: { companyName: 'ร้านทดสอบ' }, incomeCategoryCode: 'WHT_SERVICE_3',
+      incomeCategoryName: 'ค่าบริการ', whtRate: '1', grossAmount: '10000', withheldAmount: '100', paymentDate: new Date('2026-11-04') } });
+    await client!.whtCertificateHandoff.updateMany({ where: { companyId, sourcePaymentId: source.id }, data: { status: 'SYSTEM_ISSUED', certificateId: certificate.id } });
+    await repo.reopenExpenseAtomic({ companyId, expenseId: source.id, actorUserId, scopes: {}, reason: 'แก้วิธีนำส่งภาษี',
+      permissions: ['expense.confirm', 'wht.certificate.correct'], taxFilingAttested: true, requestId: randomUUID() });
+    const changed = await repo.updateExpense({ companyId, id: source.id, updatedByUserId: actorUserId, whtRemittance: 'E_WHT', status: 'READY_FOR_CONFIRMATION' });
+    await repo.confirmExpenseCas(roundTwoConfirm(changed));
+    assert.equal((await client!.whtCertificate.findUniqueOrThrow({ where: { id: certificate.id } })).status, 'VOIDED');
+    const handoffs = await client!.whtCertificateHandoff.findMany({ where: { companyId, sourcePaymentId: source.id } });
+    assert.deepEqual(handoffs.map(row => row.status), ['CANCELLED']);
+  });
+
+  for (const paidAmount of ['5000', '10600']) it(`R5 changing e-WHT to payer-files 2 percent with ${paidAmount} already paid`, async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL not set');
+    const source = await roundTwoSource('E_WHT', paidAmount);
+    await client!.expenseRecord.update({ where: { id: source.id }, data: { status: 'CONFIRMED' } });
+    await client!.expensePayment.create({ data: { companyId, expenseId: source.id, amount: paidAmount, currency: 'THB', paidAt: new Date('2026-11-04'),
+      paymentMethod: 'BANK_TRANSFER', status: 'RECORDED', createdByUserId: actorUserId, idempotencyKey: randomUUID(), payloadFingerprint: canonicalFingerprint({ expenseId: source.id, amount: paidAmount, paymentMethod: 'BANK_TRANSFER' }) } });
+    await repo.reopenExpenseAtomic({ companyId, expenseId: source.id, actorUserId, scopes: {}, reason: 'แก้อัตราหักภาษี', permissions: ['expense.confirm'], requestId: randomUUID() });
+    const { UpdateExpenseDraftUseCase } = await import('../application/use-cases/expense-draft.use-case');
+    const uc = new UpdateExpenseDraftUseCase(repo, { log: async () => undefined } as any,
+      { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any);
+    const updated = await uc.execute(reviewer(), source.id, { whtRemittance: 'PAYER_FILES', whtInput: { inputType: 'RATE', value: '2' },
+      lines: [{ lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '10000', vatRate: '0.07', whtCategoryCode: 'WHT_SERVICE_3' }] });
+    assert.equal(Number(updated.netPayableAmount), 10500);
+    const prepared = await repo.updateExpense({ id: source.id, companyId, updatedByUserId: actorUserId, status: 'READY_FOR_CONFIRMATION' });
+    if (paidAmount === '10600') await assert.rejects(() => repo.confirmExpenseCas(roundTwoConfirm(prepared)), (e: any) => e.getResponse().code === 'expense_paid_exceeds_payable');
+    else {
+      await repo.confirmExpenseCas(roundTwoConfirm(prepared));
+      assert.equal((await client!.whtCertificateHandoff.findFirstOrThrow({ where: { companyId, sourcePaymentId: source.id } })).status, 'REQUIRED');
+    }
+  });
+
+  for (const path of ['confirmExpenseCas', 'finalizeAndConfirmExpenseCas'] as const) {
+    for (const whtRemittance of ['E_WHT', 'PAYER_FILES'] as const) {
+      it(`R1/R5 ${path} round-trips ${whtRemittance} and ${whtRemittance === 'E_WHT' ? 'has no handoff' : 'requires a certificate'}`, async t => {
+        if (!ready) { t.skip(unavailable ?? 'DATABASE_URL not set'); return; }
+        const expenseDate = new Date('2026-11-04T00:00:00Z');
+        const created = await repo.createExpense({ companyId, branchId, createdByUserId: actorUserId,
+          captureSource: 'WEB_MANUAL', expenseDate, vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+          sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', vendorNameSnapshot: 'ผู้รับเงินทดสอบ',
+          whtRemittance: 'E_WHT', subtotalAmount: '100', discountAmount: '0', taxableAmount: '100', vatAmount: '0',
+          whtAmount: '3', grandTotalAmount: '100', netPayableAmount: '97', outstandingAmount: '97' });
+        assert.equal(created.whtRemittance, 'E_WHT');
+        assert.equal((await repo.findById(companyId, created.id))!.whtRemittance, 'E_WHT');
+        const changed = await repo.updateExpense({ id: created.id, companyId, updatedByUserId: actorUserId,
+          whtRemittance: 'PAYER_FILES', vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'WHT_SERVICE_3', whtRate: '3' });
+        assert.equal(changed.whtRemittance, 'PAYER_FILES');
+        assert.equal((await repo.findById(companyId, created.id))!.whtRemittance, 'PAYER_FILES');
+        await repo.upsertLines(companyId, created.id, [{ companyId, expenseId: created.id, lineNumber: 1, description: 'ค่าบริการ',
+          quantity: '1', unitPrice: '100', discountAmount: '0', taxableAmount: '100', vatRate: null, vatAmount: '0',
+          whtCategoryCode: 'WHT_SERVICE_3', whtRate: '3', whtAmount: '3', lineSubtotalAmount: '100', lineTotalAmount: '100',
+          expenseCategoryId: null, accountHintKey: null, taxCategory: null }]);
+        await repo.updateExpense({ id: created.id, companyId, updatedByUserId: actorUserId, whtRemittance, status: 'READY_FOR_CONFIRMATION', expenseNumber: `EXP-${randomUUID()}` });
+        const source = (await repo.findByIdWithRelations(companyId, created.id))!;
+        const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const,
+          attachmentIds: [] as string[], originalDocumentAvailable: true, reason: '', note: 'อยู่กับผู้ทำบัญชี' };
+        await client!.expenseRecord.update({ where: { id: created.id }, data: { aiVerificationSummaryJson: {
+          documentReview: { version: 2, reviewedAt: new Date().toISOString(), reviewedByUserId: actorUserId,
+            assessment, fingerprint: expenseEvidenceFingerprint(source, assessment) },
+        } } });
+        const reviewed = (await repo.findByIdWithRelations(companyId, created.id))!;
+        const args = { companyId, id: created.id, actorUserId, expectedUpdatedAt: reviewed.updatedAt,
+          expectedSourceChecksum: expenseTaxSourceChecksum(reviewed), expenseNumber: reviewed.expenseNumber!, postingStatus: 'not_required' as const,
+          vendorSnapshotJson: null, outboxEvent: { eventKey: `ewht-confirm:${created.id}`, payloadJson: {} } };
+        const confirmed = path === 'confirmExpenseCas' ? await repo.confirmExpenseCas(args)
+          : (await repo.finalizeAndConfirmExpenseCas(args, async () => [])).expense;
+        assert.equal(confirmed.status, 'CONFIRMED');
+        assert.equal(confirmed.whtRemittance, whtRemittance);
+        assert.equal((await repo.findByIdWithRelations(companyId, created.id))!.whtRemittance, whtRemittance);
+        const handoffs = await client!.whtCertificateHandoff.findMany({ where: { companyId, sourcePaymentType: 'expense.record', sourcePaymentId: created.id } });
+        assert.deepEqual(handoffs.map(row => row.status), whtRemittance === 'E_WHT' ? [] : ['REQUIRED']);
+      });
+    }
+  }
 });
 
 describe('evidence review at final transaction', () => {

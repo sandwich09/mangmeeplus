@@ -478,3 +478,12 @@ it('software export DTO requires purchase_journal and preserves accountant filte
   assert.equal(result.page, 2); assert.equal(result.status, undefined);
   for (const preset of [undefined, 'flowaccount', 'unknown']) await assert.rejects(() => run(dto, { preset }), BadRequestException);
 });
+
+it('R17 e-WHT setting requires a boolean DTO and rejects missing, null, string and forged fields', async () => {
+  const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+  const metadata = { type: 'body' as const, metatype: expenseDtos.UpdateExpenseEWhtSettingDto };
+  for (const used of [true, false]) assert.equal((await pipe.transform({ used }, metadata)).used, used);
+  for (const body of [{}, { used: null }, { used: 'true' }, { used: 1 }, { used: true, companyId: 'other-shop' }]) {
+    await assert.rejects(() => pipe.transform(body, metadata), BadRequestException);
+  }
+});

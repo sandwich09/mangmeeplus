@@ -1,3 +1,4 @@
+import { canonicalFingerprint } from '../../../common/security/canonical-fingerprint';
 import { after, before, describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
@@ -113,6 +114,7 @@ function fakeClient(seed: {
     whtCertificateHistory: { create: async ({ data }: any) => { assert.ok(s.handoffs[0].certificateId || s.handoffs[0].externalCertificateNumber, 'history precedes clearing'); s.history.push(data); return data; } },
     auditLog: { create: async ({ data }: any) => { s.audits.push(data); return data; } },
     taxEvent: table(s.taxEvents),
+    taxReviewIssue: table([]),
     expenseRecord,
     disbursementVoucher: table(seed.vouchers ?? []),
     disbursementVoucherLine: table(seed.voucherLines ?? []),
@@ -646,7 +648,14 @@ describe('expense void certificate cascade (A3)', () => {
   });
   it('cancels a REQUIRED handoff without history or attestation and leaves confirmed tax events alone', async () => {
     const h = setup('REQUIRED');
-    h.client.taxEvent.updateMany = async () => { throw new Error('confirmed tax events must stay on the tax-sync path'); };
+    h.client.taxReviewIssue.updateMany = async ({ where }: any) => {
+      assert.deepEqual(where.issueCode.in, ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'WHT_RATE_MISMATCH']);
+      assert.deepEqual(where.taxPeriod.formType.in, ['PND2', 'PND3', 'PND53']); return { count: 0 };
+    };
+    h.client.taxEvent.updateMany = async ({ where, data }: any) => {
+      assert.equal(where.status, 'EXCLUDED', 'ACTIVE events must stay on the tax-sync path');
+      assert.equal(data.status, 'SUPERSEDED'); return { count: 0 };
+    };
     await h.run({ permissions: [], taxFilingAttested: false });
     assert.equal(h.handoff.status, 'CANCELLED'); assert.equal(h.handoff.certificateRound, 0); assert.equal(h.client.state.history.length, 0);
   });
@@ -937,4 +946,73 @@ it('voids a covered payment and cancels its paid document without taking the doc
   assert.equal(voucher.status, 'CANCELLED'); assert.equal((voucher as any).cancelledAfterPaid, true); assert.equal((voucher as any).cancelReason, 'เอกสาร EXP-1 ถูกยกเลิก'); assert.equal((voucher as any).cancelSourceReason, 'รายการผิด');
   assert.equal(line.coversPaymentId, null); assert.equal(line.expensePaymentId, 'pay_1'); assert.deepEqual(voucher.paidSnapshotJson, { frozen: true });
   assert.ok(locks.every(key => !key.includes('disbursement-voucher-lifecycle')));
+});
+
+describe('R6 e-WHT void/reopen lifecycle (real PostgreSQL, owned paid tenant)', () => {
+  const companyId = `ewht-lifecycle-${randomUUID()}`, userId = `${companyId}-actor`;
+  let client: PrismaClient | undefined, branchId: string, ready = false, created = false, unavailable: string | null = null;
+  before(async () => {
+    const url = process.env.DATABASE_URL;
+    if (!url) { assert.notEqual(process.env.EXPENSE_PAYMENT_REQUIRE_POSTGRES, 'true', 'PostgreSQL required'); return; }
+    client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+    unavailable = await pgSpecUnreachableReason(() => client!.$queryRaw`SELECT "whtRemittance" FROM "ExpenseRecord" LIMIT 0`, 'EXPENSE_PAYMENT_REQUIRE_POSTGRES');
+    if (unavailable) return;
+    await client.company.create({ data: { id: companyId, name: 'e-WHT lifecycle fixture' } }); created = true;
+    await client.user.create({ data: { id: userId, displayName: 'ผู้ตรวจทดสอบ' } });
+    branchId = (await client.branch.create({ data: { companyId, code: 'HO', name: 'สำนักงานใหญ่' } })).id; ready = true;
+  });
+  after(async () => {
+    if (!client) return;
+    try { if (created) {
+      await client.whtFilingLine.deleteMany({ where: { filing: { companyId } } });
+      await client.whtFiling.deleteMany({ where: { companyId } });
+      await client.taxReviewIssue.deleteMany({ where: { companyId } });
+      await client.taxEvent.deleteMany({ where: { companyId } });
+      await client.expensePayment.deleteMany({ where: { companyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.taxPeriod.deleteMany({ where: { companyId } });
+      await client.company.delete({ where: { id: companyId } });
+      await client.user.delete({ where: { id: userId } });
+    } } finally { await client.$disconnect(); }
+  });
+  async function source(remittance: 'E_WHT' | 'PAYER_FILES' = 'E_WHT', locked = false) {
+    const period = await client!.taxPeriod.upsert({ where: { companyId_formType_periodKey: { companyId, formType: 'PND3', periodKey: '2026-09' } },
+      create: { companyId, taxType: 'WHT', formType: 'PND3', periodKey: '2026-09', status: locked ? 'FILED' : 'OPEN' }, update: { status: locked ? 'FILED' : 'OPEN' } });
+    const expense = await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, expenseDate: new Date('2026-09-10'),
+      status: 'CONFIRMED', postingStatus: 'not_required', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE', whtRemittance: remittance,
+      vendorEntityKindSnapshot: 'INDIVIDUAL', subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', whtAmount: '1', netPayableAmount: '99', paidAmount: '99', outstandingAmount: '0', paymentStatus: 'PAID' } });
+    const payment = await client!.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: '99', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: new Date('2026-09-10'),
+      paidAtConfirmed: true, status: 'RECORDED', postingStatus: 'not_required', createdByUserId: userId,
+      idempotencyKey: randomUUID(), payloadFingerprint: canonicalFingerprint({ expenseId: expense.id, amount: '99', paymentMethod: 'BANK_TRANSFER' }) } });
+    const event = await client!.taxEvent.create({ data: { companyId, branchId, taxPeriodId: period.id, eventType: 'WHT_PND3', status: remittance === 'E_WHT' ? 'EXCLUDED' : 'ACTIVE',
+      sourceType: 'expense.record', sourceId: expense.id, sourceLineKey: `payment:${payment.id}`, sourceEventType: remittance === 'E_WHT' ? 'expense.wht.e_wht' : 'expense.wht',
+      idempotencyKey: randomUUID(), periodKey: '2026-09', eventDate: new Date('2026-09-10'), taxableBase: '100', taxAmount: '1', currency: 'THB', whtFormType: 'PND3' } });
+    const issue = await client!.taxReviewIssue.create({ data: { companyId, taxPeriodId: period.id, sourceType: 'expense.record', sourceId: expense.id, issueCode: 'WHT_RATE_MISMATCH', severity: 'WARNING', description: 'ตรวจอัตรา' } });
+    return { expense, payment, period, event, issue, repo: new PrismaExpenseRepository({ client } as any) };
+  }
+  for (const action of ['void', 'reopen'] as const) it(`supersedes EXCLUDED and resolves its warning inside ${action}, before sync`, async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL is not set');
+    const h = await source();
+    if (action === 'void') await h.repo.voidExpenseTrueReversal(companyId, h.expense.id, userId, 'ยกเลิกรายการทดสอบ');
+    else await h.repo.reopenExpenseAtomic({ companyId, expenseId: h.expense.id, actorUserId: userId, scopes: {}, reason: 'แก้ข้อมูลทดสอบ', permissions: ['expense.confirm'] });
+    assert.equal((await client!.taxEvent.findUniqueOrThrow({ where: { id: h.event.id } })).status, 'SUPERSEDED');
+    assert.equal((await client!.taxReviewIssue.findUniqueOrThrow({ where: { id: h.issue.id } })).status, 'RESOLVED');
+  });
+  it('bypasses a legacy month lock only for e-WHT; payer-files remains blocked', async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL is not set');
+    const bank = await source('E_WHT', true), payer = await source('PAYER_FILES', true);
+    await bank.repo.reopenExpenseAtomic({ companyId, expenseId: bank.expense.id, actorUserId: userId, scopes: {}, reason: 'แก้ข้อมูลทดสอบ', permissions: ['expense.confirm'] });
+    await assert.rejects(() => payer.repo.reopenExpenseAtomic({ companyId, expenseId: payer.expense.id, actorUserId: userId, scopes: {}, reason: 'แก้ข้อมูลทดสอบ', permissions: ['expense.confirm'] }),
+      (e: any) => e.getResponse().blockers.includes('tax_period_filed'));
+  });
+  it('still blocks e-WHT when an actual FILED line covers its current payment', async t => {
+    if (!ready) return t.skip(unavailable ?? 'DATABASE_URL is not set');
+    const h = await source('E_WHT', true);
+    const paper = await client!.whtFiling.create({ data: { companyId, taxPeriodId: h.period.id, formType: 'PND3', periodKey: '2026-09', establishmentCode: '00000',
+      preparedBy: userId, payerSnapshotJson: {}, rowsChecksum: 'fixture', status: 'FILED', rowsCertain: true, filedAt: new Date(), filedByUserId: userId } });
+    await client!.whtFilingLine.create({ data: { whtFilingId: paper.id, rowNumber: 1, taxEventId: h.event.id, sourceType: 'expense.record', sourceId: h.expense.id,
+      lineJson: { payment: [...Array(13).fill(null), `payment:${h.payment.id}`] } } });
+    await assert.rejects(() => h.repo.reopenExpenseAtomic({ companyId, expenseId: h.expense.id, actorUserId: userId, scopes: {}, reason: 'แก้ข้อมูลทดสอบ', permissions: ['expense.confirm'] }),
+      (e: any) => e.getResponse().blockers.includes('tax_period_filed'));
+  });
 });

@@ -1,10 +1,11 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { computeSourceHash } from '../../domain/logic/tax-event.logic';
 import { loadWithholdingEstablishments, partitionWithholdingPayments } from './withholding-establishments';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { ExpenseSourceAdapter } from '../../infrastructure/adapters/expense-source.adapter';
 import { withholdingFormFor } from '../../domain/logic/expense-payment-withholding.logic';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { filedLineCoversPayment, withholdingPaymentFacts, orderWithholdingPayments } from './withholding-filing-state';
+import { filedLineCoversPayment, withholdingPaymentFacts, orderWithholdingPayments, currentWithholdingPayments } from './withholding-filing-state';
 import { formatCompanyLegalAddress, type CompanyLegalAddress, type WithholdingMonthIssueDto, type WhtFormType, type WhtEstablishment } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../../../generated/prisma/client';
 import type { TaxEventRecord } from '../../domain/ports/tax-event.repository.port';
@@ -52,9 +53,10 @@ export function withholdingRowFaults(event: FilingEvent, ctx: {
 }
 
 /** Source-only issues participate in payer selection, never in monetary/event totals. */
-export async function withholdingPaperBlockers<T extends { branchId?: string | null; eventType?: string; sourceType: string; sourceId: string }>(
+export async function withholdingPaperBlockers<T extends { branchId?: string | null; eventType?: string; status?: string; sourceType: string; sourceId: string }>(
   db: Prisma.TransactionClient, ctx: RequestContext, period: { periodKey: string; formType: string }, establishment?: WhtEstablishment, events: T[] = [],
 ) {
+  events = events.filter(event => event.status !== 'EXCLUDED');
   const [context, reviews] = await Promise.all([
     loadWithholdingEstablishments(db, ctx.companyId, period.periodKey),
     db.taxReviewIssue.findMany({ where: { companyId: ctx.companyId, status: 'OPEN',
@@ -62,11 +64,12 @@ export async function withholdingPaperBlockers<T extends { branchId?: string | n
   ]);
   const currentReviews = reviews.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode));
   const supplierIds = [...new Set(currentReviews.filter(i => i.sourceType === 'procurement.supplier_payment').flatMap(i => i.sourceId ? [i.sourceId] : []))];
-  const [sources, suppliers, company] = await Promise.all([
+  const [allSources, suppliers, company] = await Promise.all([
     new ExpenseSourceAdapter({ client: db } as any).findConfirmedWithWhtByCompany(ctx.companyId),
     supplierIds.length ? db.supplierPayment.findMany({ where: { companyId: ctx.companyId, id: { in: supplierIds }, status: 'RECORDED' }, select: { id: true, branchId: true, supplier: { select: { counterpartyId: true } } } }) : [],
     db.company.findUnique({ where: { id: ctx.companyId }, select: { baseCurrency: true } }),
   ]);
+  const sources = allSources.filter(source => source.whtRemittance !== 'E_WHT');
   // Catalogue routing is a live fact; income codes are on the full payment projection.
   const liveCategories = sources.length ? await db.whtIncomeCategory.findMany({ where: { code: { in: [...new Set(sources.flatMap(s => s.incomeCategoryCode ? [s.incomeCategoryCode] : []))] } } }) : [];
   const categoryByCode = new Map(liveCategories.map(c => [c.code, c]));
@@ -154,7 +157,7 @@ export async function withholdingPaperBlockers<T extends { branchId?: string | n
   const combined = partitionWithholdingPayments<T | Ref>([...events, ...refs], context.branches, context.facts, period.periodKey);
   const sanitize = (ref: Ref): WithholdingMonthIssueDto => isBranchInScope(ctx.scopes ?? {}, ref.branchId) ? ref.issue : {
     id: `hidden:${ref.issue.severity}`, issueCode: `${period.formType}_FILING_REVIEW`, severity: ref.issue.severity,
-    description: 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null,
+    description: E_WHT_WORDS['W-T5'], sourceType: null, sourceId: null, expenseId: null, counterpartyId: null,
   };
   const selectedRefs = establishment ? combined.papers.find(p => p.establishment.code === establishment.code)?.events.filter((r): r is Ref => 'issue' in r) ?? [] : refs;
   const issues = selectedRefs.map(sanitize).filter((i, n, all) => all.findIndex(other => other.id === i.id) === n);
@@ -208,7 +211,17 @@ export async function validateWithholdingFiling(db: Prisma.TransactionClient, co
   const accountantTypes = events.filter(event => categoryByCode.get(event.incomeCategoryCode ?? '')?.filingRoute === 'ACCOUNTANT_PREPARES')
     .map(event => ({ incomeType: categoryByCode.get(event.incomeCategoryCode!)!.nameTh, payeeName: event.payeeSnapshot?.name ?? '' }));
 
-  if (!events.length) fault('empty');
+  if (!events.length) {
+    const excluded = !historical && !reviews.some(issue => issue.severity === 'BLOCKING') ? await db.taxEvent.findMany({ where: {
+      companyId, periodKey: period.periodKey, eventType: `WHT_${formType}`, status: 'EXCLUDED', ...branchScopeWhere(ctx?.scopes ?? {}),
+    } }) : [];
+    const current = await currentWithholdingPayments(db, companyId, excluded.filter(event => event.status === 'EXCLUDED'), ctx?.scopes ?? {});
+    const context = await loadWithholdingEstablishments(db, companyId, period.periodKey);
+    const partition = partitionWithholdingPayments(current, context.branches, context.facts, period.periodKey);
+    const bankOnly = establishment ? partition.papers.find(paper => paper.establishment.code === establishment.code)?.events.length : current.length;
+    if (bankOnly) fault('bank_remitted_only', undefined, E_WHT_WORDS['W-T3'](individual ? 'ภ.ง.ด.3' : 'ภ.ง.ด.53', establishment?.name));
+    else fault('empty');
+  }
   const [year, month] = period.periodKey.split('-').map(Number);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period.periodKey)) fault('month');
   else {

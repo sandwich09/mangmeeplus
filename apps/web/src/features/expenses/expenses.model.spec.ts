@@ -528,6 +528,7 @@ describe('expenses.model', () => {
       vendorDocumentNumber: 'INV-1',
       expenseDate: '2026-07-10',
       vatMode: 'VAT_EXCLUDED',
+      whtRemittance: 'PAYER_FILES',
       lines: [{
         // §5.1: stated on EVERY row, product rows included. An absent kind tells the server to keep
         // whatever that row already had, which is not what this form means on a goods line.

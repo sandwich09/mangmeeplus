@@ -207,16 +207,16 @@ The table covers every named quoted control/page/command in the revised bodies a
 
 | label | where the customer sees it | file:line |
 |---|---|---|
-| กลับไปแก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:127` |
+| กลับไปแก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:136` |
 | การเบิกจ่าย | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:209` |
 | การแจ้งเตือน | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:382` |
 | กำหนดหน้าที่พนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:232` |
 | คู่ค้า | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:199` |
 | ค่าใช้จ่ายและใบเสร็จ | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:169` |
 | ค้างจ่ายทั้งหมด | ชื่อตัวเลขบนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:116` |
-| จดเลขที่ใบ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:424` |
-| จดเลขที่ใบ 50 ทวิ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:28` |
-| จ่ายค่าอะไร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1439` |
+| จดเลขที่ใบ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:434` |
+| จดเลขที่ใบ 50 ทวิ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:37` |
+| จ่ายค่าอะไร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1449` |
 | ตั้งค่าร้าน | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:361` |
 | ตั้งแต่ | ชื่อช่องเลือกวันที่บนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:128` |
 | ติดต่อเจ้าหน้าที่ | คำสั่งที่พิมพ์ใน LINE; STAFF_CONTACT_COMMAND รับที่ staffMenuCommand | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:18` |
@@ -224,20 +224,20 @@ The table covers every named quoted control/page/command in the revised bodies a
 | ถึง | ชื่อช่องเลือกวันที่บนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:128` |
 | บริษัทของฉัน | ชื่อการ์ดและพื้นที่ rich menu; พื้นที่นี้ส่ง /companies | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:40` |
 | บัญชีรับเงินคืนของฉัน | ลิงก์จากหน้าใบเบิกและชื่อหน้าบัญชีรับเงินคืน | `apps/web/src/features/reimbursements/ReimbursementPayoutAccountPage.tsx:20` |
-| บันทึกร่าง | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:247` |
-| บันทึกว่าจ่ายแล้ว | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:274` |
+| บันทึกร่าง | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:256` |
+| บันทึกว่าจ่ายแล้ว | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:283` |
 | พนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:231` |
 | พนักงานและสิทธิ์ | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:347` |
-| ภ.ง.ด.53 | แท็บแบบภาษีและชื่อแบบภาษีบนเว็บ | `apps/web/src/features/tax/WithholdingPage.tsx:239` |
+| ภ.ง.ด.53 | แท็บแบบภาษีและชื่อแบบภาษีบนเว็บ | `apps/web/src/features/tax/WithholdingPage.tsx:267` |
 | มีตัวจริง ยังไม่ได้แนบรูป | ตัวเลือกขั้นหลักฐานรายจ่าย | `apps/web/src/features/expenses/ExpensesPages.tsx:1345` |
-| ยกเลิกเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1644` |
+| ยกเลิกเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1654` |
 | ยกเลิกใบเบิก | ปุ่มยืนยันในหน้าต่างยกเลิกใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:87` |
 | ยกเลิกใบเบิกนี้ | ปุ่มเริ่มยกเลิกหน้าใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
-| ยืนยันเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1635` |
+| ยืนยันเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1645` |
 | รายงาน | ชื่อหน้ารายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:256` |
-| ลายเซ็นของฉัน | แท็บหน้าค่าใช้จ่ายบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1791` |
+| ลายเซ็นของฉัน | แท็บหน้าค่าใช้จ่ายบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1801` |
 | สาขา | ชื่อหน้าสาขาบนเว็บ | `apps/web/src/features/branch-settings/BranchSettingsPage.tsx:186` |
-| ส่งกลับให้แก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:122` |
+| ส่งกลับให้แก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:131` |
 | ส่งอนุมัติ | ปุ่มส่งใบเบิก; ใบเตรียมจ่ายใช้คำเดียวกัน | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
 | หน้าแรก | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:21` |
 | เปลี่ยนบริษัท | คำสั่งที่พิมพ์ใน LINE; parser ตอบด้วยการ์ดร้าน | `apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic.ts:53` |
@@ -247,12 +247,12 @@ The table covers every named quoted control/page/command in the revised bodies a
 | เพิ่มลายเซ็น | ปุ่มหน้าลายเซ็นบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:584` |
 | เพิ่มหมวดหมู่ | ปุ่มหน้าจัดการหมวดบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:336` |
 | เรียกรายงาน | ปุ่มหน้ารายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:365` |
-| เลือกวันที่ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:674` |
-| แก้ไขเอกสาร | ปุ่มเปิดแก้รายจ่ายที่ยืนยันแล้ว | `packages/contracts/src/expenses.ts:750` |
-| แพ็กเกจ | เมนูบนเว็บ | `apps/web/src/features/web-core-workspace/settings-menu.logic.ts:150` |
+| เลือกวันที่ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:684` |
+| แก้ไขเอกสาร | ปุ่มเปิดแก้รายจ่ายที่ยืนยันแล้ว | `packages/contracts/src/expenses.ts:756` |
+| แพ็กเกจ | เมนูบนเว็บ | `apps/web/src/features/web-core-workspace/settings-menu.logic.ts:158` |
 | แพ็กเกจและราคา | พื้นที่ rich menu ปัจจุบัน; ส่งข้อความ โปรโมชั่น | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:27` |
 | โปรโมชั่น | คำสั่งที่พิมพ์ใน LINE; VIEW_PACKAGES_COMMAND | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:16` |
-| ใบรับรองแทนใบเสร็จ | แท็บและชื่อหน้าศูนย์ใบรับรองบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1763` |
+| ใบรับรองแทนใบเสร็จ | แท็บและชื่อหน้าศูนย์ใบรับรองบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1773` |
 | ใบเสร็จรอตรวจ | ชื่อตัวเลขบนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:115` |
 | ไม่มีสิทธิ์ | ป้ายสิทธิ์รายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:32` |
 

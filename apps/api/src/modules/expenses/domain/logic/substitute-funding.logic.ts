@@ -1,4 +1,4 @@
-import { civilDate } from '@watchdog-bms/contracts';
+import { civilDate, eWhtPaymentMethodAllowed, E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { ConflictException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { SETTLE_EPSILON } from './expense-totals.logic';
@@ -17,8 +17,11 @@ export function assertFullSubstitutePayment(source: string | null | undefined, p
 
 /** Company payment facts are immutable here; compare the recorded calendar day, not the clock. */
 export function assertSubstitutePaymentDetails(source: string | null | undefined,
-  expense: { paidAmount: { toString(): string }; paidAt: Date | null; paymentMethod: string | null },
+  expense: { paidAmount: { toString(): string }; paidAt: Date | null; paymentMethod: string | null; whtRemittance?: string | null },
   certificate: { paymentDate: Date | null; paymentMethod: string | null }): void {
+  if (source === 'COMPANY' && expense.whtRemittance === 'E_WHT' && !eWhtPaymentMethodAllowed(certificate.paymentMethod)) {
+    throw new ConflictException({ code: 'substitute_receipt_ewht_payment_method', message: E_WHT_WORDS['W-R3'] });
+  }
   if (source !== 'COMPANY' || !new Decimal(expense.paidAmount.toString()).gt(0)) return;
   if ((expense.paymentMethod && expense.paymentMethod !== certificate.paymentMethod)
     || (expense.paidAt && (!certificate.paymentDate || civilDate(expense.paidAt) !== civilDate(certificate.paymentDate)))) {

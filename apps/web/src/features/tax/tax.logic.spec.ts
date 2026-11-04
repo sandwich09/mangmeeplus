@@ -24,3 +24,9 @@ describe('monthlyPeriodDateRange', () => {
     assert.equal(monthlyPeriodDateRange('2026-00'), null);
   });
 });
+
+
+it('labels the conditional e-WHT rate warning as ตรวจอัตรา', async () => {
+  const { taxReviewIssueLabel } = await import('./tax.logic');
+  assert.equal(taxReviewIssueLabel('WHT_RATE_MISMATCH'), 'ตรวจอัตรา');
+});

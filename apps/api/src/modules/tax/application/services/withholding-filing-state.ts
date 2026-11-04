@@ -1,3 +1,4 @@
+import { branchScopeWhere, type BranchScopes } from '../../../data-model-core/domain/logic/branch.logic';
 import { ConflictException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -25,12 +26,12 @@ export function orderWithholdingPayments<T extends Payment>(events: T[], formTyp
 }
 
 /** A voided source can outlive its active tax event until background sync retires it. */
-export async function currentWithholdingPayments<T extends { sourceType: string; sourceId: string; sourceLineKey?: string }>(db: Prisma.TransactionClient, companyId: string, events: T[]): Promise<T[]> {
+export async function currentWithholdingPayments<T extends { sourceType: string; sourceId: string; sourceLineKey?: string }>(db: Prisma.TransactionClient, companyId: string, events: T[], scopes?: BranchScopes): Promise<T[]> {
   const ids = (type: string) => events.filter(event => event.sourceType === type).map(event => event.sourceId);
   const expenseIds = ids('expense.record'), supplierIds = ids('procurement.supplier_payment');
   const [expenses, suppliers] = await Promise.all([
-    expenseIds.length ? db.expenseRecord.findMany({ where: { companyId, id: { in: expenseIds }, status: 'CONFIRMED' }, select: { id: true } }) : [],
-    supplierIds.length ? db.supplierPayment.findMany({ where: { companyId, id: { in: supplierIds }, status: 'RECORDED' }, select: { id: true } }) : [],
+    expenseIds.length ? db.expenseRecord.findMany({ where: { companyId, id: { in: expenseIds }, status: 'CONFIRMED', ...(scopes ? branchScopeWhere(scopes) : {}) }, select: { id: true } }) : [],
+    supplierIds.length ? db.supplierPayment.findMany({ where: { companyId, id: { in: supplierIds }, status: 'RECORDED', ...(scopes ? branchScopeWhere(scopes) : {}) }, select: { id: true } }) : [],
   ]);
   const paymentIds = events.flatMap(e => e.sourceLineKey?.startsWith('payment:') ? [e.sourceLineKey.slice(8).split(':line:')[0]] : []);
   const paid = paymentIds.length ? await db.expensePayment.findMany({ where: { companyId, id: { in: paymentIds }, status: 'RECORDED', paidAtConfirmed: true }, select: { id: true } }) : [];

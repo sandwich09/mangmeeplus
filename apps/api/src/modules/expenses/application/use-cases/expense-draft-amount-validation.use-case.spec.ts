@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import 'reflect-metadata';
 import { EXPENSE_CALCULATED_ROUNDING_SOURCE } from '@watchdog-bms/contracts';
 import type { CreateExpenseDraftInput, RequestContext, UpdateExpenseDraftInput } from '@watchdog-bms/contracts';
-import { CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } from './expense-draft.use-case';
+import { RecordExpensePaymentUseCase, ConfirmExpenseUseCase, CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
 const ctx: RequestContext = {
   requestId: 'req-amount-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
@@ -22,7 +22,9 @@ function setup(resolveLines?: (lines: any[]) => any[]) {
   const upserted: any[] = [];
   const repo = {
     resolveCreateBranchId: async () => 'branch-1',
-    createExpense: async (data: any, withinTx?: (tx: unknown, record: any) => Promise<void>) => {
+    getEWhtSetting: async () => ({ used: true }),
+    createExpense: async (data: any, withinTx?: (tx: unknown, record: any) => Promise<void>, _db?: unknown, beforeCreate?: (tx: unknown) => Promise<void>) => {
+      await beforeCreate?.({});
       const record = { id: 'expense-1', ...data };
       if (withinTx) await withinTx({}, record);
       created.push(data);
@@ -43,6 +45,21 @@ function setup(resolveLines?: (lines: any[]) => any[]) {
 }
 
 describe('CreateExpenseDraftUseCase amount persistence boundary', () => {
+  it('R1 persists explicit remittance and clears it when withholding becomes zero (paid path)', async () => {
+    for (const whtRemittance of ['PAYER_FILES', 'E_WHT', null] as const) for (const value of ['0', '3']) {
+      const { useCase, created } = setup();
+      await useCase.execute(ctx, { ...input([{ lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '100' }]),
+        whtInput: { inputType: 'AMOUNT', value }, whtRemittance });
+      assert.equal(created[0].whtRemittance, value === '0' ? null : whtRemittance);
+    }
+  });
+
+  it('R1 refuses invalid remittance before creating a paid draft', async () => {
+    const { useCase, created } = setup();
+    await assert.rejects(() => useCase.execute(ctx, { ...input([]), whtRemittance: 'BANK' } as any),
+      (error: any) => error.getResponse().code === 'expense_wht_remittance_invalid');
+    assert.equal(created.length, 0);
+  });
   it('persists an exact baht input and accepted WHT without inventing a rate', async () => {
     const { useCase, created, upserted } = setup();
     await useCase.execute(ctx, {
@@ -125,6 +142,103 @@ describe('CreateExpenseDraftUseCase amount persistence boundary', () => {
       vatSource: { inputType: 'NONE', lines: [{ lineNumber: 1, inputType: 'RATE', vatRatePercent: '7' }] },
     }), /requires an explicit zero VAT rate/);
     assert.equal(created.length, 0);
+  });
+});
+
+describe('e-WHT remittance write authority (R1)', () => {
+  const revision = new Date('2026-11-04T00:00:00Z');
+  function remittanceHarness(free = false) {
+    let record: any = { id: 'expense-1', companyId: ctx.companyId, createdByUserId: ctx.userId,
+      branchId: null, status: 'DRAFT', captureSource: 'WEB_UPLOAD', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY',
+      vatMode: 'NO_VAT', currency: 'THB', expenseDate: revision, updatedAt: revision, whtAmount: '3', whtRemittance: 'E_WHT' };
+    const writes: any[] = [];
+    const commercialAccessDb = {
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null,
+        planTerm: free ? { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } : null }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null },
+      salesAttribution: { findUnique: async () => null },
+    };
+    const repo: any = { commercialAccessDb, getEWhtSetting: async () => ({ used: true }), assertEWhtRemittancePayments: async () => undefined, findById: async () => record, listLineChargeKinds: async () => new Map(),
+      updateExpense: async (data: any) => { writes.push(data); record = { ...record, ...data }; return record; } };
+    const audit = { log: async () => undefined } as any;
+    return { repo, writes, update: new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any),
+      create: new CreateExpenseDraftUseCase(repo, audit, {} as any, {} as any),
+      confirm: new ConfirmExpenseUseCase(repo, audit, {} as any, {} as any) };
+  }
+  it('preserves absent remittance, accepts explicit changes and clears explicit null on the paid reviewer path', async () => {
+    const h = remittanceHarness();
+    const reviewer = { ...ctx, permissions: ['expense.review'] };
+    await h.update.execute(reviewer, 'expense-1', { note: 'ตรวจแล้ว' });
+    assert.equal(h.writes[0].whtRemittance, undefined);
+    for (const whtRemittance of ['PAYER_FILES', 'E_WHT', null] as const) {
+      const saved = await h.update.execute(reviewer, 'expense-1', { whtRemittance });
+      assert.equal(saved.whtRemittance, whtRemittance);
+    }
+  });
+  it('refuses remittance changes by a paid uploader without review permission', async () => {
+    const h = remittanceHarness();
+    await assert.rejects(() => h.update.execute({ ...ctx, permissions: ['expense.update'] }, 'expense-1', { whtRemittance: 'E_WHT' }),
+      (error: any) => error.getStatus() === 403);
+    assert.equal(h.writes.length, 0);
+  });
+  it('clears stored e-WHT when a paid reviewer removes withholding', async () => {
+    const h = remittanceHarness();
+    const saved = await h.update.execute({ ...ctx, permissions: ['expense.review'] }, 'expense-1', {
+      lines: [{ lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '100' }],
+      whtInput: { inputType: 'AMOUNT', value: '0' },
+    });
+    assert.equal(saved.whtAmount, '0.0000');
+    assert.equal(saved.whtRemittance, null);
+  });
+  it('refuses invalid paid updates without writing any expense', async () => {
+    const h = remittanceHarness();
+    await assert.rejects(() => h.update.execute({ ...ctx, permissions: ['expense.review'] }, 'expense-1', { whtRemittance: 'BANK' } as any),
+      (error: any) => error.getResponse().code === 'expense_wht_remittance_invalid');
+    assert.equal(h.writes.length, 0);
+  });
+  it('never opens create, remittance update or confirmation for never-paid free source drafts', async () => {
+    const h = remittanceHarness(true);
+    // Even stale financial grants cannot turn the free source-draft path into a tax workflow.
+    const freeCtx = { ...ctx, permissions: ['expense.create', 'expense.update', 'expense.review', 'expense.confirm'], freeExpenseDrafts: true };
+    const denied = (error: any) => error.getStatus() === 403 && error.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY';
+    for (const whtRemittance of ['PAYER_FILES', 'E_WHT', null] as const) {
+      await assert.rejects(() => h.create.execute(freeCtx, { ...input([]), whtRemittance }), denied);
+      await assert.rejects(() => h.update.execute(freeCtx, 'expense-1', { expectedUpdatedAt: revision.toISOString(), whtRemittance }), denied);
+    }
+    await assert.rejects(() => h.confirm.execute(freeCtx, 'expense-1'), denied);
+    const payment = new RecordExpensePaymentUseCase(h.repo, { log: async () => undefined } as any);
+    for (const paymentMethod of ['CASH', 'CARD', 'BANK_TRANSFER'] as const) {
+      await assert.rejects(() => payment.execute(freeCtx, 'expense-1', { paidAmount: '1', paymentMethod }), denied);
+      await assert.rejects(() => payment.previewLineAction(freeCtx, 'expense-1', { paidAmount: '1', paymentMethod }), denied);
+    }
+    assert.equal(h.writes.length, 0);
+  });
+  it('R19 reads the setting only for explicit E_WHT and preserves existing e-WHT after disabling', async () => {
+    const h = remittanceHarness(); let reads = 0;
+    h.repo.getEWhtSetting = async () => { reads++; return { used: false }; };
+    const reviewer = { ...ctx, permissions: ['expense.review'] };
+    await h.update.execute(reviewer, 'expense-1', {});
+    assert.equal(reads, 0);
+    await h.update.execute(reviewer, 'expense-1', { whtRemittance: 'E_WHT' });
+    assert.equal(reads, 1);
+    await h.update.execute(reviewer, 'expense-1', { whtRemittance: 'PAYER_FILES' });
+    assert.equal(reads, 1);
+    const writes = h.writes.length;
+    await assert.rejects(() => h.update.execute(reviewer, 'expense-1', { whtRemittance: 'E_WHT' }),
+      (e: any) => e.getStatus() === 422 && e.getResponse().code === 'expense_e_wht_not_enabled');
+    assert.equal(h.writes.length, writes);
+  });
+  it('R4 checks recorded cash/card payments before allowing a paid remittance update', async () => {
+    const h = remittanceHarness();
+    h.repo.assertEWhtRemittancePayments = async (companyId: string, expenseId: string, requested: string) => {
+      assert.equal(companyId, ctx.companyId); assert.equal(expenseId, 'expense-1'); assert.equal(requested, 'E_WHT');
+      const { ConflictException } = await import('@nestjs/common');
+      throw new ConflictException({ code: 'expense_ewht_cash_payment_exists' });
+    };
+    await assert.rejects(() => h.update.execute({ ...ctx, permissions: ['expense.review'] }, 'expense-1', { whtRemittance: 'E_WHT' }),
+      (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_cash_payment_exists');
+    assert.equal(h.writes.length, 0);
   });
 });
 
@@ -548,4 +662,29 @@ it('preserves each income type and rate through the draft persistence boundary',
   ]));
   assert.deepEqual(upserted.map(l => [l.whtCategoryCode, l.whtRate, l.whtAmount]), [['WHT_RENT', '0.05', '5.0000'], ['WHT_SERVICE', '0.02', '4.0000']]);
   assert.equal(created[0].netPayableAmount, '291.0000');
+});
+
+describe('R19 paid e-WHT creation and replay', () => {
+  it('rejects a new e-WHT before INSERT but replays an exact prior create after disabling', async () => {
+    const { PrismaExpenseRepository } = await import('../../infrastructure/prisma-expense.repository');
+    const { canonicalFingerprint } = await import('../../../../common/security/canonical-fingerprint');
+    let existing: any = null, settingReads = 0;
+    const body = { ...input([{ lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '100' }]),
+      idempotencyKey: 'ewht-create-1', whtInput: { inputType: 'AMOUNT' as const, value: '3' }, whtRemittance: 'E_WHT' as const };
+    const db: any = { company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
+      $executeRaw: async () => 0, $transaction: async (work: any) => work(db),
+      documentNumber: { findFirst: async () => null },
+      expenseRecord: { findFirst: async () => existing, create: async () => assert.fail('disabled new e-WHT must not insert') },
+      companyTaxProfile: { findUnique: async () => { settingReads++; return { eWhtUsed: false }; } } };
+    const repo = new PrismaExpenseRepository({ client: db } as any);
+    repo.resolveCreateBranchId = async () => 'branch-1';
+    const uc = new CreateExpenseDraftUseCase(repo, { log: async () => undefined } as any, {} as any, { assertLaunchRouteOpen: async () => undefined } as any);
+    await assert.rejects(() => uc.execute(ctx, body), (e: any) => e.getStatus() === 422 && e.getResponse().code === 'expense_e_wht_not_enabled');
+    assert.equal(settingReads, 1);
+    existing = { id: 'existing-1', companyId: ctx.companyId, createdByUserId: ctx.userId, branchId: 'branch-1', whtRemittance: 'E_WHT',
+      expenseDate: new Date(body.expenseDate), draftPayloadHash: canonicalFingerprint({ version: 1, ...body, idempotencyKey: null }) };
+    const replayed = await uc.execute(ctx, body);
+    assert.equal(replayed.id, existing.id); assert.equal(replayed.whtRemittance, 'E_WHT');
+    assert.equal(settingReads, 1, 'an exact replay does not reread the setting');
+  });
 });

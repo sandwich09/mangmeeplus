@@ -366,3 +366,15 @@ it('PWS-VAT-TRUTH defines VAT without promising eligibility after review for any
       'VAT คือภาษีมูลค่าเพิ่ม ยอดบนเอกสารยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ');
   }
 });
+
+it('E44 e-WHT definitions precede withholding and form definitions on every package', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { documentExplanationReply, documentExplanationTopic } = await import('./line-ai-scope-policy.logic');
+  for (const text of ['e-WHT คืออะไร', 'e-Withholding คืออะไร', 'อธิบาย e-WHT กับ 50 ทวิ', 'e-WHT กับ ภ.ง.ด.53 คืออะไร', 'จ่ายผ่าน e-WHT ต้องยื่น ภงด53 ไหม', 'e-WHT หักกี่เปอร์เซ็นต์', 'จ่ายผ่าน e-WHT ต้องออก 50 ทวิไหม']) {
+    for (const features of [[], ['expenses'], ['expenses', 'wht_50bis', 'wht_pnd53']]) {
+      assert.equal(documentExplanationTopic(text)?.label, 'e-WHT');
+      assert.equal(documentExplanationReply(text, features, ['expense.read_own'], 'th'), E_WHT_WORDS['L-14']);
+    }
+  }
+  assert.equal(documentExplanationTopic('บันทึกจ่ายผ่าน e-WHT ให้รายการนี้'), undefined);
+});

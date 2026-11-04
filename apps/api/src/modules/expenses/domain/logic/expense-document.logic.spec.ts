@@ -429,7 +429,7 @@ describe('accountant export logic', () => {
     assert.ok(sheet.includes('ยืนยันแล้ว'), 'status code must be shown in Thai');
     assert.doesNotMatch(sheet, /เปิดไฟล์|HYPERLINK|companies\//);
     assert.ok(!sheet.includes('เลขผู้เสียภาษีบริษัท'));
-    assert.equal((sheet.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, 25);
+    assert.equal((sheet.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, 26);
 
   });
 

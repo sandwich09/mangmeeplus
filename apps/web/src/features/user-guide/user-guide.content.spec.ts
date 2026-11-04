@@ -765,9 +765,10 @@ describe('guides after the sold-screen changes', () => {
       'ดูรูปที่เก็บไว้', '“พิมพ์แล้วเซ็นเอง” แล้วกด “บันทึก” รูปที่เก็บไว้จะถูกลบ']) assert.ok(text.includes(phrase), phrase);
   });
 
-  it('keeps the reader-facing text within the pre-round length of each guide', () => {
+  it('keeps reader-facing guide text within reviewed bounds including E44', () => {
+    // E44 adds the approved H-1 explanation and replaces the WHT summary with H-2.
     for (const [guide, limit] of [[buildExpensesGuide('co'), 11243], [buildReimbursementGuide('co'), 43225],
-      [buildSubstituteReceiptGuide('co'), 10777], [buildTaxGuide('co'), 5671]] as const) {
+      [buildSubstituteReceiptGuide('co'), 10777], [buildTaxGuide('co'), 6038]] as const) {
       assert.ok(sentences(guide).join('').length <= limit, `${guide.key}: ${sentences(guide).join('').length} > ${limit}`);
     }
   });
@@ -837,4 +838,14 @@ it('PWS-GUIDE-OWNER pins every owner-approved guide sentence from items 10–21'
   assert.ok(substitute.some(text => text.includes("ใบรับรองแทนใบเสร็จใช้ VAT ตอนยื่นภาษีไม่ได้ และยังต้องตรวจหัก ณ ที่จ่ายตามรายการ")), "item 19");
   assert.ok(substitute.some(text => text.includes("ใช้ VAT จากใบรับรองแทนใบเสร็จตอนยื่นภาษีได้ไหม")), "item 20");
   assert.ok(substitute.some(text => text.includes("ใช้ไม่ได้ ถ้าต้องการใช้ VAT ให้ขอใบกำกับภาษีจากผู้ขายที่จด VAT")), "item 21");
+});
+
+it('E44 tax WHT guide shows the approved e-WHT explanation and current catalogue summary', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  for (const permissions of [['expense.read_own'], OWNER]) {
+    const guide = buildTaxGuide('co', permissions);
+    const section = guide.sections.find(section => section.id === 'wht')!;
+    assert.equal(section.summary, E_WHT_WORDS['H-2']);
+    assert.ok(sentences({ ...guide, sections: [section] }).includes(E_WHT_WORDS['H-1']));
+  }
 });

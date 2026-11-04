@@ -1,5 +1,5 @@
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { THAI_SYSTEM_ROLE_NAMES, WHT_PRINT_CERTIFICATE_LABEL } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, THAI_SYSTEM_ROLE_NAMES, WHT_PRINT_CERTIFICATE_LABEL } from '@watchdog-bms/contracts';
 import { GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
 /**
@@ -106,13 +106,17 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
       {
         id: 'wht',
         title: 'แท็บ WHT — ภาษีหัก ณ ที่จ่าย',
-        summary: 'ระบบเตรียมหมวดเงินได้มาตรฐานไว้ให้ 15 หมวด และทุกหมวดเริ่มต้นที่สถานะ DRAFT',
+        summary: E_WHT_WORDS['H-2'],
         iconKey: 'SwapIcon',
         tone: 'amber',
         blocks: [
           {
             kind: 'items',
             items: [
+              {
+                title: E_WHT_WORDS['W-T1'],
+                detail: E_WHT_WORDS['H-1'],
+              },
               {
                 title: 'หนังสือรับรอง 50 ทวิ',
                 detail: systemCertificatesAvailable ? `เลือกเดือนที่จ่ายและแบบภาษีใน “หนังสือรับรอง 50 ทวิ” กรอง “ยังไม่ออก” “ออกแล้ว” “ทำนอกระบบ” “ยกเลิก” กดแถวไปแก้ข้อมูล ในรายจ่ายกด “${WHT_PRINT_CERTIFICATE_LABEL}” ตรวจผู้รับและยอด แล้ว “ออกเลขที่และดาวน์โหลด” ใบเดิมกด “ดาวน์โหลดหนังสือรับรอง”` : t('expenses.certificates.outside_description', 'th'),

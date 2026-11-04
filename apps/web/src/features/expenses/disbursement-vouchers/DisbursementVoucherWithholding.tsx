@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
@@ -16,6 +17,7 @@ export function DisbursementVoucherWithholding({ companyId, detail, line, canIss
   return <div className={styles.statementRow}>
     {note}
     {groups.map(({ state, lines }) => {
+      if (state === 'E_WHT') return <p key={state}>{E_WHT_WORDS[detail.header.status === 'PAID' ? 'W-V1' : 'W-V1u']}</p>;
       const pending = state === 'PENDING';
       const numbers = [...new Set(lines.map(line => line.withholdingCertificate.number).filter((number): number is string => Boolean(number)))];
       return <p key={state}>{t(pending ? canIssue ? 'expenses.disbursement.wht_issue_next' : 'expenses.disbursement.wht_external_next'
@@ -26,7 +28,7 @@ export function DisbursementVoucherWithholding({ companyId, detail, line, canIss
     {/* The shared group: one size side by side, or stacked at one width when the names do not fit (a name never wraps inside a narrow button). */}
     <ActionGroup>
       {actions}
-      {groups.flatMap(({ state, lines }) => lines.map(line => <Link key={`${state}:${line.expenseId}`} href={`/companies/${companyId}/expenses/${encodeURIComponent(line.expenseId)}?section=wht-certificate#wht-certificate`} className={`${ghostClass} whitespace-nowrap`}>
+      {groups.filter(({ state }) => state !== 'E_WHT').flatMap(({ state, lines }) => lines.map(line => <Link key={`${state}:${line.expenseId}`} href={`/companies/${companyId}/expenses/${encodeURIComponent(line.expenseId)}?section=wht-certificate#wht-certificate`} className={`${ghostClass} whitespace-nowrap`}>
         {t(state === 'PENDING' ? canIssue ? 'expenses.disbursement.go_issue_wht' : 'expenses.disbursement.open_item' : 'expenses.disbursement.view_wht', 'th')}
       </Link>))}
     </ActionGroup>

@@ -1,3 +1,4 @@
+import { E_WHT_WORDS, eWhtPaymentMethodAllowed } from '@watchdog-bms/contracts';
 import { withholdingFormFor } from '../../tax/domain/logic/expense-payment-withholding.logic';
 import type { SetExpenseCategoryAccountantAccountInput } from '@watchdog-bms/contracts';
 import { readExpenseHistoryChanges } from '../domain/logic/expense-history.logic';
@@ -265,6 +266,7 @@ function mapExpense(r: any): ExpenseRecord {
     taxableAmount: r.taxableAmount?.toString() ?? '0',
     vatAmount: r.vatAmount?.toString() ?? '0',
     whtAmount: r.whtAmount?.toString() ?? '0',
+    whtRemittance: r.whtRemittance ?? null,
     whtCategoryCode: r.whtCategoryCode ?? null,
     whtRate: expenseWhtHeaderRate(r.whtInputJson, r.lines, r.whtRate),
     grandTotalAmount: expenseDecimalToString(r.grandTotalAmount),
@@ -545,6 +547,12 @@ export type RecordExpensePaymentAtomicInput = {
   viewerReadScope?: DisbursementReadScope;
 };
 
+export function assertEWhtPaymentMethod(expense: { whtRemittance?: string | null }, method?: string | null): void {
+  if (expense.whtRemittance === 'E_WHT' && !eWhtPaymentMethodAllowed(method)) {
+    throw new ConflictException({ code: 'expense_ewht_payment_method', message: E_WHT_WORDS['W-R1'] });
+  }
+}
+
 /** Shared preflight and locked-source rules. The repository's historic claim code stays intact. */
 export function assertExpensePaymentSource(expense: { branchId?: string | null; sourceReimbursementRequestId?: string | null }, paidAt?: string, repositoryClaimCode = false) {
   if (expense.sourceReimbursementRequestId != null) {
@@ -690,6 +698,7 @@ export class PrismaExpenseRepository {
     await assertExpenseDisbursementReservation(tx, current, 'recordPayment', input.payingThroughDisbursementVoucherId, input.viewerReadScope ? { ...input.viewerReadScope, permissions: input.permissions ?? [] } : undefined);
     assertExpensePaymentSource(current, input.paidAt, true);
     const { amount, paymentMethod, bankAccountRef } = validateExpensePaymentInput(input);
+    assertEWhtPaymentMethod(current, paymentMethod);
     const payloadFingerprint = canonicalFingerprint({
       version: 1, expenseId: input.expenseId, branchId: current.branchId ?? null,
       currency: current.currency, amount: amount.toFixed(4), paymentMethod: input.paymentMethod ?? null,
@@ -888,6 +897,30 @@ export class PrismaExpenseRepository {
     return row ? { ...mapPayment(row), expense: mapExpense(row.expense) } : null;
   }
 
+  async getEWhtSetting(companyId: string, db: ExpenseDb = this.prisma.client): Promise<import('@watchdog-bms/contracts').ExpenseEWhtSetting> {
+    const row = await db.companyTaxProfile.findUnique({ where: { companyId }, select: { eWhtUsed: true } });
+    return { used: row?.eWhtUsed ?? false };
+  }
+
+  async updateEWhtSetting(companyId: string, used: boolean, actorUserId: string,
+    onChange: (tx: Prisma.TransactionClient, before: { used: boolean }) => Promise<unknown>): Promise<{ used: boolean }> {
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:e-wht-setting`}))`;
+      const before = await this.getEWhtSetting(companyId, tx);
+      if (before.used === used) return before;
+      await tx.companyTaxProfile.upsert({ where: { companyId }, update: { eWhtUsed: used, updatedByUserId: actorUserId },
+        create: { companyId, eWhtUsed: used, updatedByUserId: actorUserId } });
+      await onChange(tx, before);
+      return { used };
+    });
+  }
+
+  async assertEWhtRemittancePayments(companyId: string, expenseId: string, remittance: string | null | undefined, db: ExpenseDb = this.prisma.client): Promise<void> {
+    if (remittance !== 'E_WHT') return;
+    const payment = await db.expensePayment.findFirst({ where: { companyId, expenseId, status: 'RECORDED', paymentMethod: { in: ['CASH', 'CARD'] } }, select: { id: true } });
+    if (payment) throw new ConflictException({ code: 'expense_ewht_cash_payment_exists', message: E_WHT_WORDS['W-R2'] });
+  }
+
   async assertActiveBranch(companyId: string, branchId: string | null | undefined): Promise<void> {
     await assertActiveExpenseBranch(this.prisma.client, companyId, branchId);
   }
@@ -902,7 +935,7 @@ export class PrismaExpenseRepository {
    * and the group's own state are one atomic batch under the §2.4 lock order, and a nested
    * `$transaction` here would put the INSERT outside it.
    */
-  async createExpense(input: CreateExpenseRecordInput, withinTx?: (tx: Prisma.TransactionClient, expense: ExpenseRecord) => Promise<void>, db?: Prisma.TransactionClient): Promise<ExpenseRecord> {
+  async createExpense(input: CreateExpenseRecordInput, withinTx?: (tx: Prisma.TransactionClient, expense: ExpenseRecord) => Promise<void>, db?: Prisma.TransactionClient, beforeCreate?: (tx: Prisma.TransactionClient) => Promise<void>): Promise<ExpenseRecord> {
     const create = async (tx: Prisma.TransactionClient): Promise<ExpenseRecord> => {
       if (input.draftIdempotencyKey) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.draftIdempotencyKey}:expense-create`}))`;
@@ -919,6 +952,7 @@ export class PrismaExpenseRepository {
         const retired = await tx.documentNumber.findFirst({ where: { companyId: input.companyId, documentType: 'expense.record', idempotencyKey: expenseDraftNumberKey(input.draftIdempotencyKey) } });
         if (retired) throw new ConflictException({ code: 'EXPENSE_DRAFT_DELETED', message: 'รายการที่บันทึกไว้ถูกลบแล้ว กลับไปหน้ารายการค่าใช้จ่าย' });
       }
+      await beforeCreate?.(tx);
       await assertActiveExpenseBranch(tx, input.companyId, input.branchId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${`${input.companyId}:vat-registration`}))`;
       const inputVatPreset = await applyExpenseInputVatPreset(tx, input);
@@ -967,6 +1001,7 @@ export class PrismaExpenseRepository {
           taxableAmount: input.taxableAmount,
           vatAmount: input.vatAmount,
           whtAmount: input.whtAmount,
+          whtRemittance: input.whtRemittance,
           grandTotalAmount: input.grandTotalAmount,
           netPayableAmount: input.netPayableAmount,
           outstandingAmount: input.outstandingAmount,
@@ -980,7 +1015,7 @@ export class PrismaExpenseRepository {
       return mapExpense(r);
     };
     if (db) return create(db);
-    return input.draftIdempotencyKey || withinTx || input.assignExpenseNumber ? this.prisma.client.$transaction(create) : create(this.prisma.client);
+    return input.draftIdempotencyKey || withinTx || beforeCreate || input.assignExpenseNumber ? this.prisma.client.$transaction(create) : create(this.prisma.client);
   }
 
   async findById(companyId: string, id: string, db: ExpenseDb = this.prisma.client): Promise<ExpenseRecord | null> {
@@ -1314,7 +1349,7 @@ export class PrismaExpenseRepository {
       where: { ...expenseReadScopeWhere(filter, scopes, relatedUserId), ...(filter.expenseIds ? { id: { in: filter.expenseIds } } : {}), ...(filter.payableOnly ? { status: 'CONFIRMED', outstandingAmount: { gt: 0 } } : {}) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: { id: true, branchId: true, expenseNumber: true, expenseDate: true, createdAt: true, status: true, currency: true,
-        vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, vendorAddressSnapshot: true, grandTotalAmount: true, whtAmount: true, netPayableAmount: true,
+        vendorNameSnapshot: true, vendorTaxIdSnapshot: true, vendorBranchCodeSnapshot: true, vendorAddressSnapshot: true, grandTotalAmount: true, whtAmount: true, whtRemittance: true, netPayableAmount: true,
         outstandingAmount: true, sourceReimbursementRequestId: true, reservedByDisbursementVoucherId: true,
         vendorDocumentNumber: true, lines: { orderBy: { lineNumber: 'asc' }, take: 1, select: { description: true } },
         substituteReceiptEvidences: { orderBy: { version: 'desc' }, take: 1, select: { fundingSource: true } },
@@ -1934,7 +1969,7 @@ export class PrismaExpenseRepository {
     }
     const data: any = {};
     const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorAddressSnapshot', 'buyerAsPrintedJson', 'vendorEntityKindSnapshot', 'whtCategoryCode', 'whtRate', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
-    fields.push('whtInputJson', 'requestedReviewerUserId', 'submittedByUserId', 'submittedAt');
+    fields.push('whtRemittance', 'whtInputJson', 'requestedReviewerUserId', 'submittedByUserId', 'submittedAt');
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
@@ -3589,6 +3624,12 @@ export class PrismaExpenseRepository {
         data: { postingStatus: reversal.reversed ? 'reversed' : 'not_required', postingError: null },
       });
       if (!voidedFromConfirmed) await retireExpenseTaxEvents(tx, companyId, expenseId);
+      else {
+        await tx.taxEvent.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'EXCLUDED' }, data: { status: 'SUPERSEDED', sourceHash: null } });
+        await tx.taxReviewIssue.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'OPEN',
+          issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'WHT_RATE_MISMATCH'] },
+          taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } }, data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ยกเลิกรายจ่ายแล้ว' } });
+      }
       const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
       return {
         expense: mapExpense(row),
@@ -3620,6 +3661,7 @@ export class PrismaExpenseRepository {
       if (current?.status === 'CONFIRMED') return mapExpense(current);
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
       assertExpensePaidWithinPayable(current);
+      await this.assertEWhtRemittancePayments(input.companyId, input.id, current.whtRemittance, tx);
       await assertProjectionSource(tx, input.companyId, current);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
         { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) });
@@ -3634,8 +3676,8 @@ export class PrismaExpenseRepository {
       });
       if (changed.count !== 1) throw new Error('Expense changed while confirming. Reload and review it again.');
       // WHT certificate system issuance, Phase 1.2 (S3): a confirmed expense that withheld tax owes
-      // the payee a 50 ทวิ, recorded as a durable handoff in the SAME transaction as confirmation.
-      if (new Decimal(current.whtAmount ?? '0').gt(0)) {
+      // the payee a 50 ทวิ unless the bank remits it through e-WHT, in the SAME transaction.
+      if (current.whtRemittance !== 'E_WHT' && new Decimal(current.whtAmount ?? '0').gt(0)) {
         await createWhtHandoffForExpense(tx, { companyId: input.companyId, actorUserId: input.actorUserId, expense: current });
       }
       await tx.outboxEvent.create({
@@ -3683,6 +3725,7 @@ export class PrismaExpenseRepository {
       if (current?.status === 'CONFIRMED') return { expense: mapExpense(current), finalized: [] };
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
       assertExpensePaidWithinPayable(current);
+      await this.assertEWhtRemittancePayments(input.companyId, input.id, current.whtRemittance, tx);
       await assertProjectionSource(tx, input.companyId, current);
       requireExpenseBranchId(current.branchId);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
@@ -3813,11 +3856,11 @@ export class PrismaExpenseRepository {
       });
       if (changed.count !== 1) throw new ConflictException('expense_confirmation_source_version_changed');
       // WHT certificate system issuance, Phase 1.2 (S3): a confirmed expense that withheld tax owes
-      // the payee a 50 ทวิ, recorded as a durable handoff in the SAME transaction as confirmation.
+      // the payee a 50 ทวิ unless the bank remits it through e-WHT, in the SAME transaction.
       // The withheld amount reads from `acceptedRecord` (not `current`) because a VAT source override
       // can recompute whtAmount from `whtInputJson`; the category/rate classification is untouched by
       // that recompute, so it still reads from the raw row.
-      if (new Decimal(acceptedRecord.whtAmount ?? '0').gt(0)) {
+      if (current.whtRemittance !== 'E_WHT' && new Decimal(acceptedRecord.whtAmount ?? '0').gt(0)) {
         await createWhtHandoffForExpense(tx, {
           companyId: input.companyId, actorUserId: input.actorUserId,
           expense: {
@@ -5052,7 +5095,7 @@ export class PrismaExpenseRepository {
 // WHT certificate system issuance, Phase 1.2 (docs/plans/wht-certificate-system-issuance-plan.md §1.2).
 // Mirrors `createWhtHandoffForPayment` in prisma-procurement.repository.ts field-for-field, adapted to
 // ExpenseRecord's own snapshot columns. Unlike the AP side (which only records a handoff while the
-// SYSTEM route is closed), Expenses records the handoff unconditionally whenever whtAmount > 0 (S3):
+// SYSTEM route is closed), Expenses records the handoff whenever whtAmount > 0 and the payer files (S3):
 // this closes the gap H4 deliberately scoped out (wht-durable-prefilled-handoff.md OQ-2) rather than
 // reproducing AP's older closed-route-only condition.
 async function createWhtHandoffForExpense(tx: any, input: {

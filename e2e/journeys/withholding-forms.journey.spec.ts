@@ -1,3 +1,5 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
+import { eWhtPayeeTaxId, openEWhtMonth, printedPdfPages, setEWhtSetting, withEWhtBranch, workbookXml } from './e-wht-journey-kit';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -15,7 +17,7 @@ import type { Locator, Page } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import {
-  AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, SECOND_SHOP, dayOfLastMonth, inOrder, periodKey, pressForDownload, pressMenu, recordExpenseByHand,
+  AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, SECOND_SHOP, dayOfLastMonth, inOrder, periodKey, pressForDownloadBuffer, pressForDownload, pressMenu, recordExpenseByHand,
   thaiDate, thaiMonth, fillShopIdentity,
 } from './journey-kit';
 
@@ -927,7 +929,7 @@ test('@journey R10 source-only correction, read-only and hidden branches preserv
       await db.membershipBranchScope.updateMany({ where: { membershipId: readerMembership.id }, data: { branchId: head.id } });
       await db.companyMembership.update({ where: { id: readerMembership.id }, data: { defaultBranchId: head.id } });
       await openMonth(readonly, false);
-      await expect(rm.getByText('มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด')).toHaveCount(1);
+      await expect(rm.getByText('มีรายการของสาขาที่คุณไม่ได้ดูแลที่ต้องแก้ก่อนยื่นแบบนี้ ให้ผู้ดูแลสาขานั้นแก้ข้อมูล')).toHaveCount(1);
       await expect(rm).not.toContainText(legacy.seller);
       await expect(rm.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).first()).toBeVisible();
       await payerMode('EACH_BRANCH_PAYS');
@@ -946,7 +948,7 @@ test('@journey R10 source-only correction, read-only and hidden branches preserv
     const missing = await makeLegacySource('MISSING_ID');
     await test.step('one good filed source and one missing ID show a truthful warning while the old download stays byte-identical', async () => {
       await openMonth();
-      await expect(normal).toContainText('มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล', AFTER_PRESS);
+      await expect(normal).toContainText(`${missing.seller}: ไม่อยู่ในแบบที่ยื่นแล้ว แก้ข้อมูลก่อน แล้วระบบจะบอกว่าต้องยื่นแบบเพิ่มเติมหรือยื่นอีกแบบหนึ่ง`, AFTER_PRESS);
       await expect(main.getByTestId('withholding-fixes')).toContainText(missing.seller);
       const kept = await pressForDownload(page, () => normal.getByRole('button', { name: 'ดาวน์โหลดแบบที่ยื่น', exact: true }).click());
       expect(await readFile((await kept.download.path())!)).toEqual(earlierBytes);
@@ -970,4 +972,40 @@ test('@journey R10 source-only correction, read-only and hidden branches preserv
     if (readerRole) await db.role.delete({ where: { id: readerRole.id } });
     await db.$disconnect();
   }
+});
+
+test('@journey e-WHT mixed month: normal PND53 printed bytes exclude bank rows and the bank workbook downloads separately', async ({ pageAs, api }) => {
+  test.setTimeout(600_000);
+  const page = await pageAs('OWNER');
+  page.setDefaultTimeout(AFTER_PRESS.timeout);
+  const main = page.locator('main');
+  const card = () => main.locator('.mangmee-card').filter({ has: page.getByRole('heading', { name: 'ภ.ง.ด.53 (จ่ายให้บริษัท)', exact: true }) });
+  await withEWhtBranch(api, async branch => {
+    await setEWhtSetting(page, true);
+    const payer = unique('บริษัท ยื่นแบบเองเดือนผสม');
+    await recordExpenseByHand(page, { branch: branch.name, seller: payer, item: unique('ค่าบริการเดือนผสม'), price: '1000', total: '1,000.00 บาท', toPay: '970.00 บาท', pay: true,
+      withholding: { payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '30.00 บาท', taxId: eWhtPayeeTaxId(branch.code, 4), address: '45 ถนนสีลม กรุงเทพมหานคร 10500' } });
+    await openEWhtMonth(page, branch);
+    const normal = await pressForDownloadBuffer(page, () => card().getByRole('button', { name: 'ดาวน์โหลดแบบ ภ.ง.ด.53', exact: true }).click());
+    expect(normal.buffer.subarray(0, 5).toString()).toBe('%PDF-');
+    const baselinePages = await printedPdfPages(normal.buffer);
+    const bankPayee = unique('บริษัท ธนาคารนำส่งเดือนผสม');
+    await recordExpenseByHand(page, { branch: branch.name, seller: bankPayee, item: unique('ค่าโฆษณาเดือนผสม'), price: '1000', total: '1,000.00 บาท', toPay: '990.00 บาท', pay: true,
+      withholding: { payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าโฆษณา (นิติบุคคล) · หัก 2%', rate: '1', withheld: '10.00 บาท', taxId: eWhtPayeeTaxId(branch.code, 5), address: '45 ถนนสีลม กรุงเทพมหานคร 10500' } }, async block => {
+      await chooseThemedOption(page, block.getByRole('combobox', { name: E_WHT_WORDS['W-F1'], exact: true }), E_WHT_WORDS['W-F3']);
+    });
+    await openEWhtMonth(page, branch);
+    await expect(card().locator('.mangmee-unit')).toHaveText([metricText('1', 'รายการ'), metricText('1,000.00', 'บาท'), metricText('30.00', 'บาท')], AFTER_PRESS);
+    const mixed = await pressForDownloadBuffer(page, () => card().getByRole('button', { name: 'ดาวน์โหลดแบบ ภ.ง.ด.53', exact: true }).click());
+    expect(await printedPdfPages(mixed.buffer), 'adding an e-WHT payment changes no printed page bytes').toEqual(baselinePages);
+    const bank = main.locator('.mangmee-card').filter({ has: page.getByRole('heading', { name: E_WHT_WORDS['W-T1'], exact: true }) });
+    await expect(bank).toContainText(bankPayee);
+    await expect(bank).not.toContainText(payer);
+    const separate = await pressForDownloadBuffer(page, () => bank.getByRole('button', { name: E_WHT_WORDS['W-T2b'], exact: true }).click());
+    const xml = workbookXml(separate.buffer);
+    expect(xml).toContain(bankPayee);
+    expect(xml).not.toContain(payer);
+    expect(xml).toContain(E_WHT_WORDS['W-X3']);
+    await test.info().attach('e-wht-mixed-month', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+  });
 });

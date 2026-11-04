@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from './tax.js';
 import { EXPENSE_CORRECTION_WORDS, type ExpensePaymentMethod } from './expenses.js';
 
 export const DISBURSEMENT_VOUCHER_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED'] as const;
@@ -85,6 +86,7 @@ export const DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE = 'disbursement_voucher
 export const DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG = 'disbursement_voucher_slip';
 
 export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
+  disbursement_ewht_planned_method: E_WHT_WORDS['W-R1'],
   disbursement_reminder_cooldown: 'เพิ่งส่งเตือนผู้อนุมัติคนนี้ไป ยังส่งซ้ำไม่ได้ รอให้ครบหนึ่งชั่วโมงหรือเลือกผู้อนุมัติคนอื่น',
   disbursement_supporting_frozen: 'ใบนี้แก้ไฟล์ประกอบไม่ได้แล้ว เปิดใบนี้ใหม่เพื่อตรวจสถานะ',
   disbursement_supporting_missing: 'ไม่พบไฟล์ประกอบของใบนี้ เปิดใบนี้ใหม่เพื่อตรวจไฟล์',
@@ -214,7 +216,8 @@ export type DisbursementVoucherDetail = {
   preparerActive?: boolean; senderActive?: boolean;
   preparerName: string | null; submittedByName: string | null; requestedApproverName: string | null; approvedByName: string | null; paidByName: string | null;
   lines: (Pick<DisbursementPayableExpense, 'expenseId' | 'expenseNumber' | 'expenseDate' | 'vendorName' | 'vendorTaxId' | 'branchId' | 'grandTotalAmount' | 'whtAmount' | 'netPayableAmount' | 'outstandingAmount'> & { amount: string; position: number; expensePaymentId: string | null; paymentInEffect: boolean; description?: string | null; vendorInvoiceNumber?: string | null;
-    withholdingCertificate: { state: 'NONE' | 'PENDING' | 'SYSTEM_ISSUED' | 'EXTERNAL_LINKED'; number: string | null } })[];
+    whtRemittance: import('./tax.js').WhtRemittance | null; eWhtReducedRateApplied: boolean;
+    withholdingCertificate: { state: 'NONE' | 'PENDING' | 'E_WHT' | 'SYSTEM_ISSUED' | 'EXTERNAL_LINKED'; number: string | null } })[];
   revisions: { revision: number; snapshotJson: unknown; snapshotHash: string; requestedApproverUserId: string | null; requestedApproverName: string | null; submittedByUserId: string; submittedByName: string | null; submittedAt: string; decision: DisbursementVoucherRevisionDecision | null; decidedByUserId: string | null; decidedByName: string | null; decidedAt: string | null; decisionReason: string | null;
     postApprovalAction: 'WITHDRAWN' | 'CANCELLED' | null; postApprovalByUserId: string | null; postApprovalByName: string | null; postApprovalAt: string | null; postApprovalReason: string | null }[];
   actions: DisbursementVoucherActions;
@@ -224,6 +227,7 @@ export type DisbursementPayeePage = { data: DisbursementPayee[]; total: number; 
 export type DisbursementPayableExpenseQuery = { payeeKey?: string; search?: string; branchId?: string };
 export type DisbursementExpenseReservation = { voucherId?: string | null; documentNumber: string | null; preparerName: string | null };
 export type DisbursementPayableExpense = {
+  whtRemittance: import('./tax.js').WhtRemittance | null;
   payeeKey: string;
   payeeKeyKind: 'TAX_ID' | 'NAME' | null;
   expenseId: string;

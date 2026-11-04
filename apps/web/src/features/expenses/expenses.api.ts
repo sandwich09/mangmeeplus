@@ -856,3 +856,10 @@ export function downloadAccountingSoftwareExport(result: import('@watchdog-bms/c
     downloadBlob(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), file.fileName);
   }
 }
+
+export function getExpenseEWhtSetting(companyId: string): Promise<import('@watchdog-bms/contracts').ExpenseEWhtSetting> {
+  return apiFetch(`/companies/${companyId}/expense-settings/e-wht`, { suppressErrorToast: true });
+}
+export function updateExpenseEWhtSetting(companyId: string, input: import('@watchdog-bms/contracts').UpdateExpenseEWhtSettingInput): Promise<import('@watchdog-bms/contracts').ExpenseEWhtSetting> {
+  return apiFetch(`/companies/${companyId}/expense-settings/e-wht`, { method: 'PATCH', body: JSON.stringify(input), suppressErrorToast: true });
+}

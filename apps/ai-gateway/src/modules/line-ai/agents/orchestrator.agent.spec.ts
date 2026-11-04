@@ -2760,6 +2760,11 @@ it('Exam C4: tax guidance agrees with active service categories and the later ex
   assert.match(ADVISOR_TAX_GUIDANCE, /base BEFORE VAT/);
   assert.match(ADVISOR_TAX_GUIDANCE, /does NOT submit e-filing/);
   assert.match(ADVISOR_TAX_GUIDANCE, /WEB only/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /e-WHT.*2023-01-01.*2027-12-31/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /hotel.*restaurant.*life-insurance.*not.*3%/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /international.*ship.*1%.*ordinary/i);
+  assert.match(ADVISOR_TAX_GUIDANCE, /bank.*four business days/);
+  assert.match(ADVISOR_TAX_GUIDANCE, /e-WHT.*50.*bis.*not required/);
 });
 
 it('Exam C2/C4: a polite explanation cannot become action help even when both model selectors propose an action', async () => {
@@ -3256,4 +3261,21 @@ describe('PWS-LINE-HELP-ANSWER Q4 card eligibility', () => {
     const card = pack().cards.find((card: any) => card.id === 'package.quota')!;
     assert.ok(result.replyText.includes(card.body)); assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
   });
+});
+
+it('E44 semantic delivery answers e-WHT with the approved bank-remittance explanation', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  for (const question of ['e-WHT คืออะไร', 'จ่ายผ่าน e-WHT ต้องยื่น ภงด53 ไหม', 'e-WHT หักกี่เปอร์เซ็นต์', 'จ่ายผ่าน e-WHT ต้องออก 50 ทวิไหม']) {
+    for (const features of [[], [...TIER_FEATURE_PRESETS.STARTER_249], [...TIER_FEATURE_PRESETS.ENTERPRISE_1999]]) {
+      const req = makeReq(question);
+      req.entitledFeatureKeys = features;
+      req.userContext.permissions = ['expense.read_own'];
+      req.semanticSubrequests = [{ index: 0, kind: 'help', goal: 'explain e-WHT', requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }];
+      const result = await runSemanticTurnV2({ req, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+        provider: { generateText: async () => ({ ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: null }], answers: [{ index: 0, status: 'handled', text: 'ผู้จ่ายหักภาษีแล้วนำส่งเองค่ะ' }] }) }) },
+        invoke: async () => assert.fail('an explanation does not read company data or mutate records') });
+      assert.equal(result.replyText, E_WHT_WORDS['L-14']);
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    }
+  }
 });

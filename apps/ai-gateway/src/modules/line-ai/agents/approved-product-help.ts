@@ -1,11 +1,11 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
-import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, productKnowledgeAccess, renderApprovedKnowledge, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES, PLAIN_WORDS_HELP_DRAFTS } from './product-help-draft-cards';
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, toolPermissionReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
 
 const sources = {
-  'tax': { file: 'tax-guide.content.ts', hash: '1eac64225f803d0e436138261b81ff3d33a55c6d54bbd557843a7b733f4a8319' },
+  'tax': { file: 'tax-guide.content.ts', hash: '03d8f6dbe1c1fea2fa26f78b9ef66c663a5b35d5951d40fb5742416a6785416c' },
   'disbursement-vouchers': { file: 'disbursement-voucher-guide.content.ts', hash: 'def3bfcd017f1fb2558621a1f015434659455fde63bfd95bca42c46c35e91b8a' },
 
   expenses: { file: 'expenses-guide.content.ts', hash: '7503a7696e159765672b4762ab082858831b9b58e92140fea652b74d9aae717f' },
@@ -21,7 +21,9 @@ function card(
   const value: ProductKnowledgeCard = {
     id, version: guide === 'reimbursements' ? 4 : guide === 'expenses' ? 3 : guide === 'substitute-receipts' ? 2 : 1, title, questions, summary: title, body,
     sourceURL: `/companies/{companyId}/user-guide/${guide === 'disbursement-vouchers' ? 'expenses' : guide}#${anchor}`,
-    sourceFile: `apps/web/src/features/user-guide/${sources[guide].file}`, sourceHash: sources[guide].hash,
+    sourceFile: `apps/web/src/features/user-guide/${sources[guide].file}`,
+    // Historical v4/v6 records retain their reviewed source bytes.
+    sourceHash: guide === 'tax' ? '1eac64225f803d0e436138261b81ff3d33a55c6d54bbd557843a7b733f4a8319' : sources[guide].hash,
     contentHash: '', permissionAnyOf, requiredPermissions: [],
     featureKeys: guide === 'expenses' || guide === 'substitute-receipts' || guide === 'disbursement-vouchers' ? ['expenses'] : guide === 'reports' ? ['reports'] : [],
     requiredCapabilities, audience: 'member', risk: 'R1',
@@ -131,13 +133,22 @@ const reviewedSourceHashes: Record<string, string> = {
   "apps/web/src/features/user-guide/reimbursement-guide.content.ts": "6e65e4f84c78d933aaa64f342c9b5c0f18cc66ee1a70ea008b86d1ed2bd38e12",
   "apps/web/src/features/user-guide/reports-guide.content.ts": "a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4",
   "apps/web/src/features/user-guide/substitute-receipt-guide.content.ts": "c598503501db229e78f11edfe74c9dba5c485f6aeffb17b7b03e2fba0022f2f1",
-  "apps/web/src/features/user-guide/tax-guide.content.ts": "864e9afe7c289d756279b8566d9c7518cd77d2496d5ac14351912e732e077a27"
+  "apps/web/src/features/user-guide/tax-guide.content.ts": sources.tax.hash
 };
+
+const eWhtHelpCard: ProductKnowledgeCard = {
+  id: 'wht.e-wht', version: 1, title: E_WHT_WORDS['W-T1'], summary: E_WHT_WORDS['W-T1'],
+  questions: ['e-WHT คืออะไร', 'จ่ายผ่าน e-WHT ต้องยื่น ภงด53 ไหม', 'e-WHT หักกี่เปอร์เซ็นต์', 'จ่ายผ่าน e-WHT ต้องออก 50 ทวิไหม'],
+  body: E_WHT_WORDS['L-7'], sourceURL: '/companies/{companyId}/user-guide/tax#wht',
+  sourceFile: 'apps/web/src/features/user-guide/tax-guide.content.ts', sourceHash: sources.tax.hash, contentHash: '',
+  permissionAnyOf: ['expense.read', 'expense.read_own'], requiredPermissions: [], featureKeys: [], requiredCapabilities: [], audience: 'member', risk: 'R1',
+};
+eWhtHelpCard.contentHash = knowledgeCardHash(eWhtHelpCard);
 
 /** Owner approved all 21 recommendations on the review page in chat (2026-11-04: "ตามแนะนำ"). */
 export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
-  ...PRODUCT_HELP_V6_PACK, version: 7, reviewers: ['owner-review:2026-11-04:chat:ตามแนะนำ'], contentHash: '',
-  cards: PRODUCT_HELP_V6_PACK.cards.map(original => {
+  ...PRODUCT_HELP_V6_PACK, version: 7, reviewers: ['owner-review:2026-11-04:chat:ตามแนะนำ', 'owner-review:2026-11-04:Q4:e-WHT'], contentHash: '',
+  cards: [...PRODUCT_HELP_V6_PACK.cards.map(original => {
     const approved = PLAIN_WORDS_HELP_DRAFTS.find(draft => draft.channel === 'LINE' && draft.change !== 'C55' && draft.id === original.id);
     const sourceHash = reviewedSourceHashes[original.sourceFile]!;
     if (!approved && sourceHash === original.sourceHash) return original;
@@ -147,7 +158,7 @@ export const PRODUCT_HELP_DRAFT_PACK: ProductKnowledgePack = {
       questions: title === original.title ? original.questions : [...original.questions, original.title, title] };
     value.contentHash = knowledgeCardHash(value);
     return value;
-  }),
+  }), eWhtHelpCard],
 };
 PRODUCT_HELP_DRAFT_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_DRAFT_PACK);
 

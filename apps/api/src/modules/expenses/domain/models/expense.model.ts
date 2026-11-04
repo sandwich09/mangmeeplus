@@ -59,6 +59,7 @@ export type ExpenseRecord = {
   taxableAmount: string;
   vatAmount: string;
   whtAmount: string;
+  whtRemittance: import('@watchdog-bms/contracts').WhtRemittance | null;
   // RA-18-style classification, captured at review — mirrors SupplierPayment.whtCategoryCode/whtRate
   // (WHT certificate system issuance plan §1.2). Null means not yet classified.
   whtCategoryCode: string | null;
@@ -249,6 +250,7 @@ export type SubstituteReceiptPolicyRecord = {
 };
 
 export type CreateExpenseRecordInput = {
+  whtRemittance?: import('@watchdog-bms/contracts').WhtRemittance | null;
   /** Server-owned identity of a deliberate save; never supplied to upload/OCR repository writes. */
   draftIdempotencyKey?: string;
   draftPayloadHash?: string;

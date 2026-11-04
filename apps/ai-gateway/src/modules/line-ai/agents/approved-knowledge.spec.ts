@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import {
   eligibleKnowledgeCards, knowledgeCardHash, knowledgePackHash, offeredKnowledgeMetadata,
   parseSelectedKnowledgeCardIds, renderApprovedKnowledge, validateKnowledgePack,
@@ -180,8 +180,8 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   const pack = activeProductHelpPack();
   validateKnowledgePack(pack);
   assert.equal(pack.version, 7);
-  assert.equal(pack.contentHash, 'e64a5952f918f047dd0e9924b2c4d90f1342b3cdcff2d426dfac834c66ca0774');
-  assert.deepEqual(pack.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ']);
+  assert.equal(pack.contentHash, '6e0bb124a17b606b816bf45c234ea3d681059c5d39703c1436f3be343ecae428');
+  assert.deepEqual(pack.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ', 'owner-review:2026-11-04:Q4:e-WHT']);
   assert.equal(PRODUCT_HELP_V6_PACK.contentHash, '0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0');
   validateKnowledgePack(PRODUCT_HELP_V6_PACK);
   const approved = [
@@ -195,7 +195,7 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   },
   {
     "id": "wht.calculation",
-    "body": "ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ"
+    "body": `ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ ${E_WHT_WORDS['L-8'].slice(E_WHT_WORDS['L-8'].indexOf('ถ้าจ่ายผ่าน e-WHT'))}`
   },
   {
     "id": "wht.outside",
@@ -207,7 +207,7 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   }
 ];
   const root = resolve(__dirname, '../../../../../..');
-  const screenSources = ['packages/contracts/src/expenses.ts', 'apps/web/src/common/i18n/workspace-dictionary.ts', 'apps/web/src/features/tax/WithholdingPage.tsx', 'apps/web/src/features/expenses/ExpensesPages.tsx']
+  const screenSources = ['packages/contracts/src/expenses.ts', 'packages/contracts/src/tax.ts', 'apps/web/src/common/i18n/workspace-dictionary.ts', 'apps/web/src/features/tax/WithholdingPage.tsx', 'apps/web/src/features/expenses/ExpensesPages.tsx']
     .map(path => readFileSync(resolve(root, path), 'utf8')).join('\n');
   for (const expected of approved) {
     const card = pack.cards.find(card => card.id === expected.id)!;
@@ -235,8 +235,35 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   // Item 3 is the Q3 data answer; the reviewed generic fallback stays intact.
   assert.equal(pack.cards.find(card => card.id === 'wht.pnd53-due')!.body, PRODUCT_HELP_V6_PACK.cards.find(card => card.id === 'wht.pnd53-due')!.body);
   for (const card of pack.cards) {
-    const prior = PRODUCT_HELP_V6_PACK.cards.find(prior => prior.id === card.id)!;
-    if (!approved.some(value => value.id === card.id)) assert.equal(card.body, prior.body, card.id);
+    const prior = PRODUCT_HELP_V6_PACK.cards.find(prior => prior.id === card.id);
+    if (!prior) assert.equal(card.id, 'wht.e-wht');
+    else if (!approved.some(value => value.id === card.id)) assert.equal(card.body, prior.body, card.id);
     assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
   }
+});
+
+it('E44 serves the e-WHT card in v7 across paid and free expense-reader access with the reviewed tax source', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const pack = activeProductHelpPack(), card = pack.cards.find(card => card.id === 'wht.e-wht');
+  assert.ok(card); assert.equal(card.body, E_WHT_WORDS['L-7']);
+  assert.deepEqual(card.featureKeys, []); assert.deepEqual(card.permissionAnyOf, ['expense.read', 'expense.read_own']);
+  assert.equal(card.sourceURL, '/companies/{companyId}/user-guide/tax#wht');
+  assert.equal(card.sourceFile, 'apps/web/src/features/user-guide/tax-guide.content.ts');
+  const root = resolve(__dirname, '../../../../../..');
+  assert.equal(card.sourceHash, createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'));
+  assert.equal(card.contentHash, knowledgeCardHash(card));
+  assert.deepEqual(card.questions, ['e-WHT คืออะไร', 'จ่ายผ่าน e-WHT ต้องยื่น ภงด53 ไหม', 'e-WHT หักกี่เปอร์เซ็นต์', 'จ่ายผ่าน e-WHT ต้องออก 50 ทวิไหม']);
+  for (const permissions of [['expense.read'], ['expense.read_own']]) for (const featureKeys of [[], ['expenses'], ['expenses', 'wht_50bis', 'wht_pnd53']]) {
+    const actor = { ...access(), permissions, featureKeys };
+    assert.ok(eligibleKnowledgeCards(pack, actor).some(c => c.id === card.id));
+    assert.ok(renderApprovedKnowledge(pack, [card.id], actor, 'company-A')!.replyText.includes(E_WHT_WORDS['L-7']));
+  }
+  assert.equal(renderApprovedKnowledge(pack, [card.id], { ...access(), permissions: [], featureKeys: [] }, 'company-A'), null);
+  assert.equal(PRODUCT_HELP_PACK.cards.some(c => c.id === card.id), false);
+  assert.equal(PRODUCT_HELP_V6_PACK.cards.some(c => c.id === card.id), false);
+  const base = PLAIN_WORDS_HELP_DRAFTS.find(d => d.change === 'C56')!;
+  const revised = PLAIN_WORDS_HELP_DRAFTS.find(d => d.change === 'E44')!;
+  assert.equal(revised.body, `${base.body} ${E_WHT_WORDS['L-8'].slice(E_WHT_WORDS['L-8'].indexOf('ถ้าจ่ายผ่าน e-WHT'))}`);
+  assert.equal(pack.cards.find(c => c.id === 'wht.calculation')!.body, revised.body);
+  assert.equal(PLAIN_WORDS_HELP_DRAFTS.find(d => d.channel === 'PUBLIC' && d.id === 'wht.calculation')!.body, 'เลือก “จ่ายค่าอะไร” แล้วใช้ยอดก่อน VAT คูณอัตราที่แสดง');
 });

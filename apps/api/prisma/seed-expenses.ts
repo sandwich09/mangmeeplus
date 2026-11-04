@@ -190,6 +190,30 @@ export function seedExpenseRows(at: (dayOffset: number, hour: number, minute?: n
       duplicateStatus: 'POSSIBLE_DUPLICATE',
       note: 'เคสเอกสารเลขที่และยอดตรงกัน ต้องไม่ถูกรวมยอดก่อนผู้ใช้ยืนยัน',
     },
+    {
+      id: 'seed-expense-record-e-wht-advertising', lineId: 'seed-expense-line-e-wht-advertising',
+      expenseNumber: 'EXP-LOCAL-0007', categoryId: 'seed-expense-category-marketing',
+      vendor: 'บริษัท โฆษณาธนาคาร ตัวอย่าง จำกัด', vendorEntityKindSnapshot: 'JURISTIC',
+      vendorTaxIdSnapshot: '0994000000014', vendorAddressSnapshot: '1 ถนนทดสอบ กรุงเทพมหานคร 10110', vendorBranchCodeSnapshot: '00000',
+      docNo: 'EWHT-MIXED-BANK', date: at(0, 10), description: 'ค่าโฆษณา e-WHT ตัวอย่าง',
+      subtotal: '10000', vat: '0', wht: '100', whtRate: '1', whtCategoryCode: 'WHT_ADVERTISING_JUR', whtRemittance: 'E_WHT',
+      total: '10000', netPayable: '9900', status: 'CONFIRMED', paymentStatus: 'PAID', paidAmount: '9900',
+      payments: [{ amount: '9900', method: 'BANK_TRANSFER', paidAtConfirmed: true }], vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+      accountHintKey: 'expense.marketing', captureSource: 'WEB_MANUAL', sourceDocumentType: 'RECEIPT',
+      taxEvidenceStatus: 'SUPPORTING_ONLY', duplicateStatus: 'NO_MATCH', note: 'EWHT_MIXED_MONTH: E_WHT',
+    },
+    {
+      id: 'seed-expense-record-payer-files-rent', lineId: 'seed-expense-line-payer-files-rent',
+      expenseNumber: 'EXP-LOCAL-0008', categoryId: 'seed-expense-category-rent',
+      vendor: 'บริษัท บริการยื่นเอง ตัวอย่าง จำกัด', vendorEntityKindSnapshot: 'JURISTIC',
+      vendorTaxIdSnapshot: '0994000000014', vendorAddressSnapshot: '1 ถนนทดสอบ กรุงเทพมหานคร 10110', vendorBranchCodeSnapshot: '00000',
+      docNo: 'EWHT-MIXED-PAYER', date: at(0, 10), description: 'ค่าเช่าร้านยื่นแบบเองตัวอย่าง',
+      subtotal: '10000', vat: '0', wht: '500', whtRate: '5', whtCategoryCode: 'WHT_RENT_JUR', whtRemittance: 'PAYER_FILES',
+      total: '10000', netPayable: '9500', status: 'CONFIRMED', paymentStatus: 'PAID', paidAmount: '9500',
+      payments: [{ amount: '9500', method: 'BANK_TRANSFER', paidAtConfirmed: true }], vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+      accountHintKey: 'expense.rent', captureSource: 'WEB_MANUAL', sourceDocumentType: 'RECEIPT',
+      taxEvidenceStatus: 'SUPPORTING_ONLY', duplicateStatus: 'NO_MATCH', note: 'EWHT_MIXED_MONTH: PAYER_FILES',
+    },
   ] as const;
 }
 
@@ -197,7 +221,7 @@ type SeedExpense = ReturnType<typeof seedExpenseRows>[number];
 type SeedExpenseOwner = { companyId: string; branchId: string; ownerUserId: string };
 
 export function seedExpenseData(row: SeedExpense, owner: SeedExpenseOwner) {
-  const wht = 'whtRate' in row ? { whtRate: row.whtRate, whtCategoryCode: row.whtCategoryCode } : {};
+  const wht = 'whtRate' in row ? { ...('whtRemittance' in row && { whtRemittance: row.whtRemittance }), whtRate: row.whtRate, whtCategoryCode: row.whtCategoryCode } : {};
   const payee = 'vendorTaxIdSnapshot' in row ? {
     vendorEntityKindSnapshot: row.vendorEntityKindSnapshot, vendorTaxIdSnapshot: row.vendorTaxIdSnapshot,
     vendorAddressSnapshot: row.vendorAddressSnapshot, vendorBranchCodeSnapshot: row.vendorBranchCodeSnapshot,
@@ -241,6 +265,9 @@ export async function seedExpenses(client: PrismaClient, owner: SeedExpenseOwner
   const bytes = buildSeedPaymentProofPng();
   for (const row of rows) {
     if (await client.expenseRecord.findUnique({ where: { id: row.id } })) continue;
+    if ('whtRemittance' in row && row.whtRemittance === 'E_WHT') await client.companyTaxProfile.upsert({
+      where: { companyId: owner.companyId }, create: { companyId: owner.companyId, eWhtUsed: true }, update: { eWhtUsed: true },
+    });
     const { record, line } = seedExpenseData(row, owner);
     // Upload first: the generic private-file reader uses object storage, not AttachmentBlob.
     const stored = record.primaryAttachmentId ? await putSeedAttachmentObject({
@@ -294,7 +321,7 @@ export async function seedExpenses(client: PrismaClient, owner: SeedExpenseOwner
       for (const payment of row.payments) {
         await repo.recordPaymentInTransaction(tx, {
           companyId: owner.companyId, expenseId: row.id, actorUserId: owner.ownerUserId, scopes: {},
-          idempotencyKey, amount: payment.amount, paymentMethod: payment.method, paidAt: row.date.toISOString().slice(0, 10), paidAtConfirmed: historicalExpensePaymentDateConfirmed(idempotencyKey),
+          idempotencyKey, amount: payment.amount, paymentMethod: payment.method, paidAt: row.date.toISOString().slice(0, 10), paidAtConfirmed: 'paidAtConfirmed' in payment ? payment.paidAtConfirmed : historicalExpensePaymentDateConfirmed(idempotencyKey),
         }, (db, result) => recordExpensePaymentEffects(audit, ctx, row.id, db, result));
       }
     });

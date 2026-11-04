@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { companyProfilePath, type WithholdingMonthDto, type WithholdingMonthFormDto, type WithholdingMonthIssueDto, type WhtFormType } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, companyProfilePath, type WithholdingMonthDto, type WithholdingMonthFormDto, type WithholdingMonthIssueDto, type WhtFormType } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard, MangmeePage, MetricGrid } from '@/common/components/mangmee';
 import { secondaryButtonClass } from '@/common/components/button';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
@@ -20,13 +20,17 @@ import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import { downloadSystemWhtCertificate } from '../expenses/expenses.api';
 import { amountText } from '../expenses/ExpensesUi';
 import { t } from '@/common/i18n/workspace-i18n.logic';
+import { taxReviewIssueLabel } from './tax.logic';
 import { MoreActions } from '@/common/components/actions/MoreActions';
 import styles from '../expenses/WhtCertificatesPage.module.css';
-import { confirmWithholdingRows, exportWithholding, getWithholdingMonth, listWithholdingMonths, markWithholdingFiled, syncWithholding } from './tax.api';
+import { confirmWithholdingRows, exportWithholdingEWht, exportWithholding, getWithholdingMonth, listWithholdingMonths, markWithholdingFiled, syncWithholding } from './tax.api';
 
 const baht = (value: string) => `${amountText(value)} บาท`;
 const button = secondaryButtonClass;
 const downloadLabel = (form: WhtFormType) => form === 'PND3' ? 'ดาวน์โหลดแบบ ภ.ง.ด.3' : 'ดาวน์โหลดแบบ ภ.ง.ด.53';
+/** A filed paper marks what it now omits as WARNING only to keep its own download; the source still has to be fixed. */
+const filedPaper = (paper: { status?: string | null }) => ['FILED', 'PAID', 'CLOSED'].includes(paper.status ?? '');
+
 export function withholdingErrorMessage(error: unknown): string {
   return apiErrorMessage(error);
 }
@@ -37,6 +41,7 @@ export function withholdingPaymentPage(rows: WithholdingMonthDto['payments'], fi
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   return { rows: filtered.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), totalPages, total: filtered.length };
 }
+const isBankOnly = (issue: WithholdingMonthIssueDto) => /_FILING_BANK_REMITTED_ONLY$/.test(issue.issueCode);
 const isSourceIssue = (issue: WithholdingMonthIssueDto) => !!(issue.sourceId || issue.expenseId || issue.counterpartyId)
   || issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN' || /_FILING_REVIEW$/.test(issue.issueCode);
 function Issue({ issue, companyId, permissions }: { issue: WithholdingMonthIssueDto; companyId: string; permissions: string[] }) {
@@ -51,7 +56,7 @@ function Issue({ issue, companyId, permissions }: { issue: WithholdingMonthIssue
   const canReadExpenses = ['expense.read', 'expense.read_own', 'expense.read_related'].some(permission => permissions.includes(permission));
   const actionHref = href ?? (canReadExpenses ? `/companies/${companyId}/expenses` : null);
   return <Notice tone="warning" action={actionHref ? <Link className="inline-flex min-h-11 items-center underline" href={actionHref}>{href ? payer ? 'ตั้งค่าร้าน › ข้อมูลร้าน' : href === payeeHref ? 'เปิดคู่ค้า' : 'เปิดค่าใช้จ่าย' : 'กลับไปรายการค่าใช้จ่าย'}</Link> : undefined}>
-    {issue.description}{payer && !permissions.includes('company.legal_identity.manage') && ' ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ'}{!href && !payer && (issue.expenseId || issue.counterpartyId) && ' ให้ผู้มีสิทธิ์แก้รายการนี้เป็นผู้แก้'}
+    {issue.issueCode === 'WHT_RATE_MISMATCH' && <MangmeeBadge tone="amber" className="mr-2">{taxReviewIssueLabel(issue.issueCode)}</MangmeeBadge>}{issue.description}{payer && !permissions.includes('company.legal_identity.manage') && ' ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ'}{!href && !payer && (issue.expenseId || issue.counterpartyId) && ' ให้ผู้มีสิทธิ์แก้รายการนี้เป็นผู้แก้'}
   </Notice>;
 }
 type PaperAction = WithholdingMonthFormDto & { id?: string | null; sequence?: number; filedAt?: string | null };
@@ -88,6 +93,7 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
   const [explainDownload, setExplainDownload] = useState(false);
   const isFiled = ['FILED', 'PAID', 'CLOSED'].includes(paper.status ?? '');
   const stale = paper.status === 'EXPORTED' && paper.issues.some(issue => issue.issueCode === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+  const bankOnly = !isFiled && paper.issues.find(isBankOnly);
   const blocking = paper.issues.some(issue => issue.severity === 'BLOCKING');
   const canPrepare = permissions.includes('wht.pnd53.prepare');
   useEffect(() => {
@@ -112,7 +118,8 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
     <div ref={issuesRef} tabIndex={-1} className="scroll-mt-24 space-y-3">
       {explainDownload && paper.canDownload === false && !paper.issues.length && !paper.rowsUncertainNotice && <Notice tone="warning">ยังดาวน์โหลดไม่ได้ ดึงรายการล่าสุดแล้วตรวจข้อมูลก่อนดาวน์โหลด</Notice>}
       {error && !paper.issues.some(issue => issue.description === error) && <Notice tone="error">{error}</Notice>}
-      {paper.issues.filter(issue => !centralIssues || (!isSourceIssue(issue) && (explainDownload || error || !/_FILING_PAYER$/.test(issue.issueCode)))).map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}
+      {bankOnly && <Notice tone="info">{bankOnly.description}</Notice>}
+      {paper.issues.filter(issue => !isBankOnly(issue)).filter(issue => !centralIssues || ((issue.severity !== 'WARNING' || issue.issueCode === 'WHT_FILED_PAYMENT_OMITTED') && !isSourceIssue(issue) && (explainDownload || error || !/_FILING_PAYER$/.test(issue.issueCode)))).map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}
       {paper.paymentBasisChanged && <Notice tone="warning">รายการของแบบที่ยื่นไว้ต่างจากวันที่จ่ายจริง ให้ผู้ทำบัญชีเทียบกับแบบที่ยื่นแล้ว</Notice>}
       {paper.cancellations?.map((row, index) => <Notice key={index} tone="warning">ยกเลิกหลังยื่น: {row.payeeName} หักไว้ {baht(row.withheld)} ระบบแก้แบบที่ยื่นแล้วไม่ได้ ให้ผู้ทำบัญชีแจ้งกรมสรรพากร</Notice>)}
       {!!paper.cancelledPayeeNames?.length && <Notice tone="warning">มีผู้รับเงินที่ถูกยกเลิกหลังยื่นในเดือนนี้: {paper.cancelledPayeeNames.join(' · ')} ให้ผู้ทำบัญชีตรวจยอดก่อนยื่น</Notice>}
@@ -120,7 +127,7 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
       {paper.rowsUncertainNotice && <Notice tone="warning">{paper.rowsUncertainNotice}{(!canPrepare || !paper.canConfirmRows) && ' ให้ผู้ที่มีสิทธิ์จัดทำแบบภาษียืนยันรายการ'}</Notice>}
       {paper.rowsConfirmation && <p className="text-sm text-gray-600">ยืนยันรายการของแบบที่ยื่นแล้ว · {paper.rowsConfirmation.displayName ?? 'ผู้จัดทำแบบภาษี'} · {formatThaiDate(paper.rowsConfirmation.at)}</p>}
     </div>
-    {paper.paymentCount === 0 && !isFiled && !paper.issues.length ? <p>เดือนนี้ไม่มีรายการ</p> : canPrepare && <ActionGroup className="!flex-col sm:[&>button]:min-w-48">
+    {bankOnly ? null : paper.paymentCount === 0 && !isFiled && !paper.issues.length ? <p>เดือนนี้ไม่มีรายการ</p> : canPrepare && <ActionGroup className="!flex-col sm:[&>button]:min-w-48">
       {paper.canConfirmRows && <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={onConfirmRows}>ยืนยันรายการของแบบที่ยื่น</button>}
       <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={download}>{isFiled ? 'ดาวน์โหลดแบบที่ยื่น' : paper.accountantPrepared ? 'ดาวน์โหลดรายการให้ผู้ทำบัญชี' : paper.sequence ? `ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ ${paper.sequence}` : downloadLabel(paper.formType)}</button>
       {paper.status === 'EXPORTED' && !stale && paper.canMarkFiled !== false && <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={onFiled}>บันทึกว่ายื่นแล้ว</button>}
@@ -141,6 +148,8 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
   const [certificateBusy, setCertificateBusy] = useState<string | null>(null);
   const [establishmentCode, setEstablishmentCode] = useState('');
   const [order, setOrder] = useState<'newest' | 'oldest'>('newest');
+  const [bankBusy, setBankBusy] = useState(false);
+  const [bankError, setBankError] = useState('');
   const { confirm, confirmDialog } = useConfirm();
   const toast = useToast();
   const router = useRouter();
@@ -157,7 +166,7 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
   useEffect(() => { if (canRead) void refreshMonths().catch(e => { setError(apiErrorMessage(e)); setLoading(false); }); }, [companyId, canRead]);
   useEffect(() => {
     if (!canRead || !periodKey) return;
-    let active = true; setLoading(true); setMonth(null); setErrors({}); setError(''); setPage(1);
+    let active = true; setLoading(true); setMonth(null); setErrors({}); setError(''); setBankError(''); setPage(1);
     void (async () => {
       if (canPrepare) {
         try { await syncWithholding(companyId, 'PND53'); }
@@ -200,6 +209,13 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
       setBusyForm(value => ({ ...value, [form.formType]: false }));
     }
   }
+  async function downloadBank() {
+    if (bankBusy) return;
+    setBankBusy(true); setBankError('');
+    try { downloadArtifact(await exportWithholdingEWht(companyId, periodKey, selected?.code)); }
+    catch (e) { setBankError(apiErrorMessage(e)); }
+    finally { setBankBusy(false); }
+  }
   async function certificate(id: string) {
     setCertificateBusy(id); setError('');
     try {
@@ -213,12 +229,14 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
   const establishments = month?.establishments ?? [];
   const selected = establishments.find(row => row.code === establishmentCode) ?? establishments[0];
   const forms = selected?.forms ?? month?.forms ?? [];
-  const sourceIssues = [...new Map(forms.flatMap(form => [form, ...(form.papers ?? [])]).flatMap(form => form.issues).filter(isSourceIssue).map(issue => [issue.sourceId ? [issue.issueCode, issue.sourceId].join(':') : issue.description, issue])).values()];
+  const sourceIssues = [...new Map(forms.flatMap(form => [form, ...(form.papers ?? [])]).flatMap(form => form.issues.map(issue => ({ issue, filed: filedPaper(form) }))).filter(({ issue, filed }) => isSourceIssue(issue) && (issue.severity !== 'WARNING' || filed) && !isBankOnly(issue)).map(({ issue }) => issue).map(issue => [issue.sourceId ? [issue.issueCode, issue.sourceId].join(':') : issue.description, issue])).values()];
+  const warnings = [...new Map(forms.flatMap(form => [form, ...(form.papers ?? [])]).flatMap(form => filedPaper(form) ? [] : form.issues).filter(issue => issue.severity === 'WARNING' && issue.issueCode !== 'WHT_FILED_PAYMENT_OMITTED').map(issue => [issue.sourceId ? [issue.issueCode, issue.sourceId].join(':') : issue.description, issue])).values()];
+  const bankRows = (month?.bankRemitted ?? []).filter(row => !selected || (row.establishment?.kind === 'ESTABLISHMENT' && row.establishment.code === selected.code));
   const paged = withholdingPaymentPage(month?.payments ?? [], filter, page, 10, order);
   return <MangmeePage className="mangmee-flat" title="ภาษีหัก ณ ที่จ่าย">
     <div className="space-y-5">
       <div className="flex flex-wrap items-end gap-3">
-        <SelectField id="withholding-month" label="เดือนที่จ่าย" value={periodKey} disabled={syncing || Object.values(busyForm).some(Boolean)} onChange={e => setPeriodKey(e.target.value)}>{months.map(key => <option key={key} value={key}>{formatThaiMonth(key)}</option>)}</SelectField>
+        <SelectField id="withholding-month" label="เดือนที่จ่าย" value={periodKey} disabled={bankBusy || syncing || Object.values(busyForm).some(Boolean)} onChange={e => setPeriodKey(e.target.value)}>{months.map(key => <option key={key} value={key}>{formatThaiMonth(key)}</option>)}</SelectField>
         {/* One size side by side at every width (owner: buttons in a group are one size). */}
         <div className="ml-auto grid w-full auto-cols-fr grid-flow-col gap-3 sm:w-auto sm:min-w-80 [&>*]:min-w-0 [&>details>summary]:w-full">
           {permissions.includes('wht.pnd53.prepare') && <button type="button" className={button} disabled={syncing || loading} aria-busy={syncing || loading} onClick={() => void sync()}>ดึงรายการล่าสุด</button>}
@@ -227,13 +245,23 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
       </div>
       {error && <Notice tone="error" action={<button type="button" className={button} onClick={() => void retry()}>ลองอีกครั้ง</button>}>{error}</Notice>}
       {loading ? <LoadingState /> : month && <>
-        {establishments.length > 1 && <SelectField id="withholding-establishment" label="ยื่นในนาม" value={selected?.code ?? ''} disabled={syncing || Object.values(busyForm).some(Boolean)} onChange={e => { setEstablishmentCode(e.target.value); setErrors({}); }}>
+        {establishments.length > 1 && <SelectField id="withholding-establishment" label="ยื่นในนาม" value={selected?.code ?? ''} disabled={bankBusy || syncing || Object.values(busyForm).some(Boolean)} onChange={e => { setEstablishmentCode(e.target.value); setErrors({}); setBankError(''); }}>
           {establishments.map(row => <option key={row.code} value={row.code}>{row.name} ({row.code})</option>)}
         </SelectField>}
         {!!month.unpaidExpenses?.length && <p className="text-sm text-gray-600">ยืนยันแล้ว ยังไม่ได้จ่าย · {month.unpaidExpenses.length} รายการ ยังไม่อยู่ในแบบ {month.unpaidExpenses.map(row => <Link key={row.expenseId} className="ml-2 underline" href={`/companies/${companyId}/expenses/${row.expenseId}`}>{row.payeeName || 'เปิดรายจ่าย'}</Link>)}</p>}
         <WithholdingFixes month={month} forms={forms} companyId={companyId} permissions={permissions} sourceIssues={sourceIssues} />
+        {!!warnings.length && <MangmeeCard className="space-y-3 p-4"><h2 className="text-base font-semibold">ควรตรวจก่อนยื่น</h2>{warnings.map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}</MangmeeCard>}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{forms.map(form => <WithholdingFormCard key={form.formType} centralIssues form={{ ...form, issues: form.issues.filter(issue => !(issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' && month.establishmentIssues?.length)) }} periodKey={periodKey} companyId={companyId} permissions={permissions} busy={!!busyForm[form.formType] || syncing} error={errors[form.formType]} paperErrors={Object.fromEntries((form.papers ?? []).map(p => [String(p.sequence), errors[p.sequence ? `${form.formType}:${p.sequence}` : form.formType] ?? '']))} onDownload={(paper = form) => void act(paper, false)} onFiled={(paper = form) => void act(paper, true)} onConfirmRows={paper => void act(paper, 'confirm')} />)}</div>
         {!!month.separatePnd2?.length && <MangmeeCard className="space-y-3 p-4"><h2 className="text-base font-semibold">ต้องจัดทำ ภ.ง.ด.2 แยก</h2>{month.separatePnd2.map(row => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 border-b py-3"><div><p>{row.payeeName} · {row.incomeCategoryLabel}</p><p>จ่าย {baht(row.paid)} · หักไว้ {baht(row.withheld)}</p></div>{row.expenseId && <Link className="underline" href={`/companies/${companyId}/expenses/${row.expenseId}`}>เปิดรายจ่าย</Link>}</div>)}</MangmeeCard>}
+        {!!bankRows.length && <MangmeeCard className="min-w-0 space-y-3 p-4">
+          <h2 className="text-base font-semibold">{E_WHT_WORDS['W-T1']}</h2>
+          <p className="text-sm">{E_WHT_WORDS['W-T2']}</p>
+          {bankRows.map(row => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 border-b py-3 text-sm">
+            <span>{row.payeeName}</span><span className="whitespace-nowrap tabular-nums">{amountText(row.withheld)} {row.currency === 'THB' || !row.currency ? 'บาท' : row.currency}</span>
+          </div>)}
+          {bankError && <Notice tone="error">{bankError}</Notice>}
+          <ActionGroup><button type="button" className={button} disabled={bankBusy || syncing} aria-busy={bankBusy || syncing} onClick={() => void downloadBank()}>{E_WHT_WORDS['W-T2b']}</button></ActionGroup>
+        </MangmeeCard>}
         <MangmeeCard className="min-w-0 space-y-4 p-4">
           <h2 ref={listHeading} className="scroll-mt-4 text-lg font-semibold">รายการที่หักภาษีของเดือนนี้</h2>
           <FilterTabs aria-label="แบบภาษี" value={filter} onChange={value => { setFilter(value); setPage(1); }} tabs={[{ key: 'ALL', label: 'ทั้งหมด' }, { key: 'PND3', label: 'ภ.ง.ด.3' }, { key: 'PND53', label: 'ภ.ง.ด.53' }].map(tab => ({ ...tab, count: month.payments.filter(row => tab.key === 'ALL' || row.formType === tab.key).length }))} />

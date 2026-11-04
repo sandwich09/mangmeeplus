@@ -10219,6 +10219,7 @@ describe('Round 2 A expense action postback', () => {
       return plan;
     } } } };
     flow.deliveryExpenseActions = new WeakMap();
+    flow.deliveryExpensePaymentMethods = new WeakMap();
     flow.intentionalNoReplyTurns = new WeakSet();
     flow.expenseActions = { apply: async (...args: any[]) => { calls.push(args); return { status: 'applied', reply: 'ยืนยันแล้วค่ะ',
       preview: { previewId: token.split('.')[0], token, action: 'CONFIRM', record: { vendorName: 'ร้านทดสอบ', amount: '100.00', currency: 'THB', date: '2026-10-14', status: 'ยืนยันแล้ว', nextStatus: 'ยืนยันแล้ว' } } }; } };
@@ -14372,7 +14373,7 @@ it('PWS-B6 empty catalog confirm keeps a support exit despite retained repair ch
   assert.equal(result.reply, 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ');
   assert.equal(result.webPath, undefined);
   const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
-  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(),
+  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(), deliveryExpensePaymentMethods: new WeakMap(),
     expenseActions: { preview: async () => result, repairChoices: async () => [{ label: 'เก่า', text: 'คำตอบเดิม' }] },
     handleStaffContact: async () => { support++; } });
   for (const language of ['th', 'en'] as const) for (const retained of [false, true]) {
@@ -14407,7 +14408,7 @@ it('PWS-LINE raw evidence enum is mapped and a blocked action retains the same-c
   const text = formatGroundedReceiptFollowUp('https://app.example.com', 'company', expense);
   assert.match(text, /หลักฐานรายจ่าย: ใช้ได้/); assert.doesNotMatch(text, /USABLE_FOR_TAX|เครดิต VAT/);
   const handler: any = Object.create(ProcessLineWebhookUseCase.prototype);
-  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(),
+  Object.assign(handler, { config: { webBaseUrl: 'https://app.example.com' }, retainedTaskSources: new WeakMap(), deliveryExpensePaymentMethods: new WeakMap(),
     expenseActions: { preview: async () => ({ reply: EXPENSE_ACTION_REFUSALS.tax_period_locked, webPath: '/companies/company/expenses/plain-expense' }), repairChoices: async () => null } });
   const card = await handler.requestedCaptureConfirmation({ ...BASE_EVENT }, { companyId: 'company', permissions: ['expense.confirm'] }, expense.id, 'ยืนยันเลย', true);
   assert.match(JSON.stringify(card), /รายการนี้ยังทำต่อไม่ได้ ให้ผู้ทำบัญชีตรวจจากหน้ารายการ/);
@@ -15344,4 +15345,174 @@ it('R24 report links the prior result within thirty minutes and abandons inactiv
   assert.equal(tasks.find(task => task.id === 'inactive').endedAt.getTime(), now - minute);
   assert.equal(tasks.find(task => task.id === 'inactive').eventCount, 1);
   assert.equal(tasks.find(task => task.id === 'submit').status, 'OPEN');
+});
+
+async function ewhtActionHarness() {
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { ConflictException } = await import('@nestjs/common');
+  const record: any = { ...savedMediaFixture('ewht-source'), status: 'CONFIRMED', netPayableAmount: '1000', paidAmount: '200', whtAmount: '10', whtRate: '1',
+    whtCategoryCode: 'WHT_ADVERTISING_JUR', whtRemittance: 'E_WHT', expenseDate: new Date('2027-12-01') };
+  const ctx: any = { requestId: 'ewht', companyId: record.companyId, userId: record.createdByUserId, membershipId: 'ewht-member', roles: ['OWNER'], permissions: ['expense.read', 'expense.payment.record'], scopes: {}, authProvider: 'line' };
+  const calls: any[] = [], store = new LineDraftPreviewStore<any>();
+  const service: any = new LineExpenseActionService({ client: { aiConversation: { findFirst: async () => ({ id: 'ewht-owner', lifecycleEpoch: 1 }) } } } as any,
+    {} as any, { execute: async () => record } as any, {} as any, {} as any, {} as any, {} as any, {} as any, store,
+    { aiGatewayInternalSecret: 'ewht-secret', webBaseUrl: 'https://web.test' } as any);
+  service.recentSlip = async () => undefined;
+  service.payment = { previewLineAction: async (_ctx: any, _id: string, input: any) => { calls.push(input); if (['CASH', 'CARD'].includes(input.paymentMethod)) throw new ConflictException({ code: 'expense_ewht_payment_method' }); } };
+  return { service, ctx, record, calls, store, chat: 'ewht-chat' };
+}
+
+it('R12 e-WHT expense payment previews use future tense, bank default and conditional L-9', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const h = await ewhtActionHarness();
+  const result = await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paidAt: '2028-01-05', paidAmount: '125' }, true);
+  assert.equal(result.preview?.payment.paymentMethod, 'BANK_TRANSFER');
+  assert.ok(result.preview.details.includes(E_WHT_WORDS['L-2'])); assert.ok(result.preview.details.includes(E_WHT_WORDS['L-9']));
+  h.record.whtCategoryCode = 'WHT_TRANSPORT_JUR';
+  assert.equal((await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paidAt: '2028-01-05' }, true)).preview.details.includes(E_WHT_WORDS['L-9']), false);
+});
+
+it('R12 e-WHT refusal keeps a signed retry with the same amount and date', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { parseExpenseActionControl } = await import('../line-expense-action.service');
+  const { lineChoiceQuickReply } = await import('../../domain/logic/line-business-card.logic');
+  const h = await ewhtActionHarness();
+  const refused = await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paidAmount: '125', paidAt: '2027-11-05', paymentMethod: 'CASH' }, true);
+  assert.equal(refused.reply, E_WHT_WORDS['L-1']); assert.equal(refused.preview, undefined);
+  const stored = await h.store.load(h.ctx.companyId, `expense-action:${h.chat}`);
+  assert.equal(stored.awaitingField, 'paymentMethod'); assert.deepEqual(stored.allowedPaymentMethods, ['BANK_TRANSFER', 'CHEQUE', 'OTHER']);
+  const choices = await h.service.repairChoices(h.ctx, h.chat);
+  assert.deepEqual(choices.map((c: any) => c.label), ['โอนเงิน', 'เปิดรายการ']);
+  assert.equal(lineChoiceQuickReply(choices).items[0]!.action.type, 'postback');
+  const control = parseExpenseActionControl(choices[0].data)!;
+  assert.ok(control);
+  const tampered = await h.service.apply(h.ctx, h.chat, { ...control, action: 'expense_action_cheque' });
+  assert.equal(tampered.status, 'blocked');
+  const retried = await h.service.apply(h.ctx, h.chat, control);
+  assert.equal(retried.status, 'prepared');
+  assert.equal(retried.preview.payment.paidAmount, '125'); assert.equal(retried.preview.payment.paidAt, '2027-11-05');
+  assert.equal(retried.preview.payment.paymentMethod, 'BANK_TRANSFER');
+});
+
+it('R12 e-WHT pending methods retain one preview, ask L-10, cancel and reject changed sources', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { EXPENSE_ACTION_CHANGED } = await import('../line-expense-action.service');
+  const h = await ewhtActionHarness();
+  const input = { action: 'RECORD_PAYMENT', expenseId: h.record.id, paidAmount: '125', paidAt: '2027-11-05', paymentMethod: 'CARD' };
+  await h.service.preview(h.ctx, h.chat, input, true);
+  const first = await h.store.load(h.ctx.companyId, `expense-action:${h.chat}`);
+  assert.equal((await h.service.answerReason(h.ctx, h.chat, 'เงินสด')).reply, E_WHT_WORDS['L-1']);
+  assert.equal((await h.store.load(h.ctx.companyId, `expense-action:${h.chat}`)).previewId, first.previewId);
+  assert.equal(h.calls.length, 1);
+  assert.equal((await h.service.answerReason(h.ctx, h.chat, 'อะไรก็ได้')).reply, E_WHT_WORDS['L-10']);
+  assert.deepEqual((await h.service.repairChoices(h.ctx, h.chat)).map((c: any) => c.label), ['โอนเงิน', 'เช็ค']);
+  await h.service.answerReason(h.ctx, h.chat, 'ยกเลิก');
+  assert.equal(await h.store.load(h.ctx.companyId, `expense-action:${h.chat}`), null);
+  await h.service.preview(h.ctx, h.chat, input, true);
+  h.record.updatedAt = new Date(h.record.updatedAt.getTime() + 1000);
+  assert.equal((await h.service.answerReason(h.ctx, h.chat, 'โอนเงิน')).reply, EXPENSE_ACTION_CHANGED);
+});
+
+it('R12 e-WHT voucher cash refusals retain the voucher date and support a signed transfer retry', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { ConflictException } = await import('@nestjs/common');
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const { parseExpenseActionControl } = await import('../line-expense-action.service');
+  for (const code of ['expense_ewht_payment_method', 'disbursement_ewht_planned_method']) {
+    const h = await ewhtActionHarness();
+    h.ctx.permissions.push('expense.disbursement.pay');
+    const voucher: any = { header: { id: 'ewht-voucher', branchId: h.record.branchId, preparedByUserId: h.ctx.userId, updatedAt: h.record.updatedAt.toISOString(), createdAt: '2027-12-01T00:00:00Z', status: 'APPROVED', version: 2, totalAmount: '125', currency: 'THB', plannedMethod: 'CASH' },
+      lines: [{ expenseId: h.record.id, amount: '125', whtAmount: '10', whtRemittance: 'E_WHT', eWhtReducedRateApplied: true }] };
+    const payments: any[] = [];
+    h.service.vouchers = new LineVoucherActionService({ client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any,
+      { get: async () => voucher, previewLineAction: async (_ctx: any, _action: string, input: any) => {
+        const method = input.payment.paymentMethod ?? voucher.header.plannedMethod;
+        if (method === 'CASH') throw new ConflictException({ code });
+        payments.push(input.payment);
+      } } as any, {} as any, {} as any, {} as any, {} as any);
+    const result = await h.service.preview(h.ctx, h.chat, { action: 'VOUCHER_PAY', voucherId: voucher.header.id, paidAt: '2027-11-05' }, true);
+    assert.equal(result.reply, E_WHT_WORDS['L-1']); assert.equal(result.preview, undefined);
+    const choices = await h.service.repairChoices(h.ctx, h.chat);
+    assert.match(choices[1].uri, /expenses\/disbursement-vouchers\/ewht-voucher$/);
+    const retry = await h.service.apply(h.ctx, h.chat, parseExpenseActionControl(choices[0].data));
+    assert.equal(retry.status, 'prepared');
+    assert.deepEqual(payments, [{ commandId: 'line-preview', expectedVersion: 2, paidDate: '2027-11-05', paymentMethod: 'BANK_TRANSFER' }]);
+    assert.equal(retry.preview.payment.paidAmount, '125');
+  }
+});
+
+it('R12 never-paid free source-drafts shops keep the existing payment refusal and cannot start a retry', async () => {
+  const { freeExpenseDraftPermissions } = await import('../../../system-partner-management/application/free-expense-access');
+  const h = await ewhtActionHarness();
+  h.ctx.permissions = freeExpenseDraftPermissions(h.ctx.permissions);
+  const result = await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paymentMethod: 'CASH' }, true);
+  assert.equal(result.preview, undefined);
+  assert.match(result.reply, /ผู้มีสิทธิ์บันทึกจ่าย/);
+  assert.equal(h.calls.length, 0);
+  assert.equal(await h.store.load(h.ctx.companyId, `expense-action:${h.chat}`), null);
+});
+
+it('R12 signed e-WHT method retries survive frozen delivery only with their current private proof', async () => {
+  const { buildLineDeliveryPlan, parseLineDeliveryPlan } = await import('../../domain/logic/line-delivery-plan.logic');
+  const h = await ewhtActionHarness();
+  await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paymentMethod: 'CASH' }, true);
+  const event = { ...BASE_EVENT };
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  flow.expenseActions = h.service;
+  flow.deliveryExpensePaymentMethods = new WeakMap();
+  const choices = await flow.expenseActionRepairChoices(event, h.ctx, h.chat);
+  const { controls } = flow.deliveryExpensePaymentMethods.get(event);
+  const data = choices[0].data;
+  const text = 'จ่ายผ่านธนาคารแบบไหนคะ';
+  const createdAt = '2026-09-27T00:00:00.000Z', expiresAt = '2026-09-27T00:59:00.000Z';
+  const privateAuthorization: any = { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt,
+    actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa-1', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 1 }, proofs: [] };
+  const message: any = { type: 'text', text, quickReply: { items: [{ type: 'action', action: { type: 'postback', label: 'โอนเงิน', data } }] } };
+  for (const authorized of [false, true]) {
+    const auth = { ...privateAuthorization, proofs: authorized ? [{ id: 'payment-method', kind: 'EXPENSE_PAYMENT_METHOD', controls }] : [] };
+    const frozen = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: `ewht-${authorized}`, createdAt, expiresAt, readyAt: createdAt,
+      firstDispatchDeadlineAt: expiresAt, authorization: auth, businessResult: null, control: null,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text, required: true, sourceProofIds: [] }] }, preferredMessages: [message] });
+    assert.equal(JSON.stringify(frozen.batches).includes('expense_action_transfer'), authorized);
+    assert.ok(parseLineDeliveryPlan(frozen));
+  }
+});
+
+it('R12 e-WHT evidence refusal uses L-3 without offering a certificate', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { ConflictException } = await import('@nestjs/common');
+  const h = await ewhtActionHarness();
+  h.record.status = 'READY';
+  h.ctx.permissions.push('expense.confirm', 'expense.review');
+  h.service.updateDraft = {};
+  h.service.confirm = { previewLineAction: async () => { throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED' }); } };
+  const result = await h.service.preview(h.ctx, h.chat, { action: 'CONFIRM', expenseId: h.record.id }, true);
+  assert.equal(result.reply, E_WHT_WORDS['L-3']);
+  h.record.whtRemittance = 'PAYER_FILES';
+  assert.match((await h.service.preview(h.ctx, h.chat, { action: 'CONFIRM', expenseId: h.record.id }, true)).reply, /และออกหนังสือรับรอง 50 ทวิ/);
+});
+
+it('R12 e-WHT delivery authorization rechecks the pending source and permission before replay', async () => {
+  const { prisma } = makePrisma();
+  const flow: any = makeUseCase(prisma).useCase;
+  const h = await ewhtActionHarness();
+  const event = { ...BASE_EVENT };
+  h.chat = chatKeyHashOf(event);
+  flow.expenseActions = h.service;
+  flow.boundConversations.set(event, { id: 'ewht-owner', epoch: 1, owner: { companyId: h.ctx.companyId, userId: h.ctx.userId, membershipId: h.ctx.membershipId } });
+  flow.deliveryAccess.set(event, { companyId: h.ctx.companyId, userId: h.ctx.userId, membershipId: h.ctx.membershipId, fingerprint: 'ewht-access' });
+  flow.contextV2 = { load: async () => ({ row: { id: 'ewht-owner', lifecycleEpoch: 1 } }) };
+  flow.permissionResolver = { resolveAccess: async () => h.ctx };
+  flow.mayDeliverBusinessReply = async () => true;
+  await h.service.preview(h.ctx, h.chat, { action: 'RECORD_PAYMENT', expenseId: h.record.id, paymentMethod: 'CASH', paidAmount: '125', paidAt: '2027-11-05' }, true);
+  await flow.expenseActionRepairChoices(event, h.ctx, h.chat);
+  const authorization = await flow.webhookPlanAuthorization(event, new Date(Date.now() + 60_000).toISOString());
+  assert.equal(authorization.proofs[0].kind, 'EXPENSE_PAYMENT_METHOD');
+  assert.equal(await flow.verifyWebhookPlan({ authorization }, event), true);
+  h.ctx.permissions = ['expense.read'];
+  assert.equal(await flow.verifyWebhookPlan({ authorization }, event), false);
+  h.ctx.permissions.push('expense.payment.record');
+  h.record.updatedAt = new Date(h.record.updatedAt.getTime() + 1000);
+  assert.equal(await flow.verifyWebhookPlan({ authorization }, event), false);
 });

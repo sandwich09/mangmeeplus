@@ -1,4 +1,4 @@
-import { COMPANY_PROFILE_ACCOUNT_HASH, COMPANY_PROFILE_SETTINGS_PATH } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, COMPANY_PROFILE_ACCOUNT_HASH, COMPANY_PROFILE_SETTINGS_PATH } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
 import { canSeeRoute } from './route-permissions';
 
@@ -65,6 +65,14 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     title: 'ตั้งค่าใบรับรองแทนใบเสร็จ',
     desc: 'วิธีอนุมัติและหลักฐานที่ต้องแนบ',
     iconKey: 'DollarLineIcon',
+    tone: 'brand',
+  },
+  {
+    key: 'e-wht',
+    href: '/settings/e-wht',
+    title: E_WHT_WORDS['S-1'],
+    desc: E_WHT_WORDS['S-2'],
+    iconKey: 'BankIcon',
     tone: 'brand',
   },
   // WHT certificate system issuance plan §2.1b/§3.3 (Decision B): OWNER-only via
@@ -179,6 +187,7 @@ const SETTINGS_SIDEBAR_KEYS = [
   'tax-accounts',
   'branches',
   'substitute-receipt',
+  'e-wht',
   'tax-signature',
 ] as const;
 

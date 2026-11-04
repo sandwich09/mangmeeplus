@@ -5,6 +5,18 @@ import { RecordExpensePaymentUseCase } from './expense-draft.use-case';
 
 const noopAudit = { log: async () => undefined } as any;
 
+describe('R3 e-WHT paid payment preview', () => {
+  it('refuses cash and card and accepts every permitted bank method before a LINE card', async () => {
+    const row: any = { id: 'exp-1', branchId: 'branch-1', status: 'CONFIRMED', netPayableAmount: '100', paidAmount: '0', whtRemittance: 'E_WHT' };
+    const uc = new RecordExpensePaymentUseCase({ findById: async () => row } as any, noopAudit);
+    for (const paymentMethod of ['CASH', 'CARD'] as const) await assert.rejects(() => uc.previewLineAction(ctx(), row.id, { paidAmount: '10', paymentMethod }),
+      (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_payment_method');
+    for (const paymentMethod of ['BANK_TRANSFER', 'CHEQUE', 'OTHER', undefined] as const) assert.equal(await uc.previewLineAction(ctx(), row.id, { paidAmount: '10', paymentMethod }), row);
+    row.whtRemittance = 'PAYER_FILES';
+    assert.equal(await uc.previewLineAction(ctx(), row.id, { paidAmount: '10', paymentMethod: 'CASH' }), row);
+  });
+});
+
 function ctx() {
   return {
     requestId: 'req-1', authSubject: 'finance-1', userId: 'finance-1', companyId: 'co-1',
@@ -260,8 +272,8 @@ describe('reopen certificate cancellation notices (A5)', () => {
         sourceModule: 'expenses', sourceType: 'expense_record', sourceId: 'exp-1', periodKey: '1', severity: 'info',
         title: isExternal ? 'ยกเลิกการบันทึกแล้ว: ใบ 50 ทวิ ที่ทำนอกระบบ เลขที่ WT-1' : 'ยกเลิกแล้ว: หนังสือรับรอง 50 ทวิ เลขที่ WT-1',
         body: isExternal
-          ? 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกใบ 50 ทวิ ที่ทำนอกระบบด้วย เหตุผล: ข้อมูลผิด เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่'
-          : 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกหนังสือรับรองใบเดิม เหตุผล: ข้อมูลผิด เมื่อเอกสารถูกยืนยันอีกครั้ง ให้ออกหนังสือรับรองใบใหม่',
+          ? 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกการบันทึกนี้ กรุณายกเลิกใบ 50 ทวิ ที่ทำนอกระบบด้วย เหตุผล: ข้อมูลผิด ถ้าเอกสารถูกยืนยันอีกครั้งและยังต้องมีหนังสือรับรอง ระบบจะขึ้นให้ออกใบใหม่'
+          : 'สมใจ แก้ไขเอกสารรายจ่ายนี้ ระบบจึงยกเลิกหนังสือรับรองใบเดิม เหตุผล: ข้อมูลผิด ถ้าเอกสารถูกยืนยันอีกครั้งและยังต้องมีหนังสือรับรอง ระบบจะขึ้นให้ออกใบใหม่',
         deepLinkHref: '/companies/co-1/expenses/exp-1#wht-certificate', recipientUserIds: ['issuer-1'] }]);
     });
     it(`does not notify a ${isExternal ? 'recorder' : 'issuer'} who reopened their own certificate`, async () => {
@@ -362,5 +374,49 @@ describe('Round 3 LINE expense payment evidence transaction', () => {
     await assert.rejects(() => uc.previewLineAction({ ...ctx(), scopes: { branchIds: ['other'] } }, row.id, { paidAmount: '1' }), ForbiddenException);
     row.status = 'DRAFT'; await assert.rejects(() => uc.previewLineAction(ctx(), row.id, { paidAmount: '1' }), BadRequestException);
     row.status = 'CONFIRMED'; row.sourceReimbursementRequestId = 'claim-1'; await assert.rejects(() => uc.previewLineAction(ctx(), row.id, { paidAmount: '1' }), /reimbursement/i);
+  });
+});
+
+// The voucher service is the same web/domain entry point the LINE preview delegates to.
+describe('R3 e-WHT voucher guards (paid path)', () => {
+  async function voucherHarness(method: 'CASH' | 'CARD') {
+    const { DisbursementVoucherUseCase } = await import('./disbursement-voucher.use-case');
+    const { disbursementVoucherSourceHash } = await import('../../domain/logic/disbursement-voucher.logic');
+    const source: any = { id: 'exp-1', status: 'CONFIRMED', branchId: 'branch-1', currency: 'THB', whtRemittance: 'E_WHT',
+      netPayableAmount: '100', outstandingAmount: '100', vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: null, recordPaymentBlocker: null };
+    const voucher: any = { id: 'voucher-1', companyId: 'co-1', status: 'DRAFT', version: 0, revision: 0, preparedByUserId: 'finance-1',
+      plannedMethod: method, payeeName: 'ผู้รับเงิน', payeeBasis: 'SINGLE', lines: [{ expenseId: source.id, amount: '10', expense: source }],
+      documentNumber: null, totalAmount: '10', createdAt: new Date(0), updatedAt: new Date(0) };
+    const tx: any = { disbursementVoucher: { findFirst: async () => voucher } };
+    const repo: any = { readTransaction: async (work: any) => work(tx), findVisible: async () => voucher,
+      saveDraftAtomic: async (_input: any, work: any) => work(tx), lifecycleAtomic: async (_input: any, work: any) => work(tx, voucher),
+      canOwnerRecover: async () => false, lockSources: async () => undefined };
+    const expenseRepo: any = { readDisbursementExpenseSources: async () => [source] };
+    const list: any = { readScope: () => ({ filter: {}, scope: {} }) };
+    const uc = new DisbursementVoucherUseCase(repo, expenseRepo, list, noopAudit);
+    const actor = { ...ctx(), permissions: ['expense.disbursement.prepare', 'expense.disbursement.pay'] };
+    return { uc, source, voucher, actor, forPay() {
+      voucher.status = 'APPROVED'; voucher.documentNumber = 'PV-1'; source.reservedByDisbursementVoucherId = voucher.id;
+      voucher.lines[0].sourceHashAtSubmit = disbursementVoucherSourceHash(source);
+    } };
+  }
+  it('refuses planned cash/card on create, update, submit and submit preview', async () => {
+    for (const method of ['CASH', 'CARD'] as const) {
+      const h = await voucherHarness(method);
+      const body = { commandId: 'command-1', lines: [{ expenseId: 'exp-1', amount: '10' }], plannedMethod: method };
+      const denied = (e: any) => e.getStatus() === 409 && e.getResponse().code === 'disbursement_ewht_planned_method';
+      await assert.rejects(() => h.uc.create(h.actor, body), denied);
+      await assert.rejects(() => h.uc.update(h.actor, h.voucher.id, { ...body, expectedVersion: 0 }), denied);
+      await assert.rejects(() => h.uc.submit(h.actor, h.voucher.id, { commandId: 'submit-1', expectedVersion: 0 }), denied);
+      await assert.rejects(() => h.uc.previewLineAction(h.actor, 'submit', { id: h.voucher.id }), denied);
+    }
+  });
+  it('checks the fallback planned method in pay preview and accepts an explicit bank override', async () => {
+    const h = await voucherHarness('CASH'); h.forPay();
+    await assert.rejects(() => h.uc.previewLineAction(h.actor, 'pay', { id: h.voucher.id, payment: { commandId: 'pay-1', expectedVersion: 0 } }),
+      (e: any) => e.getStatus() === 409 && e.getResponse().code === 'expense_ewht_payment_method');
+    const result = await h.uc.previewLineAction(h.actor, 'pay', { id: h.voucher.id, payment: { commandId: 'pay-1', expectedVersion: 0, paymentMethod: 'BANK_TRANSFER' } });
+    assert.ok('status' in result);
+    assert.equal(result.status, 'APPROVED');
   });
 });

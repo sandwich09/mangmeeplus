@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from './tax.js';
 import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL } from './reimbursements.js';
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
 import { PAYMENT_DATE_IN_FUTURE } from './civil-date.js';
@@ -1076,6 +1077,7 @@ export type ExpenseBuyerAsPrinted = {
 };
 
 export type ExpenseDetail = ExpenseSummary & {
+  whtRemittance: import('./tax.js').WhtRemittance | null;
   /** Same resolved evidence facts as the accounting evidence list. */
   sourceEvidenceUnavailable?: boolean;
   categoryName?: string | null;
@@ -1157,7 +1159,11 @@ export type ExpenseDetail = ExpenseSummary & {
   captureGroup?: ExpenseCaptureLineage | null;
 };
 
+export type ExpenseEWhtSetting = { used: boolean };
+export type UpdateExpenseEWhtSettingInput = { used: boolean };
+
 export type CreateExpenseDraftInput = {
+  whtRemittance?: import('./tax.js').WhtRemittance | null;
   /** One deliberate save attempt, retained when retrying after an uncertain response. */
   idempotencyKey?: string;
   captureSource: ExpenseCaptureSource;
@@ -2094,6 +2100,7 @@ export const ACCOUNTANT_WORKBOOK_COLUMNS = [
   'expense_status',
   'notes',
   'primary_file',
+  'wht_remittance',
 ] as const;
 export const ACCOUNTANT_WORKBOOK_COLUMN_LABELS: Record<typeof ACCOUNTANT_WORKBOOK_COLUMNS[number], string> = {
   document_date: 'วันที่เอกสาร',
@@ -2122,6 +2129,7 @@ export const ACCOUNTANT_WORKBOOK_COLUMN_LABELS: Record<typeof ACCOUNTANT_WORKBOO
   expense_status: 'สถานะ',
   notes: 'หมายเหตุ',
   primary_file: 'ไฟล์เอกสาร',
+  wht_remittance: E_WHT_WORDS['W-X1'],
 };
 
 export const ACCOUNTANT_PAYMENT_SHEET_COLUMNS = [

@@ -1,4 +1,6 @@
 'use client';
+import { E_WHT_WORDS, eWhtPaymentMethodAllowed } from '@watchdog-bms/contracts';
+import { expenseEWhtPaymentWarning } from './expenses.model';
 
 import { whtPaymentProgressText } from '@watchdog-bms/contracts';
 import { expenseDisplayAttachments, expenseAttachmentTypeLabel } from './expenses.model';
@@ -249,6 +251,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const [paidAmount, setPaidAmount] = useState('');
   const [amountFocused, setAmountFocused] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>('BANK_TRANSFER');
+  useEffect(() => {
+    if (!freeExpenseDrafts && detail?.whtRemittance === 'E_WHT' && !eWhtPaymentMethodAllowed(paymentMethod)) setPaymentMethod('BANK_TRANSFER');
+  }, [freeExpenseDrafts, detail?.whtRemittance, paymentMethod]);
   const [paidAt, setPaidAt] = useState<string>(() => todayCivilDate());
   const [paymentSlip, setPaymentSlip] = useState<File | null>(null);
   const [paymentSlipId, setPaymentSlipId] = useState<string | undefined>();
@@ -1047,6 +1052,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const correctionAllowed = correctionAction?.paymentId
     ? detail.correctionCapabilities?.payments.find(p => p.id === correctionAction.paymentId)?.canCancel === true
     : detail.correctionCapabilities?.canReopen === true;
+  const eWht = !freeExpenseDrafts && detail.whtRemittance === 'E_WHT';
   const hasRecordedPayments = detail.payments?.some(p => p.status === 'RECORDED') ?? false;
   const paymentForm = expensePaymentFormState(detail.outstandingAmount, paidAmount, paidAt, Boolean(paymentAttemptRef.current), undefined, hasRecordedPayments);
   // The model gives the reason; an amount over what is owed is said with the amount it is compared to.
@@ -1311,7 +1317,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
 
   // Guided review exposes cancellation on every step, then deletion for a cancelled record.
   // Existing permission checks and financial-void actions still apply.
-  const certificateCardVisible = !freeExpenseDrafts && isConfirmed && hasWht && uiPermissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
+  const certificateCardVisible = !eWht && !freeExpenseDrafts && isConfirmed && hasWht && uiPermissions.some(permission => ['wht.certificate.read', 'wht.certificate.issue', 'wht.external_certificate.link', 'wht.certificate.correct'].includes(permission));
   const certificateIssueButton = systemCertificatesAvailable && canIssueExpenseWhtCertificate(detail, whtHandoff, uiPermissions) && !whtHandoff?.payerMissing?.length && !!whtPayeeAddress(whtHandoff?.payeeAddress, whtHandoff?.prefill.payeeSnapshot.address) && (
     <WhtIssueButton handoff={whtHandoff} busy={whtIssuing} unpaid={detail.paymentStatus !== 'PAID'} label={t('wht.print_certificate', locale)} onIssue={() => doIssueWhtCertificate()} />
   );
@@ -1409,7 +1415,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const certificateLineShown = !freeExpenseDrafts && systemCertificatesAvailable && !certificateCardVisible && isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED';
   const reviewNoticeClass = 'text-sm font-medium text-warning-700';
   // A bar with nothing to press is not drawn.
-  const certificateBlock = <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{issuedCertificateActions}</div>;
+  const certificateBlock = <div id={`expense-wht-${detail.id}`} tabIndex={-1} className="scroll-mt-24">{eWht && isConfirmed && hasWht ? <InfoBanner message={E_WHT_WORDS[hasRecordedPayments ? 'W-D1' : 'W-D1u']} /> : issuedCertificateActions}</div>;
   const secondaryActions = (menuEntries.length > 0 || deleteShown) && <>
       {/* Hand-made on purpose: the shared MoreActions brings a CSS module, and the pinned rendered spec loads this page without a loader for one. */}
       {menuEntries.length > 0 ? (
@@ -1649,7 +1655,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={uiPermissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} freeExpenseDrafts={freeExpenseDrafts} permissions={uiPermissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   // Vendor-address Slice 2, review fix 1: on a tax-code invoice the way forward is the line's Tax
@@ -1856,7 +1862,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
           <div key={payment.id} data-payment-id={payment.id} className={cx('grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-lg border p-3 text-xs', cancelled ? 'border-gray-100 bg-gray-50 text-gray-400' : 'border-gray-200 text-gray-600')}>
             <span className={cancelled ? 'line-through' : undefined}>{payment.paidAtConfirmed === false ? 'ยังไม่ทราบวันที่จ่ายจริง' : dateShort(payment.paidAt)} · <span className="whitespace-nowrap">{PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span></span>
             <span className={cx('text-right tabular-nums font-semibold', cancelled ? 'line-through' : 'text-gray-800')}>{baht(payment.amount)}</span>
-            {!freeExpenseDrafts && !cancelled && hasWht && payment.paidAtConfirmed === false && <div className="col-span-2"><PaymentDateConfirmation companyId={companyId} expenseId={expenseId} paymentId={payment.id} canRecord={uiPermissions.includes('expense.payment.record')} onSaved={load} /></div>}
+            {!freeExpenseDrafts && !cancelled && hasWht && payment.paidAtConfirmed === false && <div className="col-span-2"><PaymentDateConfirmation companyId={companyId} expenseId={expenseId} paymentId={payment.id} whtRemittance={detail.whtRemittance} whtCategoryCode={detail.whtCategoryCode} whtRate={detail.whtRate} canRecord={uiPermissions.includes('expense.payment.record')} onSaved={load} /></div>}
             {cancelled && <div className="col-span-2 space-y-1"><MangmeeBadge tone="slate">ยกเลิกแล้ว</MangmeeBadge>{payment.cancellationReason && <p>{payment.cancellationReason}</p>}</div>}
             {!cancelled && caps.canReadLedger && <span className="col-span-2">{expenseValueLabel(POSTING_STATUS_LABELS, payment.postingStatus, 'รอตรวจสถานะบัญชี')}</span>}
             {!freeExpenseDrafts && <ExpenseDisbursementPaymentEntry companyId={companyId} expenseId={expenseId} payment={payment} permissions={uiPermissions} entryOpen={disbursementEntryOpen} renderActions={actions => <ActionGroup align="start" className="col-span-2 empty:hidden">
@@ -1896,13 +1902,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
               </label>
               <label className="space-y-1 text-sm text-gray-700">
                 <span>วิธีจ่ายเงิน</span>
-                <ThemedSelect aria-label="วิธีจ่ายเงิน" className={inputClass} value={paymentMethod} disabled={actionLoading} onChange={(e) => editPayment(() => setPaymentMethod(e.target.value as ExpensePaymentMethod))}>
-                  {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                <ThemedSelect aria-label="วิธีจ่ายเงิน" aria-describedby={eWht ? 'expense-payment-bank-hint' : undefined} className={inputClass} value={paymentMethod} disabled={actionLoading} onChange={(e) => editPayment(() => setPaymentMethod(e.target.value as ExpensePaymentMethod))}>
+                  {Object.entries(PAYMENT_METHOD_LABELS).filter(([method]) => !eWht || eWhtPaymentMethodAllowed(method)).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </ThemedSelect>
+                {eWht && <span id="expense-payment-bank-hint" className="block text-sm text-gray-600">{E_WHT_WORDS['W-P1']}</span>}
               </label>
               <div className="space-y-1 text-sm text-gray-700">
                 <label htmlFor="expense-payment-paid-at">วันที่จ่ายเงินจริง</label>
                 <ThemedDate id="expense-payment-paid-at" aria-describedby="expense-payment-date-error" name="paidAt" className={inputClass} value={paidAt} max={paymentForm.maxPaidAt} required disabled={actionLoading} onChange={(e) => editPayment(() => setPaidAt(e.target.value))} />
+                {expenseEWhtPaymentWarning(detail.whtRemittance, detail.whtCategoryCode, detail.whtRate, paidAt) && <p role="status" className="text-sm text-warning-700">{E_WHT_WORDS['W-P2']}</p>}
                 <p id="expense-payment-date-error" role="status" className="text-sm text-error-700 empty:hidden">{!paymentAmountError ? paymentForm.disabledReason : null}</p>
               </div>
             </fieldset>
@@ -2290,7 +2298,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
             </div>
           </div>
 
-        {!freeExpenseDrafts && !certificateCardVisible && <ExpenseCertificateHistoryDisclosure />}
+        {!freeExpenseDrafts && !eWht && !certificateCardVisible && <ExpenseCertificateHistoryDisclosure />}
         {checkBillSecondaryActions}
 
         {!checkBillBlocked && <>
@@ -2354,6 +2362,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
             }}>
               <p>{[firstFilled(detail.vendorNameSnapshot), baht(detail.grandTotalAmount)].filter(Boolean).join(' · ')}</p>
               {warning}
+              {eWht && hasRecordedPayments && <p className="text-sm text-gray-700">{E_WHT_WORDS['W-C1']}</p>}
               <p>ยกเลิกแล้วแก้ไขหรือบันทึกจ่ายเอกสารนี้ต่อไม่ได้</p>
               <label className="block">{t('expenses.void_reason', locale)}
                 <textarea autoFocus className={cx(inputClass, 'mt-1')} rows={3} value={reason} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(e) => { setReason(sanitizeReasonInput(e.target.value)); setError(null); }} />
@@ -2453,8 +2462,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
           })() : !correctionCertificate && <>
             {/* The window names the document it is about: its number, payee and amount. */}
             <p className="text-sm font-semibold text-gray-900">{firstFilled(detail.expenseNumber) && <><span className="mangmee-unit">{detail.expenseNumber}</span> · </>}{firstFilled(detail.vendorNameSnapshot) && <>{detail.vendorNameSnapshot} · </>}<span className="mangmee-unit">{baht(detail.grandTotalAmount)}</span></p>
-            <p className="text-sm text-gray-700">{EXPENSE_CORRECTION_WORDS.reopenDescription}{hasPaymentHistory ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}</p>
+            {!(eWht && hasRecordedPayments) && <p className="text-sm text-gray-700">{EXPENSE_CORRECTION_WORDS.reopenDescription}{hasPaymentHistory ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}</p>}
           </>}
+          {eWht && hasRecordedPayments && <p className="text-sm text-gray-700">{E_WHT_WORDS['W-C1']}</p>}
           <label className="block text-sm" htmlFor="expense-correction-reason">{correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelReason : EXPENSE_CORRECTION_WORDS.reason}</label>
           <textarea ref={correctionReasonRef} aria-describedby="expense-correction-error" id="expense-correction-reason" className={inputClass} rows={3} value={correctionReason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => { setCorrectionReason(sanitizeReasonInput(event.target.value)); setCorrectionError(null); }} />
           <p id="expense-correction-error" role="alert" className="min-h-6 text-sm text-error-700">{correctionError}</p>

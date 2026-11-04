@@ -1,5 +1,5 @@
 {
-  "sourcePackHash": "e64a5952f918f047dd0e9924b2c4d90f1342b3cdcff2d426dfac834c66ca0774",
+  "sourcePackHash": "6e0bb124a17b606b816bf45c234ea3d681059c5d39703c1436f3be343ecae428",
   "cards": [
     {
       "id": "expense.start",
@@ -476,6 +476,13 @@
       "answerTh": "ต่ออายุจ่ายไม่สำเร็จมีผ่อนผันมาตรฐาน 7 วัน สิทธิ์อ่านรอบใหม่เพิ่มเมื่อจ่าย ขอทีมงานตรวจเงื่อนไขร้าน",
       "titleEn": "Failed renewal payment",
       "answerEn": "Standard failed-renewal grace is seven days; new-period reads arrive after payment; support checks shop-specific terms."
+    },
+    {
+      "id": "wht.e-wht",
+      "titleTh": "จ่ายผ่าน e-WHT",
+      "answerTh": "ธนาคารนำส่งภาษีให้ ไม่ต้องยื่น ภ.ง.ด.3/53 ไม่ต้องออก 50 ทวิสำหรับการจ่ายนี้ ค่าบริการ ค่าเช่า ค่าวิชาชีพ ค่าโฆษณา และรางวัล หัก 1% ถึง 31 ธ.ค. 2570 มีข้อยกเว้น เลือก “ธนาคารนำส่ง (e-WHT)” ในรายจ่าย",
+      "titleEn": "Pay through e-WHT",
+      "answerEn": "Bank remits tax; no PND 3/53 or 50 bis for this payment. Services, rent, professional fees, advertising and prizes: 1% until 31 Dec 2027, with exceptions. Choose “Bank remits (e-WHT)” in the expense."
     }
   ]
 }

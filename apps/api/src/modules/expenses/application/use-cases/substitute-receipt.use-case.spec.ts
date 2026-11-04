@@ -1,3 +1,4 @@
+import { assertSubstitutePaymentDetails } from '../../domain/logic/substitute-funding.logic';
 import { ctx as lineCtx, expense as lineExpense, harness as lineHarness, readyHarness as lineReadyHarness } from './line-substitute-receipt-continuation.use-case.spec';
 import { SUBSTITUTE_PHOTO_ASK_WINDOW_MS, substituteAwaitsCaptionlessPhoto } from './line-substitute-receipt-continuation.use-case';
 import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard } from '../../../line-ai/application/line-substitute-receipt-action.service';
@@ -2503,4 +2504,20 @@ it('R9 preparation failure after category commit reports the committed change', 
     assert.match(nextCard.summary, /หมวดที่เลือกตรงกับรายการค่าใช้จ่าย/);
     assert.doesNotMatch(nextCard.summary, /รายการค่าใช้จ่ายยังไม่เปลี่ยน/);
   }
+});
+
+
+describe('R4 e-WHT substitute company payment facts (paid path)', () => {
+  it('refuses CASH and CARD even before the company payment exists', () => {
+    for (const paidAmount of ['0', '100']) for (const paymentMethod of ['CASH', 'CARD']) {
+      assert.throws(() => assertSubstitutePaymentDetails('COMPANY', { paidAmount, paidAt: null, paymentMethod, whtRemittance: 'E_WHT' } as any,
+        { paymentDate: now, paymentMethod }), (e: any) => e.getStatus() === 409 && e.getResponse().code === 'substitute_receipt_ewht_payment_method');
+    }
+  });
+  it('preserves personal advances and bank-funded e-WHT certificates', () => {
+    for (const source of ['PERSONAL_ADVANCE', 'COMPANY']) for (const paymentMethod of ['BANK_TRANSFER', 'CHEQUE', 'OTHER']) {
+      assert.doesNotThrow(() => assertSubstitutePaymentDetails(source, { paidAmount: '0', paidAt: null, paymentMethod, whtRemittance: 'E_WHT' } as any, { paymentDate: now, paymentMethod }));
+    }
+    assert.doesNotThrow(() => assertSubstitutePaymentDetails('PERSONAL_ADVANCE', { paidAmount: '0', paidAt: null, paymentMethod: 'CASH', whtRemittance: 'E_WHT' } as any, { paymentDate: now, paymentMethod: 'CASH' }));
+  });
 });

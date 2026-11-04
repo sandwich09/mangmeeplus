@@ -1,3 +1,4 @@
+import { accountantWhtRemittance } from '../../domain/logic/expense-export.logic';
 import { buildPurchaseJournalRows, buildPurchaseJournalWorkbook } from '../../domain/logic/accounting-software-export.logic';
 import type { AccountingSoftwareExportRequest, AccountingSoftwareExportResult } from '@watchdog-bms/contracts';
 import { ExpenseSourceAdapter } from '../../../tax/infrastructure/adapters/expense-source.adapter';
@@ -256,6 +257,7 @@ export class CreateAccountantPackageUseCase {
       taxableAmount: r.taxableAmount,
       vatAmount: r.vatAmount,
       whtAmount: r.whtAmount,
+      whtRemittance: r.whtRemittance,
       grandTotalAmount: r.grandTotalAmount,
       netPayableAmount: r.netPayableAmount,
       paidAmount: r.paidAmount,
@@ -419,6 +421,7 @@ export class CreateAccountantPackageUseCase {
         category_name: row.categoryName, description: row.note, currency: row.currency,
         taxable_amount: String(row.taxableAmount), vat_amount: String(row.vatAmount), grand_total_amount: String(row.grandTotalAmount),
         input_vat_right: row.inputVatClaimStatus, inputVatRightLabel: row.inputVatRecordedBeforeReview ? 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)' : undefined,
+        wht_remittance: accountantWhtRemittance(row.whtAmount, row.whtRemittance),
         tax_evidence_status: row.taxEvidenceStatus, wht_amount: String(row.whtAmount), net_payable_amount: String(row.netPayableAmount), paid_amount: String(row.paidAmount), outstanding_amount: String(row.outstandingAmount),
         last_paid_at: latest ? toIso(latest.paidAt) : '', lastPaidAtConfirmed: latest?.paidAtConfirmed,
         advanced_by: row.evidenceSources?.requesterName ?? (cert?.fundingSource === 'PERSONAL_ADVANCE' ? cert.payerName : ''), expense_status: row.status,

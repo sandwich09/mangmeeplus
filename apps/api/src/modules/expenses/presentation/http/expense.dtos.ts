@@ -327,3 +327,8 @@ export class SetExpenseCategoryAccountantAccountDto {
   @Matches(/^[^=+\-@\u0000-\u001F\u007F][^\u0000-\u001F\u007F]*$/)
   accountName!: string;
 }
+
+
+export class UpdateExpenseEWhtSettingDto {
+  @IsBoolean() used!: boolean;
+}

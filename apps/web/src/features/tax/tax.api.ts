@@ -252,3 +252,7 @@ export function answerWhtPayerMode(companyId: string, answer: import('@watchdog-
 export function confirmWithholdingRows(companyId: string, filingId: string): Promise<{ confirmed: true }> {
   return apiFetch(`/v1/companies/${companyId}/tax/withholding/filings/${filingId}/confirm-rows`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ confirmed: true }) });
 }
+
+export function exportWithholdingEWht(companyId: string, periodKey: string, establishmentCode?: string): Promise<TaxExportArtifact> {
+  return apiFetch(`/v1/companies/${companyId}/tax/withholding/months/${encodeURIComponent(periodKey)}/e-wht-export${qs({ establishmentCode })}`, { suppressErrorToast: true });
+}

@@ -93,3 +93,20 @@ test('payment correction advice follows the server withdraw action and names an 
     assert.equal(disbursementPaymentCorrectionHint({ ...detail, preparerActive: authorsActive, senderActive: authorsActive, actions: { ...detail.actions, withdraw: true } }, true), 'ยอดต้องเท่ายอดที่อนุมัติ ถ้าไม่เท่า กดกลับไปแก้');
   }
 });
+
+test('e-WHT groups before and after payment without treating cancelled vouchers as a future payment', () => {
+  const line = { expenseId: 'e', whtAmount: '1', whtRemittance: 'E_WHT', withholdingCertificate: { state: 'E_WHT', number: null } };
+  for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED']) {
+    const groups = disbursementWithholdingGroups({ header: { status }, lines: [line] } as any);
+    assert.equal(groups.length, status === 'CANCELLED' ? 0 : 1);
+    if (groups.length) assert.equal(groups[0].state, 'E_WHT');
+  }
+});
+test('e-WHT voucher date warning uses the source reduced-rate flag, not a 1% total', async () => {
+  const { disbursementEWhtPaymentWarning } = await import('./disbursement-voucher-payment.logic') as any;
+  const detail: any = { lines: [{ whtRemittance: 'E_WHT', eWhtReducedRateApplied: true }] };
+  assert.equal(typeof disbursementEWhtPaymentWarning, 'function');
+  assert.ok(disbursementEWhtPaymentWarning(detail, '2028-01-01'));
+  assert.equal(disbursementEWhtPaymentWarning(detail, '2026-01-01'), null);
+  detail.lines[0].eWhtReducedRateApplied = false; assert.equal(disbursementEWhtPaymentWarning(detail, '2028-01-01'), null);
+});

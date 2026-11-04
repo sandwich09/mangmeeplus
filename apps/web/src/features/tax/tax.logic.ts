@@ -33,7 +33,7 @@ const TAX_REVIEW_ISSUE_LABELS: Record<string, string> = {
   MISSING_BRANCH_CODE: 'ยังไม่มีรหัสสาขาภาษี ตรวจข้อมูลต้นทาง',
   UNKNOWN_VAT_MODE: 'ยังระบุวิธีคิด VAT ไม่ได้ ตรวจข้อมูลต้นทาง',
   INPUT_VAT_NOT_CLAIMABLE: 'ภาษีซื้อของรายการนี้ใช้ขอคืนไม่ได้',
-  WHT_RATE_MISMATCH: 'อัตราภาษีหัก ณ ที่จ่ายไม่ตรงกับข้อมูลที่กำหนด ตรวจข้อมูลต้นทาง',
+  WHT_RATE_MISMATCH: 'ตรวจอัตรา',
   MISSING_TAX_INVOICE: 'ยังไม่มีข้อมูลอ้างอิงใบกำกับภาษี ตรวจข้อมูลต้นทาง',
   DUPLICATE_SOURCE: 'พบรายการต้นทางซ้ำ ตรวจสอบก่อนออกแบบ',
   CLOSED_PERIOD_CONFLICT: 'รายการต้นทางอยู่ในงวดที่ปิดแล้ว ตรวจสอบก่อนออกแบบ',

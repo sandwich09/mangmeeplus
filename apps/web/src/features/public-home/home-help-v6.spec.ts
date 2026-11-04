@@ -15,8 +15,8 @@ const card = (id: string) => { const value = pack.cards.find(c => c.id === id); 
 const summary = (id: string) => { const value = HOME_HELP_V6.cards.find(c => c.id === id); assert.ok(value, id); return value; };
 const faq = (question: string) => { const value = HOME_FAQ.find(f => f.question === question); assert.ok(value, question); return value.answer; };
 
-test('HOME-WIKI-V6 pins all 68 bilingual summaries to the approved pack and its exact titles', () => {
-  assert.equal(pack.version, 7); assert.equal(pack.status, 'APPROVED'); assert.equal(pack.cards.length, 68);
+test('HOME-WIKI-V6 pins all 69 bilingual summaries to the approved pack and its exact titles', () => {
+  assert.equal(pack.version, 7); assert.equal(pack.status, 'APPROVED'); assert.equal(pack.cards.length, 69);
   assert.equal(HOME_HELP_V6.sourcePackHash, pack.contentHash, 'Approved source changed: review website summaries before re-pinning');
   assert.deepEqual(HOME_HELP_V6.cards.map(c => [c.id, c.titleTh]), pack.cards.map(c => [c.id, c.title]));
   assert.match(LLMS_FULL, /## Common questions \/ คำถามที่พบบ่อยจากผู้ใช้/);

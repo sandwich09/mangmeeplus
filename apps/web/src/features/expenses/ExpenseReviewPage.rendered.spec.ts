@@ -1447,3 +1447,15 @@ test('a phone checking a draft keeps the original one tap away and sees why it n
     if (step === 'review') assert.match(reasons, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
   }
 });
+
+test('e-WHT replaces certificate actions with truthful unpaid/recorded notices and bank payment methods', () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  for (const permissions of [OWNER, [...OWNER, 'wht.certificate.issue']]) for (const recorded of [false, true]) {
+    const page = harness({ detail: expense({ whtRemittance: 'E_WHT', whtAmount: '5', whtRate: '1', whtCategoryCode: 'WHT_ADVERTISING_IND', payments: recorded ? [{ ...payment, paymentMethod: 'BANK_TRANSFER' }] : [] }), correctionAction: {} }, permissions);
+    const html = page.render(); assert.ok(html.includes(E_WHT_WORDS[recorded ? 'W-D1' : 'W-D1u']));
+    assert.doesNotMatch(html, />ออกหนังสือรับรอง 50 ทวิ</);
+    assert.equal(html.includes(E_WHT_WORDS['W-C1']), recorded);
+    const method = html.match(/<select[^>]*aria-label="วิธีจ่ายเงิน"[\s\S]*?<\/select>/)?.[0];
+    if (method) assert.doesNotMatch(method, /value="(?:CASH|CARD)"/);
+  }
+});

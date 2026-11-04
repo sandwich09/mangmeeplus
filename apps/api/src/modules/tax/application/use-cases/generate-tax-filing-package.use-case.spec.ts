@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { expenseSourceForEvent } from '../../testing/withholding-source.fixture';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import { withholdingAccountantExport } from '../services/withholding-accountant-export';
@@ -322,6 +323,24 @@ describe('PND3 validation and withholding re-export', () => {
       assert.equal(h.state.attachments.length, 1);
     }
   });
+  it('R10 an EXCLUDED e-WHT payment is not a missing source, while payer-files remains blocked', async () => {
+    const { withholdingPaperBlockers } = await import('../services/withholding-filing-validation');
+    const h = setup('PND3'); let whtRemittance: string = 'E_WHT';
+    const original = h.client.expenseRecord.findMany;
+    h.client.expenseRecord.findMany = async (query: any) => query.where.whtAmount ? [{
+      id: 'bank', companyId: 'c1', status: 'CONFIRMED', branchId: null, expenseDate: new Date('2026-09-10'), updatedAt: new Date('2026-09-10'),
+      vendorNameSnapshot: 'ผู้รับเงิน', vendorEntityKindSnapshot: 'INDIVIDUAL', vendorTaxIdSnapshot: null, vendorAddressSnapshot: null,
+      vendorCounterpartyId: null, whtRemittance, whtAmount: '30', netPayableAmount: '970', grandTotalAmount: '1000', taxableAmount: '1000',
+      whtRate: '3', whtCategoryCode: h.event.incomeCategoryCode, lines: [],
+      payments: [{ id: 'bank-payment', amount: '970', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-10'), createdAt: new Date('2026-09-10') }],
+    }] : original(query);
+    const excluded: any = { ...h.event, sourceId: 'bank', sourceLineKey: 'payment:bank-payment', status: 'EXCLUDED' };
+    const bank = await withholdingPaperBlockers(h.client, { ...ctx, scopes: {} }, h.period, undefined, [excluded]);
+    assert.deepEqual(bank.issues, []); assert.equal(bank.partition.papers.flatMap(p => p.events).length, 0);
+    whtRemittance = 'PAYER_FILES';
+    const payer = await withholdingPaperBlockers(h.client, { ...ctx, scopes: {} }, h.period, undefined, []);
+    assert.ok(payer.issues.some(issue => issue.issueCode === 'MISSING_TAX_ID'));
+  });
   it('R10 missing-source blockers stop PDF and XLSX', async () => {
     for (const form of ['PND3', 'PND53']) for (const format of ['PDF', 'XLSX'] as const)
       for (const unknown of [false, true]) for (const accountant of [false, true]) for (const reverse of [false, true]) {
@@ -608,6 +627,107 @@ describe('PND3 validation and withholding re-export', () => {
       assert.deepEqual(result.issues, []); assert.equal(result.accountantPrepared, route === 'ACCOUNTANT_PREPARES');
       if (route === 'SYSTEM_FILLS') assert.equal(result.filing!.lines[0].incomeType, 'ประเภททดสอบ');
     }
+  });
+  it('R8 e-WHT-only PND53 refuses PDF/XLSX without side effects; normal PND3 and W-T4 still download', async () => {
+    for (const format of ['PDF', 'XLSX'] as const) {
+      const h = setup('PND53'); const bank = { ...h.event, status: 'EXCLUDED', payeeSnapshotJson: h.event.payeeSnapshot };
+      h.events.length = 0;
+      h.client.whtCertificateHandoff = { findMany: async () => [] };
+      h.client.taxEvent.findMany = async ({ where }: any) => where.status === 'EXCLUDED' && where.eventType === 'WHT_PND53' ? [bank] : [];
+      h.client.expenseRecord.findMany = async ({ where }: any) => [bank, ...h.events].filter(e => !where.id || where.id.in.includes(e.sourceId)).map(e => expenseSourceForEvent(e, { whtRemittance: e === bank ? 'E_WHT' : 'PAYER_FILES' }));
+      await assert.rejects(h.useCase.execute(ctx, 'p', format), (e: any) => e.getResponse().issues.some((i: any) => i.issueCode === 'PND53_FILING_BANK_REMITTED_ONLY' && i.severity === 'BLOCKING' && i.description === E_WHT_WORDS['W-T3']('ภ.ง.ด.53')));
+      assert.equal(h.reserved, 0); assert.equal(h.state.objects.size, 0); assert.equal(h.state.packages.length, 0); assert.equal(h.state.attachments.length, 0); assert.equal(h.papers.size, 0);
+      h.period.formType = 'PND3'; Object.assign(h.event, { id: 'normal', sourceId: 'normal', eventType: 'WHT_PND3', whtFormType: 'PND3', incomeCategoryCode: 'WHT_SERVICE_3' }); h.events.push(h.event);
+      h.client.taxReviewIssue.findMany = async () => [{ id: 'rate', issueCode: 'WHT_RATE_MISMATCH', severity: 'WARNING', sourceType: 'expense.record', sourceId: 'normal', taxPeriod: h.period, description: E_WHT_WORDS['W-T4']('ผู้รับเงิน') }];
+      const result = await h.useCase.execute(ctx, 'p', format); assert.ok(result.artifact.contentBase64); assert.equal(h.reserved, 1);
+    }
+  });
+  function bankMonth() {
+    const h = setup();
+    const bank: any = { ...h.event, id: 'bank', sourceId: 'bank-expense', branchId: 'b', status: 'EXCLUDED', currency: 'USD', payeeSnapshotJson: h.event.payeeSnapshot };
+    const regular: any = { ...h.event, id: 'regular', sourceId: 'regular-expense', branchId: 'head', status: 'ACTIVE', eventType: 'WHT_PND53', payeeSnapshotJson: h.event.payeeSnapshot };
+    const all = [bank, regular];
+    const branches = [{ id: 'head', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }, { id: 'b', name: 'สาขาสอง', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: '00002' }];
+    h.client.branch.findMany = async () => branches;
+    h.client.branch.findFirst = async ({ where }: any) => branches.find(b => b.id === where.id);
+    h.client.whtPayerModeFact.findMany = async () => [{ id: 'mode', mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', answeredAt: new Date(), supersededAt: null }];
+    h.client.taxPeriod = { findMany: async () => [h.period, { ...h.period, id: 'p53', formType: 'PND53' }] };
+    h.client.taxEvent = { findMany: async ({ where }: any) => all.filter(e => e.status === where.status && (!where.eventType?.in || where.eventType.in.includes(e.eventType)) && (!where.OR || where.OR.some((p: any) => p.branchId?.in?.includes(e.branchId)))) };
+    h.client.expenseRecord.findMany = async ({ where }: any) => all.filter(e => !where.id || where.id.in.includes(e.sourceId)).map(e => expenseSourceForEvent(e, { ...h.source, whtRemittance: e.status === 'EXCLUDED' ? 'E_WHT' : 'PAYER_FILES' }));
+    h.client.taxReviewIssue.findMany = async () => [];
+    h.client.whtCertificateHandoff = { findMany: async () => [] };
+    h.client.$transaction = async (work: any) => work(h.client);
+    return { ...h, all, bank, regular };
+  }
+  it('R8 month includes e-WHT-only branches, currency and the blocking per-form W-T3', async () => {
+    const { GenerateWhtReportUseCase } = await import('./generate-wht-report.use-case');
+    const h = bankMonth(); const reader = new GenerateWhtReportUseCase({ prisma: { client: h.client } } as any);
+    const month = await reader.getMonth({ ...ctx, permissions: [], scopes: {} }, '2026-09');
+    assert.equal(month.bankRemitted?.length, 1); assert.equal(month.bankRemitted?.[0].currency, 'USD');
+    assert.equal(month.payments.length, 1); assert.equal(month.payments[0].currency, 'THB');
+    const bankForm = month.establishments?.find(e => e.code === '00002')?.forms.find(f => f.formType === 'PND3');
+    const notice = bankForm?.issues.find(i => i.issueCode === 'PND3_FILING_BANK_REMITTED_ONLY');
+    assert.equal(notice?.severity, 'BLOCKING'); assert.match(notice!.description, /สาขาสอง/);
+    assert.equal(month.establishments?.find(e => e.code === '00000')?.forms.find(f => f.formType === 'PND53')?.issues.some(i => i.issueCode.endsWith('BANK_REMITTED_ONLY')), false);
+    const scoped = await reader.getMonth({ ...ctx, permissions: [], scopes: { branchIds: ['head'] } }, '2026-09');
+    assert.deepEqual(scoped.bankRemitted, []);
+  });
+  it('R8 a current missing-tax-ID source suppresses bank-remitted-only notice', async () => {
+    const { GenerateWhtReportUseCase } = await import('./generate-wht-report.use-case');
+    const h = bankMonth();
+    const missing = { ...h.bank, id: 'missing', sourceId: 'missing-expense', status: 'ACTIVE', payeeSnapshot: { ...h.event.payeeSnapshot, taxId: null } };
+    const read = h.client.expenseRecord.findMany;
+    h.client.expenseRecord.findMany = async (q: any) => [...await read(q), ...(!q.where.id || q.where.id.in.includes(missing.sourceId) ? [expenseSourceForEvent(missing, h.source)] : [])];
+    const month = await new GenerateWhtReportUseCase({ prisma: { client: h.client } } as any).getMonth({ ...ctx, permissions: [], scopes: {} }, '2026-09');
+    const form = month.establishments?.find(e => e.code === '00002')?.forms.find(f => f.formType === 'PND3');
+    assert.ok(form?.issues.some(i => i.issueCode === 'MISSING_TAX_ID'));
+    assert.equal(form?.issues.some(i => i.issueCode.endsWith('BANK_REMITTED_ONLY')), false);
+  });
+  for (const reverse of [false, true]) it(`R8 A22 sync then accountant PDF/XLSX refuses a missing service payment (reverse=${reverse})`, async () => {
+    const { SyncTaxEventsUseCase } = await import('./sync-tax-events.use-case');
+    const { ExpenseSourceAdapter } = await import('../../infrastructure/adapters/expense-source.adapter');
+    const h = setup(); h.event.incomeCategoryCode = 'WHT_OTHER_IND';
+    const missing = { ...h.event, id: 'missing', sourceId: 'missing-expense', incomeCategoryCode: 'WHT_SERVICE_3', payeeSnapshot: { ...h.event.payeeSnapshot, taxId: null } };
+    const sources = [expenseSourceForEvent(missing), expenseSourceForEvent(h.event)]; if (reverse) sources.reverse();
+    const categories = [{ code: 'WHT_SERVICE_3', formType: 'PND3', nameTh: 'ค่าบริการ', filingRoute: 'SYSTEM_FILLS' }, { code: 'WHT_OTHER_IND', formType: 'PND3', nameTh: 'อื่นๆ', filingRoute: 'ACCOUNTANT_PREPARES' }];
+    h.client.whtIncomeCategory = { findMany: async () => categories, findUnique: async ({ where }: any) => categories.find(c => c.code === where.code) };
+    h.client.expenseRecord.findMany = async ({ where }: any) => sources.filter(s => !where.id || where.id.in.includes(s.id));
+    h.client.expensePayment = { findMany: async () => sources.flatMap(s => s.payments) };
+    h.client.taxReviewIssue.findMany = async () => h.issues;
+    Object.assign(h.repo, { upsertPeriod: async () => h.period, findEventByIdempotencyKey: async () => null, isWithholdingPaymentFiled: async () => false,
+      supersedeUnclassifiedWithholding: async () => undefined, resolveSourceIssues: async () => undefined,
+      createIssue: async (input: any) => h.issues.push({ ...input, id: input.issueCode, taxPeriod: h.period }),
+      upsertEvent: async (input: any) => Object.assign(h.event, input) });
+    await new SyncTaxEventsUseCase(h.repo, {} as any, new ExpenseSourceAdapter({ client: h.client } as any), { findRecordedWithWhtByCompany: async () => [] } as any).execute(ctx.companyId, undefined, 'WHT');
+    assert.ok(h.issues.some(i => i.issueCode === 'MISSING_TAX_ID' && i.severity === 'BLOCKING'));
+    for (const format of ['PDF', 'XLSX'] as const) await assert.rejects(h.useCase.execute(ctx, 'p', format), (e: any) => e.getResponse().issues.some((i: any) => i.issueCode === 'MISSING_TAX_ID'));
+    assert.equal(h.reserved, 0);
+  });
+  it('R8 bank events do not change the accountant workbook or its checksum', async () => {
+    const h = setup('PND53'); h.event.incomeCategoryCode = 'WHT_OTHER_JUR';
+    h.client.whtIncomeCategory.findMany = async () => [{ code: 'WHT_OTHER_JUR', nameTh: 'อื่นๆ', filingRoute: 'ACCOUNTANT_PREPARES' }];
+    const excluded = [{ ...h.event, id: 'bank', status: 'EXCLUDED', sourceEventType: 'expense.wht.e_wht' }];
+    h.client.taxEvent = { findMany: async ({ where }: any) => where.status === 'EXCLUDED' ? excluded : [] };
+    h.client.whtCertificateHandoff = { findMany: async () => [] };
+    const first = await h.useCase.execute(ctx, 'p', 'XLSX');
+    excluded.push({ ...excluded[0], id: 'more-bank' });
+    const second = await h.useCase.execute(ctx, 'p', 'XLSX');
+    assert.equal(second.artifact.checksum, first.artifact.checksum); assert.equal(second.artifact.contentBase64, first.artifact.contentBase64);
+    const file = Buffer.from(second.artifact.contentBase64, 'base64'); let xml = '';
+    for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+      const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26), start = offset + 30 + length + file.readUInt16LE(offset + 28), bytes = file.subarray(start, start + size);
+      xml += (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString(); offset = start + size;
+    }
+    assert.doesNotMatch(xml, /e-WHT/);
+  });
+  it('R8 accountant-prepared filing retains WARNING source reviews without blocking export', async () => {
+    const h = setup('PND53'); h.event.incomeCategoryCode = 'WHT_OTHER_JUR';
+    h.client.whtIncomeCategory.findMany = async () => [{ code: 'WHT_OTHER_JUR', nameTh: 'อื่นๆ', filingRoute: 'ACCOUNTANT_PREPARES' }];
+    h.client.taxReviewIssue.findMany = async () => [{ id: 'rate', issueCode: 'WHT_RATE_MISMATCH', severity: 'WARNING', sourceType: 'expense.record', sourceId: h.event.sourceId, taxPeriod: h.period, description: 'ตรวจอัตรา' }];
+    const { validateWithholdingFiling } = await import('../services/withholding-filing-validation');
+    const result = await validateWithholdingFiling(h.client, ctx.companyId, 'PND53', h.period, h.events, [], undefined, 0, false, ctx);
+    assert.equal(result.accountantPrepared, true); assert.ok(result.issues.some(i => i.issueCode === 'WHT_RATE_MISMATCH' && i.severity === 'WARNING'));
+    assert.equal(result.issues.some(i => i.severity === 'BLOCKING'), false);
   });
   it('PND2 stays outside both month cards and has no system filing download', async () => {
     const { GenerateWhtReportUseCase } = await import('./generate-wht-report.use-case');

@@ -118,3 +118,55 @@ it('combined signing is offered only to OWNER with confirm permission under OWNE
   approvalMode = 'DESIGNATED_APPROVERS';
   assert.equal((await useCase.executeRuntime({ ...ctx, roles: ['OWNER'], permissions: ['expense.confirm'] })).canCertifyAndApprove, false);
 });
+
+describe('R17 e-WHT setting (paid and never-paid free paths)', () => {
+  async function settingHarness() {
+    const { PrismaExpenseRepository } = await import('../../infrastructure/prisma-expense.repository');
+    const { GetExpenseEWhtSettingUseCase, UpdateExpenseEWhtSettingUseCase } = await import('./expense-e-wht-setting.use-case');
+    let row: any = null, writes = 0; const audits: any[] = [];
+    const client: any = { company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
+      $executeRaw: async () => 0, companyTaxProfile: {
+        findUnique: async ({ where, select }: any) => { assert.deepEqual(where, { companyId: ctx.companyId }); assert.deepEqual(select, { eWhtUsed: true }); return row; },
+        upsert: async ({ where, create, update }: any) => { assert.deepEqual(where, { companyId: ctx.companyId }); writes++; row = row ? { ...row, ...update } : create; return row; },
+      }, $transaction: async (work: any) => work(client) };
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const audit: any = { log: async (entry: any, tx: any) => { assert.equal(tx, client); audits.push(entry); } };
+    return { client, audits, writes: () => writes, get: new GetExpenseEWhtSettingUseCase(repo), update: new UpdateExpenseEWhtSettingUseCase(repo, audit) };
+  }
+  it('defaults missing rows to false and upserts/audits only a real change', async () => {
+    const h = await settingHarness();
+    assert.deepEqual(await h.get.execute(ctx), { used: false });
+    await h.update.execute(ctx, { used: false }); assert.equal(h.writes(), 0); assert.equal(h.audits.length, 0);
+    assert.deepEqual(await h.update.execute(ctx, { used: true }), { used: true });
+    await h.update.execute(ctx, { used: true }); assert.equal(h.writes(), 1); assert.equal(h.audits.length, 1);
+    assert.equal(h.audits[0].action, 'company.e_wht_setting.updated'); assert.equal(h.audits[0].riskLevel, 'MEDIUM');
+    assert.deepEqual(h.audits[0].metadataJson, { before: { used: false }, after: { used: true } });
+    await h.update.execute(ctx, { used: false }); assert.equal(h.writes(), 2); assert.equal(h.audits.length, 2);
+  });
+  it('requires the specified read/manage authority and rejects malformed direct-tool input', async () => {
+    const h = await settingHarness();
+    await assert.rejects(() => h.get.execute({ ...ctx, permissions: [] }), (e: any) => e.getStatus() === 403);
+    await h.get.execute({ ...ctx, permissions: ['expense.read_own'] });
+    await assert.rejects(() => h.update.execute({ ...ctx, permissions: ['expense.review'] }, { used: true }), (e: any) => e.getStatus() === 403);
+    for (const used of [null, undefined, 'true', 1]) await assert.rejects(() => h.update.execute(ctx, { used } as any), (e: any) => e.getStatus() === 400);
+    assert.equal(h.writes(), 0);
+  });
+  it('keeps never-paid free shops outside the setting workflow even with stale grants', async () => {
+    const h = await settingHarness();
+    h.client.company.findUnique = async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } });
+    h.client.billingAccount = { findMany: async () => [] }; h.client.billingInvoice = { findFirst: async () => null };
+    h.client.billingReceiptGrant = { findFirst: async () => null }; h.client.packageChangeRequest = { findFirst: async () => null };
+    h.client.salesAttribution = { findUnique: async () => null };
+    const denied = (e: any) => e.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY';
+    await assert.rejects(() => h.get.execute(ctx), denied); await assert.rejects(() => h.update.execute(ctx, { used: true }), denied);
+    assert.equal(h.writes(), 0);
+  });
+});
+
+it('R17 e-WHT HTTP endpoints keep the section 7.6 permission guards', async () => {
+  const { ExpenseSettingsController } = await import('../../presentation/http/expense.controller');
+  const { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, ExpenseSettingsController.prototype.getEWht),
+    ['company.setup.manage', 'expense.review', 'expense.confirm', 'expense.create', 'expense.update', 'expense.read', 'expense.read_related', 'expense.read_own']);
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseSettingsController.prototype.updateEWht), ['company.setup.manage']);
+});

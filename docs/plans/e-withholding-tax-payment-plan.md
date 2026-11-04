@@ -32,11 +32,13 @@ Phase 0 (Q1–Q4 answered 2026-11-04; MC1 CLOSED)
 
 ## Phase 0 — คำตอบเจ้าของ (answered 2026-11-04)
 
+- MC2 CLOSED 2026-11-04 (controller research). Bank service pages agree with ปชส. 5/2564 on bank remittance and no payer-issued withholding certificate. The cabinet extension covers 1 Jan 2026–31 Dec 2027, agreeing with L-5/L-7. The unfound ministerial regulation gazette number is a LOW follow-up. W-F4, W-D1, W-V1, L-7 and H-1 remain approved.
+
 - **Q1 — answered 2026-11-04:** ทุกแพ็ก; คงเงื่อนไขเปิดใช้ที่ตั้งค่าร้านตามสเปก §5.5
 - **Q2 — answered 2026-11-04:** ไม่ออกกระดาษ 50 ทวิ สำหรับรายการ e-WHT; ขั้น 1.3 ไม่รอคำตอบเจ้าของแล้ว
 - **Q3 — answered 2026-11-04:** รอบ 1 ตั้งต้นเป็น "ร้านยื่นแบบเอง" ทุกครั้ง
 - **Q4 — answered 2026-11-04:** อนุมัติ L-7/L-8/H-1/H-2 ตามที่เขียน; ขั้น 4.4 ไม่รอคำตอบเจ้าของแล้ว
-- MC1 ปิดแล้วตามสเปก §18; ประตูเดิมจาก review รอบ 4 F9 ปรับตามคำตอบข้างต้น โดยไม่เปลี่ยนแบบ: BL1/BL2/BL3 ปิดแล้วจาก focused checks 2026-10-24; ประตูที่ยังเหลือคือ MC2 (3.1/4.4) และ MC3 (1.2) ไม่ใช่คำตอบเจ้าของ
+- MC1 ปิดแล้วตามสเปก §18; ประตูเดิมจาก review รอบ 4 F9 ปรับตามคำตอบข้างต้น โดยไม่เปลี่ยนแบบ: BL1/BL2/BL3 ปิดแล้วจาก focused checks 2026-10-24; MC2 ปิดแล้วตาม controller research 2026-11-04; ประตูที่ยังเหลือคือ MC3 (1.2) ไม่ใช่คำตอบเจ้าของ
 
 ## Phase 1 — ข้อมูล กติกา และการบันทึก (API + contracts)
 
@@ -202,6 +204,8 @@ Phase 0 (Q1–Q4 answered 2026-11-04; MC1 CLOSED)
 - ตรวจ: api typecheck; spec
 
 ### 4.3 เครื่องมือ AI + แนวทางผู้ช่วย (F18, F19, F20)
+
+- L-12, L-12en, L-13 and L-13en are superseded 2026-11-04 by C47 + this truth fix (controller). Keep C47’s sentence shape, add the unpaid-item qualification and use document withholding for the certificate worklist. The remittance-only sentence continues to describe withholding from payment events.
 - `apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts`: `WhtCalculateWithholdingTool` (:124-151) L-5 + `eWht*` เมื่อประเภทที่เลือก `REDUCED` และวันนี้ในช่วง (ไม่แตะการจับคู่ชื่อเต็ม :131-133); `WhtGetMonthSummaryTool` (:62-121) L-12 แทน :108 (บั๊ก B7 — รอบ 2 F8: บอกว่าเป็นรายการใบ 50 ทวิที่นับรายการยังไม่จ่ายด้วย และใช้ "ยอดหักตามเอกสาร") + L-11 + `eWht` จาก `EXCLUDED` **เฉพาะเมื่อ `pnd53Readable`** (รอบ 2 F1), ขอบเขตสาขา/`input.branchId`, current sources, ยอดแยกต่อสกุลเงิน (รอบ 2 F2)
 - `WhtGetMonthSummaryTool` ยอดซ้อน B13 (review รอบ 4 F5): แถว REQUIRED ระดับเอกสารที่มีใบของบางการจ่ายแล้ว นับยอดคงเหลือ = ยอดเอกสาร − ยอดใบที่ออก/บันทึกแล้ว (ไม่ติดลบ; 0 ไม่นับรายการ) ที่ :84-90; เทสต์ใน `erp-tax-tools.use-case.spec.ts` (จ่ายสองงวด ออกใบงวดแรก ⇒ 10,000/100)
 - `WhtGetMonthSummaryTool` ทำ B7 ให้ครบ (review รอบ 3 F6/P33): ประโยคอังกฤษ :102 → L-12en, ท้ายข้อความ :107 → L-13en และ :114 → L-13, ฟิลด์ผลลัพธ์ `certificateItemCount`/`totalIncome`/`totalDocumentWithholding`/`byIncomeType[].itemCount…` + `countBasis`

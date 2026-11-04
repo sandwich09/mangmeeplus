@@ -51,6 +51,7 @@ describe('settings menu', () => {
         ['สาขา', '/settings/branches'],
         ['พนักงานและสิทธิ์', '/settings/access-overview'],
         ['ตั้งค่าใบรับรองแทนใบเสร็จ', '/settings/substitute-receipt'],
+        ['จ่ายผ่าน e-WHT ของธนาคาร', '/settings/e-wht'],
         ['ลายเซ็นบน 50 ทวิ', '/settings/tax-signature'],
         ['เชื่อมต่อ LINE OA', '/settings/line-oa'],
         ['สินค้าและบริการสำหรับ CRM', '/settings/crm-catalog'],
@@ -189,7 +190,7 @@ describe('settings menu', () => {
     assert.deepEqual(
       filterSettingsSidebarItems(['company.setup.read', 'company.setup.manage', 'company.branch.read', 'company.tax_signature.manage'])
         .map((item) => [item.key, item.title]),
-      [['company-profile', 'ข้อมูลร้าน'], ['branches', 'สาขา'], ['substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ'], ['tax-signature', 'ลายเซ็นบน 50 ทวิ']],
+      [['company-profile', 'ข้อมูลร้าน'], ['branches', 'สาขา'], ['substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ'], ['e-wht', 'จ่ายผ่าน e-WHT ของธนาคาร'], ['tax-signature', 'ลายเซ็นบน 50 ทวิ']],
     );
   });
 });
@@ -208,4 +209,17 @@ it('the overview has no second package entry', () => {
   const source = readFileSync(new URL('./SettingsMenu.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /PACKAGE_CARD|PACKAGE_MENU|packageCard|showsPackageCard/);
   assert.equal(filterSettingsMenuItems(['company.plan.manage']).length, 0);
+});
+
+describe('e-WHT settings', () => {
+  it('R20 card and sidebar require setup manage in every paid pack and are absent from the free shell', () => {
+    for (const permissions of [[], ['expense.review'], ['company.setup.manage']]) {
+      const allowed = permissions.includes('company.setup.manage');
+      assert.equal(filterSettingsMenuItems(permissions).some(row => row.key === 'e-wht'), allowed);
+      assert.equal(filterSettingsSidebarItems(permissions).some(row => row.key === 'e-wht'), allowed);
+      assert.equal(filterSettingsMenuItems(permissions, true).some(row => row.key === 'e-wht'), false);
+    }
+    assert.deepEqual(findRoutePermissionRule('/settings/e-wht')?.anyOf, ['company.setup.manage']);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['company.setup.manage'], 'co', '/companies/co/settings/e-wht', true), false);
+  });
 });

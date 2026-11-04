@@ -744,6 +744,7 @@ describe('buildNavItems', () => {
       ['settings.company-profile', 'ข้อมูลร้าน', '/companies/co/settings/profile'],
       ['settings.branches', 'สาขา', '/companies/co/settings/branches'],
       ['settings.substitute-receipt', 'ตั้งค่าใบรับรองแทนใบเสร็จ', '/companies/co/settings/substitute-receipt'],
+      ['settings.e-wht', 'จ่ายผ่าน e-WHT ของธนาคาร', '/companies/co/settings/e-wht'],
       ['settings.tax-signature', 'ลายเซ็นบน 50 ทวิ', '/companies/co/settings/tax-signature'],
     ]);
     assert.equal(buildLockedNavItems('co', {}, ['company.plan.manage']).find((item) => item.key === 'billing')?.label, 'แพ็กเกจ');
@@ -756,7 +757,7 @@ describe('buildNavItems', () => {
     // Each settings page lights its own row and never the overview with it (the sidebar's own rule).
     const rows = settings!.subItems!;
     for (const [path, key] of [['/settings', 'settings.overview'], ['/settings/profile', 'settings.company-profile'], ['/settings/branches', 'settings.branches'],
-      ['/settings/substitute-receipt', 'settings.substitute-receipt'], ['/settings/tax-signature', 'settings.tax-signature']] as const) {
+      ['/settings/substitute-receipt', 'settings.substitute-receipt'], ['/settings/e-wht', 'settings.e-wht'], ['/settings/tax-signature', 'settings.tax-signature']] as const) {
       const pathname = `/companies/co${path}`;
       const activeKey = getActiveModuleKey(WORKSPACE_MODULES, 'co', pathname) ?? undefined;
       assert.deepEqual(rows.filter((row) => isActiveNavSubItem(pathname, activeKey, row, rows)).map((row) => row.key), [key], path);

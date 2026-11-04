@@ -32,6 +32,7 @@ import * as lineAi from './line-ai.js';
 import * as lineDocumentQa from './line-document-qa.js';
 import * as procurement from './procurement.js';
 import * as transactionTax from './transaction-tax.js';
+import * as tax from './tax.js';
 
 describe('disbursement voucher one-source words', () => {
   it('keeps SAME_NAME warning and payee basis notes in contracts', () => {
@@ -203,6 +204,7 @@ const SOURCES = {
   'line-document-qa.ts': lineDocumentQa,
   'procurement.ts': procurement,
   'transaction-tax.ts': transactionTax,
+  'tax.ts': tax,
 } as unknown as Record<string, Record<string, unknown>>;
 
 type Registration = {
@@ -215,6 +217,7 @@ type Registration = {
 // Authoritative list of pairs. Cross-named pairs are NOT discoverable by the
 // sweep below — adding one here is the only thing that covers it.
 const REGISTRY: Registration[] = [
+  { source: 'tax.ts', arrayName: 'WHT_REMITTANCES', prismaEnum: 'WhtRemittance' },
   { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_STATUSES', prismaEnum: 'DisbursementVoucherStatus' },
   { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_ORIGINS', prismaEnum: 'DisbursementVoucherOrigin' },
   { source: 'disbursement-vouchers.ts', arrayName: 'DISBURSEMENT_VOUCHER_PAYEE_BASES', prismaEnum: 'DisbursementVoucherPayeeBasis' },

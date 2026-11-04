@@ -217,7 +217,7 @@ export class PrismaTaxRepository {
 
   async findActiveEventBySourceComponent(companyId: string, sourceType: string, sourceId: string, sourceLineKey: string, componentKey: string | null, eventType: string): Promise<TaxEventRecord | null> {
     const row = await (this.prisma.client as any).taxEvent.findFirst({ where: {
-      companyId, sourceType, sourceId, sourceLineKey, componentKey, eventType, status: 'ACTIVE',
+      companyId, sourceType, sourceId, sourceLineKey, componentKey, eventType, status: { in: ['ACTIVE', 'EXCLUDED'] },
     }, orderBy: { createdAt: 'desc' } });
     return row ? this.toEventRecord(row) : null;
   }
@@ -246,7 +246,7 @@ export class PrismaTaxRepository {
       const payment = await db.expensePayment.findFirst({ where: { companyId: input.companyId, expenseId: input.sourceId,
         id: input.sourceLineKey.slice(8).split(':line:')[0], status: 'RECORDED', paidAtConfirmed: true } });
       if (!payment || (await filedWithholdingPaymentPeriods(db, input.companyId, input.sourceType, input.sourceId,
-        { formType: input.whtFormType ?? '', periodKey: input.periodKey }, input.sourceLineKey)).length) {
+        { formType: input.whtFormType ?? '', periodKey: input.periodKey }, input.sourceLineKey, input.status === 'EXCLUDED')).length) {
         throw new ConflictException({ code: 'expense_tax_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
       }
     }
@@ -384,48 +384,62 @@ export class PrismaTaxRepository {
   /** W8: remove only obsolete unfiled reporting facts; never mutate a frozen line or file. */
   async retireObsoleteExpenseWithholding(companyId: string, rows: (Pick<ExpenseWhtSourceRow, 'id' | 'expenseDate'> & Partial<ExpenseWhtSourceRow>)[]) {
     const issues = await this.prisma.client.taxReviewIssue.findMany({ where: { companyId, sourceType: 'expense.record', status: 'OPEN',
-      issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING'] },
+      issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'WHT_RATE_MISMATCH'] },
       taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } }, include: { taxPeriod: { select: { formType: true, periodKey: true } } } });
     const categoryCodes = [...new Set(rows.flatMap(row => row.incomeCategoryCode ? [row.incomeCategoryCode] : []))];
     const categories = issues.length && categoryCodes.length ? await this.prisma.client.whtIncomeCategory.findMany({ where: { code: { in: categoryCodes } } }) : [];
     const routes = new Map(categories.map(category => [category.code, category.filingRoute]));
     for (const issue of issues) {
-      if (rows.some(row => row.id === issue.sourceId && row.expenseDate.toISOString().slice(0, 7) === issue.taxPeriod.periodKey
+      if (rows.some(row => row.whtRemittance !== 'E_WHT' && row.id === issue.sourceId && row.expenseDate.toISOString().slice(0, 7) === issue.taxPeriod.periodKey
         && (withholdingFormFor(row.payeeEntityKind ?? null, routes.get(row.incomeCategoryCode ?? '')) ?? 'PND53') === issue.taxPeriod.formType)) continue;
       await this.prisma.client.taxReviewIssue.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: issue.sourceId,
         taxPeriodId: issue.taxPeriodId, taxPeriod: { formType: issue.taxPeriod.formType, periodKey: issue.taxPeriod.periodKey }, issueCode: issue.issueCode, status: 'OPEN' },
         data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางเปลี่ยนแล้ว' } });
     }
     const current = new Set(rows.map(r => `${r.id}:${r.sourceLineKey ?? `payment:${r.paymentId}`}:${r.expenseDate.toISOString()}`));
-    const events = await this.prisma.client.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, status: 'ACTIVE' } });
+    const events = await this.prisma.client.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, status: { in: ['ACTIVE', 'EXCLUDED'] } } });
     for (const event of events) {
       if (current.has(`${event.sourceId}:${event.sourceLineKey}:${event.eventDate.toISOString()}`)) continue;
       await this.prisma.client.$transaction(async tx => {
         await lockExpenseCorrection(tx, companyId, event.sourceId);
-        await tx.$queryRaw`SELECT id FROM "TaxPeriod" WHERE id = ${event.taxPeriodId} FOR UPDATE`;
-        if ((await filedWithholdingPaymentPeriods(tx, companyId, event.sourceType, event.sourceId,
-          { formType: event.whtFormType ?? '', periodKey: event.periodKey }, event.sourceLineKey.startsWith('payment:') ? event.sourceLineKey : undefined)).length) return;
-        await tx.taxEvent.updateMany({ where: { id: event.id, companyId, status: 'ACTIVE' }, data: { status: 'SUPERSEDED' } });
+        if (event.status !== 'EXCLUDED') {
+          await tx.$queryRaw`SELECT id FROM "TaxPeriod" WHERE id = ${event.taxPeriodId} FOR UPDATE`;
+          if ((await filedWithholdingPaymentPeriods(tx, companyId, event.sourceType, event.sourceId,
+            { formType: event.whtFormType ?? '', periodKey: event.periodKey }, event.sourceLineKey.startsWith('payment:') ? event.sourceLineKey : undefined)).length) return;
+        }
+        await tx.taxEvent.updateMany({ where: { id: event.id, companyId, status: { in: ['ACTIVE', 'EXCLUDED'] } }, data: { status: 'SUPERSEDED' } });
+        await tx.taxReviewIssue.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: event.sourceId, taxPeriodId: event.taxPeriodId,
+          taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } }, issueCode: 'WHT_RATE_MISMATCH', status: 'OPEN' },
+          data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางเปลี่ยนแล้ว' } });
       });
     }
   }
 
-  async isWithholdingPaymentFiled(companyId: string, sourceType: string, sourceId: string, paymentPeriod?: { formType: string; periodKey: string }, sourceLineKey?: string): Promise<boolean> {
-    return (await filedWithholdingPaymentPeriods(this.prisma.client, companyId, sourceType, sourceId, paymentPeriod, sourceLineKey)).length > 0;
+  async resolveStaleExpenseWithholdingIssues(companyId: string, desired: Set<string>) {
+    const issues = await this.prisma.client.taxReviewIssue.findMany({ where: { companyId, sourceType: 'expense.record', status: 'OPEN',
+      issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING', 'WHT_RATE_MISMATCH'] },
+      taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } } });
+    const ids = issues.filter(issue => !desired.has(JSON.stringify([issue.sourceId, issue.taxPeriodId, issue.issueCode]))).map(issue => issue.id);
+    if (ids.length) await this.prisma.client.taxReviewIssue.updateMany({ where: { companyId, id: { in: ids }, status: 'OPEN' },
+      data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางเปลี่ยนแล้ว' } });
   }
 
-  async supersedeUnclassifiedWithholding(companyId: string, sourceType: string, sourceId: string, keepEventType?: 'WHT_PND2' | 'WHT_PND3' | 'WHT_PND53') {
-    if (await this.isWithholdingPaymentFiled(companyId, sourceType, sourceId)) return;
+  async isWithholdingPaymentFiled(companyId: string, sourceType: string, sourceId: string, paymentPeriod?: { formType: string; periodKey: string }, sourceLineKey?: string, onlyFiledRows = false): Promise<boolean> {
+    return (await filedWithholdingPaymentPeriods(this.prisma.client, companyId, sourceType, sourceId, paymentPeriod, sourceLineKey, onlyFiledRows)).length > 0;
+  }
+
+  async supersedeUnclassifiedWithholding(companyId: string, sourceType: string, sourceId: string, keepEventType?: 'WHT_PND2' | 'WHT_PND3' | 'WHT_PND53', sourceLineKey?: string, onlyFiledRows = false) {
+    if (await this.isWithholdingPaymentFiled(companyId, sourceType, sourceId, undefined, sourceLineKey, onlyFiledRows)) return;
     await this.prisma.client.taxEvent.updateMany({
-      where: { companyId, sourceType, sourceId, eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'], ...(keepEventType ? { not: keepEventType } : {}) }, status: 'ACTIVE',
-        OR: [{ eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, { taxPeriod: { status: { notIn: ['FILED', 'PAID', 'CLOSED'] } } }] },
+      where: { companyId, sourceType, sourceId, eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'], ...(keepEventType ? { not: keepEventType } : {}) }, ...(sourceLineKey ? { sourceLineKey } : {}), status: { in: ['ACTIVE', 'EXCLUDED'] },
+        OR: [{ eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, { taxPeriod: { status: { notIn: ['FILED', 'PAID', 'CLOSED'] } } }, { status: 'EXCLUDED' }] },
       data: { status: 'SUPERSEDED' },
     });
   }
 
-  async resolveSourceIssues(companyId: string, issueCode: string, sourceType: string, sourceId: string, taxPeriodId?: string) {
+  async resolveSourceIssues(companyId: string, issueCode: string, sourceType: string, sourceId: string, taxPeriodId?: string, formTypes?: readonly import('@watchdog-bms/contracts').TaxFormType[]) {
     await this.prisma.client.taxReviewIssue.updateMany({
-      where: { companyId, issueCode, sourceType, sourceId, status: 'OPEN', ...(taxPeriodId ? { taxPeriodId } : sourceType === 'expense.record' ? { taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } } : {}) },
+      where: { companyId, issueCode, sourceType, sourceId, status: 'OPEN', ...(taxPeriodId ? { taxPeriodId } : {}), ...(formTypes ? { taxPeriod: { formType: { in: [...formTypes] } } } : !taxPeriodId && sourceType === 'expense.record' ? { taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } } : {}) },
       data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางครบแล้ว' },
     });
   }

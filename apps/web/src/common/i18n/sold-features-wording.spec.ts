@@ -29,7 +29,12 @@ for (const path of [
     assert.match(text, /THAI_SYSTEM_ROLE_NAMES\.OWNER/, path);
   });
 }
-const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV|JPEG|PNG|HEIC|HEIF|GIF)\b/g, '').match(/[A-Za-z]+/g) ?? [];
+const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV|JPEG|PNG|HEIC|HEIF|GIF|e-WHT)\b/g, '').match(/[A-Za-z]+/g) ?? [];
+
+test('the specified e-WHT brand is allowed while internal remittance codes remain forbidden', () => {
+  assert.deepEqual(remainingEnglish('ธนาคารนำส่ง (e-WHT)'), []);
+  assert.deepEqual(remainingEnglish('E_WHT PAYER_FILES WHT'), ['E', 'WHT', 'PAYER', 'FILES', 'WHT']);
+});
 
 test('disbursement-voucher labels use plain Thai and name the owner role with the contracts name', () => {
   assert.ok(workspaceDictionary.th['expenses.disbursement_web_entry.owner_only'].includes('มีเพียงเจ้าของกิจการที่ใช้เมนูนี้ได้'));

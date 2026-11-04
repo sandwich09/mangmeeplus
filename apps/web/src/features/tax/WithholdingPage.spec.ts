@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import assert from 'node:assert/strict';
 import { test, mock } from 'node:test';
 import * as React from 'react';
@@ -693,7 +694,7 @@ test('R10 source-only blockers preserve correction permissions, hidden-branch pr
       if (!count) { assert.equal((html.match(/เดือนนี้ไม่มีรายการ/g) ?? []).length, 1, 'only the unrelated empty form may say it has no payments'); assert.match(html, /แก้ข้อมูลรายการจ่ายเพื่อแสดงในแบบ/); }
     } finally { view.cleanup(); }
   }
-  const hidden = { id: 'hidden', issueCode: 'PND3_FILING_REVIEW', severity: 'BLOCKING', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null, description: 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด' };
+  const hidden = { id: 'hidden', issueCode: 'PND3_FILING_REVIEW', severity: 'BLOCKING', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null, description: E_WHT_WORDS['W-T5'] };
   const view = pageView([form({ paymentCount: 0, issues: [hidden] }), form({ formType: 'PND53', paymentCount: 0, issues: [{ ...hidden, issueCode: 'PND53_FILING_REVIEW' }] })], [], ['wht.pnd53.read', 'expense.read']);
   try {
     const html = view.render(); assert.equal(html.split(hidden.description).length - 1, 1); assert.match(html, /กลับไปรายการค่าใช้จ่าย/);
@@ -702,7 +703,7 @@ test('R10 source-only blockers preserve correction permissions, hidden-branch pr
 });
 
 test('R10 FILED omission warnings keep the stored download and the additional paper separate', async () => {
-  const warning = { id: 'omitted', issueCode: 'WHT_FILED_PAYMENT_OMITTED', severity: 'WARNING', description: 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล' };
+  const warning = { id: 'omitted', issueCode: 'WHT_FILED_PAYMENT_OMITTED', severity: 'WARNING', description: E_WHT_WORDS['W-T6']('ผู้รับเงิน') };
   const exportCall = mock.method(api, 'exportWithholding', async () => ({ artifact: { fileName: 'เดิม.pdf', contentBase64: 'frozen', checksum: 'original' } }));
   const download = mock.method(downloads, 'downloadArtifact', () => {});
   const forms = [form({ status: 'FILED', canDownload: true, issues: [warning], papers: [paper(0, { status: 'FILED', canDownload: true, issues: [warning] }), paper(1, { status: 'OPEN', canDownload: true })] })];
@@ -770,5 +771,67 @@ test('R10 a source-only branch without a tax code offers branch settings without
     assert.match(html, /ตลาด ยังไม่มีรหัสสาขาภาษี/);
     assert.match(html, /settings\/branches\?from=withholding/);
     assert.doesNotMatch(html, /ตลาด ยังไม่มีรหัสสาขาภาษี · 0 รายการ|เดือนนี้ไม่มีรายการ/);
+  } finally { view.cleanup(); }
+});
+
+test('A6 bank-only forms show one information sentence in place of paper actions', () => {
+  for (const formType of ['PND3', 'PND53']) {
+    const description = E_WHT_WORDS['W-T3'](formType === 'PND3' ? 'ภ.ง.ด.3' : 'ภ.ง.ด.53', 'บางนา');
+    const html = card(form({ formType, paymentCount: 0, issues: [{ id: 'bank', issueCode: `${formType}_FILING_BANK_REMITTED_ONLY`, severity: 'BLOCKING', description }] }));
+    assert.equal(html.split(description).length - 1, 1);
+    assert.doesNotMatch(html, /<button|ต้องแก้ก่อนยื่น|เปิดค่าใช้จ่าย/);
+    assert.match(html, /role="status"/);
+  }
+});
+
+test('A23 mixed branch keeps bank card and normal PND53 download; warnings are separate from A30 blockers', () => {
+  const bank = { ...form({ paymentCount: 0 }), issues: [{ id: 'bank', severity: 'BLOCKING', issueCode: 'PND3_FILING_BANK_REMITTED_ONLY', description: E_WHT_WORDS['W-T3']('ภ.ง.ด.3', 'บางนา') }] };
+  const warning = { id: 'rate', issueCode: 'WHT_RATE_MISMATCH', severity: 'WARNING', description: E_WHT_WORDS['W-T4']('สมชาย'), expenseId: 'e' };
+  const blocking = { id: 'taxid', issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', description: 'เลขผู้เสียภาษียังไม่ครบ', expenseId: 'e2' };
+  const view = pageView([bank, form({ formType: 'PND53', issues: [warning, blocking] })]);
+  (view.state[2] as any).establishments = [{ code: '00001', name: 'บางนา', forms: [bank, form({ formType: 'PND53', issues: [warning, blocking] })] }];
+  (view.state[2] as any).bankRemitted = [{ id: 'bankpay', payeeName: 'ผู้รับผ่านธนาคาร', paid: '100', withheld: '1', currency: 'USD', establishment: { kind: 'ESTABLISHMENT', code: '00001' } }];
+  try {
+    const html = view.render();
+    assert.match(html, /จ่ายผ่าน e-WHT/); assert.match(html, /ดาวน์โหลดรายการ e-WHT/);
+    assert.match(html, /ผู้รับผ่านธนาคาร/); assert.match(html, /USD/);
+    assert.match(html, /ควรตรวจก่อนยื่น/); assert.match(html, /ตรวจอัตรา/); assert.match(html, /ต้องแก้ก่อนยื่น/);
+    assert.equal(html.split(warning.description.replaceAll('>', '&gt;')).length - 1, 1);
+    assert.match(html, /ดาวน์โหลดแบบ ภ.ง.ด.53/); assert.doesNotMatch(html, /ดาวน์โหลดแบบ ภ.ง.ด.3/);
+    const fixes = view.find('WithholdingFixes'); assert.deepEqual(fixes.sourceIssues.map((i: any) => i.id), ['taxid']);
+    (view.state[2] as any).establishments[0].forms = [bank];
+    assert.match(view.render(), /ดาวน์โหลดรายการ e-WHT/);
+  } finally { view.cleanup(); }
+});
+
+test('e-WHT download keeps the selected branch, announces loading, preserves errors and retries', async () => {
+  let fail = true;
+  const artifact = { fileName: 'bank.xlsx', contentBase64: '', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+  const request = mock.method(api, 'exportWithholdingEWht', async () => { if (fail) throw new Error('ดาวน์โหลดไม่สำเร็จ ลองอีกครั้ง'); return artifact; });
+  const download = mock.method(downloads, 'downloadArtifact', () => {});
+  const view = pageView();
+  (view.state[2] as any).establishments = [{ code: '00001', name: 'บางนา', forms: [form()] }];
+  (view.state[2] as any).bankRemitted = [{ id: 'bank', payeeName: 'ธนาคาร', withheld: '1', currency: 'THB', establishment: { kind: 'ESTABLISHMENT', code: '00001' } }];
+  try {
+    view.render(); view.find('button', p => p.children.includes(E_WHT_WORDS['W-T2b'])).onClick();
+    view.render();
+    const pending = view.find('button', p => p.children.includes(E_WHT_WORDS['W-T2b']));
+    assert.equal(pending.disabled, true); assert.equal(pending['aria-busy'], true);
+    await view.settle(); assert.match(view.render(), /ดาวน์โหลดไม่สำเร็จ ลองอีกครั้ง/);
+    assert.equal(download.mock.callCount(), 0);
+    fail = false; view.find('button', p => p.children.includes(E_WHT_WORDS['W-T2b'])).onClick();
+    await view.settle(); view.render();
+    assert.deepEqual(request.mock.calls[1].arguments, ['co', '2026-10', '00001']);
+    assert.deepEqual(download.mock.calls[0].arguments, [artifact]);
+  } finally { view.cleanup(); request.mock.restore(); download.mock.restore(); }
+});
+
+test('A30 normal source blockers keep their own notice with the bank card and no bank-only claim', () => {
+  const issue = { id: 'taxid', issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', description: 'เลขผู้เสียภาษียังไม่ครบ', expenseId: 'e' };
+  const view = pageView([form({ issues: [issue] })]);
+  (view.state[2] as any).bankRemitted = [{ id: 'bank', payeeName: 'ธนาคาร', withheld: '1', currency: 'THB' }];
+  try {
+    const html = view.render(); assert.match(html, /ต้องแก้ก่อนยื่น/); assert.match(html, /เลขผู้เสียภาษียังไม่ครบ/);
+    assert.match(html, /ดาวน์โหลดรายการ e-WHT/); assert.doesNotMatch(html, /จ่ายผ่าน e-WHT ทั้งหมด/);
   } finally { view.cleanup(); }
 });

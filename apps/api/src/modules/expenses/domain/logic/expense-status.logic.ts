@@ -1,3 +1,6 @@
+import { BadRequestException } from '@nestjs/common';
+import Decimal from 'decimal.js';
+import { WHT_REMITTANCES, type WhtRemittance } from '@watchdog-bms/contracts';
 import { CLAIMABLE_INPUT_VAT_DOCUMENT_TYPES } from './expense-document.logic';
 import {
   isNonExpenseClassificationBlocking, expenseEvidenceAssessment,
@@ -8,6 +11,17 @@ import {
 } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import type { ExpenseRecordWithRelations } from '../models/expense.model';
+
+export function eWhtRemittanceAllowed(input: { requested?: string | null; stored?: string | null; shopUsesEWht: boolean }): boolean {
+  return input.requested !== 'E_WHT' || input.stored === 'E_WHT' || input.shopUsesEWht;
+}
+
+export function normalizeWhtRemittance(value: unknown, whtAmount: string): WhtRemittance | null {
+  if (value != null && !(WHT_REMITTANCES as readonly unknown[]).includes(value)) {
+    throw new BadRequestException({ code: 'expense_wht_remittance_invalid', message: 'วิธีนำส่งภาษีไม่ถูกต้อง เลือกวิธีนำส่งภาษีอีกครั้ง' });
+  }
+  return new Decimal(whtAmount).isZero() ? null : (value as WhtRemittance | null | undefined) ?? null;
+}
 
 export const NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED =
   'This document is classified as non-expense. Finance must explicitly override the source document type before advancing.';
@@ -34,6 +48,7 @@ export function expenseTaxSourceChecksum(expense: ExpenseRecordWithRelations): s
     inputVatClaimStatus: expense.inputVatClaimStatus,
     vatCaptureSnapshot: expense.vatCaptureSnapshotJson ?? null,
     whtInput: expense.whtInputJson ?? null,
+    whtRemittance: expense.whtRemittance ?? null,
     primaryAttachmentId: expense.primaryAttachmentId ?? null,
     attachments: [...(expense.attachments ?? [])]
       .sort((left, right) => left.id.localeCompare(right.id) || left.purpose.localeCompare(right.purpose))

@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { expenseSourceForEvent } from '../../testing/withholding-source.fixture';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import assert from 'node:assert/strict';
@@ -329,7 +330,9 @@ describe('withholding month read', () => {
       taxPeriod: { findMany: async ({ where }: any) => { assert.equal(where.companyId, ctx.companyId); return periods; } },
       taxEvent: { findMany: async ({ where, orderBy }: any) => {
         if (orderBy) assert.deepEqual(orderBy, [{ eventDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }]);
-        assert.equal(where.companyId, ctx.companyId); assert.equal(where.status, 'ACTIVE');
+        assert.equal(where.companyId, ctx.companyId);
+        if (where.status === 'EXCLUDED') return [];
+        assert.equal(where.status, 'ACTIVE');
         if (where.OR) assert.deepEqual(where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
         return [event('e1', 'PND3', 'expense-1'), event('e2', 'PND53', 'expense-2'), event('e3', 'PND3', 'outside')];
       } },
@@ -883,7 +886,7 @@ it('R10 exported paper cannot be filed with omitted payments', async () => {
     await assert.rejects(value.markFiled({ ...ctx, scopes: { branchIds: ['head'] } }, ctx.companyId, 'p', {}), (error: any) => {
       const response = error.getResponse();
       assert.equal(response.code, `${formType}_FILING_REVIEW`);
-      assert.equal(response.message, 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด');
+      assert.equal(response.message, E_WHT_WORDS['W-T5']);
       assert.doesNotMatch(JSON.stringify(response), /secret|hidden-issue|"hidden"/); return true;
     });
     assert.equal(writes, 0);
@@ -970,7 +973,7 @@ it('R10 source-only corrections and FILED omission warnings follow payment cover
   db.$transaction = async (work: any) => work(db);
   const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
   const read = (actor = ctx) => reader.getMonth(actor, '2026-09');
-  const warning = 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล';
+  const warning = E_WHT_WORDS['W-T6']('ผู้รับเงินที่ต้องแก้');
   let month = await read();
   assert.ok(month.forms.every(f => f.issues.some(i => i.issueCode === 'WHT_PAYEE_KIND_UNKNOWN')));
   sources[1].vendorEntityKindSnapshot = 'JURISTIC';
@@ -989,7 +992,7 @@ it('R10 source-only corrections and FILED omission warnings follow payment cover
   assert.ok(month.forms[0].issues.some(i => i.description === warning));
   assert.equal(month.forms[0].canDownload, true); assert.equal(JSON.stringify(papers), frozen);
   const hidden = await read({ ...ctx, permissions: ['wht.pnd53.read', 'expense.read'], scopes: { branchIds: ['head'] } });
-  assert.ok(hidden.forms[0].issues.some(i => i.description === warning));
+  assert.ok(hidden.forms[0].issues.some(i => i.description === E_WHT_WORDS['W-T6']('รายการของสาขาที่คุณไม่ได้ดูแล')));
   assert.doesNotMatch(JSON.stringify(hidden), /ผู้รับเงินที่ต้องแก้|สาขาลับ|bad-payment|"bad"/);
   mode = 'EACH_BRANCH_PAYS';
   month = await read();
@@ -1013,8 +1016,59 @@ it('R10 source-only corrections and FILED omission warnings follow payment cover
   sources[0].payments.push({ ...sources[0].payments[0], id: 'new-good-payment', amount: '0', paidAt: new Date('2026-09-11') });
   sources[0].vendorEntityKindSnapshot = null;
   month = await read();
-  assert.ok(month.forms[0].issues.some(i => i.description === warning));
+  assert.ok(month.forms[0].issues.some(i => i.description === E_WHT_WORDS['W-T6']('ผู้รับเงินครบ')));
   sources[0].payments.pop();
   month = await read();
-  assert.ok(!month.forms[0].issues.some(i => i.description === warning));
+  assert.ok(!month.forms[0].issues.some(i => i.description === E_WHT_WORDS['W-T6']('ผู้รับเงินครบ')));
+});
+
+describe('R9 fresh e-WHT export (paid read permission)', () => {
+  async function fixture() {
+    const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+    const branches = [{ id: 'head', type: 'HEAD_OFFICE', name: 'สำนักงานใหญ่', taxBranchCode: '00000', status: 'ACTIVE' }, { id: 'other', type: 'BRANCH', name: 'สาขาสอง', taxBranchCode: '00002', status: 'ACTIVE' }];
+    const events: any[] = ['THB', 'USD'].map((currency, n) => ({ id: `bank-${n}`, sourceType: 'expense.record', sourceId: `expense-${n}`, status: 'EXCLUDED', branchId: 'head', eventType: 'WHT_PND3',
+      eventDate: new Date('2026-09-10'), currency, grossAmount: n ? '200' : '1000', withheldAmount: n ? '2' : '10', whtRate: '1', incomeCategoryCode: 'WHT_ADVERTISING_IND', payeeSnapshotJson: { name: `ผู้รับเงิน ${n}`, taxId: '1100700000001', address: 'กรุงเทพ', branchCode: null } }));
+    events.push({ ...events[0], id: 'hidden', sourceId: 'hidden', branchId: 'other', payeeSnapshotJson: { name: 'ความลับของสาขาอื่น' } });
+    events.push({ ...events[0], id: 'legacy-hidden', sourceId: 'legacy-hidden', branchId: null, sourceBranchId: 'other', payeeSnapshotJson: { name: 'ความลับที่แถวภาษียังไม่มีสาขา' } });
+    const audits: any[] = [];
+    const db: any = { taxEvent: { findMany: async ({ where }: any) => { assert.equal(where.status, 'EXCLUDED'); assert.equal(where.companyId, ctx.companyId);
+      return events.filter(e => !where.OR || where.OR.some((p: any) => p.branchId?.in?.includes(e.branchId) || p.branchId === null && e.branchId === null)); } },
+      expenseRecord: { findMany: async ({ where }: any) => events.filter(e => where.id.in.includes(e.sourceId) && (!where.OR || where.OR.some((p: any) => p.branchId?.in?.includes(e.sourceBranchId ?? e.branchId) || p.branchId === null && !e.sourceBranchId && e.branchId === null))).map(e => ({ id: e.sourceId })) },
+      branch: { findMany: async () => branches }, whtPayerModeFact: { findMany: async () => [{ mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', supersededAt: null }] },
+      whtIncomeCategory: { findMany: async () => [{ code: 'WHT_ADVERTISING_IND', nameTh: 'ค่าโฆษณา' }] },
+      taxFilingPackage: { create: async () => assert.fail('no package') }, documentNumber: { create: async () => assert.fail('no number') } };
+    db.$transaction = async (work: any) => work(db);
+    const noop = {} as any;
+    const controller = new TaxController(noop, noop, new GenerateWhtReportUseCase({ prisma: { client: db } } as any), noop, noop, noop, noop, noop, noop, noop, noop, noop, {} as any, { log: async (input: any) => audits.push(input) } as any);
+    return { controller, events, audits };
+  }
+  function xml(artifact: any) {
+    const file = Buffer.from(artifact.contentBase64, 'base64'); let result = '';
+    for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+      const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26), extra = file.readUInt16LE(offset + 28), start = offset + 30 + length + extra;
+      const bytes = file.subarray(start, start + size); result += (file.readUInt16LE(offset + 8) === 8 ? require('node:zlib').inflateRawSync(bytes) : bytes).toString(); offset = start + size;
+    } return result;
+  }
+  it('requires the month-read permission; no permission (including free shops) is refused', async () => {
+    const { REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const handler = (TaxController.prototype as any).exportEWht;
+    assert.ok(handler); assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['wht.pnd53.read']);
+    const { DenyByDefaultGuard } = await import('../../../../common/security/deny-by-default.guard'); const { Reflector } = await import('@nestjs/core');
+    const execution: any = { getHandler: () => handler, getClass: () => TaxController, switchToHttp: () => ({ getRequest: () => ({ context: { ...ctx, freeExpenseDrafts: true, permissions: [] } }) }) };
+    assert.throws(() => new DenyByDefaultGuard(new Reflector()).canActivate(execution), /permission/i);
+    const { isFreeExpenseDraftRoute } = await import('../../../system-partner-management/application/free-expense-access');
+    for (const suffix of ['', '/e-wht-export']) assert.equal(isFreeExpenseDraftRoute('GET', `/v1/companies/${ctx.companyId}/tax/withholding/months/2026-09${suffix}`), false, 'free source-drafts cannot reach this financial read');
+  });
+  it('exports only current scoped bank payments with currency totals, then includes new payments after filing', async () => {
+    const h = await fixture(); const actor = { ...ctx, permissions: ['wht.pnd53.read'], scopes: { branchIds: ['head'] } };
+    const first = await (h.controller as any).exportEWht(actor, ctx.companyId, '2026-09');
+    const content = xml(first); assert.match(first.fileName, /จ่ายผ่าน e-WHT/); assert.match(content, /สกุลเงิน/); assert.match(content, /ค่าโฆษณา/);
+    assert.match(content, /บาท/); assert.match(content, /ดอลลาร์สหรัฐ/); assert.equal((content.match(/>รวม</g) ?? []).length, 2); assert.doesNotMatch(content, /ความลับ|50 ทวิ/);
+    h.events.push({ ...h.events[0], id: 'new-after-filed', sourceId: 'new', payeeSnapshotJson: { name: 'จ่ายเพิ่มหลังยื่น' } });
+    const second = await (h.controller as any).exportEWht(actor, ctx.companyId, '2026-09', '00000');
+    assert.match(xml(second), /จ่ายเพิ่มหลังยื่น/); assert.notEqual(second.checksum, first.checksum);
+    assert.equal(h.audits.length, 2); assert.equal(h.audits[0].action, 'tax.withholding.e_wht_export');
+    const hidden = await (h.controller as any).exportEWht(actor, ctx.companyId, '2026-09', '00002'); assert.doesNotMatch(xml(hidden), /ความลับ|ผู้รับเงิน 0|ผู้รับเงิน 1|จ่ายเพิ่มหลังยื่น/);
+    await assert.rejects(() => (h.controller as any).exportEWht(actor, 'another-company', '2026-09'), /company/i);
+  });
 });

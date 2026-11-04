@@ -547,3 +547,16 @@ it('an expired bundle part uses the shared not-found sentence, with no file retu
   globalThis.fetch = (async () => new Response(JSON.stringify({ message: 'Not Found', statusCode: 404 }), { status: 404, headers: { 'content-type': 'application/json' } })) as typeof fetch;
   await assert.rejects(() => fetchAccountantEvidenceBundle('co', {}, 99), error => apiErrorMessage(error) === 'ไม่พบข้อมูลที่ต้องการ');
 });
+
+it('e-WHT setting read and update use the existing endpoint and suppress duplicate error toasts', async () => {
+  const { getExpenseEWhtSetting, updateExpenseEWhtSetting } = await import('./expenses.api');
+  const calls: { url: string; method?: string; body?: unknown }[] = [];
+  globalThis.fetch = (async (url, init) => {
+    calls.push({ url: String(url), method: init?.method, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+    return new Response(JSON.stringify({ used: true }), { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  assert.deepEqual(await getExpenseEWhtSetting('co'), { used: true });
+  assert.deepEqual(await updateExpenseEWhtSetting('co', { used: true }), { used: true });
+  assert.equal(calls[0].url, '/api/v1/companies/co/expense-settings/e-wht');
+  assert.deepEqual(calls[1], { url: calls[0].url, method: 'PATCH', body: { used: true } });
+});

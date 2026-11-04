@@ -47,6 +47,99 @@ export function whtPayerIdentityMissingMessage(missing: readonly WhtPayerMissing
   return `ยังไม่มี${whtPayerMissingLabel(missing)} กรอกในหน้าข้อมูลร้านก่อน แล้วกด “${WHT_PRINT_CERTIFICATE_LABEL}” อีกครั้ง`;
 }
 
+export const WHT_REMITTANCES = ['PAYER_FILES', 'E_WHT'] as const;
+export type WhtRemittance = (typeof WHT_REMITTANCES)[number];
+
+export const E_WHT_REDUCED_RATE = {
+  ratePercent: '1',
+  windows: [
+    { from: '2023-01-01', to: '2025-12-31', source: 'https://www.rd.go.th/fileadmin/user_upload/kormor/newlaw/mr389.pdf' },
+    { from: '2026-01-01', to: '2027-12-31', source: 'https://www.rd.go.th/fileadmin/user_upload/kormor/newlaw/mr402.docx' },
+  ],
+  reduced: ['WHT_SERVICE_3', 'WHT_SERVICE_5', 'WHT_RENT_IND', 'WHT_RENT_JUR', 'WHT_PROFESSIONAL_IND', 'WHT_PROFESSIONAL_JUR',
+    'WHT_ADVERTISING_IND', 'WHT_ADVERTISING_JUR', 'WHT_PRIZE', 'WHT_PRIZE_JUR'],
+  unknown: ['WHT_OTHER_IND', 'WHT_OTHER_JUR'],
+} as const;
+
+export function eWhtRateKind(code?: string | null): 'REDUCED' | 'NOT_REDUCED' | 'UNKNOWN' {
+  if (!code || (E_WHT_REDUCED_RATE.unknown as readonly string[]).includes(code)) return 'UNKNOWN';
+  return (E_WHT_REDUCED_RATE.reduced as readonly string[]).includes(code) ? 'REDUCED' : 'NOT_REDUCED';
+}
+
+export function eWhtReducedRateOn(code: string | null | undefined, civilDate: string): '1' | null {
+  return eWhtRateKind(code) === 'REDUCED' && E_WHT_REDUCED_RATE.windows.some(({ from, to }) => civilDate >= from && civilDate <= to)
+    ? E_WHT_REDUCED_RATE.ratePercent : null;
+}
+
+export function eWhtPaymentMethodAllowed(method?: string | null): boolean {
+  return method !== 'CASH' && method !== 'CARD';
+}
+
+const eWhtExplanation = 'จ่ายผ่านบริการ e-WHT ของธนาคาร ธนาคารจะนำส่งภาษีให้ ร้านไม่ต้องยื่น ภ.ง.ด.3/53 และไม่ต้องออก 50 ทวิสำหรับการจ่ายนั้นค่ะ 😊 ค่าบริการ ค่าเช่า ค่าวิชาชีพ ค่าโฆษณา และรางวัล ที่จ่ายถึง 31 ธ.ค. 2570 หัก 1% (มีข้อยกเว้นบางกรณี) ในรายจ่ายให้เลือก “ธนาคารนำส่ง (e-WHT)” (ร้านที่ยังไม่เห็นตัวเลือกนี้ ให้ผู้ดูแลร้านเปิดใช้ที่ ตั้งค่าร้าน > จ่ายผ่าน e-WHT ของธนาคาร ก่อน) ผู้รับเงินตรวจหลักฐานได้ที่เว็บกรมสรรพากรค่ะ';
+
+// Spec §10.1: sentence IDs keep the web, API, LINE and guide on the same approved words.
+export const E_WHT_WORDS = {
+  'S-1': 'จ่ายผ่าน e-WHT ของธนาคาร',
+  'S-2': 'ร้านสมัครหักภาษีผ่านธนาคารไว้หรือไม่',
+  'S-3': 'ร้านสมัครบริการ e-WHT กับธนาคารไว้หรือเปล่า',
+  'S-4': { no: 'ยังไม่ได้สมัคร', yes: 'สมัครแล้ว' },
+  'S-5': 'เลือก “สมัครแล้ว” รายจ่ายที่หักภาษีจะมีตัวเลือก “ธนาคารนำส่ง (e-WHT)”',
+  'S-6': 'บันทึกแล้ว เลือก “ธนาคารนำส่ง (e-WHT)” ได้ในรายจ่ายที่หักภาษี',
+  'S-7': 'บันทึกแล้ว รายจ่ายที่บันทึกไว้แล้วไม่เปลี่ยน',
+
+  'S-8': 'ร้านยังไม่ได้เปิดใช้ e-WHT ให้ผู้ดูแลร้านเปิดที่ ตั้งค่าร้าน หรือเลือก “ร้านยื่นแบบเอง”',
+  'W-F1': 'นำส่งภาษีอย่างไร',
+  'W-F2': 'ร้านยื่นแบบเอง',
+  'W-F3': 'ธนาคารนำส่ง (e-WHT)',
+  'W-F4': 'ธนาคารนำส่งภาษีให้ ไม่ต้องยื่นแบบและไม่ต้องออก 50 ทวิสำหรับรายการนี้',
+  'W-F5': 'อัตรา e-WHT 1% · ค่าบริการโรงแรม ภัตตาคาร และเบี้ยประกันชีวิตไม่อยู่ในประเภทนี้',
+  'W-F6': 'อัตรา e-WHT 1%',
+  'W-F7': 'ประเภทนี้ไม่ลดอัตราเมื่อจ่ายผ่าน e-WHT',
+  'W-F8': 'ประเภท “อื่นๆ” ให้ผู้ทำบัญชีบอกอัตรา e-WHT',
+  'W-F9': 'วันที่เอกสารอยู่นอกช่วงอัตรา e-WHT 1% (1 ม.ค. 2566–31 ธ.ค. 2570)',
+  'W-F10': 'ถ้าจ่ายผ่าน e-WHT ให้เลือก “ธนาคารนำส่ง (e-WHT)” แทน',
+  'W-F11': 'ใช้เลือกประเภทเงินได้ที่ตรงกัน',
+  'W-F10o': 'ถ้าจ่ายผ่าน e-WHT ของธนาคาร เปิดใช้ที่ตั้งค่าร้านก่อน',
+  "W-F10o'": 'ถ้าจ่ายผ่าน e-WHT ของธนาคาร ให้ผู้ดูแลร้านเปิดใช้ที่ตั้งค่าร้านก่อน',
+  'W-D1': 'จ่ายผ่าน e-WHT ธนาคารเป็นผู้นำส่งภาษี ไม่ต้องออก 50 ทวิ ผู้รับเงินตรวจหลักฐานได้ที่เว็บกรมสรรพากร',
+  'W-D1u': 'ตั้งให้จ่ายผ่าน e-WHT เมื่อจ่ายแล้ว ธนาคารจะนำส่งภาษี ไม่ต้องออก 50 ทวิ',
+  'W-P1': 'จ่ายผ่าน e-WHT ต้องจ่ายผ่านธนาคาร',
+  'W-P2': 'วันที่จ่ายอยู่นอกช่วงอัตรา e-WHT 1% ตรวจอัตราหักก่อนบันทึก',
+  'W-PD1': 'ยังไม่ทราบวันที่จ่ายเงินจริง ระบุวันที่จากหลักฐาน',
+  'W-PD2': 'บันทึกวันที่จ่ายแล้ว รายการนี้จ่ายผ่าน e-WHT ธนาคารเป็นผู้นำส่ง',
+  'W-C1': 'การแก้ในระบบไม่เปลี่ยนภาษีที่ธนาคารนำส่ง ถ้ายอดหักเปลี่ยน ให้ผู้ทำบัญชีจัดการกับธนาคารหรือกรมสรรพากร',
+  'W-V1': 'จ่ายผ่าน e-WHT ธนาคารเป็นผู้นำส่งภาษี ไม่ต้องออก 50 ทวิ',
+  'W-V1u': 'จะจ่ายผ่าน e-WHT ธนาคารจะนำส่งภาษี ไม่ต้องออก 50 ทวิ',
+  'W-T1': 'จ่ายผ่าน e-WHT',
+  'W-T2': 'ธนาคารเป็นผู้นำส่ง จึงไม่อยู่ในแบบ ภ.ง.ด.3/53',
+  'W-T2b': 'ดาวน์โหลดรายการ e-WHT',
+  'W-T3': (form: string, branchName?: string | null) => `รายการที่จ่ายแล้วของ ${form}${branchName ? `ของสาขา ${branchName}` : ''} ในระบบเดือนนี้จ่ายผ่าน e-WHT ทั้งหมด จึงไม่มีแถวในแบบนี้`,
+  'W-T4': (payee: string) => `${payee}: หัก 1% ถ้าจ่ายผ่าน e-WHT ให้เปิดแก้รายจ่ายแล้วเลือก “ธนาคารนำส่ง (e-WHT)” (ร้านที่ยังไม่เห็นตัวเลือกนี้ ให้ผู้ดูแลร้านเปิดใช้ที่ ตั้งค่าร้าน > จ่ายผ่าน e-WHT ของธนาคาร ก่อน) ถ้าไม่ใช่ ตรวจว่าอัตรานี้ถูกต้อง`,
+  'W-T5': 'มีรายการของสาขาที่คุณไม่ได้ดูแลที่ต้องแก้ก่อนยื่นแบบนี้ ให้ผู้ดูแลสาขานั้นแก้ข้อมูล',
+  'W-T6': (payee: string) => `${payee}: ไม่อยู่ในแบบที่ยื่นแล้ว แก้ข้อมูลก่อน แล้วระบบจะบอกว่าต้องยื่นแบบเพิ่มเติมหรือยื่นอีกแบบหนึ่ง`,
+  'W-X1': 'วิธีนำส่งภาษีหัก ณ ที่จ่าย',
+  'W-X2': { PAYER_FILES: 'ร้านยื่นแบบเอง', E_WHT: 'ธนาคารนำส่ง (e-WHT)', unspecified: 'ไม่ได้ระบุ', noWithholding: '' },
+  'W-X3': 'จ่ายผ่าน e-WHT',
+  'W-R1': 'รายการนี้จ่ายผ่าน e-WHT ต้องจ่ายผ่านธนาคาร เลือกวิธีจ่ายอื่น หรือเปิดแก้รายการเพื่อเปลี่ยนวิธีนำส่ง',
+  'W-R2': 'รายการนี้มีการจ่ายด้วยเงินสดหรือบัตรอยู่ จึงเลือก e-WHT ไม่ได้ ให้คงเป็น “ร้านยื่นแบบเอง”',
+  'W-R3': 'รายจ่ายนี้จ่ายผ่าน e-WHT ต้องจ่ายผ่านธนาคาร เลือกวิธีจ่ายอื่นในใบรับรอง',
+  'N-1': 'ถ้าเอกสารถูกยืนยันอีกครั้งและยังต้องมีหนังสือรับรอง ระบบจะขึ้นให้ออกใบใหม่',
+  'L-1': 'รายการนี้จ่ายผ่าน e-WHT ต้องจ่ายผ่านธนาคารค่ะ กด “โอนเงิน” หรือเปิดรายการเพื่อเปลี่ยนวิธีนำส่งค่ะ',
+  'L-2': 'รายการนี้จะจ่ายผ่าน e-WHT ธนาคารจะนำส่งภาษีหลังจ่ายค่ะ',
+  'L-3': 'ตรวจหลักฐานเพื่อยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่ายค่ะ',
+  'L-4': (wht: string, eWht = false) => `หักภาษีทั้งเอกสาร ${wht} บาท${eWht ? ' (e-WHT)' : ''}`,
+  'L-5': (amount: string) => `ถ้าจ่ายผ่าน e-WHT ของธนาคารภายใน 31 ธ.ค. 2570 จะหัก 1% คือ ${amount} บาท ยกเว้นบางกรณีค่ะ`,
+  'L-9': 'วันที่จ่ายอยู่นอกช่วงอัตรา e-WHT 1% ตรวจอัตราหักก่อนยืนยันค่ะ',
+  'L-10': 'จ่ายผ่านธนาคารแบบไหนคะ',
+  'L-11': (count: number, amountByCurrency: string) => `จ่ายผ่าน e-WHT ${count} รายการ หักไว้ ${amountByCurrency} ธนาคารเป็นผู้นำส่ง ไม่รวมในยอดข้างบนค่ะ`,
+  'L-7': eWhtExplanation,
+  'L-14': eWhtExplanation,
+  'L-8': 'ใช้ยอดก่อน VAT คูณอัตราตามประเภทเงินได้ค่ะ 😊 เลือก “จ่ายค่าอะไร” ให้ตรงกับรายการก่อน ถ้าจ่ายผ่าน e-WHT ให้เลือก “ธนาคารนำส่ง (e-WHT)” ด้วย (ร้านที่ยังไม่เห็นตัวเลือกนี้ ให้ผู้ดูแลร้านเปิดใช้ที่ ตั้งค่าร้าน > จ่ายผ่าน e-WHT ของธนาคาร ก่อน) ถ้าประเภทนั้นลดอัตราได้ วันที่เอกสารอยู่ในช่วงที่กฎหมายลดอัตรา และกรอกเป็นเปอร์เซ็นต์ ระบบเติมอัตราที่ลดแล้วให้ค่ะ',
+  'H-1': 'จ่ายผ่าน e-WHT — ถ้าจ่ายผ่านบริการ e-WHT ของธนาคาร ธนาคารนำส่งภาษีให้ ไม่ต้องยื่นแบบและไม่ต้องออก 50 ทวิสำหรับการจ่ายนั้น ในรายจ่ายเลือก “ธนาคารนำส่ง (e-WHT)” (ร้านที่ยังไม่เห็นตัวเลือกนี้ ให้ผู้ดูแลร้านเปิดใช้ที่ ตั้งค่าร้าน > จ่ายผ่าน e-WHT ของธนาคาร ก่อน) ถ้าประเภทลดอัตราได้ วันที่เอกสารอยู่ในช่วงที่กฎหมายลด (ถึง 31 ธ.ค. 2570) และกรอกเป็นเปอร์เซ็นต์ ระบบเติม 1% ให้ รายการนี้จะไม่อยู่ในแบบ ภ.ง.ด.3/53',
+  'H-2': 'มั่งมีเปิดใช้ประเภทเงินได้ให้แล้ว ประเภทที่ยังรอตรวจจะเลือกไม่ได้',
+  'W-F10o-link': 'ไปที่ตั้งค่า',
+} as const;
+
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 export type TaxType = 'VAT' | 'WHT' | 'CIT' | 'CUSTOMS';
@@ -922,6 +1015,7 @@ export type WhtPaymentEstablishment = WhtEstablishment
   | { kind: 'BRANCH_HAS_NO_CODE'; branchId: string | null };
 
 export type WithholdingMonthPaymentDto = {
+  currency?: string;
   paymentId?: string | null;
   paper?: WithholdingPaperRef | null;
   establishment?: WhtPaymentEstablishment;
@@ -947,6 +1041,7 @@ export type WithholdingMonthDto = {
   establishments?: (WhtEstablishment & { forms: WithholdingMonthFormDto[] })[];
   establishmentIssues?: { issueCode: 'WHT_PAYER_MODE_REQUIRED' | 'WHT_BRANCH_HAS_NO_CODE'; branchId: string | null; branchName: string; description: string; paymentCount: number; totalPaid: string; totalWithheld: string }[];
   separatePnd2?: WithholdingMonthPaymentDto[];
+  bankRemitted?: WithholdingMonthPaymentDto[];
   periodKey: string;
   forms: WithholdingMonthFormDto[];
   payments: WithholdingMonthPaymentDto[];

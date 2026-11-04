@@ -9,6 +9,7 @@ import { expenseEvidenceImageMissing } from '@watchdog-bms/contracts';
 import { deriveEvidenceRowFlags } from './evidence-audit.logic';
 import { readFileSync } from 'node:fs';
 
+(globalThis as any).self = globalThis;
 require.extensions['.css'] = m => { m.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => key }) }; };
 require.extensions['.svg'] = (module: any) => { module.exports = () => null; };
 const api = mutable('./expenses.api');
@@ -445,4 +446,25 @@ test('EVID-1 original-paper choice saves without files, keeps tax answers and sh
     assert(!screen.nodes.some(node => node.props['aria-label'] === 'มีตัวจริง ยังไม่ได้แนบรูป'));
     assert.equal(screen.field('หมายเหตุ').maxLength, 500);
   } finally { saved.mock.restore(); }
+});
+
+test('e-WHT setting gates the live review form, preserves saved bank records on read failure and makes no free-shop request', async () => {
+  const { E_WHT_WORDS } = require('@watchdog-bms/contracts');
+  for (const used of [true, false, 'failed'] as const) for (const stored of ['PAYER_FILES', 'E_WHT']) for (const free of [false, true]) for (const canManage of [false, true]) {
+    const request = mock.method(api, 'getExpenseEWhtSetting', async () => { if (used === 'failed') throw new Error('offline'); return { used }; });
+    const screen = view(ExpenseReviewEditSection, detail({ whtAmount: '1', whtRemittance: stored, whtCategoryCode: 'WHT_ADVERTISING_IND',
+      vendorEntityKindSnapshot: 'INDIVIDUAL', whtRate: '1', whtInputJson: { inputType: 'RATE', value: '1' } }),
+      { freeExpenseDrafts: free, permissions: canManage ? ['company.setup.manage'] : [] });
+    try {
+      screen.render(); await new Promise(resolve => setImmediate(resolve));
+      const html = screen.render();
+      const visible = screen.nodes.some(node => node.props['aria-label'] === E_WHT_WORDS['W-F1']);
+      assert.equal(visible, !free && (used === true || stored === 'E_WHT'), `${used}/${stored}/${free}`);
+      assert.equal(request.mock.callCount(), free ? 0 : 1);
+      if (!free && used !== true && stored === 'PAYER_FILES') {
+        assert.ok(html.includes(E_WHT_WORDS[canManage ? 'W-F10o' : "W-F10o'"]));
+        assert.equal(html.includes('href="/companies/co/settings/e-wht"'), canManage);
+      }
+    } finally { request.mock.restore(); }
+  }
 });

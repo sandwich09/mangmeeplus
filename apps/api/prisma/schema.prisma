@@ -2662,6 +2662,11 @@ model ExpenseCategory {
   @@index([companyId, status])
 }
 
+enum WhtRemittance {
+  PAYER_FILES
+  E_WHT
+}
+
 model ExpenseRecord {
   inputVatDecisions ExpenseInputVatDecision[]
   id                                 String                             @id @default(cuid())
@@ -2709,6 +2714,7 @@ model ExpenseRecord {
   taxableAmount                      Decimal                            @default(0) @db.Decimal(18, 4)
   vatAmount                          Decimal                            @default(0) @db.Decimal(18, 4)
   whtAmount                          Decimal                            @default(0) @db.Decimal(18, 4)
+  whtRemittance                      WhtRemittance?
   // The withholding DECISION behind whtAmount, mirroring SupplierPayment.whtCategoryCode/whtRate —
   // without these a 50 ทวิ certificate from Expenses had no income category to print and no rate to
   // report. Rate is a PERCENT ('3.0000' = 3%), matching WhtIncomeCategory.defaultRate.
@@ -5307,6 +5313,7 @@ enum TaxReconciliationIssueCode {
 
 // Company tax profile: VAT registration, branch policy, accounting period
 model CompanyTaxProfile {
+  eWhtUsed              Boolean   @default(false)
   id                    String    @id @default(cuid())
   companyId             String    @unique
   taxId                 String?

@@ -22,6 +22,18 @@ import {
 describe('seed expense money facts', () => {
   const rows = seedExpenseRows((offset, hour) => new Date(Date.UTC(2026, 9, 13 + offset, hour)));
 
+  it('e-WHT mixed-month fixture keeps bank and payer-file payments distinct', () => {
+    const bank = rows.find(row => row.id === 'seed-expense-record-e-wht-advertising');
+    const payer = rows.find(row => row.id === 'seed-expense-record-payer-files-rent');
+    assert.ok(bank); assert.ok(payer);
+    assert.equal(bank.date.toISOString().slice(0, 7), payer.date.toISOString().slice(0, 7));
+    assert.equal(seedExpenseData(bank, { companyId: 'shop', branchId: 'branch', ownerUserId: 'owner' }).record.whtRemittance, 'E_WHT');
+    assert.equal(seedExpenseData(payer, { companyId: 'shop', branchId: 'branch', ownerUserId: 'owner' }).record.whtRemittance, 'PAYER_FILES');
+    assert.equal(bank.payments[0].method, 'BANK_TRANSFER');
+    assert.equal((bank.payments[0] as any).paidAtConfirmed, true);
+    assert.equal((payer.payments[0] as any).paidAtConfirmed, true);
+  });
+
   it('paid seed expenses have recorded payments that add up to the header', () => {
     for (const row of rows) {
       const payments = (row as any).payments ?? [];

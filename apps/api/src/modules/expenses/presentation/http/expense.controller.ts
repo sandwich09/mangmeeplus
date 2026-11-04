@@ -1,3 +1,4 @@
+import { GetExpenseEWhtSettingUseCase, UpdateExpenseEWhtSettingUseCase } from '../../application/use-cases/expense-e-wht-setting.use-case';
 import { ExpensePaymentSlipUploadUseCase } from '../../application/use-cases/expense-upload.use-case';
 import { DecideExpenseInputVatUseCase } from '../../application/use-cases/expense-draft.use-case';
 import { DecideExpenseInputVatDto, SubstituteReceiptListQueryDto } from './expense.dtos';
@@ -14,7 +15,7 @@ import {
   SubmitSubstituteReceiptPaperDto,
   AcceptSubstituteReceiptPaperDto,
   ConfirmExpenseDto,
-  ExpenseTotalsPreviewDto,
+  ExpenseTotalsPreviewDto, UpdateExpenseEWhtSettingDto,
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
@@ -819,7 +820,21 @@ export class ExpenseSettingsController {
   constructor(
     private readonly getSubstitutePolicy: GetSubstituteReceiptPolicyUseCase,
     private readonly updateSubstitutePolicy: UpdateSubstituteReceiptPolicyUseCase,
+    private readonly getEWhtSetting: GetExpenseEWhtSettingUseCase,
+    private readonly updateEWhtSetting: UpdateExpenseEWhtSettingUseCase,
   ) {}
+
+  @Get('e-wht')
+  @RequireAnyPermission('company.setup.manage', 'expense.review', 'expense.confirm', 'expense.create', 'expense.update', 'expense.read', 'expense.read_related', 'expense.read_own')
+  getEWht(@ReqCtx() ctx: RequestContext) {
+    return this.getEWhtSetting.execute(ctx);
+  }
+
+  @Patch('e-wht')
+  @RequirePermissions('company.setup.manage')
+  updateEWht(@ReqCtx() ctx: RequestContext, @Body() body: UpdateExpenseEWhtSettingDto) {
+    return this.updateEWhtSetting.execute(ctx, body);
+  }
 
   @Get('substitute-receipt')
   @RequirePermissions('company.setup.manage')

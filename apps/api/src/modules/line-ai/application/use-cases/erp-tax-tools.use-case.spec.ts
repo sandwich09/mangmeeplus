@@ -17,6 +17,8 @@ import {
   TaxListMissingDocumentsTool,
 } from './erp-tax-tools.use-case';
 
+const emptyEWhtPrisma = { client: { taxEvent: { findMany: async () => [] } } };
+
 const baseCtx = {
   requestId: 'req-1',
   companyId: 'company-1',
@@ -398,7 +400,7 @@ describe('round 5A sold-pack document advisor reads', () => {
       handoff('5', 'SYSTEM_ISSUED', '8000', '240', { prefill: { ...handoff('5', 'SYSTEM_ISSUED', '8000', '240').prefill, paymentDate: '2026-09-30' } })];
     const seen: any[] = [];
     const handoffs = { listPaged: async (c: any, query: any) => { seen.push([c, query]); const page = query.page; return { rows: rows.slice((page - 1) * 2, page * 2), total: rows.length, pageSize: 2 }; } };
-    const repo = { findPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'PND53', '2026-10']); return { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') }; },
+    const repo = { prisma: emptyEWhtPrisma, findPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'PND53', '2026-10']); return { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') }; },
       findEventsByPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'period', 'ACTIVE']); return [
         { eventType: 'WHT_PND53', branchId: 'branch-1', taxAmount: '105.01' },
         { eventType: 'WHT_PND53', branchId: 'branch-other', taxAmount: '9999.00' },
@@ -421,14 +423,14 @@ describe('round 5A sold-pack document advisor reads', () => {
       .execute({ ...ctx, permissions: ['wht.certificate.read'] }, { periodKey: '2026-10' }));
     assert.equal(r.totalIncome, '3001.00'); assert.equal(r.totalDocumentWithholding, '90.04');
     assert.deepEqual(r.byIncomeType.map((row: any) => row.incomeCategoryName), ['ยังไม่ได้เลือกว่าจ่ายค่าอะไร', 'คำที่ร้านตั้งเอง']);
-    assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569 รวม 3,001.00 บาท หักไว้ 90.04 บาท/);
+    assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569 \(นับรายการที่ยังไม่จ่ายด้วย\) รวม 3,001.00 บาท ยอดหักตามเอกสาร 90.04 บาท/);
     assert.equal(r.dueDate, null); assert.doesNotMatch(r.message, /ยอดที่จ่าย|จ่ายแล้ว|กำหนดยื่น/);
   });
 
   it('refuses an outside branch before reads and keeps missing remittance separate from its calendar deadline', async () => {
     let calls = 0;
     const tool = new WhtGetMonthSummaryTool({ listPaged: async () => { calls++; return { rows: [], pageSize: 100, total: 0 }; } } as any,
-      { findPeriod: async () => { calls++; return null; } } as any);
+      { prisma: emptyEWhtPrisma, findPeriod: async () => { calls++; return null; } } as any);
     assert.equal((await tool.execute(ctx, { branchId: 'other' })).status, 'forbidden'); assert.equal(calls, 0);
     const r = data(await tool.execute(ctx, { periodKey: '2026-10' })); assert.equal(r.remittance, null); assert.match(r.message, /รายการที่คุณดูได้เดือน/);
     assert.equal(pnd53PaperDueDay('2026-12'), '2027-01-07');
@@ -437,7 +439,7 @@ describe('round 5A sold-pack document advisor reads', () => {
 
   it('does not read certificates or remittance without each source permission', async () => {
     const noRead = { listPaged: async () => { throw new Error('no certificate permission'); } };
-    const repo = { findPeriod: async () => null };
+    const repo = { prisma: emptyEWhtPrisma, findPeriod: async () => null };
     assert.equal(data(await new WhtGetMonthSummaryTool(noRead as any, repo as any).execute({ ...ctx, permissions: ['wht.pnd53.read'] }, {})).certificateCount, null);
     const noTax = { findPeriod: async () => { throw new Error('no remittance permission'); } };
     const certificateOnly = data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, noTax as any)
@@ -533,7 +535,7 @@ it('Exam G3: every server-worded document summary follows th/en before card deli
     const messages = [
       await new VoucherListRecentTool(vouchers).execute(context),
       await new VoucherGetDetailTool(vouchers).execute(context, { voucherId: 'v' }),
-      await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, { findPeriod: async () => null } as any).execute(context, { periodKey: '2026-10' }),
+      await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, { prisma: emptyEWhtPrisma, findPeriod: async () => null } as any).execute(context, { periodKey: '2026-10' }),
     ].map(result => String((result.data as any).message));
     for (const message of messages) {
       if (en) assert.doesNotMatch(message, /[\u0E00-\u0E7F]/u); else assert.match(message, /[\u0E00-\u0E7F]/u);
@@ -589,7 +591,7 @@ describe('PWS-PND53-DUE', () => {
   });
   for (const periodExists of [true, false]) for (const certificatesReadable of [true, false]) it(`a certificate reader still gets the summary due date, periodExists=${periodExists}, certificatesReadable=${certificatesReadable}`, async () => {
     const result = data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any,
-      { findPeriod: async () => periodExists ? { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') } : null,
+      { prisma: emptyEWhtPrisma, findPeriod: async () => periodExists ? { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') } : null,
         findEventsByPeriod: async () => [] } as any)
       .execute({ ...ctx, permissions: ['wht.pnd53.read', ...(certificatesReadable ? ['wht.certificate.read'] : [])] }, { periodKey: '2026-10' }));
     assert.match(result.message, new RegExp(`กำหนดยื่น ${periodExists ? '9' : '7'} พ.ย. 2569`));
@@ -622,4 +624,113 @@ it('PWS-WHT-LINE asks plain category/base questions and preserves exact grounded
   assert.equal(r.message, 'ยอดก่อน VAT 1000.50 บาท หัก 3% เป็น 30.02 บาท เหลือ 970.48 บาทก่อนบวก VAT ค่ะ');
   assert.equal(r.baseAmount, '1000.50'); assert.equal(r.withheldAmount, '30.02'); assert.equal(r.netBeforeVat, '970.48');
   assert.equal(r.dueDate, undefined);
+});
+
+it('R12 e-WHT voucher cards keep whole-document WHT, bank defaults and source-driven reduced-rate warnings', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const voucher: any = { header: { id: 'ewht-voucher', companyId: 'company-1', branchId: 'branch-1', preparedByUserId: 'user-1', updatedAt: '2028-01-05T00:00:00Z', createdAt: '2027-12-01T00:00:00Z', status: 'APPROVED', version: 1, payeeName: 'บริษัท ตัวอย่าง จำกัด', totalAmount: '500', currency: 'THB', plannedMethod: null },
+    lines: [{ expenseId: 'source', vendorName: 'บริษัท ตัวอย่าง จำกัด', amount: '500', whtAmount: '100', whtRemittance: 'E_WHT', eWhtReducedRateApplied: true }] };
+  const calls: any[] = [];
+  const source: any = { id: 'source', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1', updatedAt: new Date('2027-12-01'), expenseDate: new Date('2027-12-01'),
+    status: 'CONFIRMED', currency: 'THB', vendorNameSnapshot: 'บริษัท ตัวอย่าง จำกัด', outstandingAmount: '500', whtAmount: '100', whtRemittance: 'E_WHT' };
+  const service = new LineVoucherActionService({ client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any,
+    { get: async () => voucher, previewLineAction: async (_ctx: any, action: string, input: any) => { calls.push({ action, input }); } } as any,
+    { execute: async () => source } as any, {} as any, {} as any, {} as any);
+  const ctx: any = { ...baseCtx, permissions: ['expense.disbursement.pay', 'expense.disbursement.prepare'] };
+  const pay = await service.prepare(ctx, 'VOUCHER_PAY', voucher.header.id, { paidAt: '2028-01-05' });
+  assert.equal(pay.payload.payment?.paymentMethod, 'BANK_TRANSFER');
+  assert.ok(pay.details.some(line => line.includes(E_WHT_WORDS['L-4']('100.00', true))));
+  assert.ok(pay.details.includes(E_WHT_WORDS['L-2'])); assert.ok(pay.details.includes(E_WHT_WORDS['L-9']));
+  assert.equal(pay.awaitingField, undefined);
+  voucher.lines[0].eWhtReducedRateApplied = false;
+  assert.equal((await service.prepare(ctx, 'VOUCHER_PAY', voucher.header.id, { paidAt: '2028-01-05' })).details.includes(E_WHT_WORDS['L-9']), false);
+  voucher.lines[0].eWhtReducedRateApplied = true;
+  assert.equal((await service.prepare(ctx, 'VOUCHER_PAY', voucher.header.id, { paidAt: '2027-12-31' })).details.includes(E_WHT_WORDS['L-9']), false);
+  const create = await service.prepare(ctx, 'VOUCHER_CREATE', source.id, {});
+  assert.ok(create.details.some(line => line.includes(E_WHT_WORDS['L-4']('100.00', true))));
+  voucher.lines[0].whtRemittance = 'PAYER_FILES';
+  const payer = await service.prepare(ctx, 'VOUCHER_PAY', voucher.header.id, { paidAt: '2028-01-05', paymentMethod: 'CHEQUE' });
+  assert.equal(payer.details.includes(E_WHT_WORDS['L-2']), false);
+  assert.equal(payer.details.includes(E_WHT_WORDS['L-9']), false);
+});
+
+for (const [date, code, reduced] of [
+  ['2026-11-04', 'WHT_ADVERTISING_JUR', true], ['2028-01-05', 'WHT_ADVERTISING_JUR', false],
+  ['2026-11-04', 'WHT_TRANSPORT_JUR', false], ['2026-11-04', 'WHT_OTHER_JUR', false],
+] as const) it(`R13 calculator offers the e-WHT alternative only for a chosen reduced category in its window ${code} ${date}`, async t => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  t.mock.timers.enable({ apis: ['Date'], now: new Date(`${date}T05:00:00Z`).getTime() });
+  const nameTh = code === 'WHT_ADVERTISING_JUR' ? 'ค่าโฆษณา (นิติบุคคล)' : code === 'WHT_TRANSPORT_JUR' ? 'ค่าขนส่ง (นิติบุคคล)' : 'เงินได้อื่น (นิติบุคคล)';
+  const tool = new WhtCalculateWithholdingTool({ execute: async () => [{ code, nameTh, defaultRate: code === 'WHT_TRANSPORT_JUR' ? '1' : '2' }] } as any);
+  const ctx = { ...baseCtx, permissions: ['expense.create'], groundingText: 'ค่าโฆษณา 10000' };
+  const unchosen: any = (await tool.execute(ctx, { baseAmount: '10000' })).data;
+  assert.equal(unchosen.needsIncomeType, true); assert.equal(unchosen.eWhtRatePercent, undefined);
+  const data: any = (await tool.execute({ ...ctx, groundingText: `${nameTh} 10000` }, { incomeCategoryCode: code, baseAmount: '10000' })).data;
+  assert.equal(data.withheldAmount, code === 'WHT_TRANSPORT_JUR' ? '100.00' : '200.00');
+  assert.equal(data.eWhtRatePercent, reduced ? '1' : undefined);
+  assert.equal(data.eWhtWithheldAmount, reduced ? '100.00' : undefined);
+  assert.equal(data.message.includes(E_WHT_WORDS['L-5']('100.00')), reduced);
+});
+
+it('R13 e-WHT summary scopes current payments and keeps each currency separate without requiring a paper period', async () => {
+  const { E_WHT_WORDS } = await import('@watchdog-bms/contracts');
+  const events = [
+    { id: 'thb', sourceId: 'thb', branchId: 'branch-1', currency: 'THB', withheldAmount: '100', status: 'EXCLUDED', sourceLineKey: 'payment:thb' },
+    { id: 'usd', sourceId: 'usd', branchId: 'branch-1', currency: 'USD', withheldAmount: '10.25', status: 'EXCLUDED', sourceLineKey: 'payment:usd' },
+    { id: 'hidden', sourceId: 'hidden', branchId: 'branch-2', currency: 'THB', withheldAmount: '9999', status: 'EXCLUDED', sourceLineKey: 'payment:hidden' },
+    { id: 'void', sourceId: 'void', branchId: 'branch-1', currency: 'THB', withheldAmount: '8888', status: 'EXCLUDED', sourceLineKey: 'payment:void' },
+    { id: 'cancelled', sourceId: 'cancelled', branchId: 'branch-1', currency: 'THB', withheldAmount: '7777', status: 'EXCLUDED', sourceLineKey: 'payment:cancelled' },
+  ].map(e => ({ ...e, sourceType: 'expense.record', eventType: 'WHT_PND53', sourceEventType: 'expense.wht.e_wht' }));
+  const db = {
+    taxEvent: { findMany: async ({ where }: any) => {
+      assert.equal(where.companyId, 'company-1'); assert.equal(where.periodKey, '2026-10'); assert.equal(where.status, 'EXCLUDED');
+      assert.equal(where.branchId, 'branch-1'); return events;
+    } },
+    expenseRecord: { findMany: async ({ where }: any) => {
+      assert.equal(where.companyId, 'company-1'); assert.equal(where.status, 'CONFIRMED'); assert.deepEqual(where.OR, [{ branchId: { in: ['branch-1'] } }, { branchId: null }]);
+      return [{ id: 'thb' }, { id: 'usd' }, { id: 'cancelled' }];
+    } },
+    expensePayment: { findMany: async ({ where }: any) => {
+      assert.equal(where.status, 'RECORDED'); assert.equal(where.paidAtConfirmed, true); return [{ id: 'thb' }, { id: 'usd' }, { id: 'void' }];
+    } },
+  };
+  const tool = new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any,
+    { prisma: { client: db }, findPeriod: async () => null } as any);
+  const data: any = (await tool.execute({ ...baseCtx, permissions: ['wht.certificate.read', 'wht.pnd53.read'] }, { periodKey: '2026-10', branchId: 'branch-1' })).data;
+  assert.deepEqual(data.eWht, { paymentCount: 2, withheldByCurrency: [{ currency: 'THB', amount: '100.00' }, { currency: 'USD', amount: '10.25' }] });
+  assert.equal(data.certificateItemCount, 0); assert.equal(data.totalDocumentWithholding, '0.00');
+  assert.ok(data.message.includes(E_WHT_WORDS['L-11'](2, '100.00 บาท และ 10.25 USD')));
+});
+
+it('R13 certificate-only and free-draft users never read bank-remitted tax events', async () => {
+  const noTax = new Proxy({}, { get: () => assert.fail('no tax source read without PND53 permission') });
+  const tool = new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [], total: 0, pageSize: 100 }) } as any, noTax as any);
+  const data: any = (await tool.execute({ ...baseCtx, permissions: ['wht.certificate.read'] }, { periodKey: '2026-10' })).data;
+  assert.equal(data.eWht, null); assert.doesNotMatch(data.message, /จ่ายผ่าน e-WHT/);
+  const ctx = { ...baseCtx, permissions: ['expense.read_own', 'expense.receipt.line_upload'] };
+  assert.equal((await tool.execute(ctx)).status, 'forbidden');
+  assert.equal((await new WhtCalculateWithholdingTool(noTax as any).execute(ctx)).status, 'forbidden');
+});
+
+it('R10 C47 names unpaid invoice withholding as document amounts in Thai and English', async () => {
+  const invoice = { id: 'unpaid', status: 'REQUIRED', currentCertificate: null, prefill: { paymentDate: '2026-10-02', grossAmount: '1000', withheldAmount: '30', incomeCategoryCode: 'SERVICE', incomeCategoryName: 'ค่าบริการ' } };
+  const tool = new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows: [invoice], total: 1, pageSize: 100 }) } as any, {} as any);
+  for (const [locale, groundingText, expected] of [
+    ['th-TH', 'สรุปเดือนตุลาคม', 'รายการที่คุณดูได้เดือน ตุลาคม 2569 (นับรายการที่ยังไม่จ่ายด้วย) รวม 1,000.00 บาท ยอดหักตามเอกสาร 30.00 บาทค่ะ'],
+    ['en-GB', 'Show October summary', 'October 2026: records within your access, unpaid items included, total 1,000.00 THB; withholding per documents 30.00 THB.'],
+  ]) {
+    const result: any = (await tool.execute({ ...baseCtx, permissions: ['wht.certificate.read'], locale: locale!, groundingText }, { periodKey: '2026-10' })).data;
+    assert.equal(result.message, expected); assert.equal(result.totalDocumentWithholding, '30.00');
+  }
+});
+
+it('R10 C47 remittance-only wording still describes tax withheld from payments', async () => {
+  const tool = new WhtGetMonthSummaryTool({ listPaged: async () => assert.fail('no certificate read') } as any,
+    { prisma: emptyEWhtPrisma, findPeriod: async () => ({ id: 'p', status: 'OPEN', dueDate: new Date('2026-11-09Z') }),
+      findEventsByPeriod: async () => [{ eventType: 'WHT_PND53', branchId: 'branch-1', taxAmount: '30' }] } as any);
+  for (const [locale, groundingText, expected] of [
+    ['th-TH', 'สรุปเดือนตุลาคม', 'ยอดที่รวบรวมไว้เดือน ตุลาคม 2569 หักไว้ 30.00 บาท กำหนดยื่น 9 พ.ย. 2569 ค่ะ'],
+    ['en-GB', 'Show October summary', 'October 2026: PND53 period total 30.00 THB, due 9 Nov 2026.'],
+  ]) assert.equal(((await tool.execute({ ...baseCtx, permissions: ['wht.pnd53.read'], locale: locale!, groundingText }, { periodKey: '2026-10' })).data as any).message, expected);
 });

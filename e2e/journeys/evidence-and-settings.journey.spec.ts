@@ -54,6 +54,7 @@ function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
     if (name === 'รายการค่าใช้จ่าย') {
       if (data[0]!.includes('สาขาของร้าน')) expected.splice(2, 0, 'สาขาของร้าน');
       if (bundled) expected.push('ไฟล์เอกสาร');
+      expected.push('วิธีนำส่งภาษีหัก ณ ที่จ่าย');
     }
     if (name === 'การจ่าย' && bundled) expected.push('ไฟล์หลักฐานการจ่าย');
     expect(data[0]).toEqual(expected);

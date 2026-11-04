@@ -25,7 +25,7 @@ test('payment fields prefill today and planned method and use shared themed cont
   assert.match(card, /todayCivilDate\('Asia\/Bangkok'\)/);
   assert.match(card, /<ThemedDate[\s\S]*?value=\{fields.paidDate\} max=\{today\} today=\{today\}/);
   assert.match(card, /<SelectField[\s\S]*?value=\{fields.paymentMethod\}/);
-  assert.match(card, /Object.entries\(PAYMENT_METHOD_LABELS\).map/);
+  assert.match(card, /Object.entries\(PAYMENT_METHOD_LABELS\).filter\(\(\[method\]\) => !eWht \|\| eWhtPaymentMethodAllowed\(method\)\).map/);
   assert.match(card, /<TextField[\s\S]*?value=\{fields.paidFromRef\} maxLength=\{128\}/);
   for (const [key, text] of [
     ['pay_readonly', 'ใบเลขที่ {number} จ่ายให้ {payee}'], ['actual_paid_date', 'วันที่จ่ายจริง'],
@@ -131,4 +131,13 @@ test('four equal payment fields start two columns at 640px and the fixed bar ret
   assert.match(css, /@media \(min-width: 640px\) \{ fieldset.payFields/);
   assert.match(css, /\.payCard[^{}]*\[data-form-action-bar\][^{}]*\{[^}]*padding:/);
   assert.match(css, /padding-inline: 1.75rem/);
+});
+
+test('e-WHT payment screens remove cash/card, show conditional notices and keep bank statements free of certificate links', () => {
+  assert.match(card, /eWhtPaymentMethodAllowed/); assert.match(card, /disbursementEWhtPaymentWarning\(detail, fields.paidDate\)/); assert.match(card, /E_WHT_WORDS\['W-P1'\]/);
+  const withholding = readFileSync(new URL('./DisbursementVoucherWithholding.tsx', import.meta.url), 'utf8');
+  assert.match(withholding, /state === 'E_WHT'/); assert.match(withholding, /'W-V1' : 'W-V1u'/);
+  assert.match(withholding, /filter\(\(\{ state \}\) => state !== 'E_WHT'\)/);
+  const draft = readFileSync(new URL('./DisbursementVoucherDraftPage.tsx', import.meta.url), 'utf8');
+  assert.match(draft, /selectedRows.some\(row => row.whtRemittance === 'E_WHT'\)/); assert.match(draft, /eWhtPaymentMethodAllowed/);
 });

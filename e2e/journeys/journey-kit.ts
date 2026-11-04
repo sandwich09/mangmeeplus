@@ -277,7 +277,7 @@ export type HandExpense = {
  * it: menu → บันทึกด้วยมือ → บันทึกร่าง → (withholding) → ถัดไป → ประเภทเอกสาร → ถัดไป → ยืนยันเอกสาร,
  * and when asked, การจ่ายเงิน → บันทึกจ่าย. The page is left on the expense.
  */
-export async function recordExpenseByHand(page: Page, expense: HandExpense) {
+export async function recordExpenseByHand(page: Page, expense: HandExpense, reviewWithholding?: (block: Locator) => Promise<void>) {
   const main = page.locator('main');
   const pick = (name: string, option: string) => chooseThemedOption(page, main.getByRole('combobox', { name, exact: true }), option);
 
@@ -340,6 +340,7 @@ export async function recordExpenseByHand(page: Page, expense: HandExpense) {
     await pick('ผู้รับเงินเป็นใคร', wht.payeeKind);
     await pick('จ่ายค่าอะไร', wht.incomeType);
     if (wht.routeHint) await expect(block.getByText(wht.routeHint, { exact: true })).toBeVisible();
+    if (reviewWithholding) await reviewWithholding(block);
     await expect(block.getByRole('textbox', { name: /^อัตราหัก ณ ที่จ่าย/ })).toHaveValue(wht.rate);
     await expect(block).toContainText(inOrder('หัก ณ ที่จ่าย', wht.withheld));
     await expect(main.getByRole('textbox', { name: 'เลขประจำตัวผู้เสียภาษีผู้ขาย', exact: true })).toBeVisible();

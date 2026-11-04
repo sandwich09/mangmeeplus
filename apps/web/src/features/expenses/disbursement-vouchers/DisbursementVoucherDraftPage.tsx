@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { DISBURSEMENT_VOUCHER_ERROR_WORDS, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_ERROR_WORDS, DISBURSEMENT_VOUCHER_WORDS, E_WHT_WORDS, eWhtPaymentMethodAllowed, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, MetricGrid, cx } from '@/common/components/mangmee';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { SelectField, TextareaField, TextField } from '@/common/components/field';
@@ -82,6 +82,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
   const keepStepOnReload = useRef(false);
 
   const selectedRows = rows.filter(row => amounts[row.expenseId] !== undefined);
+  const eWht = selectedRows.some(row => row.whtRemittance === 'E_WHT');
   const total = selectedTotal(Object.values(amounts));
   const rule = forceConfirmation ? 'confirm' : payeeRule(selectedRows);
   const validSelection = selectedRows.length > 0 && selectedRows.length <= 20 && selectedRows.length === Object.keys(amounts).length
@@ -99,6 +100,9 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
     setDirty(true); setSaveError(null); setSelectionError(null); setFieldError(null);
   };
   const changeFields = (patch: Partial<Fields>) => { changed(); setFields(previous => ({ ...previous, ...patch })); };
+  useEffect(() => {
+    if (eWht && !eWhtPaymentMethodAllowed(fields.plannedMethod)) changeFields({ plannedMethod: 'BANK_TRANSFER' });
+  }, [eWht, fields.plannedMethod]);
 
   useEffect(() => {
     if (!canPrepare || !entryOpen) return;
@@ -337,8 +341,8 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
               <ThemedDate id="disbursement-planned-date" name="plannedPayDate" className={inputClass} allowClear value={fields.plannedPayDate}
                 onChange={event => changeFields({ plannedPayDate: event.target.value })} />
             </div>
-            <SelectField label={t('expenses.disbursement.planned_method', 'th')} value={fields.plannedMethod} onChange={event => changeFields({ plannedMethod: event.target.value as Fields['plannedMethod'] })}>
-              <option value="">{t('expenses.disbursement.planned_method_unspecified', 'th')}</option>{EXPENSE_PAYMENT_METHODS.map(method => <option key={method} value={method}>{PAYMENT_METHOD_LABELS[method]}</option>)}
+            <SelectField label={t('expenses.disbursement.planned_method', 'th')} hint={eWht ? E_WHT_WORDS['W-P1'] : undefined} value={fields.plannedMethod} onChange={event => changeFields({ plannedMethod: event.target.value as Fields['plannedMethod'] })}>
+              <option value="">{t('expenses.disbursement.planned_method_unspecified', 'th')}</option>{EXPENSE_PAYMENT_METHODS.filter(method => !eWht || eWhtPaymentMethodAllowed(method)).map(method => <option key={method} value={method}>{PAYMENT_METHOD_LABELS[method]}</option>)}
             </SelectField>
             </div>
             {['', 'BANK_TRANSFER'].includes(fields.plannedMethod) && <div id="disbursement-account">

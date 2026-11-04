@@ -2168,6 +2168,7 @@ export class ProcessLineWebhookUseCase {
   @Optional() @Inject(LineSubstituteReceiptActionService) private readonly substituteActions?: LineSubstituteReceiptActionService;
   @Inject(LineWorkflowTargetService) private readonly workflowTargets!: LineWorkflowTargetService;
   @Inject(LineExpenseActionService) private readonly expenseActions!: LineExpenseActionService;
+  private readonly deliveryExpensePaymentMethods = new WeakMap<object, { context: RequestContext; chat: string; controls: string[] }>();
   private readonly deliveryExpenseActions = new WeakMap<object, { context: RequestContext; chat: string; requestId: string; preview: ExpenseActionPreview; applied?: boolean }>();
   private readonly deliveryReimbursements = new WeakMap<object, { context: RequestContext; result: LineReimbursementDraftResult }>();
   @Inject(LineReimbursementDraftService) private readonly reimbursementDrafts!: LineReimbursementDraftService;
@@ -3834,7 +3835,7 @@ export class ProcessLineWebhookUseCase {
     if ('preview' in result) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview, applied: result.status !== 'prepared' });
     if ((result.status === 'applied' || result.status === 'replayed') && result.expenseIds?.length)
       await this.expenseSequenceTask(event, result.expenseIds, result.preview.action);
-    const choices = await this.expenseActions.repairChoices?.(ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
+    const choices = await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
     let nextCard: LineReplyMessage | undefined;
     const nextItems = lineChoiceQuickReply(choices).items;
     if (result.status === 'blocked' && result.recovery) nextCard = { type: 'text', text: result.reply,
@@ -3889,7 +3890,7 @@ export class ProcessLineWebhookUseCase {
     const result = ids.length === 1 ? await this.expenseActions.preview(ctx, chatKeyHashOf(event), { action: 'RECORD_PAYMENT', expenseId: ids[0] }, undefined, undefined, replyLanguage(event))
       : { reply: (replyLanguage(event) === 'en' ? "Which expense would you like to record payment for?" : 'ต้องการบันทึกจ่ายรายการไหนคะ') };
     if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
-    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), ctx.requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
+    const choices = await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), ctx.requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(result.reply);
     await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event), this.config?.webBaseUrl) : { type: 'text', text: result.reply,
       ...(choices.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
     await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
@@ -3992,7 +3993,7 @@ export class ProcessLineWebhookUseCase {
       await this.deliverRequiredMessages(event, [outcomeCard ?? { type: 'text', text: reply }, buildExpenseActionCard(repaired.preview, undefined, replyLanguage(event), this.config?.webBaseUrl)]);
     } else {
       if (repaired) reply = `${reply}\n${repaired.reply}`;
-      const choices = repaired ? await this.expenseActions.repairChoices(ctx, chatKeyHash, undefined, replyLanguage(event)) : null;
+      const choices = repaired ? await this.expenseActionRepairChoices(event, ctx, chatKeyHash, undefined, replyLanguage(event)) : null;
       if (choices?.length) await this.deliverReply(event, reply, lineChoiceQuickReply(choices));
       else await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
         buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
@@ -5280,6 +5281,14 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     if (owner) await this.quotedMessages.rememberLegacy(typed.webhookEventId, owner, messageIds, await this.deliveryQuoteRecords(event), await Promise.all(messages.map(message => this.quoteRecordsForMessage(event, message))));
   }
 
+  private async expenseActionRepairChoices(event: object, ctx: RequestContext, chat: string, requestId?: string, language: 'th' | 'en' = 'th') {
+    const choices = await this.expenseActions.repairChoices?.(ctx, chat, requestId, language);
+    const controls = choices?.flatMap(choice => 'data' in choice && typeof choice.data === 'string' ? [choice.data] : []) ?? [];
+    if (controls.length) this.deliveryExpensePaymentMethods.set(event, { context: ctx, chat, controls });
+    else this.deliveryExpensePaymentMethods.delete(event);
+    return choices;
+  }
+
   private async webhookPlanAuthorization(event: LineTextEvent | LineReceiptUploadEvent, expiresAt: string): Promise<DeliveryAuthorizationV2 | null> {
     const access = this.deliveryAccess.get(event), bound = this.boundConversations.get(event);
     if (!access || !bound) return null;
@@ -5336,6 +5345,13 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       if (!preview || deliveryHash(preview) !== deliveryHash(action.preview)) return null;
       proofs.push({ id: 'expense-action', kind: 'EXPENSE_ACTION_PREVIEW', requestId: action.requestId, previewHash: deliveryHash(preview), applied: action.applied === true, token: preview.token });
     }
+    const paymentMethods = this.deliveryExpensePaymentMethods.get(event);
+    if (paymentMethods) {
+      const choices = await this.expenseActions.repairChoices(paymentMethods.context, paymentMethods.chat);
+      const controls = choices?.flatMap(choice => 'data' in choice && typeof choice.data === 'string' ? [choice.data] : []) ?? [];
+      if (deliveryHash(controls) !== deliveryHash(paymentMethods.controls)) return null;
+      proofs.push({ id: 'expense-payment-method', kind: 'EXPENSE_PAYMENT_METHOD', controls });
+    }
     const reimbursement = this.deliveryReimbursements.get(event)?.result;
     if (reimbursement && (reimbursement.status === 'preview' || reimbursement.status === 'applied')) {
       const actionId = reimbursement.status === 'preview' ? reimbursement.preview.actionId : String(reimbursement.receipt.actionId);
@@ -5374,6 +5390,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     const ctx: RequestContext = { authSubject: a.userId, authProvider: 'line', requestId: a.requestId, companyId: a.companyId, userId: a.userId, membershipId: a.membershipId, permissions: resolved.permissions, entitlementDeniedPermissions: resolved.entitlementDeniedPermissions, roles: resolved.roles, scopes: resolved.scopes };
     this.deliveryAccess.set(event, { userId: a.userId, companyId: a.companyId, membershipId: a.membershipId, fingerprint: a.accessFingerprint });
     this.deliverySources.delete(event); this.deliveryReceiptSources.delete(event); this.deliveryDraftPreviews.delete(event);
+    this.deliveryExpensePaymentMethods.delete(event);
     this.deliverySubstituteActions.delete(event); this.deliverySubstituteSources.delete(event); this.deliveryCandidates.delete(event); this.deliveryWaitingSources.delete(event);
     for (const proof of auth.proofs) {
       if (proof.kind === 'CLARIFICATION') {
@@ -5413,6 +5430,11 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         const preview = await this.counterparties.pending(ctx, a.chatKeyHash);
         if (!preview || preview.token !== proof.token || deliveryHash(preview) !== proof.previewHash) return false;
         this.deliveryCounterparties.set(event, { context: ctx, preview });
+      } else if (proof.kind === 'EXPENSE_PAYMENT_METHOD') {
+        const choices = await this.expenseActions.repairChoices(ctx, a.chatKeyHash);
+        const controls = choices?.flatMap(choice => 'data' in choice && typeof choice.data === 'string' ? [choice.data] : []) ?? [];
+        if (!controls.length || deliveryHash(controls) !== deliveryHash(proof.controls)) return false;
+        this.deliveryExpensePaymentMethods.set(event, { context: ctx, chat: a.chatKeyHash, controls });
       } else if (proof.kind === 'EXPENSE_ACTION_PREVIEW') {
         if (typeof proof.requestId !== 'string') return false;
         if (typeof proof.token !== 'string') return false;
@@ -5938,6 +5960,12 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         const current = action.applied ? await this.expenseActions.appliedPreview(action.context, action.chat, action.preview.token)
           : await this.expenseActions.pending(action.context, action.chat, action.requestId);
         sourcesCurrent = sourcesCurrent && !!current && deliveryHash(current) === deliveryHash(action.preview);
+      }
+      const paymentMethods = this.deliveryExpensePaymentMethods.get(event);
+      if (paymentMethods) {
+        const choices = await this.expenseActions.repairChoices(paymentMethods.context, paymentMethods.chat);
+        const controls = choices?.flatMap(choice => 'data' in choice && typeof choice.data === 'string' ? [choice.data] : []) ?? [];
+        sourcesCurrent = sourcesCurrent && deliveryHash(controls) === deliveryHash(paymentMethods.controls);
       }
       if (this.deliveryReceiptSources.has(event)) {
         denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
@@ -6966,7 +6994,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
           await this.deliverReply(event, result.replyText);
         } else {
           if ('preview' in evidence && evidence.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: evidence.preview });
-          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+          const choices = await this.expenseActionRepairChoices(event, reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
           await this.deliverRequiredMessages(event, ['preview' in evidence && evidence.preview ? buildExpenseActionCard(evidence.preview, undefined, replyLanguage(event), this.config?.webBaseUrl)
             : { type: 'text', text: evidence.reply, ...(choices?.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
         }
@@ -6979,7 +7007,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
           this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: category.preview });
           await this.deliverRequiredMessages(event, [buildExpenseActionCard(category.preview, undefined, replyLanguage(event), this.config?.webBaseUrl)]);
         } else if ('reply' in category) {
-          const choices = await this.expenseActions.repairChoices(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+          const choices = await this.expenseActionRepairChoices(event, reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
           await this.deliverRequiredMessages(event, [{ type: 'text', text: category.reply!, quickReply: lineChoiceQuickReply(choices ?? []) }]);
         } else {
           const proposed = await this.proposeDraftUpdate(event, reasonCtx, resolvedAccess, category,
@@ -6997,7 +7025,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         // A bare payee/category value is continuation data; retain its signed proposal’s language.
         if (answer.preview?.language) event.language = answer.preview.language;
         if (answer.preview) this.deliveryExpenseActions.set(event, { context: reasonCtx, chat: chatKeyHashOf(event), requestId, preview: answer.preview });
-        const choices = answer.preview ? undefined : await this.expenseActions.repairChoices?.(reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
+        const choices = answer.preview ? undefined : await this.expenseActionRepairChoices(event, reasonCtx, chatKeyHashOf(event), undefined, replyLanguage(event));
         await this.deliverRequiredMessages(event, [answer.preview ? buildExpenseActionCard(answer.preview, undefined, replyLanguage(event), this.config?.webBaseUrl) : { type: 'text', text: answer.reply,
           ...(choices?.length ? { quickReply: lineChoiceQuickReply(choices) } : {}) }]);
         await this.updateEventLog(event.webhookEventId, answer.cancelled ? 'expense_action_cancelled' : answer.preview ? 'expense_action_prepared' : 'clarification_required', undefined, companyId);
@@ -9104,7 +9132,7 @@ ${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}` : `↩
         && ref.permissionChecked && ref.webPath?.startsWith(`/companies/${companyId}/reimbursements/`)) : undefined;
     if (actionPreview) this.deliveryExpenseActions.set(event, { context: expenseDraftCtx, chat: chatKeyHashOf(event), requestId, preview: actionPreview });
     const repairChoices = turnResponse.toolsInvoked.includes('expense.action.preview')
-      ? await this.expenseActions.repairChoices(expenseDraftCtx, chatKeyHashOf(event), requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(turnResponse.replyText) : null;
+      ? await this.expenseActionRepairChoices(event, expenseDraftCtx, chatKeyHashOf(event), requestId, replyLanguage(event)) ?? expenseActionNextStepChoices(turnResponse.replyText) : null;
     const completionWithChoices = repairChoices?.length ? inheritCompleteLineBusinessAnswerPresentation(completionMessage, {
       ...completionMessage, quickReply: lineChoiceQuickReply(repairChoices.map(choice => ({ ...choice,
         cameraRoll: choice.text === 'ส่งสลิปโอนสำหรับใบเบิกนี้' || 'cameraRoll' in choice && choice.cameraRoll === true }))),
@@ -10102,7 +10130,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: evidenceTarget.expenseId, companyId, uploaded: true };
       const result = await this.expenseActions.afterEvidencePhoto(ctx, chatKeyHashOf(event), evidenceTarget.expenseId, replyLanguage(event));
       if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId, preview: result.preview });
-      const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
+      const choices = await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
       await this.deliverReply(event, result.reply, choices?.length ? lineChoiceQuickReply(choices) : undefined,
         result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event), this.config?.webBaseUrl) : undefined);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
@@ -13019,7 +13047,7 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
       return buildExpenseActionCard(result.preview, undefined, replyLanguage(event), this.config?.webBaseUrl);
     }
     const card = buildLineAssistantTextCardMessage(result.reply, this.config.webBaseUrl, ctx.companyId, undefined, undefined, replyLanguage(event));
-    const choices = await this.expenseActions.repairChoices(ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
+    const choices = await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), undefined, replyLanguage(event));
     if (result.reply === 'ยังไม่มีรายการให้เลือก พิมพ์ ‘ติดต่อเจ้าหน้าที่’ ให้ทีมงานช่วยค่ะ'
       || result.reply === 'No choices are available; type ‘ติดต่อเจ้าหน้าที่’ to ask the team for help.') card.quickReply = lineChoiceQuickReply([{ label: replyLanguage(event) === 'en' ? 'Contact Mangmee team' : 'ติดต่อทีมงานมั่งมี', text: 'ติดต่อเจ้าหน้าที่' }]);
     else if (choices?.length) card.quickReply = lineChoiceQuickReply(choices);

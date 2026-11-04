@@ -42,7 +42,7 @@ Canonical: ${HOME_URL}
 Also known as: ${HOME_NAMES.join(', ')}
 Social (mangmee_plus): ${HOME_SOCIAL.join(' ')}
 Publisher: บริษัท มั่งมียั่งยืน จำกัด
-Facts aligned with owner-approved LINE help v6 (2026-10-21). Current shop offers, enabled channels and permissions apply.
+LINE help v7; current shop offers, channels and permissions apply.
 
 ## ภาษาไทย
 มั่งมีพลัสช่วยร้านและธุรกิจเล็กเก็บใบเสร็จและค่าใช้จ่ายผ่าน LINE และเว็บ AI เตรียมร่างให้คนตรวจ ไม่แทนนักบัญชี ไม่โอนเงิน ไม่ยื่นภาษี และไม่ให้สินเชื่อ
@@ -81,7 +81,7 @@ Renewal, changes, cancellation, refunds and expiry follow current shop terms and
 
 ### Workflows and safeguards
 LINE drafts, totals and branches follow permissions. Confirmation and payment are separate. Claims follow submit → approve → reimburse → sign; claimant and approver sign after reimbursement or provide fully signed paper. The shop pays itself.
-Payment preparation groups one payee's expenses; after approval and actual payment, recording it creates a payment voucher with the same number. Substitute receipts document actual payments with incomplete payee evidence; check purchase/payment evidence and read the full document before signing or approving, including all uploaded paper pages. Registering a signature or reading a notification does not perform the document action.
+Group one payee's expenses; recording approved, actual payment creates a same-number voucher. Substitute receipts cover payments with incomplete payee evidence; check purchase/payment evidence and all pages before signing/approval. Signature setup and reading notifications do not act on documents.
 Home custom dates initially select last month; only spending follows the range. Pending receipts and total unpaid cover all dates. Authorized accountant exports of reviewed, confirmed records are distinct from reports.
 Authorized shops on the 1,999 pack can issue a 50 bis after checking the payee and payment. Other packs record an external certificate’s number and date with an optional file. Check VAT before using it when filing tax. The shop handles filing and sending tax to the Revenue Department separately.
 AWS and AWS Bedrock are used; HTTPS encrypts traffic. Web and LINE check permissions/scope and retain important-action history. The privacy policy governs processing/retention. Blurry or handwritten evidence can need correction; AI does not guarantee tax accuracy.
@@ -90,8 +90,6 @@ AWS and AWS Bedrock are used; HTTPS encrypts traffic. Web and LINE check permiss
 ${reviewedHelp.cards.map(c => `- ${c.titleTh} / ${c.titleEn}: ${c.answerTh} / ${c.answerEn}`).join('\n')}
 
 ## Contact / ติดต่อ
-- Website / เว็บ: ${HOME_URL}
-- Start / เริ่ม: ${HOME_LINE_URL}
 - Team / ทีมงาน LINE @mangmeeplus: ${HOME_CONTACT_URL}
 - Email / อีเมล: contact@mangmeeplus.com
 - Privacy / ความเป็นส่วนตัว: ${HOME_URL}privacy

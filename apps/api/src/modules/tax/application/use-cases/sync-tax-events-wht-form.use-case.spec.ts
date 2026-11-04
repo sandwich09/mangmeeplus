@@ -239,9 +239,15 @@ it('rerouting to PND2 clears obsolete form faults across periods, not only the n
   h.taxRepo.prisma = { client: { whtIncomeCategory: { findUnique: async () => ({ formType: 'PND2', filingRoute: 'SEPARATE_PND2' }) } } };
   const cleared: any[] = [];
   h.taxRepo.resolveSourceIssues = async (...args: any[]) => { cleared.push(args); };
+  let desired: Set<string> | undefined;
+  h.taxRepo.resolveStaleExpenseWithholdingIssues = async (_company: string, keys: Set<string>) => { desired = keys; };
   await h.run('WHT');
-  assert.deepEqual(h.supersededSources[0], ['company-1', 'expense.record', 'expense-1', 'WHT_PND2']);
-  for (const code of ['MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING']) assert.ok(cleared.some(args => args[1] === code && args.length === 4));
+  assert.deepEqual(h.supersededSources[0], ['company-1', 'expense.record', 'expense-1', 'WHT_PND2', '__HEADER__', false]);
+  assert.ok(desired);
+  for (const code of ['MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING']) {
+    assert.ok(cleared.some(args => args[1] === code && args[4] === 'period-PND2' && args[5].includes('PND2')));
+    assert.equal([...desired].some(key => JSON.parse(key)[2] === code), false, 'authoritative cleanup retires obsolete faults across all WHT periods');
+  }
 });
 
 it('sync skips only the expense with a filed line while the other establishment remains open', async () => {
@@ -288,7 +294,7 @@ it('W8 retires unpaid/voided unfiled events but never mutates filed lines or the
   const events = ['unpaid', 'voided', 'filed'].map(id => ({ id, sourceId: id, sourceType: 'expense.record', sourceLineKey: '__HEADER__', eventDate: new Date('2026-10-28'), taxPeriodId: id, periodKey: '2026-10', whtFormType: 'PND3' }));
   const retired: string[] = [];
   let sourceId = '';
-  const db: any = { taxReviewIssue: { findMany: async () => [] }, $executeRaw: async () => 0, $queryRaw: async () => [],
+  const db: any = { taxReviewIssue: { findMany: async () => [], updateMany: async () => ({ count: 0 }) }, $executeRaw: async () => 0, $queryRaw: async () => [],
     taxEvent: { findMany: async () => events, updateMany: async ({ where }: any) => { retired.push(where.id); return { count: 1 }; } },
     taxPeriod: { findMany: async ({ where }: any) => {
       if (where.whtFilings) { sourceId = where.whtFilings.some.lines.some.sourceId; return sourceId === 'filed' ? [{ formType: 'PND3', periodKey: '2026-10' }] : []; }
@@ -337,4 +343,99 @@ it('R10 same-month form changes retire only the old-form source issues', async (
     assert.equal(writes.length, 1); assert.equal(writes[0].companyId, 'company-1'); assert.equal(writes[0].sourceId, 'expense-1');
     assert.equal(writes[0].taxPeriodId, oldForm); assert.equal(writes[0].sourceType, 'expense.record');
   }
+});
+
+function eWhtSyncHarness(rows: any[]) {
+  const events: any[] = [], issues: any[] = [], creates: any[] = [];
+  let legacyLocked = false, frozen = false;
+  const categories = (code: string) => ({ code, filingRoute: code.startsWith('WHT_OTHER') ? 'ACCOUNTANT_PREPARES' : code === 'WHT_INTEREST' ? 'SEPARATE_PND2' : 'SYSTEM_FILLS' });
+  const repo: any = {
+    prisma: { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) }, whtIncomeCategory: { findUnique: async ({ where }: any) => categories(where.code) } } },
+    upsertPeriod: async (input: any) => ({ id: `period-${input.formType}`, status: legacyLocked ? 'FILED' : 'OPEN', ...input }),
+    isWithholdingPaymentFiled: async (...args: any[]) => frozen || (!args[5] && legacyLocked),
+    retireObsoleteExpenseWithholding: async () => undefined,
+    findActiveEventBySourceComponent: async (_co: string, _type: string, id: string, line: string, _component: unknown, type: string) => events.find(e => e.sourceId === id && e.sourceLineKey === line && e.eventType === type && ['ACTIVE', 'EXCLUDED'].includes(e.status)),
+    supersedeEvent: async (id: string) => { events.find(e => e.id === id).status = 'SUPERSEDED'; },
+    upsertEvent: async (input: any) => { const prior = events.find(e => e.idempotencyKey === input.idempotencyKey); if (prior) Object.assign(prior, input); else events.push({ id: `event-${events.length}`, ...input }); },
+    supersedeUnclassifiedWithholding: async (_co: string, _type: string, id: string, keep?: string, line?: string) => {
+      events.filter(e => e.sourceId === id && (!line || e.sourceLineKey === line) && (!keep || e.eventType !== keep)).forEach(e => { e.status = 'SUPERSEDED'; });
+    },
+    createIssue: async (input: any) => { creates.push(input); const prior = issues.find(i => i.status === 'OPEN' && i.taxPeriodId === input.taxPeriodId && i.issueCode === input.issueCode && i.sourceId === input.sourceId);
+      if (!prior) issues.push({ ...input, formType: input.taxPeriodId.replace('period-', ''), status: 'OPEN' }); },
+    resolveSourceIssues: async (_co: string, code: string, _type: string, id: string, period?: string, forms?: string[]) => {
+      issues.filter(i => i.sourceId === id && i.issueCode === code && (!period || i.taxPeriodId === period) && (!forms || forms.includes(i.formType))).forEach(i => { i.status = 'RESOLVED'; });
+    },
+    resolveStaleExpenseWithholdingIssues: async (_co: string, desired: Set<string>) => {
+      issues.filter(i => i.sourceType === 'expense.record' && ['PND2', 'PND3', 'PND53'].includes(i.formType)
+        && !desired.has(JSON.stringify([i.sourceId, i.taxPeriodId, i.issueCode]))).forEach(i => { i.status = 'RESOLVED'; });
+    },
+  };
+  return { rows, events, issues, creates, repo, lock: (legacy: boolean, filed = false) => { legacyLocked = legacy; frozen = filed; },
+    run: () => new SyncTaxEventsUseCase(repo, {} as any, { findConfirmedWithWhtByCompany: async () => rows } as any, noWhtPayments).execute('company-1', undefined, 'WHT') };
+}
+const eWhtRow = (overrides: any = {}) => whtExpense({ payeeEntityKind: 'INDIVIDUAL', paymentId: 'p', sourceLineKey: 'payment:p', incomeCategoryCode: 'WHT_ADVERTISING_IND', whtRate: '1', whtAmount: '10', ...overrides });
+
+describe('R6/R7 e-WHT sync section 14 (paid sources)', () => {
+  it('records EXCLUDED in original currencies without KIND/tax-ID/FX issues and keeps PP30 FX open', async () => {
+    const h = eWhtSyncHarness([eWhtRow({ id: 'usd', whtRemittance: 'E_WHT', vendorTaxId: null, currency: 'USD' }), eWhtRow({ id: 'thb', whtRemittance: 'E_WHT' })]);
+    h.issues.push({ sourceType: 'expense.record', sourceId: 'usd', issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', taxPeriodId: 'period-PP30', formType: 'PP30', status: 'OPEN' });
+    const result = await h.run();
+    assert.equal(result.whtBankRemittedRecorded, 2); assert.equal(result.whtCreated, 0);
+    assert.deepEqual(h.events.map(e => [e.status, e.sourceEventType, e.currency]), [['EXCLUDED', 'expense.wht.e_wht', 'USD'], ['EXCLUDED', 'expense.wht.e_wht', 'THB']]);
+    assert.equal(h.creates.length, 0); assert.equal(h.issues[0].status, 'OPEN');
+    h.rows[0].payeeEntityKind = null; await h.run();
+    assert.equal(h.creates.length, 0, 'unknown e-WHT payee kind does not create an issue');
+  });
+  it('B5 keeps PP30 FX open on the payer-files accountant-prepares path', async () => {
+    const h = eWhtSyncHarness([eWhtRow({ incomeCategoryCode: 'WHT_OTHER_IND' })]);
+    h.issues.push({ sourceType: 'expense.record', sourceId: h.rows[0].id, issueCode: 'FUNCTIONAL_CURRENCY_FX_MISSING', taxPeriodId: 'period-PP30', formType: 'PP30', status: 'OPEN' });
+    await h.run(); assert.equal(h.issues[0].status, 'OPEN');
+  });
+  it('supersedes the old channel in either direction and resolves mismatch when changed to e-WHT', async () => {
+    const row: any = eWhtRow(); const h = eWhtSyncHarness([row]);
+    await h.run(); assert.equal(h.issues.filter(i => i.status === 'OPEN' && i.issueCode === 'WHT_RATE_MISMATCH').length, 1);
+    row.whtRemittance = 'E_WHT'; await h.run();
+    assert.deepEqual(h.events.map(e => e.status), ['SUPERSEDED', 'EXCLUDED']); assert.equal(h.issues.every(i => i.status === 'RESOLVED'), true);
+    row.whtRemittance = 'PAYER_FILES'; await h.run();
+    assert.equal(h.events.filter(e => e.status === 'ACTIVE').length, 1); assert.equal(h.events.filter(e => e.status === 'EXCLUDED').length, 0);
+  });
+  for (const reverse of [false, true]) {
+    it(`aggregates a stable mismatch once for advertising plus transport across two syncs (reverse=${reverse})`, async () => {
+      const rows = [eWhtRow({ sourceLineKey: 'payment:p:line:ad' }), eWhtRow({ sourceLineKey: 'payment:p:line:transport', incomeCategoryCode: 'WHT_TRANSPORT_IND' })];
+      const h = eWhtSyncHarness(reverse ? rows.reverse() : rows); await h.run(); await h.run();
+      const warnings = h.issues.filter(i => i.issueCode === 'WHT_RATE_MISMATCH');
+      assert.equal(warnings.length, 1); assert.equal(warnings[0].status, 'OPEN'); assert.equal(warnings[0].severity, 'WARNING');
+      assert.equal(h.events.filter(e => e.status === 'ACTIVE').length, 2);
+    });
+    it(`B6 missing tax ID stays open with a SYSTEM_FILLS and accountant-prepares line (reverse=${reverse})`, async () => {
+      const rows = [eWhtRow({ incomeCategoryCode: 'WHT_SERVICE_3', vendorTaxId: null, sourceLineKey: 'payment:p:line:service' }),
+        eWhtRow({ incomeCategoryCode: 'WHT_OTHER_IND', vendorTaxId: null, sourceLineKey: 'payment:p:line:other' })];
+      const h = eWhtSyncHarness(reverse ? rows.reverse() : rows); await h.run(); await h.run();
+      assert.equal(h.issues.filter(i => i.issueCode === 'MISSING_TAX_ID' && i.status === 'OPEN').length, 1);
+    });
+    it(`B6 missing FX stays open with mixed filing routes across two syncs (reverse=${reverse})`, async () => {
+      const rows = [eWhtRow({ incomeCategoryCode: 'WHT_SERVICE_3', currency: 'USD', sourceLineKey: 'payment:p:line:service' }),
+        eWhtRow({ incomeCategoryCode: 'WHT_OTHER_IND', currency: 'USD', sourceLineKey: 'payment:p:line:other' })];
+      const h = eWhtSyncHarness(reverse ? rows.reverse() : rows); await h.run(); await h.run();
+      assert.equal(h.issues.filter(i => i.issueCode === 'FUNCTIONAL_CURRENCY_FX_MISSING' && i.status === 'OPEN').length, 1);
+    });
+    it(`B9 PND3 and PND2 events survive both line orders and two syncs (reverse=${reverse})`, async () => {
+      const rows = [eWhtRow({ incomeCategoryCode: 'WHT_SERVICE_3', sourceLineKey: 'payment:p:line:service' }),
+        eWhtRow({ incomeCategoryCode: 'WHT_INTEREST', sourceLineKey: 'payment:p:line:interest' })];
+      const h = eWhtSyncHarness(reverse ? rows.reverse() : rows); await h.run(); await h.run();
+      assert.deepEqual(h.events.filter(e => e.status === 'ACTIVE').map(e => e.eventType).sort(), ['WHT_PND2', 'WHT_PND3']);
+    });
+  }
+  it('bypasses only legacy month locks for e-WHT; actual FILED coverage still skips it', async () => {
+    const h = eWhtSyncHarness([eWhtRow({ whtRemittance: 'E_WHT', incomeCategoryCode: 'WHT_INTEREST' })]); h.lock(true);
+    assert.equal((await h.run()).whtBankRemittedRecorded, 1);
+    const frozen = eWhtSyncHarness([eWhtRow({ whtRemittance: 'E_WHT' })]); frozen.lock(false, true);
+    assert.equal((await frozen.run()).skippedLocked, 1); assert.equal(frozen.events.length, 0);
+    const payer = eWhtSyncHarness([eWhtRow()]); payer.lock(true); assert.equal((await payer.run()).skippedLocked, 1);
+  });
+  for (const reason of ['voided expense', 'voided payment', 'withholding removed']) it(`resolves stale WHT source issues after ${reason}`, async () => {
+    const h = eWhtSyncHarness([eWhtRow({ vendorTaxId: null })]); await h.run();
+    assert.equal(h.issues.some(i => i.status === 'OPEN'), true); h.rows.splice(0); await h.run();
+    assert.equal(h.issues.every(i => i.status === 'RESOLVED'), true);
+  });
 });

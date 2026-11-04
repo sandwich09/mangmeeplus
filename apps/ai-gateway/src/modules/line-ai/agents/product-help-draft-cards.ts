@@ -1,3 +1,4 @@
+import { E_WHT_WORDS } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, type ProductKnowledgeCard } from './approved-knowledge';
 
 function card(id: string, anchor: string, title: string, questions: string[], body: string, permissionAnyOf: string[], featureKeys: string[], requiredCapabilities: string[]): ProductKnowledgeCard {
@@ -139,13 +140,16 @@ export const V6_REVISED_BODIES: Record<string, string> = {
 };
 
 /** Owner approved the proposed copy on 2026-11-04 in chat: "ตามแนะนำ"; C55 is superseded by Q3. */
+const c56CalculationBody = 'ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ';
+
 export const PLAIN_WORDS_HELP_DRAFTS: readonly {
   change: string; channel: 'LINE' | 'PUBLIC'; id: string; title?: string; body: string; bodyEn?: string;
 }[] = [
   { change: 'C53', channel: 'LINE', id: 'expense.vat-display', body: "ยอด VAT บนรายการคือยอดที่อ่านได้จากเอกสาร ยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้ค่ะ" },
   { change: 'C54', channel: 'LINE', id: 'expense.export', body: "ตรวจรายการแล้วส่งออกไฟล์บนเว็บเพื่อให้ผู้ทำบัญชีตรวจต่อค่ะ" },
   { change: 'C55', channel: 'LINE', id: 'wht.pnd53-due', body: 'ดูวันครบกำหนดของเดือนที่ต้องการที่หน้า “ภาษีหัก ณ ที่จ่าย” ค่ะ' },
-  { change: 'C56', channel: 'LINE', id: 'wht.calculation', body: "ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ" },
+  { change: 'E44', channel: 'LINE', id: 'wht.calculation', body: `${c56CalculationBody} ${E_WHT_WORDS['L-8'].slice(E_WHT_WORDS['L-8'].indexOf('ถ้าจ่ายผ่าน e-WHT'))}` },
+  { change: 'C56', channel: 'LINE', id: 'wht.calculation', body: c56CalculationBody },
   { change: 'C62', channel: 'LINE', id: 'expense.vat-credit', title: 'VAT นี้ใช้ตอนยื่นภาษีได้ไหม', body: "ขึ้นกับเอกสารและเงื่อนไขของรายการค่ะ ดูคำตอบ “ใช้ VAT ตอนยื่นภาษี” ในรายการนั้น ถ้ามีตัวจริงแต่ยังไม่มีรูป เลือก “มีตัวจริง ยังไม่ได้แนบรูป” แล้วแนบทีหลังได้ค่ะ" },
   { change: 'C71', channel: 'PUBLIC', id: 'expense.vat-display', body: "ยอดที่อ่านได้จากเอกสาร ยังไม่ได้แปลว่าใช้ตอนยื่นภาษีได้", bodyEn: 'Detected VAT is not automatically VAT that can be used when filing tax; check document type and eligibility.' },
   { change: 'C71', channel: 'PUBLIC', id: 'wht.calculation', body: "เลือก “จ่ายค่าอะไร” แล้วใช้ยอดก่อน VAT คูณอัตราที่แสดง" },

@@ -87,7 +87,7 @@ export class ReadDisbursementVoucherSourcesUseCase {
         vendorName: e.vendorNameSnapshot, vendorTaxId: e.vendorTaxIdSnapshot, branchId: e.branchId,
         description: Array.from(e.lines?.[0]?.description?.trim() || '').slice(0, 80).join('') || null,
         vendorInvoiceNumber: e.vendorDocumentNumber ?? null, branchName: e.branchName ?? null,
-        grandTotalAmount: new Decimal(String(e.grandTotalAmount)).toFixed(4), whtAmount: new Decimal(String(e.whtAmount)).toFixed(4),
+        whtRemittance: e.whtRemittance ?? null, grandTotalAmount: new Decimal(String(e.grandTotalAmount)).toFixed(4), whtAmount: new Decimal(String(e.whtAmount)).toFixed(4),
         netPayableAmount: new Decimal(String(e.netPayableAmount)).toFixed(4), outstandingAmount: new Decimal(String(e.outstandingAmount)).toFixed(4),
         selectable: reasonCode === null, reasonCode, reservation: e.reservation,
       };
