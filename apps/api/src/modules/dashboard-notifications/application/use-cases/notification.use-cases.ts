@@ -1,5 +1,5 @@
 import { finishDocumentWaitingNotifications } from '../../infrastructure/document-notification-state';
-import { reimbursementApprovalButtons } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
+import { reimbursementApprovalButtons, reimbursementPaymentButton } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { lineMessagePreview } from '../../../line-ai/domain/logic/line-message-preview.logic';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
@@ -549,6 +549,7 @@ export class ProcessQueuedDeliveryUseCase {
         severity: event.severity.toLowerCase(),
         deepLinkHref: notificationSourceHref(event),
         ...(event.triggerKey === 'workflow.reimbursement_pending_approval' && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId) } : {}),
+        ...(['workflow.reimbursement_ready_for_payment', 'workflow.reimbursement_payment_sla_breach'].includes(event.triggerKey) && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: [reimbursementPaymentButton(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId)] } : {}),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;
@@ -654,6 +655,7 @@ export class ProcessQueuedDeliveryUseCase {
         severity: event.severity.toLowerCase(),
         deepLinkHref: notificationSourceHref(event),
         ...(event.triggerKey === 'workflow.reimbursement_pending_approval' && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId) } : {}),
+        ...(['workflow.reimbursement_ready_for_payment', 'workflow.reimbursement_payment_sla_breach'].includes(event.triggerKey) && event.sourceType === 'reimbursement_request' && event.sourceId && this.config.aiGatewayInternalSecret ? { approvalButtons: [reimbursementPaymentButton(this.config.aiGatewayInternalSecret, companyId, current.recipient.userId, event.sourceId)] } : {}),
       }), deliveryId);
       const now = new Date();
       const attemptCountAfter = expectedAttemptCount + 1;

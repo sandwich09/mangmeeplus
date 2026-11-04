@@ -100,7 +100,9 @@ export type Corpus = {
 };
 
 export type ActorRef = { key: string };
-export type Actor = { key: string; company: EvalCompany; role: EvalRole; branchScope: 'all' | { branches: string[] } };
+export type Actor = { key: string; company: EvalCompany; role: EvalRole; branchScope: 'all' | { branches: string[] }; freeSourceDrafts?: true };
+export type KnowledgeGold = { cardId: string; version: number; requiredFacts: string[]; forbiddenFacts: string[]; allowedNumericFacts: string[] };
+export type DueDateGold = { formType: 'PND3' | 'PND53'; monthOffset: -1 | 0 | 1 };
 export type WorkflowFixtureOp =
   | { op: 'expire'; store: 'expense-action' | 'expense-action-applied' | 'wf-choice' | 'draft-preview' }
   | { op: 'mutate'; table: 'ExpenseRecord' | 'ReimbursementRequest' | 'DisbursementVoucher'; seedKey: string; set: Record<string, string | number | null> }
@@ -109,7 +111,8 @@ export type WorkflowPreview = { action: string; target: string; amount?: string;
 export type WorkflowTurn = {
   as?: ActorRef; user?: string; press?: string; pressFrom?: { turn: number; actor?: ActorRef }; fixture?: WorkflowFixtureOp[];
   expect: { tier?: 0 | 1 | 2; label?: string; card?: 'picker' | 'choice' | 'question' | 'preview' | 'applied' | 'declined' | 'refusal' | 'answer' | 'credit_refusal' | 'expired';
-    target?: string; preview?: WorkflowPreview; maxModelCalls?: number; mustNotCaptureAsField?: boolean; tags?: TurnTags };
+    target?: string; preview?: WorkflowPreview; maxModelCalls?: number; mustNotCaptureAsField?: boolean; tags?: TurnTags;
+    knowledge?: KnowledgeGold; dueDate?: DueDateGold; refusal?: { reason: 'permission' | 'package' | 'free'; wayOut: readonly string[] } };
 };
 export type GoldRecord = {
   table: 'ReimbursementRequest' | 'ReimbursementLine' | 'ReimbursementPayment' | 'ExpenseRecord' | 'ExpensePayment'
@@ -138,7 +141,7 @@ const PAID_RECORDS: Partial<Record<WorkflowTerminalEffect, { table: GoldRecord['
 export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlySet<string>): asserts value is WorkflowCorpus {
   assert.ok(isPlainObject(value) && value['version'] === 2 && nonEmptyString(value['seed']), 'WORKFLOW_CORPUS_VERSION');
   assert.ok(['draft', 'reviewed'].includes(value['status'] as string) && Array.isArray(value['conversations']) && (value['conversations'] as unknown[]).length, 'WORKFLOW_CORPUS_HEADER');
-  const ids = new Set<string>();
+  const ids = new Set<string>(), freeCompanies = new Set<string>(), paidCompanies = new Set<string>();
   for (const [ci, raw] of (value['conversations'] as unknown[]).entries()) {
     const path = `conversations[${ci}]`;
     assert.ok(isPlainObject(raw) && nonEmptyString(raw['id']) && !ids.has(raw['id'] as string), `${path}.id`); ids.add(raw['id'] as string);
@@ -149,6 +152,8 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
       assert.ok(isPlainObject(actor) && nonEmptyString(actor['key']) && !actorKeys.has(actor['key'] as string), `${path}.actor`);
       actorKeys.add(actor['key'] as string);
       assert.ok((COMPANIES as readonly unknown[]).includes(actor['company']) && (ROLES as readonly unknown[]).includes(actor['role']), `${path}.actor_scope`);
+      if (actor['freeSourceDrafts'] !== undefined) assert.equal(actor['freeSourceDrafts'], true, `${path}.freeSourceDrafts`);
+      (actor['freeSourceDrafts'] ? freeCompanies : paidCompanies).add(actor['company'] as string);
       const scope = actor['branchScope'];
       assert.ok(scope === 'all' || isPlainObject(scope) && Array.isArray(scope['branches']) && scope['branches'].every(nonEmptyString), `${path}.branch_scope`);
     }
@@ -163,6 +168,27 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
         if (from['actor'] !== undefined) assert.ok(isPlainObject(from['actor']) && actorKeys.has(from['actor']['key'] as string), `${path}.turns[${ti}].pressFrom.actor`);
       }
       const expect = turn['expect']; assert.ok(isPlainObject(expect), `${path}.turns[${ti}].expect`);
+      const answerPath = `${path} (${raw['id']}).turns[${ti}]`;
+      if (expect['knowledge'] !== undefined) {
+        const gold = expect['knowledge'];
+        assert.ok(isPlainObject(gold) && nonEmptyString(gold['cardId']) && Number.isInteger(gold['version']) && (gold['version'] as number) > 0, `${answerPath}.knowledge.card`);
+        for (const key of ['requiredFacts', 'forbiddenFacts', 'allowedNumericFacts'])
+          assert.ok(Array.isArray(gold[key]) && (gold[key] as unknown[]).every(nonEmptyString), `${answerPath}.knowledge.${key}`);
+      }
+      if (expect['dueDate'] !== undefined) {
+        const gold = expect['dueDate'];
+        assert.ok(isPlainObject(gold) && ['PND3', 'PND53'].includes(gold['formType'] as string) && [-1, 0, 1].includes(gold['monthOffset'] as number), `${answerPath}.dueDate`);
+      }
+      if (expect['refusal'] !== undefined) {
+        const refusal = expect['refusal'];
+        assert.ok(isPlainObject(refusal) && ['permission', 'package', 'free'].includes(refusal['reason'] as string)
+          && Array.isArray(refusal['wayOut']) && refusal['wayOut'].length > 0 && refusal['wayOut'].every(nonEmptyString), `${answerPath}.refusal`);
+        assert.ok(!expect['knowledge'] && !expect['dueDate'], `${answerPath}.refusal_must_not_leak_answer`);
+      }
+      const actorKey = (turn['as'] as ActorRef | undefined)?.key ?? (actors[0] as Actor).key;
+      if ((actors.find(actor => (actor as Actor).key === actorKey) as Actor).freeSourceDrafts)
+        assert.ok(expect['maxModelCalls'] === 0 && (expect['refusal'] as { reason?: string } | undefined)?.reason === 'free', `${answerPath}.free_zero_model_refusal`);
+      if (typeof turn['user'] === 'string') for (const key of referencedPlaceholders(turn['user'])) assert.ok(isKnownPlaceholder(key), `${answerPath}.placeholder:${key}`);
       if (expect['label'] !== undefined) assert.ok(nonEmptyString(expect['label']), `${path}.turns[${ti}].expect.label`);
       if (expect['preview'] !== undefined) assert.ok(isPlainObject(expect['preview']) && nonEmptyString(expect['preview']['action']) && nonEmptyString(expect['preview']['target']), `${path}.turns[${ti}].expect.preview`);
       if (expect['maxModelCalls'] !== undefined) assert.ok(Number.isInteger(expect['maxModelCalls']) && (expect['maxModelCalls'] as number) >= 0, `${path}.turns[${ti}].expect.maxModelCalls`);
@@ -190,9 +216,9 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
       const effect = terminal['effect'] as WorkflowTerminalEffect, confirmTurn = task['confirmTurn'] as number | undefined;
       if (!WORKFLOW_WRITE_EXEMPTIONS.has(effect)) {
         assert.ok(Number.isInteger(confirmTurn) && confirmTurn! >= (task['startTurn'] as number) && confirmTurn! <= (task['endTurn'] as number), `${path}.confirmTurn_required`);
-        const confirmTurnValue = turns[confirmTurn!] as Record<string, unknown> | undefined;
-        const confirmExpect = confirmTurnValue?.['expect'];
-        assert.ok(isPlainObject(confirmExpect) && isPlainObject(confirmExpect['preview']), `${path}.preview_before_confirm`);
+        const previewTurn = confirmTurn! - 1;
+        const previewExpect = (turns[previewTurn] as Record<string, unknown> | undefined)?.['expect'];
+        assert.ok(isPlainObject(previewExpect) && isPlainObject(previewExpect['preview']), `${path} (${raw['id']}).turns[${previewTurn}].preview_before_confirm (confirmTurn ${confirmTurn})`);
       } else assert.ok(confirmTurn === undefined, `${path}.confirmTurn_unexpected`);
       for (const record of terminal['records'] as unknown[]) {
         assert.ok(isPlainObject(record) && nonEmptyString(record['ref']) && nonEmptyString(record['table']), `${path}.gold_record`);
@@ -210,6 +236,7 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
     }
     for (const key of Object.keys(raw)) assert.ok(['id', 'actors', 'category', 'journeyKind', 'credit', 'tasks', 'turns'].includes(key), `${path}.${key}:unknown`);
   }
+  for (const company of freeCompanies) assert.ok(!paidCompanies.has(company), `WORKFLOW_MIXED_FREE_PAID_SEED:${company}`);
   for (const key of Object.keys(value)) assert.ok(['version', 'seed', 'status', 'conversations'].includes(key), `workflow_corpus.${key}:unknown`);
 }
 

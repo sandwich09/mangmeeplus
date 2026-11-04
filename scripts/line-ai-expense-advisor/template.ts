@@ -14,9 +14,15 @@ const THAI_MONTHS_FULL = [
 ];
 const THAI_MONTHS_ABBR = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
+/** The same Bangkok month drives seeded periods and period-relative due-date gold. */
+export function workflowMonthKey(now: Date, offset: number): string {
+  const [year, month] = todayCivilDate(DEFAULT_COMPANY_TIME_ZONE, now).split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1 + offset, 1)).toISOString().slice(0, 7);
+}
+
 export const TEMPLATE_PLACEHOLDERS = [
   'this_month_th', 'last_month_th', 'this_month_abbr_th', 'last_month_abbr_th',
-  'this_be_year', 'this_be_year_short', 'this_ce_year', 'last_month_be_year', 'today_day',
+  'this_be_year', 'this_be_year_short', 'this_ce_year', 'last_month_be_year', 'today_day', 'today_iso',
 ] as const;
 export type TemplatePlaceholder = (typeof TEMPLATE_PLACEHOLDERS)[number];
 
@@ -53,6 +59,7 @@ function placeholderValues(now: Date): Record<TemplatePlaceholder, string> {
     this_ce_year: String(ceYear),
     last_month_be_year: String(lastMonthCeYear + 543),
     today_day: String(Number(dayStr)),
+    today_iso: today,
   };
 }
 

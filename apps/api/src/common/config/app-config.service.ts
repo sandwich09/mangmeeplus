@@ -125,8 +125,6 @@ export class AppConfigService {
   // fail-open Redis ledger stays the only continuation state; 'shadow' measures divergence without
   // changing behavior; 'on' makes it authoritative and fails CLOSED with zero writes.
   get lineAiIntakeStateMode(): 'off' | 'shadow' | 'on' { return this.config.LINE_AI_INTAKE_STATE_MODE; }
-  // Exact standalone greeting 0-call lane (default false = exact legacy three-call greeting path).
-  get lineAiExactGreetingEnabled(): boolean { return this.config.LINE_AI_EXACT_GREETING_ENABLED; }
   // Advisor staged capability (default 'off' = the `advisor` router capability is never sent, so the
   // intake prompt/payload/parser are byte-exact legacy). Only 'off' and 'social' are buildable today.
   get lineAiAdvisorMode(): 'off' | 'social' | 'knowledge' | 'company' { return this.config.LINE_AI_ADVISOR_MODE; }

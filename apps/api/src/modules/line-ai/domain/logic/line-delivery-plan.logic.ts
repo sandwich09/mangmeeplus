@@ -1,3 +1,4 @@
+import { parseLineWorkflowControl } from './line-reimbursement-approval-control.logic';
 import { lineCustomerText, lineCustomerVisibleText } from './line-language.logic';
 import { isLineNavigationPostback, type LineReplyLanguage } from './line-language.logic';
 import { fileReadRetryPostbackCommand, parseFileReadRetryControl } from './line-file-read-retry.logic';
@@ -103,9 +104,12 @@ function controlActions(message: LineReplyMessage): Array<{ type: 'postback'; la
   };
   visit(message, 0); return found;
 }
+const INLINE_REAUTHORIZED_ACTIONS = ['wf_open', 'wf_choice', 'fixed-read', 'file-read-retry', 'reimbursement_choice',
+  'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit'];
 /** Inline evidence association and payment/tax-preview opening reauthorize on tap. */
-function authorizedInlineActions(message: LineReplyMessage, authorization: DeliveryAuthorizationV2): boolean {
-  const actions = controlActions(message);
+function authorizedInlineActions(message: LineReplyMessage, authorization: DeliveryAuthorizationV2, inlineOnly = false): boolean {
+  const actions = controlActions(message).filter(action => !inlineOnly
+    || INLINE_REAUTHORIZED_ACTIONS.includes(new URLSearchParams(action.data).get('action') ?? ''));
   if (!actions.length || authorization.kind !== 'PRIVATE') return false;
   const ids = new Set(authorization.proofs.flatMap(proof => proof.kind === 'CAPTURE_RESULT' && Array.isArray(proof.recordIds)
     ? proof.recordIds.filter((id): id is string => typeof id === 'string')
@@ -114,6 +118,9 @@ function authorizedInlineActions(message: LineReplyMessage, authorization: Deliv
   return actions.every(action => {
     const params = new URLSearchParams(action.data);
     params.delete('language');
+    if (isLineNavigationPostback(action.data) || parseLineWorkflowControl(params.toString())) return true;
+    if (params.get('action') === 'fixed-read') return [...params.keys()].length === 2
+      && params.getAll('action').length === 1 && params.getAll('id').length === 1 && params.get('id') === 'expense_month';
     if (params.get('action') === 'reimbursement_choice') return [...params.keys()].length === 4
       && ['action', 'actionId', 'revision', 'choice'].every(key => params.getAll(key).length === 1)
       && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_OPTIONS'
@@ -171,10 +178,15 @@ export function buildLineDeliveryPlan(input: Omit<DeliveryPlanV2, 'v' | 'planId'
       : preferred?.type === 'flex' ? preferred.canonicalText !== undefined && escape(preferred.canonicalText) === item.text : false;
     const evidenceActions = preferred && authorizedInlineActions(preferred, input.authorization);
     const navigationActions = preferred && controlActions(preferred).length > 0 && controlActions(preferred).every(action => isLineNavigationPostback(action.data));
+    const quickReplyItems = preferred ? [
+      ...controlActions(preferred).filter(action => !preferred.quickReply?.items.some(item =>
+        item.action.type === 'postback' && item.action.data === action.data)).map(action => ({ type: 'action' as const, action })),
+      ...(preferred.quickReply?.items ?? []),
+    ] : [];
     // Completion menus cannot replace the card's authorized actions in its text fallback.
     let quickReply = matches && preferred && (controlActions(preferred).length === 0 || evidenceActions || navigationActions || isControl)
       ? ((isControl || evidenceActions || navigationActions) && controlActions(preferred).length <= 13
-        ? { items: controlActions(preferred).map(action => ({ type: 'action' as const, action })) } : preferred.quickReply) : undefined;
+        ? { items: quickReplyItems.slice(0, 13) } : preferred.quickReply) : undefined;
     // Only a link already accepted by the card's tenant/origin guard may become a fallback button.
     const links: Array<{ type: 'action'; action: { type: 'uri'; label: string; uri: string } }> = [];
     const collectLinks = (value: unknown): void => {
@@ -262,8 +274,9 @@ export function validateLineDeliveryPlan(plan: DeliveryPlanV2): void {
       if (!message || message.type === 'image' || (message.type === 'text' ? message.text !== expected : fallback?.type !== 'text' || fallback.text !== expected)
         || ![...segmenter.segment(item.text)].some(s => s.index + s.segment.length === span.end)) fail('PLAN_INCOMPLETE_COVERAGE');
       if (batch.fallback && (fallback?.type !== 'text' || fallback.text !== expected)) fail('PLAN_INVALID_FALLBACK');
-      for (const presented of [message, fallback]) if (presented && controlActions(presented).some(action => ['file-read-retry', 'reimbursement_choice', 'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit'].includes(new URLSearchParams(action.data).get('action') ?? ''))
-        && !authorizedInlineActions(presented, plan.authorization)) fail('PLAN_INVALID_CONTROL');
+      for (const presented of [message, fallback]) if (presented && controlActions(presented).some(action =>
+        INLINE_REAUTHORIZED_ACTIONS.includes(new URLSearchParams(action.data).get('action') ?? ''))
+        && !authorizedInlineActions(presented, plan.authorization, true)) fail('PLAN_INVALID_CONTROL');
       covered.set(item.id, prior + expected);
     }
   }

@@ -676,3 +676,59 @@ describe('summarizeScores', () => {
     assert.equal(summary.failures[0]!.conversationId, 'a');
   });
 });
+
+// Q5 gold is opt-in: existing advisor turns keep their exact scoring contract.
+describe('M3 Q5 answer gold', () => {
+  it('checks the delivered card version, required/forbidden facts and every numeric fact', async () => {
+    const { scoreWorkflowAnswer } = await import('./scorer');
+    const expect = { knowledge: { cardId: 'wht.calculation', version: 4, requiredFacts: ['ก่อน VAT'], forbiddenFacts: ['ใช้อัตราเดียวทุกกรณี'], allowedNumericFacts: [] } };
+    const evidence = { deliveredText: 'หัก ณ ที่จ่ายคิดอย่างไร\nใช้ยอดก่อน VAT คูณอัตราที่เลือก', deliveredCards: [{ id: 'wht.calculation', version: 4 }], calls: [] };
+    assert.deepEqual(scoreWorkflowAnswer(expect, evidence), { ok: true, reasons: [] });
+    assert.equal(scoreWorkflowAnswer(expect, { ...evidence, deliveredCards: [{ id: 'wht.calculation', version: 3 }] }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expect, { ...evidence, deliveredText: 'ยอดก่อน VAT ใช้อัตราเดียวทุกกรณี' }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expect, { ...evidence, deliveredText: 'ยอดก่อน VAT คูณ 3%' }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expect, { ...evidence, deliveredText: 'ยอดก่อน VAT คูณ ๓%' }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expect, { ...evidence, deliveredCards: [] }).ok, false);
+  });
+  it('requires a due date proved by its seed period, not a date invented in the gold', async () => {
+    const { scoreWorkflowAnswer } = await import('./scorer');
+    const expected = { dueDate: { formType: 'PND3', monthOffset: 1 } } as const;
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ภ.ง.ด.3 ครบวันที่ 7 ม.ค. 2570', calls: [] }, { dueDate: '2027-01-07' }).ok, true);
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ภ.ง.ด.3 ครบวันที่ 7 ธ.ค. 2569', calls: [] }, { dueDate: '2027-01-07' }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ภ.ง.ด.3 ครบวันที่ 7 ม.ค. 2570', calls: [] }).ok, false);
+  });
+  it('free typed refusals enforce zero model calls and carry a way out', async () => {
+    const { scoreWorkflowAnswer } = await import('./scorer');
+    const expected = { maxModelCalls: 0, refusal: { reason: 'free', wayOut: ['แพ็กเกจ'] } } as const;
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ร้านนี้ยังใช้คำถามไม่ได้ เปิดแพ็กเกจได้', calls: [] }).ok, true);
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ร้านนี้ยังใช้คำถามไม่ได้', calls: [] }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'เปิดแพ็กเกจได้', calls: [{}] }).ok, false);
+    assert.equal(scoreWorkflowAnswer(expected, { deliveredText: 'ร้านนี้ยังใช้คำถามไม่ได้ เปิดแพ็กเกจได้', calls: [], textModelAttempts: 1 }).ok, false);
+  });
+});
+
+it('M3 rescores every unchanged legacy conversation byte-identically for empty, ordinary and adverse evidence', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { createHash } = await import('node:crypto');
+  // Pinned from the untouched HEAD scorer before this change; no model-generated evidence.
+  const hashes = {
+    heldout: 'daec946bf0f7f023fdb1b2df77f6ad2a4e720de545a49ad09cfd5432782164cc',
+    sample: '3d2b4c78e01fa8bbe11e00fa667ca784d0504c40329830de5cdc70094dac6833',
+    tuning: 'a0db7d2611048de5704f3f4c9a02eec36a52ef6e45e1a92c0883c9e32d10c4f1',
+  };
+  for (const [name, hash] of Object.entries(hashes)) {
+    const corpus = JSON.parse(readFileSync(new URL(`./corpus.${name}.json`, import.meta.url), 'utf8'));
+    const scores = corpus.conversations.flatMap((conversation: any) => conversation.turns.flatMap((turn: Turn, turnIndex: number) => [
+      evidence({ deliveredText: '', modelCalls: 0, latencyMs: null, costSatang: 0 }),
+      evidence({ toolCalls: (turn.expect.calls ?? []).map(call => ({ tool: call.tool, input: call.input })), deliveredText: 'รับทราบ ' + (turn.expect.tags?.must_mention_any ?? []).join(' ') + ' ยอด 1000 บาท', modelCalls: 2, latencyMs: 400, costSatang: 7 }),
+      evidence({ toolCalls: [{ tool: 'unexpected.fixture', input: {} }], deliveredText: 'ยังดึงข้อมูลส่วนนี้ไม่ได้ ' + (turn.expect.tags?.must_not_claim ?? []).join(' '), modelCalls: 1, latencyMs: 900, costSatang: 11 }),
+    ].map(captured => scoreTurn({ conversationId: conversation.id, turnIndex }, turn, captured, [], new Date('2026-11-04T04:00:00Z')))));
+    assert.equal(createHash('sha256').update(JSON.stringify(scores)).digest('hex'), hash, name);
+  }
+});
+
+it('M3 retains the existing W1 label denominator for Tier 0 buttons', () => {
+  const corpus = { version: 2, seed: 'x', status: 'draft', conversations: [{ id: 'button', category: 'expense', journeyKind: 'typed', actors: [], tasks: [],
+    turns: [{ press: 'อนุมัติ', expect: { tier: 0, label: 'อนุมัติ', maxModelCalls: 0 } }] }] } as any;
+  assert.deepEqual(scoreWorkflowCorpus({ corpus, attempts: [] }).W1, { passed: 0, total: 1 });
+});

@@ -1,5 +1,8 @@
+import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic/line-reimbursement-approval-control.logic';
+import type { LineWorkflowControl } from '@watchdog-bms/contracts';
+import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
-import { lineReplyLanguage } from '@watchdog-bms/contracts';
+import { LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
 import { RecordReimbursementPaymentUseCase } from '../../reimbursements/application/use-cases/reimbursement-finance.use-case';
@@ -41,15 +44,17 @@ class CategoryPreviewRollback extends Error {
   constructor(readonly source: ExpenseRecordWithRelations) { super('expense-category-preview-rollback'); }
 }
 
-export const EXPENSE_ACTIONS = ['MARK_READY', 'CONFIRM', 'DELETE_DRAFT', 'VOID', 'REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT', 'RECORD_PAYMENT', ...VOUCHER_ACTIONS] as const;
+export const EXPENSE_ACTIONS = LINE_WORKFLOW_OPEN_ACTIONS;
 export type ExpenseAction = typeof EXPENSE_ACTIONS[number] | TeamAction;
 export const EXPENSE_ACTION_LABELS: Record<ExpenseAction, string> = { ...TEAM_ACTION_LABELS, MARK_READY: 'ส่งตรวจ', CONFIRM: 'ยืนยัน', DELETE_DRAFT: 'ลบร่าง', VOID: 'ยกเลิกรายการ', REIMBURSEMENT_SUBMIT: 'ส่งอนุมัติ', REIMBURSEMENT_CANCEL: 'ยกเลิกใบเบิก', REIMBURSEMENT_APPROVE: 'อนุมัติ', REIMBURSEMENT_REJECT: 'ไม่อนุมัติ', REIMBURSEMENT_RECORD_PAYMENT: 'บันทึกจ่ายคืน', RECORD_PAYMENT: 'บันทึกจ่าย', VOUCHER_CREATE: 'สร้างใบเตรียมจ่าย', VOUCHER_SUBMIT: 'ส่งอนุมัติ', VOUCHER_APPROVE: 'อนุมัติใบเตรียมจ่าย', VOUCHER_RETURN: 'ส่งกลับแก้ไข', VOUCHER_PAY: 'บันทึกจ่าย', VOUCHER_CANCEL: 'ยกเลิกใบเตรียมจ่าย', WHT_CERTIFICATE_ISSUE: 'ออก 50 ทวิ' };
 export type ExpenseActionControl = { action: 'expense_action_confirm' | 'expense_action_cancel' | 'expense_action_approve' | 'expense_action_reject' | 'expense_action_submit' | 'expense_action_wht' | 'expense_action_payment' | 'expense_action_next'; token: string };
 export type ExpenseActionPreview = {
+  resultId?: string;
   language?: LineReplyLanguage;
   previewId: string; token: string; action: ExpenseAction; reason?: string; details?: string[]; payment?: RecordExpensePaymentInput; expiresAt: string; summary: string;
   certificates?: { number: string; uri: string }[]; offerWht?: boolean; offerPayment?: boolean; offerNext?: VoucherAction; evidenceReview?: boolean;
   documentImageUrl?: string;
+  nextControls?: { next?: string; payment?: string; wht?: string };
   record: { vendorName: string; amount: string; currency: string; date: string; status: string; nextStatus: string };
 };
 type ActionCategory = { id: string; name: string; kind?: 'wht'; other?: { id: string; name: string; kind?: 'wht' } };
@@ -103,7 +108,7 @@ function missingActionFields(error: unknown): string[] {
   return Array.isArray(fields) ? fields.filter((field): field is string => typeof field === 'string') : [];
 }
 export type ExpenseActionResult = { status: 'applied' | 'replayed' | 'prepared'; reply: string; preview: ExpenseActionPreview; expenseIds?: string[] }
-  | { status: 'blocked' | 'cancelled'; reply: string; webPath?: string; webLabel?: string };
+  | { status: 'blocked' | 'cancelled'; reply: string; webPath?: string; webLabel?: string; recovery?: string; taskSource?: { action: ExpenseAction; id: string } };
 export const EXPENSE_ACTION_CHANGED = 'รายการเปลี่ยนไปแล้วค่ะ ขอเตรียมการ์ดใหม่ก่อนยืนยันอีกครั้ง';
 // Confirm/ready/void/payment and their repository guards: customer text never echoes an exception.
 export const EXPENSE_ACTION_REFUSALS: Record<string, string> = {
@@ -435,6 +440,16 @@ export class LineExpenseActionService {
       || slip.updatedAt.toISOString() !== evidence.revision || slip.primaryAttachmentId !== evidence.attachmentId
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
+  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+    if (ctx.freeExpenseDrafts || !verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
+      control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: EXPIRED };
+    return this.preview(ctx, chat, { action: control.act,
+      ...(this.isClaim(control.act) ? { reimbursementId: control.id } : this.isVoucher(control.act) && control.act !== 'VOUCHER_CREATE'
+        ? { voucherId: control.id } : { expenseId: control.id }),
+      ...(control.pm ? { paymentMethod: control.pm } : {}), ...(control.pd ? { paidAt: control.pd } : {}),
+      ...(control.pa ? { paidAmount: control.pa } : {}) }, true, undefined, language);
+  }
+
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
     preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     const en = language === 'en';
@@ -582,11 +597,16 @@ export class LineExpenseActionService {
       if (paymentIntent) preview.details = [...(preview.details ?? []), en ? `After confirming, record payment for ${lineDisplayDate(String(paymentIntent.paidAt), language)}.` : `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
       const entry: StoredAction = { previewId: preview.previewId, companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
-        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, awaitingField: awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
+        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}), ...(typeof input.paidAmount === 'string' ? { paidAmount: input.paidAmount } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, awaitingField: awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
         ...(record.claim ? { claim: { ...(claimPayment ? { payment: claimPayment } : {}), payoutSubmitToken: record.claim.payout?.submitToken, hash: record.claim.approvalSnapshotHash, payoutVersion: record.claim.payout?.version, thirdParty: record.claim.payout?.holderType === 'THIRD_PARTY' } } : {}) };
       if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'จ่ายค่าอะไร' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
       preview.token = `${entry.previewId}.${this.sign(entry)}`;
-      if (!await this.store.save(entry)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
+      const recovery = { companyId: ctx.companyId, userId: ctx.userId, tokenHash: deliveryHash(preview.token), act: action as typeof LINE_WORKFLOW_OPEN_ACTIONS[number],
+        id: voucher?.payload.id ?? record.id,
+        ...(typeof input.paymentMethod === 'string' ? { pm: input.paymentMethod } : preview.payment?.paymentMethod ? { pm: preview.payment.paymentMethod } : {}),
+        ...(typeof input.paidAt === 'string' ? { pd: input.paidAt } : preview.payment?.paidAt ? { pd: preview.payment.paidAt } : {}),
+        ...(typeof input.paidAmount === 'string' ? { pa: input.paidAmount } : preview.payment?.paidAmount ? { pa: preview.payment.paidAmount } : {}) };
+      if (!await this.store.save(entry, recovery)) return { reply: (en ? 'A previous request is still in progress; please try again.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
       if (awaitingReason || entry.awaitingField) return { reply: this.question(entry) };
       return { preview, reply: preview.summary };
     } catch (error) {
@@ -837,6 +857,21 @@ export class LineExpenseActionService {
     }
     return entry.applied.preview;
   }
+  private async expiredRecovery(ctx: RequestContext, previewId: string, token: string, language: LineReplyLanguage): Promise<ExpenseActionResult> {
+    if (ctx.freeExpenseDrafts) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+    const recovery = await this.store.loadRecovery(ctx.companyId, previewId);
+    const tokenHash = deliveryHash(token);
+    if (recovery?.companyId === ctx.companyId && recovery.userId === ctx.userId
+      && typeof recovery.tokenHash === 'string' && recovery.tokenHash.length === tokenHash.length
+      && timingSafeEqual(Buffer.from(recovery.tokenHash), Buffer.from(tokenHash))
+      && LINE_WORKFLOW_OPEN_ACTIONS.includes(recovery.act) && typeof recovery.id === 'string' && recovery.id) {
+      return { status: 'blocked', reply: 'การ์ดนี้หมดเวลาแล้วค่ะ',
+        recovery: lineWorkflowOpenData(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
+          recovery.act, recovery.id, { ...(recovery.pm ? { pm: recovery.pm } : {}), ...(recovery.pd ? { pd: recovery.pd } : {}), ...(recovery.pa ? { pa: recovery.pa } : {}) }) };
+    }
+    return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+  }
+
   async apply(ctx: RequestContext, chat: string, control: ExpenseActionControl, language: LineReplyLanguage = 'th'): Promise<ExpenseActionResult> {
     if (control.token.startsWith('team_')) return this.teams?.apply(ctx, chat, control) ?? { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     if (control.action === 'expense_action_approve' || control.action === 'expense_action_reject' || control.action === 'expense_action_submit') {
@@ -877,15 +912,23 @@ export class LineExpenseActionService {
     }
     if (control.action === 'expense_action_wht' || control.action === 'expense_action_payment' || control.action === 'expense_action_next') return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), id);
-    if (!claim) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+    if (!claim) return this.expiredRecovery(ctx, id, control.token, language);
     const entry = claim.entry;
     let reviewSaved = false;
     let step = entry.preview.action;
     try {
-      if (!await this.bound(ctx, chat, entry, control.token)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+      if (!await this.bound(ctx, chat, entry, control.token)) {
+        const expected = `${entry.previewId}.${this.sign(entry)}`;
+        if (entry.companyId === ctx.companyId && entry.userId === ctx.userId && control.token.length === expected.length
+          && timingSafeEqual(Buffer.from(control.token), Buffer.from(expected))
+          && Date.parse(entry.preview.expiresAt) <= Date.now()) return this.expiredRecovery(ctx, entry.previewId, control.token, language);
+        return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
+      }
+      await this.store.discardRecovery(ctx.companyId, entry.previewId);
       if (control.action === 'expense_action_cancel') {
         await this.store.discard(ctx.companyId, this.key(chat));
-        return { status: 'cancelled', reply: language === 'en' ? 'Action cancelled; no change was made.' : 'ไม่ทำรายการนี้ค่ะ' };
+        return { status: 'cancelled', reply: language === 'en' ? 'Action cancelled; no change was made.' : 'ไม่ทำรายการนี้ค่ะ',
+          taskSource: { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } };
       }
       if (entry.awaitingReason || entry.awaitingField) return { status: 'blocked', reply: this.question(entry, language) };
       const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher);
@@ -941,7 +984,16 @@ export class LineExpenseActionService {
         ? await this.vouchers!.nextAction(ctx, nextVoucherId!) : entry.preview.action === 'CONFIRM' && result?.status === 'CONFIRMED'
           && 'whtAmount' in result && new Decimal(String(result.whtAmount)).gt(0) && ctx.permissions.includes('expense.disbursement.prepare') ? 'VOUCHER_CREATE' as const : undefined;
       const offerPayment = !offerNext && entry.preview.action === 'CONFIRM' && result?.status === 'CONFIRMED' && 'paymentStatus' in result && !confirmedPaid && result.paymentStatus !== 'PAID' && ctx.permissions.includes('expense.payment.record');
-      const preview = { ...entry.preview, ...(entry.preview.evidenceReview ? { evidenceReview: false, details: entry.preview.details?.filter(line => !line.startsWith('กดเพื่อตรวจรับรอง')) } : {}), ...(offerPayment ? { offerPayment: true } : {}), ...(offerNext ? { offerNext } : {}), ...(certificates ? { certificates } : {}), ...(offerWht ? { offerWht: true } : {}), record: { ...entry.preview.record, status: entry.preview.action === 'RECORD_PAYMENT' ? entry.preview.record.nextStatus : result ? this.status(entry.preview.action, result.status) : 'ลบแล้ว' } };
+      const intent = entry.paymentIntent;
+      const paymentFields = { ...(typeof intent?.paymentMethod === 'string' ? { pm: intent.paymentMethod } : {}),
+        ...(typeof intent?.paidAt === 'string' ? { pd: intent.paidAt } : {}), ...(typeof intent?.paidAmount === 'string' ? { pa: intent.paidAmount } : {}) };
+      const nextControls = {
+        ...(offerNext ? { next: lineWorkflowOpenData(this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, offerNext,
+          offerNext === 'VOUCHER_CREATE' ? entry.expenseId : nextVoucherId ?? entry.voucher!.id, paymentFields) } : {}),
+        ...(offerPayment ? { payment: lineWorkflowOpenData(this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, 'RECORD_PAYMENT', entry.expenseId, paymentFields) } : {}),
+        ...(offerWht ? { wht: lineWorkflowOpenData(this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, 'WHT_CERTIFICATE_ISSUE', entry.voucher!.id, paymentFields) } : {}),
+      };
+      const preview = { ...entry.preview, resultId: nextVoucherId ?? entry.expenseId, nextControls, ...(entry.preview.evidenceReview ? { evidenceReview: false, details: entry.preview.details?.filter(line => !line.startsWith('กดเพื่อตรวจรับรอง')) } : {}), ...(offerPayment ? { offerPayment: true } : {}), ...(offerNext ? { offerNext } : {}), ...(certificates ? { certificates } : {}), ...(offerWht ? { offerWht: true } : {}), record: { ...entry.preview.record, status: entry.preview.action === 'RECORD_PAYMENT' ? entry.preview.record.nextStatus : result ? this.status(entry.preview.action, result.status) : 'ลบแล้ว' } };
       const current = entry.voucher ? await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher) : undefined;
       entry.applied = { nextVoucherId, revision: current?.updatedAt.toISOString() ?? (result ? new Date(result.updatedAt).toISOString() : null), digest: current?.digest, preview };
       await this.store.remember(ctx.companyId, this.key(chat), entry);
@@ -974,18 +1026,20 @@ export class LineExpenseActionService {
         paidAmount: entry.claim!.payment!.paidAmount, paidAt: entry.claim!.payment!.paidAt, slipAttachmentId: intent.attachmentId }, true, undefined, language);
     } catch (error) { return { reply: this.refusal(error, 'REIMBURSEMENT_RECORD_PAYMENT', undefined, language), webPath: `/companies/${ctx.companyId}/reimbursements/${entry.expenseId}` }; }
   }
-  async answerReason(ctx: RequestContext, chat: string, reason: string): Promise<{ preview?: ExpenseActionPreview; reply: string } | null> {
+  async answerReason(ctx: RequestContext, chat: string, reason: string): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');
+    if (!/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim()) && !isPendingFieldAnswer(reason, entry.awaitingField === 'payeeName' || entry.awaitingField === 'payeeAddress' ? 'payee' : 'reason')) return null;
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     if (!record || record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) {
       await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'This expense changed; please review its current state.' : EXPENSE_ACTION_CHANGED };
     }
-    if (/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim())) { await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'Action cancelled.' : 'ไม่ทำรายการนี้ค่ะ' }; }
+    if (/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim())) { await this.store.discardRecovery(ctx.companyId, entry.previewId); await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'Action cancelled.' : 'ไม่ทำรายการนี้ค่ะ', cancelled: true,
+      taskSource: { action: entry.preview.action, id: entry.voucher?.id ?? entry.expenseId } }; }
     if (entry.awaitingField === 'payeeName') {
       if (reason.trim() === 'พิมพ์ชื่อเอง' || reason.trim() === 'Type payee name') return { reply: this.question(entry) };
-      if (!isVoucherPayeeName(reason)) { await this.store.discard(ctx.companyId, this.key(chat)); return null; }
+      if (!isVoucherPayeeName(reason)) return null;
     }
     if (entry.awaitingField === 'claimSlip') return { reply: this.question(entry) };
     const paymentMethod = entry.awaitingField === 'paymentMethod' ? /เงินสด|^CASH$/iu.test(reason) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(reason) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(reason) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(reason) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(reason) ? 'OTHER' : undefined : undefined;
@@ -994,7 +1048,7 @@ export class LineExpenseActionService {
       ...(entry.voucher?.expenseIds ? { expenseIds: entry.voucher.expenseIds.join(',') } : {}),
       ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAt: entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th');
   }
-  private async permitted(ctx: RequestContext, entry: StoredAction): Promise<boolean> {
+  async permitted(ctx: RequestContext, entry: Pick<StoredAction, 'voucher' | 'createdByUserId' | 'expenseId'> & { preview: Pick<ExpenseActionPreview, 'action'> }): Promise<boolean> {
     if (entry.voucher) { try { await this.vouchers!.authorize(ctx, entry.voucher.action); return true; } catch (error) { if (error instanceof HttpException) return false; throw error; } }
     if (this.isClaim(entry.preview.action)) {
       if (entry.preview.action === 'REIMBURSEMENT_RECORD_PAYMENT') return ctx.permissions.includes('reimbursement.payment.record');

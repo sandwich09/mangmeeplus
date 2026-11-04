@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { validateCorpus, validateWorkflowCorpus, flattenTurns, selectConversations, type Corpus, type EvalCompany, type WorkflowCorpus } from './types';
 import { buildCompanySeed, type CompanySeed } from './seed';
 import { scoreWorkflowCorpus, summarizeScores, type WorkflowRunAttempt, type WorkflowTurnEvidence } from './scorer';
-import { collectGoldResults, scoreAllTurns } from './gold-oracle-pass';
+import { collectGoldResults, deliveredKnowledgeCards, scoreAllTurns, toCapturedEvidence } from './gold-oracle-pass';
 import { gitHeadSha } from './oracle';
 import { renderReport } from './report';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
@@ -83,11 +83,16 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
       const deliveredActions = receipts.flatMap(message => Array.isArray(message.quickReply?.items)
         ? message.quickReply.items.map((item: Record<string, any>) => ({ type: 'choice', label: item.action?.label ?? item.label })) : []);
       const latencyMs = row.receipts.length ? Math.max(...row.receipts.map(receipt => receipt.at)) - row.acceptedAtMs : null;
+      const expect = conversation.turns[row.turnIndex]?.expect;
+      const answerGold = expect?.knowledge || expect?.dueDate || expect?.refusal;
       return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as ?? conversation.actors[0]?.key ?? '',
         inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence, schemaValid: classify.schemaValid, timedOut: classify.timedOut } : undefined,
         calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
-        deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n') };
+        deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),
+        ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
+          textModelAttempts: Math.max(row.gatewayResponses.length, reservations.length),
+          toolCalls: row.toolResults.map(call => ({ tool: call.tool, input: call.input as Record<string, unknown> })) } : {}) };
     });
     const turnIndexes = new Set(turns.map(turn => turn.turnIndex));
     return { attemptId: first.attemptId!, conversationId: first.scenarioId, turns,
@@ -138,7 +143,7 @@ async function main(): Promise<void> {
     validateWorkflowCorpus(rawCorpus);
     const corpus = rawCorpus as WorkflowCorpus;
     const attempts = workflowAttemptsFromEvidence(corpus, saved.turnEvidence);
-    const metrics = scoreWorkflowCorpus({ corpus, attempts });
+    const metrics = scoreWorkflowCorpus({ corpus, attempts, now: new Date(saved.startedAt) });
     const reportPath = rescoreReportPath(evidencePath, new Date());
     writeFileSync(reportPath, `# Offline workflow rescore\n\nEvidence: \`${evidencePath}\`\n\nCorpus: \`${CORPUS_PATH}\`\n\n\`\`\`json\n${JSON.stringify(metrics, null, 2)}\n\`\`\`\n`);
     console.log(JSON.stringify({ event: 'workflow_rescore_done', reportPath, attempts: attempts.length, completeAttempts: attempts.filter(attempt => attempt.complete).length }));

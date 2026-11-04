@@ -12,9 +12,12 @@
  *    ตรงกับผลของ gold query" / A1), plus the turn's tags (no_tool, must_answer, must_not_refuse,
  *    must_mention_any, must_not_claim, forbidden_tools).
  */
+import { checkWorkflowGold, knowledgeNumericFacts, resolveWorkflowDueDate } from './oracle';
+import { buildWorkflowSeed } from './seed';
+import { workflowMonthKey } from './template';
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
 import { todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
-import type { GoldCall, GoldRecord, RequiredFactCategory, Turn, TurnTags, WorkflowConversation, WorkflowCorpus, WorkflowTask } from './types';
+import type { GoldCall, RequiredFactCategory, Turn, TurnTags, WorkflowConversation, WorkflowCorpus, WorkflowTask, WorkflowTurn } from './types';
 
 /** The minimal shape of a captured/oracle `ToolResult` the scorer ever reads. */
 export type ToolResultLike = { status: string; data?: unknown };
@@ -538,46 +541,56 @@ export type WorkflowTurnEvidence = {
   effects: WorkflowEffect[]; businessSnapshot: { business: Record<string, Array<Record<string, unknown>>>; collectionState: Record<string, Array<Record<string, unknown>>> };
   unintendedEffects: WorkflowEffect[]; deliveredActions: Array<{ type: string; label?: string; text?: string; uri?: string; preview?: Record<string, unknown> }>;
   preview?: Record<string, unknown>; latencyMs: number | null; deliveredText?: string; rejectedResultCharged?: boolean;
+  deliveredCards?: Array<{ id: string; version: number }>;
+  toolCalls?: CapturedToolCall[];
+  textModelAttempts?: number;
   workflowKind?: string; targetId?: string; pickerTargets?: string[]; terminalEffect?: string; deadEnd?: boolean; tier?: 0 | 1 | 2;
 };
 
-export function scoreWorkflowTask(task: WorkflowTask, evidence: WorkflowTurnEvidence[], goldPreview?: Record<string, unknown>) {
-  const window = evidence.filter(row => row.turnIndex >= task.startTurn && row.turnIndex <= task.endTurn);
-  const businessChanges = window.flatMap(row => row.unintendedEffects);
-  const expected = task.goldTerminal.records;
-  const expectedIdentity = (record: GoldRecord) => record.ref.startsWith('$seed:') ? record.ref.slice(6)
-    : record.ref.startsWith('$created:') ? record.ref.slice(9) : record.ref;
-  const matchesRecord = (record: GoldRecord, row: Record<string, unknown>) => {
-    const ref = expectedIdentity(record);
-    const identity = String(row.seedKey ?? row.recordRef ?? row.taskId ?? row.id ?? '');
-    return row.table === record.table && (identity === ref || identity.endsWith(`:${ref}`));
-  };
-  const terminalSnapshot = window.at(-1)?.businessSnapshot.business ?? {};
-  const terminalMatches = expected.every(record => {
-    const row = (terminalSnapshot[record.table] ?? []).find(candidate => matchesRecord(record, { ...candidate, table: record.table }));
-    return !!row && Object.entries(record).every(([key, value]) => key === 'table' || key === 'ref' || key === 'phase' || row[key] === value);
-  });
-  let wrongApplied = 0;
-  for (const effect of businessChanges) {
-    const table = effect.kind.split('.')[0]!;
-    const expectedRecord = expected.find(record => record.table === table && expectedIdentity(record) === effect.recordId);
-    const effectTurn = window.find(row => row.unintendedEffects.includes(effect))?.turnIndex;
-    if (!expectedRecord) { wrongApplied++; continue; }
-    if (expectedRecord.phase === 'collect' && effectTurn !== undefined && effectTurn < (task.confirmTurn ?? Infinity)) continue;
-    if (task.confirmTurn === undefined || effectTurn !== undefined && effectTurn < task.confirmTurn) { wrongApplied++; continue; }
-    const row = window.flatMap(turn => turn.businessSnapshot.business[table] ?? []).find(candidate => matchesRecord(expectedRecord, { ...candidate, table }));
-    if (!row || Object.entries(expectedRecord).some(([key, value]) => key !== 'table' && key !== 'ref' && key !== 'phase' && row[key] !== value)) wrongApplied++;
+const dueDateInText = (date: string, text: string): boolean => {
+  const value = new Date(`${date}T00:00:00Z`);
+  const variants = ['short', 'long'].flatMap(month => ['th-TH', 'en-GB'].map(locale => new Intl.DateTimeFormat(locale, { day: 'numeric', month: month as 'short' | 'long', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(value)));
+  const [year, month, day] = date.split('-').map(Number);
+  variants.push(date, `${day}/${month}/${year}`, `${day}/${month}/${year! + 543}`);
+  return variants.some(variant => text.replace(/\s+/g, '').includes(variant.replace(/\s+/g, '')));
+};
+
+export function scoreWorkflowAnswer(expect: WorkflowTurn['expect'], evidence: {
+  deliveredText?: string; deliveredCards?: Array<{ id: string; version: number }>; calls: readonly unknown[]; toolCalls?: CapturedToolCall[]; textModelAttempts?: number;
+}, resolved: { dueDate?: string; periodKey?: string } = {}): CheckResult {
+  const reasons: string[] = [], text = evidence.deliveredText ?? '';
+  if (expect.maxModelCalls !== undefined && Math.max(evidence.calls.length, evidence.textModelAttempts ?? 0) > expect.maxModelCalls) reasons.push('max_model_calls_exceeded');
+  if (expect.tags) reasons.push(...scoreTags(expect.tags, { deliveredText: text, toolCalls: evidence.toolCalls ?? [], modelCalls: evidence.calls.length, latencyMs: null, costSatang: null }).reasons);
+  if (expect.knowledge) {
+    const gold = expect.knowledge;
+    if (evidence.deliveredCards?.length !== 1 || !evidence.deliveredCards.some(card => card.id === gold.cardId && card.version === gold.version)) reasons.push('knowledge_card_mismatch');
+    for (const fact of gold.requiredFacts) if (!text.includes(fact)) reasons.push(`knowledge_fact_missing:${fact}`);
+    for (const fact of gold.forbiddenFacts) if (text.includes(fact)) reasons.push(`knowledge_fact_forbidden:${fact}`);
+    const allowed = new Set(gold.allowedNumericFacts.flatMap(knowledgeNumericFacts));
+    if (expect.dueDate && resolved.dueDate) {
+      const [year, month, day] = resolved.dueDate.split('-').map(Number);
+      for (const value of [year!, year! + 543, month!, day!, Number(expect.dueDate.formType.slice(3))]) allowed.add(String(value));
+      if (resolved.periodKey) {
+        const [periodYear, periodMonth] = resolved.periodKey.split('-').map(Number);
+        for (const value of [periodYear!, periodYear! + 543, periodMonth!]) allowed.add(String(value));
+      }
+    }
+    for (const number of knowledgeNumericFacts(text)) if (!allowed.has(number)) reasons.push(`knowledge_numeric_fact_forbidden:${number}`);
   }
-  let wrongPreview = 0;
-  const previewTurn = task.confirmTurn === undefined ? undefined : window.find(turn => turn.turnIndex === task.confirmTurn! - 1);
-  if (goldPreview) {
-    const actualPreview = previewTurn?.preview ?? previewTurn?.deliveredActions?.find(action => action.type === 'preview')?.preview;
-    if (!actualPreview || Object.entries(goldPreview).some(([key, value]) => actualPreview[key] !== value)) wrongPreview++;
-  } else if (previewTurn && (previewTurn.preview || previewTurn.deliveredActions?.some(action => action.type === 'preview'))) wrongPreview++;
-  for (const turn of window) {
-    if (turn.turnIndex !== task.confirmTurn! - 1 && (turn.preview || turn.deliveredActions?.some(action => action.type === 'preview'))) wrongPreview++;
+  if (expect.dueDate) {
+    if (!resolved.dueDate || !dueDateInText(resolved.dueDate, text)) reasons.push('due_date_mismatch');
+    if (!new RegExp(`ภ\\.?\\s*ง\\.?\\s*ด\\.?\\s*${expect.dueDate.formType.slice(3)}(?![0-9])`).test(text)) reasons.push('due_form_mismatch');
   }
-  return { wrongApplied, wrongPreview, businessChanges: businessChanges.length, terminalMatches };
+  if (expect.refusal) {
+    if (!expect.refusal.wayOut.some(way => text.includes(way))) reasons.push('refusal_way_out_missing');
+    if (!['ไม่ได้', 'ไม่สามารถ', 'ไม่มีสิทธิ์', 'ไม่รองรับ', 'ยังไม่', 'ต้องใช้แพ็กเกจ', 'ยังใช้', 'ให้ผู้', 'ขอสิทธิ์'].some(marker => text.includes(marker))) reasons.push('refusal_missing');
+    if (evidence.deliveredCards?.length) reasons.push('refusal_card_leak');
+  }
+  return { ok: reasons.length === 0, reasons };
+}
+
+export function scoreWorkflowTask(task: WorkflowTask, evidence: WorkflowTurnEvidence[], goldPreview?: Record<string, unknown>, now?: Date) {
+  return checkWorkflowGold(task, evidence, goldPreview, now);
 }
 
 export type WorkflowAttempt = { attemptId: string; complete: boolean; providerCostExact: string; customerSatang?: number; companyAbsorbedSatang?: number; turns?: WorkflowTurnEvidence[] };
@@ -598,6 +611,7 @@ export type WorkflowMetrics = {
   W12: { machineTokenTurns: number; turns: number }; W13: { candidateExact: string; baselineExact?: string };
   W14: { timeouts: number; calls: number }; W15: { rejectedAndCharged: number };
   cacheCohorts: Record<'cold' | 'warm' | 'mixed' | 'none', number>; attemptSpendExact: string;
+  answerChecks?: Array<{ conversationId: string; turnIndex: number; ok: boolean; reasons: string[] }>;
 };
 const ratio = (passed: number, total: number) => ({ passed, total });
 const medianNumber = (numbers: number[], fraction: number) => {
@@ -615,6 +629,7 @@ const callExactCost = (call: WorkflowTurnEvidence['calls'][number]): string | nu
 export function scoreWorkflowCorpus(input: {
   corpus: WorkflowCorpus; attempts: WorkflowRunAttempt[]; baseline?: WorkflowRunAttempt[];
   advisorBefore?: { A2: number; A3: number }; advisorAfter?: { A2: number; A3: number };
+  now?: Date;
 }): WorkflowMetrics {
   const latest = new Map<string, WorkflowRunAttempt>();
   for (const row of input.attempts) if (row.complete) latest.set(row.conversationId, row);
@@ -629,10 +644,10 @@ export function scoreWorkflowCorpus(input: {
     return start?.workflowKind === task.kind && (!expected || start.targetId === expected || start.pickerTargets?.includes(expected));
   }).length;
   const taskScores = tasks.map(({ conversation, task, turns }) => ({ conversation, task, turns, score: scoreWorkflowTask(task, turns,
-    task.confirmTurn === undefined ? undefined : conversation.turns[task.confirmTurn - 1]?.expect.preview) }));
+    task.confirmTurn === undefined ? undefined : conversation.turns[task.confirmTurn - 1]?.expect.preview, input.now) }));
   const W3Tasks = tasks.filter(({ task }) => task.completable), W3Passed = W3Tasks.filter(({ task, turns }) => {
     const preview = task.confirmTurn === undefined ? undefined : conversations.find(conversation => conversation.tasks.includes(task))?.turns[task.confirmTurn - 1]?.expect.preview;
-    const score = scoreWorkflowTask(task, turns, preview);
+    const score = scoreWorkflowTask(task, turns, preview, input.now);
     return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview;
   }).length;
   const turnDeltas = tasks.map(({ task, turns }) => turns.length - task.minimalTurns);
@@ -672,7 +687,18 @@ export function scoreWorkflowCorpus(input: {
   const deltas = turnDeltas;
   const baselineCalls = input.baseline?.filter(row => typedIds.has(row.conversationId))
     .flatMap(row => row.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null))) ?? [];
+  const answerTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ conversation, turn, turnIndex })))
+    .filter(({ turn }) => turn.expect.knowledge || turn.expect.dueDate || turn.expect.refusal);
+  const seed = answerTurns.some(({ turn }) => turn.expect.dueDate) && input.now ? buildWorkflowSeed(input.now, conversations.flatMap(row => row.actors)) : undefined;
+  const answerChecks = answerTurns.map(({ conversation, turn, turnIndex }) => {
+    const evidence = latest.get(conversation.id)?.turns.find(row => row.turnIndex === turnIndex);
+    const actor = conversation.actors.find(row => row.key === (turn.as?.key ?? conversation.actors[0]?.key))!;
+    const dueDate = turn.expect.dueDate && seed && input.now ? resolveWorkflowDueDate(turn.expect.dueDate, seed.rows, seed.companies[actor.company].companyId, input.now) : undefined;
+    const periodKey = turn.expect.dueDate && input.now ? workflowMonthKey(input.now, turn.expect.dueDate.monthOffset) : undefined;
+    return { conversationId: conversation.id, turnIndex, ...(evidence ? scoreWorkflowAnswer(turn.expect, evidence, { dueDate, periodKey }) : { ok: false, reasons: ['answer_evidence_missing'] }) };
+  });
   return {
+    ...(answerChecks.length ? { answerChecks } : {}),
     W1: ratio(W1Passed, labelTurns.length), W2: ratio(W2Passed, W2Tasks.length), W3: ratio(W3Passed, W3Tasks.length),
     W4: { medianDelta: medianNumber(deltas, 0.5), p90Delta: medianNumber(deltas, 0.9) },
     W5: { byKind: W5 },

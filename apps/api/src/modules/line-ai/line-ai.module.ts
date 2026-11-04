@@ -1,3 +1,4 @@
+import { LineWorkflowTargetService } from './application/line-workflow-target.service';
 import { LineSubstituteReceiptActionService } from './application/line-substitute-receipt-action.service';
 import { LineQuotedMessageService } from './application/line-quoted-message.service';
 import { CounterpartySearchTool, CounterpartyGetDetailTool, CounterpartyActionPreviewTool, LineCounterpartyService } from './application/line-counterparty.service';
@@ -288,6 +289,7 @@ const erpTools = [
     LinePackagePurchaseService,
     LineTeamActionService,
     LineExpenseActionService,
+    LineWorkflowTargetService,
     LineSubstituteReceiptActionService,
     LineCounterpartyService,
     LineVoucherActionService,

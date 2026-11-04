@@ -395,6 +395,9 @@ export class RecoverOrphanLineEventsUseCase {
     // what a customer sent, so it must not outlive the event.
     const attempts = await this.prisma.client.lineIntakeAttempt.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
     if (attempts.length) await this.prisma.client.lineIntakeAttempt.deleteMany({ where: { id: { in: attempts.map(row => row.id) } } });
+    const tasks = await this.prisma.client.lineAiTaskRun.findMany({ where: { startedAt: { lt: before } },
+      select: { id: true }, orderBy: { startedAt: 'asc' }, take: MAX_PURGE_BATCH });
+    if (tasks.length) await this.prisma.client.lineAiTaskRun.deleteMany({ where: { id: { in: tasks.map(row => row.id) } } });
     const expired = await this.prisma.client.lineWebhookEventLog.findMany({
       where: { createdAt: { lt: before } },
       select: { id: true },

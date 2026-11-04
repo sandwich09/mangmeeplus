@@ -1,0 +1,89 @@
+{
+  "version": 2,
+  "seed": "m2-multi-actor",
+  "status": "draft",
+  "conversations": [{
+    "id": "M2-multi-company-oracle",
+    "category": "oracle",
+    "journeyKind": "button",
+    "actors": [
+      { "key": "owner-c", "company": "C", "role": "OWNER", "branchScope": "all" },
+      { "key": "limited-manager", "company": "B", "role": "MANAGER", "branchScope": { "branches": ["branch-b-1"] } },
+      { "key": "dual-a", "company": "A", "role": "OWNER", "branchScope": "all" },
+      { "key": "dual-b", "company": "B", "role": "OWNER", "branchScope": "all" }
+    ],
+    "tasks": [{
+      "id": "read-seeded-record", "kind": "read", "startTurn": 0, "endTurn": 3,
+      "goldTerminal": { "effect": "ANSWERED", "records": [{ "table": "ExpenseRecord", "ref": "$seed:workflow-expense-c-0", "amount": "1000.00" }] },
+      "minimalTurns": 4, "completable": true
+    }],
+    "turns": [
+      { "user": "ดูร่างรายจ่าย", "expect": { "target": "$seed:workflow-expense-c-0" } },
+      { "as": { "key": "limited-manager" }, "press": "ดูรายการ", "expect": { "label": "ดูรายการ" } },
+      { "as": { "key": "dual-a" }, "user": "ดูร้านที่เลือก", "expect": {} },
+      { "as": { "key": "dual-b" }, "user": "ดูร้านที่เลือก", "expect": {} }
+    ]
+  }, {
+    "id": "M2-expense-payment-oracle",
+    "category": "oracle",
+    "journeyKind": "button",
+    "actors": [{ "key": "owner-b", "company": "B", "role": "OWNER", "branchScope": "all" }],
+    "tasks": [{
+      "id": "pay-expense", "kind": "expense_pay", "startTurn": 0, "endTurn": 1, "confirmTurn": 1,
+      "goldTerminal": { "effect": "EXPENSE_PAID", "records": [
+        { "table": "ExpenseRecord", "ref": "$seed:workflow-expense-b-9", "status": "CONFIRMED", "paymentStatus": "PAID", "paidAmount": "1000.00" },
+        { "table": "ExpensePayment", "ref": "$created:pay-expense", "paidAmount": "1000.00", "paidDate": "2026-11-04", "paymentMethod": "CASH" }
+      ] },
+      "minimalTurns": 2, "completable": true
+    }],
+    "turns": [
+      { "user": "บันทึกจ่ายรายการที่เลือก 1,000 บาท เป็นเงินสด วันที่ 4 พฤศจิกายน 2569", "expect": {
+        "card": "preview", "target": "$seed:workflow-expense-b-9",
+        "preview": { "action": "RECORD_PAYMENT", "target": "$seed:workflow-expense-b-9", "amount": "1000.00", "payeeName": "ผู้รับเงินนอกคู่ค้า", "paymentMethod": "CASH", "paidDate": "2026-11-04" }
+      } },
+      { "press": "บันทึกจ่าย", "pressFrom": { "turn": 0 }, "expect": { "card": "applied", "maxModelCalls": 0 } }
+    ]
+  }, {
+    "id": "M2-claim-approval-oracle",
+    "category": "oracle",
+    "journeyKind": "button",
+    "actors": [{ "key": "manager-b", "company": "B", "role": "MANAGER", "branchScope": "all" }],
+    "tasks": [{
+      "id": "approve-claim", "kind": "approvals", "startTurn": 0, "endTurn": 1, "confirmTurn": 1,
+      "goldTerminal": { "effect": "REIMBURSEMENT_APPROVED", "records": [
+        { "table": "ReimbursementRequest", "ref": "$seed:reimbursement-company-b-7", "status": "APPROVED" },
+        { "table": "ReimbursementApprovalStep", "ref": "$child:$seed:reimbursement-company-b-7:1", "status": "APPROVED", "decisionBy": "user-b-manager" }
+      ] },
+      "minimalTurns": 2, "completable": true
+    }],
+    "turns": [
+      { "user": "อนุมัติใบเบิกของสมชายที่เลือก ยอด 1,877 บาท", "expect": {
+        "card": "preview", "target": "$seed:reimbursement-company-b-7",
+        "preview": { "action": "REIMBURSEMENT_APPROVE", "target": "$seed:reimbursement-company-b-7", "amount": "1877.00", "payeeName": "สมชาย" }
+      } },
+      { "press": "อนุมัติ", "pressFrom": { "turn": 0 }, "expect": { "card": "applied", "maxModelCalls": 0 } }
+    ]
+  }, {
+    "id": "M2-voucher-payment-oracle",
+    "category": "oracle",
+    "journeyKind": "button",
+    "actors": [{ "key": "owner-b", "company": "B", "role": "OWNER", "branchScope": "all" }],
+    "tasks": [{
+      "id": "pay-voucher", "kind": "payment_voucher", "startTurn": 0, "endTurn": 1, "confirmTurn": 1,
+      "goldTerminal": { "effect": "VOUCHER_PAID", "records": [
+        { "table": "DisbursementVoucher", "ref": "$seed:voucher-b-approved", "status": "PAID", "paidAmount": "1000.00", "paidDate": "2026-11-04", "paymentMethod": "CASH" },
+        { "table": "DisbursementVoucherLine", "ref": "$child:$seed:voucher-b-approved:1", "amount": "1000.00" },
+        { "table": "ExpenseRecord", "ref": "$seed:workflow-expense-b-13", "status": "CONFIRMED", "paymentStatus": "PAID", "paidAmount": "1000.00" },
+        { "table": "ExpensePayment", "ref": "$created:pay-voucher", "paidAmount": "1000.00", "paidDate": "2026-11-04", "paymentMethod": "CASH" }
+      ] },
+      "minimalTurns": 2, "completable": true
+    }],
+    "turns": [
+      { "user": "บันทึกจ่ายใบเตรียมจ่ายที่เลือก 1,000 บาท เป็นเงินสด วันที่ 4 พฤศจิกายน 2569", "expect": {
+        "card": "preview", "target": "$seed:voucher-b-approved",
+        "preview": { "action": "VOUCHER_PAY", "target": "$seed:voucher-b-approved", "amount": "1000.00", "payeeName": "ผู้รับเงินนอกคู่ค้า", "paymentMethod": "CASH", "paidDate": "2026-11-04" }
+      } },
+      { "press": "บันทึกจ่าย", "pressFrom": { "turn": 0 }, "expect": { "card": "applied", "maxModelCalls": 0 } }
+    ]
+  }]
+}

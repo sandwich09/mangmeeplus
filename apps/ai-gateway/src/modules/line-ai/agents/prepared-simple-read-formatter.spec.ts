@@ -187,8 +187,8 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     const en = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), EN);
     assert.equal(th.kind, 'answer');
     assert.equal(en.kind, 'answer');
-    if (th.kind === 'answer') assert.match(th.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 900\.00 บาท \(ในนั้นเป็นร่าง 900\.00 บาท\) และรายการยืนยันแล้ว 26,330\.50 บาท/);
-    if (en.kind === 'answer') assert.match(en.replyText, /Amount basis: includes 900\.00 THB pending \(including 900\.00 THB draft\) and 26,330\.50 THB confirmed/);
+    if (th.kind === 'answer') assert.match(th.replyText, /ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 900\.00 บาท และรายการยืนยันแล้ว 26,330\.50 บาท/);
+    if (en.kind === 'answer') assert.match(en.replyText, /Amount basis: includes 900\.00 THB not yet confirmed and 26,330\.50 THB confirmed/);
   });
 
   it('derives the basis from returned summary values, not the requested status filter', () => {
@@ -201,7 +201,7 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     if (filtered.kind === 'answer') {
       // toolData.input/proposedInput are the model's PROPOSED filter, not the tool's own confirmation
       // (queryApplied) — absent that, the basis line still shows and no filters line is invented.
-      assert.match(filtered.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 0\.00 บาท \(ในนั้นเป็นร่าง 0\.00 บาท\) และรายการยืนยันแล้ว 400\.00 บาท/);
+      assert.match(filtered.replyText, /ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 0\.00 บาท และรายการยืนยันแล้ว 400\.00 บาท/);
       assert.doesNotMatch(filtered.replyText, /ฐานสถานะ:/);
       assert.doesNotMatch(filtered.replyText, /ตัวกรอง:/);
     }
@@ -213,7 +213,7 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
       { ...TH, proposedInput: { documentStatus: 'CONFIRMED' } });
     assert.equal(mismatchedRequest.kind, 'answer');
     if (mismatchedRequest.kind === 'answer') {
-      assert.match(mismatchedRequest.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 100\.00 บาท \(ในนั้นเป็นร่าง 20\.00 บาท\) และรายการยืนยันแล้ว 300\.00 บาท/);
+      assert.match(mismatchedRequest.replyText, /ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 100\.00 บาท และรายการยืนยันแล้ว 300\.00 บาท/);
       assert.doesNotMatch(mismatchedRequest.replyText, /ฐานสถานะ:/);
       assert.doesNotMatch(mismatchedRequest.replyText, /ตัวกรอง:/);
     }
@@ -318,7 +318,7 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     assert.equal(branchResult.kind, 'answer');
     if (branchResult.kind === 'answer') {
       assert.match(branchResult.replyText, /\nตัวกรอง: เฉพาะสาขาลาดพร้าว/);
-      assert.match(branchResult.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 900\.00 บาท/);
+      assert.match(branchResult.replyText, /ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 900\.00 บาท/);
     }
   });
 
@@ -367,7 +367,7 @@ describe('F1 expense.list_recent::single_metric — สรุปค่าใช�
     assert.equal(r.kind, 'answer');
     if (r.kind === 'answer') {
       assert.match(r.replyText, /^ค่าใช้จ่าย: 0\.00 บาท \(0 รายการ\)/);
-      assert.match(r.replyText, /ฐานยอด: รวมรายการรอดำเนินการ 0\.00 บาท \(ในนั้นเป็นร่าง 0\.00 บาท\) และรายการยืนยันแล้ว 0\.00 บาท/);
+      assert.match(r.replyText, /ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 0\.00 บาท และรายการยืนยันแล้ว 0\.00 บาท/);
     }
   });
 
@@ -1841,12 +1841,12 @@ describe('design lock context 1 — expense summary card', () => {
     assert.equal(row(layout, 'ตัวกรอง')?.value, 'เฉพาะหมวดอาหาร');
     assert.deepEqual(layout?.notes, [
       'แสดงเฉพาะรายการของคุณ',
-      'ฐานยอด: รวมรายการรอดำเนินการ 900.00 บาท (ในนั้นเป็นร่าง 900.00 บาท) และรายการยืนยันแล้ว 26,330.50 บาท',
+      'ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 900.00 บาท และรายการยืนยันแล้ว 26,330.50 บาท',
     ]);
     // Design lock §9: the word "ขอบเขต" never labels anything on a card.
     assert.doesNotMatch(JSON.stringify(layout), /ขอบเขต|ระดับแจ้งเตือน/);
     // The same clauses are in the sentence — the card says nothing the answer does not.
-    assert.ok(result.kind === 'answer' && result.replyText.includes('ตัวกรอง: เฉพาะหมวดอาหาร') && result.replyText.includes('ฐานยอด: รวมรายการรอดำเนินการ 900.00 บาท'));
+    assert.ok(result.kind === 'answer' && result.replyText.includes('ตัวกรอง: เฉพาะหมวดอาหาร') && result.replyText.includes('ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 900.00 บาท'));
   });
 
   it('heads a period that is not one month by its own months, and says the year was assumed without brackets', () => {
@@ -1855,7 +1855,7 @@ describe('design lock context 1 — expense summary card', () => {
     assert.deepEqual(quarter?.header, ['สรุปค่าใช้จ่าย', 'ต.ค. – ธ.ค. 2568']);
     assert.equal(row(quarter, 'ช่วงวันที่')?.value, 'ไตรมาส 4 (1 ต.ค. – 31 ธ.ค. 2568)');
     assert.deepEqual(quarter?.notes, [
-      'ฐานยอด: รวมรายการรอดำเนินการ 0.00 บาท (ในนั้นเป็นร่าง 0.00 บาท) และรายการยืนยันแล้ว 1,234,567.50 บาท',
+      'ฐานยอด: รวมรายการที่ยังไม่ยืนยัน 0.00 บาท และรายการยืนยันแล้ว 1,234,567.50 บาท',
       'ไม่ได้ระบุปี จึงดูไตรมาส 4 ที่ผ่านมาล่าสุด ไตรมาส 4 ปีนี้ยังไม่ถึงค่ะ',
     ]);
     const oneDay = layoutOf(EXPENSE, expenseOutput(expenseData({ period: { fromDate: '2026-08-05', toDate: '2026-08-05', defaultedToCurrentMonth: false } })));

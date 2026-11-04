@@ -149,7 +149,7 @@ describe('AiGatewayClient deployed Sonnet 4.6 grant admission', () => {
     const model = { provider: 'bedrock', modelId, region: 'ap-southeast-1', contextTokens: 200_000, maxOutputTokens: 64_000 };
     const capability = { ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
       profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2, model };
-    const input = { owner: { owner: { companyId: 'company-1' } } } as any;
+    const input = { owner: { owner: { companyId: 'company-1' } }, serverRoute: 'fixed_read' } as any;
     let issued: any;
     const authority = { issue: async (value: unknown) => { issued = value; return { signature: 'issued-after-admission' }; } };
     const client = new AiGatewayClient(config as any, {} as any, undefined, governedPrisma(), authority as any);
@@ -162,6 +162,7 @@ describe('AiGatewayClient deployed Sonnet 4.6 grant admission', () => {
     try {
       assert.deepEqual(await client.issueLineReliabilityGrant('deployed-model', input), { signature: 'issued-after-admission' });
       assert.deepEqual(issued.model, { provider: 'bedrock', modelId, region: 'ap-southeast-1' });
+      assert.equal(issued.serverRoute, 'fixed_read');
       assert.equal(issued.modelContextTokens, 200_000);
       assert.equal(issued.modelMaxOutputTokens, 64_000);
       assert.deepEqual(issued.tariff.usdPerMTok, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
@@ -1453,4 +1454,18 @@ describe('free company gateway boundary', () => {
       assert.equal(holds, 0);
     } finally { globalThis.fetch = originalFetch; }
   });
+});
+
+
+it('A1 forwards read-only credit state to the budget authority', async () => {
+  let received: unknown;
+  const authority = { narrow: async (...args: unknown[]) => { received = args; return null; },
+    creditState: async (...args: unknown[]) => { received = args; return { ok: true }; } };
+  const client = new AiGatewayClient({} as any, {} as any, undefined, {} as any, authority as any);
+  const grant = { signature: 'test' } as any;
+  await client.narrowLineReliabilityGrant(grant, 'simple', ['line-answer/2']);
+  assert.deepEqual(received, [grant, 'simple', ['line-answer/2']]);
+  const now = new Date();
+  assert.deepEqual(await client.creditState('company', now), { ok: true });
+  assert.deepEqual(received, ['company', now]);
 });

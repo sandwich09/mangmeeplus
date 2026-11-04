@@ -1,3 +1,6 @@
+import { parseLineFixedReadControl } from '../../line-ai/domain/logic/line-staff-menu.logic';
+import { LINE_WORKFLOW_IDS } from '@watchdog-bms/contracts';
+import { parseLineWorkflowControl } from '../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
 import { lineControlLanguage } from '../../line-ai/domain/logic/line-language.logic';
 import { parseCounterpartyControl } from '../../line-ai/application/line-counterparty.service';
 import { parsePackagePurchaseControl } from '../../line-ai/application/line-package-purchase.service';
@@ -90,13 +93,22 @@ export class LineWebhookController {
         // P10-L G-03: adding the friend has a reply token and used to match no arm at all, so with
         // the OA's own Greeting switched off a new customer got silence. A synthetic item carries
         // it into the same lane a typed message uses, where §3.1 decides door card or status card.
+        const params = new URLSearchParams(postbackData);
+        const exactId = [...params.keys()].length === 2 && params.getAll('action').length === 1 && params.getAll('id').length === 1;
+        const workflowControl = event.type === 'postback' ? parseLineWorkflowControl(postbackData) : null;
+        const workflowStart = event.type === 'postback' && exactId && params.get('action') === 'chat-action'
+          ? LINE_WORKFLOW_IDS.find(id => id === params.get('id')) : undefined;
+        const fixedReadControl = event.type === 'postback' ? parseLineFixedReadControl(postbackData) : null;
+        if (event.type === 'postback' && (['wf_open', 'wf_choice'].includes(params.get('action') ?? '') && !workflowControl
+          || params.get('action') === 'fixed-read' && !fixedReadControl
+          || params.get('action') === 'chat-action' && LINE_WORKFLOW_IDS.some(id => id === params.get('id')) && !exactId)) continue;
         const counterpartyControl = event.type === 'postback' ? parseCounterpartyControl(postbackData) : null;
         const packagePurchaseControl = event.type === 'postback' ? parsePackagePurchaseControl(postbackData) : null;
         const expenseActionControl = event.type === 'postback' ? parseExpenseActionControl(postbackData) : null;
         const reimbursementChoiceControl = event.type === 'postback' ? parseLineReimbursementChoiceControl(postbackData) : null;
         const reimbursementDraftControl = event.type === 'postback' ? parseLineReimbursementDraftControl(postbackData) : null;
         const answerDeliveryControl = event.type === 'postback' ? parseLineAnswerDeliveryControl(postbackData) : null;
-        const synthetic = reimbursementChoiceControl ? reimbursementChoiceControl.choice === 'photo' ? 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้' : reimbursementChoiceControl.choice === 'no-receipt' ? 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' : 'เลือกหมวดค่าใช้จ่ายสำหรับใบเบิกนี้' : counterpartyControl ? 'ตรวจข้อมูลคู่ค้า' : packagePurchaseControl ? 'ตรวจลิงก์จ่ายแพ็กเกจ' : expenseActionControl ? 'ตรวจผลรายการค่าใช้จ่าย' : reimbursementDraftControl ? 'ตรวจผลร่างใบเบิก' : answerDeliveryControl ? answerDeliveryControl.action === 'continue' ? 'อ่านคำตอบต่อ' : 'ยกเลิกการส่งคำตอบ' : event.type === 'follow'
+        const synthetic = workflowControl ? 'เลือกงานจากการ์ด' : workflowStart ? linePostbackCommandText(postbackData, this.config.lineAiDraftEditEnabled) ?? 'เริ่มงานจากเมนู' : fixedReadControl ? 'ดูค่าใช้จ่ายเดือนนี้' : reimbursementChoiceControl ? reimbursementChoiceControl.choice === 'photo' ? 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้' : reimbursementChoiceControl.choice === 'no-receipt' ? 'ไม่มีใบเสร็จ ขอเบิกรายการใหม่นี้' : 'เลือกหมวดค่าใช้จ่ายสำหรับใบเบิกนี้' : counterpartyControl ? 'ตรวจข้อมูลคู่ค้า' : packagePurchaseControl ? 'ตรวจลิงก์จ่ายแพ็กเกจ' : expenseActionControl ? 'ตรวจผลรายการค่าใช้จ่าย' : reimbursementDraftControl ? 'ตรวจผลร่างใบเบิก' : answerDeliveryControl ? answerDeliveryControl.action === 'continue' ? 'อ่านคำตอบต่อ' : 'ยกเลิกการส่งคำตอบ' : event.type === 'follow'
           ? LINE_FOLLOW_EVENT_TEXT
           : event.type === 'postback'
             ? linePostbackCommandText(postbackData, this.config.lineAiDraftEditEnabled)
@@ -116,6 +128,9 @@ export class LineWebhookController {
               replyToken: event.replyToken,
               text: synthetic,
               ...(controlLanguage.language ? { language: controlLanguage.language } : {}),
+              ...(workflowControl ? { workflowControl } : {}),
+              ...(workflowStart ? { workflowStart } : {}),
+              ...(fixedReadControl ? { fixedReadControl } : {}),
               ...(counterpartyControl ? { counterpartyControl } : {}),
               ...(expenseActionControl ? { expenseActionControl } : {}),
               ...(packagePurchaseControl ? { packagePurchaseControl } : {}),

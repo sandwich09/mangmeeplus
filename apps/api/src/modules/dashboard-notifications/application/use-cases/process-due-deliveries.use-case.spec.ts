@@ -1217,3 +1217,17 @@ it('Round 3 existing reimbursement approval notice renders scoped opening button
   assert.ok(footer.contents.every((b: any) => b.action.type === 'postback'));
   assert.match(footer.contents[0].action.data, /expense_action_approve/u);
 });
+
+it('A4a the reimbursement payment notice renders the recipient-bound payment opener', async () => {
+  const { reimbursementPaymentButton, parseLineWorkflowControl, verifyLineWorkflowOpenSig } = await import('../../../line-ai/domain/logic/line-reimbursement-approval-control.logic');
+  const notice = buildLineMessage({ companyId: 'co-1', triggerKey: 'workflow.reimbursement_ready_for_payment', title: 'ใบเบิกรอจ่ายคืน', body: 'ค่าเดินทาง 400 บาท', severity: 'action',
+    approvalButtons: [reimbursementPaymentButton('secret', 'co-1', 'payer', 'claim-1')] });
+  const action = (notice.contents as any).footer.contents[0].action;
+  assert.equal(action.label, 'บันทึกจ่ายคืน');
+  const control = parseLineWorkflowControl(action.data)!;
+  assert.equal(control.action, 'wf_open');
+  if (control.action !== 'wf_open') assert.fail('payment notice is a signed opener');
+  assert.equal(control.act, 'REIMBURSEMENT_RECORD_PAYMENT');
+  assert.equal(verifyLineWorkflowOpenSig('secret', 'co-1', 'payer', control.act, control.id, '', '', '', control.sig), true);
+  assert.equal(verifyLineWorkflowOpenSig('secret', 'co-1', 'other', control.act, control.id, '', '', '', control.sig), false);
+});

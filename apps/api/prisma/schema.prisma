@@ -438,6 +438,7 @@ model Company {
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   aiMonthlyBucketUsage              CompanyAiMonthlyBucketUsage[]
   aiBudgetReservations              AiBudgetReservation[]
+  lineAiTaskRuns                    LineAiTaskRun[]
   aiCreditGrants                    AiCreditGrant[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
   billingReceiptGrants              BillingReceiptGrant[]
@@ -1876,6 +1877,34 @@ model AiToolInvocation {
   @@index([turnId])
 }
 
+model LineAiTaskRun {
+  id                   String    @id @default(cuid())
+  companyId            String
+  membershipId         String
+  chatKeyHash          String    @db.VarChar(64)
+  kind                 String    @db.VarChar(40)
+  entry                String    @db.VarChar(20)
+  status               String    @default("OPEN") @db.VarChar(16)
+  deadEnd              Boolean   @default(false)
+  eventCount           Int       @default(0)
+  pressCount           Int       @default(0)
+  typedCount           Int       @default(0)
+  classifierLabel      String?   @db.VarChar(40)
+  classifierConfidence Decimal?  @db.Decimal(4, 3)
+  sourceType           String?   @db.VarChar(40)
+  sourceId             String?   @db.VarChar(64)
+  resultType           String?   @db.VarChar(40)
+  resultId             String?   @db.VarChar(64)
+  startedAt            DateTime  @default(now())
+  endedAt              DateTime?
+  updatedAt            DateTime  @updatedAt
+  company              Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, startedAt])
+  @@index([companyId, chatKeyHash, status])
+  @@index([companyId, resultId])
+}
+
 model LineWebhookEventLog {
   id             String    @id @default(cuid())
   webhookEventId String    @unique
@@ -1904,6 +1933,12 @@ model LineWebhookEventLog {
   @@index([createdAt])
   budgetAuthorityJson Json?
   budgetAuthorityRevision Int @default(0)
+
+  taskRunId String?
+  classifyAuthorityJson Json?
+  classifyAuthorityRevision Int @default(0)
+
+  @@index([taskRunId])
 
 }
 

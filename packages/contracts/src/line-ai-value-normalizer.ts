@@ -352,14 +352,14 @@ const ENGLISH_MONTHS: Array<[string, number]> = [
 ];
 
 const MONTH_NAME_ALTERNATION = [...THAI_MONTHS, ...ENGLISH_MONTHS]
-  .map(([name]) => name.replace(/\./g, '\\.'))
+  .map(([name]) => name.replace(/\./g, '\\.?'))
   .sort((a, b) => b.length - a.length)
   .join('|');
 
 function monthFromName(name: string): number | null {
-  const lowered = name.toLowerCase();
+  const lowered = name.toLowerCase().replace(/\./g, '');
   for (const [candidate, month] of [...THAI_MONTHS, ...ENGLISH_MONTHS, ...THAI_SPOKEN_MONTHS]) {
-    if (candidate === lowered) return month;
+    if (candidate.replace(/\./g, '') === lowered) return month;
   }
   return null;
 }
@@ -605,7 +605,10 @@ export function extractValueCandidates(
     let day: number;
     let month: number;
     const orderAssumptions: string[] = [];
-    if (first > 12 && second <= 12) {
+    if (match[0].includes('/')) {
+      day = first; month = second; // Owner: slash dates always use Thai day/month order.
+      if (first <= 12 && second <= 12 && first !== second) orderAssumptions.push(VALUE_ASSUMPTIONS.orderAssumedDayMonth);
+    } else if (first > 12 && second <= 12) {
       day = first; month = second; // day > 12 locks D/M
     } else if (second > 12 && first <= 12) {
       day = second; month = first; // month cannot exceed 12 → the other part is the day
@@ -631,6 +634,27 @@ export function extractValueCandidates(
     recordDateRange(start, end);
   }
 
+  // A yearless Thai day/month is the latest occurrence on or before the injected Bangkok day.
+  // Reserve even impossible dates so neither their digits nor their month become another value.
+  const yearlessPatterns = [
+    /(?<![\d/])(\d{1,2})\/(\d{1,2})(?![\d/])/gu,
+    new RegExp(`(?<!\\d)(\\d{1,2})\\s+(${THAI_MONTHS.map(([name]) => name.replace(/\./g, '\\.?')).sort((a, b) => b.length - a.length).join('|')})(?![ก-๙.]|\\s*(?:ปี\\s*)?['’]?\\d)`, 'gu'),
+  ];
+  for (const pattern of yearlessPatterns) for (const match of mapped.matchAll(pattern)) {
+    const start = match.index, end = start + match[0].length;
+    if (overlaps(dateRanges, start, end)) continue;
+    recordDateRange(start, end);
+    const day = Number(match[1]), month = monthFromName(match[2]) ?? Number(match[2]);
+    if (!todayIso) continue;
+    let date = dayOccurrence(day, month, Number(todayIso.slice(0, 4)), -1);
+    if (date && date > todayIso) date = dayOccurrence(day, month, Number(date.slice(0, 4)) - 1, -1);
+    if (date) {
+      const yearCe = Number(date.slice(0, 4));
+      pushDate(start, end, day, month, { yearCe, yearBe: yearCe + BE_CE_OFFSET,
+        assumptions: [PERIOD_ASSUMPTIONS.yearAssumedLatest] }, []);
+    }
+  }
+
   // 6) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
   //    a year like 2537 can never legitimize an amount of 2537.
   for (const match of mapped.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
@@ -652,7 +676,7 @@ export function extractValueCandidates(
       continue;
     }
     const value = options.scan ? evaluateWordTokensExact(scanned.tokens) : evaluateWordTokens(scanned.tokens);
-    if (value !== null && BigInt(value) > 0n) {
+    if (value !== null && BigInt(value) > 0n && !overlaps(dateRanges, cursor, scanned.end)) {
       pushAmount(amounts, text, mapped, cursor, scanned.end, value, options.scan);
     }
     cursor = scanned.end;
@@ -663,7 +687,7 @@ export function extractValueCandidates(
   for (const match of text.matchAll(englishWordPattern)) {
     const tokens = match[0].toLowerCase().split(/[\s-]+/).map((w) => ENGLISH_NUMBER_WORDS[w]).filter((t): t is WordToken => !!t);
     const value = options.scan ? evaluateWordTokensExact(tokens) : evaluateWordTokens(tokens);
-    if (value !== null && BigInt(value) > 0n) {
+    if (value !== null && BigInt(value) > 0n && !overlaps(dateRanges, match.index, match.index + match[0].length)) {
       pushAmount(amounts, text, mapped, match.index, match.index + match[0].length, value, options.scan);
     }
   }
@@ -671,7 +695,7 @@ export function extractValueCandidates(
   // 9) Periods (spec §3.1). Computed HERE so every producer of value candidates gets them for free.
   //    A period is meaningless without a clock, so a caller that injects no `todayIso` gets none, and
   //    a turn that names no period carries no `periods` key at all — existing payloads are unchanged.
-  const periods = todayIso ? resolvePeriodCandidates(text, todayIso, dates, options.scan) : [];
+  const periods = todayIso ? resolvePeriodCandidates(text, todayIso, dates, options.scan, { dateRanges }) : [];
 
   return {
     amounts: options.scan ? amounts : amounts.slice(0, MAX_AMOUNT_CANDIDATES),
@@ -1590,7 +1614,7 @@ export function resolvePeriodCandidates(
   todayIso: string,
   dates: LineAiDateCandidate[] = [],
   scan?: CandidateScan,
-  options: { allowFuture?: boolean } = {},
+  options: { allowFuture?: boolean; dateRanges?: SpanRange[] } = {},
 ): LineAiPeriodCandidate[] {
   if (!CIVIL_DATE_PATTERN.test(todayIso)) return [];
   const mapped = mapThaiDigits(text);
@@ -1599,6 +1623,11 @@ export function resolvePeriodCandidates(
   const out: LineAiPeriodCandidate[] = [];
 
   const push = (span: string, reading: PeriodReading, start: number, end: number): void => {
+    // A day owns its month token, including an invalid day; month-only reads and ranges stay intact.
+    if (reading.kind === 'month' && options.dateRanges?.some(range => start >= range.start && end <= range.end)
+      && !dates.some(date => date.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary)
+        && (scan?.datePositions.get(date)?.start ?? text.indexOf(date.span)) <= start
+        && (scan?.datePositions.get(date)?.end ?? text.indexOf(date.span) + date.span.length) >= end)) return;
     if (!options.allowFuture && reading.fromDate > todayIso) return; // ordinary reads have no future data
     const clamped = !options.allowFuture && reading.toDate > todayIso;
     const toDate = clamped ? todayIso : reading.toDate;

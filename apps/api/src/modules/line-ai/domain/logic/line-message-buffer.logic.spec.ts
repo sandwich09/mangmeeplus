@@ -362,3 +362,13 @@ describe('debounceCohortMs', () => {
     }
   });
 });
+
+it('R23 control is a singleton command', () => {
+  for (const control of [{ workflowStart: 'reimbursement_claim' as const }, { fixedReadControl: { id: 'expense_month' as const } },
+    { workflowControl: { action: 'wf_choice' as const, token: 'choice', pick: 'other' as const } }]) {
+    const command = { ...text('control', 'เลือกงาน', { kind: 'command' }), ...control };
+    const groups = segmentBatch([text('before', 'ก่อนหน้า'), command, text('after', 'ถัดไป')]);
+    assert.equal(groups.length, 3);
+    assert.deepEqual(groups[1], { kind: 'command', item: command });
+  }
+});

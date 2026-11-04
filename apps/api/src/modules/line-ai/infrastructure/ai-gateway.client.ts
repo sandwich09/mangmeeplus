@@ -186,6 +186,10 @@ export class AiGatewayClient {
       modelContextTokens: model.contextTokens, modelMaxOutputTokens: model.maxOutputTokens, tariff });
   }
 
+  async creditState(companyId: string, now = new Date()) {
+    return this.budgetAuthority?.creditState(companyId, now) ?? null;
+  }
+
   async narrowLineReliabilityGrant(grant: AiBudgetGrantV2, lane: 'general' | 'simple' | 'mixed' | 'public', profiles: AiBudgetProfileIdV2[]) {
     return this.budgetAuthority?.narrow(grant, lane, profiles) ?? null;
   }

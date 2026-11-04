@@ -8,6 +8,7 @@ import {
   buildExpenseDraftCardMessage,
   buildExpenseDraftReviewCard,
   buildKeptReceiptCard,
+  buildClaimWorkflowPicker,
   expenseDraftCardFactsFrom,
   expenseDraftCardSubject,
   buildLineSystemTextCardMessage,
@@ -1420,6 +1421,10 @@ describe('delivery plan guard: every card carries its text, or says why it never
   const WEB = 'https://app.example.com';
   const DRAFT_FACTS: LineExpenseDraftCardFacts = { expenseId: 'e1', subject: 'ร่างค่าใช้จ่าย', rows: [{ label: 'ยอดรวม', value: '100.00 บาท', total: true }], notes: [] };
   const carriesText: Record<string, () => LineReplyMessage[]> = {
+    buildClaimWorkflowPicker: () => [
+      buildClaimWorkflowPicker({ targets: [], total: 0, exhaustive: true }, 'reimbursement_submit', 'secret', 'c1', 'u1', WEB),
+      buildClaimWorkflowPicker({ targets: [{ id: 'claim-1', requestNo: 'RB-0001', amount: '250', currency: 'THB' } as any], total: 1, exhaustive: true }, 'reimbursement_submit', 'secret', 'c1', 'u1', WEB),
+    ],
     buildPublicPolicyCardMessage: () => [buildPublicPolicyCardMessage({ topic: 'trial', title: 'หัวข้อ', text: 'คำตอบ' })],
     buildLineAssistantTextCardMessage: () => [buildLineAssistantTextCardMessage('คำตอบ', WEB, 'c1')],
     buildExpenseDraftCardMessage: () => [buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, WEB, 'c1'), buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, undefined, 'c1')],
@@ -1529,4 +1534,22 @@ it('every ติดต่อเจ้าหน้าที่ / Contact team but
   const source = readFileSync(join(__dirname, 'line-business-card.logic.ts'), 'utf8');
   assert.doesNotMatch(source, /text: STAFF_CONTACT_COMMAND|action=staff-contact/);
   assert.match(source, /\{ label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL \}/);
+});
+
+it('R22 sold single-action help uses chat-action and action-specific permission alternatives', async () => {
+  const { productHelpQuickReply } = await import('./line-business-card.logic');
+  for (const [id, permission] of [['reimbursement_claim', 'reimbursement.create'], ['expense_submit', 'expense.review'], ['expense_delete', 'expense.delete'], ['substitute_receipt', 'expense.review']]) {
+    const response: any = { refused: false, replyText: 'เลือกงานค่ะ', presentation: { kind: 'answer_cards', cards: [{ text: 'เลือกงานค่ะ', chatActionId: id }] } };
+    const action: any = productHelpQuickReply(response, [permission!], new Set(['expenses']))!.items[0]!.action;
+    assert.equal(action.type, 'postback');
+    assert.equal(action.data, `action=chat-action&id=${id}`);
+    assert.equal(productHelpQuickReply(response, [], new Set(['expenses'])), undefined);
+  }
+});
+
+
+it('R22 substitute navigation has the named English capability button', async () => {
+  const { productHelpQuickReply } = await import('./line-business-card.logic');
+  const response: any = { refused: false, presentation: { cards: [{ chatActionIds: ['substitute_receipt'] }] } };
+  assert.equal(productHelpQuickReply(response, ['expense.review'], new Set(['expenses']), 'en')!.items[0]!.action.label, 'Substitute receipt');
 });

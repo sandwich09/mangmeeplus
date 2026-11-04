@@ -286,6 +286,8 @@ function reimbursementMissingText(fieldPaths: string[]): string {
  *  server already chose is not asked again, and bills are shown only when they can actually be claimed. */
 function reimbursementOptionsMessages(options: { choices: Array<{ choiceId?: string; kind: string; label: string; details?: Record<string, string | number | boolean | null> }>;
   pages: Partial<Record<string, { hasMore: boolean }>>; selected?: { branchChoiceId?: string; requesterChoiceId?: string; targetRef?: string };
+  operation?: 'CREATE' | 'UPDATE';
+  lineQuestion?: { text: string; amountChoices: Array<{ label: string; text: string }> };
   control?: { actionId: string; revision: string }; awaitingPhoto?: boolean;
   nonEditableTargets?: Array<{ label: string; webPath: string; canReopen: boolean; pending: boolean }>; reasonQuestion?: string; receiptNotice?: string; collection?: { lineChosen: boolean; receiptChosen: boolean; categoryChosen: boolean } }, webBaseUrl = '', language: LineReplyLanguage = 'th'): LineReplyMessage[] {
   if (language === 'en') return reimbursementOptionsEnglish(options, webBaseUrl);
@@ -300,24 +302,28 @@ function reimbursementOptionsMessages(options: { choices: Array<{ choiceId?: str
   const choiceAction = (label: string, choice: string, text: string) => options.control
     ? { type: 'postback' as const, label: Array.from(label).slice(0, 20).join(''), displayText: text, data: new URLSearchParams({ action: 'reimbursement_choice', ...options.control, choice }).toString() }
     : { type: 'message' as const, label, text };
-  const buttons = (text: string, choices: Array<{ label: string; text: string }>): LineReplyMessage[] => [{ type: 'text', text,
-    quickReply: lineChoiceQuickReply(choices) }];
+  const buttons = (text: string, choices: Array<{ label: string; text: string; choice?: string }>): LineReplyMessage[] => [{ type: 'text', text,
+    quickReply: options.operation === 'CREATE' && options.control
+      ? { items: choices.map(item => ({ type: 'action' as const, action: item.choice ? choiceAction(item.label, item.choice, item.text)
+        : { type: 'message' as const, label: item.label, text: item.text } })) } : lineChoiceQuickReply(choices) }];
   for (const [kind, chosen, name] of [['BRANCH', options.selected?.branchChoiceId, 'สาขา'],
     ['REQUESTER', options.selected?.requesterChoiceId, 'ผู้ขอเบิก'], ['TARGET', options.selected?.targetRef, 'ใบเบิกที่จะแก้']] as const) {
     const choices = options.choices.filter(choice => choice.kind === kind);
-    if (!chosen && choices.length) return buttons(`เลือก${name}ได้เลยค่ะ`, choices.slice(0, 12).map(choice => ({ label: choice.label, text: `เลือก${name} ${choice.label}` }))
+    if (!chosen && choices.length) return buttons(`เลือก${name}ได้เลยค่ะ`, choices.slice(0, 12).map(choice => ({ label: choice.label, text: `เลือก${name} ${choice.label}`, ...(kind !== 'TARGET' ? { choice: choice.choiceId } : {}) }))
       .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'ค้นหาเพิ่มเติม', text: `ขอค้นหา${name}เพิ่มเติม` }] : []));
   }
   const bills = options.choices.filter(choice => choice.kind === 'SOURCE' && choice.details?.['eligible'] !== false);
-  if (!options.collection?.lineChosen && bills.length) return buttons('เลือกบิลที่จะเบิก หรือเริ่มรายการใหม่ได้เลยค่ะ', [
+  if (!options.collection?.lineChosen && !options.lineQuestion && bills.length) return buttons('เลือกบิลที่จะเบิก หรือเริ่มรายการใหม่ได้เลยค่ะ', [
     ...bills.slice(0, 4).map(choice => {
       const detail = [choice.label, typeof choice.details?.['incurredDate'] === 'string' ? formatThaiDate(choice.details['incurredDate']) : undefined,
         choice.details?.['amount'] ? formatClaimMoney(choice.details['amount'], choice.details['currency']) : undefined].filter(Boolean).join(' · ');
       const label = choice.details?.['description'] && choice.details?.['amount']
         ? `${Array.from(String(choice.details['description'])).slice(0, 9).join('')} ${formatClaimAmount(choice.details['amount'])}` : detail;
-      return { label, text: `เบิกบิล ${detail}` };
-    }), { label: 'รายการใหม่', text: 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ' },
+      return { label, text: `เบิกบิล ${detail}`, choice: choice.choiceId };
+    }), { label: 'รายการใหม่', text: 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ', choice: 'new-line' },
   ]);
+  if (!options.collection?.lineChosen && options.lineQuestion) return [{ type: 'text', text: options.lineQuestion.text,
+    ...(options.lineQuestion.amountChoices.length ? { quickReply: lineChoiceQuickReply(options.lineQuestion.amountChoices) } : {}) }];
   if (!options.collection?.lineChosen) return [{ type: 'text', text: 'ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่ายเพื่อทำใบเบิกต่อค่ะ' }];
   if (!options.collection?.receiptChosen) return [{ type: 'text', text: 'ส่งรูปใบเสร็จ หรือเลือกไม่มีใบเสร็จเพื่อทำรายการต่อได้ค่ะ',
     quickReply: { items: [{ type: 'action', action: choiceAction('ส่งรูปใบเสร็จ', 'photo', 'ส่งรูปใบเสร็จสำหรับใบเบิกนี้') },
@@ -332,24 +338,29 @@ function reimbursementOptionsMessages(options: { choices: Array<{ choiceId?: str
 }
 
 function reimbursementOptionsEnglish(options: Parameters<typeof buildReimbursementOptionsMessages>[0], webBaseUrl: string): LineReplyMessage[] {
-  const buttons = (text: string, choices: Array<{ label: string; text: string }>): LineReplyMessage[] => [{ type: 'text', text, quickReply: lineChoiceQuickReply(choices) }];
   const choice = (label: string, value: string, text: string) => options.control
     ? { type: 'postback' as const, label: Array.from(label).slice(0, 20).join(''), displayText: text,
       data: lineControlData(new URLSearchParams({ action: 'reimbursement_choice', ...options.control, choice: value }).toString(), 'en') }
     : { type: 'message' as const, label, text };
+  const buttons = (text: string, choices: Array<{ label: string; text: string; choice?: string }>): LineReplyMessage[] => [{ type: 'text', text,
+    quickReply: options.operation === 'CREATE' && options.control
+      ? { items: choices.map(item => ({ type: 'action' as const, action: item.choice ? choice(item.label, item.choice, item.text)
+        : { type: 'message' as const, label: item.label, text: item.text } })) } : lineChoiceQuickReply(choices) }];
   if (options.nonEditableTargets?.length) return options.nonEditableTargets.slice(0, 5).map(target => ({ type: 'text',
     text: target.canReopen ? 'Open this claim on the web and return it to draft before editing.' : 'This claim is no longer a draft; open it on the web for the next step.',
     quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'Open claim', uri: `${webBaseUrl.replace(/\/$/u, '')}${target.webPath}` } }] } }));
   for (const [kind, selected, label] of [['BRANCH', options.selected?.branchChoiceId, 'branch'], ['REQUESTER', options.selected?.requesterChoiceId, 'requester'],
     ['TARGET', options.selected?.targetRef, 'claim to edit']] as const) {
     const choices = options.choices.filter(entry => entry.kind === kind);
-    if (!selected && choices.length) return buttons(`Please choose the ${label}.`, choices.slice(0, 12).map(entry => ({ label: entry.label, text: `Choose ${label}: ${entry.label}` }))
+    if (!selected && choices.length) return buttons(`Please choose the ${label}.`, choices.slice(0, 12).map(entry => ({ label: entry.label, text: `Choose ${label}: ${entry.label}`, ...(kind !== 'TARGET' ? { choice: entry.choiceId } : {}) }))
       .concat(choices.length > 12 || options.pages[kind.toLowerCase()]?.hasMore ? [{ label: 'Search more', text: `Find more ${label} choices` }] : []));
   }
+  if (!options.collection?.lineChosen && options.lineQuestion) return [{ type: 'text', text: options.lineQuestion.text,
+    ...(options.lineQuestion.amountChoices.length ? { quickReply: lineChoiceQuickReply(options.lineQuestion.amountChoices) } : {}) }];
   if (!options.collection?.lineChosen) {
     const bills = options.choices.filter(entry => entry.kind === 'SOURCE' && entry.details?.eligible !== false);
-    return bills.length ? buttons('Choose an expense to claim, or start a new item.', [...bills.slice(0, 4).map(entry => ({ label: entry.label, text: `Claim expense: ${entry.label}` })),
-      { label: 'New item', text: 'Start a new claim item without an existing expense' }])
+    return bills.length ? buttons('Choose an expense to claim, or start a new item.', [...bills.slice(0, 4).map(entry => ({ label: entry.label, text: `Claim expense: ${entry.label}`, choice: entry.choiceId })),
+      { label: 'New item', text: 'Start a new claim item without an existing expense', choice: 'new-line' }])
       : [{ type: 'text', text: 'Please provide the item details, amount and date you paid.' }];
   }
   if (!options.collection?.receiptChosen) return [{ type: 'text', text: 'Send a receipt photo or choose no receipt to continue.', quickReply: { items: [

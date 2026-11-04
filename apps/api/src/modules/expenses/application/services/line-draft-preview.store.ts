@@ -20,7 +20,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import Redis from 'ioredis';
-import type { LineDraftUpdatePreview, VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
+import type { LineWorkflowControl, LineDraftUpdatePreview, VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import type { LineDraftPatch } from '../../domain/logic/line-draft-update.logic';
 
@@ -31,6 +31,10 @@ export const LINE_DRAFT_PREVIEW_TTL_SECONDS = 600;
 export const LINE_DRAFT_PREVIEW_CLAIM_TTL_SECONDS = 1_800;
 /** How long "you already confirmed this" stays sayable. A UI courtesy, not a correctness device. */
 export const LINE_DRAFT_APPLIED_TTL_SECONDS = 120;
+
+export const LINE_DRAFT_RECOVERY_TTL_SECONDS = 7 * 86400;
+export type LineActionRecovery = { companyId: string; userId: string; tokenHash: string;
+  act: Extract<LineWorkflowControl, { action: 'wf_open' }>['act']; id: string; pm?: string; pd?: string; pa?: string };
 
 export type StoredDraftPreview = {
   previewId: string;
@@ -83,7 +87,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
     return Boolean(this.client) || Boolean(this.config?.redisUrl) || !this.config?.isProduction;
   }
 
-  async save(entry: T): Promise<boolean> {
+  async save(entry: T, recovery?: LineActionRecovery): Promise<boolean> {
     // A NEW question retires the old answer. Belt to the apply path's braces: that path only
     // consults the applied memory when nothing is pending, but leaving a stale confirmation
     // sitting next to a live preview is a trap for the next reader of either.
@@ -95,9 +99,18 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
     // lets the LINE fake harness drive J3 end to end.
     if (!redis) {
       this.local.delete(appliedKey(entry.companyId, entry.chatKeyHash));
+      if (recovery) this.saveLocal(previewKey(entry.companyId, `recover:${entry.previewId}`), JSON.stringify(recovery), LINE_DRAFT_RECOVERY_TTL_SECONDS);
       return this.saveLocal(key, value);
     }
     try {
+      if (redis.eval && recovery) {
+        return Number(await redis.eval(
+          "if redis.call('EXISTS',KEYS[2])==1 then return 0 end; redis.call('DEL',KEYS[3]); redis.call('SET',KEYS[1],ARGV[1],'EX',ARGV[2]); redis.call('SET',KEYS[4],ARGV[3],'EX',ARGV[4]); return 1",
+          4, key, claimKey(entry.companyId, entry.chatKeyHash), appliedKey(entry.companyId, entry.chatKeyHash),
+          previewKey(entry.companyId, `recover:${entry.previewId}`), value, String(LINE_DRAFT_PREVIEW_TTL_SECONDS),
+          JSON.stringify(recovery), String(LINE_DRAFT_RECOVERY_TTL_SECONDS),
+        )) === 1;
+      }
       if (redis.eval) {
         this.local.delete(appliedKey(entry.companyId, entry.chatKeyHash));
         return Number(await redis.eval(
@@ -108,6 +121,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
       }
       if (await redis.get(claimKey(entry.companyId, entry.chatKeyHash))) return false;
       await this.forget(entry.companyId, entry.chatKeyHash);
+      if (recovery) await redis.set(previewKey(entry.companyId, `recover:${entry.previewId}`), JSON.stringify(recovery), 'EX', LINE_DRAFT_RECOVERY_TTL_SECONDS);
       await redis.set(key, value, 'EX', LINE_DRAFT_PREVIEW_TTL_SECONDS);
       return true;
     } catch (err) {
@@ -117,6 +131,14 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
       this.logger.warn({ msg: 'expense.line_ai.draft_preview.store_failed', error: (err as Error).message });
       return false;
     }
+  }
+
+  async loadRecovery(companyId: string, previewId: string): Promise<LineActionRecovery | null> {
+    return this.read<LineActionRecovery>(previewKey(companyId, `recover:${previewId}`));
+  }
+
+  async discardRecovery(companyId: string, previewId: string): Promise<void> {
+    await this.discard(companyId, `recover:${previewId}`);
   }
 
   async load(companyId: string, chatKeyHash: string): Promise<T | null> {
@@ -184,7 +206,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
     }
   }
 
-  private async read(key: string): Promise<T | null> {
+  private async read<U = T>(key: string): Promise<U | null> {
     const redis = this.redis();
     let raw: string | null = null;
     if (redis) {
@@ -198,7 +220,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
     raw ??= this.loadLocal(key);
     if (!raw) return null;
     try {
-      return JSON.parse(raw) as T;
+      return JSON.parse(raw) as U;
     } catch {
       // A payload this process cannot read is a payload it must not act on.
       this.local.delete(key);

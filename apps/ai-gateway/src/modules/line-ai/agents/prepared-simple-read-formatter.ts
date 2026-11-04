@@ -432,16 +432,15 @@ export function formatExpenseSummary(
   // it was simply excluded by the filter, not absent.
   const { filtersText, hasStatusFilter, scopeText, filterPhrases, accessScope } = expenseFilterLine(data, ctx, english);
 
-  const draftAmount = totals['draftAmount'];
   const pendingAmount = totals['pendingAmount'];
   const confirmedAmount = totals['confirmedAmount'];
   const validBasisAmount = (value: unknown): value is string | number => typeof value === 'number'
     ? Number.isFinite(value)
     : typeof value === 'string' && PLAIN_DECIMAL.test(value.replace(/,/g, ''));
-  const basisText = !hasStatusFilter && validBasisAmount(pendingAmount) && validBasisAmount(draftAmount) && validBasisAmount(confirmedAmount)
+  const basisText = !hasStatusFilter && validBasisAmount(pendingAmount) && validBasisAmount(confirmedAmount)
     ? english
-      ? `\nAmount basis: includes ${moneyText(pendingAmount)} THB pending (including ${moneyText(draftAmount)} THB draft) and ${moneyText(confirmedAmount)} THB confirmed`
-      : `\nฐานยอด: รวมรายการรอดำเนินการ ${moneyText(pendingAmount)} บาท (ในนั้นเป็นร่าง ${moneyText(draftAmount)} บาท) และรายการยืนยันแล้ว ${moneyText(confirmedAmount)} บาท`
+      ? `\nAmount basis: includes ${moneyText(pendingAmount)} THB not yet confirmed and ${moneyText(confirmedAmount)} THB confirmed`
+      : `\nฐานยอด: รวมรายการที่ยังไม่ยืนยัน ${moneyText(pendingAmount)} บาท และรายการยืนยันแล้ว ${moneyText(confirmedAmount)} บาท`
     : '';
 
   const localizedAsOf = ctx.asOfLabel ?? thaiExpenseAsOfLabel(asOf);

@@ -181,10 +181,10 @@ describe('validateWorkflowCorpus M1b', () => {
     tasks: [{ id: 'pay', kind: 'expense_pay', startTurn: 0, endTurn: 1, confirmTurn: 1, goldTerminal: { effect: 'EXPENSE_PAID', records: [
       { table: 'ExpensePayment', ref: '$created:pay', paidAmount: '12.50', paidDate: '2026-11-04', paymentMethod: 'CASH' },
     ] }, minimalTurns: 2, completable: true }],
-    turns: [{ as: { key: 'owner' }, user: 'จ่ายรายการนี้', expect: {} }, { as: { key: 'owner' }, press: 'ยืนยัน', expect: { preview: { action: 'pay', target: '$seed:expense' } } }],
+    turns: [{ as: { key: 'owner' }, user: 'จ่ายรายการนี้', expect: { preview: { action: 'pay', target: '$seed:expense' } } }, { as: { key: 'owner' }, press: 'ยืนยัน', expect: {} }],
   }] };
 
-  it('accepts company C, multiple actors, a press turn, and a paid record with amount, date and method', () => {
+  it('accepts a write task whose preview precedes its confirmation turn', () => {
     assert.doesNotThrow(() => validateWorkflowCorpus(paid));
   });
 
@@ -194,10 +194,44 @@ describe('validateWorkflowCorpus M1b', () => {
     assert.throws(() => validateWorkflowCorpus(malformed), /confirmTurn_required/);
   });
 
+  it('rejects a preview only on the confirmation turn and names the conversation and turn', () => {
+    const malformed = structuredClone(paid);
+    malformed.conversations[0].turns[1].expect = malformed.conversations[0].turns[0].expect;
+    malformed.conversations[0].turns[0].expect = {};
+    assert.throws(() => validateWorkflowCorpus(malformed), /paid-c.*turns\[0\].*preview_before_confirm.*confirmTurn 1/);
+  });
+
+  it('rejects a write task with no preview before confirmation', () => {
+    const malformed = structuredClone(paid);
+    malformed.conversations[0].turns[0].expect = {};
+    assert.throws(() => validateWorkflowCorpus(malformed), /paid-c.*turns\[0\].*preview_before_confirm/);
+  });
+
+  it('keeps collection-phase records and all three paid-effect table pairings', () => {
+    for (const [effect, table] of [['EXPENSE_PAID', 'ExpensePayment'], ['REIMBURSEMENT_PAID', 'ReimbursementPayment'], ['VOUCHER_PAID', 'DisbursementVoucher']] as const) {
+      const corpus = structuredClone(paid);
+      const terminal = corpus.conversations[0].tasks[0].goldTerminal;
+      terminal.effect = effect;
+      const record = { ...terminal.records[0], table, phase: 'collect' };
+      terminal.records = [record];
+      assert.doesNotThrow(() => validateWorkflowCorpus(corpus));
+      terminal.records[0].table = 'ExpenseRecord';
+      assert.throws(() => validateWorkflowCorpus(corpus), /paid_record_fields/);
+    }
+  });
+
   it('requires all paid-record fields and keeps the turn press-only without calls', () => {
     const malformed = structuredClone(paid);
     delete malformed.conversations[0].tasks[0].goldTerminal.records[0].paymentMethod;
     assert.throws(() => validateWorkflowCorpus(malformed), /paid_record_fields/);
+  });
+
+  it('validates the oracle sample with expense payment, derived claim approval, and voucher payment', () => {
+    const corpus = JSON.parse(readFileSync(resolve(HERE, 'corpus.workflow.oracle-sample.json'), 'utf8'));
+    validateWorkflowCorpus(corpus);
+    const writeTasks = corpus.conversations.flatMap(conversation => conversation.tasks).filter(task => task.confirmTurn !== undefined);
+    assert.deepEqual(writeTasks.map(task => task.goldTerminal.effect), ['EXPENSE_PAID', 'REIMBURSEMENT_APPROVED', 'VOUCHER_PAID']);
+    assert.ok(writeTasks[1].goldTerminal.records.some(record => record.table === 'ReimbursementApprovalStep' && record.ref.startsWith('$child:')));
   });
 });
 
@@ -243,5 +277,61 @@ describe('selectConversations', () => {
 
   it('throws on a misspelled/stale id rather than silently running fewer conversations', () => {
     assert.throws(() => selectConversations(corpus, ['a', 'does-not-exist']), /does-not-exist/);
+  });
+});
+
+describe('M3 tuning corpus and Q5 gold', () => {
+  const load = () => JSON.parse(readFileSync(resolve(HERE, 'corpus.workflow.tuning.json'), 'utf8'));
+  it('validates 80 conversations, 240 turns, 60% typed, all 14 starts and 30 whole Q5 pairs', async () => {
+    const { buildWorkflowSeed } = await import('./seed');
+    const { validateWorkflowPreflight } = await import('./run-preflight');
+    const corpus = load(), now = new Date('2026-12-04T04:00:00Z');
+    const coverage = validateWorkflowPreflight(corpus, buildWorkflowSeed(now, corpus.conversations.flatMap((row: any) => row.actors)), now);
+    assert.ok(coverage.conversations >= 80 && coverage.turns >= 240);
+    assert.ok(corpus.conversations.filter((row: any) => row.journeyKind === 'typed').length / coverage.conversations >= 0.6);
+    const q5 = corpus.conversations.filter((row: any) => row.category === 'Q5');
+    assert.equal(q5.length, 30);
+    assert.ok(q5.every((row: any) => row.turns.length === 2 && row.turns.every((turn: any) => turn.expect.knowledge || turn.expect.refusal)));
+    const kinds = ['reimbursement_claim','reimbursement_submit','reimbursement_cancel','approvals','reimbursement_reject','reimbursement_pay','expense_submit','expense_confirm','expense_delete','expense_void','expense_pay','payment_voucher','wht_certificate','substitute_receipt'];
+    for (const kind of kinds) assert.ok(corpus.conversations.filter((row: any) => row.category === kind).length >= 3, kind);
+    for (const role of ['OWNER','MANAGER','STAFF','ACCOUNTANT','AUDITOR_READONLY']) assert.ok(corpus.conversations.filter((row: any) => row.actors.some((actor: any) => actor.role === role)).length >= 5, role);
+    const paidInputs = new Set(corpus.conversations.filter((row: any) => !row.actors.some((actor: any) => actor.freeSourceDrafts)).map((row: any) => row.turns[0].user));
+    for (const row of corpus.conversations.filter((row: any) => row.category === 'free-boundary')) {
+      assert.ok(row.actors.every((actor: any) => actor.freeSourceDrafts) && row.turns.every((turn: any) => turn.expect.maxModelCalls === 0));
+      assert.ok(paidInputs.has(row.turns[0].user), `matched paid question: ${row.id}`);
+    }
+  });
+  it('rejects missing card versions, malformed periods and free typed model admission', () => {
+    const noVersion = load(); delete noVersion.conversations[0].turns[0].expect.knowledge.version;
+    assert.throws(() => validateWorkflowCorpus(noVersion), /Q5-01.*knowledge.card/);
+    const badPeriod = load(); badPeriod.conversations[20].turns[0].expect.dueDate.monthOffset = 2;
+    assert.throws(() => validateWorkflowCorpus(badPeriod), /Q5-21.*dueDate/);
+    const free = load(); free.conversations.find((row: any) => row.category === 'free-boundary').turns[0].expect.maxModelCalls = 1;
+    assert.throws(() => validateWorkflowCorpus(free), /free_zero_model_refusal/);
+    const mixed = load(); mixed.conversations.push({ ...mixed.conversations[0], id: 'mixed-paid-A', actors: [{ key: 'owner-a', company: 'A', role: 'OWNER', branchScope: 'all' }] });
+    assert.throws(() => validateWorkflowCorpus(mixed), /MIXED_FREE_PAID_SEED:A/);
+  });
+  it('M-R14 retains all 20 knowledge/package conversations whole in the unchanged source corpora', async () => {
+    const { createHash } = await import('node:crypto');
+    const sourceHashes = {
+      tuning: 'deaa8929da9b3b64ca9d66eed1a24ba5ff90d08384f76a547ceaa5423442430c',
+      heldout: 'b283f988bea122e579302bafa0ac7665268a6bc04543c8e57d9e7fc92587af7e',
+      sample: '7eafc96fc107176359dca7020bf12b49867407b22ae8f842ba3be65b1c6d035b',
+    };
+    const ids = [
+      'T-120-b-staff-knowledge-vat','T-126-b-accountant-knowledge-vatregister','T-128-b-staff-knowledge-vatinout',
+      'T-130-a-owner-outofpackage-invoice','T-131-b-manager-outofpackage-stock','T-132-a-accountant-outofpackage-sales',
+      'T-133-b-owner-outofpackage-payroll','T-134-a-manager-outofpackage-bank','T-135-b-staff-outofpackage-po',
+      'T-136-a-auditor-outofpackage-plreport','T-137-b-accountant-outofpackage-bankbalance','T-138-a-owner-outofpackage-receivable',
+      'T-139-b-manager-outofpackage-wht','T-140-a-staff-outofpackage-stockmovement',
+      'H-owner-outofpackage-invoice','H-manager-outofpackage-report','H-accountant-outofpackage-procurement','H-staff-outofpackage-stock',
+      'H-auditor-general-vat','A-accountant-help-and-scope',
+    ];
+    const conversations = Object.entries(sourceHashes).flatMap(([name, expected]) => {
+      const source = readFileSync(resolve(HERE, `corpus.${name}.json`), 'utf8');
+      assert.equal(createHash('sha256').update(source).digest('hex'), expected, name);
+      const corpus = JSON.parse(source); validateCorpus(corpus); return corpus.conversations;
+    });
+    for (const id of ids) assert.equal(conversations.filter((row: any) => row.id === id).length, 1, id);
   });
 });

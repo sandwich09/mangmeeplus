@@ -28,8 +28,8 @@
         }
       ],
       "turns": [
-        { "as": { "key": "staff-c" }, "user": "ขอดูรายการ", "expect": { "tier": 0 } },
-        { "as": { "key": "owner-c" }, "press": "ดูรายการ", "pressFrom": { "turn": 0, "actor": { "key": "staff-c" } }, "expect": { "tier": 0, "label": "ดูรายการ", "preview": { "action": "confirm", "target": "$seed:expense-company-c-0" } } }
+        { "as": { "key": "staff-c" }, "user": "ขอดูรายการ", "expect": { "tier": 0, "preview": { "action": "confirm", "target": "$seed:expense-company-c-0" } } },
+        { "as": { "key": "owner-c" }, "press": "ดูรายการ", "pressFrom": { "turn": 0, "actor": { "key": "staff-c" } }, "expect": { "tier": 0, "label": "ดูรายการ" } }
       ]
     }
   ]

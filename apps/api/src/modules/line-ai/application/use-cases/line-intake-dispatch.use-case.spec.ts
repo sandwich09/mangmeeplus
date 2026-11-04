@@ -227,8 +227,6 @@ function makeHarness(opts: {
   expenseDraftConversationEnabled?: boolean;
   /** LINE_AI_REIMBURSEMENT_SEMANTIC_MODE as the config getter reports it; absent = 'off' (legacy). */
   lineAiReimbursementSemanticMode?: 'off' | 'shadow' | 'clarify_only' | 'handoff';
-  /** LINE_AI_EXACT_GREETING_ENABLED; absent = false = legacy (a greeting goes through the router). */
-  lineAiExactGreetingEnabled?: boolean;
   /** LINE_AI_ADVISOR_MODE; absent is deliberately left UNSET here so the default proves fail-closed. */
   lineAiAdvisorMode?: 'off' | 'social' | 'knowledge' | 'company';
   /** Stored CompanyFeatureEntitlement rows; absent = no rows = legacy fail-open (`null`). */
@@ -422,7 +420,6 @@ function makeHarness(opts: {
       lineMessagingChannelAccessToken: 'line-token',
       lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
       lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
-      lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
       // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
       // never heard of the flag, which must still resolve to the legacy advisor-off capability.
       lineAiAdvisorMode: opts.lineAiAdvisorMode,
@@ -437,7 +434,6 @@ function makeHarness(opts: {
       lineMessagingChannelAccessToken: 'line-token',
       lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
       lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
-      lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
       // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
       // never heard of the flag, which must still resolve to the legacy advisor-off capability.
       lineAiAdvisorMode: opts.lineAiAdvisorMode,
@@ -447,6 +443,7 @@ function makeHarness(opts: {
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {} }) } as any,
     { log: async () => undefined } as any,
     {
+      creditState: async () => ({ ok: true }),
       requestLineTurn: async (req: any) => {
         turnRequests.push(req);
         return {
@@ -4607,12 +4604,12 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
   /** Own prisma so the persisted turn (aiTurn.create) and the event-log statuses are both observable. */
   function greetingHarness(opts: Omit<Parameters<typeof makeHarness>[0], 'prisma'>) {
     const { prisma, updates, turnCreates } = makePrisma();
-    return { ...makeHarness({ ...opts, prisma }), updates, turnCreates };
+    return { ...makeHarness({ ...opts, prisma }), prisma, updates, turnCreates };
   }
 
   it('answers every allowlisted greeting deterministically with zero router, gateway or model calls', async () => {
     for (const text of ['สวัสดี', 'สวัสดีค่ะ', 'สวัสดีครับ', '  สวัสดี  ']) {
-      const h = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
+      const h = greetingHarness({ permissions: GREETING_PERMISSIONS });
 
       await h.useCase.execute({ ...TEXT_EVENT, messageText: text });
 
@@ -4632,7 +4629,7 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
   // this proves the outcome is WRITTEN before delivery — not that a failed turn is replayed (§8.3 gap).
   it('records the canonical outcome before delivery and leaves the event delivery_pending when the token fails', async () => {
     const h = greetingHarness({
-      permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true, lineReplyResult: 'failed_other',
+      permissions: GREETING_PERMISSIONS, lineReplyResult: 'failed_other',
     });
 
     await assert.rejects(() => h.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' }), /LINE_DELIVERY_FAILED_OTHER/);
@@ -4646,7 +4643,7 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
 
   it('routes a greeting that carries business text — including one split by a newline — through the normal route', async () => {
     for (const text of ['สวัสดีเบิกค่าโดยสารหน่อย', 'สวัสดี\nเบิกค่าโดยสารหน่อย']) {
-      const h = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
+      const h = greetingHarness({ permissions: GREETING_PERMISSIONS });
 
       await h.useCase.execute({ ...TEXT_EVENT, messageText: text });
 
@@ -4658,7 +4655,6 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
   it('stands down when the chat has an open clarification or an expense draft in flight', async () => {
     const openClarification = greetingHarness({
       permissions: GREETING_PERMISSIONS,
-      lineAiExactGreetingEnabled: true,
       openWaiting: [{
         id: 'clarify-1', question: 'ยอดเท่าไรคะ?', text: 'ค่าวินมอไซต์', askedAt: new Date().toISOString(),
         clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
@@ -4673,7 +4669,6 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
 
     const activeDraft = greetingHarness({
       permissions: GREETING_PERMISSIONS,
-      lineAiExactGreetingEnabled: true,
       expenseDraftConversation: {
         routeContexts: async () => [{
           expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN',
@@ -4690,20 +4685,16 @@ describe('LINE intake dispatch – exact standalone greeting lane (uat-correctne
     assert.equal(activeDraft.routeRequests[0].activeExpenseDrafts.length, 1);
   });
 
-  it('is inert while the flag is off — only the flag turns the 0-call lane on', async () => {
-    const off = greetingHarness({ permissions: GREETING_PERMISSIONS });
-
-    await off.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
-
-    assert.equal(off.routeRequests.length, 1, 'default-off keeps the exact legacy path through the router');
-    assert.doesNotMatch(off.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
-
-    const on = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
-
-    await on.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
-
-    assert.equal(on.routeRequests.length, 0);
-    assert.match(on.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+  it('R14 greeting needs no feature switch and precedes the v2 route', async () => {
+    for (const boundV2 of [false, true]) {
+      const h = greetingHarness({ permissions: GREETING_PERMISSIONS, boundV2 });
+      (h.prisma.client as any).lineDeliveryPlan = { findMany: async () => [] };
+      (h.prisma.client as any).lineLedgerDelivery = { findMany: async () => [] };
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+      assert.equal(h.routeRequests.length, 0);
+      assert.equal(h.turnRequests.length, 0);
+      assert.match(h.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+    }
   });
 });
 
@@ -4758,7 +4749,6 @@ describe('LINE intake dispatch – Phase-0 capture/render stage timing (uat-corr
   it('times only render and delivery on the 0-model greeting lane — no router, no gateway turn', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],
-      lineAiExactGreetingEnabled: true,
     });
     const stages = stageEventsOf(h.useCase);
 
@@ -6167,4 +6157,41 @@ it('7B W2: explicit no-more-evidence bypasses semantic-task persistence for one 
   await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ไม่มีหลักฐานอื่น' });
   assert.equal(h.routeRequests.length, 0); assert.equal(h.substituteCalls.length, 1);
   assert.equal(h.substituteCalls[0].messageText, 'ไม่มีหลักฐานอื่น'); assert.match(h.replies.join('\n'), /รับทราบว่าไม่มีหลักฐานอื่น/);
+});
+
+
+it('A1 ordinal zero narrows only a server fixed read to simple answer', async () => {
+  const { LineAiBudgetAuthorityService } = await import('../line-ai-budget-authority.service');
+  for (const route of [{}, { serverRoute: 'fixed_read' as const }]) {
+  const row: any = { id: 'r10-event', companyId: 'company-1', status: 'received', budgetAuthorityRevision: 0 };
+  const tx: any = { $executeRaw: async () => 0,
+    lineWebhookEventLog: { findUnique: async () => row, updateMany: async ({ data }: any) => {
+      row.budgetAuthorityJson = data.budgetAuthorityJson; row.budgetAuthorityRevision += 1; return { count: 1 };
+    } },
+    lineChannelBinding: { findFirst: async () => ({ id: 'channel' }) },
+    companyMembership: { findFirst: async () => ({ id: 'mem-1' }) },
+    aiConversation: { findFirst: async () => ({ id: 'conversation', taskStateJson: null }) } };
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const authority = new LineAiBudgetAuthorityService({ client: { ...tx, $transaction: async (run: any) => run(tx) } } as any,
+    { approvedAiModelIds: [modelId], aiGatewayInternalSecret: 'r10-test-authority' } as any);
+  const grant = await authority.issue({ ...route, authorityKind: 'webhook_event', authorityId: row.id,
+    owner: { kind: 'PRIVATE', epoch: 1, owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', channel: 'line', channelKind: 'USER', messagingChannelId: 'channel', chatKeyHash: 'a'.repeat(64) } },
+    turnKey: 'tier-zero', attemptKey: 'r10-counterparty', inputDigest: 'a'.repeat(64),
+    requestKind: 'TEXT', admittedAtMs: Date.now(), coalescingExtraMs: 0, lane: 'public',
+    model: { provider: 'bedrock', modelId, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
+    tariff: { version: 'r10-test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33, usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } },
+    allowedProfileIds: ['line-intake-text/2'] });
+  assert.ok(grant);
+    assert.equal(await authority.narrow(grant, 'mixed', ['line-answer/2']), null);
+    assert.equal(await authority.narrow(grant, 'simple', ['line-control/2', 'line-answer/2']), null);
+    assert.equal(await authority.narrow(grant, 'simple', ['line-answer/2', 'line-answer/2']), null);
+    const narrowed = await authority.narrow(grant, 'simple', ['line-answer/2']);
+    assert.equal(narrowed !== null, 'serverRoute' in route);
+    if (narrowed) {
+      assert.equal(narrowed.nextOrdinal, 0);
+      assert.deepEqual(narrowed.allowedProfileIds, ['line-answer/2']);
+      assert.equal(row.budgetAuthorityJson.serverRoute, 'fixed_read');
+      assert.equal((narrowed as any).serverRoute, undefined);
+    }
+  }
 });

@@ -309,3 +309,20 @@ it('Fix-up 17B: a tax form number does not consume เดือนนี้, and
     assert.equal(await verifyLineAiRetainedTaskSource(changed), undefined);
   }
 });
+
+it('R21 workflow navigation follows action permission alternatives and current sold entitlements', async () => {
+  const { mayOfferWorkflow, LINE_CHAT_ACTIONS } = await import('./ai-tools.js');
+  const features = new Set(['expenses', 'wht_50bis']);
+  for (const [id, permissions] of [
+    ['expense_submit', ['expense.review']], ['expense_delete', ['expense.delete']],
+    ['reimbursement_cancel', ['reimbursement.finance_review']], ['reimbursement_claim', ['reimbursement.create']],
+  ] as const) {
+    assert.equal(mayOfferWorkflow(id, permissions, features), true, id);
+    assert.equal(mayOfferWorkflow(id, permissions, new Set()), false, id);
+    assert.equal(mayOfferWorkflow(id, permissions, features, { freeExpenseDrafts: true }), false, id);
+  }
+  assert.equal(mayOfferWorkflow('approvals', [], features, { assignedApprover: true }), true);
+  assert.equal(mayOfferWorkflow('approvals', [], features), false);
+  assert.equal(mayOfferWorkflow('wht_certificate', ['wht.certificate.issue'], new Set(['expenses'])), false);
+  assert.equal(LINE_CHAT_ACTIONS.filter(action => 'workflow' in action && action.workflow).length, 14);
+});

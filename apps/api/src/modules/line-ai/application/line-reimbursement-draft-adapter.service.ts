@@ -35,6 +35,8 @@ import {
 } from '../../reimbursements/application/use-cases/line-reimbursement-draft.use-case';
 import { lineConversationId, type LineConversationOwner } from './line-conversation-context.service';
 import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
+import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
+import { isPendingFieldAnswer, parseManualClaimLine, MANUAL_CLAIM_AMOUNT_QUESTION, MANUAL_CLAIM_AMOUNTS_QUESTION, MANUAL_CLAIM_DESCRIPTION_QUESTION } from '../domain/logic/line-ai-classifier.logic';
 import { formatClaimMoney } from '../domain/logic/line-reimbursement-draft-card.logic';
 import type { ErpToolContext } from '../domain/ports/erp-read-tool.port';
 import { LineAiBudgetAuthorityService } from './line-ai-budget-authority.service';
@@ -75,7 +77,8 @@ type Accepted = {
   suggestedCategoryChoiceId?: string;
   receipts?: LineReimbursementValidatedFieldReceiptV1[];
   awaitingPhoto?: boolean;
-  admission?: { requestId: string; subrequestIndex: number; taskId?: string; taskSubrequestIndex?: number };
+  lineQuestion?: { text: string; amountChoices: Array<{ label: string; text: string }> };
+  admission?: { requestId?: string; subrequestIndex?: number; taskId?: string; taskSubrequestIndex?: number; source?: 'workflow'; eventIdHash?: string };
 };
 type ClaimPhotoIntent = { previewId: string; companyId: string; chatKeyHash: string; userId: string; membershipId: string;
   ownerEpoch: number; taskId: string; actionOrdinal: number };
@@ -126,6 +129,33 @@ export class LineReimbursementDraftAdapterService {
     @Optional() @Inject(LineDraftPreviewStore) private readonly photoIntents: LineDraftPreviewStore<ClaimPhotoIntent> = new LineDraftPreviewStore(),
   ) {}
 
+  async startFromWorkflow(ctx: RequestContext, owner: LineConversationOwner, ownerEpoch: number, start: { eventIdHash: string }): Promise<LineReimbursementDraftResult> {
+    if (ctx.freeExpenseDrafts || !ctx.permissions.includes('line.ai.query') || !ctx.permissions.includes('ai.tool.invoke')) return { status: 'blocked', errorCode: 'forbidden' };
+    if (!/^[0-9a-f]{64}$/u.test(start.eventIdHash)) return { status: 'blocked', errorCode: 'invalid_field' };
+    const actionOwner = this.actionOwner(owner, ownerEpoch);
+    const active = await this.drafts.active(ctx, actionOwner);
+    if (active && (active.operation !== 'CREATE' || active.status === 'PREVIEW' || this.accepted(active))) {
+      return this.draftService.get({ ctx, owner, ownerEpoch, actionId: active.id });
+    }
+    const taskId = active?.taskId ?? stableUuid(['reimbursement-draft-task', owner, 'workflow', start.eventIdHash]);
+    const key: LineReimbursementActionKey = active
+      ? { actionId: active.id, taskId, actionOrdinal: active.actionOrdinal, operation: active.operation }
+      : { taskId, actionId: stableUuid(['reimbursement-draft-action', taskId, 'CREATE', 1]), actionOrdinal: 1, operation: 'CREATE' };
+    const opened = await this.drafts.open(ctx, actionOwner, key);
+    if (!('id' in opened)) {
+      const current = opened.status === 'blocked' && opened.fieldPaths?.includes('activeAction')
+        ? await this.drafts.active(ctx, actionOwner) : null;
+      return current ? this.draftService.get({ ctx, owner, ownerEpoch, actionId: current.id }) : opened;
+    }
+    if (opened.status !== 'COLLECTING') return this.draftService.get({ ctx, owner, ownerEpoch, actionId: opened.id });
+    const options = await this.buildOptions(ctx, key, 0, { operation: 'CREATE', subrequestIndex: 0 }, undefined,
+      undefined, { owner, epoch: ownerEpoch });
+    const proposal: LineReimbursementDraftProposalV1 = { schemaVersion: 1, taskId, taskRevision: 0, operation: 'CREATE', fields: {} };
+    const saved = await this.drafts.saveTrustedOptions({ ctx, owner: actionOwner, key,
+      accepted: { schemaVersion: 1, options, proposal, admission: { source: 'workflow', eventIdHash: start.eventIdHash } }, fieldPaths: ['lineChanges'] });
+    return 'id' in saved ? this.draftService.get({ ctx, owner, ownerEpoch, actionId: saved.id }) : saved;
+  }
+
   /** Read-only delivery view; only options still authorized for the same current owner can be printed. */
   async readDisplayOptions(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; actionId: string }) {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
@@ -150,10 +180,44 @@ export class LineReimbursementDraftAdapterService {
         ? 'หากไม่มีใบเสร็จ ต้องระบุเหตุผลในใบเบิกก่อนส่งอนุมัติค่ะ'
         : 'บริษัทกำหนดให้มีหลักฐานก่อนส่งอนุมัติค่ะ แนบใบเสร็จหรือจัดทำใบรับรองแทนใบเสร็จในเว็บให้ครบก่อนนะคะ' : undefined;
       const missingReceiptReason = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths?.includes('fields.missingReceiptReason');
-      return { ...this.publicOptions(shown, accepted.proposal, accepted.awaitingPhoto), ...(receiptNotice ? { receiptNotice } : {}),
+      return { ...this.publicOptions(shown, accepted.proposal, accepted.awaitingPhoto), ...(accepted.lineQuestion ? { lineQuestion: accepted.lineQuestion } : {}), ...(receiptNotice ? { receiptNotice } : {}),
         ...(missingReceiptReason ? { reasonQuestion: 'ไม่มีใบเสร็จเพราะอะไรคะ' } : {}),
         control: { actionId: active.id, revision: digest([options, accepted.proposal ?? null, accepted.awaitingPhoto ?? false]) } };
     } catch { return null; }
+  }
+
+  async sourceChoiceControl(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; expenseId: string }) {
+    const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
+    const accepted = active && this.accepted(active);
+    if (!active || active.operation !== 'CREATE' || active.status !== 'COLLECTING' || !accepted
+      || Date.parse(accepted.options.expiresAt) <= Date.now()) return null;
+    const branch = accepted.options.choices.find(choice => choice.choiceId === accepted.options.selected.branchChoiceId);
+    const requester = accepted.options.choices.find(choice => choice.choiceId === accepted.options.selected.requesterChoiceId);
+    if (!branch || !requester) return null;
+    try {
+      await this.currentChoice(input.ctx, branch, accepted.options);
+      await this.currentChoice(input.ctx, requester, accepted.options);
+    } catch { return null; }
+    const rows = await this.repo.listReimbursementSources(input.ctx.companyId, String(branch.raw['id']), String(requester.raw['id']), '', input.expenseId);
+    const source = rows.find(row => row.expenseId === input.expenseId && row.eligible);
+    if (!source) return null;
+    const choice = this.choice(active.id, 'SOURCE', source.label, source.updatedAt,
+      { expenseId: source.expenseId, branchId: branch.raw['id'], requesterUserId: requester.raw['id'] },
+      { incurredDate: source.incurredDate, description: source.description, purpose: source.purpose,
+        categoryKey: source.categoryKey, categoryLabel: source.categoryLabel ?? null, amount: source.amount, currency: source.currency, eligible: true });
+    const linked = accepted.proposal?.lineChanges?.find(line => line.operation === 'ADD')?.values.linkedExpenseChoiceId;
+    const sources = [choice, ...accepted.options.choices.filter(item => item.kind === 'SOURCE' && item.choiceId !== choice.choiceId)]
+      .sort((a, b) => Number(b.choiceId === linked) - Number(a.choiceId === linked)).slice(0, PAGE_SIZE);
+    const options = { ...accepted.options, choices: [...accepted.options.choices.filter(item => item.kind !== 'SOURCE'), ...sources] };
+    const owner = this.actionOwner(input.owner, input.ownerEpoch);
+    const opened = await this.drafts.open(input.ctx, owner,
+      { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: 'CREATE' });
+    if (!('id' in opened) || opened.status !== 'COLLECTING') return null;
+    const saved = await this.repo.saveDraftActionCollection({ owner, actionId: active.id, expectedUpdatedAt: active.updatedAt,
+      commandJson: { ...(active.commandJson as object), accepted: { ...accepted, options } },
+      sourceProofJson: active.sourceProofJson, expiresAt: active.expiresAt });
+    if (!saved || saved.status !== 'COLLECTING') return null;
+    return { action: 'reimbursement_choice' as const, ...this.publicOptions(options, accepted.proposal, accepted.awaitingPhoto).control, choice: choice.choiceId };
   }
 
   /** Button authority comes from the exact persisted proposal, never a model paraphrase of the tap. */
@@ -165,24 +229,90 @@ export class LineReimbursementDraftAdapterService {
       || Date.parse(accepted.options.expiresAt) <= Date.now()
       || input.control.revision !== digest([accepted.options, accepted.proposal ?? null, accepted.awaitingPhoto ?? false]))
       return { status: 'stale', actionId: input.control.actionId, errorCode: 'source_changed' };
-    const proposal = accepted.proposal && clone(accepted.proposal);
-    if (!proposal) return { status: 'needs_fields', actionId: active.id, fieldPaths: ['lineChanges'], actionRevision: active.previewRevision };
-    const lines = proposal.lineChanges?.filter(line => line.operation === 'ADD');
-    if (lines?.length !== 1) return { status: 'blocked', errorCode: 'invalid_field' };
-    const line = lines[0]!;
+    const proposal: LineReimbursementDraftProposalV1 = accepted.proposal ? clone(accepted.proposal)
+      : { schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'CREATE', fields: {} };
     try {
-      if (input.control.choice === 'no-receipt' || input.control.choice === 'photo') line.values.attachmentChoiceId = null;
-      else if (input.control.choice !== 'photo') {
-        await this.currentChoice(input.ctx, this.findChoice(accepted.options, input.control.choice, 'CATEGORY'), accepted.options);
-        line.values.categoryChoiceId = input.control.choice;
+      const selected = accepted.options.choices.find(choice => choice.choiceId === input.control.choice);
+      if (selected?.kind === 'BRANCH' || selected?.kind === 'REQUESTER') {
+        await this.currentChoice(input.ctx, selected, accepted.options);
+        const key = { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation };
+        const options = await this.buildOptions(input.ctx, key, accepted.options.taskRevision,
+          { operation: 'CREATE', subrequestIndex: 0, ...(selected.kind === 'BRANCH'
+            ? { branchChoiceId: selected.choiceId } : { requesterChoiceId: selected.choiceId }) }, accepted.options,
+          undefined, { owner: input.owner, epoch: input.ownerEpoch });
+        proposal.branchChoiceId = options.selected.branchChoiceId;
+        proposal.requesterChoiceId = options.selected.requesterChoiceId;
+        return await this.proposeCollected(input, active, { ...accepted, options, proposal });
+      }
+      if (selected?.kind === 'SOURCE') {
+        await this.currentChoice(input.ctx, selected, accepted.options);
+        proposal.lineChanges = [{ operation: 'ADD', values: { linkedExpenseChoiceId: selected.choiceId } }];
+      } else if (input.control.choice === 'new-line') {
+        proposal.lineChanges ??= [{ operation: 'ADD', values: {} }];
+        for (const change of proposal.lineChanges) if (change.operation === 'ADD') change.values.linkedExpenseChoiceId = null;
+      } else {
+        const lines = proposal.lineChanges?.filter(line => line.operation === 'ADD');
+        if (!lines?.length) return { status: 'needs_fields', actionId: active.id, fieldPaths: ['lineChanges'], actionRevision: active.previewRevision };
+        if (lines.length !== 1) return { status: 'blocked', errorCode: 'invalid_field' };
+        const line = lines[0]!;
+        if (input.control.choice === 'no-receipt' || input.control.choice === 'photo') line.values.attachmentChoiceId = null;
+        else {
+          await this.currentChoice(input.ctx, this.findChoice(accepted.options, input.control.choice, 'CATEGORY'), accepted.options);
+          line.values.categoryChoiceId = input.control.choice;
+        }
       }
       if (input.control.choice === 'photo' && !await this.photoIntents.save({ previewId: active.id, companyId: input.ctx.companyId,
         chatKeyHash: `claim-photo:${input.owner.chatKeyHash}`, userId: input.ctx.userId, membershipId: input.ctx.membershipId!,
         ownerEpoch: input.ownerEpoch, taskId: active.taskId, actionOrdinal: active.actionOrdinal })) return { status: 'blocked', errorCode: 'store_unavailable' };
       if (input.control.choice === 'no-receipt') await this.photoIntents.discard(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
       return await this.proposeCollected(input, active, { ...accepted, proposal,
+        ...(input.control.choice === 'new-line' ? { lineQuestion: { text: 'ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่ายเพื่อทำใบเบิกต่อค่ะ', amountChoices: [] } } : {}),
         awaitingPhoto: input.control.choice === 'photo' || input.control.choice !== 'no-receipt' && accepted.awaitingPhoto });
     } catch { return { status: 'stale', actionId: active.id, errorCode: 'source_changed' }; }
+  }
+
+  async answerLine(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
+    evidence: LineAiInputEvidenceV2; text: string }): Promise<LineReimbursementDraftResult | null> {
+    const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
+    const accepted = active && this.accepted(active);
+    if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
+      || Date.parse(accepted.options.expiresAt) <= Date.now()) return null;
+    const text = input.text.trim();
+    const selected = accepted.options.choices.filter(choice => {
+      if (choice.kind === 'BRANCH') return text === `เลือกสาขา ${choice.label}` || text === `Choose branch: ${choice.label}`;
+      if (choice.kind === 'REQUESTER') return text === `เลือกผู้ขอเบิก ${choice.label}` || text === `Choose requester: ${choice.label}`;
+      if (choice.kind === 'SOURCE') {
+        const details = [choice.label, typeof choice.details?.incurredDate === 'string' ? formatThaiDate(choice.details.incurredDate) : undefined,
+          choice.details?.amount ? formatClaimMoney(choice.details.amount, choice.details.currency) : undefined].filter(Boolean).join(' · ');
+        return text === `เบิกบิล ${details}` || text === `Claim expense: ${choice.label}`;
+      }
+      return false;
+    });
+    const newLine = text === 'ขอเบิกรายการใหม่ ไม่มีบิลในระบบ' || text === 'Start a new claim item without an existing expense';
+    if (newLine || selected.length === 1) return this.choose({ ...input, control: { action: 'reimbursement_choice',
+      ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: newLine ? 'new-line' : selected[0]!.choiceId } });
+    if (/^(?:เลือกสาขา|เลือกผู้ขอเบิก|เบิกบิล|Choose (?:branch|requester):|Claim expense:)/u.test(text)) return this.draftService.get({ ...input, actionId: active.id });
+    if (accepted.admission?.source !== 'workflow') return null;
+    const view = this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto);
+    if (view.collection.lineChosen || !accepted.options.selected.branchChoiceId || !accepted.options.selected.requesterChoiceId || accepted.awaitingPhoto) return null;
+    if (!isPendingFieldAnswer(text, 'claim')) return null;
+    const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
+    const parsed = candidates && await parseManualClaimLine(input.evidence, candidates);
+    if (!parsed) return this.draftService.get({ ...input, actionId: active.id });
+    const candidateValues = Object.fromEntries([...candidates!.amounts.map(item => [item.candidateId, item.value]),
+      ...candidates!.dates.map(item => [item.candidateId, item.isoDate]), ...candidates!.periods.map(item => [item.candidateId, item.fromDate])]);
+    const candidateSources = Object.fromEntries([...candidates!.amounts, ...candidates!.dates, ...candidates!.periods].map(item => [item.candidateId, item.source]));
+    const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision,
+      operation: 'CREATE', fields: {}, lineChanges: [{ operation: 'ADD', values: parsed.values }] }, { evidence: input.evidence, candidateValues, candidateSources });
+    if (!fragment) return { status: 'blocked', errorCode: 'invalid_provenance' };
+    const proposal = this.mergeProposal(accepted.proposal, fragment);
+    const line = proposal.lineChanges?.find(change => change.operation === 'ADD');
+    if (!line || line.operation !== 'ADD') return { status: 'blocked', errorCode: 'invalid_field' };
+    if (parsed.amountChoices.length) delete line.values.amount;
+    const question = parsed.amountChoices.length ? MANUAL_CLAIM_AMOUNTS_QUESTION : !line.values.amount ? MANUAL_CLAIM_AMOUNT_QUESTION
+      : !line.values.description ? MANUAL_CLAIM_DESCRIPTION_QUESTION : undefined;
+    return this.proposeCollected(input, active, { ...accepted, proposal,
+      lineQuestion: question ? { text: question, amountChoices: parsed.amountChoices } : undefined });
   }
 
   /** Only the field the current claim collection is asking owns this plain answer. */
@@ -191,10 +321,7 @@ export class LineReimbursementDraftAdapterService {
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     // The persisted preview owns a plain answer even when intake omitted its continuation hint.
     const value = input.text.trim();
-    if (!value || value.length > 2000 || /[?？\n]/u.test(value)
-      || /^(?:ขอ|ช่วย|สร้าง|เบิก|บันทึก|ดู|ยกเลิก|ไม่ทำ|เปลี่ยน|แก้|ทำข้อ|ทำรายการ|ให้ทำ)/u.test(value)
-      // A Thai question rarely carries "?": a question to the bot is never the claim's reason.
-      || /(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value)
+    if (!isPendingFieldAnswer(value, 'claim')
       || (await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok')))?.amounts.length !== 0) return null;
     if (input.purposeFallback && active?.status === 'PREVIEW')
       return this.answerPurpose(input, active, value);
@@ -339,7 +466,7 @@ export class LineReimbursementDraftAdapterService {
     const proposal = accepted.proposal!, key: LineReimbursementActionKey = { actionId: active.id, taskId: active.taskId,
       actionOrdinal: active.actionOrdinal, operation: active.operation };
     await this.validateProposalProofs(input.ctx, accepted.options, proposal);
-    const hydrated = await this.hydrateCreate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal), accepted.awaitingPhoto);
+    const hydrated = await this.hydrateCreate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal), accepted.awaitingPhoto, accepted.admission?.source === 'workflow');
     const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
     if (!sourceProof) return { status: 'blocked', errorCode: 'invalid_provenance' };
     return this.draftService.propose({ ...input, proposal: hydrated.missing.length
@@ -883,7 +1010,7 @@ export class LineReimbursementDraftAdapterService {
 
   private publicOptions(options: StoredOptions, proposal?: LineReimbursementDraftProposalV1, awaitingPhoto = false) {
     const lines = proposal?.lineChanges?.filter(change => change.operation !== 'REMOVE') ?? [];
-    return { schemaVersion: 1, taskRevision: options.taskRevision, expiresAt: options.expiresAt,
+    return { schemaVersion: 1, operation: options.operation, taskRevision: options.taskRevision, expiresAt: options.expiresAt,
       control: { actionId: options.actionId, revision: digest([options, proposal ?? null, awaitingPhoto]) }, awaitingPhoto,
       revision: options.revision, selected: options.selected,
       ...(options.nonEditableTargets ? { nonEditableTargets: options.nonEditableTargets.map(({ requestId: _requestId, revision: _revision, ...target }) => target) } : {}),
@@ -892,7 +1019,8 @@ export class LineReimbursementDraftAdapterService {
         ? lines[0]!.values.linkedExpenseChoiceId ? { reasonQuestion: 'เหตุผลการเบิกบิลนี้คืออะไรคะ' }
           : lines[0]!.values.description && lines[0]!.values.amount
             ? { reasonQuestion: `ขอเหตุผลการเบิก${lines[0]!.values.description.value.split('\n')[0]} ${formatClaimMoney(lines[0]!.values.amount.value, 'THB').replace(/\.00(?= บาท$)/u, '')}สั้นๆ ค่ะ` } : {} : {}),
-      collection: { lineChosen: lines.length > 0, receiptChosen: lines.length > 0 && lines.every(line =>
+      collection: { lineChosen: lines.length > 0 && (options.operation !== 'CREATE' || lines.every(line =>
+        !!line.values.linkedExpenseChoiceId || !!line.values.description && !!line.values.amount)), receiptChosen: lines.length > 0 && lines.every(line =>
         !!line.values.linkedExpenseChoiceId || line.values.attachmentChoiceId !== undefined),
         categoryChosen: lines.length > 0 && lines.every(line => !!line.values.linkedExpenseChoiceId || !!line.values.categoryChoiceId) },
       ...(proposal ? { collected: proposal } : {}) };
@@ -1046,7 +1174,7 @@ export class LineReimbursementDraftAdapterService {
   }
 
   private async hydrateCreate(ctx: RequestContext, options: StoredOptions, proposal: LineReimbursementDraftProposalV1,
-    receipts: LineReimbursementValidatedFieldReceiptV1[], awaitingPhoto = false) {
+    receipts: LineReimbursementValidatedFieldReceiptV1[], awaitingPhoto = false, requireReason = false) {
     const missing: string[] = [];
     const branchId = proposal.branchChoiceId ?? options.selected.branchChoiceId;
     const requesterId = proposal.requesterChoiceId ?? options.selected.requesterChoiceId;
@@ -1064,7 +1192,7 @@ export class LineReimbursementDraftAdapterService {
       receipts = receipts.filter(receipt => receipt.fieldPath !== 'fields.reason');
     }
     if (!proposal.fields.reason) missing.push('fields.reason');
-    if (!proposal.fields.reason && changes.length === 1 && changes[0]!.operation === 'ADD') {
+    if (!requireReason && !proposal.fields.reason && changes.length === 1 && changes[0]!.operation === 'ADD') {
       const reason = linkedChoice ? undefined : changes[0]!.values.purpose ?? changes[0]!.values.description;
       if (reason) {
         proposal.fields.reason = reason;

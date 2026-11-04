@@ -1,3 +1,4 @@
+import { parseLineFixedReadControl } from '@watchdog-bms/contracts';
 import { lineReplyLanguage, lineChatAction, lineCustomerWording, expenseEvidenceImageMissing, expenseEvidenceAssessment, EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL, scrubRecordText, type ExpenseEvidenceSource } from '@watchdog-bms/contracts';
 export function lineCustomerText(value: string): string {
   const ids = /\bc[a-z0-9]{24}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/iu;
@@ -39,7 +40,7 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
   [EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL]: 'Document image not attached', 'ส่งรูปเอกสาร': 'Send document photo',
-  'บันทึกค่าใช้จ่าย': 'Record expense', 'สร้างใบเบิก': 'Create claim', 'ค้นหาค่าใช้จ่าย': 'Find expenses',
+  'บันทึกค่าใช้จ่าย': 'Record expense', 'สร้างใบเบิก': 'Create claim', 'ทำใบรับรองแทนใบเสร็จ': 'Substitute receipt', 'ค้นหาค่าใช้จ่าย': 'Find expenses',
   'ดูใบเบิกรออนุมัติ': 'Review claims', 'เพิ่มคู่ค้า': 'Add counterparty', 'เลือกแพ็กเกจ': 'Choose package', 'ดูยอดขาย': 'View sales', 'ค้นหาสินค้า': 'Find products',
   'ค่าเดินทาง': 'Travel', 'ค่าน้ำมัน': 'Fuel', 'ค่าออฟฟิศ': 'Office', 'ค่าใช้จ่ายอื่นๆ': 'Other expenses',
   'ภาษาไทย': 'Thai', 'ภาษาอังกฤษ': 'English', 'สั้น': 'Short', 'ปกติ': 'Normal', 'ละเอียด': 'Detailed', 'ย่อหน้า': 'Paragraphs', 'หัวข้อ': 'Bullets', 'ตาราง': 'Table', 'ขั้นตอน': 'Steps',
@@ -102,6 +103,7 @@ export function lineDisplayDate(value: string, language: LineReplyLanguage = 'th
 export function isLineNavigationPostback(data: string): boolean {
   const params = new URLSearchParams(lineControlLanguage(data).data);
   const action = params.get('action');
+  if (action === 'fixed-read') return parseLineFixedReadControl(params.toString()) !== null;
   if (action === 'company-select') return [...params.keys()].length === 2 && params.getAll('companyId').length === 1 && /^[A-Za-z0-9_-]{1,128}$/u.test(params.get('companyId') ?? '');
   if (action === 'company-page') return [...params.keys()].length === 2 && /^[1-9][0-9]{0,2}$/u.test(params.get('page') ?? '');
   if (action === 'chat-action') return [...params.keys()].length === 2 && params.getAll('id').length === 1 && !!lineChatAction(params.get('id') ?? '');

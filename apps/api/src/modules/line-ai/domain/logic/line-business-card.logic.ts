@@ -1,5 +1,8 @@
+import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
+import { formatClaimMoney } from './line-reimbursement-draft-card.logic';
+import type { LineWorkflowTargets } from '../../application/line-workflow-target.service';
 import { lineReplyLanguage, lineCustomerText, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
-import { AI_BUDGET_REFUSAL_CODES, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
+import { scrubRecordIdentifier, AI_BUDGET_REFUSAL_CODES, mayOfferWorkflow, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
@@ -51,9 +54,10 @@ export function productHelpQuickReply(response: LineAiTurnResponse, permissions:
   const capabilityMenu = response.presentation?.cards.some(card => card.chatActionIds !== undefined);
   const ids = response.presentation?.cards.flatMap(card => card.chatActionIds ?? (card.chatActionId ? [card.chatActionId] : [])) ?? [];
   const actions = [...new Set(ids)].map(id => lineChatAction(id)).filter(action => action && !('webPath' in action)
-    && canUseLineChatAction(action.id, permissions, entitled)).slice(0, 6);
+    && ('workflow' in action && action.workflow ? mayOfferWorkflow(action.id, permissions, entitled)
+      : canUseLineChatAction(action.id, permissions, entitled))).slice(0, 6);
   if (!actions.length) return undefined;
-  if (!capabilityMenu && actions.length === 1 && language === 'th') return lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: actions[0]!.command }]);
+  if (!capabilityMenu && actions.length === 1 && language === 'th' && !('workflow' in actions[0]!)) return lineChoiceQuickReply([{ label: 'ให้น้องทำให้', text: actions[0]!.command }]);
   const shortTitles: Record<string, string> = { counterparty: 'เพิ่มคู่ค้า', package_purchase: 'เลือกแพ็กเกจ', expense_search: 'ค้นหาค่าใช้จ่าย', sales: 'ดูยอดขาย', inventory: 'ค้นหาสินค้า' };
   return { items: actions.map(action => ({ type: 'action', action: { type: 'postback',
     label: !capabilityMenu && actions.length === 1 ? language === 'en' ? 'Prepare this for me' : 'ให้น้องทำให้' : lineUiLabel(shortTitles[action!.id] ?? action!.title, language),
@@ -580,7 +584,7 @@ export function buildExpenseDraftReviewCard(
   webBaseUrl: string | undefined,
   companyId: string,
   confirmation?: ExpenseActionPreview,
-  nextAction?: { label: string; text: string },
+  nextAction?: { label: string; text: string; data?: string },
   language: LineReplyLanguage = lineReplyLanguage(canonicalText),
 ): LineReplyMessage | undefined {
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
@@ -590,7 +594,8 @@ export function buildExpenseDraftReviewCard(
   const open = { type: 'uri' as const, label: lineUiLabel(confirmation?.documentImageUrl ? 'ส่งรูปเอกสาร' : 'เปิดดูในเว็บ', language), uri: actionUrl };
   const contents = drawLineSystemCard({
     mascot: 'review', header: { lines: [lineUiLabel(facts.subject, language), lineUiLabel('รอตรวจสอบ', language)] }, rows, notes,
-    ...(nextAction || confirmation ? { choice: [nextAction ? { type: 'message', ...nextAction } : { type: 'postback', label: lineUiLabel(confirmation!.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
+    ...(nextAction || confirmation ? { choice: [nextAction ? nextAction.data ? { type: 'postback', label: nextAction.label, data: nextAction.data, displayText: nextAction.text }
+      : { type: 'message', label: nextAction.label, text: nextAction.text } : { type: 'postback', label: lineUiLabel(confirmation!.evidenceReview ? 'ตรวจแล้ว ยืนยัน' : 'ยืนยันรายการ', language),
       data: lineControlData(new URLSearchParams({ action: 'expense_action_confirm', token: confirmation!.token }).toString(), language) }, open] as const }
       : { button: { icon: 'file' as const, action: open } }),
   }, webBaseUrl);
@@ -1211,4 +1216,35 @@ export function buildLineBusinessAnswerMessage(
   };
   completeBusinessAnswerPresentations.set(message, businessAnswerPresentationFingerprint(message)!);
   return message;
+}
+
+
+export const LINE_CLAIM_PICKER_COPY = {
+  unavailable: 'ยังเปิดใบเบิกไม่ได้ค่ะ กดเปิดเมนูเพื่อลองอีกครั้ง',
+  forbidden: 'ยังไม่มีสิทธิ์เปิดใบเบิกค่ะ ให้เจ้าของกิจการตรวจสิทธิ์ก่อน',
+  choose: { reimbursement_submit: 'เลือกใบเบิกที่จะส่งอนุมัติค่ะ', reimbursement_cancel: 'เลือกใบเบิกที่จะยกเลิกค่ะ',
+    approvals: 'เลือกใบเบิกที่จะอนุมัติค่ะ', reimbursement_reject: 'เลือกใบเบิกที่ไม่อนุมัติค่ะ', reimbursement_pay: 'เลือกใบเบิกที่จะบันทึกจ่ายคืนค่ะ' },
+  empty: { reimbursement_submit: 'ยังไม่มีใบเบิกที่ส่งได้ค่ะ', reimbursement_cancel: 'ไม่พบใบเบิกที่ทำรายการนี้ได้ค่ะ',
+    approvals: 'ไม่มีใบเบิกรอคุณอนุมัติค่ะ', reimbursement_reject: 'ไม่พบใบเบิกที่ทำรายการนี้ได้ค่ะ', reimbursement_pay: 'ยังไม่มีใบเบิกที่รอจ่ายค่ะ' },
+  incomplete: 'มีรายการมากเกินจะค้นในแชตค่ะ', interrupted: 'ยังค้นใบเบิกไม่ครบค่ะ กดค้นในเว็บ',
+};
+export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: ClaimWorkflowId,
+  secret: string, company: string, user: string, webBaseUrl = ''): LineReplyMessage {
+  const text = !result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
+    : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow];
+  const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((claim, index) => ({
+    type: 'postback', label: `${(scrubRecordIdentifier(claim.requestNo, 30) ?? `ร่าง ${index + 1}`)} · ${formatClaimMoney(claim.amount, claim.currency, 'th')}`,
+    data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id),
+  }));
+  const webLabel = !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
+  const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: webLabel,
+    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements` }
+    : { type: 'message', label: 'เปิดเมนู', text: 'เมนูหลัก' };
+  if (!actions.length) return { type: 'text', text, quickReply: { items: [{ type: 'action', action: exit }] } };
+  if (!result.exhaustive || result.total > 4) actions.push(exit);
+  const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
+  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['ใบเบิก', 'เลือกใบเบิก'] }, notes: [text],
+    buttons: actions.map(action => ({ action, icon: 'file' as const })) }, webBaseUrl);
+  return contents ? asCompleteLineCard({ type: 'flex', altText: text, canonicalText, contents })
+    : { type: 'text', text: canonicalText, quickReply: { items: [{ type: 'action', action: exit }] } };
 }

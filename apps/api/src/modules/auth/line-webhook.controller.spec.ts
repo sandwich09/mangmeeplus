@@ -268,3 +268,38 @@ it('Round 7A forwards a bounded quotedMessageId and recognizes only signed-shape
   assert.equal(enqueued[0].item.quotedMessageId, 'bot-msg-123'); assert.equal(enqueued[1].item.quotedMessageId, undefined);
   assert.deepEqual(enqueued[2].item.counterpartyControl, { action: 'counterparty_confirm', token });
 });
+
+it('R3 workflow open signature binds company user action target and every payment field', async () => {
+  const { lineWorkflowOpenSig, verifyLineWorkflowOpenSig } = await import('../line-ai/domain/logic/line-reimbursement-approval-control.logic');
+  const fields = ['company', 'user', 'RECORD_PAYMENT', 'expense', 'BANK_TRANSFER', '2026-11-04', '100.00'] as const;
+  const signature = lineWorkflowOpenSig('secret', ...fields);
+  assert.equal(verifyLineWorkflowOpenSig('secret', ...fields, signature), true);
+  for (let index = 0; index < fields.length; index++) {
+    const changed: [company: string, user: string, act: string, id: string, pm: string, pd: string, pa: string] = [...fields];
+    changed[index] += '-changed';
+    assert.equal(verifyLineWorkflowOpenSig('secret', ...changed, signature), false);
+  }
+  assert.equal(verifyLineWorkflowOpenSig('', ...fields, signature), false);
+  assert.equal(verifyLineWorkflowOpenSig('wrong-secret', ...fields, signature), false);
+  assert.equal(verifyLineWorkflowOpenSig('secret', ...fields, signature + 'x'), false);
+  assert.throws(() => lineWorkflowOpenSig('', ...fields));
+});
+
+it('A2 parses exact workflow start open choice and fixed-read keys into buffered controls', async () => {
+  const valid = [
+    ['action=wf_open&act=RECORD_PAYMENT&id=expense&pm=BANK_TRANSFER&pd=2026-11-04&pa=100.00&sig=' + 'a'.repeat(43), 'workflowControl', { action: 'wf_open', act: 'RECORD_PAYMENT', id: 'expense', pm: 'BANK_TRANSFER', pd: '2026-11-04', pa: '100.00', sig: 'a'.repeat(43) }],
+    ['action=wf_choice&token=choice-token&pick=reimbursement_claim', 'workflowControl', { action: 'wf_choice', token: 'choice-token', pick: 'reimbursement_claim' }],
+    ['action=chat-action&id=reimbursement_claim', 'workflowStart', 'reimbursement_claim'],
+    ['action=fixed-read&id=expense_month', 'fixedReadControl', { id: 'expense_month' }],
+  ] as const;
+  for (const [data, key, control] of valid) {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({ events: [{ type: 'postback', webhookEventId: 'control', replyToken: 'reply', source: { userId: 'user' }, postback: { data } }] }));
+    assert.deepEqual(enqueued[0]?.item[key], control);
+    for (const malformed of [data + '&extra=x', data + '&id=duplicate', data.replace('action=', 'action=bad&action=')]) {
+      const rejected = makeController();
+      await rejected.controller.lineWebhook(requestFor({ events: [{ type: 'postback', replyToken: 'reply', source: { userId: 'user' }, postback: { data: malformed } }] }));
+      assert.equal(rejected.enqueued.length, 0, malformed);
+    }
+  }
+});

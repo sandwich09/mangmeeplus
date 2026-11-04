@@ -2259,3 +2259,29 @@ export const LINE_AI_ERROR_CODES = {
 } as const;
 
 export type LineAiErrorCode = (typeof LINE_AI_ERROR_CODES)[keyof typeof LINE_AI_ERROR_CODES];
+
+/** Sold deterministic workflows. The existing chat-action ids remain the wire ids. */
+export const LINE_WORKFLOW_IDS = [
+  'reimbursement_claim', 'reimbursement_submit', 'reimbursement_cancel', 'approvals',
+  'reimbursement_reject', 'reimbursement_pay', 'expense_submit', 'expense_confirm',
+  'expense_delete', 'expense_void', 'expense_pay', 'payment_voucher', 'wht_certificate',
+  'substitute_receipt',
+] as const;
+export type LineWorkflowId = typeof LINE_WORKFLOW_IDS[number];
+export const LINE_WORKFLOW_OPEN_ACTIONS = [
+  'MARK_READY', 'CONFIRM', 'DELETE_DRAFT', 'VOID', 'REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL',
+  'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT', 'RECORD_PAYMENT',
+  'VOUCHER_CREATE', 'VOUCHER_SUBMIT', 'VOUCHER_APPROVE', 'VOUCHER_RETURN', 'VOUCHER_PAY',
+  'VOUCHER_CANCEL', 'WHT_CERTIFICATE_ISSUE',
+] as const;
+export type LineWorkflowControl =
+  | { action: 'wf_open'; act: typeof LINE_WORKFLOW_OPEN_ACTIONS[number]; id: string; pm?: string; pd?: string; pa?: string; sig: string }
+  | { action: 'wf_choice'; token: string; pick: LineWorkflowId | 'other' };
+export type LineFixedReadControl = { id: 'expense_month' };
+
+export function parseLineFixedReadControl(data: string | undefined): LineFixedReadControl | null {
+  if (!data || data.length > 300) return null;
+  const params = new URLSearchParams(data);
+  return [...params.keys()].length === 2 && params.getAll('action').length === 1 && params.getAll('id').length === 1
+    && params.get('action') === 'fixed-read' && params.get('id') === 'expense_month' ? { id: 'expense_month' } : null;
+}

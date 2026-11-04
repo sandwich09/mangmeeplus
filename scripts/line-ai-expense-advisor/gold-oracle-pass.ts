@@ -20,11 +20,13 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices } from './oracle';
+import { buildWorkflowSeed, resolveWorkflowActor, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
+import { bootOracle, resolveGoldCallInput, resolveKnowledgeGold, resolveWorkflowDueDate, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, GOLD_TABLES, resolveGoldRecord } from './oracle';
+import { isFreeExpenseDraftCompany } from '../../apps/api/src/modules/system-partner-management/application/free-expense-access';
 import type { ShownItem } from './oracle';
 import { scoreTurn, factsForMatchedCandidate, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
-import type { Conversation, Corpus, EvalCompany, GoldCall, Turn } from './types';
+import type { Conversation, Corpus, EvalCompany, GoldCall, Turn, WorkflowCorpus } from './types';
+import { captureSpend, installEvalGuard } from './eval-spend';
 import { assertIsolatedReplayDatabase, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
 export const turnKey = (conversationId: string, turnIndex: number): string => `${conversationId}#${turnIndex}`;
@@ -71,6 +73,26 @@ export function toCapturedEvidence(evidence: RuntimeTurnEvidence): CapturedEvide
   };
 }
 
+/** An offered id is not delivery evidence. Pair audited source refs with an accepted card header. */
+export function deliveredKnowledgeCards(evidence: RuntimeTurnEvidence): Array<{ id: string; version: number }> {
+  if (evidence.delivery.status !== 'ACCEPTED' || !evidence.receipts.length) return [];
+  const text = evidence.receipts.map(receipt => extractDeliveredText(receipt.messages, true)).join('\n');
+  const cards = new Map<string, { id: string; version: number }>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const row = value as Record<string, unknown>;
+    if (row['entityType'] === 'approved_product_help' && row['permissionChecked'] === true && typeof row['entityId'] === 'string'
+      && typeof row['label'] === 'string' && text.split('\n').some(line => line.trim() === row['label'])) {
+      const parts = row['entityId'].split(':'), version = Number(parts.at(-1)), id = parts.at(-2);
+      if (id && Number.isInteger(version) && version > 0) cards.set(`${id}:${version}`, { id, version });
+    }
+    Object.values(row).forEach(visit);
+  };
+  evidence.gatewayResponses.forEach(response => visit(response.response));
+  return [...cards.values()];
+}
+
 /** Scores every flattened turn against a captured `turnEvidence` list and a `GoldOraclePass` —
  * the exact loop run-real.ts's live replay and run-rescore.ts's offline pass both need, so a
  * scoring-behavior change (e.g. T-068's resolved-input fix) cannot land in one and not the other. */
@@ -104,6 +126,7 @@ export function scoreAllTurns(
 }
 
 export type GoldOraclePass = {
+  workflowValidation?: { seedDigest: string; actorAssignments: number; goldRecords: number; previews: number };
   resultsByTurn: Map<string, Array<ToolResultLike | undefined>>;
   factsByTurn: Map<string, ExpectedFact[]>;
   resolvedCallsByTurn: Map<string, GoldCall[]>;
@@ -117,7 +140,7 @@ export type GoldOraclePass = {
 };
 
 export async function collectGoldResults(
-  repoRoot: string, corpus: Corpus, companies: Record<EvalCompany, CompanySeed>,
+  repoRoot: string, corpus: Corpus | WorkflowCorpus, companies: Record<EvalCompany, CompanySeed>,
   databaseUrl: string, redisUrl: string, secretsPath: string, now: Date, beforeTruncate?: () => Promise<void>,
 ): Promise<GoldOraclePass> {
   assertIsolatedReplayDatabase(databaseUrl);
@@ -126,7 +149,16 @@ export async function collectGoldResults(
   const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => PgClientLike & { connect(): Promise<void>; end(): Promise<void> } };
   const pg = new Client({ connectionString: databaseUrl });
   await pg.connect();
-  try { await beforeTruncate?.(); await truncateAllTables(pg); } finally { await pg.end(); }
+  try {
+    if (beforeTruncate) await beforeTruncate();
+    else {
+      const maxThb = process.env['MANGMEE_EVAL_MAX_THB'];
+      assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB_REQUIRED_BEFORE_ORACLE_RESET');
+      await installEvalGuard(pg, databaseUrl, maxThb);
+      await captureSpend(pg, databaseUrl, process.env['MANGMEE_EVAL_SPEND_PATH'] ?? '/tmp/mangmee-gold-oracle.spend.jsonl', 'gold-oracle');
+    }
+    await truncateAllTables(pg);
+  } finally { await pg.end(); }
 
   const oracle = await bootOracle({ repoRoot, databaseUrl, redisUrl, secretsPath });
   const resultsByTurn = new Map<string, Array<ToolResultLike | undefined>>();
@@ -134,6 +166,44 @@ export async function collectGoldResults(
   const resolvedCallsByTurn = new Map<string, GoldCall[]>();
   const alternativeFactsByTurn: GoldOraclePass['alternativeFactsByTurn'] = new Map();
   try {
+    if (corpus.version === 2) {
+      const seed = buildWorkflowSeed(now, corpus.conversations.flatMap(conversation => conversation.actors));
+      await applySeedRows(oracle.prisma as never, seed.rows);
+      for (const companyKey of new Set(corpus.conversations.flatMap(conversation => conversation.actors).filter(actor => actor.freeSourceDrafts).map(actor => actor.company)))
+        assert.ok(await isFreeExpenseDraftCompany(oracle.prisma as never, seed.companies[companyKey].companyId, now), `WORKFLOW_FREE_PREDICATE_FAILED:${companyKey}`);
+      const snapshot: Record<string, Array<Record<string, unknown>>> = {};
+      for (const table of [...GOLD_TABLES, 'ExpenseLine', 'ExpenseCategory']) {
+        const model = table[0]!.toLowerCase() + table.slice(1);
+        snapshot[table] = await (oracle.prisma[model] as { findMany(): Promise<Array<Record<string, unknown>>> }).findMany();
+      }
+      let actorAssignments = 0, goldRecords = 0, previews = 0;
+      for (const conversation of corpus.conversations) {
+        for (const [turnIndex, turn] of conversation.turns.entries()) {
+          const actor = conversation.actors.find(candidate => candidate.key === (turn.as?.key ?? conversation.actors[0]!.key))!;
+          const seeded = resolveWorkflowActor(actor, seed);
+          const ctx = await oracle.resolveActorContext({ userId: seeded.userId, companyId: seeded.companyId });
+          assert.deepEqual([...(ctx.branchIds as string[])].sort(), [...seeded.branchIds].sort(), `WORKFLOW_ACTOR_BRANCH_MISMATCH:${actor.key}`);
+          actorAssignments++;
+          if (turn.expect.knowledge) resolveKnowledgeGold(turn.expect.knowledge);
+          if (turn.expect.dueDate) factsByTurn.set(turnKey(conversation.id, turnIndex), [{ kind: 'date', value: resolveWorkflowDueDate(turn.expect.dueDate, seed.rows, seeded.companyId, now) }]);
+          if (turn.expect.preview) {
+            assert.ok(turn.expect.preview.target.startsWith('$seed:') || turn.expect.preview.target.startsWith('$created:'), 'WORKFLOW_PREVIEW_TARGET_INVALID');
+            previews++;
+          }
+        }
+        for (const task of conversation.tasks) for (const record of task.goldTerminal.records) {
+          assert.ok(GOLD_TABLES.includes(record.table), `WORKFLOW_GOLD_TABLE_UNKNOWN:${record.table}`);
+          assert.match(record.ref, /^\$(?:seed|created):.+$|^\$child:.+:[1-9]\d*$/, `WORKFLOW_GOLD_REFERENCE_INVALID:${record.ref}`);
+          if (record.ref.startsWith('$seed:')) assert.ok(resolveGoldRecord(record, snapshot, task.goldTerminal.records), `WORKFLOW_SEED_REFERENCE_UNKNOWN:${record.ref}`);
+          if (record.ref.startsWith('$child:')) {
+            const parentRef = record.ref.slice(7, record.ref.lastIndexOf(':'));
+            assert.ok(task.goldTerminal.records.some(parent => parent.ref === parentRef), `WORKFLOW_CHILD_PARENT_UNKNOWN:${record.ref}`);
+          }
+          goldRecords++;
+        }
+      }
+      return { resultsByTurn, factsByTurn, resolvedCallsByTurn, alternativeFactsByTurn, workflowValidation: { seedDigest: seed.digest, actorAssignments, goldRecords, previews } };
+    }
     await applySeedRows(oracle.prisma as never, SHARED_ACCESS_ROWS);
     for (const company of Object.values(companies)) await applySeedRows(oracle.prisma as never, company.rows.slice(SHARED_ACCESS_ROWS.length));
 

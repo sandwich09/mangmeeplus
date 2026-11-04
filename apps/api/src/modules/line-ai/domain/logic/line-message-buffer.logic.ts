@@ -22,6 +22,9 @@ export type LineBufferTextItem = {
   packagePurchaseControl?: import('../../application/line-package-purchase.service').PackagePurchaseControl;
   expenseActionControl?: import('../../application/line-expense-action.service').ExpenseActionControl;
   draftUpdatePreviewId?: string;
+  workflowControl?: import('@watchdog-bms/contracts').LineWorkflowControl;
+  workflowStart?: import('@watchdog-bms/contracts').LineWorkflowId;
+  fixedReadControl?: import('@watchdog-bms/contracts').LineFixedReadControl;
   reimbursementChoiceControl?: import('../../application/line-reimbursement-draft.service').LineReimbursementChoiceControl;
   reimbursementDraftControl?: import('../../application/line-reimbursement-draft.service').LineReimbursementDraftControl;
   answerDeliveryControl?: import('./line-delivery-plan.logic').LineAnswerDeliveryControl;

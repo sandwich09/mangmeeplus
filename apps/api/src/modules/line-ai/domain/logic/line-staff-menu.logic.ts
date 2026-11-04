@@ -5,7 +5,7 @@ import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard } from './line-system-card-limits.logic';
-import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText, lineChatAction } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText, lineChatAction, mayOfferWorkflow, parseLineFixedReadControl } from '@watchdog-bms/contracts';
 
 /**
  * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
@@ -66,6 +66,7 @@ export type StaffMenuContext = {
   webBaseUrl?: string;
   companyId: string;
   isOwner?: boolean;
+  assignedClaimApprover?: boolean;
 };
 
 export type CompanyPickerItem = {
@@ -145,6 +146,18 @@ export type CompanyContextCard = {
  * Submenu keys are listed directly where one exists, because `evaluateEntitledFeatureKeys` already
  * expands a parent's submenus — checking the submenu is the precise gate, not a stricter one.
  */
+export const FIXED_READ = {
+  expense_month: { label: 'ค่าใช้จ่ายเดือนนี้', text: 'ดูค่าใช้จ่ายเดือนนี้',
+    tool: 'expense.list_recent', answerShape: 'single_metric', webPath: '/companies/{companyId}/expenses' },
+} as const;
+
+export { parseLineFixedReadControl };
+
+function fixedReadAction(language: LineReplyLanguage): LineQuickReplyItem {
+  return { type: 'action', action: { type: 'postback', label: language === 'en' ? 'Monthly expenses' : FIXED_READ.expense_month.label,
+    data: lineControlData('action=fixed-read&id=expense_month', language) } };
+}
+
 const QUERY_ACTIONS = [
   // Owner decision 2026-08-15: today's number is read off the dashboard, so `dashboard.read` is the
   // honest permission. `sales.order.read` used to sit here too and was removed — it exists in no
@@ -174,6 +187,7 @@ export function buildStaffCompletionQuickReply(
   const items: LineQuickReplyItem[] = QUERY_ACTIONS
     .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(entitled, features))
     .map(([label, text], index) => {
+      if (text === FIXED_READ.expense_month.text) return fixedReadAction(language);
       if (language === 'th') return messageAction(label, text);
       const english: Record<string, [string, string]> = {
         'ยอดขายวันนี้': ['Today’s sales', 'Show today’s sales'], 'คิว/นัดวันนี้': ['Today’s bookings', 'Show today’s bookings'],
@@ -198,8 +212,19 @@ export function buildStaffCompletionQuickReply(
 }
 
 export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage {
-  if (context.language === 'en') return { type: 'text', text: `Hello ${context.displayName}; choose an available task below.`, quickReply: buildStaffCompletionQuickReply(context, 'en') };
-  const quickReply = buildStaffCompletionQuickReply(context);
+  const language = context.language ?? 'th';
+  const quickReply = buildStaffCompletionQuickReply(context, language);
+  const workflows = [
+    ['reimbursement_claim', 'สร้างใบเบิก', 'Create claim'], ['reimbursement_submit', 'ส่งใบเบิก', 'Submit claim'],
+    ['approvals', 'อนุมัติใบเบิก', 'Approve claim'], ['expense_pay', 'บันทึกจ่าย', 'Record payment'],
+  ] as const;
+  const buttons: LineQuickReplyItem[] = workflows.filter(([id]) => mayOfferWorkflow(id, context.permissions,
+    context.entitledFeatureKeys, { assignedApprover: context.assignedClaimApprover })).map(([id, thai, english]) => ({
+      type: 'action', action: { type: 'postback', label: language === 'en' ? english : thai,
+        data: lineControlData(new URLSearchParams({ action: 'chat-action', id }).toString(), language) },
+    }));
+  quickReply.items = [...buttons.slice(0, Math.max(0, 13 - quickReply.items.length)), ...quickReply.items];
+  if (language === 'en') return { type: 'text', text: `Hello ${context.displayName}; choose an available task below.`, quickReply };
   const items = quickReply.items;
   const displayName = boundedLabel(context.displayName, 'พนักงาน');
   const roleLabel = boundedLabel(context.roleLabel, 'พนักงาน');
@@ -584,7 +609,7 @@ export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage
   const permissions = new Set(context.permissions);
   const items = QUERY_ACTIONS
     .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(context.entitledFeatureKeys, features))
-    .map(([label, text]) => messageAction(label, text));
+    .map(([label, text]) => text === FIXED_READ.expense_month.text ? fixedReadAction('th') : messageAction(label, text));
   items.push(messageAction('« เมนูหลัก', 'เมนูหลัก'));
   return {
     type: 'text',
@@ -963,6 +988,7 @@ export function linePostbackCommandText(data: string | undefined, draftEditEnabl
   const params = new URLSearchParams(data);
   if (action === 'company-select' && [...params.keys()].length === 2 && /^[A-Za-z0-9_-]{1,128}$/u.test(params.get('companyId') ?? '')) return `/company ${params.get('companyId')}`;
   if (action === 'company-page' && [...params.keys()].length === 2 && /^[1-9][0-9]{0,2}$/u.test(params.get('page') ?? '')) return `/companies page ${params.get('page')}`;
+  if (action === 'fixed-read') return parseLineFixedReadControl(data) ? FIXED_READ.expense_month.text : null;
   if (action === 'chat-action') return lineChatAction(new URLSearchParams(data).get('id') ?? '')?.command ?? null;
   if (draftEditEnabled && DRAFT_POSTBACK_ACTIONS[action]) return DRAFT_POSTBACK_ACTIONS[action]!;
   return POSTBACK_ACTIONS[action] ?? null;

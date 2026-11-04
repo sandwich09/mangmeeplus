@@ -2434,3 +2434,120 @@ it('R6 free unusable OCR preserves allowance and usable persistence consumes onc
     await db.$disconnect().catch(() => undefined);
   }
 });
+
+it('real PostgreSQL: A1 fixed-read alone admits ordinal zero and creditState writes no rows', async t => {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+    return t.skip('DATABASE_URL is not set');
+  }
+  const { LineAiBudgetAuthorityService } = await import('./line-ai-budget-authority.service');
+  const { LineConversationContextService } = await import('./line-conversation-context.service');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  const companyId = `tier-zero-${randomUUID()}`;
+  const userId = `${companyId}-user`;
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  let created = false;
+  try {
+    const unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'OCR_REQUIRE_POSTGRES');
+    if (unreachable) return t.skip(unreachable);
+    await client.company.create({ data: { id: companyId, name: companyId } });
+    created = true;
+    await client.user.create({ data: { id: userId, displayName: 'Tier zero test', status: 'ACTIVE' } });
+    const member = await client.companyMembership.create({ data: { companyId, userId, status: 'ACTIVE' } });
+    await client.companyAiConfiguration.create({ data: { companyId, monthlyBudgetSatang: 100000, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 50000, ocrMonthlyBudgetSatang: 50000 } });
+    const prisma = { client } as any;
+    const service = new LineAiBudgetAuthorityService(prisma, { approvedAiModelIds: [modelId], aiGatewayInternalSecret: 'tier-zero-test', lineMessagingChannelId: 'shared-test' } as any);
+    const owner = { companyId, userId, membershipId: member.id, channel: 'line' as const, channelKind: 'USER' as const, messagingChannelId: 'shared-test', chatKeyHash: 'a'.repeat(64) };
+    const context = await new LineConversationContextService(prisma).admit(owner);
+    for (const serverRoute of [undefined, 'fixed_read' as const]) {
+      const event = await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: `${companyId}-${serverRoute}`, eventType: 'message', status: 'received' } });
+      const grant = await service.issue({ authorityKind: 'webhook_event', authorityId: event.id,
+        owner: { kind: 'PRIVATE', owner, epoch: context.lifecycleEpoch }, serverRoute,
+        turnKey: event.id, attemptKey: event.id, inputDigest: 'a'.repeat(64), requestKind: 'TEXT', admittedAtMs: Date.now(), coalescingExtraMs: 0, lane: 'public',
+        model: { provider: 'bedrock', modelId, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
+        tariff: { version: 'tier-zero:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33, usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, allowedProfileIds: ['line-intake-text/2'] });
+      assert.ok(grant);
+      assert.equal(await service.narrow(grant, 'mixed', ['line-answer/2']), null);
+      assert.equal(await service.narrow(grant, 'simple', ['line-control/2', 'line-answer/2']), null);
+      assert.equal(Boolean(await service.narrow(grant, 'simple', ['line-answer/2'])), serverRoute === 'fixed_read');
+    }
+    for (const cutover of [false, true]) {
+      if (cutover) await client.companyAiConfiguration.update({ where: { companyId }, data: { aiCreditCutoverAt: new Date(0) } });
+      const configBefore = await client.companyAiConfiguration.findUnique({ where: { companyId } });
+      const state = await service.creditState(companyId);
+      assert.equal(state.ok, !cutover, 'legacy budget is available, cut-over shop without a package is refused');
+      assert.deepEqual(await client.companyAiConfiguration.findUnique({ where: { companyId } }), configBefore);
+      for (const delegate of [client.aiBudgetReservation, client.aiCreditGrant, client.aiCreditEntry, client.aiUsageEvent, client.companyAiMonthlyUsage, client.companyAiMonthlyBucketUsage]) {
+        assert.equal(await (delegate as any).count({ where: { companyId } }), 0, 'read-only credit state creates no money or usage rows');
+      }
+    }
+  } finally {
+    if (created) {
+      await client.lineWebhookEventLog.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.user.deleteMany({ where: { id: userId } });
+    }
+    await client.$disconnect();
+  }
+});
+
+it('A1 creditState reads an empty budget without creating rows or sweeping holds', async () => {
+  const { LineAiBudgetAuthorityService } = await import('./line-ai-budget-authority.service');
+  const now = new Date('2026-11-04T10:00:00Z');
+  for (const cutover of [false, true]) {
+    for (const spent of [0, 1000]) {
+      const reads: string[] = [];
+      const data: Record<string, unknown> = {
+        'companyAiConfiguration.findUnique': { monthlyBudgetSatang: 1000, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 1000, ocrMonthlyBudgetSatang: 0, aiCreditCutoverAt: cutover ? new Date(0) : null },
+        'companyAiMonthlyUsage.findUnique': spent ? { costSatang: spent } : null,
+        'companyAiMonthlyBucketUsage.findMany': [], 'aiBudgetReservation.groupBy': [], 'aiBudgetReservation.count': 0,
+        'billingAccount.findMany': [], 'companyPlanTerm.findUnique': null, 'aiCreditGrant.findMany': [],
+      };
+      const tx = new Proxy({}, { get: (_target, table: string) => new Proxy({}, { get: (_delegate, method: string) => async () => {
+        const key = `${table}.${method}`;
+        assert.ok(Object.hasOwn(data, key), `unexpected write or query ${key}`);
+        reads.push(key);
+        return data[key];
+      } }) });
+      const service = new LineAiBudgetAuthorityService({ client: { $transaction: async (work: any, options: any) => {
+        assert.equal(options.isolationLevel, 'RepeatableRead');
+        return work(tx);
+      } } } as any, {} as any);
+      const result = await service.creditState('paid-shop', now);
+      assert.equal(result.ok, spent === 0 && !cutover);
+      assert.ok(reads.includes('aiBudgetReservation.groupBy'));
+    }
+  }
+});
+
+it('real PostgreSQL: R24 concurrent replay links one task and increments its event once', async t => {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+    return t.skip('DATABASE_URL is not set');
+  }
+  const { recordLineTaskEvent } = await import('./line-ai-task-metrics');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  const companyId = `task-metric-${randomUUID()}`;
+  let created = false;
+  try {
+    const unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'OCR_REQUIRE_POSTGRES');
+    if (unreachable) return t.skip(unreachable);
+    await client.company.create({ data: { id: companyId, name: companyId } }); created = true;
+    await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: companyId, eventType: 'message', status: 'completed' } });
+    const input = { companyId, membershipId: 'measurement-only', chatKeyHash: 'a'.repeat(64), webhookEventId: companyId,
+      kind: 'read', entry: 'BUTTON' as const, pressed: true, status: 'COMPLETED' as const, deadEnd: false };
+    await Promise.all(Array.from({ length: 8 }, () => recordLineTaskEvent(client, input)));
+    const tasks = await client.lineAiTaskRun.findMany({ where: { companyId } });
+    assert.equal(tasks.length, 1);
+    assert.deepEqual([tasks[0]!.eventCount, tasks[0]!.pressCount, tasks[0]!.typedCount], [1, 1, 0]);
+    assert.equal((await client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId: companyId } })).taskRunId, tasks[0]!.id);
+  } finally {
+    if (created) {
+      await client.lineWebhookEventLog.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+    }
+    await client.$disconnect();
+  }
+});

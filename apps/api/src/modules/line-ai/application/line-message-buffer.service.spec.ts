@@ -1687,3 +1687,59 @@ it('preserves English presentation language on a Thai synthetic confirmation thr
   assert.equal(h.executed[0]?.language, 'en');
   assert.equal(h.executed[0]?.messageText, 'ตรวจผลรายการค่าใช้จ่าย');
 });
+
+it('R23 fresh frozen replay and company switch retain control order', async () => {
+  for (const { free, mode } of [
+    { free: false, mode: 'off' }, { free: false, mode: 'on' },
+    { free: true, mode: 'off' }, { free: true, mode: 'on' },
+  ]) {
+    for (const control of [
+      { workflowControl: { action: 'wf_open', act: 'RECORD_PAYMENT', id: 'expense', sig: 'a'.repeat(43) } },
+      { workflowControl: { action: 'wf_choice', token: 'choice', pick: 'other' } },
+      { workflowStart: 'reimbursement_claim' },
+      { fixedReadControl: { id: 'expense_month' } },
+    ]) {
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let company = 'A';
+      const seen: Array<{ text: string; company: string; control: unknown }> = [];
+      const h = makeHarness({ debounceMs: 0, preflightImpl: async () => ({ status: 'continue', companyId: free ? 'free' : 'paid' }),
+        executeImpl: async event => {
+          if (event.webhookEventId === 'running') await gate;
+          if (event.messageText === '/company B') company = 'B';
+          seen.push({ text: event.messageText, company, control: event[Object.keys(control)[0]!] });
+        } });
+      const subject = h.service as any;
+      Object.assign(subject.config, { lineAiReliabilityV2Mode: mode, lineAiDeliveryPlanV2Enabled: true,
+        lineAiReliabilityV2CompanyIds: [], lineAiDeliveryPlanV2WriteCompanyIds: [] });
+      subject.prisma.client.$transaction = async (work: any) => work(subject.prisma.client);
+      try {
+        await h.service.enqueue(textEnv('running', 'รายการก่อนหน้า'));
+        await settle();
+        await h.service.enqueue(textEnv('switch', '/company B'));
+        const envelope = textEnv('workflow', 'เลือกงาน');
+        Object.assign(envelope.item, control);
+        await h.service.enqueue(envelope);
+        await settle();
+        assert.equal(seen.length, 0, 'a control must wait for the running turn and company switch');
+        const accepted = (h.rows.get('workflow')!.payloadJson as any);
+        assert.deepEqual(accepted.item[Object.keys(control)[0]!], Object.values(control)[0]);
+        release();
+        await sleep(25);
+        assert.deepEqual(seen.map(item => item.company), ['A', 'B', 'B']);
+        assert.deepEqual(seen[2]!.control, Object.values(control)[0]);
+        const frozen = h.rows.get('workflow')!.payloadJson as any;
+        assert.equal(Boolean(frozen.item.inputEvidence), mode === 'on');
+        assert.deepEqual(frozen.item[Object.keys(control)[0]!], Object.values(control)[0]);
+        const replay = makeHarness({ debounceMs: 0 });
+        replay.rows.set('workflow', { webhookEventId: 'workflow', status: 'received', errorCode: 'RETRYABLE_ORPHAN_REPLAY', createdAt: new Date(), payloadJson: frozen });
+        const { parseBufferEnvelope } = await import('./use-cases/recover-orphan-line-events.use-case');
+        const recovered = parseBufferEnvelope(JSON.parse(JSON.stringify(frozen)));
+        assert.ok(recovered);
+        await replay.service.enqueue(recovered, true);
+        await sleep(25);
+        assert.deepEqual(replay.executed[0]?.[Object.keys(control)[0]!], Object.values(control)[0]);
+      } finally { release(); }
+    }
+  }
+});

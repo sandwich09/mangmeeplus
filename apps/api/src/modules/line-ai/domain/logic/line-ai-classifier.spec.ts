@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from './line-ai-classifier.logic';
+import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
   it('trims and collapses whitespace', () => {
@@ -94,4 +94,66 @@ describe('parseBareCompanySelection', () => {
     assert.equal(parseBareCompanySelection('บริษัท 2'), null);
     assert.equal(parseBareCompanySelection('1 2 3'), null);
   });
+});
+
+for (const [text, description, amount, date] of [
+    ['ค่าแท็กซี่ 250 บาท เมื่อวาน', 'ค่าแท็กซี่', '250', '2026-11-03'],
+    ['ค่าแท็กซี่ 250 บาท', 'ค่าแท็กซี่', '250', undefined],
+    ['ค่าแท็กซี่ 250 บาท 3/11', 'ค่าแท็กซี่', '250', '2026-11-03'],
+    ['ค่าแท็กซี่ 250 บาท 28/12', 'ค่าแท็กซี่', '250', '2025-12-28'],
+    ['ค่าแท็กซี่ ๒๕๐ บาท ๓/๑๑', 'ค่าแท็กซี่', '250', '2026-11-03'],
+    ['ค่าแท็กซี่ 250 บาท 3 พ.ย.', 'ค่าแท็กซี่', '250', '2026-11-03'],
+    ['Taxi fare 250 บาท เมื่อวานค่ะ', 'Taxi fare', '250', '2026-11-03'],
+  ]) {
+  it(`R5 manual claim USER_TEXT proofs: ${text}`, async () => {
+    const { createLineAiInputEvidence, extractValueCandidatesV2, parseLineReimbursementDraftProposalV1 } = await import('@watchdog-bms/contracts');
+    const { parseManualClaimLine } = await import('./line-ai-classifier.logic');
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'manual-line', parts: [{ partId: 'part', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text! }] }))!.inputEvidence;
+    const candidates = (await extractValueCandidatesV2(evidence, '2026-11-04'))!;
+    const parsed = await parseManualClaimLine(evidence, candidates);
+    assert.ok(parsed);
+    assert.equal(parsed.values.description?.value, description);
+    assert.equal(parsed.values.amount?.value, amount);
+    assert.equal(parsed.values.incurredDate?.value, date);
+    assert.equal(parsed.question, undefined);
+    for (const value of Object.values(parsed.values)) if (value && typeof value === 'object') assert.equal(value.proof.kind, 'USER_TEXT');
+    const candidateValues = Object.fromEntries([...candidates.amounts.map(item => [item.candidateId, item.value]),
+      ...candidates.dates.map(item => [item.candidateId, item.isoDate]), ...candidates.periods.map(item => [item.candidateId, item.fromDate])]);
+    const candidateSources = Object.fromEntries([...candidates.amounts, ...candidates.dates, ...candidates.periods].map(item => [item.candidateId, item.source]));
+    assert.ok(parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: '018fbad0-4d4e-7cc7-8e43-0123456789ac', taskRevision: 0,
+      operation: 'CREATE', fields: {}, lineChanges: [{ operation: 'ADD', values: parsed.values }] }, { evidence, candidateValues, candidateSources }));
+    assert.equal(await parseManualClaimLine(evidence, { ...candidates, inputDigest: 'b'.repeat(64) }), null);
+  });
+}
+
+it('R5 manual claim line asks one missing-field question without choosing among amounts', async () => {
+  const { createLineAiInputEvidence, extractValueCandidatesV2 } = await import('@watchdog-bms/contracts');
+  const { parseManualClaimLine } = await import('./line-ai-classifier.logic');
+  for (const [text, question] of [['ค่าแท็กซี่ 100 บาท หรือ 250 บาท', 'รายการนี้ยอดเท่าไรคะ'], ['250 บาทค่ะ', 'เป็นค่าอะไรคะ'], ['ค่าแท็กซี่', 'ยอดเท่าไรคะ']]) {
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'manual-missing', parts: [{ partId: 'part', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text! }] }))!.inputEvidence;
+    const candidates = (await extractValueCandidatesV2(evidence, '2026-11-04'))!;
+    const parsed = await parseManualClaimLine(evidence, candidates);
+    assert.ok(parsed);
+    assert.equal(parsed.question, question);
+    if (candidates.amounts.length > 1) {
+      assert.equal(parsed.values.amount, undefined);
+      assert.equal(parsed.amountChoices.length, 2);
+    }
+  }
+});
+
+it('A3b pending field guard accepts numbered addresses and rejects questions and new commands', async () => {
+  for (const text of ['88 ถนนสีลม', 'ไปพบลูกค้า', 'Taxi fare 250 บาท']) assert.equal(isPendingFieldAnswer(text, 'claim'), true, text);
+  for (const text of ['ทำอะไรได้บ้าง', 'ค่ารถ 250 บาทเบิกได้ไหม', 'What is VAT?', 'ช่วยสร้างใบเบิก', 'ติดต่อเจ้าหน้าที่', '']) assert.equal(isPendingFieldAnswer(text, 'claim'), false, text);
+});
+
+
+it('A3b reason fields accept command verbs as ordinary words and reject exact commands', () => {
+  for (const text of ['บันทึกซ้ำ', 'ยกเลิกการซื้อ', 'ซื้อผิด', 'แก้ยอดผิด']) {
+    assert.equal(isPendingFieldAnswer(text, 'reason'), true, text);
+    assert.equal(isPendingFieldAnswer(text, 'claim'), text === 'ซื้อผิด', text);
+  }
+  for (const text of ['ยกเลิก', 'ไม่ทำแล้ว', 'บันทึกรายจ่าย', 'ทำใบเบิกให้หน่อย', 'ติดต่อเจ้าหน้าที่', 'ใบเบิกคืออะไร', 'เมนูหลัก', 'ช่วยสร้างใบเบิกให้หน่อย'])
+    assert.equal(isPendingFieldAnswer(text, 'reason'), false, text);
+  assert.equal(isPendingFieldAnswer('88 ถนนสีลม', 'payee'), true);
 });

@@ -16,7 +16,7 @@ import { APPROVED_KNOWLEDGE_SELECTION_PROMPT, offeredKnowledgeMetadata, parseSel
 import { activeProductHelpPack } from './approved-product-help';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { conversationReadCandidates } from './read-tool-input';
-import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
+import { LINE_INTAKE_CHAT_ACTIONS_CONTEXT as LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
 import { INTAKE_REPAIR_HINTS, clarificationReadCandidates, parseLineIntakeCompactDecision, type CompactDecodeRejection } from './line-intake-compact-decision';
 // Spec R-L1: the exact pre-call check the orchestrator runs before executing a proposed simple
 // read, reused here so a plan that would fail it is never proposed as `complexity: 'simple'` in

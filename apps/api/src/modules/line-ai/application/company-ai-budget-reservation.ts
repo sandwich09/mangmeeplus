@@ -27,7 +27,7 @@ import type { PrismaService } from '../../../common/database/prisma.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
 import { buildPricingSnapshot, computeCostSatang, priceAiStepUpperBound, computePinnedAiCostV2, type AiRenderedPricingSnapshotV2 } from './ai-model-pricing';
 import { aiCreditCycleAllowance, resolveAiBudgetPolicy, type CompanyAiBudgetPolicyRow } from './company-ai-budget-policy';
-import { consumeAiCreditHold, planAiCreditFunding, writeAiCreditHold, type AiCreditFunding, type AiCreditRefusalCause } from './ai-credit-ledger';
+import { consumeAiCreditHold, readAiCreditBalance, planAiCreditFunding, writeAiCreditHold, type AiCreditFunding, type AiCreditRefusalCause } from './ai-credit-ledger';
 import { isMeterableEntry, normalizeUsageBasis, type AiBudgetBucket, type AiRequestKind } from './company-ai-usage-meter';
 
 const logger = new Logger('CompanyAiBudgetReservation');
@@ -150,6 +150,8 @@ async function resolveBudgetUnderLock(
   config: AppConfigService,
   companyId: string,
   monthKey: string,
+  lockPlatform = true,
+  at?: Date,
 ) {
   const row = (await tx.companyAiConfiguration.findUnique({
     where: { companyId },
@@ -162,14 +164,14 @@ async function resolveBudgetUnderLock(
   const override = row?.monthlyBudgetSatang != null;
   let platform: { monthlyBudgetSatang: number } | null = null;
   if (!override) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+    if (lockPlatform) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
     platform = await tx.platformAiBudgetConfig.findUnique({
       where: { id: PLATFORM_CONFIG_ID }, select: { monthlyBudgetSatang: true },
     });
   }
   const totalSatang = override ? row!.monthlyBudgetSatang! : platform?.monthlyBudgetSatang ?? config.aiMonthlyBudgetSatang;
   return { totalSatang, override, row, cutoverAt: row?.aiCreditCutoverAt ?? null,
-    policy: resolveAiBudgetPolicy({ row, totalSatang, override, monthKey }) };
+    policy: resolveAiBudgetPolicy({ row, totalSatang, override, monthKey, at }) };
 }
 
 /** A funded call the lots could not cover. Credit refusals carry no money figures: nothing reads them. */
@@ -1084,6 +1086,29 @@ export async function readAiBudgetMonthSnapshot(
       .reduce((sum: number, h: any) => sum + (h._count?._all ?? 0), 0),
     breach: breached > 0,
   };
+}
+
+/** Read-only admission hint. The provider reservation still makes the spending decision. */
+export async function readCompanyAiCreditState(tx: any, config: AppConfigService, companyId: string, now: Date) {
+  const monthKey = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }).slice(0, 7);
+  const budget = await resolveBudgetUnderLock(tx, config, companyId, monthKey, false, now);
+  const { policy } = budget;
+  if (policy.invalidReason) return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'TOTAL' as const, detail: policy.invalidReason };
+  const snapshot = await readAiBudgetMonthSnapshot(tx, companyId, monthKey);
+  const cutOver = budget.cutoverAt !== null && budget.cutoverAt <= now;
+  const capSatang = cutOver && policy.mode === 'SHARED' ? policy.totalSatang : policy.chatCapSatang;
+  if (capSatang === null) return { ok: false as const, reason: 'unavailable' as const, budgetScope: 'CHAT' as const, detail: 'bucket_cap_missing' };
+  const decision = decideAiBudgetStep({ bucket: 'CHAT', boundSatang: 0,
+    totalSatang: policy.totalSatang, capSatang, override: policy.override,
+    spent: { total: snapshot.spent.TOTAL, bucket: snapshot.spent.CHAT },
+    reserved: { total: snapshot.reserved.TOTAL, bucket: snapshot.reserved.CHAT } });
+  if (!decision.ok || !cutOver) return decision;
+  const balance = await readAiCreditBalance(tx, { companyId, at: now,
+    allowance: cycle => aiCreditCycleAllowance({ row: budget.row, totalSatang: budget.totalSatang,
+      override: budget.override, monthKey, at: cycle.start }) });
+  if (!balance.cycle) return aiCreditRefusal({ ok: false, cause: 'PACKAGE_REQUIRED', availableUnits: 0 });
+  if (balance.totalRemainingUnits <= 0) return aiCreditRefusal({ ok: false, cause: 'EXHAUSTED', availableUnits: 0 });
+  return { ok: true as const };
 }
 
 /**

@@ -240,9 +240,9 @@ The table covers every named quoted control/page/command in the revised bodies a
 | ส่งกลับให้แก้ | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:122` |
 | ส่งอนุมัติ | ปุ่มส่งใบเบิก; ใบเตรียมจ่ายใช้คำเดียวกัน | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
 | หน้าแรก | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:21` |
-| เปลี่ยนบริษัท | คำสั่งที่พิมพ์ใน LINE; parser ตอบด้วยการ์ดร้าน | `apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic.ts:52` |
-| เปิดร้านใหม่ | ปุ่มการ์ดร้านใน LINE เมื่อเจ้าของกิจการสมัครได้ | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:270` |
-| เปิดเว็บบริษัทนี้ | ปุ่มบนการ์ดร้านและตัวเลือกร้านใน LINE | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:92` |
+| เปลี่ยนบริษัท | คำสั่งที่พิมพ์ใน LINE; parser ตอบด้วยการ์ดร้าน | `apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic.ts:53` |
+| เปิดร้านใหม่ | ปุ่มการ์ดร้านใน LINE เมื่อเจ้าของกิจการสมัครได้ | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:295` |
+| เปิดเว็บบริษัทนี้ | ปุ่มบนการ์ดร้านและตัวเลือกร้านใน LINE | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:93` |
 | เพิ่มพนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:365` |
 | เพิ่มลายเซ็น | ปุ่มหน้าลายเซ็นบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:584` |
 | เพิ่มหมวดหมู่ | ปุ่มหน้าจัดการหมวดบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:336` |

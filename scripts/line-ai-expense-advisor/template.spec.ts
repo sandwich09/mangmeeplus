@@ -62,3 +62,11 @@ describe('referencedPlaceholders / isKnownPlaceholder', () => {
     assert.equal(isKnownPlaceholder('next_month_th'), false);
   });
 });
+
+it('M3 uses Bangkok month offsets across years and renders payment gold from the same clock', async () => {
+  const { workflowMonthKey } = await import('./template');
+  assert.equal(workflowMonthKey(JANUARY, -1), '2026-12');
+  assert.equal(workflowMonthKey(new Date('2026-12-31T17:30:00Z'), 0), '2027-01');
+  assert.equal(workflowMonthKey(new Date('2026-12-04T04:00:00Z'), 1), '2027-01');
+  assert.equal(renderUserText('{{today_iso}}', JANUARY), '2027-01-05');
+});

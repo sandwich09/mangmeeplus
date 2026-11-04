@@ -68,6 +68,9 @@ export type LineBufferIncomingItem =
       counterpartyControl?: import('./line-counterparty.service').CounterpartyControl;
       expenseActionControl?: import('./line-expense-action.service').ExpenseActionControl;
       draftUpdatePreviewId?: string;
+      workflowControl?: import('@watchdog-bms/contracts').LineWorkflowControl;
+      workflowStart?: import('@watchdog-bms/contracts').LineWorkflowId;
+      fixedReadControl?: import('@watchdog-bms/contracts').LineFixedReadControl;
       reimbursementChoiceControl?: import('./line-reimbursement-draft.service').LineReimbursementChoiceControl;
       reimbursementDraftControl?: import('./line-reimbursement-draft.service').LineReimbursementDraftControl;
   answerDeliveryControl?: import('../domain/logic/line-delivery-plan.logic').LineAnswerDeliveryControl;
@@ -472,7 +475,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
     const incoming = envelope.item;
     const lineCommand = incoming.kind === 'text'
-      && (incoming.inputEvidence || incoming.counterpartyControl || incoming.quotedMessageId || incoming.packagePurchaseControl || incoming.expenseActionControl || incoming.reimbursementDraftControl || incoming.reimbursementChoiceControl || incoming.answerDeliveryControl || parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
+      && (incoming.workflowControl || incoming.workflowStart || incoming.fixedReadControl || incoming.inputEvidence || incoming.counterpartyControl || incoming.quotedMessageId || incoming.packagePurchaseControl || incoming.expenseActionControl || incoming.reimbursementDraftControl || incoming.reimbursementChoiceControl || incoming.answerDeliveryControl || parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
     const kind = lineCommand ? 'command' : incoming.kind;
     const item = {
       ...incoming,
@@ -507,7 +510,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // in-flight turn) run immediately even while the chat worker is busy: they call no model,
     // touch no lease, and change no context, so overtaking is harmless. Company commands are
     // exactly the ones the ordering comment above protects, so they still join the queue.
-    if (item.kind === 'command' && incoming.kind === 'text' && !parseLineCompanyCommand(incoming.text)) {
+    if (item.kind === 'command' && incoming.kind === 'text' && !incoming.workflowControl && !incoming.workflowStart && !incoming.fixedReadControl && !parseLineCompanyCommand(incoming.text)) {
       void this.dispatchBatch(key, state, [item], { firstAcceptedAt: acceptedAt, flushedAt: acceptedAt, loading: null })
         .catch((err) => this.logger.error({ msg: 'LINE menu command fast dispatch failed', error: (err as Error).message }));
       return;
@@ -1058,6 +1061,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
           ...(last.language ? { language: last.language } : {}),
           ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
           ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.workflowControl ? { workflowControl: last.workflowControl } : {}),
+          ...(last.workflowStart ? { workflowStart: last.workflowStart } : {}),
+          ...(last.fixedReadControl ? { fixedReadControl: last.fixedReadControl } : {}),
           ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
           ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
           inputEvidence: evidence.inputEvidence } };
@@ -1087,6 +1093,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
           ...(last.language ? { language: last.language } : {}),
           ...(last.draftUpdatePreviewId ? { draftUpdatePreviewId: last.draftUpdatePreviewId } : {}),
       ...(last.answerDeliveryControl ? { answerDeliveryControl: last.answerDeliveryControl } : {}),
+          ...(last.workflowControl ? { workflowControl: last.workflowControl } : {}),
+          ...(last.workflowStart ? { workflowStart: last.workflowStart } : {}),
+          ...(last.fixedReadControl ? { fixedReadControl: last.fixedReadControl } : {}),
           ...(last.reimbursementChoiceControl ? { reimbursementChoiceControl: last.reimbursementChoiceControl } : {}),
           ...(last.reimbursementDraftControl ? { reimbursementDraftControl: last.reimbursementDraftControl } : {}),
       // A turn that carries a replayed, already-accepted message is still owed its answer.

@@ -30,7 +30,7 @@ export function parseLineReimbursementChoiceControl(raw: unknown): LineReimburse
   const actionId = params.get('actionId'), revision = params.get('revision'), choice = params.get('choice');
   if (keys.length !== 4 || new Set(keys).size !== 4 || keys.some(key => !['action', 'actionId', 'revision', 'choice'].includes(key))
     || params.get('action') !== 'reimbursement_choice' || !actionId || !UUID.test(actionId) || !revision || !HASH.test(revision)
-    || !choice || !['no-receipt', 'photo'].includes(choice) && !HASH.test(choice)) return null;
+    || !choice || !['no-receipt', 'photo', 'new-line'].includes(choice) && !HASH.test(choice)) return null;
   return { action: 'reimbursement_choice', actionId, revision, choice };
 }
 

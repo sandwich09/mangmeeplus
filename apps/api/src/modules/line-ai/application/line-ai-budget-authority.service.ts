@@ -12,7 +12,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
 import { lineConversationId, type LineConversationOwner } from './line-conversation-context.service';
 import { priceRenderedAiInvocationV2, validAiTariffV2, type AiTariffV2 } from './ai-model-pricing';
-import { reserveAiBudgetStep, type AiBudgetReserveOutcome } from './company-ai-budget-reservation';
+import { readCompanyAiCreditState, reserveAiBudgetStep, type AiBudgetReserveOutcome } from './company-ai-budget-reservation';
 
 type PublicOwner = { companyId: string; channel: 'line'; channelKind: 'USER' | 'GROUP' | 'ROOM'; messagingChannelId: string; chatKeyHash: string };
 export type AuthorityOwner = { kind: 'PRIVATE'; owner: LineConversationOwner; epoch: number; taskId?: string; taskRevision?: number }
@@ -28,6 +28,7 @@ type BudgetAuthority = {
   /** Owner 2026-09-30 ("ทุกกรณีที่ระบบรับไว้ก่อน"): work accepted before the credit ran out. Every call
    *  under this authority passes the cap (never a cap of 0). API-side only, like `fundingContext`. */
   admitOverCap?: true;
+  serverRoute?: 'fixed_read';
 };
 export type IssueLineAiBudgetGrant = {
   authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job'; authorityId: string; owner: AuthorityOwner;
@@ -37,6 +38,7 @@ export type IssueLineAiBudgetGrant = {
   allowedProfileIds: AiBudgetProfileIdV2[];
   /** See `BudgetAuthority.admitOverCap`; decided by the admitted webhook producer only. */
   admitOverCap?: boolean;
+  serverRoute?: 'fixed_read';
 };
 const canonical = (value: unknown): string => value === null || typeof value !== 'object' ? JSON.stringify(value)
   : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
@@ -69,6 +71,11 @@ export class LineAiBudgetDeadlineExceededError extends Error {
 @Injectable()
 export class LineAiBudgetAuthorityService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService) {}
+
+  async creditState(companyId: string, now = new Date()) {
+    return this.prisma.client.$transaction(tx => readCompanyAiCreditState(tx, this.config, companyId, now),
+      { isolationLevel: 'RepeatableRead' });
+  }
 
   private sign(unsigned: Omit<AiBudgetGrantV2, 'signature'>): string {
     if (!this.config.aiGatewayInternalSecret) throw new Error('AI_BUDGET_ISSUER_UNAVAILABLE');
@@ -167,7 +174,8 @@ export class LineAiBudgetAuthorityService {
       const authority: BudgetAuthority = { version: 2, grant, owner: input.owner, tariff: structuredClone(input.tariff),
         requestKind: input.requestKind, inputDigest: input.inputDigest, modelContextTokens: input.modelContextTokens, modelMaxOutputTokens: input.modelMaxOutputTokens,
         coalescingExtraMs: input.coalescingExtraMs, nextOrdinal: 0, profileCounts: {}, repairCount: 0,
-        ...(input.admitOverCap ? { admitOverCap: true as const } : {}) };
+        ...(input.admitOverCap ? { admitOverCap: true as const } : {}),
+        ...(input.serverRoute === 'fixed_read' ? { serverRoute: input.serverRoute } : {}) };
       if (Buffer.byteLength(JSON.stringify(authority)) > MAX_AUTHORITY_BYTES) return null;
       const updated = await delegate.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision, budgetAuthorityJson: { equals: Prisma.DbNull } },
         data: { budgetAuthorityJson: authority as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } });
@@ -288,7 +296,9 @@ export class LineAiBudgetAuthorityService {
         return state.grant;
       }
       if (state.owner.kind === 'PUBLIC_GENERAL' && allowedProfileIds.includes('line-control/2')) return null;
-      if (state.grant.signature !== grant.signature || state.nextOrdinal < 1 || state.nextOrdinal > 2) return null;
+      const fixedRead = state.serverRoute === 'fixed_read' && lane === 'simple'
+        && allowedProfileIds.length === 1 && allowedProfileIds[0] === 'line-answer/2';
+      if (state.grant.signature !== grant.signature || state.nextOrdinal < (fixedRead ? 0 : 1) || state.nextOrdinal > 2) return null;
       if (state.grant.workDeadlineAtMs <= now.getTime()) throw new LineAiBudgetDeadlineExceededError();
       const maxTurnSlots = lane === 'general' || lane === 'simple' ? 2 : 4;
       const { signature: _, ...unsigned } = state.grant;

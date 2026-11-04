@@ -2,7 +2,12 @@ import { LINE_CHAT_ACTIONS, type LineAiConversationContext, type LineAiTaskProje
 
 /** Public catalogue only. Access decisions and all tenant data stay in the turn payload. */
 export const LINE_CHAT_ACTIONS_CONTEXT = {
+  // Phase A adds the substitute button at Tier 0; its existing typed continuation stays with the current intake catalogue.
   chatActions: LINE_CHAT_ACTIONS.map(({ id, title, group }) => ({ id, title, group })),
+};
+
+export const LINE_INTAKE_CHAT_ACTIONS_CONTEXT = {
+  chatActions: LINE_CHAT_ACTIONS.filter(action => action.id !== 'substitute_receipt').map(({ id, title, group }) => ({ id, title, group })),
 };
 
 export function modelConversationContext(

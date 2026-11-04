@@ -157,6 +157,7 @@ export function activeProductHelpPack(): ProductKnowledgePack {
 }
 
 const ACTION_HELP_EN: Record<(typeof LINE_CHAT_ACTIONS)[number]["id"], string> = {
+  "substitute_receipt": "Choose the expense and review its details before preparing a substitute receipt.",
   "reimbursement_submit": "Choose the claim to submit, review it and press submit.",
   "reimbursement_cancel": "Choose the claim to cancel, review it and confirm cancellation.",
   "reimbursement_reject": "Choose the claim and give the rejection reason, then review and press reject.",

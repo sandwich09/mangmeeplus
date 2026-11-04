@@ -80,6 +80,7 @@ export function splitPrisma(
       upsert: async (args: any) => { applyIncrements(monthUsage, args.update); return { ...monthUsage }; },
     },
     companyAiMonthlyBucketUsage: {
+      findMany: async () => [...buckets].map(([bucket, usage]) => ({ bucket, ...usage })),
       findUnique: async (args: any) => {
         const row = buckets.get(args.where.companyId_monthKey_bucket.bucket);
         return row ? { ...row } : null;

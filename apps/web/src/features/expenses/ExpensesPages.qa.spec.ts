@@ -42,9 +42,9 @@ test('the quota banner offers the two things the shop can still do', () => {
   // The receipt IS saved — only the read was refused — so the draft must stay reachable. G18: the
   // package page is where the quota is bought; staff without company.plan.manage cannot buy, so
   // they are told who can instead of being sent to settings, which just bounces them.
-  // A free shop's holder gets the plain ดูแพ็กเกจ and anyone else ติดต่อเจ้าของร้าน (free spec §8 rule 12).
+  // A free shop's holder gets the plain ดูแพ็กเกจ and anyone else ติดต่อเจ้าของกิจการ (free spec §8 rule 12, contracts role name).
   assert.match(source, /canManagePlan\s*\?\s*<Link href=\{`\/companies\/\$\{companyId\}\/billing`\}[^>]*>\{freeExpenseDrafts \? 'ดูแพ็กเกจ' : 'เปลี่ยนแพ็กเกจ'\}</);
-  assert.match(source, /\{freeExpenseDrafts \? 'ติดต่อเจ้าของร้าน' : `แจ้ง\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ`\}/);
+  assert.match(source, /\{freeExpenseDrafts \? `ติดต่อ\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}` : `แจ้ง\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ`\}/);
   // 390 px phones: the link is a 44 px tap target, not a line of underlined text.
   assert.match(source, /<Link href=\{`\/companies\/\$\{companyId\}\/billing`\} className="inline-flex min-h-11 items-center underline">/);
   assert.doesNotMatch(source, /href=\{`\/companies\/\$\{companyId\}\/settings`\}[^>]*>ขอเปลี่ยนแพ็กเกจ/);

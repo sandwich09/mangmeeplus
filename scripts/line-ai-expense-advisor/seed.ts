@@ -22,7 +22,8 @@ import { ALL_FEATURE_ENTITLEMENT_KEYS } from '../../packages/contracts/src/featu
 import { civilPeriodKey, todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION, legalAcceptanceStatements } from '../../packages/contracts/src/legal-acceptance';
 import { claimSnapshotFields, computeSnapshotHash } from '../../apps/api/src/modules/reimbursements/domain/logic/reimbursement.logic';
-import { ROLES, type EvalRole, type EvalCompany } from './types';
+import { ROLES, type Actor, type EvalRole, type EvalCompany } from './types';
+import { workflowMonthKey } from './template';
 
 export type SeedRow = { model: string; data: Record<string, unknown> };
 
@@ -31,7 +32,7 @@ export type CompanyUser = { userId: string; lineUserId: string; membershipId: st
 export type CompanySeed = {
   companyKey: EvalCompany;
   companyId: string;
-  tierKey: 'STARTER_249' | 'PRO_999' | 'ENTERPRISE_1999';
+  tierKey: 'STARTER_249' | 'PRO_999' | 'ENTERPRISE_1999' | 'FREE_TRIAL_15';
   branchIds: string[];
   messagingChannelId: string;
   users: Record<EvalRole, CompanyUser>;
@@ -399,6 +400,116 @@ export function buildCompanySeed(companyKey: EvalCompany, now = new Date()): Com
   rows.push(...buildReimbursementRows(companyId, branchIds, users, now, 6));
 
   return { companyKey, companyId, tierKey: def.tierKey, branchIds, messagingChannelId, users, rows, categoryIds };
+}
+
+export type WorkflowSeedActor = CompanyUser & { companyId: string; role: EvalRole; branchIds: string[] };
+export type WorkflowSeed = { companies: Record<EvalCompany, CompanySeed>; rows: SeedRow[]; actors: Record<string, WorkflowSeedActor>; digest: string };
+const actorScopeKey = (actor: Actor) => `${actor.company}:${actor.role}:${actor.branchScope === 'all' ? 'all' : [...actor.branchScope.branches].sort().join(',')}`;
+
+export function resolveWorkflowActor(actor: Actor, seed: WorkflowSeed): WorkflowSeedActor {
+  const resolved = seed.actors[actor.key]?.companyId === seed.companies[actor.company].companyId
+    ? seed.actors[actor.key] : seed.actors[actorScopeKey(actor)];
+  assert.ok(resolved, `WORKFLOW_ACTOR_SEED_MISSING:${actor.key}`);
+  const expectedBranches = actor.branchScope === 'all' ? seed.companies[actor.company].branchIds : actor.branchScope.branches;
+  assert.equal(resolved.role, actor.role, `WORKFLOW_ACTOR_ROLE_MISMATCH:${actor.key}`);
+  assert.deepEqual([...resolved.branchIds].sort(), [...expectedBranches].sort(), `WORKFLOW_ACTOR_BRANCH_MISMATCH:${actor.key}`);
+  return resolved;
+}
+
+/** One deterministic snapshot for workflow replay and its oracle, retaining legacy advisor seeds. */
+export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): WorkflowSeed {
+  const companies = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
+  for (const companyKey of new Set(requestedActors.filter(actor => actor.freeSourceDrafts).map(actor => actor.company))) {
+    const company = companies[companyKey];
+    company.tierKey = 'FREE_TRIAL_15';
+    const term = company.rows.find(row => row.model === 'companyPlanTerm')!;
+    // Active, expired trial; no provider accounts, grants, invoices or purchase history are seeded.
+    Object.assign(term.data, { tierKey: 'FREE_TRIAL_15', termStartAt: new Date(now.getTime() - 30 * 86400000), termEndsAt: new Date(now.getTime() - 86400000) });
+  }
+  const rows = [...SHARED_ACCESS_ROWS, ...Object.values(companies).flatMap(company => company.rows.slice(SHARED_ACCESS_ROWS.length))];
+  const actors: Record<string, WorkflowSeedActor> = {};
+  for (const company of Object.values(companies)) for (const role of ROLES) {
+    actors[actorScopeKey({ company: company.companyKey, role, key: '', branchScope: 'all' })] = { ...company.users[role], companyId: company.companyId, role, branchIds: company.branchIds };
+  }
+  const addActor = (key: string, company: CompanySeed, role: EvalRole, branches: string[], identity = key) => {
+    const built = buildUserRows(company.companyKey, company.companyId, role, branches, company.messagingChannelId, now);
+    const userId = `user-workflow-${identity}`, membershipId = `membership-workflow-${company.companyKey}-${key}`;
+    const lineUserId = `U${sha256Hex(identity).slice(0, 32)}`;
+    const mapping = new Map([[built.user.userId, userId], [built.user.membershipId, membershipId], [built.user.lineUserId, lineUserId]]);
+    for (const row of built.rows) {
+      const data = JSON.parse(JSON.stringify(row.data), (_key, value) => typeof value === 'string' ? mapping.get(value) ?? value.replaceAll(built.user.userId, `${userId}-${company.companyKey}`).replaceAll(built.user.membershipId, membershipId) : value);
+      if (row.model === 'user' && rows.some(existing => existing.model === 'user' && existing.data.id === userId)) continue;
+      rows.push({ model: row.model, data });
+    }
+    actors[key] = { userId, membershipId, lineUserId, companyId: company.companyId, role, branchIds: branches };
+    return actors[key]!;
+  };
+  addActor('limited-manager', companies.B, 'MANAGER', companies.B.branchIds.slice(0, 1));
+  addActor('dual-a', companies.A, 'OWNER', companies.A.branchIds, 'dual');
+  addActor('dual-b', companies.B, 'OWNER', companies.B.branchIds, 'dual');
+  rows.push({ model: 'role', data: { id: 'role-eval-draft-creator', scopeKey: 'system', key: 'EVAL_DRAFT_CREATOR', name: 'ผู้บันทึกร่าง', isSystem: false, status: 'ACTIVE' } });
+  for (const permission of ['expense.create', 'expense.update']) rows.push({ model: 'rolePermission', data: { roleId: 'role-eval-draft-creator', permissionId: `perm-${slug(permission)}` } });
+  const creator = addActor('draft-creator', companies.A, 'STAFF', companies.A.branchIds);
+  const creatorGrant = rows.find(row => row.model === 'membershipRole' && row.data.membershipId === creator.membershipId)!;
+  creatorGrant.data.roleId = 'role-eval-draft-creator';
+  for (const actor of requestedActors) {
+    const company = companies[actor.company];
+    if (actor.branchScope === 'all' || actors[actor.key]?.companyId === company.companyId) continue;
+    const branches = [...actor.branchScope.branches].sort();
+    assert.ok(branches.length && branches.every(branch => company.branchIds.includes(branch)), `WORKFLOW_BRANCH_SCOPE_UNKNOWN:${actor.key}`);
+    const key = actorScopeKey(actor);
+    if (!actors[key]) actors[key] = addActor(`scoped-${sha256Hex(key).slice(0, 16)}`, company, actor.role, branches);
+  }
+  for (const company of Object.values(companies)) {
+    for (const monthOffset of [-1, 0, 1]) for (const formType of ['PND3', 'PND53']) {
+      const periodKey = workflowMonthKey(now, monthOffset);
+      rows.push({ model: 'taxPeriod', data: { id: `tax-${company.companyKey}-${formType}-${periodKey}`, companyId: company.companyId,
+        taxType: 'WHT', formType, periodKey, status: 'OPEN', dueDate: monthOffset === 0 ? new Date(`${workflowMonthKey(now, 1)}-12T00:00:00.000Z`) : null } });
+    }
+    const extraClaims = buildReimbursementRows(company.companyId, company.branchIds, company.users, now, company.companyKey === 'B' ? 912 : 12);
+    const existing = new Set(rows.map(row => row.data.id));
+    rows.push(...extraClaims.filter(row => !existing.has(row.data.id)));
+    for (const row of rows.filter(row => row.data.companyId === company.companyId)) {
+      if (row.model === 'reimbursementRequest') {
+        row.data.requesterDisplayNameSnapshot = Number(String(row.data.id).split('-').at(-1)) % 2 ? 'สมชาย' : 'สมชัย';
+        if (row.data.status === 'APPROVED') row.data.paymentStatus = 'UNPAID';
+      }
+      if (row.model === 'reimbursementApprovalStep' && row.data.status === 'PENDING') row.data.assignedApproverUserIdsJson = [String(row.data.id).endsWith('-1-step1') ? company.users.AUDITOR_READONLY.userId : company.users.MANAGER.userId];
+    }
+    const template = rows.find(row => row.model === 'expenseRecord' && row.data.companyId === company.companyId)!;
+    for (let index = 0; index < (company.companyKey === 'B' ? 310 : 16); index++) {
+      const id = `workflow-expense-${company.companyKey.toLowerCase()}-${index}`;
+      const status = index < 3 ? 'DRAFT' : index < 6 ? 'NEEDS_REVIEW' : index < 9 ? 'READY_FOR_CONFIRMATION' : 'CONFIRMED';
+      const old = index >= 9, expenseDate = new Date(now.getTime() - (old ? 120 : 1) * 86400000);
+      const wht = company.companyKey === 'C' && (index === 9 || index === 10) ? '30.00' : '0.00';
+      rows.push({ model: 'expenseRecord', data: { ...template.data, id, vendorDocumentNumber: `ทดสอบ-${String(index + 1).padStart(4, '0')}`, status, expenseDate, vendorCounterpartyId: null, vendorNameSnapshot: 'ผู้รับเงินนอกคู่ค้า',
+        sourceDocumentType: index < 2 ? 'EXPENSE_NOTE_TEXT' : 'RECEIPT', taxEvidenceStatus: index === 0 ? 'SUPPORTING_ONLY' : 'NEEDS_REVIEW', currency: 'THB', missingReceiptReason: index === 0 ? 'ผู้ขายไม่มีใบเสร็จ' : null,
+        ...(index === 0 ? { paymentMethod: 'CASH', paidAt: expenseDate } : {}),
+        createdByUserId: company.companyKey === 'A' && index < 3 ? creator.userId : company.users.STAFF.userId,
+        expenseCategoryId: company.categoryIds[3], paymentStatus: 'UNPAID', paidAmount: '0.00', grandTotalAmount: '1000.00', subtotalAmount: '1000.00', taxableAmount: '1000.00',
+        netPayableAmount: wht === '0.00' ? '1000.00' : '970.00', outstandingAmount: wht === '0.00' ? '1000.00' : '970.00', whtAmount: wht,
+        ...(wht === '0.00' ? {} : { whtCategoryCode: '40_2', whtRate: '3.00', vendorEntityKindSnapshot: 'INDIVIDUAL' }) } });
+      rows.push({ model: 'expenseLine', data: { id: `${id}-line1`, companyId: company.companyId, expenseId: id, lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '1000.00', lineSubtotalAmount: '1000.00', lineTotalAmount: '1000.00', expenseCategoryId: company.categoryIds[3] } });
+    }
+    for (let index = 0; index < 2; index++) rows.push({ model: 'accountingCounterparty', data: { id: `duplicate-vendor-${company.companyKey}-${index}`, companyId: company.companyId, type: 'VENDOR', displayName: 'ผู้ขายชื่อซ้ำ', createdByUserId: company.users.OWNER.userId } });
+    for (const [index, status] of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED'].entries()) {
+      const id = `voucher-${company.companyKey.toLowerCase()}-${status.toLowerCase()}`;
+      const expenseId = `workflow-expense-${company.companyKey.toLowerCase()}-${11 + index}`;
+      const expense = rows.find(row => row.model === 'expenseRecord' && row.data.id === expenseId)!;
+      const paymentId = `${id}-payment`;
+      if (status === 'PENDING_APPROVAL' || status === 'APPROVED') expense.data.reservedByDisbursementVoucherId = id;
+      if (status === 'PAID') {
+        Object.assign(expense.data, { paymentStatus: 'PAID', paidAmount: '1000.00', outstandingAmount: '0.00', paymentMethod: 'CASH', paidAt: now });
+        rows.push({ model: 'expensePayment', data: { id: paymentId, companyId: company.companyId, expenseId, amount: '1000.00', paymentMethod: 'CASH', paidAt: now, createdByUserId: company.users.OWNER.userId } });
+      }
+      rows.push({ model: 'disbursementVoucher', data: { id, companyId: company.companyId, branchId: company.branchIds[0], status, origin: 'PREPARED', payeeName: 'ผู้รับเงินนอกคู่ค้า', payeeBasis: 'SINGLE', totalAmount: '1000.00', preparedByUserId: company.users.OWNER.userId,
+        ...(status === 'PAID' ? { paidDate: now, paidRecordedAt: now, paidByUserId: company.users.OWNER.userId, paidMethod: 'CASH' } : {}) } });
+      rows.push({ model: 'disbursementVoucherLine', data: { id: `${id}-line1`, companyId: company.companyId, voucherId: id, expenseId, position: 1, amount: '1000.00',
+        ...(status === 'PAID' ? { expensePaymentId: paymentId, coversPaymentId: paymentId } : {}) } });
+    }
+    rows.push({ model: 'companyAiConfiguration', data: { id: `ai-config-${company.companyKey}`, companyId: company.companyId, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: company.companyKey === 'C' ? 0 : 8000, ocrMonthlyBudgetSatang: company.companyKey === 'C' ? 0 : 8000 } });
+  }
+  return { companies, rows, actors, digest: sha256Hex(JSON.stringify(rows)) };
 }
 
 /** Fast path for preflight: group consecutive-by-model rows into `createMany` calls. Real-mode

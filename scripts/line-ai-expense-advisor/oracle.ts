@@ -18,12 +18,154 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolvePeriodToken } from './period';
-import type { AnswerShape, GoldCall, GoldInputValue, GroupByDimension, RequiredFactCategory } from './types';
+import type { AnswerShape, DueDateGold, KnowledgeGold, GoldCall, GoldInputValue, GoldRecord, GroupByDimension, RequiredFactCategory, WorkflowPreview, WorkflowTask } from './types';
+import { todayCivilDate } from '../../packages/contracts/src/civil-date';
+import { CATEGORIES } from './seed';
 import type { ExpectedFact } from './scorer';
+import type { SeedRow } from './seed';
+import { renderUserText, workflowMonthKey } from './template';
+import { pnd53PaperDueDay } from '../../apps/api/src/modules/tax/domain/logic/tax-period.logic';
+import { activeProductHelpPack } from '../../apps/ai-gateway/src/modules/line-ai/agents/approved-product-help';
+
+export function resolveWorkflowDueDate(gold: DueDateGold, rows: SeedRow[], companyId: string, now: Date): string {
+  const periodKey = workflowMonthKey(now, gold.monthOffset);
+  const period = rows.find(row => row.model === 'taxPeriod' && row.data.companyId === companyId && row.data.formType === gold.formType && row.data.periodKey === periodKey);
+  if (!period) throw new Error(`WORKFLOW_TAX_PERIOD_MISSING:${companyId}:${gold.formType}:${periodKey}`);
+  return pnd53PaperDueDay(periodKey, period.data.dueDate ? new Date(String(period.data.dueDate)) : null);
+}
+
+/** Gold is pinned to the reviewed card, never to a model's own response. */
+export function resolveKnowledgeGold(gold: KnowledgeGold) {
+  const card = activeProductHelpPack().cards.find(card => card.id === gold.cardId && card.version === gold.version);
+  if (!card) throw new Error(`WORKFLOW_KNOWLEDGE_CARD_MISSING:${gold.cardId}:${gold.version}`);
+  const source = `${card.title}\n${card.body}`;
+  for (const fact of gold.requiredFacts) if (!source.includes(fact)) throw new Error(`WORKFLOW_FACT_OUTSIDE_CARD:${gold.cardId}:${fact}`);
+  for (const fact of gold.allowedNumericFacts) if (!knowledgeNumericFacts(source).includes(fact)) throw new Error(`WORKFLOW_NUMBER_OUTSIDE_CARD:${gold.cardId}:${fact}`);
+  for (const fact of gold.forbiddenFacts) if (source.includes(fact)) throw new Error(`WORKFLOW_FORBIDDEN_FACT_IN_CARD:${gold.cardId}:${fact}`);
+  return card;
+}
+
+export const knowledgeNumericFacts = (text: string): string[] => [...text.replace(/[๐-๙]/g, digit => String('๐๑๒๓๔๕๖๗๘๙'.indexOf(digit))).replace(/,/g, '').matchAll(/\d+(?:\.\d+)?/g)].map(match => String(Number(match[0])));
 
 export type ShownItem = { index: number; id: string; date: string | null; label: string };
 
 export type ActorContext = { userId: string; companyId: string };
+
+export const GOLD_TABLES: GoldRecord['table'][] = ['ReimbursementRequest', 'ReimbursementLine', 'ReimbursementPayment', 'ExpenseRecord', 'ExpensePayment',
+  'DisbursementVoucher', 'DisbursementVoucherLine', 'WhtCertificate', 'ExpenseSubstituteReceiptEvidence', 'ReimbursementApprovalStep', 'WhtCertificateHandoff', 'WhtCertificateHistory'];
+type BusinessRows = Record<string, Array<Record<string, unknown>>>;
+type GoldTurn = { turnIndex: number; businessSnapshot: { business: BusinessRows; collectionState: BusinessRows };
+  unintendedEffects: Array<{ kind: string; recordId: string }>; preview?: Record<string, unknown>; deliveredActions?: Array<{ type: string; preview?: Record<string, unknown> }> };
+
+function goldValue(row: Record<string, any>, key: string): unknown {
+  const snapshot = row.snapshotJson ?? row.prefillSnapshotJson ?? {};
+  const aliases: Record<string, unknown> = {
+    status: row.status ?? row.eventType,
+    amount: row.amount ?? row.grandTotalAmount ?? row.totalAmount ?? row.grossAmount ?? snapshot.expense?.grandTotalAmount ?? snapshot.grossAmount,
+    paidAmount: row.paidAmount ?? row.amount ?? row.totalAmount,
+    date: row.date ?? row.incurredDate ?? row.expenseDate ?? row.paymentDate ?? row.paidAt ?? snapshot.expense?.expenseDate ?? snapshot.paymentDate,
+    paidDate: row.paidDate ?? row.paidAt ?? row.paymentDate,
+    paymentMethod: row.paymentMethod ?? row.paidMethod,
+    decisionBy: row.decisionBy ?? row.decisionByUserId ?? row.approvedByUserId ?? row.actorUserId ?? row.issuedByUserId ?? row.linkedByUserId,
+    payeeName: row.payeeName ?? row.vendorNameSnapshot ?? row.requesterDisplayNameSnapshot ?? row.payeeSnapshotJson?.name ?? row.payeeSnapshotJson?.displayName ?? snapshot.payee?.name ?? snapshot.payeeName,
+    reason: row.reason ?? row.rejectionReason ?? row.cancelReason ?? row.voidReason ?? row.missingReceiptReason,
+    categoryName: row.categoryName ?? row.categoryLabelSnapshot ?? row.expenseCategory?.name,
+    description: row.description ?? snapshot.expense?.lines?.[0]?.description,
+    whtAmount: row.whtAmount ?? row.withheldAmount ?? snapshot.whtAmount,
+  };
+  const value = Object.hasOwn(aliases, key) ? aliases[key] : row[key];
+  if ((key === 'date' || key === 'paidDate') && value != null) return todayCivilDate('Asia/Bangkok', new Date(String(value)));
+  if (['amount', 'paidAmount', 'whtAmount'].includes(key) && value != null) return String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return value;
+}
+
+function recordMatches(record: GoldRecord, row: Record<string, unknown>, snapshot: BusinessRows = {}): boolean {
+  if (record.table === 'ExpenseRecord') {
+    const line = (snapshot.ExpenseLine ?? []).filter(candidate => candidate.expenseId === row.id).sort((a, b) => Number(a.lineNumber) - Number(b.lineNumber))[0];
+    const category = (snapshot.ExpenseCategory ?? []).find(candidate => candidate.id === row.expenseCategoryId);
+    const seededCategory = CATEGORIES.find(candidate => row.expenseCategoryId === `category-${String(row.companyId).replace('company-', '')}-${candidate.key}`);
+    row = { ...row, description: row.description ?? line?.description, categoryName: row.categoryName ?? category?.name ?? seededCategory?.name };
+  }
+  return Object.entries(record).every(([key, expected]) => ['table', 'ref', 'phase'].includes(key)
+    || goldValue(row, key) === goldValue({ [key]: expected }, key));
+}
+
+function linkedToGoldParent(table: string, row: Record<string, unknown>, parents: Array<{ table: string; row: Record<string, unknown> }>, snapshot: BusinessRows, explicit = false): boolean {
+  const has = (parentTable: string, id: unknown) => id != null && parents.some(parent => parent.table === parentTable && parent.row.id === id && (!row.companyId || !parent.row.companyId || row.companyId === parent.row.companyId));
+  if (explicit && (table === 'ReimbursementLine' || table === 'ReimbursementPayment')) return has('ReimbursementRequest', row.reimbursementRequestId);
+  if (explicit && (table === 'ExpensePayment' || table === 'ExpenseSubstituteReceiptEvidence')) return has('ExpenseRecord', row.expenseId);
+  if (table === 'ReimbursementApprovalStep') return has('ReimbursementRequest', row.reimbursementRequestId);
+  if (table === 'DisbursementVoucherLine') return has('DisbursementVoucher', row.voucherId) || has('ExpenseRecord', row.expenseId);
+  if (table === 'WhtCertificateHistory') return has('ExpenseRecord', row.expenseId) || has('WhtCertificateHandoff', row.handoffId);
+  if (table === 'WhtCertificateHandoff') return has('ExpensePayment', row.sourcePaymentId)
+    || (snapshot.WhtCertificateHistory ?? []).some(history => history.handoffId === row.id && (!row.companyId || !history.companyId || history.companyId === row.companyId) && has('ExpenseRecord', history.expenseId));
+  return false;
+}
+
+/** Resolve explicit seed/created records and one-based child ordinals without accepting orphan rows. */
+export function resolveGoldRecord(record: GoldRecord, snapshot: BusinessRows, records: GoldRecord[], bindings: Record<string, string> = {}): Record<string, unknown> | undefined {
+  const rows = snapshot[record.table] ?? [];
+  if (record.ref.startsWith('$child:')) {
+    const split = record.ref.lastIndexOf(':'), parentRef = record.ref.slice(7, split), ordinal = Number(record.ref.slice(split + 1));
+    const parentRecord = records.find(parent => parent.ref === parentRef);
+    const parent = parentRecord && resolveGoldRecord(parentRecord, snapshot, records.filter(candidate => candidate !== record), bindings);
+    if (!parent || !Number.isInteger(ordinal) || ordinal < 1) return undefined;
+    return rows.filter(row => linkedToGoldParent(record.table, row, [{ table: parentRecord!.table, row: parent }], snapshot, true))
+      .sort((a, b) => Number(a.sequenceNo ?? a.lineNo ?? a.position ?? 0) - Number(b.sequenceNo ?? b.lineNo ?? b.position ?? 0) || String(a.id).localeCompare(String(b.id)))[ordinal - 1];
+  }
+  const id = bindings[`${record.table}:${record.ref}`] ?? bindings[record.ref] ?? (record.ref.startsWith('$seed:') ? record.ref.slice(6) : undefined);
+  if (id) return rows.find(row => row.id === id);
+  const candidates = rows.filter(row => row.recordRef === record.ref || row.taskId === record.ref.slice(9));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/** The same M-R6 checks serve live scoring and offline snapshot rescore. */
+export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], goldPreview?: WorkflowPreview | Record<string, unknown>, now = new Date()) {
+  const renderDates = <T extends Record<string, unknown>>(record: T): T => Object.fromEntries(Object.entries(record).map(([key, value]) =>
+    [key, ['date', 'paidDate'].includes(key) && typeof value === 'string' ? renderUserText(value, now) : value])) as T;
+  task = { ...task, goldTerminal: { ...task.goldTerminal, records: task.goldTerminal.records.map(record => renderDates(record)) } };
+  if (goldPreview) goldPreview = renderDates(goldPreview);
+  const window = evidence.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn);
+  const snapshot = window.at(-1)?.businessSnapshot.business ?? {}, records = task.goldTerminal.records;
+  const bindings: Record<string, string> = {};
+  for (const record of records.filter(candidate => candidate.ref.startsWith('$created:'))) {
+    const createdIds = new Set(window.flatMap(turn => turn.unintendedEffects.filter(effect => effect.kind === `${record.table}.create`).map(effect => effect.recordId)));
+    const candidates = (snapshot[record.table] ?? []).filter(row => createdIds.has(String(row.id)) && recordMatches(record, row, snapshot));
+    if (candidates.length === 1) bindings[`${record.table}:${record.ref}`] = String(candidates[0]!.id);
+  }
+  const parents = records.flatMap(record => {
+    const row = resolveGoldRecord(record, snapshot, records, bindings) ?? [...window].reverse().map(turn => resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)).find(Boolean);
+    return row ? [{ table: record.table, row }] : [];
+  });
+  const terminalMatches = records.every(record => {
+    const row = resolveGoldRecord(record, snapshot, records, bindings);
+    return task.goldTerminal.effect === 'EXPENSE_DELETED' && record.table === 'ExpenseRecord' ? !row : !!row && recordMatches(record, row, snapshot);
+  });
+  let wrongApplied = 0;
+  for (const turn of window) for (const effect of turn.unintendedEffects) {
+    const table = effect.kind.split('.')[0]!;
+    const row = (turn.businessSnapshot.business[table] ?? []).find(candidate => candidate.id === effect.recordId)
+      ?? parents.find(parent => parent.table === table && parent.row.id === effect.recordId)?.row
+      ?? window.filter(prior => prior.turnIndex < turn.turnIndex).reverse().flatMap(prior => prior.businessSnapshot.business[table] ?? []).find(candidate => candidate.id === effect.recordId);
+    const explicit = records.find(record => record.table === table && resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)?.id === effect.recordId)
+      ?? records.find(record => record.table === table && record.ref === `$seed:${effect.recordId}`);
+    if (explicit?.phase === 'collect' && turn.turnIndex < (task.confirmTurn ?? Infinity)) continue;
+    const allowed = turn.turnIndex === task.confirmTurn && (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'
+      || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business));
+    if (!allowed) wrongApplied++;
+  }
+  const previewTurn = window.find(turn => turn.turnIndex === (task.confirmTurn ?? -1) - 1);
+  const actualPreview = previewTurn?.preview ?? previewTurn?.deliveredActions?.find(action => action.type === 'preview')?.preview;
+  let wrongPreview = goldPreview ? Number(!actualPreview || Object.entries(goldPreview).some(([key, value]) => {
+    if (key === 'target' && typeof value === 'string') {
+      const target = value.startsWith('$seed:') ? value.slice(6) : Object.entries(bindings).find(([ref]) => ref.endsWith(`:${value}`))?.[1];
+      return actualPreview[key] !== value && actualPreview[key] !== target;
+    }
+    return goldValue(actualPreview, key) !== goldValue({ [key]: value }, key);
+  })) : Number(!!actualPreview);
+  wrongPreview += window.filter(turn => turn !== previewTurn && (turn.preview || turn.deliveredActions?.some(action => action.type === 'preview'))).length;
+  return { wrongApplied, wrongPreview, terminalMatches, businessChanges: window.reduce((sum, turn) => sum + turn.unintendedEffects.length, 0) };
+}
 
 export const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {
   'expense.list_recent': { file: 'modules/line-ai/application/use-cases/erp-tools.use-case.js', exportName: 'ExpenseListRecentTool' },

@@ -128,7 +128,7 @@ test('quota refusal keeps the camera photo and stored draft reachable', async ()
     assert.match(html, /receipt.jpg/); assert.match(html, /expenses\/e1/); assert.equal(view.find('button', p => Boolean(p['data-loading-indicator'])).disabled, false);
   } finally { quota.mock.restore(); stubs.cleanup(); }
 });
-test('free limit refusal: ดูแพ็กเกจ for the package holder, ติดต่อเจ้าของร้าน for others, no resend and no leave guard', async () => {
+test('free limit refusal: ดูแพ็กเกจ for the package holder, ติดต่อเจ้าของกิจการ for others, no resend and no leave guard', async () => {
   for (const canManagePlan of [true, false]) {
     const stubs = uploadStubs();
     const handlers = new Map<string, (event: any) => void>();
@@ -147,7 +147,7 @@ test('free limit refusal: ดูแพ็กเกจ for the package holder, �
       assert.equal(html.split('ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้').length - 1, 1);
       assert.equal(html.includes('href="/companies/co/billing"'), canManagePlan);
       assert.equal(/>ดูแพ็กเกจ</.test(html), canManagePlan);
-      assert.equal(html.includes('ติดต่อเจ้าของร้าน'), !canManagePlan);
+      assert.equal(html.includes('ติดต่อเจ้าของกิจการ'), !canManagePlan);
       assert.doesNotMatch(html, /ส่งไฟล์นี้อีกครั้ง|เปลี่ยนแพ็กเกจ/);
       assert.equal(handlers.has('beforeunload'), false, 'a refused file no longer holds the person on this page');
     } finally { view.cleanup(); init.mock.restore(); stubs.cleanup(); }

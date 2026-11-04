@@ -40,6 +40,7 @@ import { lineMessagingCredentialsFixture } from '../../../../common/config/line-
 import { ProcessLineWebhookUseCase, chatKeyHashOf } from './process-line-webhook.use-case';
 import { LineAiLedgerService, ledgerKey } from '../line-ai-ledger.service';
 import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
+import { LineAiBudgetAuthorityService } from '../line-ai-budget-authority.service';
 import { InternalAiBudgetController } from '../../presentation/http/internal-ai-budget.controller';
 import { FakeRedis } from '../line-ai-ledger-redis.fixture';
 import { splitPrisma, SPLIT_FIXTURE_MODEL_ID } from '../company-ai-budget-prisma.fixture';
@@ -352,7 +353,8 @@ function makeHarness(opts: {
     return { ok: true, status: 200, json: async () => result } as Response;
   }) as typeof fetch;
 
-  const gateway = new AiGatewayClient(config, { issue: () => 'signed' } as any, undefined, money.prisma);
+  const gateway = new AiGatewayClient(config, { issue: () => 'signed' } as any, undefined, money.prisma,
+    new LineAiBudgetAuthorityService(money.prisma, config));
   const redis = new FakeRedis();
   const ledger = new LineAiLedgerService(config, { log: async () => undefined } as any, tenant.prisma);
   ledger.attachClient(redis);

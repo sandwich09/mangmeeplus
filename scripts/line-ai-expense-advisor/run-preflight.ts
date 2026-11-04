@@ -17,9 +17,10 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCorpus, validateWorkflowCorpus, flattenTurns, type Corpus, type WorkflowCorpus } from './types';
-import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
-import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
+import { buildCompanySeed, buildWorkflowSeed, resolveWorkflowActor, type WorkflowSeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
+import { bootOracle, resolveGoldCallInput, resolveKnowledgeGold, resolveWorkflowDueDate, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
 import { renderUserText } from './template';
+import { collectGoldResults } from './gold-oracle-pass';
 import { captureSpend, installEvalGuard } from './eval-spend';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -28,25 +29,32 @@ const DB_NAME = 'watchdog_ai_reliability_replay_expense_advisor';
 const CORPUS_PATH = process.env['MANGMEE_EVAL_CORPUS'] ?? resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/corpus.sample.json');
 const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16389/13';
 
-export function resolveWorkflowSeedRef(ref: string, seeds: Record<'A' | 'B' | 'C', CompanySeed>): Record<string, unknown> {
+export function resolveWorkflowSeedRef(ref: string, seeds: Record<'A' | 'B' | 'C', CompanySeed> | WorkflowSeed): Record<string, unknown> {
   assert.ok(ref.startsWith('$seed:'), 'WORKFLOW_SEED_REFERENCE_REQUIRED');
   const key = ref.slice('$seed:'.length);
-  const row = Object.values(seeds).flatMap(company => company.rows).find(candidate => candidate.data.id === key);
+  const rows = 'rows' in seeds ? seeds.rows : Object.values(seeds).flatMap(company => company.rows);
+  const row = rows.find(candidate => candidate.data.id === key)
+    ?? rows.filter(candidate => candidate.model === 'reimbursementRequest').map(candidate => ({ model: 'reimbursementLine', data: { ...candidate.data, id: `rbl_${candidate.data.id}` } })).find(candidate => candidate.data.id === key);
   assert.ok(row, `WORKFLOW_SEED_REFERENCE_UNKNOWN:${key}`);
   return row.data;
 }
 
-export function validateWorkflowPreflight(corpus: WorkflowCorpus, seeds: Record<'A' | 'B' | 'C', CompanySeed>) {
-  const seedKeys = new Set(Object.values(seeds).flatMap(company => company.rows.map(row => String(row.data.id ?? ''))));
+export function validateWorkflowPreflight(corpus: WorkflowCorpus, seeds: Record<'A' | 'B' | 'C', CompanySeed> | WorkflowSeed, now = new Date()) {
+  const rows = 'rows' in seeds ? seeds.rows : Object.values(seeds).flatMap(company => company.rows);
+  const seedKeys = new Set(rows.map(row => String(row.data.id ?? '')));
+  for (const row of rows) if (row.model === 'reimbursementRequest') seedKeys.add(`rbl_${row.data.id}`);
   validateWorkflowCorpus(corpus, seedKeys);
   let presses = 0, seedReferences = 0, actorAssignments = 0;
   for (const conversation of corpus.conversations) for (const turn of conversation.turns) {
     const actor = turn.as ? conversation.actors.find(row => row.key === turn.as!.key) : conversation.actors[0];
     assert.ok(actor, `WORKFLOW_ACTOR_MISSING:${conversation.id}`);
-    const company = seeds[actor.company];
+    const company = ('companies' in seeds ? seeds.companies : seeds)[actor.company];
+    if ('actors' in seeds) resolveWorkflowActor(actor, seeds);
     assert.ok(company.users[actor.role], `WORKFLOW_ACTOR_SEED_MISSING:${conversation.id}:${actor.key}`);
     if (actor.branchScope !== 'all') assert.ok(actor.branchScope.branches.every(branch => company.branchIds.includes(branch)), `WORKFLOW_BRANCH_SCOPE_UNKNOWN:${actor.key}`);
     actorAssignments++;
+    if (turn.expect.knowledge) resolveKnowledgeGold(turn.expect.knowledge);
+    if (turn.expect.dueDate) resolveWorkflowDueDate(turn.expect.dueDate, rows, company.companyId, now);
     if (turn.press) presses++;
     for (const task of conversation.tasks) for (const record of task.goldTerminal.records) if (record.ref.startsWith('$seed:')) {
       resolveWorkflowSeedRef(record.ref, seeds); seedReferences++;
@@ -92,9 +100,9 @@ async function main(): Promise<void> {
   const now = new Date();
   const seeds: Record<'A' | 'B' | 'C', CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
   if ((rawCorpus as { version?: unknown }).version === 2) {
-    const coverage = validateWorkflowPreflight(rawCorpus as WorkflowCorpus, seeds);
+    const workflowCorpus = rawCorpus as WorkflowCorpus;
+    const coverage = validateWorkflowPreflight(workflowCorpus, buildWorkflowSeed(now, workflowCorpus.conversations.flatMap(conversation => conversation.actors)), now);
     if (process.argv.includes('--validate-only')) { console.log(JSON.stringify({ event: 'workflow_preflight_valid', ...coverage })); return; }
-    throw new Error('WORKFLOW_V2_ORACLE_PASS_NOT_IN_M1B: refusing to truncate before the M1c spend capture and M2 workflow oracle pass are available');
   } else {
     validateCorpus(rawCorpus);
     if (process.argv.includes('--validate-only')) { console.log(JSON.stringify({ event: 'legacy_preflight_valid' })); return; }
@@ -125,6 +133,13 @@ async function main(): Promise<void> {
     execFileSync('pnpm', ['--filter', '@watchdog-bms/api...', 'build'], { cwd: REPO_ROOT, stdio: 'inherit' });
   }
   assert.ok(existsSync(compiledEntry), `compiled API entry missing after build: ${compiledEntry}`);
+
+  if ((rawCorpus as { version?: unknown }).version === 2) {
+    const pass = await collectGoldResults(REPO_ROOT, rawCorpus as WorkflowCorpus, seeds, databaseUrl, REDIS_URL, SECRETS_PATH, now,
+      () => withPgClient(databaseUrl, requireApi, client => captureSpend(client, databaseUrl, spendPath, 'preflight-oracle')).then(() => undefined));
+    console.log(JSON.stringify({ event: 'workflow_oracle_pass', ...pass.workflowValidation }));
+    return;
+  }
 
   console.log(JSON.stringify({ event: 'truncate_start' }));
   await withPgClient(databaseUrl, requireApi, truncateAllTables);
@@ -221,7 +236,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ event: 'preflight_failed', message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }));
-  process.exitCode = 1;
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error(JSON.stringify({ event: 'preflight_failed', message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined }));
+    process.exitCode = 1;
+  });
+}

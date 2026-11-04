@@ -161,8 +161,8 @@ describe('extractValueCandidates – dates (golden set)', () => {
     assert.ok(!dates[0].assumptions.includes(VALUE_ASSUMPTIONS.orderAssumedDayMonth));
   });
 
-  it('second part > 12 means the first part is the month', () => {
-    const { dates } = extractValueCandidates('3/25/2025', TODAY);
+  it('legacy dash dates still accept month/day order', () => {
+    const { dates } = extractValueCandidates('3-25-2025', TODAY);
     assert.equal(dates.length, 1);
     assert.equal(dates[0].isoDate, '2025-03-25');
   });
@@ -1153,7 +1153,7 @@ describe('P2: day ranges are one period (owner 2026-10-05)', () => {
     for (const text of ['15 ส.ค. 2569 ถึง 10 ก.ย. 2568', '31 ก.ย. ถึง 5 ต.ค.', '29 ก.พ. 2569 ถึง 5 มี.ค. 2569']) {
       const values = extractValueCandidates(text, P1_TODAY);
       assert.ok(!values.periods?.some(period => period.kind === 'range'), text);
-      assert.ok(values.periods?.every(period => period.kind === 'month'), text);
+      assert.deepEqual(values.periods ?? [], [], `${text}: no fallback to an unrelated whole month`);
       assert.deepEqual(parseLineAiValueCandidates(values, text), values, text);
     }
   });
@@ -1175,7 +1175,11 @@ describe('P2: day ranges are one period (owner 2026-10-05)', () => {
     for (const text of ['ตั้งแต่ 31 ก.ย. ถึงวันนี้', '29 ก.พ. 2569 ถึงตอนนี้']) {
       assert.ok(!extractValueCandidates(text, P1_TODAY).periods?.some(p => p.kind === 'range'), text);
     }
-    for (const text of ['15 ก.ย.', 'วันที่ 15 ก.ย.']) assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods?.map(p => p.monthKey), ['2026-09']);
+    for (const text of ['15 ก.ย.', 'วันที่ 15 ก.ย.']) {
+      const values = extractValueCandidates(text, P1_TODAY);
+      assert.deepEqual(values.dates.map(date => date.isoDate), ['2026-09-15']);
+      assert.deepEqual(values.periods ?? [], []);
+    }
   });
 
   it('P2-4: "ตั้งแต่" a date or a month with no end named means up to today', () => {
@@ -1229,7 +1233,8 @@ describe('P2: day ranges are one period (owner 2026-10-05)', () => {
     assert.deepEqual(extractValueCandidates('เทียบ 1-15 ส.ค. กับ 1-15 ก.ย.', P1_TODAY).periods?.map(p => [p.kind, p.fromDate, p.toDate]),
       [['range', '2026-08-01', '2026-08-15'], ['range', '2026-09-01', '2026-09-15']]);
     for (const text of ['เทียบ 1 ส.ค. กับ 31 ต.ค.', '1 ส.ค. และ 31 ต.ค.']) {
-      assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods?.map(p => p.kind), ['month', 'month'], text);
+      assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods ?? [], [], `${text}: stated days must not turn into months`);
+      assert.equal(extractValueCandidates(text, P1_TODAY).dates.length, 2, text);
     }
     checkPeriodRows([p1Row('1-15 ก.ย.', '2026-09-01', '2026-09-15'), p1Row('1 ถึง 15 กันยายน', '2026-09-01', '2026-09-15')]);
   });
@@ -1269,4 +1274,39 @@ it('PWS-PND53-DUE calendar queries can retain an explicitly future named month w
   const text = 'ภงด.53 เดือนมกราคม 2570 ต้องยื่นเมื่อไหร่';
   assert.equal(normalizer.resolvePeriodCandidates(text, '2026-11-04').length, 0);
   assert.equal(normalizer.resolvePeriodCandidates(text, '2026-11-04', [], undefined, { allowFuture: true })[0]?.monthKey, '2027-01');
+});
+
+describe('A3c yearless Thai-order dates use the latest Bangkok occurrence', () => {
+  for (const [span, isoDate] of [
+    ['3/11', '2026-11-03'], ['28/12', '2025-12-28'], ['๓/๑๑', '2026-11-03'],
+    ['3 พ.ย.', '2026-11-03'], ['3 พย', '2026-11-03'], ['3 พฤศจิกายน', '2026-11-03'],
+    ['28 ธันวาคม', '2025-12-28'], ['29/2', '2024-02-29'], ['4/11', '2026-11-04'],
+    ['3/11/2569', '2026-11-03'], ['25/3/69', '2026-03-25'], ['3 พ.ย', '2026-11-03'], ['3 พย.', '2026-11-03'], ['28/12/2027', '2027-12-28'], ['3 พ.ย. 69', '2026-11-03'],
+    ['3 พฤศจิกายน 2569', '2026-11-03'],
+  ]) it(`reads ${span} as one date and keeps the adjacent amount`, () => {
+    const result = extractValueCandidates(`ค่าแท็กซี่ 250 บาท ${span}`, '2026-11-04');
+    assert.deepEqual(result.dates.map(date => [date.span, date.isoDate]), [[span, isoDate]]);
+    assert.deepEqual(result.amounts.map(amount => amount.value), ['250']);
+    assert.deepEqual(result.periods ?? [], []);
+  });
+  it('supports all full and abbreviated Thai month names without swallowing a month read', () => {
+    const full = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+    for (const [index, month] of full.entries()) for (const name of [month, normalizer.THAI_MONTH_ABBREVIATIONS[index]!, normalizer.THAI_MONTH_ABBREVIATIONS[index]!.replaceAll('.', '')]) {
+      const result = extractValueCandidates(`3 ${name}`, '2026-11-04');
+      assert.deepEqual(result.dates.map(date => date.isoDate), [`${index === 11 ? 2025 : 2026}-${String(index + 1).padStart(2, '0')}-03`], name);
+      assert.deepEqual(result.amounts, [], name);
+      assert.deepEqual(result.periods ?? [], [], name);
+    }
+    const month = extractValueCandidates('สรุป พ.ย.', '2026-11-04');
+    assert.deepEqual(month.dates, []);
+    assert.deepEqual(month.periods?.map(period => period.monthKey), ['2026-11']);
+  });
+  it('rejects impossible day/month tokens without silently re-reading their digits or month', () => {
+    for (const token of ['31/2', '0/5', '3/13', '3/13/2026', '3/25/2025', '31/2/2569', '31 ก.พ.', '0 พฤษภาคม']) {
+      const result = extractValueCandidates(`ค่าแท็กซี่ 250 บาท ${token}`, '2026-11-04');
+      assert.deepEqual(result.dates, [], token);
+      assert.deepEqual(result.periods ?? [], [], token);
+      assert.deepEqual(result.amounts.map(amount => amount.value), ['250'], token);
+    }
+  });
 });

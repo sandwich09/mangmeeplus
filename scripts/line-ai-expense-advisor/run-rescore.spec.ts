@@ -74,3 +74,20 @@ describe('legacy advisor evidence (M1c)', () => {
     assert.deepEqual(scores, [{ conversationId: 'legacy-1', turnIndex: 0, category: 'general', passed: true, reasons: [] }]);
   });
 });
+
+describe('M3 delivered knowledge evidence', () => {
+  it('uses accepted audited ids/versions and Flex body text, never an offered card alone', async () => {
+    const { deliveredKnowledgeCards } = await import('./gold-oracle-pass');
+    const row = { ...fakeEvidence('q5', 0), receipts: [{ messages: [{ type: 'flex', contents: { type: 'text', text: 'ใบเบิกคืออะไร\nสำรองจ่ายให้ร้าน' } }], at: 20, receiptId: 'reply' }],
+      gatewayResponses: [{ response: { sourceRefs: [{ entityType: 'approved_product_help', entityId: 'mangmee-product-help:7:reimbursement.meaning:6', label: 'ใบเบิกคืออะไร', permissionChecked: true }] } }] } as any;
+    assert.deepEqual(deliveredKnowledgeCards(row), [{ id: 'reimbursement.meaning', version: 6 }]);
+    assert.deepEqual(deliveredKnowledgeCards({ ...row, receipts: [] }), []);
+    assert.deepEqual(deliveredKnowledgeCards({ ...row, receipts: [{ messages: [{ type: 'text', text: 'ยังเปิดใบเบิกคืออะไรไม่ได้ ให้เจ้าของกิจการตรวจสิทธิ์' }] }] }), []);
+    assert.deepEqual(deliveredKnowledgeCards({ ...row, delivery: { status: 'INCOMPLETE' } }), []);
+    assert.deepEqual(deliveredKnowledgeCards({ ...row, gatewayResponses: [{ response: { selectedKnowledgeCardIds: ['reimbursement.meaning'] } }] }), []);
+    const corpus = { conversations: [{ id: 'q5', actors: [{ key: 'owner' }], turns: [{ expect: { knowledge: { cardId: 'reimbursement.meaning', version: 6 } } }] }] } as any;
+    const attempts = workflowAttemptsFromEvidence(corpus, [{ ...row, attemptId: 'one' }]);
+    assert.deepEqual(attempts[0].turns[0].deliveredCards, [{ id: 'reimbursement.meaning', version: 6 }]);
+    assert.match(attempts[0].turns[0].deliveredText!, /สำรองจ่ายให้ร้าน/);
+  });
+});

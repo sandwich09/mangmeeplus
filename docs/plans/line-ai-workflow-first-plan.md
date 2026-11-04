@@ -213,6 +213,8 @@ No implementation here. P07 owns B6, all current v2 callers, settlement/repair/c
 - การลบตามอายุ: `RecoverOrphanLineEventsUseCase.purgeExpiredEvents` (`recover-orphan-line-events.use-case.ts:387–407`) ลบ task ที่เกิน cutoff เดิมก่อน webhook log; MC6 closed by trace
 - ตรวจ: `pnpm --filter @watchdog-bms/api prisma:validate`; migrate บน Postgres ในเครื่อง; `process-line-webhook.use-case.spec.ts`
 
+- Controller ruling 2026-11-05: a notification's `wf_open` button is the same signed payload as a picker button, so its task run records `entry = 'BUTTON'`. `NOTIFICATION` stays reserved until a signed origin key is worth adding; nothing reads the split today.
+
 ### A10 — moved to expense-trust-and-money-fixes, step 1 / P04 (R5) and step 3 / P10 (R9)
 No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B8 category staging/CAS and FORM behavior. A10 is satisfied only after both steps pass their AC5/AC9; A4b integrates their existing signed action instead of duplicating the fix.
 

@@ -71,6 +71,7 @@ function makeHarness(rows: Row[], opts: {
   const cancelledJobs: any[] = [];
   const prisma = {
     client: {
+      lineAiTaskRun: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineReadEvidence: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineLedgerDelivery: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     // The pre-capture LINE intake diagnostic ages out in this same sweep (capture appendix §2.2),
@@ -694,4 +695,21 @@ it('Round 4 recovers only strictly shaped package purchase controls', () => {
   assert.deepEqual((parseBufferEnvelope(envelope)?.item as any)?.packagePurchaseControl, control);
   for (const bad of [{ ...control, token: 'bad' }, { ...control, action: 'charge' }, { ...control, companyId: 'other' }, undefined])
     assert.equal(parseBufferEnvelope({ ...envelope, item: { ...envelope.item, packagePurchaseControl: bad } }), null);
+});
+
+
+it('R24 task retention uses the webhook cutoff and deletes tasks before event logs', async () => {
+  const h = makeHarness([]), order: string[] = [];
+  const client = (h.useCase as any).prisma.client;
+  let taskCutoff: Date | undefined, eventCutoff: Date | undefined;
+  client.lineAiTaskRun = { findMany: async ({ where }: any) => { taskCutoff = where.startedAt.lt; return [{ id: 'old-task' }]; },
+    deleteMany: async () => { order.push('task'); return { count: 1 }; } };
+  client.lineWebhookEventLog.findMany = async ({ where }: any) => {
+    if (where.createdAt?.lt) { eventCutoff = where.createdAt.lt; return [{ id: 'old-event' }]; }
+    return [];
+  };
+  client.lineWebhookEventLog.deleteMany = async () => { order.push('event'); return { count: 1 }; };
+  await (h.useCase as any).purgeExpiredEvents(Date.now());
+  assert.deepEqual(order, ['task', 'event']);
+  assert.equal(taskCutoff?.getTime(), eventCutoff?.getTime());
 });

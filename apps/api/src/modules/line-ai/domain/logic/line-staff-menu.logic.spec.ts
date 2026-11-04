@@ -703,7 +703,7 @@ describe('LINE staff menu', () => {
 
     it('hides every action whose owning feature the company has switched off', () => {
       const expensesOnly = withFeatures('expenses', 'expenses.upload');
-      assert.deepEqual(labels(buildStaffMainMenu(expensesOnly)), ['ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล', '📷 ถ่ายใบเสร็จ']);
+      assert.deepEqual(labels(buildStaffMainMenu(expensesOnly)), ['อนุมัติใบเบิก', 'ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล', '📷 ถ่ายใบเสร็จ']);
       assert.deepEqual(labels(buildStaffQueryMenu(expensesOnly)), ['ค่าใช้จ่ายเดือนนี้', '« เมนูหลัก']);
       // Same permissions, sales switched on: the reported button comes back.
       assert.ok(labels(buildStaffMainMenu(withFeatures('sales_documents')))?.includes('ยอดขายวันนี้'));
@@ -711,7 +711,7 @@ describe('LINE staff menu', () => {
 
     it('keeps every allowed action for a legacy company with no entitlement rows', () => {
       const legacy = { ...context, permissions: ALL_PERMISSIONS, entitledFeatureKeys: null };
-      assert.deepEqual(labels(buildStaffMainMenu(legacy)), ['ยอดขายวันนี้', 'คิว/นัดวันนี้', 'แชทค้างตอบ', 'ค่าใช้จ่ายเดือนนี้', 'รายงานการเงิน', 'ใบสั่งซื้อ (PO)', '📊 ถามข้อมูล', '✅ รายการรออนุมัติ', '📷 ถ่ายใบเสร็จ']);
+      assert.deepEqual(labels(buildStaffMainMenu(legacy)), ['อนุมัติใบเบิก', 'ยอดขายวันนี้', 'คิว/นัดวันนี้', 'แชทค้างตอบ', 'ค่าใช้จ่ายเดือนนี้', 'รายงานการเงิน', 'ใบสั่งซื้อ (PO)', '📊 ถามข้อมูล', '✅ รายการรออนุมัติ', '📷 ถ่ายใบเสร็จ']);
     });
 
     it('drops the approval button when no approval queue survives, and keeps it when one does', () => {
@@ -1108,4 +1108,66 @@ it('Round 3 claim controls preserve other entitled approval queues and remain hi
   assert.equal(card.type, 'flex');
   if (card.type === 'flex') assert.match(card.canonicalText!, /คำขอซื้ออุปกรณ์/u);
   assert.doesNotMatch(JSON.stringify(buildPendingApprovalCard({ ...context, permissions: [] }, pending)), /expense_action_approve|ใบเบิกค่าเดินทาง/u);
+});
+
+it('A2 fixed-read command accepts only the sold expense-month id and exact keys', () => {
+  assert.equal(linePostbackCommandText('action=fixed-read&id=expense_month'), 'ดูค่าใช้จ่ายเดือนนี้');
+  for (const data of ['action=fixed-read&id=sales_month', 'action=fixed-read&id=expense_month&id=expense_month', 'action=fixed-read&id=expense_month&extra=x']) {
+    assert.equal(linePostbackCommandText(data), null);
+  }
+});
+
+
+it('A2 private delivery preserves workflow and fixed-read controls with exact keys', async () => {
+  const { buildLineDeliveryPlan, parseLineDeliveryPlan, validateLineDeliveryPlan, deliveryHash, lineDeliveryRetryKey } = await import('./line-delivery-plan.logic');
+  for (const data of ['action=wf_open&act=RECORD_PAYMENT&id=expense&sig=' + 'a'.repeat(43),
+    'action=wf_choice&token=choice&pick=other', 'action=fixed-read&id=expense_month']) {
+    const preferred = { type: 'text' as const, text: 'เลือกงานจากการ์ด', quickReply: { items: [{ type: 'action' as const, action: { type: 'postback' as const, label: 'เลือกงาน', data } }] } };
+    const p = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'workflow',
+      createdAt: '2026-11-04T00:00:00Z', expiresAt: '2026-11-04T00:01:00Z', readyAt: '2026-11-04T00:00:00Z', firstDispatchDeadlineAt: '2026-11-04T00:00:40Z',
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: preferred.text, sourceProofIds: [], required: true }] },
+      businessResult: null, control: null, preferredMessages: [preferred],
+      authorization: { v: 2, kind: 'PRIVATE', issuedAt: '2026-11-04T00:00:00Z', expiresAt: '2026-11-04T00:01:00Z', proofs: [],
+        actor: { userId: 'user', companyId: 'company', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint',
+          channelId: 'oa', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 1 } } });
+    assert.deepEqual(p.batches[0]!.primary.messages[0]!.quickReply, preferred.quickReply);
+    assert.ok(parseLineDeliveryPlan(JSON.parse(JSON.stringify(p))));
+    const changed = structuredClone(p);
+    changed.batches[0]!.primary.messages[0]!.quickReply!.items[0]!.action = { ...preferred.quickReply.items[0]!.action, data: data + '&extra=x' };
+    const frozen = changed.batches[0]!.primary;
+    frozen.wireHash = deliveryHash(['oa', 'recipient', frozen.messages]);
+    frozen.pushRetryKey = lineDeliveryRetryKey(changed.planId, 0, 'primary', frozen.wireHash);
+    assert.throws(() => validateLineDeliveryPlan(changed), /PLAN_INVALID_CONTROL/);
+  }
+});
+
+it('R22 expense month is the single fixed-read entry', async () => {
+  const { FIXED_READ, parseLineFixedReadControl } = await import('./line-staff-menu.logic');
+  assert.deepEqual(Object.keys(FIXED_READ), ['expense_month']);
+  for (const message of [buildStaffQueryMenu({ ...context, permissions: ['expense.read'] }),
+    buildStaffMainMenu({ ...context, permissions: ['expense.read'] })]) {
+    const button = message.quickReply!.items.find(item => item.action.label === 'ค่าใช้จ่ายเดือนนี้')!.action;
+    assert.equal(button.type, 'postback');
+    assert.deepEqual(parseLineFixedReadControl((button as any).data), { id: 'expense_month' });
+  }
+  for (const suffix of ['&extra=1', '&id=expense_month', '&action=fixed-read'])
+    assert.equal(parseLineFixedReadControl(`action=fixed-read&id=expense_month${suffix}`), null);
+});
+
+it('R21 main menu offers sold claim navigation and the frozen assigned approver entry', () => {
+  const menu = buildStaffMainMenu({ ...context, permissions: ['reimbursement.create', 'reimbursement.submit', 'expense.payment.record'], assignedClaimApprover: true });
+  for (const [label, id] of [['สร้างใบเบิก', 'reimbursement_claim'], ['ส่งใบเบิก', 'reimbursement_submit'], ['อนุมัติใบเบิก', 'approvals'], ['บันทึกจ่าย', 'expense_pay']]) {
+    const action: any = menu.quickReply!.items.find(item => item.action.label === label)!.action;
+    assert.equal(action.type, 'postback');
+    assert.equal(new URLSearchParams(action.data).get('id'), id);
+  }
+});
+
+
+it('R22 new workflow buttons preserve every existing main-menu action within the native limit', () => {
+  const wide = { ...context, isOwner: true, permissions: [...ALL_PERMISSIONS, 'reimbursement.create', 'reimbursement.submit', 'expense.payment.record'] };
+  const existing = buildStaffCompletionQuickReply(wide).items;
+  const menu = buildStaffMainMenu(wide).quickReply!.items;
+  assert.ok(menu.length <= 13);
+  assert.deepEqual(menu.slice(-existing.length), existing);
 });

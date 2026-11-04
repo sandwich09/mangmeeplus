@@ -1,3 +1,4 @@
+import { parseLineWorkflowControl } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
 /**
  * The executing runner for `LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES` (draft-control spec §11).
  *
@@ -2176,11 +2177,13 @@ it('Y1/Y4: one signed press runs ready → web evidence review → confirm with 
     const card: any = buildExpenseActionCard(result.preview, result.reply);
     assert.doesNotMatch(card.canonicalText, /กดเพื่อตรวจรับรอง|แล้วจึงยืนยัน/u);
     const paymentButton = card.contents.footer.contents[0].action;
-    assert.equal(paymentButton.label, 'บันทึกจ่าย'); assert.equal(parseExpenseActionControl(paymentButton.data)?.action, 'expense_action_payment');
+    assert.equal(paymentButton.label, 'บันทึกจ่าย');
+    const paymentOpen = parseLineWorkflowControl(paymentButton.data)!; assert.equal(paymentOpen.action, 'wf_open');
+    if (paymentOpen.action !== 'wf_open') assert.fail('signed payment opener');
+    assert.equal(paymentOpen.act, 'RECORD_PAYMENT');
     let paymentPreviews = 0;
     service.payment = { previewLineAction: async (ctx: RequestContext, id: string) => { assert.equal(ctx, h.ctx); assert.equal(id, h.record.id); paymentPreviews++; } };
-    const opened = await h.actions.apply(h.ctx, 'private-action', parseExpenseActionControl(paymentButton.data)!);
-    assert.equal(opened.status, 'prepared', opened.reply); assert.ok('preview' in opened); assert.equal(opened.preview.action, 'RECORD_PAYMENT');
+    const opened = await h.actions.openWorkflow(h.ctx, 'private-action', paymentOpen); assert.ok(opened.preview, opened.reply); assert.equal(opened.preview.action, 'RECORD_PAYMENT');
     assert.match(opened.preview.details!.join(' '), /วันที่ \d+ [ก-๙.]+ 25\d{2}/u);
     assert.doesNotMatch(opened.preview.details!.join(' '), /วันที่ \d{4}-\d{2}-\d{2}/u);
     assert.equal(paymentPreviews, 1); assert.equal(h.state.writes.length, 1, 'opening payment never pays');
@@ -2301,17 +2304,18 @@ it('Y2: alternative proof requires a user reason, reviews through the web use-ca
   assert.equal(h.record.inputVatClaimStatus, 'NON_CLAIMABLE');
 });
 
-it('Y1: the durable delivery plan preserves the payment-opening button with the applied confirmation proof and refuses a forged proof', async () => {
+it('Y1: legacy payment-opening delivery keeps its applied confirmation proof and refuses a forged proof', async () => {
   const h = evidenceReviewActionHarness(); h.ctx.permissions.push('expense.payment.record');
   const proposed = (await h.preview()).preview!;
   const result = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: proposed.token });
-  assert.ok('preview' in result); const message = buildExpenseActionCard(result.preview, result.reply);
+  assert.ok('preview' in result); const legacy = { ...result.preview, nextControls: undefined };
+  const message = buildExpenseActionCard(legacy, result.reply);
   assert.equal(message.type, 'flex'); if (message.type !== 'flex') return;
   const createdAt = new Date().toISOString(), expiresAt = proposed.expiresAt;
   const plan = buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'confirmed-with-payment-entry', createdAt, readyAt: createdAt, expiresAt, firstDispatchDeadlineAt: expiresAt,
     authorization: { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt, actor: { userId: h.ctx.userId, companyId: h.ctx.companyId, membershipId: h.ctx.membershipId,
       requestId: h.ctx.requestId, accessFingerprint: 'fingerprint', channelId: 'oa-action', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'private-action', conversationId: 'line-v2:conversation-action', ownerEpoch: 1 },
-      proofs: [{ id: 'action', kind: 'EXPENSE_ACTION_PREVIEW', applied: true, token: proposed.token, previewHash: deliveryHash(result.preview) }] }, businessResult: null,
+      proofs: [{ id: 'action', kind: 'EXPENSE_ACTION_PREVIEW', applied: true, token: proposed.token, previewHash: deliveryHash(legacy) }] }, businessResult: null,
     answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'business_result', text: message.canonicalText!, required: true, sourceProofIds: ['action'] }] },
     preferredMessages: [message], control: null,
   });
@@ -2552,24 +2556,34 @@ it('Fix-up 22B: an old signed voucher card containing a command payee cannot cre
   assert.equal(h.state5.writes.length, 0);
 });
 
-it('Fix-up 24 D3/D4: each signed lifecycle offer prepares the next card and only its confirm press mutates through 50 ทวิ', async () => {
+it('Fix-up 24 D3/D4: each signed lifecycle offer prepares the next card and only its confirm press mutates through 50 ทวิ', async t => {
   const h = round5Harness('VOUCHER_CREATE');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  let previousToken: string | undefined;
   let prepared = await h.preview(); assert.ok(prepared.preview);
   for (const [action, label, opening] of [
-    ['VOUCHER_CREATE', 'ส่งอนุมัติ', 'expense_action_next'], ['VOUCHER_SUBMIT', 'อนุมัติใบเตรียมจ่าย', 'expense_action_next'],
-    ['VOUCHER_APPROVE', 'บันทึกจ่าย', 'expense_action_next'], ['VOUCHER_PAY', 'ออก 50 ทวิ', 'expense_action_wht'],
+    ['VOUCHER_CREATE', 'ส่งอนุมัติ', 'VOUCHER_SUBMIT'], ['VOUCHER_SUBMIT', 'อนุมัติใบเตรียมจ่าย', 'VOUCHER_APPROVE'],
+    ['VOUCHER_APPROVE', 'บันทึกจ่าย', 'VOUCHER_PAY'], ['VOUCHER_PAY', 'ออก 50 ทวิ', 'WHT_CERTIFICATE_ISSUE'],
   ] as const) {
     assert.equal(prepared.preview!.action, action);
     const before = h.state5.writes.length;
+    if (previousToken) {
+      const replay = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: previousToken });
+      assert.equal(replay.status, 'blocked'); assert.equal(h.state5.writes.length, before);
+    }
     const applied = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: prepared.preview!.token });
     assert.equal(applied.status, 'applied', applied.reply); assert.equal(h.state5.writes.length, before + 1);
     if (!('preview' in applied)) assert.fail('applied card required');
     const message: any = buildExpenseActionCard(applied.preview, applied.reply);
     const data = message.contents.footer.contents.find((button: any) => button.action.label === label).action.data;
-    const control = parseExpenseActionControl(data)!; assert.equal(control.action, opening);
-    const result = await h.actions.apply(h.ctx, 'private-action', control);
-    assert.equal(result.status, 'prepared', result.reply); assert.equal(h.state5.writes.length, before + 1);
-    assert.ok('preview' in result); prepared = { preview: result.preview, reply: result.reply };
+    const control = parseLineWorkflowControl(data)!; assert.equal(control.action, 'wf_open');
+    if (control.action !== 'wf_open') assert.fail('next step is signed');
+    assert.equal(control.act, opening);
+    assert.equal(await h.store.loadRecovery(h.ctx.companyId, prepared.preview!.previewId), null, 'confirmation deletes recovery');
+    previousToken = prepared.preview!.token;
+    t.mock.timers.setTime(Date.now() + 30 * 60_000);
+    const result = await h.actions.openWorkflow(h.ctx, 'private-action', control); assert.equal(h.state5.writes.length, before + 1);
+    assert.ok(result.preview, result.reply); prepared = { preview: result.preview, reply: result.reply };
   }
   assert.equal(prepared.preview!.action, 'WHT_CERTIFICATE_ISSUE');
   const issued = await h.actions.apply(h.ctx, 'private-action', { action: 'expense_action_confirm', token: prepared.preview!.token });

@@ -1744,7 +1744,7 @@ import { v2RenderedInput } from '../../../common/usage/ai-budget-provider';
 import { INTAKE_CONSTANT_CALIBRATIONS, intakeConstantParts, scaleIntakeCalibration, REVIEWED_CATALOGUE_TOKEN_BOUND } from '../../../common/usage/intake-token-calibration';
 import { ROLE_GRANTS } from '../../../../../api/src/modules/auth/permission-registry';
 import { APPROVED_PREPARED_FAMILY_KEYS } from './prepared-simple-read-formatter';
-import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
+import { LINE_INTAKE_CHAT_ACTIONS_CONTEXT as LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
 
 const creditRoot = resolve(__dirname, '../../../../../..');
 const creditModel = 'global.anthropic.claude-sonnet-4-6';

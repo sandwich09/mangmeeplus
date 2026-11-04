@@ -319,11 +319,6 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // Membership is checked POSITIVELY ('shadow'/'on'), so an unset or unparsed value stays off —
   // this store fails CLOSED, unlike the ledger it backstops.
   LINE_AI_INTAKE_STATE_MODE: z.enum(['off', 'shadow', 'on']).default('off'),
-  // Exact standalone greeting lane (uat-correctness-latency spec §11.2, plan Phase 6B). Default OFF keeps
-  // the EXACT legacy path where a bare "สวัสดี" costs three model calls. On, a whole-message match against
-  // the versioned greeting allowlist answers deterministically with zero model calls — only after every
-  // security/identity/feature gate and only when the turn carries no open state at all.
-  LINE_AI_EXACT_GREETING_ENABLED: envBoolean.default(false),
   // Advisor conversation staged rollout (advisor spec §17). ONE capability enum plus ONE execution kill
   // switch, deliberately not a flag per feature. 'off' is behavior-identical to today in every byte: the
   // API never turns the `advisor` router capability on, so the intake prompt/payload/parser stay legacy.
