@@ -1,3 +1,4 @@
+import { readyHarness as substituteDecisionHarness } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 import { buildSubstituteReceiptActionCard } from '../line-substitute-receipt-action.service';
@@ -84,7 +85,7 @@ it('Fix-up 10 P2/P3: an explicit vendor command after capability help reaches co
 it('Fix-up 10 P4a/e: attachment summaries render once on both delivery paths and the multipart closer uses a neutral header', async () => {
   const { prisma } = makePrisma(); const h = makeUseCase(prisma), flow = h.useCase as any;
   const event = { ...BASE_EVENT, lineMessageId: 'message', messageText: 'ข้อความของผู้ใช้ที่ไม่ควรเป็นหัวปิดท้าย' };
-  const summary = 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ\nวัตถุประสงค์: ค่าโปรโมทร้าน';
+  const summary = 'ตรวจข้อมูลก่อนกดเตรียมเอกสารค่ะ\nวัตถุประสงค์: ค่าโปรโมทร้าน';
   flow.deliverySubstituteActions.set(event, { preview: { summary, label: 'เตรียมใบรับรอง', token: 'sub_current', webPath: 'https://app.example.com/companies/company-1/expenses/substitute-receipts/e1' } });
   const sent: any[][] = []; flow.deliverMessages = async (_event: unknown, messages: any[]) => { sent.push(messages); return 'ok'; };
   const text = `แนบหลักฐานให้แล้วค่ะ\n\n${summary}`;
@@ -1317,6 +1318,31 @@ describe('validLineAiReadMemoryEntries (spec §4 R-M2)', () => {
 
   it('drops the whole batch when any one entry is invalid', () => {
     assert.equal(validLineAiReadMemoryEntries([entry(), entry({ tool: '' })]), undefined);
+  });
+});
+
+describe('export cleanup 0.2 LINE refusal', () => {
+  it('free export requests remain model-free with a menu exit', async () => {
+    const state = makePrisma();
+    const h = makeUseCase(state.prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own', 'expense.receipt.line_upload'] });
+    const forbidden = async () => assert.fail('free export must not read receipts, charge or notify');
+    state.prisma.client.companyOcrUsageEvent.create = forbidden;
+    state.prisma.client.companyOcrUsageEvent.count = forbidden;
+    state.prisma.client.companyPlanTerm.updateMany = forbidden;
+    state.prisma.client.companyOcrUsageEvent.findMany = forbidden;
+    state.prisma.client.companyOcrUsageEvent.updateMany = forbidden;
+    for (const messageText of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี']) {
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `free-export-${messageText}`, messageText });
+      assert.match(h.replies.at(-1)!, /สิทธิ์ใช้ฟรีของร้านยังไม่รวมการถามตอบ/);
+      const menu = h.sentMessages.at(-1)?.quickReply?.items.find((item: any) => item.action.label === 'เมนูหลัก');
+      assert.ok(menu, 'refusal has a menu exit');
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `free-menu-${messageText}`, messageText: menu.action.text });
+      assert.match(h.replies.at(-1)!, /ร่าง|ใบเสร็จ/);
+    }
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+    assert.deepEqual(h.pushes, []); assert.deepEqual(state.aiTurns, []); assert.deepEqual(state.toolInvocations, []);
+    assert.equal(state.quotaNoticeSentMonthKey(), null);
+    assert.ok(h.auditEvents.every((event: any) => !event.action.includes('export') && !event.action.includes('charge')));
   });
 });
 
@@ -4203,9 +4229,9 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(intakeRequests.length, 0);
     assert.equal(aiGatewayRequests.length, 0);
     assert.equal(uploadIntents, 0);
-    assert.match(replies[0] ?? '', /ตรวจสอบความปลอดภัย/);
+    assert.match(replies[0] ?? '', /ระบบตรวจไฟล์นี้ไม่ได้ ส่งไฟล์อื่นได้ค่ะ/);
     assert.equal(auditEvents[0]?.action, 'attachment.upload.rejected');
-    assert.equal(auditEvents[0]?.metadataJson.reason, 'CONTENT_REJECTED');
+    assert.equal(auditEvents[0]?.metadataJson.reason, 'CONTENT_UNINSPECTABLE');
     assert.equal((updates.at(-1) as any).data.status, 'media_security_rejected');
   });
 
@@ -7465,6 +7491,29 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     }
   });
 
+  it('R5 semantic and clarification replies require a signed card', async () => {
+    const observations: any[] = [];
+    for (const dispatcher of ['semantic', 'clarification']) for (const messageText of ['1', '2', 'ใช่']) {
+      const source = await substituteDecisionHarness({ signature: { id: 'signature' } });
+      const event = { ...BASE_EVENT, webhookEventId: `r5-${dispatcher}-${messageText}`, messageText };
+      source.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.chatKeyHash = chatKeyHashOf(event);
+      const { prisma } = makePrisma();
+      const calls: any[] = [];
+      const continuation = Object.create(source.useCase);
+      continuation.execute = async (actor: any, input: any) => { calls.push(input); return source.useCase.execute(actor, input); };
+      const h = makeUseCase(prisma, { ...P, substituteContinuation: continuation,
+        substituteLedger: makeLedger([{ id: 'r5-question', text: 'ทำใบรับรองต่อ', question: 'เตรียมใบรับรองหรือแบบไปเซ็น',
+          clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'r5-question' } }]).ledger,
+        config: { lineAiSubstituteSemanticRoutingMode: dispatcher === 'semantic' ? 'primary' : 'off' },
+        intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['r5-question'] }), aiGatewayFn: aiTurn });
+      await h.useCase.execute(event);
+      observations.push({ dispatcher, messageText, calls: calls.length, prepares: source.prepares.length });
+    }
+    console.log('R5 webhook baseline', JSON.stringify(observations));
+    assert.equal(observations.some(row => row.prepares > 0), false);
+    assert.ok(observations.some(row => row.calls > 0), 'exercise the real continuation');
+  });
+
   it('PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)', async () => {
     const { prisma } = makePrisma();
     const sub = makeSub();
@@ -8475,7 +8524,7 @@ it('keeps the shared event literals frozen so execute() cannot mutate them', () 
 });
 
 describe('receipt reliability: saved facts, notification and provider-input continuity', () => {
-  function receiptHarness(options: { replay?: boolean; draft?: boolean; applyFails?: boolean; sendFails?: boolean; completeFailsAfterCommit?: boolean;
+  function receiptHarness(options: { free?: boolean; replay?: boolean; draft?: boolean; applyFails?: boolean; sendFails?: boolean; completeFailsAfterCommit?: boolean;
     changeBefore?: 'capture-summary' | 'ocr-apply' | 'final-summary' } = {}) {
     const base = makePrisma();
     let expense: any = null;
@@ -8511,7 +8560,8 @@ describe('receipt reliability: saved facts, notification and provider-input cont
       return updateSavedMedia(expense, args);
     };
     const run = makeUseCase(base.prisma, {
-      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create', 'attachment.create'],
+      freeExpenseDrafts: options.free,
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', ...(options.free ? [] : ['expense.create']), 'attachment.create'],
       config: { lineAiTerminalOutcomeReplayEnabled: options.replay ?? false, lineExpenseDraftConversationEnabled: options.draft ?? false },
       intakeRouteFn: async () => { routed += 1; return ROUTED_EXPENSE_DOCUMENT; },
       receiptOcrFn: async () => { ocrReads += 1; return { status: 'ok', classification: receiptClassification('120.00'), fields: { grandTotalAmount: '120.00' } }; },
@@ -8566,6 +8616,87 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
+
+  it('R11 admitted free LINE receipt preserves branch identity and reservation', async () => {
+    const h = receiptHarness({ free: true });
+    const flow = h.useCase as any;
+    const reservation = { eventId: 'free-event', monthKey: '2026-10', sourceRoute: 'receipt-ocr-line', requestId: 'receipt-message' };
+    flow.prisma.client.branch.findMany = async () => [{ id: 'branch-1', type: 'HEAD_OFFICE' }];
+    const read = flow.aiGateway.requestReceiptOcr;
+    flow.aiGateway.requestReceiptOcr = async (request: any, options: any) => {
+      options.onAdmitted({ ...reservation, quotaSource: 'FREE_MONTHLY_3' });
+      return read(request, options);
+    };
+    const transaction = flow.prisma.client.$transaction;
+    flow.prisma.client.$transaction = async (run: any) => transaction((tx: any) => run({ ...tx, $executeRaw: async () => {},
+      companyOcrUsageEvent: { findUnique: async () => null } }));
+    const initialize = flow.initReceiptUpload.execute;
+    const complete = flow.completeReceiptUpload.execute;
+    const apply = flow.receiptOcrApply.apply;
+    const calls: any[] = [];
+    flow.initReceiptUpload.execute = async (...args: any[]) => { calls.push(args); return initialize(...args); };
+    flow.completeReceiptUpload.execute = async (actor: any, command: any, source: any) => {
+      assert.deepEqual(actor, calls[0][0]);
+      return complete(actor, command, source);
+    };
+    flow.receiptOcrApply.apply = async (...args: any[]) => {
+      assert.equal(args[3].sourceOnly, true);
+      assert.equal(typeof args[3].onUsablePersisted, 'function');
+      return apply(...args);
+    };
+    await h.useCase.executeReceiptUpload(h.event());
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0].userId, 'user-1');
+    assert.equal(calls[0][0].membershipId, 'mem-1');
+    assert.equal(calls[0][0].companyId, 'company-1');
+    assert.deepEqual(calls[0][0].scopes, {});
+    assert.equal(calls[0][1].branchId, 'branch-1');
+    assert.deepEqual(calls[0][2], { freeOcrReservation: reservation });
+    assert.equal(h.counts().completed, 1);
+    assert.equal(h.counts().applied, 1);
+  });
+
+  it('R4 LINE inspection refusal preserves truthful severity and recovery', async () => {
+    for (const [body, reason] of [['<< /J#61vaScript 1 >>', 'CONTENT_UNINSPECTABLE'], ['<< /Type /EmbeddedFile >>', 'EMBEDDED_FILE_REJECTED']] as const) {
+      const h = receiptHarness();
+      const bytes = Buffer.from('%PDF-1.7\n' + body);
+      const flow = h.useCase as any;
+      flow.downloadLineMedia = async () => ({ ok: true, media: { bytes, fileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: bytes.length } });
+      await h.useCase.executeReceiptUpload({ ...h.event(), messageType: 'file', fileName: 'receipt.pdf' });
+      const denial = h.auditEvents.find((entry: any) => entry.action === 'attachment.upload.rejected');
+      assert.equal(denial?.riskLevel, 'MEDIUM');
+      assert.equal(denial?.metadataJson.reason, reason);
+      assert.equal(h.counts().initialized, 0);
+      assert.equal(h.counts().ocrReads, 0);
+      assert.equal(h.logs.some((entry: any) => entry.msg === 'attachment.upload.rejected' && entry.riskLevel === 'HIGH'), false);
+      assert.match(JSON.stringify(h.sends), reason === 'CONTENT_UNINSPECTABLE' ? /ระบบตรวจไฟล์นี้ไม่ได้/ : /ไฟล์แนบใน PDF นี้ยังไม่รองรับ/);
+      assert.match(JSON.stringify(h.sends), /ส่งไฟล์อื่น/);
+    }
+  });
+
+  it('R1 LINE completion preserves uploader identity', async () => {
+    const h = receiptHarness();
+    const flow = h.useCase as any;
+    const actors: any[] = [];
+    const initialize = flow.initReceiptUpload.execute;
+    const complete = flow.completeReceiptUpload.execute;
+    flow.initReceiptUpload.execute = async (actor: any, command: any, source: any) => {
+      actors.push(actor);
+      return initialize(actor, command, source);
+    };
+    flow.completeReceiptUpload.execute = async (actor: any, command: any, source: any) => {
+      actors.push(actor);
+      return complete(actor, command, source);
+    };
+    await h.useCase.executeReceiptUpload(h.event());
+    assert.equal(actors.length, 2);
+    assert.deepEqual(actors[1], actors[0]);
+    assert.equal(actors[0].userId, 'user-1');
+    assert.equal(actors[0].membershipId, 'mem-1');
+    assert.equal(actors[0].companyId, 'company-1');
+    assert.equal(actors[0].authProvider, 'line');
+    assert.deepEqual(actors[0].scopes, {});
+  });
 
   it('pairs a transfer slip only after OCR facts are saved and replies once with undo', async () => {
     const h = receiptHarness(), uc = h.useCase as any;
@@ -9382,6 +9513,26 @@ describe('Round 2 A expense action postback', () => {
     return { flow, calls, replies, event, deliveryQueries, terminal, setPlan: (value: any) => { plan = value; },
       setAcceptedResult: (value: boolean) => { acceptedResult = value; } };
   }
+  it('R5 R9 retain free deterministic gates and accepted delivery suppression', async () => {
+    for (const messageText of ['1', '2', 'ใช่']) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.receipt.upload'],
+        substituteContinuation: { execute: async () => assert.fail('free text cannot enter continuation') },
+        intakeRouteFn: () => assert.fail('free text cannot enter the model') });
+      await h.useCase.execute({ ...BASE_EVENT, messageText });
+      assert.equal(h.intakeRequests.length, 0);
+      assert.equal(h.getAiGatewayCalled(), false);
+    }
+    const h = actionPostbackHarness();
+    const apply = h.flow.expenseActions.apply;
+    h.flow.expenseActions.apply = async (...args: any[]) => ({ ...await apply(...args), status: 'replayed' });
+    h.setAcceptedResult(true);
+    await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.replies.length, 0);
+    assert.equal(h.flow.intentionalNoReplyTurns.has(h.event), true);
+  });
+
   it('applies with the exact resolved LINE RequestContext and returns the updated status card', async () => {
     const h = actionPostbackHarness();
     await h.flow.handleExpenseActionPostback(h.event, actor, new Set(['expenses']));
@@ -9977,10 +10128,10 @@ it('7B W3: a photo answering the open substitute payment ask attaches before int
         paymentEvidenceRequestedAt: new Date().toISOString() }),
       attachMedia: async (...args: any[]) => { attached.push(args); return { replyText: 'ทำต่อ: พิมพ์ “ทำใบรับรองต่อ” เพื่อดูสถานะงานล่าสุดค่ะ' }; },
       execute: async (...args: any[]) => { continued.push(args); return { handled: true, status: 'READY_FOR_WEB', expenseId: 'open-substitute-expense',
-        acceptedFields: [], blockers: [], replyText: 'ข้อมูลครบแล้วค่ะ\nตอบ 1 เพื่อออกเอกสาร\n1) ออกเอกสาร', source: { records: [] } }; },
+        acceptedFields: [], blockers: [], replyText: 'ตรวจข้อมูลก่อนกดเตรียมเอกสารแล้วค่ะ\nตอบ 1 เพื่อออกเอกสาร\n1) ออกเอกสาร', source: { records: [] } }; },
     },
     substituteActions: { prepare: async () => ({ preview: { token: 'sub_current', label: 'เตรียมใบรับรอง',
-      summary: 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ\nวัตถุประสงค์: ค่าโปรโมทร้าน' } }) },
+      summary: 'ตรวจข้อมูลก่อนกดเตรียมเอกสารค่ะ\nวัตถุประสงค์: ค่าโปรโมทร้าน' } }) },
     ensurePendingMedia: async () => ({ created: true, pending: { id: 'pending-substitute-slip', attachmentId: 'kept-slip', lineMessageId: 'substitute-slip' } }),
     resolvePendingRow: async () => undefined,
     deliverCompletedReply: async (_event: any, text: string) => delivered.push(text),
@@ -9992,8 +10143,8 @@ it('7B W3: a photo answering the open substitute payment ask attaches before int
   assert.equal(attached[0][0].userId, 'user'); assert.equal(attached[0][0].companyId, 'company');
   assert.equal(attached[0][1].expenseId, 'open-substitute-expense'); assert.equal(attached[0][1].attachmentId, 'kept-slip');
   assert.equal(attached[0][1].purpose, 'expense.payment.evidence'); assert.equal(f.expenseInitializations(), 0);
-  assert.equal(continued.length, 1); assert.match(delivered.join('\n'), /ข้อมูลครบ/);
-  assert.match(delivered.join('\n'), /แนบหลักฐานให้แล้วค่ะ.*\n.*\nข้อมูลครบ/su);
+  assert.equal(continued.length, 1); assert.match(delivered.join('\n'), /ตรวจข้อมูลก่อนกดเตรียมเอกสาร/);
+  assert.match(delivered.join('\n'), /แนบหลักฐานให้แล้วค่ะ.*\n.*\nตรวจข้อมูลก่อนกดเตรียมเอกสาร/su);
   assert.match(delivered.join('\n'), /วัตถุประสงค์: ค่าโปรโมทร้าน/);
   assert.doesNotMatch(delivered.join('\n'), /ทำต่อ:|ทำใบรับรองต่อ|ตอบ 1|1\)/);
   assert.equal(f.flow.deliverySubstituteActions.get(f.event).preview.token, 'sub_current');
@@ -13299,4 +13450,54 @@ it('free receipt notice remains claimed when a durable delivery plan owns the fa
     await assert.rejects(handler.deliverSavedReceiptReply(event, 'saved', 'company', { permissions: [], roles: [] }, monthKey), /delivery failed/);
     assert.equal(released, savedPlan ? 0 : 1);
   }
+});
+
+
+it('R11 upload callers preserve branch and identity', async () => {
+  for (const resumed of [false, true]) {
+    const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+    const actor = { requestId: 'request', companyId: 'company', userId: 'uploader', membershipId: 'membership',
+      authProvider: 'line', scopes: { branchIds: ['branch-a'] }, permissions: ['attachment.create'] };
+    const event = { lineMessageId: 'message', webhookEventId: 'event' };
+    const owner = { companyId: actor.companyId, userId: actor.userId, membershipId: actor.membershipId,
+      messagingChannelId: 'channel', chatKeyHash: 'chat', channelKind: 'USER', channel: 'line' };
+    const bound = { owner, id: 'conversation', epoch: 3 };
+    flow.boundConversations = new WeakMap([[event, bound]]);
+    const calls: any[] = [];
+    flow.createUploadIntent = {
+      execute: async (...args: any[]) => { calls.push(['create', ...args]); return { attachmentId: 'attachment', uploadRequired: true }; },
+      resume: async (...args: any[]) => { calls.push(['resume', ...args]); return { attachmentId: 'attachment', uploadRequired: false }; },
+    };
+    flow.completeAttachmentUpload = { execute: async (...args: any[]) => { calls.push(['complete', ...args]); } };
+    let uploads = 0;
+    flow.uploadLineMedia = async () => { uploads++; };
+    flow.prisma = { client: { lineIntakePendingMedia: { create: async () => {}, updateMany: async () => {} } } };
+    const pending = resumed ? { attachmentId: 'attachment', channelKind: 'USER', messagingChannelId: owner.messagingChannelId,
+      chatKeyHash: owner.chatKeyHash, membershipId: owner.membershipId, lifecycleEpoch: bound.epoch } : null;
+    await flow.stageReimbursementMedia(event, actor, '', { fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 10, checksumSha256: 'sha' }, bound, pending, 'branch-a');
+    assert.equal(calls[0][0], resumed ? 'resume' : 'create');
+    assert.deepEqual(calls[0][1], actor);
+    if (resumed) assert.equal(calls[0][2], 'attachment');
+    else {
+      assert.equal(calls[0][2].branchId, 'branch-a');
+      assert.deepEqual(calls[0][2].metadataJson.lineReimbursementOwner, owner);
+    }
+    assert.deepEqual(calls[1], ['complete', actor, { attachmentId: 'attachment', checksumSha256: 'sha', byteSize: 10 }]);
+    assert.equal(uploads, resumed ? 0 : 1);
+  }
+});
+
+
+it('R5 delivery source forwards the offered FORM decision', async () => {
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  flow.deliverySubstituteContinuations = new WeakMap();
+  flow.deliverySubstituteSources = new WeakMap();
+  flow.deliverySubstituteActions = new WeakMap();
+  const calls: any[] = [];
+  flow.substituteActions = { prepare: async (...args: any[]) => { calls.push(args); return { preview: { summary: 'ตรวจข้อมูลแล้วกดเตรียมแบบไปเซ็น' } }; } };
+  const event = { ...BASE_EVENT, messageText: '2' };
+  const context = { companyId: 'company-1', userId: 'user-1' };
+  await flow.rememberSubstituteDeliverySource(event, context, { status: 'READY_FOR_WEB', expenseId: 'expense-1', decisionOffered: 'FORM', replyText: '', blockers: [] });
+  assert.deepEqual(calls[0], [context, chatKeyHashOf(event), 'expense-1', 'th', 'FORM']);
+  assert.equal(flow.deliverySubstituteActions.has(event), true);
 });

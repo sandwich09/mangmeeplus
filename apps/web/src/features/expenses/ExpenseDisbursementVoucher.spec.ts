@@ -98,7 +98,8 @@ test('the pinned page adds child components and preserves the primary payment an
   const page = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
   assert.equal(page.split('<ExpenseDisbursementPaymentScope>').length - 1, 1);
   assert.match(page, /<ExpenseDisbursementDirectPayment reservation=\{detail.correctionCapabilities\?\.disbursementReservation\}/);
-  assert.match(page, /<\/ExpenseDisbursementDirectPayment>\s*<ExpenseDisbursementPrepareEntry/);
+  // A free-drafts shop gets no prepare-payment entry (049aa51de), so the entry sits behind that gate.
+  assert.match(page, /<\/ExpenseDisbursementDirectPayment>\s*\{!freeExpenseDrafts && <ExpenseDisbursementPrepareEntry/);
   assert.match(page, /expenseReopenBlockerMessages/);
 });
 

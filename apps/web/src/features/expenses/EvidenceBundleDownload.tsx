@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import type { AccountantEvidenceBundlePlan } from '@watchdog-bms/contracts';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
@@ -31,8 +32,8 @@ export function EvidenceBundleActions({ plan, busy, allMonths, onDownload, showC
 }
 
 /** Each plan/download belongs to one exact selection; a late response cannot download another filter's files. */
-export function EvidenceBundleDownload({ companyId, request, enabled, showCounts, accountant = false }: {
-  companyId: string; request: Record<string, unknown>; enabled: boolean; accountant?: boolean; showCounts?: boolean;
+export function EvidenceBundleDownload({ companyId, request, enabled, showCounts, accountant = false, onReturnToExpenses }: {
+  companyId: string; request: Record<string, unknown>; enabled: boolean; accountant?: boolean; showCounts?: boolean; onReturnToExpenses?: () => void;
 }) {
   const [plan, setPlan] = useState<AccountantEvidenceBundlePlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +65,11 @@ export function EvidenceBundleDownload({ companyId, request, enabled, showCounts
       : !error && <p className="text-sm text-gray-500" role="status">กำลังนับไฟล์...</p>}
     {error && <div className="space-y-2">
       <p className="text-sm text-danger-700" role="alert">{error}</p>
-      <ActionGroup align="start"><button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={busy} onClick={() => setRetry(value => value + 1)}>ลองอีกครั้ง</button></ActionGroup>
+      <ActionGroup align="start">
+        {onReturnToExpenses
+          ? <button type="button" className={secondaryButtonClass} onClick={onReturnToExpenses}>กลับไปรายการค่าใช้จ่าย</button>
+          : <Link href={`/companies/${companyId}/expenses`} className={secondaryButtonClass}>กลับไปรายการค่าใช้จ่าย</Link>}
+        <button type="button" className={secondaryButtonClass} disabled={busy} aria-busy={busy} onClick={() => setRetry(value => value + 1)}>ลองอีกครั้ง</button></ActionGroup>
     </div>}
   </div>;
 }

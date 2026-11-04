@@ -23,6 +23,9 @@ export const INPUT_VAT_SHOP = { ...PLAIN_SHOP, id: 'seed-local-input-vat-shop',
 /** A 999 shop with nothing recorded: the package journey moves it to 1999 and issues a 50 ทวิ on an earlier expense. */
 export const PACKAGE_SHOP = { ...PLAIN_SHOP, id: 'seed-local-package-shop', name: 'ร้านทดลองเปลี่ยนแพ็กเกจ',
   branchId: 'seed-package-branch-ho', roleKeys: ['OWNER'], vatCommandId: 'seed-package-shop-not-registered-v1' };
+/** A never-paid shop whose trial has ended: the free source-drafts journeys run in it, its owner only. */
+export const FREE_DRAFT_SHOP = { ...PLAIN_SHOP, id: 'seed-local-free-draft-shop', name: 'ร้านทดลองใช้ฟรี',
+  branchId: 'seed-free-draft-branch-ho', roleKeys: ['OWNER'], vatCommandId: null };
 export const plainShopEntitlements = (companyId: string = PLAIN_SHOP.id) => ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({
   companyId, featureKey,
   enabled: (FEATURE_PACKAGE_PRESETS.starter.featureKeys as readonly string[]).includes(featureKey),
@@ -63,6 +66,12 @@ export async function seedPlainShop(prisma: PrismaClient, shop: { id: string; na
       snapshotHash: createHash('sha256').update(JSON.stringify(rows.map(row => [row.featureKey, row.enabled]))).digest('hex'),
       runId: companyId === PLAIN_SHOP.id ? 'seed-plain-shop-v1' : `${companyId}-v1`, cohortKind: EXPLICIT_COHORT, normalizerVersion: NORMALIZER_VERSION, completedAt: new Date() } });
     await tx.companyWebEntrySetting.create({ data: { companyId, manualExpenseEntryEnabled: true } });
+    // An ended 15-day trial with no billing history is what makes isFreeExpenseDraftCompany true.
+    if (companyId === FREE_DRAFT_SHOP.id) {
+      const day = 24 * 60 * 60 * 1000;
+      await tx.companyPlanTerm.create({ data: { companyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 2, monthlySlipLimit: 15,
+        termStartAt: new Date(Date.now() - 30 * day), termEndsAt: new Date(Date.now() - 15 * day), createdByUserId: owner.id } });
+    }
     // No standing payout account: the first shop's seed does not give the QA staff one either.
   }, { timeout: 30_000 });
   if (!shop.vatCommandId) return; // No fact or legacy answer is written for the unanswered shop.

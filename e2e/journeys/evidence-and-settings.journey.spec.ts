@@ -17,6 +17,65 @@ type NameHistory = { displayName: string; history: Array<{ oldName: string; newN
 const STAFF = QA_ACCOUNTS.STAFF.displayName;
 const toast = (page: Page, text: string | RegExp) => page.getByRole('status').filter({ hasText: text }).first();
 
+// Requires the QA owner to belong to one never-paid free shop and one paid shop.
+// These are real commercial states: do not mock auth/me or the export endpoints.
+for (const width of [390, 1280, 1556]) test(`@journey free shops cannot open either export at 390, 1280 and 1556 (${width}px)`, async ({ pageAs, companyId }) => {
+  const page = await pageAs('OWNER');
+  await page.setViewportSize({ width, height: 1000 });
+  const companies = await json<{ data: Array<{ companyId: string; companyName: string; freeExpenseDrafts?: boolean }> }>(await page.request.get('/api/v1/auth/me/companies'));
+  const free = companies.data.find(shop => shop.freeExpenseDrafts);
+  const paid = companies.data.find(shop => shop.companyId === companyId && !shop.freeExpenseDrafts);
+  expect(free, 'Controller fixture: QA OWNER needs membership in a never-paid free shop').toBeTruthy();
+  expect(paid, 'Controller fixture: seeded paid shop must remain paid').toBeTruthy();
+  if (!free || !paid) throw new Error('Free and paid owner memberships are required');
+  const context = async (id: string) => json<{ userId: string; companyId: string; freeExpenseDrafts?: boolean; permissions: string[] }>(await page.request.get('/api/v1/auth/me', { headers: { 'X-Company-Id': id } }));
+  const before = await context(free.companyId);
+  expect(before.freeExpenseDrafts).toBe(true);
+  expect(before.permissions).not.toContain('expense.export');
+  await page.goto(`/companies/${free.companyId}/expenses`, FIRST_SIGHT);
+  const main = page.locator('main');
+  await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
+  for (const label of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี']) {
+    await expect(main.getByRole('button', { name: label, exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // A real BFF mutation carries the session's CSRF token and Origin, as the web app sends them.
+  const csrf = (await page.context().cookies()).find(cookie => cookie.name === 'watchdog_csrf')?.value;
+  expect(csrf, 'watchdog_csrf cookie is present after sign-in').toBeTruthy();
+  const mutation = { 'X-Company-Id': free.companyId, Origin: new URL(page.url()).origin, 'x-csrf-token': csrf! };
+  for (const endpoint of ['accountant-package', 'accountant-package/bundle-plan', 'accountant-package/bundle/1']) {
+    const result = await page.request.post(`/api/v1/companies/${free.companyId}/expenses/${endpoint}`, { data: {}, headers: mutation });
+    expect(result.status()).toBe(403);
+    expect((await result.json()).code).toBe('FREE_EXPENSE_DRAFTS_ONLY');
+  }
+  // Software export is added by its own Phase 1.6; it is not an endpoint in this step.
+  await page.getByRole('button', { name: 'เปลี่ยนร้าน', exact: true }).click();
+  await page.locator('[data-company-switch]').getByRole('button').filter({ hasText: paid.companyName }).click();
+  await expect(page).toHaveURL(new RegExp(`/companies/${paid.companyId}/`), AFTER_PRESS);
+  await pressMenu(page, 'รายการค่าใช้จ่าย', 'ค่าใช้จ่ายและใบเสร็จ');
+  const after = await context(paid.companyId);
+  expect(after.userId).toBe(before.userId); expect(after.companyId).toBe(paid.companyId);
+  expect(after.freeExpenseDrafts).not.toBe(true); expect(after.permissions).toContain('expense.export');
+  const bundlePlanPath = `**/api/v1/companies/${paid.companyId}/expenses/accountant-package/bundle-plan`;
+  await page.route(bundlePlanPath, route => route.fulfill({ status: 403, json: { code: 'FREE_EXPENSE_DRAFTS_ONLY' } }));
+  await main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible(AFTER_PRESS);
+  await dialog.getByRole('button', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).click();
+  await expect(dialog).toHaveCount(0, AFTER_PRESS);
+  await page.unroute(bundlePlanPath);
+  await main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+  await expect(dialog).toBeVisible(AFTER_PRESS);
+  // A stale tab gets a same-screen exit after the server refuses its export.
+  await page.route(`**/api/v1/companies/${paid.companyId}/expenses/accountant-package`, route => route.fulfill({
+    status: 403, json: { code: 'FREE_EXPENSE_DRAFTS_ONLY', message: 'สิทธิ์นี้ใช้สำหรับอ่านเอกสารและเก็บร่างรายจ่ายเท่านั้น' },
+  }));
+  await dialog.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click();
+  await dialog.getByRole('button', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).click();
+  await expect(dialog).toHaveCount(0, AFTER_PRESS);
+  await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible();
+});
+
 test('@journey an owner downloads the accounting files, switches a branch off and no longer finds it in the upload chooser; a staff name change shows under ประวัติการแก้ชื่อ on her card', async ({ pageAs, api, apiAs, companyId }) => {
   test.setTimeout(300_000);
   const vendor = unique('ร้านหลักฐานบัญชี');

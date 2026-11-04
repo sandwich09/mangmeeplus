@@ -1,3 +1,4 @@
+import { GetExpenseUseCase } from '../expenses/application/use-cases/expense-draft.use-case';
 import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /** First-shop readiness through real signup, permissions, upload and OCR persistence. */
 import { describe, it } from 'node:test';
@@ -231,7 +232,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
         } satisfies ReceiptOcrResponse);
       };
       const extract = new RequestReceiptExtractionUseCase(repo, storage, new ReceiptOcrClient(config, rateLimits, prisma), new ReceiptOcrApplyService(prisma, repo), audit, prisma,
-        new PrismaExpenseCaptureRepository(prisma), { kick: () => undefined } as any);
+        new PrismaExpenseCaptureRepository(prisma), { kick: () => undefined } as any, new GetExpenseUseCase(repo));
       await assert.rejects(extract.execute({ ...ctx, companyId: `${tag}-another-company` }, intent.expenseId));
       const result = await extract.execute(ctx, intent.expenseId);
       assert.equal(result.status, 'ok');

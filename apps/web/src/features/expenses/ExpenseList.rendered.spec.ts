@@ -65,7 +65,7 @@ function row(index: number, overrides = {}) {
     expenseCategoryId: 'cat', grandTotalAmount: '107', outstandingAmount: '107', vatAmount: '7', captureSource: 'WEB_UPLOAD',
     inputVatClaimStatus: 'NEEDS_REVIEW', inputVatRightVisible: true, ...overrides };
 }
-function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '', navigate: (url: string) => void = noop, caps = {}) {
+function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '', navigate: (url: string) => void = noop, caps = {}, freeExpenseDrafts = false) {
   const state: Record<string, unknown> = { rows, catNames: { cat: 'หมวดทดสอบ' }, loading: false, categoryNamesLoading: false, ...stateOverrides };
   const realState = runtime.useState;
   let index = 0;
@@ -81,9 +81,30 @@ function render(rows: ReturnType<typeof row>[], stateOverrides = {}, query = '',
     return renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: navigate, replace: noop, prefetch: noop } as any },
       h(SearchParamsContext.Provider, { value: new URLSearchParams(query) },
         h(ToastContext.Provider, { value: { success: noop, error: noop, warning: noop } },
-          h(ExpenseListPage, { companyId: 'co', caps: { canReview: true, canExportPackage: true, canUploadReceipts: true, ...caps }, userId: 'owner', onSelect: noop })))));
+          h(ExpenseListPage, { companyId: 'co', caps: { canReview: true, canExportPackage: true, canUploadReceipts: true, ...caps }, userId: 'owner', onSelect: noop, freeExpenseDrafts })))));
   } finally { hooks.forEach(hook => hook.mock.restore()); }
 }
+
+test('free and stale sessions cannot open export and can return to drafts', () => {
+  const label = 'ส่งออก Excel ให้สำนักงานบัญชี';
+  for (const caps of [{ canExportPackage: true }, { canExportPackage: false }]) {
+    const free = render([row(1, { status: 'DRAFT' })], { exportOpen: true }, '', noop, caps, true);
+    assert.ok(!free.includes(label)); assert.ok(!free.includes('role="dialog"'));
+  }
+  assert.ok(!render([], {}, '', noop, { canExportPackage: false }).includes(label));
+  let close: (() => void) | undefined, footer: React.ReactNode, body: React.ReactNode;
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag === 'button' && children.includes('กลับไปรายการค่าใช้จ่าย')) close = props.onClick;
+    if (tag?.name === 'Modal' && props.open) { footer = props.footer; body = children; }
+    return realCreate(tag, props, ...children);
+  });
+  try {
+    render([row(1)], { exportOpen: true, exportError: 'สิทธิ์นี้ใช้สำหรับอ่านเอกสารและเก็บร่างรายจ่ายเท่านั้น' });
+    assert.match(renderToStaticMarkup(footer), /กลับไปรายการค่าใช้จ่าย/); assert.ok(close); close();
+    assert.match(renderToStaticMarkup(body), /สิทธิ์นี้ใช้สำหรับอ่านเอกสารและเก็บร่างรายจ่ายเท่านั้น/);
+  } finally { create.mock.restore(); }
+});
 
 test('LIST-1 renders three metrics, 10 rows newest first, one work status and retained warnings in both layouts', () => {
   const html = render(Array.from({ length: 21 }, (_, index) => row(index)));

@@ -78,7 +78,7 @@ test('50 ทวิ issuance remains available across visits from server capabili
     [{ status: 'CONFIRMED', whtAmount: '3' }, { ...handoff, systemIssuanceOpen: false }, ['wht.certificate.issue']],
     [{ status: 'CONFIRMED', whtAmount: '3' }, handoff, []],
   ]) assert.equal(allowed(detail, h, permissions), false);
-  assert.match(page, /canIssueExpenseWhtCertificate\(detail, whtHandoff, permissions\)/);
+  assert.match(page, /canIssueExpenseWhtCertificate\(detail, whtHandoff, uiPermissions\)/);
   assert.match(page, /downloadSystemWhtCertificate/);
   assert.match(page, /EXPENSE_CORRECTION_WORDS.downloadAgain/);
   assert.doesNotMatch(page, /status: 'SYSTEM_ISSUED', sourcePaymentId: expenseId/);

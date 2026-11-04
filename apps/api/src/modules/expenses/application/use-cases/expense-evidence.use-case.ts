@@ -15,6 +15,7 @@ import { DisbursementVoucherUseCase } from './disbursement-voucher.use-case';
 import { disbursementVoucherReadWhere } from '../../infrastructure/prisma-disbursement-voucher.repository';
 import { IssueWhtCertificateFromHandoffUseCase } from '../../../tax/application/use-cases/issue-wht-certificate-from-handoff.use-case';
 import { zipStore } from '../../../../common/export/xlsx.logic';
+import { assertExpenseFinancialAccess } from '../expense-commercial-access';
 import { canonicalAttachmentExtension } from '../../../data-model-core/domain/logic/attachment.logic';
 
 // Bound memory and download size: stored images/PDFs gain nothing from compression.
@@ -318,6 +319,7 @@ export class CreateAccountantPackageUseCase {
     if (!hasPerm(ctx, 'expense.export')) throw new ForbiddenException('Missing permission: expense.export');
     if (!hasPerm(ctx, 'expense.read')) throw new ForbiddenException('Missing permission: expense.read');
     if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (!ctx.roles.includes('SYSTEM_ADMIN')) await assertExpenseFinancialAccess(ctx, this.prisma.client);
     const filter = { ...request, status: request.status ?? 'CONFIRMED' as const, dateField: request.dateField ?? 'expenseDate' as const };
     const pageSize = !bundle && request.pageSize && request.pageSize > 0 && request.pageSize <= 500 ? request.pageSize : 500;
     // Keep unavailable metadata in both exports so an omitted file cannot renumber the ZIP links.
@@ -367,8 +369,9 @@ export class CreateAccountantPackageUseCase {
       ...(request.expenseIds ? { sourcePaymentId: { in: request.expenseIds } } : {}),
       ...(request.branchId ? { sourceBranchId: request.branchId } : ctx.scopes?.branchIds ? { sourceBranchId: { in: ctx.scopes.branchIds } } : {}) },
       select: { id: true, certificateId: true, sourcePaymentId: true } }) : [];
+    const selection = request.expenseIds !== undefined ? new Set(request.expenseIds) : undefined;
     const extraIds = [...new Set([...payments.map(p => p.expenseId), ...paidVouchers.flatMap(v => v.lines.map(l => l.expenseId)),
-      ...handoffs.flatMap(h => h.sourcePaymentId ? [h.sourcePaymentId] : [])])].filter(id => !page.rows.some(row => row.id === id));
+      ...handoffs.flatMap(h => h.sourcePaymentId ? [h.sourcePaymentId] : [])])].filter(id => (!selection || selection.has(id)) && !page.rows.some(row => row.id === id));
     if (!bundle && (request.page !== undefined || request.pageSize !== undefined)) extraIds.length = 0;
     for (let offset = 0; offset < extraIds.length; offset += 500) {
       const extra = await this.repo.listSharedEvidence(ctx.companyId, { ...request, yearMonth: undefined, fromDate: undefined, toDate: undefined,

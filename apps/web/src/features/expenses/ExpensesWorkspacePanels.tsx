@@ -920,7 +920,10 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               <MangmeeCard className={`p-4 ${evidenceStyles.section}`}>
                 <FilterTabs aria-label="ความครบของหลักฐาน" value={flagFilter} onChange={setFlagFilter} tabs={filterOptions} className={evidenceStyles.tabs} />
                 <button type="button" className={`${quietButtonClass} ${evidenceStyles.phoneSort}`} aria-label={sortLabel} onClick={toggleOrder}>เรียง: {order === 'newest' ? 'ใหม่ไปเก่า ↓' : 'เก่าไปใหม่ ↑'}</button>
-                {error ? <ErrorState description={error} onRetry={() => void load()} />
+                {error ? <>
+                  <ErrorState description={error} onRetry={() => void load()} />
+                  <Link href={`/companies/${companyId}/expenses`} className={ghostClass}>กลับไปรายการค่าใช้จ่าย</Link>
+                </>
                   : loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && <>
                   <table className={evidenceStyles.table}>
                     <colgroup><col style={{ width: '32%' }} /><col style={{ width: '16%' }} /><col style={{ width: '18%' }} /><col style={{ width: '17%' }} /><col style={{ width: '17%' }} /></colgroup>

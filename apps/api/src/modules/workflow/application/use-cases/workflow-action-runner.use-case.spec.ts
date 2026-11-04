@@ -1191,6 +1191,7 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     } as any;
     const prisma = {
       client: {
+        company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
         companyMembership: { findFirst: async ({ where }: any) => opts.memberships[where.userId] ?? null },
         // Every branch named in a scope is ACTIVE here; a closed branch is the resolver's own spec.
         branch: { findMany: async ({ where }: any) => (where.id.in as string[]).map((id) => ({ id })) },

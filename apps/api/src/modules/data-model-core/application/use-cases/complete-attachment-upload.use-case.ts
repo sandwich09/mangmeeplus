@@ -1,3 +1,4 @@
+import { isBranchInScope } from '../../domain/logic/branch.logic';
 import { Inject, Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
@@ -5,7 +6,7 @@ import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/sec
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/ports/attachment-storage.port';
-import { generateImmutableObjectKey, inspectAttachmentBytes } from '../../domain/logic/attachment.logic';
+import { generateImmutableObjectKey, inspectAttachmentBytes, attachmentInspectionFailureCode } from '../../domain/logic/attachment.logic';
 import type { AttachmentRecord } from '../../domain/models/attachment.model';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -87,6 +88,14 @@ export class CompleteAttachmentUploadUseCase {
 
     const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
     if (!existing) throw new NotFoundException('Attachment not found.');
+    if (existing.uploadedByUserId !== ctx.userId || !isBranchInScope(ctx.scopes ?? {}, existing.branchId)) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.upload.complete', targetType: 'attachment', targetId: cmd.attachmentId,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'MEDIUM',
+      });
+      throw new ForbiddenException();
+    }
     if (existing.status !== 'PENDING_UPLOAD') {
       throw new BadRequestException('Attachment is not in PENDING_UPLOAD state.');
     }
@@ -117,11 +126,12 @@ export class CompleteAttachmentUploadUseCase {
       await this.rejectUpload(ctx, existing.id, 'Uploaded bytes have an unexpected MIME type.');
     }
     const contentError = inspectAttachmentBytes(existing.mimeType, uploaded.bytes);
-    if (contentError) await this.rejectUpload(ctx, existing.id, contentError);
+    if (contentError) await this.rejectUpload(ctx, existing.id, contentError, attachmentInspectionFailureCode(contentError));
     try {
       await this.malwareScanner.assertClean(uploaded.bytes);
-    } catch {
-      await this.rejectUpload(ctx, existing.id, 'Malware scan rejected the attachment.');
+    } catch (error) {
+      await this.rejectUpload(ctx, existing.id, 'Malware scan rejected the attachment.',
+        (error as Error).message === 'MALWARE_DETECTED' ? 'CONTENT_REJECTED' : 'CONTENT_UNINSPECTABLE');
     }
 
     const checksumSha256 = createHash('sha256').update(uploaded.bytes).digest('hex');
@@ -177,7 +187,8 @@ export class CompleteAttachmentUploadUseCase {
     return record;
   }
 
-  private async rejectUpload(ctx: RequestContext, id: string, message: string): Promise<never> {
+  private async rejectUpload(ctx: RequestContext, id: string, message: string, code?: 'CONTENT_UNINSPECTABLE' | 'EMBEDDED_FILE_REJECTED' | 'CONTENT_REJECTED'): Promise<never> {
+    const riskLevel = code === 'CONTENT_UNINSPECTABLE' || code === 'EMBEDDED_FILE_REJECTED' ? 'MEDIUM' : 'HIGH';
     await this.attachments.markQuarantined({ id, companyId: ctx.companyId });
     await this.audit.log({
       companyId: ctx.companyId,
@@ -187,15 +198,15 @@ export class CompleteAttachmentUploadUseCase {
       targetId: id,
       requestId: ctx.requestId,
       result: 'FAILED',
-      riskLevel: 'HIGH',
-      metadataJson: { reason: message },
+      riskLevel,
+      metadataJson: { reason: message, ...(code ? { code } : {}) },
     });
-    emitSecurityEvent(this.logger, SECURITY_EVENT.attachmentUploadRejected, 'HIGH', {
+    if (riskLevel === 'HIGH') emitSecurityEvent(this.logger, SECURITY_EVENT.attachmentUploadRejected, 'HIGH', {
       companyId: ctx.companyId,
       attachmentId: id,
       actorUserId: ctx.userId,
       requestId: ctx.requestId,
     });
-    throw new BadRequestException(message);
+    throw new BadRequestException(code && code !== 'CONTENT_REJECTED' ? { code, message } : message);
   }
 }

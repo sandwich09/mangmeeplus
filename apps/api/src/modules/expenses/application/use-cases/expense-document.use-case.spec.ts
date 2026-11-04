@@ -1,3 +1,4 @@
+import { GetExpenseUseCase } from './expense-draft.use-case';
 import { inflateRawSync } from 'node:zlib';
 import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
 import { applyLineExpenseDraftAnswer, materializedLineExpenseDraftItems, buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions, isLineExpenseDraftStartEligible } from '../../domain/logic/line-expense-draft-conversation.logic';
@@ -726,6 +727,7 @@ describe('signature asset lifecycle', () => {
         updateSignatureAsset: async (_c: string, id: string, data: any) => { updates.push(data); row = { ...row, id, ...data }; return row; },
         createSignatureFill: async (input: any) => ({ id: 'fill-1', appliedAt: new Date(), ...input }),
         findById: async () => ({ id: 'exp-1', status: 'NEEDS_REVIEW' }),
+        findByIdWithRelations: async () => ({ id: 'exp-1', status: 'NEEDS_REVIEW' }),
         linkAttachment: async () => undefined,
         findActiveMemberIdentity: async () => ({ userId: 'user-1', displayName: 'สมชาย ใจดี' }),
         // Absent bytes means "not an image the transform can read": the derive is skipped, which is
@@ -1033,7 +1035,7 @@ describe('signature asset lifecycle', () => {
 
   it('fill requires web channel, review permission, ownership, and an ACTIVE signature', async () => {
     const archived = makeSigRepo('ARCHIVED', { submittedByUserId: 'user-1' });
-    const fillArchived = new FillSignatureUseCase(archived.repo, completeUpload, audit);
+    const fillArchived = new FillSignatureUseCase(archived.repo, completeUpload, audit, new GetExpenseUseCase(archived.repo));
     await assert.rejects(
       () => fillArchived.execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
       /ACTIVE signatures/,
@@ -1044,13 +1046,13 @@ describe('signature asset lifecycle', () => {
     // is fillable the instant it is saved.
     const theirs = makeSigRepo('ACTIVE', { submittedByUserId: 'other-user' });
     await assert.rejects(
-      () => new FillSignatureUseCase(theirs.repo, completeUpload, audit)
+      () => new FillSignatureUseCase(theirs.repo, completeUpload, audit, new GetExpenseUseCase(theirs.repo))
         .execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
       /only apply your own signature/,
     );
 
     const active = makeSigRepo('ACTIVE', { submittedByUserId: 'user-1' });
-    const fill = new FillSignatureUseCase(active.repo, completeUpload, audit);
+    const fill = new FillSignatureUseCase(active.repo, completeUpload, audit, new GetExpenseUseCase(active.repo));
     await assert.rejects(
       () => fill.execute(ctx(['expense.review'], 'line'), 'exp-1', { signatureAssetId: 'sig-1' }),
       /web-only/,
@@ -1077,6 +1079,133 @@ describe('GetSharedEvidenceViewUseCase', () => {
     assert.deepEqual(result.rows, []);
     assert.equal(result.dateField, 'expenseDate');
     await assert.rejects(() => useCase.execute(ctx(['expense.read']), {}), /expense.evidence.read/);
+  });
+});
+
+describe('export cleanup 0.1 selection boundary', () => {
+  function workbookParts(file: Buffer) {
+    const parts = new Map<string, string>();
+    for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+      const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+      const start = offset + 30 + length + file.readUInt16LE(offset + 28);
+      const bytes = file.subarray(start, start + size);
+      parts.set(file.subarray(offset + 30, offset + 30 + length).toString(), (file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes).toString());
+      offset = start + size;
+    }
+    return parts;
+  }
+
+  it('selection excludes an unselected co-voucher expense from workbook, WHT and ZIP', async () => {
+    const reader = { ...ctx(['expense.export', 'expense.read', 'attachment.read', 'expense.disbursement.read', 'wht.certificate.read']), scopes: { branchIds: ['b1'] } };
+    for (const outsideBranch of [false, true]) {
+      const rows = ['A', 'B'].map(id => ({ id, companyId: reader.companyId, branchId: id === 'B' && outsideBranch ? 'b2' : 'b1',
+        status: 'CONFIRMED', expenseNumber: `EXP-${id}`, expenseDate: new Date('2026-09-01'), uploadedAt: new Date('2026-09-01'),
+        attachments: [{ id: `receipt-${id}`, purpose: 'expense.receipt.primary', originalFileName: `${id}.jpg`, mimeType: 'image/jpeg', byteSize: 1, status: 'ACTIVE' }] }));
+      const calls: string[] = [], filters: any[] = [];
+      const matches = (row: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+        if (key === 'AND') return value.every((part: any) => matches(row, part));
+        if (key === 'OR') return value.some((part: any) => matches(row, part));
+        if (value && typeof value === 'object') {
+          if ('in' in value) return value.in.includes(row[key]);
+          if ('not' in value) return row[key] !== value.not;
+          if ('gte' in value || 'lt' in value) return (!value.gte || row[key] >= value.gte) && (!value.lt || row[key] < value.lt);
+        }
+        return row[key] === value;
+      });
+      const db = { company: { findUnique: async () => ({ name: 'ร้าน', status: 'ACTIVE', archivedAt: null, planTerm: null }) }, user: { findMany: async () => [] }, branch: { findMany: async () => [] },
+        expensePayment: { findMany: async () => [] },
+        disbursementVoucher: { findMany: async ({ where }: any) => {
+          const voucher = { companyId: reader.companyId, branchId: 'b1', status: 'PAID', paidDate: new Date('2026-10-02') };
+          const { lines, AND, ...header } = where;
+          const selected = AND?.[0].lines.some.expenseId.in;
+          return matches(voucher, header) && rows.every(row => matches(row, lines.every.expense.is)) && (!selected || rows.some(row => selected.includes(row.id)))
+            ? [{ id: 'V', documentNumber: 'PV-AB', slipAttachmentId: 'V-slip', lines: rows.map(row => ({ expenseId: row.id })) }] : [];
+        } },
+        whtCertificate: { findMany: async ({ where }: any) => rows.map(row => ({ id: `c-${row.id}`, certificateNumber: `WHT-${row.id}`, companyId: reader.companyId, status: 'ISSUED', paymentDate: new Date('2026-10-02') })).filter(row => matches(row, where)) },
+        whtCertificateHandoff: { findMany: async ({ where }: any) => rows.map(row => ({ id: `h-${row.id}`, certificateId: `c-${row.id}`, sourcePaymentId: row.id, sourceBranchId: row.branchId, companyId: reader.companyId, status: 'SYSTEM_ISSUED', sourcePaymentType: 'expense.record' })).filter(row => matches(row, where)) },
+      };
+      const repo = { listSharedEvidence: async (companyId: string, filter: any, scopes: any, unavailable: boolean) => {
+        filters.push(filter); assert.equal(companyId, reader.companyId); assert.deepEqual(scopes, reader.scopes); assert.equal(unavailable, true);
+        const eligible = rows.filter(row => row.companyId === companyId && scopes.branchIds.includes(row.branchId)
+          && (!filter.branchId || row.branchId === filter.branchId) && row.status === filter.status
+          && (filter.expenseIds === undefined || filter.expenseIds.includes(row.id))
+          && (!filter.yearMonth || row.expenseDate.toISOString().startsWith(filter.yearMonth)));
+        return { rows: eligible.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize), total: eligible.length, page: filter.page, pageSize: filter.pageSize };
+      } };
+      const voucherFile = async () => { calls.push('V'); return { data: Buffer.from('V'), mimeType: 'image/jpeg' }; };
+      const vouchers = { documentPdf: voucherFile, slipBytes: voucherFile, supportingFiles: async () => { calls.push('V-support'); return [{ id: 'support' }]; }, supportingFileBytes: voucherFile };
+      const downloads = { execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }), readBytes: async (_: any, c: any) => Buffer.from(c.attachmentId) };
+      const wht = { download: async (_: any, id: string) => { calls.push(id); return { pdfArtifact: { contentBase64: Buffer.from(id).toString('base64') } }; } };
+      const useCase = new CreateAccountantPackageUseCase(repo as any, downloads as any, audit, { client: db } as any, vouchers as any, wht as any);
+      for (const selection of [['A'], [], undefined]) {
+        calls.length = 0; filters.length = 0;
+        const request = { yearMonth: '2026-10', branchId: 'b1', ...(selection === undefined ? {} : { expenseIds: selection }) };
+        const result = await useCase.execute(reader, request);
+        const workbook = [...workbookParts(Buffer.from(result.indexXlsxBase64, 'base64')).values()].join('');
+        const includeB = selection === undefined && !outsideBranch;
+        assert.equal(workbook.includes('EXP-B'), includeB);
+        assert.equal(workbook.includes('WHT-B'), includeB);
+        assert.equal(result.evidenceManifest.some(row => row.expense_id === 'B'), includeB);
+        const plan = await useCase.planBundle(reader, request);
+        if (selection?.length === 0) {
+          assert.deepEqual(result.indexRows, []); assert.equal(plan.partCount, 0);
+          await assert.rejects(() => useCase.downloadBundle(reader, request, 1), (e: any) => e.getStatus() === 404);
+        } else {
+          const zip = (await useCase.downloadBundle(reader, request, 1)).bytes.toString();
+          assert.equal(zip.includes('receipt-B'), includeB);
+          assert.equal(plan.counts.vouchers, includeB ? 1 : 0);
+        }
+        if (!includeB) assert.ok(!calls.some(call => call.startsWith('V')), 'full co-voucher artifacts must never be loaded');
+        for (const page of [1, 2]) {
+          const paged = await useCase.execute(reader, { ...request, page, pageSize: 1 });
+          assert.deepEqual(paged.indexRows, []); assert.deepEqual(paged.evidenceManifest, []);
+          const bundle = await useCase.planBundle(reader, { ...request, page, pageSize: 1 });
+          assert.equal(bundle.partCount, plan.partCount, 'ZIP ignores workbook pagination');
+        }
+        if (selection) assert.ok(filters.every(filter => filter.expenseIds.every((id: string) => selection.includes(id))));
+      }
+      for (const page of [1, 2, 3]) {
+        calls.length = 0;
+        const result = await useCase.execute(reader, { branchId: 'b1', page, pageSize: 1 });
+        const expected = page === 1 ? ['EXP-A'] : page === 2 && !outsideBranch ? ['EXP-B'] : [];
+        assert.deepEqual(result.indexRows.map(row => row.expense_number), expected);
+        assert.equal(result.evidenceManifest.length, expected.length);
+        assert.ok(!calls.some(call => call.startsWith('V')), 'explicit workbook pages cannot add co-voucher sources');
+      }
+    }
+  });
+});
+
+describe('export cleanup 0.2 commercial boundary', () => {
+  it('free shops cannot export accountant files through HTTP or direct calls', async () => {
+    const touched: string[] = [];
+    const forbiddenWork = async () => { touched.push('export work'); throw new Error('export work reached'); };
+    let company: any = { status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date('2020-01-01'), billingReceiptAccountId: null, capacityOverride: null } };
+    const db = { company: { findUnique: async () => company }, billingAccount: { findMany: async () => [] },
+      billingInvoice: { findFirst: async () => null }, billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      expensePayment: { findMany: forbiddenWork }, whtCertificate: { findMany: forbiddenWork } };
+    const useCase = new CreateAccountantPackageUseCase({ listSharedEvidence: forbiddenWork } as any,
+      { execute: forbiddenWork, readBytes: forbiddenWork } as any, { log: forbiddenWork } as any, { client: db } as any,
+      { documentPdf: forbiddenWork } as any, { download: forbiddenWork } as any);
+    const customer = { ...ctx(['expense.export', 'expense.read', 'attachment.read', 'wht.certificate.read']), scopes: { branchIds: ['b1'] } };
+    for (const freeExpenseDrafts of [true, undefined]) {
+      for (const run of [() => useCase.execute({ ...customer, freeExpenseDrafts }, {}),
+        () => useCase.planBundle({ ...customer, freeExpenseDrafts }, {}), () => useCase.downloadBundle({ ...customer, freeExpenseDrafts }, {}, 1)]) {
+        await assert.rejects(run, (e: any) => e.getStatus?.() === 403 && e.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
+        assert.deepEqual(touched, [], 'denial precedes rows, files, WHT and successful audit');
+      }
+    }
+    company = { status: 'ACTIVE', archivedAt: null, planTerm: { tierKey: 'STARTER_249', termEndsAt: new Date('2099-01-01'), termDisabledAt: null } };
+    await assert.rejects(() => useCase.execute(customer, { branchId: 'b2' }), /branch/i);
+    assert.deepEqual(touched, []);
+    await assert.rejects(() => useCase.execute({ ...customer, permissions: ['expense.read'] }, {}), /expense.export/);
+    assert.deepEqual(touched, []);
+    await assert.rejects(() => useCase.execute(customer, {}), /export work reached/);
+    assert.equal(touched.length, 1, 'paid customer still reaches scoped loader');
+    company = null; touched.length = 0;
+    await assert.rejects(() => useCase.execute({ ...customer, roles: ['SYSTEM_ADMIN'] }, {}), /export work reached/);
+    assert.equal(touched.length, 1, 'SYSTEM_ADMIN keeps existing exception');
   });
 });
 
@@ -1109,7 +1238,7 @@ describe('CreateAccountantPackageUseCase', () => {
     const downloadUrl = { execute: async () => ({ downloadUrl: '/local-storage/download/tok', expiresAt: new Date('2026-07-01T10:05:00Z') }) } as any;
     const prisma = {
       client: {
-        company: { findUnique: async () => ({ name: 'บริษัท ทดสอบ', taxId: '0105' }) },
+        company: { findUnique: async () => ({ name: 'บริษัท ทดสอบ', taxId: '0105', status: 'ACTIVE', archivedAt: null, planTerm: null }) },
         branch: { findMany: async () => [{ id: 'b1', code: 'SIAM' }] },
         user: { findMany: async () => [{ id: 'user-1', displayName: 'สมชาย', email: null }] },
         expenseSubstituteReceiptEvidence: { findMany: async () => [] },
@@ -1212,7 +1341,7 @@ describe('accountant evidence bundle', () => {
       queries.push({ companyId, filter, scopes, options });
       return { rows: rows.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize).map(row => ({ ...row, attachments: row.attachments.filter((file: any) => options || file.status === 'ACTIVE') })), total: rows.length, page: filter.page, pageSize: filter.pageSize };
     } } as any;
-    return { queries, audits, useCase: new CreateAccountantPackageUseCase(repo, { readBytes, execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }) } as any, { log: async (entry: any) => { if (entry.action === 'expense.accountant_bundle.download') audits.push(entry); } } as any, { client: { expensePayment: { findMany: async () => [] }, company: { findUnique: async () => ({ name: 'ร้าน' }) }, user: { findMany: async () => [] }, branch: { findMany: async () => [] } } } as any, {} as any, {} as any) };
+    return { queries, audits, useCase: new CreateAccountantPackageUseCase(repo, { readBytes, execute: async () => ({ downloadUrl: '/file', expiresAt: new Date() }) } as any, { log: async (entry: any) => { if (entry.action === 'expense.accountant_bundle.download') audits.push(entry); } } as any, { client: { expensePayment: { findMany: async () => [] }, company: { findUnique: async () => ({ name: 'ร้าน', status: 'ACTIVE', archivedAt: null, planTerm: null }) }, user: { findMany: async () => [] }, branch: { findMany: async () => [] } } } as any, {} as any, {} as any) };
   }
   function unzip(bytes: Buffer) {
     const entries = new Map<string, Buffer>();
@@ -1266,7 +1395,7 @@ describe('accountant evidence bundle', () => {
       return { rows: matched.slice((filter.page - 1) * filter.pageSize, filter.page * filter.pageSize), total: matched.length, page: filter.page, pageSize: filter.pageSize };
     } };
     const useCase = new CreateAccountantPackageUseCase(repo as any, {} as any, audit, { client: {
-      company: { findUnique: async () => ({ name: 'ร้าน' }) },
+      company: { findUnique: async () => ({ name: 'ร้าน', status: 'ACTIVE', archivedAt: null, planTerm: null }) },
       expensePayment: { findMany: async (query: any) => rows.filter(row => row.paidAt >= query.where.paidAt.gte && row.paidAt < query.where.paidAt.lt).map(row => ({ id: `pay-${row.id}`, expenseId: row.id })) },
       attachmentLink: { findMany: async () => [] },
     } } as any, {} as any, {} as any);
@@ -1287,7 +1416,7 @@ describe('accountant evidence bundle', () => {
   it('packages paid vouchers, direct-issued vouchers, slips and issued 50 ทวิ for an earlier expense with scoped month counts and index links', async () => {
     const row = { uploadedAt: new Date('2026-09-01'), expenseDate: new Date('2026-09-01'), id: 'e', expenseNumber: 'EXP-1', branchId: 'b1', attachments: [file('receipt')] };
     const queries: any = {}, calls: string[] = [];
-    const db = { company: { findUnique: async () => ({ name: 'ร้าน', timezone: 'Asia/Bangkok' }) },
+    const db = { company: { findUnique: async () => ({ name: 'ร้าน', timezone: 'Asia/Bangkok', status: 'ACTIVE', archivedAt: null, planTerm: null }) },
       user: { findMany: async () => [] }, branch: { findMany: async () => [] },
       expensePayment: { findMany: async (q: any) => { queries.payments = q; return [{ id: 'pay', expenseId: 'e' }]; } },
       attachmentLink: { findMany: async () => [{ targetId: 'pay', attachment: file('payment-slip') }] },
@@ -1580,3 +1709,74 @@ describe('cash-note questions stay separate from receipt completeness', () => {
       hints: { confidence: 1, amount: '1800', items: [{ sourceText: 'ค่าซ่อมแอร์', description: 'ค่าซ่อมแอร์' }, { sourceText: 'ค่าล้างแอร์', description: 'ค่าล้างแอร์' }] } });
     assert.equal(materializedLineExpenseDraftItems(multi).length, 0, 'a document total never becomes each of two item totals');
   });
+
+
+it('R12 signature fill uses expense detail scope before mutation', async () => {
+  for (const renderedAttachmentId of [undefined, 'rendered-1']) {
+    for (const scenario of ['branch', 'tenant', 'missing', 'valid', 'central', 'unrestricted', 'database', 'closed', 'own-read'] as const) {
+      const calls: string[] = [];
+      const expense = { id: 'exp-1', companyId: 'company-1', status: scenario === 'closed' ? 'CONFIRMED' : 'DRAFT', createdByUserId: 'other-creator',
+        branchId: scenario === 'central' ? null : scenario === 'branch' ? 'branch-b' : 'branch-a' };
+      const failure = new Error('database unavailable');
+      const repo = {
+        findById: async () => expense,
+        findByIdWithRelations: async (companyId: string, expenseId: string) => {
+          if (scenario === 'database') throw failure;
+          return companyId === expense.companyId && expenseId === expense.id ? expense : null;
+        },
+        findSignatureAssetById: async () => { calls.push('asset'); return { id: 'sig-1', submittedByUserId: 'user-1', status: 'ACTIVE' }; },
+        linkAttachment: async () => { calls.push('link'); },
+        createSignatureFill: async () => { calls.push('fill'); return { id: 'fill-1', appliedAt: new Date() }; },
+      } as any;
+      const complete = { execute: async () => { calls.push('complete'); } } as any;
+      const audit = { log: async () => { calls.push('success'); } } as any;
+      const useCase = new FillSignatureUseCase(repo, complete, audit, new GetExpenseUseCase(repo));
+      const actor = { ...ctx(scenario === 'own-read' ? ['expense.read_own'] : ['expense.review', ...(renderedAttachmentId ? ['attachment.create'] : [])]), companyId: scenario === 'tenant' ? 'other-company' : 'company-1',
+        scopes: scenario === 'unrestricted' ? undefined : { branchIds: scenario === 'central' ? [] : ['branch-a'] } };
+      const run = () => useCase.execute(actor as RequestContext, scenario === 'missing' ? 'missing' : 'exp-1', { signatureAssetId: 'sig-1', renderedAttachmentId });
+      if (['valid', 'central', 'unrestricted'].includes(scenario)) {
+        assert.equal((await run()).fillId, 'fill-1');
+        assert.deepEqual(calls, ['asset', ...(renderedAttachmentId ? ['complete', 'link'] : []), 'fill', 'success']);
+      } else {
+        await assert.rejects(run, (error: any) => scenario === 'database' ? error === failure : error.getStatus() === (scenario === 'closed' ? 400 : scenario === 'own-read' ? 403 : 404));
+        assert.deepEqual(calls, []);
+      }
+    }
+  }
+});
+
+it('R12 free source drafts cannot acquire a signature fill', async () => {
+  for (const freeExpenseDrafts of [undefined, true]) {
+    const calls: string[] = [];
+    const repo = {
+      commercialAccessDb: {
+        company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } }) },
+        billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+        billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      },
+      findById: async () => ({ id: 'exp-1', status: 'DRAFT' }),
+      findByIdWithRelations: async () => { calls.push('read'); return { id: 'exp-1', status: 'DRAFT' }; },
+      findSignatureAssetById: async () => { calls.push('asset'); return { id: 'sig-1', submittedByUserId: 'user-1', status: 'ACTIVE' }; },
+      linkAttachment: async () => { calls.push('link'); },
+      createSignatureFill: async () => { calls.push('fill'); return { id: 'fill-1', appliedAt: new Date() }; },
+    } as any;
+    const useCase = new FillSignatureUseCase(repo, { execute: async () => { calls.push('complete'); } } as any,
+      { log: async () => { calls.push('success'); } } as any, new GetExpenseUseCase(repo));
+    await assert.rejects(() => useCase.execute({ ...ctx(['expense.review']), freeExpenseDrafts }, 'exp-1', { signatureAssetId: 'sig-1', renderedAttachmentId: 'rendered-1' }),
+      (error: any) => error.getStatus() === 403 && error.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
+    assert.deepEqual(calls, []);
+  }
+});
+
+
+it('R11 upload callers preserve branch and identity', async () => {
+  const actor = { ...ctx(['expense.review', 'attachment.create']), scopes: { branchIds: [] } };
+  const calls: any[] = [];
+  const useCase = new InitSignatureUploadUseCase({ execute: async (...args: any[]) => { calls.push(args); return { attachmentId: 'signature-upload' }; } } as any);
+  await useCase.execute(actor, { originalFileName: 'signature.png', mimeType: 'image/png', byteSize: 1_000 });
+  assert.deepEqual(calls[0][0], actor);
+  assert.equal(calls[0][1].branchId, undefined);
+  assert.equal(calls[0][0].userId, actor.userId);
+  assert.equal(calls[0][0].membershipId, actor.membershipId);
+  assert.equal(calls[0][0].companyId, actor.companyId);
+});

@@ -269,7 +269,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.routeCheckBill, true);
 
     const next = await h.useCase.execute(ctx(), {
-      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
     const codes = next.blockers.map((item) => item.code);
     assert.equal(codes.includes('source_type_ineligible'), false);
@@ -296,7 +296,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
           attachments: [{ id: 'source', status: 'ACTIVE', purpose: 'expense.receipt.primary', mimeType: 'image/jpeg' }, ...(proof ? [proof] : [])],
         }) });
         await h.useCase.startFromCheckBill(ctx(), { expenseId: 'expense-1', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE });
-        const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+        const result = await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
         assert.equal(result.blockers.some((item) => item.code === 'payment_evidence_required'), proof?.mimeType !== 'application/pdf');
         assert.equal(h.prepares.length, 0);
         assert.equal(h.getExpense().id, 'expense-1');
@@ -569,7 +569,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       'the offered choice stays pending so the dispatcher routes the next “1” back here');
 
     const chosen = await h.useCase.execute(ctx(), {
-      messageText: '1', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [
         { id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' },
         { id: 'expense-9', label: 'โน้ตค่าใช้จ่าย · 90.00' },
@@ -854,7 +854,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     current.aiVerificationSummaryJson = { classification: { documentKind: 'ORDER_OR_CHECK_BILL' } };
     current.attachments.push({ id: 'paid-proof', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'image/png' });
     current.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.routeCheckBill = true;
-    const result = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const result = await h.useCase.execute(ctx(), { messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'READY_FOR_WEB');
     assert.equal(h.prepares.length, 1);
     assert.equal(h.getExpense().sourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
@@ -986,8 +986,12 @@ describe('R13 — the assistant asks before producing the document', () => {
         assert.match(result.replyText, /แก้ได้เลยค่ะ/);
         return;
       }
+      assert.equal(h.prepares.length, 0);
+      assert.equal(result.decisionOffered, expected);
+      const applied = await h.useCase.execute(ctx(), { messageText, confirmedDecision: expected,
+        chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
       assert.equal(h.prepares.length, 1);
-      assert.match(result.replyText, expected === 'ISSUE' ? /รอยืนยัน/ : /แบบฟอร์มรอลงนาม/);
+      assert.match(applied.replyText, expected === 'ISSUE' ? /รอยืนยัน/ : /แบบฟอร์มรอลงนาม/);
     });
   }
 
@@ -1056,7 +1060,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.equal(capture.decisionUnread, true, 'the dispatcher must be free to route this to the intake router');
     assert.match(capture.resumeCapsule ?? '', /ยังอยู่/, 'and the waiting decision still travels with that turn');
 
-    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the invitation is still true after an unrelated message');
     assert.match(later.replyText, /รอยืนยัน/);
   });
@@ -1077,7 +1081,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.equal(h.prepares.length, 0);
     assert.ok(declined.pendingQuestion, 'the pending question is what keeps this chat listening');
 
-    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the answer the invitation asked for is received');
     assert.match(later.replyText, /รอยืนยัน/);
   });
@@ -1102,7 +1106,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     for (const permissions of [SIGNER, undefined]) {
       const h = await readyHarness();
 
-      const answered = await h.useCase.execute(ctx(permissions), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+      const answered = await h.useCase.execute(ctx(permissions), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
       assert.equal(h.prepares.length, 0, 'no signature means nothing is prepared');
       assert.match(answered.replyText, /เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น/);
@@ -1126,9 +1130,9 @@ describe('R13 — the assistant asks before producing the document', () => {
   it('keeps the paper escape open from the ask, for a payer with or without the legacy signature key', async () => {
     for (const permissions of [SIGNER, undefined]) {
       const h = await readyHarness();
-      await h.useCase.execute(ctx(permissions), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+      await h.useCase.execute(ctx(permissions), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
-      const form = await h.useCase.execute(ctx(permissions), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+      const form = await h.useCase.execute(ctx(permissions), { messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
       assert.equal(h.prepares.length, 1);
       assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
     }
@@ -1143,7 +1147,7 @@ describe('R13 — the assistant asks before producing the document', () => {
   it('completes Journey A with no approval wait: ask → photo → 1 → prepared', async () => {
     const h = await readyHarness();
 
-    const asked = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const asked = await h.useCase.execute(ctx(SIGNER), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 0, 'nothing is prepared without a signature');
     assert.equal(asked.pendingQuestion, 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
 
@@ -1167,7 +1171,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     });
     assert.equal(asset.status, 'ACTIVE', 'saved and signable, with nothing in between');
 
-    const issued = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const issued = await h.useCase.execute(ctx(SIGNER), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the very next turn prepares');
     assert.equal(issued.status, 'READY_FOR_WEB');
     assert.match(issued.replyText, /SUB-202608-00007/);
@@ -1181,7 +1185,7 @@ describe('R13 — the assistant asks before producing the document', () => {
   // …and the numbered media question offers the choice to whoever the ask was written for.
   it('offers the signature choice to a payer on either signing act', async () => {
     const h = await readyHarness();
-    await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await h.useCase.execute(ctx(SIGNER), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     for (const permissions of [SIGNER, undefined, ['expense.review']]) {
       const context = await h.useCase.loadOpenMediaContext(ctx(permissions), 'chat-hash');
@@ -1194,7 +1198,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     const h = await readyHarness({ signature: { id: 'signature-1' } });
     const before = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation;
 
-    const issued = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสาร', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const issued = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสาร', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 1);
     const prepared = h.prepares[0];
@@ -1237,7 +1241,7 @@ describe('R13 — the assistant asks before producing the document', () => {
       }),
     });
 
-    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.deepEqual(h.prepares[0].supportingAttachmentIds, ['att-photo'], 'same split the web wizard uses');
     assert.deepEqual(h.prepares[0].paymentEvidenceAttachmentIds, ['att-slip']);
@@ -1246,7 +1250,7 @@ describe('R13 — the assistant asks before producing the document', () => {
   it('choice 2 prepares the same way and points at the unsigned form instead', async () => {
     const h = await readyHarness({ signature: null });
 
-    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const form = await h.useCase.execute(ctx(), { messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 1, 'the paper route needs no stored signature');
     assert.equal(h.prepares[0].preparedFromChannel, 'LINE');
@@ -1312,7 +1316,7 @@ describe('R13 — the assistant asks before producing the document', () => {
 
   it('reports the existing document instead of restarting the conversation over it', async () => {
     const h = await readyHarness({ signature: { id: 'signature-1' } });
-    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     const consumed = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation;
     assert.equal(consumed.status, 'CONSUMED');
     const provenanceBefore = JSON.stringify(consumed.provenance);
@@ -1341,7 +1345,7 @@ describe('R13 — the assistant asks before producing the document', () => {
       prepareError: new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review.' }),
     });
 
-    const stale = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const stale = await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(stale.status, 'STALE');
     assert.match(stale.replyText, /รายการถูกแก้ไขจากเว็บหรือผู้ใช้อื่น/);
@@ -1363,7 +1367,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     });
     assert.equal(h.asked.status, 'READY_FOR_WEB');
 
-    const refused = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const refused = await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 0, 'prepare refused before it reached the repository');
     assert.equal(refused.status, 'BLOCKED');
@@ -1465,7 +1469,7 @@ describe('R15 — wrong-document detection', () => {
     assert.equal(forbidden.replyText.includes('ใบสำคัญรับเงิน'), false);
 
     const h = await readyHarness({ signature: { id: 'signature-1' } });
-    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     const afterPrepare = await h.useCase.execute(ctx(), {
       messageText: 'ทำใบรับรองต่อ เขาเซ็นแล้ว', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
@@ -1664,13 +1668,13 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
 
   it('marks the paper route on the state the prepare consumes, so the next photo can be the scan', async () => {
     const h = await readyHarness();
-    await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await h.useCase.execute(ctx(), { messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares[0].lineContinuation.formRequested, true);
     const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
     assert.equal(context?.awaitingScans[0]?.documentNumber, 'SUB-202608-00007');
 
     const digital = await readyHarness({ signature: { id: 'signature-1' } });
-    await digital.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    await digital.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(digital.prepares[0].lineContinuation.formRequested, false);
     // Consumed, nothing awaiting: this chat has no open substitute work for a photo to belong to.
     assert.equal(await digital.useCase.loadOpenMediaContext(ctx(), 'chat-hash'), undefined);
@@ -1987,7 +1991,7 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
     assert.deepEqual(numbered, ['• \u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', '• \u0e04\u0e48\u0e32\u0e2d\u0e32\u0e2b\u0e32\u0e23'], 'no label appears twice under two numbers');
 
     const answered = await h.useCase.execute(ctx(), {
-      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
     assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', 'the company\u2019s own row wins over the global default');
   });
@@ -2016,7 +2020,7 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
     assert.equal(ready.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
 
     const issued = await h.useCase.execute(ctx(), {
-      messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
     assert.equal(h.prepares.length, 1, issued.replyText);
   });
@@ -2067,7 +2071,7 @@ describe('B2 — the capture-time missing-receipt marker is never an answer and 
         messageText: 'วินมอเตอร์ไซค์ไม่ออกใบเสร็จให้ค่ะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
       });
       await h.useCase.execute(ctx(), {
-        messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+        messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
       });
 
       assert.equal(h.prepares.length, 1);
@@ -2095,7 +2099,7 @@ describe('B5 — the paper choice survives the next turn', () => {
     const h = await readyHarness({ signature: { id: 'signature-1' } });
 
     const form = await h.useCase.execute(ctx(), {
-      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
     assert.equal(form.badge, '🖊️ รอลงนาม');
     assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
@@ -2482,7 +2486,7 @@ describe('Fix-up 8A — legal facts boundaries', () => {
   it('requires a fresh facts review before preparing an old continuation with swallowed payment text', async () => {
     const h = await readyHarness();
     h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose = 'ค่าโปรโมทร้าน จ่ายโอน วันที่ 10 ต.ค. 2569 500 บาท';
-    const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    const result = await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [] });
     assert.equal(h.prepares.length, 0, 'the old decision cannot sign newly split legal text');
     assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, 'ค่าโปรโมทร้าน');
     assert.match(result.replyText, /• วัตถุประสงค์ทางธุรกิจ: ค่าโปรโมทร้าน$/mu);
@@ -2511,7 +2515,7 @@ describe('substitute reply source facts', () => {
   }
   it('binds a prepared document to its returned expense and evidence revisions', async () => {
     const h = await readyHarness({ signature: { id: 'sig-1' } });
-    const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const result = await h.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'READY_FOR_WEB'); assert.ok(result.source);
     assert.equal(await h.useCase.replySourcesCurrent(ctx(), result.source), true);
     const original = JSON.stringify(result.source); h.issue();
@@ -2532,7 +2536,7 @@ describe('Original offered choices take precedence over reordered active workflo
       const records = () => [second.getExpense(), first.getExpense()];
       first.repo.listLineSubstituteContinuationRows = async () => records().filter(row => row.sourceChannelMetadataJson.lineSubstituteReceiptContinuation);
       first.repo.findByIdWithRelations = async (_companyId: string, id: string) => records().find(row => row.id === id) ?? null;
-      const result = await first.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash',
+      const result = await first.useCase.execute(ctx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash',
         recentCandidates: [{ id: 'expense-1', label: 'รายการแรก' }, { id: 'expense-2', label: 'รายการที่สอง' }],
         boundCandidateExpenseIds: ['expense-1', 'expense-2'] });
       assert.equal(result.expenseId, 'expense-1');

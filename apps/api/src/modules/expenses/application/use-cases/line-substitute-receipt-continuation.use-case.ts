@@ -118,6 +118,7 @@ export type LineSubstituteReceiptContinuationResult = {
    *  expense capture still works while the decision waits, and carries the re-ask along as the
    *  resume capsule. Absent means the continuation owns the turn. */
   decisionUnread?: boolean;
+  decisionOffered?: 'ISSUE' | 'FORM';
   resumeCapsule?: string;
   /** The exact expense id(s) this reply is asking the user to pick from or confirm — a target-selection
    *  carries the offered shortlist, a start-confirm carries the ONE selected id. The webhook pins these on
@@ -1691,6 +1692,8 @@ export class LineSubstituteReceiptContinuationUseCase {
     /** The webhook sets this when the user AFFIRMATIVELY confirmed a pending substitute-start
      *  clarification, so a paraphrase-started workflow may now be created without the canonical phrase. */
     confirmedStart?: boolean;
+    /** Supplied only by the verified signed action. */
+    confirmedDecision?: 'ISSUE' | 'FORM';
   }): Promise<LineSubstituteReceiptContinuationResult> {
     const language = input.language ?? ('messageText' in input && typeof input.messageText === 'string' ? lineReplyLanguage(input.messageText) : 'th');
     input = { ...input, language };
@@ -2093,6 +2096,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     language?: 'th' | 'en';
       requireStartConfirmation?: boolean;
       confirmedStart?: boolean;
+      confirmedDecision?: 'ISSUE' | 'FORM';
     },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
@@ -2188,7 +2192,7 @@ export class LineSubstituteReceiptContinuationUseCase {
    *  values" — the normal collect-and-re-ask path owns those, so a correction is never lost. */
   private async answerIssueDecision(
     ctx: RequestContext,
-    input: { messageText: string; webBaseUrl?: string; language?: 'th' | 'en' },
+    input: { messageText: string; webBaseUrl?: string; language?: 'th' | 'en'; confirmedDecision?: 'ISSUE' | 'FORM' },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
     categories: Array<{ id: string; name: string }>,
@@ -2198,7 +2202,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     // action word (“แก้วัตถุประสงค์: ไปพบลูกค้า” names both). Read first so the collect path owns it
     // and nothing the sender typed is dropped for the sake of a word match.
     if (Object.keys(extractValues(input.messageText, null, ctx.userId, categories)).length > 0) return undefined;
-    const choice = issueDecisionChoice(input.messageText);
+    const choice = input.confirmedDecision ?? issueDecisionChoice(input.messageText);
     const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
     if (!choice) {
       // §15: a question asked while the decision is open is still answered from source state, and the
@@ -2279,6 +2283,14 @@ export class LineSubstituteReceiptContinuationUseCase {
           question,
           webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
         }),
+      };
+    }
+    if (!input.confirmedDecision) {
+      return {
+        handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
+        source: substituteReplySource(expense), decisionOffered: choice,
+        acceptedFields: [], blockers: [], webPath,
+        replyText: language === 'en' ? 'Review the details and press the preparation button.' : 'ตรวจข้อมูลแล้วกดปุ่มเตรียมเอกสารได้ค่ะ',
       };
     }
     if (choice === 'ISSUE') {

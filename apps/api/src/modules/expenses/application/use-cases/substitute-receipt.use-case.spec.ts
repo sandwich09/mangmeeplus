@@ -2125,7 +2125,7 @@ describe('Fix-up 11 — LINE prepares and hands signing to the web', () => {
 
   for (const action of ['CERTIFY', 'APPROVE_ISSUE']) it(`a stale ${action} postback navigates to the same web page without signing`, async () => {
     const h = await actionHarness(), actor = lineCtx();
-    await h.useCase.execute(actor, { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    await h.useCase.execute(actor, { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [] });
     const current = (await h.service.prepare(actor, 'chat-hash', 'expense-1')).preview!;
     const store = (h.service as any).store, entry = await store.load(actor.companyId, 'substitute-action:chat-hash');
     entry.action = action; delete entry.preview.webOnly;
@@ -2196,7 +2196,7 @@ describe('Fix-up 11 — LINE prepares and hands signing to the web', () => {
 
   it('a legacy paper form opens the web and does not ask for or embed a digital signature', async () => {
     const h = await actionHarness();
-    await h.useCase.execute(lineCtx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    await h.useCase.execute(lineCtx(), { messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [] });
     Object.assign(h.getExpense().substituteReceiptEvidence, { signatureMode: 'PAPER', wetSignedScanAttachmentId: 'original-scan' });
     h.repo.findReusableSignatureAsset = async () => assert.fail('web owns signing');
     const paper = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
@@ -2351,4 +2351,47 @@ it('U4 parsed substitute payee stays consistent across continuation, prepare and
   const web = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
   assert.match(web.summary, /ผู้รับเงิน: คุณเอ อินฟลู/);
   assert.match(JSON.stringify(buildSubstituteReceiptActionCard(web)), /คุณเอ อินฟลู/);
+});
+
+
+it('R5 typed issue or form never prepares', async () => {
+  const observations: any[] = [];
+  for (const messageText of ['1', '2', 'ใช่']) {
+    const h = await lineReadyHarness({ signature: { id: 'signature' } });
+    const result = await h.useCase.execute(lineCtx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [] });
+    observations.push({ messageText, status: result.status, decision: (result as any).decisionOffered,
+      prepares: h.prepares.length, reviewed: Boolean(h.getExpense().aiVerificationSummaryJson?.documentReview), numberAllocated: Boolean(h.getExpense().substituteReceiptEvidence?.documentNumber) });
+  }
+  console.log('R5 direct baseline', JSON.stringify(observations));
+  assert.deepEqual(observations.map(row => [row.messageText, row.decision, row.prepares, Number(row.reviewed)]),
+    [['1', 'ISSUE', 0, 0], ['2', 'FORM', 0, 0], ['ใช่', 'ISSUE', 0, 0]]);
+});
+
+
+it('R5 signed decisions bind the offer and FORM needs no saved signature', async () => {
+  for (const decision of ['ISSUE', 'FORM'] as const) {
+    const h = await actionHarness();
+    if (decision === 'FORM') {
+      h.signature(false);
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.signatureRequested = true;
+    }
+    const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1', 'th', decision)).preview!;
+    assert.equal(card.label, decision === 'FORM' ? 'เตรียมแบบไปเซ็น' : 'เตรียมใบรับรอง');
+    const result = await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(result.expenseId, 'expense-1');
+    assert.equal(h.prepares.length, 1);
+    assert.equal(Boolean(h.prepares[0].lineContinuation?.formRequested), decision === 'FORM');
+    await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(h.prepares.length, 1);
+  }
+  for (const legacy of [false, true]) {
+    const h = await actionHarness();
+    const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+    const store = (h.service as any).store;
+    const entry = await store.load('company-1', 'substitute-action:chat-hash');
+    if (legacy) delete entry.decision; else entry.decision = 'FORM';
+    await store.save(entry);
+    assert.equal((await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token })).expenseId, undefined);
+    assert.equal(h.prepares.length, 0);
+  }
 });

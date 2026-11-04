@@ -71,7 +71,7 @@ const contentCases: Array<[string, string, Buffer, RegExp | null]> = [
   ['javascript: URI in a pdf', 'application/pdf', pdf('/URI (javascript:alert(1))'), /Active content/],
   ['pdf /OpenAction + /JavaScript', 'application/pdf', pdf('<< /OpenAction << /S /JavaScript >> >>'), /Active PDF content/],
   ['pdf /Launch action', 'application/pdf', pdf('<< /Launch (/bin/sh) >>'), /Active PDF content/],
-  ['pdf /EmbeddedFile', 'application/pdf', pdf('<< /Type /EmbeddedFile >>'), /Active PDF content/],
+  ['pdf /EmbeddedFile', 'application/pdf', pdf('<< /Type /EmbeddedFile >>'), /Embedded files are not supported/],
   ['pdf object-count bomb', 'application/pdf', pdf('0 obj\nendobj\n'.repeat(100_001)), /parser safety limit/],
   ['truncated jpeg without EOI', 'image/jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), /File signature/],
 ];

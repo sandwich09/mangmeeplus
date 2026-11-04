@@ -445,6 +445,7 @@ describe('receipt upload use cases', () => {
     } = {}) {
       const audits: any[] = [];
       const updates: any[] = [];
+      const completionActors: any[] = [];
       const retirement = receiptRetirement({ primaries: ['att-old', 'att-new'] });
       const expense = {
         id: 'expense-1', updatedAt: NOW, status: 'NEEDS_REVIEW', createdByUserId: 'user-1',
@@ -485,7 +486,7 @@ describe('receipt upload use cases', () => {
             return { id: input.id };
           },
         } as any,
-        { execute: async () => ({ id: 'att-new' }) } as any,
+        { execute: async (actor: any) => { completionActors.push(actor); return { id: 'att-new', uploadedByUserId: actor.userId }; } } as any,
         { log: async (entry: any) => { audits.push(entry); } } as any,
         { append: async () => undefined } as any,
         retirement.attachments,
@@ -495,7 +496,7 @@ describe('receipt upload use cases', () => {
       const run = (cmd: Record<string, unknown>) => uc.execute(ctxWithPermissions, {
         expenseId: 'expense-1', attachmentId: 'att-new', byteSize: 123, ...cmd,
       } as any);
-      return { run, updates, audits, retirement };
+      return { run, updates, audits, retirement, completionActors, ctxWithPermissions };
     }
 
     const conflictCode = async (run: Promise<unknown>) => run.then(
@@ -521,6 +522,13 @@ describe('receipt upload use cases', () => {
         assert.equal(await conflictCode(run(cmd)), 'expense_revision_conflict');
         assert.deepEqual(updates, []);
       }
+    });
+
+    it('R1 reviewer completes their own receipt upload', async () => {
+      const h = intentHarness({ expense: { createdByUserId: 'another-creator' }, permissions: ['expense.review', 'attachment.create'] });
+      await h.run({ intent: 'replace', expectedUpdatedAt: NOW.toISOString(), expectedPrimaryAttachmentId: 'att-old' });
+      assert.deepEqual(h.completionActors, [h.ctxWithPermissions]);
+      assert.equal(h.completionActors[0].userId, 'user-1');
     });
 
     it('returns a record already sent for confirmation to review, for a reviewer only', async () => {
@@ -1330,4 +1338,69 @@ describe('LinkLinePaymentEvidenceUseCase', () => {
     await assert.rejects(() => h.uc.undo(ctx, 'chat-1', 'slip', result.operationId));
     assert.equal(h.rows.get('slip').status, 'VOIDED');
   });
+});
+
+
+it('R11 upload callers preserve branch and identity', async () => {
+  for (const line of [false, true]) {
+    const actor = { ...ctx, authProvider: line ? 'line' : 'watchdog', scopes: { branchIds: ['branch-a'] }, permissions: ['expense.receipt.upload', 'attachment.create'] };
+    const intents: any[] = [];
+    const resumes: any[] = [];
+    let expense: any;
+    let reserved = false;
+    const repo = { ...branchValidation, findByLineMessageId: async () => expense ?? null,
+      createExpense: async (input: any) => { expense = { id: 'expense-1', ...input }; return expense; } };
+    const prisma = { client: { $transaction: async (run: any) => run({ $executeRaw: async () => undefined,
+      attachmentObject: { findFirst: async ({ where }: any) => {
+        assert.equal(where.companyId, actor.companyId); assert.equal(where.uploadedByUserId, actor.userId);
+        return reserved ? { id: 'att-1' } : null;
+      } } }) } };
+    const uc = new InitReceiptUploadUseCase(repo as any, {
+      execute: async (...args: any[]) => { intents.push(args); reserved = true; return { attachmentId: 'att-1' }; },
+      resume: async (...args: any[]) => { resumes.push(args); return { attachmentId: 'att-1', uploadRequired: false }; },
+    } as any, { log: async () => {} } as any, { execute: async () => ({ mode: 'SIMPLE' }) } as any, openLaunchGate, prisma as any);
+    const command = { branchId: 'branch-a', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
+      captureSource: line ? 'LINE_UPLOAD' as const : 'WEB_UPLOAD' as const,
+      ...(line ? { lineCapture: { lineMessageId: 'message-1', lineEventId: 'event-1', chatKeyHash: 'chat' } } : {}) };
+    await uc.execute(actor, command);
+    assert.deepEqual(intents[0][0], actor);
+    assert.equal(intents[0][1].branchId, 'branch-a');
+    assert.deepEqual(intents[0][2], line ? { expenseId: 'expense-1' } : undefined);
+    assert.equal(expense.createdByUserId, actor.userId);
+    if (line) {
+      await uc.execute(actor, command);
+      assert.deepEqual(resumes, [[actor, 'att-1']]);
+      assert.equal(intents.length, 1);
+    }
+  }
+});
+
+
+it('R11 admitted free LINE receipt forwards its original reservation across purchase', async () => {
+  for (const upgraded of [false, true]) {
+    const actor = { ...ctx, scopes: { branchIds: ['branch-a'] } };
+    const reservation = { eventId: 'event-free', monthKey: '2026-10', sourceRoute: 'receipt-ocr-line' as const, requestId: 'line-message' };
+    const event = { id: reservation.eventId, companyId: actor.companyId, ...reservation, quotaSource: 'FREE_MONTHLY_3', succeededAt: null, billingReceiptGrantId: null };
+    const db = {
+      company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: upgraded ? 'STARTER_249' : 'FREE_TRIAL_15', termEndsAt: upgraded ? new Date('2099-01-01') : new Date(0) } }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null }, billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      companyOcrUsageEvent: { findUnique: async () => event, findMany: async () => [event] },
+      attachmentObject: { count: async () => 0, findFirst: async () => null }, $executeRaw: async () => undefined,
+    };
+    let expense: any;
+    const repo = { ...branchValidation, commercialAccessDb: db, findByLineMessageId: async () => expense ?? null,
+      createExpense: async (input: any) => { expense = { id: 'expense-free', ...input }; return expense; } };
+    const calls: any[] = [];
+    const uc = new InitReceiptUploadUseCase(repo as any, { execute: async (...args: any[]) => { calls.push(args); return { attachmentId: 'att-free' }; } } as any,
+      { log: async () => {} } as any, { execute: async () => ({ mode: 'SIMPLE' }) } as any, openLaunchGate,
+      { client: { $transaction: async (run: any) => run(db) } } as any);
+    await uc.execute(actor, { branchId: 'branch-a', originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 100,
+      captureSource: 'LINE_UPLOAD', lineCapture: { lineMessageId: 'line-message', lineEventId: 'webhook', chatKeyHash: 'chat' } }, { freeOcrReservation: reservation });
+    assert.deepEqual(calls[0][0], actor);
+    assert.equal(calls[0][1].branchId, 'branch-a');
+    assert.deepEqual(calls[0][2], { expenseId: 'expense-free', freeOcrReservation: reservation });
+    assert.equal(calls[0][2].freeOcrReservation, reservation);
+    assert.equal(expense.createdByUserId, actor.userId);
+  }
 });

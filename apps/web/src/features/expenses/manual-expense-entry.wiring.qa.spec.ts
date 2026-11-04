@@ -44,7 +44,7 @@ test('the manual page always renders the hub: the server never answers 403 or re
 
 test('the sidebar item is built from the same predicate, by the layout that owns the session', () => {
   const layout = read('src/features/web-core-workspace/WorkspaceLayout.tsx');
-  assert.match(layout, /buildNavItems\(filteredModules, companyId, locale, ICON_MAP, session\.permissions, session\.roles, canOpenManual, false, shopHasSystemWhtCertificates\(session\.entitledFeatureKeys\)\)/);
+  assert.match(layout, /buildNavItems\(filteredModules, companyId, locale, ICON_MAP, session\.permissions, session\.roles, canOpenManual, false, shopHasSystemWhtCertificates\(session\.entitledFeatureKeys\), freeExpenseDrafts\)/);
   assert.match(layout, /const canOpenManual = canOpenManualWeb\(session, companyId\);/);
 });
 

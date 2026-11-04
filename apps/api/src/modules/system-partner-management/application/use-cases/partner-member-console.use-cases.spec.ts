@@ -361,7 +361,7 @@ describe('ExecutiveUsersService (E1)', () => {
       authSession: { updateMany: async ({ where, data }: any) => { writes.push('sessions'); const rows = state.sessions.filter((s) => matches(s, where)); rows.forEach((s) => Object.assign(s, data)); return { count: rows.length }; } },
     };
     let serializationFailure = false;
-    const prisma = { client: { ...tx, $transaction: async (run: any, options: any) => {
+    const prisma = { client: { ...tx, company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) }, $transaction: async (run: any, options: any) => {
       const before = structuredClone(state);
       try {
         const result = await run(tx);

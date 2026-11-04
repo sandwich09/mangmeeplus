@@ -411,8 +411,9 @@ describe('P10-L webhook doors', () => {
     // R-C4: the how-to picture is withdrawn (it showed no package step); the hello and the door stay.
     assert.deepEqual(h.replies.flat().map((message: any) => message.type), ['text', 'flex']);
     assert.doesNotMatch(rendered(h), /welcome-how-to-start/);
-    assert.match(spoken(h), /^สวัสดีค่ะ 🙏 ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
-    assert.match(spoken(h), /กด "เปิดร้านใหม่" ในการ์ดด้านล่าง/);
+    // 049aa51de shortened the hello (no price or paid-first steps once free source drafts exist).
+    assert.match(spoken(h), /^สวัสดีค่ะ ขอบคุณที่เพิ่มมั่งมีพลัสเป็นเพื่อนนะคะ\n/);
+    assert.match(spoken(h), /เลือกเปิดร้านใหม่ หรือเชื่อมบัญชีที่มีอยู่ในการ์ดด้านล่าง/);
     // L-B follow-up (c): adding the OA is the INVITED first step of this flow. Recording it DENIED
     // put every prospect into a security signal whose whole value is that it is rare.
     const denied = h.audits.filter((entry: any) => entry.result === 'DENIED');

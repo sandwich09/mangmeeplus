@@ -1,3 +1,4 @@
+import { GetExpenseUseCase } from './expense-draft.use-case';
 import { completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot } from '../../../line-ai/application/free-expense-quota';
 import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
 import { freeExpenseQuotaNoticeTextTh, FREE_EXPENSE_IN_FLIGHT_TEXT_TH } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
@@ -75,6 +76,7 @@ export class RequestReceiptExtractionUseCase {
     private readonly prisma: PrismaService,
     private readonly capture: PrismaExpenseCaptureRepository,
     private readonly runner: ExpenseCaptureReadRunnerService,
+    private readonly getExpense: GetExpenseUseCase,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
@@ -93,11 +95,11 @@ export class RequestReceiptExtractionUseCase {
 
   private async extract(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
     const freeExpenseDrafts = await isFreeExpenseDraftCompany(this.prisma.client, ctx.companyId);
-    const expense = await this.repo.findById(ctx.companyId, expenseId);
-    if (!expense) {
+    const expense = await this.getExpense.execute(ctx, expenseId).catch(async (error: unknown) => {
+      if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
       await this.auditOutcome(ctx, expenseId, 'not_found');
       throw new NotFoundException(`Expense ${expenseId} not found`);
-    }
+    });
 
     const canRequest = ctx.permissions.includes('expense.ocr.request') || ctx.permissions.includes('expense.review');
     const canRequestOwn = ctx.permissions.includes('expense.receipt.upload') && expense.createdByUserId === ctx.userId;

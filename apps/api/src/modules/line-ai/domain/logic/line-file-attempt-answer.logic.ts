@@ -85,11 +85,23 @@ function shortStateTh(attempt: LineFileAttemptFacts): string {
  * §17.5's last row ("ตอนแรก {เหตุ} ตอนนี้ {สถานะล่าสุด} แล้ว") exists so a customer is never answered
  * from a stale error and made to send or pay twice.
  */
+export function fileInspectionRefusalReply(reason: string, language: 'th' | 'en' = 'th'): string | undefined {
+  if (reason === 'EMBEDDED_FILE_REJECTED') return language === 'en'
+    ? 'Attachments inside this PDF are unsupported; send another file.' : 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ ส่งไฟล์อื่นได้ค่ะ';
+  if (reason === 'CONTENT_UNINSPECTABLE' || reason === 'MALWARE_SCAN_FAILED') return language === 'en'
+    ? 'This file could not be inspected; send another file.' : 'ระบบตรวจไฟล์นี้ไม่ได้ ส่งไฟล์อื่นได้ค่ะ';
+  return undefined;
+}
+
 export function fileAttemptAnswer(
   attempt: LineFileAttemptFacts,
   resolvedFrom?: LineFileAttemptFacts,
   language: 'th' | 'en' = 'th',
 ): string {
+  if (attempt.outcome === 'REJECTED') {
+    const refusal = fileInspectionRefusalReply(attempt.reasonCode, language);
+    if (refusal) return refusal;
+  }
   if (language === 'en') {
     const link = linkTail(attempt);
     if (resolvedFrom?.outcome === 'REJECTED' && attempt.outcome !== 'REJECTED') return `The earlier upload was rejected; now ${englishAttemptState(attempt).toLowerCase()}.${link}`;
@@ -117,8 +129,12 @@ function rejectionCauseTh(attempt: LineFileAttemptFacts): string {
       return 'ไฟล์ชนิดนี้ยังไม่รองรับ';
     case 'CONTENT_REJECTED':
     case 'MALWARE_DETECTED':
-    case 'MALWARE_SCAN_FAILED':
       return 'ไฟล์ไม่ผ่านการตรวจความปลอดภัย';
+    case 'MALWARE_SCAN_FAILED':
+    case 'CONTENT_UNINSPECTABLE':
+      return 'ระบบตรวจไฟล์ไม่ได้';
+    case 'EMBEDDED_FILE_REJECTED':
+      return 'ไฟล์แนบใน PDF ยังไม่รองรับ';
     case 'persist_failed':
       return 'ระบบเก็บไฟล์ไม่สำเร็จ';
     default:

@@ -6022,7 +6022,10 @@ describe('LINE file lane (capture appendix §3/§25)', () => {
     const attempt = h.captureState.attempts.at(-1);
     assert.equal(attempt.stage, 'SECURITY');
     assert.equal(attempt.outcome, 'REJECTED');
-    assert.match(h.replies[0] ?? '', /ไม่สามารถรับไฟล์นี้ได้/);
+    // P05 (R4a): a mislabelled file is uninspectable, not proven active content, so it gets the
+    // truthful "could not check" recovery instead of the security refusal.
+    assert.equal(attempt.reasonCode, 'CONTENT_UNINSPECTABLE');
+    assert.match(h.replies[0] ?? '', /ระบบตรวจไฟล์นี้ไม่ได้ ส่งไฟล์อื่นได้ค่ะ/);
   });
 
   /**

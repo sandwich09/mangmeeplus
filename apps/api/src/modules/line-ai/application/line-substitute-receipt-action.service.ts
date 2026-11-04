@@ -22,6 +22,7 @@ type StoredAction = {
   previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
   conversationId: string; ownerEpoch: number; expenseId: string; branchId: string | null;
   revision: string; digest: string; action: 'PREPARE' | 'WEB_LINK';
+  decision?: 'ISSUE' | 'FORM';
   applied?: { revision: string; digest: string };
   preview: SubstituteActionPreview;
 };
@@ -31,8 +32,8 @@ const signatureAsk = 'ส่งรูปลายเซ็นเข้ามา�
 function stateOf(expense: ExpenseRecordWithRelations) {
   return expense.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation as LineSubstituteReceiptContinuation | undefined;
 }
-function digest(expense: ExpenseRecordWithRelations) {
-  return createHash('sha256').update(JSON.stringify([expense.substituteReceiptEvidence, expense.attachments])).digest('hex');
+function digest(expense: ExpenseRecordWithRelations, decision?: 'ISSUE' | 'FORM') {
+  return createHash('sha256').update(JSON.stringify([decision, expense.substituteReceiptEvidence, expense.attachments])).digest('hex');
 }
 
 /** LINE prepares through the existing use case; signing and approval continue in the web hub. */
@@ -59,6 +60,7 @@ export class LineSubstituteReceiptActionService {
       .update(JSON.stringify({ ...signed, preview: { ...entry.preview, token: '' } })).digest('base64url');
   }
   private async bound(ctx: RequestContext, chat: string, entry: StoredAction, token: string) {
+    if (entry.action === 'PREPARE' && !['ISSUE', 'FORM'].includes(entry.decision ?? '')) return false;
     if (ctx.authProvider !== 'line' || entry.companyId !== ctx.companyId || entry.userId !== ctx.userId
       || entry.membershipId !== ctx.membershipId || entry.chatKeyHash !== this.key(chat)
       || !isBranchInScope(ctx.scopes ?? {}, entry.branchId) || Date.parse(entry.preview.expiresAt) <= Date.now()) return false;
@@ -97,7 +99,7 @@ export class LineSubstituteReceiptActionService {
     return next.preview || next.reply ? next : null;
   }
 
-  async prepare(ctx: RequestContext, chat: string, expenseId: string, language: LineReplyLanguage = 'th'): Promise<{ preview?: SubstituteActionPreview; reply?: string }> {
+  async prepare(ctx: RequestContext, chat: string, expenseId: string, language: LineReplyLanguage = 'th', decision: 'ISSUE' | 'FORM' = 'ISSUE'): Promise<{ preview?: SubstituteActionPreview; reply?: string }> {
     const en = language === 'en';
     if (ctx.authProvider !== 'line') return {};
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
@@ -113,8 +115,10 @@ export class LineSubstituteReceiptActionService {
       if (!ctx.permissions.includes('expense.review') || state?.status !== 'OPEN' || state.pendingDecision !== 'ISSUE_CONFIRM'
         || state.userId !== ctx.userId || state.companyId !== ctx.companyId || state.chatKeyHash !== chat
         || state.targetRevision !== expense.updatedAt.toISOString()) return {};
-      if (state.signatureRequested && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) return { reply: en ? 'Please send your signature photo here.' : signatureAsk };
-      action = 'PREPARE'; label = en ? 'Prepare document' : 'เตรียมใบรับรอง'; summary = en ? 'Review the details, then prepare the substitute receipt for signing on the web.' : 'ข้อมูลครบแล้วค่ะ กดเตรียมใบรับรองเพื่อตรวจและลงนามต่อ';
+      if (decision === 'ISSUE' && state.signatureRequested && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) return { reply: en ? 'Please send your signature photo here.' : signatureAsk };
+      action = 'PREPARE';
+      label = decision === 'FORM' ? en ? 'Prepare paper form' : 'เตรียมแบบไปเซ็น' : en ? 'Prepare document' : 'เตรียมใบรับรอง';
+      summary = en ? 'Review the details before preparing the document.' : 'ตรวจข้อมูลก่อนกดเตรียมเอกสารค่ะ';
     } else {
       const approver = await this.canApprove(ctx, expense);
       if (evidence.payerUserId !== ctx.userId && !ctx.permissions.includes('expense.review') && !approver) return {};
@@ -139,7 +143,7 @@ export class LineSubstituteReceiptActionService {
         (en ? 'This substitute receipt is not a tax invoice.' : 'ใบรับรองนี้ไม่ใช่ใบกำกับภาษีค่ะ')].join('\n'), webPath };
     const entry: StoredAction = { previewId: `sub_${randomUUID()}`, companyId: ctx.companyId, userId: ctx.userId,
       membershipId: ctx.membershipId, chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,
-      expenseId, branchId: expense.branchId, revision: expense.updatedAt.toISOString(), digest: digest(expense), action,
+      expenseId, branchId: expense.branchId, revision: expense.updatedAt.toISOString(), digest: digest(expense, decision), action, decision,
       preview };
     preview.token = `${entry.previewId}.${this.sign(entry)}`;
     return await this.store.save(entry) ? { preview } : { reply: (language === 'en' ? 'Your earlier request is still processing; please try again shortly.' : 'กำลังดำเนินการคำขอก่อนหน้าค่ะ กรุณาลองอีกครั้ง') };
@@ -150,7 +154,7 @@ export class LineSubstituteReceiptActionService {
     if (!entry || !await this.bound(ctx, chat, entry, token)) return false;
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
     if (!expense || expense.updatedAt.toISOString() !== (applied ? entry.applied?.revision : entry.revision)
-      || digest(expense) !== (applied ? entry.applied?.digest : entry.digest)) return false;
+      || digest(expense, entry.decision) !== (applied ? entry.applied?.digest : entry.digest)) return false;
     if (entry.action === 'PREPARE') return ctx.permissions.includes('expense.review');
     return entry.action === 'WEB_LINK' && (expense.substituteReceiptEvidence?.payerUserId === ctx.userId
       || ctx.permissions.includes('expense.review') || await this.canApprove(ctx, expense));
@@ -181,6 +185,7 @@ export class LineSubstituteReceiptActionService {
     if (!claim) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
     const entry = claim.entry;
     try {
+      if (entry.action === 'PREPARE' && !entry.decision) return { reply: language === 'en' ? 'Request a fresh preparation card.' : EXPIRED };
       if (!await this.bound(ctx, chat, entry, control.token)) { const preview = this.webHandoff(ctx, language); return { reply: preview.summary, preview }; }
       // Old sign/approve cards are navigation only, even if their source revision has changed.
       if (entry.action !== 'PREPARE') {
@@ -198,9 +203,9 @@ export class LineSubstituteReceiptActionService {
         await this.store.discard(ctx.companyId, this.key(chat)); return { reply: (language === 'en' ? 'This step was cancelled; the existing details are retained.' : 'ยังไม่ทำขั้นตอนนี้ค่ะ ข้อมูลเดิมยังอยู่') };
       }
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, entry.expenseId, undefined, ctx.scopes ?? {});
-      if (!expense || expense.updatedAt.toISOString() !== entry.revision || digest(expense) !== entry.digest) return { reply: language === 'en' ? 'The expense changed; please check the latest details before continuing.' : CHANGED };
+      if (!expense || expense.updatedAt.toISOString() !== entry.revision || digest(expense, entry.decision) !== entry.digest) return { reply: language === 'en' ? 'The expense changed; please check the latest details before continuing.' : CHANGED };
       if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException();
-      const result = await this.continuation.execute(ctx, { language, messageText: '1', chatKeyHash: chat,
+      const result = await this.continuation.execute(ctx, { language, messageText: entry.decision === 'FORM' ? '2' : '1', confirmedDecision: entry.decision, chatKeyHash: chat,
         recentCandidates: [{ id: expense.id, label: 'รายการนี้' }], boundCandidateExpenseIds: [expense.id], webBaseUrl: this.config.webBaseUrl });
       const reply = result.replyText;
       if (result.blockers.some(item => item.code === 'reusable_signature_required')) {
@@ -209,7 +214,7 @@ export class LineSubstituteReceiptActionService {
       }
       const after = await this.repo.findByIdWithRelations(ctx.companyId, expense.id, undefined, ctx.scopes ?? {});
       if (!after) throw new ConflictException();
-      entry.applied = { revision: after.updatedAt.toISOString(), digest: digest(after) };
+      entry.applied = { revision: after.updatedAt.toISOString(), digest: digest(after, entry.decision) };
       await this.store.remember(ctx.companyId, this.key(chat), entry);
       await this.store.discard(ctx.companyId, this.key(chat));
       return { reply, expenseId: expense.id, preview: entry.preview };
@@ -229,7 +234,7 @@ export function buildSubstituteReceiptActionCard(preview: SubstituteActionPrevie
     ] },
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
       ...(applied || preview.webOnly ? [] : (['expense_action_confirm', 'expense_action_cancel'] as const).map((action, i) => ({ type: 'button', style: i === 0 ? 'primary' : 'secondary',
-        action: { type: 'postback', label: language === 'en' ? i === 0 ? 'Prepare document' : 'Cancel action' : i === 0 ? preview.label : 'ยังไม่ทำ', data: lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) } }))),
+        action: { type: 'postback', label: i === 0 ? preview.label : language === 'en' ? 'Cancel action' : 'ยังไม่ทำ', data: lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) } }))),
       ...(applied || preview.webOnly ? [{ type: 'button', style: 'primary', action: { type: 'uri', label: language === 'en' ? preview.webOnly ? 'Continue on web' : 'View document' : preview.webOnly ? preview.label : 'ดูเอกสาร', uri: preview.webPath } }] : []),
     ] },
   } });

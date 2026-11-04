@@ -79,6 +79,15 @@ export class CreateUploadIntentUseCase {
       throw new ForbiddenException();
     }
 
+    if (!isBranchInScope(ctx.scopes ?? {}, cmd.branchId)) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.upload.intent', targetType: 'attachment', targetId: undefined,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'MEDIUM',
+      });
+      throw new ForbiddenException();
+    }
+
     let freeMetadata: Record<string, unknown> | undefined;
     const freeExpenseDrafts = await expenseDraftAccess(ctx, this.attachments.commercialAccessDb);
     if (freeExpenseDrafts || source?.freeOcrReservation) {

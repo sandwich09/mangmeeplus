@@ -665,3 +665,10 @@ test('a posted expense journal has no reopen shortcut for its VAT decision', () 
 test('free expense read-limit refusal explains that existing drafts remain editable', () => {
   assert.equal(apiErrorMessage({ code: 'FREE_DOCUMENT_LIMIT_REACHED' }), 'ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้');
 });
+
+
+test('R4 uninspectable and embedded PDFs give truthful recovery', () => {
+  assert.equal(apiErrorMessage({ code: 'CONTENT_UNINSPECTABLE' }), 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น');
+  assert.equal(apiErrorMessage({ code: 'EMBEDDED_FILE_REJECTED' }), 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ เลือกไฟล์อื่น');
+  assert.equal(translateApiError('PDF could not be inspected.'), 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น');
+});

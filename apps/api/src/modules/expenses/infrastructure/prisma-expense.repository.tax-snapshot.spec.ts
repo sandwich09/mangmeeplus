@@ -399,7 +399,7 @@ function decisionHarness(overrides: any = {}) {
     companyFeatureEntitlement: { findMany: async () => [] },
     $executeRaw: async () => 1,
     $transaction: async (work: any) => work(tx),
-    company: { findFirstOrThrow: async () => ({ name: 'ร้านเรา', registeredName: 'ร้านเรา', taxId: '0100000000002' }) },
+    company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }), findFirstOrThrow: async () => ({ name: 'ร้านเรา', registeredName: 'ร้านเรา', taxId: '0100000000002' }) },
     branch: { findFirst: async () => null }, user: { findUnique: async () => ({ displayName: 'ผู้ตรวจ ก' }) },
     companyVatRegistrationFact: { findMany: async () => [{ status: 'REGISTERED', effectiveFrom: new Date('2020-01-01'), effectiveTo: null, supersededAt: null, answeredAt: new Date('2020-01-01') }] },
     attachmentLink: { findMany: async () => [] }, attachmentObject: { findMany: async () => [{ id: 'a1' }] },

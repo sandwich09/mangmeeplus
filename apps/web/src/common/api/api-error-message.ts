@@ -14,6 +14,8 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  CONTENT_UNINSPECTABLE: 'ระบบตรวจไฟล์นี้ไม่ได้ เลือกไฟล์อื่น',
+  EMBEDDED_FILE_REJECTED: 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ เลือกไฟล์อื่น',
   WHT_ESTABLISHMENT_FORBIDDEN: 'ไม่มีสิทธิ์เปิดแบบของสาขานี้ เลือกสาขาที่เปิดได้',
   WHT_ESTABLISHMENT_INVALID: 'รหัสสาขาภาษีไม่ถูกต้อง เลือกสาขาอีกครั้ง',
   WHT_ESTABLISHMENT_REQUIRED: 'เดือนนี้มีหลายสาขาที่ยื่น เลือกสาขาก่อนดาวน์โหลดหรือบันทึกว่ายื่นแล้ว',
@@ -466,9 +468,16 @@ const CODE_LABELS: Record<string, string> = {
   // read was refused — so the copy says what still works before it says what to do about the
   // ceiling. No number: the browser's ApiError keeps only `code`, and a wrong count is worse than none.
   receipt_quota_exceeded: 'โควตาให้ AI อ่านรูปของเดือนนี้ครบแล้ว (ใบเสร็จ 1 ใบ = 1 ครั้ง) ยังกรอกรายการเองได้ตามปกติ หรือขอเปลี่ยนแพ็กเกจเพื่อเพิ่มจำนวนครั้งได้เลย',
+  FREE_EXPENSE_DRAFTS_ONLY: 'ร้านนี้ใช้ได้เฉพาะอ่านเอกสารและเก็บร่างรายจ่าย',
   FREE_DOCUMENT_LIMIT_REACHED: 'ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้',
   FREE_DOCUMENTS_IN_FLIGHT: 'ระบบกำลังอ่านเอกสารที่ส่งไปก่อนหน้า กรุณารอผลก่อนส่งไฟล์ใหม่',
   FREE_MULTI_DOCUMENT_UNSUPPORTED: 'ไฟล์นี้มีเอกสารหลายฉบับ ระบบยังอ่านให้ไม่ได้ กรุณาส่งทีละฉบับ',
+  FREE_EXPENSE_UPLOAD_RESERVATION_INVALID: 'สิทธิ์อ่านเอกสารฟรีไม่ตรงกับไฟล์ที่ส่ง ส่งไฟล์อีกครั้ง',
+  FREE_EXPENSE_ACCESS_UNAVAILABLE: 'ตรวจสิทธิ์ของร้านไม่สำเร็จ ลองอีกครั้ง',
+  FREE_EXPENSE_SOURCE_ACCESS_REVOKED: 'สิทธิ์ส่งเอกสารเข้าร้านนี้เปลี่ยนไปแล้ว ถามเจ้าของกิจการ',
+  FREE_CHAT_NOT_INCLUDED: 'สิทธิ์ใช้ฟรียังไม่รวมการถามตอบกับน้องมั่งมี เลือกแพ็กเกจเพื่อถามต่อ',
+  OCR_ADMISSION_STALE: 'การอ่านเอกสารรอบนี้ไม่ใช่รอบล่าสุดแล้ว ส่งไฟล์อีกครั้ง',
+  line_billing_selection_invalid: 'แพ็กเกจที่เลือกจากลิงก์ไม่ถูกต้อง กลับไปที่ LINE แล้วเลือกแพ็กเกจอีกครั้ง',
   entitlement_features_required: 'เลือกอย่างน้อยหนึ่งฟีเจอร์ก่อนบันทึก',
   entitlement_feature_invalid: 'ข้อมูลฟีเจอร์ไม่ถูกต้อง กรุณาโหลดหน้าใหม่',
   entitlement_feature_batch_too_large: 'จำนวนฟีเจอร์เกินรายการที่ระบบรองรับ กรุณาโหลดหน้าใหม่',
@@ -1531,6 +1540,8 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Pending upload quota exceeded.': UPLOAD_QUOTA_EXCEEDED,
   'Pending upload quota exceeded. Complete or wait for existing upload intents to expire.': UPLOAD_QUOTA_EXCEEDED,
   // การอัปโหลดซ้ำด้วยไฟล์เดิมล้มเหมือนเดิมเสมอ ข้อความจึงห้ามชวนให้ลองใหม่ ต้องบอกให้เปลี่ยนไฟล์
+  'PDF could not be inspected.': CODE_LABELS.CONTENT_UNINSPECTABLE!,
+  'Embedded files are not supported in PDFs.': CODE_LABELS.EMBEDDED_FILE_REJECTED!,
   'Malware scan rejected the attachment.': UPLOAD_CONTENT_REJECTED,
   'Malware test signature detected.': UPLOAD_CONTENT_REJECTED,
   'Active content is not allowed in attachments.': UPLOAD_CONTENT_REJECTED,

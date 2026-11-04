@@ -131,3 +131,77 @@ describe('CreateUploadIntentUseCase receipt resume', () => {
     await assert.rejects(() => uc.resume(makeCtx([]), 'att-1'), /Forbidden/);
   });
 });
+
+
+it('R11 upload intent checks branch before quota and storage', async () => {
+  for (const branchIds of [['branch-a'], []]) {
+    const commercial = mock.fn(async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'STARTER_249', termEndsAt: new Date('2099-01-01') } }));
+    const repo = makeRepo({ commercialAccessDb: { company: { findUnique: commercial } } });
+    const storage = makeStorage();
+    const audit = makeAudit();
+    const uc = new CreateUploadIntentUseCase(repo as any, storage as any, audit as any, config as any);
+    await assert.rejects(() => uc.execute({ ...makeCtx(['attachment.create']), scopes: { branchIds } }, { ...validCmd, branchId: 'branch-b' }),
+      (error: any) => error.getStatus() === 403);
+    for (const spy of [commercial, repo.sumPendingBytes, storage.createUploadIntent, repo.createPending]) assert.equal(spy.mock.callCount(), 0);
+    assert.equal((audit.log.mock.calls as any[])[0]?.arguments[0].result, 'DENIED');
+  }
+  for (const [branchId, scopes] of [['branch-a', { branchIds: ['branch-a'] }], [undefined, { branchIds: [] }], [null, { branchIds: [] }], ['branch-b', undefined], ['branch-b', {}]] as const) {
+    const repo = makeRepo();
+    const uc = new CreateUploadIntentUseCase(repo as any, makeStorage() as any, makeAudit() as any, config as any);
+    const actor = { ...makeCtx(['attachment.create']), scopes: scopes as any };
+    await uc.execute(actor, { ...validCmd, branchId: branchId as any });
+    const input = (repo.createPending.mock.calls as any[])[0].arguments[0];
+    assert.equal(input.branchId, branchId);
+    assert.equal(input.uploadedByUserId, actor.userId);
+    assert.equal(input.companyId, actor.companyId);
+  }
+});
+
+
+it('R11 free upload keeps source branch and reservation identity', async () => {
+  const reservation = { eventId: 'free-event', monthKey: '2026-10', sourceRoute: 'receipt-ocr-line' as const, requestId: 'line-message' };
+  for (const scenario of ['free', 'upgrade', 'mismatch', 'foreign-creator', 'foreign-tenant', 'final', 'revoked', 'live-branch', 'source-branch', 'reservation-company', 'reservation-month', 'reservation-message'] as const) {
+    const actor = { ...makeCtx(['attachment.create', 'expense.receipt.line_upload']), authProvider: 'line' as const, scopes: { branchIds: ['branch-a', 'branch-b'] } };
+    const source = { id: 'expense-1', branchId: scenario === 'source-branch' ? 'branch-c' : 'branch-a',
+      createdByUserId: scenario === 'foreign-creator' ? 'another-user' : actor.userId,
+      status: scenario === 'final' ? 'CONFIRMED' : 'DRAFT', captureSource: 'LINE_UPLOAD', lineMessageId: 'line-message' };
+    const event = { id: reservation.eventId, companyId: scenario === 'reservation-company' ? 'other-company' : actor.companyId,
+      sourceRoute: reservation.sourceRoute, requestId: scenario === 'reservation-message' ? 'other-message' : reservation.requestId,
+      monthKey: scenario === 'reservation-month' ? '2026-09' : reservation.monthKey, quotaSource: 'FREE_MONTHLY_3', succeededAt: null, billingReceiptGrantId: null };
+    const months: string[] = [];
+    const db = {
+      company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: scenario === 'upgrade' ? 'STARTER_249' : 'FREE_TRIAL_15',
+        termEndsAt: scenario === 'upgrade' ? new Date('2099-01-01') : new Date(0) } }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null }, billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      expenseRecord: { findFirst: async ({ where }: any) => where.companyId === actor.companyId && scenario !== 'foreign-tenant' ? source : null },
+      companyMembership: { findFirst: async () => scenario === 'revoked' ? null : { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: scenario === 'live-branch' ? [] : [{ branchId: 'branch-a' }, { branchId: 'branch-b' }] } },
+      companyOcrUsageEvent: {
+        findUnique: async () => event,
+        findMany: async ({ where }: any) => { months.push(where.monthKey); return [event, { succeededAt: new Date() }, { succeededAt: new Date() }]; },
+      },
+      attachmentObject: { count: async () => 0 },
+    };
+    const repo = makeRepo({ commercialAccessDb: db });
+    const storage = makeStorage();
+    const uc = new CreateUploadIntentUseCase(repo as any, storage as any, makeAudit() as any, config as any);
+    const command = { ...validCmd, ...(scenario === 'mismatch' ? { branchId: 'branch-b' } : {}), visibility: 'PUBLIC' as any,
+      metadataJson: { freeExpenseSource: { kind: 'EXPENSE', id: 'forged-source' } } };
+    const run = () => uc.execute(actor, command, { expenseId: source.id, freeOcrReservation: reservation });
+    if (scenario === 'free' || scenario === 'upgrade') {
+      await run();
+      const pending = (repo.createPending.mock.calls as any[])[0].arguments[0];
+      assert.equal(pending.branchId, 'branch-a');
+      assert.equal(pending.uploadedByUserId, actor.userId);
+      assert.equal(pending.companyId, actor.companyId);
+      assert.equal(pending.visibility, 'INTERNAL');
+      assert.deepEqual(pending.metadataJson, { freeExpenseSource: { kind: 'EXPENSE', id: source.id }, freeExpenseUploadMonth: reservation.monthKey, lineReceiptExpenseId: source.id });
+      assert.deepEqual(months, [reservation.monthKey]);
+    } else {
+      await assert.rejects(run, (error: any) => error.getStatus() === 403, scenario);
+      assert.equal(storage.createUploadIntent.mock.callCount(), 0, scenario);
+      assert.equal(repo.sumPendingBytes.mock.callCount(), 0, scenario);
+      assert.equal(repo.createPending.mock.callCount(), 0, scenario);
+    }
+  }
+});

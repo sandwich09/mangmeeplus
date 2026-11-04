@@ -60,6 +60,23 @@ test('a completed part downloads once under its server filename, and a refusal l
   } finally { fetch.mock.restore(); download.mock.restore(); view.cleanup(); }
 });
 
+test('denied bundle plans and downloads offer returning to expenses alongside retry', () => {
+  for (const withPlan of [false, true]) for (const inDialog of [false, true]) {
+    let returned = false;
+    const view = certificateHarness(() => h(EvidenceBundleDownload, { companyId: 'co', request: {}, enabled: true,
+      ...(inDialog ? { onReturnToExpenses: () => { returned = true; } } : {}) }),
+      [withPlan ? { fileCount: 1, partCount: 1 } : null, 'ร้านนี้ใช้ได้เฉพาะอ่านเอกสารและเก็บร่าง', false, 0]);
+    try {
+      const html = view.render();
+      assert.match(html, /กลับไปรายการค่าใช้จ่าย/); assert.match(html, /ลองอีกครั้ง/);
+      if (inDialog) {
+        const back = view.nodes.find(node => node.tag === 'button' && node.props.children.includes('กลับไปรายการค่าใช้จ่าย'));
+        assert.ok(back); back.props.onClick(); assert.equal(returned, true);
+      } else assert.match(html, /href="\/companies\/co\/expenses"/);
+    } finally { view.cleanup(); }
+  }
+});
+
 test('the accountant bundle names all paper counts and warns about missing receipts', () => {
   const plan = { fileCount: 8, partCount: 1, counts: { receipts: 2, substituteReceipts: 1, paymentSlips: 2, vouchers: 2, whtCertificates: 1 }, missingReceiptCount: 3 };
   const view = certificateHarness(() => h(EvidenceBundleActions, { plan, showCounts: true, busy: false, allMonths: false, onDownload: () => {} }));

@@ -1,6 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RequestReceiptExtractionUseCase } from './expense-extraction.use-case';
+import { GetExpenseUseCase } from './expense-draft.use-case';
 import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
@@ -46,14 +47,14 @@ function makeCaptureStub() {
   return {
     jobs,
     client: {},
-    findLiveJobForAttachment: async (_db: unknown, input: any) => jobs.find((job) =>
+    findLiveJobForAttachment: mock.fn(async (_db: unknown, input: any) => jobs.find((job) =>
       job.expenseId === input.expenseId && job.attachmentId === input.attachmentId
-      && job.attachmentChecksum === input.attachmentChecksum) ?? null,
-    createReadJob: async (_db: unknown, input: any) => {
+      && job.attachmentChecksum === input.attachmentChecksum) ?? null),
+    createReadJob: mock.fn(async (_db: unknown, input: any) => {
       const job = { id: `job-${jobs.length + 1}`, status: 'QUEUED', ...input };
       jobs.push(job);
       return job;
-    },
+    }),
   };
 }
 
@@ -84,12 +85,19 @@ function makeUseCase(options: {
   /** P10-L §15.1: what `receiptQuotaSnapshot` reads back when naming the numbers in a 409. */
   planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null } | null;
   used?: number;
+  free?: boolean;
+  related?: boolean;
 } = {}) {
   const updates: any[] = [];
   const applyCalls: any[] = [];
   const audits: any[] = [];
   const repo = {
     findById: mock.fn(async () => options.expense === undefined ? baseExpense : options.expense),
+    findByIdWithRelations: mock.fn(async (companyId: string, expenseId: string) => {
+      const expense = options.expense === undefined ? baseExpense : options.expense;
+      return expense?.companyId === companyId && expense.id === expenseId ? expense : null;
+    }),
+    isUserRelatedToExpense: mock.fn(async () => options.related ?? false),
     findReceiptExtractionAttachment: mock.fn(async () => options.attachment === undefined ? baseAttachment : options.attachment),
     listCategories: mock.fn(async () => [
       { id: 'cat-meals', name: 'ค่าอาหาร', status: 'ACTIVE' },
@@ -139,16 +147,27 @@ function makeUseCase(options: {
       },
     },
   } as any;
+  if (options.free) {
+    Object.assign(prisma.client, {
+      company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } }) },
+      billingAccount: { findMany: async () => [] },
+      billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null },
+      packageChangeRequest: { findFirst: async () => null },
+      salesAttribution: { findUnique: async () => null },
+    });
+    Object.assign(repo, { commercialAccessDb: prisma.client });
+  }
   const capture = makeCaptureStub();
   const runner = makeRunnerStub();
-  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma, capture as any, runner as any);
+  const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma, capture as any, runner as any, new GetExpenseUseCase(repo as any));
   return { useCase, repo, storage, client, applyService, audit, updates, applyCalls, audits, capture, runner };
 }
 
 describe('RequestReceiptExtractionUseCase', () => {
-  it('allows OCR request, review, or the uploader with receipt upload permission, but denies other staff', async () => {
+  it('allows readable OCR requests, review, or creator upload access, and hides inaccessible records', async () => {
     for (const allowed of [
-      ctx(['expense.ocr.request']),
+      ctx(['expense.read', 'expense.ocr.request']),
       ctx(['expense.review']),
       ctx(['expense.receipt.upload'], 'uploader-1'),
     ]) {
@@ -159,7 +178,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     const { useCase } = makeUseCase({ attachment: null });
     await assert.rejects(
       () => useCase.execute(ctx(['expense.receipt.upload'], 'other-staff'), 'expense-1'),
-      { name: 'ForbiddenException' },
+      { name: 'NotFoundException' },
     );
   });
 
@@ -171,7 +190,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       attachment: { ...baseAttachment, mimeType: 'application/pdf', objectKey: 'company-1/receipt.pdf', byteSize: 9_900_000, checksumSha256: 'sha-pdf' },
     });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
     assert.equal(result.status, 'ok');
     assert.ok(result.readJobId, 'the review page needs the job id to poll');
     assert.equal(result.readStatus, 'QUEUED');
@@ -193,7 +212,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       gatewayResult: { status: 'ok', fields: { vendorName: 'ร้านทดสอบ', grandTotalAmount: '321.00', missingFields: [], confidence: 0.9 }, classification: classification() },
     });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal(result.status, 'ok');
     assert.equal(result.readJobId, undefined, 'nothing to poll: the answer is in this response');
@@ -208,8 +227,8 @@ describe('RequestReceiptExtractionUseCase', () => {
     const { useCase, capture, runner } = makeUseCase({
       attachment: { ...baseAttachment, mimeType: 'application/pdf', checksumSha256: 'sha-pdf' },
     });
-    const first = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
-    const second = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const first = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
+    const second = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
     assert.equal(second.readJobId, first.readJobId);
     assert.equal(capture.jobs.length, 1, 'one file, one job, one admitted read');
     assert.equal(runner.kicked.length, 2, 'a retry still nudges the runner');
@@ -222,7 +241,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     ]) {
       const { useCase, storage, client } = makeUseCase({ attachment });
 
-      assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'unsupported' });
+      assert.deepEqual(await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), { status: 'unsupported' });
       assert.equal(storage.getObject.mock.callCount(), 0);
       assert.equal(client.extract.mock.callCount(), 0);
     }
@@ -239,7 +258,7 @@ describe('RequestReceiptExtractionUseCase', () => {
   it('passes through not_configured without applying or writing fields', async () => {
     const { useCase, repo, applyCalls } = makeUseCase({ gatewayResult: { status: 'not_configured' } });
 
-    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'not_configured' });
+    assert.deepEqual(await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), { status: 'not_configured' });
     assert.equal(applyCalls.length, 0);
     assert.equal(repo.updateExpense.mock.callCount(), 0);
   });
@@ -257,7 +276,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       missingFields: ['documentNumber'],
       confidence: 0.91,
     };
-    const requestContext = ctx(['expense.ocr.request']);
+    const requestContext = ctx(['expense.read', 'expense.ocr.request']);
     const { useCase, storage, client, updates, applyCalls, audits } = makeUseCase({
       gatewayResult: { status: 'ok', fields, classification: classification(), modelLineage },
     });
@@ -334,7 +353,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       },
     });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal(result.status, 'ok');
     assert.equal(updates[0].aiVerificationSummaryJson.recognizedFields.currency, 'USD');
@@ -362,7 +381,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       },
     });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.deepEqual(result.missingFields, ['documentNumber']);
     assert.deepEqual(updates[0].aiVerificationSummaryJson.missingFields, ['documentNumber']);
@@ -378,7 +397,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     const fields = { grandTotalAmount: '180.00', vatMode: 'VAT_INCLUDED' as const, missingFields: ['vatAmount'] };
     const { useCase, updates } = makeUseCase({ gatewayResult: { status: 'ok', fields, classification: classification('RECEIPT', { amountSignals: ['180.00'] }) } });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.ok(result.missingFields?.includes('vatRate'), `expected vatRate in ${JSON.stringify(result.missingFields)}`);
     assert.ok(updates[0].aiVerificationSummaryJson.missingFields.includes('vatRate'));
@@ -393,7 +412,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       gatewayResult: { status: 'ok', fields, classification: classification('RECEIPT', { amountSignals: ['180.00'] }) },
     });
 
-    const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal(result.missingFields?.includes('vatRate'), false);
   });
@@ -404,7 +423,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       gatewayResult: { status: 'ok', fields, classification: classification('TAX_INVOICE') },
     });
 
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal(updates[0].sourceDocumentType, 'TAX_INVOICE');
     assert.equal(updates[0].taxEvidenceStatus, 'USABLE_FOR_TAX');
@@ -416,7 +435,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00' }, classification: classification('SUPPLIER_INVOICE_OR_BILL') },
     });
 
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal(updates[0].sourceDocumentType, 'SUPPLIER_BILL');
     assert.equal(updates[0].taxEvidenceStatus, 'NEEDS_REVIEW');
@@ -428,7 +447,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00' }, classification: classification('TAX_INVOICE') },
     });
 
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
     assert.equal('sourceDocumentType' in updates[0], false);
     assert.equal('taxEvidenceStatus' in updates[0], false);
@@ -446,7 +465,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       });
 
       const fields = { vendorName: 'ไม่ควรถูกเขียน', grandTotalAmount: '500' };
-      assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), {
+      assert.deepEqual(await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), {
         status: 'not_expense_document',
         classification: detected,
         fields,
@@ -468,13 +487,13 @@ describe('RequestReceiptExtractionUseCase', () => {
 
   it('does not apply fields when classification is missing or the total is not positive', async () => {
     const missingClassification = makeUseCase({ gatewayResult: { status: 'ok', fields: { grandTotalAmount: '100' } } });
-    assert.deepEqual(await missingClassification.useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed' });
+    assert.deepEqual(await missingClassification.useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), { status: 'failed' });
     assert.equal(missingClassification.applyCalls.length, 0);
 
     const missingTotal = makeUseCase({
       gatewayResult: { status: 'ok', fields: { vendorName: 'ร้านค้า', grandTotalAmount: '0' }, classification: classification() },
     });
-    assert.deepEqual(await missingTotal.useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_UNUSABLE_RESULT' });
+    assert.deepEqual(await missingTotal.useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_UNUSABLE_RESULT' });
     assert.equal(missingTotal.updates[0].aiVerificationSummaryJson.status, 'OCR_FAILED');
     assert.deepEqual(missingTotal.updates[0].aiVerificationSummaryJson.recognizedFields, { vendorName: 'ร้านค้า', grandTotalAmount: '0' });
     assert.equal(missingTotal.applyCalls.length, 0);
@@ -486,7 +505,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     });
 
     await assert.rejects(
-      () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+      () => useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
       { name: 'ConflictException' },
     );
     assert.equal(storage.getObject.mock.callCount(), 0);
@@ -503,7 +522,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       const { useCase } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
 
       await assert.rejects(
-        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        () => useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         (error: any) => {
           assert.equal(error.name, 'ConflictException');
           assert.equal(error.getStatus(), 409);
@@ -531,7 +550,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       });
 
       await assert.rejects(
-        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        () => useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         (error: any) => {
           assert.equal(
             error.getResponse().message,
@@ -553,7 +572,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       });
 
       await assert.rejects(
-        () => tiered.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        () => tiered.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         (error: any) => {
           assert.match(error.getResponse().message, /15 ครั้ง/);
           assert.doesNotMatch(error.getResponse().message, /0 ครั้ง/);
@@ -562,7 +581,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       );
       // Nothing left to read the ceiling from at all: the sentence drops the number, never prints 0.
       await assert.rejects(
-        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        () => useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         (error: any) => {
           // The fixed "ใบเสร็จ 1 ใบ = 1 ครั้ง" rate clause stays; it is the CEILING that has no number.
           assert.doesNotMatch(error.getResponse().message, /อ่านรูปได้ \d+ ครั้ง/);
@@ -580,7 +599,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       });
 
       await assert.rejects(
-        () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        () => useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         (error: any) => {
           assert.equal(error.getResponse().limit, 15);
           assert.match(error.getResponse().message, /15 ครั้ง/);
@@ -592,7 +611,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     it('audits the refusal rather than logging it as an extraction failure', async () => {
       const { useCase, audits } = makeUseCase({ gatewayResult: quotaRefused, planTerm: freeTrial, used: 15 });
 
-      await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
+      await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1').catch(() => undefined);
 
       const quotaAudit = audits.find((entry) => entry.metadataJson?.status === 'receipt_quota_exceeded');
       assert.ok(quotaAudit, 'the refusal is auditable on its own name');
@@ -605,7 +624,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       });
 
       assert.deepEqual(
-        await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
+        await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'),
         { status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' },
       );
     });
@@ -682,8 +701,8 @@ describe('ReceiptOcrClient failure boundary', () => {
         if (scenario === 'summary_failure') fixture.repo.updateExpense.mock.mockImplementation(async () => { throw new Error('synthetic persist failure'); });
         if (scenario === 'notification_failure') fixture.audit.log.mock.mockImplementation(async (entry: any) => { if (entry.action === 'expense.ocr.request') throw new Error('synthetic post-save audit failure'); });
         const client = new ReceiptOcrClient({ aiGatewayInternalSecret: 'synthetic', aiGatewayInternalUrl: 'http://ai.invalid', aiMonthlyBudgetSatang: 1_000_000, aiThbPerUsd: 35, isProduction: false } as any, undefined, state.prisma);
-        const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma, fixture.capture as any, fixture.runner as any);
-        await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
+        const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma, fixture.capture as any, fixture.runner as any, new GetExpenseUseCase(fixture.repo as any));
+        await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1').catch(() => undefined);
         const retained = ['success', 'summary_failure', 'notification_failure', 'generic_image'].includes(scenario);
         assert.equal(state.usedCount(), retained ? 1 : 0, scenario);
         assert.equal(state.events.length, retained ? 1 : 0, 'fence matches retained commercial use');
@@ -933,7 +952,7 @@ it('keeps human evidence choices/history on OCR reread without acknowledging the
       expense: { ...baseExpense, aiVerificationSummaryJson: { documentEvidenceDraft: assessment, documentReview: review, extractionRequestId: 'old-request' } },
       gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00', vendorName: 'ร้านทดสอบ', missingFields: [] }, classification: classification(documentKind) },
     });
-    await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await h.useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
     assert.deepEqual(h.updates[0].aiVerificationSummaryJson.documentEvidenceDraft, assessment);
     assert.deepEqual(h.updates[0].aiVerificationSummaryJson.documentReview, review);
     assert.equal(h.updates[0].aiVerificationSummaryJson.extractionRequestId, 'request-1');
@@ -945,14 +964,14 @@ describe('receipt date provenance survives extraction summaries', () => {
     const dateResolution = { expenseDate: '2026-09-12', resolvedByUserId: 'uploader-1', resolvedAt: '2026-09-17T00:00:00Z' };
     const { useCase, updates } = makeUseCase({ expense: { ...baseExpense, aiVerificationSummaryJson: { dateStatus: 'verified', dateResolution } },
       gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00' }, classification: classification() } });
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
     assert.deepEqual(updates[0].aiVerificationSummaryJson.dateResolution, dateResolution);
     assert.equal(updates[0].aiVerificationSummaryJson.dateStatus, 'verified');
   });
   it('keeps an unknown document date unknown when the image is not an expense', async () => {
     const { useCase, updates } = makeUseCase({ expense: { ...baseExpense, aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'] } },
       gatewayResult: { status: 'ok', fields: {}, classification: classification('OTHER', { contentKind: 'NON_DOCUMENT', documentFamily: 'OTHER', businessDirection: 'UNKNOWN' }) } });
-    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
     assert.equal(updates[0].aiVerificationSummaryJson.dateStatus, 'unverified');
   });
 });
@@ -983,7 +1002,7 @@ describe('RequestReceiptExtractionUseCase – company AI money refusals (spec §
         gatewayResult: { status: 'failed', errorCode: code, ...(scope ? { budgetScope: scope } : {}) },
       });
 
-      const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+      const result = await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
 
       assert.deepEqual(result, { status: 'failed', errorCode: code, ...(scope ? { budgetScope: scope } : {}) });
       assert.equal(updates.length, 1, 'exactly one write: the reason, nothing else');
@@ -1011,7 +1030,7 @@ describe('RequestReceiptExtractionUseCase – company AI money refusals (spec §
     });
     repo.updateExpense = mock.fn(async () => { throw new Error('RECORD_CHANGED'); }) as any;
 
-    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), {
+    assert.deepEqual(await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), {
       status: 'failed', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL',
     });
   });
@@ -1022,7 +1041,7 @@ describe('RequestReceiptExtractionUseCase – company AI money refusals (spec §
       gatewayResult: { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' },
     });
 
-    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' });
+    assert.deepEqual(await useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' });
     assert.deepEqual(updates, []);
   });
 });
@@ -1031,7 +1050,7 @@ it('R10 Q5c: web extraction also tells the shared apply that a new source is pay
   const h = makeUseCase({ expense: { ...baseExpense, sourceDocumentType: 'NEEDS_REVIEW' },
     gatewayResult: { status: 'ok', classification: classification('TRANSFER_SLIP', { documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' }),
       fields: { vendorName: 'TEST FOODS CO', grandTotalAmount: '321.00' } } });
-  await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+  await h.useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
   assert.equal(h.applyCalls.length, 1); assert.equal(h.applyCalls[0][3].sourceDocumentType, 'TRANSFER_SLIP');
 });
 
@@ -1040,8 +1059,51 @@ it('R11 T2: re-extracting a slip on an existing receipt passes OCR classificatio
   const h = makeUseCase({ expense: { ...baseExpense, sourceDocumentType: 'RECEIPT' },
     gatewayResult: { status: 'ok', classification: classification('TRANSFER_SLIP', { documentFamily: 'PAYMENT_EVIDENCE', businessDirection: 'UNKNOWN' }),
       fields: { vendorName: 'TEST FOODS CO', grandTotalAmount: '321.00' } } });
-  await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+  await h.useCase.execute(ctx(['expense.read', 'expense.ocr.request']), 'expense-1');
   assert.equal(h.applyCalls.length, 1);
   assert.equal(h.applyCalls[0][3].ocrDocumentType, 'TRANSFER_SLIP');
   assert.equal(h.applyCalls[0][3].sourceDocumentType, undefined);
+});
+
+
+it('R3 extraction enforces detail scope before any side effect', async () => {
+  for (const mimeType of ['image/jpeg', 'application/pdf']) {
+    for (const scenario of ['branch', 'tenant', 'missing', 'ocr-only', 'own-other', 'related-other', 'free-branch', 'free-other', 'free-state'] as const) {
+      const free = scenario.startsWith('free-');
+      const expense = scenario === 'missing' ? null : { ...baseExpense, branchId: scenario.endsWith('branch') ? 'branch-b' : 'branch-a',
+        ...(scenario === 'tenant' ? { companyId: 'other-company' } : {}),
+        ...(free ? { status: 'DRAFT' } : {}),
+        ...(free && scenario !== 'free-other' ? { createdByUserId: 'user-1' } : {}),
+        ...(scenario === 'free-state' ? { status: 'READY_FOR_CONFIRMATION' } : {}) };
+      const h = makeUseCase({ expense, free, attachment: { ...baseAttachment, mimeType } });
+      const permissions = scenario === 'ocr-only' ? ['expense.ocr.request']
+        : scenario === 'own-other' ? ['expense.read_own', 'expense.ocr.request']
+        : scenario === 'related-other' ? ['expense.read_related', 'expense.ocr.request']
+        : scenario === 'free-branch' ? ['expense.receipt.upload']
+        : free ? ['expense.read', 'expense.ocr.request'] : ['expense.review'];
+      const actor = { ...ctx(permissions), scopes: { branchIds: ['branch-a'] } };
+      await assert.rejects(() => h.useCase.execute(actor, 'expense-1'), (error: any) => error.getStatus() === (scenario === 'free-other' ? 403 : 404), scenario);
+      for (const spy of [h.repo.findReceiptExtractionAttachment, h.storage.getObject, h.client.extract, h.repo.updateExpense, h.applyService.apply, h.capture.findLiveJobForAttachment, h.capture.createReadJob]) assert.equal(spy.mock.callCount(), 0, scenario);
+      assert.deepEqual(h.capture.jobs, [], scenario);
+      assert.deepEqual(h.runner.kicked, [], scenario);
+    }
+  }
+  for (const [permissions, userId, related, free] of [
+    [['expense.review'], 'user-1', false, false],
+    [['expense.receipt.upload'], 'uploader-1', false, false],
+    [['expense.read_own', 'expense.ocr.request'], 'uploader-1', false, false],
+    [['expense.read_related', 'expense.ocr.request'], 'user-1', true, false],
+    [['expense.receipt.upload'], 'uploader-1', false, true],
+  ] as const) {
+    const h = makeUseCase({ expense: { ...baseExpense, branchId: 'branch-a' }, attachment: null, related, free });
+    assert.equal((await h.useCase.execute({ ...ctx([...permissions], userId), scopes: { branchIds: ['branch-a'] } }, 'expense-1')).status, 'no_attachment');
+  }
+  const freeDraft = makeUseCase({ free: true, expense: { ...baseExpense, branchId: 'branch-a', status: 'DRAFT' }, attachment: null });
+  assert.equal((await freeDraft.useCase.execute({ ...ctx(['expense.receipt.upload'], 'uploader-1'), scopes: { branchIds: ['branch-a'] } }, 'expense-1')).status, 'no_attachment');
+  const readOnly = makeUseCase();
+  await assert.rejects(() => readOnly.useCase.execute(ctx(['expense.read']), 'expense-1'), (error: any) => error.getStatus() === 403);
+  const broken = makeUseCase();
+  const failure = new Error('database unavailable');
+  broken.repo.findByIdWithRelations.mock.mockImplementation(async () => { throw failure; });
+  await assert.rejects(() => broken.useCase.execute(ctx(['expense.review']), 'expense-1'), (error) => error === failure);
 });

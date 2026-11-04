@@ -208,3 +208,56 @@ describe('CompleteAttachmentUploadUseCase', () => {
     assert.equal(storage.deleteObject.mock.callCount(), 0, 'the API must not delete an S3 version directly');
   });
 });
+
+
+it('R1 only the in-scope uploader can complete', async () => {
+  for (const freeExpenseDrafts of [false, true]) for (const status of ['PENDING_UPLOAD', 'ACTIVE'] as const) {
+    for (const denied of [{ userId: 'other-user' }, { scopes: { branchIds: ['branch-b'] } }, { companyId: 'other-company' }, { permissions: [] }]) {
+      const repo = makeRepo();
+      repo.findById = mock.fn(async (input?: any) => input.companyId === attachment.companyId ? { ...attachment, branchId: 'branch-a', status } : null as any);
+      const storage = makeStorage();
+      const audit = makeAudit();
+      const scanner = { assertClean: mock.fn(async () => {}) };
+      const cleanup = makeCleanup();
+      const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, audit as any, scanner as any, makeLogger() as any, cleanup as any);
+      await assert.rejects(() => uc.execute({ ...ctx, freeExpenseDrafts, ...denied }, { attachmentId: attachment.id }),
+        (error: any) => error.getStatus() === ('companyId' in denied ? 404 : 403));
+      for (const spy of [storage.getObjectMetadata, storage.getObject, storage.putObject, repo.markActive, repo.markQuarantined, scanner.assertClean, cleanup.enqueue]) assert.equal(spy.mock.callCount(), 0);
+      if (!('companyId' in denied)) assert.equal((audit.log.mock.calls as any[])[0]?.arguments[0].result, 'DENIED');
+    }
+  }
+  for (const freeExpenseDrafts of [false, true]) for (const [branchId, scopes] of [['branch-a', { branchIds: ['branch-a'] }], [undefined, { branchIds: [] }], ['branch-b', undefined]] as const) {
+    const repo = makeRepo();
+    repo.findById = mock.fn(async () => ({ ...attachment, branchId }));
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, makeStorage() as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
+    assert.equal((await uc.execute({ ...ctx, freeExpenseDrafts, scopes: scopes as any }, { attachmentId: attachment.id })).status, 'ACTIVE');
+  }
+});
+
+
+it('R4 inspection failures have truthful severity', async () => {
+  for (const freeExpenseDrafts of [false, true]) for (const scenario of ['uninspectable', 'embedded', 'active', 'scanner-unavailable', 'malware'] as const) {
+    const content = Buffer.from('%PDF-1.7\n' + (scenario === 'embedded' ? '<< /Type /EmbeddedFile >>' : scenario === 'active' ? '<< /OpenAction /JavaScript >>' : scenario === 'uninspectable' ? '<< /J#61vaScript 1 >>' : '<< /Type /Catalog >>'));
+    const repo = makeRepo();
+    repo.findById = mock.fn(async () => ({ ...attachment, byteSize: content.length }));
+    const storage = makeStorage({ getObjectMetadata: mock.fn(async () => ({ exists: true, byteSize: content.length })), getObject: mock.fn(async () => ({ bytes: content })) });
+    const audit = makeAudit();
+    const logger = makeLogger();
+    const scanner = { assertClean: async () => {
+      if (scenario === 'scanner-unavailable') throw new Error('scanner offline');
+      if (scenario === 'malware') throw new Error('MALWARE_DETECTED');
+    } };
+    const useCase = new CompleteAttachmentUploadUseCase(repo as any, storage as any, audit as any, scanner as any, logger as any, makeCleanup() as any);
+    await assert.rejects(() => useCase.execute({ ...ctx, freeExpenseDrafts }, { attachmentId: attachment.id }), (error: any) => {
+      if (scenario === 'uninspectable' || scenario === 'scanner-unavailable') return error.getResponse().code === 'CONTENT_UNINSPECTABLE';
+      if (scenario === 'embedded') return error.getResponse().code === 'EMBEDDED_FILE_REJECTED';
+      return error.getStatus() === 400;
+    });
+    const high = scenario === 'active' || scenario === 'malware';
+    assert.equal((audit.log.mock.calls as any[])[0].arguments[0].riskLevel, high ? 'HIGH' : 'MEDIUM');
+    assert.equal(logger.warn.mock.callCount(), high ? 1 : 0);
+    assert.equal(repo.markQuarantined.mock.callCount(), 1);
+    assert.equal(repo.markActive.mock.callCount(), 0);
+    assert.equal((storage.putObject as any).mock.callCount(), 0);
+  }
+});

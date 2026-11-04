@@ -826,6 +826,7 @@ describe('claim certificate cancellation (A7)', () => {
       auditLog: table(() => audits), documentNumber: table(() => []), outboxEvent: fakeTx(state.calls.outbox).outboxEvent,
       companyMembership: { findFirst: async ({ where }: any) => ({ user: { displayName: where.userId === 'staff-1' ? 'สมชาย' : 'คนดำเนินการต่อ' } }) },
       companyFeatureEntitlement: { findMany: async () => [] },
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
       $executeRaw: async () => 0,
       $queryRaw: async () => [{ pending: state.request.cancellationPendingAt, attested: state.request.cancellationCertificateAttestedAt }],
       $transaction: async (work: any) => work(client),
@@ -2337,6 +2338,7 @@ describe('claim detail paymentDesk', () => {
         permissions: member.permissions.map((key) => ({ permission: { key } })) } }],
     }));
     return { client: {
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
       companyMembership: {
         // The repository's own where clause, applied as written.
         findMany: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId && row.status === where.status

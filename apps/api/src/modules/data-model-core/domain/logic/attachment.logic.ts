@@ -1,3 +1,5 @@
+import { inflateSync } from 'node:zlib';
+import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
 import { DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_PDF_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
 import {
@@ -194,32 +196,308 @@ export function canonicalAttachmentExtension(mimeType: string): string | null {
   return CANONICAL_EXTENSION_BY_MIME_TYPE[mimeType] ?? null;
 }
 
-// CR-10: a scanned receipt is one compressed image stream per page, and compressed bytes are
-// statistically random — so short needles like `/js` hit by chance. Measured on well-formed
-// PDFs, the old whole-stream scan quarantined 13% of 0.5 MB scans and 78% of 10 MB ones,
-// permanently and behind a HIGH security alert. Strip stream payloads and match only the object
-// structure a reader parses for behaviour. Detection is unchanged in practice: active content
-// only works from a dictionary, and anything hidden inside a compressed stream was already
-// unreadable to a regex. Anchored on `>>` so the literal word "stream" cannot blind the scan.
-const PDF_STREAM_PAYLOAD = />>\s*stream\b[\s\S]*?endstream/g;
+const PDF_UNINSPECTABLE = 'PDF could not be inspected.';
+const PDF_EMBEDDED_REJECTED = 'Embedded files are not supported in PDFs.';
+const PDF_OBJECT_LIMIT = 'PDF object count exceeds the parser safety limit.';
+const PDF_ACTIVE = 'Active PDF content is not allowed.';
+const CONTENT_ACTIVE = 'Active content is not allowed in attachments.';
+const PDF_MAX_OBJECT_STREAM_BYTES = 8 * 1024 * 1024;
+const PDF_MAX_EXPANDED_BYTES = 32 * 1024 * 1024;
+
+type PdfAtom = { kind: 'name' | 'string' | 'word'; value: string };
+type PdfReference = { kind: 'reference'; key: string };
+type PdfDictionary = { kind: 'dictionary'; entries: Map<string, PdfValue> };
+type PdfValue = number | PdfAtom | PdfReference | PdfDictionary | PdfValue[];
+type PdfToken = { kind: 'name' | 'string' | 'word' | 'number' | 'delimiter'; value: string; end: number };
+type PdfStream = { dictionary: PdfDictionary; bytes: Buffer; declaredLength: PdfValue; length: number };
+
+function pdfWhitespace(byte: number) { return byte === 0 || byte === 9 || byte === 10 || byte === 12 || byte === 13 || byte === 32; }
+function pdfDelimiter(byte: number) { return pdfWhitespace(byte) || '()<>[]{}/%'.includes(String.fromCharCode(byte)); }
+function pdfInspectionFailure(): never { throw new Error(PDF_UNINSPECTABLE); }
+function checkPdfText(value: string): void {
+  // Tags need their word boundary on the raw text ("<svg onload" compacts to "<svgonload");
+  // schemes are also checked compacted, so "java\nscript:" cannot slip through.
+  const lower = value.toLowerCase();
+  const compact = lower.replace(/[\x00-\x20\x7f]/g, '');
+  if (/<script\b|<svg\b|javascript:|vbscript:|data:text\/html/.test(lower)
+    || /javascript:|vbscript:|data:text\/html/.test(compact)) throw new Error(CONTENT_ACTIVE);
+}
+
+class PdfInspectionBudget {
+  private readonly startedAt = performance.now();
+  objects = 0;
+  objectStreams = 0;
+  expandedBytes = 0;
+  check() {
+    if (this.objects > 100_000) throw new Error(PDF_OBJECT_LIMIT);
+    if (performance.now() - this.startedAt > 2000 || this.objectStreams > 2000
+      || this.expandedBytes > PDF_MAX_EXPANDED_BYTES) pdfInspectionFailure();
+  }
+}
+
+/** A bounded lexer/parser. Only dictionaries with an exact stream boundary may hide opaque bytes. */
+class PdfSafetyReader {
+  private position = 0;
+  private readonly lookahead: PdfToken[] = [];
+  readonly objects = new Map<string, PdfValue>();
+  private readonly streams: PdfStream[] = [];
+
+  constructor(private readonly bytes: Buffer, private readonly budget: PdfInspectionBudget) {}
+
+  private checkpoint() { if ((this.position & 4095) === 0) this.budget.check(); }
+
+  private token(): PdfToken | undefined {
+    const bytes = this.bytes;
+    while (this.position < bytes.length) {
+      this.checkpoint();
+      if (pdfWhitespace(bytes[this.position]!)) { this.position++; continue; }
+      if (bytes[this.position] !== 37) break;
+      while (this.position < bytes.length && ![10, 13].includes(bytes[this.position]!)) { this.checkpoint(); this.position++; }
+    }
+    if (this.position >= bytes.length) return undefined;
+    const start = this.position++;
+    const first = bytes[start]!;
+    const result = (kind: PdfToken['kind'], value: string): PdfToken => ({ kind, value, end: this.position });
+    if (first === 47) {
+      while (this.position < bytes.length && !pdfDelimiter(bytes[this.position]!)) { this.checkpoint(); this.position++; }
+      const raw = bytes.toString('latin1', start + 1, this.position);
+      if (/#(?![\da-f]{2})/i.test(raw)) pdfInspectionFailure();
+      const value = raw.replace(/#([\da-f]{2})/gi, (_match, hex: string) => {
+        const decoded = String.fromCharCode(parseInt(hex, 16));
+        if (/[a-z\d]/i.test(decoded)) pdfInspectionFailure();
+        return decoded;
+      });
+      if (/^(javascript|js|openaction|launch|richmedia|xfa)$/i.test(value)) throw new Error(PDF_ACTIVE);
+      if (/^embeddedfile$/i.test(value)) throw new Error(PDF_EMBEDDED_REJECTED);
+      if (/^encrypt$/i.test(value)) pdfInspectionFailure();
+      checkPdfText(value);
+      return result('name', value);
+    }
+    if (first === 40) {
+      let depth = 1;
+      const decoded: number[] = [];
+      while (this.position < bytes.length && depth > 0) {
+        this.checkpoint();
+        let byte = bytes[this.position++]!;
+        if (byte === 92) {
+          if (this.position >= bytes.length) pdfInspectionFailure();
+          byte = bytes[this.position++]!;
+          if (byte === 10) continue;
+          if (byte === 13) { if (bytes[this.position] === 10) this.position++; continue; }
+          if (byte >= 48 && byte <= 55) {
+            let octal = String.fromCharCode(byte);
+            for (let count = 1; count < 3 && bytes[this.position]! >= 48 && bytes[this.position]! <= 55; count++) octal += String.fromCharCode(bytes[this.position++]!);
+            decoded.push(parseInt(octal, 8) & 255);
+          } else decoded.push(({ 110: 10, 114: 13, 116: 9, 98: 8, 102: 12 } as Record<number, number>)[byte] ?? byte);
+          continue;
+        }
+        if (byte === 40 && ++depth > 64) pdfInspectionFailure();
+        if (byte === 41 && --depth === 0) break;
+        decoded.push(byte);
+      }
+      if (depth !== 0) pdfInspectionFailure();
+      const value = Buffer.from(decoded).toString('latin1');
+      checkPdfText(value);
+      return result('string', value);
+    }
+    if (first === 60 && bytes[this.position] !== 60) {
+      if (/^<(?:script|svg)\b/i.test(bytes.toString('latin1', start, start + 10))) throw new Error(CONTENT_ACTIVE);
+      let hex = '';
+      while (this.position < bytes.length && bytes[this.position] !== 62) {
+        this.checkpoint();
+        const byte = bytes[this.position++]!;
+        if (pdfWhitespace(byte)) continue;
+        const character = String.fromCharCode(byte);
+        if (!/[\da-f]/i.test(character)) pdfInspectionFailure();
+        hex += character;
+      }
+      if (bytes[this.position++] !== 62) pdfInspectionFailure();
+      const value = Buffer.from(hex.length % 2 ? hex + '0' : hex, 'hex').toString('latin1');
+      checkPdfText(value);
+      return result('string', value);
+    }
+    if ((first === 60 || first === 62) && bytes[this.position] === first) {
+      this.position++;
+      return result('delimiter', String.fromCharCode(first, first));
+    }
+    if ('[]()<>{}'.includes(String.fromCharCode(first))) return result('delimiter', String.fromCharCode(first));
+    while (this.position < bytes.length && !pdfDelimiter(bytes[this.position]!)) { this.checkpoint(); this.position++; }
+    const value = bytes.toString('latin1', start, this.position);
+    checkPdfText(value);
+    return result(/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(value) ? 'number' : 'word', value);
+  }
+
+  private peek(index = 0): PdfToken | undefined {
+    while (this.lookahead.length <= index) {
+      const token = this.token();
+      if (!token) return undefined;
+      this.lookahead.push(token);
+    }
+    return this.lookahead[index];
+  }
+
+  private take() { const token = this.peek(); this.lookahead.shift(); return token; }
+
+  private value(depth = 0): PdfValue {
+    this.budget.check();
+    if (depth > 64) pdfInspectionFailure();
+    const token = this.take();
+    if (!token) pdfInspectionFailure();
+    if (token.value === '[' && token.kind === 'delimiter') {
+      const items: PdfValue[] = [];
+      while (this.peek()?.value !== ']') items.push(this.value(depth + 1));
+      this.take();
+      return items;
+    }
+    if (token.value === '<<' && token.kind === 'delimiter') {
+      const entries = new Map<string, PdfValue>();
+      while (this.peek()?.value !== '>>') {
+        const key = this.take();
+        if (!key || key.kind !== 'name' || entries.has(key.value)) pdfInspectionFailure();
+        entries.set(key.value, this.value(depth + 1));
+      }
+      this.take();
+      return { kind: 'dictionary', entries };
+    }
+    if (token.kind === 'delimiter') pdfInspectionFailure();
+    if (token.kind === 'number') {
+      if (this.peek()?.kind === 'number' && this.peek(1)?.value === 'R') {
+        const generation = this.take()!;
+        this.take();
+        if (!/^\d+$/.test(token.value) || !/^\d+$/.test(generation.value)) pdfInspectionFailure();
+        return { kind: 'reference', key: `${token.value} ${generation.value}` };
+      }
+      const number = Number(token.value);
+      if (!Number.isFinite(number)) pdfInspectionFailure();
+      return number;
+    }
+    if (depth > 0 && token.kind === 'word' && !['null', 'true', 'false'].includes(token.value)) pdfInspectionFailure();
+    return { kind: token.kind, value: token.value };
+  }
+
+  private stream(dictionary: PdfDictionary) {
+    const token = this.take()!;
+    this.position = token.end;
+    this.lookahead.length = 0;
+    while ([9, 32].includes(this.bytes[this.position]!)) this.position++;
+    if (this.bytes[this.position] === 13) this.position++;
+    else if (this.bytes[this.position] !== 10) pdfInspectionFailure();
+    if (this.bytes[this.position] === 10) this.position++;
+    const start = this.position;
+    const declaredLength = dictionary.entries.get('Length');
+    if (declaredLength === undefined) pdfInspectionFailure();
+    const known = this.resolve(declaredLength);
+    let end: number;
+    if (typeof known === 'number') {
+      if (!Number.isSafeInteger(known) || known < 0) pdfInspectionFailure();
+      end = start + known;
+    } else {
+      // Forward scalar /Length references are verified after the rest of the structure is parsed.
+      // An earlier fake delimiter makes that verification fail, so ambiguity never becomes clean.
+      if (typeof known === 'number' || Array.isArray(known) || known.kind !== 'reference') pdfInspectionFailure();
+      const candidates = [this.bytes.indexOf(Buffer.from('\nendstream'), start), this.bytes.indexOf(Buffer.from('\rendstream'), start)].filter(index => index >= 0);
+      end = Math.min(...candidates);
+      if (!Number.isFinite(end)) pdfInspectionFailure();
+      if (this.bytes[end - 1] === 13) end--;
+    }
+    if (end > this.bytes.length) pdfInspectionFailure();
+    this.position = end;
+    while (pdfWhitespace(this.bytes[this.position]!)) { this.checkpoint(); this.position++; }
+    if (this.bytes.toString('latin1', this.position, this.position + 9) !== 'endstream'
+      || this.position + 9 < this.bytes.length && !pdfDelimiter(this.bytes[this.position + 9]!)) pdfInspectionFailure();
+    this.position += 9;
+    this.streams.push({ dictionary, bytes: this.bytes.subarray(start, end), declaredLength, length: end - start });
+  }
+
+  private resolve(value: PdfValue): PdfValue {
+    const seen = new Set<string>();
+    while (typeof value === 'object' && !Array.isArray(value) && value.kind === 'reference' && this.objects.has(value.key)) {
+      if (seen.has(value.key)) pdfInspectionFailure();
+      seen.add(value.key);
+      value = this.objects.get(value.key)!;
+    }
+    return value;
+  }
+
+  inspect() {
+    let previous: PdfValue[] = [];
+    while (this.peek()) {
+      let value = this.value();
+      if (typeof value === 'object' && !Array.isArray(value) && value.kind === 'word' && value.value === 'obj') {
+        this.budget.objects++;
+        this.budget.check();
+        const [id, generation] = previous.slice(-2);
+        value = this.value();
+        if (typeof id === 'number' && typeof generation === 'number') this.objects.set(`${id} ${generation}`, value);
+      }
+      if (typeof value === 'object' && !Array.isArray(value) && value.kind === 'dictionary' && this.peek()?.value === 'stream') {
+        this.stream(value);
+      } else if (typeof value === 'object' && !Array.isArray(value) && value.kind === 'word' && ['stream', 'endstream'].includes(value.value)) pdfInspectionFailure();
+      previous.push(value);
+      if (previous.length > 2) previous.shift();
+    }
+    for (const stream of this.streams) {
+      if (this.resolve(stream.declaredLength) !== stream.length) pdfInspectionFailure();
+      const storedType = stream.dictionary.entries.get('Type');
+      const type = storedType === undefined ? undefined : this.resolve(storedType);
+      if (type && typeof type === 'object' && !Array.isArray(type) && type.kind === 'reference') pdfInspectionFailure();
+      if (typeof type !== 'object' || Array.isArray(type) || type.kind !== 'name' || type.value.toLowerCase() !== 'objstm') continue;
+      this.budget.objectStreams++;
+      this.budget.check();
+      if (stream.dictionary.entries.has('DecodeParms')) pdfInspectionFailure();
+      const storedFilter = stream.dictionary.entries.get('Filter');
+      const filter = storedFilter === undefined ? undefined : this.resolve(storedFilter);
+      const single = Array.isArray(filter) && filter.length === 1 ? filter[0] : filter;
+      if (!single || typeof single !== 'object' || Array.isArray(single) || single.kind !== 'name' || single.value !== 'FlateDecode') pdfInspectionFailure();
+      const expanded = inflateSync(stream.bytes, { maxOutputLength: PDF_MAX_OBJECT_STREAM_BYTES });
+      this.budget.expandedBytes += expanded.length;
+      this.budget.check();
+      const count = stream.dictionary.entries.get('N');
+      const first = stream.dictionary.entries.get('First');
+      if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || typeof first !== 'number'
+        || !Number.isSafeInteger(first) || first < 0 || first > expanded.length) pdfInspectionFailure();
+      this.budget.objects += count;
+      this.budget.check();
+      const header = new PdfSafetyReader(expanded.subarray(0, first), this.budget);
+      let lastOffset = -1;
+      const offsets: number[] = [];
+      for (let index = 0; index < count; index++) {
+        const id = header.value();
+        const offset = header.value();
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 0 || typeof offset !== 'number'
+          || !Number.isSafeInteger(offset) || offset <= lastOffset || first + offset >= expanded.length) pdfInspectionFailure();
+        lastOffset = offset;
+        offsets.push(offset);
+      }
+      if (header.peek()) pdfInspectionFailure();
+      if (count === 0 && first !== expanded.length) pdfInspectionFailure();
+      for (let index = 0; index < offsets.length; index++) {
+        const object = new PdfSafetyReader(expanded.subarray(first + offsets[index]!,
+          index + 1 < offsets.length ? first + offsets[index + 1]! : expanded.length), this.budget);
+        object.value(1);
+        if (object.peek()) pdfInspectionFailure();
+      }
+    }
+  }
+}
+
+export function attachmentInspectionFailureCode(message: string): 'CONTENT_UNINSPECTABLE' | 'EMBEDDED_FILE_REJECTED' | 'CONTENT_REJECTED' {
+  if (message === PDF_EMBEDDED_REJECTED) return 'EMBEDDED_FILE_REJECTED';
+  if (message === PDF_UNINSPECTABLE || message === PDF_OBJECT_LIMIT || message === 'File signature does not match the declared MIME type.') return 'CONTENT_UNINSPECTABLE';
+  return 'CONTENT_REJECTED';
+}
 
 export function inspectAttachmentBytes(mimeType: string, bytes: Buffer): string | null {
   if (detectAttachmentMimeType(bytes) !== mimeType) return 'File signature does not match the declared MIME type.';
-
-  const ascii = bytes.toString('latin1').toLowerCase();
-  if (ascii.includes('eicar-standard-antivirus-test-file')) return 'Malware test signature detected.';
-
-  const isPdf = mimeType === 'application/pdf';
-  const scanned = isPdf ? ascii.replace(PDF_STREAM_PAYLOAD, '>>') : ascii;
-  if (/<script\b|<svg\b|javascript:|vbscript:|data:text\/html/.test(scanned)) {
-    return 'Active content is not allowed in attachments.';
+  if (bytes.toString('latin1').toLowerCase().includes('eicar-standard-antivirus-test-file')) return 'Malware test signature detected.';
+  try {
+    if (mimeType === 'application/pdf') new PdfSafetyReader(bytes, new PdfInspectionBudget()).inspect();
+    else checkPdfText(bytes.toString('latin1'));
+    return null;
+  } catch (error) {
+    return error instanceof Error && [PDF_UNINSPECTABLE, PDF_OBJECT_LIMIT, PDF_EMBEDDED_REJECTED, PDF_ACTIVE, CONTENT_ACTIVE].includes(error.message)
+      ? error.message : PDF_UNINSPECTABLE;
   }
-  if (isPdf && /\/(javascript|js|openaction|launch|richmedia|embeddedfile|xfa)\b/.test(scanned)) {
-    return 'Active PDF content is not allowed.';
-  }
-  const pdfObjectCount = isPdf ? (scanned.match(/\bobj\b/g) ?? []).length : 0;
-  if (pdfObjectCount > 100_000) return 'PDF object count exceeds the parser safety limit.';
-  return null;
 }
 
 // Decides the Content-Type only; `downloadContentDisposition` decides attachment vs inline.

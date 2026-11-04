@@ -404,6 +404,13 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/reimbursements/presentation/http/reimbursement-draft-action.controller.spec.ts',
     // Advisor S3: whose desk the waiting claims are on (pile vs one approver, departed approvers, branch, scope).
     'src/modules/reimbursements/application/use-cases/reimbursement-approval-backlog.use-case.spec.ts',
+    // Free source drafts (049aa51de): merged without an owning runner, so the API suite's coverage guard failed.
+    'src/modules/auth/free-expense-handoff.spec.ts',
+    'src/modules/auth/free-expense-password-login.spec.ts',
+    'src/modules/data-model-core/application/use-cases/free-expense-attachment.spec.ts',
+    'src/modules/expenses/application/use-cases/expense-free-access.use-case.spec.ts',
+    'src/modules/line-ai/domain/logic/free-expense-line.logic.spec.ts',
+    'src/modules/system-partner-management/application/free-expense-access.spec.ts',
   ] },
   { id: 'reliability-web-v2', cwd: 'apps/web', command: '../../node_modules/.bin/tsx', args: ['--test',
     'src/features/reimbursements/ReimbursementDraftActionPage.qa.spec.ts',

@@ -134,6 +134,7 @@ import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   canonicalAttachmentExtension,
   inspectAttachmentBytes,
+  attachmentInspectionFailureCode,
   normalizeAttachmentMimeType,
   validateAttachmentFileName,
   validateAttachmentMeta,
@@ -155,6 +156,7 @@ import {
 } from '../../domain/logic/line-non-receipt-reply.logic';
 import {
   fileAttemptAnswer,
+  fileInspectionRefusalReply,
   fileAttemptChoiceList,
   FILE_ATTEMPT_LOOKUP_FAILED_REPLY,
   FILE_ATTEMPT_NONE_REPLY,
@@ -461,6 +463,8 @@ export function lineCaptureFailureReply(
   const code = error instanceof HttpException
     ? (error.getResponse() as { code?: string } | undefined)?.code
     : undefined;
+  const inspectionReply = code && fileInspectionRefusalReply(code, language);
+  if (inspectionReply) return { reply: inspectionReply, status: 'media_security_rejected', errorCode: code! };
   if (code === 'TRANSACTION_BRANCH_REQUIRED' || code === 'TRANSACTION_BRANCH_INVALID') {
     return {
       reply: language === 'en' ? LEGACY_LINE_COPY_EN.RECEIPT_BRANCH_REQUIRED_REPLY + (tail === BRANCH_RETRY_RESEND ? ' Then resend the photo.' : ' The earlier file is retained; repeat your answer after choosing the branch.') : `${RECEIPT_BRANCH_REQUIRED_REPLY}${tail}`,
@@ -5891,7 +5895,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     const proofs = this.deliverySubstituteSources.get(event) ?? [];
     proofs.push({ context, source: result.source }); this.deliverySubstituteSources.set(event, proofs);
     if (result.expenseId && result.status === 'READY_FOR_WEB' && this.substituteActions) {
-      const offered = await this.substituteActions.prepare(context, chatKeyHashOf(event), result.expenseId, replyLanguage(event));
+      const offered = await this.substituteActions.prepare(context, chatKeyHashOf(event), result.expenseId, replyLanguage(event), result.decisionOffered);
       if (offered.preview) {
         this.deliverySubstituteActions.set(event, { context, preview: offered.preview });
         result.replyText = offered.preview.summary;
@@ -6931,12 +6935,13 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     }
 
     if (resolvedAccess.freeExpenseDrafts) {
-      const text = menuCommand === 'main' || isCapabilityQuestion(event.messageText)
+      const showsMenu = menuCommand === 'main' || isCapabilityQuestion(event.messageText);
+      const text = showsMenu
         ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
         : isExplicitFinalFinancialRequest(event.messageText)
           ? MUTATION_REFUSAL_REPLY.split('\n')[0]!
           : isExplicitSourceEditRequest(event.messageText) ? FREE_EXPENSE_TEXT_EDIT_REPLY : FREE_EXPENSE_CHAT_REPLY;
-      await this.deliverReply(event, text);
+      await this.deliverReply(event, text, showsMenu ? undefined : lineChoiceQuickReply([{ label: 'เมนูหลัก', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, menuCommand === 'main' ? 'staff_menu_main' : 'free_chat_not_included', undefined, companyId);
       return;
     }
@@ -9781,11 +9786,16 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     const media = downloaded.media;
     const mediaRejectionReason = await this.lineMediaRejectionReason(media);
     if (mediaRejectionReason) {
+      const riskLevel = ['CONTENT_REJECTED', 'MALWARE_DETECTED'].includes(mediaRejectionReason) ? 'HIGH' : 'MEDIUM';
+      const inspectionReply = fileInspectionRefusalReply(mediaRejectionReason, replyLanguage(event));
       await this.recordIntakeAttempt(event, {
         companyId, stage: 'SECURITY', reasonCode: mediaRejectionReason, outcome: 'REJECTED',
         measuredByteSize: media.byteSize, fileName: media.fileName,
       });
-      await this.deliverReply(event, (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_SECURITY_REJECTED_REPLY : MEDIA_SECURITY_REJECTED_REPLY), undefined, undefined, 'notTaken');
+      await this.deliverReply(event, inspectionReply ?? (replyLanguage(event) === 'en' ? LEGACY_LINE_COPY_EN.MEDIA_SECURITY_REJECTED_REPLY : MEDIA_SECURITY_REJECTED_REPLY),
+        inspectionReply && ctx.permissions.includes('expense.create') ? { items: [{ type: 'action', action: { type: 'uri',
+          label: replyLanguage(event) === 'en' ? 'Enter expense' : 'กรอกรายจ่ายเอง',
+          uri: absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/manual`) } }] } : undefined, undefined, 'notTaken');
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -9794,7 +9804,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
         targetId: event.webhookEventId,
         requestId,
         result: 'DENIED',
-        riskLevel: 'HIGH',
+        riskLevel,
         metadataJson: {
           source: 'LINE_AI',
           reason: mediaRejectionReason,
@@ -9802,7 +9812,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
           byteSize: media.byteSize,
         },
       });
-      emitSecurityEvent(this.logger, SECURITY_EVENT.attachmentUploadRejected, 'HIGH', {
+      if (riskLevel === 'HIGH') emitSecurityEvent(this.logger, SECURITY_EVENT.attachmentUploadRejected, 'HIGH', {
         companyId,
         source: 'LINE_AI',
         reason: mediaRejectionReason,
@@ -11305,7 +11315,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
             companyId: ctx.companyId, stage: 'SECURITY', reasonCode: rejection, outcome: 'REJECTED',
             measuredByteSize: media.byteSize, fileName: media.fileName, targetType: 'expense', targetId: expense.id,
           });
-          throw new Error('LINE_RECEIPT_MEDIA_UNAVAILABLE');
+          throw new HttpException({ code: rejection }, 400);
         }
         await this.uploadLineMedia(intent, media);
       }
@@ -13278,7 +13288,8 @@ No payment was recorded; review the details and VAT on the web, and attach the p
   private async lineMediaRejectionReason(media: DownloadedLineMedia): Promise<string | null> {
     if (validateAttachmentMeta(media.mimeType, media.byteSize, this.config.uploadMaxBytes)) return 'METADATA_REJECTED';
     if (validateAttachmentFileName(media.fileName, media.mimeType)) return 'EXTENSION_MIME_MISMATCH';
-    if (inspectAttachmentBytes(media.mimeType, media.bytes)) return 'CONTENT_REJECTED';
+    const inspectionError = inspectAttachmentBytes(media.mimeType, media.bytes);
+    if (inspectionError) return attachmentInspectionFailureCode(inspectionError);
     try {
       await this.malwareScanner.assertClean(media.bytes);
       return null;

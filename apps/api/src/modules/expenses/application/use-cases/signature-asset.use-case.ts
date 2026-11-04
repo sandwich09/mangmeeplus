@@ -1,3 +1,5 @@
+import { GetExpenseUseCase } from './expense-draft.use-case';
+import { assertExpenseFinancialAccess } from '../expense-commercial-access';
 import { Inject, Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -391,14 +393,18 @@ export class FillSignatureUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly audit: AuditService,
+    private readonly getExpense: GetExpenseUseCase,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, input: SignatureFillInput & { checksumSha256?: string; byteSize?: number }): Promise<{ fillId: string; appliedAt: string }> {
     if (!hasPerm(ctx, 'expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     if (ctx.authProvider === 'line') throw new ForbiddenException('Signature fill is a web-only action');
 
-    const expense = await this.repo.findById(ctx.companyId, expenseId);
-    if (!expense) throw new NotFoundException(`Expense ${expenseId} not found`);
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
+    const expense = await this.getExpense.execute(ctx, expenseId).catch((error: unknown) => {
+      if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
+      throw new NotFoundException(`Expense ${expenseId} not found`);
+    });
     if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
       throw new BadRequestException(`Cannot fill signature in status ${expense.status}`);
     }

@@ -60,7 +60,7 @@ describe('expense source branch is mandatory', () => {
 
   it('rejects an unassigned receipt before creating its storage intent or draft', async () => {
     let intents = 0;
-    const repo = new PrismaExpenseRepository({ client: { branch: { findMany: async () => [{ id: 'b1' }, { id: 'b2' }] } } } as any);
+    const repo = new PrismaExpenseRepository({ client: { company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) }, branch: { findMany: async () => [{ id: 'b1' }, { id: 'b2' }] } } } as any);
     const upload = new InitReceiptUploadUseCase(repo,
       { execute: async () => { intents++; } } as any,
       { log: async () => undefined } as any,

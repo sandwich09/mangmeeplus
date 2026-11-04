@@ -274,14 +274,19 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
     },
   } as any;
   const intents: any[] = [];
+  const intentActors: any[] = [];
+  const intentSources: any[] = [];
+  const completionActors: any[] = [];
   // The attachment row has a lifecycle here, because the fix under test turns on reading it back:
   // PENDING_UPLOAD after the intent, ACTIVE once the shared completion has verified the bytes.
   const objects = capture.objects;
   const createIntent = {
-    execute: async (_ctx: any, cmd: any) => {
+    execute: async (actor: any, cmd: any, source: any) => {
       intents.push(cmd);
+      intentActors.push(actor);
+      intentSources.push(source);
       const attachmentId = `att-${intents.length}`;
-      objects.set(attachmentId, { id: attachmentId, companyId: 'co-1', status: 'PENDING_UPLOAD', byteSize: cmd.byteSize });
+      objects.set(attachmentId, { id: attachmentId, companyId: actor.companyId, uploadedByUserId: actor.userId, branchId: cmd.branchId, status: 'PENDING_UPLOAD', byteSize: cmd.byteSize });
       return {
         attachmentId, uploadUrl: '/upload', uploadMethod: 'PUT',
         uploadHeaders: {}, expiresAt: new Date('2026-09-18T00:00:00.000Z'),
@@ -291,8 +296,9 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
   const completed: any[] = [];
   let onCompleteUpload: (() => void) | undefined;
   const completeUpload = {
-    execute: async (_ctx: any, cmd: any) => {
+    execute: async (actor: any, cmd: any) => {
       completed.push(cmd);
+      completionActors.push(actor);
       const object = objects.get(cmd.attachmentId);
       // The real one refuses anything that is not PENDING_UPLOAD; a fake that forgives that would
       // hide the exact stranding this fix exists for.
@@ -314,7 +320,7 @@ function build(options: { intakeEnabled?: boolean; repo?: FakeCaptureRepo } = {}
   const runner = { kicked: [] as string[], kick(jobId: string) { this.kicked.push(jobId); } };
 
   return {
-    capture, access, intents, completed, objects, runner,
+    capture, access, intents, completed, objects, runner, intentActors, intentSources, completionActors,
     duringCompleteUpload: (hook: () => void) => { onCompleteUpload = hook; },
     capability: new GetExpenseCaptureCapabilityUseCase(access),
     create: new CreateExpenseCaptureGroupUseCase(capture as any, expenses, access, audit, openLaunchGate),
@@ -896,4 +902,29 @@ describe('certificate progress per derived source (W06, A40)', () => {
 
     assert.equal(detail.derivedSources.find((source) => source.expenseId === 'e-b')?.nextAction, 'receipt_present');
   });
+});
+
+
+it('R1 capture uploader completes and replays', async () => {
+  const app = build();
+  const actor = ctx({ scopes: { branchIds: ['branch-1'] } });
+  const group = await app.create.execute(actor, { branchId: 'branch-1' });
+  const added = await app.addFile.execute(actor, group.groupId, { originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1_000, expectedRevision: 1 });
+  const completed = await app.completeFile.execute(actor, group.groupId, added.fileId, { expectedRevision: added.revision });
+  assert.deepEqual(app.completionActors, [actor]);
+  const replay = await app.completeFile.execute(actor, group.groupId, added.fileId, { expectedRevision: completed.revision });
+  assert.equal(replay.replayed, true);
+  assert.equal(app.completed.length, 1);
+  assert.equal(app.objects.get(added.attachmentId).uploadedByUserId, actor.userId);
+});
+
+it('R11 upload callers preserve branch and identity', async () => {
+  const app = build();
+  const actor = ctx({ scopes: { branchIds: ['branch-1'] } });
+  const group = await app.create.execute(actor, { branchId: 'branch-1' });
+  await app.addFile.execute(actor, group.groupId, { originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1_000, expectedRevision: 1 });
+  assert.deepEqual(app.intentActors, [actor]);
+  assert.equal(app.intents[0].branchId, 'branch-1');
+  assert.deepEqual(app.intentSources, [{ captureGroupId: group.groupId }]);
+  assert.equal([...app.capture.files.values()][0].addedByUserId, actor.userId);
 });

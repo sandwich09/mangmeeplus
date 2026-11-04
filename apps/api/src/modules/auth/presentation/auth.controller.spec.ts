@@ -434,7 +434,7 @@ describe('AuthController myCompanies()', () => {
   it('reports package access from active role permissions, regardless of role name', async () => {
     let query: any;
     const T = new Date('2026-09-01T00:00:00.000Z');
-    const prisma = { client: { companyMembership: { findMany: async (input: any) => {
+    const prisma = { client: { company: { findUnique: async () => null }, companyMembership: { findMany: async (input: any) => {
       query = input;
       return [
         { companyId: 'co-manager', company: { name: 'Manager shop', status: 'ACTIVE', planTerm: null }, roles: [

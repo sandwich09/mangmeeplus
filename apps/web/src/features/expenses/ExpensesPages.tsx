@@ -2999,7 +2999,12 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
         {canExportHere && <button type="button" className={ghostClass} aria-haspopup="dialog" onClick={() => setExportOpen(true)}>{EXPORT_FOR_ACCOUNTANT}</button>}
       </div>
       {!freeExpenseDrafts && <Modal open={exportOpen} onClose={() => setExportOpen(false)} title={EXPORT_FOR_ACCOUNTANT} size="sm"
-        footer={<button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+        footer={exportError ? <>
+          <button type="button" className={ghostClass} onClick={() => setExportOpen(false)}>กลับไปรายการค่าใช้จ่าย</button>
+          <button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+            {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
+          </button>
+        </> : <button type="button" className={btnClass} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
           {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
         </button>}>
         <div className="space-y-4">
@@ -3012,7 +3017,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
               <option value="full">{t('expenses.export_columns_full', locale)}</option>
             </ThemedSelect>
           </label>
-          <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts
+          <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts onReturnToExpenses={() => setExportOpen(false)}
             request={{ fromDate, toDate, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
           {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}

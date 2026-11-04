@@ -146,3 +146,10 @@ it('unknown allowed file types never expose MIME tokens', () => {
   assert.doesNotMatch(text, /x-new-format|X-NEW-FORMAT|application/);
   assert.match(text, /ไฟล์ชนิดที่ระบบรองรับ/);
 });
+
+
+it('R4 file refusal explains a usable next action', () => {
+  assert.equal(fileAttemptAnswer(attempt({ reasonCode: 'CONTENT_UNINSPECTABLE' })), 'ระบบตรวจไฟล์นี้ไม่ได้ ส่งไฟล์อื่นได้ค่ะ');
+  assert.equal(fileAttemptAnswer(attempt({ reasonCode: 'EMBEDDED_FILE_REJECTED' })), 'ไฟล์แนบใน PDF นี้ยังไม่รองรับ ส่งไฟล์อื่นได้ค่ะ');
+  assert.equal(fileAttemptAnswer(attempt({ reasonCode: 'MALWARE_SCAN_FAILED' })), 'ระบบตรวจไฟล์นี้ไม่ได้ ส่งไฟล์อื่นได้ค่ะ');
+});

@@ -113,6 +113,7 @@ it('backfills old custom/read-only roles idempotently and resolves feature-gated
     for (const key of REIMBURSEMENT_SELF_SERVICE_PERMISSIONS) assert.ok(held.has(key), `${roleId}: ${key}`);
     for (const enabled of [true, false]) {
       const resolver = new PrismaPermissionResolverRepository({ client: {
+        company: { findUnique: async () => null },
         companyMembership: { findFirst: async ({ where }: any) => {
           assert.deepEqual(where, { userId: 'u-1', companyId: 'co-1', status: 'ACTIVE' });
           return { id: 'm-1', companyId: 'co-1', company: { status: 'ACTIVE' },
@@ -160,6 +161,7 @@ it('adds the pay and void rights to company roles that approve reimbursements, a
   /** The API's answer for a member holding only this role: resolve as every request does, then record a payment. */
   const pays = async (roleId: string) => {
     const access = await new PrismaPermissionResolverRepository({ client: {
+      company: { findUnique: async () => null },
       companyMembership: { findFirst: async () => ({ id: 'm-1', companyId: 'co-1', company: { status: 'ACTIVE' }, branchScopeMode: 'ALL_BRANCHES', branchScopes: [],
         roles: [{ role: { key: roles.get(roleId)!.key, status: 'ACTIVE', permissions: [...grants.get(roleId)!].map((key) => ({ permission: { key } })) } }] }) },
       companyFeatureEntitlement: { findMany: async () => [] },
