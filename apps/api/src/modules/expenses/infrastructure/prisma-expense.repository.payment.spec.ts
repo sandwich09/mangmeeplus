@@ -60,6 +60,7 @@ function harness(overrides: Record<string, unknown> = {}) {
   let forceCasFailure = false;
   let failingWrite: 'audit' | 'outbox' | undefined;
   const client: any = {
+    company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
     expenseRecord: { findFirst: async () => state.expense },
     $transaction: async (work: (tx: any) => Promise<unknown>) => {
       const draft = structuredClone(state);
@@ -968,7 +969,13 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     await useCase(clients[0]!).execute(context(), expense.id, input);
     await clients[0]!.expenseRecord.update({ where: { id: expense.id }, data: { branchId: 'restricted-test-branch' } });
     await assert.rejects(() => useCase(clients[1]!).execute({ ...context(), scopes: { branchIds: ['other-branch'] } }, expense.id, input), ForbiddenException);
-    await assert.rejects(() => useCase(clients[1]!).execute({ ...context(), companyId: 'foreign-company' }, expense.id, input), NotFoundException);
+    const foreignId = `foreign-${randomUUID()}`;
+    await clients[0]!.company.create({ data: { id: foreignId, name: 'Synthetic foreign tenant', registeredName: 'บริษัทอื่นทดสอบ จำกัด' } });
+    try {
+      await assert.rejects(() => useCase(clients[1]!).execute({ ...context(), companyId: foreignId }, expense.id, input), NotFoundException);
+    } finally {
+      await clients[0]!.company.deleteMany({ where: { id: foreignId } });
+    }
     await clients[0]!.expenseRecord.update({ where: { id: expense.id }, data: { branchId } });
     await new PrismaExpenseRepository({ client: clients[0] } as any).voidExpenseTrueReversal(companyId, expense.id, userId, 'Synthetic void replay regression');
     await assert.rejects(() => useCase(clients[1]!).execute(context(), expense.id, input), (e: any) => e.getResponse?.().code === 'expense_payment_cancelled_replay');
