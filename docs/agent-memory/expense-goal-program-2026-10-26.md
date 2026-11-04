@@ -80,18 +80,20 @@ Scope:
   - Step 8 Phase 1.4–1.5. The controller restored the deprecated `columnSet` API compatibility.
   - Step 7 Phase 3.2+3.4. The repair script writes only with `--apply`.
   - Owner Q3: LINE answers the ภ.ง.ด.53 due date.
-- **Held:** plain-words rounds 1–3 plus P5.3 drafts (lane pw1). They land with P5.4 after the owner approves the rendered help cards; the approval page was sent 2026-11-04.
-  - On approval, the getting-started VAT FAQ answer takes the approved C62 wording.
-- **In progress (Codex lanes):**
-  - pw1 words Round 4;
-  - ld1 owner Q4 "answer whenever possible" (spec §9 Q4);
-  - ex1 step 7 Phase 3.3+3.6;
-  - step 9 M2 committed in lm1 (`4f2ee2601`, `db5407d41`). Its PG preflight needs a local secrets file. Real writes are proven by run-real (M4), since the oracle pass runs gold calls only.
-- **Later:**
-  - step 7 Phase 3.5 and Phase 4;
-  - step 9 M3/M4;
-  - steps 10 and 11;
-  - step 5 last, with the owner.
+- **Batches 8–9, landed 2026-11-04.** develop `2637be6a6` / `e7eabbbad`: step 7 Phase 3.3/3.5/3.6, owner Q4 (LINE answers whenever possible), LINE read retry.
+- **Batch 10, landed 2026-11-04.** develop `e28e60601`, main `a28938740`, same tree. Verify 19/19 GREEN (API 12.9k, web 5,161, gateway 2,704, whole-chain 5,663); real-PG 9 files GREEN; journeys 99/99 on a fresh DB.
+  - Step 6 plain words, rounds 1–10 (P1–P6.4). Owner approved the help wording in chat on 2026-11-04 ("ตามแนะนำ", all 21 items) → help pack v7, public FAQ, guides.
+  - Bug fix: help-card data reads (ภ.ง.ด.53 due date, package quota/renewal/expiry, claim approval, notifications, ภ.ง.ด.53 preparation) were refused on the general/help path ("ยังตรวจสอบคำตอบครบทุกส่วนไม่ได้ค่ะ"); now delivered with permission/feature rechecks.
+  - Bug fix: the getting-started guide turned null entitlements into [] and hid 11 of 16 sections for shops without entitlement rows.
+  - Old PG-only test pin: approved voucher reminder reads "อนุมัติแล้ว รอจ่าย".
+  - Plan docs: step 9 cost-first order (owner 2026-11-04 "ก่อนทดสอบ ai ให้แก้เรื่อง ลดค่าใช้จ่ายเอไอ และ แคชก่อน"); CACHE-1 decided from Production counts: keep the 5-minute cache.
+- **Held (not on develop):**
+  - step 10 weekly summary (lane ws1) through 5.5 journeys: waits for the controller's fake-LINE proof and the LINE OA cost figure (5.5);
+  - step 11 e-WHT (lane ew1) through Phase 3.4/3.6: 3.5 journey in progress, then Phase 4–5;
+  - step 6 P6.5 closing journeys: 7 failed in the browser (test-only), being fixed (pw1:12);
+  - step 9 Phase A (lane wf1): A1/A2/A6c committed; A3a/A3c/A3b in progress.
+- **Owner 2026-11-04:** LINE follow-up questions approved ("ได้ ตามแนะนำ"): remember the last card id, explain it more simply from approved text, due-date follow-ups and ภ.ง.ด.3; one real-model test run after the cost work (within the 2,000 THB programme cap).
+- **Later:** step 7 Phase 4; step 9 M3/M4 and Phases B–C; step 5 last, with the owner.
 
 ## Verification
 - Batch 1 checks:

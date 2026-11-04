@@ -16,7 +16,7 @@ import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import {
   AFTER_PRESS, FIRST_SIGHT, MAIN_SHOP, SECOND_SHOP, dayOfLastMonth, inOrder, periodKey, pressForDownload, pressMenu, recordExpenseByHand,
-  thaiDate, thaiMonth,
+  thaiDate, thaiMonth, fillShopIdentity,
 } from './journey-kit';
 
 const metricText = (value: string, unit: string) => new RegExp(`^${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*${unit}$`);
@@ -55,21 +55,6 @@ const FORMS = [
   { key: 'PND53', short: 'ภ.ง.ด.53', card: 'ภ.ง.ด.53 (จ่ายให้บริษัท)', paid: '10,000.00', withheld: '300.00' },
 ] as const;
 
-/** The payer's legal identity the first journey fills through ข้อมูลร้าน; later journeys may find it cleared. */
-async function fillShopIdentity(page: Page) {
-  const main = page.locator('main');
-  await page.goto(`/companies/${MAIN_SHOP}/settings/profile?from=withholding`, FIRST_SIGHT);
-  await expect(main.getByRole('heading', { level: 1, name: 'ข้อมูลร้าน', exact: true })).toBeVisible(FIRST_SIGHT);
-  await main.getByRole('textbox', { name: /^ชื่อจดทะเบียน/ }).fill('บริษัท บลูมบิวตี้ทดลอง จำกัด');
-  await main.getByRole('textbox', { name: /^เลขผู้เสียภาษี/ }).fill('0105558000014');
-  await main.getByRole('textbox', { name: 'รหัสไปรษณีย์', exact: true }).fill('10110');
-  await expect(main.getByRole('combobox', { name: 'จังหวัด', exact: true })).toHaveText('กรุงเทพมหานคร', AFTER_PRESS);
-  await chooseThemedOption(page, main.getByRole('combobox', { name: 'อำเภอ / เขต', exact: true }), 'คลองเตย');
-  await chooseThemedOption(page, main.getByRole('combobox', { name: 'ตำบล / แขวง', exact: true }), 'คลองเตย');
-  await main.getByRole('textbox', { name: 'ที่อยู่ (บ้านเลขที่ ถนน)', exact: true }).fill('88 ถนนพระราม 4');
-  await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
-  await expect(main.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' })).toContainText('✓ บันทึกข้อมูลร้านแล้ว', AFTER_PRESS);
-}
 
 async function addBranch(page: Page, name: string, code: string, taxCode?: string) {
   const main = page.locator('main');
@@ -255,6 +240,7 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     await whtCard.getByRole('button', { name: 'ออกเลขที่และดาวน์โหลด', exact: true }).click();
 
     const dialog = page.getByRole('dialog', { name: 'ออกหนังสือรับรอง 50 ทวิ ให้ผู้รับเงิน' });
+    await expect(dialog.getByRole('term')).toHaveText(['ผู้รับเงิน', 'เลขผู้เสียภาษี', 'ที่อยู่', 'จ่ายค่าอะไร', 'จำนวนเงินที่จ่าย', 'ภาษีที่หักไว้']);
     await expect(dialog.getByRole('definition')).toHaveText([
       person, '3-1012-00456-78-9', '12 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพมหานคร 10900',
       'ค่าบริการ (บุคคลธรรมดา)', '4,000.00 บาท', '120.00 บาท',
@@ -271,6 +257,45 @@ test('@journey withholding forms: three paid expenses, the shop fault fixed thro
     await expect(state).toHaveText(inOrder('ออกแล้ว', `เลขที่ ${certificateNumber}`, `วันที่ออก ${today}`));
     await expect(whtCard.getByText('พิมพ์ ตรวจลายเซ็น แล้วส่งให้ผู้รับเงิน', { exact: true })).toBeVisible();
     await expect(whtCard.getByRole('button', { name: 'ดาวน์โหลดหนังสือรับรอง', exact: true })).toBeEnabled();
+    // C59: a stale caller cannot change financial facts through spelling correction.
+    const scope = { headers: { 'X-Company-Id': SECOND_SHOP } };
+    const handoffs = await json<Array<{ id: string; certificateNumber: string }>>(await api.get(`companies/${SECOND_SHOP}/wht/payment-handoffs?sourcePaymentId=${personExpense.expenseId}`, scope));
+    // Issuing for the payment adds a handoff beside the earlier expense-wide REQUIRED row.
+    const issuedHandoffs = handoffs.filter(handoff => handoff.certificateNumber === certificateNumber);
+    expect(issuedHandoffs).toHaveLength(1);
+    const issuedHandoff = issuedHandoffs[0]!;
+    const locked = await api.post(`companies/${SECOND_SHOP}/wht/payment-handoffs/${issuedHandoff.id}/system-certificate/correction`, {
+      ...scope, data: { corrected: { grossAmount: '4001' }, reason: 'ทดสอบทางแก้ยอดจากรายจ่าย' },
+    });
+    expect(locked.status()).toBe(409);
+    expect(await locked.json()).toMatchObject({ code: 'wht_correction_field_locked', message: 'แก้ยอด อัตรา รายการที่จ่าย หรือเลขผู้เสียภาษีที่รายจ่ายด้วย “แก้ไขเอกสาร”' });
+    expect(await json<Array<{ id: string; certificateNumber: string }>>(await api.get(`companies/${SECOND_SHOP}/wht/payment-handoffs?sourcePaymentId=${personExpense.expenseId}`, scope))).toContainEqual(expect.objectContaining({ id: issuedHandoff.id, certificateNumber }));
+    await whtCard.getByRole('button', { name: 'แก้ไขหนังสือรับรอง', exact: true }).click();
+    const correction = whtCard.locator('form');
+    await expect(correction).toContainText('ค่าบริการ (บุคคลธรรมดา)');
+    await expect(correction).toContainText('จ่าย 4,000.00 บาท');
+    await expect(correction).toContainText('หักไว้ 120.00 บาท');
+    for (const locked of ['จ่ายค่าอะไร', 'จำนวนเงินที่จ่าย', 'อัตราหัก ณ ที่จ่าย', 'เลขผู้เสียภาษีของผู้รับเงิน'])
+      await expect(correction.getByRole('textbox', { name: locked, exact: true })).toHaveCount(0);
+    await expect(correction).toContainText('ถ้าส่วนนี้ผิด');
+    const certificateViewport = page.viewportSize();
+    expect(certificateViewport).not.toBeNull();
+    for (const width of [390, 1280, 1556]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(correction.getByRole('button', { name: 'แก้ไขเอกสาร', exact: true })).toBeVisible();
+      // The content area slides for 300 ms after a resize; measure once it has settled.
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), AFTER_PRESS).toBe(true);
+    }
+    await page.setViewportSize(certificateViewport!);
+    await correction.getByRole('button', { name: 'แก้ไขเอกสาร', exact: true }).click();
+    const reopen = page.getByRole('dialog', { name: 'แก้ไขเอกสาร', exact: true });
+    await expect(reopen).toContainText(certificateNumber);
+    await expect(reopen.getByRole('radio', { name: 'ยังไม่ได้ยื่นภาษีหัก ณ ที่จ่ายของรายการนี้', exact: true })).toBeVisible();
+    await expect(reopen.getByRole('button', { name: 'ยกเลิกหนังสือรับรองและแก้ไขเอกสาร', exact: true })).toBeDisabled();
+    await reopen.getByRole('button', { name: 'ปิด', exact: true }).last().click();
+    await expect(reopen).toHaveCount(0);
+    await expect(whtCard.getByRole('status').filter({ hasText: 'ออกแล้ว' })).toContainText('ออกแล้ว');
+
     const fromExpense = await pressForDownload(page, () => whtCard.getByRole('button', { name: 'ดาวน์โหลดหนังสือรับรอง', exact: true }).click());
     expect(fromExpense.name).toBe(`หนังสือรับรอง-50-ทวิ-${certificateNumber}.pdf`);
     await expect(page.getByRole('status').filter({ hasText: `ดาวน์โหลดหนังสือรับรอง ${certificateNumber} แล้ว` }).first()).toBeVisible(AFTER_PRESS);
@@ -904,7 +929,7 @@ test('@journey R10 source-only correction, read-only and hidden branches preserv
       await openMonth(readonly, false);
       await expect(rm.getByText('มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด')).toHaveCount(1);
       await expect(rm).not.toContainText(legacy.seller);
-      await expect(rm.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true })).toBeVisible();
+      await expect(rm.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).first()).toBeVisible();
       await payerMode('EACH_BRANCH_PAYS');
     });
     await test.step('correct the source through its expense, then download and file the normal paper', async () => {

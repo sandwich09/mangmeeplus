@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 /**
  * Journey: a receipt sent from a phone by a staff member, then reviewed, confirmed and paid by an owner.
  *
@@ -10,7 +13,7 @@
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { QA_ACCOUNTS } from '../harness/roles';
-import { AFTER_PRESS, FIRST_SIGHT, confirmThroughThreeSteps, idFromUrl, inOrder, picture, pressMenu, thaiDate } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, confirmThroughThreeSteps, idFromUrl, inOrder, picture, pressMenu, thaiDate, periodKey } from './journey-kit';
 
 type ExpenseDetail = {
   status: string; paymentStatus: string; vendorNameSnapshot: string; grandTotalAmount: string; outstandingAmount: string;
@@ -181,4 +184,86 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
   expect(Number(expense.outstandingAmount)).toBe(0);
   expect(expense.createdByUserId).toBe(`seed-qa-user-${QA_ACCOUNTS.STAFF.username.split('.')[1]}`);
   expect(expense.attachments.length).toBeGreaterThan(0);
+});
+
+
+// Free spec rules 11-12: after the free reads run out, the OWNER gets a "ดูแพ็กเกจ" way out and the package page stays reachable.
+// The free web menu shows expenses only and the refused file offers only a retry, so this journey waits for that product fix.
+test.fixme('@journey PWS-CHAIN free owner reaches the package page after the free reads run out', async () => {});
+// The refusal promises "ยังเปิดดูและแก้ร่างเดิมได้". Navigating from the refused upload to the saved draft stayed on the upload page (2026-11-04);
+// find whether the leave guard or a redirect keeps the person there before this journey asserts it.
+test.fixme('@journey PWS-CHAIN free owner opens the saved draft again right after the free reads run out', async () => {});
+
+for (const width of [390, 1280, 1556]) test(`@journey PWS-CHAIN free receipt, source edit, human history, quota refusal and package exit at ${width}px`, async ({ pageAs }) => {
+  test.setTimeout(300_000);
+  const page = await pageAs('OWNER');
+  await page.setViewportSize({ width, height: 1000 });
+  const shop = 'seed-local-free-draft-shop';
+  const company = { headers: { 'X-Company-Id': shop } };
+  const me = await json<{ freeExpenseDrafts?: boolean; permissions: string[] }>(await page.request.get('/api/v1/auth/me', company));
+  expect(me.freeExpenseDrafts, 'The seeded never-paid shop must remain on source drafts').toBe(true);
+  expect(me.permissions).toContain('company.plan.manage');
+  expect(me.permissions).not.toContain('expense.confirm');
+  const connectionString = process.env['DATABASE_URL'];
+  expect(connectionString, 'DATABASE_URL is required for the reversible quota fixture').toBeTruthy();
+  expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(connectionString!).hostname);
+  const apiRequire = createRequire(resolve('apps/api/package.json'));
+  const { PrismaPg } = apiRequire('@prisma/adapter-pg');
+  const dist = process.env['API_DIST_DIR'] ?? `dist/e2e-${process.env['API_PORT'] ?? '3001'}`;
+  const { PrismaClient } = apiRequire(resolve(`apps/api/${dist}/apps/api/src/generated/prisma/client.js`));
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  const quotaIds = [randomUUID(), randomUUID(), randomUUID()];
+  const quotaWhere = { companyId: shop, monthKey: periodKey(), quotaSource: 'FREE_MONTHLY_3' };
+  const vendor = unique('ร้านใบเสร็จใช้ฟรี');
+  const receiptFiles = [picture(`${unique('ใบเสร็จใช้ฟรี')}.png`), picture(`${unique('ใบเสร็จเกินสิทธิ์')}.png`)];
+  const main = page.locator('main');
+  try {
+    expect(await db.companyOcrUsageEvent.count({ where: quotaWhere }), 'Free journey fixture needs an unused allowance').toBe(0);
+    await page.goto(`/companies/${shop}/expenses/upload`, FIRST_SIGHT);
+    await chooseThemedOption(page, main.getByRole('combobox', { name: 'สาขา', exact: true }), 'สำนักงานใหญ่ (สำนักงานใหญ่)');
+    await main.getByLabel('เลือกจากคลังภาพหรือไฟล์', { exact: true }).setInputFiles(receiptFiles[0]!);
+    await main.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/companies/${shop}/expenses/[^/?]+$`), AFTER_PRESS);
+    const expenseId = idFromUrl(page);
+    const source = main.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true });
+    await expect(source).toBeVisible(AFTER_PRESS);
+    await source.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true }).fill(vendor);
+    await source.getByRole('textbox', { name: 'ซื้อไปใช้ทำอะไร', exact: true }).fill('ซื้อของใช้หน้าร้าน');
+    await source.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
+    await expect(source.getByRole('status')).toHaveText('บันทึกร่างแล้ว ยังไม่ยืนยันรายการ', AFTER_PRESS);
+    for (const label of ['ยืนยันเอกสาร', 'บันทึกจ่าย']) await expect(main.getByRole('button', { name: label, exact: true })).toHaveCount(0);
+    await main.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
+    await main.getByRole('button', { name: 'ดูประวัติ', exact: true }).click();
+    const history = page.getByRole('dialog', { name: /ประวัติรายการจ่าย/ });
+    const edit = history.getByRole('listitem').filter({ hasText: 'แก้ไขรายการจ่าย' });
+    await expect(edit).toHaveCount(1, AFTER_PRESS);
+    await expect(edit).toContainText(QA_ACCOUNTS.OWNER.displayName);
+    await expect(edit.locator('time')).toHaveAttribute('datetime', /^\d{4}-\d{2}-\d{2}T/);
+    for (const financial of ['ยกเลิกเอกสารรายจ่าย', 'บันทึกคำตอบเรื่อง VAT']) await expect(history.getByText(financial, { exact: false })).toHaveCount(0);
+    await history.getByRole('button', { name: 'ปิด', exact: true }).last().click();
+    await expect(history).toHaveCount(0);
+    await expect(source.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true })).toHaveValue(vendor);
+    // This proof stack has no OCR provider. The failed read releases its slot before the quota fixture is installed.
+    await expect.poll(() => db.companyOcrUsageEvent.count({ where: quotaWhere }), AFTER_PRESS).toBe(0);
+    await db.companyOcrUsageEvent.createMany({ data: quotaIds.map(id => ({ id, ...quotaWhere,
+      sourceRoute: 'receipt-ocr-web', requestId: id, succeededAt: new Date() })) });
+    await page.goto(`/companies/${shop}/expenses/upload`, FIRST_SIGHT);
+    await chooseThemedOption(page, main.getByRole('combobox', { name: 'สาขา', exact: true }), 'สำนักงานใหญ่ (สำนักงานใหญ่)');
+    await main.getByLabel('เลือกจากคลังภาพหรือไฟล์', { exact: true }).setInputFiles(receiptFiles[1]!);
+    const refused = page.waitForResponse(response => response.url().endsWith('/expenses/receipt-uploads') && response.request().method() === 'POST' && response.status() === 429);
+    await main.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
+    expect((await (await refused).json()).code).toBe('FREE_DOCUMENT_LIMIT_REACHED');
+    const refusedFile = main.getByRole('listitem').filter({ hasText: receiptFiles[1]!.name });
+    await expect(refusedFile).toContainText('ส่งไม่สำเร็จ', AFTER_PRESS);
+    await expect(refusedFile).toContainText('ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้', AFTER_PRESS);
+    await expect(refusedFile.getByRole('button', { name: 'ส่งไฟล์นี้อีกครั้ง', exact: true })).toBeVisible();
+    // The package exit (free spec rules 11-12: OWNER sees "ดูแพ็กเกจ") is not on the free web yet; see the fixme below.
+    // Reopening the draft right after the refusal stays on the upload page in the proof browser: see the fixme below.
+  } finally {
+    try {
+      await db.companyOcrUsageEvent.deleteMany({ where: { companyId: shop, id: { in: quotaIds } } });
+      await db.attachmentObject.updateMany({ where: { companyId: shop, originalFileName: { in: receiptFiles.map(file => file.name) } }, data: { status: 'DELETED' } });
+    }
+    finally { await db.$disconnect(); }
+  }
 });

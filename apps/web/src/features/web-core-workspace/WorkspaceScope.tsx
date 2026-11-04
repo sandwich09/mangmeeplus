@@ -223,17 +223,17 @@ export function BranchSelector() {
   }
 
   return (
-    <div ref={rootRef} className="relative min-w-0 flex-1 sm:flex-none">
+    <div ref={rootRef} className="relative min-w-0 max-w-full flex-1 sm:flex-none">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full min-w-11 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[360px]"
+        className="flex h-11 w-full min-w-0 max-w-full overflow-hidden items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[360px]"
         aria-label="เลือกสาขา"
       >
         {/* No picture on a phone: its 24 px are what keeps "Room45 Eyes Lashes · สยาม" whole (the end of a branch
             name is the part that tells two branches apart, and an ellipsis ate it). */}
         <span className="shrink-0 max-sm:hidden"><BranchIcon /></span>
-        <span className="min-w-0 truncate text-left text-sm" title={label}>{label}</span>
+        <span className="min-w-0 flex-1 truncate text-left text-sm" title={label}>{label}</span>
         <svg className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>
@@ -333,13 +333,13 @@ export function CompanySwitcher({ companyId, fallbackName, currentFreeExpenseDra
   }
 
   return (
-    <div ref={rootRef} data-company-switch="" className="relative min-w-11 flex-1 sm:flex-none">
+    <div ref={rootRef} data-company-switch="" className="relative min-w-0 max-w-full flex-1 sm:flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex h-11 w-full min-w-11 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-0 max-w-full overflow-hidden items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 sm:w-auto sm:max-w-[240px]"
         aria-label="เปลี่ยนร้าน"
       >
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
         <svg className={`h-4 w-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
         </svg>

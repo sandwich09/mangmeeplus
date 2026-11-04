@@ -254,3 +254,13 @@ Current deliverable totals are 13 requirements, 76 C changes and the preserved 9
 B27 retires the dormant dictionary edits for I0674/I0698 after the current exact-key caller audit. Keep both ids in the documentation. The shared active payee hint remains with its real consumer. This is part of P0/P1.1 source validation and adds no implementation step.
 
 Final source/id/excerpt/path/table and whitespace document checks passed on 2026-11-04. Every original id remains, the current C count is 76, and all 97 D aliases retain a closed current disposition. The API test additions use the registered paths and counts above. The current concise history baseline includes 884ba5307 as well as the original 1fbba874e feature commit.
+
+## 8. Q5 follow-up questions (owner approved 2026-11-04) — after step 9 Phase A, before its real-model run
+
+| Step / depends | Change | Tests | Checks |
+|---|---|---|---|
+| P7.1 | API: persist the delivered help/knowledge card ids and versions in the existing turn record and `loadConversationContext` (no reply text); gateway: accept them as DATA and always include them in `approvedKnowledgeCandidates` for the next turn (`approved-knowledge.ts`, `intent-router.agent.ts`) | `process-line-webhook.use-case.spec.ts` PWS-FOLLOW-STORE (ids only, window expiry, a different company or user never sees them); `approved-knowledge.spec.ts` PWS-FOLLOW-OFFER (included, not auto-selected, Q4 eligibility rechecked) | API/GATEWAY specs; W00 regenerate |
+| P7.2 / P7.1 | Gateway: a vague follow-up (Q5 ②) after a card re-explains the same card in simpler words from its text only, using the LOW/MEDIUM rule; HIGH is shown again; "ยกตัวอย่าง" is built from the card facts or the steps | `semantic-turn-v2` spec PWS-FOLLOW-SIMPLER (numbers ⊆ allowedNumericFacts, title header, HIGH verbatim, no new action) | GATEWAY specs |
+| P7.3 / P7.1 | Due-date follow-ups and ภ.ง.ด.3: `erp-advisor-document-tools.use-case.ts` accepts `formType: 'PND3' \| 'PND53'` with the same `pnd53PaperDueDay` rule and guards; the help path keeps the Q4 delivery rule | `erp-tax-tools.use-case.spec.ts` PWS-PND3-DUE, PWS-DUE-FOLLOW (next/previous/named month); the webhook help-route spec | API specs |
+| P7.4 / P7.1–P7.3 + step 9 Phase A | About 30 question→follow-up conversations added to the step 9 M3 corpus; measured in the one real-model run | Corpus + scorer cases | Real-model run inside the 2,000 THB cap |
+

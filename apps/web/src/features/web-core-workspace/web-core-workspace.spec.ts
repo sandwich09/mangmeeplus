@@ -107,12 +107,12 @@ it('P24-2b keeps all seven scope-control templates touch-sized with forced-color
     'both company and branch popups have a viewport-bounded vertical scroller');
 });
 
-it('MOBILE-1 the company picker cannot shrink below its button while its long shop name truncates', () => {
+it('MOBILE-1 both scope pickers constrain long names and retain 44px controls on phones', () => {
   const source = readFileSync(new URL('./WorkspaceScope.tsx', import.meta.url), 'utf8');
-  const picker = source.slice(source.indexOf('<div ref={rootRef} data-company-switch'));
-  assert.match(picker, /data-company-switch="" className="relative min-w-11 flex-1 sm:flex-none"/);
-  assert.match(picker, /className="flex h-11 w-full min-w-11 /);
-  assert.match(picker, /<span className="min-w-0 truncate">\{label\}<\/span>/);
+  assert.equal((source.match(/className="relative min-w-0 max-w-full flex-1 sm:flex-none"/g) ?? []).length, 2);
+  assert.equal((source.match(/className="flex h-11 w-full min-w-0 max-w-full overflow-hidden /g) ?? []).length, 2);
+  assert.match(source, /<span className="min-w-0 flex-1 truncate">\{label\}<\/span>/);
+  assert.match(source, /<span className="min-w-0 flex-1 truncate text-left text-sm" title=\{label\}>\{label\}<\/span>/);
 });
 
 // Superset of every module permission — an OWNER-like session.

@@ -20,6 +20,22 @@ export const AFTER_PRESS = { timeout: 30_000 };
 export const MAIN_SHOP = 'seed-local-company';
 export const SECOND_SHOP = 'seed-local-company-2';
 
+/** The payer's legal identity the first journey fills through ข้อมูลร้าน; later journeys may find it cleared. */
+export async function fillShopIdentity(page: Page, companyId = MAIN_SHOP) {
+  const main = page.locator('main');
+  await page.goto(`/companies/${companyId}/settings/profile?from=withholding`, FIRST_SIGHT);
+  await expect(main.getByRole('heading', { level: 1, name: 'ข้อมูลร้าน', exact: true })).toBeVisible(FIRST_SIGHT);
+  await main.getByRole('textbox', { name: /^ชื่อจดทะเบียน/ }).fill('บริษัท บลูมบิวตี้ทดลอง จำกัด');
+  await main.getByRole('textbox', { name: /^เลขผู้เสียภาษี/ }).fill('0105558000014');
+  await main.getByRole('textbox', { name: 'รหัสไปรษณีย์', exact: true }).fill('10110');
+  await expect(main.getByRole('combobox', { name: 'จังหวัด', exact: true })).toHaveText('กรุงเทพมหานคร', AFTER_PRESS);
+  await chooseThemedOption(page, main.getByRole('combobox', { name: 'อำเภอ / เขต', exact: true }), 'คลองเตย');
+  await chooseThemedOption(page, main.getByRole('combobox', { name: 'ตำบล / แขวง', exact: true }), 'คลองเตย');
+  await main.getByRole('textbox', { name: 'ที่อยู่ (บ้านเลขที่ ถนน)', exact: true }).fill('88 ถนนพระราม 4');
+  await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
+  await expect(main.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' })).toContainText('✓ บันทึกข้อมูลร้านแล้ว', AFTER_PRESS);
+}
+
 /** Today as the screens print it, e.g. `13 ต.ค. 2569` (Buddhist year, Bangkok time). */
 export function thaiDate(date = new Date()) {
   return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {

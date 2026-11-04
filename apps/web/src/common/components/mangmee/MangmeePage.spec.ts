@@ -36,3 +36,13 @@ test('LIST-1 two metrics share a row from 640px and keep their notes on phones',
   assert.match(html, /sm:grid-cols-2/); assert.doesNotMatch(html, /sm:grid-cols-3|hidden sm:block/);
   for (const item of items) { assert.ok(html.includes(item.label)); assert.ok(html.includes(item.note)); }
 });
+
+test('phone page titles wrap unbroken names in both shared headers', () => {
+  assert.match(css, /\.mangmee-page-title\s*\{[^}]*overflow-wrap:\s*anywhere;/);
+  for (const path of ['./MangmeePage.tsx', '../page/PageHeader.tsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(source, /<h1 className="mangmee-page-title">\{title\}<\/h1>/);
+  }
+  const voucherCss = readFileSync(new URL('../../../features/expenses/disbursement-vouchers/disbursement-vouchers.module.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(voucherCss, /:global\(\.mangmee-page-title\)/);
+});

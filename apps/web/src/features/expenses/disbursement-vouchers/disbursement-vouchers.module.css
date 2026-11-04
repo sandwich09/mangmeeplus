@@ -118,8 +118,6 @@ a.documentLine:focus-visible { outline: 2px solid var(--color-brand-500); outlin
   box-shadow: 0 1px 3px rgb(16 24 40 / 14%), 0 2px 8px rgb(16 24 40 / 8%);
 }
 
-.page :global(.mangmee-page-title) { overflow-wrap: anywhere; }
-
 /* Document facts belong to one card: phone label/value rows, equal columns on wide screens. */
 .documentPage :global(.mangmee-eyebrow) { display: block; border: 0; border-radius: 0; background: none; padding: 0; color: var(--color-text-secondary); font-size: .875rem; font-weight: 400; }
 .mainCard { min-width: 0; }

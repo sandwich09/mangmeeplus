@@ -271,6 +271,7 @@ html {
 /* 1.4, not 1.25: a long title wraps on a phone, and at 1.25 the marks of the second line ran into
    the first. */
 .mangmee-page-title {
+  overflow-wrap: anywhere;
   color: var(--color-gray-900);
   font-size: clamp(1.5rem, 1.35rem + 0.45vw, 1.875rem);
   font-weight: 700;
