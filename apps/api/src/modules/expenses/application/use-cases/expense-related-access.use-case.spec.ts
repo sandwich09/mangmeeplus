@@ -289,7 +289,7 @@ describe('disbursement voucher drafts and visibility', () => {
         create: async ({ data }: any) => { state.locks.push({ sql: 'WRITE payment', values: [] }); const p = { ...data, id: `pay-${state.payments.length}`, createdAt: new Date(), updatedAt: new Date() }; state.payments.push(p); return p; },
       },
       outboxEvent: { create: async ({ data }: any) => { state.events.push(data); return data; } },
-      company: { findFirst: async ({ where }: any) => where.id === 'company-1' ? { id: where.id, name: 'กิจการทดสอบ', registeredName: 'กิจการทดสอบ', taxId: '0123456789012', addressJson: {} } : null },
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }), findFirst: async ({ where }: any) => where.id === 'company-1' ? { id: where.id, name: 'กิจการทดสอบ', registeredName: 'กิจการทดสอบ', taxId: '0123456789012', addressJson: {} } : null },
       attachmentObject: { findFirst: async ({ where }: any) => state.attachments.find((a: any) => matches(a, where)) ?? null, findMany: async ({ where }: any) => state.attachments.filter((a: any) => matches(a, where)) },
       attachmentLink: {
         findFirst: async ({ where, include }: any) => { const l = state.attachmentLinks.find((l: any) => matches(l, where)); return l ? { ...l, ...(include?.attachment ? { attachment: state.attachments.find((a: any) => a.id === l.attachmentId) } : {}) } : null; },
@@ -1258,7 +1258,7 @@ describe('disbursement voucher drafts and visibility', () => {
     const full = context({ scopes: {} });
     const own = await h.useCase.create(full, body({ plannedPayDate: '2026-11-02' }));
     const mixed = await h.useCase.create(full, body({ commandId: 'mixed', lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }], plannedPayDate: '2026-11-01' }));
-    const branch = await h.useCase.create(full, body({ commandId: 'branch', lines: [{ expenseId: 'c', amount: '1' }] }));
+    const branch = await h.useCase.create(full, body({ commandId: 'branch', lines: [{ expenseId: 'c', amount: '1' }], plannedPayDate: '2026-10-31' }));
     const all = await h.useCase.list(full, {}); assert.deepEqual(all.data.map((v: any) => v.id), [own.id, mixed.id, branch.id]); assert.equal(all.counts.DRAFT, 3); assert.equal(all.total, 3);
     const scoped = await h.useCase.list(context(), {}); assert.equal(scoped.total, 2); assert.equal(scoped.counts.DRAFT, 2);
     const ownContext = context({ permissions: ['expense.disbursement.read', 'expense.read_own'] });

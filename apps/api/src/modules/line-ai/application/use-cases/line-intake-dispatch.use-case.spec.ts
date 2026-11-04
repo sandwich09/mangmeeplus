@@ -5238,6 +5238,7 @@ describe('LINE usable receipt allowance settlement', () => {
       let used = 0;
       Object.assign(state.prisma.client, {
         $executeRaw: async () => undefined,
+        company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: null }) },
         companyAiConfiguration: { findUnique: async () => null },
         companyPlanTerm: { findUnique: async () => ({ tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15, warmupSlipLimit: 10, warmupUntil: new Date(Date.now() + 100000) }) },
         companyOcrUsageEvent: {
