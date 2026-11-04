@@ -581,6 +581,30 @@ describe('LineMessageBufferService – media and captions', () => {
     await sleep(20);
   });
 
+  it('company selection stays ordered while receipt result delivery is pending', async () => {
+    let release!: () => void;
+    const delivery = new Promise<void>(resolve => { release = resolve; });
+    const order: string[] = [];
+    let started!: () => void;
+    const receiptStarted = new Promise<void>(resolve => { started = resolve; });
+    const h = makeHarness({ debounceMs: 10,
+      receiptImpl: async () => { order.push('receipt'); started(); await delivery; order.push('receipt-delivered'); return { outcome: 'done' }; },
+      executeImpl: async event => { order.push(event.messageText); },
+    });
+    try {
+      await h.service.enqueue(mediaEnv('r19-receipt'));
+      await h.service.enqueue(textEnv('r19-caption', 'ค่าอาหาร'));
+      await receiptStarted;
+      await h.service.enqueue(textEnv('r19-switch', '/company 2'));
+      await settle();
+      assert.deepEqual(order, ['receipt'], 'a company switch must not overtake pending receipt delivery');
+    } finally { release(); }
+    await settle();
+    assert.deepEqual(order, ['receipt', 'receipt-delivered', '/company 2']);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.executed.length, 1);
+  });
+
   it('keeps uncaptioned receipts serial with each other', async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });

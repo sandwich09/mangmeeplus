@@ -184,6 +184,8 @@ import { isOpenShopHelpQuestion, OPEN_SHOP_HELP_ANSWER, isPublicPolicyFollowUp, 
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildWelcomeReceiptCapturePrompt, WELCOME_RECEIPT_COMMAND, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { fileReadRetryData, isFileReadRetryCommand, parseFileReadRetryControl, verifyFileReadRetryControl } from '../../domain/logic/line-file-read-retry.logic';
+import { drawLineSystemCard } from '../../domain/logic/line-system-card-limits.logic';
 import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
 import { lineChoiceQuickReply, productHelpQuickReply, asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES, type LineExpenseDraftCardFacts, type LineSentDocumentOutcome } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
@@ -6460,7 +6462,8 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     }
 
     if (event.answerDeliveryControl) { await this.handleAnswerDeliveryControl(event); return; }
-    if (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId) {
+    if (!isFileReadRetryCommand(event.messageText)
+      && (event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId)) {
       if (event.counterpartyControl || event.expenseActionControl || event.packagePurchaseControl || isPackagePurchaseIntent(event.messageText)) {
         await this.deliverReply(event, (replyLanguage(event) === 'en' ? "Please continue in a private chat." : 'กรุณาทำรายการในแชตส่วนตัวค่ะ'));
         await this.updateEventLog(event.webhookEventId, 'expense_action_private_required');
@@ -6718,6 +6721,13 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
       allowDuringSupportPause: deterministicCommand });
     await this.bindConversation(event);
+    if (isFileReadRetryCommand(event.messageText)) {
+      const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+        scopes: resolvedAccess.scopes, freeExpenseDrafts: resolvedAccess.freeExpenseDrafts, authProvider: 'line' };
+      await this.retryStoredFileRead(event, ctx, resolvedAccess);
+      return;
+    }
     if (!resolvedAccess.freeExpenseDrafts) {
     if (event.counterpartyControl) {
       const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
@@ -9754,6 +9764,10 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     const existingCapture = canCaptureExpense
       ? await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId) : null;
     if (existingCapture) {
+      if (event.messageType === 'file' && existingCapture.primaryAttachmentId) {
+        await this.replyForStoredFileRead(event, ctx, access, existingCapture.id, existingCapture.primaryAttachmentId, false);
+        return;
+      }
       await this.resumeCapturedReceipt(event, ctx, access, existingCapture);
       return;
     }
@@ -9919,12 +9933,29 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
         (replyLanguage(event) === 'en' ? `Status: ${receiptProgressLabel(exact.status, exact.aiVerificationStatus, replyLanguage(event))}` : `สถานะ – ${receiptProgressLabel(exact.status, exact.aiVerificationStatus, replyLanguage(event))}`),
         (replyLanguage(event) === 'en' ? `View existing receipt: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}` : `เปิดใบเสร็จเดิม: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}`),
       ].join('\n');
+      let readRetry: ReturnType<ProcessLineWebhookUseCase['fileReadRetryAction']> | undefined;
+      if (exact.primaryAttachmentId && ['DRAFT', 'NEEDS_REVIEW'].includes(exact.status)
+        && exact.aiVerificationStatus === 'NOT_VERIFIED'
+        && !exact.aiVerificationSummaryJson?.status && !exact.aiVerificationSummaryJson?.recognizedFields) {
+        const job = await this.prisma.client.expenseCaptureReadJob.findFirst({ where: { companyId, expenseId: exact.id,
+          attachmentId: exact.primaryAttachmentId }, select: { id: true } });
+        const readAttempt = job ? null : await this.prisma.client.lineIntakeAttempt.findFirst({
+          where: { companyId, targetType: 'expense', targetId: exact.id, stage: 'READ' }, select: { id: true },
+        });
+        if (!job && !readAttempt) {
+          const attachment = await this.prisma.client.attachmentObject.findFirst({ where: { companyId,
+            id: exact.primaryAttachmentId, uploadedByUserId: ctx.userId, status: 'ACTIVE' }, select: { checksumSha256: true } });
+          if (attachment?.checksumSha256 === media.checksumSha256)
+            readRetry = this.fileReadRetryAction(event, ctx, exact.id, exact.primaryAttachmentId);
+        }
+      }
       // The same reply as a row card of the locked design, from the same facts. A bill not read yet
       // holds no amount (the record's 0), so its card has no total row; the sentence is as it was.
       await this.deliverCompletedReply(event, keptReply, companyId, access, undefined, buildKeptReceiptCard(keptReply, {
         expenseId: exact.id, vendor: exact.vendorNameSnapshot, ...(Number(toMoney4(exact.grandTotalAmount)) !== 0 ? { total } : {}),
         progress: receiptProgress(exact.status, exact.aiVerificationStatus, replyLanguage(event)),
-      }, this.config.webBaseUrl, companyId));
+      }, this.config.webBaseUrl, companyId, readRetry)
+        ?? (readRetry ? this.fileReadRetryReply(event, ctx, exact.id, exact.primaryAttachmentId!, keptReply).card : undefined));
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -11149,6 +11180,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
       attachmentChecksum: input.media.checksumSha256 ?? null,
       expectedSourceUpdatedAt: completed.updatedAt ?? null,
     }).catch(() => null);
+    if (input.read !== 'none' && readJobId === null) this.rememberReceiptDeliverySource(event, ctx, completed);
     return {
       expenseId: intent.expenseId, attachmentId: intent.attachmentId, readJobId,
       link: this.expenseCaptureLink(ctx.companyId, intent.expenseId),
@@ -11185,9 +11217,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
     // already produced a draft, so answer with THAT one instead of storing the bytes twice.
     const existing = await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId);
     if (existing) {
-      await this.deliverCompletedReply(
-        event, this.fileStoredReply(this.expenseCaptureLink(companyId, existing.id), replyLanguage(input.event)), companyId, access, undefined, undefined, 'reading',
-      );
+      await this.replyForStoredFileRead(event, ctx, access, existing.id, existing.primaryAttachmentId ?? '', false);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
       return finished();
     }
@@ -11215,16 +11245,20 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
     }
 
     await this.recordIntakeAttempt(event, {
-      companyId, stage: 'PERSIST', reasonCode: 'stored', outcome: 'STORED_READING',
+      companyId, stage: 'PERSIST', reasonCode: 'stored', outcome: persisted.readJobId === null ? 'STORED' : 'STORED_READING',
       measuredByteSize: media.byteSize, fileName: media.fileName,
       targetType: 'expense', targetId: persisted.expenseId,
     });
 
-    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link, replyLanguage(input.event)), companyId, access, undefined, undefined, 'reading');
+    const reply = persisted.readJobId === null
+      ? this.fileReadRetryReply(event, ctx, persisted.expenseId, persisted.attachmentId)
+      : { text: this.fileStoredReply(persisted.link, replyLanguage(input.event)), card: undefined };
+    await this.deliverCompletedReply(event, reply.text, companyId, access, undefined, reply.card,
+      persisted.readJobId === null ? 'stored' : 'reading');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
-      replyText: this.fileStoredReply(persisted.link, replyLanguage(input.event)), intent: 'EVIDENCE_CAPTURE',
+      replyText: reply.text, intent: 'EVIDENCE_CAPTURE',
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'retained' });
     return finished();
@@ -11269,6 +11303,90 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
       targetType: 'expense', targetId: persisted.expenseId,
     });
     return persisted.link;
+  }
+
+  private fileReadRetryAction(event: LineReceiptUploadEvent | LineTextEvent, ctx: Pick<RequestContext, 'companyId' | 'userId'>, expenseId: string, attachmentId: string) {
+    return { type: 'postback' as const, label: 'เริ่มอ่านอีกครั้ง', data: fileReadRetryData(this.config.aiGatewayInternalSecret ?? '', {
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), messagingChannelId: event.messagingChannelId,
+    }, expenseId, attachmentId) };
+  }
+
+  private fileReadRetryReply(event: LineReceiptUploadEvent | LineTextEvent, ctx: Pick<RequestContext, 'companyId' | 'userId'>, expenseId: string, attachmentId: string,
+    text = 'เก็บไฟล์แล้วค่ะ กดเริ่มอ่านอีกครั้งได้เลย') {
+    const action = this.fileReadRetryAction(event, ctx, expenseId, attachmentId);
+    const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['เอกสารค่าใช้จ่าย', 'เก็บไฟล์แล้ว'] }, text,
+      button: { icon: 'file', primary: true, action },
+    }, this.config.webBaseUrl);
+    const card: LineReplyMessage = contents ? asCompleteLineCard({ type: 'flex', altText: text, canonicalText: text, contents })
+      : asCompleteLineCard({ type: 'flex', altText: text, canonicalText: text, contents: { type: 'bubble',
+        body: { type: 'box', layout: 'vertical', contents: [{ type: 'text', text, wrap: true }] },
+        footer: { type: 'box', layout: 'vertical', contents: [{ type: 'button', action }] } } });
+    return { text, card };
+  }
+
+  private async retryStoredFileRead(event: LineTextEvent, ctx: RequestContext, access: { permissions: string[]; roles: string[] }) {
+    event.language ??= 'th';
+    const control = parseFileReadRetryControl(event.messageText);
+    if (!control || !verifyFileReadRetryControl(this.config.aiGatewayInternalSecret ?? '', {
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), messagingChannelId: event.messagingChannelId,
+    }, control)) {
+      await this.deliverReply(event, 'ปุ่มนี้ใช้กับรายการนี้ไม่ได้ค่ะ เปิดรายการเพื่อตรวจไฟล์ หรือกดเมนูหลัก',
+        lineChoiceQuickReply([{ label: 'เมนูหลัก', text: 'เมนูหลัก' }]));
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return;
+    }
+    await this.replyForStoredFileRead(event, ctx, access, control.expenseId, control.attachmentId, true);
+  }
+
+  private async replyForStoredFileRead(event: LineReceiptUploadEvent | LineTextEvent, ctx: RequestContext,
+    access: { permissions: string[]; roles: string[] }, expenseId: string, attachmentId: string, retry: boolean) {
+    const expense = await this.expenseRepo?.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
+    const allowed = access.permissions.some(permission => ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'].includes(permission));
+    if (!allowed || !expense || expense.companyId !== ctx.companyId || expense.createdByUserId !== ctx.userId
+      || expense.captureSource !== 'LINE_UPLOAD' || !isBranchInScope(ctx.scopes ?? {}, expense.branchId)
+      || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event) || expense.primaryAttachmentId !== attachmentId) {
+      await this.deliverReply(event, 'เปิดอ่านรายการนี้ไม่ได้ค่ะ กดเมนูหลักเพื่อตรวจร้านและสิทธิ์ที่ใช้อยู่',
+        lineChoiceQuickReply([{ label: 'เมนูหลัก', text: 'เมนูหลัก' }]));
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return;
+    }
+    const attachment = await this.prisma.client.attachmentObject.findFirst({
+      where: { id: attachmentId, companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE' },
+      select: { checksumSha256: true },
+    });
+    if (!attachment) {
+      await this.deliverReply(event, `ไม่พบไฟล์เดิมค่ะ เปิดรายการเพื่อตรวจไฟล์: ${this.expenseCaptureLink(ctx.companyId, expenseId)}`);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return;
+    }
+    const read = async (db: Prisma.TransactionClient) => {
+      const job = await db.expenseCaptureReadJob.findFirst({ where: { companyId: ctx.companyId, expenseId,
+        attachmentId, attachmentChecksum: attachment.checksumSha256 ?? '' }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true } });
+      const readJobId = job?.id ?? (retry && ['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)
+        ? await this.captureLine?.queueExpenseRead({ companyId: ctx.companyId, expenseId, attachmentId,
+          attachmentChecksum: attachment.checksumSha256, expectedSourceUpdatedAt: expense.updatedAt }, db).catch(() => null) : null);
+      return { job, readJobId };
+    };
+    // Two taps can arrive on separate workers; serialize their check/create, never the LINE delivery.
+    const { job, readJobId } = retry ? await this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-file-read-retry:${ctx.companyId}:${expenseId}:${attachmentId}`}))`;
+      return read(tx);
+    }).catch(() => ({ job: null, readJobId: null })) : await read(this.prisma.client);
+    if (!job && !['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) {
+      await this.deliverReply(event, `รายการนี้เปลี่ยนไปแล้วค่ะ เปิดรายการเพื่อตรวจข้อมูล: ${this.expenseCaptureLink(ctx.companyId, expenseId)}`);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return;
+    }
+    const link = this.expenseCaptureLink(ctx.companyId, expenseId);
+    const states: Record<string, string> = { DONE: 'อ่านเอกสารแล้วค่ะ', PARTIAL: 'อ่านเอกสารได้บางส่วนค่ะ',
+      FAILED: 'อ่านเอกสารไม่สำเร็จค่ะ', PAUSED: 'หยุดอ่านเอกสารไว้ค่ะ', CANCELLED: 'ยกเลิกงานอ่านเอกสารแล้วค่ะ' };
+    if (!readJobId) this.rememberReceiptDeliverySource(event, ctx, expense);
+    const reply = !readJobId ? this.fileReadRetryReply(event, ctx, expenseId, attachmentId)
+      : { text: job && states[job.status] ? `${states[job.status]} เปิดรายการเพื่อตรวจข้อมูล: ${link}`
+        : this.fileStoredReply(link, replyLanguage(event)), card: undefined };
+    await this.deliverCompletedReply(event, reply.text, ctx.companyId, access, undefined, reply.card,
+      readJobId ? job && states[job.status] ? 'result' : 'reading' : 'stored');
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
   }
 
   /** §16.7 UX: persisted, being read, and where to look while it is — nothing about a deadline. */
@@ -11637,10 +11755,13 @@ ${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true, replyLanguage(eve
         { lineMessageId: file.lineMessageId, lineEventId: event.webhookEventId, pushTargetId: event.pushTargetId ?? event.lineUserId,
           ownerBinding: { conversationId: bound.id, membershipId: bound.owner.membershipId, channelId: bound.owner.messagingChannelId, ownerEpoch: bound.epoch } })).expenseId;
     const saved = await this.expenseRepo.findById(companyId, expenseId);
-    await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: file.attachmentId, attachmentChecksum: attachment.checksumSha256 ?? null,
-      expectedSourceUpdatedAt: saved?.updatedAt ?? null });
-    const reply = (replyLanguage(event) === 'en' ? "The file is being read to prepare an expense draft for your review; no expense confirmation or payment has occurred." : 'กำลังอ่านไฟล์นี้เพื่อทำร่างค่าใช้จ่ายให้ตรวจค่ะ อ่านเสร็จจะส่งร่างในแชตนี้ ยังไม่ได้ยืนยันรายการหรือจ่ายเงิน');
-    await this.deliverCompletedReply(event, reply, companyId, access);
+    const readJobId = await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: file.attachmentId, attachmentChecksum: attachment.checksumSha256 ?? null,
+      expectedSourceUpdatedAt: saved?.updatedAt ?? null }).catch(() => null);
+    if (readJobId === null && saved) this.rememberReceiptDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
+      membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, saved);
+    const retry = readJobId === null ? this.fileReadRetryReply(event, { companyId, userId }, expenseId, file.attachmentId) : undefined;
+    const reply = retry?.text ?? (replyLanguage(event) === 'en' ? "The file is being read to prepare an expense draft for your review; no expense confirmation or payment has occurred." : 'กำลังอ่านไฟล์นี้เพื่อทำร่างค่าใช้จ่ายให้ตรวจค่ะ อ่านเสร็จจะส่งร่างในแชตนี้ ยังไม่ได้ยืนยันรายการหรือจ่ายเงิน');
+    await this.deliverCompletedReply(event, reply, companyId, access, undefined, retry?.card);
     await this.persistIntakeTurn({ event, userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: event.messageText, replyText: reply, intent: 'EVIDENCE_CAPTURE' });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
@@ -12579,6 +12700,7 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
       ));
     }
     const pdfReading = pending.mimeType === 'application/pdf';
+    let pdfReadJobId: string | null = null;
     if (pdfReading) {
       const saved = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes);
       if (!saved || saved.createdByUserId !== userId || saved.captureSource !== 'LINE_UPLOAD'
@@ -12589,8 +12711,10 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
         select: { checksumSha256: true },
       });
       if (!attachment || !this.captureLine) throw new ConflictException('The original receipt attachment is unavailable.');
-      await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: pending.attachmentId,
-        attachmentChecksum: attachment.checksumSha256, expectedSourceUpdatedAt: saved.updatedAt });
+      pdfReadJobId = await this.captureLine.queueExpenseRead({ companyId, expenseId, attachmentId: pending.attachmentId,
+        attachmentChecksum: attachment.checksumSha256, expectedSourceUpdatedAt: saved.updatedAt }).catch(() => null);
+      if (pdfReadJobId === null) this.rememberReceiptDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
+        membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, saved);
     }
     let additionalReply: string | undefined;
     let pendingQuestion: string | undefined;
@@ -12615,14 +12739,16 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
         additionalReply = SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED;
       }
     }
+    const pdfRetry = pdfReading && pdfReadJobId === null ? this.fileReadRetryReply(event, { companyId, userId }, expenseId, pending.attachmentId) : undefined;
     const summary = pdfReading
-      ? { texts: [this.fileStoredReply(this.expenseCaptureLink(companyId, expenseId), replyLanguage(event))], draft: undefined }
+      ? { texts: [pdfRetry?.text ?? this.fileStoredReply(this.expenseCaptureLink(companyId, expenseId), replyLanguage(event))], draft: undefined }
       : await this.savedReceiptReply(event, companyId, expenseId);
     const receiptReply = summary.texts.join('\n');
     const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
     // The review card is the receipt's own summary; a reply that also reports the substitute work keeps the card that shows its text.
     await this.deliverCompletedReply(event, reply, companyId, access, undefined,
-      additionalReply || pdfReading ? undefined : await this.receiptReviewCard(event, reply, summary.draft, companyId), pdfReading ? 'reading' : undefined);
+      (pdfRetry && additionalReply ? this.fileReadRetryReply(event, { companyId, userId }, expenseId, pending.attachmentId, reply).card : pdfRetry?.card)
+        ?? (additionalReply || pdfReading ? undefined : await this.receiptReviewCard(event, reply, summary.draft, companyId)), pdfReading ? pdfReadJobId ? 'reading' : 'stored' : undefined);
     await this.prisma.client.lineIntakePendingMedia.updateMany({
       where: { id: pending.id, status: 'PENDING' },
       data: { status: 'RESOLVED_RECEIPT' },

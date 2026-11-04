@@ -649,6 +649,7 @@ export function buildKeptReceiptCard(
   facts: LineKeptReceiptFacts,
   webBaseUrl: string | undefined,
   companyId: string,
+  readRetry?: LineSystemCardAction,
 ): LineReplyMessage | undefined {
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
   const { state, next, tone } = facts.progress;
@@ -662,7 +663,8 @@ export function buildKeptReceiptCard(
   if (!actionUrl || !systemCardHolds(rows, notes)) return undefined;
   const contents = drawLineSystemCard({
     mascot: 'general', header: { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES.kept] }, rows, notes,
-    button: { action: { type: 'uri', label: 'เปิดใบเสร็จเดิม', uri: actionUrl }, icon: 'receipt' },
+    ...(readRetry ? { choice: [readRetry, { type: 'uri', label: 'เปิดใบเสร็จเดิม', uri: actionUrl }] as const }
+      : { button: { action: { type: 'uri' as const, label: 'เปิดใบเสร็จเดิม', uri: actionUrl }, icon: 'receipt' as const } }),
   }, webBaseUrl);
   // The notification reads as it did: the reply without its link line.
   return contents && asCompleteLineCard({

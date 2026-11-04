@@ -1,5 +1,6 @@
 import { lineCustomerText, lineCustomerVisibleText } from './line-language.logic';
 import { isLineNavigationPostback, type LineReplyLanguage } from './line-language.logic';
+import { fileReadRetryPostbackCommand, parseFileReadRetryControl } from './line-file-read-retry.logic';
 import { linePaymentEvidencePostbackCommand, parseLinePaymentEvidenceControl } from './line-payment-evidence-reply.logic';
 import { createHash } from 'node:crypto';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
@@ -122,6 +123,11 @@ function authorizedInlineActions(message: LineReplyMessage, authorization: Deliv
       && authorization.proofs.some(proof => proof.kind === 'REIMBURSEMENT_DRAFT' && proof.status === 'applied' && proof.submitToken === params.get('token'));
     if (['expense_action_payment', 'expense_action_wht', 'expense_action_next'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
       && authorization.proofs.some(proof => proof.kind === 'EXPENSE_ACTION_PREVIEW' && proof.applied === true && proof.token === params.get('token'));
+    const retryCommand = fileReadRetryPostbackCommand(params.toString());
+    const retry = retryCommand && parseFileReadRetryControl(retryCommand);
+    if (retry) return ids.has(retry.expenseId);
+    if (actions.some(candidate => new URLSearchParams(candidate.data).get('action') === 'file-read-retry')
+      && isLineNavigationPostback(action.data)) return true;
     const command = linePaymentEvidencePostbackCommand(params.toString());
     const control = command ? parseLinePaymentEvidenceControl(command) : null;
     return !!control && ids.has(control.slipId) && (!control.receiptId || ids.has(control.receiptId));
@@ -256,7 +262,7 @@ export function validateLineDeliveryPlan(plan: DeliveryPlanV2): void {
       if (!message || message.type === 'image' || (message.type === 'text' ? message.text !== expected : fallback?.type !== 'text' || fallback.text !== expected)
         || ![...segmenter.segment(item.text)].some(s => s.index + s.segment.length === span.end)) fail('PLAN_INCOMPLETE_COVERAGE');
       if (batch.fallback && (fallback?.type !== 'text' || fallback.text !== expected)) fail('PLAN_INVALID_FALLBACK');
-      for (const presented of [message, fallback]) if (presented && controlActions(presented).some(action => ['reimbursement_choice', 'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit'].includes(new URLSearchParams(action.data).get('action') ?? ''))
+      for (const presented of [message, fallback]) if (presented && controlActions(presented).some(action => ['file-read-retry', 'reimbursement_choice', 'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit'].includes(new URLSearchParams(action.data).get('action') ?? ''))
         && !authorizedInlineActions(presented, plan.authorization)) fail('PLAN_INVALID_CONTROL');
       covered.set(item.id, prior + expected);
     }

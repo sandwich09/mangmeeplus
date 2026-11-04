@@ -15,6 +15,8 @@ import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, 
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import { ROLE_GRANTS } from '../../../auth/permission-registry';
+import { ExpenseCaptureReadRunnerService } from '../../../expenses/application/services/expense-capture-read-runner.service';
+import { ExpenseCaptureLineUseCase } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -37,7 +39,7 @@ function flexButtons(message: any): Array<{ action: any }> {
   return buttons;
 }
 import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
-import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
+import { linePostbackCommandText, staffMenuCommand, buildStaffCompletionQuickReply, STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
@@ -892,6 +894,588 @@ const BASE_EVENT = Object.freeze({
   replyToken: 'reply-1',
   messageText: 'ดู dashboard',
   messagingChannelId: 'msg-channel-1',
+});
+
+describe('R19 same-draft file read retry', () => {
+  function fileHarness(free: boolean) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'], freeExpenseDrafts: free,
+      config: { aiGatewayInternalSecret: 'file-retry-test-secret' } });
+    const flow = h.useCase as any;
+    const drafts: any[] = [], jobs: any[] = [], deliveries: any[] = [], queues: any[] = [];
+    let queueFails = true;
+    const ctx = { requestId: 'file-request', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
+      membershipId: 'mem-1', permissions: ['expense.receipt.line_upload'], roles: ['STAFF'], scopes: {}, authProvider: 'line', freeExpenseDrafts: free };
+    const access = { ...ctx };
+    const event = (message = 'file-message', id = message) => ({ ...BASE_EVENT, webhookEventId: id,
+      lineMessageId: message, messageType: 'file' as const, fileName: 'receipt.pdf' });
+    const media = { bytes: Buffer.from('%PDF-1.4'), fileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 8, checksumSha256: 'same-file-checksum' };
+    flow.initReceiptUpload = { execute: async (actor: any, command: any) => {
+      assert.equal(Boolean(actor.freeExpenseDrafts), free);
+      assert.equal(actor.companyId, ctx.companyId);
+      const draft = { ...savedMediaFixture(`file-draft-${drafts.length + 1}`), lineMessageId: command.lineCapture.lineMessageId,
+        primaryAttachmentId: `file-attachment-${drafts.length + 1}`, branchId: 'branch-1',
+        aiVerificationStatus: 'NOT_VERIFIED', aiVerificationSummaryJson: null,
+        sourceChannelMetadataJson: { ...command.lineCapture } };
+      drafts.push(draft);
+      return { expenseId: draft.id, attachmentId: draft.primaryAttachmentId };
+    } };
+    flow.completeReceiptUpload = { execute: async (_ctx: any, command: any) => drafts.find(row => row.id === command.expenseId) };
+    flow.uploadLineMedia = async () => {};
+    flow.expenseRepo = {
+      findByLineMessageId: async (company: string, message: string) => drafts.find(row => row.companyId === company && row.lineMessageId === message) ?? null,
+      findByIdWithRelations: async (company: string, id: string) => drafts.find(row => row.companyId === company && row.id === id) ?? null,
+    };
+    const findJob = ({ where }: any) => jobs.find(row => Object.entries(where).every(([key, value]) => row[key] === value)) ?? null;
+    prisma.client.expenseCaptureReadJob = { findFirst: async (args: any) => findJob(args) };
+    prisma.client.lineIntakeAttempt = { findFirst: async () => null };
+    prisma.client.$transaction = async (work: any) => work({ ...prisma.client, $executeRaw: async () => {} });
+    prisma.client.attachmentObject = { findFirst: async ({ where }: any) => drafts.some(row => row.companyId === where.companyId
+      && row.primaryAttachmentId === where.id && row.createdByUserId === where.uploadedByUserId)
+      ? { id: where.id, checksumSha256: media.checksumSha256 } : null };
+    const capture = { client: {}, findLiveJobForAttachment: async (_tx: any, input: any) => findJob({ where: input }),
+      createReadJob: async (_tx: any, input: any) => {
+        queues.push(input);
+        if (queueFails) throw new Error('queue unavailable');
+        const job = { ...input, id: `read-job-${jobs.length + 1}`, status: 'QUEUED' }; jobs.push(job); return job;
+      } };
+    flow.captureLine = new ExpenseCaptureLineUseCase(capture as any, prisma, {} as any);
+    flow.deliverCompletedReply = async (_event: any, text: string, _company: string, _access: any, _badge: any, card: any) => { deliveries.push(card ?? { text }); };
+    flow.deliverReply = async (_event: any, text: string, _quick: any, card: any) => { deliveries.push(card ?? { text }); };
+    flow.persistIntakeTurn = async () => {};
+    flow.recordIntakeAttempt = async () => {};
+    let fileEvent = event();
+    const captureFile = async (message?: string, id?: string) => { fileEvent = event(message, id);
+      return flow.captureLineFile({ event: fileEvent, ctx, access, companyId: ctx.companyId, userId: ctx.userId, media, caption: '' }); };
+    const preparePdfIngress = async () => {
+      const pdf = await receiptXmlPdfForLine();
+      flow.downloadLineMedia = async () => ({ ok: true, media: { ...pdf, checksumSha256: media.checksumSha256 } });
+      flow.expenseRepo.findExpenseIdsByAttachmentChecksum = async (company: string, _exclude: string, checksum: string) =>
+        drafts.filter(row => row.companyId === company && checksum === media.checksumSha256).map(row => row.id);
+      flow.expenseRepo.findById = flow.expenseRepo.findByIdWithRelations;
+    };
+    const button = () => flexButtons(deliveries.at(-1)).find(item => item.action.label === 'เริ่มอ่านอีกครั้ง')!.action;
+    let pressCount = 0;
+    const press = async (data = button().data) => {
+      const text = linePostbackCommandText(data);
+      assert.ok(text, 'real webhook postback decoding must reach the retry handler');
+      assert.equal(staffMenuCommand(text), 'file_read_retry', 'the buffer must retain this as its own command');
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `retry-${++pressCount}`, messageText: text });
+    };
+    return { ...h, flow, ctx, access, event, media, drafts, jobs, deliveries, queues, captureFile, preparePdfIngress, button, press, fileEvent: () => fileEvent,
+      allowQueue: () => { queueFails = false; } };
+  }
+
+  // Exercise the existing admission and terminal compensation, rather than faking the quota decision.
+  function readLifecycle(h: ReturnType<typeof fileHarness>, free: boolean, occupied = 0, inFlight = false) {
+    const monthKey = bangkokMonthKey();
+    const admissions: any[] = Array.from({ length: occupied }, (_, index) => ({ id: `occupied-${index}`, companyId: h.ctx.companyId,
+      monthKey, sourceRoute: 'receipt-capture-web', requestId: `older-${index}`, billingReceiptGrantId: null,
+      quotaSource: free ? 'FREE_MONTHLY_3' : null, succeededAt: inFlight ? null : new Date() }));
+    let usedCount = occupied, releases = 0;
+    const entries: any[] = free || !occupied ? [] : [
+      { grantId: 'paid-grant', operationKey: 'older', generation: 1, kind: 'RESERVE', units: occupied },
+      ...(!inFlight ? [{ grantId: 'paid-grant', operationKey: 'older', generation: 1, kind: 'CONSUME', units: occupied }] : []),
+    ];
+    const term = { tierKey: free ? 'FREE_TRIAL_15' : 'MICRO', termEndsAt: new Date(free ? 0 : Date.now() + 86400000),
+      monthlySlipLimit: 3, warmupUntil: null, warmupSlipLimit: null, billingReceiptAccountId: free ? null : 'paid-account', capacityOverride: null, termDisabledAt: null };
+    const tx: any = { $executeRaw: async () => {}, $queryRaw: async () => [],
+      company: { findUnique: async () => ({ status: 'ACTIVE', archivedAt: null, planTerm: term }) },
+      billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+      billingReceiptGrant: { findFirst: async () => null, findMany: async () => free ? [] : [{ id: 'paid-grant', kind: 'INITIAL', units: 3,
+        availableAt: new Date(0), expiresAt: term.termEndsAt, createdAt: new Date(0), revokedAt: null, _count: { admissions: 0 } }] },
+      receiptUnitEntry: {
+        aggregate: async ({ where }: any) => ({ _max: { generation: Math.max(0, ...entries.filter(row => row.operationKey === where.operationKey && row.kind === where.kind).map(row => row.generation)) } }),
+        groupBy: async () => ['RESERVE', 'CONSUME', 'RELEASE'].map(kind => ({ grantId: 'paid-grant', kind, _sum: { units: entries.filter(row => row.kind === kind).reduce((sum, row) => sum + row.units, 0) } })),
+        findFirst: async ({ where }: any) => entries.find(row => row.operationKey === where.operationKey && row.generation === where.generation && where.kind.in.includes(row.kind)) ?? null,
+        create: async ({ data }: any) => { entries.push(data); return data; },
+      },
+      packageChangeRequest: { findFirst: async () => null }, salesAttribution: { findUnique: async () => null },
+      companyPlanTerm: { findUnique: async () => term },
+      companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: null }) },
+      companyOcrUsageEvent: {
+        findUnique: async ({ where }: any) => {
+          const key = where.companyId_sourceRoute_requestId;
+          return admissions.find(row => row.companyId === key.companyId && row.sourceRoute === key.sourceRoute && row.requestId === key.requestId) ?? null;
+        },
+        findMany: async ({ where }: any) => admissions.filter(row => row.companyId === where.companyId && row.monthKey === where.monthKey && row.quotaSource === where.quotaSource),
+        count: async ({ where }: any) => admissions.filter(row => row.companyId === where.companyId && row.monthKey === where.monthKey
+          && (!where.sourceRoute?.in || where.sourceRoute.in.includes(row.sourceRoute)) && row.billingReceiptGrantId === null && row.quotaSource === null).length,
+        create: async ({ data }: any) => { const row = { id: `admission-${admissions.length}`, billingReceiptGrantId: null, succeededAt: null, ...data }; admissions.push(row); return row; },
+        updateMany: async ({ where, data }: any) => { const row = admissions.find(event => event.id === where.id && event.companyId === where.companyId && event.succeededAt === null); if (row) Object.assign(row, data); return { count: row ? 1 : 0 }; },
+        delete: async ({ where }: any) => { const index = admissions.findIndex(row => row.id === where.id); assert.ok(index >= 0); releases++; return admissions.splice(index, 1)[0]; },
+      },
+      companyOcrMonthlyUsage: { findUnique: async () => ({ usedCount }), upsert: async () => ({ usedCount: ++usedCount }),
+        updateMany: async () => { usedCount--; return { count: 1 }; } },
+      auditLog: { findFirst: async () => null, create: async () => ({}) },
+    };
+    const runner: any = Object.create(ExpenseCaptureReadRunnerService.prototype);
+    runner.prisma = { client: { ...tx, $transaction: async (run: any) => run(tx) } };
+    runner.config = { receiptQuotaEnforced: true };
+    runner.logger = { log: () => {}, warn: () => {} };
+    runner.capture = { updateJobFenced: async ({ jobId, leaseOwner, data }: any) => {
+      const job = h.jobs.find(row => row.id === jobId && row.leaseOwner === leaseOwner);
+      if (!job) return false;
+      Object.assign(job, data); return true;
+    } };
+    runner.outbox = { append: async () => {} };
+    const job = () => ({ ...h.jobs[0], ownerType: 'EXPENSE', ocrAdmissionRequestId: h.jobs[0].ocrAdmissionRequestId });
+    const admit = () => runner.admitOcrRead(job(), {}, false);
+    const finish = async (status: string, usable: boolean, admission: any) => {
+      h.jobs[0].leaseOwner = 'r19-owner';
+      await runner.finish(job(), 'r19-owner', { status, documentCount: usable ? 1 : 0, usablePersisted: usable },
+        { ocrEventId: admission.eventId, ocrQuotaSource: admission.quotaSource });
+    };
+    return { admit, finish, admissions, entries, counts: () => ({ usedCount, releases }) };
+  }
+
+  it('PostgreSQL concurrent retry transactions create one read job', {
+    skip: !process.env.RECEIPT_RELIABILITY_TEST_DATABASE_URL,
+  }, async () => {
+    const url = process.env.RECEIPT_RELIABILITY_TEST_DATABASE_URL!;
+    const parsed = new URL(url);
+    assert.ok(['127.0.0.1', 'localhost'].includes(parsed.hostname));
+    assert.ok(parsed.pathname === '/watchdog_bms' || parsed.port === '15432' && parsed.pathname === '/mangmee_billing_20260912',
+      'requires the same explicit local receipt reliability database as the neighbouring PG proofs');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { PrismaClient } = await import('../../../../generated/prisma/client');
+    const { PrismaExpenseCaptureRepository } = await import('../../../expenses/infrastructure/prisma-expense-capture.repository');
+    const { randomUUID } = await import('node:crypto');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+    const companyId = `r19-retry-${randomUUID()}`;
+    const h = fileHarness(false); await h.captureFile();
+    const source = h.drafts[0]; h.ctx.companyId = companyId; source.companyId = companyId;
+    const attachmentObject = h.flow.prisma.client.attachmentObject;
+    h.flow.prisma = { client: { ...h.flow.prisma.client, attachmentObject, expenseCaptureReadJob: client.expenseCaptureReadJob,
+      $transaction: client.$transaction.bind(client) } };
+    const capture = new ExpenseCaptureLineUseCase(new PrismaExpenseCaptureRepository({ client } as any), { client } as any, {} as any);
+    const queue = capture.queueExpenseRead.bind(capture);
+    let release!: () => void, started!: () => void, queueCalls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const queued = new Promise<void>(resolve => { started = resolve; });
+    capture.queueExpenseRead = async (input, db) => { queueCalls++; started(); await gate; return queue(input, db); };
+    h.flow.captureLine = capture;
+    const running: Promise<unknown>[] = [];
+    try {
+      await client.company.create({ data: { id: companyId, name: 'Synthetic R19 retry proof' } });
+      const press = () => h.flow.replyForStoredFileRead({ ...BASE_EVENT }, h.ctx, h.access, source.id, source.primaryAttachmentId, true);
+      running.push(press()); await queued;
+      const key = `line-file-read-retry:${companyId}:${source.id}:${source.primaryAttachmentId}`;
+      const probe = await client.$queryRaw<Array<{ available: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext(${key})) AS available`;
+      assert.equal(probe[0]!.available, false, 'the first retry must hold the exact source lock');
+      running.push(press()); release(); await Promise.all(running);
+      const jobs = await client.expenseCaptureReadJob.findMany({ where: { companyId } });
+      assert.equal(queueCalls, 1); assert.equal(jobs.length, 1);
+      assert.equal(jobs[0]!.expenseId, source.id); assert.equal(jobs[0]!.attachmentId, source.primaryAttachmentId);
+      assert.equal(jobs[0]!.attachmentChecksum, h.media.checksumSha256);
+    } finally {
+      release(); await Promise.allSettled(running);
+      try { await client.expenseCaptureReadJob.deleteMany({ where: { companyId } }); await client.company.deleteMany({ where: { id: companyId } }); }
+      finally { await client.$disconnect(); }
+    }
+  });
+
+  it('malformed retry controls never reach model routing or a queue', async () => {
+    for (const free of [false, true]) {
+      const h = fileHarness(free);
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'malformed-retry', messageText: '__line_file_read_retry__:action=file-read-retry' });
+      assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.queues.length, 0);
+      assert.match(JSON.stringify(h.deliveries.at(-1)), /เมนูหลัก/);
+    }
+  });
+
+  for (const kept of [false, true]) it(`a bound delivery preserves the ${kept ? 'kept-file' : 'stored-file'} signed retry card and its fallback only for the proven expense`, async () => {
+    const h = fileHarness(false); await h.captureFile();
+    if (kept) { await h.preparePdfIngress(); await h.useCase.executeReceiptUpload(h.event('same-bytes-again')); }
+    const proof = h.flow.deliveryReceiptSources.get(h.fileEvent());
+    assert.equal(proof.records.get(h.drafts[0].id), h.drafts[0].updatedAt.toISOString());
+    const card = h.deliveries.at(-1), now = new Date(), expiresAt = new Date(now.getTime() + 60000).toISOString();
+    const build = (expenseId: string) => buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'file-read-retry-delivery',
+      createdAt: now.toISOString(), readyAt: now.toISOString(), expiresAt, firstDispatchDeadlineAt: expiresAt,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: card.canonicalText, required: true, sourceProofIds: ['receipt'] }] },
+      control: null, businessResult: null, preferredMessages: [card],
+      authorization: { v: 2, kind: 'PRIVATE', issuedAt: now.toISOString(), expiresAt,
+        actor: { companyId: h.ctx.companyId, userId: h.ctx.userId, membershipId: h.ctx.membershipId, requestId: 'request',
+          accessFingerprint: 'access', channelId: BASE_EVENT.messagingChannelId, channel: 'line', channelKind: 'USER',
+          recipientHash: 'recipient', chatKeyHash: chatKeyHashOf(BASE_EVENT), conversationId: 'line-v2:conversation', ownerEpoch: 1 },
+        proofs: [{ id: 'receipt', kind: 'EXPENSE_REVISION', records: [{ id: expenseId, revision: h.drafts[0].updatedAt.toISOString() }], categories: [] }] } });
+    const plan = build(h.drafts[0].id);
+    validateLineDeliveryPlan(plan);
+    const primary = plan.batches[0].primary.messages[0], fallback = plan.batches[0].fallback!.messages[0];
+    assert.equal(primary.type, 'flex');
+    assert.equal(flexButtons(primary)[0].action.data, h.button().data);
+    assert.equal(fallback.quickReply!.items[0].action.type, 'postback');
+    assert.equal((fallback.quickReply!.items[0].action as any).data, h.button().data);
+    card.quickReply = buildStaffCompletionQuickReply({ permissions: h.access.permissions, entitledFeatureKeys: null, isOwner: false }, 'en');
+    const englishMenu = build(h.drafts[0].id);
+    assert.equal(englishMenu.batches[0].primary.messages[0].type, 'flex', 'an English completion menu cannot replace the retry card');
+    assert.equal(flexButtons(englishMenu.batches[0].primary.messages[0])[0].action.data, h.button().data);
+    const wrong = build('another-expense');
+    assert.doesNotMatch(JSON.stringify(wrong.batches), /file-read-retry/);
+    const forged = structuredClone(plan);
+    if (forged.authorization.kind !== 'PRIVATE') assert.fail('private authorization required');
+    forged.authorization.proofs[0]!.records = [];
+    assert.throws(() => validateLineDeliveryPlan(forged), /PLAN_INVALID_CONTROL/);
+  });
+
+  it('a retry in its original group stays model-free and cannot move into another chat', async () => {
+    for (const free of [false, true]) {
+      const h = fileHarness(free);
+      const event = { ...h.event(), channelKind: 'GROUP' as const, pushTargetId: 'original-group' };
+      await h.flow.captureLineFile({ event, ctx: h.ctx, access: h.access, companyId: h.ctx.companyId,
+        userId: h.ctx.userId, media: h.media, caption: '' });
+      const data = h.button().data;
+      h.allowQueue();
+      const press = (chat: string) => h.useCase.execute({ ...BASE_EVENT, webhookEventId: `retry-${chat}`,
+        channelKind: 'GROUP', pushTargetId: chat, messageText: linePostbackCommandText(data)! });
+      await press('another-group');
+      assert.equal(h.jobs.length, 0);
+      await press('original-group');
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.jobs[0].expenseId, h.drafts[0].id);
+      assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+    }
+  });
+
+  it('Q3 current-file expense draft queue failure keeps the retry bound to its stored source', async () => {
+    const h = fileHarness(false); await h.captureFile(); const source = h.drafts[0];
+    const event = { ...BASE_EVENT, messageText: 'ทำร่างค่าอาหารจากใบนี้' };
+    const bound = { id: 'conversation', owner: h.ctx, epoch: 1 };
+    h.flow.boundConversations.set(event, bound);
+    h.flow.textValueCandidates = async () => ({ amounts: [] });
+    h.flow.prisma.client.lineIntakePendingMedia.findMany = async () => [{ attachmentId: source.primaryAttachmentId,
+      lineMessageId: source.lineMessageId, readJobId: 'earlier-question-job' }];
+    h.flow.expenseRepo.findById = h.flow.expenseRepo.findByIdWithRelations;
+    const handled = await h.flow.draftCurrentDocumentV2(event, 'draft-current', { semanticSubrequests: [
+      { kind: 'write', writeIntent: 'EXPENSE_DOCUMENT_CAPTURE' },
+    ] }, h.access);
+    assert.equal(handled, true);
+    assert.equal(h.deliveries.at(-1).canonicalText, 'เก็บไฟล์แล้วค่ะ กดเริ่มอ่านอีกครั้งได้เลย');
+    assert.equal(new URLSearchParams(h.button().data).get('expenseId'), source.id);
+    assert.equal(h.drafts.length, 1);
+    assert.equal(h.jobs.length, 0);
+  });
+
+  for (const free of [false, true]) describe(free ? 'free source drafts' : 'paid shop', () => {
+    it('failed file queue offers same-draft retry only to the actor without a charge', async () => {
+      const h = fileHarness(free);
+      await h.captureFile();
+      const card = h.deliveries.at(-1);
+      assert.equal(card.type, 'flex');
+      assert.equal(card.canonicalText, 'เก็บไฟล์แล้วค่ะ กดเริ่มอ่านอีกครั้งได้เลย');
+      const action = h.button();
+      assert.equal(action.type, 'postback');
+      assert.match(action.data, /signature=/);
+      assert.doesNotMatch(JSON.stringify(card), /ส่งไฟล์เดิม|กำลังอ่านเอกสาร|1\./);
+      assert.equal(h.jobs.length, 0);
+      await h.press(action.data); // still failing: repeat the same actionable card
+      assert.equal(h.deliveries.at(-1).canonicalText, card.canonicalText);
+      h.allowQueue();
+      await h.press(action.data);
+      await h.press(action.data);
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.jobs[0].expenseId, h.drafts[0].id);
+      assert.equal(h.jobs[0].attachmentId, h.drafts[0].primaryAttachmentId);
+      assert.equal(h.jobs[0].attachmentChecksum, h.media.checksumSha256);
+      assert.match(JSON.stringify(h.deliveries.at(-1)), /กำลังอ่าน/);
+      assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+      assert.equal(h.auditEvents.some(row => /charge|notice|confirm|payment/.test(row.action)), false);
+    });
+
+    it('the read job is checked and created on the locking transaction', async () => {
+      const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+      h.allowQueue();
+      const capture = h.flow.captureLine.capture, seen: any[] = [];
+      const live = capture.findLiveJobForAttachment, create = capture.createReadJob;
+      capture.findLiveJobForAttachment = async (db: any, input: any) => { seen.push(db); return live(db, input); };
+      capture.createReadJob = async (db: any, input: any) => { seen.push(db); return create(db, input); };
+      await h.press(data);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(seen.length, 2);
+      assert.equal(seen[0], seen[1]);
+      assert.equal(typeof seen[0].$executeRaw, 'function', 'the queue must use the transaction holding the source lock');
+    });
+
+    it('concurrent presses queue the original file exactly once', async () => {
+      const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+      h.allowQueue();
+      const capture = h.flow.captureLine.capture, create = capture.createReadJob;
+      let releaseRead!: () => void, started!: () => void;
+      const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+      const firstReadStarted = new Promise<void>(resolve => { started = resolve; });
+      capture.createReadJob = async (...args: any[]) => { started(); await readGate; return create(...args); };
+      let lockTail = Promise.resolve();
+      h.flow.prisma.client.$transaction = async (work: any) => {
+        let unlock: (() => void) | undefined;
+        try {
+          return await work({ expenseCaptureReadJob: h.flow.prisma.client.expenseCaptureReadJob,
+            $executeRaw: async (sql: TemplateStringsArray, key: string) => {
+              assert.match(sql.join(''), /pg_advisory_xact_lock/);
+              assert.ok(key.includes(h.ctx.companyId) && key.includes(h.drafts[0].id) && key.includes(h.drafts[0].primaryAttachmentId));
+              const before = lockTail;
+              lockTail = new Promise<void>(resolve => { unlock = resolve; });
+              await before;
+            } });
+        } finally { unlock?.(); }
+      };
+      const first = h.press(data);
+      await firstReadStarted;
+      const second = h.press(data);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      releaseRead();
+      await Promise.all([first, second]);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.jobs[0].attachmentId, h.drafts[0].primaryAttachmentId);
+    });
+
+    it('new message IDs with exact saved bytes keep the original draft and signed retry source', async () => {
+      const h = fileHarness(free); await h.preparePdfIngress();
+      await h.useCase.executeReceiptUpload(h.event('message-a')); const first = h.button().data;
+      await h.useCase.executeReceiptUpload(h.event('message-b'));
+      assert.equal(h.drafts.length, 1);
+      assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+      assert.equal(h.button().data, first);
+      assert.equal(h.queues.length, 1, 'resending only offers retry; it does not queue another read');
+      const kept = readLineSystemCard(h.deliveries.at(-1));
+      assert.deepEqual(kept.header, ['เอกสารที่ส่งมา', 'ตรงกับบิลที่เก็บไว้แล้ว']);
+      assert.deepEqual(kept.actions.map(action => action.label), ['เริ่มอ่านอีกครั้ง', 'เปิดใบเสร็จเดิม']);
+      await h.useCase.executeReceiptUpload(h.event('message-a', 'redelivered-message-a'));
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.button().data, first);
+      h.allowQueue();
+      await h.press(first); await h.press(first);
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.jobs[0].expenseId, h.drafts[0].id);
+      assert.equal(h.jobs[0].attachmentId, h.drafts[0].primaryAttachmentId);
+    });
+
+    it('the public PDF shortcut offers retry only before a read job exists and never reads twice', async () => {
+      const h = fileHarness(free); await h.preparePdfIngress();
+      await h.useCase.executeReceiptUpload(h.event('pdf-a'));
+      assert.equal(h.drafts.length, 1, JSON.stringify(h.deliveries));
+      const first = h.button().data;
+      const delivered = h.deliveries.length;
+      await h.useCase.executeReceiptUpload(h.event('pdf-a', 'pdf-a-redelivery'));
+      assert.equal(h.deliveries.length, delivered + 1);
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.button().data, first);
+      await h.useCase.executeReceiptUpload(h.event('pdf-b'));
+      assert.equal(h.drafts.length, 1, 'exact saved bytes retain their original scoped draft');
+      assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+      assert.equal(h.button().data, first);
+      assert.equal(h.queues.length, 1);
+      h.allowQueue(); await h.press(h.button().data); await h.press(first);
+      assert.equal(h.jobs[0].expenseId, h.drafts[0].id);
+      assert.equal(h.jobs[0].attachmentId, h.drafts[0].primaryAttachmentId);
+      assert.equal(h.jobs.length, 1);
+      for (const status of ['QUEUED', 'PREPARING', 'READING', 'PARTIAL', 'PAUSED', 'FAILED', 'DONE', 'CANCELLED']) {
+        h.jobs[0].status = status;
+        await h.useCase.executeReceiptUpload(h.event(`pdf-with-${status}`));
+        assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+        assert.deepEqual(readLineSystemCard(h.deliveries.at(-1)).actions.map(action => action.label), ['เปิดใบเสร็จเดิม'], status);
+      }
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+    });
+
+    it('the exact-image shortcut keeps the original draft and offers its unread-file retry', async () => {
+      const h = fileHarness(free); await h.preparePdfIngress(); await h.captureFile('image-file-a');
+      const original = h.button().data;
+      h.flow.downloadLineMedia = async () => ({ ok: true, media: { fileName: 'receipt.jpg', mimeType: 'image/jpeg',
+        bytes: JPEG_BYTES, byteSize: JPEG_BYTES.length, contentBase64: JPEG_BYTES.toString('base64'), checksumSha256: h.media.checksumSha256 } });
+      await h.useCase.executeReceiptUpload({ ...h.event('same-image-b'), messageType: 'image' });
+      assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+      assert.equal(h.button().data, original);
+      h.allowQueue(); await h.press(); await h.press(original);
+      assert.equal(h.drafts.length, 1); assert.equal(h.jobs.length, 1);
+      assert.equal(h.jobs[0].expenseId, h.drafts[0].id);
+      assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+    });
+
+    it('a missing or different primary attachment never receives the matched file retry', async () => {
+      for (const checksum of [null, 'different-checksum']) {
+        const h = fileHarness(free); await h.preparePdfIngress(); await h.captureFile('saved-pdf');
+        h.flow.prisma.client.attachmentObject.findFirst = async () => checksum ? { checksumSha256: checksum } : null;
+        await h.useCase.executeReceiptUpload(h.event('matched-supporting-file'));
+        assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+        assert.deepEqual(readLineSystemCard(h.deliveries.at(-1)).actions.map(action => action.label), ['เปิดใบเสร็จเดิม']);
+        assert.equal(h.drafts.length, 1); assert.equal(h.jobs.length, 0);
+      }
+    });
+
+    it('the kept reply never offers another read for an already-read source without a job', async () => {
+      for (const read of ['AI_VERIFIED', 'HUMAN_VERIFIED', 'PARTIAL', 'NEEDS_REVIEW', 'FAILED', 'VERIFYING', 'summary', 'attempt']) {
+        const h = fileHarness(free); await h.preparePdfIngress(); await h.useCase.executeReceiptUpload(h.event('read-source'));
+        if (read === 'summary') h.drafts[0].aiVerificationSummaryJson = { recognizedFields: { grandTotalAmount: '100' } };
+        else if (read === 'attempt') h.flow.prisma.client.lineIntakeAttempt.findFirst = async ({ where }: any) => {
+          assert.equal(where.companyId, h.ctx.companyId); assert.equal(where.targetId, h.drafts[0].id);
+          assert.equal(where.stage, 'READ'); return { id: 'previous-read' };
+        };
+        else h.drafts[0].aiVerificationStatus = read;
+        await h.useCase.executeReceiptUpload(h.event(`resend-${read}`));
+        assert.match(h.deliveries.at(-1).canonicalText, /ตรงกับบิลที่เก็บไว้แล้ว/);
+        assert.deepEqual(readLineSystemCard(h.deliveries.at(-1)).actions.map(action => action.label), ['เปิดใบเสร็จเดิม'], read);
+        assert.equal(h.drafts.length, 1); assert.equal(h.jobs.length, 0);
+      }
+    });
+
+    it('refuses forged, other-owner, other-chat, other-branch and switched-company retries before queueing', async () => {
+      for (const change of ['signature', 'owner', 'chat', 'branch', 'company', 'attachment', 'permission', 'source']) {
+        const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+        if (change === 'signature') { await h.press(data.replace(/signature=[^&]+/, 'signature=' + 'a'.repeat(43))); }
+        else {
+          if (change === 'owner') h.drafts[0].createdByUserId = 'another-user';
+          if (change === 'chat') h.drafts[0].sourceChannelMetadataJson.chatKeyHash = 'another-chat';
+          if (change === 'branch') { h.drafts[0].branchId = 'another-branch'; h.flow.permissionResolver.resolveAccess = async () => ({ ...h.access, scopes: { branchIds: ['branch-1'] } }); }
+          if (change === 'company') h.drafts[0].companyId = 'another-company';
+          if (change === 'attachment') h.drafts[0].primaryAttachmentId = 'another-attachment';
+          if (change === 'permission') h.flow.permissionResolver.resolveAccess = async () => ({ ...h.access, permissions: [] });
+          if (change === 'source') h.drafts[0].captureSource = 'WEB_UPLOAD';
+          await h.press(data);
+        }
+        assert.equal(h.queues.length, 1, change);
+        assert.equal(h.jobs.length, 0, change);
+        assert.match(JSON.stringify(h.deliveries.at(-1)), /เปิด.*รายการ|เมนูหลัก/, change);
+        assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+      }
+    });
+
+    it('signed retries cannot change the actor, channel, chat, company or source IDs', async () => {
+      for (const change of ['user', 'channel', 'chat', 'company', 'expenseId', 'attachmentId']) {
+        const h = fileHarness(free); await h.captureFile(); let data = h.button().data;
+        const event: any = { ...BASE_EVENT, webhookEventId: `signed-retry-${change}` };
+        if (change === 'user' || change === 'channel') h.flow.resolveLineIdentity = async () => ({ userId: change === 'user' ? 'user-2' : h.ctx.userId, user: { status: 'ACTIVE', displayName: 'พิม', aiAssistantOptOutAt: null } });
+        if (change === 'channel') event.messagingChannelId = 'another-channel';
+        if (change === 'chat') event.pushTargetId = 'another-chat';
+        if (change === 'company') {
+          h.flow.prisma.client.companyMembership.findMany = async () => [{ companyId: 'company-2', roles: [] }];
+          h.flow.prisma.client.lineCompanyContext.findUnique = async () => ({ companyId: 'company-2' });
+        }
+        if (change === 'expenseId' || change === 'attachmentId') { const params = new URLSearchParams(data); params.set(change, 'forged-id'); data = params.toString(); }
+        event.messageText = linePostbackCommandText(data);
+        await h.useCase.execute(event);
+        assert.equal(h.queues.length, 1, change);
+        assert.equal(h.jobs.length, 0, change);
+        assert.equal(h.drafts.length, 1, change);
+        assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0, change);
+        assert.match(JSON.stringify(h.deliveries.at(-1)), /เมนูหลัก/, change);
+      }
+    });
+
+    it('reports existing read states without requeueing or resending a financial confirmation', async () => {
+      const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+      h.allowQueue(); await h.press(data);
+      for (const [status, words] of [['READING', /กำลังอ่าน/], ['DONE', /อ่าน.*แล้ว/], ['PARTIAL', /อ่าน.*บางส่วน/], ['FAILED', /อ่าน.*ไม่สำเร็จ/], ['PAUSED', /หยุดอ่าน/]]) {
+        h.jobs[0].status = status;
+        await h.press(data);
+        assert.match(JSON.stringify(h.deliveries.at(-1)), words as RegExp);
+        assert.doesNotMatch(JSON.stringify(h.deliveries.at(-1)), /expense_action_confirm|ยืนยันรายการ/);
+      }
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.queues.length, 2);
+    });
+
+    it('a stored pending PDF queue failure uses the same card and original attachment', async () => {
+      const h = fileHarness(free); await h.captureFile();
+      const source = h.drafts[0], pending = { id: 'pending-file', attachmentId: source.primaryAttachmentId,
+        lineMessageId: source.lineMessageId, mimeType: 'application/pdf' };
+      h.flow.completeReceiptDraft = async (expenseId: string, original: any) => {
+        assert.equal(expenseId, source.id); assert.equal(original.attachmentId, source.primaryAttachmentId);
+      };
+      h.flow.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+      h.flow.recordDeliveredReceiptContinuation = async () => {};
+      await h.flow.resolvePendingMediaAsReceipt({ ...BASE_EVENT, messageText: 'เป็นใบเสร็จ' }, 'pending-retry',
+        h.ctx.userId, h.ctx.companyId, h.access, pending, 'เป็นใบเสร็จ');
+      assert.equal(h.deliveries.at(-1).canonicalText, 'เก็บไฟล์แล้วค่ะ กดเริ่มอ่านอีกครั้งได้เลย');
+      const data = new URLSearchParams(h.button().data);
+      assert.equal(data.get('expenseId'), source.id);
+      assert.equal(data.get('attachmentId'), source.primaryAttachmentId);
+      assert.equal(h.drafts.length, 1);
+      assert.equal(h.jobs.length, 0);
+    });
+
+    it('an additional document outcome remains visible beside the PDF retry action', async () => {
+      const h = fileHarness(free); await h.captureFile(); const source = h.drafts[0];
+      h.flow.completeReceiptDraft = async () => {};
+      h.flow.prisma.client.lineIntakePendingMedia.updateMany = async () => ({ count: 1 });
+      h.flow.recordDeliveredReceiptContinuation = async () => {};
+      h.flow.rememberSubstituteDeliverySource = async () => {};
+      h.flow.substituteReceiptContinuation = { execute: async () => ({ replyText: 'เก็บคำขอใบรับรองไว้แล้วค่ะ' }) };
+      await h.flow.resolvePendingMediaAsReceipt({ ...BASE_EVENT, messageText: 'เป็นใบเสร็จ' }, 'pending-extra',
+        h.ctx.userId, h.ctx.companyId, h.access, { id: 'pending', attachmentId: source.primaryAttachmentId,
+          lineMessageId: source.lineMessageId, mimeType: 'application/pdf' }, 'เป็นใบเสร็จ', 'ทำใบรับรองแทนใบเสร็จ');
+      assert.match(h.deliveries.at(-1).canonicalText, /เก็บไฟล์แล้วค่ะ กดเริ่มอ่านอีกครั้งได้เลย/);
+      assert.match(h.deliveries.at(-1).canonicalText, /เก็บคำขอใบรับรองไว้แล้วค่ะ/);
+      assert.equal(h.button().type, 'postback');
+    });
+
+    it('exhausted or in-flight allowance refuses a read without spending a new unit', async () => {
+      for (const inFlight of [false, true]) {
+        const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+        h.allowQueue(); await h.press(data);
+        const lifecycle = readLifecycle(h, free, 3, inFlight);
+        const admission = await lifecycle.admit();
+        assert.deepEqual(admission, { ok: false, errorCode: free ? inFlight ? 'FREE_DOCUMENTS_IN_FLIGHT' : 'FREE_DOCUMENT_LIMIT_REACHED' : 'RECEIPT_QUOTA_EXCEEDED' });
+        assert.deepEqual(lifecycle.counts(), { usedCount: 3, releases: 0 });
+        assert.equal(lifecycle.admissions.length, 3);
+        assert.equal(h.aiGatewayRequests.length + h.intakeRequests.length + h.pushes.length, 0);
+      }
+    });
+
+    it('failed or unusable read releases its original reservation', async () => {
+      for (const status of ['FAILED', 'DONE']) {
+        const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+        h.allowQueue(); await h.press(data);
+        const lifecycle = readLifecycle(h, free);
+        const admission = await lifecycle.admit(); assert.equal(admission.ok, true);
+        assert.equal(lifecycle.counts().usedCount, 1);
+        await lifecycle.finish(status, false, admission);
+        assert.deepEqual(lifecycle.counts(), { usedCount: 0, releases: 1 });
+        assert.equal(lifecycle.admissions.length, 0);
+        if (!free) assert.deepEqual(lifecycle.entries.map(row => row.kind), ['RESERVE', 'RELEASE']);
+        await h.press(data);
+        assert.equal(h.jobs.length, 1);
+        assert.equal(lifecycle.counts().usedCount, 0);
+      }
+    });
+
+    it('usable-result delivery retry neither reads nor counts twice', async () => {
+      const h = fileHarness(free); await h.captureFile(); const data = h.button().data;
+      h.allowQueue(); await h.press(data);
+      const lifecycle = readLifecycle(h, free);
+      const admission = await lifecycle.admit(); assert.equal(admission.ok, true);
+      const resumed = await lifecycle.admit();
+      assert.equal(resumed.eventId, admission.eventId, 'same job uses the original admission');
+      assert.equal(lifecycle.admissions.length, 1);
+      await lifecycle.finish('DONE', true, admission);
+      const delivery = h.flow.deliverCompletedReply;
+      h.flow.deliverCompletedReply = async () => { throw new Error('LINE delivery unavailable'); };
+      // The transport failed after usable facts were committed; a later button press only reads state.
+      await assert.rejects(() => h.press(data), /LINE delivery unavailable/);
+      h.flow.deliverCompletedReply = delivery;
+      await h.press(data); await h.press(data);
+      assert.deepEqual(lifecycle.counts(), { usedCount: 1, releases: 0 });
+      assert.equal(lifecycle.admissions.length, 1);
+      if (free) assert.ok(lifecycle.admissions[0].succeededAt);
+      else assert.deepEqual(lifecycle.entries.map(row => row.kind), ['RESERVE', 'CONSUME']);
+      assert.equal(h.jobs.length, 1);
+      assert.equal(h.queues.length, 2);
+      assert.match(JSON.stringify(h.deliveries.at(-1)), /อ่านเอกสารแล้ว/);
+      assert.doesNotMatch(JSON.stringify(h.deliveries.at(-1)), /expense_action_confirm|ยืนยันรายการ/);
+    });
+
+    it('read none never queues or offers the queue-failure retry', async () => {
+      const h = fileHarness(free);
+      const saved = await h.flow.persistLineFileExpense(h.ctx, h.event(), { media: h.media, caption: '', read: 'none' });
+      assert.equal(saved.readJobId, null);
+      assert.equal(h.queues.length, 0);
+      assert.equal(h.deliveries.length, 0);
+    });
+  });
 });
 
 it('fails a bound semantic turn before pending media, ERP reads, or a LINE turn when compact intake is invalid', async () => {

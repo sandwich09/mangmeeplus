@@ -1,4 +1,5 @@
 import { lineControlData, type LineReplyLanguage } from './line-language.logic';
+import { fileReadRetryPostbackCommand, isFileReadRetryCommand } from './line-file-read-retry.logic';
 import { linePaymentEvidencePostbackCommand } from './line-payment-evidence-reply.logic';
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
@@ -856,7 +857,7 @@ export type StaffMenuCommand =
   // S-4 (draft-control spec §5.4): typed words still enter the command lane, but only the card
   // postback carries the opaque previewId required to apply or cancel that exact proposal.
   | 'draft_update_confirm' | 'draft_update_cancel'
-  | 'follow';
+  | 'follow' | 'file_read_retry';
 
 /**
  * The whole-string key a command is matched on: tile emoji stripped, inner whitespace collapsed,
@@ -877,6 +878,7 @@ function menuCommandKey(text: string): string {
 }
 
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
+  if (isFileReadRetryCommand(text)) return 'file_read_retry';
   const normalized = menuCommandKey(text);
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
@@ -941,6 +943,8 @@ const DRAFT_POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
  * than the more permissive one.
  */
 export function linePostbackCommandText(data: string | undefined, draftEditEnabled = false): string | null {
+  const fileRetry = fileReadRetryPostbackCommand(data);
+  if (fileRetry) return fileRetry;
   const paymentEvidence = linePaymentEvidencePostbackCommand(data);
   if (paymentEvidence) return paymentEvidence;
   if (!data) return null;

@@ -219,7 +219,7 @@ The table covers every named quoted control/page/command in the revised bodies a
 | จ่ายค่าอะไร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1439` |
 | ตั้งค่าร้าน | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:361` |
 | ตั้งแต่ | ชื่อช่องเลือกวันที่บนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:128` |
-| ติดต่อเจ้าหน้าที่ | คำสั่งที่พิมพ์ใน LINE; STAFF_CONTACT_COMMAND รับที่ staffMenuCommand | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:17` |
+| ติดต่อเจ้าหน้าที่ | คำสั่งที่พิมพ์ใน LINE; STAFF_CONTACT_COMMAND รับที่ staffMenuCommand | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:18` |
 | ติดต่อเรา | พื้นที่ rich menu; เป็นคนละคำสั่งกับขอคุยทีมงาน | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:93` |
 | ถึง | ชื่อช่องเลือกวันที่บนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:128` |
 | บริษัทของฉัน | ชื่อการ์ดและพื้นที่ rich menu; พื้นที่นี้ส่ง /companies | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:40` |
@@ -241,8 +241,8 @@ The table covers every named quoted control/page/command in the revised bodies a
 | ส่งอนุมัติ | ปุ่มส่งใบเบิก; ใบเตรียมจ่ายใช้คำเดียวกัน | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |
 | หน้าแรก | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:21` |
 | เปลี่ยนบริษัท | คำสั่งที่พิมพ์ใน LINE; parser ตอบด้วยการ์ดร้าน | `apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic.ts:52` |
-| เปิดร้านใหม่ | ปุ่มการ์ดร้านใน LINE เมื่อเจ้าของกิจการสมัครได้ | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:269` |
-| เปิดเว็บบริษัทนี้ | ปุ่มบนการ์ดร้านและตัวเลือกร้านใน LINE | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:91` |
+| เปิดร้านใหม่ | ปุ่มการ์ดร้านใน LINE เมื่อเจ้าของกิจการสมัครได้ | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:270` |
+| เปิดเว็บบริษัทนี้ | ปุ่มบนการ์ดร้านและตัวเลือกร้านใน LINE | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:92` |
 | เพิ่มพนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:365` |
 | เพิ่มลายเซ็น | ปุ่มหน้าลายเซ็นบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:584` |
 | เพิ่มหมวดหมู่ | ปุ่มหน้าจัดการหมวดบนเว็บ | `apps/web/src/features/expenses/ExpensesWorkspacePanels.tsx:336` |
@@ -251,7 +251,7 @@ The table covers every named quoted control/page/command in the revised bodies a
 | แก้ไขเอกสาร | ปุ่มเปิดแก้รายจ่ายที่ยืนยันแล้ว | `packages/contracts/src/expenses.ts:750` |
 | แพ็กเกจ | เมนูบนเว็บ | `apps/web/src/features/web-core-workspace/settings-menu.logic.ts:150` |
 | แพ็กเกจและราคา | พื้นที่ rich menu ปัจจุบัน; ส่งข้อความ โปรโมชั่น | `scripts/line-oa/rich-menu-v2-ver3.manifest.json:27` |
-| โปรโมชั่น | คำสั่งที่พิมพ์ใน LINE; VIEW_PACKAGES_COMMAND | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:15` |
+| โปรโมชั่น | คำสั่งที่พิมพ์ใน LINE; VIEW_PACKAGES_COMMAND | `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts:16` |
 | ใบรับรองแทนใบเสร็จ | แท็บและชื่อหน้าศูนย์ใบรับรองบนเว็บ | `apps/web/src/common/i18n/workspace-dictionary.ts:1763` |
 | ใบเสร็จรอตรวจ | ชื่อตัวเลขบนการ์ดรายจ่ายหน้าแรก | `apps/web/src/features/dashboard-notifications/DashboardPages.tsx:115` |
 | ไม่มีสิทธิ์ | ป้ายสิทธิ์รายงานบนเว็บ | `apps/web/src/features/reports/ReportsWorkspacePage.tsx:32` |

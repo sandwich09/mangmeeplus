@@ -10,7 +10,7 @@ import {
   EXPENSE_CAPTURE_GROUP_TARGET_TYPE,
 } from '../../../data-model-core/domain/logic/attachment.logic';
 import { expenseCaptureWebPath } from '../../domain/logic/expense-capture.logic';
-import { PrismaExpenseCaptureRepository } from '../../infrastructure/prisma-expense-capture.repository';
+import { PrismaExpenseCaptureRepository, type CaptureDb } from '../../infrastructure/prisma-expense-capture.repository';
 import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
 import { ExpenseCaptureReadRunnerService } from '../services/expense-capture-read-runner.service';
 
@@ -67,12 +67,12 @@ export class ExpenseCaptureLineUseCase {
     attachmentChecksum?: string | null;
     objectVersionId?: string | null;
     expectedSourceUpdatedAt?: Date | null;
-  }): Promise<string> {
-    const existing = await this.capture.findLiveJobForAttachment(this.capture.client, {
+  }, db: CaptureDb = this.capture.client): Promise<string> {
+    const existing = await this.capture.findLiveJobForAttachment(db, {
       companyId: input.companyId, expenseId: input.expenseId,
       attachmentId: input.attachmentId, attachmentChecksum: input.attachmentChecksum ?? '',
     });
-    const job = existing ?? await this.capture.createReadJob(this.capture.client, {
+    const job = existing ?? await this.capture.createReadJob(db, {
       companyId: input.companyId, ownerType: 'EXPENSE', expenseId: input.expenseId,
       attachmentId: input.attachmentId, attachmentChecksum: input.attachmentChecksum ?? '',
       objectVersionId: input.objectVersionId ?? null,
