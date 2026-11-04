@@ -31,6 +31,8 @@ import {
 } from './application/use-cases/expense-upload.use-case';
 import {
   CaptureLineExpenseNoteUseCase,
+  SetExpenseCategoryAccountantAccountUseCase,
+  ClearExpenseCategoryAccountantAccountUseCase,
   CreateExpenseCategoryUseCase,
   UpdateExpenseCategoryUseCase,
   ListAllExpenseCategoriesUseCase,
@@ -222,6 +224,8 @@ import { ProcurementModule } from '../procurement/procurement.module';
     SupersedeSubstituteReceiptUseCase,
     GetSubstituteReceiptPolicyUseCase,
     UpdateSubstituteReceiptPolicyUseCase,
+    SetExpenseCategoryAccountantAccountUseCase,
+    ClearExpenseCategoryAccountantAccountUseCase,
     CreateExpenseCategoryUseCase,
     UpdateExpenseCategoryUseCase,
     ListAllExpenseCategoriesUseCase,

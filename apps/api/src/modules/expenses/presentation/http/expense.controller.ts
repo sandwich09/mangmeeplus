@@ -2,9 +2,10 @@ import { ExpensePaymentSlipUploadUseCase } from '../../application/use-cases/exp
 import { DecideExpenseInputVatUseCase } from '../../application/use-cases/expense-draft.use-case';
 import { DecideExpenseInputVatDto, SubstituteReceiptListQueryDto } from './expense.dtos';
 import { PrismaService } from '../../../../common/database/prisma.service';
-import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
+import { Controller, Delete, Put, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  SetExpenseCategoryAccountantAccountDto,
   AccountantEvidenceBundleDto,
   AccountantPackageDto,
   AmendSubstituteReceiptDto,
@@ -57,6 +58,8 @@ import {
   ListExpenseCategoriesUseCase,
 } from '../../application/use-cases/expense-upload.use-case';
 import {
+  SetExpenseCategoryAccountantAccountUseCase,
+  ClearExpenseCategoryAccountantAccountUseCase,
   CreateExpenseCategoryUseCase,
   UpdateExpenseCategoryUseCase,
   ListAllExpenseCategoriesUseCase,
@@ -734,6 +737,8 @@ export class ExpenseCategoryController {
     private readonly listAllCats: ListAllExpenseCategoriesUseCase,
     private readonly createCat: CreateExpenseCategoryUseCase,
     private readonly updateCat: UpdateExpenseCategoryUseCase,
+    private readonly setAccount: SetExpenseCategoryAccountantAccountUseCase,
+    private readonly clearAccount: ClearExpenseCategoryAccountantAccountUseCase,
   ) {}
 
   @Get()
@@ -753,6 +758,19 @@ export class ExpenseCategoryController {
   @RequirePermissions('expense.category.manage')
   createCategory(@ReqCtx() ctx: RequestContext, @Body() body: CreateExpenseCategoryInput) {
     return this.createCat.execute(ctx, body);
+  }
+
+  @Put(':categoryId/accountant-account')
+  @RequirePermissions('expense.category.manage')
+  setAccountantAccount(@ReqCtx() ctx: RequestContext, @Param('categoryId') categoryId: string, @Body() body: SetExpenseCategoryAccountantAccountDto) {
+    return this.setAccount.execute(ctx, categoryId, body);
+  }
+
+  @Delete(':categoryId/accountant-account')
+  @HttpCode(204)
+  @RequirePermissions('expense.category.manage')
+  clearAccountantAccount(@ReqCtx() ctx: RequestContext, @Param('categoryId') categoryId: string) {
+    return this.clearAccount.execute(ctx, categoryId);
   }
 
   @Patch(':categoryId')

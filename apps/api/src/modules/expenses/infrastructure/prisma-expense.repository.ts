@@ -1,3 +1,4 @@
+import type { SetExpenseCategoryAccountantAccountInput } from '@watchdog-bms/contracts';
 import { readExpenseHistoryChanges } from '../domain/logic/expense-history.logic';
 import { hasExpenseCategory } from '@watchdog-bms/contracts';
 import { withholdingPayerPrefill } from '../../tax/application/services/withholding-establishments';
@@ -4075,14 +4076,47 @@ export class PrismaExpenseRepository {
     return { id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder };
   }
 
-  /** Management view: bootstrapped company set, or de-duplicated legacy global fallback. */
+  /** Visible categories plus tenant-referenced history; mapping never changes ledger codes. */
   async listAllCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
     const cats = await this.prisma.client.expenseCategory.findMany({
       where: { OR: [{ companyId }, { companyId: null }] },
       orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+      include: {
+        accountantAccounts: { where: { companyId }, select: { accountCode: true, accountName: true } },
+        expenseRecords: { where: { companyId }, select: { id: true }, take: 1 },
+        expenseLines: { where: { companyId }, select: { id: true }, take: 1 },
+      },
     });
-    const selected = selectExpenseCategoryScope(cats, companyId);
-    return selected.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
+    const visible = new Set(selectExpenseCategoryScope(cats, companyId).map(c => c.id));
+    return cats.filter(c => visible.has(c.id) || c.expenseRecords?.length || c.expenseLines?.length)
+      .map((c): ExpenseCategorySummary => ({
+        id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey,
+        defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as ExpenseCategorySummary['status'], sortOrder: c.sortOrder,
+        accountantAccount: c.accountantAccounts?.[0] ?? null,
+        ...(!visible.has(c.id) ? { referencedOnly: true as const } : {}),
+      }));
+  }
+
+  async findCategoryAccountantAccounts(companyId: string, categoryIds: string[]) {
+    return this.prisma.client.expenseCategoryAccountantAccount.findMany({
+      where: { companyId, expenseCategoryId: { in: categoryIds } },
+      select: { expenseCategoryId: true, accountCode: true, accountName: true },
+    });
+  }
+
+  async upsertCategoryAccountantAccount(companyId: string, categoryId: string, input: SetExpenseCategoryAccountantAccountInput, userId: string) {
+    if (!(await this.listAllCategories(companyId)).some(c => c.id === categoryId)) throw new NotFoundException('Category not found');
+    const data = { accountCode: input.accountCode, accountName: input.accountName, updatedByUserId: userId };
+    return this.prisma.client.expenseCategoryAccountantAccount.upsert({
+      where: { companyId_expenseCategoryId: { companyId, expenseCategoryId: categoryId } },
+      create: { companyId, expenseCategoryId: categoryId, ...data }, update: data,
+      select: { accountCode: true, accountName: true },
+    });
+  }
+
+  async deleteCategoryAccountantAccount(companyId: string, categoryId: string): Promise<void> {
+    if (!(await this.listAllCategories(companyId)).some(c => c.id === categoryId)) throw new NotFoundException('Category not found');
+    await this.prisma.client.expenseCategoryAccountantAccount.deleteMany({ where: { companyId, expenseCategoryId: categoryId } });
   }
 
   async findNearDuplicates(

@@ -33,6 +33,7 @@ import {
   Matches,
   Max,
   MaxLength,
+  Length,
   Min,
   IsUUID,
   ValidateNested,
@@ -306,4 +307,16 @@ export class SubstituteReceiptListQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) pageSize?: number;
   @IsOptional() @IsIn(['newest', 'oldest']) order?: 'newest' | 'oldest';
+}
+
+export class SetExpenseCategoryAccountantAccountDto {
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @Length(1, 20)
+  @Matches(/^[^=+\-@\u0000-\u001F\u007F][^\u0000-\u001F\u007F]*$/)
+  accountCode!: string;
+
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @Length(1, 120)
+  @Matches(/^[^=+\-@\u0000-\u001F\u007F][^\u0000-\u001F\u007F]*$/)
+  accountName!: string;
 }

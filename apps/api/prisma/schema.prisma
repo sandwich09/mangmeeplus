@@ -400,6 +400,7 @@ model Company {
   disbursementVouchers              DisbursementVoucher[]
   disbursementVoucherCommands        DisbursementVoucherCommand[]
   expenseLines                      ExpenseLine[]
+  expenseCategoryAccountantAccounts ExpenseCategoryAccountantAccount[]
   expenseCategories                 ExpenseCategory[]
   revenueCategories                 RevenueCategory[]
   receiptExtractions                ReceiptExtraction[]
@@ -2573,7 +2574,25 @@ model RevenueCategory {
   @@index([companyId, status])
 }
 
+/// Per-shop accountant codes; independent of the internal ledger chart.
+model ExpenseCategoryAccountantAccount {
+  id                String          @id @default(cuid())
+  companyId         String
+  expenseCategoryId String
+  accountCode       String          @db.VarChar(20)
+  accountName       String          @db.VarChar(120)
+  updatedByUserId   String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expenseCategory   ExpenseCategory @relation(fields: [expenseCategoryId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, expenseCategoryId])
+  @@index([companyId])
+}
+
 model ExpenseCategory {
+  accountantAccounts ExpenseCategoryAccountantAccount[]
   id                            String                @id @default(cuid())
   companyId                     String?
   name                          String

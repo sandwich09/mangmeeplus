@@ -510,7 +510,12 @@ export const SIGNATURE_ASSET_STATUS_LABELS: Record<SignatureAssetStatus, string>
   ARCHIVED: 'เลิกใช้แล้ว',
 };
 
+export type ExpenseCategoryAccountantAccount = { accountCode: string; accountName: string };
+export type SetExpenseCategoryAccountantAccountInput = ExpenseCategoryAccountantAccount;
+
 export type ExpenseCategorySummary = {
+  accountantAccount?: ExpenseCategoryAccountantAccount | null;
+  referencedOnly?: true;
   id: string;
   companyId: string | null;
   name: string;
@@ -2205,3 +2210,56 @@ export function expenseCurrencyLabel(code: string | null | undefined): string {
     return label && label !== code.toUpperCase() ? label : 'สกุลเงินอื่น';
   } catch { return 'สกุลเงินอื่น'; }
 }
+
+// General accounting-office purchase journal. Vendor presets wait for a verified template.
+export const ACCOUNTING_SOFTWARE_EXPORT_PRESETS = ['purchase_journal'] as const;
+export type AccountingSoftwareExportPreset = (typeof ACCOUNTING_SOFTWARE_EXPORT_PRESETS)[number];
+export type AccountingSoftwareExportRequest = SharedEvidenceFilter & { preset: AccountingSoftwareExportPreset };
+export const ACCOUNTING_EXPORT_EXCLUSION_REASONS = ['foreign_currency', 'not_confirmed', 'vat_not_representable',
+  'wht_not_representable', 'wht_without_vendor_tax_id', 'wht_form_not_supported', 'wht_payee_kind_unknown',
+  'wht_mixed_income_types', 'wht_unpaid', 'wht_partly_paid', 'wht_paid_in_several_payments', 'wht_paid_date_unconfirmed',
+  'wht_payment_method_not_supported', 'account_unmapped', 'too_many_rows'] as const;
+export type AccountingExportExclusionReason = (typeof ACCOUNTING_EXPORT_EXCLUSION_REASONS)[number];
+export const ACCOUNTING_EXPORT_EXCLUSION_LABELS: Record<AccountingExportExclusionReason, string> = {
+  foreign_currency: 'ยอดเป็นสกุลเงินอื่น นำเข้าได้เฉพาะเงินบาท',
+  not_confirmed: 'รายการยังไม่ยืนยัน กลับไปตรวจรายการ',
+  vat_not_representable: 'ภาษีในรายการนี้ใส่ในไฟล์นี้ไม่ได้',
+  wht_not_representable: 'ยอดภาษีที่หักไว้ใส่ในไฟล์นี้ไม่ได้',
+  wht_without_vendor_tax_id: 'ยังไม่มีเลขผู้เสียภาษีของผู้ขาย',
+  wht_form_not_supported: 'ภาษีของรายการนี้ใส่ในไฟล์นี้ไม่ได้',
+  wht_payee_kind_unknown: 'ยังไม่ระบุว่าผู้รับเงินเป็นบุคคลหรือนิติบุคคล',
+  wht_mixed_income_types: 'รายการนี้หักภาษีหลายประเภท',
+  wht_unpaid: 'รายการนี้ต้องจ่ายก่อนส่งเข้าไฟล์นี้',
+  wht_partly_paid: 'จ่ายยังไม่ครบ',
+  wht_paid_in_several_payments: 'จ่ายหลายครั้ง',
+  wht_paid_date_unconfirmed: 'วันที่จ่ายยังไม่ยืนยัน',
+  wht_payment_method_not_supported: 'วิธีจ่ายนี้ใส่ในไฟล์นำเข้าไม่ได้',
+  account_unmapped: 'ยังไม่ระบุรหัสบัญชีของหมวดนี้',
+  too_many_rows: 'เอกสารมีบรรทัดมากเกินที่ไฟล์นี้รับ',
+};
+export type AccountingSoftwareExportResult = {
+  preset: AccountingSoftwareExportPreset;
+  files: { fileName: string; xlsxBase64: string; rowCount: number }[];
+  documentCount: number;
+  rowCount: number;
+  excluded: { expenseNumber: string; reason: AccountingExportExclusionReason; detail: string }[];
+  paymentNotExported: { expenseNumber: string; detail: string }[];
+  unmappedCategories: { id: string; name: string }[];
+};
+export const PURCHASE_JOURNAL_COLUMNS = [
+  'document_date', 'vendor_document_number', 'expense_number', 'source_document_type', 'vendor_name', 'vendor_tax_id',
+  'vendor_branch', 'account_code', 'account_name', 'category_name', 'description', 'vat_treatment', 'taxable_amount',
+  'vat_amount', 'grand_total_amount', 'input_vat_right', 'wht_form', 'wht_income_type', 'wht_base_amount', 'wht_rate',
+  'wht_amount', 'net_payable_amount', 'payment_status', 'last_paid_at', 'advanced_by',
+] as const;
+export type PurchaseJournalColumn = (typeof PURCHASE_JOURNAL_COLUMNS)[number];
+export type PurchaseJournalRow = Record<PurchaseJournalColumn, string | number>;
+export const PURCHASE_JOURNAL_COLUMN_LABELS: Record<PurchaseJournalColumn, string> = {
+  document_date: 'วันที่เอกสาร', vendor_document_number: 'เลขที่ตามเอกสาร', expense_number: 'เลขที่รายการ',
+  source_document_type: 'ประเภทเอกสาร', vendor_name: 'ผู้ขาย/ผู้รับเงิน', vendor_tax_id: 'เลขประจำตัวผู้เสียภาษีผู้ขาย',
+  vendor_branch: 'สาขาผู้ขาย (00000 = สำนักงานใหญ่)', account_code: 'รหัสบัญชี', account_name: 'ชื่อบัญชี',
+  category_name: 'หมวดค่าใช้จ่าย', description: 'รายละเอียด', vat_treatment: 'การใช้ VAT', taxable_amount: 'มูลค่าก่อน VAT',
+  vat_amount: 'VAT', grand_total_amount: 'ยอดรวม', input_vat_right: 'สิทธิภาษีซื้อ', wht_form: 'แบบ ภ.ง.ด.',
+  wht_income_type: 'ประเภทเงินได้', wht_base_amount: 'ฐานหัก ณ ที่จ่าย', wht_rate: 'อัตราหัก (%)', wht_amount: 'หัก ณ ที่จ่าย',
+  net_payable_amount: 'ยอดจ่ายสุทธิ', payment_status: 'สถานะการจ่าย', last_paid_at: 'วันที่จ่ายล่าสุด', advanced_by: 'สำรองจ่ายโดย',
+};

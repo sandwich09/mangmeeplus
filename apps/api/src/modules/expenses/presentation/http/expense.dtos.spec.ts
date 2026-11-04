@@ -24,6 +24,7 @@ import {
   SetSignatureDerivedAssetDto,
   UploadIntentDto,
 } from './expense.dtos';
+import * as expenseDtos from './expense.dtos';
 
 // The exact global-pipe configuration main.ts registers, so this exercises the gate production
 // runs rather than a lookalike.
@@ -456,5 +457,17 @@ it('validates substitute receipt list date order, status, month and paging at th
   assert.equal((await query({})).order, undefined);
   for (const value of [{ order: 'ascending' }, { status: 'APPROVED' }, { yearMonth: '2026-13' }, { page: '1.5' }, { pageSize: '0' }]) {
     await assert.rejects(() => query(value), BadRequestException);
+  }
+});
+
+it('office mapping trims values and rejects formula prefixes and controls anywhere in values', async () => {
+  const dto = (expenseDtos as any).SetExpenseCategoryAccountantAccountDto;
+  assert.equal(typeof dto, 'function');
+  const saved = await run(dto, { accountCode: ' 52031 ', accountName: ' ค่าเช่า ' });
+  assert.equal(saved.accountCode, '52031'); assert.equal(saved.accountName, 'ค่าเช่า');
+  for (const key of ['accountCode', 'accountName']) {
+    for (const value of ['', '   ', '=SUM(A1)', '+1', '-1', '@x', 'a\tb', 'a\nb', 'a\u0000b', 'a\u007fb', 'x'.repeat(key === 'accountCode' ? 21 : 121), 123, null]) {
+      await assert.rejects(() => run(dto, { accountCode: '52031', accountName: 'ค่าเช่า', [key]: value }), BadRequestException);
+    }
   }
 });

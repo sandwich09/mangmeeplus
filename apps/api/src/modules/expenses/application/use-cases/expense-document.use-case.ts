@@ -1,3 +1,5 @@
+import { assertExpenseFinancialAccess } from '../expense-commercial-access';
+import type { SetExpenseCategoryAccountantAccountInput } from '@watchdog-bms/contracts';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
@@ -451,6 +453,40 @@ export class ListAllExpenseCategoriesUseCase {
 
   async execute(ctx: RequestContext): Promise<ExpenseCategorySummary[]> {
     if (!hasPerm(ctx, 'expense.category.manage')) throw new ForbiddenException('Missing permission: expense.category.manage');
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
     return this.repo.listAllCategories(ctx.companyId);
+  }
+}
+
+@Injectable()
+export class SetExpenseCategoryAccountantAccountUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, categoryId: string, input: SetExpenseCategoryAccountantAccountInput) {
+    if (!hasPerm(ctx, 'expense.category.manage')) throw new ForbiddenException('Missing permission: expense.category.manage');
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
+    const account = await this.repo.upsertCategoryAccountantAccount(ctx.companyId, categoryId, input, ctx.userId);
+    void this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+      action: 'expense.category.accountant_account.set', targetType: 'expense_category', targetId: categoryId,
+      result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { ...account },
+    });
+    return account;
+  }
+}
+
+@Injectable()
+export class ClearExpenseCategoryAccountantAccountUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, categoryId: string): Promise<void> {
+    if (!hasPerm(ctx, 'expense.category.manage')) throw new ForbiddenException('Missing permission: expense.category.manage');
+    await assertExpenseFinancialAccess(ctx, this.repo.commercialAccessDb);
+    await this.repo.deleteCategoryAccountantAccount(ctx.companyId, categoryId);
+    void this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+      action: 'expense.category.accountant_account.clear', targetType: 'expense_category', targetId: categoryId,
+      result: 'SUCCESS', riskLevel: 'LOW',
+    });
   }
 }

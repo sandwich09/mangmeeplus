@@ -1,3 +1,5 @@
+import * as documentUseCases from './expense-document.use-case';
+import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { GetExpenseUseCase } from './expense-draft.use-case';
 import { inflateRawSync } from 'node:zlib';
 import { LineExpenseDraftConversationUseCase } from './line-expense-draft-conversation.use-case';
@@ -1935,4 +1937,82 @@ it('R11 upload callers preserve branch and identity', async () => {
   assert.equal(calls[0][0].userId, actor.userId);
   assert.equal(calls[0][0].membershipId, actor.membershipId);
   assert.equal(calls[0][0].companyId, actor.companyId);
+});
+
+describe('accountant office mapping', () => {
+  function fixture(bootstrapped = true, reference: 'record' | 'line' = 'record') {
+    const cats = [
+      { id: 'own', companyId: 'company-1', name: 'ค่าเช่า', accountHintKey: 'rent', ledgerAccountCode: 'INTERNAL', ledgerAccountReviewedByUserId: bootstrapped ? 'system:expense-category-bootstrap' : null },
+      { id: 'old', companyId: null, name: 'หมวดเก่า', accountHintKey: 'old', ledgerAccountCode: 'GLOBAL' },
+      { id: 'unused', companyId: null, name: 'ไม่เกี่ยว', accountHintKey: 'unused' },
+    ].map(c => ({ status: 'ACTIVE', sortOrder: 0, defaultInputTaxCode: null, ...c }));
+    const writes: any[] = []; const logs: any[] = []; const mappings: any[] = [];
+    const db: any = {
+      expenseCategory: { findMany: async () => cats.map(c => ({ ...c, expenseRecords: c.id === 'old' && reference === 'record' ? [{ id: 'e' }] : [], expenseLines: c.id === 'old' && reference === 'line' ? [{ id: 'l' }] : [], accountantAccounts: mappings.filter(m => m.expenseCategoryId === c.id).map(({ accountCode, accountName }) => ({ accountCode, accountName })) })) },
+      expenseCategoryAccountantAccount: {
+        findMany: async () => mappings,
+        upsert: async (args: any) => { writes.push(args); const row = { ...args.create }; mappings.splice(0, mappings.length, row); return row; },
+        deleteMany: async (args: any) => { writes.push(args); mappings.length = 0; return { count: 1 }; },
+      },
+    };
+    const repo = new PrismaExpenseRepository({ client: db } as any);
+    // Commercial state uses the same resolver for current free and paid shops.
+    db.company = { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'STARTER', termEndsAt: new Date('2099-01-01') } }) };
+    return { repo, cats, db, writes, logs, audit: { log: async (entry: any) => { logs.push(entry); } } as any };
+  }
+  it('office mapping allows referenced hidden categories without changing ledger codes and audits set/clear LOW', async () => {
+    const f = fixture(); const context = ctx(['expense.category.manage']);
+    const Set = (documentUseCases as any).SetExpenseCategoryAccountantAccountUseCase;
+    const Clear = (documentUseCases as any).ClearExpenseCategoryAccountantAccountUseCase;
+    assert.equal(typeof Set, 'function'); assert.equal(typeof Clear, 'function');
+    const set = new Set(f.repo, f.audit); const clear = new Clear(f.repo, f.audit);
+    for (const id of ['own', 'old']) await set.execute(context, id, { accountCode: '52031', accountName: 'ค่าเช่า' });
+    const rows = await f.repo.listAllCategories(context.companyId);
+    assert.equal(rows.find(c => c.id === 'old')?.referencedOnly, true);
+    assert.deepEqual(rows.find(c => c.id === 'old')?.accountantAccount, { accountCode: '52031', accountName: 'ค่าเช่า' });
+    await clear.execute(context, 'old');
+    assert.deepEqual(f.logs.map(l => [l.action, l.riskLevel]), [
+      ['expense.category.accountant_account.set', 'LOW'], ['expense.category.accountant_account.set', 'LOW'], ['expense.category.accountant_account.clear', 'LOW'],
+    ]);
+    assert.equal(f.cats[0].ledgerAccountCode, 'INTERNAL');
+    assert.ok(f.writes.every(w => !JSON.stringify(w).includes('ledgerAccountCode')));
+    for (const id of ['other-shop', 'unused']) {
+      await assert.rejects(() => set.execute(context, id, { accountCode: '52031', accountName: 'ค่าเช่า' }), (e: any) => e.getStatus() === 404);
+      await assert.rejects(() => clear.execute(context, id), (e: any) => e.getStatus() === 404);
+    }
+  });
+  it('allows line-only historical references and preserves mappings when a category is archived', async () => {
+    const f = fixture(true, 'line');
+    const Set = (documentUseCases as any).SetExpenseCategoryAccountantAccountUseCase;
+    await new Set(f.repo, f.audit).execute(ctx(['expense.category.manage']), 'old', { accountCode: 'H', accountName: 'หมวดเก่า' });
+    f.cats.find(c => c.id === 'old')!.status = 'ARCHIVED';
+    const category = (await f.repo.listAllCategories('company-1')).find(c => c.id === 'old');
+    assert.equal(category?.referencedOnly, true); assert.equal(category?.accountantAccount?.accountCode, 'H');
+  });
+  it('allows visible global categories for a paid shop and refuses absent management permission on both paths', async () => {
+    const f = fixture(false); const Set = (documentUseCases as any).SetExpenseCategoryAccountantAccountUseCase;
+    const Clear = (documentUseCases as any).ClearExpenseCategoryAccountantAccountUseCase;
+    assert.equal(typeof Set, 'function');
+    await new Set(f.repo, f.audit).execute(ctx(['expense.category.manage']), 'unused', { accountCode: 'A', accountName: 'ค่าใช้จ่าย' });
+    for (const freeExpenseDrafts of [false, true]) {
+      const context = { ...ctx([]), freeExpenseDrafts };
+      await assert.rejects(() => new Set(f.repo, f.audit).execute(context, 'own', { accountCode: 'A', accountName: 'ค่าใช้จ่าย' }), (e: any) => e.getStatus() === 403);
+      await assert.rejects(() => new Clear(f.repo, f.audit).execute(context, 'own'), (e: any) => e.getStatus() === 403);
+    }
+  });
+  it('rechecks never-paid free state with stale management permission before managing mappings', async () => {
+    const f = fixture(); const Set = (documentUseCases as any).SetExpenseCategoryAccountantAccountUseCase;
+    const Clear = (documentUseCases as any).ClearExpenseCategoryAccountantAccountUseCase;
+    assert.equal(typeof Set, 'function');
+    f.db.company.findUnique = async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date('2020-01-01') } });
+    f.db.billingAccount = { findMany: async () => [] };
+    for (const key of ['billingInvoice', 'billingReceiptGrant', 'packageChangeRequest']) f.db[key] = { findFirst: async () => null };
+    f.db.salesAttribution = { findUnique: async () => null };
+    for (const action of [() => new Set(f.repo, f.audit).execute(ctx(['expense.category.manage']), 'own', { accountCode: 'A', accountName: 'ค่าใช้จ่าย' }),
+      () => new Clear(f.repo, f.audit).execute(ctx(['expense.category.manage']), 'own'),
+      () => new ListAllExpenseCategoriesUseCase(f.repo).execute(ctx(['expense.category.manage']))]) {
+      await assert.rejects(action, (e: any) => e.getStatus() === 403 && e.getResponse().code === 'FREE_EXPENSE_DRAFTS_ONLY');
+    }
+    assert.equal(f.writes.length, 0); assert.equal(f.logs.length, 0);
+  });
 });

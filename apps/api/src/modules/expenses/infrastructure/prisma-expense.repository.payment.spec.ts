@@ -545,6 +545,35 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     }
   });
 
+  it('office mappings are unique per shop, tenant isolated and cascade on category deletion', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const other = await client.company.create({ data: { name: 'Other office mapping shop' } });
+    const category = await client.expenseCategory.create({ data: { companyId, name: `Office-${randomUUID()}`, accountHintKey: 'office-test', ledgerAccountCode: 'INTERNAL' } });
+    const global = await client.expenseCategory.create({ data: { name: `Global-${randomUUID()}`, accountHintKey: randomUUID() } });
+    const repo = new PrismaExpenseRepository({ client } as any);
+    try {
+      await repo.upsertCategoryAccountantAccount(companyId, category.id, { accountCode: '52031', accountName: 'ค่าเช่า' }, userId);
+      await repo.upsertCategoryAccountantAccount(companyId, category.id, { accountCode: '52032', accountName: 'ค่าเช่าใหม่' }, userId);
+      assert.equal(await client.expenseCategoryAccountantAccount.count({ where: { companyId, expenseCategoryId: category.id } }), 1);
+      assert.equal((await repo.findCategoryAccountantAccounts(companyId, [category.id]))[0]?.accountCode, '52032');
+      assert.equal((await client.expenseCategory.findUniqueOrThrow({ where: { id: category.id } })).ledgerAccountCode, 'INTERNAL');
+      assert.deepEqual(await repo.findCategoryAccountantAccounts(other.id, [category.id]), []);
+      await assert.rejects(() => repo.upsertCategoryAccountantAccount(other.id, category.id, { accountCode: 'B', accountName: 'ห้ามข้ามร้าน' }, userId), NotFoundException);
+      await repo.upsertCategoryAccountantAccount(companyId, global.id, { accountCode: 'A', accountName: 'ของร้านแรก' }, userId);
+      await repo.upsertCategoryAccountantAccount(other.id, global.id, { accountCode: 'B', accountName: 'ของอีกร้าน' }, userId);
+      assert.equal((await repo.listAllCategories(companyId)).find(c => c.id === global.id)?.accountantAccount?.accountCode, 'A');
+      assert.equal((await repo.listAllCategories(other.id)).find(c => c.id === global.id)?.accountantAccount?.accountCode, 'B');
+      await client.expenseCategory.delete({ where: { id: category.id } });
+      assert.equal(await client.expenseCategoryAccountantAccount.count({ where: { expenseCategoryId: category.id } }), 0);
+      await repo.deleteCategoryAccountantAccount(companyId, global.id);
+      assert.equal((await repo.findCategoryAccountantAccounts(other.id, [global.id])).length, 1);
+    } finally {
+      await client.expenseCategory.deleteMany({ where: { id: { in: [category.id, global.id] } } });
+      await client.company.delete({ where: { id: other.id } });
+    }
+  });
+
   async function vatDraftFixture() {
     const client = clients[0]!;
     const co = await client.company.create({ data: { name: 'VAT decision ledger test' } });

@@ -416,3 +416,135 @@ it('formats every accountant money cell as two-decimal numeric money across 3000
     assert.equal(moneyCells, rows.length * columns.filter(key => key.endsWith('_amount')).length);
   }
 });
+
+describe('general purchase journal', () => {
+  const mapping = new Map([['rent', { accountCode: '52031', accountName: 'ค่าใช้จ่าย' }], ['service', { accountCode: '52031', accountName: 'ค่าใช้จ่าย' }]]);
+  const income = new Map([['RENT', { nameTh: 'ค่าเช่า', filingRoute: 'STANDARD' }], ['SERVICE', { nameTh: 'ค่าบริการ', filingRoute: 'STANDARD' }], ['PND2', { nameTh: 'ดอกเบี้ย', filingRoute: 'SEPARATE_PND2' }]]);
+  const line = (patch: any = {}) => ({ lineNumber: 1, description: 'ค่าเช่า', expenseCategoryId: 'rent', categoryName: 'ค่าเช่า',
+    taxableAmount: '100', vatAmount: '7', vatRate: '0.07', vatTreatment: null, whtAmount: '0', ...patch });
+  const record = (lines: any[], patch: any = {}) => ({ id: 'c1234567890123456789012345', status: 'CONFIRMED', expenseNumber: 'EXP-1', expenseDate: '2026-09-30',
+    uploadedAt: '2026-10-02', currency: 'THB', sourceDocumentType: 'TAX_INVOICE', vendorNameSnapshot: 'ผู้ขาย', vendorTaxIdSnapshot: '0100000000001',
+    vendorBranchCodeSnapshot: '00000', expenseCategoryId: 'rent', categoryName: 'ค่าเช่า', vendorEntityKindSnapshot: 'INDIVIDUAL',
+    taxableAmount: lines.reduce((n, l) => n + Number(l.taxableAmount), 0).toFixed(2),
+    vatAmount: lines.reduce((n, l) => n + Number(l.vatAmount), 0).toFixed(2),
+    whtAmount: lines.reduce((n, l) => n + Number(l.whtAmount), 0).toFixed(2),
+    inputVatClaimStatus: 'CLAIMABLE', taxEvidenceStatus: 'USABLE_FOR_TAX', paymentStatus: 'UNPAID', lines, ...patch });
+  const logic = () => import('./accounting-software-export.logic');
+  it('separates 7% plus exempt and keeps the recorded VAT 21.01 including VAT_INCLUDED', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    for (const vatMode of ['VAT_EXCLUDED', 'VAT_INCLUDED']) {
+      const doc = record([line({ taxableAmount: '300', vatAmount: '21.01' }), line({ lineNumber: 2, taxableAmount: '100', vatAmount: '0', vatRate: null, vatTreatment: 'EXEMPT' })], { vatMode });
+      const result = buildPurchaseJournalRows([doc], mapping, income);
+      assert.equal(result.rows.length, 2);
+      assert.deepEqual(result.rows.map(r => [r.vat_treatment, r.taxable_amount, r.vat_amount, r.grand_total_amount]), [['ยกเว้น VAT', '100.00', '0.00', '100.00'], ['VAT 7%', '300.00', '21.01', '321.01']]);
+    }
+  });
+  it('AC-2 keeps two accounts with totals 1000 plus VAT 70 and explicitly distinguishes zero-rated and non-VAT', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line({ taxableAmount: '600', vatAmount: '42' }), line({ lineNumber: 2, expenseCategoryId: 'other', categoryName: 'อีกหมวด', taxableAmount: '400', vatAmount: '28' })]);
+    const accounts = new Map([...mapping, ['other', { accountCode: '52032', accountName: 'อีกบัญชี' }]]);
+    const { rows } = buildPurchaseJournalRows([doc], accounts, income);
+    assert.equal(rows.length, 2);
+    for (const [column, expected] of [['taxable_amount', 1000], ['vat_amount', 70], ['grand_total_amount', 1070]] as const) assert.equal(rows.reduce((n, r) => n + Number(r[column]), 0), expected);
+    const zero = buildPurchaseJournalRows([record([line({ vatAmount: '0', vatRate: '0', vatTreatment: 'ZERO_RATED' }), line({ lineNumber: 2, vatAmount: '0', vatRate: null, vatTreatment: 'NON_VAT' })])], mapping, income).rows;
+    assert.equal(zero.length, 2); assert.deepEqual(zero.map(r => r.vat_treatment).sort(), ['VAT 0%', 'ไม่มี VAT'].sort());
+  });
+  it('merges mapped accounts and inherits header category for additional charges without mutating facts', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line(), line({ lineNumber: 2, expenseCategoryId: 'service', categoryName: 'ค่าบริการ' }), line({ lineNumber: 3, expenseCategoryId: 'irrelevant', categoryName: 'ไม่ใช้', chargeKind: 'SERVICE_CHARGE', taxableAmount: '10', vatAmount: '0.70' })]);
+    const before = JSON.stringify(doc);
+    const { rows } = buildPurchaseJournalRows([doc], mapping, income);
+    assert.equal(rows.length, 1); assert.equal(rows[0].taxable_amount, '210.00'); assert.equal(rows[0].vat_amount, '14.70');
+    assert.equal(rows[0].category_name, 'ค่าเช่า, ค่าบริการ'); assert.equal(JSON.stringify(doc), before);
+  });
+  it('allocates the header 0.01 VAT remainder only to the largest taxable VAT group', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line(), line({ lineNumber: 2, expenseCategoryId: 'other', taxableAmount: '200', vatAmount: '14' }),
+      line({ lineNumber: 3, taxableAmount: '1000', vatAmount: '0', vatRate: null, vatTreatment: 'EXEMPT' })], { vatAmount: '21.01', taxableAmount: '1300.01' });
+    const { rows } = buildPurchaseJournalRows([doc], mapping, income);
+    assert.equal(rows.find(r => r.taxable_amount === '200.01')?.vat_amount, '14.01');
+    assert.equal(rows.find(r => r.vat_treatment === 'ยกเว้น VAT')?.vat_amount, '0.00');
+    assert.equal(rows.find(r => r.vat_treatment === 'ยกเว้น VAT')?.taxable_amount, '1000.00');
+    assert.equal(rows.reduce((n, r) => n + Math.round(Number(r.taxable_amount) * 100), 0), 130001);
+  });
+  it('keeps legacy rent 5% and service 2% and non-withheld lines separate on the same account and VAT', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line({ whtCategoryCode: 'RENT', whtRate: '0.05', whtAmount: '5' }),
+      line({ lineNumber: 2, expenseCategoryId: 'service', whtCategoryCode: 'SERVICE', whtRate: '0.02', whtAmount: '2' }), line({ lineNumber: 3 })]);
+    const { rows } = buildPurchaseJournalRows([doc], mapping, income);
+    assert.equal(rows.length, 3);
+    assert.deepEqual(rows.filter(r => r.wht_amount !== '0.00').map(r => [r.wht_income_type, r.wht_base_amount, r.wht_rate, r.wht_amount]), [['ค่าเช่า', '100.00', '5', '5.00'], ['ค่าบริการ', '100.00', '2', '2.00']]);
+    assert.equal(rows.find(r => r.wht_amount === '0.00')?.wht_form, '');
+  });
+  it('combines current document VAT gate with line restrictions and separates V7 from ND on one account', async () => {
+    const { buildPurchaseJournalRows, effectiveInputVatRight } = await logic();
+    const v7 = line({ externalTaxCodeSnapshot: 'V7', taxComponentsJson: [{ componentKey: 'VAT' }], claimabilitySnapshot: 'CLAIMABLE', taxEvidenceReviewStatus: 'VERIFIED' });
+    const nd = line({ ...v7, lineNumber: 2, externalTaxCodeSnapshot: 'ND', claimabilitySnapshot: 'NONDEDUCTIBLE_EXPENSE' });
+    const doc = record([v7, nd]);
+    assert.deepEqual(buildPurchaseJournalRows([doc], mapping, income).rows.map(r => r.input_vat_right).sort(), ['ใช้ได้ตามเงื่อนไข', 'ใช้ไม่ได้'].sort());
+    assert.equal(effectiveInputVatRight({ ...doc, inputVatClaimStatus: 'NON_CLAIMABLE' }, v7), 'ใช้ไม่ได้');
+    assert.equal(effectiveInputVatRight({ ...doc, inputVatClaimStatus: 'CLAIMABLE' }, v7), 'ใช้ได้ตามเงื่อนไข');
+    assert.equal(effectiveInputVatRight({ ...doc, taxEvidenceStatus: 'NEEDS_REVIEW' }, v7), 'รอตรวจสอบ');
+    assert.equal(effectiveInputVatRight(doc, { ...v7, taxEvidenceReviewStatus: 'REVIEW_REQUIRED' }), 'รอตรวจสอบ');
+    assert.equal(effectiveInputVatRight(doc, { ...v7, taxEvidenceReviewStatus: null }), 'รอตรวจสอบ');
+    for (const claimabilitySnapshot of ['NONDEDUCTIBLE_EXPENSE', 'NONDEDUCTIBLE_CAPITALIZED']) assert.equal(effectiveInputVatRight(doc, { ...v7, claimabilitySnapshot }), 'ใช้ไม่ได้');
+    for (const taxEvidenceStatus of ['SUPPORTING_ONLY', 'NOT_TAX_EVIDENCE']) assert.equal(effectiveInputVatRight({ ...doc, taxEvidenceStatus }, v7), 'ใช้ไม่ได้');
+    assert.equal(effectiveInputVatRight(doc, { ...v7, claimabilitySnapshot: 'PARTIAL' }), 'ใช้ได้บางส่วน');
+    assert.equal(effectiveInputVatRight(doc, { ...v7, claimabilitySnapshot: 'PENDING_EVIDENCE' }), 'รอตรวจสอบ');
+    assert.equal(effectiveInputVatRight(doc, { ...v7, taxEvidenceReviewStatus: 'REJECTED' }), 'ใช้ไม่ได้');
+    assert.equal(effectiveInputVatRight(doc, line({ vatAmount: '0', vatTreatment: 'NON_VAT' })), 'ไม่มี VAT');
+  });
+  it('retains whole-document manual base 270.50 and amount-only withholding without inventing a rate', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line({ taxableAmount: '300', vatAmount: '21', whtAmount: '8.12', whtCategoryCode: 'SERVICE' }), line({ taxableAmount: '70.50', vatAmount: '4.94' })],
+      { whtInputJson: { inputType: 'RATE', value: '3', baseAmount: '270.50' } });
+    let result = buildPurchaseJournalRows([doc], mapping, income);
+    assert.equal(result.rows[0].wht_base_amount, '270.50'); assert.equal(result.rows[0].wht_amount, '8.12'); assert.equal(result.rows[0].wht_rate, '3');
+    result = buildPurchaseJournalRows([{ ...doc, whtInputJson: { inputType: 'AMOUNT', value: '8.12', baseAmount: '270.50' } }], mapping, income);
+    assert.equal(result.rows[0].wht_rate, 'ยังไม่ระบุ');
+  });
+  it('places whole-bill withholding on the largest row and uses the existing form selection including PND2', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line({ whtCategoryCode: 'PND2', whtAmount: '3' }), line({ expenseCategoryId: 'other', taxableAmount: '200', vatAmount: '14' })], { whtInputJson: { inputType: 'RATE', value: '1', baseAmount: '300' } });
+    for (const [vendorEntityKindSnapshot, form] of [['INDIVIDUAL', 'ภ.ง.ด.2'], ['JURISTIC', 'ภ.ง.ด.53'], [null, 'ยังไม่ระบุ']]) {
+      const { rows } = buildPurchaseJournalRows([{ ...doc, vendorEntityKindSnapshot }], mapping, income);
+      const withheld = rows.filter(r => r.wht_form); assert.equal(withheld.length, 1);
+      assert.equal(withheld[0].taxable_amount, '200.00'); assert.equal(withheld[0].wht_form, form);
+    }
+  });
+  it('foreign currency is excluded without converting the stored amount and unmapped categories remain separate', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const doc = record([line(), line({ expenseCategoryId: 'other', categoryName: 'อีกหมวด' })]);
+    const { rows, excluded, unmappedCategories } = buildPurchaseJournalRows([doc, { ...doc, expenseNumber: 'USD-1', currency: 'USD' }]);
+    assert.equal(rows.length, 2); assert.ok(rows.every(r => r.account_code === ''));
+    assert.equal(unmappedCategories.length, 2); assert.deepEqual(excluded, [{ expenseNumber: 'USD-1', reason: 'foreign_currency', detail: 'ยอดเป็นสกุลเงินอื่น นำเข้าได้เฉพาะเงินบาท' }]);
+  });
+  it('uses stored tax-treatment snapshots for zero-rated and exempt lines when legacy treatment is empty', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const { rows } = buildPurchaseJournalRows([record([line({ vatAmount: '0', vatRate: '0', taxTreatmentSnapshot: 'ZERO_RATED' }),
+      line({ lineNumber: 2, vatAmount: '0', vatRate: '0', taxTreatmentSnapshot: 'EXEMPT' })])], mapping, income);
+    assert.deepEqual(rows.map(r => r.vat_treatment).sort(), ['VAT 0%', 'ยกเว้น VAT'].sort());
+  });
+  it('refuses header differences beyond the existing 0.05 identity tolerance instead of rewriting stored VAT', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    assert.throws(() => buildPurchaseJournalRows([record([line()], { vatAmount: '8' })], mapping, income), /totals/);
+    assert.throws(() => buildPurchaseJournalRows([record([line()], { taxableAmount: '101' })], mapping, income), /totals/);
+  });
+  it('software export preserves document-month semantics without relaxing confirmed-only selection', async () => {
+    const { buildPurchaseJournalRows } = await logic();
+    const { rows } = buildPurchaseJournalRows([record([line()], { expenseNumber: 'LATE', expenseDate: '2024-03-18', uploadedAt: '2026-10-02', aiVerificationSummaryJson: { expenseDateStatus: 'implausible' } }), record([line()])], mapping, income);
+    assert.deepEqual(rows.map(r => r.document_date), ['2024-03-18', '2026-09-30']);
+  });
+  it('software export contains office headings without URLs IDs or posting fields and date cells are serials', async () => {
+    const { buildPurchaseJournalRows, buildPurchaseJournalWorkbook } = await logic();
+    const { rows, excluded } = buildPurchaseJournalRows([record([line()], { payments: [{ status: 'RECORDED', paidAt: '2026-10-02', paidAtConfirmed: true }, { status: 'VOIDED', paidAt: '2026-11-01' }] })], mapping, income);
+    assert.equal(rows[0].last_paid_at, '2026-10-02');
+    const file = buildPurchaseJournalWorkbook(rows, excluded, { ร้าน: 'ร้านตัวอย่าง' });
+    const xml = exportedSheet(file); assert.match(xml, /รหัสบัญชี/); assert.match(xml, /สิทธิภาษีซื้อ/);
+    assert.match(xml, /r="A2" s="4"><v>46295<\/v>/); assert.match(xml, /r="F2"[^>]*t="inlineStr"/); assert.match(xml, /00000/);
+    assert.doesNotMatch([...xml.matchAll(/<t[^>]*>(.*?)<\/t>/g)].map(m => m[1]).join(' '), /https?:|c1234567890123456789012345|JV-1|posting|ledger/);
+    assert.match(exportedSheet(file, 'xl/workbook.xml'), /สมุดรายวันซื้อ/); assert.match(exportedSheet(file, 'xl/workbook.xml'), /เกี่ยวกับไฟล์นี้/);
+    const excludedFile = buildPurchaseJournalWorkbook([], [{ expenseNumber: 'USD-1', reason: 'foreign_currency', detail: 'ยอดเป็นสกุลเงินอื่น นำเข้าได้เฉพาะเงินบาท' }], {});
+    assert.match(exportedSheet(excludedFile, 'xl/worksheets/sheet2.xml'), /USD-1/);
+  });
+});
