@@ -996,13 +996,7 @@ export const CAPTURE_SOURCE_LABELS: Record<ExpenseCaptureSource, string> = {
   API_INTERNAL: 'ระบบ',
 };
 
-export const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
-  CASH: 'เงินสด',
-  BANK_TRANSFER: 'โอนเงิน',
-  CARD: 'บัตรเครดิต',
-  CHEQUE: 'เช็ค',
-  OTHER: 'อื่นๆ',
-};
+export { EXPENSE_PAYMENT_METHOD_LABELS as PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
 
 export const POSTING_STATUS_LABELS: Record<ExpensePostingStatus, string> = {
   not_required: '-',

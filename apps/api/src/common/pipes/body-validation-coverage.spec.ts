@@ -75,7 +75,7 @@ const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
 };
 
 /** Total across every controller, including the long tail not listed individually above. */
-const KNOWN_UNVALIDATED_TOTAL = 142;
+const KNOWN_UNVALIDATED_TOTAL = 141;
 
 describe('request body validation coverage (audit H-23)', () => {
   it('does not grow the unvalidated-body backlog', () => {

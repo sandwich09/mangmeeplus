@@ -1,3 +1,4 @@
+import { withholdingFormFor } from '../../domain/logic/expense-payment-withholding.logic';
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import { AccountingDocumentSourceAdapter } from '../../infrastructure/adapters/accounting-document-source.adapter';
@@ -71,7 +72,7 @@ export class SyncTaxEventsUseCase {
     if (category?.filingRoute === 'SEPARATE_PND2' || category?.filingRoute === 'ACCOUNTANT_PREPARES') {
       for (const code of ['MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING']) await this.taxRepo.resolveSourceIssues(companyId, code, sourceType, sourceId);
     }
-    const formType = kind === 'INDIVIDUAL' ? category?.filingRoute === 'SEPARATE_PND2' ? 'PND2' : 'PND3' : 'PND53';
+    const formType = withholdingFormFor(kind, category?.filingRoute)!;
     await this.taxRepo.supersedeUnclassifiedWithholding?.(companyId, sourceType, sourceId, `WHT_${formType}`);
     return { formType, filingRoute: category?.filingRoute ?? 'SYSTEM_FILLS' };
   }

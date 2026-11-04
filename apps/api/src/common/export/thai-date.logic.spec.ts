@@ -8,7 +8,7 @@ import {
 } from '@watchdog-bms/contracts';
 import {
   buildAccountantIndexCsv,
-  buildAccountantIndexXlsx,
+  buildAccountantWorkbook,
 } from '../../modules/expenses/domain/logic/expense-export.logic';
 import { buildTaxExportArtifact } from '../../modules/tax/domain/logic/tax-export.logic';
 import { formatThaiExportDate, isIsoDateLike } from './thai-date.logic';
@@ -77,7 +77,7 @@ describe('XLSX-only Thai export dates', () => {
     });
 
     const csv = buildAccountantIndexCsv([row]);
-    const xlsx = sheetXml(buildAccountantIndexXlsx([row], 'full'));
+    const xlsx = sheetXml(buildAccountantWorkbook({ rows: [{ ...row, last_paid_at: row.paid_at, description: row.accounting_period }], payments: [], withholding: [], visible: {}, about: { 'ช่วงวันที่': row.accounting_period } }));
 
     // The full CSV now includes the appended document/evidence/address columns; dates stay ISO.
     assert.equal(csv.split('\n')[0], ACCOUNTANT_INDEX_COLUMNS.join(','));

@@ -6,6 +6,7 @@ import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res
 import type { Response } from 'express';
 import {
   AccountantEvidenceBundleDto,
+  AccountantPackageDto,
   AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
@@ -106,7 +107,7 @@ import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
-  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
+  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
   PreviewSubstituteReceiptInput,
@@ -273,7 +274,7 @@ export class ExpenseController {
 
   @Post('accountant-package')
   @RequirePermissions('expense.export')
-  createAccountantPackage(@ReqCtx() ctx: RequestContext, @Body() body: AccountantPackageRequest) {
+  createAccountantPackage(@ReqCtx() ctx: RequestContext, @Body() body: AccountantPackageDto) {
     return this.accountantPackage.execute(ctx, body ?? {});
   }
 

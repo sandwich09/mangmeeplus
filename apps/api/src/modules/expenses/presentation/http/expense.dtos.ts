@@ -31,6 +31,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   IsUUID,
@@ -274,6 +275,14 @@ export class AccountantEvidenceBundleDto {
   @IsOptional() @IsIn(Object.keys(TAX_EVIDENCE_STATUS_LABELS)) taxEvidenceStatus?: SharedEvidenceFilter['taxEvidenceStatus'];
   @IsOptional() @IsIn(EXPENSE_PAYMENT_STATUSES) paymentStatus?: SharedEvidenceFilter['paymentStatus'];
   @IsOptional() @IsIn(['not_required', 'pending', 'posted', 'posting_error', 'reversed']) postingStatus?: SharedEvidenceFilter['postingStatus'];
+}
+
+
+export class AccountantPackageDto extends AccountantEvidenceBundleDto {
+  @IsOptional() @IsIn(['summary', 'full']) columnSet?: 'summary' | 'full';
+  @IsOptional() @IsIn(['csv']) format?: 'csv';
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500) pageSize?: number;
 }
 
 

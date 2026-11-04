@@ -25,3 +25,9 @@ export function allocateExpenseWithholding<T extends { id: string; amount: unkno
     return { ...p, grossAmount: base.toString(), whtAmount: tax.toString() };
   });
 }
+
+/** Shared form choice; callers retain source-specific kind validation and review issues. */
+export function withholdingFormFor(kind: string | null, filingRoute?: string | null): 'PND2' | 'PND3' | 'PND53' | null {
+  if (kind === 'INDIVIDUAL') return filingRoute === 'SEPARATE_PND2' ? 'PND2' : 'PND3';
+  return kind === 'JURISTIC' || kind === 'JURISTIC_PERSON' ? 'PND53' : null;
+}

@@ -1240,7 +1240,9 @@ describe('AnthropicApiProvider (local eval)', () => {
         if (testCase.contents !== undefined) writeFileSync(keyPath, testCase.contents);
         const child = spawnSync(process.execPath, ['--input-type=module', '--eval', runner, launcher, testCase.expected, dir], {
           encoding: 'utf8', env: { ...process.env, AWS_PROFILE: testCase.profile, ANTHROPIC_API_KEY: 'ambient-key-must-be-ignored',
-            MANGMEE_EVAL_ANTHROPIC_KEY_FILE: testCase.file, MANGMEE_EVAL_SECRETS_PATH: secretsPath },
+            MANGMEE_EVAL_ANTHROPIC_KEY_FILE: testCase.file, MANGMEE_EVAL_SECRETS_PATH: secretsPath,
+            // M1c: the launcher records its transport provenance here and refuses to start without it.
+            MANGMEE_EVAL_OUTPUT_DIR: join(dir, 'eval-out') },
         });
         assert.equal(child.status, testCase.refused ? 1 : 0, child.stderr);
         assert.ok(!`${child.stdout}${child.stderr}`.includes(key));

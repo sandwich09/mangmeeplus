@@ -46,6 +46,79 @@ function harness(rows: Array<Record<string, unknown>>) {
   return { taxRepo, events, periods, issues, supersededSources, run: (scope: 'ALL' | 'WHT' | 'PND53' = 'ALL') => new SyncTaxEventsUseCase(taxRepo, docSource, expenseSource, noWhtPayments).execute('company-1', undefined, scope) };
 }
 
+describe('accountant export shared WHT projection', () => {
+  it('withholdingFormFor preserves every sync payee and filing-route decision', async () => {
+    const logic: any = await import('../../domain/logic/expense-payment-withholding.logic');
+    assert.equal(typeof logic.withholdingFormFor, 'function');
+    for (const route of [undefined, 'SYSTEM_FILLS', 'ACCOUNTANT_PREPARES', 'SEPARATE_PND2']) {
+      assert.equal(logic.withholdingFormFor('INDIVIDUAL', route), route === 'SEPARATE_PND2' ? 'PND2' : 'PND3');
+      for (const kind of ['JURISTIC', 'JURISTIC_PERSON']) assert.equal(logic.withholdingFormFor(kind, route), 'PND53');
+      for (const kind of [null, 'FOREIGN', 'GOVERNMENT', 'OTHER']) assert.equal(logic.withholdingFormFor(kind, route), null);
+    }
+  });
+
+  function adapterFixture(overrides: Record<string, unknown> = {}) {
+    const row = (id: string) => ({ id, companyId: 'company-1', status: 'CONFIRMED', expenseDate: new Date('2026-10-01'), updatedAt: new Date('2026-10-01'),
+      vendorNameSnapshot: 'ผู้รับเงิน', vendorAddressSnapshot: 'กรุงเทพ', vendorEntityKindSnapshot: 'INDIVIDUAL', vendorCounterpartyId: null,
+      whtAmount: '30', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000', whtRate: '3', whtCategoryCode: 'SERVICE_FEE',
+      lines: [], payments: [1, 2].map(n => ({ id: `${id}-${n}`, amount: '485', status: 'RECORDED', paidAtConfirmed: true,
+        paidAt: new Date(`2026-10-0${n}`), createdAt: new Date(`2026-10-0${n}`) })), ...overrides });
+    const queries: any[] = [], otherQueries: string[] = [];
+    const db = { expenseRecord: { findMany: async ({ where }: any) => { queries.push(where); return [row('A'), row('B')].filter(r => r.companyId === where.companyId && r.status === where.status && Number(r.whtAmount) > where.whtAmount.gt && (!where.id || where.id.in.includes(r.id))); } },
+      whtFilingLine: { findMany: async () => { otherQueries.push('filing'); return []; } }, company: { findUnique: async () => { otherQueries.push('company'); return { timezone: 'Asia/Bangkok' }; } } };
+    return { db, queries, otherQueries };
+  }
+
+  it('WHT selection distinguishes empty from omitted IDs', async () => {
+    const { ExpenseSourceAdapter } = await import('../../infrastructure/adapters/expense-source.adapter');
+    const f = adapterFixture(); const adapter: any = new ExpenseSourceAdapter({ client: f.db } as any);
+    assert.deepEqual(await adapter.findConfirmedWithWhtByCompany('company-1', undefined, { expenseIds: [] }), []);
+    assert.deepEqual(f.queries, []); assert.deepEqual(f.otherQueries, []);
+    const selected = await adapter.findConfirmedWithWhtByCompany('company-1', undefined, { expenseIds: ['A'] });
+    assert.deepEqual(selected.map((row: any) => [row.id, row.grossAmount, row.whtAmount]), [['A', '500', '15'], ['A', '500', '15']]);
+    for (const args of [[], [undefined], [undefined, {}], [undefined, { expenseIds: undefined }]]) {
+      const rows = await adapter.findConfirmedWithWhtByCompany('company-1', ...args);
+      assert.deepEqual(rows.map((row: any) => row.id), ['A', 'A', 'B', 'B']);
+      assert.ok(!('id' in f.queries.at(-1)!));
+    }
+    const h = harness([]); const calls: any[][] = [];
+    await new SyncTaxEventsUseCase(h.taxRepo, { findIssuedWithVatByCompany: async () => [] } as any,
+      { findConfirmedWithWhtByCompany: async (...args: any[]) => { calls.push(args); return []; } } as any, noWhtPayments).execute('company-1', undefined, 'WHT');
+    assert.deepEqual(calls, [['company-1', undefined]], 'sync keeps two arguments');
+  });
+
+  it('shared projection preserves split rates, explicit base, amount-only tax and unconfirmed dates', async () => {
+    const { ExpenseSourceAdapter } = await import('../../infrastructure/adapters/expense-source.adapter');
+    const project = async (overrides: Record<string, unknown>) => {
+      const f = adapterFixture(overrides); return new ExpenseSourceAdapter({ client: f.db } as any).findConfirmedWithWhtByCompany('company-1');
+    };
+    const legacy = await project({ whtAmount: '24', netPayableAmount: '976', lines: [
+      { id: 'rent', taxableAmount: '300', whtAmount: '3', whtRate: '0.01', whtCategoryCode: 'RENT' },
+      { id: 'service', taxableAmount: '700', whtAmount: '21', whtRate: '0.03', whtCategoryCode: 'SERVICE_FEE' }],
+      payments: [{ id: 'p', amount: '976', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-10-02'), createdAt: new Date('2026-10-02') }] });
+    assert.deepEqual(legacy.slice(0, 2).map(row => [row.grossAmount, row.whtAmount, row.whtRate]), [['300', '3', '1.0000'], ['700', '21', '3.0000']]);
+    const explicit = await project({ whtAmount: '8.12', netPayableAmount: '991.88',
+      whtInputJson: { inputType: 'RATE', value: '3', baseAmount: '270.50', origin: 'REVIEWER' },
+      payments: [{ id: 'p', amount: '991.88', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-10-02'), createdAt: new Date('2026-10-02') }] });
+    assert.equal(explicit.filter(row => row.id === 'A').reduce((sum, row) => sum + Number(row.grossAmount), 0), 270.50);
+    const amount = await project({ whtInputJson: { inputType: 'AMOUNT', value: '30', baseAmount: '1000', origin: 'REVIEWER' } });
+    assert.ok(amount.every(row => row.whtRate === null));
+    assert.deepEqual(await project({ payments: [{ id: 'p', amount: '970', status: 'RECORDED', paidAtConfirmed: false, paidAt: new Date('2026-10-02'), createdAt: new Date('2026-10-02') }] }), []);
+  });
+
+  it('withholdingRowFaults keeps the existing Thai row faults', async () => {
+    const validation: any = await import('../services/withholding-filing-validation');
+    assert.equal(typeof validation.withholdingRowFaults, 'function');
+    const event = { eventType: 'WHT_PND3', sourceType: 'expense.record', sourceId: 'A', payeeSnapshot: { name: 'สมชาย', taxId: '123', branchCode: '', address: null },
+      incomeCategoryCode: 'SERVICE_FEE', whtRate: '3', grossAmount: '1000', withheldAmount: '30' };
+    const context = { formType: 'PND3', categoryByCode: new Map([['SERVICE_FEE', { nameTh: 'ค่าบริการ', formType: 'PND3' }]]), sourceKind: 'INDIVIDUAL' };
+    assert.deepEqual(validation.withholdingRowFaults(event, context), [{ reason: 'payee', detail: 'สมชาย: ข้อมูลผู้รับเงินยังขาด: ที่อยู่ · เลขผู้เสียภาษีต้องมี 13 หลัก · เปิดรายจ่ายหรือคู่ค้าแล้วแก้ไข' }]);
+    assert.deepEqual(validation.withholdingRowFaults({ ...event, payeeSnapshot: { ...event.payeeSnapshot, taxId: '1234567890123', address: 'กรุงเทพ' } }, context), []);
+    assert.deepEqual(validation.withholdingRowFaults({ ...event, eventType: 'WHT_PND2', incomeCategoryCode: 'INTEREST', payeeSnapshot: { ...event.payeeSnapshot, taxId: '1234567890123', address: 'กรุงเทพ' } },
+      { ...context, formType: 'PND2', categoryByCode: new Map([['INTEREST', { nameTh: 'ดอกเบี้ย', formType: 'PND2' }]]) }), []);
+  });
+});
+
 describe('SyncTaxEventsUseCase WHT form selection', () => {
   it('carries exact amount-only WHT into tax events without fabricating a reporting rate', async () => {
     const h = harness([whtExpense({ whtAmount: '30.01', grossAmount: '1234.56', whtRate: null })]);

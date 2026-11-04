@@ -67,10 +67,12 @@ export class ExpenseSourceAdapter {
     }));
   }
 
-  async findConfirmedWithWhtByCompany(companyId: string, since?: Date): Promise<ExpenseWhtSourceRow[]> {
+  async findConfirmedWithWhtByCompany(companyId: string, since?: Date, filter?: { expenseIds?: string[] }): Promise<ExpenseWhtSourceRow[]> {
+    if (filter?.expenseIds?.length === 0) return [];
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId,
+        ...(filter?.expenseIds !== undefined ? { id: { in: filter.expenseIds } } : {}),
         status: 'CONFIRMED',
         whtAmount: { gt: 0 },
         // Read all payments: a void or late payment can change an older unfiled month.

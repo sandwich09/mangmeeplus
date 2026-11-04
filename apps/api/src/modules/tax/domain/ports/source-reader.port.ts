@@ -124,7 +124,7 @@ export interface AccountingDocumentSourcePort {
 
 export interface ExpenseSourcePort {
   findConfirmedWithVatByCompany(companyId: string, since?: Date): Promise<ExpenseSourceRow[]>;
-  findConfirmedWithWhtByCompany(companyId: string, since?: Date): Promise<ExpenseWhtSourceRow[]>;
+  findConfirmedWithWhtByCompany(companyId: string, since?: Date, filter?: { expenseIds?: string[] }): Promise<ExpenseWhtSourceRow[]>;
   findFinalizedTransactionTaxLines(companyId: string, since?: Date): Promise<TransactionTaxSourceLineRow[]>;
   findVoidedTransactionTaxLines(companyId: string, since?: Date): Promise<TransactionTaxSourceLineRow[]>;
 }

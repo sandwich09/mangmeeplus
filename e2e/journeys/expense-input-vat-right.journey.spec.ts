@@ -244,7 +244,7 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
     await expect(owner.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
   });
-  await test.step('accounting office workbook carries both rows with the shared words and the appended decision', async () => {
+  await test.step('accounting office workbook carries both rows with accountant columns and shared Thai words', async () => {
     await pressMenu(owner, 'หลักฐานทางบัญชี', 'ค่าใช้จ่ายและใบเสร็จ');
     await expect(main.getByRole('heading', { level: 1, name: 'หลักฐานทางบัญชี', exact: true })).toBeVisible(FIRST_SIGHT);
     const month = main.getByRole('combobox', { name: 'เดือน', exact: true });
@@ -258,17 +258,17 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     await main.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
     const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click());
     const [headers, ...rows] = sheetRows(await readFile((await file.download.path())!));
-    expect(headers!.slice(-7, -3)).toEqual(['สิทธิภาษีซื้อ', 'เหตุผลสิทธิภาษีซื้อ', 'ผู้ตรวจสิทธิภาษีซื้อ', 'วันเวลาที่ตรวจสิทธิภาษีซื้อ']);
-    expect(headers!.slice(-3)).toEqual(['เลขใบสำคัญจ่าย', 'เลขหนังสือรับรอง 50 ทวิ', 'ชื่อไฟล์ในชุดเอกสาร']);
+    expect(headers).toContain('สิทธิภาษีซื้อ');
+    expect(headers!.slice(-4)).toEqual(['วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ']);
+    for (const removed of ['ผู้ตรวจสิทธิภาษีซื้อ', 'วันเวลาที่ตรวจสิทธิภาษีซื้อ', 'เหตุผลสิทธิภาษีซื้อ', 'เลขใบสำคัญจ่าย', 'เลขหนังสือรับรอง 50 ทวิ', 'ชื่อไฟล์ในชุดเอกสาร']) expect(headers).not.toContain(removed);
     expect(headers).toContain('หมายเหตุ');
     const cell = (row: string[], label: string) => row[headers!.indexOf(label)];
     const invoice = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === invoiceSeller)!;
     const receipt = rows.find(row => cell(row, 'ผู้ขาย/ผู้รับเงิน') === receiptSeller)!;
     expect(invoice).toBeDefined(); expect(receipt).toBeDefined();
     for (const row of [invoice, receipt]) expect(cell(row, 'หลักฐานรายจ่าย')).toBe('ใช้ได้');
-    expect(cell(invoice, 'สิทธิภาษีซื้อ')).toBe('ใช้ได้ตามเงื่อนไข'); expect(cell(invoice, 'ผู้ตรวจสิทธิภาษีซื้อ')).toBe(QA_ACCOUNTS.OWNER.displayName);
-    expect(cell(invoice, 'วันเวลาที่ตรวจสิทธิภาษีซื้อ')).toContain(thaiDate());
-    expect(cell(receipt, 'สิทธิภาษีซื้อ')).toBe('ใช้ไม่ได้'); expect(cell(receipt, 'ผู้ตรวจสิทธิภาษีซื้อ')).toBe('');
+    expect(cell(invoice, 'สิทธิภาษีซื้อ')).toBe('ใช้ได้ตามเงื่อนไข');
+    expect(cell(receipt, 'สิทธิภาษีซื้อ')).toBe('ใช้ไม่ได้');
     const saved = await json<ExpenseDetail>(await api.get(`companies/${SHOP}/expenses/${receiptId}`, scope));
     expect(saved.inputVatClaimStatus).toBe('NON_CLAIMABLE'); expect(saved.inputVatRight?.latestDecision).toBeNull();
   });
@@ -296,8 +296,8 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     for (const seller of [invoiceSeller, receiptSeller]) {
       const row = rows.find(row => row[headers!.indexOf('ผู้ขาย/ผู้รับเงิน')] === seller);
       expect(row).toBeDefined();
-      const names = row![headers!.indexOf('ชื่อไฟล์ในชุดเอกสาร')]!.split('\n').filter(Boolean);
-      expect(names.some(name => name.startsWith('ใบเสร็จ/EXP-'))).toBe(true);
+      const names = row![headers!.indexOf('ไฟล์เอกสาร')]!.split('\n').filter(Boolean);
+      expect(names.some(name => name.startsWith('เอกสารค่าใช้จ่าย/EXP-'))).toBe(true);
       for (const name of names) expect(files.has(name), name).toBe(true);
     }
     // Downloading keeps the bundle dialog open so a person can download it again.

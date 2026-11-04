@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { decideLinePaymentEvidencePairing, isRecentPaymentEvidenceLinkText, LINE_PAYMENT_EVIDENCE_WINDOW_MS, type LinePaymentEvidenceCandidate } from './line-payment-evidence.logic';
 import assert from 'node:assert/strict';
 import { deriveInputVatPreset, deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
-import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, accountingPeriod } from './expense-export.logic';
+import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantWorkbook, buildManifestEntry, accountingPeriod } from './expense-export.logic';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
 
 describe('deriveTaxEvidence', () => {
@@ -397,9 +397,9 @@ describe('accountant export logic', () => {
     assert.ok(csv.includes('"\'=WEBSERVICE(""https://evil.example"")"'));
   });
 
-  it('builds a real xlsx: Thai headers, numeric amounts, summary column set by default', () => {
+  it('builds one accountant workbook with Thai headers, numeric amounts and no app links', () => {
     const rows = [buildAccountantIndexRow(source)];
-    const summary = buildAccountantIndexXlsx(rows, 'summary');
+    const workbook = buildAccountantWorkbook({ rows, payments: [], withholding: [], visible: {}, about: {} });
     const sheetXml = (workbook: Buffer) => {
       for (let offset = 0; workbook.readUInt32LE(offset) === 0x04034b50;) {
         const size = workbook.readUInt32LE(offset + 18), nameLength = workbook.readUInt16LE(offset + 26), extraLength = workbook.readUInt16LE(offset + 28);
@@ -412,29 +412,25 @@ describe('accountant export logic', () => {
       }
       throw Error('Missing worksheet');
     };
-    const sheet = sheetXml(summary);
+    const sheet = sheetXml(workbook);
     for (const receiptProblem of ['NOT_AVAILABLE', 'LOST']) {
       const noReceipt = buildAccountantIndexRow({ ...source, sourceDocumentType: 'EXPENSE_NOTE_TEXT',
         aiVerificationSummaryJson: { documentReview: { assessment: { route: 'SUBSTITUTE_RECEIPT', receiptProblem, reason: 'ไม่มีใบเสร็จ', attachmentIds: [] } } } });
-      const file = sheetXml(buildAccountantIndexXlsx([noReceipt], 'full'));
+      const file = sheetXml(buildAccountantWorkbook({ rows: [noReceipt], payments: [], withholding: [], visible: {}, about: {} }));
       assert.match(file, /ไม่มีใบเสร็จ/); assert.doesNotMatch(file, /โน้ตค่าใช้จ่าย/);
     }
 
 
-    assert.equal(summary.subarray(0, 2).toString('utf8'), 'PK');
+    assert.equal(workbook.subarray(0, 2).toString('utf8'), 'PK');
     assert.ok(sheet.includes('<t xml:space="preserve">วันที่เอกสาร</t>'));
-    assert.ok(sheet.includes('<t xml:space="preserve">ยอดรวม</t>'));
+    assert.ok(sheet.includes('<t xml:space="preserve">ยอดรวมตามเอกสาร</t>'));
     assert.ok(!sheet.includes('grand_total_amount'));
     assert.ok(sheet.includes('<v>100</v>'), 'amounts must be numeric cells');
     assert.ok(sheet.includes('ยืนยันแล้ว'), 'status code must be shown in Thai');
-    assert.match(sheet, /เปิดไฟล์/);
-    assert.match(sheet, /HYPERLINK/);
-    assert.ok(!sheet.includes('เลขผู้เสียภาษีบริษัท'), 'summary set stays short');
-    assert.equal((sheet.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_SUMMARY_COLUMNS.length);
+    assert.doesNotMatch(sheet, /เปิดไฟล์|HYPERLINK|companies\//);
+    assert.ok(!sheet.includes('เลขผู้เสียภาษีบริษัท'));
+    assert.equal((sheet.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, 25);
 
-    const full = sheetXml(buildAccountantIndexXlsx(rows, 'full'));
-    assert.ok(full.includes('เลขผู้เสียภาษีบริษัท'));
-    assert.equal((full.match(/<row r="1"[^>]*>.*?<\/row>/s)?.[0].match(/<c /g) ?? []).length, ACCOUNTANT_INDEX_COLUMNS.length);
   });
 
   it('builds manifest entries without object keys and with expiring download urls', () => {

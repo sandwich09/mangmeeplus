@@ -1869,7 +1869,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   bundle_file_names: 'ชื่อไฟล์ในชุดเอกสาร',
 };
 
-/** Everyday view: what a non-accountant needs to read the export at a glance. */
+/** @deprecated Legacy selector; the accountant workbook has one column layout. */
 export const ACCOUNTANT_INDEX_SUMMARY_COLUMNS: readonly AccountantIndexColumn[] = [
   'document_date',
   'vendor_name',
@@ -1884,6 +1884,7 @@ export const ACCOUNTANT_INDEX_SUMMARY_COLUMNS: readonly AccountantIndexColumn[] 
 
 export type AccountantIndexColumnSet = 'summary' | 'full';
 
+/** @deprecated Only for the frozen legacy projection. */
 export function accountantIndexColumns(columnSet: AccountantIndexColumnSet): readonly AccountantIndexColumn[] {
   return columnSet === 'summary' ? ACCOUNTANT_INDEX_SUMMARY_COLUMNS : ACCOUNTANT_INDEX_COLUMNS;
 }
@@ -1919,7 +1920,7 @@ export type SkippedEvidenceEntry = {
 
 export type AccountantPackageRequest = SharedEvidenceFilter & {
   format?: 'csv';
-  /** Column set of the downloadable index file. Default `summary`. */
+  /** @deprecated Accepted for existing clients; the accountant workbook has one layout. */
   columnSet?: AccountantIndexColumnSet;
 };
 
@@ -1930,16 +1931,22 @@ export type AccountantEvidenceBundlePlan = {
 };
 
 export type AccountantPackageResult = {
+  /** Populated by the v2 projection; absent on legacy package responses. */
+  indexFileName?: string;
+  paymentRowCount?: number;
+  withholdingRowCount?: number;
   generatedAt: string;
   filterSummary: Record<string, string>;
   rowCount: number;
   totalMatched: number;
   truncated: boolean;
+  /** Frozen first-generation projection; file paths are legacy names, not current ZIP paths. */
   indexRows: AccountantPackageIndexRow[];
-  /** Machine-key CSV in full spec column order, for system-to-system consumers. */
+  /** Frozen first-generation CSV; file paths are legacy names, not current ZIP paths. */
   indexCsv: string;
   /** Real .xlsx (base64) with Thai header labels — what the UI downloads. */
   indexXlsxBase64: string;
+  /** @deprecated The accountant workbook has one layout. */
   columnSet: AccountantIndexColumnSet;
   evidenceManifest: EvidenceManifestEntry[];
   /** Empty on a complete package; anything here means the accountant is missing those files. */
@@ -2065,3 +2072,154 @@ export type ExpenseHistoryEntry = {
   changes: ExpenseHistoryChange[];
 };
 export type ExpenseHistoryResult = { data: ExpenseHistoryEntry[]; total: number; page: number; pageSize: number; creatorDisplayName: string | null };
+
+export const ACCOUNTANT_WORKBOOK_SHEETS = {
+  expenses: 'รายการค่าใช้จ่าย', payments: 'การจ่าย', withholding: 'หัก ณ ที่จ่าย', files: 'ไฟล์ทั้งหมด', about: 'เกี่ยวกับไฟล์นี้',
+} as const;
+
+export const ACCOUNTANT_WORKBOOK_COLUMNS = [
+  'document_date',
+  'uploaded_at',
+  'expense_number',
+  'vendor_document_number',
+  'source_document_type',
+  'vendor_name',
+  'vendor_tax_id',
+  'vendor_branch',
+  'vendor_address',
+  'category_name',
+  'description',
+  'currency',
+  'taxable_amount',
+  'vat_amount',
+  'grand_total_amount',
+  'input_vat_right',
+  'tax_evidence_status',
+  'wht_amount',
+  'net_payable_amount',
+  'paid_amount',
+  'outstanding_amount',
+  'last_paid_at',
+  'advanced_by',
+  'expense_status',
+  'notes',
+  'primary_file',
+] as const;
+export const ACCOUNTANT_WORKBOOK_COLUMN_LABELS: Record<typeof ACCOUNTANT_WORKBOOK_COLUMNS[number], string> = {
+  document_date: 'วันที่เอกสาร',
+  uploaded_at: 'วันที่ส่งเข้ามั่งมี',
+  expense_number: 'เลขที่รายการ',
+  source_document_type: 'ประเภทเอกสาร',
+  vendor_document_number: 'เลขที่ตามเอกสาร',
+  vendor_name: 'ผู้ขาย/ผู้รับเงิน',
+  vendor_tax_id: 'เลขประจำตัวผู้เสียภาษีผู้ขาย',
+  vendor_branch: 'สาขาผู้ขาย',
+  vendor_address: 'ที่อยู่ผู้ขาย',
+  category_name: 'หมวดค่าใช้จ่าย',
+  description: 'รายละเอียด',
+  currency: 'สกุลเงิน',
+  taxable_amount: 'มูลค่าก่อน VAT',
+  vat_amount: 'VAT',
+  grand_total_amount: 'ยอดรวมตามเอกสาร',
+  input_vat_right: 'สิทธิภาษีซื้อ',
+  tax_evidence_status: 'หลักฐานรายจ่าย',
+  wht_amount: 'หัก ณ ที่จ่าย (ทั้งเอกสาร)',
+  net_payable_amount: 'ยอดจ่ายสุทธิ',
+  paid_amount: 'จ่ายแล้ว',
+  outstanding_amount: 'ค้างจ่าย',
+  last_paid_at: 'วันที่จ่ายล่าสุด',
+  advanced_by: 'สำรองจ่ายโดย',
+  expense_status: 'สถานะ',
+  notes: 'หมายเหตุ',
+  primary_file: 'ไฟล์เอกสาร',
+};
+
+export const ACCOUNTANT_PAYMENT_SHEET_COLUMNS = [
+  'paid_at',
+  'expense_number',
+  'payee_name',
+  'amount',
+  'currency',
+  'payment_method',
+  'paid_from',
+  'voucher_numbers',
+  'payment_file',
+] as const;
+export const ACCOUNTANT_PAYMENT_SHEET_COLUMN_LABELS: Record<typeof ACCOUNTANT_PAYMENT_SHEET_COLUMNS[number], string> = {
+  paid_at: 'วันที่จ่าย',
+  expense_number: 'เลขที่รายการ',
+  payee_name: 'ผู้ขาย/ผู้รับเงิน',
+  amount: 'ยอดจ่าย',
+  currency: 'สกุลเงิน',
+  payment_method: 'วิธีจ่าย',
+  paid_from: 'จ่ายจาก',
+  voucher_numbers: 'เลขที่ใบสำคัญจ่าย',
+  payment_file: 'ไฟล์หลักฐานการจ่าย',
+};
+
+export const ACCOUNTANT_WITHHOLDING_SHEET_COLUMNS = [
+  'paid_at',
+  'expense_number',
+  'payee_name',
+  'payee_tax_id',
+  'payee_branch',
+  'payee_address',
+  'form_type',
+  'income_type',
+  'rate',
+  'gross_amount',
+  'withheld_amount',
+  'currency',
+  'certificate_numbers',
+  'status',
+  'notes',
+] as const;
+export const ACCOUNTANT_WITHHOLDING_SHEET_COLUMN_LABELS: Record<typeof ACCOUNTANT_WITHHOLDING_SHEET_COLUMNS[number], string> = {
+  paid_at: 'วันที่จ่าย',
+  expense_number: 'เลขที่รายการ',
+  payee_name: 'ผู้รับเงิน',
+  payee_tax_id: 'เลขประจำตัวผู้เสียภาษี',
+  payee_branch: 'สาขา',
+  payee_address: 'ที่อยู่',
+  form_type: 'แบบ ภ.ง.ด.',
+  income_type: 'ประเภทเงินได้',
+  rate: 'อัตรา (%)',
+  gross_amount: 'จำนวนเงินที่จ่าย',
+  withheld_amount: 'ภาษีที่หัก',
+  currency: 'สกุลเงิน',
+  certificate_numbers: 'เลขที่หนังสือรับรอง 50 ทวิ',
+  status: 'สถานะ',
+  notes: 'หมายเหตุ',
+};
+
+export const ACCOUNTANT_FILES_SHEET_COLUMNS = [
+  'expense_number',
+  'kind',
+  'version',
+  'replaced_by',
+  'file',
+  'part',
+] as const;
+export const ACCOUNTANT_FILES_SHEET_COLUMN_LABELS: Record<typeof ACCOUNTANT_FILES_SHEET_COLUMNS[number], string> = {
+  expense_number: 'เลขที่รายการ',
+  kind: 'ชนิดเอกสาร',
+  version: 'ฉบับ',
+  replaced_by: 'แทนด้วย',
+  file: 'ไฟล์',
+  part: 'ชุดที่',
+};
+
+export const ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMNS = ['shop_branch'] as const;
+export const ACCOUNTANT_WORKBOOK_OPTIONAL_COLUMN_LABELS = { shop_branch: 'สาขาของร้าน' } as const;
+
+export const EXPENSE_PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
+  CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CARD: 'บัตรเครดิต', CHEQUE: 'เช็ค', OTHER: 'อื่นๆ',
+};
+
+export function expenseCurrencyLabel(code: string | null | undefined): string {
+  if (!code || !/^[A-Za-z]{3}$/.test(code)) return 'สกุลเงินอื่น';
+  try {
+    const label = new Intl.DisplayNames(['th'], { type: 'currency', fallback: 'none' }).of(code.toUpperCase());
+    return label && label !== code.toUpperCase() ? label : 'สกุลเงินอื่น';
+  } catch { return 'สกุลเงินอื่น'; }
+}

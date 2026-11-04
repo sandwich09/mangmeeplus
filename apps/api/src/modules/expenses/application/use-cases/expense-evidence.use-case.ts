@@ -1,9 +1,15 @@
-import { civilDayRangeToUtc, civilInstantDayRangeToUtc, expenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { ExpenseSourceAdapter } from '../../../tax/infrastructure/adapters/expense-source.adapter';
+import { withholdingFormFor } from '../../../tax/domain/logic/expense-payment-withholding.logic';
+import { filedLineCoversPayment } from '../../../tax/application/services/withholding-filing-state';
+import { withholdingRowFaults } from '../../../tax/application/services/withholding-filing-validation';
+import { formPeriodKey, withholdingIssueDescription, makeReviewIssue } from '../../../tax/domain/logic/tax-period.logic';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
+import { civilDayRangeToUtc, civilInstantDayRangeToUtc, expenseDocumentDateStatus, civilDate, expenseEvidenceAssessment, expenseEvidenceImageMissing, TAX_EVIDENCE_REASON_LABELS, EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
 import { Injectable, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/use-cases/create-download-url.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
-import { noReceiptDocumentLabel, buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, evidenceRef } from '../../domain/logic/expense-export.logic';
+import { noReceiptDocumentLabel, buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantWorkbook, accountantNotes, shopBranchLabel, type AccountantWorkbookRow, type AccountantPaymentRow, type AccountantWithholdingRow, type AccountantWorkbookFile, buildManifestEntry, evidenceRef } from '../../domain/logic/expense-export.logic';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { branchScopeWhere, isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type {
@@ -49,11 +55,29 @@ function toAttachmentRef(a: { id: string; purpose: string; originalFileName: str
 
 type BundleKind = keyof AccountantEvidenceBundlePlan['counts'];
 type BundleFile = {
-  kind: BundleKind; expenseIds: string[]; expenseNumber: string; fileName: string;
+  kind: BundleKind; expenseIds: string[]; expenseNumber: string; fileName: string; legacyFileName: string; part: number;
+  version?: 'current' | 'superseded'; replacedBy?: string; paymentId?: string;
   attachment: { id: string; byteSize: number; status: string; originalFileName: string };
   extension: string | null; load?: () => Promise<Buffer>; number?: string;
 };
 const bundleName = (value: string) => value.replace(/[^A-Za-z0-9_\u0E00-\u0E7F-]/g, '_');
+
+function accountantRange(request: AccountantPackageRequest) {
+  let from = request.fromDate?.slice(0, 10), to = request.toDate?.slice(0, 10);
+  if (request.yearMonth) { from = `${request.yearMonth}-01`; const [year, month] = request.yearMonth.split('-').map(Number); to = new Date(Date.UTC(year!, month!, 0)).toISOString().slice(0, 10); }
+  const months: string[] = [];
+  if (from && to) for (let month = from.slice(0, 7); month <= to.slice(0, 7);) {
+    months.push(month); const [year, number] = month.split('-').map(Number); month = new Date(Date.UTC(year!, number!, 1)).toISOString().slice(0, 7);
+  }
+  return { from, to, months: from && to ? months : undefined };
+}
+function legacyBundleFileName(folder: string, expenseNumber: string, extension: string | null,
+  options: { index?: number; id?: string; number?: string; name?: string; duplicateId?: string } = {}) {
+  const stem = options.index !== undefined ? `${folder}/${bundleName(expenseNumber)}-${options.index + 1}${options.duplicateId ? `-${bundleName(options.duplicateId)}` : ''}`
+    : options.name ? `${folder}/${bundleName(options.name)}` : options.number !== undefined ? `${folder}/${bundleName(expenseNumber)}-${bundleName(options.number)}-${bundleName(options.id!)}`
+      : `${folder}/${bundleName(expenseNumber)}-${bundleName(options.id!)}`;
+  return `${stem}.${extension ?? 'bin'}`;
+}
 
 /**
  * Accountant/auditor shared evidence view: DB-backed virtual year/month
@@ -129,18 +153,20 @@ export class CreateAccountantPackageUseCase {
     private readonly prisma: PrismaService,
     private readonly vouchers: DisbursementVoucherUseCase,
     private readonly wht: IssueWhtCertificateFromHandoffUseCase,
+    private readonly expenseSource: ExpenseSourceAdapter = new ExpenseSourceAdapter(prisma),
   ) {}
 
   async execute(ctx: RequestContext, request: AccountantPackageRequest): Promise<AccountantPackageResult> {
     return this.createIndex(ctx, request, await this.bundleContents(ctx, request, false));
   }
 
-  private async createIndex(ctx: RequestContext, request: AccountantPackageRequest, { page, files, expenseIds }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>): Promise<AccountantPackageResult> {
-    const columnSet = request.columnSet === 'full' ? 'full' : 'summary';
+  private async createIndex(ctx: RequestContext, request: AccountantPackageRequest, contents: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>, download?: { part: number; included: Set<string>; skipped: Map<string, string> }): Promise<AccountantPackageResult> {
+    const { page, files, expenseIds } = contents;
+    const columnSet = 'full' as const;
 
     const company = await this.prisma.client.company.findUnique({
       where: { id: ctx.companyId },
-      select: { name: true, registeredName: true, taxId: true },
+      select: { name: true, registeredName: true, taxId: true, timezone: true, baseCurrency: true },
     });
     const userIds = [...new Set(page.rows.flatMap((r) => [r.createdByUserId, r.reviewedByUserId].filter((v): v is string => !!v)))];
     const users = userIds.length > 0
@@ -149,7 +175,7 @@ export class CreateAccountantPackageUseCase {
     const userName = new Map(users.map((u) => [u.id, u.displayName ?? u.email ?? u.id]));
     const branchIds = [...new Set(page.rows.map((row) => row.branchId).filter((id): id is string => !!id))];
     const branches = branchIds.length ? await this.prisma.client.branch.findMany({
-      where: { companyId: ctx.companyId, id: { in: branchIds } }, select: { id: true, code: true },
+      where: { companyId: ctx.companyId, id: { in: branchIds } }, select: { id: true, code: true, name: true, taxBranchCode: true, isVatEstablishment: true },
     }) : [];
     const branchCodes = new Map(branches.map((branch) => [branch.id, branch.code]));
     const certificatesFor = (id: string) => page.rows.find(row => row.id === id)?.evidenceSources?.certificates ?? [];
@@ -235,7 +261,7 @@ export class CreateAccountantPackageUseCase {
       const linked = files.filter(file => file.expenseIds.includes(row.id));
       indexRows[i]!.voucher_numbers = [...new Set(linked.filter(file => file.kind === 'vouchers').map(file => file.number!))].join(', ');
       indexRows[i]!.wht_certificate_numbers = [...new Set(linked.filter(file => file.kind === 'whtCertificates').map(file => file.number!))].join(', ');
-      indexRows[i]!.bundle_file_names = linked.map(file => file.fileName).join('\n');
+      indexRows[i]!.bundle_file_names = linked.map(file => file.legacyFileName).join('\n');
     }
 
     // Per-file signed links re-check the caller's attachment permission and expire.
@@ -287,7 +313,7 @@ export class CreateAccountantPackageUseCase {
 
     // Payment-month papers remain available, but cannot become another month's expense rows.
     const expenseIndexRows = indexRows.filter((_, i) => expenseIds.has(page.rows[i]!.id));
-    const paymentEvidenceRows = indexRows.filter((_, i) => !expenseIds.has(page.rows[i]!.id));
+    const workbook = await this.workbookProjection(ctx, request, contents, company, branches, download);
     const filterSummary: Record<string, string> = {};
     for (const [key, value] of Object.entries({ ...request, status: request.status ?? 'CONFIRMED', dateField: request.dateField ?? 'expenseDate' })) {
       if (value !== undefined && value !== null && key !== 'format' && key !== 'columnSet') filterSummary[key] = String(value);
@@ -297,7 +323,7 @@ export class CreateAccountantPackageUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.accountant_package.create', targetType: 'expense_export', targetId: ctx.requestId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { rowCount: expenseIndexRows.length, totalMatched: page.total, truncated: expenseIndexRows.length < page.total, evidenceCount: evidenceManifest.length, skippedEvidenceCount: skippedEvidence.length, filterSummary },
+      metadataJson: { workbook: 'accountant-v2', rowCount: expenseIndexRows.length, totalMatched: page.total, truncated: expenseIndexRows.length < page.total, evidenceCount: evidenceManifest.length, skippedEvidenceCount: skippedEvidence.length, filterSummary },
     });
 
     return {
@@ -308,11 +334,124 @@ export class CreateAccountantPackageUseCase {
       truncated: expenseIndexRows.length < page.total,
       indexRows: expenseIndexRows,
       indexCsv: buildAccountantIndexCsv(expenseIndexRows),
-      indexXlsxBase64: buildAccountantIndexXlsx(expenseIndexRows, columnSet, paymentEvidenceRows).toString('base64'),
+      indexXlsxBase64: workbook.data.toString('base64'),
+      indexFileName: workbook.indexFileName, paymentRowCount: workbook.paymentRowCount, withholdingRowCount: workbook.withholdingRowCount,
       columnSet,
       evidenceManifest,
       skippedEvidence,
     };
+  }
+
+  private async workbookProjection(ctx: RequestContext, request: AccountantPackageRequest,
+    { page, files, expenseIds }: Awaited<ReturnType<CreateAccountantPackageUseCase['bundleContents']>>,
+    company: { name: string; registeredName?: string | null; taxId?: string | null; timezone?: string; baseCurrency?: string } | null,
+    branches: { id: string; name: string; taxBranchCode: string | null; isVatEstablishment: boolean }[],
+    download?: { part: number; included: Set<string>; skipped: Map<string, string> }) {
+    const db = this.prisma.client, loadedRowIds = page.rows.map(row => row.id);
+    const visible = { vouchers: ctx.authProvider !== 'line' && hasPerm(ctx, 'expense.disbursement.read'),
+      certificates: ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct', 'wht.external_certificate.link'].some(permission => hasPerm(ctx, permission)),
+      shopBranch: await db.branch.count({ where: { companyId: ctx.companyId } }) > 1 };
+    const [payments, live, filed] = loadedRowIds.length ? await Promise.all([
+      db.expensePayment.findMany({ where: { companyId: ctx.companyId, status: 'RECORDED', expenseId: { in: loadedRowIds } },
+        select: { id: true, expenseId: true, amount: true, paidAt: true, paidAtConfirmed: true, paymentMethod: true, bankAccountRef: true } }),
+      this.expenseSource.findConfirmedWithWhtByCompany(ctx.companyId, undefined, { expenseIds: loadedRowIds }),
+      db.whtFilingLine.findMany({ where: { sourceType: 'expense.record', sourceId: { in: loadedRowIds }, filing: { companyId: ctx.companyId, status: 'FILED' } },
+        select: { id: true, sourceType: true, sourceId: true, lineJson: true, filing: { select: { formType: true, periodKey: true } } } }),
+    ]) : [[], [], []] as [never[], never[], never[]];
+    const categoryCodes = [...new Set([...live.flatMap(row => row.incomeCategoryCode ? [row.incomeCategoryCode] : []),
+      ...filed.flatMap(line => { const code = (line.lineJson as { payment?: (string | null)[] }).payment?.[5]; return code ? [code] : []; })])];
+    const [categories, periods, voucherLines, handoffs] = await Promise.all([
+      categoryCodes.length ? db.whtIncomeCategory.findMany({ where: { code: { in: categoryCodes } } }) : [],
+      live.length ? db.taxPeriod.findMany({ where: { companyId: ctx.companyId, taxType: 'WHT', status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { formType: true, periodKey: true, status: true } }) : [],
+      visible.vouchers && payments.length ? db.disbursementVoucherLine.findMany({ where: { companyId: ctx.companyId, expensePaymentId: { in: payments.map(payment => payment.id) }, voucher: { status: 'PAID' } },
+        select: { expensePaymentId: true, voucher: { select: { documentNumber: true, status: true } } } }) : [],
+      visible.certificates && loadedRowIds.length ? db.whtCertificateHandoff.findMany({ where: { companyId: ctx.companyId, sourcePaymentType: 'expense.record', sourcePaymentId: { in: loadedRowIds },
+        status: { in: ['SYSTEM_ISSUED', 'EXTERNAL_LINKED'] }, ...(request.branchId ? { sourceBranchId: request.branchId } : ctx.scopes?.branchIds ? { sourceBranchId: { in: ctx.scopes.branchIds } } : {}) },
+        select: { sourcePaymentId: true, status: true, certificateId: true, externalCertificateNumber: true } }) : [],
+    ]);
+    const certificateIds = handoffs.flatMap(handoff => handoff.certificateId ? [handoff.certificateId] : []);
+    const certificates = certificateIds.length ? await db.whtCertificate.findMany({ where: { companyId: ctx.companyId, id: { in: certificateIds } }, select: { id: true, certificateNumber: true } }) : [];
+    const certificateNumbers = (expenseId: string) => [...new Set(handoffs.filter(handoff => handoff.sourcePaymentId === expenseId).flatMap(handoff => {
+      const number = handoff.status === 'EXTERNAL_LINKED' ? handoff.externalCertificateNumber : certificates.find(certificate => certificate.id === handoff.certificateId)?.certificateNumber;
+      return number ? [number] : [];
+    }))].join(', ');
+    const range = accountantRange(request), timezone = company?.timezone ?? 'Asia/Bangkok';
+    const inRange = (date: Date | string) => { const day = civilDate(date instanceof Date ? date : new Date(date), timezone); return (!range.from || day >= range.from) && (!range.to || day <= range.to); };
+    const fileRows: AccountantWorkbookFile[] = files.map(file => ({ expenseNumber: file.expenseNumber, kind: file.kind, path: file.fileName, part: file.part,
+      version: file.version, replacedBy: file.replacedBy,
+      ...(download?.skipped.has(file.fileName) ? { skippedReason: download.skipped.get(file.fileName) } : download && file.part === download.part && !download.included.has(file.fileName) ? { skippedReason: 'ไม่พบไฟล์' } : {}) }));
+    const workbookRows: AccountantWorkbookRow[] = page.rows.filter(row => expenseIds.has(row.id)).map(row => {
+      const latest = payments.filter(payment => payment.expenseId === row.id).sort((a, b) => b.paidAt.getTime() - a.paidAt.getTime() || b.id.localeCompare(a.id))[0];
+      const cert = row.evidenceSources?.certificates.slice().reverse().find(certificate => certificate.status === 'ISSUED');
+      const evidenceSource = { aiVerificationSummaryJson: row.aiVerificationSummaryJson as Record<string, unknown> | null, attachments: row.attachments };
+      const evidence = expenseEvidenceAssessment(evidenceSource);
+      const primary = files.find(file => file.expenseIds.includes(row.id) && file.version !== 'superseded'
+        && (file.kind === 'substituteReceipts' || file.attachment.id === row.primaryAttachmentId || row.attachments.some(attachment => attachment.id === file.attachment.id && attachment.purpose === 'expense.receipt.primary')));
+      return { document_date: toIso(row.expenseDate).slice(0, 10), uploaded_at: toIso(row.uploadedAt), dateStatus: expenseDocumentDateStatus(row.aiVerificationSummaryJson),
+        expense_number: row.expenseNumber, vendor_document_number: row.vendorDocumentNumber ?? (cert?.snapshotJson as { documentNumber?: string } | null)?.documentNumber, source_document_type: row.sourceDocumentType,
+        sourceDocumentTypeLabel: noReceiptDocumentLabel({ sourceDocumentType: row.sourceDocumentType, taxEvidenceStatus: row.taxEvidenceStatus, aiVerificationSummaryJson: row.aiVerificationSummaryJson as Record<string, unknown> | null }) ?? undefined,
+        shop_branch: row.branchId && branches.find(branch => branch.id === row.branchId) ? shopBranchLabel(branches.find(branch => branch.id === row.branchId)!) : '',
+        vendor_name: row.vendorNameSnapshot, vendor_tax_id: row.vendorTaxIdSnapshot, vendor_branch: row.vendorBranchCodeSnapshot, vendor_address: row.vendorAddressSnapshot,
+        category_name: row.categoryName, description: row.note, currency: row.currency,
+        taxable_amount: String(row.taxableAmount), vat_amount: String(row.vatAmount), grand_total_amount: String(row.grandTotalAmount),
+        input_vat_right: row.inputVatClaimStatus, inputVatRightLabel: row.inputVatRecordedBeforeReview ? 'ไม่ได้ใช้ภาษีซื้อ (บันทึกก่อนมีการตรวจสิทธิ)' : undefined,
+        tax_evidence_status: row.taxEvidenceStatus, wht_amount: String(row.whtAmount), net_payable_amount: String(row.netPayableAmount), paid_amount: String(row.paidAmount), outstanding_amount: String(row.outstandingAmount),
+        last_paid_at: latest ? toIso(latest.paidAt) : '', lastPaidAtConfirmed: latest?.paidAtConfirmed,
+        advanced_by: row.evidenceSources?.requesterName ?? (cert?.fundingSource === 'PERSONAL_ADVANCE' ? cert.payerName : ''), expense_status: row.status,
+        notes: accountantNotes({ hasImage: !expenseEvidenceImageMissing(evidenceSource), evidenceNote: evidence?.note,
+          taxEvidenceStatus: row.taxEvidenceStatus, taxEvidenceReason: row.taxEvidenceReasonCode ? (TAX_EVIDENCE_REASON_LABELS as Record<string, string>)[row.taxEvidenceReasonCode] : '',
+          inputVatClaimStatus: row.inputVatClaimStatus, inputVatReason: row.latestInputVatDecision?.reason }),
+        primaryFile: primary ? fileRows[files.indexOf(primary)] : undefined };
+    });
+    const paymentRows: AccountantPaymentRow[] = payments.filter(payment => inRange(payment.paidAt)).map(payment => {
+      const row = page.rows.find(expense => expense.id === payment.expenseId)!;
+      const proof = files.find(file => file.kind === 'paymentSlips' && (file.paymentId === payment.id || file.expenseIds.includes(row.id) && !file.paymentId));
+      return { paid_at: toIso(payment.paidAt), paidAtConfirmed: payment.paidAtConfirmed, expense_number: row.expenseNumber ?? 'ยังไม่มีเลขที่', payee_name: row.vendorNameSnapshot,
+        amount: String(payment.amount), currency: row.currency, payment_method: payment.paymentMethod, paid_from: payment.bankAccountRef,
+        voucher_numbers: voucherLines.filter(line => line.expensePaymentId === payment.id && line.voucher.status === 'PAID').map(line => line.voucher.documentNumber).filter(Boolean).join(', '),
+        paymentFile: proof ? fileRows[files.indexOf(proof)] : undefined };
+    });
+    const categoryByCode = new Map(categories.map(category => [category.code, category]));
+    const withholding: AccountantWithholdingRow[] = [];
+    let coveredOutsideRangeCount = 0;
+    for (const line of [...new Map(filed.map(line => [line.id, line])).values()]) {
+      const payment = (line.lineJson as { payment?: (string | null)[] }).payment;
+      if (!payment?.[2] || !inRange(payment[2])) continue;
+      withholding.push({ paid_at: payment[2], expense_number: page.rows.find(row => row.id === line.sourceId)?.expenseNumber ?? 'ยังไม่มีเลขที่',
+        payee_name: payment[9], payee_tax_id: payment[10], payee_branch: payment[11], payee_address: payment[12], form_type: line.filing.formType,
+        income_type: payment[5] ? categoryByCode.get(payment[5])?.nameTh : '', rate: payment[8], gross_amount: payment[6], withheld_amount: payment[7], currency: payment[4],
+        certificate_numbers: certificateNumbers(line.sourceId), status: 'FILED', notes: categoryByCode.get(payment[5] ?? '')?.filingRoute === 'ACCOUNTANT_PREPARES' ? 'ผู้ทำบัญชีจัดทำแบบนี้เอง' : '' });
+    }
+    for (const row of live) {
+      const covered = filed.filter(line => filedLineCoversPayment(line, { sourceType: 'expense.record', sourceId: row.id, sourceLineKey: row.sourceLineKey, paymentId: row.paymentId }));
+      if (covered.length) {
+        if (inRange(row.expenseDate) && !covered.some(line => { const date = (line.lineJson as { payment?: (string | null)[] }).payment?.[2]; return date && inRange(date); })) coveredOutsideRangeCount++;
+        continue;
+      }
+      if (!inRange(row.expenseDate)) continue;
+      const category = categoryByCode.get(row.incomeCategoryCode ?? ''), form = withholdingFormFor(row.payeeEntityKind, category?.filingRoute);
+      const faults: string[] = [];
+      if (!form) faults.push(makeReviewIssue('WHT_PAYEE_KIND_UNKNOWN', { context: row.vendorName ?? undefined }).description);
+      if ((category?.filingRoute ?? 'SYSTEM_FILLS') === 'SYSTEM_FILLS' && row.currency.toUpperCase() !== (company?.baseCurrency ?? 'THB').toUpperCase()) faults.push(withholdingIssueDescription('FUNCTIONAL_CURRENCY_FX_MISSING', '', row.vendorName));
+      if ((category?.filingRoute ?? 'SYSTEM_FILLS') === 'SYSTEM_FILLS' && !row.vendorTaxId) faults.push(makeReviewIssue('MISSING_TAX_ID', { context: row.vendorName ?? 'ผู้รับเงิน' }).description);
+      faults.push(...withholdingRowFaults({ id: row.sourceLineKey ?? row.id, eventType: `WHT_${form ?? 'PND53'}`, sourceType: 'expense.record', sourceId: row.id, branchId: row.branchId,
+        eventDate: row.expenseDate, currency: row.currency, payeeSnapshot: { name: row.vendorName ?? '', taxId: row.vendorTaxId, branchCode: row.vendorBranchCode, address: row.vendorAddress },
+        incomeCategoryCode: row.incomeCategoryCode, whtRate: row.whtRate, grossAmount: row.grossAmount, withheldAmount: row.whtAmount, sourceLineKey: row.sourceLineKey },
+        { formType: form ?? 'PND53', categoryByCode, sourceKind: row.payeeEntityKind, expenseWithoutCounterparty: !page.rows.find(expense => expense.id === row.id)?.vendorCounterpartyId }).map(fault => fault.detail));
+      const locked = form && periods.some(period => period.formType === form && period.periodKey === formPeriodKey(form, row.expenseDate));
+      withholding.push({ paid_at: toIso(row.expenseDate), expense_number: page.rows.find(expense => expense.id === row.id)?.expenseNumber ?? 'ยังไม่มีเลขที่',
+        payee_name: row.vendorName, payee_tax_id: row.vendorTaxId, payee_branch: row.vendorBranchCode, payee_address: row.vendorAddress, form_type: form,
+        income_type: category?.nameTh, rate: row.whtRate, gross_amount: row.grossAmount, withheld_amount: row.whtAmount, currency: row.currency,
+        certificate_numbers: certificateNumbers(row.id), status: locked ? 'LOCKED' : faults.length ? 'NEEDS_REVIEW' : 'READY', faults: faults.slice(0, 1), notes: category?.filingRoute === 'ACCOUNTANT_PREPARES' ? 'ผู้ทำบัญชีจัดทำแบบนี้เอง' : '' });
+    }
+    const about: Record<string, string | number> = { 'ร้าน': company?.registeredName?.trim() || company?.name || '', 'เลขประจำตัวผู้เสียภาษีของร้าน': company?.taxId ?? '',
+      'ช่วงวันที่': [range.from, range.to].filter(Boolean).map(formatThaiExportDate).join(' – ') || 'ทุกเดือน', 'นับตาม': request.dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร',
+      'สถานะเอกสาร': EXPENSE_STATUS_LABELS[request.status ?? 'CONFIRMED'], 'สาขา': request.branchId ? branches.find(branch => branch.id === request.branchId)?.name ?? '' : 'ทุกสาขา', 'สร้างเมื่อ': formatThaiExportDate(new Date().toISOString()) };
+    if (request.page !== undefined || request.pageSize !== undefined) about['หน้า'] = `หน้าที่ ${request.page ?? 1} — การจ่ายและหัก ณ ที่จ่ายมีเฉพาะรายการในหน้านี้`;
+    if (coveredOutsideRangeCount) about['รวมในแบบที่ยื่นแล้ว'] = `การจ่ายหัก ณ ที่จ่าย ${coveredOutsideRangeCount} รายการในช่วงนี้ ระบบถือว่ารวมอยู่ในแบบที่ยื่นแล้วซึ่งลงวันที่จ่ายนอกช่วงนี้ จึงไม่แสดงในแผ่นนี้`;
+    const shop = bundleName(company?.registeredName?.trim() || company?.name || 'ร้าน').slice(0, 40), period = request.yearMonth ?? (range.from || range.to ? `${range.from ?? ''}_${range.to ?? ''}` : 'ทุกเดือน');
+    return { data: buildAccountantWorkbook({ rows: workbookRows, payments: paymentRows, withholding, files: download ? fileRows : undefined, part: download?.part, visible, about }),
+      indexFileName: `รายจ่าย-${shop}-${period}.xlsx`, paymentRowCount: paymentRows.length, withholdingRowCount: withholding.length };
   }
 
   private async readPackageRows(ctx: RequestContext, request: AccountantPackageRequest, bundle = false) {
@@ -369,9 +508,13 @@ export class CreateAccountantPackageUseCase {
       ...(request.expenseIds ? { sourcePaymentId: { in: request.expenseIds } } : {}),
       ...(request.branchId ? { sourceBranchId: request.branchId } : ctx.scopes?.branchIds ? { sourceBranchId: { in: ctx.scopes.branchIds } } : {}) },
       select: { id: true, certificateId: true, sourcePaymentId: true } }) : [];
+    const range = accountantRange(request);
+    const filedCandidates = request.expenseIds?.length === 0 ? [] : await db.whtFilingLine.findMany({ where: { sourceType: 'expense.record',
+      ...(request.expenseIds !== undefined ? { sourceId: { in: request.expenseIds } } : {}),
+      filing: { companyId: ctx.companyId, status: 'FILED', ...(range.months ? { periodKey: { in: range.months } } : range.from || range.to ? { periodKey: { ...(range.from ? { gte: range.from.slice(0, 7) } : {}), ...(range.to ? { lte: range.to.slice(0, 7) } : {}) } } : {}) } }, select: { sourceId: true } });
     const selection = request.expenseIds !== undefined ? new Set(request.expenseIds) : undefined;
     const extraIds = [...new Set([...payments.map(p => p.expenseId), ...paidVouchers.flatMap(v => v.lines.map(l => l.expenseId)),
-      ...handoffs.flatMap(h => h.sourcePaymentId ? [h.sourcePaymentId] : [])])].filter(id => (!selection || selection.has(id)) && !page.rows.some(row => row.id === id));
+      ...handoffs.flatMap(h => h.sourcePaymentId ? [h.sourcePaymentId] : []), ...filedCandidates.map(line => line.sourceId)])].filter(id => (!selection || selection.has(id)) && !page.rows.some(row => row.id === id));
     if (!bundle && (request.page !== undefined || request.pageSize !== undefined)) extraIds.length = 0;
     for (let offset = 0; offset < extraIds.length; offset += 500) {
       const extra = await this.repo.listSharedEvidence(ctx.companyId, { ...request, yearMonth: undefined, fromDate: undefined, toDate: undefined,
@@ -381,17 +524,25 @@ export class CreateAccountantPackageUseCase {
     page.rows.sort((a, b) => (a.expenseNumber ?? a.id).localeCompare(b.expenseNumber ?? b.id) || a.id.localeCompare(b.id));
     const names = new Map(page.rows.map(row => [row.id, row.expenseNumber ?? row.id]));
     const files: BundleFile[] = [];
-    const usedNames = new Set<string>();
+    const usedNames = new Set<string>(), publicNames = new Set<string>();
+    const displayNames = new Map(page.rows.map(row => [row.id, row.expenseNumber ?? 'ยังไม่มีเลขที่']));
+    const paymentSequence = new Map<string, number>();
+    const publicFileName = (stem: string, extension: string | null) => {
+      let name = `${stem}.${extension ?? 'bin'}`, suffix = 2;
+      while (publicNames.has(name)) name = `${stem}-${suffix++}.${extension ?? 'bin'}`;
+      publicNames.add(name); return name;
+    };
+    const paymentStem = (id: string) => { const next = (paymentSequence.get(id) ?? 0) + 1; paymentSequence.set(id, next); return `หลักฐานการจ่าย/${bundleName(displayNames.get(id)!)}-จ่าย-${next}`; };
     for (const row of page.rows) {
       row.attachments.forEach((attachment, index) => {
         const substitute = row.evidenceSources?.certificates.some(c => c.artifactAttachmentId === attachment.id || c.wetSignedScanAttachmentId === attachment.id);
         const folder = substitute ? 'ใบรับรองแทนใบเสร็จ' : 'ใบเสร็จ';
         const extension = canonicalAttachmentExtension(attachment.mimeType) ?? null;
-        const stem = `${folder}/${bundleName(names.get(row.id)!)}-${index + 1}`;
-        let fileName = `${stem}.${extension ?? 'bin'}`;
-        if (usedNames.has(fileName)) fileName = `${stem}-${bundleName(row.id)}.${extension ?? 'bin'}`;
-        usedNames.add(fileName);
-        files.push({ attachment, expenseIds: [row.id], expenseNumber: names.get(row.id)!, fileName, extension,
+        let legacyFileName = legacyBundleFileName(folder, names.get(row.id)!, extension, { index });
+        if (usedNames.has(legacyFileName)) legacyFileName = legacyBundleFileName(folder, names.get(row.id)!, extension, { index, duplicateId: row.id });
+        usedNames.add(legacyFileName);
+        const fileName = publicFileName(`${substitute ? 'ใบรับรองแทนใบเสร็จ' : 'เอกสารค่าใช้จ่าย'}/${bundleName(displayNames.get(row.id)!)}-${index + 1}${attachment.isHistorical ? '-ฉบับเดิม' : ''}`, extension);
+        files.push({ attachment, expenseIds: [row.id], expenseNumber: displayNames.get(row.id)!, fileName, legacyFileName, part: 0, extension,
           kind: substitute ? 'substituteReceipts' : 'receipts' });
       });
     }
@@ -399,11 +550,12 @@ export class CreateAccountantPackageUseCase {
       const expenseId = payments.find(payment => payment.id === slip.targetId)!.expenseId;
       if (!names.has(expenseId)) continue;
       const extension = canonicalAttachmentExtension(slip.attachment.mimeType) ?? null;
-      files.push({ kind: 'paymentSlips', expenseIds: [expenseId], expenseNumber: names.get(expenseId)!, attachment: { ...slip.attachment, byteSize: Number(slip.attachment.byteSize) }, extension,
-        fileName: `สลิปการจ่าย/${bundleName(names.get(expenseId)!)}-${bundleName(slip.targetId)}.${extension ?? 'bin'}` });
+      files.push({ kind: 'paymentSlips', expenseIds: [expenseId], expenseNumber: displayNames.get(expenseId)!, paymentId: slip.targetId, part: 0, attachment: { ...slip.attachment, byteSize: Number(slip.attachment.byteSize) }, extension,
+        legacyFileName: legacyBundleFileName('สลิปการจ่าย', names.get(expenseId)!, extension, { id: slip.targetId }),
+        fileName: publicFileName(paymentStem(expenseId), extension) });
     }
     const addDocument = async (kind: BundleKind, ids: string[], id: string, number: string, folder: string,
-      load: () => Promise<{ data: Buffer; mimeType?: string }>, name?: string) => {
+      load: () => Promise<{ data: Buffer; mimeType?: string }>, name?: string, displayNumber = number) => {
       if (!ids.length || ids.some(expenseId => !names.has(expenseId))) return;
       // Measure generated documents with the real downloader, one at a time. Do not retain a
       // month's PDF buffers in memory; parts still obey the existing byte and file limits.
@@ -414,22 +566,25 @@ export class CreateAccountantPackageUseCase {
       }
       const extension = canonicalAttachmentExtension(document.mimeType ?? 'application/pdf') ?? null;
       const expenseNumber = ids.map(expenseId => names.get(expenseId)!).sort()[0]!;
-      const fileName = name ? `${folder}/${bundleName(name)}.${extension ?? 'bin'}` : `${folder}/${bundleName(expenseNumber)}-${bundleName(number)}-${bundleName(id)}.${extension ?? 'bin'}`;
-      files.push({ kind, expenseIds: ids, expenseNumber, fileName, number, extension,
+      const legacyFileName = legacyBundleFileName(folder, expenseNumber, extension, { id, number, name });
+      const publicFolder = kind === 'whtCertificates' ? 'หนังสือรับรอง 50 ทวิ' : folder;
+      const stem = kind === 'paymentSlips' ? paymentStem(ids[0]!) : `${publicFolder}/${bundleName(displayNumber)}${name ? name.match(/-\d+$/)?.[0] ?? '' : ''}`;
+      const fileName = publicFileName(stem, extension);
+      files.push({ kind, expenseIds: ids, expenseNumber: ids.map(expenseId => displayNames.get(expenseId)!).sort()[0]!, fileName, legacyFileName, part: 0, number, extension,
         attachment: { id, byteSize: document.data.length, status: 'ACTIVE', originalFileName: fileName }, load: async () => (await load()).data });
     };
     for (const voucher of paidVouchers) {
       const ids = voucher.lines.map(line => line.expenseId);
-      await addDocument('vouchers', ids, voucher.id, voucher.documentNumber ?? voucher.id, 'ใบสำคัญจ่าย', () => this.vouchers.documentPdf(ctx, voucher.id));
+      await addDocument('vouchers', ids, voucher.id, voucher.documentNumber ?? voucher.id, 'ใบสำคัญจ่าย', () => this.vouchers.documentPdf(ctx, voucher.id), undefined, voucher.documentNumber ?? 'ยังไม่มีเลขที่');
       if (ids.length && ids.every(id => names.has(id))) {
         let supporting: Awaited<ReturnType<DisbursementVoucherUseCase['supportingFiles']>> = [];
         try { supporting = await this.vouchers.supportingFiles(ctx, voucher.id); } catch (error) {
           if (!(error instanceof ForbiddenException || error instanceof NotFoundException)) throw error;
         }
         for (const [index, file] of supporting.entries()) await addDocument('supportingFiles', ids, file.id, voucher.documentNumber ?? voucher.id, 'เอกสารประกอบการจ่าย',
-          () => this.vouchers.supportingFileBytes(ctx, voucher.id, file.id), `${voucher.documentNumber ?? voucher.id}-${index + 1}`);
+          () => this.vouchers.supportingFileBytes(ctx, voucher.id, file.id), `${voucher.documentNumber ?? voucher.id}-${index + 1}`, voucher.documentNumber ?? 'ยังไม่มีเลขที่');
       }
-      if (voucher.slipAttachmentId) await addDocument('paymentSlips', ids, voucher.slipAttachmentId, voucher.documentNumber ?? voucher.id, 'สลิปการจ่าย', () => this.vouchers.slipBytes(ctx, voucher.id));
+      if (voucher.slipAttachmentId) await addDocument('paymentSlips', ids, voucher.slipAttachmentId, voucher.documentNumber ?? voucher.id, 'สลิปการจ่าย', () => this.vouchers.slipBytes(ctx, voucher.id), undefined, voucher.documentNumber ?? 'ยังไม่มีเลขที่');
     }
     for (const handoff of handoffs) {
       const certificate = certificates.find(c => c.id === handoff.certificateId)!;
@@ -443,9 +598,19 @@ export class CreateAccountantPackageUseCase {
     for (const file of files) {
       const current = parts.at(-1);
       if (!current || current.length >= EVIDENCE_BUNDLE_MAX_FILES || bytes + file.attachment.byteSize > EVIDENCE_BUNDLE_MAX_BYTES) { parts.push([]); bytes = 0; }
-      parts.at(-1)!.push(file); bytes += file.attachment.byteSize;
+      file.part = parts.length; parts.at(-1)!.push(file); bytes += file.attachment.byteSize;
     }
     if (!parts.length && page.rows.length) parts.push([]); // An index also explains a month with missing papers.
+    for (const row of page.rows) for (const file of files.filter(file => file.kind === 'substituteReceipts' && file.expenseIds.includes(row.id))) {
+      const certificates = row.evidenceSources?.certificates ?? [];
+      const original = certificates.find(cert => cert.artifactAttachmentId === file.attachment.id || cert.wetSignedScanAttachmentId === file.attachment.id);
+      file.version = original?.status === 'SUPERSEDED' || row.attachments.find(attachment => attachment.id === file.attachment.id)?.isHistorical ? 'superseded' : 'current';
+      if (file.version !== 'superseded' || !original) continue;
+      let terminal = original;
+      const seen = new Set<string>();
+      while (!seen.has(terminal.id)) { seen.add(terminal.id); const next = certificates.find(cert => cert.correctionOfEvidenceId === terminal.id); if (!next) break; terminal = next; }
+      if (terminal.status === 'ISSUED') file.replacedBy = files.find(candidate => candidate.attachment.id === terminal.artifactAttachmentId || candidate.attachment.id === terminal.wetSignedScanAttachmentId)?.fileName;
+    }
     const counts = { receipts: 0, substituteReceipts: 0, paymentSlips: 0, vouchers: 0, supportingFiles: 0, whtCertificates: 0 };
     for (const file of files) counts[file.kind]++;
     const missingReceiptCount = page.rows.filter(row => !files.some(file => file.expenseIds.includes(row.id)
@@ -464,7 +629,7 @@ export class CreateAccountantPackageUseCase {
     const { parts } = contents;
     if (!Number.isInteger(part) || part < 1 || part > parts.length) throw new NotFoundException();
     const entries: Record<string, Buffer> = Object.create(null);
-    const skipped: string[] = [];
+    const skipped: string[] = [], skippedFiles = new Map<string, string>();
     for (const file of parts[part - 1]!) {
       let reason: string | undefined;
       if (file.attachment.status !== 'ACTIVE') reason = file.attachment.status === 'PENDING_UPLOAD' ? 'ไฟล์ยังตรวจสอบไม่เสร็จ' : 'ไฟล์นี้เปิดไม่ได้';
@@ -479,19 +644,19 @@ export class CreateAccountantPackageUseCase {
             : status === 403 ? 'ไม่มีสิทธิ์เปิดไฟล์' : 'อ่านไฟล์ไม่ได้ ลองดาวน์โหลดอีกครั้ง';
         }
       }
-      if (reason) skipped.push(`${file.expenseNumber.replace(/[\r\n\t]/g, ' ')} · ${file.attachment.originalFileName.replace(/[\r\n\t]/g, ' ')} · ${reason}`);
+      if (reason) { skippedFiles.set(file.fileName, reason); skipped.push(`${file.expenseNumber.replace(/[\r\n\t]/g, ' ')} · ${file.attachment.originalFileName.replace(/[\r\n\t]/g, ' ')} · ${reason}`); }
     }
     const fileCount = Object.keys(entries).length;
     if (skipped.length) entries['ไฟล์ที่ไม่ได้รวม.txt'] = Buffer.from(skipped.join('\n'), 'utf8');
-    const index = await this.createIndex(ctx, { ...request, columnSet: 'full' }, contents);
+    const index = await this.createIndex(ctx, { ...request, columnSet: 'full' }, contents, { part, included: new Set(Object.keys(entries)), skipped: skippedFiles });
     entries['สารบัญ.xlsx'] = Buffer.from(index.indexXlsxBase64, 'base64');
     const bytes = zipStore(entries);
     await this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
       action: 'expense.accountant_bundle.download', targetType: 'expense_export', targetId: ctx.requestId,
       result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { yearMonth: request.yearMonth ?? 'all', dateField: request.dateField ?? 'expenseDate', branchId: request.branchId ?? null, part, fileCount, skippedCount: skipped.length },
+      metadataJson: { workbook: 'accountant-v2', yearMonth: request.yearMonth ?? 'all', dateField: request.dateField ?? 'expenseDate', branchId: request.branchId ?? null, part, fileCount, skippedCount: skipped.length },
     });
-    return { bytes, fileName: `หลักฐาน-${request.yearMonth ?? 'ทุกเดือน'}${parts.length > 1 ? `-ชุดที่-${part}` : ''}.zip` };
+    return { bytes, fileName: index.indexFileName!.replace(/^รายจ่าย-/, 'หลักฐาน-').replace(/\.xlsx$/, `${parts.length > 1 ? `-ชุดที่-${part}` : ''}.zip`) };
   }
 }

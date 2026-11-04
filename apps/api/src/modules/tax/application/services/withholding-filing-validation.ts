@@ -7,6 +7,44 @@ import { PND3_FILING_REVIEW_MESSAGES, withholdingIssueDescription } from '../../
 
 type FilingEvent = Pick<TaxEventRecord, 'id' | 'eventType' | 'sourceType' | 'sourceId' | 'branchId' | 'eventDate' | 'currency' | 'payeeSnapshot' | 'incomeCategoryCode' | 'whtRate' | 'grossAmount' | 'withheldAmount' | 'sourceLineKey'>;
 type ReviewIssue = Pick<WithholdingMonthIssueDto, 'id' | 'issueCode' | 'description' | 'severity' | 'sourceType' | 'sourceId'>;
+export function withholdingRowFaults(event: FilingEvent, ctx: {
+  formType: WhtFormType | 'PND2'; categoryByCode: ReadonlyMap<string, { formType?: string | null; nameTh: string }>; sourceKind?: string | null; expenseWithoutCounterparty?: boolean;
+}): Array<{ reason: keyof typeof PND3_FILING_REVIEW_MESSAGES; detail: string }> {
+  const { formType, categoryByCode } = ctx;
+  const individual = formType !== 'PND53';
+  const faults: Array<{ reason: keyof typeof PND3_FILING_REVIEW_MESSAGES; detail: string }> = [];
+  const fault = (reason: keyof typeof PND3_FILING_REVIEW_MESSAGES, _event?: FilingEvent, detail?: string) => faults.push({ reason,
+    detail: detail ?? withholdingIssueDescription(`${formType}_FILING_${reason.toUpperCase()}`, PND3_FILING_REVIEW_MESSAGES[reason], event.payeeSnapshot?.name, ctx.expenseWithoutCounterparty),
+  });
+  const payee = event.payeeSnapshot;
+  const payeeAddress = printablePnd53PayeeAddress(payee?.address);
+  const payeeTaxId = String(payee?.taxId ?? '').replace(/\D/g, '');
+  const payeeBranch = payee?.branchCode ?? (individual ? '' : '00000');
+  const missingPayee: string[] = [], invalidPayee: string[] = [];
+  if (!payee?.name?.trim()) missingPayee.push('ชื่อผู้รับเงิน');
+  else if (payee.name.length > 80) invalidPayee.push('ชื่อผู้รับเงินยาวเกินช่องของแบบ (80 ตัวอักษร)');
+  if (!payeeTaxId) missingPayee.push('เลขผู้เสียภาษี');
+  else if (!/^\d{13}$/.test(payeeTaxId)) invalidPayee.push('เลขผู้เสียภาษีต้องมี 13 หลัก');
+  if (!(individual && payeeBranch === '') && !/^\d{5}$/.test(payeeBranch)) invalidPayee.push('รหัสสาขาภาษีต้องมี 5 หลัก');
+  if (!payeeAddress) missingPayee.push('ที่อยู่');
+  else if (payeeAddress.length > 104) invalidPayee.push('ที่อยู่ยาวเกินช่องของแบบ (104 ตัวอักษร)');
+  if (missingPayee.length || invalidPayee.length) fault('payee', event,
+    `${payee?.name?.trim() || 'ผู้รับเงิน'}: ${[...(missingPayee.length ? [`ข้อมูลผู้รับเงินยังขาด: ${missingPayee.join(' · ')}`] : []), ...invalidPayee, 'เปิดรายจ่ายหรือคู่ค้าแล้วแก้ไข'].join(' · ')}`);
+  if (!categoryByCode.has(event.incomeCategoryCode ?? '')) fault('category', event);
+  const categoryForm = categoryByCode.get(event.incomeCategoryCode ?? '')?.formType;
+  if (categoryForm && categoryForm !== formType) fault('kind', event);
+  const rate = Number(event.whtRate), income = Number(event.grossAmount), withheld = Number(event.withheldAmount);
+  // This checks tax against rate, not certificate/filing income equality. Keep the two-satang
+  // allowance for independent payment-share rounding and saved legacy per-line withholding.
+  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(income) || income <= 0 || !Number.isFinite(withheld) || (withheld < 0 || (withheld === 0 && !event.sourceLineKey?.startsWith('payment:'))) || Math.abs(Math.round(income * rate) / 100 - withheld) > 0.02) fault('amount', event);
+  if (event.sourceType === 'expense.record') {
+    if (ctx.sourceKind !== (individual ? 'INDIVIDUAL' : 'JURISTIC')) fault('kind', event);
+  } else if (event.sourceType === 'procurement.supplier_payment') {
+    if (ctx.sourceKind !== (individual ? 'INDIVIDUAL' : 'JURISTIC_PERSON')) fault('kind', event);
+  } else fault('source', event);
+  return faults;
+}
+
 /** Live facts, shared by the month read and PDF export. Old filing issues are historical, never inputs. */
 export async function validateWithholdingFiling(db: Prisma.TransactionClient, companyId: string, formType: WhtFormType,
   period: { periodKey: string; dueDate?: Date | null }, events: FilingEvent[], reviewIssues: ReviewIssue[], establishment?: WhtEstablishment, sequence = 0, historical = false) {
@@ -87,31 +125,13 @@ export async function validateWithholdingFiling(db: Prisma.TransactionClient, co
     const payeeAddress = printablePnd53PayeeAddress(payee?.address);
     const payeeTaxId = String(payee?.taxId ?? '').replace(/\D/g, '');
     const payeeBranch = payee?.branchCode ?? (individual ? '' : '00000');
-    const missingPayee: string[] = [], invalidPayee: string[] = [];
-    if (!payee?.name?.trim()) missingPayee.push('ชื่อผู้รับเงิน');
-    else if (payee.name.length > 80) invalidPayee.push('ชื่อผู้รับเงินยาวเกินช่องของแบบ (80 ตัวอักษร)');
-    if (!payeeTaxId) missingPayee.push('เลขผู้เสียภาษี');
-    else if (!/^\d{13}$/.test(payeeTaxId)) invalidPayee.push('เลขผู้เสียภาษีต้องมี 13 หลัก');
-    if (!(individual && payeeBranch === '') && !/^\d{5}$/.test(payeeBranch)) invalidPayee.push('รหัสสาขาภาษีต้องมี 5 หลัก');
-    if (!payeeAddress) missingPayee.push('ที่อยู่');
-    else if (payeeAddress.length > 104) invalidPayee.push('ที่อยู่ยาวเกินช่องของแบบ (104 ตัวอักษร)');
-    if (missingPayee.length || invalidPayee.length) fault('payee', event,
-      `${payee?.name?.trim() || 'ผู้รับเงิน'}: ${[...(missingPayee.length ? [`ข้อมูลผู้รับเงินยังขาด: ${missingPayee.join(' · ')}`] : []), ...invalidPayee, 'เปิดรายจ่ายหรือคู่ค้าแล้วแก้ไข'].join(' · ')}`);
+    const source = expenseById.get(event.sourceId);
+    const sourceKind = event.sourceType === 'expense.record'
+      ? source?.vendorEntityKindSnapshot ?? kinds.get(source?.vendorCounterpartyId ?? '')
+      : supplierById.get(event.sourceId)?.supplierType;
+    for (const item of withholdingRowFaults(event, { formType, categoryByCode, sourceKind, expenseWithoutCounterparty: event.sourceType === 'expense.record' && !counterpartyId(event.sourceType, event.sourceId) })) fault(item.reason, event, item.detail);
     const incomeType = event.incomeCategoryCode ? categoryNames.get(event.incomeCategoryCode) : null;
-    if (!categoryByCode.has(event.incomeCategoryCode ?? '')) fault('category', event);
-    const categoryForm = categoryByCode.get(event.incomeCategoryCode ?? '')?.formType;
-    if (categoryForm && categoryForm !== formType) fault('kind', event);
     const rate = Number(event.whtRate), income = Number(event.grossAmount), withheld = Number(event.withheldAmount);
-    // This checks tax against rate, not certificate/filing income equality. Keep the two-satang
-    // allowance for independent payment-share rounding and saved legacy per-line withholding.
-    if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(income) || income <= 0 || !Number.isFinite(withheld) || (withheld < 0 || (withheld === 0 && !event.sourceLineKey?.startsWith('payment:'))) || Math.abs(Math.round(income * rate) / 100 - withheld) > 0.02) fault('amount', event);
-    if (event.sourceType === 'expense.record') {
-      const source = expenseById.get(event.sourceId);
-      const kind = source?.vendorEntityKindSnapshot ?? kinds.get(source?.vendorCounterpartyId ?? '');
-      if (kind !== (individual ? 'INDIVIDUAL' : 'JURISTIC')) fault('kind', event);
-    } else if (event.sourceType === 'procurement.supplier_payment') {
-      if (supplierById.get(event.sourceId)?.supplierType !== (individual ? 'INDIVIDUAL' : 'JURISTIC_PERSON')) fault('kind', event);
-    } else fault('source', event);
     lines.push({ payeeName: payee?.name ?? '', payeeTaxId, payeeBranch, payeeAddress: payeeAddress ?? '', paidAt: event.eventDate, incomeType: incomeType ?? '', rate, income, withheld });
   }
   lines.sort((a, b) => a.payeeTaxId.localeCompare(b.payeeTaxId) || a.payeeBranch.localeCompare(b.payeeBranch) || a.paidAt.getTime() - b.paidAt.getTime());

@@ -43,6 +43,16 @@ it('validates the three document slip steps and accepts only the slip id on paym
   }
 });
 
+describe('accountant-v2 request DTO', () => {
+  it('accountant package validates selection and explicit pages', async () => {
+    const dtos: any = await import('./expense.dtos'); assert.equal(typeof dtos.AccountantPackageDto, 'function');
+    const dto = dtos.AccountantPackageDto;
+    for (const body of [{ expenseIds: 'x' }, { pageSize: 501 }, { page: 0 }, { page: 1.5 }, { columnSet: 'unknown' }]) await assert.rejects(() => run(dto, body), BadRequestException);
+    for (const body of [{ page: 2, pageSize: 100 }, { dateField: 'expenseDate', fromDate: '2026-10-01', toDate: '2026-10-31', columnSet: 'summary' },
+      { yearMonth: '2026-10', dateField: 'uploadedAt', expenseIds: ['A'], columnSet: 'full' }, { format: 'csv', expenseIds: [] }]) assert.ok(await run(dto, body));
+  });
+});
+
 describe('expense body DTOs (audit H-23)', () => {
   it('accepts only payment facts for a disbursement voucher and never client amounts or payment keys', async () => {
     const body = { commandId: 'pay', expectedVersion: 1, paidDate: '2026-10-01', paymentMethod: 'CASH', paidFromRef: 'เงินสด' };
