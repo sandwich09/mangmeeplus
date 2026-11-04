@@ -23,9 +23,19 @@ export type RuntimeSourceSnapshot = {
   assets: Record<string, { path: string; sha256: string; mimeType: string }>;
   /** Exact button label to click on a later turn, selected only from the preceding accepted wire. */
   postbackLabels?: Record<number, string>;
+  /** Optional workflow replay actors; omitted snapshots retain the original single-actor seed. */
+  actors?: Record<string, { companyId: string; userId: string; role: string; branchIds: string[]; postbackLabels?: Record<number, string> }>;
 };
+export type RuntimeReplayAction =
+  | { type: 'postback'; label: string; pressFrom?: string }
+  | { type: 'message'; label: string; text: string; pressFrom?: string }
+  | { type: 'uri'; label: string; uri: string; pressFrom?: string }
+  | { type: 'camera'; label: string; assetId: string; pressFrom?: string };
+export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string };
+export type RuntimeReplayFixture = ReliabilityFixture & { turns: Array<ReliabilityFixture['turns'][number] & RuntimeReplayTurn> };
+export type RuntimeReplayCorpus = Omit<ReliabilityCorpus, 'fixtures'> & { fixtures: RuntimeReplayFixture[] };
 export type ReliabilityRuntimeManifest = {
-  version: 2; corpus: ReliabilityCorpus; snapshots: Record<string, RuntimeSourceSnapshot>;
+  version: 2; corpus: RuntimeReplayCorpus; snapshots: Record<string, RuntimeSourceSnapshot>;
   snapshotDigests: Record<string, string>; versions: ReliabilityTurnTrace['versions'];
   /** Explicit local gateway; it must call this API's local port for guarded tools/budgets. */
   apiPort: number; gatewayUrl: string; databaseUrl: string; redisUrl: string; localStorageEndpoint?: string;
@@ -37,6 +47,7 @@ export type ReliabilityRuntimeManifest = {
 export type RuntimeWireReceipt = { messages: unknown; at: number; receiptId: string; path: string; payloadHash: string };
 export type RuntimeTurnEvidence = {
   scenarioId: string; repeat: number; turnIndex: number; user: string; attachmentIds: string[];
+  inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string;
   companyId: string; sourceSnapshot: string; snapshotDigest: string; webBaseUrl?: string;
   acceptedAtMs: number; modelWorkCompletedAtMs: number | null;
   receipts: RuntimeWireReceipt[];
@@ -44,6 +55,8 @@ export type RuntimeTurnEvidence = {
   gatewayResponses: Array<{ method: string; requestId: string; startedAtMs: number; completedAtMs: number; response: unknown }>;
   webhookEvents: unknown[]; providerUsage: unknown[]; reservations: unknown[];
   reviewState: { before: RuntimeReviewState; after: RuntimeReviewState };
+  businessSnapshot?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
+  unintendedEffects?: ReliabilityTurnTrace['effects'];
   delivery: ReliabilityTurnTrace['delivery'];
 };
 export type RuntimeReviewState = { draftActions: unknown[]; conversations: unknown[]; truncated: boolean };
@@ -201,9 +214,55 @@ export function runtimeSourceFacts(results: ToolResult[], cited: Set<string>): R
 const EFFECT_TABLES = ['ExpenseRecord', 'ExpensePayment', 'ExpenseLine', 'ExpenseSubstituteReceiptEvidence', 'ExpenseCaptureGroup', 'ExpenseCaptureFile',
   'ExpenseCaptureAllocation', 'ReimbursementRequest', 'ReimbursementLine', 'ReimbursementPayment', 'AccountingDocument', 'AccountingDocumentLine',
   'BankAdjustment', 'BankReconciliationMatch', 'PurchaseOrder', 'PurchaseOrderLine', 'SalesOrder', 'SalesOrderLine', 'StockMovement', 'CrmCustomer',
-  'WorkflowTask', 'AttachmentObject', 'AttachmentLink'];
+  'WorkflowTask', 'AttachmentObject', 'AttachmentLink', 'ReimbursementDraftAction', 'ReimbursementApprovalStep', 'DisbursementVoucher',
+  'DisbursementVoucherLine', 'WhtCertificate', 'WhtCertificateHandoff', 'WhtCertificateHistory'];
+const COLLECTION_STATE_STATUSES = new Set(['COLLECTING', 'PREVIEW', 'EXPIRED', 'CANCELLED']);
+const EXPENSE_CONTINUATION_FIELDS = new Set(['sourceChannelMetadataJson', 'updatedAt', 'updatedByUserId']);
 
-export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string) {
+export const runtimeAttemptId = (scenarioId: string, repeat: number) => `${scenarioId}:${repeat}:${randomUUID()}`;
+export const runtimeEventIdPrefix = (attemptId: string, turnIndex: number) => `replay-${sha(`${attemptId}:${turnIndex}`).slice(0, 20)}`;
+
+export function runtimeBusinessSnapshot(rows: Record<string, JsonRow[]>) {
+  const business: Record<string, JsonRow[]> = {}, collectionState: Record<string, JsonRow[]> = {};
+  for (const [table, entries] of Object.entries(rows)) {
+    if (table === 'ReimbursementDraftAction') {
+      const collecting = entries.filter(row => COLLECTION_STATE_STATUSES.has(row.status));
+      const applied = entries.filter(row => !COLLECTION_STATE_STATUSES.has(row.status));
+      if (collecting.length) collectionState[table] = structuredClone(collecting);
+      if (applied.length) business[table] = structuredClone(applied);
+      continue;
+    }
+    if (table === 'ExpenseRecord') {
+      business[table] = entries.map(row => Object.fromEntries(Object.entries(row).filter(([key]) => !EXPENSE_CONTINUATION_FIELDS.has(key))));
+      collectionState[table] = entries.map(row => ({ id: row.id, ...Object.fromEntries(Object.entries(row).filter(([key]) => EXPENSE_CONTINUATION_FIELDS.has(key))) }));
+      continue;
+    }
+    business[table] = structuredClone(entries);
+  }
+  return { business, collectionState };
+}
+
+export function runtimeBusinessEffects(before: Record<string, JsonRow[]>, after: Record<string, JsonRow[]>) {
+  return runtimeDatabaseEffects(before, after).filter(effect => {
+    const id = effect.recordId, oldRow = (before[effect.kind.split('.')[0]!] ?? []).find(row => String(row.id) === id);
+    const newRow = (after[effect.kind.split('.')[0]!] ?? []).find(row => String(row.id) === id);
+    if (effect.kind.startsWith('ReimbursementDraftAction.'))
+      return ![oldRow, newRow].filter(Boolean).every(row => COLLECTION_STATE_STATUSES.has(row!.status));
+    if (effect.kind !== 'ExpenseRecord.update' || !oldRow || !newRow) return true;
+    const changed = new Set([...Object.keys(oldRow), ...Object.keys(newRow)].filter(key => reliabilityDigest(oldRow[key] ?? null) !== reliabilityDigest(newRow[key] ?? null)));
+    return !(changed.size === EXPENSE_CONTINUATION_FIELDS.size && [...changed].every(key => EXPENSE_CONTINUATION_FIELDS.has(key)));
+  });
+}
+
+export async function resetRuntimeAfterHook<T>(onBeforeReset: ((conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void) | undefined,
+  conversation: ReliabilityFixture, attemptId: string, reset: () => Promise<T>): Promise<T> {
+  await onBeforeReset?.(conversation, attemptId);
+  return reset();
+}
+
+export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string,
+  hooks: { onTurn?: (evidence: RuntimeTurnEvidence) => Promise<void> | void;
+    onBeforeReset?: (conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void } = {}) {
   assert.equal(manifest.version, 2); assertIsolatedReplayDatabase(manifest.databaseUrl);
   assert.ok(manifest.bootstrapLaunchGates === undefined || typeof manifest.bootstrapLaunchGates === 'boolean', 'REPLAY_INVALID_LAUNCH_BOOTSTRAP_FLAG');
   localUrl(manifest.gatewayUrl, 'http:'); const redisAddress = localUrl(manifest.redisUrl, 'redis:');
@@ -245,11 +304,13 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const { AppConfigService } = requireApi(resolve(compiled, 'common/config/app-config.service.js'));
   const { AppModule } = requireApi(resolve(compiled, 'app.module.js'));
   const originalFetch = globalThis.fetch;
-  let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, unsafeToReset = false;
+  let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, attemptId = '', unsafeToReset = false;
+  let selectedCompanyId = '', selectedActorId = '';
   let processingWebhook = 0;
   let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
     responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: RuntimeWireReceipt[];
-    toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState } | undefined;
+    toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState;
+    inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string } | undefined;
   let turnStates: Array<NonNullable<typeof active>> = [];
   const turnEvidence: RuntimeTurnEvidence[] = [];
   const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
@@ -271,8 +332,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const readReviewState = async (): Promise<RuntimeReviewState> => {
     assert.ok(current, 'REPLAY_NO_CURRENT_OWNER');
     const [draftActions, conversations] = await Promise.all([
-      client.reimbursementDraftAction.findMany({ where: { companyId: current.fixture.company, actorUserId: current.fixture.actor }, orderBy: { id: 'asc' }, take: 101 }),
-      client.aiConversation.findMany({ where: { companyId: current.fixture.company, userId: current.fixture.actor }, orderBy: { id: 'asc' }, take: 101 }),
+      client.reimbursementDraftAction.findMany({ where: { companyId: selectedCompanyId, actorUserId: selectedActorId }, orderBy: { id: 'asc' }, take: 101 }),
+      client.aiConversation.findMany({ where: { companyId: selectedCompanyId, userId: selectedActorId }, orderBy: { id: 'asc' }, take: 101 }),
     ]);
     return { draftActions: draftActions.slice(0, 100), conversations: conversations.slice(0, 100), truncated: draftActions.length > 100 || conversations.length > 100 };
   };
@@ -308,8 +369,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     const state = active, turn = row.turns[turnIndex]!;
     const [after, usage, events, tasks, plans, outcomes, holds] = await Promise.all([readEffects(), client.aiUsageEvent.findMany(),
       client.lineWebhookEventLog.findMany({ where: { webhookEventId: { in: state.eventIds } } }),
-      client.aiConversation.findMany({ where: { companyId: row.fixture.company, userId: row.fixture.actor } }),
-      client.lineDeliveryPlan.findMany({ where: { companyId: row.fixture.company, createdAt: { gte: new Date(state.acceptedAt) } } }),
+      client.aiConversation.findMany({ where: { companyId: selectedCompanyId, userId: selectedActorId } }),
+      client.lineDeliveryPlan.findMany({ where: { companyId: selectedCompanyId, createdAt: { gte: new Date(state.acceptedAt) } } }),
       client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } }),
       client.aiBudgetReservation.findMany({ where: { createdAt: { gte: new Date(state.acceptedAt) } } })]);
     const calls = usage.filter((item: any) => !state.usageIds.has(item.id) && item.eventKind === 'MODEL_CALL');
@@ -321,8 +382,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     const delivery = runtimeDeliveryEvidence(plans, outcomes, state.receipts);
     if (state.receipts.length && !delivery.requiredBatchIds.length) state.errors.push('no_frozen_delivery_requirement');
     if (unreported.length) state.errors.push('provider_usage_unobserved');
+    const businessSnapshot = runtimeBusinessSnapshot(after);
+    const businessEffects = runtimeBusinessEffects(state.before, after);
     const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
-      companyId: row.fixture.company, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
+      inputKind: state.inputKind ?? (turn.attachmentIds.length ? 'camera' : 'message'), ...(state.action ? { action: state.action } : {}), ...(state.pressFrom ? { pressFrom: state.pressFrom } : {}),
+      companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
       webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: state.acceptedAt, modelWorkCompletedAtMs: state.completedAt,
       receipts: state.receipts, toolResults: state.toolResults, gatewayResponses: state.gatewayResponses,
       webhookEvents: events.map(({ webhookEventId, eventType, status, errorCode, processedAt, createdAt }: any) => ({ webhookEventId, eventType, status, errorCode, processedAt, createdAt })),
@@ -331,13 +395,14 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens, costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt })),
       reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt }: any) =>
         ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt })),
-      reviewState: { before: state.reviewBefore, after: await readReviewState() }, delivery });
+      reviewState: { before: state.reviewBefore, after: await readReviewState() }, businessSnapshot, unintendedEffects: businessEffects, delivery });
     if (evidence.reviewState.before.truncated || evidence.reviewState.after.truncated) state.errors.push('review_state_truncated');
     const previous = turnEvidence.findIndex(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === turnIndex);
     if (previous < 0) turnEvidence.push(evidence); else turnEvidence[previous] = evidence;
+    await hooks.onTurn?.(evidence);
     return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
       sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: state.acceptedAt, outcome, taskId: new Set(taskIds).size === 1 ? taskIds[0] : null,
-      askedSlots: [...new Set(state.missing)], tools: state.tools, facts: runtimeSourceFacts(state.results, cited), effects: runtimeDatabaseEffects(state.before, after),
+      askedSlots: [...new Set(state.missing)], tools: state.tools, facts: runtimeSourceFacts(state.results, cited), effects: businessEffects,
       modelCalls: calls.length + unreported.length, costSatang: unreported.length || calls.some((item: any) => item.usageBasis !== 'PROVIDER_REPORTED') ? null : calls.reduce((sum: number, item: any) => sum + item.costSatang, 0),
       modelWorkCompletedAtMs: state.completedAt, delivery, falseRefusalOrHandoff: false, validationFailures: state.errors,
       criticalErrors: state.critical, versions: manifest.versions };
@@ -354,6 +419,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (app) { await app.close(); app = undefined; } active = undefined;
       turnStates = [];
       current = row; repeat = ordinal; snapshot = manifest.snapshots[row.fixture.sourceSnapshot];
+      attemptId = runtimeAttemptId(row.id, ordinal);
+      selectedCompanyId = row.fixture.company; selectedActorId = row.fixture.actor;
       assert.ok(snapshot && reliabilityDigest(snapshot) === manifest.snapshotDigests[row.fixture.sourceSnapshot], 'REPLAY_CONCRETE_SNAPSHOT_REQUIRED');
       const civil = (time: number) => new Intl.DateTimeFormat('en-CA', { timeZone: row.fixture.timezone }).format(time);
       assert.ok(snapshot.lineUserId && row.fixture.clock && civil(Date.parse(row.fixture.clock)) === civil(Date.now()), 'REPLAY_FIXTURE_BUSINESS_DATE_CHANGED');
@@ -369,7 +436,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       assert.ok(owner === redisOwner || owner === null && await redis.dbsize() === 0, 'REPLAY_REDIS_CONTAINS_OTHER_WORK');
       await redis.flushdb(); await redis.set(redisOwnerKey, redisOwner);
       stage = 'database_reset';
-      await resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl);
+      await resetRuntimeAfterHook(hooks.onBeforeReset, row, attemptId,
+        () => resetRuntimeFixtureDatabase(databaseLock, manifest.databaseUrl));
       for (const [index, seed] of snapshot.rows.entries()) { assert.ok(/^[a-z][A-Za-z0-9]*$/.test(seed.model) && typeof client[seed.model]?.create === 'function', 'REPLAY_INVALID_SEED_MODEL'); stage = `seed:${index}:${seed.model}`; await client[seed.model].create({ data: seed.data }); }
       if (manifest.bootstrapLaunchGates === true) {
         stage = 'launch_gate_bootstrap';
@@ -414,7 +482,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         if (active && coverage) active.deliveryCoverage = structuredClone(coverage);
         return result;
       });
-      for (const method of ['requestLineTurn', 'requestLinePublicGeneral', 'requestLineIntakeRoute', 'requestLineDocumentQa']) {
+      for (const method of ['requestLineTurn', 'requestLinePublicGeneral', 'requestLineIntakeRoute', 'requestLineDocumentQa', 'requestLineWorkflowClassify']) {
+        if (typeof gateway[method] !== 'function') continue;
         instrumentRuntimeMethod(gateway, method, async (original, args) => { const state = active, startedAtMs = Date.now(); if (state) state.requests.push(args[0].requestId); try { const result = await original(...args);
           if (state) { state.completedAt = Date.now(); if (Array.isArray(result.sourceRefs)) state.responses.push(result);
             state.gatewayResponses.push(structuredClone({ method, requestId: args[0].requestId, startedAtMs, completedAtMs: state.completedAt, response: result }));
@@ -433,17 +502,50 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (turnIndex > 0 && TURN_PAUSE_MS > 0) { stage = 'turn_pause'; await delay(TURN_PAUSE_MS); }
       stage = `turn:${turnIndex}`;
       assert.equal(current?.id, row.id); assert.ok(snapshot && app);
-      const turn = row.turns[turnIndex]!, prefix = `replay-${sha(`${row.id}:${repeat}:${turnIndex}`).slice(0, 20)}`;
-      const postbackLabel = snapshot.postbackLabels?.[turnIndex];
-      const postbackData = postbackLabel ? selectRuntimePostback(active?.receipts.map(receipt => receipt.messages), postbackLabel) : undefined;
-      if (postbackLabel) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
-      const source = { type: row.fixture.channelKind.toLowerCase(), userId: snapshot.lineUserId,
+      const precedingReceipts = active?.receipts.map(receipt => receipt.messages);
+      active = undefined;
+      const turn = row.turns[turnIndex]!, replayTurn = turn as typeof turn & RuntimeReplayTurn;
+      const prefix = runtimeEventIdPrefix(attemptId, turnIndex), action = replayTurn.action;
+      const actorKey = replayTurn.pressFrom ?? action?.pressFrom, actor = actorKey ? snapshot.actors?.[actorKey] : undefined;
+      if (actorKey) assert.ok(actor, 'REPLAY_UNKNOWN_PRESS_ACTOR');
+      selectedCompanyId = actor?.companyId ?? row.fixture.company;
+      selectedActorId = actor?.userId ?? row.fixture.actor;
+      if (actor) {
+        const access = await app.get(PermissionResolverService).resolveAccess(actor.userId, actor.companyId);
+        assert.ok(access.roles.includes(actor.role), 'REPLAY_ACTOR_ROLE_MISMATCH');
+        assert.deepEqual([...access.scopes.branchIds].sort(), [...actor.branchIds].sort(), 'REPLAY_ACTOR_BRANCH_SCOPE_MISMATCH');
+      }
+      const postbackLabel = action?.type === 'postback' ? action.label : (actor?.postbackLabels ?? snapshot.postbackLabels)?.[turnIndex];
+      const postbackData = postbackLabel ? selectRuntimePostback(precedingReceipts, postbackLabel) : undefined;
+      if (postbackLabel && !action) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
+      const source = { type: row.fixture.channelKind.toLowerCase(), userId: actor?.userId ?? snapshot.lineUserId,
         ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
-      const inputs = [...turn.attachmentIds.map(id => runtimeAttachmentMessage(id, snapshot!.assets[id], repoRoot)), ...(turn.user ? [{ type: 'text', text: turn.user, id: `${prefix}-text` }] : [])];
+      if (action?.type === 'uri') {
+        const at = Date.now(), before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
+        const review = await readReviewState();
+        const state = { acceptedAt: at, eventIds: [], before, usageIds, tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [],
+          completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: review, inputKind: 'uri', action, pressFrom: actorKey } as NonNullable<typeof active>;
+        active = state; turnStates.push(state);
+        const delivery = runtimeDeliveryEvidence([], [], []), businessSnapshot = runtimeBusinessSnapshot(before);
+        const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
+          inputKind: 'uri', action, ...(actorKey ? { pressFrom: actorKey } : {}),
+          companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
+          webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: at, modelWorkCompletedAtMs: null, receipts: [], toolResults: [], gatewayResponses: [],
+          webhookEvents: [], providerUsage: [], reservations: [], reviewState: { before: review, after: review }, businessSnapshot, unintendedEffects: [], delivery });
+        turnEvidence.push(evidence); await hooks.onTurn?.(evidence);
+        return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
+          sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: at, outcome: 'web_handoff', taskId: null, askedSlots: [], tools: [], facts: [], effects: [],
+          modelCalls: 0, costSatang: 0, modelWorkCompletedAtMs: null, delivery, falseRefusalOrHandoff: false, validationFailures: [], criticalErrors: [], versions: manifest.versions };
+      }
+      const assetIds = action?.type === 'camera' ? [action.assetId] : turn.attachmentIds;
+      const messageText = action?.type === 'message' ? action.text : turn.user;
+      const inputs = action?.type === 'postback' ? [{ type: 'postback', label: action.label }]
+        : [...assetIds.map(id => runtimeAttachmentMessage(id, snapshot!.assets[id], repoRoot)), ...(messageText ? [{ type: 'text', text: messageText, id: `${prefix}-text` }] : [])];
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
-        tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState() };
+        tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState(),
+        inputKind: action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey };
       turnStates.push(active);
       const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
         ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),

@@ -4,7 +4,46 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
+import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeBusinessSnapshot, runtimeBusinessEffects, runtimeAttemptId, runtimeEventIdPrefix, resetRuntimeAfterHook, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
+
+test('onBeforeReset runs before the database reset and receives its conversation attempt', async () => {
+  const order: string[] = [];
+  const conversation = { id: 'sample' } as any;
+  const attemptId = runtimeAttemptId('sample', 2);
+  await resetRuntimeAfterHook((row, id) => { order.push(`hook:${row.id}:${id}`); }, conversation, attemptId, async () => {
+    order.push('truncate');
+  });
+  assert.deepEqual(order, [`hook:sample:${attemptId}`, 'truncate']);
+});
+
+test('event IDs use an attempt-specific prefix while the legacy attempt number remains stable', () => {
+  const firstAttempt = runtimeAttemptId('sample', 0), retry = runtimeAttemptId('sample', 0);
+  assert.notEqual(firstAttempt, retry);
+  assert.notEqual(runtimeEventIdPrefix(firstAttempt, 1), runtimeEventIdPrefix(retry, 1));
+  assert.equal(runtimeEventIdPrefix(firstAttempt, 1), runtimeEventIdPrefix(firstAttempt, 1));
+});
+
+test('collectionState is snapshotted separately and excluded from scored business effects', () => {
+  const before = { ReimbursementDraftAction: [{ id: 'draft', status: 'COLLECTING' }],
+    ExpenseRecord: [{ id: 'expense', amount: '10', sourceChannelMetadataJson: null, updatedAt: 'one', updatedByUserId: 'actor' }] };
+  const after = { ReimbursementDraftAction: [{ id: 'draft', status: 'PREVIEW' }],
+    ExpenseRecord: [{ id: 'expense', amount: '10', sourceChannelMetadataJson: { step: 2 }, updatedAt: 'two', updatedByUserId: 'actor-2' }] };
+  const prior = runtimeBusinessSnapshot(before), next = runtimeBusinessSnapshot(after);
+  assert.equal(next.collectionState.ReimbursementDraftAction?.[0]?.status, 'PREVIEW');
+  assert.equal(next.business.ExpenseRecord?.[0]?.amount, '10');
+  assert.deepEqual(runtimeDatabaseEffects(prior.business, next.business), []);
+  assert.deepEqual(runtimeDatabaseEffects(before, after).map(row => row.kind).sort(), ['ExpenseRecord.update', 'ReimbursementDraftAction.update']);
+  assert.deepEqual(runtimeBusinessEffects(before, after), []);
+  assert.equal(runtimeBusinessEffects(before, { ...after, ExpenseRecord: [{ ...after.ExpenseRecord[0]!, updatedByUserId: 'actor' }] }).length, 1,
+    'an incomplete continuation-only change remains a business effect');
+});
+
+test('existing turns keep their message and attachment defaults without a typed action', () => {
+  const oldTurn = { user: 'ใบเสร็จนี้', attachmentIds: ['receipt-1'] };
+  const currentTurn = { ...oldTurn, action: undefined };
+  assert.equal(currentTurn.user, oldTurn.user);
+  assert.deepEqual(currentTurn.attachmentIds, oldTurn.attachmentIds);
+});
 
 test('clarification trace keeps nested typed missing fields without guessing slots from prose', () => {
   assert.deepEqual(runtimeAskedSlots({ missingFields: ['amount'], captureHints: { missingFields: ['expenseDate', 'amount'] },
