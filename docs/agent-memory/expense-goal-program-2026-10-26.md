@@ -1,6 +1,6 @@
 # Agent Memory: expense-goal-program-2026-10-26
 
-Status: SPECS + PLANS ACCEPTED 2026-11-04 for steps 1–4 and 6–11 (step 5 is owner-present ops). All are re-anchored to develop e7c422802. Owner answered every summary question on 2026-11-04 (see Owner answers). No code until the owner says so.
+Status: SPECS + PLANS ACCEPTED 2026-11-04 for steps 1–4 and 6–11 (step 5 is owner-present ops). All are re-anchored to develop e7c422802. Owner answered every summary question on 2026-11-04 (see Owner answers). Owner gave the go 2026-11-04 (step 5 last).
 Owner: platform (owner sets order and business answers; Codex writes; controller reviews and lands)
 Scope:
 - Owner 2026-10-26 instruction: "จากข้อ 1-11 ให้ ทำ spec + plan อย่างละเอียดสามารถ ตรวจสอบย้อนกลับได้ และ implement ตามได้เลย ระวัง bug gap impact ทุกฟีเจอร์โมดูลที่เกี่ยวข้อง อย่าทำเกินฟีเจอร์ที่เปิดขายอยู่ ทำแค่สูงสุดคือตามฟีเจอร์ pack 1999 ให้ codex ช่วยทำ และคุณรีวิวให้คำปรึกษา".
@@ -22,7 +22,7 @@ Scope:
 | 6 | Plain words on sold screens and in LINE; exact terms in reports | `docs/specs/plain-words-sold-screens-spec.md` + plan | accepted 2026-11-04: exhaustive for sold + free surfaces; 76 C rows; gaps outside wording recorded as B18–B23 |
 | 7 | Accountant export cleanup | `docs/specs/accountant-export-cleanup-spec.md` + plan | accepted 2026-11-04: RC-F2 intersect first; 0.2 free-export guard; Phase S handed to trust/money P03; E5/posting cut |
 | 8 | Accounting-software export (FlowAccount first) | `docs/specs/accounting-software-export-spec.md` + plan | accepted 2026-11-04; FlowAccount Phase 0 needs owner OK |
-| 9 | LINE AI workflow-first | `docs/specs/line-ai-workflow-first-spec.md`, `docs/specs/line-ai-measurement-and-eval-spec.md` + plan | accepted 2026-11-04: R4-F2 closed; 19 eval conversations restored; R26 package/knowledge fallback; R27 free no-AI |
+| 9 | LINE AI workflow-first | `docs/specs/line-ai-workflow-first-spec.md`, `docs/specs/line-ai-measurement-and-eval-spec.md` + plan | accepted 2026-11-04: R4-F2 closed; 20 eval conversations restored (count corrected 2026-11-04); R26 package/knowledge fallback; R27 free no-AI |
 | 10 | Weekly LINE summary | `docs/specs/proactive-expense-summary-spec.md` + plan | accepted 2026-11-04: ledger menu and ภ.พ.30 row cut (ceiling); R19 paid-only eligibility, free shops get no weekly summary; owner 2026-11-04 redesign (ceil9:5/6): shop-chosen day (R20, membership cursor, no seven-day cap for continuing recipients, C1 closed by controller), owner on by default, others picked in shop settings under company.setup.manage (R21), home invite removed |
 | 11 | e-WHT incl. per-shop setting | `docs/specs/e-withholding-tax-payment-spec.md` + plan | READY; traceability, B5 note and free-path note added; citations re-anchored 2026-11-04 |
 
@@ -60,8 +60,28 @@ Scope:
 ## Artifacts
 - Codex lane logs (local, not in git): `mangmee-worktrees/codex/lane-{fixdoc,wordsdoc,blkrev,ceil7,ceil9}/`; briefs in `codex/briefs/` (`goal-*-2b.md`, `goal-wordsdoc-3b.md`, `goal-ceil7-2.md`, `reanchor-20261104.md`).
 
+## Implementation log (owner go 2026-11-04: steps in plan order, step 5 last)
+- **Batch 1, landed 2026-11-04.** develop `99f127a64`, main `13a444a56`, same tree.
+  - Step 1 (trust/money): P01 `c82d1237a`, P03 `ba4426193`, P02+P13+P14 `b45745e3d`, P04+P05 `6b987e237`.
+  - Step 7 (export cleanup): 0.1 RC-F2 `7c606db2d`, 0.2 free denial `23eebd2cd`.
+  - Step 9: M1a `97097c31b`.
+  - Test-only repairs of develop drift: `4cb980091`, `2846c00de`, `3d55d9a40`, `99f127a64`.
+  - Free draft shop seed and journey: `86c96153a`. Pins: `28719e37b`.
+- **In progress (Codex lanes):**
+  - step 1 P06 (receipt XML);
+  - step 7 Phase 1.4/1.5 (committed 1.1–1.3 `163869f24` in the lane worktree);
+  - step 9 M1c (M1b part 1 committed in the lane worktree).
+- **Later:** steps 2–4 (P07–P12), then 6, 8, 10, 11; step 5 last with the owner.
+
 ## Verification
-- None yet. This file records docs work only.
+- Batch 1 checks:
+  - `scripts/local-proof/verify.sh`: 19/19 GREEN (API 12.7k, web 5,113, gateway 2,583, whole-chain 4,151);
+  - real-PG: 718/718 (9 files);
+  - proof journeys: 91/91 on a fresh DB;
+  - M-14 with ClamAV 1.5.4: all checks pass;
+  - 18 repo/generated PDFs scanned old vs new: only the RD fillable forms with JavaScript are refused.
+- Baseline before batch 1: a clean develop had 75 API, 4 web, 1 gateway and 1 W00 failures (drift from 049aa51de with Actions off), all repaired test-only.
+- **Owner FYI:** 049aa51de shortened the LINE follow-welcome without a spec record. The test now pins the current text, and nothing changed for customers.
 
 ## Next
 - Done 2026-11-04: reviewed fixdoc:3, ceil9:3/4, wordsdoc:4 and ceil7:2 against e7c422802; landed on develop and main.

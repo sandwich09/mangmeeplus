@@ -66,7 +66,7 @@ D หลังแต่ละ release
 - ตรวจ: `node_modules/.bin/tsx --test scripts/line-ai-reliability-runtime.spec.ts` (เพิ่มเคสในไฟล์เดิม: hook ก่อน truncate, event id ต่าง attempt ไม่ชน, collectionState ไม่นับเป็น wrong)
 
 ### M1b Corpus v2 + scorer (ขึ้นกับ M1a)
-- M-R14/R26/R27: retain the 19 knowledge/package-boundary conversations listed in measurement §3, original ids and whole conversations; identical manifest/digest for baseline/candidate. Add free/paid matched inputs without enabling unsold modules; no new unsold formatter/conversion/workflow/tool/read.
+- M-R14/R26/R27: retain the 20 knowledge/package-boundary conversations listed in measurement §3 (T-139 included; corrected 2026-11-04), original ids and whole conversations; identical manifest/digest for baseline/candidate. Add free/paid matched inputs without enabling unsold modules; no new unsold formatter/conversion/workflow/tool/read.
 - `scripts/line-ai-expense-advisor/types.ts`: `Actor/WorkflowTurn/GoldRecord/WorkflowTask/WorkflowConversation` + validator (`confirmTurn` + `expect.preview` บังคับสำหรับงานเขียน; `EXPENSE_PAID` ↔ `ExpensePayment`, `REIMBURSEMENT_PAID` ↔ `ReimbursementPayment`, `VOUCHER_PAID` ↔ `DisbursementVoucher` พร้อมยอด/วันที่/วิธีจ่าย; `phase: 'collect'`)
 - `scripts/line-ai-expense-advisor/scorer.ts`: W1–W15, M-R5/M-R6 (เฉพาะส่วน `business`), ต้นทุนไม่ปัดทุกส่วนของ tariff + ตรวจคู่การปัด (M-R3), cold/warm (M-R12), attempt (M-R13)
 - `scripts/line-ai-expense-advisor/run-preflight.ts`: `captureSpend` ก่อน truncate (:79); actor จาก `actors[]`/`as` แทน `companies[conversation.company]`/`conversation.role` (:129–130); บริษัท C; turn แบบ `press` (ไม่มี `calls`) ตรวจรูปแบบ แทนการวน `turn.expect.calls` (:134); `$seed` ของ GoldRecord resolve
