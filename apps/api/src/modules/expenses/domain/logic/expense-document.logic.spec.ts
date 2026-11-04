@@ -5,7 +5,7 @@ import { decideLinePaymentEvidencePairing, isRecentPaymentEvidenceLinkText, LINE
 import assert from 'node:assert/strict';
 import { deriveInputVatPreset, deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType, assessLineTextExpenseCapture } from './expense-document.logic';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantWorkbook, buildManifestEntry, accountingPeriod } from './expense-export.logic';
-import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
+import { ACCOUNTANT_INDEX_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
 
 describe('deriveTaxEvidence', () => {
   it('maps complete tax invoice to USABLE_FOR_TAX', () => {

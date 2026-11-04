@@ -2080,8 +2080,8 @@ describe('Fix-up 7B — combined facts and targeted payment evidence', () => {
   });
 });
 
-async function actionHarness() {
-  const h = await lineReadyHarness({ signature: { id: 'my-signature' } });
+async function actionHarness(overrides: Parameters<typeof lineReadyHarness>[0] = {}) {
+  const h = await lineReadyHarness({ signature: { id: 'my-signature' }, ...overrides });
   const calls: any[] = [];
   let epoch = 1, policy: any = { approvalMode: 'OWNER_SELF', approverUserIds: [] }, available = true;
   h.repo.getSubstituteReceiptPolicy = async () => policy;
@@ -2393,5 +2393,114 @@ it('R5 signed decisions bind the offer and FORM needs no saved signature', async
     await store.save(entry);
     assert.equal((await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token })).expenseId, undefined);
     assert.equal(h.prepares.length, 0);
+  }
+});
+
+
+it('R9 category stays proposed until signed confirmation', async () => {
+  const h = await actionHarness();
+  h.repo.listCategories = async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }, { id: 'cat-food', name: 'ค่าอาหาร' }];
+  const result = await h.useCase.execute(lineCtx(), { messageText: 'หมวด: ค่าอาหาร', chatKeyHash: 'chat-hash', recentCandidates: [] });
+  assert.ok(result.acceptedFields.includes('expenseCategoryId'));
+  assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId, 'cat-food');
+  assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', 'answering the category question must leave the record unchanged');
+  assert.equal(h.prepares.length, 0);
+  assert.match(result.replyText, /เก็บหมวดไว้ในร่างแล้วค่ะ ตรวจข้อมูลก่อนกดเตรียมใบรับรอง/);
+});
+
+
+async function proposedCategoryHarness() {
+  const h = await actionHarness();
+  h.repo.listCategories = async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }, { id: 'cat-food', name: 'ค่าอาหาร' }];
+  h.repo.findCategoryById = async (companyId: string, id: string) => ({ companyId, id, status: 'ACTIVE', name: 'ค่าอาหาร' });
+  await h.useCase.execute(lineCtx(), { messageText: 'หมวด: ค่าอาหาร', chatKeyHash: 'chat-hash', recentCandidates: [] });
+  return h;
+}
+
+it('R9 pause decline cancel and expiry retain the proposal without changing the record', async () => {
+  for (const control of ['พัก', 'ยกเลิก', 'ยังไม่ต้องออกเอกสาร', 'card-cancel', 'expiry', 'invalid-token']) {
+    const h = await proposedCategoryHarness();
+    if (['card-cancel', 'expiry', 'invalid-token'].includes(control)) {
+      const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+      if (control === 'expiry') {
+        const entry = await (h.service as any).store.load('company-1', 'substitute-action:chat-hash');
+        entry.preview.expiresAt = '2020-01-01T00:00:00.000Z';
+        await (h.service as any).store.save(entry);
+      }
+      await h.service.apply(lineCtx(), 'chat-hash', { action: control === 'card-cancel' ? 'expense_action_cancel' : 'expense_action_confirm', token: card.token + (control === 'invalid-token' ? 'x' : '') });
+    } else {
+      await h.useCase.execute(lineCtx(), { messageText: control, chatKeyHash: 'chat-hash', recentCandidates: [] });
+    }
+    assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', control);
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId, 'cat-food', control);
+    assert.equal(h.prepares.length, 0, control);
+  }
+});
+
+it('R9 signed proposal commits before review and FORM works after a signature request', async () => {
+  for (const decision of ['ISSUE', 'FORM'] as const) {
+    const h = await proposedCategoryHarness();
+    const beforeCommit = h.getExpense().updatedAt;
+    if (decision === 'FORM') {
+      h.signature(false);
+      const issue = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+      await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: issue.token });
+      assert.equal(h.getExpense().expenseCategoryId, 'cat-travel');
+      assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.signatureRequested, true);
+    }
+    const review = (h.useCase as any).review;
+    const executeReview = review.execute.bind(review);
+    let reviews = 0;
+    review.execute = async (actor: any, id: string, input: any, options: any) => {
+      reviews++;
+      assert.equal(h.getExpense().expenseCategoryId, 'cat-food');
+      assert.equal(input.expectedUpdatedAt, h.getExpense().updatedAt.toISOString());
+      assert.ok(h.getExpense().updatedAt > beforeCommit);
+      assert.equal(h.saves.at(-1).expenseCategoryId, 'cat-food');
+      return executeReview(actor, id, input, options);
+    };
+    const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1', 'th', decision)).preview!;
+    assert.match(card.summary, /ค่าอาหาร/);
+    assert.match(card.summary, /หมวดยังอยู่ในร่าง/);
+    const result = await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(reviews, 1); assert.equal(h.prepares.length, 1);
+    assert.match(result.reply, decision === 'FORM' ? /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/ : /เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น/);
+    assert.equal(Boolean(h.prepares[0].lineContinuation?.formRequested), decision === 'FORM');
+    await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(reviews, 1); assert.equal(h.prepares.length, 1);
+  }
+});
+
+it('R9 signed digest binds the category proposal and rejects an archived or foreign category', async () => {
+  for (const change of ['proposal', 'archived', 'tenant'] as const) {
+    const h = await proposedCategoryHarness();
+    const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+    if (change === 'proposal') h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId = 'cat-travel';
+    else h.repo.findCategoryById = async () => ({ id: 'cat-food', companyId: change === 'tenant' ? 'other-company' : 'company-1', status: change === 'archived' ? 'ARCHIVED' : 'ACTIVE' });
+    const result = await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', change);
+    assert.equal(h.prepares.length, 0, change);
+    assert.equal(h.getExpense().aiVerificationSummaryJson?.documentReview, undefined);
+    if (change !== 'proposal') assert.match(result.reply, /หมวดนี้ใช้ไม่ได้แล้ว.*เปิดค่าใช้จ่าย/);
+  }
+});
+
+it('R9 preparation failure after category commit reports the committed change', async () => {
+  for (const failsAt of ['review', 'prepare'] as const) {
+    const h = await proposedCategoryHarness();
+    if (failsAt === 'review') (h.useCase as any).review.execute = async () => { throw new ConflictException('concurrent edit'); };
+    else h.repo.createPreparedSubstituteEvidence = async () => { throw new Error('storage failed'); };
+    const card = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+    const result = await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(h.getExpense().expenseCategoryId, 'cat-food');
+    assert.equal(h.getExpense().substituteReceiptEvidence, null);
+    assert.match(result.reply, /บันทึกหมวดค่าใช้จ่ายแล้ว.*เปิดค่าใช้จ่าย/);
+    assert.doesNotMatch(result.reply, /ยังไม่แก้รายการ|เตรียมใบรับรองแล้ว/);
+    const revision = h.getExpense().updatedAt.toISOString();
+    await h.service.apply(lineCtx(), 'chat-hash', { action: 'expense_action_confirm', token: card.token });
+    assert.equal(h.getExpense().updatedAt.toISOString(), revision, 'duplicate apply cannot commit again');
+    const nextCard = (await h.service.prepare(lineCtx(), 'chat-hash', 'expense-1')).preview!;
+    assert.match(nextCard.summary, /หมวดที่เลือกตรงกับรายการค่าใช้จ่าย/);
+    assert.doesNotMatch(nextCard.summary, /รายการค่าใช้จ่ายยังไม่เปลี่ยน/);
   }
 });

@@ -2,20 +2,64 @@
  * Journey: the files for the accounting office, a branch switched off, and a name change that leaves
  * a trace: three short errands of an owner, with a staff member changing her own display name.
  *
- * Download names are being moved to Thai ones while this is written, so a download is asserted by
- * its extension and its first bytes, not by its exact name.
+ * Downloads are opened as archives so the Thai sheets and the actual installment facts are checked.
  */
+import { inflateRawSync } from 'node:zlib';
 import type { Page, Response } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { loginAs, QA_ACCOUNTS } from '../harness/roles';
-import { AFTER_PRESS, FIRST_SIGHT, branchEntry, openUserMenu, picture, pressForDownload, pressMenu, recordExpenseByHand, thaiMonth } from './journey-kit';
+import { AFTER_PRESS, FIRST_SIGHT, branchEntry, openUserMenu, picture, pressForDownloadBuffer, pressMenu, recordExpenseByHand, thaiMonth, thaiDate, dayOfLastMonth } from './journey-kit';
 
 type Branches = { items: Array<{ id: string; code: string; name: string; status: string }> };
 type NameHistory = { displayName: string; history: Array<{ oldName: string; newName: string; changedByName: string | null }> };
 
 const STAFF = QA_ACCOUNTS.STAFF.displayName;
 const toast = (page: Page, text: string | RegExp) => page.getByRole('status').filter({ hasText: text }).first();
+
+function unzip(file: Buffer) {
+  const files = new Map<string, Buffer>();
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const size = file.readUInt32LE(offset + 18), length = file.readUInt16LE(offset + 26);
+    const name = file.subarray(offset + 30, offset + 30 + length).toString();
+    const start = offset + 30 + length + file.readUInt16LE(offset + 28);
+    const bytes = file.subarray(start, start + size);
+    files.set(name, file.readUInt16LE(offset + 8) === 8 ? inflateRawSync(bytes) : bytes);
+    offset = start + size;
+  }
+  return files;
+}
+const decodeXml = (text: string) => text.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+function rows(xml: string): string[][] {
+  return [...xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)].map(row =>
+    [...row[1]!.matchAll(/<c\b[^>]*>([\s\S]*?)<\/c>/g)].map(cell =>
+      decodeXml(cell[1]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>|<v>([^<]*)<\/v>/)?.slice(1).find(value => value !== undefined) ?? '')));
+}
+const headers = {
+  'รายการค่าใช้จ่าย': ['วันที่เอกสาร', 'วันที่ส่งเข้ามั่งมี', 'เลขที่รายการ', 'เลขที่ตามเอกสาร', 'ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'เลขประจำตัวผู้เสียภาษีผู้ขาย', 'สาขาผู้ขาย', 'ที่อยู่ผู้ขาย', 'หมวดค่าใช้จ่าย', 'รายละเอียด', 'สกุลเงิน', 'มูลค่าก่อน VAT', 'VAT', 'ยอดรวมตามเอกสาร', 'สิทธิภาษีซื้อ', 'หลักฐานรายจ่าย', 'หัก ณ ที่จ่าย (ทั้งเอกสาร)', 'ยอดจ่ายสุทธิ', 'จ่ายแล้ว', 'ค้างจ่าย', 'วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ'],
+  'การจ่าย': ['วันที่จ่าย', 'เลขที่รายการ', 'ผู้ขาย/ผู้รับเงิน', 'ยอดจ่าย', 'สกุลเงิน', 'วิธีจ่าย', 'จ่ายจาก', 'เลขที่ใบสำคัญจ่าย'],
+  'หัก ณ ที่จ่าย': ['วันที่จ่าย', 'เลขที่รายการ', 'ผู้รับเงิน', 'เลขประจำตัวผู้เสียภาษี', 'สาขา', 'ที่อยู่', 'แบบ ภ.ง.ด.', 'ประเภทเงินได้', 'อัตรา (%)', 'จำนวนเงินที่จ่าย', 'ภาษีที่หัก', 'สกุลเงิน', 'เลขที่หนังสือรับรอง 50 ทวิ', 'สถานะ', 'หมายเหตุ'],
+  'ไฟล์ทั้งหมด': ['เลขที่รายการ', 'ชนิดเอกสาร', 'ฉบับ', 'แทนด้วย', 'ไฟล์', 'ชุดที่'],
+  'เกี่ยวกับไฟล์นี้': ['หัวข้อ', 'ค่า'],
+};
+function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
+  const files = unzip(buffer);
+  const names = [...files.get('xl/workbook.xml')!.toString().matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map(match => decodeXml(match[1]!));
+  expect(names).toEqual(bundled ? Object.keys(headers) : Object.keys(headers).filter(name => name !== 'ไฟล์ทั้งหมด'));
+  return new Map(names.map((name, index) => {
+    const xml = files.get(`xl/worksheets/sheet${index + 1}.xml`)!.toString();
+    expect(decodeXml(xml)).not.toMatch(/HYPERLINK\("http/i);
+    const data = rows(xml);
+    const expected = headers[name as keyof typeof headers].filter(label => name !== 'ไฟล์ทั้งหมด' || label !== 'ชุดที่' || partCount > 1);
+    if (name === 'รายการค่าใช้จ่าย') {
+      if (data[0]!.includes('สาขาของร้าน')) expected.splice(2, 0, 'สาขาของร้าน');
+      if (bundled) expected.push('ไฟล์เอกสาร');
+    }
+    if (name === 'การจ่าย' && bundled) expected.push('ไฟล์หลักฐานการจ่าย');
+    expect(data[0]).toEqual(expected);
+    return [name, data.slice(1)] as const;
+  }));
+}
 
 // Requires the QA owner to belong to one never-paid free shop and one paid shop.
 // These are real commercial states: do not mock auth/me or the export endpoints.
@@ -35,7 +79,7 @@ for (const width of [390, 1280, 1556]) test(`@journey free shops cannot open eit
   await page.goto(`/companies/${free.companyId}/expenses`, FIRST_SIGHT);
   const main = page.locator('main');
   await expect(main.getByRole('heading', { name: 'รายการค่าใช้จ่าย', exact: true })).toBeVisible(FIRST_SIGHT);
-  for (const label of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี']) {
+  for (const label of ['ส่งออก Excel ให้สำนักงานบัญชี', 'ดาวน์โหลด Excel', 'ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี']) {
     await expect(main.getByRole('button', { name: label, exact: true })).toHaveCount(0);
   }
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -88,17 +132,38 @@ test('@journey an owner downloads the accounting files, switches a branch off an
   const main = owner.locator('main');
   await owner.goto(`/companies/${companyId}/dashboard`, FIRST_SIGHT);
 
-  await test.step('owner: a confirmed receipt of this journey, so the files do not depend on another journey', () => recordExpenseByHand(owner, {
-    branch: 'Head Office (สำนักงานใหญ่)', item: unique('อาหารประชุม'), price: '1.005', total: '1.01 บาท', seller: vendor, toPay: '1.01 บาท',
-  }));
+  const expense = await test.step('owner: a service with 3% withheld, paid in two installments on two days', async () => {
+    const expense = await recordExpenseByHand(owner, {
+      branch: 'Head Office (สำนักงานใหญ่)', lastMonthDay: 1, item: unique('ค่าบริการ'), price: '1000', total: '1,000.00 บาท', seller: vendor, toPay: '970.00 บาท',
+      withholding: { payeeKind: 'บริษัท / ห้างหุ้นส่วน', incomeType: 'ค่าบริการ (นิติบุคคล) · หัก 3%', rate: '3', withheld: '30.00 บาท',
+        taxId: '0105557123457', address: '12 ถนนสีลม แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500' },
+    });
+    for (const day of [1, 2]) {
+      const date = main.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true });
+      const previousMonthSelected = (await date.innerText()).trim() === thaiDate(dayOfLastMonth(1));
+      await date.click();
+      if (!previousMonthSelected) await owner.getByRole('button', { name: 'เดือนก่อนหน้า', exact: true }).click();
+      await owner.getByRole('button', { name: String(day), exact: true }).click();
+      await expect(date).toHaveText(thaiDate(dayOfLastMonth(day)));
+      await main.locator('#expense-payment-amount').fill('485');
+      await main.getByLabel('แนบสลิป (ถ้ามี)', { exact: true }).setInputFiles(picture(`${unique('หลักฐานการจ่าย')}.png`));
+      const response = owner.waitForResponse(result => result.url().endsWith(`/expenses/${expense.expenseId}/payment`) && result.request().method() === 'POST');
+      // The second installment pays the whole remainder, so its button says so.
+      await main.getByRole('button', { name: day === 1 ? 'บันทึกจ่าย 485.00 บาท' : 'บันทึกจ่ายส่วนที่เหลือ 485.00 บาท', exact: true }).click();
+      expect((await response).ok()).toBe(true);
+      await expect(toast(owner, 'บันทึกจ่ายแล้ว 485.00 บาท')).toBeVisible(AFTER_PRESS);
+    }
+    await expect(main.locator('.mangmee-page-header').getByText('จ่ายแล้ว', { exact: true })).toBeVisible();
+    return expense;
+  });
 
-  await test.step('หลักฐานทางบัญชี: this month → fix a row, return to its filters, and download the accountant bundle', async () => {
+  await test.step('หลักฐานทางบัญชี: the installment month → fix a row, return to its filters, and download the accountant bundle', async () => {
     await pressMenu(owner, 'หลักฐานทางบัญชี', 'ค่าใช้จ่ายและใบเสร็จ');
     await expect(main.getByRole('heading', { level: 1, name: 'หลักฐานทางบัญชี', exact: true })).toBeVisible(FIRST_SIGHT);
     const month = main.getByRole('combobox', { name: 'เดือน', exact: true });
     await month.click();
-    await owner.getByRole('option', { name: new RegExp(`^${thaiMonth().replace(/\./g, '\\.')} · \\d+ รายการ`) }).click();
-    await expect(month).toContainText(thaiMonth());
+    await owner.getByRole('option', { name: new RegExp(`^${thaiMonth(dayOfLastMonth(1)).replace(/\./g, '\\.')} · \\d+ รายการ`) }).click();
+    await expect(month).toContainText(thaiMonth(dayOfLastMonth(1)));
     await expect(main.getByText('การเงินและบัญชี', { exact: true })).toHaveCount(0);
     await expect(main.getByText(/^แสดง \d+-\d+ จาก/)).toHaveCount(0);
     await expect(main.getByText('กำลังโหลด...', { exact: true })).toHaveCount(0);
@@ -121,14 +186,17 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await owner.waitForURL(url => url.pathname.endsWith('/expenses/evidence'));
     for (const [key, value] of new URL(listUrl).searchParams) expect(new URL(owner.url()).searchParams.get(key)).toBe(value);
     await expect(row).toBeVisible(AFTER_PRESS);
-    await main.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
 
-    const excel = main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
+    const excel = main.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true });
     await expect(excel).toBeEnabled(AFTER_PRESS);
-    const workbook = await pressForDownload(owner, () => excel.click());
+    const workbook = await pressForDownloadBuffer(owner, () => excel.click());
     expect(workbook.name).toMatch(/\.xlsx$/);
-    expect(workbook.head.slice(0, 2)).toBe('PK');
-    await expect(owner.getByText(/ดาวน์โหลด Excel แล้ว \d+ รายการ/).first()).toBeVisible(AFTER_PRESS);
+    const sheets = workbookSheets(workbook.buffer);
+    const payments = sheets.get('การจ่าย')!.filter(row => row[1] === expense.expenseNumber);
+    expect(payments.map(row => [row[0], row[3]])).toEqual([1, 2].map(day => [thaiDate(dayOfLastMonth(day)), '485']));
+    const withheld = sheets.get('หัก ณ ที่จ่าย')!.filter(row => row[1] === expense.expenseNumber);
+    expect(withheld.map(row => [row[0], row[8], row[9], row[10]])).toEqual([1, 2].map(day => [thaiDate(dayOfLastMonth(day)), '3', '500', '15']));
+    await expect(owner.getByText(/ดาวน์โหลด Excel แล้ว/).first()).toBeVisible(AFTER_PRESS);
     await expect(main.getByText(/^สร้างเมื่อ /)).toBeVisible();
 
     await expect(main.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true })).toHaveCount(0);
@@ -136,9 +204,12 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await expect(bundles.first()).toBeEnabled(AFTER_PRESS);
     const count = await bundles.count();
     for (let index = 0; index < count; index++) {
-      const bundle = await pressForDownload(owner, () => bundles.nth(index).click(), 120_000);
+      const bundle = await pressForDownloadBuffer(owner, () => bundles.nth(index).click(), 120_000);
       expect(bundle.name).toMatch(/\.zip$/);
-      expect(bundle.head.slice(0, 2)).toBe('PK');
+      const files = unzip(bundle.buffer);
+      expect(files.has('สารบัญ.xlsx')).toBe(true);
+      for (const name of files.keys()) expect(name).not.toMatch(/c[a-z0-9]{24}/i);
+      workbookSheets(files.get('สารบัญ.xlsx')!, true, count);
     }
   });
 
@@ -156,7 +227,8 @@ test('@journey an owner downloads the accounting files, switches a branch off an
     await expect(main.locator('[data-form-action-bar]').getByRole('button', { name: 'บันทึก', exact: true })).toBeVisible();
     const recent = main.locator('section').filter({ has: owner.getByRole('heading', { name: 'ใบล่าสุด', exact: true }) });
     const expense = recent.getByRole('link').filter({ hasText: 'EXP-' }).first();
-    await expect(expense).toContainText('1.01 บาท');
+    // This vendor's only expense is the installment one recorded at the start of the journey.
+    await expect(expense).toContainText('1,000.00 บาท');
     await expect(recent).not.toContainText('฿');
     await expense.click();
     await owner.waitForURL(url => url.pathname.includes('/expenses/'));

@@ -7,7 +7,6 @@ import { IMAGE_SOURCE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watch
 import { useState, useEffect, useCallback, useRef, type MouseEventHandler, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { MoreActions } from '@/common/components/actions/MoreActions';
 import { FilterTabs } from '@/common/components/tabs';
 import { expenseDetailUrl } from './expense-list-navigation.logic';
 import evidenceStyles from './WhtCertificatesPage.module.css';
@@ -34,7 +33,7 @@ import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
-import { err, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, WholeWords, EXPORT_FOR_ACCOUNTANT } from './ExpensesUi';
+import { err, baht0, amountText, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, WholeWords } from './ExpensesUi';
 import { Pagination } from '@/common/components/data-table/Pagination';
 
 /** Labels above the filters of the evidence page: 14 px, like every field label of this workspace. */
@@ -722,6 +721,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const setPage = (page: number) => update({ page });
   const [packageResult, setPackageResult] = useState<AccountantPackageResult | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportEmpty, setExportEmpty] = useState(false);
   const [backfillPreview, setBackfillPreview] = useState<ExpenseBackfillPreview | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
@@ -759,22 +759,21 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     exportScopeVersion.current += 1;
-    setPackageResult(null);
+    setPackageResult(null); setExportEmpty(false);
   }, [branchId, dateField, yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter]);
 
   const exportPackage = async () => {
     const version = loadVersion.current;
     const scopeVersion = exportScopeVersion.current;
-    setExporting(true); setError(null);
+    setExporting(true); setError(null); setExportEmpty(false); setPackageResult(null);
     try {
-      const result = await createAccountantPackage(companyId, { ...exportFilters, columnSet: 'full' });
+      const result = await createAccountantPackage(companyId, exportFilters);
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
-      // Same guard as the list page (ebed6dfb): a header-only workbook reads as a broken export.
-      if (result.rowCount === 0) { toast.warning('ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้'); return; }
+      if (result.rowCount + (result.paymentRowCount ?? 0) + (result.withholdingRowCount ?? 0) === 0) { setExportEmpty(true); return; }
       setPackageResult(result);
-      downloadIndexXlsx(result, `สรุปรายจ่าย-${yearMonth || 'ทุกเดือน'}.xlsx`);
+      downloadIndexXlsx(result, result.indexFileName);
       // Said where the person is looking, the moment it happens.
-      toast.success(`ดาวน์โหลด Excel แล้ว ${result.rowCount} รายการ`);
+      toast.success('ดาวน์โหลด Excel แล้ว');
     } catch (e) {
       if (version !== loadVersion.current || scopeVersion !== exportScopeVersion.current) return;
       if (isBranchScope403(e, branchId)) branchFilter?.reportBranchForbidden();
@@ -809,8 +808,10 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const visibleRows = evidenceRowsInDateOrder(filterRowsByFlag(rows, flagFilter), order);
   const total = visibleRows.reduce((s, r) => s + Number(r.grandTotalAmount || 0), 0);
   const exportAttentionCount = summarizeEvidenceRows(visibleRows).attention;
+  // The ทั้งหมด tab sends no selection: the server filters below are the view, and a month whose
+  // only facts are payments or filed withholding still exports them (R8 keeps a narrowed tab exact).
   const exportFilters = {
-    expenseIds: visibleRows.map((row) => row.expenseId),
+    ...(flagFilter === 'all' ? {} : { expenseIds: visibleRows.map((row) => row.expenseId) }),
     ...(branchId ? { branchId } : {}), dateField, status: documentStatus,
     ...(yearMonth ? { yearMonth } : {}),
     ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
@@ -848,7 +849,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
           <MangmeeCard className="flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-end">
             <label className="min-w-0 flex-1">
               <span className={FILTER_LABEL}>เดือน</span>
-              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} aria-label="เดือน" value={yearMonth} onChange={(e) => setYearMonth(e.target.value)}>
+              <ThemedSelect className={cx(inputClass, 'min-w-0 w-full')} id="evidence-export-month" aria-label="เดือน" value={yearMonth} onChange={(e) => setYearMonth(e.target.value)}>
                 <option value="">ทุกเดือน</option>
                 {months.map(month => <option key={month} value={month}>{`${formatThaiMonth(month)}${view ? ` · ${view.folders.find(folder => folder.yearMonth === month)?.expenseCount ?? 0} รายการ` : ''}`}</option>)}
               </ThemedSelect>
@@ -898,16 +899,16 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               A download can be repeated and undone by deleting a file, so it asks nothing first. */}
           {canExport && !error && (
             <MangmeeCard className="space-y-3 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end [&>details]:w-full sm:[&>details]:w-auto [&>details>summary]:w-full">
-                <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])} />
-                <MoreActions label="เพิ่มเติม" align="end" closeOnPress busy={exporting}>
-                  <button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting || loading || !visibleRows.length} aria-busy={Boolean(exporting || loading)}>{exporting ? 'กำลังสร้าง...' : EXPORT_FOR_ACCOUNTANT}</button>
-                </MoreActions>
-              </div>
+              <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])}
+                excelAction={<button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting || loading} aria-busy={Boolean(exporting || loading)}>{exporting ? 'กำลังสร้าง...' : 'ดาวน์โหลด Excel'}</button>} />
+              {exportEmpty && <div className="space-y-2">
+                <p role="status" className="text-sm text-gray-700">ไม่มีรายการตามที่เลือก</p>
+                <button type="button" className={ghostClass} onClick={() => document.getElementById('evidence-export-month')?.focus()}>เปลี่ยนช่วงวันที่</button>
+              </div>}
               {exportAttentionCount > 0 && <p className="text-sm text-gray-500">มี {exportAttentionCount} รายการต้องแก้ ดาวน์โหลดได้ แต่ควรแก้ก่อนส่ง</p>}
               {packageResult && (
                 <div className="space-y-1 rounded-xl border border-brand-100 bg-brand-25 p-3 text-sm" role="status">
-                  <p className="font-semibold text-brand-700">✓ ดาวน์โหลด Excel แล้ว {packageResult.rowCount} รายการ</p>
+                  <p className="font-semibold text-brand-700">✓ ดาวน์โหลด Excel แล้ว</p>
                   {packageResult.truncated && <p className="font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ เลือกเดือนหรือปรับตัวกรองให้แคบลง แล้วส่งออกอีกครั้ง</p>}
                   <p className="text-gray-500">สร้างเมื่อ {formatThaiDateTime(packageResult.generatedAt)}</p>
 

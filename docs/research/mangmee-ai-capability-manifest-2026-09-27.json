@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "0866f76570304a24748fceaa96643670c8cd36de",
+  "sourceRevision": "1db9daa99c785b9b33baeb8c220aaaa63391b2ca",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
-      "sha256": "5cd2ccb87f7416873b8543e286a700fe82ef7202bb481b2d2487f7b2f4705331"
+      "sha256": "52db252d71f6627b4b28904bbb64c04f71ecf9d43c7bb3e4ced735920b3770ef"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-banking-tools.use-case.ts",
@@ -229,7 +229,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "a35734598dea406109743281638830a0a13d48fe91161b9dcf21e927fd6ed17e"
+      "sha256": "b2f84a7a1258dbe36a02da770c32891600441e350bd21a7379c848e7b735120c"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -10171,6 +10171,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-04T07:06:56.817Z",
-  "manifestDigest": "470150d2cd59fb8551ff816aa2bbd193b5c38c5db48dbe899368963c4e2c362b"
+  "generatedAt": "2026-11-04T07:37:20.637Z",
+  "manifestDigest": "2eebcbb5f9f1c29b9f992be4e39bc6a88dff19ff5117ec0747068b46d49959aa"
 }

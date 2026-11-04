@@ -255,8 +255,8 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
       await owner.waitForURL(/\/expenses\/evidence\?/, FIRST_SIGHT);
     }
     await expect(main.getByRole('link').filter({ hasText: invoiceSeller }).filter({ visible: true })).toBeVisible(AFTER_PRESS);
-    await main.locator('summary').filter({ hasText: 'เพิ่มเติม' }).click();
-    const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click());
+    // Export Phase 2.2: the evidence card shows ดาวน์โหลด Excel beside the bundle button, no เพิ่มเติม menu.
+    const file = await pressForDownload(owner, () => main.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click());
     const [headers, ...rows] = sheetRows(await readFile((await file.download.path())!));
     expect(headers).toContain('สิทธิภาษีซื้อ');
     expect(headers!.slice(-4)).toEqual(['วันที่จ่ายล่าสุด', 'สำรองจ่ายโดย', 'สถานะ', 'หมายเหตุ']);
@@ -281,7 +281,7 @@ test('@journey input VAT: unknown shop answers from its link, waiting confirms, 
     const dialog = owner.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true });
     // One line: the file count, then only the kinds of paper the bundle holds (a kind with none is left out).
     await expect(dialog.getByRole('status').filter({ hasText: /^\d+ ไฟล์ · / })).toHaveText(
-      /^\d+ ไฟล์ · ใบเสร็จ [1-9]\d*(?: · (?:ใบรับรองแทนใบเสร็จ|สลิป|ใบสำคัญจ่าย|50 ทวิ) [1-9]\d*)*$/, AFTER_PRESS);
+      /^\d+ ไฟล์ · เอกสารค่าใช้จ่าย [1-9]\d*(?: · (?:ใบรับรองแทนใบเสร็จ|หลักฐานการจ่าย|ใบสำคัญจ่าย|50 ทวิ) [1-9]\d*)*$/, AFTER_PRESS);
     const download = await pressForDownload(owner, () => dialog.getByRole('button', { name: 'ดาวน์โหลดไฟล์ทั้งหมด', exact: true }).click());
     const zip = await readFile((await download.download.path())!);
     const files = new Map<string, Buffer>();

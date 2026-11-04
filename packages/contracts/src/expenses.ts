@@ -1869,25 +1869,7 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   bundle_file_names: 'ชื่อไฟล์ในชุดเอกสาร',
 };
 
-/** @deprecated Legacy selector; the accountant workbook has one column layout. */
-export const ACCOUNTANT_INDEX_SUMMARY_COLUMNS: readonly AccountantIndexColumn[] = [
-  'document_date',
-  'vendor_name',
-  'description',
-  'category_name',
-  'grand_total_amount',
-  'vat_amount',
-  'expense_status',
-  'web_url',
-  'voucher_numbers', 'wht_certificate_numbers', 'bundle_file_names', 'notes',
-];
-
 export type AccountantIndexColumnSet = 'summary' | 'full';
-
-/** @deprecated Only for the frozen legacy projection. */
-export function accountantIndexColumns(columnSet: AccountantIndexColumnSet): readonly AccountantIndexColumn[] {
-  return columnSet === 'summary' ? ACCOUNTANT_INDEX_SUMMARY_COLUMNS : ACCOUNTANT_INDEX_COLUMNS;
-}
 
 export type AccountantPackageIndexRow = Record<AccountantIndexColumn, string>;
 

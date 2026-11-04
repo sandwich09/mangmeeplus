@@ -1130,21 +1130,16 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
 // document load, which resets the store by design — using it would make the reset tests pass
 // even if the feature did not exist, and the retention test fail even though it works.
 //
-// The probe is the export-columns select: it is retained exactly like the period, but unlike
-// the period, chip and search it does not filter the list, so a row stays clickable for the
-// round trip. All six retained values share one mechanism, so proving one proves it.
+// Date order changes no selection, so a row remains available for the return trip.
 test.describe('expense list filter retention', () => {
-  const SUMMARY = 'แบบย่อ';
-  const FULL = 'แบบเต็มสำหรับสำนักงานบัญชี';
-  const columns = (page: any) => page.getByRole('combobox', { name: 'รายละเอียดในไฟล์' });
+  const sort = (page: any, order: 'newest' | 'oldest') => page.getByRole('button', {
+    name: order === 'newest' ? 'วันที่ ใหม่ไปเก่า กดเพื่อเรียงเก่าไปใหม่' : 'วันที่ เก่าไปใหม่ กดเพื่อเรียงใหม่ไปเก่า', exact: true,
+  }).filter({ visible: true });
 
-  async function chooseFullColumns(page: any) {
-    await page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
-    await expect(columns(page)).toHaveText(SUMMARY);
-    await columns(page).click();
-    await page.getByRole('option', { name: FULL, exact: true }).click();
-    await expect(columns(page)).toHaveText(FULL);
-    await page.getByRole('dialog', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).getByRole('button', { name: 'ปิด', exact: true }).click();
+  async function chooseOldest(page: any) {
+    await expect(sort(page, 'newest')).toBeVisible();
+    await sort(page, 'newest').click();
+    await expect(sort(page, 'oldest')).toBeVisible();
   }
 
   /** Navigate the way a user does — the sidebar — so Next routes on the client. */
@@ -1159,7 +1154,7 @@ test.describe('expense list filter retention', () => {
     const ownDraft = await createExpense(api, companyId);
     try {
       await gotoCompany(authedPage, companyId, '/expenses');
-      await chooseFullColumns(authedPage);
+      await chooseOldest(authedPage);
 
       const listQuery = new URL(authedPage.url()).searchParams;
       // Into the detail route by clicking a row, and back out via the กลับ link — both client-side.
@@ -1171,8 +1166,7 @@ test.describe('expense list filter retention', () => {
       for (const key of ['month', 'chip', 'query', 'dateOrder', 'page']) expect(returned.get(key)).toBe(listQuery.get(key));
       await expect(authedPage.locator('[data-testid="expenses-row"][data-highlighted]').filter({ visible: true })).toBeVisible();
 
-      await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
-      await expect(columns(authedPage)).toHaveText(FULL);
+      await expect(sort(authedPage, 'oldest')).toBeVisible();
     } finally {
       expect((await api.delete(`companies/${companyId}/expenses/${ownDraft.id}`)).status()).toBe(204);
     }
@@ -1180,30 +1174,27 @@ test.describe('expense list filter retention', () => {
 
   test('EXP-21 @p1 resets the filter on reload', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
-    await chooseFullColumns(authedPage);
+    await chooseOldest(authedPage);
     await authedPage.reload();
-    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
-    await expect(columns(authedPage)).toHaveText(SUMMARY);
+    await expect(sort(authedPage, 'newest')).toBeVisible();
   });
 
   test('EXP-22 @p1 resets the filter when another menu is visited', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
-    await chooseFullColumns(authedPage);
+    await chooseOldest(authedPage);
     await clickSidebar(authedPage, '/dashboard');
     await clickSidebar(authedPage, '/expenses');
-    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
-    await expect(columns(authedPage)).toHaveText(SUMMARY);
+    await expect(sort(authedPage, 'newest')).toBeVisible();
   });
 
   // A sibling tab is a different sidebar entry, so it counts as a menu change (owner decision
   // 2026-08-06) even though its path nests under /expenses.
   test('EXP-23 @p2 resets the filter when a sibling expense tab is visited', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
-    await chooseFullColumns(authedPage);
+    await chooseOldest(authedPage);
     await clickSidebar(authedPage, '/expenses/evidence');
     await clickSidebar(authedPage, '/expenses');
-    await authedPage.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
-    await expect(columns(authedPage)).toHaveText(SUMMARY);
+    await expect(sort(authedPage, 'newest')).toBeVisible();
   });
 });
 
@@ -1232,8 +1223,8 @@ test('EXP-EVIDENCE @p1 pending evidence saves and reopens without enabling Next 
 });
 
 // Opening export options must not move the trigger or the list, including on mobile.
-for (const width of [1280, 390]) {
-  test(`EXP-EXPORT @p1 export dialog keeps layout and selected format at ${width}px`, async ({ authedPage: page, companyId }) => {
+for (const width of [390, 1280, 1556]) {
+  test(`EXP-EXPORT @p1 export dialog keeps layout and offers one accountant file at ${width}px`, async ({ authedPage: page, companyId }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests: Array<Record<string, unknown>> = [];
     await page.route('**/expenses/accountant-package', async (route) => {
@@ -1254,18 +1245,17 @@ for (const width of [1280, 390]) {
     expect(await trigger.boundingBox()).toEqual(before.trigger);
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(requests).toHaveLength(0);
-    await dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true }).click();
-    await page.getByRole('option', { name: 'แบบเต็มสำหรับสำนักงานบัญชี', exact: true }).click();
+    await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveCount(0);
     await dialog.getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click();
     await expect(dialog.getByRole('alert')).toBeVisible();
     expect(requests).toHaveLength(1);
-    expect(requests[0].columnSet).toBe('full');
+    expect(requests[0]).not.toHaveProperty('columnSet');
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
     expect(await trigger.boundingBox()).toEqual(before.trigger);
     await trigger.click();
-    await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveText('แบบเต็มสำหรับสำนักงานบัญชี');
+    await expect(dialog.getByRole('combobox', { name: 'รายละเอียดในไฟล์', exact: true })).toHaveCount(0);
     await dialog.getByRole('button', { name: 'ปิด', exact: true }).click();
     expect(await listSearch.boundingBox()).toEqual(before.list);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -1290,7 +1280,7 @@ test('EXP-DATE upload leaves receipt date to AI or review and omits it from the 
   await expect(page.getByRole('combobox', { name: 'วันที่ในใบเสร็จ', exact: true })).toHaveCount(0);
 });
 
-for (const width of [1280, 390]) {
+for (const width of [390, 1280, 1556]) {
   // 2026-10-13: the three-step explainer box of this page was removed (thai-ux-standard §1.3, §3.1: the page title and
   // the one button say it). What this test keeps protecting at both widths: the page fits the screen and offers its
   // one action without a second heading that repeats the title.

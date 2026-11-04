@@ -33,7 +33,7 @@ function stateOf(expense: ExpenseRecordWithRelations) {
   return expense.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation as LineSubstituteReceiptContinuation | undefined;
 }
 function digest(expense: ExpenseRecordWithRelations, decision?: 'ISSUE' | 'FORM') {
-  return createHash('sha256').update(JSON.stringify([decision, expense.substituteReceiptEvidence, expense.attachments])).digest('hex');
+  return createHash('sha256').update(JSON.stringify([decision, stateOf(expense)?.acceptedValues, expense.substituteReceiptEvidence, expense.attachments])).digest('hex');
 }
 
 /** LINE prepares through the existing use case; signing and approval continue in the web hub. */
@@ -140,6 +140,10 @@ export class LineSubstituteReceiptActionService {
           paymentMethod: expense.paymentMethod ?? undefined, paymentDate: expense.paidAt?.toISOString().slice(0, 10),
           ...state!.acceptedValues,
         }, await this.repo.listCategories(ctx.companyId), language)),
+        ...(action === 'PREPARE' && state?.acceptedValues.expenseCategoryId
+          ? [state.acceptedValues.expenseCategoryId === expense.expenseCategoryId
+            ? en ? 'The selected category matches the expense.' : 'หมวดที่เลือกตรงกับรายการค่าใช้จ่ายค่ะ'
+            : en ? 'The category is still proposed in the draft. The expense has not changed.' : 'หมวดยังอยู่ในร่าง รายการค่าใช้จ่ายยังไม่เปลี่ยนค่ะ'] : []),
         (en ? 'This substitute receipt is not a tax invoice.' : 'ใบรับรองนี้ไม่ใช่ใบกำกับภาษีค่ะ')].join('\n'), webPath };
     const entry: StoredAction = { previewId: `sub_${randomUUID()}`, companyId: ctx.companyId, userId: ctx.userId,
       membershipId: ctx.membershipId, chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,

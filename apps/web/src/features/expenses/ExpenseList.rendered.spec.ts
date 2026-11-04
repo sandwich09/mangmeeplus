@@ -59,6 +59,34 @@ test('table and evidence exports use the same past date range rather than the mo
     assert.deepEqual(bundle, { dateField: table.dateField, fromDate: table.fromDate, toDate: table.toDate });
   } finally { create.mock.restore(); request.mock.restore(); }
 });
+test('one accountant file downloads payment-only and filed-only results under the server name', async () => {
+  let body: React.ReactNode;
+  let press: (() => Promise<void>) | undefined;
+  const downloaded: unknown[][] = [];
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'Modal' && props.open) { press = props.footer?.props.onClick; body = children; }
+    return realCreate(tag, props, ...children);
+  });
+  const download = mock.method(api, 'downloadIndexXlsx', (...args: unknown[]) => downloaded.push(args));
+  let result = { rowCount: 0, paymentRowCount: 1, withholdingRowCount: 0, indexFileName: 'รายจ่าย-ร้าน.xlsx', skippedEvidence: [] };
+  const request = mock.method(api, 'createAccountantPackage', async (_company: string, body: any) => {
+    assert.equal('columnSet' in body, false); return result;
+  });
+  try {
+    for (const counts of [[1, 0], [0, 1], [0, 0]]) {
+      result = { ...result, paymentRowCount: counts[0]!, withholdingRowCount: counts[1]! };
+      render([], { exportOpen: true });
+      assert.doesNotMatch(renderToStaticMarkup(body), /รายละเอียดในไฟล์|แบบเต็มสำหรับสำนักงานบัญชี|แบบย่อ/);
+      assert.ok(press); await press();
+    }
+    assert.equal(downloaded.length, 2);
+    assert.ok(downloaded.every(args => args[1] === result.indexFileName));
+    render([], { exportOpen: true, exportNotice: 'ไม่มีรายการตามที่เลือก' });
+    assert.match(renderToStaticMarkup(body), /เปลี่ยนช่วงวันที่/);
+  } finally { create.mock.restore(); request.mock.restore(); download.mock.restore(); }
+});
+
 function row(index: number, overrides = {}) {
   return { id: `e${index}`, status: 'CONFIRMED', paymentStatus: 'UNPAID', expenseNumber: `EXP-${index}`, vendorNameSnapshot: `ร้าน ${index}`,
     expenseDate: '2026-09-30', uploadedAt: '2026-10-03T01:00:00Z', dueDate: '2020-01-01', dateStatus: 'verified',
@@ -175,5 +203,28 @@ test('failed expense reads show retry without zero metrics, empty states or stal
     }
     assert.ok(retry); retry(); await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(calls, [{ company: 'co', filter: { fromDate: '2026-09-01', toDate: '2026-09-30', page: 1, pageSize: 200 } }]);
+  } finally { create.mock.restore(); request.mock.restore(); }
+});
+
+
+test('export failure retains filters and offers retry or change dates', async () => {
+  let footer: React.ReactNode, press: (() => Promise<void>) | undefined;
+  const bodies: unknown[] = [];
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'Modal' && props.open) { footer = props.footer; if (props.footer?.props.onClick) press = props.footer.props.onClick; }
+    return realCreate(tag, props, ...children);
+  });
+  const request = mock.method(api, 'createAccountantPackage', async (_company: string, body: any) => { bodies.push(body); throw new Error('ดาวน์โหลดไม่ได้ ลองอีกครั้ง'); });
+  try {
+    const query = 'month=2026-09&query=ร้านเดิม&dateOrder=oldest';
+    render([], { exportOpen: true }, query); assert.ok(press); await press();
+    render([], { exportOpen: true, exportError: 'ดาวน์โหลดไม่ได้ ลองอีกครั้ง' }, query);
+    assert.match(renderToStaticMarkup(footer), /กลับไปรายการค่าใช้จ่าย/);
+    const retry = React.Children.toArray((footer as React.ReactElement<any>).props.children).find((child: any) => child.props.onClick && child.props['aria-busy'] !== undefined);
+    await (retry as React.ReactElement<any>).props.onClick();
+    assert.deepEqual(bodies[1], bodies[0]);
+    render([], { exportOpen: true, exportNotice: 'ไม่มีรายการตามที่เลือก' }, query);
+    assert.match(source, /เปลี่ยนช่วงวันที่/);
   } finally { create.mock.restore(); request.mock.restore(); }
 });

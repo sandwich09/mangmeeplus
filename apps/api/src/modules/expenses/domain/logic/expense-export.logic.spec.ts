@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 // Run the shared date/CSV contract alongside its registered accountant-export neighbours.
 import '../../../../common/export/thai-date.logic.spec';
 import assert from 'node:assert/strict';
-import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, ACCOUNTANT_WORKBOOK_COLUMNS } from '@watchdog-bms/contracts';
+import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_WORKBOOK_COLUMNS } from '@watchdog-bms/contracts';
 import type { ExpenseAttachmentPurpose } from '@watchdog-bms/contracts';
 import { buildAccountantWorkbook, buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, exportSourceChannel, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
 
@@ -224,8 +224,8 @@ describe('accountant index is independent of expense capture mode', () => {
     }
   });
 
-  it('keeps vat_amount in the summary column set the UI downloads by default', () => {
-    assert.ok(ACCOUNTANT_INDEX_SUMMARY_COLUMNS.includes('vat_amount'));
+  it('keeps vat_amount in the single accountant workbook column set', () => {
+    assert.ok(ACCOUNTANT_WORKBOOK_COLUMNS.includes('vat_amount'));
   });
 });
 

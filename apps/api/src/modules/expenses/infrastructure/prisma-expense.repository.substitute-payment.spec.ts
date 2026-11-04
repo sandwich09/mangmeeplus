@@ -197,6 +197,45 @@ describe('substitute approval reservations and cancelled personal receipts (real
       }
     } finally { await client?.$disconnect(); }
   });
+  it('R9 category confirmation CAS preserves concurrent edits', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const categories = await Promise.all(['เดิม', 'เสนอ', 'เว็บ'].map(name => client!.expenseCategory.create({ data: { companyId, name, accountHintKey: 'GENERAL_EXPENSE' } })));
+    const row = await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: 'payer', expenseDate: PAID_AT,
+      expenseCategoryId: categories[0]!.id, status: 'NEEDS_REVIEW' } });
+    let read!: () => void, release!: () => void;
+    const readBarrier = new Promise<void>(resolve => { read = resolve; });
+    const webCommitted = new Promise<void>(resolve => { release = resolve; });
+    const delayedClient = { $transaction: (fn: any) => client!.$transaction(tx => fn(new Proxy(tx, { get(target, key) {
+      if (key === 'expenseRecord') return new Proxy(target.expenseRecord, { get(table, method) {
+        if (method === 'findFirst') return async (args: any) => {
+          const found = await table.findFirst(args); read(); await webCommitted; return found;
+        };
+        const value = Reflect.get(table, method); return typeof value === 'function' ? value.bind(table) : value;
+      } });
+      const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;
+    } }))) };
+    const input = { companyId, expenseId: row.id, actorUserId: 'payer', expectedUpdatedAt: row.updatedAt, scopes: { branchIds: [branchId] },
+      expenseCategoryId: categories[1]!.id, continuation: { workflowId: randomUUID(), acceptedValues: { expenseCategoryId: categories[1]!.id } } };
+    const pending = new PrismaExpenseRepository({ client: delayedClient } as any).saveLineSubstituteContinuation(input);
+    const refused = assert.rejects(pending, (error: any) => error.getResponse().code === 'LINE_SUBSTITUTE_CONTINUATION_STALE');
+    try {
+      await readBarrier;
+      await client!.expenseRecord.update({ where: { id: row.id }, data: { expenseCategoryId: categories[2]!.id, updatedAt: new Date(row.updatedAt.getTime() + 1000) } });
+    } finally { release(); }
+    await refused;
+    let current = await client!.expenseRecord.findUniqueOrThrow({ where: { id: row.id } });
+    assert.equal(current.expenseCategoryId, categories[2]!.id, 'web edit wins the race');
+    assert.equal(current.sourceChannelMetadataJson, null, 'losing CAS rolls back the continuation too');
+    const repo = new PrismaExpenseRepository({ client } as any);
+    const second = await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: 'payer', expenseDate: PAID_AT, expenseCategoryId: categories[0]!.id } });
+    const secondInput = { ...input, expenseId: second.id, expectedUpdatedAt: second.updatedAt };
+    const confirmed = await repo.saveLineSubstituteContinuation(secondInput);
+    current = await client!.expenseRecord.update({ where: { id: second.id }, data: { expenseCategoryId: categories[2]!.id, updatedAt: new Date(confirmed.updatedAt.getTime() + 1000) } });
+    await assert.rejects(repo.saveLineSubstituteContinuation({ ...secondInput, expectedUpdatedAt: confirmed.updatedAt }),
+      (error: any) => error.getResponse().code === 'LINE_SUBSTITUTE_CONTINUATION_STALE');
+    assert.equal((await client!.expenseRecord.findUniqueOrThrow({ where: { id: second.id } })).expenseCategoryId, categories[2]!.id, 'duplicate apply cannot overwrite a newer edit');
+  });
+
   async function source(fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE') {
     const expense = await client!.expenseRecord.create({ data: { companyId, branchId, createdByUserId: 'payer', expenseDate: PAID_AT,
       expenseNumber: `EXP-${randomUUID()}`, status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'EXPENSE_NOTE_TEXT', postingStatus: 'not_required',

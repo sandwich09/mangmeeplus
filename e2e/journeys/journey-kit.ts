@@ -199,14 +199,20 @@ export async function signOnScreen(page: Page, scope: Locator = page.locator('ma
 /** Press something that downloads a file and hand back the file with its first bytes. */
 export async function pressForDownload(page: Page, press: () => Promise<unknown>, timeout = 90_000) {
   const [download] = await Promise.all([page.waitForEvent('download', { timeout }), press()]);
-  return { download, name: download.suggestedFilename(), head: await headOf(download) };
+  return { download, name: download.suggestedFilename(), head: (await downloadBuffer(download)).subarray(0, 5).toString('latin1') };
 }
 
-async function headOf(download: Download) {
+/** Press a download and keep all bytes for workbook and archive assertions. */
+export async function pressForDownloadBuffer(page: Page, press: () => Promise<unknown>, timeout = 90_000) {
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout }), press()]);
+  return { name: download.suggestedFilename(), buffer: await downloadBuffer(download) };
+}
+
+async function downloadBuffer(download: Download) {
   const stream = await download.createReadStream();
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).subarray(0, 5).toString('latin1');
+  return Buffer.concat(chunks);
 }
 
 /** The id at the end of the address, e.g. `/expenses/<id>`. */

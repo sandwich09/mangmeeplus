@@ -151,6 +151,10 @@ export function harness(overrides: {
     },
     findByIdWithRelations: async (_companyId: string, id: string) => id === current.id ? current : null,
     listCategories: async () => overrides.categories ?? [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
+    findCategoryById: async (companyId: string, id: string) => {
+      const category = (await repo.listCategories(companyId)).find((item: any) => item.id === id);
+      return category ? { companyId, status: 'ACTIVE', ...category } : null;
+    },
     getSubstituteReceiptPolicy: async () => overrides.policy ?? null,
     listEligibleSubstituteReceiptApprovers: async () => overrides.approvers ?? [{ userId: 'user-1', displayName: 'เจ้าของ' }],
     findActiveMemberIdentity: async (_companyId: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
@@ -183,7 +187,7 @@ export function harness(overrides: {
       current = {
         ...current,
         updatedAt: now,
-        // Mirrors the repository: the collected category is written to the ROW in the same CAS write.
+        // Mirrors the repository: only signed confirmation supplies a category to this CAS.
         ...(input.expenseCategoryId ? { expenseCategoryId: input.expenseCategoryId } : {}),
         sourceChannelMetadataJson: { ...current.sourceChannelMetadataJson, lineSubstituteReceiptContinuation: continuation },
       };
@@ -991,7 +995,7 @@ describe('R13 — the assistant asks before producing the document', () => {
       const applied = await h.useCase.execute(ctx(), { messageText, confirmedDecision: expected,
         chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
       assert.equal(h.prepares.length, 1);
-      assert.match(applied.replyText, expected === 'ISSUE' ? /รอยืนยัน/ : /แบบฟอร์มรอลงนาม/);
+      assert.match(applied.replyText, expected === 'ISSUE' ? /เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น/ : /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/);
     });
   }
 
@@ -1062,7 +1066,7 @@ describe('R13 — the assistant asks before producing the document', () => {
 
     const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the invitation is still true after an unrelated message');
-    assert.match(later.replyText, /รอยืนยัน/);
+    assert.match(later.replyText, /เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น/);
   });
 
   it('S1: the “พัก” escape stays visible in the re-ask, not only in the first decline reply', async () => {
@@ -1083,7 +1087,7 @@ describe('R13 — the assistant asks before producing the document', () => {
 
     const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the answer the invitation asked for is received');
-    assert.match(later.replyText, /รอยืนยัน/);
+    assert.match(later.replyText, /เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น/);
   });
 
   for (const messageText of NOT_A_CHOICE) {
@@ -1134,7 +1138,7 @@ describe('R13 — the assistant asks before producing the document', () => {
 
       const form = await h.useCase.execute(ctx(permissions), { messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
       assert.equal(h.prepares.length, 1);
-      assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+      assert.match(form.replyText, /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/);
     }
   });
 
@@ -1214,9 +1218,12 @@ describe('R13 — the assistant asks before producing the document', () => {
 
     assert.equal(issued.status, 'READY_FOR_WEB');
     assert.equal(issued.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
-    assert.match(issued.replyText, /รอยืนยัน/);
+    assert.match(issued.replyText, /เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น/);
     assert.match(issued.replyText, /SUB-202608-00007/);
-    assert.match(issued.replyText, /LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.equal(h.getExpense().substituteReceiptEvidence.status, 'PREPARED');
+    assert.equal(h.getExpense().substituteReceiptEvidence.certifiedAt, null);
+    assert.equal(h.getExpense().substituteReceiptEvidence.approvedAt, null);
+    assert.equal(h.getExpense().substituteReceiptEvidence.issuedAt, null);
     assert.equal(issued.replyText.includes('ออกเอกสารแล้ว'), false, 'a prepared document is never described as issued');
     assert.equal(issued.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false);
 
@@ -1255,9 +1262,12 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.equal(h.prepares.length, 1, 'the paper route needs no stored signature');
     assert.equal(h.prepares[0].preparedFromChannel, 'LINE');
     assert.equal(form.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
-    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
-    assert.match(form.replyText, /UNSIGNED/);
-    assert.match(form.replyText, /LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.match(form.replyText, /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/);
+    assert.equal(h.prepares[0].lineContinuation.formRequested, true, 'paper preparation stays unsigned');
+    assert.equal(h.getExpense().substituteReceiptEvidence.status, 'PREPARED');
+    assert.equal(h.getExpense().substituteReceiptEvidence.certifiedAt, null);
+    assert.equal(h.getExpense().substituteReceiptEvidence.approvedAt, null);
+    assert.equal(h.getExpense().substituteReceiptEvidence.issuedAt, null);
   });
 
   it('M3: choice 3 lists the editable fields UNNUMBERED, with an example, and never numbers a dead option', async () => {
@@ -1944,14 +1954,11 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
         answered.blockers.some((item) => item.code === 'reviewed_category_required'), false,
         'the answer the user gave actually clears the blocker it was asked for',
       );
-      // The category is an expense field: it has to reach the ROW, or the prepare (and the web
-      // wizard) would still refuse the very thing the sender just answered.
-      assert.equal(h.getExpense().expenseCategoryId, 'cat-food');
+      assert.equal(h.getExpense().expenseCategoryId, null, 'collection keeps the category proposed');
+      assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId, 'cat-food');
       assert.match(answered.replyText, /หมวดค่าใช้จ่าย/);
-      // The echo promises “ยังไม่แก้รายการ” for every other field — and the category is the one that IS
-      // written to the row, so the promise must not be made about it.
-      assert.equal(answered.replyText.includes('(ยังไม่แก้รายการ)'), false);
-      assert.match(answered.replyText, /หมวดค่าใช้จ่ายบันทึกลงรายการให้แล้ว/);
+      assert.match(answered.replyText, /หมวดในรายการค่าใช้จ่ายยังไม่เปลี่ยน/);
+      assert.match(answered.replyText, /เก็บหมวดไว้ในร่างแล้วค่ะ ตรวจข้อมูลก่อนกดเตรียมใบรับรอง/);
     });
   }
 
@@ -1993,7 +2000,8 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
     const answered = await h.useCase.execute(ctx(), {
       messageText: '1', confirmedDecision: 'ISSUE', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
-    assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', 'the company\u2019s own row wins over the global default');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId, 'cat-travel', 'the company\u2019s own row wins over the global default');
+    assert.equal(h.getExpense().expenseCategoryId, null);
   });
 
   it('runs the whole journey to a clean preflight and the R13 ask, then prepares', async () => {
@@ -2102,7 +2110,7 @@ describe('B5 — the paper choice survives the next turn', () => {
       messageText: '2', confirmedDecision: 'FORM', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
     assert.equal(form.badge, '🖊️ รอลงนาม');
-    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+    assert.match(form.replyText, /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/);
     // The prepare records the paper choice on the consumed state; `signatureMode` stays DIGITAL
     // until the wet-signed scan arrives, which is exactly the window this bug lived in.
     assert.equal(h.getExpense().substituteReceiptEvidence.signatureMode, 'DIGITAL');

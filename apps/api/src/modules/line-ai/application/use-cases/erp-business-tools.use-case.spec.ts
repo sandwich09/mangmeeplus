@@ -14,6 +14,7 @@ import { InventoryGetStockBalanceTool, InventoryListLowStockTool, InventorySearc
 import { NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from './erp-workflow-tools.use-case';
 import { ExpenseGetDailyClosingTool } from './erp-expense-daily-closing.use-case';
+import { ListExpensesUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { mergeVendorBreakdownGroups, type VendorBreakdownRawGroup } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH' } as any;
@@ -398,6 +399,48 @@ describe('ExpenseGetBreakdownTool', () => {
     assert.equal(data.totalCount, 3);
     assert.equal(data.totalAmount, '300.0000');
     assert.equal(data.period.defaultedToCurrentMonth, true);
+  });
+
+  it('R7 linked source is replaced only inside the same filtered population', async () => {
+    for (const documentStatus of [undefined, 'NEEDS_REVIEW'] as const) {
+      // T12 proves the repository population. These are its visible snapshots: a source and
+      // projection replace each other only when the projection matches this query.
+      const filtered = Boolean(documentStatus);
+      const count = filtered ? 1 : 2, amount = filtered ? '1000' : '1200';
+      const seen: any[] = [];
+      const source = new ListExpensesUseCase({
+        readAiExpenseSummary: async (filter: any, scope: any) => {
+          seen.push({ filter, scope });
+          return { asOf: new Date('2026-10-31T00:00:00Z'), total: count,
+            byCurrency: [{ currency: 'THB', count, totalAmount: amount, paidAmount: '0', outstandingAmount: amount }],
+            byStatus: [{ status: documentStatus ?? 'CONFIRMED', currency: 'THB', count, totalAmount: amount }],
+            items: [{ id: filtered ? 'source' : 'unrelated', expenseNumber: null, expenseDate: new Date('2026-10-20T00:00:00Z'),
+              vendorNameSnapshot: 'ผู้ขาย', vendorDocumentNumber: null, status: documentStatus ?? 'CONFIRMED', paymentStatus: 'UNPAID',
+              currency: 'THB', grandTotalAmount: filtered ? '1000' : '200', paidAmount: '0', outstandingAmount: filtered ? '1000' : '200' }],
+            hasMore: !filtered, nextCursorSource: filtered ? null : { expenseDate: new Date('2026-10-20T00:00:00Z'), id: 'unrelated' } };
+        },
+        readAiExpenseBreakdown: async (filter: any, scope: any) => {
+          seen.push({ filter, scope });
+          return { asOf: new Date('2026-10-31T00:00:00Z'), byCurrency: [{ currency: 'THB', count, totalAmount: amount }],
+            byCategory: [{ expenseCategoryId: null, currency: 'THB', count, totalAmount: amount, label: null }],
+            byBranch: [], byVendor: [], categoryHasMore: false, branchHasMore: false, vendorHasMore: false };
+        },
+      } as any);
+      const ctx = { ...baseCtx, permissions: ['expense.read_related'], branchIds: ['b1'] };
+      const input = { period: { fromDate: '2026-10-01', toDate: '2026-10-31' }, ...(documentStatus ? { documentStatus } : {}) };
+      const results = [await new ExpenseListRecentTool(source, { client: {} } as any).execute(ctx, { ...input, limit: 1 }),
+        await new ExpenseGetBreakdownTool(source).execute(ctx, input)];
+      for (const result of results) {
+        assert.equal(result.status, 'ok');
+        assert.equal((result.data as any).totalAmount ?? (result.data as any).summary?.totalAmount, amount);
+        const total = result.facts?.find(fact => fact.metric === 'expense_total');
+        assert.equal(total?.value, amount);
+        assert.equal(result.queryApplied?.accessScope, 'related');
+        assert.ok(result.sourceRefs.every(ref => ref.permissionChecked));
+      }
+      assert.ok(seen.every(({ filter, scope }) => filter.companyId === ctx.companyId && filter.status === documentStatus
+        && scope.relatedUserId === ctx.userId && scope.branchIds[0] === 'b1'));
+    }
   });
 
   it('spec §4 R-M1: echoes the effective groupBy in queryApplied, defaulting to category', async () => {

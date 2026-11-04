@@ -349,10 +349,53 @@ describe('round 5A sold-pack document advisor reads', () => {
       prefill: { paymentDate: '2026-10-02', formType: 'PND53', grossAmount: gross, withheldAmount: withheld,
         incomeCategoryCode: 'CAT_SERVICE', incomeCategoryName: 'ค่าบริการมาตรฐาน', payeeSnapshot: { name: 'ผู้รับ' } }, ...overrides };
   }
+  it('R8 partly certified expense contributes only its remainder', async () => {
+    const source = { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' };
+    const required = handoff('required', 'REQUIRED', '10000', '100', source);
+    const certificate = handoff('issued', 'SYSTEM_ISSUED', '5000', '50', {
+      ...source, currentCertificate: { paymentDate: '2026-10-01', grossAmount: '5000', withheldAmount: '50', incomeCategoryCode: 'CAT_SERVICE', incomeCategoryName: 'ค่าบริการมาตรฐาน', payee: { name: 'ผู้รับ' } },
+    });
+    const run = async (rows: any[]) => data(await new WhtGetMonthSummaryTool({ listPaged: async () => ({ rows, total: rows.length, pageSize: 100 }) } as any, {} as any)
+      .execute({ ...ctx, permissions: ['wht.certificate.read'] }, { periodKey: '2026-10' }));
+    const snapshot = JSON.stringify([required, certificate]);
+    const partial = await run([required, certificate, certificate]);
+    assert.equal(partial.totalIncome ?? partial.totalPaid, '10000.00'); assert.equal(partial.totalDocumentWithholding, '100.00');
+    assert.equal(partial.certificateItemCount, 2); assert.equal(partial.certificateCount, 1);
+    assert.equal(partial.countBasis, 'certificate_worklist_including_unpaid');
+    assert.equal(JSON.stringify([required, certificate]), snapshot, 'projection never changes shared DTOs');
+    const external = handoff('external', 'EXTERNAL_LINKED', '5000', '50', source);
+    const cancelled = handoff('cancelled', 'CANCELLED', '9000', '90', source);
+    const full = await run([required, certificate, external, cancelled]);
+    assert.equal(full.totalIncome, '10000.00'); assert.equal(full.certificateItemCount, 2); assert.equal(full.certificateCount, 2);
+    const payment = handoff('payment', 'REQUIRED', '5000', '50', { ...source, prefill: { ...required.prefill, expensePaymentId: 'payment-2', grossAmount: '5000', withheldAmount: '50', expenseTotals: { grossAmount: '10000', withheldAmount: '100' } } });
+    assert.equal((await run([payment, certificate])).totalIncome, '10000.00', 'payment-specific required is not reduced again');
+    assert.equal((await run([required, { ...certificate, sourcePaymentId: 'other' }])).totalIncome, '15000.00', 'sources cannot reduce each other');
+    assert.equal((await run([required, { ...certificate, sourcePaymentType: 'supplier.payment' }])).totalIncome, '15000.00');
+    const unpaid = await run([required]);
+    assert.equal(unpaid.totalIncome, '10000.00'); assert.equal(unpaid.certificateCount, 0);
+    assert.doesNotMatch(unpaid.message, /จากการจ่าย|ค้างชำระ/);
+  });
+
+  it('R8 cross-month certificates are subtracted before month selection', async () => {
+    const source = { sourcePaymentType: 'expense.record', sourcePaymentId: 'expense-1' };
+    const required = handoff('required', 'REQUIRED', '10000', '100', source);
+    const prior = handoff('prior', 'EXTERNAL_LINKED', '5000', '50', { ...source, prefill: { ...required.prefill, paymentDate: '2026-09-30', grossAmount: '5000', withheldAmount: '50', expensePaymentId: 'payment-1' } });
+    const filler = Array.from({ length: 101 }, (_, i) => handoff(`unpaid-${i}`, 'REQUIRED', '0.10', '0.01', { sourcePaymentType: 'expense.record', sourcePaymentId: `unpaid-${i}` }));
+    const rows = [required, ...filler, prior];
+    const pages: number[] = [];
+    const r = data(await new WhtGetMonthSummaryTool({ listPaged: async (c: any, query: any) => {
+      assert.equal(c.companyId, ctx.companyId); assert.deepEqual(c.scopes.branchIds, ctx.branchIds);
+      assert.equal(query.periodKey, undefined); pages.push(query.page);
+      return { rows: rows.slice((query.page - 1) * 100, query.page * 100), total: rows.length, pageSize: 100 };
+    } } as any, {} as any).execute({ ...ctx, permissions: ['wht.certificate.read'] }, { periodKey: '2026-10' }));
+    assert.deepEqual(pages, [1, 2]); assert.equal(r.totalIncome ?? r.totalPaid, '5010.10'); assert.equal(r.totalDocumentWithholding, '51.01');
+    assert.equal(r.certificateCount, 0); assert.equal(r.certificateItemCount, 102);
+  });
+
   it('sums every page of seeded paid/certificate figures and only active scoped PND53 events', async () => {
     const rows = [handoff('1', 'SYSTEM_ISSUED', '1000.10', '30.00'), handoff('2', 'EXTERNAL_LINKED', '2000.20', '60.01'),
       handoff('3', 'REQUIRED', '500.05', '15.00'), handoff('4', 'CANCELLED', '9000', '270'),
-      handoff('5', 'SYSTEM_ISSUED', '8000', '240', { prefill: { paymentDate: '2026-09-30' } })];
+      handoff('5', 'SYSTEM_ISSUED', '8000', '240', { prefill: { ...handoff('5', 'SYSTEM_ISSUED', '8000', '240').prefill, paymentDate: '2026-09-30' } })];
     const seen: any[] = [];
     const handoffs = { listPaged: async (c: any, query: any) => { seen.push([c, query]); const page = query.page; return { rows: rows.slice((page - 1) * 2, page * 2), total: rows.length, pageSize: 2 }; } };
     const repo = { findPeriod: async (...args: any[]) => { assert.deepEqual(args, ['company-1', 'PND53', '2026-10']); return { id: 'period', status: 'OPEN', dueDate: new Date('2026-11-09Z') }; },
@@ -362,11 +405,11 @@ describe('round 5A sold-pack document advisor reads', () => {
         { eventType: 'VAT_INPUT', branchId: 'branch-1', taxAmount: '777.00' }]; } };
     const r = data(await new WhtGetMonthSummaryTool(handoffs as any, repo as any).execute(ctx, { periodKey: '2026-10', branchId: 'branch-1' }));
     assert.equal(seen.length, 3); assert.equal(seen[0][0].companyId, ctx.companyId); assert.deepEqual(seen[0][0].scopes.branchIds, ctx.branchIds);
-    assert.equal(r.certificateCount, 2); assert.equal(r.paymentCount, 3); assert.equal(r.totalPaid, '3500.35'); assert.equal(r.totalWithheld, '105.01');
-    assert.deepEqual(r.byIncomeType, [{ incomeCategoryName: 'ค่าบริการมาตรฐาน', paymentCount: 3, totalPaid: '3500.35', totalWithheld: '105.01' }]);
+    assert.equal(r.certificateCount, 2); assert.equal(r.certificateItemCount, 3); assert.equal(r.totalIncome, '3500.35'); assert.equal(r.totalDocumentWithholding, '105.01');
+    assert.deepEqual(r.byIncomeType, [{ incomeCategoryName: 'ค่าบริการมาตรฐาน', itemCount: 3, totalIncome: '3500.35', totalDocumentWithholding: '105.01' }]);
     assert.equal(r.remittance.totalWithheld, '105.01'); assert.equal(r.remittance.dueDate, '2026-11-09'); assert.equal(r.remittance.dueDateBasis, 'configured_period');
-    assert.equal(r.issuedCertificates.length, 2); assert.match(r.message, /EXT-1.*ผู้รับ.*60.01/); assert.match(r.message, /ยังไม่ใช่ยอดค้างชำระ/);
-    assert.match(r.message, /งวด ตุลาคม 2569/); assert.doesNotMatch(r.message, /2026-10|2026-11-09/);
+    assert.equal(r.issuedCertificates.length, 2); assert.equal(r.issuedCertificates[1].number, 'EXT-1'); assert.doesNotMatch(r.message, /จากการจ่าย|ค้างชำระ/);
+    assert.match(r.message, /รายการที่คุณดูได้เดือน ตุลาคม 2569/); assert.doesNotMatch(r.message, /2026-10|2026-11-09/);
   });
 
   it('refuses an outside branch before reads and never invents a missing period or deadline', async () => {
@@ -374,7 +417,7 @@ describe('round 5A sold-pack document advisor reads', () => {
     const tool = new WhtGetMonthSummaryTool({ listPaged: async () => { calls++; return { rows: [], pageSize: 100, total: 0 }; } } as any,
       { findPeriod: async () => { calls++; return null; } } as any);
     assert.equal((await tool.execute(ctx, { branchId: 'other' })).status, 'forbidden'); assert.equal(calls, 0);
-    const r = data(await tool.execute(ctx, { periodKey: '2026-10' })); assert.equal(r.remittance, null); assert.match(r.message, /ยังยืนยันยอดนำส่งและวันครบกำหนด/);
+    const r = data(await tool.execute(ctx, { periodKey: '2026-10' })); assert.equal(r.remittance, null); assert.match(r.message, /รายการที่คุณดูได้เดือน/);
     assert.equal(pnd53PaperDueDay('2026-12'), '2027-01-07');
     await assert.rejects(() => tool.execute(ctx, { periodKey: '2026-13' }));
   });

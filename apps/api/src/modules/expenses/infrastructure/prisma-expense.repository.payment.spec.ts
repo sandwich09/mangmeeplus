@@ -466,6 +466,85 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     audit ?? new AuditService(new PrismaAuditRepository({ client } as any), { error: () => undefined } as any),
   );
 
+  it('R7 all AI expense projections share one deduplicated snapshot', async (t) => {
+    if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
+    const client = clients[0]!;
+    const co = await client.company.create({ data: { name: 'R7 filtered population' } });
+    const other = await client.company.create({ data: { name: 'R7 other tenant' } });
+    try {
+      const branch = await client.branch.create({ data: { companyId: co.id, code: 'A', name: 'A' } });
+      const hidden = await client.branch.create({ data: { companyId: co.id, code: 'B', name: 'B' } });
+      const category = await client.expenseCategory.create({ data: { companyId: co.id, name: 'ค่าเดินทาง', accountHintKey: 'travel' } });
+      const vendor = await client.accountingCounterparty.create({ data: { companyId: co.id, type: 'VENDOR', displayName: 'ผู้ขาย', createdByUserId: userId } });
+      const source = await client.expenseRecord.create({ data: { companyId: co.id, branchId: branch.id, createdByUserId: userId, status: 'NEEDS_REVIEW',
+        expenseDate: new Date('2026-10-20T00:00:00Z'), grandTotalAmount: '1000', expenseCategoryId: category.id, vendorCounterpartyId: vendor.id, paymentStatus: 'UNPAID' } });
+      await client.expenseRecord.create({ data: { companyId: co.id, branchId: branch.id, createdByUserId: userId, status: 'NEEDS_REVIEW', expenseDate: new Date('2026-10-21T00:00:00Z'), grandTotalAmount: '200', netPayableAmount: '200', paidAmount: '200', paymentStatus: 'PAID' } });
+      const request = await client.reimbursementRequest.create({ data: { companyId: co.id, branchId: branch.id, requesterUserId: userId, requesterDisplayNameSnapshot: 'ผู้เบิก', createdByUserId: userId,
+        reason: 'R7', categoryKey: 'travel', amount: '1000', incurredDate: source.expenseDate, status: 'APPROVED',
+        // The insert trigger writes line 1 from the header (ensure_reimbursement_request_fallback_line).
+        linkedExpenseId: source.id }, include: { lines: true } });
+      const filter = { companyId: co.id, fromDate: '2026-10-01', toDate: '2026-10-31' };
+      const repo = new PrismaExpenseRepository({ client } as any);
+      const check = async (expected: string, extra: any = {}, scope: any = { branchIds: [branch.id] }) => {
+        const f = { ...filter, ...extra };
+        const summary = await repo.readAiExpenseSummary(f, scope, 1);
+        const breakdown = await repo.readAiExpenseBreakdown(f, scope);
+        for (const groupBy of ['category', 'vendor', 'day'] as const) {
+          const groups = await repo.readAiExpenseGroups(f, scope, groupBy, 1, 0);
+          assert.equal(new Decimal(groups.byCurrency.find(r => r.currency === 'THB')!.totalAmount).toFixed(2), expected, groupBy);
+          assert.deepEqual(groups.byCurrency, breakdown.byCurrency);
+        }
+        assert.equal(new Decimal(summary.byCurrency.find(r => r.currency === 'THB')!.totalAmount).toFixed(2), expected);
+        assert.equal(summary.total, breakdown.byCurrency.reduce((sum, r) => sum + r.count, 0));
+        assert.equal(summary.byStatus.reduce((sum, r) => sum + r.count, 0), summary.total);
+        return summary;
+      };
+      await check('1200.00'); // Before projection/approval materialization the source stays.
+      const projection = await client.expenseRecord.create({ data: { companyId: co.id, branchId: branch.id, createdByUserId: userId, status: 'CONFIRMED',
+        sourceReimbursementRequestId: request.id, sourceReimbursementLineId: request.lines[0]!.id,
+        expenseDate: new Date('2026-10-10T00:00:00Z'), grandTotalAmount: '1000', paymentStatus: 'PAID' } });
+      const summary = await check('1200.00');
+      assert.equal(summary.items[0]!.grandTotalAmount, '200', 'projection outside page still replaces source');
+      const next = await repo.readAiExpenseSummary(filter, { branchIds: [branch.id] }, 1, summary.nextCursorSource!);
+      assert.equal(next.items[0]!.id, projection.id); assert.equal(next.total, 2);
+      for (const extra of [{ status: 'NEEDS_REVIEW' }, { expenseCategoryId: category.id }, { vendorCounterpartyId: vendor.id }, { paymentStatus: 'UNPAID' }, { fromDate: '2026-10-20', toDate: '2026-10-20' }]) {
+        await check(extra.status ? '1200.00' : '1000.00', extra);
+      }
+      for (const change of [{ status: 'VOIDED' }, { branchId: hidden.id }, { createdByUserId: `${userId}-other` }, { expenseDate: new Date('2026-09-30T00:00:00Z') }]) {
+        await client.expenseRecord.update({ where: { id: projection.id }, data: change as any });
+        await check('1200.00', change.createdByUserId ? { createdByUserId: userId } : {});
+        await check('1200.00', {}, { branchIds: [branch.id], relatedUserId: userId });
+        await client.expenseRecord.update({ where: { id: projection.id }, data: { status: 'CONFIRMED', branchId: branch.id, createdByUserId: userId, expenseDate: new Date('2026-10-10T00:00:00Z') } });
+      }
+      await client.expenseRecord.create({ data: { companyId: other.id, createdByUserId: userId, status: 'CONFIRMED', expenseDate: source.expenseDate, grandTotalAmount: '9999' } });
+      await client.expenseRecord.create({ data: { companyId: co.id, branchId: branch.id, createdByUserId: userId, status: 'CONFIRMED', expenseDate: source.expenseDate, grandTotalAmount: '50', currency: 'USD' } });
+      const currencies = await check('1200.00');
+      assert.equal(currencies.byCurrency.find(r => r.currency === 'USD')!.totalAmount, '50');
+      // Establish the read snapshot, then commit a projection on another connection before the reads continue.
+      await client.expenseRecord.delete({ where: { id: projection.id } });
+      let inserted = false;
+      const snapshotClient = { $transaction: (fn: any, options: any) => client.$transaction(async tx => fn(new Proxy(tx, { get(target, key) {
+        if (key === '$queryRaw') return async (...args: any[]) => {
+          const stamp = await (target.$queryRaw as any)(...args);
+          if (!inserted) {
+            inserted = true;
+            await clients[1]!.expenseRecord.create({ data: { companyId: co.id, branchId: branch.id, createdByUserId: userId, status: 'CONFIRMED', expenseDate: projection.expenseDate,
+              grandTotalAmount: '1000', sourceReimbursementRequestId: request.id, sourceReimbursementLineId: request.lines[0]!.id } });
+          }
+          return stamp;
+        };
+        const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;
+      } })), options) };
+      const beforeInsert = await new PrismaExpenseRepository({ client: snapshotClient } as any).readAiExpenseSummary(filter, {}, 10);
+      assert.equal(beforeInsert.total, 3); assert.ok(beforeInsert.items.some(r => r.id === source.id));
+      assert.equal((await check('1200.00')).total, 3);
+      assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: source.id } })).status, 'NEEDS_REVIEW', 'read does not mutate source status');
+    } finally {
+      await client.expenseRecord.deleteMany({ where: { companyId: co.id, sourceReimbursementLineId: { not: null } } });
+      await client.company.deleteMany({ where: { id: { in: [co.id, other.id] } } });
+    }
+  });
+
   async function vatDraftFixture() {
     const client = clients[0]!;
     const co = await client.company.create({ data: { name: 'VAT decision ledger test' } });

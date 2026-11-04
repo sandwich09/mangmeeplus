@@ -1375,6 +1375,19 @@ export class PrismaExpenseRepository {
     };
   }
 
+  private async replacedLinkedSourceIds(tx: Prisma.TransactionClient, baseWhere: Prisma.ExpenseRecordWhereInput): Promise<string[]> {
+    const projections = await tx.expenseRecord.findMany({
+      where: { AND: [baseWhere, { sourceReimbursementLineId: { not: null } }] },
+      select: { companyId: true, sourceReimbursementLineId: true },
+    });
+    if (!projections.length) return [];
+    const lines = await tx.reimbursementLine.findMany({
+      where: { OR: projections.map(row => ({ companyId: row.companyId, id: row.sourceReimbursementLineId! })), linkedExpenseId: { not: null } },
+      select: { linkedExpenseId: true },
+    });
+    return [...new Set(lines.flatMap(line => line.linkedExpenseId ? [line.linkedExpenseId] : []))];
+  }
+
   /** One repeatable-read snapshot for list rows, counts, and every exact Decimal aggregate. */
   async readAiExpenseSummary(
     filter: AiExpenseReadFilter,
@@ -1394,15 +1407,17 @@ export class PrismaExpenseRepository {
     hasMore: boolean;
     nextCursorSource: { expenseDate: Date; id: string } | null;
   }> {
-    const where = this.aiExpenseWhere(filter, scope);
-    const rowWhere: Prisma.ExpenseRecordWhereInput = cursor ? {
-      AND: [where, { OR: [
-        { expenseDate: { lt: cursor.expenseDate } },
-        { expenseDate: cursor.expenseDate, id: { lt: cursor.id } },
-      ] }],
-    } : where;
+    const baseWhere = this.aiExpenseWhere(filter, scope);
     return this.prisma.client.$transaction(async (tx) => {
       const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const replaced = await this.replacedLinkedSourceIds(tx, baseWhere);
+      const where: Prisma.ExpenseRecordWhereInput = { AND: [baseWhere, { id: { notIn: replaced } }] };
+      const rowWhere: Prisma.ExpenseRecordWhereInput = cursor ? {
+        AND: [where, { OR: [
+          { expenseDate: { lt: cursor.expenseDate } },
+          { expenseDate: cursor.expenseDate, id: { lt: cursor.id } },
+        ] }],
+      } : where;
       const [currencyGroups, statusGroups, rows, company] = await Promise.all([
         tx.expenseRecord.groupBy({
           by: ['currency'], where, _count: { _all: true },
@@ -1483,11 +1498,13 @@ export class PrismaExpenseRepository {
     branchHasMore: boolean;
     vendorHasMore: boolean;
   }> {
-    const where = this.aiExpenseWhere(filter, scope);
+    const baseWhere = this.aiExpenseWhere(filter, scope);
     const vendorGroupLimit = 10;
     const vendorFetchLimit = 500;
     return this.prisma.client.$transaction(async (tx) => {
       const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const replaced = await this.replacedLinkedSourceIds(tx, baseWhere);
+      const where: Prisma.ExpenseRecordWhereInput = { AND: [baseWhere, { id: { notIn: replaced } }] };
       const [totals, categoryGroups, branchGroups, vendorRawGroups, company] = await Promise.all([
         tx.expenseRecord.groupBy({ by: ['currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true } }),
         tx.expenseRecord.groupBy({
@@ -1600,9 +1617,11 @@ export class PrismaExpenseRepository {
     groups: Array<{ key: string | null; label: string | null; currency: string; count: number; totalAmount: string }>;
     hasMore: boolean;
   }> {
-    const where = this.aiExpenseWhere(filter, scope);
+    const baseWhere = this.aiExpenseWhere(filter, scope);
     return this.prisma.client.$transaction(async (tx) => {
       const stamp = await tx.$queryRaw<Array<{ asOf: Date }>>`SELECT transaction_timestamp() AS "asOf"`;
+      const replaced = await this.replacedLinkedSourceIds(tx, baseWhere);
+      const where: Prisma.ExpenseRecordWhereInput = { AND: [baseWhere, { id: { notIn: replaced } }] };
       const groupQuery = groupBy === 'category'
         ? tx.expenseRecord.groupBy({
           by: ['expenseCategoryId', 'currency'], where, _count: { _all: true }, _sum: { grandTotalAmount: true },
@@ -4363,7 +4382,7 @@ export class PrismaExpenseRepository {
 
   /**
    * Compare-and-set a typed continuation together with the expense revision it represents.
-   * This intentionally updates metadata only; certificate preparation/issuance remains web-only.
+   * Collection updates metadata only. A verified preparation decision may also commit its category.
    */
   async saveLineSubstituteContinuation(input: {
     companyId: string;
@@ -4372,10 +4391,8 @@ export class PrismaExpenseRepository {
     expectedUpdatedAt: Date;
     scopes: { branchIds?: string[] };
     continuation: Record<string, unknown>;
-    /** The one expense field the LINE conversation collects. It lives on the row (the preflight, the
-     *  web wizard and substitute eligibility all read it there), so it rides the same CAS write as
-     *  the state instead of advancing the revision a second time. Callers pass only an id they have
-     *  already resolved against this company's ACTIVE categories. */
+    /** Only a verified preparation decision supplies the proposed category, revalidated against
+     *  this company's ACTIVE categories. Collection keeps it in the continuation. */
     expenseCategoryId?: string;
   }): Promise<{ updatedAt: Date; continuation: Record<string, unknown> }> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {

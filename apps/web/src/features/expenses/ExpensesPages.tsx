@@ -2736,7 +2736,6 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
-  const [columnSet, setColumnSet] = useMenuFilterState<'summary' | 'full'>('expenses.list.columnSet', () => 'summary');
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -2922,20 +2921,13 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const exportExcel = async () => {
     if (exporting) return;
     const version = loadVersion.current;
-    setExporting(true); setExportError(null); setExportNotice(null);
+    setExporting(true); setExportError(null); setExportNotice(null); setExported(false);
     try {
-      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
+      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
-      // The package covers confirmed expenses only. Downloading an empty workbook reads as a broken
-      // export; say which rows it would have contained instead.
-      if (result.rowCount === 0) { toast.warning(t('expenses.export_empty', locale)); return; }
+      if (result.rowCount + (result.paymentRowCount ?? 0) + (result.withholdingRowCount ?? 0) === 0) { setExportNotice('ไม่มีรายการตามที่เลือก'); return; }
       if (result.truncated) setExportNotice(`ส่งออก ${result.rowCount} จากทั้งหมด ${result.totalMatched} รายการ — แบ่งช่วงวันที่ให้สั้นลงเพื่อส่งออกให้ครบ`);
-      // An incomplete package must never look complete: files the caller may not open are dropped
-      // from the manifest, so say how many instead of handing over a quietly short set.
-      if (result.skippedEvidence.length > 0) {
-        setExportNotice((prev) => [prev, `ข้ามไฟล์แนบ ${result.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด`].filter(Boolean).join(' · '));
-      }
-      downloadIndexXlsx(result, `สรุปรายจ่าย-${month}.xlsx`);
+      downloadIndexXlsx(result, result.indexFileName);
       setExported(true); setTimeout(() => setExported(false), 3000);
     } catch (e) {
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
@@ -3010,17 +3002,13 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
         <div className="space-y-4">
           {/* What will be in the file, in one line: how many, which dates, which branch. */}
           <p className="text-sm text-gray-700">รายการที่ยืนยันแล้ว {chipCounts.confirmed} รายการ ตามวันที่เอกสาร · <span className="mangmee-unit">{dateShort(fromDate)}</span> – <span className="mangmee-unit">{dateShort(toDate)}</span>{branchLabel ? ` · ${branchLabel}` : ''}</p>
-          <label className="block space-y-1.5">
-            <span className={FIELD_LABEL}>{t('expenses.export_columns', locale)}</span>
-            <ThemedSelect className={cx(inputClass, 'w-full')} value={columnSet} onChange={(e) => setColumnSet(e.target.value as 'summary' | 'full')} aria-label={t('expenses.export_columns', locale)}>
-              <option value="summary">{t('expenses.export_columns_summary', locale)}</option>
-              <option value="full">{t('expenses.export_columns_full', locale)}</option>
-            </ThemedSelect>
-          </label>
           <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts onReturnToExpenses={() => setExportOpen(false)}
             request={{ fromDate, toDate, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
-          {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}
+          {exportNotice && <div className="space-y-2">
+            <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>
+            {exportNotice === 'ไม่มีรายการตามที่เลือก' && <button type="button" className={ghostClass} onClick={() => setExportOpen(false)}>เปลี่ยนช่วงวันที่</button>}
+          </div>}
           {exported && <p role="status" className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</p>}
         </div>
       </Modal>}

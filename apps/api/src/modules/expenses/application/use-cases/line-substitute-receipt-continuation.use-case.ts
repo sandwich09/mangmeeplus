@@ -547,10 +547,8 @@ function preflight(
 ): LineSubstituteReceiptBlocker[] {
   const result: LineSubstituteReceiptBlocker[] = [];
   if (!ctx.permissions.includes('expense.review')) result.push(blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน'));
-  // B1: the category is the one eligibility issue a LINE sender can actually answer, so it is the one
-  // that is offered as a question instead of a dead end — and it disappears the moment they answer it.
+  // Eligibility reads an effective expense containing the validated category proposal.
   result.push(...collectSubstituteReceiptEligibilityIssues(expense, values.reasonCode, { routeCheckBill })
-    .filter((issue) => !(issue.code === CATEGORY_BLOCKER && values.expenseCategoryId))
     .map((issue) => blocker(issue.code, issue.message, issue.code === CATEGORY_BLOCKER)));
   if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') {
     result.push(blocker('active_substitute_evidence_exists', 'รายการนี้มีใบรับรองแทนใบเสร็จที่ยังใช้งานอยู่แล้ว'));
@@ -1262,11 +1260,11 @@ function formatResult(input: {
     `ยอดปัจจุบัน: ${bahtAmount(input.expense)}`,
   ];
   if (input.acceptedFields.length) {
-    // The parenthetical is a promise, so it has to stop being made the moment it stops being true:
-    // the category is an EXPENSE field and is written to the row, unlike every other collected value.
-    const wroteCategory = input.acceptedFields.includes('expenseCategoryId');
-    lines.push(`✅ รับข้อมูลเข้าร่างแล้ว${wroteCategory ? '' : ' (ยังไม่แก้รายการ)'}: ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
-    if (wroteCategory) lines.push('หมวดค่าใช้จ่ายบันทึกลงรายการให้แล้ว ส่วนช่องอื่นเก็บไว้ในร่างเอกสาร');
+    if (input.acceptedFields.includes('expenseCategoryId')) {
+      lines.push('เก็บหมวดไว้ในร่างแล้วค่ะ ตรวจข้อมูลก่อนกดเตรียมใบรับรอง', 'หมวดในรายการค่าใช้จ่ายยังไม่เปลี่ยนค่ะ');
+    } else {
+      lines.push(`✅ รับข้อมูลเข้าร่างแล้ว (ยังไม่แก้รายการ): ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
+    }
   }
   const facts = substituteReceiptFactLines(input.state.acceptedValues, categories);
   if (facts.length) lines.push('ตรวจข้อมูลสำหรับใบรับรองค่ะ:', ...facts);
@@ -1314,7 +1312,7 @@ function formatResult(input: {
 function formatEnglishResult(input: Parameters<typeof formatResult>[0]): string {
   const lines = [`Substitute receipt: ${expenseLabel(input.expense, 'en')} · ${bahtAmount(input.expense, 'en')}`];
   if (input.acceptedFields.length) lines.push(input.acceptedFields.includes('expenseCategoryId')
-    ? 'The expense category was saved; other details are held in the document draft.'
+    ? 'The category is held in the draft. Review the details before preparing the receipt. The expense category has not changed.'
     : 'Your details are held in the document draft; the expense itself has not been changed.');
   lines.push(...substituteReceiptFactLines(input.state.acceptedValues, input.categories ?? [], 'en'));
   if (input.sideAnswer) lines.push(input.sideAnswer);
@@ -1949,15 +1947,22 @@ export class LineSubstituteReceiptContinuationUseCase {
       ? policy.approverUserIds.some((id) => eligibleApprovers.some((item) => item.userId === id) && id !== acceptedValues.payerUserId)
       : eligibleApprovers.length > 0;
     const policyFacts = { configured: policy.configured, ready: policyReady, approvalMode: policy.approvalMode };
+    const proposedCategory = acceptedValues.expenseCategoryId
+      ? await this.repo.findCategoryById(ctx.companyId, acceptedValues.expenseCategoryId) : null;
+    const categoryActive = proposedCategory?.companyId === ctx.companyId && proposedCategory.status === 'ACTIVE';
+    const effectiveExpense = categoryActive ? { ...expense, expenseCategoryId: proposedCategory.id } : expense;
     const blockers = preflight(
       ctx,
-      expense,
+      effectiveExpense,
       acceptedValues,
       policy,
       new Set(eligibleApprovers.map((item) => item.userId)),
       Boolean(payer),
       selected.state.routeCheckBill === true,
     );
+    if (acceptedValues.expenseCategoryId && !categoryActive && !blockers.some(item => item.code === CATEGORY_BLOCKER)) {
+      blockers.unshift(blocker(CATEGORY_BLOCKER, 'หมวดนี้ใช้ไม่ได้แล้วค่ะ เลือกหมวดที่ใช้งานอีกครั้ง', true));
+    }
     const missingFields = blockers
       .filter((item) => item.collectableInLine)
       .map((item) => FIELD_BY_BLOCKER[item.code])
@@ -1996,11 +2001,6 @@ export class LineSubstituteReceiptContinuationUseCase {
       const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {}, continuation: nextState as unknown as Record<string, unknown>,
-        // B1: the category is an EXPENSE field, not a conversation field — the preflight, the web wizard
-        // and `validateEligibility` all read it off the row. Written in the SAME CAS write that stores the
-        // state (never advancing the revision twice), on the one turn it is answered, and only ever an
-        // ACTIVE category of this company because `resolveCategoryId` matched it there.
-        ...(acceptedNow.expenseCategoryId ? { expenseCategoryId: acceptedNow.expenseCategoryId } : {}),
       });
       state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       producedRevision = saved.updatedAt;
@@ -2373,7 +2373,28 @@ export class LineSubstituteReceiptContinuationUseCase {
     const supportingAttachmentIds = active
       .filter((item) => item.purpose !== 'expense.payment.evidence' && item.purpose !== 'expense.review.evidence')
       .map((item) => item.id);
+    let categoryCommitted = false;
     try {
+      if (values.expenseCategoryId) {
+        const category = await this.repo.findCategoryById(ctx.companyId, values.expenseCategoryId);
+        if (!category || category.companyId !== ctx.companyId || category.status !== 'ACTIVE') {
+          const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
+          return { handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+            source: substituteReplySource(expense), acceptedFields: [],
+            blockers: [blocker(CATEGORY_BLOCKER, 'หมวดนี้ใช้ไม่ได้แล้วค่ะ เปิดค่าใช้จ่ายเพื่อเลือกหมวดที่ใช้งานแล้วลองอีกครั้ง')], webPath,
+            replyText: `${language === 'en' ? 'This category is no longer available. Open the expense to choose an active category and try again.' : 'หมวดนี้ใช้ไม่ได้แล้วค่ะ เปิดค่าใช้จ่ายเพื่อเลือกหมวดที่ใช้งานแล้วลองอีกครั้ง'}\n${webLink(webPath)}` };
+        }
+        const saved = await this.repo.saveLineSubstituteContinuation({
+          companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+          expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+          continuation: state as unknown as Record<string, unknown>, expenseCategoryId: category.id,
+        });
+        categoryCommitted = true;
+        state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+        const updated = await this.repo.findByIdWithRelations(ctx.companyId, expense.id);
+        if (!updated || updated.updatedAt.getTime() !== saved.updatedAt.getTime()) throw new ConflictException('Expense changed after category confirmation');
+        expense = updated;
+      }
       // This path is reached only after an explicit, revision-bound ISSUE/FORM answer.
       // Use the same permission-checked review use case as the web; a chat capture is not a review.
       const reviewResult = await this.review.execute(ctx, expense.id, {
@@ -2427,12 +2448,6 @@ export class LineSubstituteReceiptContinuationUseCase {
         ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
-      const amount = bahtAmount(expense, language);
-      const formLines = [
-        (language === 'en' ? `Prepared as ${evidence.documentNumber}; awaiting signature.` : `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`),
-        `${language === 'en' ? 'Amount' : 'ยอด'} ${amount} · ${language === 'en' ? 'Payer' : 'ผู้จ่าย'} ${evidence.payerName}`,
-        (language === 'en' ? 'The watermarked unsigned form is not an issued document.' : 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว'),
-      ];
       const badge = substituteReceiptBadge({ language,
         status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature: choice === 'FORM',
       });
@@ -2441,24 +2456,21 @@ export class LineSubstituteReceiptContinuationUseCase {
         source: substituteReplySource({ ...expense, substituteReceiptEvidence: evidence }, new Date(evidence.expenseUpdatedAtAtPreparation)),
         acceptedFields: [], blockers: [], webPath,
         ...(badge ? { badge } : {}),
-        replyText: formatStandalone({ language,
-          headline: choice === 'ISSUE'
-            ? [
-              (language === 'en' ? `Prepared as ${evidence.documentNumber}; awaiting certification and approval.` : `🔵 รอยืนยัน — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`),
-              `${language === 'en' ? 'Amount' : 'ยอด'} ${amount} · ${language === 'en' ? 'Payer' : 'ผู้จ่าย'} ${evidence.payerName}`,
-              (language === 'en' ? 'Continue on the web: the payer signs and certifies, then an authorized approver approves.' : 'ขั้นต่อไปทำในเว็บค่ะ ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ'),
-            ].join('\n')
-            : formLines.join('\n'),
-          boundary: (language === 'en' ? 'No signature, approval or document issuance was performed in LINE.' : 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร'),
-          question: choice === 'ISSUE'
-            ? (language === 'en' ? 'Open the link above to sign, certify and approve on the web.' : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ')
-            : (language === 'en' ? 'Open the link above to download the unsigned form, then print and sign it.' : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ'),
-          webPath,
-        }),
+        replyText: `${choice === 'ISSUE'
+          ? language === 'en' ? 'The substitute receipt is prepared. Open the web app to sign.' : 'เตรียมใบรับรองแล้วค่ะ เปิดเว็บเพื่อเซ็น'
+          : language === 'en' ? 'The paper form is prepared. Open the web app to download and sign it.' : 'เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น'}\n${language === 'en' ? 'Document' : 'เลขที่'} ${evidence.documentNumber} · ${bahtAmount(expense, language)}\n${webLink(webPath)}`,
       };
     } catch (error) {
       // A prepare that cannot happen is a state the sender can act on, not a stack trace.
       const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
+      if (categoryCommitted) {
+        const expensePath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
+        return { handled: true, status: error instanceof ConflictException ? 'STALE' : 'BLOCKED',
+          expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense), acceptedFields: [],
+          blockers: [blocker('substitute_prepare_failed', 'บันทึกหมวดค่าใช้จ่ายแล้ว แต่ยังเตรียมใบรับรองไม่ได้ค่ะ เปิดค่าใช้จ่ายเพื่อตรวจข้อมูลแล้วลองอีกครั้ง')],
+          webPath: expensePath,
+          replyText: `${language === 'en' ? 'The expense category was saved, but the substitute receipt could not be prepared. Open the expense to check the latest details and try again.' : 'บันทึกหมวดค่าใช้จ่ายแล้ว แต่ยังเตรียมใบรับรองไม่ได้ค่ะ เปิดค่าใช้จ่ายเพื่อตรวจข้อมูลแล้วลองอีกครั้ง'}\n${webLink(expensePath)}` };
+      }
       if (error instanceof ConflictException) {
         return {
           handled: true, status: 'STALE', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),

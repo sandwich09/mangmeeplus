@@ -701,7 +701,7 @@ export async function fetchAccountantEvidenceBundle(companyId: string, body: Rec
 }
 
 /** Saves the package index as a real .xlsx (headers are Thai labels, amounts are numbers). */
-export function downloadIndexXlsx(result: AccountantPackageResult, fileName: string): void {
+export function downloadIndexXlsx(result: AccountantPackageResult, fileName = 'รายจ่าย.xlsx'): void {
   const bytes = Uint8Array.from(atob(result.indexXlsxBase64), (c) => c.charCodeAt(0));
   const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   downloadBlob(blob, fileName);

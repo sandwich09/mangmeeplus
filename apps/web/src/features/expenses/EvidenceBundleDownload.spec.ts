@@ -81,7 +81,7 @@ test('the accountant bundle names all paper counts and warns about missing recei
   const plan = { fileCount: 8, partCount: 1, counts: { receipts: 2, substituteReceipts: 1, paymentSlips: 2, vouchers: 2, whtCertificates: 1 }, missingReceiptCount: 3 };
   const view = certificateHarness(() => h(EvidenceBundleActions, { plan, showCounts: true, busy: false, allMonths: false, onDownload: () => {} }));
   const html = view.render();
-  assert.match(html, /ใบเสร็จ 2 · ใบรับรองแทนใบเสร็จ 1 · สลิป 2 · ใบสำคัญจ่าย 2 · 50 ทวิ 1/);
+  assert.match(html, /เอกสารค่าใช้จ่าย 2 · ใบรับรองแทนใบเสร็จ 1 · หลักฐานการจ่าย 2 · ใบสำคัญจ่าย 2 · 50 ทวิ 1/);
   assert.match(html, /ยังไม่มีใบเสร็จ 3 รายการ/);
   const existingPanel = certificateHarness(() => h(EvidenceBundleActions, { plan, busy: false, allMonths: false, onDownload: () => {} }));
   assert.doesNotMatch(existingPanel.render(), /ใบสำคัญจ่าย 2|ยังไม่มีใบเสร็จ 3 รายการ/);
@@ -99,6 +99,24 @@ test('accounting evidence uses the primary bundle action and keeps split archive
     assert.equal(buttons.length, parts);
     for (const button of buttons) { assert.match(button.props.className, /primary/); button.props.onClick(); }
     assert.deepEqual(downloads, Array.from({ length: parts }, (_, i) => i + 1));
+    view.cleanup();
+  }
+});
+
+
+test('bundle hints and actions match available files', () => {
+  for (const fileCount of [0, 2]) {
+    const view = certificateHarness(() => h(EvidenceBundleActions, { accountant: true, showCounts: true,
+      plan: { fileCount, partCount: fileCount ? 1 : 0, counts: { receipts: 1, paymentSlips: 1 }, missingReceiptCount: 0 },
+      busy: false, allMonths: false, onDownload() {}, excelAction: h('button', {}, 'ดาวน์โหลด Excel') }));
+    const html = view.render();
+    assert.match(html, /ดาวน์โหลด Excel/);
+    if (fileCount) {
+      assert.match(html, /เอกสารค่าใช้จ่าย 1 · หลักฐานการจ่าย 1/);
+      assert.match(html, /แตกไฟล์ ZIP ก่อน แล้วเปิด สารบัญ.xlsx ในคอมพิวเตอร์ เพื่อกดเปิดเอกสาร/);
+      const group = view.find('ActionGroup');
+      assert.ok(group.children.flat().some((child: any) => child?.props?.children === 'ดาวน์โหลด Excel'));
+    } else assert.doesNotMatch(html, /แตกไฟล์ ZIP ก่อน/);
     view.cleanup();
   }
 });

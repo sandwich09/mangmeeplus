@@ -1,7 +1,7 @@
-import { readyHarness as substituteDecisionHarness } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec';
+import { ctx as substituteDecisionCtx, readyHarness as substituteDecisionHarness } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 
-import { buildSubstituteReceiptActionCard } from '../line-substitute-receipt-action.service';
+import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard } from '../line-substitute-receipt-action.service';
 import { capabilityFollowUpReply } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
@@ -7514,6 +7514,39 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     assert.ok(observations.some(row => row.calls > 0), 'exercise the real continuation');
   });
 
+  it('R9 card shows proposed category and FORM needs no signature', async () => {
+    const source = await substituteDecisionHarness({ signature: null });
+    source.repo.listCategories = async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }, { id: 'cat-food', name: 'ค่าอาหาร' }];
+    const event = { ...BASE_EVENT, webhookEventId: 'r9-category-answer', messageText: 'หมวด: ค่าอาหาร' };
+    source.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.chatKeyHash = chatKeyHashOf(event);
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { ...P, substituteContinuation: source.useCase,
+      substituteLedger: makeLedger([{ id: 'r9-question', text: 'ทำใบรับรองต่อ', question: 'ค่าใช้จ่ายนี้อยู่หมวดไหน',
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'r9-question' } }]).ledger,
+      config: { lineAiSubstituteSemanticRoutingMode: 'primary' },
+      intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['r9-question'] }), aiGatewayFn: aiTurn });
+    await h.useCase.execute(event);
+    assert.equal(source.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.expenseCategoryId, 'cat-food');
+    assert.equal(source.getExpense().expenseCategoryId, 'cat-travel', 'webhook category answer is a proposal');
+    assert.equal(source.prepares.length, 0);
+    const actor = substituteDecisionCtx();
+    const chat = chatKeyHashOf(event);
+    const service = new LineSubstituteReceiptActionService(
+      { aiGatewayInternalSecret: 'r9-secret', webBaseUrl: 'https://app.example.com', isProduction: false } as any,
+      { client: { aiConversation: { findFirst: async () => ({ id: 'r9-conversation', lifecycleEpoch: 1 }) } } } as any,
+      source.repo, source.useCase, {} as any);
+    const issue = (await service.prepare(actor, chat, 'expense-1')).preview!;
+    await service.apply(actor, chat, { action: 'expense_action_confirm', token: issue.token });
+    assert.equal(source.getExpense().expenseCategoryId, 'cat-travel');
+    assert.equal(source.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.signatureRequested, true);
+    const form = (await service.prepare(actor, chat, 'expense-1', 'th', 'FORM')).preview!;
+    assert.match(form.summary, /ค่าอาหาร/);
+    const result = await service.apply(actor, chat, { action: 'expense_action_confirm', token: form.token });
+    assert.equal(source.getExpense().expenseCategoryId, 'cat-food');
+    assert.equal(source.prepares.length, 1);
+    assert.match(result.reply, /เตรียมแบบแล้วค่ะ เปิดเว็บเพื่อดาวน์โหลดไปเซ็น/);
+  });
+
   it('PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)', async () => {
     const { prisma } = makePrisma();
     const sub = makeSub();
@@ -9572,7 +9605,7 @@ describe('Round 2 A expense action postback', () => {
       setAcceptedResult: (value: boolean) => { acceptedResult = value; } };
   }
   it('R5 R9 retain free deterministic gates and accepted delivery suppression', async () => {
-    for (const messageText of ['1', '2', 'ใช่']) {
+    for (const messageText of ['1', '2', 'ใช่', 'หมวด: ค่าอาหาร']) {
       const { prisma } = makePrisma();
       const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.receipt.upload'],
         substituteContinuation: { execute: async () => assert.fail('free text cannot enter continuation') },

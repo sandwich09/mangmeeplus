@@ -1348,7 +1348,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiredInputFields: ['voucherId'],
   },
   {
-    name: 'wht.get_month_summary', description: 'Read issued 50 bis certificates, paid income bases and withholding by income type for periodKey YYYY-MM (current month by default). Read PND53 period remittance and its system deadline only with wht.pnd53.read. No other tax forms or mutations.',
+    name: 'wht.get_month_summary', description: 'Read the 50 bis certificate worklist including confirmed unpaid expenses, income and document withholding by income type for periodKey YYYY-MM (current month by default). Read PND53 period remittance and its system deadline only with wht.pnd53.read. No other tax forms or mutations.',
     businessSubjects: ['tax', 'payment'], questionKinds: ['summary', 'list', 'breakdown'], category: 'read_summary',
     requiredPermissions: [], anyOfPermissions: ['wht.certificate.read', 'wht.pnd53.read'],
     featureKeys: ['wht_50bis', 'wht_pnd53'], sourceModule: 'tax', supportedAgents: ['accounting', 'tax', 'general'],

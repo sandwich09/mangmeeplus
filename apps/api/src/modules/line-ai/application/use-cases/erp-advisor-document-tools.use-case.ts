@@ -76,44 +76,60 @@ export class WhtGetMonthSummaryTool implements ErpReadToolPort {
     if (certificatesReadable) {
       for (let page = 1; ; page++) {
         const batch = await this.handoffs.listPaged(requestContext(ctx), { branchId: input.branchId, page, pageSize: 100 });
-        rows.push(...batch.rows.filter(row => row.status !== 'CANCELLED' && (row.currentCertificate ?? row.prefill).paymentDate.slice(0, 7) === periodKey));
+        rows.push(...batch.rows);
         if (page * batch.pageSize >= batch.total) break;
       }
     }
-    const issued = rows.filter(row => row.status === 'SYSTEM_ISSUED' || row.status === 'EXTERNAL_LINKED');
-    const groups = new Map<string, { incomeCategoryName: string; paymentCount: number; paid: string[]; withheld: string[] }>();
-    for (const row of rows) {
-      const p = row.currentCertificate ?? row.prefill;
-      const key = p.incomeCategoryCode ?? '';
-      const group = groups.get(key) ?? { incomeCategoryName: p.incomeCategoryName ?? 'ยังไม่ระบุประเภทเงินได้', paymentCount: 0, paid: [], withheld: [] };
-      group.paymentCount++; group.paid.push(p.grossAmount); group.withheld.push(p.withheldAmount); groups.set(key, group);
+    const currentRows = [...new Map(rows.map(row => [row.id, row])).values()].filter(row => row.status !== 'CANCELLED');
+    const sourceKey = (row: WhtCertificateHandoffListRowDto) => row.sourcePaymentType && row.sourcePaymentId
+      ? JSON.stringify([row.sourcePaymentType, row.sourcePaymentId]) : null;
+    const certified = new Map<string, { gross: Decimal; withheld: Decimal }>();
+    for (const row of currentRows) {
+      if (row.status !== 'SYSTEM_ISSUED' && row.status !== 'EXTERNAL_LINKED') continue;
+      const key = sourceKey(row);
+      if (!key) continue;
+      const amounts = row.currentCertificate ?? row.prefill;
+      const previous = certified.get(key) ?? { gross: new Decimal(0), withheld: new Decimal(0) };
+      certified.set(key, { gross: previous.gross.plus(amounts.grossAmount), withheld: previous.withheld.plus(amounts.withheldAmount) });
     }
-    const byIncomeType = [...groups.values()].map(g => ({ incomeCategoryName: g.incomeCategoryName, paymentCount: g.paymentCount, totalPaid: sum(g.paid), totalWithheld: sum(g.withheld) }));
+    const projected = currentRows.flatMap(row => {
+      const amounts = row.currentCertificate ?? row.prefill;
+      let gross = new Decimal(amounts.grossAmount), withheld = new Decimal(amounts.withheldAmount);
+      if (row.status === 'REQUIRED' && row.sourcePaymentType === 'expense.record' && !row.prefill.expensePaymentId) {
+        const total = row.prefill.expenseTotals ?? row.prefill;
+        const issuedAmounts = certified.get(sourceKey(row) ?? '');
+        gross = Decimal.max(0, new Decimal(total.grossAmount).minus(issuedAmounts?.gross ?? 0));
+        withheld = Decimal.max(0, new Decimal(total.withheldAmount).minus(issuedAmounts?.withheld ?? 0));
+        if (gross.isZero() && withheld.isZero()) return [];
+      }
+      return amounts.paymentDate.slice(0, 7) === periodKey ? [{ row, amounts, gross: gross.toFixed(2), withheld: withheld.toFixed(2) }] : [];
+    });
+    const issued = projected.map(p => p.row).filter(row => row.status === 'SYSTEM_ISSUED' || row.status === 'EXTERNAL_LINKED');
+    const groups = new Map<string, { incomeCategoryName: string; itemCount: number; income: string[]; withheld: string[] }>();
+    for (const { amounts, gross, withheld } of projected) {
+      const key = amounts.incomeCategoryCode ?? '';
+      const group = groups.get(key) ?? { incomeCategoryName: amounts.incomeCategoryName ?? 'ยังไม่ระบุประเภทเงินได้', itemCount: 0, income: [], withheld: [] };
+      group.itemCount++; group.income.push(gross); group.withheld.push(withheld); groups.set(key, group);
+    }
+    const byIncomeType = [...groups.values()].map(g => ({ incomeCategoryName: g.incomeCategoryName, itemCount: g.itemCount, totalIncome: sum(g.income), totalDocumentWithholding: sum(g.withheld) }));
     const period = pnd53Readable ? await this.taxRepo.findPeriod(ctx.companyId, 'PND53', periodKey) : null;
     const events = period ? (await this.taxRepo.findEventsByPeriod(ctx.companyId, period.id, 'ACTIVE')).filter(event => event.eventType === 'WHT_PND53'
       && isBranchInScope(requestContext(ctx).scopes, event.branchId) && (!input.branchId || event.branchId === input.branchId)) : [];
     const remittance = period ? { totalWithheld: sum(events.map(e => e.taxAmount)), eventCount: events.length, status: period.status,
       dueDate: pnd53PaperDueDay(periodKey, period.dueDate), dueDateBasis: period.dueDate ? 'configured_period' : 'paper_filing_rule' } : null;
-    const totalPaid = sum(byIncomeType.map(g => g.totalPaid)), totalWithheld = sum(byIncomeType.map(g => g.totalWithheld));
+    const totalIncome = sum(byIncomeType.map(g => g.totalIncome)), totalDocumentWithholding = sum(byIncomeType.map(g => g.totalDocumentWithholding));
     const language = lineReplyLanguage(ctx.groundingText ?? '', ctx.locale?.startsWith('en') ? 'en' : 'th');
     const monthLabel = new Date(`${periodKey}-01T00:00:00Z`).toLocaleDateString(language === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' });
-    const dueDateLabel = remittance && lineDisplayDate(remittance.dueDate, language);
-    const message = language === 'en' ? [`${monthLabel}: records within your access.`,
-      ...(certificatesReadable ? [`${issued.length} withholding certificates from ${rows.length} payments; gross ${totalPaid} THB, withheld ${totalWithheld} THB.`,
-        ...byIncomeType.map(g => `${g.incomeCategoryName}: gross ${g.totalPaid} THB, withheld ${g.totalWithheld} THB`),
-        ...issued.slice(0, 10).map(row => `${row.currentCertificate?.number ?? row.externalCertificateNumber ?? row.certificateNumber ?? 'No document number'} · ${(row.currentCertificate?.payee ?? row.prefill.payeeSnapshot).name} · withheld ${money((row.currentCertificate ?? row.prefill).withheldAmount)} THB`)] : []),
-      pnd53Readable ? remittance ? `PND53 for this period: ${remittance.totalWithheld} THB, due ${dueDateLabel}.`
-        : 'No PND53 period exists, so its remittance and due date are not yet confirmed.' : 'Your access does not include PND53 remittances.',
-      'Payment withholding and period totals may differ before synchronization; a period total is not an unpaid balance.'].join('\n') : [`งวด ${monthLabel} เฉพาะข้อมูลที่คุณมีสิทธิ์ดูค่ะ`,
-      ...(certificatesReadable ? [`ออกหรือบันทึก 50 ทวิแล้ว ${issued.length} ใบ จากการจ่าย ${rows.length} รายการ ฐานเงินได้ ${totalPaid} บาท หักไว้ ${totalWithheld} บาทค่ะ`,
-        ...byIncomeType.map(g => `${g.incomeCategoryName}: ฐาน ${g.totalPaid} บาท หัก ${g.totalWithheld} บาท`),
-        ...issued.slice(0, 10).map(row => `${row.currentCertificate?.number ?? row.externalCertificateNumber ?? row.certificateNumber ?? 'ยังไม่มีเลขเอกสาร'} · ${(row.currentCertificate?.payee ?? row.prefill.payeeSnapshot).name} · หัก ${money((row.currentCertificate ?? row.prefill).withheldAmount)} บาท`),
-        ...(issued.length > 10 ? ['แสดงหนังสือรับรอง 10 ใบล่าสุดค่ะ'] : [])] : []),
-      pnd53Readable ? remittance ? `ยอดภาษี ภงด.53 ของงวด ${remittance.totalWithheld} บาท กำหนด${remittance.dueDateBasis === 'paper_filing_rule' ? 'ยื่นกระดาษตามกติกาในระบบ' : 'ตามงวดในระบบ'} ${dueDateLabel} ค่ะ`
-        : 'ยังไม่มีงวด ภงด.53 จึงยังยืนยันยอดนำส่งและวันครบกำหนดจากงวดไม่ได้ค่ะ' : 'คุณยังไม่มีสิทธิ์ดูยอดนำส่ง ภงด.53 ค่ะ',
-      'ยอดหักของการจ่ายกับยอดในงวดอาจต่างกันหากยังไม่ได้ซิงค์ข้อมูล และยอดของงวดยังไม่ใช่ยอดค้างชำระค่ะ'].join('\n');
-    return result(ctx, this.toolName, { periodKey, certificateCount: certificatesReadable ? issued.length : null, paymentCount: certificatesReadable ? rows.length : null,
-      totalPaid: certificatesReadable ? totalPaid : null, totalWithheld: certificatesReadable ? totalWithheld : null, byIncomeType,
+    const displayMoney = (value: string) => new Decimal(value).toNumber().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const message = certificatesReadable
+      ? language === 'en' ? `${monthLabel}: records within your access total ${displayMoney(totalIncome)} THB, withheld ${displayMoney(totalDocumentWithholding)} THB.`
+        : `รายการที่คุณดูได้เดือน ${monthLabel} รวม ${displayMoney(totalIncome)} บาท หักไว้ ${displayMoney(totalDocumentWithholding)} บาทค่ะ`
+      : remittance ? language === 'en' ? `${monthLabel}: PND53 period total ${displayMoney(remittance.totalWithheld)} THB, due ${lineDisplayDate(remittance.dueDate, language)}.`
+        : `ยอดที่รวบรวมไว้เดือน ${monthLabel} หักไว้ ${displayMoney(remittance.totalWithheld)} บาท กำหนดยื่น ${lineDisplayDate(remittance.dueDate, language)} ค่ะ`
+        : language === 'en' ? 'No collected data is available for this month.' : 'ยังไม่มีข้อมูลที่รวบรวมไว้สำหรับเดือนนี้ค่ะ';
+    return result(ctx, this.toolName, { periodKey, certificateCount: certificatesReadable ? issued.length : null, certificateItemCount: certificatesReadable ? projected.length : null,
+      countBasis: 'certificate_worklist_including_unpaid', totalIncome: certificatesReadable ? totalIncome : null,
+      totalDocumentWithholding: certificatesReadable ? totalDocumentWithholding : null, byIncomeType,
       issuedCertificates: issued.slice(0, 10).map(r => ({ number: r.currentCertificate?.number ?? r.externalCertificateNumber ?? r.certificateNumber, payeeName: r.currentCertificate?.payee.name ?? r.prefill.payeeSnapshot.name,
         grossAmount: (r.currentCertificate ?? r.prefill).grossAmount, withheldAmount: (r.currentCertificate ?? r.prefill).withheldAmount })),
       remittance, message }, pnd53Readable ? 'tax/pnd53' : 'expenses/wht-certificates', 'สรุป 50 ทวิและภาษีหัก ณ ที่จ่ายรายเดือน');
