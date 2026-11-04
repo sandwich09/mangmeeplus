@@ -495,6 +495,18 @@ describe('AuthGuard', () => {
     });
   });
 
+  it('R10 free source-drafts shops cannot reach month, export or markFiled routes', async () => {
+    const freeResolve = { execute: async (...args: any[]) => ({ ...await noopResolve.execute(...args), freeExpenseDrafts: true }) } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, freeResolve, localConfig,
+      prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) }), acceptedLegal);
+    for (const [method, suffix] of [
+      ['GET', 'tax/withholding/months'], ['GET', 'tax/withholding/months/2026-09'],
+      ['POST', 'tax/withholding/PND3/periods/p/export'], ['POST', 'tax/pnd53/periods/p/export'],
+      ['PATCH', 'tax/withholding/PND53/periods/p/mark-filed'], ['PATCH', 'tax/periods/p/mark-filed'],
+    ]) await assert.rejects(guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', method, path: `/v1/companies/c1/${suffix}` })),
+      (error: any) => error instanceof ForbiddenException && (error.getResponse() as any).code === 'FREE_EXPENSE_DRAFTS_ONLY');
+  });
+
   it('free mode opens exact draft actions while preserving legal and final-action gates', async () => {
     const freeResolve = { execute: async (...args: any[]) => ({ ...await noopResolve.execute(...args), freeExpenseDrafts: true }) } as any;
     const expiredPrisma = prismaFor('test-sub', null, { termEndsAt: new Date(Date.now() - 1000) });

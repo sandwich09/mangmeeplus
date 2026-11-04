@@ -1,3 +1,8 @@
+import { withholdingPaperBlockers } from '../../application/services/withholding-filing-validation';
+import { currentWithholdingPayments, withholdingPaymentChecksum } from '../../application/services/withholding-filing-state';
+import { selectWithholdingPaper } from '../../application/services/withholding-establishments';
+import { withholdingFormFor } from '../../domain/logic/expense-payment-withholding.logic';
+import type { ExpenseWhtSourceRow } from '../../domain/ports/source-reader.port';
 import { assertOpenWithholdingSequence, withholdingPaperPayments } from '../../application/services/withholding-filing-state';
 import { filedWithholdingPaymentPeriods } from '../../application/services/filed-withholding-payment';
 import { todayCivilDate, type AnswerWhtPayerModeRequest, type WhtPayerModeDto } from '@watchdog-bms/contracts';
@@ -89,6 +94,19 @@ export class PrismaTaxRepository {
         const papers = await tx.whtFiling.findMany({ where: { companyId: ctx.companyId, taxPeriodId: period.id }, include: { lines: true } });
         assertOpenWithholdingSequence(papers.filter(p => p.establishmentCode === input.establishmentCode), input.sequence!);
         if (withholdingPaperPayments(input.lines, papers).length !== input.lines.length) throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
+      }
+      const events = await currentWithholdingPayments(tx, ctx.companyId, (await tx.taxEvent.findMany({ where: { companyId: ctx.companyId, taxPeriodId: period.id, status: 'ACTIVE' } })).map(e => ({
+        ...e, payeeSnapshot: e.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
+        grossAmount: e.grossAmount?.toString() ?? null, withheldAmount: e.withheldAmount?.toString() ?? null, whtRate: e.whtRate?.toString() ?? null,
+      })));
+      const projection = await withholdingPaperBlockers(tx, ctx, period, undefined, events);
+      const selected = selectWithholdingPaper(ctx, projection.partition, input.establishmentCode);
+      const blockers = await withholdingPaperBlockers(tx, ctx, period, selected?.establishment, events);
+      const blocking = blockers.issues.find(i => i.severity === 'BLOCKING');
+      if (blocking) throw new ConflictException({ code: `${period.formType}_FILING_REVIEW`, message: blocking.description, issues: blockers.issues });
+      const papers = await tx.whtFiling.findMany({ where: { companyId: ctx.companyId, taxPeriodId: period.id }, include: { lines: true } });
+      if (!selected || withholdingPaymentChecksum(withholdingPaperPayments(selected.events, papers)) !== input.rowsChecksum) {
+        throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
       }
       const key = { companyId: ctx.companyId, formType: period.formType as 'PND3' | 'PND53', periodKey: period.periodKey, establishmentCode: input.establishmentCode, sequence: input.sequence ?? 0 };
       let filing = await tx.whtFiling.findUnique({ where: { companyId_formType_periodKey_establishmentCode_sequence: key } });
@@ -364,7 +382,20 @@ export class PrismaTaxRepository {
   }
 
   /** W8: remove only obsolete unfiled reporting facts; never mutate a frozen line or file. */
-  async retireObsoleteExpenseWithholding(companyId: string, rows: { id: string; paymentId?: string; sourceLineKey?: string; expenseDate: Date }[]) {
+  async retireObsoleteExpenseWithholding(companyId: string, rows: (Pick<ExpenseWhtSourceRow, 'id' | 'expenseDate'> & Partial<ExpenseWhtSourceRow>)[]) {
+    const issues = await this.prisma.client.taxReviewIssue.findMany({ where: { companyId, sourceType: 'expense.record', status: 'OPEN',
+      issueCode: { in: ['WHT_PAYEE_KIND_UNKNOWN', 'MISSING_TAX_ID', 'FUNCTIONAL_CURRENCY_FX_MISSING'] },
+      taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } }, include: { taxPeriod: { select: { formType: true, periodKey: true } } } });
+    const categoryCodes = [...new Set(rows.flatMap(row => row.incomeCategoryCode ? [row.incomeCategoryCode] : []))];
+    const categories = issues.length && categoryCodes.length ? await this.prisma.client.whtIncomeCategory.findMany({ where: { code: { in: categoryCodes } } }) : [];
+    const routes = new Map(categories.map(category => [category.code, category.filingRoute]));
+    for (const issue of issues) {
+      if (rows.some(row => row.id === issue.sourceId && row.expenseDate.toISOString().slice(0, 7) === issue.taxPeriod.periodKey
+        && (withholdingFormFor(row.payeeEntityKind ?? null, routes.get(row.incomeCategoryCode ?? '')) ?? 'PND53') === issue.taxPeriod.formType)) continue;
+      await this.prisma.client.taxReviewIssue.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: issue.sourceId,
+        taxPeriodId: issue.taxPeriodId, taxPeriod: { formType: issue.taxPeriod.formType, periodKey: issue.taxPeriod.periodKey }, issueCode: issue.issueCode, status: 'OPEN' },
+        data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางเปลี่ยนแล้ว' } });
+    }
     const current = new Set(rows.map(r => `${r.id}:${r.sourceLineKey ?? `payment:${r.paymentId}`}:${r.expenseDate.toISOString()}`));
     const events = await this.prisma.client.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', eventType: { in: ['WHT_PND2', 'WHT_PND3', 'WHT_PND53'] }, status: 'ACTIVE' } });
     for (const event of events) {
@@ -394,7 +425,7 @@ export class PrismaTaxRepository {
 
   async resolveSourceIssues(companyId: string, issueCode: string, sourceType: string, sourceId: string, taxPeriodId?: string) {
     await this.prisma.client.taxReviewIssue.updateMany({
-      where: { companyId, issueCode, sourceType, sourceId, status: 'OPEN', ...(taxPeriodId ? { taxPeriodId } : {}) },
+      where: { companyId, issueCode, sourceType, sourceId, status: 'OPEN', ...(taxPeriodId ? { taxPeriodId } : sourceType === 'expense.record' ? { taxPeriod: { formType: { in: ['PND2', 'PND3', 'PND53'] } } } : {}) },
       data: { status: 'RESOLVED', resolvedAt: new Date(), resolvedNote: 'ข้อมูลต้นทางครบแล้ว' },
     });
   }

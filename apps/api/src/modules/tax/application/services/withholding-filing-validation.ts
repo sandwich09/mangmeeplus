@@ -1,4 +1,10 @@
-import { orderWithholdingPayments } from './withholding-filing-state';
+import { computeSourceHash } from '../../domain/logic/tax-event.logic';
+import { loadWithholdingEstablishments, partitionWithholdingPayments } from './withholding-establishments';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { ExpenseSourceAdapter } from '../../infrastructure/adapters/expense-source.adapter';
+import { withholdingFormFor } from '../../domain/logic/expense-payment-withholding.logic';
+import type { RequestContext } from '@watchdog-bms/contracts';
+import { filedLineCoversPayment, withholdingPaymentFacts, orderWithholdingPayments } from './withholding-filing-state';
 import { formatCompanyLegalAddress, type CompanyLegalAddress, type WithholdingMonthIssueDto, type WhtFormType, type WhtEstablishment } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../../../generated/prisma/client';
 import type { TaxEventRecord } from '../../domain/ports/tax-event.repository.port';
@@ -45,11 +51,127 @@ export function withholdingRowFaults(event: FilingEvent, ctx: {
   return faults;
 }
 
+/** Source-only issues participate in payer selection, never in monetary/event totals. */
+export async function withholdingPaperBlockers<T extends { branchId?: string | null; eventType?: string; sourceType: string; sourceId: string }>(
+  db: Prisma.TransactionClient, ctx: RequestContext, period: { periodKey: string; formType: string }, establishment?: WhtEstablishment, events: T[] = [],
+) {
+  const [context, reviews] = await Promise.all([
+    loadWithholdingEstablishments(db, ctx.companyId, period.periodKey),
+    db.taxReviewIssue.findMany({ where: { companyId: ctx.companyId, status: 'OPEN',
+      taxPeriod: { periodKey: period.periodKey, formType: { in: ['PND3', 'PND53'] } } }, include: { taxPeriod: { select: { formType: true } } } }),
+  ]);
+  const currentReviews = reviews.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode));
+  const supplierIds = [...new Set(currentReviews.filter(i => i.sourceType === 'procurement.supplier_payment').flatMap(i => i.sourceId ? [i.sourceId] : []))];
+  const [sources, suppliers, company] = await Promise.all([
+    new ExpenseSourceAdapter({ client: db } as any).findConfirmedWithWhtByCompany(ctx.companyId),
+    supplierIds.length ? db.supplierPayment.findMany({ where: { companyId: ctx.companyId, id: { in: supplierIds }, status: 'RECORDED' }, select: { id: true, branchId: true, supplier: { select: { counterpartyId: true } } } }) : [],
+    db.company.findUnique({ where: { id: ctx.companyId }, select: { baseCurrency: true } }),
+  ]);
+  // Catalogue routing is a live fact; income codes are on the full payment projection.
+  const liveCategories = sources.length ? await db.whtIncomeCategory.findMany({ where: { code: { in: [...new Set(sources.flatMap(s => s.incomeCategoryCode ? [s.incomeCategoryCode] : []))] } } }) : [];
+  const categoryByCode = new Map(liveCategories.map(c => [c.code, c]));
+  const sourceIds = [...new Set(sources.map(source => source.id))];
+  const [expenses, filedLines] = await Promise.all([
+    sourceIds.length ? db.expenseRecord.findMany({ where: { companyId: ctx.companyId, id: { in: sourceIds } }, select: { id: true, vendorCounterpartyId: true } }) : [],
+    sourceIds.length ? db.whtFilingLine.findMany({ where: { sourceType: 'expense.record', sourceId: { in: sourceIds }, filing: { companyId: ctx.companyId, formType: period.formType as WhtFormType, status: 'FILED' } }, select: { sourceType: true, sourceId: true, lineJson: true } }) : [],
+  ]);
+  const sourceForm = (source: (typeof sources)[number]) => withholdingFormFor(source.payeeEntityKind, categoryByCode.get(source.incomeCategoryCode ?? '')?.filingRoute);
+  const paymentEvent = (source: (typeof sources)[number]) => ({
+    sourceType: 'expense.record', sourceId: source.id, sourceLineKey: source.sourceLineKey, eventDate: source.expenseDate,
+    branchId: source.branchId, currency: source.currency, incomeCategoryCode: source.incomeCategoryCode,
+    grossAmount: source.grossAmount, withheldAmount: source.whtAmount, whtRate: source.whtRate,
+    payeeSnapshot: { name: source.vendorName ?? '', taxId: source.vendorTaxId, branchCode: source.vendorBranchCode, address: source.vendorAddress },
+  });
+  const samePayment = (source: (typeof sources)[number], event: T) => {
+    const saved = event as T & FilingEvent & { payeeSnapshotJson?: FilingEvent['payeeSnapshot']; sourceHash?: string | null };
+    if (saved.sourceLineKey?.startsWith('payment:') && saved.sourceLineKey !== source.sourceLineKey) return false;
+    if (saved.sourceHash && saved.sourceHash !== computeSourceHash({ sourceLineKey: source.sourceLineKey, paymentDate: source.expenseDate.toISOString(), grossAmount: source.grossAmount,
+      whtAmount: source.whtAmount, updatedAt: source.updatedAt.toISOString(), incomeCategoryCode: source.incomeCategoryCode })) return false;
+    const live = paymentEvent(source);
+    // Legacy header events are comparable only to the same current payment facts.
+    live.sourceLineKey = saved.sourceLineKey;
+    const currentFacts = withholdingPaymentFacts(live);
+    const savedFacts = withholdingPaymentFacts({ ...saved, branchId: saved.branchId ?? source.branchId, payeeSnapshot: saved.payeeSnapshot ?? saved.payeeSnapshotJson });
+    return sourceForm(source) === period.formType && JSON.stringify(currentFacts) === JSON.stringify(savedFacts);
+  };
+
+  type Ref = { branchId: string | null; eventType: string; sourceType: string; sourceId: string; issue: WithholdingMonthIssueDto };
+  const refs: Ref[] = [];
+  const addSourceIssue = (source: { sourceId: string; branchId?: string | null }, issueCode: string, description: string) => {
+    if (refs.some(ref => ref.sourceId === source.sourceId && ref.issue.issueCode === issueCode)) return;
+    refs.push({ branchId: source.branchId ?? null, eventType: `WHT_${period.formType}`, sourceType: 'expense.record', sourceId: source.sourceId,
+      issue: { id: `live:${issueCode}:${source.sourceId}`, issueCode, severity: 'BLOCKING', description,
+        sourceType: 'expense.record', sourceId: source.sourceId, expenseId: source.sourceId,
+        counterpartyId: expenses.find(e => e.id === source.sourceId)?.vendorCounterpartyId ?? null } });
+  };
+
+  for (const issue of currentReviews) {
+    let branchId: string | null = null, counterpartyId: string | null = null;
+    if (issue.sourceType === 'expense.record') {
+      const live = sources.filter(s => s.id === issue.sourceId && s.expenseDate.toISOString().slice(0, 7) === period.periodKey);
+      const relevant = live.filter(s => {
+        const form = withholdingFormFor(s.payeeEntityKind, categoryByCode.get(s.incomeCategoryCode ?? '')?.filingRoute);
+        if (issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN') return !form;
+        if (form !== period.formType || issue.taxPeriod.formType !== period.formType) return false;
+        if (issue.issueCode === 'MISSING_TAX_ID') return !s.vendorTaxId;
+        if (issue.issueCode === 'FUNCTIONAL_CURRENCY_FX_MISSING') return s.currency.toUpperCase() !== (company?.baseCurrency ?? 'THB');
+        return true;
+      });
+      if (!relevant.length) continue;
+      branchId = relevant[0].branchId ?? null;
+      counterpartyId = expenses.find(e => e.id === issue.sourceId)?.vendorCounterpartyId ?? null;
+    } else if (issue.sourceType === 'procurement.supplier_payment') {
+      if (issue.taxPeriod.formType !== period.formType) continue;
+      const source = suppliers.find(s => s.id === issue.sourceId); if (!source) continue;
+      branchId = source.branchId; counterpartyId = source.supplier.counterpartyId;
+    } else if (issue.taxPeriod.formType !== period.formType) continue;
+    const projected: WithholdingMonthIssueDto = { id: issue.id, issueCode: issue.issueCode, description: withholdingIssueDescription(issue.issueCode, issue.description,
+      sources.find(s => s.id === issue.sourceId)?.vendorName, issue.sourceType === 'expense.record' && !counterpartyId), severity: issue.severity, sourceType: issue.sourceType, sourceId: issue.sourceId,
+      expenseId: issue.sourceType === 'expense.record' ? issue.sourceId : null, counterpartyId };
+    refs.push({ branchId, eventType: `WHT_${period.formType}`, sourceType: issue.sourceType ?? '', sourceId: issue.sourceId ?? '', issue: projected });
+  }
+  // Compare live sources and payment dates even when sync has not created a review issue.
+  for (const event of events.filter(e => e.sourceType === 'expense.record')) {
+    const candidates = sources.filter(source => source.id === event.sourceId);
+    if (!candidates.some(source => samePayment(source, event))) {
+      addSourceIssue(event, 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น');
+    }
+  }
+  for (const source of sources.filter(source => source.expenseDate.toISOString().slice(0, 7) === period.periodKey)) {
+    const formType = sourceForm(source);
+    if (events.some(event => event.sourceType === 'expense.record' && event.sourceId === source.id && samePayment(source, event))) continue;
+    if (formType && formType !== period.formType) continue;
+    if (filedLines.some(line => filedLineCoversPayment(line, paymentEvent(source)))) continue;
+    const route = categoryByCode.get(source.incomeCategoryCode ?? '')?.filingRoute ?? 'SYSTEM_FILLS';
+    if (!formType) addSourceIssue({ sourceId: source.id, branchId: source.branchId }, 'WHT_PAYEE_KIND_UNKNOWN',
+      withholdingIssueDescription('WHT_PAYEE_KIND_UNKNOWN', '', source.vendorName, !expenses.find(e => e.id === source.id)?.vendorCounterpartyId));
+    else if (route === 'SYSTEM_FILLS' && !source.vendorTaxId) addSourceIssue({ sourceId: source.id, branchId: source.branchId }, 'MISSING_TAX_ID',
+      withholdingIssueDescription('MISSING_TAX_ID', '', source.vendorName));
+    else {
+      addSourceIssue({ sourceId: source.id, branchId: source.branchId }, 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น');
+    }
+  }
+  const combined = partitionWithholdingPayments<T | Ref>([...events, ...refs], context.branches, context.facts, period.periodKey);
+  const sanitize = (ref: Ref): WithholdingMonthIssueDto => isBranchInScope(ctx.scopes ?? {}, ref.branchId) ? ref.issue : {
+    id: `hidden:${ref.issue.severity}`, issueCode: `${period.formType}_FILING_REVIEW`, severity: ref.issue.severity,
+    description: 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null,
+  };
+  const selectedRefs = establishment ? combined.papers.find(p => p.establishment.code === establishment.code)?.events.filter((r): r is Ref => 'issue' in r) ?? [] : refs;
+  const issues = selectedRefs.map(sanitize).filter((i, n, all) => all.findIndex(other => other.id === i.id) === n);
+  const partition = { ...combined, papers: combined.papers.map(p => ({ ...p, events: p.events.filter((r): r is T => !('issue' in r)) })),
+    unassigned: combined.unassigned.filter((r): r is T => !('issue' in r)) };
+  // Internal payment identities let historical readers test coverage without exposing hidden sources.
+  const sourcePayments = selectedRefs.flatMap(ref => sources.filter(source => ref.sourceType === 'expense.record' && source.id === ref.sourceId
+    && source.expenseDate.toISOString().slice(0, 7) === period.periodKey).map(source => ({ ...paymentEvent(source), issueId: sanitize(ref).id })));
+  return { issues, partition, sourcePayments, unassignedBlockers: combined.unassigned.filter((r): r is Ref => 'issue' in r).map(r => ({ branchId: r.branchId, eventType: r.eventType })) };
+}
+
 /** Live facts, shared by the month read and PDF export. Old filing issues are historical, never inputs. */
 export async function validateWithholdingFiling(db: Prisma.TransactionClient, companyId: string, formType: WhtFormType,
-  period: { periodKey: string; dueDate?: Date | null }, events: FilingEvent[], reviewIssues: ReviewIssue[], establishment?: WhtEstablishment, sequence = 0, historical = false) {
+  period: { periodKey: string; dueDate?: Date | null }, events: FilingEvent[], reviewIssues: ReviewIssue[], establishment?: WhtEstablishment, sequence = 0, historical = false, ctx?: RequestContext) {
   const individual = formType === 'PND3';
-  const reviews = reviewIssues.filter(issue => !/^PND(?:3|53)_FILING_/.test(issue.issueCode) && issue.issueCode !== 'WHT_PAYEE_KIND_UNKNOWN');
+  const projection = historical ? null : await withholdingPaperBlockers(db, ctx ?? { companyId, scopes: {} } as RequestContext, { ...period, formType }, establishment, events);
+  const reviews = projection?.issues ?? reviewIssues.filter(issue => !/^PND(?:3|53)_FILING_/.test(issue.issueCode));
   const refs = [...events, ...reviews];
   const ids = (type: string) => [...new Set(refs.filter(row => row.sourceType === type).flatMap(row => row.sourceId ? [row.sourceId] : []))];
   const expenseIds = ids('expense.record'), supplierIds = ids('procurement.supplier_payment');
@@ -67,7 +189,7 @@ export async function validateWithholdingFiling(db: Prisma.TransactionClient, co
   const counterpartyId = (sourceType: string | null, sourceId: string | null) => sourceType === 'expense.record'
     ? expenseById.get(sourceId ?? '')?.vendorCounterpartyId ?? null : supplierById.get(sourceId ?? '')?.counterpartyId ?? null;
   const issues: WithholdingMonthIssueDto[] = reviews.map(issue => ({ ...issue,
-    description: withholdingIssueDescription(issue.issueCode, issue.description, expenseById.get(issue.sourceId ?? '')?.vendorNameSnapshot),
+    description: projection ? issue.description : withholdingIssueDescription(issue.issueCode, issue.description, expenseById.get(issue.sourceId ?? '')?.vendorNameSnapshot),
     expenseId: issue.sourceType === 'expense.record' ? issue.sourceId : null, counterpartyId: counterpartyId(issue.sourceType, issue.sourceId),
   }));
   const fault = (reason: keyof typeof PND3_FILING_REVIEW_MESSAGES, event?: FilingEvent, detail?: string) => {
@@ -104,7 +226,7 @@ export async function validateWithholdingFiling(db: Prisma.TransactionClient, co
   const payerAddress = (establishment && (branch?.type === 'HEAD_OFFICE' || !branchId) ? company?.addressJson : branch?.addressJson ?? company?.addressJson) as CompanyLegalAddress | null;
   const payer = { periodKey: period.periodKey, payerName, payerTaxId, payerBranch, payerAddress: payerAddress! };
   if (accountantTypes.length && !/^\d{5}$/.test(payerBranch)) fault('payer', undefined, 'รหัสสาขาภาษีต้องมี 5 หลัก เปิดข้อมูลร้านแล้วแก้ไข');
-  if (accountantTypes.length && !historical) return { issues: issues.filter(issue => issue.issueCode.endsWith('_BRANCHES') || issue.issueCode.endsWith('_BRANCH') || issue.issueCode.endsWith('_PAYER')),
+  if (accountantTypes.length && !historical) return { issues: issues.filter(issue => reviews.some(review => review.id === issue.id) || issue.issueCode.endsWith('_BRANCHES') || issue.issueCode.endsWith('_BRANCH') || issue.issueCode.endsWith('_PAYER')),
     filing: null, candidateFiling: null, eventIds: events.map(event => event.id), payer, establishmentBranchId: branchId, accountantPrepared: true, accountantTypes };
   const missing: string[] = [], invalid: string[] = [];
   if (!payerName) missing.push('ชื่อจดทะเบียน');

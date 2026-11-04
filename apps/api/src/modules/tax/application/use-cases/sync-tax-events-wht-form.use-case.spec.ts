@@ -288,7 +288,7 @@ it('W8 retires unpaid/voided unfiled events but never mutates filed lines or the
   const events = ['unpaid', 'voided', 'filed'].map(id => ({ id, sourceId: id, sourceType: 'expense.record', sourceLineKey: '__HEADER__', eventDate: new Date('2026-10-28'), taxPeriodId: id, periodKey: '2026-10', whtFormType: 'PND3' }));
   const retired: string[] = [];
   let sourceId = '';
-  const db: any = { $executeRaw: async () => 0, $queryRaw: async () => [],
+  const db: any = { taxReviewIssue: { findMany: async () => [] }, $executeRaw: async () => 0, $queryRaw: async () => [],
     taxEvent: { findMany: async () => events, updateMany: async ({ where }: any) => { retired.push(where.id); return { count: 1 }; } },
     taxPeriod: { findMany: async ({ where }: any) => {
       if (where.whtFilings) { sourceId = where.whtFilings.some.lines.some.sourceId; return sourceId === 'filed' ? [{ formType: 'PND3', periodKey: '2026-10' }] : []; }
@@ -302,4 +302,39 @@ it('W3 sync preserves each income line of the same payment as a distinct event',
   const h = harness(['rent', 'service'].map(line => whtExpense({ paymentId: 'p1', sourceLineKey: `payment:p1:line:${line}` })));
   await h.run('WHT');
   assert.deepEqual(h.events.map(e => e.sourceLineKey), ['payment:p1:line:rent', 'payment:p1:line:service']);
+});
+
+
+it('R10 source correction retires only obsolete WHT blockers', async () => {
+  const { PrismaTaxRepository } = await import('../../infrastructure/repositories/prisma-tax.repository');
+  const updates: any[] = [];
+  const issues = ['PND3', 'PND53', 'PP30'].map(formType => ({ id: formType, companyId: 'c', sourceType: 'expense.record', sourceId: 'removed', issueCode: 'MISSING_TAX_ID', taxPeriodId: formType, taxPeriod: { formType, periodKey: '2026-09' } }));
+  const db: any = { taxEvent: { findMany: async () => [] }, taxReviewIssue: {
+    findMany: async ({ where }: any) => { assert.equal(where.companyId, 'c'); assert.equal(where.sourceType, 'expense.record'); assert.deepEqual(where.taxPeriod.formType.in, ['PND2', 'PND3', 'PND53']); return issues.filter(i => where.taxPeriod.formType.in.includes(i.taxPeriod.formType)); },
+    updateMany: async (input: any) => { updates.push(input); },
+  } };
+  await new PrismaTaxRepository({ client: db } as any).retireObsoleteExpenseWithholding('c', []);
+  assert.equal(updates.length, 2);
+  for (const update of updates) {
+    assert.equal(update.where.companyId, 'c'); assert.equal(update.where.sourceId, 'removed'); assert.equal(update.where.sourceType, 'expense.record');
+    assert.ok(['PND3', 'PND53'].includes(update.where.taxPeriodId)); assert.equal(update.data.status, 'RESOLVED');
+  }
+});
+
+it('R10 same-month form changes retire only the old-form source issues', async () => {
+  const { PrismaTaxRepository } = await import('../../infrastructure/repositories/prisma-tax.repository');
+  for (const [oldForm, newForm, kind] of [['PND3', 'PND53', 'JURISTIC'], ['PND53', 'PND3', 'INDIVIDUAL']] as const) {
+    const issues = [oldForm, newForm, 'PP30'].map(formType => ({ id: formType, companyId: 'company-1', sourceType: 'expense.record', sourceId: 'expense-1',
+      issueCode: 'MISSING_TAX_ID', taxPeriodId: formType, taxPeriod: { formType, periodKey: '2026-07' }, status: 'OPEN' }));
+    const writes: any[] = [];
+    const db: any = { taxEvent: { findMany: async () => [] }, whtIncomeCategory: { findMany: async () => [] }, taxReviewIssue: {
+      findMany: async ({ where }: any) => issues.filter(i => where.taxPeriod.formType.in.includes(i.taxPeriod.formType)),
+      updateMany: async ({ where, data }: any) => { writes.push(where); for (const i of issues) if (i.companyId === where.companyId && i.sourceId === where.sourceId && i.taxPeriodId === where.taxPeriodId) Object.assign(i, data); },
+    } };
+    await new PrismaTaxRepository({ client: db } as any).retireObsoleteExpenseWithholding('company-1', [whtExpense({ payeeEntityKind: kind, vendorTaxId: null })] as any);
+    assert.equal(issues.find(i => i.id === oldForm)?.status, 'RESOLVED');
+    assert.equal(issues.find(i => i.id === newForm)?.status, 'OPEN'); assert.equal(issues.find(i => i.id === 'PP30')?.status, 'OPEN');
+    assert.equal(writes.length, 1); assert.equal(writes[0].companyId, 'company-1'); assert.equal(writes[0].sourceId, 'expense-1');
+    assert.equal(writes[0].taxPeriodId, oldForm); assert.equal(writes[0].sourceType, 'expense.record');
+  }
 });

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import { renderToStaticMarkup } from 'react-dom/server';
 (globalThis as any).React = React;
+(globalThis as any).self = globalThis;
 require.extensions['.css'] = module => { module.exports = { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) }; };
 const navigation = mutable('next/navigation');
 const visits: string[] = [];
@@ -64,10 +65,10 @@ test('both forms have their own steps; empty forms and readers have no step butt
 });
 test('issues show the server sentence and fixing link, never the code; shop fixes respect permission', () => {
   const issue = { id: 'i', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', description: 'ยังไม่รู้ประเภทผู้รับเงิน เปิดคู่ค้าแล้วเลือกประเภทก่อน', counterpartyId: 'cp', expenseId: 'ex' };
-  const html = card(form({ issues: [issue] }));
+  const html = card(form({ issues: [issue] }), ['wht.pnd53.prepare', 'accounting.counterparty.read', 'accounting.counterparty.manage']);
   assert.match(html, /counterparties\/cp/); assert.match(html, /ยังไม่รู้ประเภทผู้รับเงิน/); assert.doesNotMatch(html, /WHT_PAYEE_KIND_UNKNOWN/);
-  const unlinked = card(form({ issues: [{ ...issue, counterpartyId: null }] }));
-  assert.match(unlinked, /href="\/companies\/co\/expenses\/ex"[^>]*>เปิดรายจ่าย/);
+  const unlinked = card(form({ issues: [{ ...issue, counterpartyId: null }] }), ['expense.read', 'expense.update', 'expense.confirm']);
+  assert.match(unlinked, /href="\/companies\/co\/expenses\/ex"[^>]*>เปิดค่าใช้จ่าย/);
   assert.doesNotMatch(unlinked, />เปิดคู่ค้า</);
   const payer = form({ issues: [{ ...issue, issueCode: 'PND3_FILING_PAYER', description: 'ข้อมูลร้านยังไม่ครบ' }] });
   assert.match(card(payer), /ให้เจ้าของกิจการ/);
@@ -198,7 +199,7 @@ test('every official export refusal has a Thai code fallback and preserves its s
 
 test('blocking faults explain download beside their reason and unknown kinds appear once above both cards', () => {
   const issue = { id: 'payer', issueCode: 'PND3_FILING_PAYER', severity: 'BLOCKING', description: 'ข้อมูลร้านยังขาด: ชื่อจดทะเบียน', expenseId: null, counterpartyId: null };
-  const html = card(form({ issues: [issue] }));
+  const html = card(form({ issues: [issue] }), ['wht.pnd53.prepare', 'accounting.counterparty.read', 'accounting.counterparty.manage']);
   assert.doesNotMatch(html, /disabled=""/);
   assert.match(html, /ดาวน์โหลดแบบ ภ.ง.ด.3/);
   assert.ok(html.indexOf(issue.description) < html.indexOf('ดาวน์โหลดแบบ ภ.ง.ด.3'));
@@ -208,7 +209,7 @@ test('blocking faults explain download beside their reason and unknown kinds app
     const page = view.render();
     assert.ok(page.indexOf('ต้องแก้ก่อนยื่น') < page.indexOf('ภ.ง.ด.3 (จ่ายให้บุคคล)'));
     assert.equal(page.split(unknown.description).length - 1, 1);
-    for (const node of view.nodes.filter(n => n.tag === 'WithholdingFormCard')) assert.deepEqual(node.props.form.issues, []);
+    assert.equal(view.find('WithholdingFormCard', p => p.form.formType === 'PND53').form.issues[0].issueCode, 'WHT_PAYEE_KIND_UNKNOWN');
   } finally { view.cleanup(); }
 });
 
@@ -658,4 +659,100 @@ test('the must-fix card reads facts from each form and from each of its papers',
   // 2026-10-16: with an additional filing in the month, the accountant-prepared income sat on the form, not on its papers.
   const page = readFileSync(new URL('./WithholdingPage.tsx', import.meta.url), 'utf8');
   assert.match(page, /const papers = forms\.flatMap\(form => \[form, \.\.\.\(form\.papers \?\? \[\]\)\]\);/);
+});
+
+test('R10 source-only blockers preserve correction permissions, hidden-branch privacy and a return action', () => {
+  for (const issueCode of ['MISSING_TAX_ID', 'WHT_PAYEE_KIND_UNKNOWN']) for (const count of [0, 1]) for (const mayEdit of [false, true]) {
+    const issue = { id: 'source-only', issueCode, sourceType: 'expense.record', sourceId: 'bad', expenseId: 'bad', counterpartyId: 'cp', severity: 'BLOCKING', description: 'ข้อมูลผู้รับเงินยังไม่ครบ เปิดรายการเพื่อแก้ข้อมูล' };
+    const view = pageView([form({ paymentCount: count, canDownload: false, issues: [issue] }), form({ formType: 'PND53', paymentCount: 0 })],
+      count ? [{ id: 'good', payeeName: 'ผู้รับเงินครบ', formType: 'PND3', paymentDate: '2026-10-01', paid: '1000', withheld: '30' }] : [],
+      ['wht.pnd53.read', 'wht.pnd53.prepare', 'expense.read', ...(mayEdit ? ['expense.update', 'expense.confirm', 'accounting.counterparty.read', 'accounting.counterparty.manage'] : [])]);
+    try {
+      const html = view.render();
+      assert.equal(html.split(issue.description).length - 1, 1);
+      assert.match(html, /ต้องแก้ก่อนยื่น/);
+      assert.equal(html.includes('href="/companies/co/counterparties/cp"'), mayEdit && issueCode.includes('KIND'));
+      assert.equal(html.includes('href="/companies/co/expenses/bad"'), mayEdit && !issueCode.includes('KIND'));
+      if (!mayEdit) assert.match(html, /กลับไปรายการค่าใช้จ่าย/);
+      if (!count) { assert.equal((html.match(/เดือนนี้ไม่มีรายการ/g) ?? []).length, 1, 'only the unrelated empty form may say it has no payments'); assert.match(html, /แก้ข้อมูลรายการจ่ายเพื่อแสดงในแบบ/); }
+    } finally { view.cleanup(); }
+  }
+  const hidden = { id: 'hidden', issueCode: 'PND3_FILING_REVIEW', severity: 'BLOCKING', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null, description: 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด' };
+  const view = pageView([form({ paymentCount: 0, issues: [hidden] }), form({ formType: 'PND53', paymentCount: 0, issues: [{ ...hidden, issueCode: 'PND53_FILING_REVIEW' }] })], [], ['wht.pnd53.read', 'expense.read']);
+  try {
+    const html = view.render(); assert.equal(html.split(hidden.description).length - 1, 1); assert.match(html, /กลับไปรายการค่าใช้จ่าย/);
+    assert.doesNotMatch(html, /counterparties\/|expenses\/(?!wht)|เดือนนี้ไม่มีรายการ/);
+  } finally { view.cleanup(); }
+});
+
+test('R10 FILED omission warnings keep the stored download and the additional paper separate', async () => {
+  const warning = { id: 'omitted', issueCode: 'WHT_FILED_PAYMENT_OMITTED', severity: 'WARNING', description: 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล' };
+  const exportCall = mock.method(api, 'exportWithholding', async () => ({ artifact: { fileName: 'เดิม.pdf', contentBase64: 'frozen', checksum: 'original' } }));
+  const download = mock.method(downloads, 'downloadArtifact', () => {});
+  const forms = [form({ status: 'FILED', canDownload: true, issues: [warning], papers: [paper(0, { status: 'FILED', canDownload: true, issues: [warning] }), paper(1, { status: 'OPEN', canDownload: true })] })];
+  const read = mock.method(api, 'getWithholdingMonth', async () => ({ periodKey: '2026-10', forms, payments: [] }));
+  const view = pageView(forms);
+  try {
+    assert.match(view.render(), new RegExp(warning.description));
+    view.find('button', p => p.children.includes('ดาวน์โหลดแบบที่ยื่น')).onClick(); await view.settle();
+    assert.equal(exportCall.mock.calls[0].arguments[5], 0);
+    assert.equal(download.mock.calls[0].arguments[0].checksum, 'original');
+    view.render(); assert.ok(view.find('button', p => p.children.includes('ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ 1')));
+  } finally { view.cleanup(); for (const m of [exportCall, download, read]) m.mock.restore(); }
+});
+
+test('R10 correction reload removes the blocker and loading or an error never claims an empty month', async () => {
+  const issue = { id: 'bad', issueCode: 'MISSING_TAX_ID', sourceId: 'bad', expenseId: 'bad', severity: 'BLOCKING', description: 'เปิดรายการเพื่อแก้เลขผู้เสียภาษี' };
+  const sync = mock.method(api, 'syncWithholding', async () => ({}));
+  const months = mock.method(api, 'listWithholdingMonths', async () => ({ months: ['2026-10'] }));
+  const read = mock.method(api, 'getWithholdingMonth', async () => ({ periodKey: '2026-10', forms: [form({ canDownload: true })], payments: [] }));
+  const view = pageView([form({ paymentCount: 0, issues: [issue], canDownload: false })]);
+  try {
+    view.state[5] = true; assert.doesNotMatch(view.render(), /เดือนนี้ไม่มีรายการ/);
+    view.state[5] = false; view.state[2] = null; view.state[9] = 'โหลดรายการไม่ได้ ลองอีกครั้ง';
+    assert.match(view.render(), /ลองอีกครั้ง/); assert.doesNotMatch(view.render(), /เดือนนี้ไม่มีรายการ/);
+    view.state[2] = { periodKey: '2026-10', forms: [form({ paymentCount: 0, issues: [issue], canDownload: false })], payments: [] }; view.state[9] = '';
+    view.render(); view.find('button', p => p.children.includes('ดึงรายการล่าสุด')).onClick(); await view.settle();
+    assert.doesNotMatch(view.render(), new RegExp(issue.description));
+    assert.equal(view.find('WithholdingFormCard').form.canDownload, true);
+  } finally { view.cleanup(); for (const m of [sync, months, read]) m.mock.restore(); }
+});
+
+test('R10 retry keeps the loading state until the month read completes', async () => {
+  let finish!: (value: any) => void;
+  const months = mock.method(api, 'listWithholdingMonths', async () => ({ months: ['2026-10'] }));
+  const read = mock.method(api, 'getWithholdingMonth', () => new Promise(resolve => { finish = resolve; }));
+  const view = pageView(); view.state[2] = null; view.state[9] = 'โหลดรายการไม่ได้ ลองอีกครั้ง';
+  try {
+    view.render(); view.find('button', p => p.children.includes('ลองอีกครั้ง')).onClick(); await view.settle();
+    assert.doesNotMatch(view.render(), /เดือนนี้ไม่มีรายการ/);
+    assert.ok(view.nodes.some(n => n.tag === 'LoadingState'));
+    finish({ periodKey: '2026-10', forms: [form()], payments: [] }); await view.settle();
+    view.render(); assert.equal(view.nodes.some(n => n.tag === 'LoadingState'), false);
+    assert.ok(view.nodes.some(n => n.tag === 'WithholdingFormCard'));
+  } finally { view.cleanup(); months.mock.restore(); read.mock.restore(); }
+});
+
+test('R10 source corrections belong to the selected establishment', () => {
+  const issue = { id: 'branch-only', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', sourceId: 'bad', expenseId: 'bad', severity: 'BLOCKING', description: 'ผู้รับเงินสาขาตลาดยังไม่ครบ' };
+  const head = [form()], branch = [form({ issues: [issue], canDownload: false })];
+  const view = pageView(head, [], ['wht.pnd53.read', 'expense.read']);
+  (view.state[2] as any).establishments = [{ code: '00000', name: 'สำนักงานใหญ่', forms: head }, { code: '00002', name: 'ตลาด', forms: branch }];
+  try {
+    assert.doesNotMatch(view.render(), new RegExp(issue.description));
+    view.find('SelectField', p => p.label === 'ยื่นในนาม').onChange({ target: { value: '00002' } });
+    assert.match(view.render(), new RegExp(issue.description));
+    assert.match(view.render(), /กลับไปรายการค่าใช้จ่าย/);
+  } finally { view.cleanup(); }
+});
+
+test('R10 a source-only branch without a tax code offers branch settings without a false zero-payment sentence', () => {
+  const view = pageView([form({ paymentCount: 0, issues: [{ id: 'source', sourceId: 'bad', expenseId: 'bad', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', description: 'ข้อมูลผู้รับเงินยังไม่ครบ', severity: 'BLOCKING' }] })], [], ['wht.pnd53.read', 'expense.read', 'company.branch.read']);
+  (view.state[2] as any).establishmentIssues = [{ issueCode: 'WHT_BRANCH_HAS_NO_CODE', branchId: 'branch', branchName: 'ตลาด', paymentCount: 0 }];
+  try {
+    const html = view.render();
+    assert.match(html, /ตลาด ยังไม่มีรหัสสาขาภาษี/);
+    assert.match(html, /settings\/branches\?from=withholding/);
+    assert.doesNotMatch(html, /ตลาด ยังไม่มีรหัสสาขาภาษี · 0 รายการ|เดือนนี้ไม่มีรายการ/);
+  } finally { view.cleanup(); }
 });

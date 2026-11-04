@@ -1,3 +1,4 @@
+import { isSerializationFailure } from '../../../../common/database/prisma-error';
 import { confirmWithholdingRows, uncertainWithholdingPaper } from '../services/legacy-withholding-filing';
 import { cancelledWithholdingRows, cancelledPayeeNames, cancelledPayeesNote } from '../services/withholding-filing-history';
 import { loadWithholdingEstablishments, partitionWithholdingPayments, selectWithholdingPaper, assertEstablishmentScope } from '../services/withholding-establishments';
@@ -15,7 +16,7 @@ import { renderPnd3OfficialForm } from '../../domain/logic/pnd3-official-form.lo
 import { isPeriodLocked } from '../../domain/logic/tax-period.logic';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 
-import { validateWithholdingFiling } from '../services/withholding-filing-validation';
+import { validateWithholdingFiling, withholdingPaperBlockers } from '../services/withholding-filing-validation';
 
 import { assertOpenWithholdingSequence, withholdingPaperPayments, currentWithholdingPayments, withholdingPaymentChecksum, withholdingPaymentFacts, orderWithholdingPayments } from '../services/withholding-filing-state';
 
@@ -47,7 +48,8 @@ export class GenerateTaxFilingPackageUseCase {
     const existingPapers = freezesPaper ? await db.whtFiling.findMany({ where: { companyId: ctx.companyId, taxPeriodId: period.id }, include: { lines: true } }) : [];
     const allEvents = await this.taxRepo.findEventsByPeriod(ctx.companyId, period.id, 'ACTIVE');
     const activeEvents = freezesPaper ? await currentWithholdingPayments(db, ctx.companyId, allEvents) : allEvents;
-    const partition = context ? partitionWithholdingPayments(activeEvents, context.branches, context.facts, period.periodKey) : null;
+    const projection = context ? await withholdingPaperBlockers(db, ctx, period, undefined, activeEvents) : null;
+    const partition = projection?.partition ?? null;
     if (freezesPaper) {
       const codes = [...new Set([...existingPapers.map(p => p.establishmentCode), ...partition!.papers.map(p => p.establishment.code)])];
       if (!establishmentCode && codes.length > 1) throw new ConflictException({ code: 'WHT_ESTABLISHMENT_REQUIRED', message: 'เดือนนี้มีหลายสาขาที่ยื่น เลือกสาขาก่อนดาวน์โหลดหรือบันทึกว่ายื่นแล้ว' });
@@ -83,9 +85,9 @@ export class GenerateTaxFilingPackageUseCase {
       }) : null,
     ]);
     const selected = partition ? selectWithholdingPaper(ctx, partition, establishmentCode) : null;
-    if (partition && !selected && activeEvents.length) throw new ConflictException({ code: 'WHT_BRANCH_HAS_NO_CODE', message: 'สาขายังไม่มีรหัสสาขาภาษี เปิดตั้งค่าสาขาแล้วกรอกรหัสก่อนดาวน์โหลดแบบ' });
+    if (partition && !selected && (activeEvents.length || projection!.unassignedBlockers.length)) throw new ConflictException({ code: 'WHT_BRANCH_HAS_NO_CODE', message: 'สาขายังไม่มีรหัสสาขาภาษี เปิดตั้งค่าสาขาแล้วกรอกรหัสก่อนดาวน์โหลดแบบ' });
     const events = freezesPaper ? orderWithholdingPayments(withholdingPaperPayments(selected?.events ?? [], existingPapers), period.formType) : activeEvents;
-    const paperIssues = freezesPaper ? reviewIssues.filter(issue => !issue.sourceId || events.some(e => e.sourceType === issue.sourceType && e.sourceId === issue.sourceId)) : reviewIssues;
+    const paperIssues = reviewIssues;
     if (['PP30', 'PP36'].includes(period.formType)) {
       if (!reconciliation) throw new ConflictException('A current tax reconciliation run is required before export');
       if (reconciliation.status !== 'REVIEWED' || reconciliation.blockingIssueCount > 0) throw new ConflictException('Tax reconciliation must be reviewed with no blocking lines before export');
@@ -114,10 +116,10 @@ export class GenerateTaxFilingPackageUseCase {
       reviewIssues,
       disclaimer: 'Manual filing review package only. Confirm with accountant/RD before submission.',
     };
-    const validation = freezesPaper ? await validateWithholdingFiling(this.taxRepo.prisma.client, ctx.companyId, period.formType as 'PND3' | 'PND53', period, events, paperIssues, selected?.establishment, sequence) : null;
-    if (validation?.accountantPrepared && exportFormat === 'PDF') throw new ConflictException({ code: 'WHT_ACCOUNTANT_PREPARES', message: 'ผู้ทำบัญชีจัดทำแบบนี้เอง ดาวน์โหลดรายการให้ผู้ทำบัญชีแทน' });
+    const validation = freezesPaper ? await validateWithholdingFiling(this.taxRepo.prisma.client, ctx.companyId, period.formType as 'PND3' | 'PND53', period, events, paperIssues, selected?.establishment, sequence, false, ctx) : null;
     const blocking = validation?.issues.find(issue => issue.severity === 'BLOCKING');
-    if (blocking) throw new ConflictException({ code: blocking.issueCode.startsWith(`${period.formType}_FILING_`) ? blocking.issueCode : `${period.formType}_FILING_REVIEW`, message: blocking.description, issues: validation!.issues });
+    if (blocking) throw new ConflictException({ code: (blocking.issueCode.startsWith(`${period.formType}_FILING_`) || blocking.issueCode === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD') ? blocking.issueCode : `${period.formType}_FILING_REVIEW`, message: blocking.description, issues: validation!.issues });
+    if (validation?.accountantPrepared && exportFormat === 'PDF') throw new ConflictException({ code: 'WHT_ACCOUNTANT_PREPARES', message: 'ผู้ทำบัญชีจัดทำแบบนี้เอง ดาวน์โหลดรายการให้ผู้ทำบัญชีแทน' });
     const paperEvents = validation ? events.filter(event => validation.eventIds.includes(event.id)) : events;
     const cancelledNames = sequence > 0 ? cancelledPayeeNames(await cancelledWithholdingRows(db, ctx.companyId, existingPapers), paperEvents) : [];
     const workbook = freezesPaper && exportFormat === 'XLSX'
@@ -147,6 +149,8 @@ export class GenerateTaxFilingPackageUseCase {
       } catch (error) {
         // Only this new, unlinked object is eligible for cleanup; never overwrite/delete an older paper.
         await this.storage.deleteObject(stored).catch(() => undefined);
+        // A concurrent change won the Serializable snapshot (P2034, or 40001 from a raw statement).
+        if (isSerializationFailure(error)) throw new ConflictException({ code: 'WHT_FILING_CHANGED_DURING_DOWNLOAD', message: 'มีรายการเปลี่ยนระหว่างดาวน์โหลด ดาวน์โหลดอีกครั้ง' });
         throw error;
       }
     } else pkg = await this.taxRepo.prisma.client.taxFilingPackage.create({ data: {

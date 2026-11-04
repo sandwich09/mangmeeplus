@@ -3184,40 +3184,73 @@ describe('frozen withholding papers (real PostgreSQL)', () => {
   it('package, file reference and frozen lines commit together, roll back together, and refuse replacement after filing', async t => {
     if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }
     const { PrismaTaxRepository } = await import('../../tax/infrastructure/repositories/prisma-tax.repository');
+    const { withholdingPaymentChecksum } = await import('../../tax/application/services/withholding-filing-state');
     const repo = new PrismaTaxRepository({ client } as any);
-    const input: any = { ctx: { companyId, userId: 'synthetic-actor' }, period, exportFormat: 'PDF', exportNumber: 'TEST-1',
-      artifact: { fileName: 'test.pdf', mimeType: 'application/pdf', checksum: 'file', byteLength: 5, contentBase64: 'JVBERi0=' },
-      stored: { bucket: 'synthetic', objectKey: `${companyId}/first`, storageProvider: 'local', objectVersionId: 'v1', byteSize: 5, checksumSha256: 'file' },
-      establishmentCode: '00000', establishmentBranchId: null, preparedBy: 'SYSTEM', payerSnapshotJson: { payerName: 'ร้านทดสอบ' }, rowsChecksum: 'rows', rowsCertain: true,
-      lines: [{ taxEventId: 'synthetic-event', sourceType: 'expense.record', sourceId: 'synthetic-expense', lineJson: { income: 1000, withheld: 30 } }] };
-    const pkg = await repo.recordWithholdingDownload(input);
-    const filing = await client!.whtFiling.findFirstOrThrow({ where: { companyId, filingPackageId: pkg.id }, include: { lines: true } });
-    assert.equal(filing.lines.length, 1);
-    assert.ok(await client!.attachmentObject.findUnique({ where: { id: pkg.attachmentId! } }));
-    await assert.rejects(repo.recordWithholdingDownload({ ...input, stored: { ...input.stored, objectKey: `${companyId}/rolled-back` }, lines: [{ ...input.lines[0], taxEventId: null }] }));
-    assert.equal(await client!.taxFilingPackage.count({ where: { companyId } }), 1);
-    assert.equal(await client!.attachmentObject.count({ where: { companyId } }), 1);
-    assert.deepEqual((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true } })).lines, filing.lines);
-    await client!.$transaction(async tx => {
-      await repo.markWithholdingFilingFiled(tx, companyId, pkg.id, 'synthetic-actor', new Date(), 'ยื่นแล้ว');
-      await tx.taxPeriod.update({ where: { id: period.id }, data: { status: 'FILED' } });
-    });
-    await assert.rejects(repo.recordWithholdingDownload(input), (error: any) => error.getResponse().code === 'WHT_FILING_ALREADY_FILED');
-    assert.equal(await client!.taxFilingPackage.count({ where: { companyId } }), 1);
-    assert.equal((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id } })).filedByUserId, 'synthetic-actor');
-    const kept = await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } });
-    const additional = { ...input, sequence: 1, exportNumber: 'TEST-ADDITIONAL-1', stored: { ...input.stored, objectKey: `${companyId}/additional-1` },
-      lines: [{ ...input.lines[0], taxEventId: 'late-event', sourceId: 'late-expense' }] };
-    await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: input.lines }), (e: any) => e.getResponse().code === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
-    await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: [{ ...additional.lines[0], taxEventId: null }] }));
-    assert.equal(await client!.whtFiling.count({ where: { companyId, establishmentCode: '00000', sequence: 1 } }), 0, 'failed line write rolls back the additional paper and package');
-    const extra = await repo.recordWithholdingDownload(additional);
-    assert.equal(await client!.whtFiling.count({ where: { companyId, establishmentCode: '00000', sequence: 1 } }), 1);
-    await assert.rejects(repo.recordWithholdingDownload({ ...additional, sequence: 2 }), (e: any) => e.getResponse().code === 'WHT_FILING_SEQUENCE_INVALID');
-    await client!.$transaction(tx => repo.markWithholdingFilingFiled(tx, companyId, extra.id, 'synthetic-actor', new Date()));
-    await assert.rejects(repo.recordWithholdingDownload(additional), (e: any) => e.getResponse().code === 'WHT_FILING_ALREADY_FILED');
-    assert.deepEqual(await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } }), kept);
-
+    // R10 rechecks live payments inside the download, so this paper gets its own tenant with real payments and tax events.
+    const own = `wht-paper-pg-${randomUUID()}`;
+    await client!.company.create({ data: { id: own, name: 'Synthetic paper' } });
+    const ownPeriod = await client!.taxPeriod.create({ data: { companyId: own, taxType: 'WHT', formType: 'PND3', periodKey: '2026-09' } });
+    const paid = async (name: string) => {
+      const source = await client!.expenseRecord.create({ data: { companyId: own, status: 'CONFIRMED', expenseDate: new Date('2026-09-10'), createdByUserId: 'synthetic-actor',
+        whtAmount: '30', whtRate: '3', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000',
+        vendorNameSnapshot: name, vendorAddressSnapshot: 'กรุงเทพ', vendorEntityKindSnapshot: 'INDIVIDUAL', vendorTaxIdSnapshot: '1100700000001',
+        payments: { create: { amount: '970', paidAt: new Date('2026-09-10'), paidAtConfirmed: true, createdByUserId: 'synthetic-actor' } } }, include: { payments: true } });
+      const event = await client!.taxEvent.create({ data: { companyId: own, taxPeriodId: ownPeriod.id, idempotencyKey: `${own}:${source.id}`, eventType: 'WHT_PND3',
+        sourceType: 'expense.record', sourceId: source.id, sourceLineKey: `payment:${source.payments[0].id}`, periodKey: ownPeriod.periodKey,
+        eventDate: new Date('2026-09-10'), taxableBase: '1000', taxAmount: '30', grossAmount: '1000', withheldAmount: '30', whtRate: '3', whtFormType: 'PND3',
+        payeeSnapshotJson: { name, taxId: '1100700000001', branchCode: null, address: 'กรุงเทพ' } } });
+      const payment: any = { ...event, payeeSnapshot: event.payeeSnapshotJson, grossAmount: event.grossAmount?.toString() ?? null,
+        withheldAmount: event.withheldAmount?.toString() ?? null, whtRate: event.whtRate?.toString() ?? null };
+      return { checksum: withholdingPaymentChecksum([payment]),
+        line: { taxEventId: event.id, sourceType: 'expense.record', sourceId: source.id, lineJson: { income: 1000, withheld: 30 } } };
+    };
+    try {
+      const first = await paid('Synthetic payee');
+      const input: any = { ctx: { companyId: own, userId: 'synthetic-actor', roles: ['OWNER'], permissions: [], scopes: {} }, period: ownPeriod, exportFormat: 'PDF', exportNumber: 'TEST-1',
+        artifact: { fileName: 'test.pdf', mimeType: 'application/pdf', checksum: 'file', byteLength: 5, contentBase64: 'JVBERi0=' },
+        stored: { bucket: 'synthetic', objectKey: `${own}/first`, storageProvider: 'local', objectVersionId: 'v1', byteSize: 5, checksumSha256: 'file' },
+        establishmentCode: '00000', establishmentBranchId: null, preparedBy: 'SYSTEM', payerSnapshotJson: { payerName: 'ร้านทดสอบ' }, rowsChecksum: first.checksum, rowsCertain: true,
+        lines: [first.line] };
+      const pkg = await repo.recordWithholdingDownload(input);
+      const filing = await client!.whtFiling.findFirstOrThrow({ where: { companyId: own, filingPackageId: pkg.id }, include: { lines: true } });
+      assert.equal(filing.lines.length, 1);
+      assert.ok(await client!.attachmentObject.findUnique({ where: { id: pkg.attachmentId! } }));
+      await assert.rejects(repo.recordWithholdingDownload({ ...input, stored: { ...input.stored, objectKey: `${own}/rolled-back` }, lines: [{ ...input.lines[0], taxEventId: null }] }));
+      assert.equal(await client!.taxFilingPackage.count({ where: { companyId: own } }), 1);
+      assert.equal(await client!.attachmentObject.count({ where: { companyId: own } }), 1);
+      assert.deepEqual((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true } })).lines, filing.lines);
+      await client!.$transaction(async tx => {
+        await repo.markWithholdingFilingFiled(tx, own, pkg.id, 'synthetic-actor', new Date(), 'ยื่นแล้ว');
+        await tx.taxPeriod.update({ where: { id: ownPeriod.id }, data: { status: 'FILED' } });
+      });
+      await assert.rejects(repo.recordWithholdingDownload(input), (error: any) => error.getResponse().code === 'WHT_FILING_ALREADY_FILED');
+      assert.equal(await client!.taxFilingPackage.count({ where: { companyId: own } }), 1);
+      assert.equal((await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id } })).filedByUserId, 'synthetic-actor');
+      const kept = await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } });
+      const late = await paid('Late payee');
+      const additional = { ...input, sequence: 1, exportNumber: 'TEST-ADDITIONAL-1', stored: { ...input.stored, objectKey: `${own}/additional-1` },
+        rowsChecksum: late.checksum, lines: [late.line] };
+      await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: input.lines }), (e: any) => e.getResponse().code === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+      await assert.rejects(repo.recordWithholdingDownload({ ...additional, lines: [{ ...additional.lines[0], taxEventId: null }] }));
+      assert.equal(await client!.whtFiling.count({ where: { companyId: own, establishmentCode: '00000', sequence: 1 } }), 0, 'failed line write rolls back the additional paper and package');
+      const extra = await repo.recordWithholdingDownload(additional);
+      assert.equal(await client!.whtFiling.count({ where: { companyId: own, establishmentCode: '00000', sequence: 1 } }), 1);
+      await assert.rejects(repo.recordWithholdingDownload({ ...additional, sequence: 2 }), (e: any) => e.getResponse().code === 'WHT_FILING_SEQUENCE_INVALID');
+      await client!.$transaction(tx => repo.markWithholdingFilingFiled(tx, own, extra.id, 'synthetic-actor', new Date()));
+      await assert.rejects(repo.recordWithholdingDownload(additional), (e: any) => e.getResponse().code === 'WHT_FILING_ALREADY_FILED');
+      assert.deepEqual(await client!.whtFiling.findUniqueOrThrow({ where: { id: filing.id }, include: { lines: true, latestPackage: true } }), kept);
+    } finally {
+      // Fixture cleanup only: break the latest-package cycle before removing this synthetic tenant.
+      await client!.whtFiling.updateMany({ where: { companyId: own }, data: { filingPackageId: null } });
+      await client!.whtFilingLine.deleteMany({ where: { filing: { companyId: own } } });
+      await client!.taxFilingPackage.deleteMany({ where: { companyId: own } });
+      await client!.whtFiling.deleteMany({ where: { companyId: own } });
+      await client!.attachmentLink.deleteMany({ where: { companyId: own } });
+      await client!.attachmentObject.deleteMany({ where: { companyId: own } });
+      await client!.expensePayment.deleteMany({ where: { companyId: own } });
+      await client!.expenseRecord.deleteMany({ where: { companyId: own } });
+      await client!.company.deleteMany({ where: { id: own } });
+    }
   });
   it('legacy restoration is idempotent and confirmation commits file, certainty and audit together', async t => {
     if (!ready) { t.skip('Local migrated PostgreSQL unavailable'); return; }

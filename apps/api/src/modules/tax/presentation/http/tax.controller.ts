@@ -1,3 +1,5 @@
+import { isSerializationFailure } from '../../../../common/database/prisma-error';
+import { withholdingPaperBlockers } from '../../application/services/withholding-filing-validation';
 import { assertOpenWithholdingSequence, withholdingPaperPayments } from '../../application/services/withholding-filing-state';
 import { filedWithholdingPaymentPeriods } from '../../application/services/filed-withholding-payment';
 import { loadWithholdingEstablishments, partitionWithholdingPayments, selectWithholdingPaper, rollUpWithholdingPeriod } from '../../application/services/withholding-establishments';
@@ -318,7 +320,8 @@ export class TaxController {
             ...event, payeeSnapshot: event.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
             grossAmount: event.grossAmount?.toString() ?? null, withheldAmount: event.withheldAmount?.toString() ?? null, whtRate: event.whtRate?.toString() ?? null,
           })));
-          const partition = partitionWithholdingPayments(events, context.branches, context.facts, period.periodKey);
+          const projection = await withholdingPaperBlockers(tx, ctx, period, undefined, events);
+          const partition = projection.partition;
           const selected = selectWithholdingPaper(ctx, partition, body.establishmentCode);
           const paper = selected ? await tx.whtFiling.findFirst({ where: { companyId: ctx.companyId, taxPeriodId: periodId, establishmentCode: selected.establishment.code, sequence: body.sequence ?? 0 }, include: { latestPackage: true } }) : null;
           if (selected && (body.sequence ?? 0) > 0) {
@@ -330,16 +333,15 @@ export class TaxController {
           if (!selected || !paper || paper.status !== 'EXPORTED' || !pkg || !await isWithholdingDownloadCurrent(tx, ctx.companyId, periodId, selected.events, pkg, selected.establishment.code, body.sequence)) {
             throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
           }
-          const issues = await tx.taxReviewIssue.findMany({ where: { companyId: ctx.companyId, taxPeriodId: periodId, status: 'OPEN' } });
-          const blocking = issues.find(issue => issue.severity === 'BLOCKING' && !/^PND(?:3|53)_FILING_/.test(issue.issueCode) && issue.issueCode !== 'WHT_PAYEE_KIND_UNKNOWN'
-            && (!issue.sourceId || selected.events.some(event => event.sourceType === issue.sourceType && event.sourceId === issue.sourceId)));
-          if (blocking) throw new ConflictException({ code: `${period.formType}_FILING_REVIEW`, message: blocking.description });
+          const blockers = await withholdingPaperBlockers(tx, ctx, period, selected.establishment, selected.events);
+          const blocking = blockers.issues.find(issue => issue.severity === 'BLOCKING');
+          if (blocking) throw new ConflictException({ code: `${period.formType}_FILING_REVIEW`, message: blocking.description, issues: blockers.issues });
           await this.taxRepo.markWithholdingFilingFiled(tx, ctx.companyId, pkg.id, ctx.userId, new Date(), body.note);
           await tx.taxFilingPackage.update({ where: { id: pkg.id }, data: { status: 'ACCEPTED_MANUAL', filedManuallyAt: new Date(), filedManuallyNote: body.note } });
           await rollUpWithholdingPeriod(tx, ctx.companyId, periodId, partition.papers.map(p => p.establishment.code));
         }, { isolationLevel: 'Serializable' });
       } catch (error) {
-        if ((error as { code?: string }).code === 'P2034') throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
+        if (isSerializationFailure(error)) throw new ConflictException({ code: 'WHT_FILING_CHANGED_AFTER_DOWNLOAD', message: 'มีรายการเปลี่ยนหลังดาวน์โหลดแบบ ดาวน์โหลดแบบใหม่ก่อนยื่น' });
         throw error;
       }
       await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.period.mark_filed', targetType: 'tax_period', targetId: periodId,

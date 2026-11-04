@@ -55,6 +55,22 @@ const FORMS = [
   { key: 'PND53', short: 'ภ.ง.ด.53', card: 'ภ.ง.ด.53 (จ่ายให้บริษัท)', paid: '10,000.00', withheld: '300.00' },
 ] as const;
 
+/** The payer's legal identity the first journey fills through ข้อมูลร้าน; later journeys may find it cleared. */
+async function fillShopIdentity(page: Page) {
+  const main = page.locator('main');
+  await page.goto(`/companies/${MAIN_SHOP}/settings/profile?from=withholding`, FIRST_SIGHT);
+  await expect(main.getByRole('heading', { level: 1, name: 'ข้อมูลร้าน', exact: true })).toBeVisible(FIRST_SIGHT);
+  await main.getByRole('textbox', { name: /^ชื่อจดทะเบียน/ }).fill('บริษัท บลูมบิวตี้ทดลอง จำกัด');
+  await main.getByRole('textbox', { name: /^เลขผู้เสียภาษี/ }).fill('0105558000014');
+  await main.getByRole('textbox', { name: 'รหัสไปรษณีย์', exact: true }).fill('10110');
+  await expect(main.getByRole('combobox', { name: 'จังหวัด', exact: true })).toHaveText('กรุงเทพมหานคร', AFTER_PRESS);
+  await chooseThemedOption(page, main.getByRole('combobox', { name: 'อำเภอ / เขต', exact: true }), 'คลองเตย');
+  await chooseThemedOption(page, main.getByRole('combobox', { name: 'ตำบล / แขวง', exact: true }), 'คลองเตย');
+  await main.getByRole('textbox', { name: 'ที่อยู่ (บ้านเลขที่ ถนน)', exact: true }).fill('88 ถนนพระราม 4');
+  await main.getByRole('button', { name: 'บันทึกข้อมูลร้าน', exact: true }).click();
+  await expect(main.getByRole('status').filter({ hasText: 'บันทึกข้อมูลร้านแล้ว' })).toContainText('✓ บันทึกข้อมูลร้านแล้ว', AFTER_PRESS);
+}
+
 async function addBranch(page: Page, name: string, code: string, taxCode?: string) {
   const main = page.locator('main');
   await pressMenu(page, 'สาขา', 'ตั้งค่าร้าน');
@@ -754,4 +770,165 @@ test('@journey withholding: a shop with one active branch reads its list without
   await expect(paymentRows(main).first()).toBeVisible(FIRST_SIGHT);
   await expect(main.getByRole('combobox', { name: 'ยื่นในนาม', exact: true })).toHaveCount(0);
   await expect(main.getByText(/^ยื่นโดย /)).toHaveCount(0);
+});
+
+// R10 needs legacy source facts which today's review form correctly refuses to create.
+// Only this fresh local proof database receives those synthetic omissions.
+test('@journey R10 source-only correction, read-only and hidden branches preserve FILED bytes and open an additional paper', async ({ authedPage: page, pageAs, api }) => {
+  test.setTimeout(900_000);
+  const connectionString = process.env['DATABASE_URL'];
+  if (!connectionString) throw new Error('DATABASE_URL is required for the fresh R10 proof fixture');
+  expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(connectionString).hostname);
+  const apiRequire = createRequire(resolve('apps/api/package.json'));
+  const { PrismaPg } = apiRequire('@prisma/adapter-pg');
+  const dist = process.env['API_DIST_DIR'] ?? `dist/e2e-${process.env['API_PORT'] ?? '3001'}`;
+  const { PrismaClient } = apiRequire(resolve(`apps/api/${dist}/apps/api/src/generated/prisma/client.js`));
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  const main = page.locator('main'), period = periodKey();
+  const branchName = unique('สาขาตรวจข้อมูลผู้รับเงิน'), branchCode = '91012';
+  const shop = { headers: { 'X-Company-Id': MAIN_SHOP } };
+  let readerMembership: any, readerRole: any;
+  const openMonth = async (target = page, selectBranch = true) => {
+    await target.goto(`/companies/${MAIN_SHOP}/tax/withholding?periodKey=${period}`, FIRST_SIGHT);
+    await expect(async () => {
+      const ready = await formCard(target, 'ภ.ง.ด.3 (จ่ายให้บุคคล)').count() + await target.locator('main').getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).count();
+      expect(ready).toBeGreaterThan(0);
+    }).toPass(AFTER_PRESS);
+    const chooser = target.locator('main').getByRole('combobox', { name: 'ยื่นในนาม', exact: true });
+    if (selectBranch && await chooser.count()) await chooseThemedOption(target, chooser, `${branchName} (${branchCode})`);
+    await expect(target.getByRole('heading', { level: 1, name: 'ภาษีหัก ณ ที่จ่าย', exact: true })).toBeVisible(AFTER_PRESS);
+  };
+  const payerMode = async (mode: string) => json(await api.post(`companies/${MAIN_SHOP}/tax/withholding/payer-mode`, {
+    ...shop, data: { mode, effectiveFromPeriodKey: period },
+  }));
+  const makeLegacySource = async (kind: 'UNKNOWN' | 'MISSING_ID') => {
+    const seller = unique(kind === 'UNKNOWN' ? 'ผู้รับเงินเดิมไม่ทราบประเภท' : 'ผู้รับเงินเดิมขาดเลขผู้เสียภาษี');
+    const expense = await recordExpenseByHand(page, { branch: branchName, item: unique('ค่าซ่อมร้าน'), price: '1000', total: '1,000.00 บาท', seller,
+      withholding: PERSON_SERVICE, toPay: '970.00 บาท', pay: true });
+    await db.expenseRecord.update({ where: { id: expense.expenseId }, data: { vendorCounterpartyId: null, vendorTaxIdSnapshot: null,
+      ...(kind === 'UNKNOWN' ? { vendorEntityKindSnapshot: null } : {}) } });
+    await db.taxEvent.updateMany({ where: { companyId: MAIN_SHOP, sourceType: 'expense.record', sourceId: expense.expenseId,
+      eventType: { in: ['WHT_PND3', 'WHT_PND53'] }, status: 'ACTIVE' }, data: { status: 'SUPERSEDED' } });
+    return { ...expense, seller };
+  };
+  const correctSource = async (expense: { expenseId: string; seller: string }) => {
+    const fixes = main.getByTestId('withholding-fixes');
+    const issue = fixes.getByRole('status').filter({ hasText: expense.seller }).first();
+    await issue.getByRole('link', { name: 'เปิดค่าใช้จ่าย', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/expenses/${expense.expenseId}$`), FIRST_SIGHT);
+    await main.getByRole('button', { name: 'แก้ไขเอกสาร', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'แก้ไขเอกสาร', exact: true });
+    await dialog.getByRole('textbox', { name: 'เหตุผลที่แก้ไข', exact: true }).fill('เติมข้อมูลผู้รับเงินก่อนจัดทำแบบภาษี');
+    await dialog.getByRole('button', { name: 'เปิดเอกสารกลับไปตรวจสอบ', exact: true }).click();
+    const payeeKind = main.getByRole('combobox', { name: 'ผู้รับเงินเป็นใคร', exact: true });
+    await expect(payeeKind).toBeVisible(FIRST_SIGHT);
+    if (await payeeKind.textContent() !== 'บุคคลธรรมดา') await chooseThemedOption(page, payeeKind, 'บุคคลธรรมดา');
+    await chooseThemedOption(page, main.getByRole('combobox', { name: 'จ่ายค่าอะไร', exact: true }), 'ค่าบริการ (บุคคลธรรมดา) · หัก 3%');
+    await main.getByRole('textbox', { name: 'เลขประจำตัวผู้เสียภาษีผู้ขาย', exact: true }).fill('3101200456789');
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await main.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await main.getByRole('button', { name: 'ยืนยันเอกสาร', exact: true }).click();
+    await expect(page.getByText('ยืนยันเอกสารแล้ว', { exact: true }).first()).toBeVisible(AFTER_PRESS);
+    await openMonth();
+  };
+  const filePaper = async (scope: Locator) => {
+    await scope.getByRole('button', { name: 'บันทึกว่ายื่นแล้ว', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: /^บันทึกว่ายื่น ภ\.ง\.ด\.3/ });
+    await dialog.getByRole('button', { name: 'บันทึกว่ายื่นแล้ว', exact: true }).click();
+    await expect(scope.getByText('ยื่นแล้ว', { exact: true })).toBeVisible(AFTER_PRESS);
+  };
+  try {
+    expect(await db.whtFiling.count({ where: { companyId: MAIN_SHOP, periodKey: period, status: 'FILED' } }), 'R10 requires the fresh isolated withholding proof database').toBe(0);
+    const payer = await db.company.findUniqueOrThrow({ where: { id: MAIN_SHOP }, select: { registeredName: true, taxId: true, addressJson: true } });
+    if (!payer.registeredName || !payer.taxId || !payer.addressJson) await fillShopIdentity(page);
+    await page.goto(`/companies/${MAIN_SHOP}/dashboard`, FIRST_SIGHT);
+    await addBranch(page, branchName, `R${Date.now().toString(36)}`, branchCode);
+    await payerMode('EACH_BRANCH_PAYS');
+    const branch = await db.branch.findFirstOrThrow({ where: { companyId: MAIN_SHOP, taxBranchCode: branchCode } });
+    const legacy = await makeLegacySource('UNKNOWN');
+    await test.step('a failed month read offers retry and never calls the month empty', async () => {
+      let failing = true;
+      const pattern = `**/companies/${MAIN_SHOP}/tax/withholding/months/${period}`;
+      await page.route(pattern, route => failing ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'โหลดรายการไม่ได้ ลองอีกครั้ง' }) }) : route.fallback());
+      try {
+        await openMonth(page, false);
+        await expect(main.getByRole('button', { name: 'ลองอีกครั้ง', exact: true })).toBeVisible(AFTER_PRESS);
+        await expect(main.getByText('เดือนนี้ไม่มีรายการ', { exact: true })).toHaveCount(0);
+        failing = false;
+        await main.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
+        await expect(main.getByRole('combobox', { name: 'ยื่นในนาม', exact: true })).toBeVisible(AFTER_PRESS);
+      } finally { await page.unroute(pattern); }
+    });
+    await test.step('zero events shows corrective work on both forms and an authorized correction link', async () => {
+      await openMonth();
+      await expect(main.getByTestId('withholding-fixes')).toContainText(legacy.seller, AFTER_PRESS);
+      await expect(main.getByRole('link', { name: 'เปิดค่าใช้จ่าย', exact: true })).toHaveCount(1);
+      for (const title of ['ภ.ง.ด.3 (จ่ายให้บุคคล)', 'ภ.ง.ด.53 (จ่ายให้บริษัท)']) await expect(formCard(page, title)).not.toContainText('เดือนนี้ไม่มีรายการ');
+      const list = main.locator('.mangmee-card').filter({ has: page.getByRole('heading', { name: 'รายการที่หักภาษีของเดือนนี้', exact: true }) });
+      await expect(list).not.toContainText('เดือนนี้ไม่มีรายการ');
+    });
+    await test.step('a read-only user gets a permitted return action, and a hidden shared-payer source exposes no identity', async () => {
+      const reader = await db.user.findUniqueOrThrow({ where: { username: 'qa.company' } });
+      readerMembership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId: MAIN_SHOP, userId: reader.id } }, include: { branchScopes: true } });
+      const permission = await db.permission.findUniqueOrThrow({ where: { key: 'wht.pnd53.read' } });
+      readerRole = await db.role.create({ data: { companyId: MAIN_SHOP, scopeKey: MAIN_SHOP, key: unique('R10_READ'), name: 'อ่านข้อมูลภาษีทดสอบ',
+        permissions: { create: { permissionId: permission.id } }, memberships: { create: { membershipId: readerMembership.id } } } });
+      await db.companyMembership.update({ where: { id: readerMembership.id }, data: { branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: branch.id } });
+      await db.membershipBranchScope.deleteMany({ where: { membershipId: readerMembership.id } });
+      await db.membershipBranchScope.create({ data: { membershipId: readerMembership.id, branchId: branch.id } });
+      const readonly = await pageAs('COMPANY_VIEW');
+      await openMonth(readonly);
+      const rm = readonly.locator('main');
+      await expect(rm.getByTestId('withholding-fixes')).toContainText(legacy.seller);
+      await expect(rm.getByRole('link', { name: 'เปิดค่าใช้จ่าย', exact: true })).toHaveCount(0);
+      await expect(rm.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).first()).toBeVisible();
+      await expect(rm.getByRole('button', { name: /ดาวน์โหลดแบบ|บันทึกว่ายื่นแล้ว/ })).toHaveCount(0);
+      await payerMode('HEAD_OFFICE_PAYS_ALL');
+      const head = await db.branch.findFirstOrThrow({ where: { companyId: MAIN_SHOP, type: 'HEAD_OFFICE', status: 'ACTIVE' } });
+      await db.membershipBranchScope.updateMany({ where: { membershipId: readerMembership.id }, data: { branchId: head.id } });
+      await db.companyMembership.update({ where: { id: readerMembership.id }, data: { defaultBranchId: head.id } });
+      await openMonth(readonly, false);
+      await expect(rm.getByText('มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด')).toHaveCount(1);
+      await expect(rm).not.toContainText(legacy.seller);
+      await expect(rm.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true })).toBeVisible();
+      await payerMode('EACH_BRANCH_PAYS');
+    });
+    await test.step('correct the source through its expense, then download and file the normal paper', async () => {
+      await openMonth(); await correctSource(legacy);
+      await expect(main.getByTestId('withholding-fixes').getByText(legacy.seller, { exact: false })).toHaveCount(0);
+      const normal = formCard(page, 'ภ.ง.ด.3 (จ่ายให้บุคคล)');
+      await pressForDownload(page, () => normal.getByRole('button', { name: 'ดาวน์โหลดแบบ ภ.ง.ด.3', exact: true }).click());
+      await filePaper(normal);
+    });
+    const normal = formCard(page, 'ภ.ง.ด.3 (จ่ายให้บุคคล)');
+    const earlier = await pressForDownload(page, () => normal.getByRole('button', { name: 'ดาวน์โหลดแบบที่ยื่น', exact: true }).click());
+    const earlierBytes = await readFile((await earlier.download.path())!);
+    const before = await db.whtFiling.findFirstOrThrow({ where: { companyId: MAIN_SHOP, periodKey: period, establishmentCode: branchCode, sequence: 0, status: 'FILED' }, include: { lines: true, latestPackage: true } });
+    const missing = await makeLegacySource('MISSING_ID');
+    await test.step('one good filed source and one missing ID show a truthful warning while the old download stays byte-identical', async () => {
+      await openMonth();
+      await expect(normal).toContainText('มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล', AFTER_PRESS);
+      await expect(main.getByTestId('withholding-fixes')).toContainText(missing.seller);
+      const kept = await pressForDownload(page, () => normal.getByRole('button', { name: 'ดาวน์โหลดแบบที่ยื่น', exact: true }).click());
+      expect(await readFile((await kept.download.path())!)).toEqual(earlierBytes);
+      expect(await db.whtFiling.findUniqueOrThrow({ where: { id: before.id }, include: { lines: true, latestPackage: true } })).toEqual(before);
+    });
+    await test.step('correct the omitted source and download the existing additional-paper sequence', async () => {
+      await correctSource(missing);
+      await expect(main.getByTestId('withholding-fixes').getByText(missing.seller, { exact: false })).toHaveCount(0);
+      const additional = normal.getByRole('region', { name: 'ยื่นเพิ่มเติมครั้งที่ 1', exact: true });
+      const file = await pressForDownload(page, () => normal.getByRole('button', { name: 'ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ 1', exact: true }).click());
+      expect(file.name).toContain('เพิ่มเติมครั้งที่-1');
+      await filePaper(additional);
+      expect(await db.whtFiling.findUniqueOrThrow({ where: { id: before.id }, include: { lines: true, latestPackage: true } })).toEqual(before);
+    });
+  } finally {
+    if (readerMembership) {
+      await db.membershipBranchScope.deleteMany({ where: { membershipId: readerMembership.id } });
+      if (readerMembership.branchScopes.length) await db.membershipBranchScope.createMany({ data: readerMembership.branchScopes.map((s: any) => ({ membershipId: readerMembership.id, branchId: s.branchId })) });
+      await db.companyMembership.update({ where: { id: readerMembership.id }, data: { branchScopeMode: readerMembership.branchScopeMode, defaultBranchId: readerMembership.defaultBranchId } });
+    }
+    if (readerRole) await db.role.delete({ where: { id: readerRole.id } });
+    await db.$disconnect();
+  }
 });

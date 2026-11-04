@@ -1,3 +1,4 @@
+import { expenseSourceForEvent } from '../../testing/withholding-source.fixture';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import { inflateRawSync } from 'node:zlib';
 import assert from 'node:assert/strict';
@@ -10,6 +11,15 @@ import { renderPnd3OfficialForm, splitPnd3PayeeName } from '../../domain/logic/p
 
 function filingStore(repo: any) {
   const db = repo.prisma.client;
+  const readSources = db.expenseRecord?.findMany;
+  if (readSources) db.expenseRecord.findMany = async (query: any) => {
+    const rows = await readSources(query);
+    if (!query.where.whtAmount) return rows;
+    const events = await repo.findEventsByPeriod();
+    return rows.filter((row: any) => events.some((e: any) => e.sourceType === 'expense.record' && e.sourceId === row.id) || row.payments).map((row: any) => row.payments ? row : expenseSourceForEvent(events.find((e: any) => e.sourceId === row.id) ?? { sourceId: row.id }, row));
+  };
+  db.accountingCounterparty ??= { findMany: async () => [] };
+
   const state: any = { filing: null, lines: [], packages: [], attachments: [], objects: new Map(), writes: 0 };
   const papers = new Map<string, any>();
   const lines = new Map<string, any[]>();
@@ -22,10 +32,12 @@ function filingStore(repo: any) {
     create: async ({ data }: any) => { state.filing = { id: `filing-${papers.size}`, ...data }; papers.set(state.filing.id, state.filing); return state.filing; },
     updateMany: async ({ where, data }: any) => { state.filing = papers.get(where.id) ?? state.filing; if (!matches(where)) return { count: 0 }; Object.assign(state.filing, data); state.writes++; return { count: 1 }; },
   };
-  db.whtFilingLine = { deleteMany: async ({ where }: any) => { state.lines = []; lines.set(where.whtFilingId, []); }, createMany: async ({ data }: any) => { state.lines = data; if (data.length) lines.set(data[0].whtFilingId, data); } };
+  db.whtFilingLine = { findMany: async ({ where }: any) => [...papers.values()].filter(p => p.status === 'FILED' && (!where.filing.formType || p.formType === where.filing.formType)).flatMap(p => lines.get(p.id) ?? []), deleteMany: async ({ where }: any) => { state.lines = []; lines.set(where.whtFilingId, []); }, createMany: async ({ data }: any) => { state.lines = data; if (data.length) lines.set(data[0].whtFilingId, data); } };
   db.attachmentObject = { create: async ({ data }: any) => { const row = { id: `file-${state.attachments.length}`, ...data }; state.attachments.push(row); return row; },
     findFirst: async ({ where }: any) => state.attachments.find((a: any) => a.id === where.id && a.companyId === where.companyId) };
   db.attachmentLink = { create: async () => ({}) };
+  db.taxReviewIssue.findMany ??= async () => [];
+  db.taxEvent ??= { findMany: async () => (await repo.findEventsByPeriod()).map((e: any) => ({ ...e, payeeSnapshotJson: e.payeeSnapshot })) };
   db.$queryRaw = async () => [];
   db.$transaction = async (work: any) => work(db);
   db.taxFilingPackage.create = async ({ data }: any) => {
@@ -40,7 +52,10 @@ function filingStore(repo: any) {
       if (!['FILED', 'PAID', 'CLOSED'].includes((await repo.findPeriodById()).status)) await repo.updatePeriodStatus(input.ctx.companyId, input.period.id, 'EXPORTED');
       return { count: 1 };
     };
-    return real.recordWithholdingDownload(input);
+    const readEvents = db.taxEvent.findMany;
+    db.taxEvent.findMany = async (query: any) => query.where.taxPeriodId === input.period.id
+      ? (await repo.findEventsByPeriod()).map((e: any) => ({ ...e, payeeSnapshotJson: e.payeeSnapshot })) : readEvents(query);
+    try { return await real.recordWithholdingDownload(input); } finally { db.taxEvent.findMany = readEvents; }
   };
   repo.markWithholdingFilingFiled = real.markWithholdingFilingFiled.bind(real);
   const storage: any = { putObject: async ({ objectKey, bytes }: any) => { state.objects.set(objectKey, Buffer.from(bytes)); return { bucket: 'test', objectKey, storageProvider: 'local', objectVersionId: 'v1', byteSize: bytes.length, checksumSha256: 'test' }; },
@@ -100,7 +115,7 @@ describe('GenerateTaxFilingPackageUseCase official PND53 paper form', () => {
     const taxRepo = { findPeriodById: async () => period, findEventsByPeriod: async () => [{ ...event, ...changes }],
       findIssuesByPeriod: async () => [], createIssue: async () => undefined, updatePeriodStatus: async () => period,
       prisma: { client: {
-        taxReportSnapshot: { findFirst: async () => null, create: async ({ data }: any) => data }, taxReviewIssue: { updateMany: async () => ({ count: 0 }) },
+        taxReportSnapshot: { findFirst: async () => null, create: async ({ data }: any) => data }, taxReviewIssue: { findMany: async () => [], updateMany: async () => ({ count: 0 }) },
         company: { findUnique: async () => ({ registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '0994000163011',
           addressJson: { line1: '123/4 ถนนลาดพร้าว', subdistrict: 'จอมพล', district: 'จตุจักร', province: 'กรุงเทพมหานคร', postalCode: '10900' } }) },
         companyTaxProfile: { findUnique: async () => null },
@@ -201,7 +216,7 @@ describe('PND3 validation and withholding re-export', () => {
       whtIncomeCategory: { findMany: async () => ['WHT_SERVICE_3', 'WHT_RENT_IND', 'WHT_PROFESSIONAL_IND', 'WHT_ADVERTISING_IND', 'WHT_TRANSPORT_IND', 'WHT_SERVICE_5'].map(code => ({ code, nameTh: 'ค่าบริการ', formType: code === 'WHT_SERVICE_5' ? 'PND53' : 'PND3' })) },
       expenseRecord: { findMany: async () => events.map(event => ({ id: event.sourceId, ...source })) }, branch: { findFirst: async () => null, findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] },
       taxReportSnapshot: { findFirst: async () => null, create: async ({ data }: any) => data },
-      taxReviewIssue: { updateMany: async () => ({ count: 0 }) },
+      taxReviewIssue: { findMany: async () => [], updateMany: async () => ({ count: 0 }) },
       whtCertificate: { findMany: async () => [] },
       taxFilingPackage: { create: async ({ data }: any) => ({ id: 'pkg', ...data, status: 'GENERATED', generatedAt: new Date(), createdAt: new Date() }) },
     };
@@ -212,6 +227,81 @@ describe('PND3 validation and withholding re-export', () => {
       { execute: async () => undefined } as any, { log: async () => undefined } as any, persistence.storage);
     return { useCase, repo, ...persistence, period, event, events, payer, source, issues, transitions, client, get reserved() { return reserved; } };
   }
+  it('R10 a missing source preserves FILED bytes and a correction opens only an additional paper', async () => {
+    const h = setup();
+    const filed = await h.useCase.execute(ctx, 'p', 'PDF');
+    await h.repo.markWithholdingFilingFiled(h.client, ctx.companyId, filed.id, ctx.userId, new Date());
+    h.period.status = 'FILED';
+    const frozen = JSON.stringify(h.state.lines);
+    const badEvent = { ...h.event, id: 'bad', sourceId: 'bad', sourceLineKey: 'payment:bad-payment', payeeSnapshot: { ...h.event.payeeSnapshot, taxId: null } };
+    const badSource = expenseSourceForEvent(badEvent, { vendorEntityKindSnapshot: null });
+    h.client.expensePayment = { findMany: async () => badSource.payments };
+    const readSources = h.client.expenseRecord.findMany;
+    h.client.expenseRecord.findMany = async (query: any) => {
+      const rows = (await readSources(query)).filter((row: any) => row.id !== 'bad');
+      return !query.where.id || query.where.id.in.includes('bad') ? [...rows, badSource] : rows;
+    };
+    const preserved = await h.useCase.execute(ctx, 'p', 'PDF');
+    assert.equal(preserved.artifact.checksum, filed.artifact.checksum);
+    assert.equal(preserved.artifact.contentBase64, filed.artifact.contentBase64);
+    await assert.rejects(h.useCase.execute(ctx, 'p', 'PDF', '00000', 1), (error: any) => error.getResponse().issues.some((issue: any) => issue.sourceId === 'bad'));
+    assert.equal(h.reserved, 1); assert.equal(JSON.stringify(h.state.lines), frozen);
+    badSource.vendorEntityKindSnapshot = 'INDIVIDUAL'; badSource.vendorTaxIdSnapshot = '1100700000002'; badEvent.payeeSnapshot.taxId = '1100700000002';
+    h.events.push(badEvent);
+    const additional = await h.useCase.execute(ctx, 'p', 'PDF', '00000', 1);
+    assert.match(additional.artifact.fileName, /เพิ่มเติมครั้งที่-1/);
+    assert.equal((await h.useCase.execute(ctx, 'p', 'PDF', '00000', 0)).artifact.contentBase64, filed.artifact.contentBase64);
+    assert.equal(h.state.objects.size, 2);
+  });
+  it('R10 serialization failures delete only the new stored object and preserve the earlier paper', async () => {
+    for (const error of [{ code: 'P2034' }, { code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40001' } } } }]) {
+      const h = setup('PND53');
+      const earlier = await h.useCase.execute(ctx, 'p', 'PDF');
+      const [earlierKey, earlierBytes] = [...h.state.objects.entries()][0] as [string, Buffer];
+      const deleted: string[] = [];
+      const remove = h.storage.deleteObject;
+      h.storage.deleteObject = async (object: any) => { deleted.push(object.objectKey); await remove(object); };
+      h.repo.recordWithholdingDownload = async () => { throw error; };
+      await assert.rejects(h.useCase.execute(ctx, 'p', 'PDF'), (failure: any) => {
+        assert.equal(failure.getResponse().code, 'WHT_FILING_CHANGED_DURING_DOWNLOAD');
+        assert.equal(failure.getResponse().message, 'มีรายการเปลี่ยนระหว่างดาวน์โหลด ดาวน์โหลดอีกครั้ง');
+        return true;
+      });
+      assert.equal(deleted.length, 1); assert.notEqual(deleted[0], earlierKey);
+      assert.equal(h.state.objects.size, 1); assert.deepEqual(h.state.objects.get(earlierKey), earlierBytes);
+      assert.equal(h.state.packages.length, 1); assert.equal(h.state.packages[0].id, earlier.id);
+      assert.equal(h.state.attachments.length, 1);
+    }
+  });
+  it('R10 missing-source blockers stop PDF and XLSX', async () => {
+    for (const form of ['PND3', 'PND53']) for (const format of ['PDF', 'XLSX'] as const)
+      for (const unknown of [false, true]) for (const accountant of [false, true]) for (const reverse of [false, true]) {
+      const h = setup(form);
+      const issue = { id: 'missing', taxPeriodId: unknown ? 'other-form' : 'p', sourceType: 'expense.record', sourceId: 'bad',
+        issueCode: unknown ? 'WHT_PAYEE_KIND_UNKNOWN' : 'MISSING_TAX_ID', description: 'ข้อมูลผู้รับเงินยังไม่ครบ เปิดค่าใช้จ่ายแล้วแก้ไข', severity: 'BLOCKING', taxPeriod: { formType: unknown ? 'PND53' : form, periodKey: h.period.periodKey } };
+      h.issues.push(issue);
+      h.client.taxReviewIssue.findMany = async () => [issue];
+      h.client.whtFilingLine.findMany = async () => [];
+      const original = h.client.expenseRecord.findMany;
+      h.client.expenseRecord.findMany = async (query: any) => query.where.whtAmount ? ['expense-1', 'bad'].map(id => ({
+        id, companyId: 'c1', status: 'CONFIRMED', branchId: null, expenseDate: new Date('2026-09-10'), updatedAt: new Date('2026-09-10'),
+        vendorNameSnapshot: 'ผู้รับเงิน', vendorEntityKindSnapshot: id === 'bad' && unknown ? null : h.source.vendorEntityKindSnapshot,
+        vendorTaxIdSnapshot: id === 'bad' ? null : '1100700000001', vendorAddressSnapshot: 'กรุงเทพ', vendorCounterpartyId: null,
+        whtAmount: '30', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000', whtRate: '3', whtCategoryCode: h.event.incomeCategoryCode,
+        lines: [], payments: [{ id: id + '-payment', amount: '970', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-10'), createdAt: new Date('2026-09-10') }],
+      })).sort(() => reverse ? -1 : 1) : original(query);
+      if (accountant) {
+        const categories = h.client.whtIncomeCategory.findMany;
+        h.client.whtIncomeCategory.findMany = async () => (await categories()).map((c: any) => ({ ...c, filingRoute: 'ACCOUNTANT_PREPARES' }));
+      }
+      await assert.rejects(h.useCase.execute(ctx, 'p', format), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.ok(error.getResponse().issues?.some((i: any) => i.sourceId === 'bad'));
+        return true;
+      });
+      assert.equal(h.reserved, 0); assert.equal(h.state.objects.size, 0); assert.equal(h.state.packages.length, 0);
+    }
+  });
   it('opens two successive additional papers through the PDF and accountant routes without changing any filed bytes', async () => {
     for (const form of ['PND3', 'PND53']) for (const format of ['PDF', 'XLSX'] as const) {
       const h = setup(form);
@@ -324,7 +414,7 @@ describe('PND3 validation and withholding re-export', () => {
     const old = h.events[0]; h.events.splice(0, 1, { ...old, id: 'new', sourceId: 'new', grossAmount: '2000', withheldAmount: '60' });
     h.client.expenseRecord.findMany = async ({ where }: any) => where.status === 'VOIDED'
       ? [{ id: old.sourceId, voidedAt: new Date('2026-09-21'), voidedByUserId: 'u2' }]
-      : h.events.map(e => ({ id: e.sourceId, ...h.source }));
+      : h.events.map(e => expenseSourceForEvent(e, h.source));
     const second = await h.useCase.execute(ctx, 'p', 'XLSX', '00000', 1);
     const file = Buffer.from(second.artifact.contentBase64, 'base64');
     let xml = '';
@@ -478,7 +568,7 @@ describe('PND3 validation and withholding re-export', () => {
     h.client.whtIncomeCategory.findMany = async () => [...await originalCategories(), { code: 'WHT_INTEREST', nameTh: 'ดอกเบี้ย', formType: 'PND2', filingRoute: 'SEPARATE_PND2' }];
     h.client.taxPeriod = { findMany: async () => [h.period, { ...h.period, id: 'p2', formType: 'PND2' }] };
     h.client.taxEvent = { findMany: async () => [h.event, separate].map(event => ({ ...event, taxPeriodId: event.taxPeriodId ?? 'p', payeeSnapshotJson: event.payeeSnapshot })) };
-    h.client.expenseRecord.findMany = async () => [h.event, separate].map(event => ({ id: event.sourceId, ...h.source }));
+    h.client.expenseRecord.findMany = async () => [h.event, separate].map(event => expenseSourceForEvent(event, h.source));
     h.client.taxReviewIssue.findMany = async () => [];
     h.client.whtCertificateHandoff = { findMany: async () => [] };
     h.client.$transaction = async (work: any) => work(h.client);
@@ -536,7 +626,7 @@ describe('PND3 validation and withholding re-export', () => {
       h.client.taxPeriod = { findMany: async () => [h.period] };
       h.client.taxEvent = { findMany: async () => h.events.map(event => ({ ...event, taxPeriodId: 'p', payeeSnapshotJson: event.payeeSnapshot })) };
       h.client.taxReviewIssue.findMany = async () => h.issues;
-      h.client.expenseRecord.findMany = async () => h.events.map(event => ({ id: event.sourceId, vendorNameSnapshot: event.payeeSnapshot.name, vendorCounterpartyId: null, ...h.source }));
+      h.client.expenseRecord.findMany = async () => h.events.map(event => expenseSourceForEvent(event, h.source));
       h.client.whtCertificateHandoff = { findMany: async () => [] };
       h.client.$transaction = async (work: any) => work(h.client);
       const reader = new GenerateWhtReportUseCase({ prisma: { client: h.client } } as any);
@@ -557,12 +647,13 @@ describe('PND3 validation and withholding re-export', () => {
       assert.equal(h.issues.length, 1, 'filing checks do not append historical issues');
     }
   });
-  it('unknown payee issues do not block either return while other blocking review issues still do', async () => {
+  it('obsolete unknown sources clear while live period review issues still block', async () => {
     for (const formType of ['PND3', 'PND53']) {
       const h = setup(formType);
       h.issues.push({ id: 'unknown', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', severity: 'BLOCKING', description: 'ยังไม่รู้ประเภทผู้รับเงิน', sourceType: 'expense.record', sourceId: 'unknown-expense' });
       await h.useCase.execute(ctx, 'p', 'PDF');
-      h.issues.push({ id: 'missing', issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', description: 'ยังไม่มีเลขผู้เสียภาษี', sourceType: 'expense.record', sourceId: 'expense-1' });
+      h.issues.push({ id: 'missing', issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', description: 'ยังไม่มีเลขผู้เสียภาษี', sourceType: null, sourceId: null, taxPeriod: { formType } });
+      h.client.taxReviewIssue.findMany = async () => h.issues.filter(i => i.id === 'missing');
       await assert.rejects(h.useCase.execute(ctx, 'p', 'PDF'), (error: any) => {
         assert.equal(error.getResponse().issues.some((i: any) => i.issueCode === 'MISSING_TAX_ID'), true);
         assert.equal(error.getResponse().issues.some((i: any) => i.issueCode === 'WHT_PAYEE_KIND_UNKNOWN'), false);

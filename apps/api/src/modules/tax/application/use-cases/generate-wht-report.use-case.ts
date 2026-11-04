@@ -14,7 +14,7 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.logic';
 import { handoffBranchWhere, handoffReadBoundary } from '../services/wht-handoff-read-scope';
 import { isWithholdingDownloadCurrent } from '../services/withholding-filing-state';
-import { validateWithholdingFiling } from '../services/withholding-filing-validation';
+import { validateWithholdingFiling, withholdingPaperBlockers } from '../services/withholding-filing-validation';
 import { isPeriodLocked, evaluateDueDate, monthlyPeriodKey, withholdingIssueDescription } from '../../domain/logic/tax-period.logic';
 
 @Injectable()
@@ -129,10 +129,15 @@ export class GenerateWhtReportUseCase {
           certificate: handoff ? { handoffId: handoff.id, state: handoff.status, number,
             canDownload: handoff.status === 'SYSTEM_ISSUED' && number !== null && readableIds.has(handoff.id) } : null };
       });
-      const completePayments = ctx.scopes?.branchIds
-        ? await currentWithholdingPayments(db, ctx.companyId, await db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'ACTIVE', eventType: { in: ['WHT_PND3', 'WHT_PND53'] } } }))
-        : payments.filter(event => event.eventType !== 'WHT_PND2');
+      const completePayments = await currentWithholdingPayments(db, ctx.companyId, ctx.scopes?.branchIds
+        ? await db.taxEvent.findMany({ where: { companyId: ctx.companyId, periodKey, status: 'ACTIVE', eventType: { in: ['WHT_PND3', 'WHT_PND53'] } } })
+        : payments.filter(event => event.eventType !== 'WHT_PND2'));
+      const projections = await Promise.all((['PND3', 'PND53'] as const).map(formType => withholdingPaperBlockers(db, ctx, { periodKey, formType }, undefined, completePayments.filter(e => e.eventType === `WHT_${formType}`))));
       const partition = partitionWithholdingPayments(completePayments, branches, payerFacts, periodKey);
+      for (const projection of projections) {
+        for (const paper of projection.partition.papers) if (!partition.papers.some(p => p.establishment.code === paper.establishment.code)) partition.papers.push({ ...paper, events: [] });
+        partition.unanswered ||= projection.partition.unanswered;
+      }
       const frozenPapers = await db.whtFiling.findMany({ where: { companyId: ctx.companyId, periodKey }, include: { lines: true } });
       const confirmationIds = [...new Set(frozenPapers.flatMap(paper => {
         const confirmation = (paper.payerSnapshotJson as { rowsConfirmation?: { userId: string } } | null)?.rowsConfirmation;
@@ -147,16 +152,18 @@ export class GenerateWhtReportUseCase {
           name: branch?.type === 'HEAD_OFFICE' || !branch ? 'สำนักงานใหญ่' : branch.name });
       }
       const visibleEstablishments = establishments.filter(e => isBranchInScope(ctx.scopes ?? {}, e.branchId));
+      const projectionModeBlockers = (formType: string) => projections[formType === 'PND3' ? 0 : 1].unassignedBlockers.some(e => e.eventType === `WHT_${formType}`);
       const buildForm = async (formType: WhtFormType, establishment?: import('@watchdog-bms/contracts').WhtEstablishment, sequence = 0) => {
         const period = periods.find(row => row.formType === formType);
-        const payerModeRequired = partition.unanswered && partition.unassigned.some(e => e.eventType === `WHT_${formType}`);
+        const payerModeRequired = partition.unanswered && (partition.unassigned.some(e => e.eventType === `WHT_${formType}`) || projectionModeBlockers(formType));
         // An unanswered form has no payer yet; show its visible rows once, even after an earlier download.
         const showUnassigned = payerModeRequired && (!establishment || establishment.code === visibleEstablishments[0]?.code);
         const establishmentPayments = showUnassigned ? payments.filter(e => e.eventType === `WHT_${formType}`) : establishment ? (partition.papers.find(p => p.establishment.code === establishment.code)?.events ?? []).filter(e => e.eventType === `WHT_${formType}`) : partition.unanswered ? payments.filter(e => e.eventType === `WHT_${formType}`) : [];
         const sameForm = frozenPapers.filter(p => p.taxPeriodId === period?.id);
         const paperPayments = withholdingPaperPayments(establishmentPayments, sameForm);
         let formPayments = paperPayments.map(e => ({ paid: String(e.grossAmount ?? e.taxableBase), withheld: String(e.withheldAmount ?? e.taxAmount) }));
-        const periodIssues = issues.filter(issue => issue.taxPeriodId === period?.id && visible(issue) && (!establishment || issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN' || !issue.sourceId || paperPayments.some(e => e.sourceType === issue.sourceType && e.sourceId === issue.sourceId)));
+        const projection = await withholdingPaperBlockers(db, ctx, { periodKey, formType }, establishment, completePayments.filter(e => e.eventType === `WHT_${formType}`));
+        const periodIssues = projection.issues;
         const frozen = frozenPapers.find(p => p.taxPeriodId === period?.id && (!establishment || p.establishmentCode === establishment.code) && (p.sequence ?? 0) === sequence) ?? null;
         const preserved = frozen?.status === 'FILED';
         const uncertain = frozen?.rowsCertain === false;
@@ -165,10 +172,17 @@ export class GenerateWhtReportUseCase {
           paperPayments.map(event => ({ ...event,
             payeeSnapshot: event.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
             whtRate: event.whtRate?.toString() ?? null, grossAmount: event.grossAmount?.toString() ?? null, withheldAmount: event.withheldAmount?.toString() ?? null,
-          })), periodIssues, establishment, sequence) : { issues: [] as import('@watchdog-bms/contracts').WithholdingMonthIssueDto[], accountantPrepared: false, accountantTypes: [] };
+          })), periodIssues, establishment, sequence, false, ctx) : { issues: periodIssues, accountantPrepared: false, accountantTypes: [] };
+
+        if (preserved && frozen.rowsCertain) {
+          const omittedIssueIds = new Set(projection.sourcePayments.filter(payment => !frozen.lines.some(line => filedLineCoversPayment(line, payment))).map(payment => payment.issueId));
+          validation.issues = periodIssues.filter(issue => omittedIssueIds.has(issue.id)).map(issue => ({ ...issue, severity: 'WARNING' as const }));
+          if (omittedIssueIds.size) validation.issues.push({ id: `omitted:${frozen.id}`, issueCode: 'WHT_FILED_PAYMENT_OMITTED', severity: 'WARNING',
+            description: 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล', sourceType: null, sourceId: null, expenseId: null, counterpartyId: null });
+        }
 
         // Empty establishment forms have no paper to validate; retain source review issues.
-        if (!paperPayments.length && !preserved) validation.issues = validation.issues.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode));
+        if (!paperPayments.length && !preserved) validation.issues = validation.issues.filter(i => !/^PND(?:3|53)_FILING_/.test(i.issueCode) || periodIssues.some(p => p.id === i.id));
         const status = frozen?.status ?? (sequence > 0 ? 'OPEN' : frozenPapers.length ? (paperPayments.length ? 'OPEN' : null) : period?.status ?? null);
         const stale = status === 'EXPORTED' && !await isWithholdingDownloadCurrent(db, ctx.companyId, period!.id,
           paperPayments.map(event => ({ ...event, payeeSnapshot: event.payeeSnapshotJson as import('@watchdog-bms/contracts').PayeeSnapshot | null,
@@ -195,14 +209,11 @@ export class GenerateWhtReportUseCase {
           canConfirmRows: uncertain && (ctx.permissions ?? []).includes('wht.pnd53.prepare'),
           rowsConfirmation: rowsConfirmation ? { ...rowsConfirmation, displayName: confirmationNames.get(rowsConfirmation.userId) ?? null } : null,
           rowsUncertainNotice: uncertain ? 'รายการของแบบที่ยื่นไว้ตรวจได้ไม่ครบ ให้ผู้ทำบัญชีเทียบกับแบบที่ยื่นจริง' : null,
-          id: frozen?.id ?? null, kind: sequence === 0 ? 'NORMAL' as const : 'ADDITIONAL' as const, sequence, downloadedAt: frozen?.downloadedAt?.toISOString() ?? null, filedAt: frozen?.filedAt?.toISOString() ?? null, noticeCode: sequence > 0 ? 'WHT_ADDITIONAL_SURCHARGE_MANUAL' as const : null, unfiledPaymentCount: preserved ? paperPayments.filter(event => !frozen.lines.some(line => line.sourceType === event.sourceType && line.sourceId === event.sourceId)).length : 0, establishmentCode: establishment?.code, canDownload: !uncertain && (preserved || (paperPayments.length > 0 && !validation.issues.some(i => i.severity === 'BLOCKING'))), canMarkFiled: !uncertain && status === 'EXPORTED' && !stale && !validation.issues.some(i => i.severity === 'BLOCKING'), rowsCertain: frozen?.rowsCertain ?? (sequence > 0 || sameForm.some(p => p.rowsCertain) || !(period && (period.status === 'EXPORTED' || isPeriodLocked(period.status)))), accountantPrepared: validation.accountantPrepared, accountantTypes: validation.accountantTypes, formType, periodId: period?.id ?? null, status, paymentCount: formPayments.length,
+          id: frozen?.id ?? null, kind: sequence === 0 ? 'NORMAL' as const : 'ADDITIONAL' as const, sequence, downloadedAt: frozen?.downloadedAt?.toISOString() ?? null, filedAt: frozen?.filedAt?.toISOString() ?? null, noticeCode: sequence > 0 ? 'WHT_ADDITIONAL_SURCHARGE_MANUAL' as const : null, unfiledPaymentCount: preserved ? paperPayments.filter(event => !frozen.lines.some(line => filedLineCoversPayment(line, event))).length : 0, establishmentCode: establishment?.code, canDownload: !uncertain && (preserved || (paperPayments.length > 0 && !validation.issues.some(i => i.severity === 'BLOCKING'))), canMarkFiled: !uncertain && status === 'EXPORTED' && !stale && !validation.issues.some(i => i.severity === 'BLOCKING'), rowsCertain: frozen?.rowsCertain ?? (sequence > 0 || sameForm.some(p => p.rowsCertain) || !(period && (period.status === 'EXPORTED' || isPeriodLocked(period.status)))), accountantPrepared: validation.accountantPrepared, accountantTypes: validation.accountantTypes, formType, periodId: period?.id ?? null, status, paymentCount: formPayments.length,
           totalPaid: sum('paid'), totalWithheld: sum('withheld'),
           dueDate: (period?.dueDate ?? evaluateDueDate(periodKey, { type: 'day_of_next_month', day: 7 }))!.toISOString().slice(0, 10),
-          issues: [...validation.issues, ...periodIssues.filter(issue => issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN').map(issue => ({
-            id: issue.id, issueCode: issue.issueCode, description: withholdingIssueDescription(issue.issueCode, issue.description, expenses.find(row => issue.sourceType === 'expense.record' && row.id === issue.sourceId)?.vendorNameSnapshot, issue.sourceType === 'expense.record' && !sources.get(`${issue.sourceType}:${issue.sourceId}`)), severity: issue.severity,
-            sourceType: issue.sourceType, sourceId: issue.sourceId, expenseId: issue.sourceType === 'expense.record' ? issue.sourceId : null,
-            counterpartyId: sources.get(`${issue.sourceType}:${issue.sourceId}`) ?? null,
-          }))],
+          issues: validation.issues,
+
         };
       };
       const buildForms = async (establishment?: import('@watchdog-bms/contracts').WhtEstablishment) => Promise.all((['PND3', 'PND53'] as const).map(async formType => {
@@ -211,7 +222,7 @@ export class GenerateWhtReportUseCase {
         const normal = await buildForm(formType, establishment);
         const remaining = withholdingPaperPayments((partition.papers.find(p => p.establishment.code === establishment?.code)?.events ?? []).filter(e => e.eventType === `WHT_${formType}`), frozenPapers.filter(p => p.taxPeriodId === period?.id));
         const next = openWithholdingSequence(existing);
-        const sequences = [...new Set([...(existing.length || remaining.length || normal.paymentCount || (!establishment && period) ? [0] : []), ...existing.map(p => p.sequence ?? 0), ...(next && remaining.length ? [next] : [])])].sort((a, b) => a - b);
+        const sequences = [...new Set([...(existing.length || remaining.length || normal.paymentCount || normal.issues.length || (!establishment && period) ? [0] : []), ...existing.map(p => p.sequence ?? 0), ...(next && remaining.length ? [next] : [])])].sort((a, b) => a - b);
         const papers = await Promise.all(sequences.map(async sequence => ({ ...(sequence === 0 ? normal : await buildForm(formType, establishment, sequence)), establishmentCode: establishment?.code ?? '00000' })));
         const sum = (key: 'totalPaid' | 'totalWithheld') => papers.reduce((n, p) => n.plus(p[key]), new Prisma.Decimal(0)).toFixed(4);
         return { ...normal, papers, monthTotals: { paymentCount: papers.reduce((n, p) => n + p.paymentCount, 0), totalPaid: sum('totalPaid'), totalWithheld: sum('totalWithheld') } };
@@ -227,7 +238,8 @@ export class GenerateWhtReportUseCase {
           : open && open.rowsCertain !== false ? { id: open.id, kind: open.kind, sequence: open.sequence, establishmentCode: open.establishmentCode } : null;
       }
       const unassigned = partition.unassigned.filter(e => payments.some(p => p.id === e.id));
-      const issueGroups = [...new Set(unassigned.map(e => partition.unanswered ? null : e.branchId ?? null))];
+      const sourceBranches = projections.flatMap(projection => projection.unassignedBlockers).filter(source => isBranchInScope(ctx.scopes ?? {}, source.branchId));
+      const issueGroups = [...new Set([...unassigned, ...sourceBranches].map(source => partition.unanswered ? null : source.branchId ?? null))];
       const establishmentIssues = issueGroups.map(branchId => {
         const group = unassigned.filter(e => partition.unanswered || (e.branchId ?? null) === branchId);
         const branchName = branches.find(b => b.id === branchId)?.name ?? 'สำนักงานใหญ่';

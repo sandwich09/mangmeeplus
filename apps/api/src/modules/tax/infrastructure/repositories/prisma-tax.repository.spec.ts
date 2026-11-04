@@ -1,5 +1,6 @@
+import { isSerializationFailure } from '../../../../common/database/prisma-error';
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import { PrismaTaxRepository } from './prisma-tax.repository.js';
 
 const issueInput = {
@@ -242,4 +243,184 @@ it('a stale VAT sync cannot claim after a newer decision without changing confir
     expectedExpenseConfirmedAt: new Date(1), expectedInputVatClaimStatus: 'CLAIMABLE', expectedTaxEvidenceStatus: 'USABLE_FOR_TAX', idempotencyKey: 'before-decision' } as any),
     (e: any) => e.getResponse?.().code === 'expense_tax_source_changed');
   assert.equal(writes, 0);
+});
+
+// Run with TAX_REQUIRE_POSTGRES=true for the controller's no-skip proof.
+describe('R10 filing checks source blockers in its transaction (real PostgreSQL)', () => {
+  let clients: import('../../../../generated/prisma/client').PrismaClient[] = [];
+  let unavailable: string | null = null;
+  const companies: string[] = [];
+  const gate = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>(finish => { resolve = finish; });
+    return { promise, resolve };
+  };
+  before(async () => {
+    if (!process.env.DATABASE_URL) {
+      assert.notEqual(process.env.TAX_REQUIRE_POSTGRES, 'true', 'TAX_REQUIRE_POSTGRES requires DATABASE_URL');
+      unavailable = 'DATABASE_URL is not set';
+      return;
+    }
+    const { PrismaClient } = await import('../../../../generated/prisma/client');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { pgSpecUnreachableReason } = await import('../../../../common/database/pg-spec-guard');
+    clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) }));
+    unavailable = await pgSpecUnreachableReason(() => clients[0].$queryRaw`SELECT id FROM "WhtFiling" LIMIT 0`, 'TAX_REQUIRE_POSTGRES');
+  });
+  const fixture = async () => {
+    const { randomUUID } = await import('node:crypto');
+    const companyId = `r10-${randomUUID()}`;
+    await clients[0].company.create({ data: { id: companyId, name: 'Synthetic R10' } });
+    companies.push(companyId);
+    const period = await clients[0].taxPeriod.create({ data: { companyId, taxType: 'WHT', formType: 'PND53', periodKey: '2026-09' } });
+    const ctx: any = { companyId, userId: 'r10-pg', roles: ['OWNER'], permissions: [], scopes: {}, requestId: randomUUID() };
+    return { companyId, period, ctx };
+  };
+  type Fixture = Awaited<ReturnType<typeof fixture>>;
+  const source = (f: Fixture, unknown = false) => clients[1].expenseRecord.create({ data: {
+    companyId: f.companyId, status: 'CONFIRMED', expenseDate: new Date('2026-09-10'), createdByUserId: f.ctx.userId,
+    whtAmount: '30', whtRate: '3', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000',
+    vendorNameSnapshot: 'Synthetic payee', vendorAddressSnapshot: 'กรุงเทพ', vendorEntityKindSnapshot: unknown ? null : 'JURISTIC',
+    vendorTaxIdSnapshot: unknown ? null : '1100700000001',
+    payments: { create: { amount: '970', paidAt: new Date('2026-09-10'), paidAtConfirmed: true, createdByUserId: f.ctx.userId } },
+  }, include: { payments: true } });
+  const addBlocker = async (f: Fixture) => {
+    const bad = await source(f, true);
+    await clients[1].taxReviewIssue.create({ data: { companyId: f.companyId, taxPeriodId: f.period.id, sourceType: 'expense.record', sourceId: bad.id,
+      issueCode: 'WHT_PAYEE_KIND_UNKNOWN', severity: 'BLOCKING', description: 'เลือกประเภทผู้รับเงินก่อนดาวน์โหลด' } });
+  };
+  const download = (repo: PrismaTaxRepository, f: Fixture) => repo.recordWithholdingDownload({ ctx: f.ctx, period: f.period as any,
+    exportFormat: 'PDF', exportNumber: 'r10', establishmentCode: '00000', establishmentBranchId: null, preparedBy: 'SYSTEM',
+    payerSnapshotJson: {}, rowsChecksum: '', rowsCertain: true,
+    artifact: { fileName: 'test.pdf', mimeType: 'application/pdf', checksum: 'test', contentBase64: '', byteLength: 0 },
+    stored: { bucket: 'test', objectKey: 'test', storageProvider: 'local', byteSize: 0, checksumSha256: 'test' } as any, lines: [] });
+  const withTransaction = (transaction: (...args: any[]) => any) => new Proxy(clients[0], {
+    get(target, key) { return key === '$transaction' ? transaction : Reflect.get(target, key); },
+  });
+  const controller = async (client: any) => {
+    const { TaxController } = await import('../../presentation/http/tax.controller');
+    const noop: any = {};
+    return new TaxController({ execute: async () => {} } as any, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop,
+      new PrismaTaxRepository({ client } as any), { log: async () => {} } as any);
+  };
+  const exportedAdditionalPaper = async (f: Fixture) => {
+    const { withholdingPaymentFacts, withholdingPaymentChecksum } = await import('../../application/services/withholding-filing-state');
+    const good = await source(f);
+    const event = await clients[0].taxEvent.create({ data: {
+      companyId: f.companyId, taxPeriodId: f.period.id, idempotencyKey: `${f.companyId}:good`, eventType: 'WHT_PND53',
+      sourceType: 'expense.record', sourceId: good.id, sourceLineKey: `payment:${good.payments[0].id}`, periodKey: f.period.periodKey,
+      eventDate: new Date('2026-09-10'), taxableBase: '1000', taxAmount: '30', grossAmount: '1000', withheldAmount: '30', whtRate: '3',
+      whtFormType: 'PND53', payeeSnapshotJson: { name: 'Synthetic payee', taxId: '1100700000001', branchCode: null, address: 'กรุงเทพ' },
+    } });
+    const payment: any = { ...event, payeeSnapshot: event.payeeSnapshotJson, grossAmount: '1000', withheldAmount: '30', whtRate: '3' };
+    const createPaper = async (sequence: number, status: 'FILED' | 'EXPORTED') => {
+      const paper = await clients[0].whtFiling.create({ data: { companyId: f.companyId, taxPeriodId: f.period.id, formType: 'PND53', periodKey: f.period.periodKey,
+        establishmentCode: '00000', sequence, status, preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: withholdingPaymentChecksum([payment]), rowsCertain: true } });
+      const pkg = await clients[0].taxFilingPackage.create({ data: { companyId: f.companyId, taxPeriodId: f.period.id, formType: 'PND53', periodKey: f.period.periodKey,
+        whtFilingId: paper.id, exportNumber: `${f.companyId}:${sequence}`, exportFormat: 'PDF', checksum: `earlier-bytes-${sequence}` } });
+      await clients[0].whtFiling.update({ where: { id: paper.id }, data: { filingPackageId: pkg.id } });
+      await clients[0].whtFilingLine.create({ data: { whtFilingId: paper.id, rowNumber: 1, taxEventId: event.id,
+        sourceType: 'expense.record', sourceId: sequence ? good.id : 'earlier-source',
+        lineJson: { payment: sequence ? withholdingPaymentFacts(payment) : ['expense.record', 'earlier-source'] } } });
+      return paper.id;
+    };
+    const earlierId = await createPaper(0, 'FILED');
+    const currentId = await createPaper(1, 'EXPORTED');
+    await clients[0].taxPeriod.update({ where: { id: f.period.id }, data: { status: 'EXPORTED' } });
+    const readEarlier = () => clients[0].whtFiling.findUniqueOrThrow({ where: { id: earlierId }, include: { lines: true, latestPackage: true } });
+    return { currentId, readEarlier, earlier: await readEarlier() };
+  };
+  const assertPreserved = async (f: Fixture, paper: Awaited<ReturnType<typeof exportedAdditionalPaper>>) => {
+    assert.equal((await clients[0].whtFiling.findUniqueOrThrow({ where: { id: paper.currentId } })).status, 'EXPORTED');
+    assert.equal((await clients[0].taxPeriod.findUniqueOrThrow({ where: { id: f.period.id } })).status, 'EXPORTED');
+    assert.equal(await clients[0].taxFilingPackage.count({ where: { companyId: f.companyId } }), 2);
+    assert.deepEqual(await paper.readEarlier(), paper.earlier);
+  };
+  it('rejects a blocker committed before the checked download snapshot without publishing a package', async t => {
+    if (unavailable) return t.skip(unavailable);
+    const f = await fixture();
+    const beforeSnapshot = gate(), sourceCommitted = gate();
+    const client = withTransaction(async (work, options) => {
+      beforeSnapshot.resolve(); await sourceCommitted.promise;
+      return clients[0].$transaction(work, options);
+    });
+    const pending = download(new PrismaTaxRepository({ client } as any), f);
+    await beforeSnapshot.promise;
+    try { await addBlocker(f); } finally { sourceCommitted.resolve(); }
+    await assert.rejects(pending, (error: any) => error.getResponse?.().code === 'PND53_FILING_REVIEW');
+    assert.equal(await clients[0].taxFilingPackage.count({ where: { companyId: f.companyId } }), 0);
+    assert.equal(await clients[0].whtFiling.count({ where: { companyId: f.companyId } }), 0);
+  });
+  it('refuses conflicting Serializable download writes without publishing a package', async t => {
+    if (unavailable) return t.skip(unavailable);
+    const f = await fixture();
+    const snapshot = gate(), committed = gate();
+    const pending = clients[0].$transaction(async tx => {
+      await tx.taxPeriod.findUniqueOrThrow({ where: { id: f.period.id } });
+      snapshot.resolve(); await committed.promise;
+      return download(new PrismaTaxRepository({ client: { $transaction: (work: any) => work(tx) } } as any), f);
+    }, { isolationLevel: 'Serializable' });
+    await snapshot.promise;
+    try { await clients[1].taxPeriod.update({ where: { id: f.period.id }, data: { reviewNote: 'competing write' } }); }
+    finally { committed.resolve(); }
+    // A raw statement reports 40001 as P2010; the use case maps both forms (isSerializationFailure).
+    await assert.rejects(pending, (error: any) => isSerializationFailure(error));
+    assert.equal((await clients[0].taxPeriod.findUniqueOrThrow({ where: { id: f.period.id } })).status, 'OPEN');
+    assert.equal(await clients[0].taxFilingPackage.count({ where: { companyId: f.companyId } }), 0);
+  });
+  it('markFiled rejects a blocker committed after sync and before its Serializable snapshot and preserves the earlier paper', async t => {
+    if (unavailable) return t.skip(unavailable);
+    const f = await fixture();
+    const paper = await exportedAdditionalPaper(f);
+    const beforeSnapshot = gate(), committed = gate();
+    const client = withTransaction(async (work, options) => {
+      assert.equal(options.isolationLevel, 'Serializable');
+      beforeSnapshot.resolve(); await committed.promise;
+      return clients[0].$transaction(work, options);
+    });
+    const value = await controller(client);
+    const pending = value.markFiled(f.ctx, f.companyId, f.period.id, { establishmentCode: '00000', sequence: 1 });
+    await beforeSnapshot.promise;
+    try { await addBlocker(f); } finally { committed.resolve(); }
+    await assert.rejects(pending, (error: any) => error.getResponse?.().code === 'PND53_FILING_REVIEW');
+    await assertPreserved(f, paper);
+  });
+  it('markFiled maps a concurrent paper write to its serialization refusal and preserves the earlier paper', async t => {
+    if (unavailable) return t.skip(unavailable);
+    const f = await fixture();
+    const paper = await exportedAdditionalPaper(f);
+    const checked = gate(), committed = gate();
+    const client = withTransaction((work, options) => clients[0].$transaction(tx => work(new Proxy(tx, {
+      get(target, key) {
+        if (key !== 'whtFiling') return Reflect.get(target, key);
+        return new Proxy(target.whtFiling, { get(delegate, operation) {
+          if (operation !== 'updateMany') return Reflect.get(delegate, operation);
+          return async (query: any) => {
+            checked.resolve(); await committed.promise;
+            return delegate.updateMany(query);
+          };
+        } });
+      },
+    })), options));
+    const value = await controller(client);
+    const pending = value.markFiled(f.ctx, f.companyId, f.period.id, { establishmentCode: '00000', sequence: 1 });
+    await Promise.race([checked.promise, pending.then(() => assert.fail('markFiled completed before its checked barrier'))]);
+    try { await clients[1].whtFiling.update({ where: { id: paper.currentId }, data: { filedNote: 'competing write' } }); }
+    finally { committed.resolve(); }
+    await assert.rejects(pending, (error: any) => error.getResponse?.().code === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
+    await assertPreserved(f, paper);
+  });
+  after(async () => {
+    try {
+      for (const companyId of companies) {
+        await clients[0].whtFiling.updateMany({ where: { companyId }, data: { filingPackageId: null } });
+        await clients[0].whtFilingLine.deleteMany({ where: { filing: { companyId } } });
+        await clients[0].taxFilingPackage.deleteMany({ where: { companyId } });
+        await clients[0].whtFiling.deleteMany({ where: { companyId } });
+        await clients[0].expensePayment.deleteMany({ where: { companyId } });
+        await clients[0].expenseRecord.deleteMany({ where: { companyId } });
+        await clients[0].company.deleteMany({ where: { id: companyId } });
+      }
+    } finally { await Promise.all(clients.map(client => client.$disconnect())); }
+  });
 });

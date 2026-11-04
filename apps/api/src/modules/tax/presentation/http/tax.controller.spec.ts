@@ -1,3 +1,4 @@
+import { expenseSourceForEvent } from '../../testing/withholding-source.fixture';
 import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-tax.repository';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -13,6 +14,10 @@ function controller(repo: any) {
 /** Wraps a repo with a companyTaxProfile.findUnique stub (null → default ACCOUNTANT reviewer). */
 function withProfile(repo: any, taxReviewerRole: string | null = null) {
   const client = repo.prisma?.client ?? {};
+  client.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  client.expenseRecord ??= { findMany: async () => [] };
+  client.whtFilingLine ??= { findMany: async () => [] };
+  client.accountingCounterparty ??= { findMany: async () => [] };
   return {
     ...repo,
     prisma: { client: { ...client, companyTaxProfile: { findUnique: async () => (taxReviewerRole === null ? null : { companyId: 'company-1', taxReviewerRole }) } } },
@@ -328,8 +333,12 @@ describe('withholding month read', () => {
         if (where.OR) assert.deepEqual(where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
         return [event('e1', 'PND3', 'expense-1'), event('e2', 'PND53', 'expense-2'), event('e3', 'PND3', 'outside')];
       } },
-      taxReviewIssue: { findMany: async () => issues },
+      taxReviewIssue: { findMany: async () => issues.map(i => ({ ...i, taxPeriod: { formType: 'PND53' } })) },
+      whtFilingLine: { findMany: async () => [] },
+      accountingCounterparty: { findMany: async () => [] },
       expenseRecord: { findMany: async ({ where }: any) => {
+        if (where.whtAmount && !where.OR) return [...[event('e1', 'PND3', 'expense-1'), event('e2', 'PND53', 'expense-2')].map(e => expenseSourceForEvent(e, { branchId: 'b1', vendorCounterpartyId: linked ? `cp-${e.sourceId}` : null })), { id: 'unknown-expense', companyId: ctx.companyId, status: 'CONFIRMED', branchId: 'b1', vendorCounterpartyId: linked ? 'cp-unknown-expense' : null, vendorAddressSnapshot: 'กรุงเทพ', vendorNameSnapshot: 'สมชาย', vendorEntityKindSnapshot: null,
+          expenseDate: new Date('2026-09-10'), updatedAt: new Date(), whtAmount: '30', netPayableAmount: '970', grandTotalAmount: '1000', taxableAmount: '1000', lines: [], payments: [{ id: 'unknown-pay', amount: '970', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-10'), createdAt: new Date() }] }];
         if (!where.id) assert.ok(JSON.stringify(where).includes('b1'));
         else if (where.OR) assert.ok(JSON.stringify(where).includes('b1'));
         else assert.ok(where.id.in.length > 0);
@@ -346,7 +355,10 @@ describe('withholding month read', () => {
     db.whtPayerModeFact ??= { findMany: async () => [] };
     db.branch ??= { findMany: async () => [] };
     db.$transaction = async (work: any) => work(db);
-    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async ({ where }: any) => (await db.whtFiling.findMany({ where: { companyId: ctx.companyId } })).filter((p: any) => p.status === 'FILED' && (!where.filing.formType || (p.formType ?? p.taxPeriodId) === where.filing.formType)).flatMap((p: any) => p.lines ?? []) };
+  db.accountingCounterparty ??= { findMany: async () => [] };
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
     const result = await reader.getMonth(actor, '2026-09');
     assert.equal(result.periodKey, '2026-09'); assert.equal(result.payments.length, 2);
     assert.deepEqual(result.forms.map(f => [f.formType, f.paymentCount, f.totalPaid, f.totalWithheld]), [
@@ -387,7 +399,10 @@ describe('withholding month read', () => {
     db.whtPayerModeFact ??= { findMany: async () => [] };
     db.branch ??= { findMany: async () => [] };
     db.$transaction = async (work: any) => work(db);
-    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async ({ where }: any) => (await db.whtFiling.findMany({ where: { companyId: ctx.companyId } })).filter((p: any) => p.status === 'FILED' && (!where.filing.formType || (p.formType ?? p.taxPeriodId) === where.filing.formType)).flatMap((p: any) => p.lines ?? []) };
+  db.accountingCounterparty ??= { findMany: async () => [] };
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
     assert.deepEqual(await reader.listMonths(ctx), { months: ['2026-09', '2026-08', '2026-07'] });
     db.taxPeriod.findMany = async () => []; db.taxEvent.findMany = async () => [];
     db.taxReviewIssue = { findMany: async () => [] };
@@ -459,7 +474,7 @@ it('official export refusals return a stable 409 code and every current Thai rea
         findEventsByPeriod: async () => [{ id: 'event', eventDate: new Date('2026-09-10'), branchId: null }],
         findIssuesByPeriod: async () => reason === 'REVIEW' ? [{ id: 'missing', issueCode: 'MISSING_TAX_ID', description: 'ยังไม่มีเลขผู้เสียภาษี', severity: 'BLOCKING', sourceType: null, sourceId: null }] : [],
         createIssue: async (issue: any) => { recorded.push(issue); },
-        prisma: { client: { whtFiling: { findFirst: async () => null, findMany: async () => [] }, taxReportSnapshot: { findFirst: async () => null }, company: { findUnique: async () => ({}) },
+        prisma: { client: { taxReviewIssue: { findMany: async () => reason === 'REVIEW' ? [{ id: 'payer', issueCode: 'MISSING_TAX_ID', description: 'ยังไม่มีเลขผู้เสียภาษี', severity: 'BLOCKING', sourceType: null, sourceId: null, taxPeriod: { formType } }] : [] }, whtFiling: { findFirst: async () => null, findMany: async () => [] }, taxReportSnapshot: { findFirst: async () => null }, company: { findUnique: async () => ({}) },
           branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] }, whtIncomeCategory: { findMany: async () => [] } } },
       });
       const noop = {} as any;
@@ -482,7 +497,7 @@ it('official export refusals return a stable 409 code and every current Thai rea
 it('both narrow filing routes reject changed payments with a Thai 409 and accept a fresh download', async () => {
   const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
   for (const formType of ['PND3', 'PND53']) for (const exportFormat of ['PDF', 'XLSX']) {
-    const first: any = { sourceType: 'expense.record', sourceId: 'expense-1', eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3' };
+    const first: any = { currency: 'THB', eventType: `WHT_${formType}`, payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1100700000001', address: 'กรุงเทพ', branchCode: null }, sourceType: 'expense.record', sourceId: 'expense-1', eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3' };
     let events = [first], frozen = events.map(event => ({ lineJson: { payment: withholdingPaymentFacts(event) } })), updates = 0, syncs = 0;
     const pkg = { id: 'pkg', exportFormat, generatedAt: new Date() };
     const db: any = {
@@ -490,9 +505,9 @@ it('both narrow filing routes reject changed payments with a Thai 409 and accept
       taxFilingPackage: { findFirst: async ({ where }: any) => { assert.ok(where.exportFormat.in.includes(exportFormat)); return pkg; }, update: async () => { updates++; } },
       whtFiling: { findMany: async () => [{ id: 'f', status: 'FILED', lines: frozen }], findFirst: async () => ({ id: 'f', establishmentCode: '00000', status: 'EXPORTED', rowsCertain: true, lines: frozen, latestPackage: pkg }), updateMany: async ({ data }: any) => { assert.equal(data.filedByUserId, ctx.userId); assert.ok(data.filedAt instanceof Date); updates++; return { count: 1 }; } },
       taxPeriod: { findFirst: async () => ({ status: 'EXPORTED' }), update: async () => { updates++; } },
-      expenseRecord: { findMany: async () => events.map(event => ({ id: event.sourceId })) },
+      expenseRecord: { findMany: async () => events.map(event => expenseSourceForEvent(event)) },
       $transaction: async (operations: any) => typeof operations === 'function' ? operations(db) : Promise.all(operations),
-      taxEvent: { findMany: async () => events.map(event => ({ ...event, payeeSnapshotJson: null })) },
+      whtIncomeCategory: { findMany: async () => [] }, taxEvent: { findMany: async () => events.map(event => ({ ...event, payeeSnapshotJson: event.payeeSnapshot })) },
     };
     const repo = withProfile({ prisma: { client: db }, findPeriodById: async () => ({ id: 'p', formType, status: 'EXPORTED', periodKey: '2026-09' }),
       findEventsByPeriod: async () => events, findIssuesByPeriod: async () => [], markWithholdingFilingFiled: PrismaTaxRepository.prototype.markWithholdingFilingFiled });
@@ -525,12 +540,15 @@ it('month payments sort by payment date then source recording time with a stable
   const events = ['older', 'newer', 'same-time', 'next-day'].map((id, i) => ({ id, sourceId: id, sourceType: 'expense.record',
     eventType: 'WHT_PND3', eventDate: new Date(i === 3 ? '2026-09-11' : '2026-09-10'), createdAt: new Date(2030 - i, 1), grossAmount: '1000', withheldAmount: '30', payeeSnapshotJson: { name: id } }));
   const db: any = { taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => events }, taxReviewIssue: { findMany: async () => [] },
-    expenseRecord: { findMany: async () => events.map(e => ({ id: e.id, payments: [{ createdAt: new Date(e.id === 'older' ? '2026-09-12T01:00:00Z' : '2026-09-12T02:00:00Z') }] })) },
+    expenseRecord: { findMany: async () => events.map(e => expenseSourceForEvent(e, { payments: [{ ...expenseSourceForEvent(e).payments[0], createdAt: new Date(e.id === 'older' ? '2026-09-12T01:00:00Z' : '2026-09-12T02:00:00Z') }] })) },
     whtIncomeCategory: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] } };
   db.whtFiling ??= { findMany: async () => [] };
     db.whtPayerModeFact ??= { findMany: async () => [] };
     db.branch ??= { findMany: async () => [] };
     db.$transaction = async (work: any) => work(db);
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async ({ where }: any) => (await db.whtFiling.findMany({ where: { companyId: ctx.companyId } })).filter((p: any) => p.status === 'FILED' && (!where.filing.formType || (p.formType ?? p.taxPeriodId) === where.filing.formType)).flatMap((p: any) => p.lines ?? []) };
+  db.accountingCounterparty ??= { findMany: async () => [] };
   const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
   const read = async () => (await reader.getMonth(ctx, '2026-09')).payments.map(p => p.id);
   assert.deepEqual(await read(), ['next-day', 'same-time', 'newer', 'older']);
@@ -562,11 +580,14 @@ describe('payer mode foundation routes and additive month fields', () => {
       branch: { findMany: async () => branches }, whtPayerModeFact: { findMany: async () => facts },
       taxPeriod: { findMany: async () => [] }, taxReviewIssue: { findMany: async () => [] },
       taxEvent: { findMany: async () => [{ id: 'e', branchId: null, sourceType: 'expense.record', sourceId: 'expense', eventType: 'WHT_PND3', eventDate: new Date('2026-09-01'), grossAmount: '1000', withheldAmount: '30' }] },
-      expenseRecord: { findMany: async () => [{ id: 'expense', branchId: 'branch', status: 'CONFIRMED' }] }, supplierPayment: { findMany: async () => [] },
+      expenseRecord: { findMany: async () => [expenseSourceForEvent({ id: 'e', sourceId: 'expense', branchId: 'branch', eventType: 'WHT_PND3', eventDate: new Date('2026-09-01'), grossAmount: '1000', withheldAmount: '30' })] }, supplierPayment: { findMany: async () => [] },
       whtIncomeCategory: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] },
     };
     db.whtFiling ??= { findMany: async () => [] }; db.$transaction = async (fn: any) => fn(db);
-    const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async ({ where }: any) => (await db.whtFiling.findMany({ where: { companyId: ctx.companyId } })).filter((p: any) => p.status === 'FILED' && (!where.filing.formType || (p.formType ?? p.taxPeriodId) === where.filing.formType)).flatMap((p: any) => p.lines ?? []) };
+  db.accountingCounterparty ??= { findMany: async () => [] };
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
     const one = await reader.getMonth(ctx, '2026-09');
     assert.deepEqual(one.payments[0].establishment, { kind: 'ESTABLISHMENT', code: '00000', branchId: 'head', name: 'สำนักงานใหญ่' });
     assert.deepEqual(one.establishments?.map(({ forms, ...e }) => e), [one.payments[0].establishment]);
@@ -614,13 +635,16 @@ it('month separates both forms by establishment, narrows faults, and keeps missi
     branch: { findMany: async () => branches, findFirst: async ({ where }: any) => branches.find(b => b.id === where.id) }, whtPayerModeFact: { findMany: async () => facts },
     taxPeriod: { findMany: async () => ['PND3', 'PND53'].map(formType => ({ id: formType, formType, periodKey: '2026-09', status: 'OPEN', dueDate: new Date('2099-10-07') })) },
     taxEvent: { findMany: async ({ where }: any) => where.OR ? events.filter(e => where.OR[0].branchId.in.includes(e.branchId)) : events },
-    expenseRecord: { findMany: async () => events.map(e => ({ id: e.id, branchId: e.branchId, status: 'CONFIRMED', vendorEntityKindSnapshot: e.whtFormType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC' })) },
+    expenseRecord: { findMany: async () => events.map(e => expenseSourceForEvent(e)) },
     supplierPayment: { findMany: async () => [] }, taxReviewIssue: { findMany: async () => [] }, whtFiling: { findMany: async () => [] },
     company: { findUnique: async () => ({ registeredName: 'ร้าน', taxId: '0994000163011', addressJson: address }) }, companyTaxProfile: { findUnique: async () => null },
     whtIncomeCategory: { findMany: async () => ['PND3', 'PND53'].map(code => ({ code, formType: code, nameTh: 'ค่าบริการ' })) },
     whtCertificateHandoff: { findMany: async () => [] },
     $transaction: async (fn: any) => fn(db),
   };
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async ({ where }: any) => (await db.whtFiling.findMany({ where: { companyId: ctx.companyId } })).filter((p: any) => p.status === 'FILED' && (!where.filing.formType || (p.formType ?? p.taxPeriodId) === where.filing.formType)).flatMap((p: any) => p.lines ?? []) };
+  db.accountingCounterparty ??= { findMany: async () => [] };
   const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
   const month = await reader.getMonth(ctx, '2026-09');
   assert.equal(month.payments.length, 6);
@@ -723,17 +747,18 @@ it('month separates both forms by establishment, narrows faults, and keeps missi
 it('filing one establishment files only its frozen paper and leaves the other payment unlocked', async () => {
   const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
   const { filedWithholdingPaymentPeriods } = await import('../../application/services/filed-withholding-payment');
-  const events: any[] = ['head', 'b'].map((branchId, i) => ({ sourceType: 'expense.record', sourceId: branchId, branchId,
-    eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3', payeeSnapshotJson: null }));
+  const events: any[] = ['head', 'b'].map((branchId, i) => ({ currency: 'THB', eventType: 'WHT_PND3', payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1100700000001', address: 'กรุงเทพ', branchCode: null }, sourceType: 'expense.record', sourceId: branchId, branchId,
+    eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3', payeeSnapshotJson: { name: 'ผู้รับเงิน', taxId: '1100700000001', address: 'กรุงเทพ', branchCode: null } }));
   const currentIssues = [{ issueCode: 'MISSING_TAX_ID', severity: 'BLOCKING', sourceType: 'expense.record', sourceId: 'b', description: 'ผู้รับเงินยังไม่มีเลขผู้เสียภาษี เปิดคู่ค้าแล้วกรอกเลข' }];
   const papers: any[] = events.map((event, i) => ({ sequence: 0, id: `f${i}`, establishmentCode: i ? '00002' : '00000', filingPackageId: `pkg${i}`, status: 'EXPORTED', rowsCertain: true,
     latestPackage: { id: `pkg${i}` }, lines: [{ sourceType: event.sourceType, sourceId: event.sourceId, lineJson: { payment: withholdingPaymentFacts(event) } }] }));
   const period = { id: 'p', formType: 'PND3', periodKey: '2026-09', status: 'EXPORTED' };
   const db: any = {
-    $queryRaw: async () => [], $transaction: async (fn: any) => fn(db), taxReviewIssue: { findMany: async () => currentIssues },
+    $queryRaw: async () => [], $transaction: async (fn: any) => fn(db), taxReviewIssue: { findMany: async () => currentIssues.map(i => ({ ...i, taxPeriod: { formType: 'PND3' } })) },
     branch: { findMany: async () => [{ id: 'head', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: null }, { id: 'b', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: '00002' }] },
     whtPayerModeFact: { findMany: async () => [{ mode: 'EACH_BRANCH_PAYS', effectiveFromPeriodKey: '2026-01', supersededAt: null }] },
-    taxEvent: { findMany: async () => events }, expenseRecord: { findMany: async () => events.map(e => ({ id: e.sourceId })) },
+    company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) }, whtIncomeCategory: { findMany: async () => [] }, whtFilingLine: { findMany: async () => papers.filter(p => p.status === 'FILED').flatMap(p => p.lines) },
+    taxEvent: { findMany: async () => events }, expenseRecord: { findMany: async () => events.map(e => expenseSourceForEvent(e, { vendorTaxIdSnapshot: e.sourceId === 'b' && currentIssues.length ? null : e.payeeSnapshot.taxId })) },
     whtFiling: {
       findMany: async () => papers,
       findFirst: async ({ where }: any) => papers.find(p => (!where.establishmentCode || where.establishmentCode === p.establishmentCode) && (!where.filingPackageId || where.filingPackageId === p.filingPackageId) && (where.sequence === undefined || where.sequence === p.sequence)),
@@ -804,11 +829,13 @@ it('confirmation is a validated prepare-only command scoped to the route company
 
 it('W4 month read exposes undated payments without assigning a month or creating a paper', async () => {
   const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
-  const db: any = { taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => [] },
+  const db: any = { taxReviewIssue: { findMany: async () => [] }, taxPeriod: { findMany: async () => [] }, taxEvent: { findMany: async () => [] },
     whtIncomeCategory: { findMany: async () => [] }, branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] },
     whtFiling: { findMany: async () => [] }, whtCertificateHandoff: { findMany: async () => [] },
-    expenseRecord: { findMany: async ({ where }: any) => { assert.equal(where.status, 'CONFIRMED'); assert.equal(where.whtAmount.gt, 0); return [{ id: 'e', vendorNameSnapshot: 'สมชาย', payments: [{ id: 'p', paidAtConfirmed: false, amount: '97', createdAt: new Date('2026-11-09'), createdByUserId: 'u' }] }]; } },
+    expenseRecord: { findMany: async ({ where }: any) => { assert.equal(where.status, 'CONFIRMED'); assert.equal(where.whtAmount.gt, 0); return [expenseSourceForEvent({ id: 'e', sourceId: 'e', grossAmount: '100', withheldAmount: '3', eventDate: new Date('2026-11-09') }, { vendorNameSnapshot: 'สมชาย', payments: [{ id: 'p', paidAt: new Date('2026-11-09'), paidAtConfirmed: false, status: 'RECORDED', amount: '97', createdAt: new Date('2026-11-09'), createdByUserId: 'u' }] })]; } },
     $transaction: async (fn: any) => fn(db) };
+  db.company ??= { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) };
+  db.whtFilingLine ??= { findMany: async () => [] };
   const month = await new GenerateWhtReportUseCase({ prisma: { client: db } } as any).getMonth(ctx, '2026-10');
   assert.deepEqual(month.payments, []);
   assert.deepEqual(month.undatedPayments, [{ paymentId: 'p', expenseId: 'e', payeeName: 'สมชาย', amount: '97', recordedAt: '2026-11-09T00:00:00.000Z', recordedByUserId: 'u' }]);
@@ -828,4 +855,166 @@ it('WHT-OUTSIDE-2 file routes keep external-link mutation permission and the han
   await assert.rejects(() => value.completeExternalWhtFile(ctx, 'other-company', 'handoff', 'file', {}), /company/i);
   await assert.rejects(() => value.externalWhtFile(ctx, 'other-company', 'handoff', 'file'), /company/i);
   assert.equal(calls, 0);
+});
+
+
+it('R10 exported paper cannot be filed with omitted payments', async () => {
+  const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
+  for (const formType of ['PND3', 'PND53']) {
+    const event: any = { id: 'event', eventType: `WHT_${formType}`, sourceType: 'expense.record', sourceId: 'good', eventDate: new Date('2026-09-10'), grossAmount: '1000', withheldAmount: '30', whtRate: '3' };
+    let writes = 0;
+    const issue = { id: 'hidden-issue', sourceType: 'expense.record', sourceId: 'secret', issueCode: 'WHT_PAYEE_KIND_UNKNOWN', severity: 'BLOCKING', description: 'secret name', taxPeriod: { formType: 'PND53', periodKey: '2026-09' } };
+    const db: any = { $queryRaw: async () => [], taxEvent: { findMany: async () => [event] },
+      taxReviewIssue: { findMany: async () => [issue] },
+      branch: { findMany: async () => [{ id: 'head', type: 'HEAD_OFFICE', status: 'ACTIVE', name: 'สำนักงานใหญ่', taxBranchCode: '00000' }, { id: 'secret-branch', type: 'BRANCH', status: 'ACTIVE', name: 'hidden', taxBranchCode: '00002' }] },
+      whtPayerModeFact: { findMany: async () => [{ mode: 'HEAD_OFFICE_PAYS_ALL', effectiveFromPeriodKey: '2026-01', supersededAt: null }] },
+      expenseRecord: { findMany: async ({ where }: any) => where.whtAmount ? [{ id: 'secret', companyId: ctx.companyId, branchId: 'secret-branch', status: 'CONFIRMED',
+        expenseDate: new Date('2026-09-10'), updatedAt: new Date(), vendorNameSnapshot: 'secret name', vendorEntityKindSnapshot: null, vendorCounterpartyId: null, vendorAddressSnapshot: 'hidden',
+        whtAmount: '30', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000', whtRate: '3', lines: [],
+        payments: [{ id: 'secret-pay', status: 'RECORDED', amount: '970', paidAtConfirmed: true, paidAt: new Date('2026-09-10'), createdAt: new Date() }] }] : [{ id: 'good' }] },
+      company: { findUnique: async () => ({ timezone: 'Asia/Bangkok' }) },
+      whtIncomeCategory: { findMany: async () => [] }, whtFilingLine: { findMany: async () => [] },
+      whtFiling: { findFirst: async () => ({ id: 'paper', status: 'EXPORTED', rowsCertain: true, latestPackage: { id: 'pkg' }, lines: [{ lineJson: { payment: withholdingPaymentFacts(event) } }] }) },
+    };
+    db.$transaction = async (fn: any) => fn(db);
+    const repo = withProfile({ prisma: { client: db }, findPeriodById: async () => ({ id: 'p', formType, status: 'EXPORTED', periodKey: '2026-09' }), markWithholdingFilingFiled: async () => { writes++; } });
+    const noop = {} as any;
+    const value = new TaxController({ execute: async () => {} } as any, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => {} } as any);
+    await assert.rejects(value.markFiled({ ...ctx, scopes: { branchIds: ['head'] } }, ctx.companyId, 'p', {}), (error: any) => {
+      const response = error.getResponse();
+      assert.equal(response.code, `${formType}_FILING_REVIEW`);
+      assert.equal(response.message, 'มีข้อมูลที่ต้องแก้โดยผู้ดูแลสาขานั้นก่อนดาวน์โหลด');
+      assert.doesNotMatch(JSON.stringify(response), /secret|hidden-issue|"hidden"/); return true;
+    });
+    assert.equal(writes, 0);
+  }
+});
+
+it('R10 rejects a payment date or source edited after sync before download or markFiled', async () => {
+  const { GenerateTaxFilingPackageUseCase } = await import('../../application/use-cases/generate-tax-filing-package.use-case');
+  const { withholdingPaymentFacts, withholdingPaymentChecksum } = await import('../../application/services/withholding-filing-state');
+  const { computeSourceHash } = await import('../../domain/logic/tax-event.logic');
+  for (const formType of ['PND3', 'PND53']) for (const change of ['date', 'payee', 'amount', 'kind', 'void', 'branch', 'revision']) {
+    const period: any = { id: 'period', companyId: ctx.companyId, formType, periodKey: '2026-09', status: 'EXPORTED', dueDate: new Date('2099-10-07') };
+    const payment: any = { id: 'payment', amount: '970', status: 'RECORDED', paidAtConfirmed: true, paidAt: new Date('2026-09-10'), createdAt: new Date('2026-09-10') };
+    const source: any = { id: 'source', companyId: ctx.companyId, branchId: null, status: 'CONFIRMED', expenseDate: new Date('2026-09-01'), updatedAt: new Date('2026-09-10'),
+      vendorCounterpartyId: null, vendorNameSnapshot: 'ผู้รับเงิน', vendorTaxIdSnapshot: '1100700000001', vendorBranchCodeSnapshot: null, vendorAddressSnapshot: 'กรุงเทพ',
+      vendorEntityKindSnapshot: formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC', whtAmount: '30', netPayableAmount: '970', taxableAmount: '1000', grandTotalAmount: '1000', whtRate: '3', whtCategoryCode: 'SERVICE', lines: [], payments: [payment] };
+    const event: any = { id: 'event', taxPeriodId: period.id, periodKey: period.periodKey, eventType: `WHT_${formType}`, sourceType: 'expense.record', sourceId: source.id, sourceLineKey: 'payment:payment', branchId: null,
+      eventDate: new Date('2026-09-10'), currency: 'THB', incomeCategoryCode: 'SERVICE', grossAmount: '1000', withheldAmount: '30', whtRate: '3',
+      payeeSnapshot: { name: 'ผู้รับเงิน', taxId: '1100700000001', branchCode: null, address: 'กรุงเทพ' } };
+    event.sourceHash = computeSourceHash({ sourceLineKey: event.sourceLineKey, paymentDate: event.eventDate.toISOString(), grossAmount: '1000', whtAmount: '30', updatedAt: source.updatedAt.toISOString(), incomeCategoryCode: 'SERVICE' });
+    const frozen = [{ sourceType: event.sourceType, sourceId: event.sourceId, lineJson: { payment: withholdingPaymentFacts(event) } }];
+    let packages = 0, filed = 0, objects = 0, numbers = 0;
+    const db: any = { $queryRaw: async () => [],
+      company: { findUnique: async () => ({ timezone: 'Asia/Bangkok', baseCurrency: 'THB', registeredName: 'ร้าน', taxId: '1100700000001', addressJson: { line1: '1 ถนน', subdistrict: 'บางนา', district: 'บางนา', province: 'กรุงเทพมหานคร', postalCode: '10260' } }) },
+      companyTaxProfile: { findUnique: async () => null }, branch: { findMany: async () => [] }, whtPayerModeFact: { findMany: async () => [] },
+      taxReviewIssue: { findMany: async () => [] }, taxEvent: { findMany: async () => [{ ...event, payeeSnapshotJson: event.payeeSnapshot }] },
+      expenseRecord: { findMany: async ({ where }: any) => !where.status || where.status === source.status ? [source] : [] },
+      expensePayment: { findMany: async () => payment.status === 'RECORDED' ? [payment] : [] },
+      whtIncomeCategory: { findMany: async () => [{ code: 'SERVICE', formType, nameTh: 'ค่าบริการ', filingRoute: 'SYSTEM_FILLS' }] },
+      whtFilingLine: { findMany: async () => [] },
+      whtFiling: { findMany: async () => [], findFirst: async ({ where }: any) => where.status === 'FILED' ? null : ({ id: 'paper', status: 'EXPORTED', rowsCertain: true, latestPackage: { id: 'pkg' }, lines: frozen }) },
+      taxReportSnapshot: { findFirst: async () => null }, taxPeriod: { update: async () => {}, findMany: async () => [] }, taxFilingPackage: { update: async () => {} },
+    };
+    db.$transaction = async (fn: any) => fn(db);
+    const repo: any = { prisma: { client: db }, findPeriodById: async () => period, findEventsByPeriod: async () => [event], findIssuesByPeriod: async () => [],
+      recordWithholdingDownload: async () => { packages++; return { id: 'new-pkg', generatedAt: new Date(), createdAt: new Date() }; }, markWithholdingFilingFiled: async () => { filed++; } };
+    const noop: any = {};
+    const exporter = new GenerateTaxFilingPackageUseCase(repo, { execute: async () => { numbers++; return { id: 'number', documentNumber: 'number' }; } } as any, { execute: async () => {} } as any, { log: async () => {} } as any,
+      { putObject: async () => { objects++; return {}; } } as any);
+    (exporter as any).buildWithholdingArtifact = async () => ({ fileName: 'test.pdf', mimeType: 'application/pdf', contentBase64: '', checksum: 'test', byteLength: 0 });
+    const controller = new TaxController({ execute: async () => {} } as any, noop, noop, exporter, noop, noop, noop, noop, noop, noop, noop, noop, repo, { log: async () => {} } as any);
+    if (change === 'date') payment.paidAt = new Date('2026-10-01');
+    if (change === 'payee') source.vendorTaxIdSnapshot = null;
+    if (change === 'amount') source.whtAmount = '60';
+    if (change === 'kind') source.vendorEntityKindSnapshot = formType === 'PND3' ? 'JURISTIC' : 'INDIVIDUAL';
+    if (change === 'void') payment.status = 'VOIDED';
+    if (change === 'branch') { source.branchId = 'changed-branch'; source.updatedAt = new Date('2026-09-11'); }
+    if (change === 'revision') source.updatedAt = new Date('2026-09-11');
+    const refuses = (error: any) => { assert.equal(error.getStatus(), 409); assert.ok(error.getResponse().code.includes('FILING_')); return true; };
+    await assert.rejects(exporter.execute(ctx, period.id, 'PDF'), refuses, `${formType}/${change}/download`);
+    await assert.rejects(controller.markFiled(ctx, ctx.companyId, period.id, {}), refuses, `${formType}/${change}/markFiled`);
+    assert.deepEqual({ packages, filed, objects, numbers }, { packages: 0, filed: 0, objects: 0, numbers: 0 });
+    // Exercise the repository recheck after preflight with the old event checksum too.
+    await assert.rejects(new PrismaTaxRepository({ client: db } as any).recordWithholdingDownload({ ctx, period, exportFormat: 'PDF', exportNumber: 'reserved',
+      establishmentCode: '00000', establishmentBranchId: null, preparedBy: 'SYSTEM', payerSnapshotJson: {}, rowsChecksum: withholdingPaymentChecksum([event]), rowsCertain: true,
+      artifact: {} as any, stored: {} as any, lines: [{ taxEventId: event.id, sourceType: event.sourceType, sourceId: event.sourceId, lineJson: frozen[0].lineJson }] }), refuses);
+    assert.deepEqual({ packages, filed, objects, numbers }, { packages: 0, filed: 0, objects: 0, numbers: 0 });
+  }
+});
+
+it('R10 source-only corrections and FILED omission warnings follow payment coverage and form sequences', async () => {
+  const { GenerateWhtReportUseCase } = await import('../../application/use-cases/generate-wht-report.use-case');
+  const { withholdingPaymentFacts } = await import('../../application/services/withholding-filing-state');
+  const periods: any[] = ['PND3', 'PND53'].map(formType => ({ id: formType, formType, periodKey: '2026-09', status: 'OPEN', dueDate: new Date('2099-10-07') }));
+  const good: any = { id: 'good-event', sourceType: 'expense.record', sourceId: 'good', sourceLineKey: 'payment:good-payment', branchId: 'head', eventType: 'WHT_PND3', taxPeriodId: 'PND3', periodKey: '2026-09',
+    eventDate: new Date('2026-09-10'), currency: 'THB', incomeCategoryCode: 'PND3', grossAmount: '1000', withheldAmount: '30', whtRate: '3', payeeSnapshotJson: { name: 'ผู้รับเงินครบ', taxId: '1100700000001', address: 'กรุงเทพ', branchCode: null } };
+  const bad: any = { ...good, id: 'bad-event', sourceId: 'bad', sourceLineKey: 'payment:bad-payment', branchId: 'branch', payeeSnapshotJson: { ...good.payeeSnapshotJson, name: 'ผู้รับเงินที่ต้องแก้', taxId: null } };
+  const sources: any[] = [expenseSourceForEvent(good), expenseSourceForEvent(bad, { vendorEntityKindSnapshot: null })];
+  const events: any[] = [good], papers: any[] = [];
+  const branches = [{ id: 'head', name: 'สำนักงานใหญ่', type: 'HEAD_OFFICE', status: 'ACTIVE', taxBranchCode: '00000' }, { id: 'branch', name: 'สาขาลับ', type: 'BRANCH', status: 'ACTIVE', taxBranchCode: '00002' }];
+  let mode = 'HEAD_OFFICE_PAYS_ALL';
+  const db: any = {
+    company: { findUnique: async () => ({ timezone: 'Asia/Bangkok', baseCurrency: 'THB', registeredName: 'ร้าน', taxId: '1100700000001', addressJson: { line1: '1 ถนน', subdistrict: 'บางนา', district: 'บางนา', province: 'กรุงเทพมหานคร', postalCode: '10260' } }) },
+    companyTaxProfile: { findUnique: async () => null }, branch: { findMany: async () => branches, findFirst: async ({ where }: any) => branches.find(b => b.id === where.id) },
+    whtPayerModeFact: { findMany: async () => [{ mode, effectiveFromPeriodKey: '2026-01', supersededAt: null }] },
+    taxPeriod: { findMany: async () => periods }, taxReviewIssue: { findMany: async () => [] },
+    expenseRecord: { findMany: async ({ where }: any) => sources.filter(s => (!where.id || where.id.in.includes(s.id)) && (!where.status || where.status === s.status) && (!where.OR || where.OR[0].branchId.in.includes(s.branchId))) },
+    expensePayment: { findMany: async () => sources.flatMap(s => s.payments) }, supplierPayment: { findMany: async () => [] },
+    taxEvent: { findMany: async ({ where }: any) => events.filter(e => (!where.OR || where.OR[0].branchId.in.includes(e.branchId))) },
+    whtIncomeCategory: { findMany: async () => ['PND3', 'PND53'].map(formType => ({ code: formType, formType, nameTh: 'ค่าบริการ', filingRoute: 'SYSTEM_FILLS' })) },
+    whtFiling: { findMany: async () => papers }, whtFilingLine: { findMany: async ({ where }: any) => papers.filter(p => p.status === 'FILED' && (!where.filing.formType || p.formType === where.filing.formType)).flatMap(p => p.lines) },
+    whtCertificateHandoff: { findMany: async () => [] }, user: { findMany: async () => [] },
+  };
+  db.$transaction = async (work: any) => work(db);
+  const reader = new GenerateWhtReportUseCase({ prisma: { client: db } } as any);
+  const read = (actor = ctx) => reader.getMonth(actor, '2026-09');
+  const warning = 'มีรายการที่ยังไม่อยู่ในแบบที่ยื่นแล้ว เปิดรายการเพื่อแก้ข้อมูล';
+  let month = await read();
+  assert.ok(month.forms.every(f => f.issues.some(i => i.issueCode === 'WHT_PAYEE_KIND_UNKNOWN')));
+  sources[1].vendorEntityKindSnapshot = 'JURISTIC';
+  month = await read();
+  assert.ok(!month.forms[0].issues.some(i => i.sourceId === 'bad'));
+  assert.ok(month.forms[1].issues.some(i => i.issueCode === 'MISSING_TAX_ID' && i.sourceId === 'bad'));
+  sources[1].vendorEntityKindSnapshot = null;
+  events.length = 0; periods.splice(0, 1);
+  month = await read();
+  assert.ok(month.forms.every(f => f.paymentCount === 0 && f.issues.some(i => i.issueCode === 'WHT_PAYEE_KIND_UNKNOWN')));
+  periods.unshift({ id: 'PND3', formType: 'PND3', periodKey: '2026-09', status: 'FILED', dueDate: new Date('2099-10-07') }); events.push(good);
+  papers.push({ id: 'filed', formType: 'PND3', taxPeriodId: 'PND3', establishmentCode: '00000', establishmentBranchId: 'head', sequence: 0, status: 'FILED', rowsCertain: true,
+    preparedBy: 'SYSTEM', lines: [{ sourceType: good.sourceType, sourceId: good.sourceId, lineJson: { payment: withholdingPaymentFacts({ ...good, payeeSnapshot: good.payeeSnapshotJson }) } }] });
+  const frozen = JSON.stringify(papers);
+  month = await read();
+  assert.ok(month.forms[0].issues.some(i => i.description === warning));
+  assert.equal(month.forms[0].canDownload, true); assert.equal(JSON.stringify(papers), frozen);
+  const hidden = await read({ ...ctx, permissions: ['wht.pnd53.read', 'expense.read'], scopes: { branchIds: ['head'] } });
+  assert.ok(hidden.forms[0].issues.some(i => i.description === warning));
+  assert.doesNotMatch(JSON.stringify(hidden), /ผู้รับเงินที่ต้องแก้|สาขาลับ|bad-payment|"bad"/);
+  mode = 'EACH_BRANCH_PAYS';
+  month = await read();
+  assert.ok(!month.establishments!.find(e => e.code === '00000')!.forms[0].issues.some(i => i.description === warning));
+  assert.ok(month.establishments!.find(e => e.code === '00002')!.forms.every(f => f.issues.length));
+  (branches[1] as any).taxBranchCode = null;
+  const noCode = await read();
+  assert.ok(noCode.establishmentIssues!.some(issue => issue.issueCode === 'WHT_BRANCH_HAS_NO_CODE' && issue.branchId === 'branch'), 'a source-only branch still offers its branch-code correction');
+  branches[1].taxBranchCode = '00002';
+  mode = 'HEAD_OFFICE_PAYS_ALL'; sources[1].vendorEntityKindSnapshot = 'INDIVIDUAL'; sources[1].vendorTaxIdSnapshot = '1100700000002';
+  bad.payeeSnapshotJson.taxId = '1100700000002'; events.push(bad);
+  month = await read();
+  assert.ok(month.forms[0].papers!.some(p => p.sequence === 1 && p.canDownload));
+  assert.equal(month.forms[0].canDownload, true); assert.equal(JSON.stringify(papers), frozen);
+  // A different unfiled form uses its normal paper, without changing the filed form's bytes/rows.
+  sources[1].vendorEntityKindSnapshot = 'JURISTIC'; sources[1].whtCategoryCode = 'PND53'; bad.eventType = 'WHT_PND53'; bad.taxPeriodId = 'PND53'; bad.incomeCategoryCode = 'PND53';
+  month = await read();
+  assert.equal(month.forms[1].papers![0].sequence, 0); assert.equal(month.forms[1].papers![0].canDownload, true);
+  assert.equal(JSON.stringify(papers), frozen);
+  // A source-level match cannot hide an omitted second payment on the very same expense.
+  sources[0].payments.push({ ...sources[0].payments[0], id: 'new-good-payment', amount: '0', paidAt: new Date('2026-09-11') });
+  sources[0].vendorEntityKindSnapshot = null;
+  month = await read();
+  assert.ok(month.forms[0].issues.some(i => i.description === warning));
+  sources[0].payments.pop();
+  month = await read();
+  assert.ok(!month.forms[0].issues.some(i => i.description === warning));
 });

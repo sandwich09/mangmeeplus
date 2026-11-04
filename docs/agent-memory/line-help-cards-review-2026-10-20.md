@@ -228,7 +228,7 @@ The table covers every named quoted control/page/command in the revised bodies a
 | บันทึกว่าจ่ายแล้ว | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:274` |
 | พนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:231` |
 | พนักงานและสิทธิ์ | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:347` |
-| ภ.ง.ด.53 | แท็บแบบภาษีและชื่อแบบภาษีบนเว็บ | `apps/web/src/features/tax/WithholdingPage.tsx:212` |
+| ภ.ง.ด.53 | แท็บแบบภาษีและชื่อแบบภาษีบนเว็บ | `apps/web/src/features/tax/WithholdingPage.tsx:239` |
 | มีตัวจริง ยังไม่ได้แนบรูป | ตัวเลือกขั้นหลักฐานรายจ่าย | `apps/web/src/features/expenses/ExpensesPages.tsx:1334` |
 | ยกเลิกเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1644` |
 | ยกเลิกใบเบิก | ปุ่มยืนยันในหน้าต่างยกเลิกใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:87` |

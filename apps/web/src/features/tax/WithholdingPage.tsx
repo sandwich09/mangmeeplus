@@ -37,15 +37,21 @@ export function withholdingPaymentPage(rows: WithholdingMonthDto['payments'], fi
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   return { rows: filtered.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize), totalPages, total: filtered.length };
 }
+const isSourceIssue = (issue: WithholdingMonthIssueDto) => !!(issue.sourceId || issue.expenseId || issue.counterpartyId)
+  || issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN' || /_FILING_REVIEW$/.test(issue.issueCode);
 function Issue({ issue, companyId, permissions }: { issue: WithholdingMonthIssueDto; companyId: string; permissions: string[] }) {
   const payer = /_FILING_PAYER$/.test(issue.issueCode);
   const kind = /KIND/.test(issue.issueCode);
+  const canEditExpense = permissions.includes('expense.read') && permissions.includes('expense.update') && permissions.includes('expense.confirm');
+  const canEditPayee = permissions.includes('accounting.counterparty.read') && permissions.includes('accounting.counterparty.manage');
+  const expenseHref = issue.expenseId && canEditExpense ? `/companies/${companyId}/expenses/${issue.expenseId}` : null;
+  const payeeHref = issue.counterpartyId && canEditPayee ? `/companies/${companyId}/counterparties/${issue.counterpartyId}` : null;
   const href = payer ? permissions.includes('company.setup.read') ? `${companyProfilePath(companyId)}?from=withholding` : null
-    : kind && issue.counterpartyId ? `/companies/${companyId}/counterparties/${issue.counterpartyId}`
-    : issue.expenseId ? `/companies/${companyId}/expenses/${issue.expenseId}`
-    : issue.counterpartyId ? `/companies/${companyId}/counterparties/${issue.counterpartyId}` : null;
-  return <Notice tone="warning" action={href ? <Link className="underline" href={href}>{payer ? 'ตั้งค่าร้าน › ข้อมูลร้าน' : (kind && issue.counterpartyId) || !issue.expenseId ? 'เปิดคู่ค้า' : 'เปิดรายจ่าย'}</Link> : undefined}>
-    {issue.description}{payer && !permissions.includes('company.legal_identity.manage') && ' ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ'}
+    : kind ? payeeHref ?? expenseHref : expenseHref ?? payeeHref;
+  const canReadExpenses = ['expense.read', 'expense.read_own', 'expense.read_related'].some(permission => permissions.includes(permission));
+  const actionHref = href ?? (canReadExpenses ? `/companies/${companyId}/expenses` : null);
+  return <Notice tone="warning" action={actionHref ? <Link className="inline-flex min-h-11 items-center underline" href={actionHref}>{href ? payer ? 'ตั้งค่าร้าน › ข้อมูลร้าน' : href === payeeHref ? 'เปิดคู่ค้า' : 'เปิดค่าใช้จ่าย' : 'กลับไปรายการค่าใช้จ่าย'}</Link> : undefined}>
+    {issue.description}{payer && !permissions.includes('company.legal_identity.manage') && ' ให้เจ้าของกิจการหรือผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ'}{!href && !payer && (issue.expenseId || issue.counterpartyId) && ' ให้ผู้มีสิทธิ์แก้รายการนี้เป็นผู้แก้'}
   </Notice>;
 }
 type PaperAction = WithholdingMonthFormDto & { id?: string | null; sequence?: number; filedAt?: string | null };
@@ -66,7 +72,7 @@ export function WithholdingFormCard({ form, periodKey, companyId, permissions, b
       { key: 'withheld', label: 'ภาษีที่หักไว้', value: amountText(totals.totalWithheld), unit: 'บาท', dot: 'bg-brand-500' },
     ]} />
     <p className="text-sm text-gray-500">กำหนดยื่น {formatThaiDate(form.dueDate, '')}</p>
-    {!multiple && !!form.unfiledPaymentCount && !form.rowsUncertainNotice && <Notice tone="warning">มีรายการที่ยังไม่อยู่ในแบบที่ยื่น {form.unfiledPaymentCount} รายการ ให้ผู้ทำบัญชียื่นเพิ่มเติม</Notice>}
+    {!multiple && !!form.unfiledPaymentCount && !form.rowsUncertainNotice && !form.issues.some(issue => issue.issueCode === 'WHT_FILED_PAYMENT_OMITTED') && <Notice tone="warning">มีรายการที่ยังไม่อยู่ในแบบที่ยื่น {form.unfiledPaymentCount} รายการ ให้ผู้ทำบัญชียื่นเพิ่มเติม</Notice>}
     <div className="mt-auto pt-2 space-y-4">{papers.map(paper => <WithholdingPaper key={paper.sequence ?? 0} paper={paper} multiple={multiple} centralIssues={centralIssues} companyId={companyId} permissions={permissions} busy={busy} error={paperErrors[String(paper.sequence ?? 0)] ?? (paper.sequence ? undefined : error)} onDownload={() => onDownload(paper)} onFiled={() => onFiled(paper)} onConfirmRows={() => onConfirmRows?.(paper)} />)}</div>
   </MangmeeCard>;
 }
@@ -82,16 +88,31 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
   const [explainDownload, setExplainDownload] = useState(false);
   const isFiled = ['FILED', 'PAID', 'CLOSED'].includes(paper.status ?? '');
   const stale = paper.status === 'EXPORTED' && paper.issues.some(issue => issue.issueCode === 'WHT_FILING_CHANGED_AFTER_DOWNLOAD');
-  const blocking = paper.issues.some(issue => issue.severity === 'BLOCKING' && issue.issueCode !== 'WHT_PAYEE_KIND_UNKNOWN');
+  const blocking = paper.issues.some(issue => issue.severity === 'BLOCKING');
   const canPrepare = permissions.includes('wht.pnd53.prepare');
-  useEffect(() => { if (error && !busy) issuesRef.current?.scrollIntoView({ block: 'start' }); }, [error, busy]);
+  useEffect(() => {
+    if (!error || busy) return;
+    const target = centralIssues && typeof document !== 'undefined' ? document.querySelector<HTMLDivElement>('[data-testid="withholding-fixes"]') : null;
+    (target ?? issuesRef.current)?.scrollIntoView({ block: 'start' });
+  }, [error, busy, centralIssues]);
+  function download() {
+    if ((!isFiled && blocking) || paper.canDownload === false) {
+      setExplainDownload(true);
+      const target = centralIssues && typeof document !== 'undefined' ? document.querySelector<HTMLDivElement>('[data-testid="withholding-fixes"]') : null;
+      (target ?? issuesRef.current)?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'start' });
+      return;
+    }
+    onDownload();
+  }
+
   return <section aria-label={multiple ? withholdingPaperName(paper.sequence) : undefined} className="space-y-3">
     {multiple && <><p className="text-sm font-semibold">{withholdingPaperName(paper.sequence)}{isFiled && paper.filedAt ? ` · ${formatThaiDate(paper.filedAt)}` : ''}</p><PaperStatus form={paper} /><p className="text-sm text-gray-500">{paper.paymentCount} รายการ · หักไว้ {baht(paper.totalWithheld)}</p></>}
 
     <div ref={issuesRef} tabIndex={-1} className="scroll-mt-24 space-y-3">
       {explainDownload && paper.canDownload === false && !paper.issues.length && !paper.rowsUncertainNotice && <Notice tone="warning">ยังดาวน์โหลดไม่ได้ ดึงรายการล่าสุดแล้วตรวจข้อมูลก่อนดาวน์โหลด</Notice>}
       {error && !paper.issues.some(issue => issue.description === error) && <Notice tone="error">{error}</Notice>}
-      {paper.issues.filter(issue => !centralIssues || explainDownload || error || !/_FILING_PAYER$/.test(issue.issueCode)).map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}
+      {paper.issues.filter(issue => !centralIssues || (!isSourceIssue(issue) && (explainDownload || error || !/_FILING_PAYER$/.test(issue.issueCode)))).map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}
       {paper.paymentBasisChanged && <Notice tone="warning">รายการของแบบที่ยื่นไว้ต่างจากวันที่จ่ายจริง ให้ผู้ทำบัญชีเทียบกับแบบที่ยื่นแล้ว</Notice>}
       {paper.cancellations?.map((row, index) => <Notice key={index} tone="warning">ยกเลิกหลังยื่น: {row.payeeName} หักไว้ {baht(row.withheld)} ระบบแก้แบบที่ยื่นแล้วไม่ได้ ให้ผู้ทำบัญชีแจ้งกรมสรรพากร</Notice>)}
       {!!paper.cancelledPayeeNames?.length && <Notice tone="warning">มีผู้รับเงินที่ถูกยกเลิกหลังยื่นในเดือนนี้: {paper.cancelledPayeeNames.join(' · ')} ให้ผู้ทำบัญชีตรวจยอดก่อนยื่น</Notice>}
@@ -99,9 +120,9 @@ function WithholdingPaper({ paper, multiple, centralIssues, companyId, permissio
       {paper.rowsUncertainNotice && <Notice tone="warning">{paper.rowsUncertainNotice}{(!canPrepare || !paper.canConfirmRows) && ' ให้ผู้ที่มีสิทธิ์จัดทำแบบภาษียืนยันรายการ'}</Notice>}
       {paper.rowsConfirmation && <p className="text-sm text-gray-600">ยืนยันรายการของแบบที่ยื่นแล้ว · {paper.rowsConfirmation.displayName ?? 'ผู้จัดทำแบบภาษี'} · {formatThaiDate(paper.rowsConfirmation.at)}</p>}
     </div>
-    {paper.paymentCount === 0 && !isFiled ? <p>เดือนนี้ไม่มีรายการ</p> : canPrepare && <ActionGroup className="!flex-col sm:[&>button]:min-w-48">
+    {paper.paymentCount === 0 && !isFiled && !paper.issues.length ? <p>เดือนนี้ไม่มีรายการ</p> : canPrepare && <ActionGroup className="!flex-col sm:[&>button]:min-w-48">
       {paper.canConfirmRows && <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={onConfirmRows}>ยืนยันรายการของแบบที่ยื่น</button>}
-      <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={() => { if (blocking || paper.canDownload === false) { setExplainDownload(true); issuesRef.current?.focus({ preventScroll: true }); return; } onDownload(); }}>{isFiled ? 'ดาวน์โหลดแบบที่ยื่น' : paper.accountantPrepared ? 'ดาวน์โหลดรายการให้ผู้ทำบัญชี' : paper.sequence ? `ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ ${paper.sequence}` : downloadLabel(paper.formType)}</button>
+      <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={download}>{isFiled ? 'ดาวน์โหลดแบบที่ยื่น' : paper.accountantPrepared ? 'ดาวน์โหลดรายการให้ผู้ทำบัญชี' : paper.sequence ? `ดาวน์โหลดแบบยื่นเพิ่มเติมครั้งที่ ${paper.sequence}` : downloadLabel(paper.formType)}</button>
       {paper.status === 'EXPORTED' && !stale && paper.canMarkFiled !== false && <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={onFiled}>บันทึกว่ายื่นแล้ว</button>}
     </ActionGroup>}
   </section>;
@@ -154,6 +175,12 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
     try { await syncWithholding(companyId, 'PND53'); await refreshMonths(); if (periodKey) setMonth(await getWithholdingMonth(companyId, periodKey)); toast.success('ดึงรายการล่าสุดแล้ว'); }
     catch (e) { setError(apiErrorMessage(e)); } finally { setSyncing(false); }
   }
+  async function retry() {
+    setLoading(true); setError('');
+    try { await refreshMonths(); if (periodKey) setMonth(await getWithholdingMonth(companyId, periodKey)); }
+    catch (e) { setError(apiErrorMessage(e)); }
+    finally { setLoading(false); }
+  }
   async function act(form: PaperAction, filed: boolean | 'confirm') {
     if (!form.periodId) return;
     const establishment = (month?.establishments?.length ?? 0) > 1 ? month?.establishments?.find(row => row.code === form.establishmentCode) : undefined;
@@ -183,10 +210,10 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
     catch (e) { setError(apiErrorMessage(e)); } finally { setCertificateBusy(null); }
   }
   if (!canRead) return <ForbiddenState />;
-  const unknownIssues = [...new Map((month?.forms.flatMap(form => form.issues) ?? []).filter(issue => issue.issueCode === 'WHT_PAYEE_KIND_UNKNOWN').map(issue => [`${issue.sourceType}:${issue.sourceId ?? issue.id}`, issue])).values()];
   const establishments = month?.establishments ?? [];
   const selected = establishments.find(row => row.code === establishmentCode) ?? establishments[0];
   const forms = selected?.forms ?? month?.forms ?? [];
+  const sourceIssues = [...new Map(forms.flatMap(form => [form, ...(form.papers ?? [])]).flatMap(form => form.issues).filter(isSourceIssue).map(issue => [issue.sourceId ? [issue.issueCode, issue.sourceId].join(':') : issue.description, issue])).values()];
   const paged = withholdingPaymentPage(month?.payments ?? [], filter, page, 10, order);
   return <MangmeePage className="mangmee-flat" title="ภาษีหัก ณ ที่จ่าย">
     <div className="space-y-5">
@@ -198,19 +225,19 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
           {permissions.includes('wht.certificate.issue') && <MoreActions label="เพิ่มเติม" align="end" closeOnPress><Link href={`/companies/${companyId}/expenses/wht-certificates`}>ดูหนังสือรับรอง 50 ทวิ</Link></MoreActions>}
         </div>
       </div>
-      {error && <Notice tone="error" action={<button type="button" className={button} onClick={() => { setError(''); void refreshMonths().then(async () => { if (periodKey) setMonth(await getWithholdingMonth(companyId, periodKey)); }).catch(e => setError(apiErrorMessage(e))); }}>ลองอีกครั้ง</button>}>{error}</Notice>}
+      {error && <Notice tone="error" action={<button type="button" className={button} onClick={() => void retry()}>ลองอีกครั้ง</button>}>{error}</Notice>}
       {loading ? <LoadingState /> : month && <>
         {establishments.length > 1 && <SelectField id="withholding-establishment" label="ยื่นในนาม" value={selected?.code ?? ''} disabled={syncing || Object.values(busyForm).some(Boolean)} onChange={e => { setEstablishmentCode(e.target.value); setErrors({}); }}>
           {establishments.map(row => <option key={row.code} value={row.code}>{row.name} ({row.code})</option>)}
         </SelectField>}
         {!!month.unpaidExpenses?.length && <p className="text-sm text-gray-600">ยืนยันแล้ว ยังไม่ได้จ่าย · {month.unpaidExpenses.length} รายการ ยังไม่อยู่ในแบบ {month.unpaidExpenses.map(row => <Link key={row.expenseId} className="ml-2 underline" href={`/companies/${companyId}/expenses/${row.expenseId}`}>{row.payeeName || 'เปิดรายจ่าย'}</Link>)}</p>}
-        <WithholdingFixes month={month} forms={forms} companyId={companyId} permissions={permissions} unknownIssues={unknownIssues} />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{forms.map(form => <WithholdingFormCard key={form.formType} centralIssues form={{ ...form, issues: form.issues.filter(issue => issue.issueCode !== 'WHT_PAYEE_KIND_UNKNOWN' && !(issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' && month.establishmentIssues?.length)) }} periodKey={periodKey} companyId={companyId} permissions={permissions} busy={!!busyForm[form.formType] || syncing} error={errors[form.formType]} paperErrors={Object.fromEntries((form.papers ?? []).map(p => [String(p.sequence), errors[p.sequence ? `${form.formType}:${p.sequence}` : form.formType] ?? '']))} onDownload={(paper = form) => void act(paper, false)} onFiled={(paper = form) => void act(paper, true)} onConfirmRows={paper => void act(paper, 'confirm')} />)}</div>
+        <WithholdingFixes month={month} forms={forms} companyId={companyId} permissions={permissions} sourceIssues={sourceIssues} />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{forms.map(form => <WithholdingFormCard key={form.formType} centralIssues form={{ ...form, issues: form.issues.filter(issue => !(issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' && month.establishmentIssues?.length)) }} periodKey={periodKey} companyId={companyId} permissions={permissions} busy={!!busyForm[form.formType] || syncing} error={errors[form.formType]} paperErrors={Object.fromEntries((form.papers ?? []).map(p => [String(p.sequence), errors[p.sequence ? `${form.formType}:${p.sequence}` : form.formType] ?? '']))} onDownload={(paper = form) => void act(paper, false)} onFiled={(paper = form) => void act(paper, true)} onConfirmRows={paper => void act(paper, 'confirm')} />)}</div>
         {!!month.separatePnd2?.length && <MangmeeCard className="space-y-3 p-4"><h2 className="text-base font-semibold">ต้องจัดทำ ภ.ง.ด.2 แยก</h2>{month.separatePnd2.map(row => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 border-b py-3"><div><p>{row.payeeName} · {row.incomeCategoryLabel}</p><p>จ่าย {baht(row.paid)} · หักไว้ {baht(row.withheld)}</p></div>{row.expenseId && <Link className="underline" href={`/companies/${companyId}/expenses/${row.expenseId}`}>เปิดรายจ่าย</Link>}</div>)}</MangmeeCard>}
         <MangmeeCard className="min-w-0 space-y-4 p-4">
           <h2 ref={listHeading} className="scroll-mt-4 text-lg font-semibold">รายการที่หักภาษีของเดือนนี้</h2>
           <FilterTabs aria-label="แบบภาษี" value={filter} onChange={value => { setFilter(value); setPage(1); }} tabs={[{ key: 'ALL', label: 'ทั้งหมด' }, { key: 'PND3', label: 'ภ.ง.ด.3' }, { key: 'PND53', label: 'ภ.ง.ด.53' }].map(tab => ({ ...tab, count: month.payments.filter(row => tab.key === 'ALL' || row.formType === tab.key).length }))} />
-          {paged.rows.length === 0 ? <p>เดือนนี้ไม่มีรายการ</p> : <WithholdingPayments systemCertificatesAvailable={systemCertificatesAvailable} rows={paged.rows} month={month} companyId={companyId} order={order} onOrder={() => { setOrder(order === 'newest' ? 'oldest' : 'newest'); setPage(1); }} onOpen={href => router.push(href)} certificateBusy={certificateBusy} onCertificate={id => void certificate(id)} />}
+          {paged.rows.length === 0 ? <p>{sourceIssues.length || month.establishmentIssues?.length ? 'แก้ข้อมูลรายการจ่ายเพื่อแสดงในแบบ' : 'เดือนนี้ไม่มีรายการ'}</p> : <WithholdingPayments systemCertificatesAvailable={systemCertificatesAvailable} rows={paged.rows} month={month} companyId={companyId} order={order} onOrder={() => { setOrder(order === 'newest' ? 'oldest' : 'newest'); setPage(1); }} onOpen={href => router.push(href)} certificateBusy={certificateBusy} onCertificate={id => void certificate(id)} />}
           {paged.totalPages > 1 && <Pagination prominent page={Math.min(page, paged.totalPages)} totalPages={paged.totalPages} onPageChange={next => { setPage(next); listHeading.current?.scrollIntoView({ block: 'start' }); }} />}
         </MangmeeCard>
       </>}
@@ -218,18 +245,19 @@ export function WithholdingPage({ companyId, permissions, systemCertificatesAvai
   </MangmeePage>;
 }
 
-function WithholdingFixes({ month, forms, companyId, permissions, unknownIssues }: { month: WithholdingMonthDto; forms: WithholdingMonthFormDto[]; companyId: string; permissions: string[]; unknownIssues: WithholdingMonthIssueDto[] }) {
+function WithholdingFixes({ month, forms, companyId, permissions, sourceIssues }: { month: WithholdingMonthDto; forms: WithholdingMonthFormDto[]; companyId: string; permissions: string[]; sourceIssues: WithholdingMonthIssueDto[] }) {
   // A form and each of its papers (normal and additional filings) can carry facts; rows below are de-duplicated.
   const papers = forms.flatMap(form => [form, ...(form.papers ?? [])]);
+  const canReadExpenses = ['expense.read', 'expense.read_own', 'expense.read_related'].some(permission => permissions.includes(permission));
   const branchSettings = `/companies/${companyId}/settings/branches?from=withholding&periodKey=${month.periodKey}`;
   const payerIssues = [...new Map(papers.flatMap(form => form.issues).filter(issue => /_FILING_PAYER$/.test(issue.issueCode)).map(issue => [issue.description, issue])).values()];
   const incomeRows = [...new Map(papers.flatMap(form => form.accountantTypes ?? []).map(row => [`${row.payeeName}:${row.incomeType}`, row])).values()];
-  if (!month.undatedPayments?.length && !month.paidWithoutWithholding?.length && !unknownIssues.length && !payerIssues.length && !incomeRows.length && !month.establishmentIssues?.length) return null;
+  if (!month.undatedPayments?.length && !month.paidWithoutWithholding?.length && !sourceIssues.length && !payerIssues.length && !incomeRows.length && !month.establishmentIssues?.length) return null;
   const rowClass = 'flex min-h-11 flex-wrap items-center justify-between gap-2 border-b border-gray-50 py-3 text-sm hover:bg-gray-50';
   // MangmeeCard passes on only its class, so the test id sits on a wrapper.
-  return <div data-testid="withholding-fixes"><MangmeeCard className="p-4"><h2 className="text-base font-semibold">ต้องแก้ก่อนยื่น</h2>
+  return <div data-testid="withholding-fixes" tabIndex={-1} className="scroll-mt-24"><MangmeeCard className="p-4"><h2 className="text-base font-semibold">ต้องแก้ก่อนยื่น</h2>
         {month.establishmentIssues?.map(issue => <Notice key={[issue.issueCode, issue.branchId].join(':')} tone="warning" action={permissions.includes('company.branch.read') ? <Link className="underline" href={`${branchSettings}${issue.branchId ? `&branchId=${encodeURIComponent(issue.branchId)}` : ''}`}>ตั้งค่าร้าน › สาขา</Link> : undefined}>
-          {issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' ? 'มีรายการจ่ายจากหลายสาขา บอกก่อนว่าใครจ่ายเงินและหักภาษี' : `${issue.branchName} ยังไม่มีรหัสสาขาภาษี · ${issue.paymentCount} รายการ`}
+          {issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' ? 'มีรายการจ่ายจากหลายสาขา บอกก่อนว่าใครจ่ายเงินและหักภาษี' : `${issue.branchName} ยังไม่มีรหัสสาขาภาษี${issue.paymentCount ? ` · ${issue.paymentCount} รายการ` : ''}`}
           {!permissions.includes('company.legal_identity.manage') && issue.issueCode === 'WHT_PAYER_MODE_REQUIRED' && ' ให้ผู้ที่แก้ไขข้อมูลร้านได้เป็นผู้บันทึก'}
           {!permissions.includes('company.branch.manage') && issue.issueCode === 'WHT_BRANCH_HAS_NO_CODE' && ' ให้ผู้ที่แก้ไขสาขาได้กรอกรหัสสาขาภาษี'}
         </Notice>)}
@@ -240,11 +268,8 @@ function WithholdingFixes({ month, forms, companyId, permissions, unknownIssues 
     {/* Every row reads the same: what is wrong at the left, one badge at the right, and the whole row opens where it is fixed. */}
     {payerIssues.map(issue => permissions.includes('company.setup.read')
       ? <Link key={issue.id} className={rowClass} href={`${companyProfilePath(companyId)}?from=withholding`}><span className="min-w-0 flex-1 break-words">{issue.description}</span><MangmeeBadge tone="amber">ข้อมูลร้านยังไม่ครบ</MangmeeBadge></Link>
-      : <div key={issue.id} className={rowClass}><span className="min-w-0 flex-1 break-words">{issue.description} ให้ผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ</span><MangmeeBadge tone="amber">ข้อมูลร้านยังไม่ครบ</MangmeeBadge></div>)}
-    {unknownIssues.map(issue => { const contents = <><span className="min-w-0 flex-1 break-words">{issue.description}</span><MangmeeBadge tone="amber">ยังไม่รู้ประเภทผู้รับเงิน</MangmeeBadge></>;
-      return issue.counterpartyId || issue.expenseId
-        ? <Link key={issue.id} className={rowClass} href={issue.counterpartyId ? `/companies/${companyId}/counterparties/${issue.counterpartyId}` : `/companies/${companyId}/expenses/${issue.expenseId}`}>{contents}</Link>
-        : <div key={issue.id} className={rowClass}>{contents}</div>; })}
+      : <div key={issue.id} className={rowClass}><span className="min-w-0 flex-1 break-words">{issue.description} ให้ผู้มีสิทธิ์แก้ข้อมูลร้านตรวจข้อมูลให้ครบ{canReadExpenses && <> <Link className="inline-flex min-h-11 items-center underline" href={`/companies/${companyId}/expenses`}>กลับไปรายการค่าใช้จ่าย</Link></>}</span><MangmeeBadge tone="amber">ข้อมูลร้านยังไม่ครบ</MangmeeBadge></div>)}
+    {sourceIssues.map(issue => <Issue key={issue.id} issue={issue} companyId={companyId} permissions={permissions} />)}
     {incomeRows.map(row => { const expense = month.payments.find(payment => payment.payeeName === row.payeeName && payment.incomeCategoryLabel === row.incomeType);
       const contents = <><span className="min-w-0 flex-1 break-words font-semibold">{row.payeeName} · {row.incomeType}</span><MangmeeBadge tone="amber">ให้ผู้ทำบัญชีจัดทำแบบ</MangmeeBadge></>;
       return expense?.expenseId ? <Link key={`${row.payeeName}:${row.incomeType}`} className={rowClass} href={`/companies/${companyId}/expenses/${expense.expenseId}`}>{contents}</Link> : <div key={`${row.payeeName}:${row.incomeType}`} className={rowClass}>{contents}</div>;
