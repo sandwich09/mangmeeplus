@@ -1,10 +1,42 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeBusinessSnapshot, runtimeBusinessEffects, runtimeAttemptId, runtimeEventIdPrefix, resetRuntimeAfterHook, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
+import { join, resolve } from 'node:path';
+import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeBusinessSnapshot, runtimeBusinessEffects, runtimeAttemptId, runtimeEventIdPrefix, runtimeAssetMessageId, resetRuntimeAfterHook, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
+import { capRejectionCount, installEvalGuard } from './line-ai-expense-advisor/eval-spend';
+
+test('real PostgreSQL: eval_guard blocks an over-cap reservation and preserves the rejection sequence', { skip: !process.env['BILLING_TEST_DATABASE_URL'] }, async () => {
+  const databaseUrl = process.env['BILLING_TEST_DATABASE_URL']!;
+  assertIsolatedReplayDatabase(databaseUrl);
+  const requireApi = createRequire(resolve(process.cwd(), 'apps/api/package.json'));
+  const { Client } = requireApi('pg') as { Client: new (options: { connectionString: string }) => { connect(): Promise<void>; end(): Promise<void>; query(sql: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> } };
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  let installed = false;
+  try {
+    await installEvalGuard(client, databaseUrl, '1.00');
+    installed = true;
+    await client.query('UPDATE eval_guard.ledger_satang SET amount = 100 WHERE id = true');
+    const before = await capRejectionCount(client);
+    await assert.rejects(client.query(`INSERT INTO public."AiBudgetReservation"
+      ("id","companyId","monthKey","bucket","policyRevision","sourceRoute","stepKind","attemptKey","invocationKey","upperBoundSatang","pricingSnapshot","ownerToken")
+      VALUES ('eval-guard-test','no-company-needed-before-trigger','2026-11','CHAT','test','line-turn','test','attempt','eval-guard-test-invocation',1,'{}','owner')`), /EVAL_RUN_CAP/);
+    const after = await capRejectionCount(client);
+    assert.equal(BigInt(after), BigInt(before) + 1n);
+  } finally {
+    try {
+      if (installed) {
+        await client.query('UPDATE eval_guard.ledger_satang SET amount = 0 WHERE id = true');
+        const maxThb = process.env['MANGMEE_EVAL_MAX_THB'] ?? '2000.00';
+        const [baht, fraction = ''] = maxThb.split('.');
+        await client.query('UPDATE eval_guard.settings SET max_satang = $1 WHERE id = true', [String(BigInt(baht!) * 100n + BigInt(fraction.padEnd(2, '0')))]);
+      }
+    } finally { await client.end(); }
+  }
+});
 
 test('onBeforeReset runs before the database reset and receives its conversation attempt', async () => {
   const order: string[] = [];
@@ -20,6 +52,7 @@ test('event IDs use an attempt-specific prefix while the legacy attempt number r
   const firstAttempt = runtimeAttemptId('sample', 0), retry = runtimeAttemptId('sample', 0);
   assert.notEqual(firstAttempt, retry);
   assert.notEqual(runtimeEventIdPrefix(firstAttempt, 1), runtimeEventIdPrefix(retry, 1));
+  assert.notEqual(runtimeAssetMessageId(firstAttempt, 1, 'receipt-1'), runtimeAssetMessageId(retry, 1, 'receipt-1'));
   assert.equal(runtimeEventIdPrefix(firstAttempt, 1), runtimeEventIdPrefix(firstAttempt, 1));
 });
 

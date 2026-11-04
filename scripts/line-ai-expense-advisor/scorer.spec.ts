@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   callMatchesGold, factInText, factsForMatchedCandidate, moneyTextVariants, scoreFacts, scoreMachineTokens, scoreTags, scoreToolCalls, scoreTurn, summarizeScores,
+  providerCostExact, classifyCacheState, scoreWorkflowTask, selectLatestCompleteAttempt, workflowAttemptCostTotal, scoreWorkflowCorpus,
   type CapturedEvidence, type ExpectedFact,
 } from './scorer';
 import { extractExpectedFacts, extractExpectedFactsForCall } from './oracle';
@@ -35,6 +36,58 @@ describe('moneyTextVariants', () => {
       assert.ok(variants.includes('0.00'), `moneyTextVariants(${JSON.stringify(zero)}) should include '0.00'`);
       assert.ok(variants.includes('0'), `moneyTextVariants(${JSON.stringify(zero)}) should include '0'`);
     }
+  });
+});
+
+describe('workflow measurement M1b', () => {
+  it('computes every tariff part exactly, then checks the paired HALF_UP satang total', () => {
+    const cost = providerCostExact({
+      tokens: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 }, externalUnits: 1,
+      tariff: { usdPerMTok: { input: 0.5, output: 0, cacheRead: 0, cacheWrite: 0 }, thbPerUsd: 30,
+        externalUsdPerUnit: 0.002, searchContentInputTokensPerUnit: 2000 },
+      recordedCostSatang: 9,
+    });
+    assert.equal(cost.exactSatang, '9.0015');
+    assert.equal(cost.roundedSatang, 9);
+    assert.equal(cost.roundingMatches, true);
+  });
+
+  it('separates cache cohorts and treats collectionState as non-business for M-R6', () => {
+    assert.equal(classifyCacheState({ cacheRead: 0, cacheWrite: 12 }), 'cold');
+    assert.equal(classifyCacheState({ cacheRead: 12, cacheWrite: 0 }), 'warm');
+    assert.equal(classifyCacheState({ cacheRead: 12, cacheWrite: 2 }), 'mixed');
+    const task = { id: 'draft', kind: 'reimbursement', startTurn: 0, endTurn: 2, confirmTurn: 2,
+      goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [] }, minimalTurns: 2, completable: true } as any;
+    const scores = scoreWorkflowTask(task, [{ turnIndex: 1, businessSnapshot: { business: {}, collectionState: { ReimbursementDraftAction: [{ id: 'a', status: 'COLLECTING' }] } }, unintendedEffects: [] }]);
+    assert.equal(scores.wrongApplied, 0);
+    assert.equal(scores.wrongPreview, 0);
+  });
+
+  it('scores only the latest complete attempt while keeping spend from every attempt', () => {
+    const attempts = [
+      { attemptId: 'a1', complete: false, providerCostExact: '4.25' },
+      { attemptId: 'a2', complete: true, providerCostExact: '2.10' },
+      { attemptId: 'a3', complete: true, providerCostExact: '3.20' },
+    ];
+    assert.equal(selectLatestCompleteAttempt(attempts)?.attemptId, 'a3');
+    assert.equal(workflowAttemptCostTotal(attempts), '9.55');
+  });
+
+  it('counts every typed attempt in W13 and excludes button-only conversations', () => {
+    const corpus = { version: 2, seed: 'x', status: 'draft', conversations: [
+      { id: 'typed', category: 'expense', journeyKind: 'typed', actors: [], tasks: [], turns: [] },
+      { id: 'button', category: 'expense', journeyKind: 'button', actors: [], tasks: [], turns: [] },
+    ] } as any;
+    const call = (providerCostExact: string) => ({ tag: 'classifier', modelId: 'm', ok: true, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, providerCostExact });
+    const turn = (conversationId: string, calls: any[]) => ({ attemptId: 'a', conversationId, turnIndex: 0, actorKey: 'owner', inputKind: 'message', calls, effects: [],
+      businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], deliveredActions: [], latencyMs: null });
+    const metrics = scoreWorkflowCorpus({ corpus, attempts: [
+      { attemptId: 'failed', conversationId: 'typed', complete: false, turns: [turn('typed', [call('1')])] },
+      { attemptId: 'complete', conversationId: 'typed', complete: true, turns: [turn('typed', [call('2')])] },
+      { attemptId: 'button', conversationId: 'button', complete: true, turns: [turn('button', [call('8')])] },
+    ] as any });
+    assert.equal(metrics.W13.candidateExact, '3');
+    assert.equal(metrics.attemptSpendExact, '11');
   });
 });
 

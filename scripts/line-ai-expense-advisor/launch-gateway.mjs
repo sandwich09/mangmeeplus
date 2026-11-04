@@ -19,7 +19,7 @@
  *   MANGMEE_EVAL_REDIS_URL               default redis://127.0.0.1:16389/13
  *   MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES  default matches spec §5 R-L4's family list
  */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -31,6 +31,7 @@ const DB_NAME = 'watchdog_ai_reliability_replay_expense_advisor';
 const PORT = process.env.MANGMEE_EVAL_GATEWAY_PORT ?? '19205';
 const API_PORT = process.env.MANGMEE_EVAL_API_PORT ?? '19291';
 const REDIS_URL = process.env.MANGMEE_EVAL_REDIS_URL ?? 'redis://127.0.0.1:16389/13';
+const OUTPUT_DIR = process.env.MANGMEE_EVAL_OUTPUT_DIR;
 const DETERMINISTIC_FAMILIES = process.env.MANGMEE_EVAL_DETERMINISTIC_RESPONSE_FAMILIES
   ?? 'expense.list_recent::single_metric,expense.list_recent::list,expense.get_breakdown::list,expense.get_daily_closing::single_metric,reimbursement.list_pending_approvals::list,reimbursement.get_summary::single_metric';
 
@@ -88,9 +89,18 @@ const env = {
 };
 
 const entry = resolve(REPO_ROOT, 'apps/ai-gateway/dist/apps/ai-gateway/src/main.js');
+if (!OUTPUT_DIR) {
+  console.error(JSON.stringify({ event: 'gateway_launch_refused', reason: 'MANGMEE_EVAL_OUTPUT_DIR_REQUIRED_FOR_PROVENANCE' }));
+  process.exit(1);
+}
+mkdirSync(OUTPUT_DIR, { recursive: true });
+const transport = anthropicApiKey ? 'anthropic-api' : 'bedrock';
+const gatewayManifestPath = resolve(OUTPUT_DIR, 'gateway.manifest.json');
+writeFileSync(gatewayManifestPath, JSON.stringify({ transport, modelId: env.BEDROCK_MODEL_ID, region: env.BEDROCK_REGION,
+  recordedAt: new Date().toISOString(), gatewayUrl: env.AI_GATEWAY_INTERNAL_URL }, null, 2));
 console.log(JSON.stringify({
   event: 'gateway_launch', port: PORT, url: env.AI_GATEWAY_INTERNAL_URL, apiUrl: env.ERP_CORE_INTERNAL_URL, entry,
-  transport: anthropicApiKey ? 'anthropic-api' : 'bedrock',
+  transport, gatewayManifestPath,
 }));
 const child = spawn(process.execPath, [entry], { env, stdio: 'inherit' });
 child.on('exit', (code) => process.exit(code ?? 1));

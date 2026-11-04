@@ -6,7 +6,8 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { scenarioIdsIn, rescoreReportPath } from './run-rescore';
+import { scenarioIdsIn, rescoreReportPath, workflowAttemptsFromEvidence } from './run-rescore';
+import { scoreAllTurns } from './gold-oracle-pass';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
 function fakeEvidence(scenarioId: string, turnIndex: number): RuntimeTurnEvidence {
@@ -45,5 +46,31 @@ describe('rescoreReportPath', () => {
     const path = rescoreReportPath('/tmp/out/run.evidence.json', NOW);
     assert.ok(path.endsWith('.report.md'));
     assert.notEqual(path, '/tmp/out/run.report.md');
+  });
+});
+
+describe('workflowAttemptsFromEvidence (M1c)', () => {
+  it('rescores the saved businessSnapshot rows in one complete attempt per conversation', () => {
+    const corpus = { version: 2, seed: 'synthetic', status: 'draft', conversations: [{ id: 'workflow-1', category: 'expense', journeyKind: 'typed',
+      actors: [{ key: 'owner', company: 'A', role: 'OWNER', branchScope: 'all' }], tasks: [], turns: [{ user: 'show', expect: {} }, { press: 'continue', expect: { label: 'continue' } }] }] } as any;
+    const first = { ...fakeEvidence('workflow-1', 0), attemptId: 'attempt-1', businessSnapshot: { business: { ExpenseRecord: [{ id: 'seed-1', status: 'READY' }] }, collectionState: {} }, unintendedEffects: [] } as any;
+    const second = { ...fakeEvidence('workflow-1', 1), attemptId: 'attempt-1', businessSnapshot: { business: { ExpenseRecord: [{ id: 'seed-1', status: 'CONFIRMED' }] }, collectionState: {} }, unintendedEffects: [] } as any;
+    const attempts = workflowAttemptsFromEvidence(corpus, [first, second]);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0]!.complete, true);
+    assert.deepEqual(attempts[0]!.turns[1]!.businessSnapshot.business.ExpenseRecord, [{ id: 'seed-1', status: 'CONFIRMED' }]);
+  });
+});
+
+describe('legacy advisor evidence (M1c)', () => {
+  it('keeps the prior scorer result when rescore evidence has no attempt or business snapshot', () => {
+    const conversation = { id: 'legacy-1', company: 'A', role: 'OWNER', turns: [
+      { category: 'general', user: 'ตอบสั้น ๆ', expect: { tags: { no_tool: true } } },
+    ] } as any;
+    const evidence = { ...fakeEvidence('legacy-1', 0), receipts: [{ messages: [{ type: 'text', text: 'รับทราบแล้ว' }], at: 20, receiptId: 'reply' }] };
+    const scores = scoreAllTurns([{ conversation, turnIndex: 0, turn: conversation.turns[0] }], [evidence], {
+      resultsByTurn: new Map(), factsByTurn: new Map(), resolvedCallsByTurn: new Map(), alternativeFactsByTurn: new Map(),
+    }, new Date('2026-11-04T00:00:00.000Z'));
+    assert.deepEqual(scores, [{ conversationId: 'legacy-1', turnIndex: 0, category: 'general', passed: true, reasons: [] }]);
   });
 });

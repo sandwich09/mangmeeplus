@@ -7,7 +7,7 @@
  */
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import type { Corpus } from './types';
-import type { TurnScore, summarizeScores } from './scorer';
+import type { TurnScore, WorkflowMetrics, summarizeScores } from './scorer';
 import { renderUserText } from './template';
 
 const REPORT_REPLY_MAX_CHARS = 600;
@@ -107,6 +107,28 @@ export function gatewayCoverageForReport(evidence: RuntimeTurnEvidence | undefin
   });
 }
 
+const thb = (satang: string) => (Number(satang) / 100).toFixed(2);
+const workflowCostPerCompleted = (metrics: WorkflowMetrics) => {
+  const rows = Object.values(metrics.W5.byKind);
+  const completed = rows.reduce((sum, row) => sum + row.completedTasks, 0);
+  const total = rows.reduce((sum, row) => sum + Number(row.providerExact), 0);
+  return completed ? (total / completed / 100).toFixed(2) : '0.00';
+};
+
+/** Owner-facing before/after table from measurement spec §10. */
+export function renderWorkflowSummary(input: { before: WorkflowMetrics; after: WorkflowMetrics; ready?: string; remaining?: string }): string {
+  const before = input.before, after = input.after;
+  const beforeComplete = before.W3.total ? `${(100 * before.W3.passed / before.W3.total).toFixed(0)}%` : '0%';
+  const afterComplete = after.W3.total ? `${(100 * after.W3.passed / after.W3.total).toFixed(0)}%` : '0%';
+  const beforeWrong = before.W6.wrongApplied + before.W6.wrongPreview, afterWrong = after.W6.wrongApplied + after.W6.wrongPreview;
+  const beforeFast = ((before.W8['0']?.p50 ?? 0) / 1000).toFixed(1), afterFast = ((after.W8['0']?.p50 ?? 0) / 1000).toFixed(1);
+  return `## ผลวัดงานซ้ำ\n\n| | ก่อน | หลัง |\n|---|---:|---:|\n`
+    + `| ต้นทุนต่องานที่เสร็จ | ${workflowCostPerCompleted(before)} บาท | ${workflowCostPerCompleted(after)} บาท |\n`
+    + `| ต้นทุนรวมชุดงานเดียวกัน | ${thb(before.W13.candidateExact)} บาท | ${thb(after.W13.candidateExact)} บาท |\n`
+    + `| งานจบโดยไม่ติด | ${beforeComplete} | ${afterComplete} |\n| ทำผิดรายการ | ${beforeWrong} ครั้ง | ${afterWrong} ครั้ง |\n`
+    + `| ตอบเร็ว (ปุ่ม) | ${beforeFast} วิ | ${afterFast} วิ |\n\nพร้อมแล้ว: ${input.ready ?? '—'}\n\nยังเหลือ: ${input.remaining ?? '—'}\n`;
+}
+
 export function renderReport(input: {
   sourceCommit: string;
   now: Date;
@@ -121,8 +143,9 @@ export function renderReport(input: {
    * run's saved turnEvidence against the current scorer/corpus, rather than a fresh model run —
    * the report must say so just as plainly as a subset run. */
   rescoredFrom?: { evidencePath: string; sourceCommit: string; startedAt: string };
+  workflowSummary?: { before: WorkflowMetrics; after: WorkflowMetrics; ready?: string; remaining?: string };
 }): string {
-  const { sourceCommit, now, summary, scores, corpus, turnEvidence, subset, rescoredFrom } = input;
+  const { sourceCommit, now, summary, scores, corpus, turnEvidence, subset, rescoredFrom, workflowSummary } = input;
   const subsetBanner = subset
     ? `> **Subset run — not the full corpus.** ${corpus.conversations.length} conversation(s) selected from ${subset.description}: ${subset.onlyIds.join(', ')}\n\n`
     : '';
@@ -172,5 +195,6 @@ export function renderReport(input: {
     + `| Turns with machine tokens (D3) | ${machineTokenTurnCount} (${machineTokenBreakdown}) |\n\n`
     + `## By category (spec §3 row)\n\n| Category | Passed/Total |\n|---|---|\n${byCategoryRows}\n\n`
     + `## Latency by lane (D5)\n\n| Lane | n | p50 ms | p95 ms | max ms | >15s | >30s | Cost (THB) |\n|---|---|---|---|---|---|---|---|\n${latencyRows}\n\n`
-    + `## Failures\n\n${failureSections || '_none_'}\n`;
+    + `## Failures\n\n${failureSections || '_none_'}\n`
+    + (workflowSummary ? `\n${renderWorkflowSummary(workflowSummary)}` : '');
 }

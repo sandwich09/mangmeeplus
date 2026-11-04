@@ -16,16 +16,48 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateCorpus, flattenTurns, type Corpus } from './types';
+import { validateCorpus, validateWorkflowCorpus, flattenTurns, type Corpus, type WorkflowCorpus } from './types';
 import { buildCompanySeed, applySeedRows, truncateAllTables, SHARED_ACCESS_ROWS, type CompanySeed, type PgClientLike } from './seed';
 import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFactsForCall, extractOfferedChoices, gitHeadSha, type ShownItem } from './oracle';
 import { renderUserText } from './template';
+import { captureSpend, installEvalGuard } from './eval-spend';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
 const DB_NAME = 'watchdog_ai_reliability_replay_expense_advisor';
 const CORPUS_PATH = process.env['MANGMEE_EVAL_CORPUS'] ?? resolve(REPO_ROOT, 'scripts/line-ai-expense-advisor/corpus.sample.json');
 const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16389/13';
+
+export function resolveWorkflowSeedRef(ref: string, seeds: Record<'A' | 'B' | 'C', CompanySeed>): Record<string, unknown> {
+  assert.ok(ref.startsWith('$seed:'), 'WORKFLOW_SEED_REFERENCE_REQUIRED');
+  const key = ref.slice('$seed:'.length);
+  const row = Object.values(seeds).flatMap(company => company.rows).find(candidate => candidate.data.id === key);
+  assert.ok(row, `WORKFLOW_SEED_REFERENCE_UNKNOWN:${key}`);
+  return row.data;
+}
+
+export function validateWorkflowPreflight(corpus: WorkflowCorpus, seeds: Record<'A' | 'B' | 'C', CompanySeed>) {
+  const seedKeys = new Set(Object.values(seeds).flatMap(company => company.rows.map(row => String(row.data.id ?? ''))));
+  validateWorkflowCorpus(corpus, seedKeys);
+  let presses = 0, seedReferences = 0, actorAssignments = 0;
+  for (const conversation of corpus.conversations) for (const turn of conversation.turns) {
+    const actor = turn.as ? conversation.actors.find(row => row.key === turn.as!.key) : conversation.actors[0];
+    assert.ok(actor, `WORKFLOW_ACTOR_MISSING:${conversation.id}`);
+    const company = seeds[actor.company];
+    assert.ok(company.users[actor.role], `WORKFLOW_ACTOR_SEED_MISSING:${conversation.id}:${actor.key}`);
+    if (actor.branchScope !== 'all') assert.ok(actor.branchScope.branches.every(branch => company.branchIds.includes(branch)), `WORKFLOW_BRANCH_SCOPE_UNKNOWN:${actor.key}`);
+    actorAssignments++;
+    if (turn.press) presses++;
+    for (const task of conversation.tasks) for (const record of task.goldTerminal.records) if (record.ref.startsWith('$seed:')) {
+      resolveWorkflowSeedRef(record.ref, seeds); seedReferences++;
+    }
+    for (const op of turn.fixture ?? []) if (op.op === 'mutate') {
+      assert.ok(seedKeys.has(op.seedKey), `WORKFLOW_FIXTURE_SEED_UNKNOWN:${op.seedKey}`);
+      resolveWorkflowSeedRef(`$seed:${op.seedKey}`, seeds);
+    }
+  }
+  return { conversations: corpus.conversations.length, turns: corpus.conversations.reduce((sum, row) => sum + row.turns.length, 0), presses, actorAssignments, seedReferences };
+}
 
 function withDatabase(adminUrl: string, name: string): string {
   const url = new URL(adminUrl);
@@ -56,6 +88,19 @@ async function withPgClient<T>(databaseUrl: string, requireApi: NodeJS.Require, 
 
 async function main(): Promise<void> {
   console.log(JSON.stringify({ event: 'preflight_start', db: DB_NAME, corpus: CORPUS_PATH }));
+  const rawCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as unknown;
+  const now = new Date();
+  const seeds: Record<'A' | 'B' | 'C', CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
+  if ((rawCorpus as { version?: unknown }).version === 2) {
+    const coverage = validateWorkflowPreflight(rawCorpus as WorkflowCorpus, seeds);
+    if (process.argv.includes('--validate-only')) { console.log(JSON.stringify({ event: 'workflow_preflight_valid', ...coverage })); return; }
+    throw new Error('WORKFLOW_V2_ORACLE_PASS_NOT_IN_M1B: refusing to truncate before the M1c spend capture and M2 workflow oracle pass are available');
+  } else {
+    validateCorpus(rawCorpus);
+    if (process.argv.includes('--validate-only')) { console.log(JSON.stringify({ event: 'legacy_preflight_valid' })); return; }
+  }
+  const maxThb = process.env['MANGMEE_EVAL_MAX_THB'];
+  assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB is required before a database reset');
   const secrets = JSON.parse(readFileSync(SECRETS_PATH, 'utf8')) as { databaseUrl: string };
   const apiRoot = resolve(REPO_ROOT, 'apps/api');
   const requireApi = createRequire(resolve(apiRoot, 'package.json'));
@@ -66,6 +111,12 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({ event: 'migrate_start' }));
   execFileSync(resolve(apiRoot, 'node_modules/.bin/prisma'), ['migrate', 'deploy'], {
     cwd: apiRoot, env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: 'inherit',
+  });
+
+  const spendPath = process.env['MANGMEE_EVAL_SPEND_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/preflight.spend.jsonl';
+  await withPgClient(databaseUrl, requireApi, async client => {
+    await installEvalGuard(client, databaseUrl, maxThb);
+    await captureSpend(client, databaseUrl, spendPath, 'preflight');
   });
 
   const compiledEntry = resolve(apiRoot, 'dist/apps/api/src/app.module.js');
@@ -81,8 +132,7 @@ async function main(): Promise<void> {
   const oracle = await bootOracle({ repoRoot: REPO_ROOT, databaseUrl, redisUrl: REDIS_URL, secretsPath: SECRETS_PATH });
   try {
     console.log(JSON.stringify({ event: 'seed_start' }));
-    const now = new Date();
-    const companies: Record<'A' | 'B', CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now) };
+    const companies = seeds;
     // SHARED_ACCESS_ROWS is the identical prefix of every company's `rows` (see seed.ts) — seeded
     // once here since preflight shares one un-truncated database across both companies, unlike
     // real-mode's per-fixture reset+reseed, where each company's `rows` must stay self-contained.
@@ -92,9 +142,10 @@ async function main(): Promise<void> {
       event: 'seed_done',
       companyA: { companyId: companies.A.companyId, branches: companies.A.branchIds.length },
       companyB: { companyId: companies.B.companyId, branches: companies.B.branchIds.length },
+      companyC: { companyId: companies.C.companyId, branches: companies.C.branchIds.length },
     }));
 
-    const corpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
+    const corpus = rawCorpus as Corpus;
     validateCorpus(corpus);
     const flat = flattenTurns(corpus);
 

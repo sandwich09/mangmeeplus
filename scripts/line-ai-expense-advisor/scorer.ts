@@ -14,7 +14,7 @@
  */
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
 import { todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
-import type { GoldCall, RequiredFactCategory, Turn, TurnTags } from './types';
+import type { GoldCall, GoldRecord, RequiredFactCategory, Turn, TurnTags, WorkflowConversation, WorkflowCorpus, WorkflowTask } from './types';
 
 /** The minimal shape of a captured/oracle `ToolResult` the scorer ever reads. */
 export type ToolResultLike = { status: string; data?: unknown };
@@ -473,5 +473,217 @@ export function summarizeScores(scores: TurnScore[]): ScoreSummary {
     total: scores.length, passed, failed: scores.length - passed,
     passRate: scores.length ? passed / scores.length : 1, byCategory,
     failures: scores.filter((score) => !score.passed),
+  };
+}
+
+type ExactDecimal = { n: bigint; scale: number };
+const decimal = (value: string | number): ExactDecimal => {
+  const text = String(value), match = /^(-?)(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (!match) throw new Error('WORKFLOW_COST_INVALID_DECIMAL');
+  const fraction = match[3] ?? '', exponent = Number(match[4] ?? 0), scale = fraction.length - exponent;
+  let n = BigInt(`${match[1]}${match[2]}${fraction}`);
+  return scale < 0 ? { n: n * 10n ** BigInt(-scale), scale: 0 } : { n, scale };
+};
+const decimalAdd = (a: ExactDecimal, b: ExactDecimal): ExactDecimal => {
+  const scale = Math.max(a.scale, b.scale);
+  return { n: a.n * 10n ** BigInt(scale - a.scale) + b.n * 10n ** BigInt(scale - b.scale), scale };
+};
+const decimalMul = (a: ExactDecimal, b: ExactDecimal): ExactDecimal => ({ n: a.n * b.n, scale: a.scale + b.scale });
+const decimalText = ({ n, scale }: ExactDecimal): string => {
+  const sign = n < 0n ? '-' : '', digits = String(n < 0n ? -n : n).padStart(scale + 1, '0');
+  const raw = scale ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}`.replace(/0+$/, '').replace(/\.$/, '') : digits;
+  return `${sign}${raw || '0'}`;
+};
+const roundDecimalHalfUp = ({ n, scale }: ExactDecimal): number => {
+  const divisor = 10n ** BigInt(scale), abs = n < 0n ? -n : n;
+  const rounded = (abs + divisor / 2n) / divisor;
+  return Number(n < 0n ? -rounded : rounded);
+};
+const decimalDivide = (value: ExactDecimal, divisor: number): ExactDecimal => {
+  const expanded = { n: value.n * 1_000_000_000n, scale: value.scale + 9 };
+  return { n: expanded.n / BigInt(divisor), scale: expanded.scale };
+};
+
+export function providerCostExact(input: {
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  externalUnits: number;
+  tariff: { usdPerMTok: { input: number; output: number; cacheRead: number; cacheWrite: number }; thbPerUsd: number;
+    externalUsdPerUnit?: number; searchContentInputTokensPerUnit?: number };
+  recordedCostSatang: number;
+}) {
+  const million = decimal(1_000_000), exchange = decimal(input.tariff.thbPerUsd), satang = decimal(100);
+  let tokenUsd = decimal(0);
+  for (const key of ['input', 'output', 'cacheRead', 'cacheWrite'] as const)
+    tokenUsd = decimalAdd(tokenUsd, decimalMul(decimal(input.tokens[key]), decimal(input.tariff.usdPerMTok[key])));
+  const searchContentTokens = decimalMul(decimal(input.externalUnits), decimal(input.tariff.searchContentInputTokensPerUnit ?? 0));
+  tokenUsd = decimalAdd(tokenUsd, decimalMul(searchContentTokens, decimal(input.tariff.usdPerMTok.input)));
+  const tokenSatang = decimalMul(decimalMul(tokenUsd, exchange), satang);
+  const externalSatang = decimalMul(decimalMul(decimal(input.externalUnits), decimal(input.tariff.externalUsdPerUnit ?? 0)), decimalMul(exchange, satang));
+  const exact = decimalAdd({ ...tokenSatang, scale: tokenSatang.scale + 6 }, externalSatang);
+  const roundedSatang = roundDecimalHalfUp(exact);
+  return { exactSatang: decimalText(exact), roundedSatang, roundingMatches: roundedSatang === input.recordedCostSatang };
+}
+
+export function classifyCacheState(tokens: { cacheRead: number; cacheWrite: number }): 'cold' | 'warm' | 'mixed' | 'none' {
+  return tokens.cacheRead > 0 && tokens.cacheWrite > 0 ? 'mixed' : tokens.cacheWrite > 0 ? 'cold' : tokens.cacheRead > 0 ? 'warm' : 'none';
+}
+
+export type WorkflowEffect = { kind: string; recordId: string; evidenceHash?: string };
+export type WorkflowTurnEvidence = {
+  attemptId: string; conversationId: string; turnIndex: number; actorKey: string; inputKind: 'message' | 'postback' | 'uri' | 'camera';
+  classifier?: { label?: string; confidence?: number; status?: string; errorCode?: string; schemaValid?: boolean; timedOut?: boolean };
+  calls: Array<{ tag: string; modelId: string; ok: boolean; errorCode?: string; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+    externalUnits?: number; tariff?: Parameters<typeof providerCostExact>[0]['tariff']; providerCostExact?: string; recordedCostSatang?: number;
+    customerSatang?: number; companyAbsorbedSatang?: number; basis?: 'measured' | 'estimated' | 'unknown' }>;
+  effects: WorkflowEffect[]; businessSnapshot: { business: Record<string, Array<Record<string, unknown>>>; collectionState: Record<string, Array<Record<string, unknown>>> };
+  unintendedEffects: WorkflowEffect[]; deliveredActions: Array<{ type: string; label?: string; text?: string; uri?: string; preview?: Record<string, unknown> }>;
+  preview?: Record<string, unknown>; latencyMs: number | null; deliveredText?: string; rejectedResultCharged?: boolean;
+  workflowKind?: string; targetId?: string; pickerTargets?: string[]; terminalEffect?: string; deadEnd?: boolean; tier?: 0 | 1 | 2;
+};
+
+export function scoreWorkflowTask(task: WorkflowTask, evidence: WorkflowTurnEvidence[], goldPreview?: Record<string, unknown>) {
+  const window = evidence.filter(row => row.turnIndex >= task.startTurn && row.turnIndex <= task.endTurn);
+  const businessChanges = window.flatMap(row => row.unintendedEffects);
+  const expected = task.goldTerminal.records;
+  const expectedIdentity = (record: GoldRecord) => record.ref.startsWith('$seed:') ? record.ref.slice(6)
+    : record.ref.startsWith('$created:') ? record.ref.slice(9) : record.ref;
+  const matchesRecord = (record: GoldRecord, row: Record<string, unknown>) => {
+    const ref = expectedIdentity(record);
+    const identity = String(row.seedKey ?? row.recordRef ?? row.taskId ?? row.id ?? '');
+    return row.table === record.table && (identity === ref || identity.endsWith(`:${ref}`));
+  };
+  const terminalSnapshot = window.at(-1)?.businessSnapshot.business ?? {};
+  const terminalMatches = expected.every(record => {
+    const row = (terminalSnapshot[record.table] ?? []).find(candidate => matchesRecord(record, { ...candidate, table: record.table }));
+    return !!row && Object.entries(record).every(([key, value]) => key === 'table' || key === 'ref' || key === 'phase' || row[key] === value);
+  });
+  let wrongApplied = 0;
+  for (const effect of businessChanges) {
+    const table = effect.kind.split('.')[0]!;
+    const expectedRecord = expected.find(record => record.table === table && expectedIdentity(record) === effect.recordId);
+    const effectTurn = window.find(row => row.unintendedEffects.includes(effect))?.turnIndex;
+    if (!expectedRecord) { wrongApplied++; continue; }
+    if (expectedRecord.phase === 'collect' && effectTurn !== undefined && effectTurn < (task.confirmTurn ?? Infinity)) continue;
+    if (task.confirmTurn === undefined || effectTurn !== undefined && effectTurn < task.confirmTurn) { wrongApplied++; continue; }
+    const row = window.flatMap(turn => turn.businessSnapshot.business[table] ?? []).find(candidate => matchesRecord(expectedRecord, { ...candidate, table }));
+    if (!row || Object.entries(expectedRecord).some(([key, value]) => key !== 'table' && key !== 'ref' && key !== 'phase' && row[key] !== value)) wrongApplied++;
+  }
+  let wrongPreview = 0;
+  const previewTurn = task.confirmTurn === undefined ? undefined : window.find(turn => turn.turnIndex === task.confirmTurn! - 1);
+  if (goldPreview) {
+    const actualPreview = previewTurn?.preview ?? previewTurn?.deliveredActions?.find(action => action.type === 'preview')?.preview;
+    if (!actualPreview || Object.entries(goldPreview).some(([key, value]) => actualPreview[key] !== value)) wrongPreview++;
+  } else if (previewTurn && (previewTurn.preview || previewTurn.deliveredActions?.some(action => action.type === 'preview'))) wrongPreview++;
+  for (const turn of window) {
+    if (turn.turnIndex !== task.confirmTurn! - 1 && (turn.preview || turn.deliveredActions?.some(action => action.type === 'preview'))) wrongPreview++;
+  }
+  return { wrongApplied, wrongPreview, businessChanges: businessChanges.length, terminalMatches };
+}
+
+export type WorkflowAttempt = { attemptId: string; complete: boolean; providerCostExact: string; customerSatang?: number; companyAbsorbedSatang?: number; turns?: WorkflowTurnEvidence[] };
+export function selectLatestCompleteAttempt<T extends { complete: boolean }>(attempts: T[]): T | undefined {
+  return [...attempts].reverse().find(attempt => attempt.complete);
+}
+export function workflowAttemptCostTotal(attempts: Array<{ providerCostExact: string }>): string {
+  return decimalText(attempts.reduce((sum, attempt) => decimalAdd(sum, decimal(attempt.providerCostExact)), decimal(0)));
+}
+
+export type WorkflowRunAttempt = { attemptId: string; conversationId: string; complete: boolean; turns: WorkflowTurnEvidence[] };
+export type WorkflowMetrics = {
+  W1: { passed: number; total: number }; W2: { passed: number; total: number }; W3: { passed: number; total: number };
+  W4: { medianDelta: number; p90Delta: number }; W5: { byKind: Record<string, { providerExact: string; completedTasks: number; costPerCompletedTask: string }> };
+  W6: { wrongApplied: number; wrongPreview: number }; W7: { medianCallsPerTask: number; startedByTextAtMostOne: number; startedByText: number };
+  W8: Record<string, { p50: number; p95: number }>; W9: { invalidCalls: number; calls: number };
+  W10: { lowConfidenceCards: number; typedWorkflowTurns: number }; W11: { beforeA2: number | null; afterA2: number | null; beforeA3: number | null; afterA3: number | null };
+  W12: { machineTokenTurns: number; turns: number }; W13: { candidateExact: string; baselineExact?: string };
+  W14: { timeouts: number; calls: number }; W15: { rejectedAndCharged: number };
+  cacheCohorts: Record<'cold' | 'warm' | 'mixed' | 'none', number>; attemptSpendExact: string;
+};
+const ratio = (passed: number, total: number) => ({ passed, total });
+const medianNumber = (numbers: number[], fraction: number) => {
+  if (!numbers.length) return 0;
+  const sorted = [...numbers].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]!;
+};
+const callExactCost = (call: WorkflowTurnEvidence['calls'][number]): string | null => {
+  if (call.providerCostExact !== undefined) return call.providerCostExact;
+  if (!call.tariff || call.recordedCostSatang === undefined) return null;
+  return providerCostExact({ tokens: call.tokens, externalUnits: call.externalUnits ?? 0, tariff: call.tariff, recordedCostSatang: call.recordedCostSatang }).exactSatang;
+};
+
+/** W1–W15 over the latest complete conversation attempt; monetary totals retain every attempt. */
+export function scoreWorkflowCorpus(input: {
+  corpus: WorkflowCorpus; attempts: WorkflowRunAttempt[]; baseline?: WorkflowRunAttempt[];
+  advisorBefore?: { A2: number; A3: number }; advisorAfter?: { A2: number; A3: number };
+}): WorkflowMetrics {
+  const latest = new Map<string, WorkflowRunAttempt>();
+  for (const row of input.attempts) if (row.complete) latest.set(row.conversationId, row);
+  const allTurns = [...latest.values()].flatMap(row => row.turns), conversations = input.corpus.conversations;
+  const tasks = conversations.flatMap(conversation => conversation.tasks.map(task => ({ conversation, task,
+    attempt: latest.get(conversation.id), turns: latest.get(conversation.id)?.turns.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn) ?? [] })));
+  const labelTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ turn, turnIndex, attempt: latest.get(conversation.id) }))).filter(row => row.turn.expect.label !== undefined);
+  const W1Passed = labelTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.classifier?.label === row.turn.expect.label).length;
+  const W2Tasks = tasks.filter(({ task }) => task.kind !== 'advisor');
+  const W2Passed = W2Tasks.filter(({ conversation, task, attempt, turns }) => {
+    const start = turns.find(turn => turn.turnIndex === task.startTurn), expected = conversation.turns[task.startTurn]?.expect.target;
+    return start?.workflowKind === task.kind && (!expected || start.targetId === expected || start.pickerTargets?.includes(expected));
+  }).length;
+  const taskScores = tasks.map(({ conversation, task, turns }) => ({ conversation, task, turns, score: scoreWorkflowTask(task, turns,
+    task.confirmTurn === undefined ? undefined : conversation.turns[task.confirmTurn - 1]?.expect.preview) }));
+  const W3Tasks = tasks.filter(({ task }) => task.completable), W3Passed = W3Tasks.filter(({ task, turns }) => {
+    const preview = task.confirmTurn === undefined ? undefined : conversations.find(conversation => conversation.tasks.includes(task))?.turns[task.confirmTurn - 1]?.expect.preview;
+    const score = scoreWorkflowTask(task, turns, preview);
+    return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview;
+  }).length;
+  const turnDeltas = tasks.map(({ task, turns }) => turns.length - task.minimalTurns);
+  const calls = allTurns.flatMap(turn => turn.calls);
+  const attemptCosts = input.attempts.flatMap(attempt => attempt.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null)));
+  const typedIds = new Set(conversations.filter(conversation => conversation.journeyKind === 'typed').map(conversation => conversation.id));
+  const typedAttemptCosts = input.attempts.filter(attempt => typedIds.has(attempt.conversationId))
+    .flatMap(attempt => attempt.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null)));
+  const completedTasks = taskScores.filter(row => row.task.completable && row.turns.some(turn => turn.terminalEffect === row.task.goldTerminal.effect));
+  const totalExact = workflowAttemptCostTotal(typedAttemptCosts.map(providerCostExact => ({ providerCostExact })));
+  const W5: WorkflowMetrics['W5']['byKind'] = {};
+  for (const kind of new Set(tasks.map(row => row.task.kind))) {
+    const groupTasks = tasks.filter(row => row.task.kind === kind), completeIds = new Set(completedTasks.filter(row => row.task.kind === kind).map(row => `${row.conversation.id}:${row.task.id}`));
+    const spend = input.attempts.flatMap(attempt => groupTasks.filter(row => row.conversation.id === attempt.conversationId)
+      .flatMap(({ task }) => attempt.turns.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn)
+        .flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null))));
+    const sum = workflowAttemptCostTotal(spend.map(providerCostExact => ({ providerCostExact })));
+    W5[kind] = { providerExact: sum, completedTasks: completeIds.size,
+      costPerCompletedTask: completeIds.size ? decimalText(decimalDivide(decimal(sum), completeIds.size)) : '0' };
+  }
+  const typedTasks = tasks.filter(row => row.conversation.journeyKind === 'typed');
+  const textTasks = typedTasks.filter(row => !!row.conversation.turns[row.task.startTurn]?.user);
+  const taskCalls = tasks.map(row => row.turns.reduce((sum, turn) => sum + turn.calls.length, 0));
+  const tiers = new Map<number, number[]>();
+  for (const turn of allTurns) if (turn.latencyMs !== null) {
+    const tier = turn.tier ?? 0;
+    tiers.set(tier, [...(tiers.get(tier) ?? []), turn.latencyMs]);
+  }
+  const cohorts = { cold: 0, warm: 0, mixed: 0, none: 0 };
+  for (const call of calls) cohorts[classifyCacheState(call.tokens)]++;
+  const classifierCalls = allTurns.filter(turn => !!turn.classifier).length;
+  const invalidCalls = allTurns.filter(turn => turn.classifier?.schemaValid === false).length;
+  const typedWorkflowTurns = allTurns.filter(turn => turn.workflowKind && turn.inputKind === 'message').length;
+  const lowConfidenceCards = allTurns.filter(turn => turn.classifier?.confidence !== undefined && turn.classifier.confidence < 0.7
+    && turn.deliveredActions?.some(action => ['picker', 'choice'].includes(action.type))).length;
+  const machineTokenTurns = allTurns.filter(turn => scoreMachineTokens(turn.deliveredText ?? '').reasons.length > 0).length;
+  const deltas = turnDeltas;
+  const baselineCalls = input.baseline?.filter(row => typedIds.has(row.conversationId))
+    .flatMap(row => row.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null))) ?? [];
+  return {
+    W1: ratio(W1Passed, labelTurns.length), W2: ratio(W2Passed, W2Tasks.length), W3: ratio(W3Passed, W3Tasks.length),
+    W4: { medianDelta: medianNumber(deltas, 0.5), p90Delta: medianNumber(deltas, 0.9) },
+    W5: { byKind: W5 },
+    W6: { wrongApplied: taskScores.reduce((sum, row) => sum + row.score.wrongApplied, 0), wrongPreview: taskScores.reduce((sum, row) => sum + row.score.wrongPreview, 0) },
+    W7: { medianCallsPerTask: medianNumber(taskCalls, 0.5), startedByTextAtMostOne: textTasks.filter(row => (row.attempt?.turns.filter(turn => turn.turnIndex >= row.task.startTurn && turn.turnIndex <= row.task.endTurn).reduce((sum, turn) => sum + turn.calls.length, 0) ?? 0) <= 1).length, startedByText: textTasks.length },
+    W8: Object.fromEntries([...tiers].map(([tier, values]) => [String(tier), { p50: medianNumber(values, 0.5), p95: medianNumber(values, 0.95) }])),
+    W9: { invalidCalls, calls: classifierCalls }, W10: { lowConfidenceCards, typedWorkflowTurns },
+    W11: { beforeA2: input.advisorBefore?.A2 ?? null, afterA2: input.advisorAfter?.A2 ?? null, beforeA3: input.advisorBefore?.A3 ?? null, afterA3: input.advisorAfter?.A3 ?? null },
+    W12: { machineTokenTurns, turns: allTurns.length }, W13: { candidateExact: totalExact, ...(baselineCalls.length ? { baselineExact: workflowAttemptCostTotal(baselineCalls.map(providerCostExact => ({ providerCostExact }))) } : {}) },
+    W14: { timeouts: allTurns.filter(turn => turn.classifier?.timedOut).length, calls: classifierCalls },
+    W15: { rejectedAndCharged: allTurns.filter(turn => turn.rejectedResultCharged).length }, cacheCohorts: cohorts,
+    attemptSpendExact: workflowAttemptCostTotal(attemptCosts.map(providerCostExact => ({ providerCostExact }))),
   };
 }

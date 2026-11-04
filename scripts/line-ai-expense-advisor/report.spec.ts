@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { deliveredReplyForReport, gatewayCoverageForReport, renderReport, summarizeLatencyByLane } from './report';
-import { summarizeScores, type TurnScore } from './scorer';
+import { summarizeScores, type TurnScore, type WorkflowMetrics } from './scorer';
 import type { Corpus } from './types';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
@@ -162,6 +162,19 @@ describe('renderReport', () => {
     const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(passing), scores: passing, corpus, turnEvidence });
     assert.match(report, /## Latency by lane/);
     assert.match(report, /\| fast \| 1 \| 1000 \| 1000 \| 1000 \| 0 \| 0 \| 0\.50 \|/);
+  });
+
+  it('renders the workflow before/after table from §10 when workflow metrics are supplied', () => {
+    const metrics = {
+      W3: { passed: 9, total: 10 }, W5: { byKind: { expense: { providerExact: '300', completedTasks: 2, costPerCompletedTask: '150' } } },
+      W6: { wrongApplied: 1, wrongPreview: 2 }, W8: { '0': { p50: 1250, p95: 2000 } }, W13: { candidateExact: '120', baselineExact: '200' },
+    } as WorkflowMetrics;
+    const report = renderReport({ sourceCommit: 'abc123', now: NOW, summary: summarizeScores(scores), scores, corpus, turnEvidence: [], workflowSummary: { before: metrics, after: metrics, ready: 'ตรวจแล้ว', remaining: 'ยังต้องวัด' } });
+    assert.match(report, /\| ต้นทุนต่องานที่เสร็จ \| 1\.50 บาท \| 1\.50 บาท \|/);
+    assert.match(report, /\| ต้นทุนรวมชุดงานเดียวกัน \| 1\.20 บาท \| 1\.20 บาท \|/);
+    assert.match(report, /\| งานจบโดยไม่ติด \| 90% \| 90% \|/);
+    assert.match(report, /\| ทำผิดรายการ \| 3 ครั้ง \| 3 ครั้ง \|/);
+    assert.match(report, /พร้อมแล้ว: ตรวจแล้ว[\s\S]*ยังเหลือ: ยังต้องวัด/);
   });
 });
 

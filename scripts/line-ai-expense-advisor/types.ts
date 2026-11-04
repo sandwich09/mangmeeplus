@@ -11,14 +11,16 @@
  * `{ $fromShownItems: index }`, both resolved at run time by the oracle (spec §4 R-M1 memory).
  */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { PERIOD_TOKENS, type PeriodToken } from './period';
 import { isKnownPlaceholder, referencedPlaceholders } from './template';
 
 export const ROLES = ['OWNER', 'MANAGER', 'STAFF', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
 export type EvalRole = (typeof ROLES)[number];
 
-export const COMPANIES = ['A', 'B'] as const;
+export const COMPANIES = ['A', 'B', 'C'] as const;
 export type EvalCompany = (typeof COMPANIES)[number];
+const LEGACY_COMPANIES = ['A', 'B'] as const;
 
 export type PeriodRef = { $period: PeriodToken };
 export type ShownItemRef = { $fromShownItems: number };
@@ -96,6 +98,124 @@ export type Corpus = {
   version: 1;
   conversations: Conversation[];
 };
+
+export type ActorRef = { key: string };
+export type Actor = { key: string; company: EvalCompany; role: EvalRole; branchScope: 'all' | { branches: string[] } };
+export type WorkflowFixtureOp =
+  | { op: 'expire'; store: 'expense-action' | 'expense-action-applied' | 'wf-choice' | 'draft-preview' }
+  | { op: 'mutate'; table: 'ExpenseRecord' | 'ReimbursementRequest' | 'DisbursementVoucher'; seedKey: string; set: Record<string, string | number | null> }
+  | { op: 'setCredit'; state: 'normal' | 'exhausted' };
+export type WorkflowPreview = { action: string; target: string; amount?: string; reason?: string; payeeName?: string; paymentMethod?: string; paidDate?: string };
+export type WorkflowTurn = {
+  as?: ActorRef; user?: string; press?: string; pressFrom?: { turn: number; actor?: ActorRef }; fixture?: WorkflowFixtureOp[];
+  expect: { tier?: 0 | 1 | 2; label?: string; card?: 'picker' | 'choice' | 'question' | 'preview' | 'applied' | 'declined' | 'refusal' | 'answer' | 'credit_refusal' | 'expired';
+    target?: string; preview?: WorkflowPreview; maxModelCalls?: number; mustNotCaptureAsField?: boolean; tags?: TurnTags };
+};
+export type GoldRecord = {
+  table: 'ReimbursementRequest' | 'ReimbursementLine' | 'ReimbursementPayment' | 'ExpenseRecord' | 'ExpensePayment'
+    | 'DisbursementVoucher' | 'DisbursementVoucherLine' | 'WhtCertificate' | 'ExpenseSubstituteReceiptEvidence'
+    | 'ReimbursementApprovalStep' | 'WhtCertificateHandoff' | 'WhtCertificateHistory';
+  ref: string; status?: string; paymentStatus?: string; decisionBy?: string; amount?: string; date?: string; payeeName?: string;
+  reason?: string; categoryName?: string; description?: string; paidAmount?: string; paidDate?: string; paymentMethod?: string;
+  whtAmount?: string; phase?: 'collect';
+};
+export type WorkflowTerminalEffect = 'REIMBURSEMENT_DRAFT_SAVED' | 'REIMBURSEMENT_SUBMITTED' | 'REIMBURSEMENT_APPROVED' | 'REIMBURSEMENT_REJECTED'
+  | 'REIMBURSEMENT_CANCELLED' | 'REIMBURSEMENT_PAID' | 'EXPENSE_MARKED_READY' | 'EXPENSE_CONFIRMED' | 'EXPENSE_DELETED' | 'EXPENSE_VOIDED'
+  | 'EXPENSE_PAID' | 'VOUCHER_CREATED' | 'VOUCHER_SUBMITTED' | 'VOUCHER_APPROVED' | 'VOUCHER_PAID' | 'WHT_ISSUED' | 'SUBSTITUTE_PREPARED'
+  | 'DECLINED' | 'ANSWERED' | 'REFUSED';
+export type WorkflowTask = { id: string; kind: string; startTurn: number; endTurn: number; confirmTurn?: number;
+  goldTerminal: { effect: WorkflowTerminalEffect; records: GoldRecord[] }; minimalTurns: number; completable: boolean; journeyId?: string };
+export type WorkflowConversation = { id: string; actors: Actor[]; category: string; journeyKind: 'typed' | 'button'; credit?: 'normal' | 'exhausted'; tasks: WorkflowTask[]; turns: WorkflowTurn[] };
+export type WorkflowCorpus = { version: 2; seed: string; status: 'draft' | 'reviewed'; conversations: WorkflowConversation[] };
+
+const WORKFLOW_WRITE_EXEMPTIONS = new Set<WorkflowTerminalEffect>(['ANSWERED', 'REFUSED', 'DECLINED']);
+const PAID_RECORDS: Partial<Record<WorkflowTerminalEffect, { table: GoldRecord['table']; amount: keyof GoldRecord; date: keyof GoldRecord; method: keyof GoldRecord }>> = {
+  EXPENSE_PAID: { table: 'ExpensePayment', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
+  REIMBURSEMENT_PAID: { table: 'ReimbursementPayment', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
+  VOUCHER_PAID: { table: 'DisbursementVoucher', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
+};
+
+export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlySet<string>): asserts value is WorkflowCorpus {
+  assert.ok(isPlainObject(value) && value['version'] === 2 && nonEmptyString(value['seed']), 'WORKFLOW_CORPUS_VERSION');
+  assert.ok(['draft', 'reviewed'].includes(value['status'] as string) && Array.isArray(value['conversations']) && (value['conversations'] as unknown[]).length, 'WORKFLOW_CORPUS_HEADER');
+  const ids = new Set<string>();
+  for (const [ci, raw] of (value['conversations'] as unknown[]).entries()) {
+    const path = `conversations[${ci}]`;
+    assert.ok(isPlainObject(raw) && nonEmptyString(raw['id']) && !ids.has(raw['id'] as string), `${path}.id`); ids.add(raw['id'] as string);
+    assert.ok(Array.isArray(raw['actors']) && raw['actors'].length > 0 && Array.isArray(raw['turns']) && raw['turns'].length > 0 && Array.isArray(raw['tasks']), `${path}.shape`);
+    assert.ok(nonEmptyString(raw['category']) && ['typed', 'button'].includes(raw['journeyKind'] as string), `${path}.journey`);
+    const actors = raw['actors'] as unknown[], actorKeys = new Set<string>();
+    for (const actor of actors) {
+      assert.ok(isPlainObject(actor) && nonEmptyString(actor['key']) && !actorKeys.has(actor['key'] as string), `${path}.actor`);
+      actorKeys.add(actor['key'] as string);
+      assert.ok((COMPANIES as readonly unknown[]).includes(actor['company']) && (ROLES as readonly unknown[]).includes(actor['role']), `${path}.actor_scope`);
+      const scope = actor['branchScope'];
+      assert.ok(scope === 'all' || isPlainObject(scope) && Array.isArray(scope['branches']) && scope['branches'].every(nonEmptyString), `${path}.branch_scope`);
+    }
+    const turns = raw['turns'] as unknown[];
+    for (const [ti, turn] of turns.entries()) {
+      assert.ok(isPlainObject(turn) && (nonEmptyString(turn['user']) || nonEmptyString(turn['press'])), `${path}.turns[${ti}].input`);
+      assert.ok(!(nonEmptyString(turn['user']) && nonEmptyString(turn['press'])), `${path}.turns[${ti}].one_input`);
+      if (turn['as'] !== undefined) assert.ok(isPlainObject(turn['as']) && actorKeys.has(turn['as']['key'] as string), `${path}.turns[${ti}].as`);
+      if (turn['pressFrom'] !== undefined) {
+        const from = turn['pressFrom'];
+        assert.ok(isPlainObject(from) && Number.isInteger(from['turn']) && (from['turn'] as number) >= 0 && (from['turn'] as number) < ti, `${path}.turns[${ti}].pressFrom`);
+        if (from['actor'] !== undefined) assert.ok(isPlainObject(from['actor']) && actorKeys.has(from['actor']['key'] as string), `${path}.turns[${ti}].pressFrom.actor`);
+      }
+      const expect = turn['expect']; assert.ok(isPlainObject(expect), `${path}.turns[${ti}].expect`);
+      if (expect['label'] !== undefined) assert.ok(nonEmptyString(expect['label']), `${path}.turns[${ti}].expect.label`);
+      if (expect['preview'] !== undefined) assert.ok(isPlainObject(expect['preview']) && nonEmptyString(expect['preview']['action']) && nonEmptyString(expect['preview']['target']), `${path}.turns[${ti}].expect.preview`);
+      if (expect['maxModelCalls'] !== undefined) assert.ok(Number.isInteger(expect['maxModelCalls']) && (expect['maxModelCalls'] as number) >= 0, `${path}.turns[${ti}].expect.maxModelCalls`);
+      if (turn['fixture'] !== undefined) assert.ok(Array.isArray(turn['fixture']), `${path}.turns[${ti}].fixture`);
+      for (const op of (turn['fixture'] as unknown[] | undefined) ?? []) {
+        assert.ok(isPlainObject(op) && ['expire', 'mutate', 'setCredit'].includes(op['op'] as string), `${path}.fixture_op`);
+        if (op['op'] === 'mutate') {
+          assert.ok(['ExpenseRecord', 'ReimbursementRequest', 'DisbursementVoucher'].includes(op['table'] as string) && nonEmptyString(op['seedKey']) && isPlainObject(op['set']), `${path}.fixture_mutate`);
+          if (knownSeedKeys) assert.ok(knownSeedKeys.has(op['seedKey'] as string), `${path}.fixture_mutate.seedKey`);
+        }
+      }
+    }
+    const tasks = raw['tasks'] as unknown[], taskIds = new Set<string>(), occupiedTurns = new Set<number>();
+    for (const task of tasks) {
+      assert.ok(isPlainObject(task) && nonEmptyString(task['id']) && !taskIds.has(task['id'] as string), `${path}.task_id`); taskIds.add(task['id'] as string);
+      assert.ok(nonEmptyString(task['kind']) && Number.isInteger(task['startTurn']) && Number.isInteger(task['endTurn'])
+        && (task['startTurn'] as number) >= 0 && (task['endTurn'] as number) >= (task['startTurn'] as number) && (task['endTurn'] as number) < turns.length,
+      `${path}.task_range`);
+      assert.ok(Number.isInteger(task['minimalTurns']) && (task['minimalTurns'] as number) > 0 && typeof task['completable'] === 'boolean', `${path}.task_metrics`);
+      for (let index = task['startTurn'] as number; index <= (task['endTurn'] as number); index++) {
+        assert.ok(!occupiedTurns.has(index), `${path}.task_overlap`); occupiedTurns.add(index);
+      }
+      const terminal = task['goldTerminal']; assert.ok(isPlainObject(terminal) && Array.isArray(terminal['records']), `${path}.gold_terminal`);
+      assert.ok((['REIMBURSEMENT_DRAFT_SAVED','REIMBURSEMENT_SUBMITTED','REIMBURSEMENT_APPROVED','REIMBURSEMENT_REJECTED','REIMBURSEMENT_CANCELLED','REIMBURSEMENT_PAID','EXPENSE_MARKED_READY','EXPENSE_CONFIRMED','EXPENSE_DELETED','EXPENSE_VOIDED','EXPENSE_PAID','VOUCHER_CREATED','VOUCHER_SUBMITTED','VOUCHER_APPROVED','VOUCHER_PAID','WHT_ISSUED','SUBSTITUTE_PREPARED','DECLINED','ANSWERED','REFUSED'] as readonly unknown[]).includes(terminal['effect']), `${path}.gold_terminal.effect`);
+      const effect = terminal['effect'] as WorkflowTerminalEffect, confirmTurn = task['confirmTurn'] as number | undefined;
+      if (!WORKFLOW_WRITE_EXEMPTIONS.has(effect)) {
+        assert.ok(Number.isInteger(confirmTurn) && confirmTurn! >= (task['startTurn'] as number) && confirmTurn! <= (task['endTurn'] as number), `${path}.confirmTurn_required`);
+        const confirmTurnValue = turns[confirmTurn!] as Record<string, unknown> | undefined;
+        const confirmExpect = confirmTurnValue?.['expect'];
+        assert.ok(isPlainObject(confirmExpect) && isPlainObject(confirmExpect['preview']), `${path}.preview_before_confirm`);
+      } else assert.ok(confirmTurn === undefined, `${path}.confirmTurn_unexpected`);
+      for (const record of terminal['records'] as unknown[]) {
+        assert.ok(isPlainObject(record) && nonEmptyString(record['ref']) && nonEmptyString(record['table']), `${path}.gold_record`);
+        if (record['phase'] !== undefined) assert.equal(record['phase'], 'collect', `${path}.gold_record.phase`);
+        if (record['ref'] && (record['ref'] as string).startsWith('$seed:') && knownSeedKeys)
+          assert.ok(knownSeedKeys.has((record['ref'] as string).slice('$seed:'.length)), `${path}.gold_record.seed_ref`);
+      }
+      const paid = PAID_RECORDS[effect];
+      if (paid) assert.ok((terminal['records'] as Array<Record<string, unknown>>).some(record => record['table'] === paid.table
+        && nonEmptyString(record[paid.amount]) && nonEmptyString(record[paid.date]) && nonEmptyString(record[paid.method])), `${path}.paid_record_fields`);
+    }
+    if (raw['journeyKind'] === 'typed') for (const [ti, turn] of turns.entries()) {
+      if (!isPlainObject(turn) || !nonEmptyString(turn['press'])) continue;
+      assert.ok((turn['expect'] as Record<string, unknown> | undefined)?.['label'] === turn['press'], `${path}.typed_button_not_in_baseline:${ti}`);
+    }
+    for (const key of Object.keys(raw)) assert.ok(['id', 'actors', 'category', 'journeyKind', 'credit', 'tasks', 'turns'].includes(key), `${path}.${key}:unknown`);
+  }
+  for (const key of Object.keys(value)) assert.ok(['version', 'seed', 'status', 'conversations'].includes(key), `workflow_corpus.${key}:unknown`);
+}
+
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : isPlainObject(value)
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+export const workflowCorpusDigest = (corpus: WorkflowCorpus) => createHash('sha256').update(JSON.stringify(canonical(corpus))).digest('hex');
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -187,7 +307,7 @@ function validateConversation(conversation: unknown, path: string, seenIds: Set<
   assert.ok(nonEmptyString(conversation['id']), `${path}.id: required non-empty string`);
   assert.ok(!seenIds.has(conversation['id'] as string), `${path}.id: duplicate conversation id ${conversation['id']}`);
   seenIds.add(conversation['id'] as string);
-  assert.ok((COMPANIES as readonly string[]).includes(conversation['company'] as string), `${path}.company: must be one of ${COMPANIES.join(', ')}`);
+  assert.ok((LEGACY_COMPANIES as readonly string[]).includes(conversation['company'] as string), `${path}.company: must be one of ${LEGACY_COMPANIES.join(', ')}`);
   assert.ok((ROLES as readonly string[]).includes(conversation['role'] as string), `${path}.role: must be one of ${ROLES.join(', ')}`);
   assert.ok(Array.isArray(conversation['turns']) && (conversation['turns'] as unknown[]).length > 0, `${path}.turns: must be a non-empty array`);
   (conversation['turns'] as unknown[]).forEach((turn, index) => validateTurn(turn, `${path}.turns[${index}]`));

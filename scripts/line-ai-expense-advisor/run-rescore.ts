@@ -30,15 +30,17 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateCorpus, flattenTurns, selectConversations, type Corpus, type EvalCompany } from './types';
+import { validateCorpus, validateWorkflowCorpus, flattenTurns, selectConversations, type Corpus, type EvalCompany, type WorkflowCorpus } from './types';
 import { buildCompanySeed, type CompanySeed } from './seed';
-import { summarizeScores } from './scorer';
+import { scoreWorkflowCorpus, summarizeScores, type WorkflowRunAttempt, type WorkflowTurnEvidence } from './scorer';
 import { collectGoldResults, scoreAllTurns } from './gold-oracle-pass';
 import { gitHeadSha } from './oracle';
 import { renderReport } from './report';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
+import { captureSpend, installEvalGuard } from './eval-spend';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -50,8 +52,48 @@ const REDIS_URL = process.env['MANGMEE_EVAL_REDIS_URL'] ?? 'redis://127.0.0.1:16
 export type SavedEvidenceFile = {
   startedAt: string;
   sourceCommit: string;
-  turnEvidence: RuntimeTurnEvidence[];
+  turnEvidence: Array<RuntimeTurnEvidence & { attemptId?: string }>;
 };
+
+/** Rebuild the v2 scorer input from the persisted turn snapshots; no API/oracle reads are needed. */
+export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: SavedEvidenceFile['turnEvidence']): WorkflowRunAttempt[] {
+  const grouped = new Map<string, Array<RuntimeTurnEvidence & { attemptId?: string }>>();
+  for (const row of rows) if (row.attemptId) {
+    const key = `${row.scenarioId}\u0000${row.attemptId}`;
+    grouped.set(key, [...(grouped.get(key) ?? []).filter(existing => existing.turnIndex !== row.turnIndex), row]);
+  }
+  return [...grouped.values()].map(turnRows => {
+    const first = turnRows[0]!;
+    const conversation = corpus.conversations.find(row => row.id === first.scenarioId)!;
+    const turns: WorkflowTurnEvidence[] = turnRows.sort((a, b) => a.turnIndex - b.turnIndex).map(row => {
+      const reservations = row.reservations as Array<Record<string, any>>;
+      const usage = row.providerUsage as Array<Record<string, any>>;
+      const calls = usage.map(call => {
+        const reservation = reservations.find(item => item.invocationKey === call.invocationKey);
+        const pricing = reservation?.pricingSnapshot as Record<string, any> | undefined;
+        const heldEvidence = reservation?.evidenceJson as Record<string, any> | undefined;
+        return { tag: String(call.usageTag ?? ''), modelId: String(call.modelId ?? ''), ok: call.ok === true,
+          errorCode: typeof call.errorCode === 'string' ? call.errorCode : undefined,
+          tokens: { input: Number(call.inputTokens ?? 0), output: Number(call.outputTokens ?? 0), cacheRead: Number(call.cacheReadInputTokens ?? 0), cacheWrite: Number(call.cacheWriteInputTokens ?? 0) },
+          externalUnits: heldEvidence?.externalUnits, tariff: pricing?.tariff,
+          recordedCostSatang: Number(call.costSatang ?? 0), basis: call.usageBasis === 'PROVIDER_REPORTED' ? 'measured' as const : 'estimated' as const };
+      });
+      const classify = row.gatewayResponses.find(call => call.method === 'requestLineWorkflowClassify')?.response as Record<string, any> | undefined;
+      const receipts = row.receipts.flatMap(receipt => Array.isArray(receipt.messages) ? receipt.messages as Array<Record<string, any>> : []);
+      const deliveredActions = receipts.flatMap(message => Array.isArray(message.quickReply?.items)
+        ? message.quickReply.items.map((item: Record<string, any>) => ({ type: 'choice', label: item.action?.label ?? item.label })) : []);
+      const latencyMs = row.receipts.length ? Math.max(...row.receipts.map(receipt => receipt.at)) - row.acceptedAtMs : null;
+      return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as ?? conversation.actors[0]?.key ?? '',
+        inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence, schemaValid: classify.schemaValid, timedOut: classify.timedOut } : undefined,
+        calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
+        businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
+        deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n') };
+    });
+    const turnIndexes = new Set(turns.map(turn => turn.turnIndex));
+    return { attemptId: first.attemptId!, conversationId: first.scenarioId, turns,
+      complete: turnIndexes.size === conversation.turns.length && conversation.turns.every((_, index) => turnIndexes.has(index)) };
+  });
+}
 
 /** Every distinct conversation id the saved evidence covers, in first-seen order — pure, so it is
  * testable without touching the filesystem or the DB. */
@@ -91,12 +133,35 @@ async function main(): Promise<void> {
   assert.ok(Array.isArray(saved.turnEvidence) && saved.turnEvidence.length > 0, `${evidencePath}: no turnEvidence to rescore`);
   assert.ok(typeof saved.startedAt === 'string' && !Number.isNaN(Date.parse(saved.startedAt)), `${evidencePath}: missing/invalid startedAt`);
 
+  const rawCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as unknown;
+  if ((rawCorpus as { version?: unknown }).version === 2) {
+    validateWorkflowCorpus(rawCorpus);
+    const corpus = rawCorpus as WorkflowCorpus;
+    const attempts = workflowAttemptsFromEvidence(corpus, saved.turnEvidence);
+    const metrics = scoreWorkflowCorpus({ corpus, attempts });
+    const reportPath = rescoreReportPath(evidencePath, new Date());
+    writeFileSync(reportPath, `# Offline workflow rescore\n\nEvidence: \`${evidencePath}\`\n\nCorpus: \`${CORPUS_PATH}\`\n\n\`\`\`json\n${JSON.stringify(metrics, null, 2)}\n\`\`\`\n`);
+    console.log(JSON.stringify({ event: 'workflow_rescore_done', reportPath, attempts: attempts.length, completeAttempts: attempts.filter(attempt => attempt.complete).length }));
+    return;
+  }
+
   const secrets = JSON.parse(readFileSync(SECRETS_PATH, 'utf8')) as { databaseUrl: string };
   const databaseUrl = new URL(secrets.databaseUrl);
   databaseUrl.pathname = `/${DB_NAME}`;
   databaseUrl.searchParams.set('schema', 'public');
+  const maxThb = process.env['MANGMEE_EVAL_MAX_THB'];
+  assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB is required before the oracle reset');
+  const apiRoot = resolve(REPO_ROOT, 'apps/api'), requireApi = createRequire(resolve(apiRoot, 'package.json'));
+  const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => import('./eval-spend').EvalPgClient & { connect(): Promise<void>; end(): Promise<void> } };
+  const pg = new Client({ connectionString: databaseUrl.toString() });
+  await pg.connect();
+  try {
+  await installEvalGuard(pg, databaseUrl.toString(), maxThb);
+  const spendPath = evidencePath.replace(/\.evidence\.json$/, '.spend.jsonl');
+  const attemptId = (saved.turnEvidence[0] as RuntimeTurnEvidence & { attemptId?: string }).attemptId ?? 'rescore';
+  await captureSpend(pg, databaseUrl.toString(), spendPath, attemptId);
 
-  const fullCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
+  const fullCorpus = rawCorpus as Corpus;
   validateCorpus(fullCorpus);
   const corpus = corpusForRescore(fullCorpus, evidencePath, saved.turnEvidence);
   const flat = flattenTurns(corpus);
@@ -108,7 +173,9 @@ async function main(): Promise<void> {
   const companies: Record<EvalCompany, CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now) };
 
   console.log(JSON.stringify({ event: 'rescore_start', evidencePath, conversations: corpus.conversations.length, turns: flat.length, now: now.toISOString() }));
-  const goldPass = await collectGoldResults(REPO_ROOT, corpus, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now);
+  const goldPass = await collectGoldResults(REPO_ROOT, corpus, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now,
+    () => captureSpend(pg, databaseUrl.toString(), spendPath, attemptId).then(() => undefined));
+  await captureSpend(pg, databaseUrl.toString(), spendPath, attemptId);
   const scores = scoreAllTurns(flat, saved.turnEvidence, goldPass, now);
   const summary = summarizeScores(scores);
 
@@ -120,6 +187,7 @@ async function main(): Promise<void> {
 
   console.log(JSON.stringify({ event: 'rescore_done', reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
   process.exitCode = summary.failed > 0 ? 1 : 0;
+  } finally { await pg.end(); }
 }
 
 // Guarded so run-rescore.spec.ts can import this file's pure exports (scenarioIdsIn,

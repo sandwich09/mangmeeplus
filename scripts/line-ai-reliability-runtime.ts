@@ -221,6 +221,7 @@ const EXPENSE_CONTINUATION_FIELDS = new Set(['sourceChannelMetadataJson', 'updat
 
 export const runtimeAttemptId = (scenarioId: string, repeat: number) => `${scenarioId}:${repeat}:${randomUUID()}`;
 export const runtimeEventIdPrefix = (attemptId: string, turnIndex: number) => `replay-${sha(`${attemptId}:${turnIndex}`).slice(0, 20)}`;
+export const runtimeAssetMessageId = (attemptId: string, turnIndex: number, assetId: string) => `${runtimeEventIdPrefix(attemptId, turnIndex)}-${assetId}`;
 
 export function runtimeBusinessSnapshot(rows: Record<string, JsonRow[]>) {
   const business: Record<string, JsonRow[]> = {}, collectionState: Record<string, JsonRow[]> = {};
@@ -262,7 +263,9 @@ export async function resetRuntimeAfterHook<T>(onBeforeReset: ((conversation: Re
 
 export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string,
   hooks: { onTurn?: (evidence: RuntimeTurnEvidence) => Promise<void> | void;
-    onBeforeReset?: (conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void } = {}) {
+    onBeforeReset?: (conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void;
+    onBeforeTurn?: (conversation: ReliabilityFixture, turnIndex: number, attemptId: string) => Promise<void> | void;
+    onConversationComplete?: (conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void } = {}) {
   assert.equal(manifest.version, 2); assertIsolatedReplayDatabase(manifest.databaseUrl);
   assert.ok(manifest.bootstrapLaunchGates === undefined || typeof manifest.bootstrapLaunchGates === 'boolean', 'REPLAY_INVALID_LAUNCH_BOOTSTRAP_FLAG');
   localUrl(manifest.gatewayUrl, 'http:'); const redisAddress = localUrl(manifest.redisUrl, 'redis:');
@@ -393,8 +396,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       providerUsage: calls.map(({ id, requestId, invocationKey, sourceRoute, usageTag, modelId, ok, inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens,
         costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt }: any) => ({ id, requestId, invocationKey, sourceRoute, usageTag, modelId, ok,
         inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens, costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt })),
-      reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt }: any) =>
-        ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, createdAt, dispatchedAt, settledAt })),
+      reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt }: any) =>
+        ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt })),
       reviewState: { before: state.reviewBefore, after: await readReviewState() }, businessSnapshot, unintendedEffects: businessEffects, delivery });
     if (evidence.reviewState.before.truncated || evidence.reviewState.after.truncated) state.errors.push('review_state_truncated');
     const previous = turnEvidence.findIndex(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === turnIndex);
@@ -498,6 +501,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       app.setGlobalPrefix('v1'); app.useGlobalPipes(new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS)); await app.listen(manifest.apiPort, '127.0.0.1');
     },
     async turn(row, turnIndex) {
+      await hooks.onBeforeTurn?.(row, turnIndex, attemptId);
       // Not before the fixture's first turn — that gap is CONVERSATION_PAUSE_MS, taken in reset().
       if (turnIndex > 0 && TURN_PAUSE_MS > 0) { stage = 'turn_pause'; await delay(TURN_PAUSE_MS); }
       stage = `turn:${turnIndex}`;
@@ -540,7 +544,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const assetIds = action?.type === 'camera' ? [action.assetId] : turn.attachmentIds;
       const messageText = action?.type === 'message' ? action.text : turn.user;
       const inputs = action?.type === 'postback' ? [{ type: 'postback', label: action.label }]
-        : [...assetIds.map(id => runtimeAttachmentMessage(id, snapshot!.assets[id], repoRoot)), ...(messageText ? [{ type: 'text', text: messageText, id: `${prefix}-text` }] : [])];
+        : [...assetIds.map(id => runtimeAttachmentMessage(runtimeAssetMessageId(attemptId, turnIndex, id), snapshot!.assets[id], repoRoot)), ...(messageText ? [{ type: 'text', text: messageText, id: `${prefix}-text` }] : [])];
       const before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
@@ -585,6 +589,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         const evidence = turnEvidence.find(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === index);
         if (evidence) evidence.delivery = structuredClone(trace.delivery);
       }
+      await hooks.onConversationComplete?.(row, attemptId);
     },
   };
   for (const method of ['reset', 'turn', 'finalize'] as const) instrumentRuntimeMethod(adapter, method, async (original, args) => {

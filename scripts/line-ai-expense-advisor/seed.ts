@@ -31,7 +31,7 @@ export type CompanyUser = { userId: string; lineUserId: string; membershipId: st
 export type CompanySeed = {
   companyKey: EvalCompany;
   companyId: string;
-  tierKey: 'STARTER_249' | 'PRO_999';
+  tierKey: 'STARTER_249' | 'PRO_999' | 'ENTERPRISE_1999';
   branchIds: string[];
   messagingChannelId: string;
   users: Record<EvalRole, CompanyUser>;
@@ -349,9 +349,10 @@ function buildReimbursementRows(companyId: string, branchIds: string[], users: R
   return [...requests, ...approvalSteps, ...payments];
 }
 
-const COMPANY_DEFS: Record<EvalCompany, { tierKey: 'STARTER_249' | 'PRO_999'; branchCount: number; name: string }> = {
+const COMPANY_DEFS: Record<EvalCompany, { tierKey: 'STARTER_249' | 'PRO_999' | 'ENTERPRISE_1999'; branchCount: number; name: string }> = {
   A: { tierKey: 'STARTER_249', branchCount: 1, name: 'ร้านตัวอย่าง A (Starter)' },
   B: { tierKey: 'PRO_999', branchCount: 2, name: 'ร้านตัวอย่าง B (Pro)' },
+  C: { tierKey: 'ENTERPRISE_1999', branchCount: 3, name: 'ร้านตัวอย่าง C (Enterprise)' },
 };
 
 /** Builds one company's full, self-contained row list: shared access rows + this company's own

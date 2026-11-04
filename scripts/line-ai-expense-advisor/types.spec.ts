@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { validateCorpus, flattenTurns, parseFailedConversationIds, selectConversations, type Corpus } from './types';
+import { validateCorpus, validateWorkflowCorpus, flattenTurns, parseFailedConversationIds, selectConversations, type Corpus } from './types';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -172,6 +172,32 @@ describe('validateCorpus', () => {
       turns: [{ user: 'x', category: '8', expect: { calls: [{ tool: 'expense.get_detail', input: {} }], requiredFacts: [] } }],
     })] };
     assert.throws(() => validateCorpus(corpus), /requiredFacts: must be a non-empty array/);
+  });
+});
+
+describe('validateWorkflowCorpus M1b', () => {
+  const paid = { version: 2, seed: 'synthetic', status: 'draft', conversations: [{ id: 'paid-c', category: 'expense', journeyKind: 'button',
+    actors: [{ key: 'owner', company: 'C', role: 'OWNER', branchScope: 'all' }],
+    tasks: [{ id: 'pay', kind: 'expense_pay', startTurn: 0, endTurn: 1, confirmTurn: 1, goldTerminal: { effect: 'EXPENSE_PAID', records: [
+      { table: 'ExpensePayment', ref: '$created:pay', paidAmount: '12.50', paidDate: '2026-11-04', paymentMethod: 'CASH' },
+    ] }, minimalTurns: 2, completable: true }],
+    turns: [{ as: { key: 'owner' }, user: 'จ่ายรายการนี้', expect: {} }, { as: { key: 'owner' }, press: 'ยืนยัน', expect: { preview: { action: 'pay', target: '$seed:expense' } } }],
+  }] };
+
+  it('accepts company C, multiple actors, a press turn, and a paid record with amount, date and method', () => {
+    assert.doesNotThrow(() => validateWorkflowCorpus(paid));
+  });
+
+  it('requires a confirmation turn and the matching preview on a write task', () => {
+    const malformed = structuredClone(paid);
+    delete malformed.conversations[0].tasks[0].confirmTurn;
+    assert.throws(() => validateWorkflowCorpus(malformed), /confirmTurn_required/);
+  });
+
+  it('requires all paid-record fields and keeps the turn press-only without calls', () => {
+    const malformed = structuredClone(paid);
+    delete malformed.conversations[0].tasks[0].goldTerminal.records[0].paymentMethod;
+    assert.throws(() => validateWorkflowCorpus(malformed), /paid_record_fields/);
   });
 });
 

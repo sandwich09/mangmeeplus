@@ -25,7 +25,7 @@ import { bootOracle, resolveGoldCallInput, extractShownItems, extractExpectedFac
 import type { ShownItem } from './oracle';
 import { scoreTurn, factsForMatchedCandidate, type CapturedEvidence, type ExpectedFact, type ToolResultLike, type TurnScore } from './scorer';
 import type { Conversation, Corpus, EvalCompany, GoldCall, Turn } from './types';
-import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
+import { assertIsolatedReplayDatabase, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
 export const turnKey = (conversationId: string, turnIndex: number): string => `${conversationId}#${turnIndex}`;
 
@@ -118,14 +118,15 @@ export type GoldOraclePass = {
 
 export async function collectGoldResults(
   repoRoot: string, corpus: Corpus, companies: Record<EvalCompany, CompanySeed>,
-  databaseUrl: string, redisUrl: string, secretsPath: string, now: Date,
+  databaseUrl: string, redisUrl: string, secretsPath: string, now: Date, beforeTruncate?: () => Promise<void>,
 ): Promise<GoldOraclePass> {
+  assertIsolatedReplayDatabase(databaseUrl);
   const apiRoot = resolve(repoRoot, 'apps/api');
   const requireApi = createRequire(resolve(apiRoot, 'package.json'));
   const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => PgClientLike & { connect(): Promise<void>; end(): Promise<void> } };
   const pg = new Client({ connectionString: databaseUrl });
   await pg.connect();
-  try { await truncateAllTables(pg); } finally { await pg.end(); }
+  try { await beforeTruncate?.(); await truncateAllTables(pg); } finally { await pg.end(); }
 
   const oracle = await bootOracle({ repoRoot, databaseUrl, redisUrl, secretsPath });
   const resultsByTurn = new Map<string, Array<ToolResultLike | undefined>>();

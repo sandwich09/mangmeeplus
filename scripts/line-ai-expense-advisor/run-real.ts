@@ -56,7 +56,8 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runLineReliabilityRuntime, type ReliabilityRuntimeManifest, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
@@ -71,6 +72,7 @@ import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/emplo
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { renderUserText } from './template';
 import { renderReport } from './report';
+import { appendJsonLine, capRejectionCount, captureSpend, installEvalGuard, readJsonLines } from './eval-spend';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -102,6 +104,30 @@ process.env['MANGMEE_EVAL_CONVERSATION_PAUSE_MS'] ??= '2000';
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(resolve(REPO_ROOT, path))).digest('hex');
+}
+
+export type EvalProgress = { startedAt: string; completedConversationIds: string[]; completedAttempts: Record<string, string>; inFlightConversationId: string | null; inFlightAttemptId: string | null };
+export function checkpointPaths(progressPath: string) {
+  const base = progressPath.replace(/\.progress\.json$/, '');
+  return { turnsPath: `${base}.turns.jsonl`, spendPath: `${base}.spend.jsonl`, evidencePath: `${base}.evidence.json`, reportPath: `${base}.report.md` };
+}
+function writeProgress(path: string, progress: EvalProgress): void {
+  const temporary = `${path}.tmp`;
+  writeFileSync(temporary, JSON.stringify(progress, null, 2));
+  const fd = openSync(temporary, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+  renameSync(temporary, path);
+}
+function defaultProgress(startedAt: Date): EvalProgress {
+  return { startedAt: startedAt.toISOString(), completedConversationIds: [], completedAttempts: {}, inFlightConversationId: null, inFlightAttemptId: null };
+}
+function completeAttemptEvidence(rows: RuntimeTurnEvidence[], complete: Record<string, string>): RuntimeTurnEvidence[] {
+  const latest = new Map<string, RuntimeTurnEvidence & { attemptId?: string }>();
+  for (const row of rows as Array<RuntimeTurnEvidence & { attemptId?: string }>) latest.set(`${row.scenarioId}\u0000${row.attemptId}\u0000${row.turnIndex}`, row);
+  return [...latest.values()].filter(row => {
+    const attemptId = (row as RuntimeTurnEvidence & { attemptId?: string }).attemptId;
+    return attemptId && complete[row.scenarioId] === attemptId;
+  });
 }
 
 export type SubsetSelection = { onlyIds: string[]; description: string };
@@ -192,92 +218,123 @@ function buildFixtures(corpus: Corpus, companies: Record<EvalCompany, CompanySee
 async function main(): Promise<void> {
   const outputDir = process.env['MANGMEE_EVAL_OUTPUT_DIR'];
   const gatewayUrl = process.env['MANGMEE_EVAL_GATEWAY_URL'];
-  assert.ok(outputDir, 'MANGMEE_EVAL_OUTPUT_DIR is required');
+  const resumePath = process.env['MANGMEE_EVAL_RESUME'];
+  assert.ok(outputDir || resumePath, 'MANGMEE_EVAL_OUTPUT_DIR or MANGMEE_EVAL_RESUME is required');
   assert.ok(gatewayUrl, 'MANGMEE_EVAL_GATEWAY_URL is required (start it with launch-gateway.mjs first)');
-  mkdirSync(outputDir, { recursive: true });
-
   const secrets = JSON.parse(readFileSync(SECRETS_PATH, 'utf8')) as { databaseUrl: string };
   const databaseUrl = new URL(secrets.databaseUrl);
   databaseUrl.pathname = `/${DB_NAME}`;
   databaseUrl.searchParams.set('schema', 'public');
+  const apiRoot = resolve(REPO_ROOT, 'apps/api');
+  const requireApi = createRequire(resolve(apiRoot, 'package.json'));
+  const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => import('./eval-spend').EvalPgClient & { connect(): Promise<void>; end(): Promise<void> } };
+  const pg = new Client({ connectionString: databaseUrl.toString() });
+  await pg.connect();
+  try {
+    const progress: EvalProgress = resumePath ? JSON.parse(readFileSync(resumePath, 'utf8')) as EvalProgress : defaultProgress(new Date());
+    assert.ok(!Number.isNaN(Date.parse(progress.startedAt)) && Array.isArray(progress.completedConversationIds), 'EVAL_PROGRESS_INVALID');
+    const progressPath = resumePath ?? resolve(outputDir!, `${new Date(progress.startedAt).toISOString().replace(/[:.]/g, '-')}.progress.json`);
+    const paths = checkpointPaths(progressPath);
+    mkdirSync(dirname(progressPath), { recursive: true });
+    writeProgress(progressPath, progress);
+    const maxThb = process.env['MANGMEE_EVAL_MAX_THB'];
+    assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB is required');
+    await installEvalGuard(pg, databaseUrl.toString(), maxThb);
+    await captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'startup');
 
-  const fullCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
-  validateCorpus(fullCorpus);
-  const subset = resolveSubsetSelection();
-  const corpus: Corpus = subset ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset.onlyIds) } : fullCorpus;
-  const flat = flattenTurns(corpus);
-
-  const now = new Date();
-  const companies: Record<EvalCompany, CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now) };
-  const { snapshots, snapshotDigests } = buildSnapshots(corpus, companies);
-  const fixtures = buildFixtures(corpus, companies, now);
-
-  console.log(JSON.stringify({ event: 'gold_oracle_pass_start' }));
-  const goldPass = await collectGoldResults(REPO_ROOT, corpus, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now);
-  console.log(JSON.stringify({ event: 'gold_oracle_pass_done', turnsResolved: goldPass.resultsByTurn.size }));
-
-  const sourceCommit = gitHeadSha(REPO_ROOT);
-  const model = { provider: 'bedrock', modelId: 'global.anthropic.claude-sonnet-4-6', region: 'ap-southeast-1', transport: 'local-http', runtime: 'strands-local' };
-
-  const manifest: ReliabilityRuntimeManifest = {
-    version: 2,
-    corpus: { version: 2, seed: 'mangmee-ai-expense-advisor-sample-v1', status: 'draft', fixtures },
-    snapshots, snapshotDigests,
-    versions: {
-      sourceCommit,
-      schema: sha256File('apps/api/prisma/schema.prisma'),
-      prompt: reliabilityDigest([
-        'apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts',
-        'apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts',
-      ].map(sha256File)),
-      registry: sha256File('packages/contracts/src/ai-tools.ts'),
-      model: reliabilityDigest(model),
-      price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts'),
-    },
-    apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl: REDIS_URL,
-    environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES },
-    repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
-  };
-
-  console.log(JSON.stringify({ event: 'real_run_start', conversations: fixtures.length, turns: flat.length, sourceCommit, subset: subset ?? undefined }));
-  const result = await runLineReliabilityRuntime(manifest, REPO_ROOT);
-
-  if (result.records.some((record: { error: string | null }) => record.error) || result.runtimeDiagnostics.length) {
-    // The runtime keeps going per-fixture even after a failure (so one bad conversation does not
-    // hide the rest), but that also means the FIRST sign of trouble is buried in these two arrays
-    // rather than thrown — surface them before anything asserts on missing evidence, or the real
-    // cause (e.g. a seed/fixture mismatch a replica reset caught) is lost behind a generic assert.
-    console.error(JSON.stringify({
-      event: 'real_run_diagnostics',
-      recordErrors: result.records.filter((record: { error: string | null }) => record.error)
-        .map((record: { scenarioId: string; repeat: number; error: string | null }) => ({ scenarioId: record.scenarioId, repeat: record.repeat, error: record.error })),
-      runtimeDiagnostics: result.runtimeDiagnostics,
-    }, null, 2));
-  }
-
-  // Checked up front, with the richer (live-replay-only) diagnostic pointer: scoreAllTurns itself
-  // throws a plainer "no captured evidence" error, since run-rescore.ts's offline pass has no
-  // `result.records`/`runtimeDiagnostics` to point at.
-  for (const { conversation, turnIndex } of flat) {
-    if (result.turnEvidence.some((row: RuntimeTurnEvidence) => row.scenarioId === conversation.id && row.turnIndex === turnIndex)) continue;
-    const record = result.records.find((row: { scenarioId: string }) => row.scenarioId === conversation.id);
-    throw new Error(`no captured evidence for ${conversation.id}#${turnIndex} — record error: ${record?.error ?? 'none'}; see the real_run_diagnostics line above for runtimeDiagnostics`);
-  }
-  const scores: TurnScore[] = scoreAllTurns(flat, result.turnEvidence, goldPass, now);
-  const summary = summarizeScores(scores);
-
-  const stamp = now.toISOString().replace(/[:.]/g, '-');
-  const evidencePath = resolve(outputDir, `${stamp}.evidence.json`);
-  const reportPath = resolve(outputDir, `${stamp}.report.md`);
-  const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
-  writeFileSync(evidencePath, JSON.stringify({ startedAt: now.toISOString(), sourceCommit, model, manifest: safeManifest, subset: subset ?? undefined, scores, summary, turnEvidence: result.turnEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
-  writeFileSync(reportPath, renderReport({ sourceCommit, now, summary, scores, corpus, turnEvidence: result.turnEvidence, subset: subset ?? undefined }));
-
-  console.log(JSON.stringify({ event: 'real_run_done', evidencePath, reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
-  process.exitCode = summary.failed > 0 ? 1 : 0;
+    const fullCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
+    validateCorpus(fullCorpus);
+    const subset = resolveSubsetSelection();
+    const requested: Corpus = subset ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset.onlyIds) } : fullCorpus;
+    const corpus: Corpus = { ...requested, conversations: requested.conversations.filter(row => !progress.completedConversationIds.includes(row.id)) };
+    const flat = flattenTurns(corpus), now = new Date(progress.startedAt);
+    const companies: Record<EvalCompany, CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
+    const { snapshots, snapshotDigests } = buildSnapshots(corpus, companies), fixtures = buildFixtures(corpus, companies, now);
+    const gatewayManifestPath = resolve(dirname(progressPath), 'gateway.manifest.json');
+    const gatewayManifest = JSON.parse(readFileSync(gatewayManifestPath, 'utf8')) as { transport: 'bedrock' | 'anthropic-api'; modelId?: string };
+    assert.ok(['bedrock', 'anthropic-api'].includes(gatewayManifest.transport), 'EVAL_GATEWAY_TRANSPORT_MISSING');
+    if (gatewayManifest.modelId?.toLowerCase().includes('haiku-5-5')) assert.equal(gatewayManifest.transport, 'bedrock', 'EVAL_PHASE_C_BEDROCK_REQUIRED');
+    const model = { provider: gatewayManifest.transport === 'bedrock' ? 'bedrock' : 'anthropic-api', modelIds: [], transport: gatewayManifest.transport, runtime: 'strands-local' };
+    const sourceCommit = gitHeadSha(REPO_ROOT);
+    const manifest: ReliabilityRuntimeManifest = {
+      version: 2, corpus: { version: 2, seed: 'mangmee-ai-expense-advisor-sample-v1', status: 'draft', fixtures }, snapshots, snapshotDigests,
+      versions: { sourceCommit, schema: sha256File('apps/api/prisma/schema.prisma'), prompt: reliabilityDigest([
+        'apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts', 'apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts',
+      ].map(sha256File)), registry: sha256File('packages/contracts/src/ai-tools.ts'), model: reliabilityDigest(model), price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts') },
+      apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl: REDIS_URL,
+      environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
+    };
+    const goldPass = await collectGoldResults(REPO_ROOT, requested, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now,
+      () => captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'oracle').then(() => undefined));
+    const turnCounts = new Map<string, number>(), attemptByConversation = new Map<string, string>();
+    let capReached = false;
+    let capCount = await capRejectionCount(pg);
+    const result = corpus.conversations.length ? await runLineReliabilityRuntime(manifest, REPO_ROOT, {
+      onBeforeReset: async (conversation, attemptId) => {
+        await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
+        if (capReached) throw new Error('EVAL_CAP_REACHED');
+        attemptByConversation.set(conversation.id, attemptId);
+        progress.inFlightConversationId = conversation.id; progress.inFlightAttemptId = attemptId;
+        writeProgress(progressPath, progress);
+      },
+      onBeforeTurn: async () => {
+        const current = await capRejectionCount(pg);
+        if (current !== capCount) { capReached = true; capCount = current; throw new Error('EVAL_CAP_REACHED'); }
+      },
+      onTurn: async evidence => {
+        const attemptId = attemptByConversation.get(evidence.scenarioId);
+        assert.ok(attemptId, 'EVAL_ATTEMPT_MISSING');
+        appendJsonLine(paths.turnsPath, { ...evidence, attemptId });
+        turnCounts.set(evidence.scenarioId, (turnCounts.get(evidence.scenarioId) ?? 0) + 1);
+        const next = await capRejectionCount(pg);
+        if (next !== capCount) { capReached = true; capCount = next; throw new Error('EVAL_CAP_REACHED'); }
+      },
+      onConversationComplete: async (conversation, attemptId) => {
+        if (capReached || turnCounts.get(conversation.id) !== requested.conversations.find(row => row.id === conversation.id)?.turns.length) return;
+        progress.completedConversationIds = [...new Set([...progress.completedConversationIds, conversation.id])];
+        progress.completedAttempts[conversation.id] = attemptId;
+        progress.inFlightConversationId = null; progress.inFlightAttemptId = null;
+        writeProgress(progressPath, progress);
+      },
+    }) : { records: [], turnEvidence: [], runtimeDiagnostics: [] };
+    for (const evidence of result.turnEvidence) {
+      const attemptId = attemptByConversation.get(evidence.scenarioId);
+      if (attemptId) appendJsonLine(paths.turnsPath, { ...evidence, attemptId });
+    }
+    for (const row of result.records) if (!row.error && row.traces.length === requested.conversations.find(item => item.id === row.scenarioId)?.turns.length) {
+      progress.completedConversationIds = [...new Set([...progress.completedConversationIds, row.scenarioId])];
+      const attemptId = attemptByConversation.get(row.scenarioId);
+      if (attemptId) progress.completedAttempts[row.scenarioId] = attemptId;
+      if (progress.inFlightConversationId === row.scenarioId) { progress.inFlightConversationId = null; progress.inFlightAttemptId = null; }
+    }
+    await captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'final');
+    writeProgress(progressPath, progress);
+    const allEvidence = readJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(paths.turnsPath);
+    const completedEvidence = completeAttemptEvidence(allEvidence, progress.completedAttempts);
+    const completedCorpus: Corpus = { ...requested, conversations: requested.conversations.filter(row => progress.completedConversationIds.includes(row.id)) };
+    const completedFlat = flattenTurns(completedCorpus);
+    const actualModel = { ...model, modelIds: [...new Set(allEvidence.flatMap(row => (row.providerUsage as Array<{ modelId?: string }>).map(call => call.modelId).filter((id): id is string => !!id)))] };
+    const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
+    if (capReached) {
+      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'CAP_REACHED', progress, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      console.log(JSON.stringify({ event: 'CAP_REACHED', evidencePath: paths.evidencePath, progressPath })); process.exitCode = 2; return;
+    }
+    if (progress.completedConversationIds.length < requested.conversations.length || completedFlat.some(({ conversation, turnIndex }) => !completedEvidence.some(row => row.scenarioId === conversation.id && row.turnIndex === turnIndex))) {
+      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'FAILED_RESUMABLE', progress, turnEvidence: allEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      throw new Error(`EVAL_FAILED_RESUMABLE:${progress.inFlightConversationId ?? 'unknown'}`);
+    }
+    const scores = scoreAllTurns(completedFlat, completedEvidence, goldPass, now), summary = summarizeScores(scores);
+    writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, subset: subset ?? undefined,
+      progress, scores, summary, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+    writeFileSync(paths.reportPath, renderReport({ sourceCommit, now, summary, scores, corpus: completedCorpus, turnEvidence: completedEvidence, subset: subset ?? undefined }));
+    console.log(JSON.stringify({ event: 'real_run_done', evidencePath: paths.evidencePath, reportPath: paths.reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
+    process.exitCode = summary.failed > 0 ? 1 : 0;
+  } finally { await pg.end(); }
 }
 
-main().catch((error) => {
-  console.error(JSON.stringify({ event: 'real_run_failed', message: error instanceof Error ? error.message : String(error) }));
-  process.exitCode = 1;
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error(JSON.stringify({ event: 'real_run_failed', message: error instanceof Error ? error.message : String(error) }));
+    process.exitCode = 1;
+  });
+}

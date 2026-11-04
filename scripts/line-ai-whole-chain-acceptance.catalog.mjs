@@ -580,7 +580,9 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
 ];
 
 /** Real PostgreSQL invariants run separately with a mandatory isolated database URL. */
-export const LINE_AI_RELIABILITY_POSTGRES_SUITES = [{ id: 'reliability-postgres-v2', cwd: 'apps/api', command: '../../node_modules/.bin/tsx', args: ['--test',
+export const LINE_AI_RELIABILITY_POSTGRES_SUITES = [
+  { id: 'eval-guard-postgres', cwd: '.', command: 'node', args: ['--import', 'tsx', '--test', '--test-name-pattern', 'real PostgreSQL: eval_guard', 'scripts/line-ai-reliability-runtime.spec.ts'] },
+  { id: 'reliability-postgres-v2', cwd: 'apps/api', command: '../../node_modules/.bin/tsx', args: ['--test',
   'src/modules/billing/application/billing-feature-entitlements.pg.spec.ts',
   'src/modules/line-ai/application/line-retained-task-source.pg.spec.ts',
   'src/modules/line-ai/application/line-ai-budget-authority.pg.spec.ts',
