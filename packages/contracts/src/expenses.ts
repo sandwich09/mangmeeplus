@@ -2000,11 +2000,11 @@ export function canVoidExpenseFinancialState(expense: {
     && (Number(expense.paidAmount ?? 0) > 0 || Boolean(expense.journalEntryId) || expense.postingStatus === 'posted'));
 }
 
-/** Thai names shared by upload pickers, validation, API errors and guides. */
-export const JPEG_LABEL = 'เจเพ็ก';
-export const PNG_LABEL = 'พีเอ็นจี';
+/** File-type names shared by upload pickers, validation, API errors and guides; owner 2026-11-04: in English. */
+export const JPEG_LABEL = 'JPEG';
+export const PNG_LABEL = 'PNG';
 export const STORED_IMAGE_TYPES_LABEL = `${JPEG_LABEL}, ${PNG_LABEL}`;
-export const IMAGE_SOURCE_TYPES_LABEL = `${STORED_IMAGE_TYPES_LABEL}, ฮีอิก, ฮีฟ, กิฟ`;
+export const IMAGE_SOURCE_TYPES_LABEL = `${STORED_IMAGE_TYPES_LABEL}, HEIC, HEIF, GIF`;
 export const ATTACHMENT_SOURCE_TYPES_LABEL = `PDF หรือรูปภาพ (${IMAGE_SOURCE_TYPES_LABEL})`;
 export const SIGNATURE_FILE_TYPES_LABEL = `รูปภาพ (${STORED_IMAGE_TYPES_LABEL})`;
 export const SIGNATURE_FILE_REQUIRED_MESSAGE = `ไฟล์ลายเซ็นต้องเป็น${SIGNATURE_FILE_TYPES_LABEL} ขนาดไม่เกิน 2 เมกะไบต์`;

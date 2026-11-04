@@ -101,7 +101,7 @@ describe('LINE staff menu', () => {
     assert.equal(message.type, 'flex');
     assert.equal((message.contents as any).type, 'bubble');
     assert.match(JSON.stringify(message), /ใช้งานอยู่/);
-    assert.equal(JSON.stringify(message).includes('/company co-1'), false);
+    assert.equal(JSON.stringify(message).includes('co-1'), false);
   });
 
   it('shows only current company, user, and human role labels in the context card', () => {
@@ -294,8 +294,8 @@ describe('LINE staff menu', () => {
     assert.match(JSON.stringify(message), /บริษัท 1/);
     assert.match(JSON.stringify(message), /บริษัท 2/);
     assert.match(JSON.stringify(message), /กดปุ่มเลือกบริษัทได้เลยค่ะ/);
-    assert.match(JSON.stringify(message), /\/company co-2/);
-    assert.equal(JSON.stringify(message).includes('/company co-1'), false);
+    assert.match(JSON.stringify(message), /action=company-select&companyId=co-2/);
+    assert.equal(JSON.stringify(message).includes('co-1'), false);
   });
 
   /**
@@ -310,7 +310,7 @@ describe('LINE staff menu', () => {
     ], 'co-1');
     const [, second] = (message as any).contents.contents;
     assert.deepEqual(second.footer.contents.map((button: any) => button.action), [
-      { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: '/company co-2' },
+      { type: 'postback', label: COMPANY_PICKER_SELECT_LABEL, data: 'action=company-select&companyId=co-2', displayText: 'บริษัท 2 · บริษัทสอง' },
       { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok2' },
     ]);
     assert.equal(second.footer.contents[0].style, 'primary');
@@ -332,7 +332,7 @@ describe('LINE staff menu', () => {
       { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: 'https://app.example.com/l/tok1' },
     ]);
     assert.match(JSON.stringify(first), /ใช้งานอยู่/);
-    assert.equal(JSON.stringify(message).includes('/company co-1'), false, 'no redundant switch action');
+    assert.equal(JSON.stringify(message).includes('companyId=co-1'), false, 'no redundant switch action');
     // …and nothing to switch either: "ระบบจะสลับบริษัทในไลน์ให้ด้วย" on the bubble the chat is
     // ALREADY on promises a change that will not happen. The line belongs to the bubbles it is
     // true of; the second one still carries it.

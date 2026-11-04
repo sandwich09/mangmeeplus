@@ -867,11 +867,11 @@ describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
   });
 
   it('recovers only the seller tax id when both parties are explicitly labelled', () => {
-    const twoIds = 'ผู้ขาย บจก. ทดสอบ เลขประจำตัวผู้เสียภาษี 0105561000105\nผู้ซื้อ เลขประจำตัวผู้เสียภาษี 0994000163011\nรวม 100.00';
+    const twoIds = 'ผู้ขาย บจก. ทดสอบ เลขประจำตัวผู้เสียภาษี 0105561000101\nผู้ซื้อ เลขประจำตัวผู้เสียภาษี 0994000163011\nรวม 100.00';
     const out = applyOcrValueCrossCheck({}, twoIds);
-    assert.equal(out.vendorTaxId, '0105561000105');
-    const kept = applyOcrValueCrossCheck({ vendorTaxId: '0105561000105' }, twoIds);
-    assert.equal(kept.vendorTaxId, '0105561000105', 'a model selection that the text contains survives');
+    assert.equal(out.vendorTaxId, '0105561000101');
+    const kept = applyOcrValueCrossCheck({ vendorTaxId: '0105561000101' }, twoIds);
+    assert.equal(kept.vendorTaxId, '0105561000101', 'a model selection that the text contains survives');
   });
 
   it('rejects a date-valued documentNumber in printed and ISO forms (the reported bug)', () => {
@@ -953,6 +953,145 @@ describe('export cleanup receipt identity evidence', () => {
   });
 });
 
+// ── Marketplace order image: seller block, tax id grounding, coupon rows, misread numbers ─────
+
+describe('receipt OCR marketplace order grounding (2026-11-04)', () => {
+  const SHOP_ADDRESS = '9/9 หมู่ 9 ตำบลสมมติ อำเภอตัวอย่าง จังหวัดตัวอย่าง 50000';
+  const PLATFORM_ADDRESS = '1 อาคารสมมติ ถนนตัวอย่าง แขวงตัวอย่าง เขตตัวอย่าง กรุงเทพฯ 10000';
+  /** Synthetic TikTok-layout step-1 text: platform and courier header, a ผู้ขาย block with a +66
+   *  phone, the buyer, two items, a delivery charge and two minus-signed คูปอง rows. */
+  const tiktokText = (rows: string[] = ['| เสื้อยืดตัวอย่าง | 1 | 600.00 |', '| กางเกงตัวอย่าง | 1 | 400.00 |'], orderNumber = '5781-2604-3321-0088') => [
+    'TikTok Shop',
+    'บริษัท ตัวอย่างแพลตฟอร์ม (ประเทศไทย) จำกัด',
+    `ที่อยู่ ${PLATFORM_ADDRESS}`,
+    'เลขประจำตัวผู้เสียภาษี 0105556012341',
+    'ขนส่งโดย บริษัท ขนส่งตัวอย่าง จำกัด',
+    'ใบเสร็จรับเงิน',
+    `เลขที่คำสั่งซื้อ ${orderNumber}`,
+    'ผู้ขาย: ร้านตัวอย่างดีช็อป',
+    'โทร +66 81 234 5678 18',
+    `ที่อยู่ ${SHOP_ADDRESS}`,
+    'ผู้ซื้อ: ลูกค้าตัวอย่าง',
+    'ที่อยู่จัดส่ง 5/5 ถนนสมมติ กรุงเทพฯ 10900',
+    '| สินค้า | จำนวน | ราคา |',
+    ...rows,
+    'ยอดรวมสินค้า 1,000.00',
+    'ค่าจัดส่ง 40.00',
+    'คูปองส่วนลดจากร้านค้า -฿50.00',
+    'คูปองส่วนลดค่าจัดส่ง -฿40.00',
+    'ยอดชำระทั้งหมด 950.00',
+  ].join('\n');
+  const modelFields = (overrides: Record<string, unknown> = {}) => ({
+    vendorName: 'ร้านตัวอย่างดีช็อป',
+    // Built from the seller's +66 phone: printed only as a phone, and the old substring check let it through.
+    vendorTaxId: '6681234567818',
+    vendorAddress: SHOP_ADDRESS,
+    documentNumber: '5781-2604-3321-0088',
+    subtotalAmount: '1,000.00',
+    grandTotalAmount: '950.00',
+    lines: [
+      { description: 'เสื้อยืดตัวอย่าง', quantity: '1', amount: '600.00', evidenceSignal: 'เสื้อยืดตัวอย่าง' },
+      { description: 'กางเกงตัวอย่าง', quantity: '1', amount: '400.00', evidenceSignal: 'กางเกงตัวอย่าง' },
+    ],
+    additionalCharges: [{ kind: 'DELIVERY', description: 'ค่าจัดส่ง', amount: '40.00', evidenceSignal: 'ค่าจัดส่ง 40.00' }],
+    ...overrides,
+  });
+  const read = (fields: Record<string, unknown>, documentText: string, documentKind = 'MARKETPLACE_ORDER') => {
+    const parsed = parseReceiptOcrJson(JSON.stringify({ fields }), documentText, new Set());
+    return applyOcrValueCrossCheck(parsed!.fields!, documentText, '2026-11-04', documentKind);
+  };
+
+  it('takes the vendor from the ผู้ขาย block, no phone tax id, and the coupon sum as the discount', () => {
+    const out = read(modelFields(), tiktokText());
+    assert.equal(out.vendorName, 'ร้านตัวอย่างดีช็อป');
+    assert.equal(out.vendorAddress, SHOP_ADDRESS);
+    assert.equal(out.vendorTaxId, undefined, 'neither the phone nor the platform header tax id is the shop’s');
+    assert.equal(out.discountAmount, '90.00', 'shop coupon 50.00 + shipping coupon 40.00');
+    assert.equal(out.documentNumber, '5781-2604-3321-0088');
+    assert.equal(receiptItemsMismatch(out), false, 'the item rows now balance against the printed total');
+  });
+
+  it('never takes the platform header as the vendor; its name, address and tax id go to review', () => {
+    const out = read(modelFields({
+      vendorName: 'บริษัท ตัวอย่างแพลตฟอร์ม (ประเทศไทย) จำกัด',
+      vendorIdentityEvidence: 'บริษัท ตัวอย่างแพลตฟอร์ม (ประเทศไทย) จำกัด',
+      vendorTaxId: '0105556012341',
+      vendorAddress: PLATFORM_ADDRESS,
+    }), tiktokText());
+    assert.equal(out.vendorName, undefined);
+    assert.equal(out.vendorEntityKind, undefined);
+    assert.equal(out.vendorTaxId, undefined);
+    assert.equal(out.vendorAddress, undefined);
+    assert.ok(out.missingFields?.includes('vendorName'));
+    assert.ok(out.missingFields?.includes('vendorTaxId'));
+  });
+
+  it('keeps today’s review state when the coupon arithmetic does not prove itself', () => {
+    const shortRows = read(modelFields({ lines: [
+      { description: 'เสื้อยืดตัวอย่าง', quantity: '1', amount: '600.00', evidenceSignal: 'เสื้อยืดตัวอย่าง' },
+      { description: 'กางเกงตัวอย่าง', quantity: '1', amount: '399.94', evidenceSignal: 'กางเกงตัวอย่าง' },
+    ] }), tiktokText(['| เสื้อยืดตัวอย่าง | 1 | 600.00 |', '| กางเกงตัวอย่าง | 1 | 399.94 |']));
+    assert.equal(shortRows.discountAmount, undefined, 'item rows 0.06 under the subtotal: the coupon sum is not proven');
+    assert.equal(receiptItemsMismatch(shortRows), true, 'and the rows still go to review');
+    const offTotal = tiktokText().replace('ยอดชำระทั้งหมด 950.00', 'ยอดชำระทั้งหมด 950.06');
+    const unproven = read(modelFields({ grandTotalAmount: '950.06' }), offTotal);
+    assert.equal(unproven.discountAmount, undefined, 'subtotal − coupons + charges misses the total by 0.06');
+    assert.equal(receiptItemsMismatch(unproven), true);
+  });
+
+  it('sends a receipt number with I, O or l between digits to review', () => {
+    const misread = '5781-26O4-332I-0088';
+    const out = read(modelFields({ documentNumber: misread }), tiktokText(undefined, misread));
+    assert.equal(out.documentNumber, undefined);
+    assert.ok(out.missingFields?.includes('documentNumber'));
+    for (const number of ['5I78O2', '12l45']) {
+      const result = applyOcrValueCrossCheck({ documentNumber: number }, `เลขที่ ${number} รวม 180.00`, '2026-11-04', 'RECEIPT');
+      assert.equal(result.documentNumber, undefined, number);
+    }
+    assert.equal(applyOcrValueCrossCheck({ documentNumber: 'INV-0012' }, 'เลขที่ INV - 0012 รวม 180.00', '2026-11-04', 'RECEIPT').documentNumber, 'INV-0012');
+  });
+
+  it('accepts a seller tax id only as a whole, check-digit-valid run that is not a phone', () => {
+    const page = (line: string) => `ร้านทดสอบ\n${line}\nรวม 100.00`;
+    for (const line of [
+      'เลขประจำตัวผู้เสียภาษี 0105556012342', // bad check digit
+      'เลขที่ 1234 0105556012341', // a window of a longer run
+      'โทร +66 81 234 5678 18', 'Tel 6681234567818', 'Phone: (+66) 6681234567818', 'มือถือ 6681234567818',
+      'ติดต่อ 0812345678 / 6681234567818', // beside a phone-shaped run
+    ]) {
+      const digits = collapseDigits(line).match(/\d{13}(?!\d)/)?.[0] ?? '';
+      assert.equal(applyOcrValueCrossCheck({ vendorTaxId: digits }, page(line)).vendorTaxId, undefined, line);
+      assert.equal(applyOcrValueCrossCheck({}, page(`เลขประจำตัวผู้เสียภาษี ${line}`)).vendorTaxId, undefined, `recovered: ${line}`);
+    }
+    for (const line of ['เลขประจำตัวผู้เสียภาษี 0-1055-56012-34-1', 'เลขประจำตัวผู้เสียภาษี 0105556012341 โทร 02-123-4567']) {
+      assert.equal(applyOcrValueCrossCheck({ vendorTaxId: '0105556012341' }, page(line)).vendorTaxId, '0105556012341', line);
+      assert.equal(applyOcrValueCrossCheck({}, page(line)).vendorTaxId, '0105556012341', `recovered: ${line}`);
+    }
+  });
+
+  it('leaves the ordinary regressions alone: POS discount, delivery charge, no seller label', () => {
+    const pos = 'ใบเสร็จรับเงิน\nกาแฟ 1 120.00\nยอดรวม 120.00\nส่วนลดสมาชิก -15.00\nรวมทั้งสิ้น 105.00';
+    assert.equal(applyOcrValueCrossCheck({ subtotalAmount: '120.00', discountAmount: '15.00', grandTotalAmount: '105.00' }, pos).discountAmount, '15.00');
+    const delivery = 'ใบเสร็จรับเงิน\nข้าวผัด 1 100.00\nยอดรวม 100.00\nค่าจัดส่ง 20.00\nรวมทั้งสิ้น 120.00';
+    const charged = read({ subtotalAmount: '100.00', grandTotalAmount: '120.00',
+      additionalCharges: [{ kind: 'DELIVERY', description: 'ค่าจัดส่ง', amount: '20.00', evidenceSignal: 'ค่าจัดส่ง 20.00' }] }, delivery, 'RECEIPT');
+    assert.equal(charged.discountAmount, undefined);
+    assert.equal(charged.additionalCharges?.[0]?.amount, '20.00');
+    const header = 'บริษัท ตัวอย่างวัสดุ จำกัด\nเลขประจำตัวผู้เสียภาษี 0105556012341\nรวม 100.00\nผู้ขาย ..............';
+    const plain = applyOcrValueCrossCheck({ vendorName: 'บริษัท ตัวอย่างวัสดุ จำกัด' }, header);
+    assert.equal(plain.vendorName, 'บริษัท ตัวอย่างวัสดุ จำกัด', 'a bare signature label is not a seller block');
+    assert.equal(plain.vendorTaxId, '0105556012341');
+    for (const caption of ['ผู้ขาย ผู้รับเงิน', 'Seller Signature ________', 'ผู้ขาย ลงชื่อ ..........', 'ผู้ขาย: ผู้รับเงิน', 'Seller: Authorized signature']) {
+      const invoice = `บริษัท ตัวอย่างวัสดุ จำกัด\nเลขประจำตัวผู้เสียภาษี 0105556012341\nรวม 100.00\n${caption}`;
+      const kept = applyOcrValueCrossCheck({ vendorName: 'บริษัท ตัวอย่างวัสดุ จำกัด', vendorTaxId: '0105556012341' }, invoice);
+      assert.equal(kept.vendorName, 'บริษัท ตัวอย่างวัสดุ จำกัด', `a signature caption is not a seller block: ${caption}`);
+      assert.equal(kept.vendorTaxId, '0105556012341', caption);
+    }
+  });
+});
+
+const collapseDigits = (text: string) => text.replace(/(?<=\d)[- ]+(?=\d)/g, '');
+
 // ── Vendor address §7/§8: the printed seller address, and the buyer block kept apart ─────────
 
 describe('receipt OCR printed addresses (vendor-address spec §7)', () => {
@@ -961,7 +1100,7 @@ describe('receipt OCR printed addresses (vendor-address spec §7)', () => {
     'ใบกำกับภาษี/ใบเสร็จรับเงิน',
     'บริษัท สยามวัสดุก่อสร้าง จำกัด (สำนักงานใหญ่)',
     'ที่อยู่ 199/8 ถนนพระราม 3 แขวงบางโพงพาง เขตยานนาวา กรุงเทพฯ 10120',
-    'เลขประจำตัวผู้เสียภาษี 0105561000105',
+    'เลขประจำตัวผู้เสียภาษี 0105561000101',
     'เลขที่ IV-2569-0412 วันที่ 12/09/2569',
     'ผู้ซื้อ บริษัท มั่งมีพลัส จำกัด (สำนักงานใหญ่)',
     'ที่อยู่ผู้ซื้อ 55/3 ซอยลาดพร้าว 15 แขวงจอมพล เขตจตุจักร กรุงเทพฯ 10900',
@@ -982,7 +1121,7 @@ describe('receipt OCR printed addresses (vendor-address spec §7)', () => {
   it('keeps the seller address in vendorAddress and our own block in buyerAsPrinted', () => {
     const out = read({
       vendorName: 'บริษัท สยามวัสดุก่อสร้าง จำกัด',
-      vendorTaxId: '0105561000105',
+      vendorTaxId: '0105561000101',
       vendorAddress: SELLER_ADDRESS,
       buyerAsPrinted: {
         name: 'บริษัท มั่งมีพลัส จำกัด', taxId: '0994000163011', branchCode: '00000', addressText: BUYER_ADDRESS,
@@ -990,7 +1129,7 @@ describe('receipt OCR printed addresses (vendor-address spec §7)', () => {
       grandTotalAmount: '1,498.00',
     }, FULL_TAX_INVOICE_TEXT, 'TAX_INVOICE');
     assert.equal(out.vendorAddress, SELLER_ADDRESS);
-    assert.equal(out.vendorTaxId, '0105561000105', 'the seller tax id stays the seller’s');
+    assert.equal(out.vendorTaxId, '0105561000101', 'the seller tax id stays the seller’s');
     assert.deepEqual(out.buyerAsPrinted, {
       name: 'บริษัท มั่งมีพลัส จำกัด', addressText: BUYER_ADDRESS, taxId: '0994000163011', branchCode: '00000',
     });

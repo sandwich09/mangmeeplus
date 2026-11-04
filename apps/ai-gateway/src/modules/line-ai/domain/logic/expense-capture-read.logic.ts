@@ -557,11 +557,30 @@ const positiveInt = (value: unknown): number | undefined =>
 const optional = <T>(key: string, value: T | undefined): Record<string, T> =>
   (value === undefined ? {} : { [key]: value } as Record<string, T>);
 
-/** Identity candidates belong to an issuer block, never to a lone number elsewhere on the page. */
+const SELLER_LABEL_LINE_RE = /^\s*(?:\[SELLER\]\s*)?(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร|ร้านค้า)(?:\s|[:：]))/i;
+
+/** The page labels its seller with a printed value (ผู้ขาย: ร้าน…, Seller: …, ร้านค้า …), as a
+ *  marketplace order does beneath the platform's or courier's own header. A bare label over a
+ *  signature line ("ผู้ขาย ........", "Seller's signature") is not a block. */
+export function hasLabelledSellerBlock(documentText: string): boolean {
+  return documentText.split('\n').some((line) => {
+    const label = SELLER_LABEL_LINE_RE.exec(line);
+    if (!label) return false;
+    const rest = line.slice(label[0].length);
+    // A signature caption ("ผู้ขาย ผู้รับเงิน", "Seller Signature", "ผู้ขาย ลงชื่อ") names a role, not the seller.
+    return /^[\s:：|*]*[\p{L}\p{N}]/u.test(rest)
+      && !/^[\s:：|*]*(?:ผู้|ลงชื่อ|ลายมือ|วันที่|ขอบคุณ|sign|authori[sz]ed|date\b|thank)/iu.test(rest);
+  });
+}
+
+/** Identity candidates belong to an issuer block, never to a lone number elsewhere on the page.
+ *  When the page labels its seller block, that block alone is the issuer: the platform or logistics
+ *  header above it is never the vendor, whichever block the transcription marked [SELLER]. */
 export function receiptIssuerText(documentText: string): string {
-  const marked = [...documentText.matchAll(/\[SELLER\]([\s\S]*?)\[\/SELLER\]/gi)].map((match) => match[1]);
+  const labelledSeller = hasLabelledSellerBlock(documentText);
+  const marked = labelledSeller ? [] : [...documentText.matchAll(/\[SELLER\]([\s\S]*?)\[\/SELLER\]/gi)].map((match) => match[1]);
   return (marked.length ? marked : [documentText]).map((block) => {
-    let otherParty = false;
+    let otherParty = labelledSeller;
     const issuerNames = new Set<string>();
     return block!.split('\n').filter((line) => {
       if (/^\s*(?:[#*|]+\s*)?(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ชื่อผู้ป่วย|ผู้ป่วย|ผู้รับสินค้า)(?:\s|[:：])|ชื่อ\s*\/\s*Patient)/i.test(line)) {
@@ -572,7 +591,7 @@ export function receiptIssuerText(documentText: string): string {
       const identifiedFooter = [...issuerNames].some(issuer => name === issuer || name.startsWith(`${issuer} `))
         || [...issuerNames].some(issuer => issuer.startsWith('โรงพยาบาล'))
           && /^\s*เลข(?:ประจำตัว)?ผู้เสียภาษี(?:อากร)?\s*ของ\s*โรงพยาบาล(?:\s|[:：])/.test(line);
-      if (identifiedFooter || /^\s*(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร)(?:\s|[:：]))/i.test(line)) otherParty = false;
+      if (identifiedFooter || SELLER_LABEL_LINE_RE.test(line)) otherParty = false;
       if (!otherParty && /^(?:โรงพยาบาล|บริษัท|ห้างหุ้นส่วน|HOSPITAL\b)/i.test(name)) issuerNames.add(name);
       return !otherParty;
     }).join('\n');

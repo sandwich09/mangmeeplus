@@ -1318,8 +1318,8 @@ export function isWetSignedScanAttachment(
 
 export const MIME_TYPE_LABELS: Record<string, string> = {
   'application/pdf': 'เอกสาร PDF',
-  'image/jpeg': `รูปภาพ${JPEG_LABEL}`,
-  'image/jpg': `รูปภาพ${JPEG_LABEL}`,
+  'image/jpeg': `รูปภาพ ${JPEG_LABEL}`,
+  'image/jpg': `รูปภาพ ${JPEG_LABEL}`,
   'image/png': 'รูปภาพ',
   'image/svg+xml': 'ภาพเวกเตอร์',
 };

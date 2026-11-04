@@ -484,7 +484,15 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
         && saved.attachments.some(attachment => attachment.id === attachmentId && attachment.status === 'ACTIVE')) attempt.step = 'extract';
     }
     if (!attempt) {
-      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
+      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() }).catch((e: unknown) => {
+        // A free shop past its monthly reads is refused before any file is kept: the same banner
+        // as a refused read, and no batch row may offer to send it again this month.
+        if (freeExpenseDrafts && apiErrorCode(e) === 'FREE_DOCUMENT_LIMIT_REACHED') {
+          stopBatchRef.current = true;
+          setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
+        }
+        throw e;
+      });
       attempt = { intent, step: 'upload' };
       uploadAttempts.current.set(file, attempt);
     }
@@ -608,7 +616,8 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
     }
   }, [validationAttempt]);
 
-  const hasUnsent = !sentExpenseIds.length && selectedFiles.some((_, index) => !captureFiles[index]?.expenseId);
+  // Files the month's limit refused cannot be sent anyway, so they never hold the person on this page.
+  const hasUnsent = !quotaBlocked && !sentExpenseIds.length && selectedFiles.some((_, index) => !captureFiles[index]?.expenseId);
   const askToLeave = async () => !hasUnsent || leaveAllowed.current || await confirm({
     title: 'ยังไม่ได้บันทึกสิ่งที่แก้', message: 'ออกจากหน้านี้ สิ่งที่แก้ไว้จะหายไป',
     confirmLabel: 'ออกโดยไม่บันทึก', cancelLabel: 'อยู่ต่อ', variant: 'danger',
@@ -679,8 +688,8 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
               {/* G18: the package page is where the quota is bought; staff without the permission
                   cannot buy, so they are told who can instead of being sent to a page that bounces. */}
               {canManagePlan
-                ? <Link href={`/companies/${companyId}/billing`} className="inline-flex min-h-11 items-center underline">เปลี่ยนแพ็กเกจ</Link>
-                : <span className="inline-flex min-h-11 items-center">แจ้ง{THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ</span>}
+                ? <Link href={`/companies/${companyId}/billing`} className="inline-flex min-h-11 items-center underline">{freeExpenseDrafts ? 'ดูแพ็กเกจ' : 'เปลี่ยนแพ็กเกจ'}</Link>
+                : <span className="inline-flex min-h-11 items-center">{freeExpenseDrafts ? 'ติดต่อเจ้าของร้าน' : `แจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ`}</span>}
               {blockedExpenseId && (
                 <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="inline-flex min-h-11 items-center underline">
                   กรอกใบเสร็จที่เพิ่งอัปโหลดเอง
@@ -738,9 +747,9 @@ export function UploadPanel({ companyId, branchId, canManagePlan, userId, caps, 
                     <p className="text-sm font-semibold text-gray-800 [overflow-wrap:anywhere]">{row.name}</p>
                     <p className="min-h-5 text-sm text-gray-500">
                       {sizeText(row.size)}{sizeText(row.size) && row.state !== 'PENDING' ? ' · ' : ''}{row.state !== 'PENDING' && (row.state === 'UPLOADING' && extracting ? uploadPhase : t(CAPTURE_STATE_LABELS[row.state], locale))}
-                      {row.error && <span className="block text-error-700">{row.error}</span>}
+                      {row.error && row.error !== quotaLatch?.message && <span className="block text-error-700">{row.error}</span>}
                     </p>
-                    {row.state === 'FAILED' && (
+                    {row.state === 'FAILED' && !quotaBlocked && (
                       <button type="button" className={cx(ghostClass, 'mt-2')} disabled={loading} aria-busy={loading} onClick={() => void handleBatchUpload(selectedFiles, index)}>
                         {t('expenses.capture.retry_file', locale)}
                       </button>
@@ -2724,6 +2733,8 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const [query, setQuery] = useState(initialListState.query);
   const [gran, setGran] = useMenuFilterState<'day' | 'month'>('expenses.list.gran', () => 'month');
   const [month, setMonth] = useState(initialListState.month);
+  // The month counts by document date unless the person picks the day it was sent in, which finds an old receipt sent today.
+  const [dateField, setDateField] = useState<'expenseDate' | 'uploadedAt'>(searchParams.get('dateField') === 'uploadedAt' ? 'uploadedAt' : 'expenseDate');
   const [day] = useMenuFilterState('expenses.list.day', () => todayCivilDate());
   const requestedDay = searchParams.get('day') ?? searchParams.get('date') ?? (requestedFrom === requestedTo ? requestedFrom : null);
   useEffect(() => {
@@ -2780,6 +2791,8 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   const { fromDate, toDate } = sourceView
     ? { fromDate: sourceView === 'confirmed' ? requestedFrom! : undefined, toDate: sourceView === 'confirmed' ? requestedTo! : undefined }
     : periodRange(month);
+  // Special views keep their own document-date scope; only the month view offers the other date.
+  const periodDateField = sourceView ? 'expenseDate' : dateField;
   const loadVersion = useRef(0);
   useEffect(() => { if (sourceView && !searchParams.has('chip') && !searchParams.has('query')) { setChip('all'); setQuery(''); } }, [sourceView, requestedFrom, requestedTo, setChip, setQuery]);
 
@@ -2798,7 +2811,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
             // §11.4: scoped to the checklist's range when the URL carries a valid one, every period
             // otherwise (§8 - the chip's own link, so old documents can be filled in any time).
             : sourceView === 'addressMissing' ? addressMissingListFilter(requestedFrom, requestedTo)
-            : { fromDate, toDate }),
+            : periodDateField === 'uploadedAt' ? { uploadedFromDate: fromDate, uploadedToDate: toDate } : { fromDate, toDate }),
           page: nextPage, pageSize: 200,
         });
         if (version !== loadVersion.current) return;
@@ -2814,7 +2827,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
     }
     finally { if (version === loadVersion.current) setLoading(false); }
     // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
-  }, [companyId, branchId, fromDate, toDate, sourceView, requestedFrom, requestedTo, highlightId, highlightReadyId]);
+  }, [companyId, branchId, fromDate, toDate, periodDateField, sourceView, requestedFrom, requestedTo, highlightId, highlightReadyId]);
   useEffect(() => { void load(); return () => { loadVersion.current += 1; }; }, [load]);
   useEffect(() => {
     setCategoryNamesLoading(true);
@@ -2853,12 +2866,13 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   useEffect(() => {
     // A branch deep-link is applied by the existing scope control before recording the initial filters.
     if (requestedBranchId && branchFilter && !branchFilter.locked && branchId !== requestedBranchId && branchFilter.branches.some(b => b.id === requestedBranchId)) return;
-    const key = JSON.stringify([chip, query, month, branchId, dateOrder]);
+    const key = JSON.stringify([chip, query, month, dateField, branchId, dateOrder]);
     if (previousFilters.current !== null && previousFilters.current !== key) setPage(1);
     previousFilters.current = key; setExportNotice(null); setSoftwareResult(null); setExported(false);
-  }, [chip, query, month, branchId, dateOrder, requestedBranchId, branchFilter]);
+  }, [chip, query, month, dateField, branchId, dateOrder, requestedBranchId, branchFilter]);
   const listQuery = new URLSearchParams(searchParams.toString());
   if (branchId) listQuery.set('branchId', branchId); else listQuery.delete('branchId');
+  if (dateField === 'uploadedAt') listQuery.set('dateField', dateField); else listQuery.delete('dateField');
   const listUrl = expenseListUrl(listPath, listQuery, { month, chip, query, dateOrder, page });
   // The address follows what the person changes, never the first settle after loading: a replace at that
   // moment raced a menu press made as the list appeared and pulled the person back to the list.
@@ -2928,11 +2942,11 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
     setExporting(true); setExportError(null); setExportNotice(null); setExported(false); setSoftwareResult(null);
     try {
       if (exportFormat === 'purchase_journal' && !forceAccountant) {
-        const result = await createAccountingSoftwareExport(companyId, { preset: 'purchase_journal', status: activeChip === 'closed' ? 'VOIDED' : activeChip === 'pending' ? 'NEEDS_REVIEW' : 'CONFIRMED', dateField: 'expenseDate', fromDate, toDate, ...(branchId ? { branchId } : {}) });
+        const result = await createAccountingSoftwareExport(companyId, { preset: 'purchase_journal', status: activeChip === 'closed' ? 'VOIDED' : activeChip === 'pending' ? 'NEEDS_REVIEW' : 'CONFIRMED', dateField: periodDateField, fromDate, toDate, ...(branchId ? { branchId } : {}) });
         if (version !== loadVersion.current) return;
         setSoftwareResult(result); downloadAccountingSoftwareExport(result); return;
       }
-      const result = await createAccountantPackage(companyId, { dateField: 'expenseDate', fromDate, toDate, ...(branchId ? { branchId } : {}) });
+      const result = await createAccountantPackage(companyId, { dateField: periodDateField, fromDate, toDate, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
       if (result.rowCount + (result.paymentRowCount ?? 0) + (result.withholdingRowCount ?? 0) === 0) { setExportNotice('ไม่มีรายการตามที่เลือก'); return; }
       if (result.truncated) setExportNotice(`ส่งออก ${result.rowCount} จากทั้งหมด ${result.totalMatched} รายการ — แบ่งช่วงวันที่ให้สั้นลงเพื่อส่งออกให้ครบ`);
@@ -2953,7 +2967,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
   // Owner 2026-10-15: the list's numbers in one card above it, as on the home page (no icons, no second copy below the list).
   const amount = (value: number) => value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const metricItems = [
-    { key: 'total', label: t('expenses.kpi_total', locale), value: amount(kpi.total), unit: 'บาท', note: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
+    { key: 'total', label: periodDateField === 'uploadedAt' ? 'ยอดค่าใช้จ่ายตามวันที่ส่งเข้า' : t('expenses.kpi_total', locale), value: amount(kpi.total), unit: 'บาท', note: `${kpi.counted} ${t('expenses.kpi_total_sub', locale)}`, dot: 'bg-[#5aa95c]', color: 'text-[#3e8a4f]' },
     { key: 'outstanding', label: 'ค้างจ่าย', value: amount(kpi.outstanding), unit: 'บาท', note: kpi.overdueCount > 0 ? `เกินกำหนด ${baht(kpi.overdue)} · ${kpi.overdueCount} ใบ` : t('expenses.kpi_outstanding_sub', locale), dot: 'bg-gray-400' },
     { key: 'vat', label: t('expenses.kpi_vat', locale), value: amount(kpi.vat), unit: 'บาท', note: t('expenses.kpi_vat_sub', locale), dot: 'bg-sky-400' },
   ];
@@ -2984,9 +2998,14 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
                 : 'ค้างจ่ายที่ยืนยันแล้ว · ทุกเดือน'}
         </Notice>
       )}
-      {/* The month and seller/document search are the list's filters. */}
+      {/* The month, which date it counts by, and seller/document search are the list's filters. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-        {!sourceView && <ThemedDate mode="month" aria-label={t('expenses.document_date', locale)} className={cx(inputClass, 'w-auto min-w-36 shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
+        {!sourceView && <ThemedDate mode="month" aria-label={dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : t('expenses.document_date', locale)} className={cx(inputClass, 'w-auto min-w-36 shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
+        {/* The Evidence page's own choice and words: วันที่ส่งเข้า is true for typed and LINE records too, which were never uploaded. */}
+        {!sourceView && <div className="mangmee-segmented shrink-0 self-start sm:self-auto" role="group" aria-label="นับเดือนตาม">
+          <button type="button" className={cx('mangmee-tab', dateField === 'expenseDate' && 'mangmee-tab-active')} aria-pressed={dateField === 'expenseDate'} onClick={() => setDateField('expenseDate')}>{t('expenses.document_date', locale)}</button>
+          <button type="button" className={cx('mangmee-tab', dateField === 'uploadedAt' && 'mangmee-tab-active')} aria-pressed={dateField === 'uploadedAt'} onClick={() => setDateField('uploadedAt')}>วันที่ส่งเข้า</button>
+        </div>}
         <div className="relative w-full sm:w-72">
           <input className={cx(inputClass, 'mangmee-input-icon-end w-full')} type="search"
             aria-label={t('expenses.search_placeholder', locale)}
@@ -3010,12 +3029,12 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
         </button>}>
         <div className="space-y-4">
           {/* What will be in the file, in one line: how many, which dates, which branch. */}
-          <p className="text-sm text-gray-700">รายการที่ยืนยันแล้ว {chipCounts.confirmed} รายการ ตามวันที่เอกสาร · <span className="mangmee-unit">{dateShort(fromDate)}</span> – <span className="mangmee-unit">{dateShort(toDate)}</span>{branchLabel ? ` · ${branchLabel}` : ''}</p>
+          <p className="text-sm text-gray-700">รายการที่ยืนยันแล้ว {chipCounts.confirmed} รายการ ตาม{periodDateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'} · <span className="mangmee-unit">{dateShort(fromDate)}</span> – <span className="mangmee-unit">{dateShort(toDate)}</span>{branchLabel ? ` · ${branchLabel}` : ''}</p>
           <AccountingExportFormatSelect value={exportFormat} disabled={exporting} onChange={value => { setExportFormat(value); setSoftwareResult(null); setExportNotice(null); setExportError(null); setExported(false); }} />
           {exportFormat === 'purchase_journal' && !['all', 'confirmed'].includes(activeChip) && <div className="space-y-2">{!exportError && <p className="text-sm">{t('expenses.export_confirmed_only', locale)}</p>}<ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => { setChip('confirmed'); setExportError(null); }}>{t('expenses.export_view_confirmed', locale)}</button></ActionGroup></div>}
           {softwareResult && <AccountingExportFeedback result={softwareResult} busy={exporting} onFallback={() => void exportExcel(true)} onChangeDates={() => setExportOpen(false)} />}
           <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts onReturnToExpenses={() => setExportOpen(false)}
-            request={{ fromDate, toDate, dateField: 'expenseDate', ...(branchId ? { branchId } : {}) }} />
+            request={{ fromDate, toDate, dateField: periodDateField, ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}
           {exportNotice && <div className="space-y-2">
             <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>
@@ -3508,7 +3527,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
               focusExpenseField(field);
             }}>
             <fieldset disabled={tab === 'manual' && !createBranchId} className={cx('min-w-0', tab === 'manual' && !createBranchId && 'pointer-events-none')}>
-              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} userId={userId} caps={caps} canManagePlan={!freeExpenseDrafts && permissions.includes('company.plan.manage')} freeExpenseDrafts={freeExpenseDrafts} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
+              {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} userId={userId} caps={caps} canManagePlan={permissions.includes('company.plan.manage')} freeExpenseDrafts={freeExpenseDrafts} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
               {tab === 'manual' && <ManualExpensePanel permissions={permissions} companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} entryClosed={manualView === 'form_closed'} onSuccess={openListExpense} />}
             </fieldset>
             </div>

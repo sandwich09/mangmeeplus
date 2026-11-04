@@ -29,7 +29,7 @@ for (const path of [
     assert.match(text, /THAI_SYSTEM_ROLE_NAMES\.OWNER/, path);
   });
 }
-const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '').match(/[A-Za-z]+/g) ?? [];
+const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV|JPEG|PNG|HEIC|HEIF|GIF)\b/g, '').match(/[A-Za-z]+/g) ?? [];
 
 test('disbursement-voucher labels use plain Thai and name the owner role with the contracts name', () => {
   assert.ok(workspaceDictionary.th['expenses.disbursement_web_entry.owner_only'].includes('มีเพียงเจ้าของกิจการที่ใช้เมนูนี้ได้'));
@@ -92,7 +92,7 @@ test('sold expense, employee, profile and login copy removes technical words at 
   assert.doesNotMatch(source('features/auth/LoginPage.tsx'), />LIVE</);
 });
 
-test('upload validation and failure guidance uses Thai format names and retains its limits', () => {
+test('upload validation and failure guidance uses plain format names and retains its limits', () => {
   for (const policy of ['attachment', 'image'] as const) {
     for (const message of [uploadSourceFileValidationError({ name: 'bad.exe', type: '' }, policy), uploadFileValidationError({ name: 'bad.exe', type: '' }, policy)]) {
       assert.ok(message); assert.deepEqual(remainingEnglish(message), []);

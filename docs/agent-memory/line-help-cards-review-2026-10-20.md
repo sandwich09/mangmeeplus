@@ -229,7 +229,7 @@ The table covers every named quoted control/page/command in the revised bodies a
 | พนักงาน | เมนูหรือปุ่มหน้าจัดการพนักงานบนเว็บ | `apps/web/src/features/employee-access/EmployeeAccessPages.tsx:231` |
 | พนักงานและสิทธิ์ | เมนูบนเว็บ | `packages/contracts/src/menu-entitlements.ts:347` |
 | ภ.ง.ด.53 | แท็บแบบภาษีและชื่อแบบภาษีบนเว็บ | `apps/web/src/features/tax/WithholdingPage.tsx:239` |
-| มีตัวจริง ยังไม่ได้แนบรูป | ตัวเลือกขั้นหลักฐานรายจ่าย | `apps/web/src/features/expenses/ExpensesPages.tsx:1336` |
+| มีตัวจริง ยังไม่ได้แนบรูป | ตัวเลือกขั้นหลักฐานรายจ่าย | `apps/web/src/features/expenses/ExpensesPages.tsx:1345` |
 | ยกเลิกเอกสาร | ปุ่มหรือช่องบนเว็บ; ใช้ชื่อจากพจนานุกรมร่วม | `apps/web/src/common/i18n/workspace-dictionary.ts:1644` |
 | ยกเลิกใบเบิก | ปุ่มยืนยันในหน้าต่างยกเลิกใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:87` |
 | ยกเลิกใบเบิกนี้ | ปุ่มเริ่มยกเลิกหน้าใบเบิก | `apps/web/src/features/reimbursements/ReimbursementJourneyPage.tsx:53` |

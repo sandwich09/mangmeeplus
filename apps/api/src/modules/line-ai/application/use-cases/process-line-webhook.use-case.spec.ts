@@ -3895,7 +3895,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
-    assert.match(JSON.stringify(sentMessages[0]), /\/company co-2/);
+    assert.match(JSON.stringify(sentMessages[0]), /action=company-select&companyId=co-2/);
   });
 
   it('lists owner companies through explicit LINE control command without AI Gateway', async () => {
@@ -3948,7 +3948,9 @@ describe('ProcessLineWebhookUseCase', () => {
         await useCase.execute({ ...BASE_EVENT, webhookEventId: `list-${state}-${role}`, messageText: '/companies' });
         const wire = lineDeliveryWireMessages(sentMessageBatches[0]!);
         const picker = wire[1] as any;
-        const text = picker.contents.contents[1].footer.contents[0].action.text;
+        const action = picker.contents.contents[1].footer.contents[0].action;
+        assert.deepEqual([action.type, action.displayText], ['postback', 'บริษัท 2 · ร้าน 2'], `${state}/${role}`);
+        const text = linePostbackCommandText(action.data)!;
         assert.equal(text, `/company ${ids[1]}`, `${state}/${role}`);
         await useCase.execute({ ...BASE_EVENT, webhookEventId: `select-${state}-${role}`, messageText: text });
         assert.equal((upserts.at(-1) as any).update.companyId, ids[1]);
@@ -3962,6 +3964,42 @@ describe('ProcessLineWebhookUseCase', () => {
         assert.equal(getAiGatewayCalled(), false, 'navigation never needs a paid AI turn');
       }
     }
+  });
+
+  // Owner 2026-11-04: "พอกดเปลี่ยนบริษัทในไลน์ ดันเจอเลขรหัสบริษัทยาวๆ ซึ่งไม่ควร". The select button was a message
+  // action, so LINE posted "/company <id>" as the user's own bubble. No visible field carries an id, two shops of one
+  // name stay apart by their number, and the postback still switches only to one of the user's own shops.
+  it('switches shops without showing a company id, and two shops of one name stay apart', async () => {
+    const ids = ['cmvc8kuzi05m0uqk1sw21svk5', 'cmvc8kuzi05m0uqk1sw21svk6', 'cmvc8kuzi05m0uqk1sw21svk7'];
+    const { prisma, upserts, updates } = makePrisma({
+      memberships: ids.map((companyId, index) => ({ companyId, company: { name: index ? 'ร้านกาแฟ' : 'ร้านหลัก' },
+        roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] })),
+      lineCompanyContext: { companyId: ids[0]! },
+    });
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    // What LINE shows: text, labels, alt text, and a postback's displayText (a message action's text is posted as a bubble).
+    const visible = (value: unknown): string[] => !value || typeof value !== 'object' ? [] : Object.entries(value).flatMap(([key, child]) =>
+      typeof child === 'string' ? (['text', 'label', 'displayText', 'altText'].includes(key) ? [child] : []) : visible(child));
+    const leaks = (messages: unknown) => visible(messages).filter(text => /\bc[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu.test(text));
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-switch-list', messageText: 'เปลี่ยนบริษัท' });
+    assert.deepEqual(leaks(sentMessageBatches[0]), []);
+    const picker = sentMessageBatches[0]!.at(-1) as any;
+    const actions = picker.contents.contents.flatMap((bubble: any) => bubble.footer?.contents ?? []).map((button: any) => button.action);
+    assert.deepEqual(actions.map((action: any) => [action.type, action.displayText]), [['postback', 'บริษัท 2 · ร้านกาแฟ'], ['postback', 'บริษัท 3 · ร้านกาแฟ']]);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-switch-pick', messageText: linePostbackCommandText(actions[1].data)! });
+    assert.equal((upserts.at(-1) as any).update.companyId, ids[2]);
+    assert.equal((updates.at(-1) as any).data.status, 'company_context_switched');
+    assert.match(JSON.stringify(sentMessageBatches.at(-1)), /เปลี่ยนบริษัทเป็น ร้านกาแฟ แล้ว/);
+    assert.deepEqual(leaks(sentMessageBatches.at(-1)), []);
+
+    const switched = upserts.length;
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-switch-foreign',
+      messageText: linePostbackCommandText('action=company-select&companyId=cmvc8kuzi05m0uqk1sw21zzzz')! });
+    assert.equal(upserts.length, switched, 'a foreign company stays unselectable');
+    assert.equal((updates.at(-1) as any).data.status, 'company_context_selection_invalid');
+    assert.deepEqual(leaks(sentMessageBatches.at(-1)), []);
   });
 
   it('labels a locked shop in the picker and the context card with the LIFF wording (R-C8)', async () => {
@@ -4051,7 +4089,7 @@ describe('ProcessLineWebhookUseCase', () => {
         { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-2' },
       ]);
       assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
-        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+        { type: 'postback', label: 'เลือกบริษัทนี้', data: 'action=company-select&companyId=co-1', displayText: 'บริษัท 1 · บริษัทหนึ่ง' },
         { type: 'uri', label: 'เปิดเว็บบริษัทนี้', uri: 'https://app.example.com/l/tok-co-1' },
       ]);
       // The send-boundary seam still runs and adds nothing: `/l/<token>` sits outside `/companies/`,
@@ -4094,7 +4132,7 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(rendered.includes('เปิดเว็บบริษัทนี้'), false);
       assert.equal(rendered.includes('"uri"'), false);
       assert.equal(rendered.includes('/l/'), false);
-      assert.match(rendered, /\/company co-1/, 'and the switch button it always had still works');
+      assert.match(rendered, /action=company-select&companyId=co-1/, 'and the switch button it always had still works');
     });
 
     it('drops only the failing bubble’s web button when one mint fails', async () => {
@@ -4106,7 +4144,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const [current, other] = bubbles(pickerOf(sentMessageBatches));
       assert.equal(current.footer.contents.length, 1, 'the company that minted keeps its web button');
       assert.deepEqual(other.footer.contents.map((b: any) => b.action), [
-        { type: 'message', label: 'เลือกบริษัทนี้', text: '/company co-1' },
+        { type: 'postback', label: 'เลือกบริษัทนี้', data: 'action=company-select&companyId=co-1', displayText: 'บริษัท 1 · บริษัทหนึ่ง' },
       ], 'the one that failed keeps the picker it always had, and nothing else is lost');
     });
 
@@ -4675,7 +4713,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), false);
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
-    assert.match(JSON.stringify(sentMessages[0]), /\/company co-2/);
+    assert.match(JSON.stringify(sentMessages[0]), /action=company-select&companyId=co-2/);
   });
 
   it('lists every company for a multi-company user with mixed roles', async () => {

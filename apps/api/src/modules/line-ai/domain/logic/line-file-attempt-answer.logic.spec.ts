@@ -74,7 +74,7 @@ describe('§17.5 answer table', () => {
 
   it('an unsupported type names the kinds the capability really listed', () => {
     const text = fileAttemptAnswer(attempt({ stage: 'SECURITY', reasonCode: 'METADATA_REJECTED' }));
-    assert.match(text, /กรุณาเลือก PDF, พีเอ็นจี, เจเพ็ก/);
+    assert.match(text, /กรุณาเลือก PDF, PNG, JPEG/);
   });
 
   it('a download failure with no known cause says exactly that — never "too large" or "expired"', () => {

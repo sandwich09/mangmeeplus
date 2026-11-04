@@ -22,8 +22,8 @@ describe('LineReplyAdapter rich payload delivery', () => {
       assert.equal(await adapter.sendPush('synthetic-user', [picker], 'picker-retry'), 'ok');
       assert.equal(bodies.length, 2);
       for (const body of bodies) {
-        assert.deepEqual(body.messages[0].contents.contents.map((bubble: any) => bubble.footer.contents[0].action.text),
-          ids.map(id => `/company ${id}`));
+        assert.deepEqual(body.messages[0].contents.contents.map((bubble: any) => [bubble.footer.contents[0].action.data, bubble.footer.contents[0].action.displayText]),
+          ids.map((id, index) => [`action=company-select&companyId=${id}`, `บริษัท ${index + 1} · ร้านทดสอบ`]));
       }
     } finally { globalThis.fetch = originalFetch; }
   });

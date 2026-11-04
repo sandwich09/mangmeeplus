@@ -1431,3 +1431,19 @@ test('PWS-CERTIFICATE names the paper plainly and lower packs retain only extern
     } finally { view.cleanup(); }
   }
 });
+
+test('a phone checking a draft keeps the original one tap away and sees why it needs checking on the last step', () => {
+  const reason = 'อ่านวันที่ในเอกสารไม่ได้';
+  for (const step of ['data', 'evidence', 'review']) {
+    const html = harness({ step, detail: expense({ status: 'NEEDS_REVIEW', extractionId: 'x1',
+      attachments: [{ id: 'att', purpose: 'expense.receipt.primary', originalFileName: 'ใบเสร็จ.jpg', mimeType: 'image/jpeg' }],
+      aiVerificationSummaryJson: { status: 'NEEDS_REVIEW', reviewReasons: [reason] } }) }).render();
+    // The wide viewer is CSS-hidden below lg; the phone file row and its open control are not.
+    const phoneFiles = html.split('data-testid="expense-attachment-list"')[1]?.split('data-testid="expense-review-form"')[0] ?? '';
+    assert.match(html, /data-testid="expense-attachment-list" class="[^"]*lg:hidden/);
+    assert.match(phoneFiles, />ดูไฟล์</, step);
+    const reasons = html.split('data-review-reasons')[1]?.split('</div>')[0] ?? '';
+    assert.equal(reasons.includes(reason), step === 'review', step);
+    if (step === 'review') assert.match(reasons, /ข้อมูลจาก AI \(ต้องตรวจสอบก่อนยืนยัน\)/);
+  }
+});

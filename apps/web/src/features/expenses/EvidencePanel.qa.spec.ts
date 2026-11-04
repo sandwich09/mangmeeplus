@@ -37,8 +37,10 @@ test('evidence starts in document month and explains missing-date fallback witho
   assert.match(source, /รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า/);
   assert.doesNotMatch(source, /ดาวน์โหลดรายการลิงก์หลักฐาน|ลิงก์ไฟล์หลักฐาน \(สำหรับผู้ดูแลระบบ\)|evidence_manifest\.json/);
   const list = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
-  assert.match(list, /dateField: 'expenseDate', fromDate, toDate/);
-  assert.match(list, /รายการที่ยืนยันแล้ว \{chipCounts\.confirmed\} รายการ ตามวันที่เอกสาร/);
+  // The list's month and its export count by document date unless the person picks วันที่ส่งเข้า.
+  assert.match(list, /useState<'expenseDate' \| 'uploadedAt'>\(searchParams\.get\('dateField'\) === 'uploadedAt' \? 'uploadedAt' : 'expenseDate'\)/);
+  assert.match(list, /dateField: periodDateField, fromDate, toDate/);
+  assert.match(list, /รายการที่ยืนยันแล้ว \{chipCounts\.confirmed\} รายการ ตาม\{periodDateField === 'uploadedAt' \? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'\}/);
   assert.doesNotMatch(list, /รายการที่ยังไม่มีวันที่เอกสารนับตามวันที่ส่งเข้า/);
   assert.match(list, /<DocumentDateBadge expense=\{e\}/);
 });

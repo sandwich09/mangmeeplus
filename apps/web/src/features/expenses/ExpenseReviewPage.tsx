@@ -1736,6 +1736,17 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   // One AI line, not three. The old stack (extraction notice + titled prefill card + step helper)
   // repeated "AI read it, please check" three times above the fold and pushed the form off-screen.
   // What stays is the only part the reviewer acts on: which fields they must fill themselves.
+  // Spec §5.1/§5.2: the server's own words for what it could not decide — an unread date, a
+  // charge whose VAT nothing proved, a withholding base worth checking. These are the reasons
+  // behind the flags in the banner below, and without them the reviewer sees a warning with no cause.
+  const reviewReasonChips = (Array.isArray(aiMap?.['reviewReasons']) ? aiMap['reviewReasons'] : [])
+    .filter((reason): reason is string => typeof reason === 'string')
+    .slice(0, 4)
+    .map((reason, index) => (
+      <span key={`reason-${index}`} className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
+        {reason}
+      </span>
+    ));
   const aiPrefillBanner = !isCancelled && hasAiOutput && aiMap && (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] px-3 py-2.5 text-xs text-[#3538CD]">
       <p className="font-semibold">
@@ -1763,17 +1774,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
           {t('expenses.ai_charges_folded', locale)}
         </span>
       )}
-      {/* Spec §5.1/§5.2: the server's own words for what it could not decide — an unread date, a
-          charge whose VAT nothing proved, a withholding base worth checking. These are the reasons
-          behind the flags above, and without them the reviewer sees a warning with no cause. */}
-      {(Array.isArray(aiMap?.['reviewReasons']) ? aiMap['reviewReasons'] : [])
-        .filter((reason): reason is string => typeof reason === 'string')
-        .slice(0, 4)
-        .map((reason, index) => (
-          <span key={`reason-${index}`} className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">
-            {reason}
-          </span>
-        ))}
+      {reviewReasonChips}
       {expenseDocumentDateStatus(aiMap) === 'assumed' && (
         <span className="rounded-full border border-[#A4BCFD] bg-white px-2 py-0.5 font-medium text-[#3538CD]">
           {EXPENSE_DATE_STATUS_LABELS.assumed}
@@ -2241,6 +2242,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
                       {priceMismatchWarning}
                     </div>
                     <div className={cx('space-y-4', step === 'review' ? undefined : 'hidden')}>
+                      {/* The same reasons again where the draft is checked: on a phone, step 1 and the file are out of sight. */}
+                      {step === 'review' && !isCancelled && reviewReasonChips.length > 0 && (
+                        <div data-review-reasons className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] px-3 py-2.5 text-xs text-[#3538CD]">
+                          <p className="font-semibold">{t('expenses.ai_data_title', locale)}</p>
+                          {reviewReasonChips}
+                        </div>
+                      )}
                       {showInputVatQuestion(detail) && canReview && detail.inputVatRight?.postsToLedger && detail.inputVatClaimStatus === 'NEEDS_REVIEW' && !detail.inputVatRight.fixed && <Notice tone="info" action={<button type="button" className={ghostClass} onClick={() => void goToReviewField('evidence', `expense-input-vat-${detail.id}`)}>ตรวจ VAT สำหรับยื่นภาษี</button>}>{INPUT_VAT_LEDGER_BEFORE_CONFIRM}</Notice>}
                       {/* The last step asks the reviewer to look at the whole summary: the amounts are part of it. */}
                       {step === 'review' && moneyCard}

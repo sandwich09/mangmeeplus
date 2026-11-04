@@ -88,7 +88,7 @@ export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
   disbursement_reminder_cooldown: 'เพิ่งส่งเตือนผู้อนุมัติคนนี้ไป ยังส่งซ้ำไม่ได้ รอให้ครบหนึ่งชั่วโมงหรือเลือกผู้อนุมัติคนอื่น',
   disbursement_supporting_frozen: 'ใบนี้แก้ไฟล์ประกอบไม่ได้แล้ว เปิดใบนี้ใหม่เพื่อตรวจสถานะ',
   disbursement_supporting_missing: 'ไม่พบไฟล์ประกอบของใบนี้ เปิดใบนี้ใหม่เพื่อตรวจไฟล์',
-  disbursement_supporting_invalid: 'เอกสารประกอบการจ่ายต้องเป็นรูปภาพหรือไฟล์พีดีเอฟขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่',
+  disbursement_supporting_invalid: 'เอกสารประกอบการจ่ายต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่',
   disbursement_supporting_not_owned: 'ไฟล์นี้ยังแนบกับใบนี้ไม่ได้ เลือกไฟล์แล้วอัปโหลดใหม่',
   disbursement_slip_missing: 'ใบนี้ยังไม่มีหลักฐานการจ่าย เปิดใบนี้เพื่อตรวจไฟล์ที่แนบ',
   disbursement_slip_invalid: 'หลักฐานการจ่ายต้องเป็นรูปภาพหรือไฟล์ PDF ขนาดไม่เกิน 10 เมกะไบต์ เลือกไฟล์ใหม่',

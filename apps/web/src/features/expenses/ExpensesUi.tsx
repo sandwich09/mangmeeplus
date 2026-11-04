@@ -3,7 +3,7 @@
 // Shared presentational primitives for the Expenses workspace, matching the
 // มั่งมี mock's exact card/colour/spacing system. Real Thai copy from the feature;
 // exact hex accents from the mock (mangmee brand tokens for the green shell).
-import { EXPENSE_CORRECTION_WORDS, IMAGE_SOURCE_TYPES_LABEL, STORED_IMAGE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { MangmeeBadge, cx, type MangmeeTone } from '@/common/components/mangmee';
 import { dangerButtonClass, primaryButtonClass, secondaryButtonClass } from '@/common/components/button/button-classes';
@@ -110,20 +110,11 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 /**
- * A shared sentence of names the browser does not know (file types written in Thai), with every name kept whole. A browser breaks
- * Thai where its dictionary sees a word, so at a phone's width it cut "ฮีอิก" or "พีเอ็นจี" in two. The words stay the shared ones:
- * only where a line may break changes (at the spaces).
+ * A short file-type hint broken only at its spaces, so a phone's width never splits "หรือรูปภาพ" inside the phrase. The type
+ * names are the shared ones, in English since 2026-11-04 (their old Thai spellings were cut in two).
  */
 export function WholeWords({ text }: { text: string }) {
   return <>{text.split(' ').map((word, index) => <Fragment key={index}>{index > 0 && ' '}<span className="whitespace-nowrap">{word}</span></Fragment>)}</>;
-}
-
-/** A banner sentence that lists file types keeps every type's name whole (a phone cut "ฮีอิก" in two); any other sentence is shown as written. */
-function TypeNamesWhole({ message }: { message: string }) {
-  const list = [IMAGE_SOURCE_TYPES_LABEL, STORED_IMAGE_TYPES_LABEL].find(label => message.includes(label));
-  if (!list) return <>{message}</>;
-  const at = message.indexOf(list);
-  return <>{message.slice(0, at)}<WholeWords text={list} />{message.slice(at + list.length)}</>;
 }
 
 // ── banners ──────────────────────────────────────────────────────────────────
@@ -136,10 +127,10 @@ export function ErrorBanner({ message, focus = false }: { message: string; focus
     ref.current?.scrollIntoView({ block: 'center' });
     ref.current?.focus({ preventScroll: true });
   }, [message, focus]);
-  return <Notice ref={ref} tabIndex={-1} tone="error" className="whitespace-pre-line"><TypeNamesWhole message={message} /></Notice>;
+  return <Notice ref={ref} tabIndex={-1} tone="error" className="whitespace-pre-line">{message}</Notice>;
 }
 export function InfoBanner({ message }: { message: string }) {
-  return <Notice tone="info"><TypeNamesWhole message={message} /></Notice>;
+  return <Notice tone="info">{message}</Notice>;
 }
 export function isForbidden(message: string): boolean {
   return /Insufficient permissions|Missing permission|Forbidden/i.test(message);

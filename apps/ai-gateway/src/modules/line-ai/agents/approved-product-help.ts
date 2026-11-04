@@ -127,7 +127,7 @@ PRODUCT_HELP_V6_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_V6_PACK);
 const reviewedSourceHashes: Record<string, string> = {
   "apps/web/src/features/user-guide/disbursement-voucher-guide.content.ts": "9cdf7c46feaf3fd6231e43a954250ea0ab22b27d80ada9b897d4a3f9502d14f9",
   "apps/web/src/features/user-guide/expenses-guide.content.ts": "3c35707f55bb4d9cc0850f3b7c7a4968590a6fc8b935f194d71535f07e7bc6d0",
-  "apps/web/src/features/user-guide/getting-started-guide.content.ts": "458a4121921da6c0ddbcd14a9159c3918dbbb4a914038af8bc90e0d2607c32e8",
+  "apps/web/src/features/user-guide/getting-started-guide.content.ts": "46765970abd8e48989882abdc5ec6caca71d24958d14c5c87eb09ffaaa23b65a",
   "apps/web/src/features/user-guide/reimbursement-guide.content.ts": "6e65e4f84c78d933aaa64f342c9b5c0f18cc66ee1a70ea008b86d1ed2bd38e12",
   "apps/web/src/features/user-guide/reports-guide.content.ts": "a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4",
   "apps/web/src/features/user-guide/substitute-receipt-guide.content.ts": "c598503501db229e78f11edfe74c9dba5c485f6aeffb17b7b03e2fba0022f2f1",

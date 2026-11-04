@@ -497,8 +497,13 @@ function companyBubble(company: CompanyPickerItem, selectionNumber: number, curr
   // Two ways in, in the order they were asked for: switch the chat only (unchanged, and still
   // typeable as a number), or switch AND open the web on that company in one tap. The current
   // company keeps having nothing to select, so it gets the web button alone.
+  // Owner 2026-11-04: a message action posted "/company <id>" as the user's own bubble. The postback
+  // carries the id unseen and the bubble shows the number and name this card shows; the server still
+  // re-checks it against the user's own memberships, and typed `/company <id>` from old cards still works.
   const buttons = [
-    ...(!current ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'message', label: COMPANY_PICKER_SELECT_LABEL, text: `/company ${company.companyId}` } }] : []),
+    ...(!current ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'postback', label: COMPANY_PICKER_SELECT_LABEL,
+      data: new URLSearchParams({ action: 'company-select', companyId: company.companyId }).toString(),
+      displayText: `บริษัท ${selectionNumber} · ${boundedLabel(company.companyName, 'ไม่ระบุบริษัท')}` } }] : []),
     ...(company.webUrl ? [{ type: 'button', style: 'secondary', action: { type: 'uri', label: COMPANY_PICKER_OPEN_WEB_LABEL, uri: company.webUrl } }] : []),
   ];
   return {

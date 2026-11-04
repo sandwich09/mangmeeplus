@@ -70,19 +70,18 @@ test('never words the state as a missing permission, a hidden page or a closed s
   }
 });
 
-// Found on a phone 2026-10-05: the sentences that list file types were cut inside a type's name ("ฮี / อิก", "พี / เอ็นจี").
-// The words stay the shared ones; only where a line may break changes.
-test('a sentence that lists file types keeps every type name whole, in the banners and in the hints', async () => {
+// Found on a phone 2026-10-05: the sentences that list file types were cut inside a Thai-spelled type name ("ฮี / อิก").
+// Owner 2026-11-04: the names are English now, which no browser cuts, so a banner shows its sentence exactly as written.
+test('file types are named in English, banners show them as written and the hints keep each word whole', async () => {
   const { ErrorBanner, InfoBanner, WholeWords } = await import('./ExpensesUi');
   const { ATTACHMENT_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL } = await import('@watchdog-bms/contracts');
   const whole = (name: string) => `<span class="whitespace-nowrap">${name}</span>`;
+  assert.equal(ATTACHMENT_SOURCE_TYPES_LABEL, 'PDF หรือรูปภาพ (JPEG, PNG, HEIC, HEIF, GIF)');
+  assert.equal(SIGNATURE_FILE_TYPES_LABEL, 'รูปภาพ (JPEG, PNG)');
   const unsupported = renderToStaticMarkup(React.createElement(ErrorBanner, { message: `รองรับเฉพาะไฟล์ ${ATTACHMENT_SOURCE_TYPES_LABEL}` }));
-  assert.match(unsupported, /role="alert"/); assert.ok(unsupported.includes(`รูปภาพ (${whole('เจเพ็ก,')} ${whole('พีเอ็นจี,')} ${whole('ฮีอิก,')} ${whole('ฮีฟ,')} ${whole('กิฟ')})`));
-  assert.equal(unsupported.replace(/<[^>]*>/g, ''), `⚠ รองรับเฉพาะไฟล์ ${ATTACHMENT_SOURCE_TYPES_LABEL}`); // the words themselves are untouched
-  assert.ok(renderToStaticMarkup(React.createElement(InfoBanner, { message: `กรุณาเลือกไฟล์ลายมือชื่อเป็น${SIGNATURE_FILE_TYPES_LABEL}` })).includes(`รูปภาพ (${whole('เจเพ็ก,')} ${whole('พีเอ็นจี')})`));
-  // Any other sentence is shown exactly as written: long Thai clauses must stay free to wrap.
-  const plain = renderToStaticMarkup(React.createElement(ErrorBanner, { message: 'บันทึกไม่สำเร็จ ลองอีกครั้ง' }));
-  assert.doesNotMatch(plain, /whitespace-nowrap/); assert.ok(plain.includes('⚠ บันทึกไม่สำเร็จ ลองอีกครั้ง'));
+  assert.match(unsupported, /role="alert"/); assert.doesNotMatch(unsupported, /whitespace-nowrap/);
+  assert.equal(unsupported.replace(/<[^>]*>/g, ''), `⚠ รองรับเฉพาะไฟล์ ${ATTACHMENT_SOURCE_TYPES_LABEL}`);
+  assert.ok(renderToStaticMarkup(React.createElement(InfoBanner, { message: `กรุณาเลือกไฟล์ลายมือชื่อเป็น${SIGNATURE_FILE_TYPES_LABEL}` })).includes('รูปภาพ (JPEG, PNG)'));
   assert.equal(renderToStaticMarkup(React.createElement(WholeWords, { text: 'PDF หรือรูปภาพ' })), `${whole('PDF')} ${whole('หรือรูปภาพ')}`);
   const { readFileSync } = await import('node:fs');
   const source = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');

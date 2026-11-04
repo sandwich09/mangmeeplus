@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "fdafd5dec900159c070f38fda56f124991f856fc",
+  "sourceRevision": "fd4b533b4e87f3edfc00ad2059e7db612fe4c608",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -17,11 +17,11 @@
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
-      "sha256": "f9ecb6c7f4f0212f15e9d83d9e9b03ce5f5ef5ca9c79699d529607323e7c01b6"
+      "sha256": "1fe104baaeb08d84c973823093f42b48e6143569df0d8ea05a49478d2f9a8747"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/product-help-draft-cards.ts",
-      "sha256": "0540753a9ffa04e24bfa8f8c883558f25e6ef289fba1ad64d4be1c4158861cc1"
+      "sha256": "f0e76604f5f2e1c830b6095e1e94d918245303432a531986e0af6a8a52487014"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/presentation/http/line-reliability-capabilities.controller.ts",
@@ -213,7 +213,7 @@
     },
     {
       "path": "apps/web/src/features/user-guide/getting-started-guide.content.ts",
-      "sha256": "458a4121921da6c0ddbcd14a9159c3918dbbb4a914038af8bc90e0d2607c32e8"
+      "sha256": "46765970abd8e48989882abdc5ec6caca71d24958d14c5c87eb09ffaaa23b65a"
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
@@ -10173,6 +10173,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-04T14:09:26.563Z",
-  "manifestDigest": "51a77b996eba369b92ed539bbc894890b4aca010b6c490d4ac998a3e3006a859"
+  "generatedAt": "2026-11-04T16:55:24.607Z",
+  "manifestDigest": "51e555644b6a05444b2d73717f707843427cb1f2e03b7144f044fbffea4fc64b"
 }

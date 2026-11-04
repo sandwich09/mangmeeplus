@@ -1,5 +1,5 @@
 {
-  "sourcePackHash": "fb42b47fae1b91cbf04d59c518236fe67ad7e89cba8cb5c9e7f0f899f63676c0",
+  "sourcePackHash": "e64a5952f918f047dd0e9924b2c4d90f1342b3cdcff2d426dfac834c66ca0774",
   "cards": [
     {
       "id": "expense.start",
@@ -403,7 +403,7 @@
     {
       "id": "wht.outside",
       "titleTh": "จดเลขที่ 50 ทวิที่ทำนอกระบบ",
-      "answerTh": "ทำใบนอกระบบแล้วจดเลขที่และวันที่ แนบรูปหรือพีดีเอฟได้ถ้ามีเพื่อค้นย้อนหลัง",
+      "answerTh": "ทำใบนอกระบบแล้วจดเลขที่และวันที่ แนบรูปหรือ PDF ได้ถ้ามีเพื่อค้นย้อนหลัง",
       "titleEn": "External 50 bis",
       "answerEn": "Make the certificate outside the system; record number and date, with an optional image or PDF for retrieval."
     },

@@ -25,11 +25,11 @@ import {
   MAX_CAPTURE_PAGE_TEXT_CHARS,
   captureReadPrompt,
   parseCaptureNaturalText,
-  receiptIssuerText, parseCaptureObservationsJson,
+  hasLabelledSellerBlock, receiptIssuerText, parseCaptureObservationsJson,
   parseCaptureReadPages,
   parseCategorySuggestion,
 } from '../../domain/logic/expense-capture-read.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, AI_DOCUMENT_PAGE_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, AI_DOCUMENT_PAGE_TIMEOUT_MS, EXPENSE_CAPTURE_CONTRACT_VERSION, EXPENSE_CAPTURE_OBSERVATION_LIMITS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, lineAiRetainedTaskSourceMatchesProjection, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, thaiTaxIdChecksumValid, VALUE_ASSUMPTIONS, parseAiBudgetGrantV2, parseLineAiTaskProjection, parseLineAiPublicGeneralRequest, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2, type AiBudgetScope, type AiModelLineage, type BusinessDocumentClassification, type ExpenseCaptureExtractRequest, type ExpenseCaptureExtractResponse, type ExpenseCaptureObservations, type ExpenseCaptureReadChunk, type ExpenseCaptureReadRequest, type ExpenseCaptureReadResponse, type LineAiPublicGeneralRequest, type LineAiPublicGeneralResponse, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeOnePassReceipt, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrFallbackReason, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -1271,7 +1271,7 @@ Whenever grandTotalAmount is filled, amountSignals MUST include the total NUMBER
 businessDirection is judged from the perspective of the business UPLOADING this document, never from the document's own voice — a receipt always speaks as the seller. The issuer/header block identifies the seller; the buyer appears only in a customer field (ลูกค้า, นาม, ผู้ซื้อ, ได้รับเงินจาก, Bill to, Customer). Supplier-issued settled evidence submitted for expense capture is PURCHASE_EXPENSE even when the buyer field is blank or absent (abbreviated tax invoices legally omit the buyer). Use SALES_RECEIVABLE only when the document is evidently issued BY the uploading business itself. If genuinely unresolvable, use UNKNOWN with AMBIGUOUS_BUSINESS_DIRECTION — never default to SALES_RECEIVABLE.
 Fields (omit irrelevant or unknown fields): vendorName, vendorIdentityEvidence, vendorEntityKind, vendorTaxId, vendorBranchCode, vendorAddress, buyerAsPrinted, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, whtBaseAmount, grandTotalAmount, currency, vatMode, lines, additionalCharges, categorySuggestion, confidence, missingFields.
 description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes. At either level, include unitPrice ONLY when that per-unit value is itself printed; never divide amount by quantity to derive it.
-vendorName is the exact legal issuer/payee name from the SELLER block; do not append a branch description or a patient name. Never expand a brand into a legal company name from memory, including when the header is cropped. vendorIdentityEvidence is one exact issuer-name span (up to 320 characters). vendorEntityKind is JURISTIC only for explicit issuer company/registered partnership wording, INDIVIDUAL only for an explicit personal issuer/payee name, otherwise omit it. A buyer/patient/cashier/contact is never the payee. Use an ordinary transaction description without personal patient identifiers.
+vendorName is the exact legal issuer/payee name from the SELLER block; do not append a branch description or a patient name. Never expand a brand into a legal company name from memory, including when the header is cropped. vendorIdentityEvidence is one exact issuer-name span (up to 320 characters). vendorEntityKind is JURISTIC only for explicit issuer company/registered partnership wording, INDIVIDUAL only for an explicit personal issuer/payee name, otherwise omit it. A buyer/patient/cashier/contact is never the payee. When the page prints a ผู้ขาย / Seller / ร้านค้า block (a marketplace order), take vendorName, vendorTaxId and vendorAddress only from that block; the platform or logistics company in the page header is never the vendor. Use an ordinary transaction description without personal patient identifiers.
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
 documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". On a TRANSFER_SLIP, documentNumber is the printed bank transaction/reference number (รหัสอ้างอิง / เลขที่รายการ / Reference No.); remove all spaces and zero-width characters without changing its letters or digits. documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
@@ -1361,9 +1361,9 @@ function parseStatementRowsJson(text: string): BankStatementAiExtractRow[] | nul
 const OCR_NUMERIC_FIELDS = ['quantity', 'unitPrice', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'whtBaseAmount', 'grandTotalAmount'] as const;
 
 // §19j field-format canon (spec §19j; research: docs/research/thai-receipt-field-format-conventions.md).
-// A Thai tax id is 13 digits printed solid or grouped with single dashes/spaces; the boundary
-// guards make the 13-digit window maximal so runs inside longer numbers never qualify.
-const TAX_ID_CANDIDATE_RE = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
+// A phone printed just before a digit run: +66 / (+66), a โทร / Tel / Phone / มือถือ label, or a
+// 0X phone number joined to it only by separators. A run read there is a phone, never a tax id.
+const PHONE_BEFORE_RUN_RE = /(?:\+|\(\s*\+?\s*66\s*\)|โทร|\bTel\b|\bPhone\b|มือถือ|(?<!\d)0\d{8,9})[^\p{L}\d]*$/iu;
 const HQ_BRANCH_LABEL_RE = /สำนักงานใหญ่|สนญ|HEAD OFFICE|\bHO\b|\bHQ\b/i;
 const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?:\((?:รวม|INCL(?:UDED)?|INC)\)[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
 const VAT_AMOUNT_THEN_LABEL_RE = /(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)[ \t:|=_*\-]+(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี)/giu;
@@ -1458,6 +1458,18 @@ function hasExplicitReceiptDateLabel(documentText: string, span: string): boolea
 /** Collapses dash/space separators between digits so 0-9940-0016-30-11 equals its solid form. */
 function collapseDigitSeparators(text: string): string {
   return text.replace(/(?<=\d)[- ]+(?=\d)/g, '');
+}
+
+/** A Thai tax id is 13 digits printed solid or grouped with dashes/spaces. It is accepted only as a
+ *  WHOLE run (never a window of a longer number), with a valid check digit, and not printed as a
+ *  phone; a run that fails any of these stays empty for review and is never "corrected". */
+function printedSellerTaxIds(issuerText: string): string[] {
+  return issuerText.split('\n').flatMap((line) => {
+    const collapsed = collapseDigitSeparators(line);
+    return [...collapsed.matchAll(/(?<!\d)\d{13}(?!\d)/g)]
+      .filter((run) => thaiTaxIdChecksumValid(run[0]) && !PHONE_BEFORE_RUN_RE.test(collapsed.slice(0, run.index)))
+      .map((run) => run[0]);
+  });
 }
 
 /** §19j decision 2a: true when the WHOLE trimmed value reads as one calendar date — a
@@ -1584,14 +1596,24 @@ export function applyOcrValueCrossCheck(
 
   // The legacy contract has one discount slot. A combined line + bill discount need not be
   // printed as one number; require the printed bases AND settlement to prove the aggregate.
-  if (!out.discountAmount && fields.discountAmount && /ส่วนลด|discount|coupon|voucher/i.test(mappedText)) {
+  // A marketplace order prints each coupon (shop, shipping) as its own minus-signed row, and the
+  // model may return none of them: their printed sum is tried under the same proof, and only while
+  // the item rows reach the subtotal (otherwise the API would trade those rows for a subtotal line).
+  // No charge kind carries a shipping discount (only ROUNDING may be negative): both reduce the bill.
+  if (!out.discountAmount && ONE_PASS_DISCOUNT_SIGNAL.test(mappedText)) {
     const money = (value?: string) => Number((value ?? 'NaN').replace(/,/g, ''));
-    const discount = Math.abs(money(fields.discountAmount));
     const charges = (out.additionalCharges ?? []).reduce((sum, charge) => sum + money(charge.amount), 0);
-    const base = money(out.subtotalAmount) - discount + charges;
     const vat = out.vatMode === 'VAT_EXCLUDED' ? money(out.vatAmount) : 0;
-    if (discount > 0 && discount <= money(out.subtotalAmount)
-      && Math.abs(base + vat - money(out.grandTotalAmount)) <= 0.05) {
+    const settles = (discount: number) => discount > 0 && discount <= money(out.subtotalAmount)
+      && Math.abs(money(out.subtotalAmount) - discount + charges + vat - money(out.grandTotalAmount)) <= 0.05;
+    const couponSum = mappedText.split('\n').filter((line) => line.length <= 120 && ONE_PASS_DISCOUNT_SIGNAL.test(line))
+      .flatMap((line) => [...line.matchAll(/(?<!\d)[-−]\s*(?:฿\s*)?(\d[\d,]*\.\d{2})(?![\d.,])/g)])
+      .reduce((sum, match) => sum + money(match[1]), 0);
+    const rowsReachSubtotal = !missing.has('lines') && (!out.lines?.length
+      || Math.abs(out.lines.reduce((sum, line) => sum + money(line.amount), 0) - money(out.subtotalAmount)) <= 0.05);
+    const modelDiscount = Math.abs(money(fields.discountAmount ?? '0'));
+    const discount = settles(modelDiscount) ? modelDiscount : rowsReachSubtotal && settles(couponSum) ? couponSum : undefined;
+    if (discount !== undefined) {
       out.discountAmount = discount.toFixed(2);
       missing.delete('discountAmount');
     }
@@ -1668,7 +1690,7 @@ export function applyOcrValueCrossCheck(
   const collapsedIssuer = collapseDigitSeparators(issuerText);
   if (out.vendorTaxId) {
     const digits = collapseDigitSeparators(mapThaiDigits(out.vendorTaxId).trim());
-    if (/^\d{13}$/.test(digits) && collapsedIssuer.includes(digits)) out.vendorTaxId = digits;
+    if (/^\d{13}$/.test(digits) && printedSellerTaxIds(issuerText).includes(digits)) out.vendorTaxId = digits;
     else {
       delete out.vendorTaxId;
       missing.add('vendorTaxId');
@@ -1680,15 +1702,20 @@ export function applyOcrValueCrossCheck(
     const labelledTaxIds = issuerText.split('\n').flatMap((line, index, rows) =>
       /TAX\s*(?:ID|NO|NUMBER)|\bTIN\b|เลข(?:ประจำตัว)?ผู้เสียภาษี|เลขประจำตัวผู้เสียภาษี(?:อากร)?|เลขทะเบียนนิติบุคคล|ทะเบียนเลขที่/i.test(line)
         ? [line, rows[index + 1] ?? ''] : []).join('\n');
-    for (const match of labelledTaxIds.matchAll(TAX_ID_CANDIDATE_RE)) {
-      taxIdRuns.add(match[0].replace(/[- ]/g, ''));
-    }
+    for (const taxId of printedSellerTaxIds(labelledTaxIds)) taxIdRuns.add(taxId);
     if (taxIdRuns.size === 1) {
       out.vendorTaxId = [...taxIdRuns][0]!;
       missing.delete('vendorTaxId');
     }
   }
   const normalizeIdentity = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
+  // A labelled seller block is the only seller on the page: a name printed only outside it (the
+  // platform or courier header of a marketplace order) is never the vendor, so it goes to review.
+  if (out.vendorName && hasLabelledSellerBlock(mappedText)
+    && !normalizeIdentity(issuerText).includes(normalizeIdentity(out.vendorName))) {
+    delete out.vendorName;
+    missing.add('vendorName');
+  }
   const evidence = out.vendorIdentityEvidence && issuerText.includes(out.vendorIdentityEvidence)
     ? out.vendorIdentityEvidence : out.vendorName && normalizeIdentity(issuerText).includes(normalizeIdentity(out.vendorName))
       ? out.vendorName : undefined;
@@ -1708,7 +1735,9 @@ export function applyOcrValueCrossCheck(
       || isFullSpanDate(value)
       || (documentKind === 'TRANSFER_SLIP'
         ? !compactReference(mappedText).includes(value)
-        : digitRuns.length === 0 || !(compactNumber(collapsedText).includes(compactNumber(value)) || bookNumber));
+        // I, O or l between digits (5I78O2) is a misread 1 or 0, even when the transcription printed it.
+        : digitRuns.length === 0 || /\d[IOl]+\d/.test(compactNumber(value))
+          || !(compactNumber(collapsedText).includes(compactNumber(value)) || bookNumber));
     if (invalid) {
       delete out.documentNumber;
       missing.add('documentNumber');

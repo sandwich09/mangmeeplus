@@ -187,13 +187,6 @@ test('@journey staff sends a receipt from a phone (picture before branch), fills
 });
 
 
-// Free spec rules 11-12: after the free reads run out, the OWNER gets a "ดูแพ็กเกจ" way out and the package page stays reachable.
-// The free web menu shows expenses only and the refused file offers only a retry, so this journey waits for that product fix.
-test.fixme('@journey PWS-CHAIN free owner reaches the package page after the free reads run out', async () => {});
-// The refusal promises "ยังเปิดดูและแก้ร่างเดิมได้". Navigating from the refused upload to the saved draft stayed on the upload page (2026-11-04);
-// find whether the leave guard or a redirect keeps the person there before this journey asserts it.
-test.fixme('@journey PWS-CHAIN free owner opens the saved draft again right after the free reads run out', async () => {});
-
 for (const width of [390, 1280, 1556]) test(`@journey PWS-CHAIN free receipt, source edit, human history, quota refusal and package exit at ${width}px`, async ({ pageAs }) => {
   test.setTimeout(300_000);
   const page = await pageAs('OWNER');
@@ -223,14 +216,18 @@ for (const width of [390, 1280, 1556]) test(`@journey PWS-CHAIN free receipt, so
     await chooseThemedOption(page, main.getByRole('combobox', { name: 'สาขา', exact: true }), 'สำนักงานใหญ่ (สำนักงานใหญ่)');
     await main.getByLabel('เลือกจากคลังภาพหรือไฟล์', { exact: true }).setInputFiles(receiptFiles[0]!);
     await main.getByRole('button', { name: /^ส่งใบเสร็จ(?: \d+ ใบ)?$/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/companies/${shop}/expenses/[^/?]+$`), AFTER_PRESS);
+    // The upload page's own address also ends in one segment, so wait for the record's address itself.
+    await expect(page).toHaveURL(new RegExp(`/companies/${shop}/expenses/(?!upload$)[^/?]+$`), AFTER_PRESS);
     const expenseId = idFromUrl(page);
     const source = main.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true });
     await expect(source).toBeVisible(AFTER_PRESS);
-    await source.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true }).fill(vendor);
-    await source.getByRole('textbox', { name: 'ซื้อไปใช้ทำอะไร', exact: true }).fill('ซื้อของใช้หน้าร้าน');
-    await source.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click();
-    await expect(source.getByRole('status')).toHaveText('บันทึกร่างแล้ว ยังไม่ยืนยันรายการ', AFTER_PRESS);
+    // The draft refreshes once when the failed read settles (no OCR here); type again if that refresh cleared the fields.
+    await expect(async () => {
+      await source.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true }).fill(vendor);
+      await source.getByRole('textbox', { name: 'ซื้อไปใช้ทำอะไร', exact: true }).fill('ซื้อของใช้หน้าร้าน');
+      await source.getByRole('button', { name: 'บันทึกร่าง', exact: true }).click({ timeout: 2_000 });
+      await expect(source.getByRole('status')).toHaveText('บันทึกร่างแล้ว ยังไม่ยืนยันรายการ', { timeout: 5_000 });
+    }).toPass(AFTER_PRESS);
     for (const label of ['ยืนยันเอกสาร', 'บันทึกจ่าย']) await expect(main.getByRole('button', { name: label, exact: true })).toHaveCount(0);
     await main.locator('summary').filter({ hasText: /^เพิ่มเติม$/ }).click();
     await main.getByRole('button', { name: 'ดูประวัติ', exact: true }).click();
@@ -255,10 +252,17 @@ for (const width of [390, 1280, 1556]) test(`@journey PWS-CHAIN free receipt, so
     expect((await (await refused).json()).code).toBe('FREE_DOCUMENT_LIMIT_REACHED');
     const refusedFile = main.getByRole('listitem').filter({ hasText: receiptFiles[1]!.name });
     await expect(refusedFile).toContainText('ส่งไม่สำเร็จ', AFTER_PRESS);
-    await expect(refusedFile).toContainText('ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้', AFTER_PRESS);
-    await expect(refusedFile.getByRole('button', { name: 'ส่งไฟล์นี้อีกครั้ง', exact: true })).toBeVisible();
-    // The package exit (free spec rules 11-12: OWNER sees "ดูแพ็กเกจ") is not on the free web yet; see the fixme below.
-    // Reopening the draft right after the refusal stays on the upload page in the proof browser: see the fixme below.
+    await expect(main.getByText('ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้').first()).toBeVisible(AFTER_PRESS);
+    // Free spec rules 11-12: no retry this month, and the OWNER's way out is the package page, with nothing holding them on upload.
+    await expect(refusedFile.getByRole('button', { name: 'ส่งไฟล์นี้อีกครั้ง', exact: true })).toHaveCount(0);
+    await main.getByRole('link', { name: 'ดูแพ็กเกจ', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/companies/${shop}/billing`), AFTER_PRESS);
+    await expect(page.getByRole('heading', { level: 1, name: 'แพ็กเกจ', exact: true })).toBeVisible(FIRST_SIGHT);
+    // The refusal promises "ยังเปิดดูและแก้ร่างเดิมได้": the saved draft opens again.
+    await page.goto(`/companies/${shop}/expenses/${expenseId}`, FIRST_SIGHT);
+    await expect(source.getByRole('textbox', { name: 'ชื่อผู้ขาย', exact: true })).toHaveValue(vendor, AFTER_PRESS);
+    await pressMenu(page, 'แพ็กเกจ');
+    await expect(page).toHaveURL(new RegExp(`/companies/${shop}/billing`), AFTER_PRESS);
   } finally {
     try {
       await db.companyOcrUsageEvent.deleteMany({ where: { companyId: shop, id: { in: quotaIds } } });

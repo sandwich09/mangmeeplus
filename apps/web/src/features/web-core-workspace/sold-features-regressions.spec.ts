@@ -100,7 +100,7 @@ test('signature settings read their narrow endpoint, keep padding and offer no s
 test('the signature image field names its file types once, without nested parentheses', () => {
   const html = visible(render(h(TaxSignatureSettingsPage, { companyId: 'c', permissions: ['company.tax_signature.manage'] }),
     (_initial, index) => index === 0 ? { signatureMode: 'AUTO_STAMP', signatureImageAttachmentId: null } : index === 1 ? 'AUTO_STAMP' : index === 3 ? false : undefined));
-  assert.match(html, /รูปลายเซ็น ·\s+รูปภาพ \(เจเพ็ก, พีเอ็นจี\)/);
+  assert.match(html, /รูปลายเซ็น ·\s+รูปภาพ \(JPEG, PNG\)/);
   assert.doesNotMatch(html, /รูปลายเซ็น\s*\(\s*รูปภาพ/);
 });
 

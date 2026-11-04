@@ -180,7 +180,7 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   const pack = activeProductHelpPack();
   validateKnowledgePack(pack);
   assert.equal(pack.version, 7);
-  assert.equal(pack.contentHash, 'fb42b47fae1b91cbf04d59c518236fe67ad7e89cba8cb5c9e7f0f899f63676c0');
+  assert.equal(pack.contentHash, 'e64a5952f918f047dd0e9924b2c4d90f1342b3cdcff2d426dfac834c66ca0774');
   assert.deepEqual(pack.reviewers, ['owner-review:2026-11-04:chat:ตามแนะนำ']);
   assert.equal(PRODUCT_HELP_V6_PACK.contentHash, '0bab85e0afa9cc83d0ab71af7d12f2110f7749f7461532c8c159711c81c008c0');
   validateKnowledgePack(PRODUCT_HELP_V6_PACK);
@@ -196,6 +196,10 @@ it('PWS-HELP publishes the exact owner-approved v7 words and retains immutable v
   {
     "id": "wht.calculation",
     "body": "ใช้ยอดก่อน VAT คูณอัตราของ “จ่ายค่าอะไร” ที่เลือกค่ะ เลือกให้ตรงกับรายการก่อนนะคะ"
+  },
+  {
+    "id": "wht.outside",
+    "body": "ทำใบจากแบบฟอร์มกรมสรรพากรหรือโปรแกรมอื่น แล้วใช้ “จดเลขที่ใบ” ที่รายการ หรือ “จดเลขที่ใบ 50 ทวิ” ที่หน้ารายจ่ายค่ะ 😊 ใส่เลขที่และวันที่ แนบรูปหรือ PDF ได้ถ้ามี ระบบช่วยเก็บเลขที่และไฟล์ของใบที่ทำนอกระบบไว้ให้ค้นเจอค่ะ"
   },
   {
     "id": "expense.vat-credit",

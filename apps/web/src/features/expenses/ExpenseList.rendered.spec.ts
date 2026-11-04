@@ -256,3 +256,31 @@ test('a refused non-confirmed software export keeps the confirmed-list exit besi
     assert.match(renderToStaticMarkup(content), />ดูรายการที่ยืนยันแล้ว<\/button>/);
   } finally { create.mock.restore(); }
 });
+
+test('the month counts by document date by default and by the day sent in when chosen', async () => {
+  let retry: (() => void) | undefined;
+  const calls: any[] = [];
+  const realCreate = runtime.createElement;
+  const create = mock.method(runtime, 'createElement', (tag: any, props: any, ...children: any[]) => {
+    if (tag?.name === 'ErrorState') retry = props.onRetry;
+    return realCreate(tag, props, ...children);
+  });
+  const request = mock.method(api, 'listExpenses', async (_company: string, filter: any) => { calls.push(filter); return { data: [], total: 0 }; });
+  try {
+    for (const dateField of [undefined, 'uploadedAt']) {
+      const html = render([], { error: 'โหลดไม่สำเร็จ', ...(dateField ? { dateField } : {}) }, 'month=2026-09');
+      assert.match(html, /role="group" aria-label="นับเดือนตาม"/);
+      assert.match(html, new RegExp(`aria-pressed="true"[^>]*>${dateField ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'}<`));
+      assert.ok(retry); retry(); await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.deepEqual(calls, [
+      { fromDate: '2026-09-01', toDate: '2026-09-30', page: 1, pageSize: 200 },
+      { uploadedFromDate: '2026-09-01', uploadedToDate: '2026-09-30', page: 1, pageSize: 200 },
+    ]);
+    // The total names the date the month counts by.
+    assert.match(render([row(1)], { dateField: 'uploadedAt' }, 'month=2026-09'), /ยอดค่าใช้จ่ายตามวันที่ส่งเข้า/);
+    assert.match(render([row(1)], {}, 'month=2026-09'), /ยอดค่าใช้จ่ายตามวันที่เอกสาร/);
+    // Special views keep their own document-date scope and show no second date choice.
+    assert.doesNotMatch(render([], { dateField: 'uploadedAt' }, 'view=confirmed&fromDate=2025-02-03&toDate=2025-03-04'), /นับเดือนตาม/);
+  } finally { create.mock.restore(); request.mock.restore(); }
+});

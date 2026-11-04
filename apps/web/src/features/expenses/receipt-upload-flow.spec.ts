@@ -128,6 +128,31 @@ test('quota refusal keeps the camera photo and stored draft reachable', async ()
     assert.match(html, /receipt.jpg/); assert.match(html, /expenses\/e1/); assert.equal(view.find('button', p => Boolean(p['data-loading-indicator'])).disabled, false);
   } finally { quota.mock.restore(); stubs.cleanup(); }
 });
+test('free limit refusal: ดูแพ็กเกจ for the package holder, ติดต่อเจ้าของร้าน for others, no resend and no leave guard', async () => {
+  for (const canManagePlan of [true, false]) {
+    const stubs = uploadStubs();
+    const handlers = new Map<string, (event: any) => void>();
+    Object.assign(window, { addEventListener: (name: string, handler: any) => handlers.set(name, handler), removeEventListener: (name: string) => handlers.delete(name),
+      matchMedia: () => ({ matches: false, addEventListener: noop, removeEventListener: noop }) });
+    const init = mock.method(api, 'initReceiptUpload', async () => { throw Object.assign(new Error('limit'), { code: 'FREE_DOCUMENT_LIMIT_REACHED' }); });
+    const view = uploadHarness(() => h(UploadPanel, { companyId: 'co', branchId: 'b1', canManagePlan, userId: 'sender', caps: senderCaps, onSuccess: noop, freeExpenseDrafts: true }));
+    try {
+      view.render(); view.find('input', p => p.multiple).onChange({ target: { files: [photo, { ...photo, name: 'two.jpg' }] } });
+      await view.settle(); view.render(true);
+      assert.equal(handlers.has('beforeunload'), true, 'picked files guard leaving before anything is sent');
+      await view.find('button', p => p['data-loading-indicator']).onClick(); await view.settle();
+      const html = view.render(true);
+      assert.equal(init.mock.callCount(), 1, 'the batch stops at the first refusal');
+      assert.match(html, /data-upload-quota/);
+      assert.equal(html.split('ใช้สิทธิ์อ่านเอกสารฟรีของเดือนนี้ครบแล้ว ยังเปิดดูและแก้ร่างเดิมได้').length - 1, 1);
+      assert.equal(html.includes('href="/companies/co/billing"'), canManagePlan);
+      assert.equal(/>ดูแพ็กเกจ</.test(html), canManagePlan);
+      assert.equal(html.includes('ติดต่อเจ้าของร้าน'), !canManagePlan);
+      assert.doesNotMatch(html, /ส่งไฟล์นี้อีกครั้ง|เปลี่ยนแพ็กเกจ/);
+      assert.equal(handlers.has('beforeunload'), false, 'a refused file no longer holds the person on this page');
+    } finally { view.cleanup(); init.mock.restore(); stubs.cleanup(); }
+  }
+});
 test('sender result shows only permitted missing fields and returns after a narrow draft save', async () => {
   const confirm = mock.method(confirmation, 'useConfirm', () => ({ confirm: async () => true, confirmDialog: null }));
   let body: any; const save = mock.method(api, 'updateExpenseDraft', async (_co: string, _id: string, payload: any) => { body = payload; });

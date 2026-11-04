@@ -27,6 +27,16 @@ describe('free expense workspace routing', () => {
     assert.equal(companySwitcherTarget({ companyId: 'free', currentCompanyId: 'paid', expired: true, freeExpenseDrafts: true, currentPath: '/companies/paid/dashboard' }), '/companies/free/expenses');
     assert.equal(companySwitcherTarget({ companyId: 'paid', currentCompanyId: 'free', expired: true, currentFreeExpenseDrafts: true, currentPath: '/companies/free/expenses' }), '/companies/paid/renew');
   });
+
+  it('keeps แพ็กเกจ in a free shop for the holder of company.plan.manage only (spec §8 rule 11–12)', () => {
+    const member = ['expense.read_own', 'expense.receipt.upload'];
+    for (const [permissions, holder] of [[[...member, 'company.plan.manage'], true], [member, false]] as const) {
+      const nav = buildNavItems(filterModulesForSession(WORKSPACE_MODULES, [...permissions], true), 'co', 'th', {}, [...permissions], [], false, false, true, true);
+      assert.deepEqual(nav.map((item) => item.key), holder ? ['expenses', 'billing'] : ['expenses']);
+      if (holder) assert.deepEqual([nav[1]!.label, nav[1]!.href], ['แพ็กเกจ', '/companies/co/billing']);
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [...permissions], 'co', '/companies/co/billing', true), holder);
+    }
+  });
 });
 
 describe('disbursement-voucher web entrances', () => {

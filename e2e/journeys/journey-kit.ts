@@ -139,13 +139,15 @@ export async function pressMenu(page: Page, label: string, parent?: string) {
   await expect(async () => { expect((await nav.isVisible()) || (await opener.isVisible())).toBe(true); }).toPass(FIRST_SIGHT);
   const realRow = nav.locator('a:not([href*="/user-guide/"])');
   // Phone: a page that is still settling can close the menu again right after it opened. Open it until the row is there.
-  const first = parent ? nav.getByRole('button', { name: new RegExp(`^${escapeRegExp(parent)}`) }) : nav.getByRole('link', { name: label, exact: true }).and(realRow);
+  // A row may carry a badge in its name ("แพ็กเกจ เหลือ 0 วัน"), as a group's button may.
+  const row = nav.getByRole('link', { name: new RegExp(`^${escapeRegExp(label)}(?:\\s|$)`) }).and(realRow);
+  const first = parent ? nav.getByRole('button', { name: new RegExp(`^${escapeRegExp(parent)}`) }) : row;
   await expect(async () => {
     if (!(await nav.isVisible())) await opener.click();
     await expect(first).toBeVisible({ timeout: 3_000 });
   }).toPass(FIRST_SIGHT);
   if (!parent) {
-    await nav.getByRole('link', { name: label, exact: true }).and(realRow).click();
+    await row.click();
     await expectFitsScreen(page);
     return;
   }
