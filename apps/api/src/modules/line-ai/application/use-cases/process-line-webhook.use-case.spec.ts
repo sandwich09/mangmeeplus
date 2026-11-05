@@ -14115,8 +14115,8 @@ describe('free expense LINE boundary', () => {
       assert.equal(h.intakeRequests.length, 0);
       assert.equal(h.getAiGatewayCalled(), false);
       if (messageText === 'วันนี้ขายดีไหม' || messageText.startsWith('แก้')) {
-        assert.ok(h.sentMessages.some(message => message.quickReply?.items.some((item: any) => item.action.type === 'uri'
-          && item.action.uri.includes('/expenses'))), 'free refusal offers the permitted expense list');
+        assert.ok(h.sentMessages.some(message => message.quickReply?.items.some((item: any) => item.action.type === 'message'
+          && item.action.label === 'เมนูหลัก' && item.action.text === 'เมนูหลัก')), 'free refusal offers the main menu');
       }
     }
   });
@@ -15515,4 +15515,282 @@ it('R12 e-WHT delivery authorization rechecks the pending source and permission 
   h.ctx.permissions.push('expense.payment.record');
   h.record.updatedAt = new Date(h.record.updatedAt.getTime() + 1000);
   assert.equal(await flow.verifyWebhookPlan({ authorization }, event), false);
+});
+
+it('A4b expense picker reads both outstanding sets within three pages, includes old debt and keeps free shops out', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const ctx = { ...manualClaimHarness().ctx, permissions: ['expense.read', 'expense.payment.record'] };
+  const reads: any[] = [];
+  const service: any = new LineWorkflowTargetService({} as any, { permitted: async () => true } as any);
+  service.expenses = { execute: async (_ctx: any, filter: any) => {
+    reads.push(filter);
+    const count = filter.paymentStatus === 'PARTIALLY_PAID' || filter.page === 2 ? 1 : 100;
+    return { data: Array.from({ length: count }, (_, i) => ({ id: `${filter.paymentStatus}-${filter.page}-${i}`, createdByUserId: ctx.userId,
+      status: 'CONFIRMED', paymentStatus: filter.paymentStatus, expenseDate: new Date(filter.paymentStatus === 'PARTIALLY_PAID' ? '2026-11-05' : '2019-01-01'),
+      vendorNameSnapshot: 'ร้านทดสอบ', grandTotalAmount: '1000', currency: 'THB' })), total: filter.paymentStatus === 'PARTIALLY_PAID' ? 1 : 101 };
+  } };
+  const result = await service.pick(ctx, 'chat', 'expense_pay', {}, 1);
+  assert.equal(reads.length, 3);
+  assert.ok(reads.every(row => row.pageSize === 100 && !row.fromDate && !row.toDate));
+  assert.deepEqual(new Set(reads.map(row => row.paymentStatus)), new Set(['UNPAID', 'PARTIALLY_PAID']));
+  assert.equal(result.exhaustive, true); assert.equal(result.total, 102);
+  assert.match(result.targets[0].id, /PARTIALLY_PAID/);
+  assert.ok(result.targets.some((row: any) => row.id.startsWith('UNPAID')));
+  await service.pick({ ...ctx, freeExpenseDrafts: true }, 'chat', 'expense_pay', {}, 1);
+  assert.equal(reads.length, 3);
+});
+
+it('A4b seller search is scoped and bounded; missing search rights retain the latest expense choices', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const ctx = { ...manualClaimHarness().ctx, permissions: ['expense.read', 'expense.payment.record', 'accounting.counterparty.read'] };
+  const service: any = new LineWorkflowTargetService({} as any, { permitted: async () => true } as any);
+  const sellers: any[] = [], expenses: any[] = [];
+  service.counterparties = { execute: async (_ctx: any, page: number, pageSize: number, filter: any) => {
+    sellers.push({ page, pageSize, filter }); return { data: [{ id: 'seller', displayName: 'ร้านหนึ่ง' }], total: 1 };
+  } };
+  service.expenses = { execute: async (_ctx: any, filter: any) => { expenses.push(filter); return { data: [], total: 0 }; } };
+  await service.pick(ctx, 'chat', 'expense_pay', { vendorName: 'ร้านหนึ่ง' }, 1);
+  assert.deepEqual(sellers, [{ page: 1, pageSize: 100, filter: { search: 'ร้านหนึ่ง' } }]);
+  assert.ok(expenses.every(filter => filter.vendorCounterpartyId === 'seller'));
+  expenses.length = 0;
+  const latest = await service.pick({ ...ctx, permissions: ctx.permissions.filter((key: string) => key !== 'accounting.counterparty.read') }, 'chat', 'expense_pay', { vendorName: 'ร้านหนึ่ง' }, 1);
+  assert.equal(sellers.length, 1);
+  assert.ok(expenses.every(filter => filter.vendorCounterpartyId === undefined));
+  assert.equal(latest.latestOnly, true);
+});
+
+it('A4b paid expense and certificate buttons bypass credit and models while free shops retain R27', async () => {
+  for (const free of [false, true]) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { permissions: manualClaimHarness().ctx.permissions, freeExpenseDrafts: free,
+      config: { aiGatewayInternalSecret: 'secret' }, intakeRouteFn: () => assert.fail('picker must not enter intake'),
+      aiGatewayFn: () => assert.fail('picker must not invoke a model') });
+    const flow = h.useCase as any;
+    flow.aiGateway.creditState = async () => assert.fail('a button never reads credit');
+    const workflows: string[] = [];
+    flow.workflowTargets = { pick: async (_ctx: unknown, _chat: string, workflow: string) => {
+      workflows.push(workflow); return { targets: [], total: 0, exhaustive: true };
+    } };
+    for (const workflow of ['expense_submit', 'expense_confirm', 'expense_delete', 'expense_void', 'expense_pay', 'payment_voucher', 'wht_certificate'] as const) {
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `a4b-${workflow}-${free}`, messageText: 'เลือกรายการ', workflowStart: workflow });
+    }
+    assert.equal(workflows.length, free ? 0 : 7);
+    if (free) assert.match(h.replies.join(' '), /สิทธิ์ใช้ฟรี/);
+  }
+});
+
+it('A4b certificate picker uses only the scoped LINE list and canOfferCertificate; incomplete reads stay incomplete', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const service: any = new LineWorkflowTargetService({} as any, {} as any);
+  const ctx = manualClaimHarness().ctx;
+  let calls = 0;
+  service.vouchers = { listForLine: async (_ctx: unknown, query: any) => {
+    assert.equal(query.pageSize, 100); assert.equal(query.status, 'PAID'); calls++;
+    return { data: [{ id: `voucher-${query.page}`, payeeName: 'ร้านทดสอบ', totalAmount: '500' }], total: 301 };
+  } };
+  const checked: string[] = [];
+  service.voucherActions = { authorize: async () => undefined, canOfferCertificate: async (_ctx: unknown, id: string) => {
+    checked.push(id); return id === 'voucher-2';
+  } };
+  const result = await service.pick(ctx, 'chat', 'wht_certificate', {}, 1);
+  assert.equal(calls, 3); assert.equal(result.exhaustive, false); assert.equal(result.total, 301);
+  assert.deepEqual(checked, ['voucher-1', 'voucher-2', 'voucher-3']);
+  assert.deepEqual(result.targets.map((row: any) => row.id), ['voucher-2']);
+});
+
+it('A4b expense cards bind the action and owner and distinguish empty from incomplete searches', async () => {
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  const { parseLineWorkflowControl, verifyLineWorkflowOpenSig } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  const ctx = manualClaimHarness().ctx;
+  const target = { id: 'expense-1', label: 'ร้านทดสอบ', amount: '400', currency: 'THB' };
+  const card = buildExpenseWorkflowPicker({ targets: [target], total: 1, exhaustive: true }, 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com');
+  const json = JSON.stringify(card);
+  const data = [...json.matchAll(/"data":"([^"]+)"/g)].map(match => match[1]).find(value => value.includes('wf_open'))!;
+  const control = parseLineWorkflowControl(data)!;
+  assert.equal(control.action, 'wf_open');
+  if (control.action !== 'wf_open') assert.fail('signed target');
+  assert.equal(control.act, 'RECORD_PAYMENT'); assert.equal(control.id, target.id);
+  assert.equal(verifyLineWorkflowOpenSig('secret', ctx.companyId, ctx.userId, control.act, control.id, '', '', '', control.sig), true);
+  assert.equal(verifyLineWorkflowOpenSig('secret', ctx.companyId, 'another-user', control.act, control.id, '', '', '', control.sig), false);
+  const empty = buildExpenseWorkflowPicker({ targets: [], total: 0, exhaustive: true }, 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com');
+  assert.match(JSON.stringify(empty), /ไม่มีรายการค้างจ่ายค่ะ/);
+  const incomplete = buildExpenseWorkflowPicker({ targets: [], total: 301, exhaustive: false }, 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com');
+  assert.match(JSON.stringify(incomplete), /มีรายการมากเกินจะค้นในแชตค่ะ/);
+  assert.doesNotMatch(JSON.stringify(incomplete), /ไม่มีรายการ/);
+  assert.match(JSON.stringify(incomplete), /ค้นในเว็บ/);
+});
+
+it('A4b MC1 filters creator targets again and applies the existing submit and delete state rules', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const ctx = { ...manualClaimHarness().ctx, permissions: ['expense.update'] };
+  const service: any = new LineWorkflowTargetService({} as any, { permitted: async () => true } as any);
+  const own = { ...savedMediaFixture('own-draft'), createdByUserId: ctx.userId, status: 'DRAFT',
+    expenseDate: new Date('2026-11-04'), grandTotalAmount: '250', paymentStatus: 'UNPAID', currency: 'THB' };
+  const rows = [own, { ...own, id: 'other-draft', createdByUserId: 'another' },
+    { ...own, id: 'confirmed', status: 'CONFIRMED' }, { ...own, id: 'history', hasDeletionBlockingHistory: true }];
+  service.expenses = { execute: async (_ctx: unknown, filter: any, options: any) => {
+    assert.equal(filter.createdByUserId, ctx.userId);
+    assert.ok(['MARK_READY', 'DELETE_DRAFT'].includes(options.lineAction));
+    return { data: rows, total: rows.length };
+  } };
+  const submit = await service.pick(ctx, 'chat', 'expense_submit', {}, 1);
+  assert.deepEqual(submit.targets.map((row: any) => row.id).sort(), ['history', own.id].sort());
+  const remove = await service.pick(ctx, 'chat', 'expense_delete', {}, 1);
+  assert.deepEqual(remove.targets.map((row: any) => row.id), [own.id]);
+});
+
+it('A4b every free workflow returns before list access or authorization', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const service: any = new LineWorkflowTargetService({ execute: () => assert.fail('free claim list') } as any,
+    { permitted: () => assert.fail('free permission preview') } as any);
+  for (const field of ['expenses', 'counterparties', 'vouchers', 'candidates', 'voucherActions']) {
+    service[field] = new Proxy({}, { get: () => assert.fail(`free lookup ${field}`) });
+  }
+  for (const workflow of ['expense_submit', 'expense_confirm', 'expense_delete', 'expense_void', 'expense_pay',
+    'payment_voucher', 'wht_certificate', 'substitute_receipt']) {
+    assert.deepEqual(await service.pick({ ...manualClaimHarness().ctx, freeExpenseDrafts: true }, 'chat', workflow, { vendorName: 'ร้าน' }, 1),
+      { targets: [], total: 0, exhaustive: true });
+  }
+});
+
+
+it('A4b seller cards distinguish one, several and no matches with scrubbed names and the action web exit', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  const ctx = { ...manualClaimHarness().ctx, permissions: ['expense.read', 'expense.payment.record', 'accounting.counterparty.read'] };
+  const service: any = new LineWorkflowTargetService({} as any, { permitted: async () => true } as any);
+  let count = 1;
+  service.counterparties = { execute: async (_ctx: unknown, page: number, pageSize: number) => {
+    const rows = Array.from({ length: count }, (_, i) => ({ id: `seller-${i}`, displayName: `ร้าน${i + 1} https://evil.example` }));
+    return { data: rows.slice((page - 1) * pageSize, page * pageSize), total: count };
+  } };
+  const filters: any[] = [];
+  service.expenses = { execute: async (_ctx: unknown, filter: any) => { filters.push(filter); return { data: [], total: 0 }; } };
+  const pick = () => service.pick(ctx, 'chat', 'expense_pay', { vendorName: 'ร้าน' }, 1);
+  await pick();
+  assert.ok(filters.every(filter => filter.vendorCounterpartyId === 'seller-0'));
+  count = 5;
+  const several = await pick();
+  const card = JSON.stringify(buildExpenseWorkflowPicker(several, 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com'));
+  assert.match(card, /ชื่อนี้ตรงกับผู้ขายหลายราย/);
+  for (const name of ['ร้าน1', 'ร้าน2', 'ร้าน3']) assert.ok(card.includes(name));
+  assert.doesNotMatch(card, /ร้าน4|ร้าน5|evil\.example|wf_open/);
+  assert.match(card, /พิมพ์ชื่อให้ชัดขึ้น/);
+  assert.match(card, /เปิดในเว็บ/);
+  assert.match(card, /\/expenses/);
+  count = 0;
+  const empty = JSON.stringify(buildExpenseWorkflowPicker(await pick(), 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com'));
+  assert.match(empty, /ไม่พบผู้ขายชื่อ ร้าน ในรายชื่อคู่ค้าค่ะ/);
+  count = 2;
+  const pair = JSON.stringify(buildExpenseWorkflowPicker(await pick(), 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com'));
+  assert.match(pair, /ชื่อนี้ตรงกับผู้ขายหลายราย/);
+  count = 301;
+  const incomplete = JSON.stringify(buildExpenseWorkflowPicker(await pick(), 'expense_pay', 'secret', ctx.companyId, ctx.userId, 'https://app.example.com'));
+  assert.match(incomplete, /มีรายการมากเกินจะค้นในแชตค่ะ/);
+  assert.match(incomplete, /ชื่อนี้ตรงกับผู้ขายหลายราย/);
+  assert.match(incomplete, /ร้าน3/);
+  assert.doesNotMatch(incomplete, /ไม่พบผู้ขาย|ร้าน4/);
+});
+
+it('A4b substitute workflow buttons use scoped candidates and the existing continuation with zero AI admission', async () => {
+  const { substituteReplySource } = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case');
+  for (const [free, count, exhaustive] of [[false, 1, true], [false, 2, true], [false, 1, false], [false, 0, true], [false, 0, false], [true, 2, true]] as const) {
+    const { prisma } = makePrisma();
+    const appended: any[] = [], continued: any[] = [], picked: any[] = [];
+    const records = Array.from({ length: count }, (_, i) => ({ ...savedMediaFixture(`candidate-${i}`), attachments: [], updatedAt: new Date('2026-11-05') }));
+    const source = { records: records.flatMap(row => substituteReplySource(row as any).records) };
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read', 'expense.review'], freeExpenseDrafts: free,
+      config: { aiGatewayInternalSecret: 'secret' },
+      intakeRouteFn: () => assert.fail('button and field answers must not enter intake'), aiGatewayFn: () => assert.fail('must not call a model'),
+      substituteLedger: { openWaitingUser: async () => [], appendSubRequests: async (input: any) => { appended.push(input); } },
+      substituteContinuation: { replySourcesCurrent: async () => true, execute: async (ctx: any, input: any) => {
+        continued.push({ ctx, input });
+        return { handled: true, status: count === 1 && exhaustive ? 'BLOCKED' : 'TARGET_REQUIRED', replyText: 'ใครจ่ายรายการนี้คะ',
+          source, acceptedFields: [], blockers: [], pendingQuestion: 'ใครจ่ายรายการนี้คะ',
+          ...(count === 1 ? { expenseId: records[0].id } : { candidateExpenseIds: records.map(row => row.id) }) };
+      } } });
+    const flow = h.useCase as any;
+    flow.aiGateway.creditState = () => assert.fail('no credit admission');
+    flow.workflowTargets = { pick: async (...args: any[]) => { picked.push(args); return {
+      targets: records.map((row, i) => ({ id: row.id, label: `ร้าน${i + 1}`, amount: '250', currency: 'THB' })),
+      total: exhaustive ? count : 301, exhaustive };
+    } };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `sub-picker-${free}-${count}-${exhaustive}`, messageText: 'ทำใบรับรองแทนใบเสร็จ', workflowStart: 'substitute_receipt' });
+    assert.equal(picked.length, free ? 0 : 1);
+    assert.equal(continued.length, !free && count > 0 ? 1 : 0);
+    if (continued.length) {
+      assert.equal(continued[0].input.confirmedStart, exhaustive || count > 1);
+      if (!exhaustive && count === 1) assert.equal(continued[0].input.requireStartConfirmation, true, 'an incomplete search cannot silently choose its sole loaded candidate');
+      assert.equal(continued[0].input.confirmedDecision, undefined, 'navigation cannot confirm document preparation');
+      assert.deepEqual(continued[0].input.boundCandidateExpenseIds, records.map(row => row.id));
+      assert.deepEqual(appended[0].items[0].candidateExpenseIds, records.map(row => row.id));
+      assert.ok(appended[0].items[0].sourceContext, 'the question is source-bound');
+    }
+    if (!free && !count) assert.match(JSON.stringify(h.sentMessages), exhaustive ? /ไม่มีรายการที่ทำใบรับรองแทนใบเสร็จได้/ : /มีรายการมากเกินจะค้น/);
+    if (free) {
+      assert.match(h.replies.join(' '), /สิทธิ์ใช้ฟรี/);
+      const choices = h.sentMessages.at(-1)?.quickReply?.items.map((item: any) => item.action);
+      assert.equal(choices?.[0]?.type, 'uri');
+      assert.equal(choices?.[0]?.label, 'เปิดรายการค่าใช้จ่าย');
+      assert.equal(choices?.[1]?.text, 'เมนูหลัก');
+    }
+  }
+});
+
+it('A4b source-bound substitute selection and field answers finish with no credit or model calls and reject changed sources', async () => {
+  const { substituteReplySource } = await import('../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case');
+  const { prisma } = makePrisma();
+  const records = ['first', 'second'].map(id => ({ ...savedMediaFixture(id), attachments: [], updatedAt: new Date('2026-11-05') }));
+  let waiting: any[] = [], current = true;
+  const inputs: any[] = [], consumed: string[][] = [];
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read', 'expense.review'],
+    config: { aiGatewayInternalSecret: 'secret' },
+    intakeRouteFn: () => assert.fail('owned substitute answers must not enter intake'), aiGatewayFn: () => assert.fail('must not call a model'),
+    substituteLedger: { openWaitingUser: async () => waiting, appendSubRequests: async (input: any) => {
+      waiting.push(...input.items.map((item: any, index: number) => ({ ...item, id: `question-${inputs.length}-${index}`, question: item.clarifyQuestion,
+        askedAt: new Date().toISOString(), entry: { sourceContext: item.sourceContext } })));
+    } },
+    substituteContinuation: { replySourcesCurrent: async () => current, execute: async (_ctx: any, input: any) => {
+      inputs.push(input);
+      assert.equal(input.confirmedDecision, undefined, 'only the existing signed action confirms preparation');
+      const choosing = input.messageText === 'ทำใบรับรองแทนใบเสร็จ';
+      const selected = choosing ? records : [records[1]];
+      return { handled: true, status: choosing ? 'TARGET_REQUIRED' : 'BLOCKED',
+        source: { records: selected.flatMap(row => substituteReplySource(row as any).records) },
+        replyText: 'ใครจ่ายรายการนี้คะ', pendingQuestion: 'ใครจ่ายรายการนี้คะ', acceptedFields: [], blockers: [],
+        ...(choosing ? { candidateExpenseIds: selected.map(row => row.id) } : { expenseId: records[1].id }) };
+    } } });
+  const flow = h.useCase as any;
+  flow.aiGateway.creditState = () => assert.fail('an active workflow bypasses exhausted credit');
+  flow.consumeClarifications = async (_company: string, _chat: string, _user: string, _open: any[], ids: string[]) => { consumed.push(ids); waiting = waiting.filter(item => !ids.includes(item.id)); };
+  flow.workflowTargets = { pick: async () => ({ targets: records.map((row, index) => ({ id: row.id, label: `ร้าน${index + 1}`, amount: '250', currency: 'THB' })), total: 2, exhaustive: true }) };
+  let turn = 0;
+  const send = async (messageText: string, extra: any = {}) => h.useCase.execute({ ...BASE_EVENT, webhookEventId: `sub-field-${++turn}`, messageText, ...extra });
+  await send('ทำใบรับรองแทนใบเสร็จ', { workflowStart: 'substitute_receipt' });
+  assert.ok(h.sentMessages.some(message => JSON.stringify(message).includes('"text":"2"')), 'candidate choices use existing message actions');
+  await send('ทำใบรับรองแทนใบเสร็จ', { workflowStart: 'substitute_receipt' });
+  assert.equal(waiting.length, 1, 'pressing the workflow button again replaces its own pending prompt');
+  await send('2');
+  assert.deepEqual(inputs[2].boundCandidateExpenseIds, ['first', 'second']);
+  assert.equal(inputs[2].messageText, '2');
+  await send('บริษัท');
+  assert.deepEqual(inputs[3].boundCandidateExpenseIds, ['second']);
+  assert.equal(inputs[3].messageText, 'บริษัท');
+  assert.ok(consumed.some(ids => ids.length === 1));
+  current = false;
+  await send('โอน');
+  assert.equal(inputs.length, 4, 'changed sources never reach the continuation');
+  assert.equal(h.intakeRequests.length, 0);
+  assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+
+it('A4b free substitute buttons give only the main menu to a member without list-read rights', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.receipt.line_upload'],
+    intakeRouteFn: () => assert.fail('free button must not enter intake'), aiGatewayFn: () => assert.fail('free button must not call a model') });
+  (h.useCase as any).workflowTargets = { pick: () => assert.fail('free button must not read candidates') };
+  (h.useCase as any).aiGateway.creditState = () => assert.fail('free button must not read credit');
+  await h.useCase.execute({ ...BASE_EVENT, messageText: 'ทำใบรับรองแทนใบเสร็จ', workflowStart: 'substitute_receipt' });
+  assert.deepEqual(h.sentMessages.at(-1)?.quickReply?.items.map((item: any) => item.action), [{ type: 'message', label: 'เมนูหลัก', text: 'เมนูหลัก' }]);
 });

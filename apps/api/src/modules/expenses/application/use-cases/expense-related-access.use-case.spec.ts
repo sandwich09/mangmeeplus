@@ -2711,3 +2711,42 @@ describe('expense activity history authorization and projection', () => {
 
 });
 const VERSION_FOR_HISTORY = '2026-10-30T10:00:00.000Z';
+
+it('MC2 LINE voucher list keeps web results and read/branch guards while unsigned writes stay refused', async () => {
+  const reads: any[] = [];
+  const repo: any = { list: async (scope: any, query: any) => { reads.push({ scope, query }); return { rows: [], counts: {}, sums: {}, total: 0, amountsInEffect: new Map() }; } };
+  const expenses: any = { readScope: (actor: any, branchId?: string) => {
+    if (branchId && !actor.scopes.branchIds.includes(branchId)) throw new ForbiddenException();
+    return { filter: {}, scope: { relatedUserId: actor.userId } };
+  } };
+  const useCase = new DisbursementVoucherUseCase(repo, {} as any, expenses, {} as any);
+  const actor = { ...ctx, permissions: ['expense.disbursement.read', 'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay', 'expense.disbursement.issue'] };
+  const query = { page: 1, pageSize: 100, branchId: 'branch-1' };
+  const web = await useCase.list(actor, query);
+  const line = { ...actor, authProvider: 'line' };
+  assert.deepEqual(await useCase.listForLine(line, query), web);
+  assert.deepEqual(reads[1], reads[0]);
+  await assert.rejects(useCase.listForLine({ ...line, permissions: [] }, query), ForbiddenException);
+  await assert.rejects(useCase.listForLine(line, { ...query, branchId: 'other' }), ForbiddenException);
+  for (const write of [() => useCase.create(line, {} as any), () => useCase.approve(line, 'voucher', {} as any),
+    () => useCase.pay(line, 'voucher', {} as any), () => useCase.fromPayment(line, {} as any)]) {
+    await assert.rejects(write, (error: any) => error.getResponse().code === 'disbursement_line_session_denied');
+  }
+});
+
+it('MC1 LINE creator picker reads only its own records for the two permitted actions', async () => {
+  const reads: any[] = [];
+  const repo: any = { listExpenses: async (...args: any[]) => { reads.push(args); return { data: [], total: 0, page: 1, pageSize: 100 }; } };
+  const useCase = new ListExpensesUseCase(repo);
+  const actor = { ...ctx, authProvider: 'line', permissions: ['expense.create', 'expense.update'] };
+  for (const lineAction of ['MARK_READY', 'DELETE_DRAFT'] as const) {
+    await useCase.execute(actor, { pageSize: 100, createdByUserId: 'another' }, { lineAction });
+    assert.equal(reads.at(-1)[0].createdByUserId, actor.userId);
+    assert.equal(reads.at(-1)[0].companyId, actor.companyId);
+    assert.deepEqual(reads.at(-1)[1], actor.scopes);
+  }
+  await assert.rejects(useCase.execute(actor, {}), ForbiddenException);
+  await assert.rejects(useCase.execute({ ...actor, authProvider: 'watchdog' }, {}, { lineAction: 'MARK_READY' }), ForbiddenException);
+  await assert.rejects(useCase.execute({ ...actor, permissions: ['expense.create'] }, {}, { lineAction: 'MARK_READY' }), ForbiddenException);
+  await assert.rejects(useCase.execute(actor, { branchId: 'other' }, { lineAction: 'DELETE_DRAFT' }), ForbiddenException);
+});

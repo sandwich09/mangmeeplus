@@ -1,8 +1,8 @@
 import { recordLineTaskEvent, lineTaskSummary, type LineTaskObservation } from '../line-ai-task-metrics';
 import { FIXED_READ } from '../../domain/logic/line-staff-menu.logic';
 import { LineWorkflowTargetService } from '../line-workflow-target.service';
-import { CLAIM_WORKFLOW_ACTIONS, type ClaimWorkflowId } from '../../domain/logic/line-reimbursement-approval-control.logic';
-import { buildClaimWorkflowPicker, LINE_CLAIM_PICKER_COPY } from '../../domain/logic/line-business-card.logic';
+import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from '../../domain/logic/line-reimbursement-approval-control.logic';
+import { buildClaimWorkflowPicker, buildExpenseWorkflowPicker, LINE_EXPENSE_PICKER_COPY, LINE_CLAIM_PICKER_COPY } from '../../domain/logic/line-business-card.logic';
 import { lineControlData, lineDisplayDate, lineUiLabel, lineSourceLabel } from '../../domain/logic/line-language.logic';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard, type SubstituteActionPreview } from '../line-substitute-receipt-action.service';
@@ -795,6 +795,7 @@ const SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED = '⏳ ส่วนใบรับ�
  *  expense to make it for”. It is deliberately a DIFFERENT request text from the resume entry above:
  *  that one has a target and must keep capture-first off, this one has none and is the reason
  *  capture-first has to run on the very next message. */
+const SUBSTITUTE_WORKFLOW_PENDING_TEXT = 'ทำใบรับรองแทนใบเสร็จจากเมนู';
 const SUBSTITUTE_TARGET_PENDING_TEXT = 'ทำใบรับรองแทนใบเสร็จรับเงิน (ยังไม่มีรายการค่าใช้จ่าย)';
 const SUBSTITUTE_TARGET_PENDING_QUESTION = 'ค่าใช้จ่ายที่จะทำใบรับรองแทนใบเสร็จรับเงินให้คือรายการไหน ยอดเท่าไรคะ? เช่น “ค่าวินมอไซค์ 50 บาท”';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
@@ -3739,6 +3740,46 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
+  private async deliverSubstituteWorkflow(event: LineTextEvent, ctx: RequestContext, result: LineSubstituteReceiptContinuationResult,
+    waiting: Array<LineAiOpenClarification & { entry: LedgerEntry }>, designed?: LineReplyMessage): Promise<void> {
+    await this.rememberSubstituteDeliverySource(event, ctx, result);
+    await this.deliverCompletedReply(event, result.replyText, ctx.companyId, ctx, result.badge, designed);
+    const chatKey = event.pushTargetId ?? event.lineUserId;
+    await this.consumeClarifications(ctx.companyId, chatKey, ctx.userId, waiting, waiting.map(item => item.id), 'business_answer');
+    if (result.pendingQuestion) {
+      const candidateExpenseIds = result.candidateExpenseIds ?? (result.expenseId ? [result.expenseId] : undefined);
+      await this.appendSourceBoundClarifications(event, { messagingChannelId: event.messagingChannelId,
+        companyId: ctx.companyId, chatKey, turnId: ctx.requestId, webhookEventId: event.webhookEventId, userId: ctx.userId,
+        items: [{ text: SUBSTITUTE_WORKFLOW_PENDING_TEXT, state: 'waiting_user', clarifyQuestion: result.pendingQuestion,
+          intent: 'CLARIFY', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', ...(candidateExpenseIds?.length ? { candidateExpenseIds } : {}) }] });
+    }
+    await this.updateEventLog(event.webhookEventId, result.pendingQuestion ? 'clarification_required' : 'completed', undefined, ctx.companyId);
+  }
+
+  private async continueSubstituteWorkflow(event: LineTextEvent, ctx: RequestContext): Promise<boolean> {
+    if (!this.ledger || !this.substituteReceiptContinuation || isInterveningQuestionText(event.messageText)) return false;
+    let waiting: Array<LineAiOpenClarification & { entry: LedgerEntry }>;
+    try { waiting = (await this.ledger.openWaitingUser(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId))
+      .filter(item => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION' && item.text === SUBSTITUTE_WORKFLOW_PENDING_TEXT); }
+    catch (error) {
+      if (!(error instanceof ConsumptionMarkerUnavailableError)) throw error;
+      await this.deliverReply(event, ERROR_REPLY[replyLanguage(event)]);
+      await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', ctx.companyId);
+      return true;
+    }
+    if (!waiting.length) return false;
+    if (waiting.length !== 1) { await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event)); return true; }
+    if (!await this.waitingSourcesCurrent(event, ctx, waiting)) return true;
+    const ids = waiting[0]!.candidateExpenseIds;
+    if (!ids?.length) return false;
+    const result = await this.substituteReceiptContinuation.execute(ctx, { language: replyLanguage(event),
+      messageText: event.messageText, chatKeyHash: chatKeyHashOf(event), recentCandidates: ids.map(id => ({ id, label: 'รายการที่เลือก' })),
+      boundCandidateExpenseIds: ids, confirmedStart: true, webBaseUrl: this.config.webBaseUrl });
+    if (result.decisionUnread) return false;
+    await this.deliverSubstituteWorkflow(event, ctx, result, waiting);
+    return true;
+  }
+
   private async handleWorkflowControl(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<void> {
     if (ctx.freeExpenseDrafts || features !== null && !features.has('expenses')) {
       await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)], lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }])); return;
@@ -3752,15 +3793,42 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
       return;
     }
+    const expenseWorkflow = event.workflowStart && (Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, event.workflowStart) || event.workflowStart === 'substitute_receipt')
+      ? event.workflowStart as ExpenseWorkflowId : undefined;
     const workflow = event.workflowStart as ClaimWorkflowId;
+    const copy = expenseWorkflow ? LINE_EXPENSE_PICKER_COPY : LINE_CLAIM_PICKER_COPY;
     const secret = this.config.aiGatewayInternalSecret;
-    if (!secret) { await this.deliverReply(event, LINE_CLAIM_PICKER_COPY.unavailable,
+    if (!secret) { await this.deliverReply(event, copy.unavailable,
       lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }])); return; }
     let result;
-    try { result = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), workflow, {}, 1); }
+    try {
+      if (expenseWorkflow) {
+        const records = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), expenseWorkflow, {}, 1);
+        const picker = buildExpenseWorkflowPicker(records, expenseWorkflow, secret, ctx.companyId, ctx.userId, this.config.webBaseUrl);
+        if (expenseWorkflow === 'substitute_receipt' && records.targets.length && this.substituteReceiptContinuation) {
+          const candidates = records.targets.slice(0, 4).map(target => ({ id: target.id, label: target.label }));
+          const waiting = this.ledger ? (await this.ledger.openWaitingUser(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId))
+            .filter(item => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION' && item.text === SUBSTITUTE_WORKFLOW_PENDING_TEXT) : [];
+          const result = await this.substituteReceiptContinuation.execute(ctx, { language: replyLanguage(event),
+            messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: chatKeyHashOf(event), recentCandidates: candidates,
+            boundCandidateExpenseIds: candidates.map(target => target.id), confirmedStart: records.exhaustive || candidates.length > 1,
+            requireStartConfirmation: !records.exhaustive && candidates.length === 1, webBaseUrl: this.config.webBaseUrl });
+          if (result.status === 'TARGET_REQUIRED') {
+            result.replyText = picker.type === 'text' ? picker.text : picker.type === 'flex' ? picker.canonicalText ?? picker.altText : result.replyText;
+            result.pendingQuestion = LINE_EXPENSE_PICKER_COPY.choose.substitute_receipt;
+          }
+          await this.deliverSubstituteWorkflow(event, ctx, result, waiting, result.status === 'TARGET_REQUIRED' ? picker : undefined);
+          return;
+        }
+        await this.deliverRequiredMessages(event, [picker]);
+        await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
+        return;
+      }
+      result = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), workflow, {}, 1);
+    }
     catch (error) {
       if (!(error instanceof ForbiddenException)) throw error;
-      await this.deliverReply(event, LINE_CLAIM_PICKER_COPY.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+      await this.deliverReply(event, copy.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, ctx.companyId); return;
     }
     await this.deliverRequiredMessages(event, [buildClaimWorkflowPicker(result, workflow, secret,
@@ -6948,7 +7016,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       await this.updateEventLog(event.webhookEventId, `counterparty_${result.status}`, undefined, companyId);
       return;
     }
-    if (event.workflowControl?.action === 'wf_open' || event.workflowStart && Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, event.workflowStart)) {
+    if (event.workflowControl?.action === 'wf_open' || event.workflowStart && (Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, event.workflowStart) || Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, event.workflowStart) || event.workflowStart === 'substitute_receipt')) {
       const ctx: RequestContext = { requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
         entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions, scopes: resolvedAccess.scopes, authProvider: 'line' };
@@ -7255,6 +7323,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       }
       if (await this.continueReimbursementQuestion(event, expenseDraftCtx)) return;
     }
+    if (!deterministicCommand && await this.continueSubstituteWorkflow(event, expenseDraftCtx)) return;
     // Q1: new typed turns read credit without reserving; an existing field answer returned above.
     if (!menuCommand && !event.workflowControl && !event.workflowStart && !event.fixedReadControl && !event.reimbursementChoiceControl) {
       const credit = await this.aiGateway.creditState(companyId).catch(() => null);

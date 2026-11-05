@@ -234,8 +234,16 @@ export class DisbursementVoucherUseCase {
       action: 'expense.disbursement.draft_deleted', targetType: 'disbursement_voucher', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW' }, tx)));
   }
 
-  async list(ctx: RequestContext, query: DisbursementVoucherListQuery): Promise<DisbursementVoucherListPage> {
-    const scope = this.scope(ctx, 'read', query.branchId);
+  list(ctx: RequestContext, query: DisbursementVoucherListQuery): Promise<DisbursementVoucherListPage> {
+    return this.listScoped(ctx, query, false);
+  }
+
+  listForLine(ctx: RequestContext, query: DisbursementVoucherListQuery): Promise<DisbursementVoucherListPage> {
+    return this.listScoped(ctx, query, true);
+  }
+
+  private async listScoped(ctx: RequestContext, query: DisbursementVoucherListQuery, lineRead: boolean): Promise<DisbursementVoucherListPage> {
+    const scope = this.scope(ctx, 'read', query.branchId, lineRead);
     if (query.q !== undefined && typeof query.q !== 'string' || query.branchId !== undefined && typeof query.branchId !== 'string' || query.status !== undefined && !DISBURSEMENT_VOUCHER_STATUSES.includes(query.status) || query.order !== undefined && query.order !== 'newest' && query.order !== 'oldest') throw invalid();
     const page = Number.isFinite(query.page) ? Math.max(1, Math.floor(query.page!)) : 1;
     const pageSize = Number.isFinite(query.pageSize) ? Math.min(200, Math.max(1, Math.floor(query.pageSize!))) : 20;

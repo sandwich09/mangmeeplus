@@ -1252,9 +1252,16 @@ describe('R7 / Fix-up 11 — LINE prepares; preview, signing, approval and downl
     idempotencyKey: 'workflow-1', continuationId: 'workflow-1', expectedExpenseUpdatedAt: now.toISOString(),
   };
 
+  it('MC2 refuses direct unsigned LINE prepare before reading or writing a candidate', async () => {
+    const repo = new Proxy({}, { get: () => assert.fail('unsigned LINE prepare must stop before repository access') });
+    const useCase = new PrepareSubstituteReceiptUseCase(repo as any, audit, notification);
+    await assert.rejects(useCase.execute(line() as any, 'exp-1', input), /authenticated web/);
+    await assert.rejects(useCase.execute(line() as any, 'exp-1', { ...input, lineConfirmed: true } as any), /authenticated web/);
+  });
+
   it('prepares from LINE with expense.review and records the channel on the row and the audit', async () => {
     const h = prepareHarness();
-    await h.useCase.execute(line() as any, 'exp-1', input);
+    await h.useCase.execute(line() as any, 'exp-1', input, true);
 
     assert.equal(h.input().preparedFromChannel, 'LINE');
     const audit = h.audits.find((entry) => entry.action === 'expense.substitute_receipt.prepare');
@@ -1275,7 +1282,7 @@ describe('R7 / Fix-up 11 — LINE prepares; preview, signing, approval and downl
   it('refuses a LINE prepare without expense.review', async () => {
     const h = prepareHarness();
     await assert.rejects(
-      () => h.useCase.execute(line('payer-1', []) as any, 'exp-1', input),
+      () => h.useCase.execute(line('payer-1', []) as any, 'exp-1', input, true),
       /expense\.review/,
     );
   });
@@ -2520,4 +2527,20 @@ describe('R4 e-WHT substitute company payment facts (paid path)', () => {
     }
     assert.doesNotThrow(() => assertSubstitutePaymentDetails('PERSONAL_ADVANCE', { paidAmount: '0', paidAt: null, paymentMethod: 'CASH', whtRemittance: 'E_WHT' } as any, { paymentDate: now, paymentMethod: 'CASH' }));
   });
+});
+
+it('MC2 explicit LINE candidate reads preserve web scope and every eligibility filter', async () => {
+  const reads: any[] = [];
+  const repo: any = new Proxy({ listSubstituteReceiptCandidateSources: async (...args: any[]) => { reads.push(args); return []; } }, {
+    get: (target, key) => { assert.equal(key, 'listSubstituteReceiptCandidateSources', 'candidate lists only read existing sources'); return Reflect.get(target, key); },
+  });
+  const useCase = new ListSubstituteReceiptCandidatesUseCase(repo);
+  const web = ctx();
+  const filter = { search: 'ค่าเดินทาง', page: 2, pageSize: 100 };
+  const expected = await useCase.execute(web, filter);
+  const line = { ...web, authProvider: 'line' };
+  assert.deepEqual(await useCase.execute(line, filter, { channel: 'line' }), expected);
+  assert.deepEqual(reads[1], reads[0]);
+  await assert.rejects(useCase.execute(line, filter), /authenticated web/);
+  await assert.rejects(useCase.execute({ ...line, permissions: [] }, filter, { channel: 'line' }), /expense.review/);
 });

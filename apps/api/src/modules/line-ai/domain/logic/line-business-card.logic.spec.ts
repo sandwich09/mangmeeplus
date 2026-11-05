@@ -9,6 +9,7 @@ import {
   buildExpenseDraftReviewCard,
   buildKeptReceiptCard,
   buildClaimWorkflowPicker,
+  buildExpenseWorkflowPicker,
   expenseDraftCardFactsFrom,
   expenseDraftCardSubject,
   buildLineSystemTextCardMessage,
@@ -1421,6 +1422,10 @@ describe('delivery plan guard: every card carries its text, or says why it never
   const WEB = 'https://app.example.com';
   const DRAFT_FACTS: LineExpenseDraftCardFacts = { expenseId: 'e1', subject: 'ร่างค่าใช้จ่าย', rows: [{ label: 'ยอดรวม', value: '100.00 บาท', total: true }], notes: [] };
   const carriesText: Record<string, () => LineReplyMessage[]> = {
+    buildExpenseWorkflowPicker: () => [
+      buildExpenseWorkflowPicker({ targets: [], total: 0, exhaustive: true }, 'expense_pay', 'secret', 'c1', 'u1', WEB),
+      buildExpenseWorkflowPicker({ targets: [{ id: 'e1', label: 'ร้านทดสอบ', amount: '250', currency: 'THB' }], total: 1, exhaustive: true }, 'expense_pay', 'secret', 'c1', 'u1', WEB),
+    ],
     buildClaimWorkflowPicker: () => [
       buildClaimWorkflowPicker({ targets: [], total: 0, exhaustive: true }, 'reimbursement_submit', 'secret', 'c1', 'u1', WEB),
       buildClaimWorkflowPicker({ targets: [{ id: 'claim-1', requestNo: 'RB-0001', amount: '250', currency: 'THB' } as any], total: 1, exhaustive: true }, 'reimbursement_submit', 'secret', 'c1', 'u1', WEB),

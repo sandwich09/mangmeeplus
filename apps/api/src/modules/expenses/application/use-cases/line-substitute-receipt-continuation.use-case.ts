@@ -2446,7 +2446,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         formRequested: choice === 'FORM',
         expectedExpenseUpdatedAt: state.targetRevision,
         ...(state.routeCheckBill ? { routeCheckBill: true as const } : {}),
-      });
+      }, true);
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
       const badge = substituteReceiptBadge({ language,
         status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature: choice === 'FORM',

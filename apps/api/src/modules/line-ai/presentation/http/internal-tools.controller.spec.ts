@@ -591,6 +591,20 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
 
   const CONTEXT = { requestId: 'r-cat', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' };
 
+  it('MC2 read-only list access never exposes voucher or substitute writes through internal tools', async () => {
+    const { controller } = build({ permissions: [AI, 'expense.read', 'expense.review', 'expense.disbursement.read',
+      'expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.disbursement.pay', 'expense.disbursement.issue'],
+      finalMutationEnabled: true });
+    for (const toolName of ['voucher.create', 'voucher.approve', 'voucher.pay', 'voucher.issue',
+      'expense.prepare_substitute_receipt', 'expense.sign_substitute_receipt']) {
+      const result = await controller.invoke('secret', DELEGATION, { toolName, context: CONTEXT,
+        input: { channel: 'line', lineConfirmed: true } });
+      assert.equal(result.status, 'unavailable', toolName);
+      assert.equal(result.errorCode, 'TOOL_NOT_FOUND', toolName);
+      assert.equal(controller.toolMap.has(toolName), false);
+    }
+  });
+
   it('denies a tool name with no registry entry before any permission or dispatch decision', async () => {
     const { controller, events } = build({ permissions: [AI] });
 

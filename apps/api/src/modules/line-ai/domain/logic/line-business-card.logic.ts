@@ -1,8 +1,8 @@
-import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
+import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
 import { formatClaimMoney } from './line-reimbursement-draft-card.logic';
-import type { LineWorkflowTargets } from '../../application/line-workflow-target.service';
+import type { LineWorkflowTargets, LineWorkflowRecordTargets } from '../../application/line-workflow-target.service';
 import { lineReplyLanguage, lineCustomerText, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
-import { scrubRecordIdentifier, AI_BUDGET_REFUSAL_CODES, mayOfferWorkflow, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
+import { scrubRecordText, scrubRecordIdentifier, AI_BUDGET_REFUSAL_CODES, mayOfferWorkflow, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
@@ -1245,6 +1245,47 @@ export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: 
   if (!result.exhaustive || result.total > 4) actions.push(exit);
   const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
   const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['ใบเบิก', 'เลือกใบเบิก'] }, notes: [text],
+    buttons: actions.map(action => ({ action, icon: 'file' as const })) }, webBaseUrl);
+  return contents ? asCompleteLineCard({ type: 'flex', altText: text, canonicalText, contents })
+    : { type: 'text', text: canonicalText, quickReply: { items: [{ type: 'action', action: exit }] } };
+}
+
+
+export const LINE_EXPENSE_PICKER_COPY = {
+  unavailable: 'ยังเปิดรายการไม่ได้ค่ะ กดเมนูหลักเพื่อลองอีกครั้ง',
+  forbidden: 'ยังไม่มีสิทธิ์เปิดรายการนี้ค่ะ ให้เจ้าของกิจการตรวจสิทธิ์ก่อน',
+  choose: { expense_submit: 'เลือกรายการที่จะส่งตรวจค่ะ', expense_confirm: 'เลือกรายการที่จะยืนยันค่ะ',
+    expense_delete: 'เลือกร่างที่จะลบค่ะ', expense_void: 'เลือกรายการที่จะยกเลิกค่ะ',
+    expense_pay: 'เลือกรายการที่จะบันทึกจ่ายค่ะ', payment_voucher: 'เลือกรายจ่ายที่จะทำใบเตรียมจ่ายค่ะ',
+    wht_certificate: 'เลือกใบเตรียมจ่ายที่จะออก 50 ทวิค่ะ', substitute_receipt: 'เลือกรายการที่จะทำใบรับรองแทนใบเสร็จค่ะ' },
+  empty: { expense_submit: 'ไม่มีรายการที่ส่งตรวจได้ค่ะ', expense_confirm: 'ไม่มีรายการรอยืนยันค่ะ',
+    expense_delete: 'ไม่มีร่างที่ลบได้ค่ะ', expense_void: 'ไม่มีรายการที่ยกเลิกได้ค่ะ',
+    expense_pay: 'ไม่มีรายการค้างจ่ายค่ะ', payment_voucher: 'ไม่มีรายจ่ายที่ทำใบเตรียมจ่ายได้ค่ะ',
+    wht_certificate: 'ไม่มีใบเตรียมจ่ายที่ออก 50 ทวิได้ค่ะ', substitute_receipt: 'ไม่มีรายการที่ทำใบรับรองแทนใบเสร็จได้ค่ะ' },
+};
+export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, workflow: ExpenseWorkflowId,
+  secret: string, company: string, user: string, webBaseUrl = ''): LineReplyMessage {
+  const sellerName = scrubRecordText(result.sellerSearch, 60);
+  const sellerText = result.sellerSearch === undefined ? undefined : result.total > 1
+    ? ['ชื่อนี้ตรงกับผู้ขายหลายราย เลือกในเว็บหรือพิมพ์ชื่อให้ชัดขึ้นค่ะ',
+      ...(result.sellers ?? []).slice(0, 3).map(seller => scrubRecordText(seller.label, 60)).filter(Boolean)].join('\n')
+    : sellerName ? `ไม่พบผู้ขายชื่อ ${sellerName} ในรายชื่อคู่ค้าค่ะ` : 'ไม่พบผู้ขายชื่อนี้ในรายชื่อคู่ค้าค่ะ';
+  const text = !result.exhaustive ? [result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
+    ...(sellerText && result.total > 1 ? [sellerText] : [])].join('\n')
+    : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
+      : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
+  const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((target, index) => ({
+    label: `${scrubRecordText(target.label, 60) || `รายการ ${index + 1}`} · ${formatClaimMoney(target.amount, target.currency, 'th')}`,
+    ...(workflow === 'substitute_receipt' ? { type: 'message' as const, text: String(index + 1) }
+      : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, EXPENSE_WORKFLOW_ACTIONS[workflow], target.id) }),
+  }));
+  const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: !result.exhaustive ? 'ค้นในเว็บ' : result.sellerSearch !== undefined ? 'เปิดในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ',
+    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/expenses${workflow === 'wht_certificate' ? '/disbursement-vouchers' : workflow === 'substitute_receipt' ? '/substitute-receipts/new' : ''}` }
+    : { type: 'message', label: 'เมนูหลัก', text: 'เมนูหลัก' };
+  if (!actions.length) return { type: 'text', text, quickReply: { items: [{ type: 'action', action: exit }] } };
+  if (!result.exhaustive || result.total > 4) actions.push(exit);
+  const canonicalText = [text, ...actions.map(action => action.label)].join('\n');
+  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: ['รายจ่าย', 'เลือกรายการ'] }, notes: [text],
     buttons: actions.map(action => ({ action, icon: 'file' as const })) }, webBaseUrl);
   return contents ? asCompleteLineCard({ type: 'flex', altText: text, canonicalText, contents })
     : { type: 'text', text: canonicalText, quickReply: { items: [{ type: 'action', action: exit }] } };

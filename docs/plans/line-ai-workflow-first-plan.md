@@ -181,6 +181,8 @@ No implementation here. P07 owns B6, all current v2 callers, settlement/repair/c
 - `process-line-webhook.use-case.ts`: `substitute_receipt` เริ่มด้วย continuation เดิม (:6769) จากรายการของ candidates — หลัง A10 เท่านั้น
 - ตรวจ: `process-line-webhook.use-case.spec.ts`, `internal-tools.controller.spec.ts` (ไม่ข้ามสิทธิ์; ทางเขียนของใบเตรียมจ่าย/ใบทดแทนใน LINE ยังปฏิเสธ), `reimbursement-request.use-case.spec.ts`
 
+- Controller 2026-11-05: MC2 closed (read-only, same permission and branch checks; existing signed continuations unchanged). Substitute receipts start from the existing signed continuation (spec R7: LINE may prepare there, never sign, approve or issue). Several matching sellers: the card lists up to 3 scrubbed names with the action's web exit; no new control.
+
 ### A5 ปุ่มขั้นถัดไปไม่หมดอายุ + ทางออก (ขึ้นกับ A2; แก้ B1/B4)
 - `apps/api/src/modules/line-ai/domain/logic/line-expense-action-card.logic.ts:28–30`: ปุ่ม next/payment/wht เป็น `wf_open` (`act` = action ถัดไปจาก `offerNext`/`offerPayment`/`offerWht`, lea:936–943; `id` = `nextVoucherId`/expenseId; `pm/pd/pa` จาก paymentIntent ตอนสร้างปุ่ม — `paidAmount` lea:470)
 - `line-expense-action.service.ts:845–880`: control เดิมยังรับ; หมดอายุและรู้เป้าหมาย → "การ์ดนี้หมดเวลาแล้วค่ะ" + `เตรียมการ์ดใหม่`; `preview` รับ `pm/pd/pa` จาก `wf_open` แทน `applied.paymentIntent` (:863) — มี `pa` แล้วไม่ตั้งยอดเป็นยอดค้างทั้งหมด (:539)

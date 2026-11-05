@@ -71,3 +71,10 @@ export function reimbursementPaymentButton(secret: string, company: string, user
   return { type: 'button', style: 'primary', action: { type: 'postback', label: 'บันทึกจ่ายคืน',
     data: lineWorkflowOpenData(secret, company, user, 'REIMBURSEMENT_RECORD_PAYMENT', id) } };
 }
+
+
+export const EXPENSE_WORKFLOW_ACTIONS = {
+  expense_submit: 'MARK_READY', expense_confirm: 'CONFIRM', expense_delete: 'DELETE_DRAFT', expense_void: 'VOID',
+  expense_pay: 'RECORD_PAYMENT', payment_voucher: 'VOUCHER_CREATE', wht_certificate: 'WHT_CERTIFICATE_ISSUE',
+} as const;
+export type ExpenseWorkflowId = keyof typeof EXPENSE_WORKFLOW_ACTIONS | 'substitute_receipt';

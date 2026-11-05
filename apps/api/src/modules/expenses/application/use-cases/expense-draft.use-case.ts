@@ -317,9 +317,14 @@ export class GetExpenseHistoryUseCase {
 export class ListExpensesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
-  async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>): Promise<PaginatedExpenses> {
+  async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>,
+    options: { lineAction?: 'MARK_READY' | 'DELETE_DRAFT' } = {}): Promise<PaginatedExpenses> {
     const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
-    const scope = this.readScope(ctx, filter.branchId);
+    const creatorOnly = ctx.authProvider === 'line' && !expenseListReadScope(ctx) && ctx.permissions.includes('expense.update')
+      && (options.lineAction === 'MARK_READY' || options.lineAction === 'DELETE_DRAFT');
+    if (creatorOnly && filter.branchId) assertBranchInScope(ctx, filter.branchId);
+    const scope = creatorOnly ? { filter: { createdByUserId: ctx.userId },
+      scope: { branchIds: ctx.scopes?.branchIds, relatedUserId: undefined } } : this.readScope(ctx, filter.branchId);
     const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
     const pageSize = Number.isFinite(filter.pageSize) ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!))) : 20;
     const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize, ...scope.filter };

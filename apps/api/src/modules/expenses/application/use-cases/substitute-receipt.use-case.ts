@@ -471,8 +471,8 @@ export class SaveOwnSubstituteReceiptReviewUseCase {
 export class ListSubstituteReceiptCandidatesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
-  async execute(ctx: RequestContext, filter: SubstituteReceiptCandidateFilter): Promise<SubstituteReceiptCandidatePage> {
-    assertWeb(ctx);
+  async execute(ctx: RequestContext, filter: SubstituteReceiptCandidateFilter, options: { channel?: 'line' } = {}): Promise<SubstituteReceiptCandidatePage> {
+    if (options.channel !== 'line') assertWeb(ctx);
     const scope = substituteReceiptPreparationScope(ctx, filter.branchId);
     const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
     const pageSize = Number.isFinite(filter.pageSize) ? Math.min(100, Math.max(1, Math.floor(filter.pageSize!))) : 5;
@@ -704,7 +704,8 @@ export class PrepareSubstituteReceiptUseCase {
     }, { evidenceId, expectedUpdatedAt: current.updatedAt, keepDocumentNumberConfirmed: input.keepDocumentNumberConfirmed, previousPaymentDate: current.paymentDate?.toISOString() });
   }
 
-  async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
+  async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput, lineConfirmed = false): Promise<SubstituteReceiptEvidenceSummary> {
+    if (!lineConfirmed) assertWeb(ctx);
     return this.prepare(ctx, expenseId, input);
   }
 

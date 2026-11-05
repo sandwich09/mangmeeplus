@@ -273,6 +273,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     ApproveSubstituteReceiptUseCase,
     // Advisor S1: the LINE read tool for the caller's own substitute-receipt signature queue.
     ListMySubstituteReceiptSignaturesUseCase,
+    ListSubstituteReceiptCandidatesUseCase,
     LineExpenseDraftConversationUseCase,
     ConfirmExpenseUseCase,
     MarkExpenseReadyUseCase,
