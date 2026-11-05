@@ -44,6 +44,13 @@ describe('Line reimbursement draft contract', () => {
       } }],
     };
     assert.ok(parseLineReimbursementDraftProposalV1(proposal, { evidence: built.inputEvidence, candidateValues: { [candidateId]: '120' }, candidateSources: { [candidateId]: ref(amountStart, amountStart + 3) } }));
+    // Real model, 2026-11-05: a first claim message without an amount arrived as `amount: null`.
+    // A bare null is "not given"; it must not block the typed description, and adds no value.
+    const unknownAmount = parseLineReimbursementDraftProposalV1({ ...proposal, fields: { reason: null, title: null }, lineChanges: [{ operation: 'ADD', values: {
+      description: proposal.lineChanges[0]!.values.description, amount: null, incurredDate: null, purpose: null, categoryChoiceId: null } }] }, { evidence: built.inputEvidence });
+    assert.ok(unknownAmount);
+    assert.deepEqual(unknownAmount.fields, {});
+    assert.deepEqual(Object.keys(unknownAmount.lineChanges![0]!.operation === 'ADD' ? unknownAmount.lineChanges![0]!.values : {}).sort(), ['categoryChoiceId', 'description']);
     assert.equal(parseLineReimbursementDraftProposalV1({ ...proposal, lineChanges: [{ ...proposal.lineChanges[0], values: { ...proposal.lineChanges[0]!.values, amount: { ...proposal.lineChanges[0]!.values.amount, value: '999' } } }] }, { evidence: built.inputEvidence, candidateValues: { [candidateId]: '120' }, candidateSources: { [candidateId]: ref(amountStart, amountStart + 3) } }), undefined);
   });
 

@@ -197,9 +197,13 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
     const available = shown.rows.filter(row => row.selectable);
     const branch = lockedBranch ?? available[0]?.branchId;
     const choices = available.filter(row => row.branchId === branch);
-    if (checked && choices.length > DISBURSEMENT_VOUCHER_MAX_LINES) { setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines); return; }
-    setAmounts(previous => { const next = { ...previous }; for (const row of choices) {
-      if (checked) next[row.expenseId] ??= initialAmount(row.outstandingAmount); else delete next[row.expenseId];
+    // More bills than one voucher holds: select the oldest up to the limit and say the rest go on another voucher.
+    if (checked && choices.length > DISBURSEMENT_VOUCHER_MAX_LINES) setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines);
+    const oldestFirst = [...choices].sort((a, b) => String(a.expenseDate ?? '').localeCompare(String(b.expenseDate ?? ''))
+      || String(a.expenseNumber ?? '').localeCompare(String(b.expenseNumber ?? '')));
+    setAmounts(previous => { const next = { ...previous }; for (const row of oldestFirst) {
+      if (!checked) delete next[row.expenseId];
+      else if (next[row.expenseId] === undefined && Object.keys(next).length < DISBURSEMENT_VOUCHER_MAX_LINES) next[row.expenseId] = initialAmount(row.outstandingAmount);
     } return next; });
   };
 

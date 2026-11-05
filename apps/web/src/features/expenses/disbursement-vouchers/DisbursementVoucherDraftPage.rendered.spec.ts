@@ -68,6 +68,20 @@ test('empty selection Next remains usable and focuses its inline error; select a
     assert.deepEqual(view.state[10], {});
   } finally { (globalThis as any).requestAnimationFrame = oldRaf; (globalThis as any).document = oldDocument; view.close(); }
 });
+test('select all over the voucher limit selects the 30 oldest bills and says the rest go on another voucher', () => {
+  const view = setup(1, false);
+  try {
+    // Listed newest first, as the picker shows them: e1 is the newest bill.
+    view.state[9] = Array.from({ length: 31 }, (_, i) => ({ ...row, expenseId: `e${i + 1}`, expenseNumber: `EXP-${String(31 - i).padStart(2, '0')}` }));
+    view.render(); view.find('DisbursementVoucherExpenseRows').onSelectAll(true);
+    const selected = view.state[10] as Record<string, string>;
+    assert.equal(Object.keys(selected).length, 30);
+    assert.equal(selected.e1, undefined, 'the newest bill waits for the next voucher');
+    assert.match(view.render(), /รวมได้ไม่เกิน 30 รายการ แบ่งรายการที่เหลือไปทำอีกใบ/);
+    view.find('DisbursementVoucherExpenseRows').onSelectAll(false);
+    assert.deepEqual(view.state[10], {});
+  } finally { view.close(); }
+});
 test('draft save is available at every selected step and on edit; details show money and only transfer account fields', () => {
   for (const step of [0, 1, 2]) {
     const view = setup(step);

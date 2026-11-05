@@ -131,6 +131,9 @@ Scope:
 - **Owner 2026-11-05, "AI ต้องอ่านถูก":** marketplace receipt reading was fixed against the 3 real images on Bedrock.
   - Results: seller, receipt number, every row, discount and delivery are right on all three. One look-alike Thai letter (ฎ/ฏ) stays ambiguous at 22 px.
   - Tall images are read as tiles the provider does not downscale, at about 3.5 THB per tall receipt.
+- **Help-pack follow-up (next pack version):** the substitute-receipt user guide still says "(PDF ไม่เกิน 5 หน้า)" for the signed paper form. The API accepts 64 pages, and a 200-row form prints 8.
+  - The screen and the API error are already fixed.
+  - The guide file's source hash is part of the owner-approved v7 pack hash, so its text changes only with a new reviewed pack version.
 - **Batch 19 (this batch):**
   - harness r13;
   - the LINE multi-message claim fix;

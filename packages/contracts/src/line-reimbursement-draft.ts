@@ -258,19 +258,19 @@ function line(value: unknown, context: ParseContext, path: string): LineReimburs
   const keys = ['incurredDate', 'description', 'purpose', 'categoryChoiceId', 'amount', 'attachmentChoiceId', 'linkedExpenseChoiceId'];
   if (!object(value) || !exact(value, keys)) return undefined;
   const result: LineReimbursementProposedClaimLineV1 = {};
-  if (value['incurredDate'] !== undefined) {
+  if (value['incurredDate'] != null) {
     const item = proposed(value['incurredDate'], context, `${path}.incurredDate`, (candidate): candidate is string => typeof candidate === 'string' && DATE.test(candidate));
     if (!item) return undefined; result.incurredDate = item;
   }
-  if (value['description'] !== undefined) {
+  if (value['description'] != null) {
     const item = proposed(value['description'], context, `${path}.description`, (candidate): candidate is string => bounded(candidate, LINE_REIMBURSEMENT_DRAFT_LIMITS.descriptionUtf16, false));
     if (!item) return undefined; result.description = item;
   }
-  if (value['purpose'] !== undefined) {
+  if (value['purpose'] != null) {
     const item = proposed(value['purpose'], context, `${path}.purpose`, (candidate): candidate is string => bounded(candidate, LINE_REIMBURSEMENT_DRAFT_LIMITS.purposeUtf16));
     if (!item) return undefined; result.purpose = item;
   }
-  if (value['amount'] !== undefined) {
+  if (value['amount'] != null) {
     const item = proposed(value['amount'], context, `${path}.amount`, (candidate): candidate is string => typeof candidate === 'string' && MONEY.test(candidate));
     if (!item) return undefined; result.amount = item;
   }
@@ -303,7 +303,8 @@ export function parseLineReimbursementDraftProposalV1(value: unknown, context: P
   ] as const;
   for (const [key, max, allowEmpty] of fieldSpecs) {
     const raw = value['fields'][key];
-    if (raw === undefined) continue;
+    // A bare null is "not given" (models send it for unknown fields); clearing uses {value: null, proof}.
+    if (raw == null) continue;
     const item = proposed(raw, context, `fields.${key}`, (candidate): candidate is string | null =>
       (key === 'missingReceiptReason' && candidate === null) || bounded(candidate, max, allowEmpty));
     if (!item) return undefined;

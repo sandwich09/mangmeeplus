@@ -132,7 +132,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
           <ThemedFile file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} aria-label="ฉบับที่เซ็นบนกระดาษ" aria-describedby="substitute-paper-file-hint" onChange={(picked) => { setFile(picked); setMatches(false); }} />
           {attempted && !file && <p role="alert" className={errorLineClass}>เลือกไฟล์ฉบับที่เซ็นแล้ว</p>}
           {/* Its own line, not the picker's `hint`: each file-type name and the size must stay whole. */}
-          <p id="substitute-paper-file-hint" className="mt-1 text-sm text-gray-500">PDF ไม่เกิน 5 หน้า หรือ<WholeWords text={SIGNATURE_FILE_TYPES_LABEL} /> ขนาดไม่เกิน <span className="whitespace-nowrap">10 เมกะไบต์</span> ถ่ายให้เห็นครบทุกหน้า</p>
+          <p id="substitute-paper-file-hint" className="mt-1 text-sm text-gray-500">PDF หรือ<WholeWords text={SIGNATURE_FILE_TYPES_LABEL} /> ขนาดไม่เกิน <span className="whitespace-nowrap">10 เมกะไบต์</span> ถ่ายให้เห็นครบทุกหน้า</p>
         </div>
         <div className="grid gap-5 md:grid-cols-2">{signerFields('ผู้รับรองการจ่าย', payer, setPayer)}{signerFields('ผู้อนุมัติ', approver, setApprover)}</div>
         <div className="grid gap-2">

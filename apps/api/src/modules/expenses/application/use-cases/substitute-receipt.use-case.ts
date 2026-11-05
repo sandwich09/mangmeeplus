@@ -42,7 +42,7 @@ import {
   type CaptureCertificateRefusal,
 } from '../../domain/logic/expense-capture-certificate.logic';
 import { hasBlockingNonExpenseClassification } from '../../domain/logic/expense-status.logic';
-import { renderSubstitutePaperPreviewPages, renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
+import { SUBSTITUTE_RECEIPT_PDF_LIMITS, renderSubstitutePaperPreviewPages, renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
 import { SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import type { ExpenseRecordWithRelations, SubstituteReceiptEvidenceRecord } from '../../domain/models/expense.model';
@@ -1847,7 +1847,7 @@ export class PaperSubstituteReceiptUseCase {
     const form = evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot;
     if (!form) throw new ConflictException('ยังไม่ได้เตรียมแบบฟอร์ม ดาวน์โหลดแบบฟอร์มก่อนอัปโหลดฉบับที่เซ็น');
     try { await renderSubstituteReceiptPaperArtifactPdf({ bytes: scan.bytes, mimeType: attachment.mimeType }, renderSubstituteReceiptAttestationSvg(form, { snapshotChecksumSha256: canonicalSnapshotHash(form), wetSignedScanChecksumSha256: input.checksumSha256 }), evidence.documentNumber); }
-    catch { throw new BadRequestException('เปิดอ่านไฟล์ไม่ได้หรือเกินจำนวนหน้าที่รองรับ เลือกรูปหรือ PDF ที่เปิดอ่านได้ โดย PDF ต้นฉบับไม่เกิน 5 หน้า'); }
+    catch { throw new BadRequestException(`เปิดอ่านไฟล์ไม่ได้หรือเกินจำนวนหน้าที่รองรับ เลือกรูปหรือ PDF ที่เปิดอ่านได้ โดย PDF ไม่เกิน ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages} หน้า`); }
     const uploadedByName = await this.repo.findMemberDisplayName(ctx.companyId, ctx.userId) ?? '-';
     const updated = await this.repo.submitSubstitutePaper({ companyId: ctx.companyId, expenseId, evidenceId, expectedUpdatedAt: evidence.updatedAt,
       attachmentId: attachment.id, checksumSha256: input.checksumSha256,
