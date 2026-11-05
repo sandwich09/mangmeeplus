@@ -472,6 +472,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         }
         return new Response('{}', { status: 200, headers: { 'x-line-request-id': receiptId } });
       }
+      // Pricing FX (ai-fx-rate.ts): answer with the configured rate, so replay cost never depends
+      // on a live source and the blocked fetch is not reported as an infrastructure failure.
+      if (url.origin === 'https://open.er-api.com' && url.pathname === '/v6/latest/USD') {
+        return Response.json({ result: 'success', rates: { THB: Number(process.env['AI_THB_PER_USD'] ?? '33') } });
+      }
       if (url.hostname === 'api-data.line.me') {
         const id = decodeURIComponent(url.pathname.match(/\/message\/([^/]+)\/content$/)?.[1] ?? '');
         const asset = snapshot?.assets[id]; assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
