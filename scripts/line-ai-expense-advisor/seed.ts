@@ -27,6 +27,10 @@ import { workflowMonthKey } from './template';
 
 export type SeedRow = { model: string; data: Record<string, unknown> };
 
+export function workflowCreditState(state: 'normal' | 'exhausted') {
+  return { budgetMode: 'SPLIT', chatMonthlyBudgetSatang: state === 'normal' ? 8000 : 0, ocrMonthlyBudgetSatang: state === 'normal' ? 8000 : 0 };
+}
+
 export type CompanyUser = { userId: string; lineUserId: string; membershipId: string };
 
 export type CompanySeed = {
@@ -539,7 +543,7 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
       rows.push({ model: 'disbursementVoucherLine', data: { id: `${id}-line1`, companyId: company.companyId, voucherId: id, expenseId, position: 1, amount: '1000.00',
         ...(status === 'PAID' ? { expensePaymentId: paymentId, coversPaymentId: paymentId } : {}) } });
     }
-    rows.push({ model: 'companyAiConfiguration', data: { id: `ai-config-${company.companyKey}`, companyId: company.companyId, budgetMode: 'SPLIT', chatMonthlyBudgetSatang: company.companyKey === 'C' ? 0 : 8000, ocrMonthlyBudgetSatang: company.companyKey === 'C' ? 0 : 8000 } });
+    rows.push({ model: 'companyAiConfiguration', data: { id: `ai-config-${company.companyKey}`, companyId: company.companyId, ...workflowCreditState(company.companyKey === 'C' ? 'exhausted' : 'normal') } });
   }
   return { companies, rows, actors, digest: sha256Hex(JSON.stringify(rows)) };
 }

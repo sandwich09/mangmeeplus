@@ -7,6 +7,52 @@
  * cannot silently come back).
  */
 import assert from 'node:assert/strict';
+
+it('projects terminal effects from the shared business delta without trusting gold or unchanged statuses', async () => {
+  const { observedWorkflowTerminals } = await import('./oracle');
+  const before = { ExpenseRecord: [{ id: 'a', status: 'NEEDS_REVIEW' }, { id: 'b', status: 'CONFIRMED' }] };
+  const after = { ExpenseRecord: [{ id: 'a', status: 'CONFIRMED' }, { id: 'b', status: 'CONFIRMED', amount: 10 }], ExpensePayment: [{ id: 'payment' }] };
+  assert.deepEqual(observedWorkflowTerminals([{ kind: 'ExpenseRecord.update', recordId: 'a' }, { kind: 'ExpenseRecord.update', recordId: 'b' },
+    { kind: 'ExpensePayment.create', recordId: 'payment' }], before, after), ['EXPENSE_CONFIRMED', 'EXPENSE_PAID']);
+  assert.deepEqual(observedWorkflowTerminals([{ kind: 'ExpenseRecord.update', recordId: 'b' }], before, after), []);
+  assert.deepEqual(observedWorkflowTerminals([{ kind: 'ExpensePayment.create', recordId: 'voided' }], {}, { ExpensePayment: [{ id: 'voided', status: 'VOIDED' }] }), []);
+  const states = [
+    ['ExpenseRecord', 'READY_FOR_CONFIRMATION', 'EXPENSE_MARKED_READY'], ['ExpenseRecord', 'VOIDED', 'EXPENSE_VOIDED'],
+    ['ReimbursementRequest', 'DRAFT', 'REIMBURSEMENT_DRAFT_SAVED'], ['ReimbursementRequest', 'PENDING_APPROVAL', 'REIMBURSEMENT_SUBMITTED'],
+    ['ReimbursementRequest', 'APPROVED', 'REIMBURSEMENT_APPROVED'], ['ReimbursementRequest', 'REJECTED', 'REIMBURSEMENT_REJECTED'],
+    ['ReimbursementRequest', 'CANCELLED', 'REIMBURSEMENT_CANCELLED'], ['ReimbursementRequest', 'PAID', 'REIMBURSEMENT_PAID'],
+    ['DisbursementVoucher', 'DRAFT', 'VOUCHER_CREATED'], ['DisbursementVoucher', 'PENDING_APPROVAL', 'VOUCHER_SUBMITTED'],
+    ['DisbursementVoucher', 'APPROVED', 'VOUCHER_APPROVED'], ['DisbursementVoucher', 'PAID', 'VOUCHER_PAID'],
+    ['WhtCertificate', 'ISSUED', 'WHT_ISSUED'], ['ExpenseSubstituteReceiptEvidence', 'PREPARED', 'SUBSTITUTE_PREPARED'],
+  ];
+  for (const [table, status, expected] of states) assert.deepEqual(observedWorkflowTerminals([{ kind: `${table}.create`, recordId: 'row' }], {},
+    { [table!]: [{ id: 'row', status }] }), [expected]);
+});
+
+it('accepts an applied draft action only as a linked parent effect at confirmation', () => {
+  const task = { id: 'claim', kind: 'reimbursement_claim', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+    goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [{ table: 'ReimbursementRequest', ref: '$created:claim', status: 'DRAFT' }] } } as any;
+  const preview = { action: 'reimbursement_draft_confirm', target: '$created:claim' };
+  const turns = [{ turnIndex: 0, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], preview: { ...preview, target: 'request' } },
+    { turnIndex: 1, businessSnapshot: { business: { ReimbursementRequest: [{ id: 'request', status: 'DRAFT' }],
+      ReimbursementDraftAction: [{ id: 'action', status: 'APPLIED', requestId: 'request' }] }, collectionState: {} },
+      unintendedEffects: [{ kind: 'ReimbursementRequest.create', recordId: 'request' }, { kind: 'ReimbursementDraftAction.update', recordId: 'action' }] }] as any;
+  assert.equal(checkWorkflowGold(task, turns, preview).wrongApplied, 0);
+  turns[1].businessSnapshot.business.ReimbursementDraftAction[0].requestId = 'other';
+  assert.equal(checkWorkflowGold(task, turns, preview).wrongApplied, 1);
+});
+
+it('scores every distinct delivered preview, including an extra wrong target on the expected turn', () => {
+  const task = { id: 'decline', kind: 'expense_confirm', startTurn: 0, endTurn: 1, previewTurn: 0,
+    goldTerminal: { effect: 'DECLINED', records: [] }, minimalTurns: 2, completable: true } as any;
+  const preview = { action: 'CONFIRM', target: '$seed:one' };
+  const correct = { action: 'CONFIRM', target: 'one' };
+  const turn = { turnIndex: 0, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], preview: correct,
+    deliveredActions: [{ type: 'preview', preview: correct }, { type: 'preview', preview: { ...correct, target: 'other' } }] };
+  assert.equal(checkWorkflowGold(task, [turn], preview).wrongPreview, 1);
+  turn.deliveredActions[1]!.preview = { ...correct };
+  assert.equal(checkWorkflowGold(task, [turn], preview).wrongPreview, 0);
+});
 import { describe, it } from 'node:test';
 import { TOOL_MODULES, GOLD_TABLES, resolveGoldCallInput, extractExpectedFacts, checkWorkflowGold, resolveGoldRecord, type ShownItem } from './oracle';
 import { buildWorkflowSeed, resolveWorkflowActor } from './seed';

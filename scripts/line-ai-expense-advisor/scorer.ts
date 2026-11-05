@@ -546,6 +546,7 @@ export type WorkflowTurnEvidence = {
   textModelAttempts?: number;
   pressedLabel?: string;
   workflowKind?: string; targetId?: string; pickerTargets?: string[]; terminalEffect?: string; deadEnd?: boolean; tier?: 0 | 1 | 2;
+  terminalEffects?: string[];
 };
 
 const dueDateInText = (date: string, text: string): boolean => {
@@ -642,6 +643,7 @@ export function scoreWorkflowCorpus(input: {
   now?: Date;
   /** Opt-in for new workflow evaluations; omitted preserves historical W1 bytes. */
   classifierLabels?: 'messages';
+  includeButtonBaseline?: boolean;
 }): WorkflowMetrics {
   const latest = new Map<string, WorkflowRunAttempt>();
   for (const row of input.attempts) if (row.complete) latest.set(row.conversationId, row);
@@ -657,26 +659,30 @@ export function scoreWorkflowCorpus(input: {
   const buttonsPassed = buttonTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.pressedLabel === row.turn.press).length;
   const W1Passed = labelTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.classifier?.label === row.turn.expect.label).length;
   const W2Tasks = tasks.filter(({ task }) => task.kind !== 'advisor');
-  const W2Passed = W2Tasks.filter(({ conversation, task, attempt, turns }) => {
-    const start = turns.find(turn => turn.turnIndex === task.startTurn), expected = conversation.turns[task.startTurn]?.expect.target;
+  const W2Passed = W2Tasks.filter(({ conversation, task, turns }) => {
+    const start = turns.find(turn => turn.turnIndex === task.startTurn), reference = conversation.turns[task.startTurn]?.expect.target;
+    const expected = reference?.startsWith('$seed:') ? reference.slice(6)
+      : Object.entries(bindings.get(conversation.id) ?? {}).find(([key]) => key.endsWith(`:${reference}`))?.[1] ?? reference;
     return start?.workflowKind === task.kind && (!expected || start.targetId === expected || start.pickerTargets?.includes(expected));
   }).length;
   const taskScores = tasks.map(({ conversation, task, turns }) => ({ conversation, task, turns, score: scoreWorkflowTask(task, turns,
     conversation.turns[task.previewTurn ?? (task.confirmTurn ?? -1) - 1]?.expect.preview, input.now, bindings.get(conversation.id)) }));
-  const W3Tasks = tasks.filter(({ task }) => task.completable), W3Passed = W3Tasks.filter(({ task, turns }) => {
+  const W3Tasks = tasks.filter(({ task }) => task.completable), W3Completed = W3Tasks.filter(({ task, turns }) => {
     const conversation = conversations.find(conversation => conversation.tasks.includes(task))!;
     const preview = conversation.turns[task.previewTurn ?? (task.confirmTurn ?? -1) - 1]?.expect.preview;
     const score = scoreWorkflowTask(task, turns, preview, input.now, bindings.get(conversation.id));
-    return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview
+    return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect || turn.terminalEffects?.includes(task.goldTerminal.effect)) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview
       && turns.every(turn => !isFreeAnswer(conversation, conversation.turns[turn.turnIndex]!) || scoreWorkflowAnswer(conversation.turns[turn.turnIndex]!.expect, turn, { freeAnswer: true }).ok);
-  }).length;
+  });
+  const W3Passed = W3Completed.length;
   const turnDeltas = tasks.map(({ task, turns }) => turns.length - task.minimalTurns);
   const calls = allTurns.flatMap(turn => turn.calls);
   const attemptCosts = input.attempts.flatMap(attempt => attempt.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null)));
   const typedIds = new Set(conversations.filter(conversation => conversation.journeyKind === 'typed').map(conversation => conversation.id));
   const typedAttemptCosts = input.attempts.filter(attempt => typedIds.has(attempt.conversationId))
     .flatMap(attempt => attempt.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null)));
-  const completedTasks = taskScores.filter(row => row.task.completable && row.turns.some(turn => turn.terminalEffect === row.task.goldTerminal.effect));
+  const completedTaskSet = new Set(W3Completed.map(row => row.task));
+  const completedTasks = taskScores.filter(row => completedTaskSet.has(row.task));
   const totalExact = workflowAttemptCostTotal(typedAttemptCosts.map(providerCostExact => ({ providerCostExact })));
   const W5: WorkflowMetrics['W5']['byKind'] = {};
   for (const kind of new Set(tasks.map(row => row.task.kind))) {
@@ -718,7 +724,7 @@ export function scoreWorkflowCorpus(input: {
     return { conversationId: conversation.id, turnIndex, ...(evidence ? scoreWorkflowAnswer(turn.expect, evidence, { dueDate, periodKey, freeAnswer: isFreeAnswer(conversation, turn) }) : { ok: false, reasons: ['answer_evidence_missing'] }) };
   });
   return {
-    ...(input.classifierLabels === 'messages' ? { buttonBaseline: ratio(buttonsPassed, buttonTurns.length) } : {}),
+    ...(input.classifierLabels === 'messages' || input.includeButtonBaseline ? { buttonBaseline: ratio(buttonsPassed, buttonTurns.length) } : {}),
     ...(answerChecks.length ? { answerChecks } : {}),
     W1: ratio(W1Passed, labelTurns.length), W2: ratio(W2Passed, W2Tasks.length), W3: ratio(W3Passed, W3Tasks.length),
     W4: { medianDelta: medianNumber(deltas, 0.5), p90Delta: medianNumber(deltas, 0.9) },

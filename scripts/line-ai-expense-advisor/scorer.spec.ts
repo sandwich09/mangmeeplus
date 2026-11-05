@@ -10,6 +10,30 @@ import type { Turn } from './types';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z'); // 13:00 Bangkok, 27 Sep 2026
 
+it('does not count a payment outside its gold amount as a completed task for W5', () => {
+  const task = { id: 'pay', kind: 'expense_pay', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+    goldTerminal: { effect: 'EXPENSE_PAID', records: [{ table: 'ExpensePayment', ref: '$created:pay', paidAmount: '250.00', paidDate: '2026-11-05', paymentMethod: 'CASH' }] } };
+  const corpus = { version: 2, seed: 'money', status: 'draft', conversations: [{ id: 'pay', actors: [], journeyKind: 'button', tasks: [task],
+    turns: [{ user: 'จ่าย', expect: { preview: { action: 'RECORD_PAYMENT', target: '$seed:expense' } } }, { press: 'ยืนยัน', expect: {} }] }] } as any;
+  const base = { calls: [], effects: [], deliveredActions: [], latencyMs: 10 };
+  const turns = [{ ...base, turnIndex: 0, preview: { action: 'RECORD_PAYMENT', target: 'expense' }, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [] },
+    { ...base, turnIndex: 1, terminalEffect: 'EXPENSE_PAID', terminalEffects: ['EXPENSE_PAID'],
+      businessSnapshot: { business: { ExpensePayment: [{ id: 'payment', amount: '300.00', paidAt: '2026-11-05', paymentMethod: 'CASH' }] }, collectionState: {} },
+      unintendedEffects: [{ kind: 'ExpensePayment.create', recordId: 'payment' }] }];
+  const metrics = scoreWorkflowCorpus({ corpus, attempts: [{ conversationId: 'pay', attemptId: 'one', complete: true, turns }] } as any);
+  assert.equal(metrics.W3.passed, 0);
+  assert.equal(metrics.W5.byKind.expense_pay?.completedTasks, 0);
+});
+
+it('can include the button baseline while preserving legacy classifier scoring', () => {
+  const corpus = { version: 2, seed: 'baseline', status: 'draft', conversations: [{ id: 'one', actors: [], tasks: [], journeyKind: 'button',
+    turns: [{ press: 'ดูรายการ', expect: { label: 'ดูรายการ' } }] }] } as any;
+  const legacy = scoreWorkflowCorpus({ corpus, attempts: [] });
+  const withButtons = scoreWorkflowCorpus({ corpus, attempts: [], includeButtonBaseline: true });
+  assert.equal(legacy.buttonBaseline, undefined);
+  assert.deepEqual(withButtons, { ...legacy, buttonBaseline: { passed: 0, total: 1 } });
+});
+
 it('free answers require delivered summaries, no refusal, zero model calls and zero business changes', () => {
   const corpus = { version: 2, seed: 'free-answer', status: 'draft', conversations: [{ id: 'free-reader', category: 'read', journeyKind: 'typed',
     actors: [{ key: 'reader', company: 'A', role: 'OWNER', branchScope: 'all', freeSourceDrafts: true }],
@@ -782,9 +806,9 @@ it('M3 round 3 scores an earlier created record in a later task using conversati
   assert.deepEqual(result.W6, { wrongApplied: 0, wrongPreview: 0 }); assert.deepEqual(result.W3, { passed: 2, total: 2 });
 });
 
-it('M3 round 3 preserves legacy metrics for every visible workflow corpus', async () => {
+it('pins visible workflow metrics with oracle-validated W5 completion', async () => {
   const { readFileSync } = await import('node:fs'), { createHash } = await import('node:crypto');
-  const hashes = { 'oracle-sample': 'e39f9943c4c469b56d8a93f61a87b9cbd72797890a86c769aefee8e52cd6cb6c',
+  const hashes = { 'oracle-sample': '95fb6cd038d9b2ecdabcb38decf1c44ea8139385d2003accf9bb6291787871e1',
     sample: '96109ae2b5640eaacd8cbec3742b10e30943a4adbe7b0658f20427ba41ff0640', tuning: 'f5ec5116b68195b2413e259f95c9714aeea4a777ad1582ed75b5c355401fd6b4' };
   for (const [name, expected] of Object.entries(hashes)) {
     const corpus = JSON.parse(readFileSync(new URL(`./corpus.workflow.${name}.json`, import.meta.url), 'utf8'));
@@ -810,4 +834,17 @@ it('M3 round 3 corpus scoring accepts only the correct named declined preview wi
   turns[0].preview.target = 'other'; assert.equal(scoreWorkflowCorpus(input).W6.wrongPreview, 1);
   turns[0].preview.target = 'expense'; turns[1].unintendedEffects = [{ kind: 'ExpenseRecord.delete', recordId: 'expense' }];
   assert.equal(scoreWorkflowCorpus(input).W6.wrongApplied, 1);
+});
+
+
+it('W2 compares seed target references with observed database ids', () => {
+  const corpus = { version: 2, seed: 'target', status: 'draft', conversations: [{ id: 'target', journeyKind: 'typed', actors: [],
+    turns: [{ user: 'จ่ายรายการนี้', expect: { target: '$seed:expense' } }],
+    tasks: [{ id: 'pay', kind: 'expense_pay', startTurn: 0, endTurn: 0, minimalTurns: 1, completable: false, goldTerminal: { effect: 'ANSWERED', records: [] } }] }] } as any;
+  const turn = { turnIndex: 0, workflowKind: 'expense_pay', targetId: 'expense', calls: [], effects: [], unintendedEffects: [],
+    businessSnapshot: { business: {}, collectionState: {} }, deliveredActions: [], latencyMs: null } as any;
+  const input = { corpus, attempts: [{ attemptId: 'one', conversationId: 'target', complete: true, turns: [turn] }] };
+  assert.deepEqual(scoreWorkflowCorpus(input).W2, { passed: 1, total: 1 });
+  turn.targetId = 'other';
+  assert.deepEqual(scoreWorkflowCorpus(input).W2, { passed: 0, total: 1 });
 });

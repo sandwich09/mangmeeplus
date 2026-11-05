@@ -38,8 +38,8 @@ import { validateCorpus, validateWorkflowCorpus, flattenTurns, selectConversatio
 import { buildCompanySeed, type CompanySeed } from './seed';
 import { scoreWorkflowCorpus, summarizeScores, type WorkflowRunAttempt, type WorkflowTurnEvidence } from './scorer';
 import { collectGoldResults, deliveredKnowledgeCards, scoreAllTurns, toCapturedEvidence } from './gold-oracle-pass';
-import { gitHeadSha } from './oracle';
-import { renderReport } from './report';
+import { gitHeadSha, observedWorkflowTerminals } from './oracle';
+import { renderReport, renderWorkflowReport } from './report';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { captureSpend, installEvalGuard } from './eval-spend';
 
@@ -54,19 +54,26 @@ export type SavedEvidenceFile = {
   startedAt: string;
   sourceCommit: string;
   turnEvidence: Array<RuntimeTurnEvidence & { attemptId?: string }>;
+  classifierLabels?: 'messages';
+  includeButtonBaseline?: boolean;
+  progress?: { completedAttempts: Record<string, string> };
+  subset?: { onlyIds: string[]; description: string };
 };
 
 /** Rebuild the v2 scorer input from the persisted turn snapshots; no API/oracle reads are needed. */
-export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: SavedEvidenceFile['turnEvidence']): WorkflowRunAttempt[] {
+export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: SavedEvidenceFile['turnEvidence'], completedAttempts?: Record<string, string>): WorkflowRunAttempt[] {
   const grouped = new Map<string, Array<RuntimeTurnEvidence & { attemptId?: string }>>();
   for (const row of rows) if (row.attemptId) {
     const key = `${row.scenarioId}\u0000${row.attemptId}`;
     grouped.set(key, [...(grouped.get(key) ?? []).filter(existing => existing.turnIndex !== row.turnIndex), row]);
   }
   return [...grouped.values()].map(turnRows => {
+    turnRows.sort((a, b) => a.turnIndex - b.turnIndex);
     const first = turnRows[0]!;
     const conversation = corpus.conversations.find(row => row.id === first.scenarioId)!;
-    const turns: WorkflowTurnEvidence[] = turnRows.sort((a, b) => a.turnIndex - b.turnIndex).map(row => {
+    const finalSnapshot = turnRows.at(-1)?.businessSnapshot;
+    const finalDrafts = [...(finalSnapshot?.business.ReimbursementDraftAction ?? []), ...(finalSnapshot?.collectionState.ReimbursementDraftAction ?? [])];
+    const turns: WorkflowTurnEvidence[] = turnRows.map(row => {
       const reservations = row.reservations as Array<Record<string, any>>;
       const usage = row.providerUsage as Array<Record<string, any>>;
       const calls = usage.map(call => {
@@ -88,11 +95,25 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
       const actorKey = conversation.turns[row.turnIndex]?.as?.key ?? conversation.actors[0]?.key;
       const freeAnswer = expect?.card === 'answer' && !expect.refusal && conversation.actors.find(actor => actor.key === actorKey)?.freeSourceDrafts;
       const answerGold = expect?.knowledge || expect?.dueDate || expect?.refusal || freeAnswer;
-      return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as ?? conversation.actors[0]?.key ?? '',
+      const previews = (row.workflowPreviews ?? []).map(preview => {
+        const applied = preview.draftActionId && finalDrafts.find(draft => draft.id === preview.draftActionId && draft.requestId);
+        return applied ? { ...preview, target: applied.requestId } : preview;
+      });
+      const tasks = row.workflowTasks ?? [];
+      const observed = observedWorkflowTerminals(row.unintendedEffects ?? [], row.businessSnapshotBefore?.business ?? {}, row.businessSnapshot?.business ?? {});
+      if (row.delivery?.status === 'ACCEPTED') {
+        if (tasks.some(task => task.status === 'DECLINED')) observed.push('DECLINED');
+        if (tasks.some(task => task.status === 'REFUSED')) observed.push('REFUSED');
+        if (!observed.length && tasks.some(task => task.status === 'COMPLETED' && ['read', 'open', 'smalltalk'].includes(task.kind))) observed.push('ANSWERED');
+      }
+      const workflow = tasks.at(-1);
+      return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as?.key ?? conversation.actors[0]?.key ?? '',
         inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence, schemaValid: classify.schemaValid, timedOut: classify.timedOut } : undefined,
         calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
-        deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),
+        deliveredActions: [...deliveredActions, ...previews.map(preview => ({ type: 'preview', preview }))], preview: previews[0], latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),
+        ...(observed.length ? { terminalEffect: observed[0], terminalEffects: [...new Set(observed)] } : {}),
+        ...(workflow ? { workflowKind: workflow.kind, targetId: workflow.sourceId ?? undefined, deadEnd: workflow.deadEnd === true } : {}),
         ...(row.webhookEvents.some(event => (event as { status?: string }).status === 'free_expense_month_summary') && row.delivery?.status === 'ACCEPTED' && row.receipts.length ? { terminalEffect: 'ANSWERED' } : {}),
         ...(row.action ? { pressedLabel: row.action.label } : {}),
         ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
@@ -101,7 +122,8 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
     });
     const turnIndexes = new Set(turns.map(turn => turn.turnIndex));
     return { attemptId: first.attemptId!, conversationId: first.scenarioId, turns,
-      complete: turnIndexes.size === conversation.turns.length && conversation.turns.every((_, index) => turnIndexes.has(index)) };
+      complete: (!completedAttempts || completedAttempts[first.scenarioId] === first.attemptId)
+        && turnIndexes.size === conversation.turns.length && conversation.turns.every((_, index) => turnIndexes.has(index)) };
   });
 }
 
@@ -146,11 +168,15 @@ async function main(): Promise<void> {
   const rawCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as unknown;
   if ((rawCorpus as { version?: unknown }).version === 2) {
     validateWorkflowCorpus(rawCorpus);
-    const corpus = rawCorpus as WorkflowCorpus;
-    const attempts = workflowAttemptsFromEvidence(corpus, saved.turnEvidence);
-    const metrics = scoreWorkflowCorpus({ corpus, attempts, now: new Date(saved.startedAt), classifierLabels: process.argv.includes('--classifier-labels=messages') ? 'messages' : undefined });
+    const fullCorpus = rawCorpus as WorkflowCorpus;
+    const corpus = { ...fullCorpus, conversations: selectConversations(fullCorpus, saved.subset?.onlyIds ?? null) };
+    const ids = new Set(corpus.conversations.map(row => row.id));
+    const attempts = workflowAttemptsFromEvidence(corpus, saved.turnEvidence.filter(row => ids.has(row.scenarioId)), saved.progress?.completedAttempts);
+    const metrics = scoreWorkflowCorpus({ corpus, attempts, now: new Date(saved.startedAt),
+      classifierLabels: process.argv.includes('--classifier-labels=messages') ? 'messages' : saved.classifierLabels ?? corpus.classifierLabels,
+      includeButtonBaseline: saved.includeButtonBaseline });
     const reportPath = rescoreReportPath(evidencePath, new Date());
-    writeFileSync(reportPath, `# Offline workflow rescore\n\nEvidence: \`${evidencePath}\`\n\nCorpus: \`${CORPUS_PATH}\`\n\n\`\`\`json\n${JSON.stringify(metrics, null, 2)}\n\`\`\`\n`);
+    writeFileSync(reportPath, renderWorkflowReport({ sourceCommit: saved.sourceCommit, now: new Date(saved.startedAt), corpus, metrics, subset: saved.subset }));
     console.log(JSON.stringify({ event: 'workflow_rescore_done', reportPath, attempts: attempts.length, completeAttempts: attempts.filter(attempt => attempt.complete).length }));
     return;
   }

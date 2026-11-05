@@ -14,6 +14,10 @@ import { classifyLineAiTerminalOutcome } from '../apps/api/src/modules/line-ai/d
 import { reliabilityDigest, replayReliabilityCorpus, type ReliabilityCorpus, type ReliabilityFixture, type ReliabilityReplayAdapter, type ReliabilityTurnTrace } from './line-ai-reliability-fixtures';
 import type { ReliabilityAttempt } from './line-ai-reliability-evaluation';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../apps/api/src/common/pipes/validation-pipe.options';
+import { hashMessagePreview } from '../apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic';
+import { workflowCreditState } from './line-ai-expense-advisor/seed';
+import type { WorkflowFixtureOp } from './line-ai-expense-advisor/types';
+import { todayCivilDate } from '../packages/contracts/src/civil-date';
 
 type JsonRow = Record<string, any>;
 export type RuntimeReplayActor =
@@ -43,7 +47,7 @@ export type RuntimeReplayAction =
   | { type: 'message'; label: string; text: string; pressFrom?: string }
   | { type: 'uri'; label: string; uri: string; pressFrom?: string }
   | { type: 'camera'; label: string; assetId: string; pressFrom?: string };
-export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string };
+export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string; pressOrigin?: { turn: number; actor?: string }; fixture?: WorkflowFixtureOp[] };
 export type RuntimeReplayFixture = ReliabilityFixture & { turns: Array<ReliabilityFixture['turns'][number] & RuntimeReplayTurn> };
 export type RuntimeReplayCorpus = Omit<ReliabilityCorpus, 'fixtures'> & { fixtures: RuntimeReplayFixture[] };
 export type ReliabilityRuntimeManifest = {
@@ -68,6 +72,9 @@ export type RuntimeTurnEvidence = {
   webhookEvents: unknown[]; providerUsage: unknown[]; reservations: unknown[];
   reviewState: { before: RuntimeReviewState; after: RuntimeReviewState };
   businessSnapshot?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
+  businessSnapshotBefore?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
+  workflowPreviews?: JsonRow[];
+  workflowTasks?: JsonRow[];
   unintendedEffects?: ReliabilityTurnTrace['effects'];
   delivery: ReliabilityTurnTrace['delivery'];
 };
@@ -274,6 +281,86 @@ export async function resetRuntimeAfterHook<T>(onBeforeReset: ((conversation: Re
   return reset();
 }
 
+const FIXTURE_MODELS = { ExpenseRecord: 'expenseRecord', ReimbursementRequest: 'reimbursementRequest', DisbursementVoucher: 'disbursementVoucher' } as const;
+export function validateRuntimeFixtureOperations(operations: WorkflowFixtureOp[]): void {
+  for (const operation of operations) {
+    assert.ok(['setCredit', 'expire', 'mutate'].includes(operation.op), 'REPLAY_FIXTURE_OP_UNKNOWN');
+    if (operation.op === 'setCredit') assert.ok(['normal', 'exhausted'].includes(operation.state), 'REPLAY_FIXTURE_CREDIT_STATE');
+    if (operation.op === 'expire') assert.ok(['expense-action', 'expense-action-applied', 'wf-choice', 'draft-preview'].includes(operation.store), 'REPLAY_FIXTURE_EXPIRY_STORE');
+    if (operation.op === 'mutate') assert.ok(Object.hasOwn(FIXTURE_MODELS, operation.table) && operation.seedKey && operation.set && typeof operation.set === 'object', 'REPLAY_FIXTURE_MUTATE_TABLE');
+  }
+}
+
+export async function executeRuntimeFixtureOperations(operations: WorkflowFixtureOp[], context: {
+  databaseUrl: string; client: Record<string, any>; redis: { del(key: string): Promise<number> };
+  companyId: string; userId: string; chatKeyHash: string; seedRows: RuntimeSourceSnapshot['rows'];
+}): Promise<void> {
+  assertIsolatedReplayDatabase(context.databaseUrl);
+  validateRuntimeFixtureOperations(operations);
+  for (const operation of operations) {
+    if (operation.op === 'setCredit') {
+      assert.ok(context.companyId, 'REPLAY_FIXTURE_COMPANY_REQUIRED');
+      await context.client.companyAiConfiguration.update({ where: { companyId: context.companyId }, data: workflowCreditState(operation.state) });
+    } else if (operation.op === 'mutate') {
+      const model = FIXTURE_MODELS[operation.table];
+      assert.ok(context.seedRows.some(row => row.model === model && row.data.id === operation.seedKey), 'REPLAY_FIXTURE_SEED_UNKNOWN');
+      await context.client[model].update({ where: { id: operation.seedKey }, data: operation.set });
+    } else {
+      const chat = operation.store === 'draft-preview' ? context.chatKeyHash
+        : `${operation.store === 'expense-action-applied' ? 'expense-action' : operation.store}:${context.chatKeyHash}`;
+      // Same keys as LineDraftPreviewStore's previewKey/appliedKey, without loading its Nest decorators.
+      const key = `line-ai:${operation.store === 'expense-action-applied' ? 'draft-applied' : 'draft-preview'}:${context.companyId}:${chat}`;
+      await context.redis.del(key);
+      if (operation.store === 'draft-preview') {
+        const latest = await context.client.reimbursementDraftAction.findFirst({ where: { companyId: context.companyId, actorUserId: context.userId,
+          chatKeyHash: context.chatKeyHash, status: { in: ['COLLECTING', 'PREVIEW'] } }, orderBy: { createdAt: 'desc' } });
+        if (latest) await context.client.reimbursementDraftAction.update({ where: { id: latest.id }, data: { expiresAt: new Date(0) } });
+      }
+    }
+  }
+}
+
+export function runtimePressReceipts(states: Array<{ pressFrom?: string; receipts: Array<{ messages: unknown }> }>, turnIndex: number, turn: RuntimeReplayTurn): unknown {
+  const origin = turn.pressOrigin?.turn ?? turnIndex - 1;
+  assert.ok(Number.isInteger(origin) && origin >= 0 && origin < turnIndex && states[origin], 'REPLAY_PRESS_ORIGIN_MISSING');
+  if (turn.pressOrigin?.actor) assert.equal(states[origin]!.pressFrom, turn.pressOrigin.actor, 'REPLAY_PRESS_ORIGIN_ACTOR');
+  return states[origin]!.receipts.map(receipt => receipt.messages);
+}
+
+/** Bind a delivered confirmation to its stored payload and the product's own card renderer. */
+export function runtimeDeliveredPreviews(receipts: Array<{ messages: unknown }>, entries: JsonRow[], render: (entry: JsonRow) => unknown): JsonRow[] {
+  const previews: JsonRow[] = [];
+  for (const receipt of receipts) for (const message of Array.isArray(receipt.messages) ? receipt.messages : []) {
+    const controls: URLSearchParams[] = [];
+    const visit = (value: any): void => {
+      if (!value || typeof value !== 'object') return;
+      if (value.type === 'postback' && typeof value.data === 'string') controls.push(new URLSearchParams(value.data));
+      for (const child of Object.values(value)) if (typeof child === 'object') visit(child);
+    };
+    visit(message);
+    const control = controls.find(params => ['expense_action_confirm', 'reimbursement_draft_confirm'].includes(params.get('action') ?? ''));
+    if (!control) continue;
+    const claim = control.get('action') === 'reimbursement_draft_confirm';
+    const entry = entries.find(candidate => claim ? candidate.preview?.actionId === control.get('actionId')
+      && String(candidate.preview.previewRevision) === control.get('previewRevision') && candidate.preview.confirmationDigest === control.get('confirmationDigest')
+      : candidate.preview?.token === control.get('token'));
+    const expected = entry && render(entry);
+    const candidates = Array.isArray(expected) ? expected : [expected];
+    const verified = candidates.some(candidate => candidate && reliabilityDigest(candidate.contents) === reliabilityDigest(message.contents) && candidate.altText === message.altText);
+    if (!entry || !verified) { previews.push({ action: 'UNVERIFIED_PREVIEW', target: entry?.expenseId ?? '' }); continue; }
+    const preview = entry.preview, payment = preview.payment ?? entry.claim?.payment ?? entry.voucher?.payment;
+    const paidDate = payment?.paidAt ?? payment?.paidDate;
+    previews.push({ action: claim ? 'reimbursement_draft_confirm' : preview.action,
+      target: claim ? entry.requestId ?? preview.targetRef ?? preview.actionId : entry.voucher?.id ?? entry.expenseId,
+      ...(claim ? { draftActionId: preview.actionId } : {}),
+      ...(claim ? { amount: preview.after?.amount ?? preview.after?.totalAmount, reason: preview.after?.reason, payeeName: preview.after?.requesterDisplayName }
+        : { amount: preview.record?.amount, payeeName: preview.record?.vendorName }),
+      ...(preview.reason ? { reason: preview.reason } : {}), ...(payment?.paymentMethod ? { paymentMethod: payment.paymentMethod } : {}),
+      ...(paidDate ? { paidDate: todayCivilDate('Asia/Bangkok', new Date(paidDate)) } : {}) });
+  }
+  return previews;
+}
+
 export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeManifest, repoRoot: string,
   hooks: { onTurn?: (evidence: RuntimeTurnEvidence) => Promise<void> | void;
     onBeforeReset?: (conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void;
@@ -286,6 +373,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   if (manifest.localStorageEndpoint) localUrl(manifest.localStorageEndpoint, 'http:');
   assert.ok(Number.isInteger(manifest.apiPort) && manifest.apiPort >= 1024 && manifest.apiPort <= 65535, 'REPLAY_PORT');
   assert.ok(manifest.corpus.fixtures.every(row => row.provenance.kind === 'synthetic'), 'REPLAY_SYNTHETIC_ONLY');
+  for (const fixture of manifest.corpus.fixtures) for (const turn of fixture.turns) validateRuntimeFixtureOperations(turn.fixture ?? []);
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
   assert.equal(manifest.versions.sourceCommit, sourceCommit, 'REPLAY_SOURCE_COMMIT_CHANGED');
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim(), '', 'REPLAY_REQUIRES_COMMITTED_SOURCE');
@@ -319,6 +407,9 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const { ProcessLineWebhookUseCase } = requireApi(resolve(compiled, 'modules/line-ai/application/use-cases/process-line-webhook.use-case.js'));
   const { AppConfigService } = requireApi(resolve(compiled, 'common/config/app-config.service.js'));
   const { AppModule } = requireApi(resolve(compiled, 'app.module.js'));
+  const { buildExpenseActionCard } = requireApi(resolve(compiled, 'modules/line-ai/domain/logic/line-expense-action-card.logic.js'));
+  const { buildReimbursementDraftMessages } = requireApi(resolve(compiled, 'modules/line-ai/domain/logic/line-reimbursement-draft-card.logic.js'));
+  const { LineDraftPreviewStore } = requireApi(resolve(compiled, 'modules/expenses/application/services/line-draft-preview.store.js'));
   const originalFetch = globalThis.fetch;
   let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, attemptId = '', unsafeToReset = false;
   let selectedCompanyId = '', selectedActorId = '';
@@ -326,7 +417,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
     responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: RuntimeWireReceipt[];
     toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState;
-    inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string } | undefined;
+    inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string; previewEntries: JsonRow[]; lineUserId: string } | undefined;
   let turnStates: Array<NonNullable<typeof active>> = [];
   const turnEvidence: RuntimeTurnEvidence[] = [];
   const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
@@ -361,7 +452,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (url.pathname !== '/v2/bot/chat/loading/start') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         assert.ok(active && Array.isArray(body.messages), 'REPLAY_UNSCOPED_SEND');
-        if (body.to !== undefined && body.to !== (current?.fixture.channelKind === 'USER' ? snapshot?.lineUserId : current?.fixture.chat)
+        if (body.to !== undefined && body.to !== (current?.fixture.channelKind === 'USER' ? active.lineUserId : current?.fixture.chat)
           || body.replyToken !== undefined && !active.eventIds.some(id => body.replyToken === `${id}-token`)) {
           active.critical.push('cross_recipient_attempt'); throw new Error('REPLAY_WRONG_RECIPIENT');
         }
@@ -399,7 +490,19 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     if (state.receipts.length && !delivery.requiredBatchIds.length) state.errors.push('no_frozen_delivery_requirement');
     if (unreported.length) state.errors.push('provider_usage_unobserved');
     const businessSnapshot = runtimeBusinessSnapshot(after);
+    const workflowTasks = await client.lineAiTaskRun.findMany({ where: { id: { in: events.map((event: any) => event.taskRunId).filter(Boolean) } } });
+    const chatKeyHash = hashMessagePreview(row.fixture.channelKind === 'USER' ? state.lineUserId : row.fixture.chat);
+    const pending = await app.get(LineDraftPreviewStore).load(selectedCompanyId, `expense-action:${chatKeyHash}`);
+    const entries = [...state.previewEntries, ...(pending ? [pending] : []), ...(after.ReimbursementDraftAction ?? []).filter(row => row.status === 'PREVIEW' && row.actorUserId === selectedActorId)
+      .map(row => ({ ...row, preview: row.previewJson }))];
+    const webBaseUrl = app.get(AppConfigService).webBaseUrl;
+    const workflowPreviews = runtimeDeliveredPreviews(state.receipts, entries, entry => entry.preview?.actionId
+      ? ['th', 'en'].flatMap(language => buildReimbursementDraftMessages({ status: 'preview', preview: entry.preview }, webBaseUrl ?? '', selectedCompanyId, [], undefined, language))
+      : buildExpenseActionCard(entry.preview, undefined, entry.preview.language ?? 'th', webBaseUrl));
     const businessEffects = runtimeBusinessEffects(state.before, after);
+    const changedRecords = new Set(businessEffects.map(effect => `${effect.kind.split('.')[0]}:${effect.recordId}`));
+    const beforeBusiness = Object.fromEntries(Object.entries(runtimeBusinessSnapshot(state.before).business)
+      .map(([table, rows]) => [table, rows.filter(record => changedRecords.has(`${table}:${record.id}`))]));
     const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
       inputKind: state.inputKind ?? (turn.attachmentIds.length ? 'camera' : 'message'), ...(state.action ? { action: state.action } : {}), ...(state.pressFrom ? { pressFrom: state.pressFrom } : {}),
       companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
@@ -411,7 +514,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens, costSatang, requestKind, budgetBucket, usageBasis, eventKind, pricingSnapshot, createdAt })),
       reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt }: any) =>
         ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt })),
-      reviewState: { before: state.reviewBefore, after: await readReviewState() }, businessSnapshot, unintendedEffects: businessEffects, delivery });
+      reviewState: { before: state.reviewBefore, after: await readReviewState() }, businessSnapshot,
+      businessSnapshotBefore: { business: beforeBusiness, collectionState: {} }, workflowPreviews, workflowTasks, unintendedEffects: businessEffects, delivery });
     if (evidence.reviewState.before.truncated || evidence.reviewState.after.truncated) state.errors.push('review_state_truncated');
     const previous = turnEvidence.findIndex(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === turnIndex);
     if (previous < 0) turnEvidence.push(evidence); else turnEvidence[previous] = evidence;
@@ -461,6 +565,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         await seedLaunchGates(app.get(PrismaService));
       }
       stage = 'seed_access_validation';
+      instrumentRuntimeMethod(app.get(LineDraftPreviewStore), 'save', async (save, args) => {
+        const saved = await save(...args);
+        if (saved && active) active.previewEntries.push(structuredClone(args[0]));
+        return saved;
+      });
       const entitlementRows = await client.companyFeatureEntitlement.findMany({ where: { companyId: row.fixture.company }, select: { featureKey: true, enabled: true } });
       assert.ok(entitlementRows.length, 'REPLAY_EXPLICIT_ENTITLEMENT_SEED_REQUIRED');
       assert.deepEqual(entitlementRows.filter((item: any) => item.enabled).map((item: any) => item.featureKey).sort(),
@@ -519,7 +628,6 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (turnIndex > 0 && TURN_PAUSE_MS > 0) { stage = 'turn_pause'; await delay(TURN_PAUSE_MS); }
       stage = `turn:${turnIndex}`;
       assert.equal(current?.id, row.id); assert.ok(snapshot && app);
-      const precedingReceipts = active?.receipts.map(receipt => receipt.messages);
       active = undefined;
       const turn = row.turns[turnIndex]!, replayTurn = turn as typeof turn & RuntimeReplayTurn;
       const prefix = runtimeEventIdPrefix(attemptId, turnIndex), action = replayTurn.action;
@@ -529,8 +637,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         (userId, companyId) => app.get(PermissionResolverService).resolveAccess(userId, companyId));
       selectedCompanyId = actorContext.companyId;
       selectedActorId = actorContext.userId;
+      await executeRuntimeFixtureOperations(replayTurn.fixture ?? [], { databaseUrl: manifest.databaseUrl, client, redis,
+        companyId: selectedCompanyId, userId: selectedActorId,
+        chatKeyHash: hashMessagePreview(row.fixture.channelKind === 'USER' ? actorContext.lineUserId : row.fixture.chat), seedRows: snapshot.rows });
       const postbackLabel = action?.type === 'postback' ? action.label : (actor?.postbackLabels ?? snapshot.postbackLabels)?.[turnIndex];
-      const postbackData = postbackLabel ? selectRuntimePostback(precedingReceipts, postbackLabel) : undefined;
+      const postbackData = postbackLabel ? selectRuntimePostback(runtimePressReceipts(turnStates, turnIndex, replayTurn), postbackLabel) : undefined;
       if (postbackLabel && !action) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
       const source = { type: row.fixture.channelKind.toLowerCase(), userId: actorContext.lineUserId,
         ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
@@ -538,7 +649,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         const at = Date.now(), before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
         const review = await readReviewState();
         const state = { acceptedAt: at, eventIds: [], before, usageIds, tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [],
-          completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: review, inputKind: 'uri', action, pressFrom: actorKey } as NonNullable<typeof active>;
+          completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: review, inputKind: 'uri', action, pressFrom: actorKey,
+          previewEntries: [], lineUserId: actorContext.lineUserId } as NonNullable<typeof active>;
         active = state; turnStates.push(state);
         const delivery = runtimeDeliveryEvidence([], [], []), businessSnapshot = runtimeBusinessSnapshot(before);
         const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
@@ -559,7 +671,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const at = Date.now();
       active = { acceptedAt: at, eventIds: inputs.map((_, index) => `${prefix}-${index}`), before, usageIds,
         tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [], completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: await readReviewState(),
-        inputKind: action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey };
+        inputKind: action?.type ?? (assetIds.length ? 'camera' : 'message'), action, pressFrom: actorKey, previewEntries: [], lineUserId: actorContext.lineUserId };
       turnStates.push(active);
       const body = { destination: row.fixture.messagingChannelId, events: inputs.map((message, index) => ({
         ...(postbackData ? { type: 'postback', postback: { data: postbackData } } : { type: 'message', message }),

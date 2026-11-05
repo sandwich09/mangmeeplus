@@ -7,6 +7,14 @@ import { validateCorpus, validateWorkflowCorpus, flattenTurns, parseFailedConver
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+it('accepts only message classifier labels as an optional workflow manifest setting', () => {
+  const corpus = JSON.parse(readFileSync(resolve(HERE, 'corpus.workflow.sample.json'), 'utf8'));
+  corpus.classifierLabels = 'messages';
+  assert.doesNotThrow(() => validateWorkflowCorpus(corpus));
+  corpus.classifierLabels = 'buttons';
+  assert.throws(() => validateWorkflowCorpus(corpus), /WORKFLOW_CLASSIFIER_LABELS/);
+});
+
 describe('free actor model-free turns (owner 2026-11-05)', () => {
   const corpus = (expect: Record<string, unknown>) => ({ version: 2, seed: 'free-answer', status: 'draft', conversations: [{
     id: 'free-reader', category: 'read', journeyKind: 'typed', actors: [{ key: 'reader', company: 'A', role: 'OWNER', branchScope: 'all', freeSourceDrafts: true }],

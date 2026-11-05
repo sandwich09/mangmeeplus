@@ -17,8 +17,9 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import { resolvePeriodToken } from './period';
-import type { AnswerShape, DueDateGold, KnowledgeGold, GoldCall, GoldInputValue, GoldRecord, GroupByDimension, RequiredFactCategory, WorkflowPreview, WorkflowTask } from './types';
+import type { AnswerShape, DueDateGold, KnowledgeGold, GoldCall, GoldInputValue, GoldRecord, GroupByDimension, RequiredFactCategory, WorkflowPreview, WorkflowTask, WorkflowTerminalEffect } from './types';
 import { todayCivilDate } from '../../packages/contracts/src/civil-date';
 import { CATEGORIES } from './seed';
 import type { ExpectedFact } from './scorer';
@@ -54,6 +55,35 @@ export type ActorContext = { userId: string; companyId: string };
 export const GOLD_TABLES: GoldRecord['table'][] = ['ReimbursementRequest', 'ReimbursementLine', 'ReimbursementPayment', 'ExpenseRecord', 'ExpensePayment',
   'DisbursementVoucher', 'DisbursementVoucherLine', 'WhtCertificate', 'ExpenseSubstituteReceiptEvidence', 'ReimbursementApprovalStep', 'WhtCertificateHandoff', 'WhtCertificateHistory'];
 type BusinessRows = Record<string, Array<Record<string, unknown>>>;
+
+/** Project the existing observer's business delta; this does not read the expected task. */
+export function observedWorkflowTerminals(effects: Array<{ kind: string; recordId: string }>, before: BusinessRows, after: BusinessRows): WorkflowTerminalEffect[] {
+  const terminals: WorkflowTerminalEffect[] = [];
+  const statuses: Record<string, Record<string, WorkflowTerminalEffect>> = {
+    ExpenseRecord: { READY_FOR_CONFIRMATION: 'EXPENSE_MARKED_READY', CONFIRMED: 'EXPENSE_CONFIRMED', VOIDED: 'EXPENSE_VOIDED' },
+    ReimbursementRequest: { DRAFT: 'REIMBURSEMENT_DRAFT_SAVED', PENDING_APPROVAL: 'REIMBURSEMENT_SUBMITTED', APPROVED: 'REIMBURSEMENT_APPROVED',
+      REJECTED: 'REIMBURSEMENT_REJECTED', CANCELLED: 'REIMBURSEMENT_CANCELLED', PAID: 'REIMBURSEMENT_PAID' },
+    DisbursementVoucher: { DRAFT: 'VOUCHER_CREATED', PENDING_APPROVAL: 'VOUCHER_SUBMITTED', APPROVED: 'VOUCHER_APPROVED', PAID: 'VOUCHER_PAID' },
+    ReimbursementApprovalStep: { APPROVED: 'REIMBURSEMENT_APPROVED', REJECTED: 'REIMBURSEMENT_REJECTED' },
+    WhtCertificate: { ISSUED: 'WHT_ISSUED' }, WhtCertificateHandoff: { SYSTEM_ISSUED: 'WHT_ISSUED' },
+    ExpenseSubstituteReceiptEvidence: { PREPARED: 'SUBSTITUTE_PREPARED' },
+  };
+  const creates: Record<string, WorkflowTerminalEffect> = { ExpensePayment: 'EXPENSE_PAID', ReimbursementPayment: 'REIMBURSEMENT_PAID' };
+  for (const effect of effects) {
+    const [table, operation] = effect.kind.split('.');
+    const row = after[table!]?.find(candidate => candidate.id === effect.recordId);
+    const previous = before[table!]?.find(candidate => candidate.id === effect.recordId);
+    if (operation === 'delete' && table === 'ExpenseRecord') terminals.push('EXPENSE_DELETED');
+    if (operation === 'create' && creates[table!] && row && (row.status === undefined || row.status === 'RECORDED')) terminals.push(creates[table!]!);
+    if (row && (operation === 'create' || previous && row.status !== previous.status)) {
+      const terminal = statuses[table!]?.[String(row.status)];
+      if (terminal) terminals.push(terminal);
+      if (table === 'ReimbursementRequest' && previous?.status === 'DRAFT' && ['PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(String(row.status)))
+        terminals.push('REIMBURSEMENT_SUBMITTED');
+    }
+  }
+  return [...new Set(terminals)];
+}
 type GoldTurn = { turnIndex: number; businessSnapshot: { business: BusinessRows; collectionState: BusinessRows };
   unintendedEffects: Array<{ kind: string; recordId: string }>; preview?: Record<string, unknown>; deliveredActions?: Array<{ type: string; preview?: Record<string, unknown> }> };
 
@@ -95,6 +125,7 @@ function linkedToGoldParent(table: string, row: Record<string, unknown>, parents
   if (explicit && (table === 'ReimbursementLine' || table === 'ReimbursementPayment')) return has('ReimbursementRequest', row.reimbursementRequestId);
   if (explicit && (table === 'ExpensePayment' || table === 'ExpenseSubstituteReceiptEvidence')) return has('ExpenseRecord', row.expenseId);
   if (table === 'ReimbursementApprovalStep') return has('ReimbursementRequest', row.reimbursementRequestId);
+  if (table === 'ReimbursementDraftAction' && row.status === 'APPLIED') return has('ReimbursementRequest', row.requestId);
   if (table === 'DisbursementVoucherLine') return has('DisbursementVoucher', row.voucherId) || has('ExpenseRecord', row.expenseId);
   if (table === 'WhtCertificateHistory') return has('ExpenseRecord', row.expenseId) || has('WhtCertificateHandoff', row.handoffId);
   if (table === 'WhtCertificateHandoff') return has('ExpensePayment', row.sourcePaymentId)
@@ -157,7 +188,12 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
     if (!allowed) wrongApplied++;
   }
   const previewTurn = window.find(turn => turn.turnIndex === (task.previewTurn ?? (task.confirmTurn ?? -1) - 1));
-  const actualPreview = previewTurn?.preview ?? previewTurn?.deliveredActions?.find(action => action.type === 'preview')?.preview;
+  const previewsOf = (turn: GoldTurn | undefined) => {
+    const delivered = turn?.deliveredActions?.filter(action => action.type === 'preview' && action.preview).map(action => action.preview!) ?? [];
+    const previews = delivered.length ? delivered : turn?.preview ? [turn.preview] : [];
+    return previews.filter((preview, index) => previews.findIndex(candidate => isDeepStrictEqual(candidate, preview)) === index);
+  };
+  const actualPreviews = previewsOf(previewTurn), actualPreview = actualPreviews[0];
   let wrongPreview = goldPreview ? Number(!actualPreview || Object.entries(goldPreview).some(([key, value]) => {
     if (key === 'target' && typeof value === 'string') {
       const target = value.startsWith('$seed:') ? value.slice(6) : Object.entries(bindings).find(([ref]) => ref.endsWith(`:${value}`))?.[1];
@@ -165,7 +201,8 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
     }
     return goldValue(actualPreview, key) !== goldValue({ [key]: value }, key);
   })) : Number(!!actualPreview);
-  wrongPreview += window.filter(turn => turn !== previewTurn && (turn.preview || turn.deliveredActions?.some(action => action.type === 'preview'))).length;
+  wrongPreview += Math.max(0, actualPreviews.length - 1);
+  wrongPreview += window.filter(turn => turn !== previewTurn).reduce((sum, turn) => sum + previewsOf(turn).length, 0);
   return { wrongApplied, wrongPreview, terminalMatches, businessChanges: window.reduce((sum, turn) => sum + turn.unintendedEffects.length, 0) };
 }
 

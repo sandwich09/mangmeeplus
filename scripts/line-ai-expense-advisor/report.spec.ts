@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { deliveredReplyForReport, gatewayCoverageForReport, renderReport, summarizeLatencyByLane } from './report';
-import { summarizeScores, type TurnScore, type WorkflowMetrics } from './scorer';
+import { deliveredReplyForReport, gatewayCoverageForReport, renderReport, renderWorkflowReport, summarizeLatencyByLane } from './report';
+import { scoreWorkflowCorpus, summarizeScores, type TurnScore, type WorkflowMetrics } from './scorer';
 import type { Corpus } from './types';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z');
+
+it('renders every workflow W-metric and the button baseline without changing their values', () => {
+  const corpus = { version: 2, seed: 'report', status: 'draft', conversations: [] } as any;
+  const metrics = scoreWorkflowCorpus({ corpus, attempts: [], classifierLabels: 'messages' });
+  const report = renderWorkflowReport({ sourceCommit: 'abc123', now: NOW, corpus, metrics, subset: { onlyIds: ['one'], description: 'test subset' } });
+  for (let index = 1; index <= 15; index++) assert.ok(report.includes(`| W${index} |`));
+  assert.ok(report.includes('| buttonBaseline |'));
+  assert.match(report, /Selected conversations one/);
+  assert.deepEqual(JSON.parse(report.match(/```json\n([\s\S]*?)\n```/)![1]!), metrics);
+});
 
 function fakeEvidence(overrides: Partial<RuntimeTurnEvidence> = {}): RuntimeTurnEvidence {
   return {

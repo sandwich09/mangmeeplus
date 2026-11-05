@@ -6,7 +6,7 @@
  * production-ai-env.json).
  */
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
-import type { Corpus } from './types';
+import type { Corpus, WorkflowCorpus } from './types';
 import type { TurnScore, WorkflowMetrics, summarizeScores } from './scorer';
 import { renderUserText } from './template';
 
@@ -127,6 +127,18 @@ export function renderWorkflowSummary(input: { before: WorkflowMetrics; after: W
     + `| ต้นทุนรวมชุดงานเดียวกัน | ${thb(before.W13.candidateExact)} บาท | ${thb(after.W13.candidateExact)} บาท |\n`
     + `| งานจบโดยไม่ติด | ${beforeComplete} | ${afterComplete} |\n| ทำผิดรายการ | ${beforeWrong} ครั้ง | ${afterWrong} ครั้ง |\n`
     + `| ตอบเร็ว (ปุ่ม) | ${beforeFast} วิ | ${afterFast} วิ |\n\nพร้อมแล้ว: ${input.ready ?? '—'}\n\nยังเหลือ: ${input.remaining ?? '—'}\n`;
+}
+
+export function renderWorkflowReport(input: {
+  sourceCommit: string; now: Date; corpus: WorkflowCorpus; metrics: WorkflowMetrics;
+  subset?: { onlyIds: string[]; description: string };
+}): string {
+  const rows = Object.entries(input.metrics).filter(([key]) => /^W\d+$/.test(key) || key === 'buttonBaseline')
+    .map(([key, value]) => `| ${key} | ${JSON.stringify(value)} |`).join('\n');
+  return `# LINE AI workflow eval report\n\nSource commit ${input.sourceCommit}\n\nRun started ${input.now.toISOString()}\n\n`
+    + `Corpus ${input.corpus.conversations.length} conversations\n\n`
+    + (input.subset ? `Selected conversations ${input.subset.onlyIds.join(', ')}\n\n` : '')
+    + `| Metric | Result |\n|---|---|\n${rows}\n\n\`\`\`json\n${JSON.stringify(input.metrics, null, 2)}\n\`\`\`\n`;
 }
 
 export function renderReport(input: {

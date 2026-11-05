@@ -5,8 +5,119 @@ import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeBusinessSnapshot, runtimeBusinessEffects, runtimeAttemptId, runtimeEventIdPrefix, runtimeAssetMessageId, resetRuntimeAfterHook, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
 import { capRejectionCount, installEvalGuard } from './line-ai-expense-advisor/eval-spend';
+
+test('fixture operations use replay credit rows, actor-scoped expiry and allowed seeded mutations', async () => {
+  const { executeRuntimeFixtureOperations } = await import('./line-ai-reliability-runtime');
+  const writes: any[] = [], deleted: string[] = [];
+  const client: Record<string, any> = Object.fromEntries(['companyAiConfiguration', 'expenseRecord', 'reimbursementRequest', 'disbursementVoucher', 'reimbursementDraftAction']
+    .map(model => [model, { async update(args: any) { writes.push({ model, ...args }); }, async findFirst() { return null; } }]));
+  const context = { databaseUrl: 'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_fixture', client,
+    redis: { async del(key: string) { deleted.push(key); return 1; } }, companyId: 'company-a', userId: 'user-a', chatKeyHash: 'chat-a',
+    seedRows: [{ model: 'expenseRecord', data: { id: 'expense-a', companyId: 'company-a' } },
+      { model: 'reimbursementRequest', data: { id: 'claim-a', companyId: 'company-a' } },
+      { model: 'disbursementVoucher', data: { id: 'voucher-a', companyId: 'company-a' } }] } as any;
+  await executeRuntimeFixtureOperations([{ op: 'setCredit', state: 'exhausted' }, { op: 'setCredit', state: 'normal' }], context);
+  assert.deepEqual(writes.map(row => row.data.chatMonthlyBudgetSatang), [0, 8000]);
+  assert.ok(writes.every(row => row.where.companyId === 'company-a' && row.data.budgetMode === 'SPLIT'));
+  await executeRuntimeFixtureOperations([{ op: 'setCredit', state: 'normal' }], { ...context, companyId: 'company-b' });
+  assert.equal(writes.at(-1).where.companyId, 'company-b');
+  for (const store of ['expense-action', 'expense-action-applied', 'wf-choice', 'draft-preview'] as const)
+    await executeRuntimeFixtureOperations([{ op: 'expire', store }], context);
+  assert.deepEqual(deleted, ['line-ai:draft-preview:company-a:expense-action:chat-a', 'line-ai:draft-applied:company-a:expense-action:chat-a',
+    'line-ai:draft-preview:company-a:wf-choice:chat-a', 'line-ai:draft-preview:company-a:chat-a']);
+  let draftQuery: any;
+  client.reimbursementDraftAction.findFirst = async (query: any) => { draftQuery = query; return { id: 'latest-draft' }; };
+  await executeRuntimeFixtureOperations([{ op: 'expire', store: 'draft-preview' }], context);
+  assert.deepEqual(draftQuery, { where: { companyId: 'company-a', actorUserId: 'user-a', chatKeyHash: 'chat-a',
+    status: { in: ['COLLECTING', 'PREVIEW'] } }, orderBy: { createdAt: 'desc' } });
+  assert.deepEqual(writes.at(-1), { model: 'reimbursementDraftAction', where: { id: 'latest-draft' }, data: { expiresAt: new Date(0) } });
+  await executeRuntimeFixtureOperations([{ op: 'mutate', table: 'ExpenseRecord', seedKey: 'expense-a', set: { status: 'VOIDED' } }], context);
+  assert.deepEqual(writes.at(-1), { model: 'expenseRecord', where: { id: 'expense-a' }, data: { status: 'VOIDED' } });
+  for (const [table, id, model] of [['ReimbursementRequest', 'claim-a', 'reimbursementRequest'], ['DisbursementVoucher', 'voucher-a', 'disbursementVoucher']] as const) {
+    await executeRuntimeFixtureOperations([{ op: 'mutate', table, seedKey: id, set: { status: 'CANCELLED' } }], context);
+    assert.deepEqual(writes.at(-1), { model, where: { id }, data: { status: 'CANCELLED' } });
+  }
+  await assert.rejects(executeRuntimeFixtureOperations([{ op: 'mutate', table: 'ExpenseRecord', seedKey: 'not-seeded', set: { status: 'VOIDED' } }], context), /REPLAY_FIXTURE_SEED_UNKNOWN/);
+  for (const operations of [[{ op: 'unknown' }], [{ op: 'mutate', table: 'User', seedKey: 'expense-a', set: {} }]])
+    await assert.rejects(executeRuntimeFixtureOperations(operations as any, context), /REPLAY_FIXTURE/);
+  const before = writes.length;
+  await assert.rejects(executeRuntimeFixtureOperations([{ op: 'setCredit', state: 'normal' }], { ...context, databaseUrl: 'postgresql://test:test@127.0.0.1:15440/watchdog_bms' }), /DEDICATED_LOCAL/);
+  assert.equal(writes.length, before);
+});
+
+test('postbacks resolve the explicitly named earlier delivered card across actors', async () => {
+  const { runtimePressReceipts } = await import('./line-ai-reliability-runtime');
+  const card = [{ type: 'flex', contents: { footer: { action: { type: 'postback', label: 'ยืนยัน', data: 'signed-first-card' } } } }];
+  const states = [{ pressFrom: 'staff', receipts: [{ messages: card }] }, { pressFrom: 'owner', receipts: [{ messages: [{ type: 'text', text: 'later question' }] }] }];
+  assert.equal(selectRuntimePostback(runtimePressReceipts(states as any, 2, { pressOrigin: { turn: 0, actor: 'staff' } }), 'ยืนยัน'), 'signed-first-card');
+  assert.throws(() => runtimePressReceipts(states as any, 2, { pressOrigin: { turn: 0, actor: 'other' } }), /PRESS_ORIGIN/);
+  assert.throws(() => runtimePressReceipts(states as any, 2, { pressOrigin: { turn: 2 } }), /PRESS_ORIGIN/);
+});
+
+test('preview evidence requires the delivered card to match its stored signed payload', async () => {
+  const { runtimeDeliveredPreviews } = await import('./line-ai-reliability-runtime');
+  const entry = { expenseId: 'expense-a', preview: { action: 'RECORD_PAYMENT', token: 'signed', record: { amount: '250.00', vendorName: 'ผู้ขาย' },
+    payment: { paymentMethod: 'CASH', paidAt: '2026-11-05T00:00:00.000Z' } } };
+  const render = (value: any) => ({ type: 'flex', altText: 'ตรวจการจ่าย', contents: { amount: value.preview.record.amount,
+    footer: { action: { type: 'postback', label: 'ยืนยัน', data: 'action=expense_action_confirm&token=signed' } } } });
+  const message = render(entry);
+  const correct = runtimeDeliveredPreviews([{ messages: [message] }], [entry], render);
+  assert.deepEqual(correct, [{ action: 'RECORD_PAYMENT', target: 'expense-a', amount: '250.00', payeeName: 'ผู้ขาย', paymentMethod: 'CASH', paidDate: '2026-11-05' }]);
+  assert.deepEqual(runtimeDeliveredPreviews([], [entry], render), []);
+  assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, contents: { ...message.contents, amount: '999.00' } }] }], [entry], render)[0]?.action, 'UNVERIFIED_PREVIEW');
+  assert.equal(runtimeDeliveredPreviews([{ messages: [message] }], [], render)[0]?.action, 'UNVERIFIED_PREVIEW');
+  const claim = { preview: { actionId: 'draft', previewRevision: 2, confirmationDigest: 'digest', targetRef: 'claim-a',
+    after: { amount: '250.00', reason: 'ค่าเดินทาง', requesterDisplayName: 'ผู้เบิก' } } };
+  const claimCard = { type: 'flex', altText: 'ตรวจใบเบิก', contents: { action: { type: 'postback',
+    data: 'action=reimbursement_draft_confirm&actionId=draft&previewRevision=2&confirmationDigest=digest' } } };
+  assert.deepEqual(runtimeDeliveredPreviews([{ messages: [claimCard] }], [claim], () => claimCard),
+    [{ action: 'reimbursement_draft_confirm', target: 'claim-a', draftActionId: 'draft', amount: '250.00', reason: 'ค่าเดินทาง', payeeName: 'ผู้เบิก' }]);
+});
+
+test('fixture expiration reaches the product expired-card path for free and paid actors', () => {
+  const script = `
+    const assert = require('node:assert/strict');
+    const {LineDraftPreviewStore} = require('./apps/api/src/modules/expenses/application/services/line-draft-preview.store.ts');
+    const {LineExpenseActionService} = require('./apps/api/src/modules/line-ai/application/line-expense-action.service.ts');
+    const {buildExpenseActionCard} = require('./apps/api/src/modules/line-ai/domain/logic/line-expense-action-card.logic.ts');
+    const {executeRuntimeFixtureOperations,runtimeDeliveredPreviews} = require('./scripts/line-ai-reliability-runtime.ts');
+    (async () => {
+      const values = new Map();
+      const redis = {async get(key) {return values.get(key) ?? null;}, async set(key, value) {values.set(key,value);},
+        async del(key) {return Number(values.delete(key));}, async quit() {}};
+      const store = new LineDraftPreviewStore({isProduction:false}); store.attachClient(redis);
+      const service = new LineExpenseActionService({}, {}, {}, {}, {}, {}, {}, {}, store, {aiGatewayInternalSecret:'synthetic'});
+      for (const freeExpenseDrafts of [false,true]) {
+        const companyId = freeExpenseDrafts ? 'company-a' : 'company-b', chat = 'actor-chat';
+        const context = {databaseUrl:'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_fixture',
+          client:{reimbursementDraftAction:{async findFirst(){return null;}}}, redis, companyId, userId:'actor', chatKeyHash:chat, seedRows:[]};
+        const entry = {previewId:'pending',companyId,chatKeyHash:'expense-action:'+chat};
+        assert.equal(await store.save(entry),true);
+        await executeRuntimeFixtureOperations([{op:'expire',store:'expense-action'}],context);
+        assert.equal(await store.load(companyId,entry.chatKeyHash),null);
+        const result = await service.apply({companyId,userId:'actor',freeExpenseDrafts},chat,{action:'expense_action_confirm',token:'pending.signed'});
+        assert.equal(result.status,'blocked'); assert.match(result.reply,/หมดเวลา|ใช้ไม่ได้|expired/);
+        for (const kind of ['wf-choice','draft-preview','expense-action-applied']) {
+          const key = kind === 'draft-preview' ? chat : (kind === 'expense-action-applied' ? 'expense-action' : kind)+':'+chat;
+          const saved = {...entry,chatKeyHash:key};
+          if(kind === 'expense-action-applied') await store.remember(companyId,key,saved); else await store.save(saved);
+          await executeRuntimeFixtureOperations([{op:'expire',store:kind}],context);
+          assert.equal(kind === 'expense-action-applied' ? await store.loadApplied(companyId,key) : await store.load(companyId,key),null);
+        }
+      }
+      const entry = {expenseId:'expense-a',preview:{previewId:'card',token:'card.signed',action:'CONFIRM',summary:'ตรวจรายการ',
+        expiresAt:'2099-01-01T00:00:00Z',record:{vendorName:'ผู้ขาย',amount:'1000.00',currency:'THB',date:'2026-11-05',status:'รอตรวจ',nextStatus:'ยืนยันแล้ว'}}};
+      const render = value => buildExpenseActionCard(value.preview,undefined,'th','https://web.eval.test');
+      const wire = render(entry);
+      const [observed] = runtimeDeliveredPreviews([{messages:[wire]}],[entry],render);
+      assert.equal(observed.action,'CONFIRM'); assert.equal(observed.target,'expense-a'); assert.equal(observed.amount,'1000.00');
+    })().catch(error=>{console.error(error);process.exitCode=1;});`;
+  execFileSync(process.execPath, ['--import', 'tsx', '-e', script], { cwd: process.cwd(),
+    env: { ...process.env, TSX_TSCONFIG_PATH: resolve('apps/api/tsconfig.json') }, stdio: 'pipe' });
+});
 
 test('free_expense_month_summary is a delivered read outcome', () => {
   assert.equal(runtimeSemanticOutcome([], [{ status: 'free_expense_month_summary' }], []), 'answered');

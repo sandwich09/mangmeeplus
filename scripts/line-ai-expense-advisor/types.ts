@@ -131,7 +131,7 @@ export type WorkflowTerminalEffect = 'REIMBURSEMENT_DRAFT_SAVED' | 'REIMBURSEMEN
 export type WorkflowTask = { id: string; kind: string; startTurn: number; endTurn: number; confirmTurn?: number; previewTurn?: number;
   goldTerminal: { effect: WorkflowTerminalEffect; records: GoldRecord[] }; minimalTurns: number; completable: boolean; journeyId?: string };
 export type WorkflowConversation = { id: string; actors: Actor[]; category: string; journeyKind: 'typed' | 'button'; credit?: 'normal' | 'exhausted'; tasks: WorkflowTask[]; turns: WorkflowTurn[] };
-export type WorkflowCorpus = { version: 2; seed: string; status: 'draft' | 'reviewed'; conversations: WorkflowConversation[] };
+export type WorkflowCorpus = { version: 2; seed: string; status: 'draft' | 'reviewed'; classifierLabels?: 'messages'; conversations: WorkflowConversation[] };
 
 const WORKFLOW_WRITE_EXEMPTIONS = new Set<WorkflowTerminalEffect>(['ANSWERED', 'REFUSED', 'DECLINED']);
 const PAID_RECORDS: Partial<Record<WorkflowTerminalEffect, { table: GoldRecord['table']; amount: keyof GoldRecord; date: keyof GoldRecord; method: keyof GoldRecord }>> = {
@@ -143,6 +143,7 @@ const PAID_RECORDS: Partial<Record<WorkflowTerminalEffect, { table: GoldRecord['
 export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlySet<string>): asserts value is WorkflowCorpus {
   assert.ok(isPlainObject(value) && value['version'] === 2 && nonEmptyString(value['seed']), 'WORKFLOW_CORPUS_VERSION');
   assert.ok(['draft', 'reviewed'].includes(value['status'] as string) && Array.isArray(value['conversations']) && (value['conversations'] as unknown[]).length, 'WORKFLOW_CORPUS_HEADER');
+  assert.ok(value['classifierLabels'] === undefined || value['classifierLabels'] === 'messages', 'WORKFLOW_CLASSIFIER_LABELS');
   const ids = new Set<string>(), freeCompanies = new Set<string>(), paidCompanies = new Set<string>();
   for (const [ci, raw] of (value['conversations'] as unknown[]).entries()) {
     const path = `conversations[${ci}]`;
@@ -252,7 +253,7 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
     for (const key of Object.keys(raw)) assert.ok(['id', 'actors', 'category', 'journeyKind', 'credit', 'tasks', 'turns'].includes(key), `${path}.${key}:unknown`);
   }
   for (const company of freeCompanies) assert.ok(!paidCompanies.has(company), `WORKFLOW_MIXED_FREE_PAID_SEED:${company}`);
-  for (const key of Object.keys(value)) assert.ok(['version', 'seed', 'status', 'conversations'].includes(key), `workflow_corpus.${key}:unknown`);
+  for (const key of Object.keys(value)) assert.ok(['version', 'seed', 'status', 'classifierLabels', 'conversations'].includes(key), `workflow_corpus.${key}:unknown`);
 }
 
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : isPlainObject(value)
@@ -389,7 +390,7 @@ export function parseFailedConversationIds(evidence: EvidenceFileForSubsetSelect
  * keeps the corpus's own order (never `onlyIds`' order) and refuses a stale/misspelled id outright
  * — silently running fewer conversations than asked for is the one wrong failure mode for a
  * re-run whose whole point is confirming a specific fix. */
-export function selectConversations(corpus: Corpus, onlyIds: readonly string[] | null): Conversation[] {
+export function selectConversations<T extends { id: string }>(corpus: { conversations: T[] }, onlyIds: readonly string[] | null): T[] {
   if (onlyIds === null) return corpus.conversations;
   const known = new Set(corpus.conversations.map((conversation) => conversation.id));
   for (const id of onlyIds) assert.ok(known.has(id), `MANGMEE_EVAL_ONLY: no conversation with id "${id}" in this corpus`);

@@ -10,8 +10,8 @@
  * scripts/line-ai-reliability-runtime.ts machinery — the compiled API in-process, signed LINE
  * webhooks, delivery capture via a fetch patch — then scores each turn with scorer.ts (never the
  * legacy financial-fact-oracle scorer that runtime.ts's own ReliabilityFixture shape implies; this
- * corpus's `expect` is the tool/tag format in types.ts) and writes JSON evidence plus a markdown
- * report.
+ * corpus's `expect` uses tool/tag gold for v1 and workflow gold for v2) and writes JSON evidence
+ * plus a markdown report.
  *
  * Usage: node_modules/.bin/tsx scripts/line-ai-expense-advisor/run-real.ts
  * Required env:
@@ -33,6 +33,8 @@
  *                             (never a single turn: a follow-up turn needs its own history)
  *   MANGMEE_EVAL_ONLY_FAILED  '1' to read MANGMEE_EVAL_ONLY as an evidence.json path and select
  *                             every conversation that had a failing turn in it
+ * CLI: --classifier-labels=messages uses message-only W1, as does a v2 corpus's
+ *      classifierLabels: 'messages'. The button baseline is recorded for every v2 run.
  *
  * MANGMEE_EVAL_TURN_PAUSE_MS/MANGMEE_EVAL_CONVERSATION_PAUSE_MS: `replayReliabilityCorpus` (shared
  * by every reliability replay, not just this eval) has no hook between its turn/fixture loop
@@ -60,19 +62,21 @@ import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, wr
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runLineReliabilityRuntime, type ReliabilityRuntimeManifest, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
+import { runLineReliabilityRuntime, validateRuntimeFixtureOperations, type ReliabilityRuntimeManifest, type RuntimeReplayFixture, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { reliabilityDigest, type ReliabilityFixture } from '../line-ai-reliability-fixtures';
-import { validateCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany } from './types';
-import { buildCompanySeed, type CompanySeed } from './seed';
-import { summarizeScores, type TurnScore } from './scorer';
+import { validateCorpus, validateWorkflowCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany, type WorkflowCorpus } from './types';
+import { buildCompanySeed, buildWorkflowSeed, resolveWorkflowActor, type CompanySeed, type WorkflowSeed } from './seed';
+import { scoreWorkflowCorpus, summarizeScores } from './scorer';
 import { collectGoldResults, scoreAllTurns } from './gold-oracle-pass';
 import { gitHeadSha } from './oracle';
 import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry';
 import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { renderUserText } from './template';
-import { renderReport } from './report';
-import { appendJsonLine, capRejectionCount, captureSpend, installEvalGuard, readJsonLines } from './eval-spend';
+import { renderReport, renderWorkflowReport } from './report';
+import { appendJsonLine, capRejectionCount, captureSpend, installEvalGuard, readJsonLines, type EvalPgClient } from './eval-spend';
+import { validateWorkflowPreflight } from './run-preflight';
+import { workflowAttemptsFromEvidence } from './run-rescore';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const SECRETS_PATH = process.env['MANGMEE_EVAL_SECRETS_PATH'] ?? '/tmp/mangmee-latency-pilot-20260927/runtime-secrets.json';
@@ -137,10 +141,10 @@ export type SubsetSelection = { onlyIds: string[]; description: string };
  * case every conversation that had a failing turn in it is re-run. Always whole conversations
  * (selectConversations, types.ts): a follow-up turn needs its own history, never a single turn run
  * in isolation. `null` means no subset was requested — every conversation in the corpus runs. */
-function resolveSubsetSelection(): SubsetSelection | null {
-  const only = process.env['MANGMEE_EVAL_ONLY'];
+function resolveSubsetSelection(environment = process.env): SubsetSelection | null {
+  const only = environment['MANGMEE_EVAL_ONLY'];
   if (!only) return null;
-  if (process.env['MANGMEE_EVAL_ONLY_FAILED'] === '1') {
+  if (environment['MANGMEE_EVAL_ONLY_FAILED'] === '1') {
     const evidence = JSON.parse(readFileSync(resolve(REPO_ROOT, only), 'utf8'));
     return { onlyIds: parseFailedConversationIds(evidence), description: `conversations with a failing turn in ${only}` };
   }
@@ -215,20 +219,66 @@ function buildFixtures(corpus: Corpus, companies: Record<EvalCompany, CompanySee
 // collectGoldResults/turnKey moved to gold-oracle-pass.ts (shared with run-rescore.ts, which
 // re-scores saved evidence against the SAME oracle pass with no gateway/model involved).
 
-async function main(): Promise<void> {
-  const outputDir = process.env['MANGMEE_EVAL_OUTPUT_DIR'];
-  const gatewayUrl = process.env['MANGMEE_EVAL_GATEWAY_URL'];
-  const resumePath = process.env['MANGMEE_EVAL_RESUME'];
+export function buildWorkflowReplay(corpus: WorkflowCorpus, seed: WorkflowSeed, now: Date) {
+  const snapshots: Record<string, RuntimeSourceSnapshot> = {};
+  const fixtures = corpus.conversations.map((conversation): RuntimeReplayFixture => {
+    const firstActor = conversation.actors.find(actor => actor.key === (conversation.turns[0]?.as?.key ?? conversation.actors[0]!.key))!;
+    const first = resolveWorkflowActor(firstActor, seed);
+    const company = first.kind === 'unlinked' ? seed.companies.B : Object.values(seed.companies).find(row => row.companyId === first.companyId)!;
+    const enabledFeatures = seed.rows.filter(row => row.model === 'companyFeatureEntitlement' && row.data.companyId === company.companyId && row.data.enabled).map(row => String(row.data.featureKey));
+    const roles = new Set(seed.rows.filter(row => row.model === 'membershipRole' && row.data.membershipId === first.membershipId).map(row => row.data.roleId));
+    const grants = new Set(seed.rows.filter(row => row.model === 'rolePermission' && roles.has(row.data.roleId)).map(row => row.data.permissionId));
+    const permissions = filterPermissionsByEntitlement(seed.rows.filter(row => row.model === 'permission' && grants.has(row.data.id)).map(row => String(row.data.key)), new Set(enabledFeatures)).sort();
+    snapshots[conversation.id] = { rows: seed.rows, lineUserId: first.lineUserId, assets: {},
+      actors: Object.fromEntries(conversation.actors.map(actor => [actor.key, resolveWorkflowActor(actor, seed)])) };
+    return {
+      id: conversation.id, familyId: conversation.id, split: 'development', language: 'th', paraphrase: false, fixedRegression: false,
+      capabilities: ['C01'], provenance: { kind: 'synthetic', sourceId: conversation.id, consentRef: null, reviewedBy: null, reviewedAt: null },
+      fixture: { clock: now.toISOString(), timezone: 'Asia/Bangkok', company: company.companyId,
+        actor: first.userId ?? `unlinked-${firstActor.key}`, channelKind: 'USER', messagingChannelId: company.messagingChannelId,
+        membership: first.membershipId ?? null, chat: first.lineUserId, permissions, branches: first.branchIds ?? [], enabledFeatures,
+        sourceSnapshot: conversation.id, taskRevision: null, previewRevision: null }, assets: [],
+      turns: conversation.turns.map((turn, index) => {
+        validateRuntimeFixtureOperations(turn.fixture ?? []);
+        if (turn.pressFrom?.actor) assert.equal(turn.pressFrom.actor.key, conversation.turns[turn.pressFrom.turn]!.as?.key ?? conversation.actors[0]!.key,
+          `WORKFLOW_RUNTIME_PRESS_ACTOR_MISMATCH:${conversation.id}:${index}`);
+        return { user: renderUserText(turn.user ?? turn.press!, now), attachmentIds: [],
+          pressFrom: turn.as?.key ?? conversation.actors[0]!.key,
+          ...(turn.pressFrom ? { pressOrigin: { turn: turn.pressFrom.turn, actor: turn.pressFrom.actor?.key } } : {}),
+          ...(turn.fixture ? { fixture: turn.fixture } : {}),
+          ...(turn.press ? { action: { type: 'postback' as const, label: turn.press } } : {}),
+          expect: { outcomes: ['answered', 'partial', 'needs_input', 'access_denied', 'unsupported_action', 'feature_unavailable'],
+            toolInputs: [], requiredFacts: [], requiredEffects: [], forbiddenEffects: [], requiredDelivery: 'ACCEPTED',
+            maxModelCalls: turn.expect.maxModelCalls ?? 4, deadlineMs: 30_000 } };
+      }),
+    };
+  });
+  return { fixtures, snapshots, snapshotDigests: Object.fromEntries(Object.entries(snapshots).map(([key, snapshot]) => [key, reliabilityDigest(snapshot)])) };
+}
+
+export async function runReal(dependencies: {
+  environment?: NodeJS.ProcessEnv;
+  pg?: EvalPgClient & { connect(): Promise<void>; end(): Promise<void> };
+  runtime?: typeof runLineReliabilityRuntime;
+  oracle?: typeof collectGoldResults;
+} = {}): Promise<void> {
+  const environment = dependencies.environment ?? process.env;
+  const secretsPath = environment['MANGMEE_EVAL_SECRETS_PATH'] ?? SECRETS_PATH;
+  const corpusPath = environment['MANGMEE_EVAL_CORPUS'] ?? CORPUS_PATH;
+  const redisUrl = environment['MANGMEE_EVAL_REDIS_URL'] ?? REDIS_URL;
+  const outputDir = environment['MANGMEE_EVAL_OUTPUT_DIR'];
+  const gatewayUrl = environment['MANGMEE_EVAL_GATEWAY_URL'];
+  const resumePath = environment['MANGMEE_EVAL_RESUME'];
   assert.ok(outputDir || resumePath, 'MANGMEE_EVAL_OUTPUT_DIR or MANGMEE_EVAL_RESUME is required');
   assert.ok(gatewayUrl, 'MANGMEE_EVAL_GATEWAY_URL is required (start it with launch-gateway.mjs first)');
-  const secrets = JSON.parse(readFileSync(SECRETS_PATH, 'utf8')) as { databaseUrl: string };
+  const secrets = JSON.parse(readFileSync(secretsPath, 'utf8')) as { databaseUrl: string };
   const databaseUrl = new URL(secrets.databaseUrl);
   databaseUrl.pathname = `/${DB_NAME}`;
   databaseUrl.searchParams.set('schema', 'public');
   const apiRoot = resolve(REPO_ROOT, 'apps/api');
   const requireApi = createRequire(resolve(apiRoot, 'package.json'));
   const { Client } = requireApi('pg') as { Client: new (opts: { connectionString: string }) => import('./eval-spend').EvalPgClient & { connect(): Promise<void>; end(): Promise<void> } };
-  const pg = new Client({ connectionString: databaseUrl.toString() });
+  const pg = dependencies.pg ?? new Client({ connectionString: databaseUrl.toString() });
   await pg.connect();
   try {
     const progress: EvalProgress = resumePath ? JSON.parse(readFileSync(resumePath, 'utf8')) as EvalProgress : defaultProgress(new Date());
@@ -237,19 +287,27 @@ async function main(): Promise<void> {
     const paths = checkpointPaths(progressPath);
     mkdirSync(dirname(progressPath), { recursive: true });
     writeProgress(progressPath, progress);
-    const maxThb = process.env['MANGMEE_EVAL_MAX_THB'];
+    const maxThb = environment['MANGMEE_EVAL_MAX_THB'];
     assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB is required');
     await installEvalGuard(pg, databaseUrl.toString(), maxThb);
     await captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'startup');
 
-    const fullCorpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as Corpus;
-    validateCorpus(fullCorpus);
-    const subset = resolveSubsetSelection();
-    const requested: Corpus = subset ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset.onlyIds) } : fullCorpus;
-    const corpus: Corpus = { ...requested, conversations: requested.conversations.filter(row => !progress.completedConversationIds.includes(row.id)) };
-    const flat = flattenTurns(corpus), now = new Date(progress.startedAt);
+    const fullCorpus = JSON.parse(readFileSync(corpusPath, 'utf8')) as Corpus | WorkflowCorpus;
+    if (fullCorpus.version === 2) validateWorkflowCorpus(fullCorpus);
+    else validateCorpus(fullCorpus);
+    if (fullCorpus.version === 2) writeFileSync(paths.spendPath, '', { flag: 'a' });
+    const subset = resolveSubsetSelection(environment);
+    const requested = fullCorpus.version === 2
+      ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset?.onlyIds ?? null) }
+      : { ...fullCorpus, conversations: selectConversations(fullCorpus, subset?.onlyIds ?? null) };
+    const corpus = { ...requested, conversations: requested.conversations.filter(row => !progress.completedConversationIds.includes(row.id)) } as Corpus | WorkflowCorpus;
+    const now = new Date(progress.startedAt);
     const companies: Record<EvalCompany, CompanySeed> = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
-    const { snapshots, snapshotDigests } = buildSnapshots(corpus, companies), fixtures = buildFixtures(corpus, companies, now);
+    const workflowSeed = fullCorpus.version === 2 ? buildWorkflowSeed(now, fullCorpus.conversations.flatMap(row => row.actors)) : undefined;
+    if (fullCorpus.version === 2) validateWorkflowPreflight(fullCorpus, workflowSeed!, now);
+    const replay = corpus.version === 2 ? buildWorkflowReplay(corpus, workflowSeed!, now)
+      : { ...buildSnapshots(corpus, companies), fixtures: buildFixtures(corpus, companies, now) };
+    const { snapshots, snapshotDigests, fixtures } = replay;
     const gatewayManifestPath = resolve(dirname(progressPath), 'gateway.manifest.json');
     const gatewayManifest = JSON.parse(readFileSync(gatewayManifestPath, 'utf8')) as { transport: 'bedrock' | 'anthropic-api'; modelId?: string };
     assert.ok(['bedrock', 'anthropic-api'].includes(gatewayManifest.transport), 'EVAL_GATEWAY_TRANSPORT_MISSING');
@@ -257,19 +315,19 @@ async function main(): Promise<void> {
     const model = { provider: gatewayManifest.transport === 'bedrock' ? 'bedrock' : 'anthropic-api', modelIds: [], transport: gatewayManifest.transport, runtime: 'strands-local' };
     const sourceCommit = gitHeadSha(REPO_ROOT);
     const manifest: ReliabilityRuntimeManifest = {
-      version: 2, corpus: { version: 2, seed: 'mangmee-ai-expense-advisor-sample-v1', status: 'draft', fixtures }, snapshots, snapshotDigests,
+      version: 2, corpus: { version: 2, seed: corpus.version === 2 ? corpus.seed : 'mangmee-ai-expense-advisor-sample-v1', status: corpus.version === 2 ? corpus.status : 'draft', fixtures }, snapshots, snapshotDigests,
       versions: { sourceCommit, schema: sha256File('apps/api/prisma/schema.prisma'), prompt: reliabilityDigest([
         'apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts', 'apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts',
       ].map(sha256File)), registry: sha256File('packages/contracts/src/ai-tools.ts'), model: reliabilityDigest(model), price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts') },
-      apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl: REDIS_URL,
+      apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl,
       environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
     };
-    const goldPass = await collectGoldResults(REPO_ROOT, requested, companies, databaseUrl.toString(), REDIS_URL, SECRETS_PATH, now,
+    const goldPass = await (dependencies.oracle ?? collectGoldResults)(REPO_ROOT, fullCorpus.version === 2 ? fullCorpus : requested, workflowSeed?.companies ?? companies, databaseUrl.toString(), redisUrl, secretsPath, now,
       () => captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'oracle').then(() => undefined));
     const turnCounts = new Map<string, number>(), attemptByConversation = new Map<string, string>();
     let capReached = false;
     let capCount = await capRejectionCount(pg);
-    const result = corpus.conversations.length ? await runLineReliabilityRuntime(manifest, REPO_ROOT, {
+    const result = corpus.conversations.length ? await (dependencies.runtime ?? runLineReliabilityRuntime)(manifest, REPO_ROOT, {
       onBeforeReset: async (conversation, attemptId) => {
         await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
         if (capReached) throw new Error('EVAL_CAP_REACHED');
@@ -311,18 +369,44 @@ async function main(): Promise<void> {
     writeProgress(progressPath, progress);
     const allEvidence = readJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(paths.turnsPath);
     const completedEvidence = completeAttemptEvidence(allEvidence, progress.completedAttempts);
-    const completedCorpus: Corpus = { ...requested, conversations: requested.conversations.filter(row => progress.completedConversationIds.includes(row.id)) };
-    const completedFlat = flattenTurns(completedCorpus);
+    const completedCorpus = { ...requested, conversations: requested.conversations.filter(row => progress.completedConversationIds.includes(row.id)) } as Corpus | WorkflowCorpus;
+    const completedPositions = completedCorpus.conversations.flatMap(conversation => conversation.turns.map((_, turnIndex) => ({ conversation, turnIndex })));
     const actualModel = { ...model, modelIds: [...new Set(allEvidence.flatMap(row => (row.providerUsage as Array<{ modelId?: string }>).map(call => call.modelId).filter((id): id is string => !!id)))] };
     const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
     if (capReached) {
       writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'CAP_REACHED', progress, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
       console.log(JSON.stringify({ event: 'CAP_REACHED', evidencePath: paths.evidencePath, progressPath })); process.exitCode = 2; return;
     }
-    if (progress.completedConversationIds.length < requested.conversations.length || completedFlat.some(({ conversation, turnIndex }) => !completedEvidence.some(row => row.scenarioId === conversation.id && row.turnIndex === turnIndex))) {
+    const incomplete = requested.version === 2 ? requested.conversations.some(row => !progress.completedConversationIds.includes(row.id))
+      : progress.completedConversationIds.length < requested.conversations.length;
+    if (incomplete || completedPositions.some(({ conversation, turnIndex }) => !completedEvidence.some(row => row.scenarioId === conversation.id && row.turnIndex === turnIndex))) {
       writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'FAILED_RESUMABLE', progress, turnEvidence: allEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
       throw new Error(`EVAL_FAILED_RESUMABLE:${progress.inFlightConversationId ?? 'unknown'}`);
     }
+    if (completedCorpus.version === 2) {
+      const classifierLabels = process.argv.includes('--classifier-labels=messages') ? 'messages' : completedCorpus.classifierLabels;
+      const ids = new Set(completedCorpus.conversations.map(row => row.id));
+      const attempts = workflowAttemptsFromEvidence(completedCorpus, allEvidence.filter(row => ids.has(row.scenarioId)), progress.completedAttempts);
+      const workflowMetrics = scoreWorkflowCorpus({ corpus: completedCorpus, attempts, now, classifierLabels, includeButtonBaseline: true });
+      const failures = completedCorpus.conversations.filter(conversation => {
+        const metrics = scoreWorkflowCorpus({ corpus: { ...completedCorpus, conversations: [conversation] },
+          attempts: attempts.filter(attempt => attempt.conversationId === conversation.id), now, classifierLabels, includeButtonBaseline: true });
+        return metrics.W1.passed < metrics.W1.total || metrics.W2.passed < metrics.W2.total || metrics.W3.passed < metrics.W3.total
+          || metrics.W6.wrongApplied > 0 || metrics.W6.wrongPreview > 0 || metrics.W9.invalidCalls > 0 || metrics.W12.machineTokenTurns > 0
+          || metrics.W14.timeouts > 0 || metrics.W15.rejectedAndCharged > 0 || metrics.answerChecks?.some(check => !check.ok)
+          || metrics.buttonBaseline && metrics.buttonBaseline.passed < metrics.buttonBaseline.total;
+      }).map(conversation => ({ conversationId: conversation.id }));
+      const summary = { unit: 'conversation', total: completedCorpus.conversations.length,
+        passed: completedCorpus.conversations.length - failures.length, failed: failures.length, failures };
+      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest,
+        corpusVersion: 2, classifierLabels, includeButtonBaseline: true, subset: subset ?? undefined, progress, workflowMetrics, summary,
+        turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      writeFileSync(paths.reportPath, renderWorkflowReport({ sourceCommit, now, corpus: completedCorpus, metrics: workflowMetrics, subset: subset ?? undefined }));
+      console.log(JSON.stringify({ event: 'real_run_done', evidencePath: paths.evidencePath, reportPath: paths.reportPath, ...summary }));
+      process.exitCode = summary.failed > 0 ? 1 : 0;
+      return;
+    }
+    const completedFlat = flattenTurns(completedCorpus);
     const scores = scoreAllTurns(completedFlat, completedEvidence, goldPass, now), summary = summarizeScores(scores);
     writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, subset: subset ?? undefined,
       progress, scores, summary, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
@@ -333,7 +417,7 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
+  runReal().catch((error) => {
     console.error(JSON.stringify({ event: 'real_run_failed', message: error instanceof Error ? error.message : String(error) }));
     process.exitCode = 1;
   });
