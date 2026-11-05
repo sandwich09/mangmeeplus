@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer } from './line-ai-classifier.logic';
+import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, isPendingFieldAnswer, lineWorkflowPickerText, isLineWorkflowCountRead } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
   it('trims and collapses whitespace', () => {
@@ -156,4 +156,16 @@ it('A3b reason fields accept command verbs as ordinary words and reject exact co
   for (const text of ['ยกเลิก', 'ไม่ทำแล้ว', 'บันทึกรายจ่าย', 'ทำใบเบิกให้หน่อย', 'ติดต่อเจ้าหน้าที่', 'ใบเบิกคืออะไร', 'เมนูหลัก', 'ช่วยสร้างใบเบิกให้หน่อย'])
     assert.equal(isPendingFieldAnswer(text, 'reason'), false, text);
   assert.equal(isPendingFieldAnswer('88 ถนนสีลม', 'payee'), true);
+});
+
+it('R8 picker text reads requester names up to the next locator and treats Thai questions as questions', () => {
+  for (const [text, name] of [['ของสมชายยอด 1,877 บาท', 'สมชาย'], ['ของสมชายรอบ 12 ยอด 2721', 'สมชาย'], ['ของสมชาย ใจดี สาขา 2', 'สมชาย'], ['ของสมชายนะคะ', 'สมชาย'], ['ของฉันรอบ 1', 'ฉัน']] as const)
+    assert.equal(lineWorkflowPickerText(text, true).requester, name, text);
+  assert.equal(lineWorkflowPickerText('ของสมชาย', false).requester, undefined);
+  for (const text of ['ใบแรกใครเป็นคนเบิกคะ', 'อันนี้จ่ายรึยัง', 'ทำไมยอดไม่ตรง', 'ใบนี้ยังไง?']) assert.equal(lineWorkflowPickerText(text).question, true, text);
+  for (const text of ['อนุมัติใบแรกหน่อยได้ไหม', 'ใบเลขที่ ทดสอบ-0003 ค่ะ', 'อันที่ 2']) assert.equal(lineWorkflowPickerText(text).question, false, text);
+  assert.equal(lineWorkflowPickerText('อันแรกเลยค่ะ').ordinal, 1);
+  assert.equal(isLineWorkflowCountRead('ตอนนี้มีใบเบิกรออนุมัติกี่ใบ รวมเท่าไหร่'), true);
+  assert.equal(isLineWorkflowCountRead('อนุมัติใบเบิก 1,877 บาทให้หน่อย'), false);
+  assert.equal(isLineWorkflowCountRead('มีใบเบิกรออนุมัติไหม'), false);
 });

@@ -1321,6 +1321,10 @@ export class PrismaExpenseRepository {
     if (sourceDraftsOnly) {
       where.AND = [...(where.AND ?? []), { status: { in: ['DRAFT', 'NEEDS_REVIEW'] }, captureSource: { in: ['WEB_UPLOAD', 'LINE_UPLOAD'] } }];
     }
+    if (rest.search?.trim()) where.AND = [...(where.AND ?? []), { OR: [
+      { expenseNumber: { contains: rest.search.trim(), mode: 'insensitive' } },
+      { vendorDocumentNumber: { contains: rest.search.trim(), mode: 'insensitive' } },
+    ] }];
     const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
     const orderBy = [uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const }, { id: 'desc' as const }];
     const [data, total] = await Promise.all([

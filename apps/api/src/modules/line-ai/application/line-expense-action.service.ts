@@ -4,7 +4,7 @@ import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowR
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ClaimWorkflowId, type ExpenseWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic/line-reimbursement-approval-control.logic';
 import type { LineAiInputEvidenceV2, LineWorkflowControl } from '@watchdog-bms/contracts';
-import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
+import { isPendingFieldAnswer, lineWorkflowPickerText } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
 import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
@@ -467,14 +467,16 @@ export class LineExpenseActionService {
   }
 
   async resolveNamedTargets(ctx: RequestContext, chat: string, action: ExpenseAction, workflow: LineWorkflowId, evidence: LineAiInputEvidenceV2, input: Record<string, unknown>, pickerAnswer = false): Promise<
-    { targets?: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>; requestedVoucherCount?: number; exhaustive?: boolean } | { reply: string; webPath: string }> {
+    { targets?: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>; requestedVoucherCount?: number; exhaustive?: boolean; hasIdentifier?: boolean; searchedExact?: boolean } | { reply: string; webPath: string }> {
     const webPath = `/companies/${ctx.companyId}/${this.isClaim(action) ? 'reimbursements' : 'expenses'}`;
     const unavailable = { reply: LINE_CLAIM_PICKER_COPY.unavailable, webPath };
     const candidates = await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
     if (candidates?.completeness !== 'complete') return unavailable;
     const text = mapThaiDigits(evidence.parts.map(part => part.rawText).join('\n'));
+    const parsed = lineWorkflowPickerText(text, this.isClaim(action));
+    if (pickerAnswer && parsed.question) return { targets: [], hasIdentifier: false };
     let documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
-    const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
+    const rounds = parsed.rounds;
     const isTargetAmount = (amount: typeof candidates.amounts[number]) => {
       if (amount.currencyToken) return /^(?:บาท|฿|THB|baht)$/iu.test(amount.currencyToken);
       const raw = mapThaiDigits(evidence.parts.find(part => part.partId === amount.source.partId)!.rawText);
@@ -482,7 +484,7 @@ export class LineExpenseActionService {
         const start = raw.indexOf(document);
         return start >= 0 && amount.source.startUtf16 >= start && amount.source.endUtf16 <= start + document.length;
       })) return false;
-      return ![...raw.matchAll(/(?:รอบ|สาขา|ใบที่|รายการที่)\s*\d+|(?:บิล|ใบ|เอกสาร)?เลขที่\s*[^\s,]+|[A-Za-zก-๙]+[-/]\d[\d/-]*|\d+\s*(?:ใบ|บิล)/gu)]
+      return ![...raw.matchAll(/(?:รอบ|สาขา|ใบที่|รายการที่|อันที่)\s*\d+|(?:บิล|ใบ|เอกสาร)?เลขที่\s*[^\s,]+|[A-Za-zก-๙]+[-/]\d[\d/-]*|\d+\s*(?:ใบ|บิล)/gu)]
         .some(match => amount.source.startUtf16 >= match.index && amount.source.endUtf16 <= match.index + match[0].length);
     };
     let amounts = candidates.amounts.filter(isTargetAmount);
@@ -497,7 +499,12 @@ export class LineExpenseActionService {
     }
     if (!this.workflowTargets) return unavailable;
     if (!pickerAnswer) await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
-    const result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
+    let result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
+    let searchedDocument: string | undefined;
+    if (pickerAnswer && !result.exhaustive && parsed.documents.length === 1) {
+      searchedDocument = parsed.documents[0]!;
+      result = await this.workflowTargets.pick(ctx, chat, workflow, { search: searchedDocument }, 1);
+    }
     if ((rounds.length || pickerAnswer) && !this.isClaim(action) && action !== 'WHT_CERTIFICATE_ISSUE') {
       for (const target of result.targets as LineWorkflowRecordTarget[]) {
         const record = await this.repo.findByIdWithRelations(ctx.companyId, target.id, undefined, ctx.scopes);
@@ -519,7 +526,7 @@ export class LineExpenseActionService {
     documents = [...new Set([...documents.filter(document => !literalNumbers.some(number => number.includes(document) || document.endsWith(number))), ...literalNumbers])].sort((a, b) => text.indexOf(a) - text.indexOf(b));
     amounts = candidates.amounts.filter(isTargetAmount);
     named = documents.length > 0 || rounds.length > 0 || amounts.length === 1;
-    if (pickerAnswer && amounts.length > 1) return { targets: [], exhaustive: result.exhaustive };
+    if (pickerAnswer && amounts.length > 1) return { targets: [], exhaustive: result.exhaustive, hasIdentifier: true };
     const normalize = (value: string) => mapThaiDigits(value).toLocaleLowerCase().replace(/\s+/gu, '');
     const branches = pickerAnswer ? await this.prisma.client.branch.findMany({ where: { companyId: ctx.companyId,
       id: { in: result.targets.flatMap(target => target.branchId ? [target.branchId] : []) } }, select: { id: true, name: true } }) : [];
@@ -536,20 +543,28 @@ export class LineExpenseActionService {
         .replace(/(?:บิล|ใบ|เอกสาร)?เลขที่|เลขเอกสาร|จำนวนเงิน|ยอด|บาท|ร่าง|ใบนี้|รายการนี้|ผู้ขาย|คำอธิบาย|ของฉัน|[?？·,]/gu, '').trim();
     }
     const searchWords = pickerAnswer ? remaining.split(/\s+/u).map(normalize).filter(word => word.length >= 3) : [];
+    const strongIdentifier = parsed.explicit || amounts.length === 1;
+    const targetWords = (target: typeof result.targets[number]) => normalize(['title' in target ? target.title : (target as LineWorkflowRecordTarget).label, (target as LineWorkflowRecordTarget).roundText].filter(Boolean).join(' '));
+    const hasIdentifier = strongIdentifier || result.targets.some(target => searchWords.length > 0 && searchWords.every(word => targetWords(target).includes(word)));
     const matches = (target: typeof result.targets[number]) => {
+      if (pickerAnswer && parsed.requester && (parsed.requester === 'ฉัน'
+        ? (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId
+        : !normalize((target as LineWorkflowTargets['targets'][number]).requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester)))) return false;
       if (pickerAnswer && ((/สาขา\s*/u.test(text) || namedBranches.length) && !namedBranches.some(branch => branch.id === target.branchId)
-        || searchWords.some(word => !normalize(['title' in target ? target.title : (target as LineWorkflowRecordTarget).label, (target as LineWorkflowRecordTarget).roundText].filter(Boolean).join(' ')).includes(word)))) return false;
+        || !strongIdentifier && searchWords.some(word => !targetWords(target).includes(word)))) return false;
       if (this.isClaim(action) && text.includes('ของฉัน') && (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId) return false;
       if (amounts.length === 1 && (target.currency !== 'THB' || !new Decimal(target.amount).eq(amounts[0]!.value))) return false;
       const label = 'title' in target ? target.title ?? '' : (target as LineWorkflowRecordTarget).roundText ?? '';
       return rounds.every(round => [...mapThaiDigits(label).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round));
     };
     const eligible = result.targets.filter(matches);
-    const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => mapThaiDigits(number).includes(document))));
+    const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => searchedDocument
+      ? normalize(number) === normalize(searchedDocument) : mapThaiDigits(number).includes(document))));
     const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;
     const unique = result.exhaustive && (documents.length ? byDocument.every(rows => rows.length === 1) : targets.length === 1)
       && (action === 'VOUCHER_CREATE' || targets.length === 1);
-    if (pickerAnswer) return { targets: byDocument.some(rows => !rows.length) ? [] : targets, exhaustive: result.exhaustive };
+    if (pickerAnswer) return { targets: byDocument.some(rows => !rows.length) ? [] : targets, exhaustive: result.exhaustive, hasIdentifier,
+      searchedExact: !!searchedDocument && targets.length === 1 && byDocument.every(rows => rows.length === 1) };
     if (named && unique) return { targets };
     const previous = await this.store.load(ctx.companyId, this.key(chat));
     if (previous) await this.store.discardIfCurrent(ctx.companyId, this.key(chat), previous.previewId);

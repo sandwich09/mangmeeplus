@@ -1356,3 +1356,10 @@ describe('B3 one-call workflow classifier', () => {
     }
   });
 });
+
+it('R8 workflow classifier treats เปิดใบเบิก as create while เปิดดู stays a read or open', () => {
+  const claim = WORKFLOW_CLASSIFIER_SYSTEM_PROMPT.split('reimbursement_claim:')[1]!.split('reimbursement_submit:')[0]!;
+  assert.match(claim, /เปิดใบเบิก/); assert.match(claim, /ขอเปิดใบเบิก/); assert.match(claim, /เปิดบิลเบิก/);
+  assert.match(claim, /เปิดใบเบิกค่าแท็กซี่ 250 บาทให้ที/);
+  assert.match(claim, /เปิดดูใบเบิก.*open.*read/);
+});

@@ -281,6 +281,10 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 - held-out → MA3 and MA6, including R26/R27; ไม่ผ่าน = ไม่ปล่อย Tier 1
 - เวลาตาม spec AC14 (Tier 0/1 ≤ 15 วิ; fallback ไป Tier 2 ตาม A7 ภายใน deadline เดิมของ turn)
 - whole-chain + W00 + live replay + UAT + Owner + Production; หลัง deploy เรียก classifier 1 ครั้งเพื่อ compile grammar; เฝ้า W14
+- **Status 2026-11-06.** T 0.70 / M 0.10 are locked in code (`4c24027de`). The first held-out run on main `921face4f` **does not pass**: Tier 1 is not released. Results are in `docs/research/line-ai-workflow-baseline-2026-10.md`, "After Phase B".
+  - **What held:** wrong applied changes fell 20 → 0.
+  - **What failed:** almost no workflow task finishes by chat. An open picker traps later messages, and count questions open the approval picker. Both are being fixed in round 8.
+  - **Next:** a re-run, then a fresh blind held-out set for MA3/MA6.
 
 ### B6 (เมื่อหลักฐานรองรับเท่านั้น) ลดพรอมต์ planner
 - telemetry 2 สัปดาห์แสดงว่างานซ้ำไม่ไป Tier 2 → ตัดร้อยแก้วงานซ้ำจาก `CONTROL_PROMPT` (stv2:89); rebuild AgentCore; วัด W11; ถ้าแตะพรอมต์ router ต้อง recalibrate (`scripts/recalibrate-line-intake.cjs`)

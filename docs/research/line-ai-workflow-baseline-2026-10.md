@@ -52,8 +52,54 @@ Plan: `docs/plans/line-ai-workflow-first-plan.md` M4. Measurement rules: `docs/s
 4. **A combined claim answer** ("ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผล…") was not captured, so the claim never reached a confirm card. Fixed in `wfp-r3`.
 5. **Q5 follow-ups** ("ไม่เข้าใจ", "ยกตัวอย่าง") lose the card. P7.1/P7.2 landed after this baseline, and P7.4 measures them in the post-Phase-B run.
 
-## Next
+## Next (as planned on 2026-11-06 morning)
 - Land Phase B B3/B4 with `wfp-r3`–`r5`.
 - B5: tune T/M on the tuning corpus.
 - Then one held-out run for MA3/MA6, and the advisor held-out for W11.
 - Compare against this baseline: W2, W3, W6 = 0, W7 and W13.
+
+## After Phase B, measured 2026-11-06
+
+### What was run
+- **Tuning.** Main `61fbf2245`: Phase B B1–B4 with `wfp-r3`–`r6`, before `wfp-r7` and B5. Spend 158.78 THB.
+- **Held-out and advisor.** Main `921face4f`: B1–B5, with T 0.70 / M 0.10 and `wfp-r3`–`r7`. One Bangkok day, chunks of 25.
+  - Held-out: 157.33 THB.
+  - Advisor held-out: 51.06 THB.
+- **Programme spend.** About 1,189 THB for all real-model eval runs so far, inside the 2,300 THB cap.
+
+### Results
+
+| Metric | Tuning before → after | Held-out before → after | Target |
+|---|---|---|---|
+| W1 classifier label | 0/58 → 55/58 (94.8%) | 0/92 → 74/92 (80.4%) | ≥ 95% |
+| W2 workflow started right | 12/79 → 43/79 | 40/240 → 85/240 (35.4%) | ≥ 95% |
+| W3 completable tasks finished | 39/72 → 40/72 | 59/160 → 61/160 (38.1%) | ≥ 95% |
+| W6 wrong applied / wrong preview | 8 / 15 → **0** / 16 | 20 / 96 → **0** / 93 | 0 |
+| W7 typed starts with ≤ 1 model call | 9/107 → 38/107 | 68/157 → 90/157 | ≥ 95% |
+| W9 / W14 classifier invalid / timeouts | 0 / 0 of 191 calls | 0 / 1 of 182 calls | 0 |
+| W8 p50 / p95, ms | p95 17,855 → 13,360 (p50 5,663) | p95 16,696 → 13,020 (p50 3,023) | AC14 |
+| W12 machine-token turns | 0 | 0/578 | 0 |
+| W13 provider cost | 260.51 → 149.08 THB (−43%) | 199.34 → 88.89 THB (−55%) | ≥ 70% lower, typed workflows |
+
+**Advisor held-out (W11):** 52/71 (73.2%), against 64/71 before. The target is ≥ 90%, so it **fails**.
+
+### Findings
+1. **The safety goal held.** No conversation in either corpus applied a change to a record other than the gold one.
+   - Before: 8 in tuning and 20 in held-out.
+   - The fixes were the named-record guard (`wfp-r3`, `wfp-r5`) and the open-picker rule (`wfp-r4`).
+2. **Workflow tasks still almost never finish by chat.** In both corpora the W3 count is made of how-to, read and small-talk tasks. The classifier starts the workflow (W2 doubled), then the typed exchange stalls. Classes, with fixes in `wfp-r8`:
+   - **The trap.** An open picker re-shows itself for every later message, so a question or a change of topic cannot leave it. Only "?" was let through, and Thai questions rarely use it.
+   - **Filler words.** A typed answer naming the right document number still fails when it carries polite or pointing words ("…ที่ให้เลือกเมื่อกี้นะคะ"). Every leftover word had to match the row's vendor.
+   - **Names and ordinals.** Requester names ("ของสมชาย") and spoken ordinals ("อันแรก") are not read.
+   - **Long lists.** On a list too long to page in chat, a typed document number never continues.
+3. **Count questions open the approval picker.** "How many claims are waiting, and for how much" is labelled `approvals` and shows the picker, with no count or total.
+   - For someone who cannot approve, the picker says no claim awaits them, which is false when claims await others.
+   - This, with the trap, causes 5 of the advisor regressions. Fix in `wfp-r8`: count and total questions skip Tier 1.
+4. **Bedrock throttling.** Five advisor turns were `PROVIDER_THROTTLED` on the intake route, after the existing two retries. The user saw the "ระบบตอบช้า" reply.
+   - **Timing.** Throttled calls appeared only in this 04:22–05:39 window: 8 in the held-out run and 5 failed advisor turns. Every earlier run at the same sequential pace had none: tuning before and after, both baseline held-out parts, and the baseline advisor run. That points to a provider capacity window, not this account's quota.
+   - **Shared quota.** The eval profile is an IAM user in the Production account, so real-model evals share Production's Bedrock quota. Before the Phase B release, read the Sonnet 4.6 quotas (this needs the owner's MFA session), because Phase B adds one classifier call per typed message.
+5. **W1 on held-out is 80.4%.** Half of the misses read the create phrasing "เปิดใบเบิก…" as `open`. One classifier prompt example in `wfp-r8`.
+6. **Stale advisor gold.** It now covers four out-of-package rows, unchanged from the baseline note.
+
+### Held-out caveat
+The `wfp-r8` classes were found or confirmed on this held-out run, and the tuning corpus shows the same classes. The next run on this held-out set therefore measures progress but is not blind for those classes. MA3/MA6 acceptance needs a fresh held-out set written by a separate lane.

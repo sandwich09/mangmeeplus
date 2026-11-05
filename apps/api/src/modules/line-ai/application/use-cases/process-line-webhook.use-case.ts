@@ -173,7 +173,7 @@ import {
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
 import { isStaleOcrApply, RECEIPT_REVIEW_REASONS, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion, type ReceiptOcrApplyOutcome } from '../../../expenses/application/services/receipt-ocr-apply.service';
-import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
+import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand, lineWorkflowPickerText, isLineWorkflowCountRead } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { absoluteWebLink } from '../../../../common/http/web-link';
@@ -3947,7 +3947,7 @@ export class ProcessLineWebhookUseCase {
   private async tryWorkflowClassify(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null,
     open: LineOpenWorkContext, drafts = false): Promise<boolean> {
     const bound = this.boundConversations.get(event);
-    if (!bound || ctx.freeExpenseDrafts || event.workflowTierTwoOnly || event.workflowControl || event.workflowStart
+    if (!bound || ctx.freeExpenseDrafts || isLineWorkflowCountRead(event.messageText) || event.workflowTierTwoOnly || event.workflowControl || event.workflowStart
       || event.fixedReadControl || event.reimbursementChoiceControl || event.reimbursementDraftControl
       || event.channelKind && event.channelKind !== 'USER' || event.pushTargetId && event.pushTargetId !== event.lineUserId
       || 'messageType' in event && event.messageType !== 'text' || event.messageText.length > 1000
@@ -4076,13 +4076,16 @@ export class ProcessLineWebhookUseCase {
 
   private async handlePendingWorkflowPicker(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<boolean> {
     const text = mapThaiDigits(event.messageText.trim());
+    if (lineWorkflowPickerText(text).question) return false;
     if (ctx.freeExpenseDrafts || event.workflowControl || event.workflowStart || event.expenseActionControl
       || event.channelKind === 'GROUP' || event.channelKind === 'ROOM' || event.pushTargetId && event.pushTargetId !== event.lineUserId
       || isExactStandaloneGreeting(text) || LINE_CHAT_ACTIONS.some(action => action.command === text) || staffMenuCommand(text) || parseLineCompanyCommand(text)
       || /^(?:(?:ช่วย|ขอ)(?:สร้าง|ทำ|เตรียม|ส่ง|ลบ|ยกเลิก|เบิก|บันทึก)|(?:สร้าง|เตรียม|ทำ)(?:ใบ|รายจ่าย|ร่าง)|ส่งใบ|ส่งตรวจ|ยกเลิกใบ|ไม่อนุมัติใบ|อนุมัติใบ|บันทึก(?:รายจ่าย|จ่าย)|เบิก(?:ค่า|เงิน)|ลบร่าง|ดู(?:ราย|ใบ|เมนู)|เปิด(?:ราย|ใบ|เมนู)|ติดต่อเจ้าหน้าที่)/u.test(text)) return false;
     const picker = await this.latestWorkflowPicker(event);
     if (!picker) return false;
-    const ordinal = /(?:ใบ|รายการ|ร่าง)ที่\s*(\d+)/u.exec(text);
+    const act = picker.rows[0]!.control.act;
+    const parsed = lineWorkflowPickerText(text, act.startsWith('REIMBURSEMENT_'));
+    const ordinal = parsed.ordinal;
     const branchText = /(?:ที่)?สาขา\s*([^?？]+)/u.exec(text)?.[1]?.trim();
     const evidence = await this.textEvidenceV2(event);
     const candidates = evidence ? await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok')) : undefined;
@@ -4092,10 +4095,9 @@ export class ProcessLineWebhookUseCase {
       const source = amount.source, raw = evidence?.parts.find(part => part.partId === source?.partId)?.rawText;
       if (!source || raw === undefined) return false;
       // Ordinals, branch numbers and document identifiers are locators, not payment amounts.
-      const locators = mapThaiDigits(raw).matchAll(/(?:ใบ|รายการ|ร่าง)ที่\s*\d+|สาขา\s*\d+|(?:ใบเลขที่|เลขที่|เลขเอกสาร)\s*\S+|[A-Za-zก-๙]+-\d[\d-]*/gu);
+      const locators = mapThaiDigits(raw).matchAll(/(?:อัน|ใบ|รายการ|ร่าง)ที่\s*\d+|สาขา\s*\d+|(?:ใบเลขที่|เลขที่|เลขเอกสาร)\s*\S+|[A-Za-zก-๙]+-\d[\d-]*/gu);
       return ![...locators].some(match => source.startUtf16 >= match.index && source.endUtf16 <= match.index + match[0].length);
     }) ?? [];
-    const act = picker.rows[0]!.control.act;
     const workflow = Object.entries({ ...EXPENSE_WORKFLOW_ACTIONS, ...CLAIM_WORKFLOW_ACTIONS }).find(([, action]) => action === act)?.[0] as LineWorkflowId | undefined;
     let current: Array<Record<string, any>> = [];
     if (workflow && (act.startsWith('REIMBURSEMENT_') || act === 'WHT_CERTIFICATE_ISSUE')) {
@@ -4124,25 +4126,29 @@ export class ProcessLineWebhookUseCase {
     for (const amount of amounts) search = search.replace(mapThaiDigits(amount.span), '').replace(amount.currencyToken ?? /$^/u, '');
     for (const row of records) for (const number of documents(row.record)) search = search.replace(mapThaiDigits(number), '');
     for (const branch of namedBranches) search = search.replace(mapThaiDigits(branch.name), '');
-    search = search.replace(/(?:ใบ|รายการ|ร่าง)ที่\s*\d+|(?:ที่)?สาขา\s*[^?？]+/gu, '')
+    search = search.replace(/(?:อัน|ใบ|รายการ|ร่าง)ที่\s*\d+|(?:ที่)?สาขา\s*[^?？]+/gu, '')
       .replace(/ใบเลขที่|เลขเอกสาร|เลขที่|จำนวนเงิน|ยอด|บาท|ร่าง|ใบนี้|รายการนี้|ผู้ขาย|คำอธิบาย|[?？·,]/gu, '').replace(/(?:^|\s)ที่(?=\s|$)/gu, ' ').trim();
     const searchWords = search.split(/\s+/u).map(normalized).filter(word => word.length >= 3);
     const hasKnownDocument = records.some(row => documents(row.record).some(number => normalized(text).includes(normalized(number))));
     const hasKnownWords = records.some(row => words(row).some(word => normalized(text).includes(normalized(word))));
-    const hasTarget = !!ordinal || !!branchText || amounts.length > 0 || documentCue || hasKnownDocument || hasKnownWords || namedBranches.length > 0;
+    let hasTarget = parsed.explicit || !!branchText || amounts.length > 0 || documentCue || hasKnownDocument || hasKnownWords || namedBranches.length > 0;
     const matches = records.filter((row, index) => {
       const r = row.record;
       const numberMatch = documents(r).some(value => normalized(text).includes(normalized(value)));
       const wordMatch = words(row).some(value => normalized(text).includes(normalized(value)));
-      if (ordinal && Number(ordinal[1]) !== index + 1 || documentCue && !numberMatch || hasKnownDocument && !numberMatch) return false;
+      if (parsed.rounds.some(round => ![...mapThaiDigits([r?.title, r?.note, r?.internalMemo, ...(r?.lines ?? []).map((line: any) => line.description)].filter(Boolean).join(' ')).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round))) return false;
+      if (parsed.documents.some(document => !documents(r).some(number => normalized(number).includes(normalized(document))))) return false;
+      if (ordinal !== undefined && ordinal !== index + 1 || documentCue && !numberMatch || hasKnownDocument && !numberMatch) return false;
       if ((branchText || namedBranches.length) && !namedBranches.some(branch => branch.id === r?.branchId)) return false;
       if (amounts.length > 1) return false;
       if (amounts.length === 1) {
         const amount = act === 'RECORD_PAYMENT' ? r?.outstandingAmount : r?.amount ?? r?.grandTotalAmount ?? r?.totalAmount;
         if (amount == null || !new Prisma.Decimal(amount).eq(amounts[0]!.value) || r?.currency && r.currency !== 'THB') return false;
       }
-      if (hasKnownWords && !wordMatch || searchWords.some(searchWord => !words(row).some(word => normalized(word).includes(searchWord)))) return false;
-      return !!ordinal || numberMatch || wordMatch || amounts.length === 1 || namedBranches.length > 0;
+      if (parsed.requester && (parsed.requester === 'ฉัน' ? r?.requesterUserId !== ctx.userId
+        : !normalized(r?.requesterDisplayNameSnapshot ?? '').includes(normalized(parsed.requester)))) return false;
+      if (!parsed.explicit && amounts.length !== 1 && (hasKnownWords && !wordMatch || searchWords.some(searchWord => !words(row).some(word => normalized(word).includes(searchWord))))) return false;
+      return parsed.explicit || numberMatch || wordMatch || amounts.length === 1 || namedBranches.length > 0;
     });
     if (matches.length === 1 && candidates?.completeness === 'complete') {
       event.workflowControl = matches[0]!.control;
@@ -4151,9 +4157,10 @@ export class ProcessLineWebhookUseCase {
       return true;
     }
     let message = picker.message;
-    if (!matches.length && !ordinal && workflow && evidence && candidates?.completeness === 'complete') {
+    if (matches.length !== 1 && ordinal === undefined && workflow && evidence && candidates?.completeness === 'complete') {
       const selection = await this.expenseActions.resolveNamedTargets?.(ctx, chatKeyHashOf(event), act, workflow, evidence, {}, true)
         .catch(error => { if (!(error instanceof ForbiddenException)) throw error; return undefined; });
+      if (selection && 'targets' in selection && selection.hasIdentifier) hasTarget = true;
       if (selection && 'targets' in selection && selection.targets?.length) {
         const first = picker.rows[0]!.control;
         const paymentIntent = { ...(first.pm ? { pm: first.pm } : {}), ...(first.pd ? { pd: first.pd } : {}), ...(first.pa ? { pa: first.pa } : {}) };
@@ -4161,7 +4168,7 @@ export class ProcessLineWebhookUseCase {
         message = Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, workflow)
           ? buildExpenseWorkflowPicker(result as LineWorkflowRecordTargets, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent)
           : buildClaimWorkflowPicker(result as LineWorkflowTargets, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent);
-        const row = result.exhaustive && result.targets.length === 1 ? this.workflowPickerRows([message])?.rows[0] : undefined;
+        const row = (result.exhaustive || selection.searchedExact) && result.targets.length === 1 ? this.workflowPickerRows([message])?.rows[0] : undefined;
         if (row) {
           event.workflowControl = row.control;
           try { await this.handleWorkflowControl(event, ctx, features); await this.closeWorkflowPicker(picker); }
@@ -4170,7 +4177,7 @@ export class ProcessLineWebhookUseCase {
         }
       }
     }
-    if (/[?？]/u.test(text) && !hasTarget && message === picker.message) return false;
+    if (!hasTarget) return false;
     this.repeatedWorkflowPickerExpiry.set(event, picker.expiry);
     await this.deliverRequiredMessages(event, [{ type: 'text', text: 'เลือกรายการจากการ์ดนี้' }, message]);
     await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);

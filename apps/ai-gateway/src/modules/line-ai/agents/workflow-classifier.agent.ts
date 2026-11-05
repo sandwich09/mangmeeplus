@@ -25,7 +25,7 @@ export const WORKFLOW_CLASSIFIER_SCHEMA = {
 export const WORKFLOW_CLASSIFIER_SYSTEM_PROMPT = `You classify one LINE message for MangmeePlus. Return exactly the supplied JSON object, with every required field present. Choose labels from the closed enum. Your only task is to label the message and copy explicit text spans. You do not answer questions, fetch records, choose a package, check permissions, calculate tax, or execute an action. A workflow label proposes the start of a permission-checked preview. A person must still review and confirm that preview.
 
 Workflow definitions and short examples
-reimbursement_claim: Start a new claim for money the person advanced for the shop. Example "สร้างใบเบิกค่าแท็กซี่ให้หน่อย". A new claim can be incomplete. Distinguish creating a claim from asking what a claim means or editing an existing claim.
+reimbursement_claim: Create claims for shop advances, even incomplete; not definitions/edits. "สร้างใบเบิกค่าแท็กซี่ให้หน่อย". "เปิดใบเบิก", "ขอเปิดใบเบิก" or "เปิดบิลเบิก" + amount, purpose or "ให้ที" creates: "เปิดใบเบิกค่าแท็กซี่ 250 บาทให้ที"; "เปิดดูใบเบิก…" stays open/read.
 reimbursement_submit: Send an existing reimbursement claim for approval. Example "ส่งใบเบิกของฉันให้อนุมัติหน่อย". The claim must already exist. Sending is different from an approver deciding to approve it.
 reimbursement_cancel: Cancel an existing reimbursement claim. Example "ยกเลิกใบเบิกนี้". Do not infer cancellation merely because a question asks whether cancellation is possible.
 approvals: Show claims awaiting the person's approval, or approve one existing claim. Example "มีใบเบิกรออนุมัติไหม" or "อนุมัติใบเบิกนี้". Do not use this for changing the approval policy or assigning approvers.

@@ -117,7 +117,7 @@ export class LineWorkflowTargetService {
       : action === 'CONFIRM' ? 'READY_FOR_CONFIRMATION' : undefined;
     const paymentSets: Array<ExpensePaymentStatus | undefined> = action === 'RECORD_PAYMENT' ? ['UNPAID', 'PARTIALLY_PAID'] : [undefined];
     const result = await this.readPages(paymentSets, async (paymentStatus, page) => {
-      const list = await this.expenses.execute(ctx, { page, pageSize: 100, ...(status ? { status } : {}),
+      const list = await this.expenses.execute(ctx, { page, pageSize: 100, ...(slots.search ? { search: slots.search } : {}), ...(status ? { status } : {}),
         ...(paymentStatus ? { paymentStatus } : {}), ...(vendorCounterpartyId ? { vendorCounterpartyId } : {}),
         ...(creatorOnly ? { createdByUserId: ctx.userId } : {}) },
         action === 'MARK_READY' || action === 'DELETE_DRAFT' ? { lineAction: action } : {});

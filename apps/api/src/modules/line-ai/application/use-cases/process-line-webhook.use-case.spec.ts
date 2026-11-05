@@ -17374,9 +17374,10 @@ it('M4 round 4 listed branch name vendor words and bare document number select o
     assert.equal(await h.answer(text), true); assert.deepEqual(h.selected, ['listed-1'], text);
   }
 });
-it('M4 round 4 conflicting vendor text never overrides an amount match', async () => {
+it('M4 round 4 an explicit amount ignores leftover vendor words while conflicting identifiers stay pending', async () => {
   const h = await m4PickerHarness();
-  assert.equal(await h.answer('ค่าบริการ 711 บาท'), true); assert.deepEqual(h.selected, []);
+  assert.equal(await h.answer('ค่าบริการ 711 บาท'), true); assert.deepEqual(h.selected, ['listed-2']);
+  h.selected.length = 0; h.row.authorizationJson.workflowPickerClosed = false;
   assert.equal(await h.answer('ใบเลขที่ ทดสอบ-0003 ยอด 711'), true); assert.deepEqual(h.selected, []);
   assert.deepEqual(h.sentMessages.at(-1), h.card); assert.equal(h.created(), 0);
 });
@@ -17874,7 +17875,7 @@ it('M4 round 7 several permitted off-page matches deliver only their filtered pi
 });
 
 it('M4 round 7 off-page amount round and vendor answers reuse the permitted-list resolver', async t => {
-  for (const text of ['504 บาท', 'รอบ 5', 'ร้านนอกหน้า', 'ร้านนอกหน้า?', 'บิลเลขที่ ทดสอบ-0003', 'สาขา 1 ร้านนอกหน้า', 'ทดสอบ-0003 ร้านนอกหน้า 504 บาท รอบ 5']) {
+  for (const text of ['504 บาท', 'รอบ 5', 'ร้านนอกหน้า', 'บิลเลขที่ ทดสอบ-0003', 'ทดสอบ-0003 ร้านนอกหน้า 504 บาท รอบ 5']) {
     const h = await r7OffPagePicker(t);
     h.source.prisma.client.branch.findMany = h.prisma.client.branch.findMany;
     await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
@@ -17898,19 +17899,21 @@ it('M4 round 7 off-page branch alone selects only a permitted branch target', as
   assert.deepEqual(h.source.previewed, ['workflow-expense-c-2']);
 });
 
-it('M4 round 7 incomplete searches and conflicting identifiers never auto-select an off-page bill', async t => {
-  for (const text of ['ใบเลขที่ ทดสอบ-0003 ยอด 400 บาท', 'ใบเลขที่ ทดสอบ-0003 504 บาท 400 บาท', 'ใบเลขที่ ทดสอบ-0003 สาขา 2', 'ใบเลขที่ ทดสอบ-0003 ร้านอื่น', 'ใบเลขที่ ทดสอบ-0003 รอบ 1', 'ใบเลขที่ ทดสอบ-0003 และเลขที่ ทดสอบ-9999', 'ใบเลขที่ ทดสอบ-0003']) {
+it('M4 round 7 conflicting identifiers stay pending while searched exact numbers ignore leftover words', async t => {
+  for (const text of ['ใบเลขที่ ทดสอบ-0003 ยอด 400 บาท', 'ใบเลขที่ ทดสอบ-0003 504 บาท 400 บาท', 'ใบเลขที่ ทดสอบ-0003 สาขา 2', 'ใบเลขที่ ทดสอบ-0003 รอบ 1', 'ใบเลขที่ ทดสอบ-0003 และเลขที่ ทดสอบ-9999']) {
     const h = await r7OffPagePicker(t);
-    if (text === 'ใบเลขที่ ทดสอบ-0003') {
-      const pick = h.source.targets.pick.bind(h.source.targets);
-      h.source.targets.pick = async (...args: any[]) => ({ ...await pick(...args), exhaustive: false });
-    }
     await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
     await h.execute(text);
     assert.deepEqual(h.source.previewed, [], text);
     assert.equal(h.creates(), 0);
     assert.match(JSON.stringify(h.delivered.at(-1)), /เลือก|ยังค้น|ค้นในเว็บ/);
   }
+  const h = await r7OffPagePicker(t);
+  const pick = h.source.targets.pick.bind(h.source.targets);
+  h.source.targets.pick = async (...args: any[]) => ({ ...await pick(...args), exhaustive: false });
+  await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+  await h.execute('ใบเลขที่ ทดสอบ-0003 ร้านอื่น ที่ให้เลือกเมื่อกี้นะคะ');
+  assert.deepEqual(h.source.previewed, ['workflow-expense-c-2'], 'the named number decides despite leftover words');
 });
 
 it('M4 round 7 card rows remain first and free shops never read the fallback list', async () => {
@@ -17947,4 +17950,177 @@ it('M4 round 7 certificate picker branch matching reads only already-permitted v
   const selected = await h.actions.resolveNamedTargets(h.ctx, 'm5-chat', 'WHT_CERTIFICATE_ISSUE', 'wht_certificate', evidence, {}, true);
   assert.deepEqual(selected.targets.map((row: any) => row.id), ['permitted-voucher']);
   assert.deepEqual(reads, ['permitted-voucher']); assert.equal(h.drafts.length, 0);
+});
+
+async function r8ClaimPicker(t: TestContext, workflow = 'approvals', duplicate = false) {
+  const source = await m4ClaimAmountHarness(duplicate);
+  Object.assign(source.ctx, { userId: 'user-1', membershipId: 'mem-1' });
+  source.ctx.permissions.push('reimbursement.cancel_own');
+  source.claims.forEach((claim, i) => Object.assign(claim, { id: i === 1 ? 'c-7' : `c-${i}`, requesterDisplayNameSnapshot: 'สมชาย',
+    ...(workflow === 'reimbursement_cancel' ? { status: 'DRAFT', requesterUserId: 'user-1', amount: i === 1 ? '400' : '900' } : {}) }));
+  const h = await fx21bBoundWebhook(t, { source: 'r8-picker', messageText: '', route: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 } }, source.ctx.permissions);
+  h.flow.config.aiGatewayInternalSecret = 'amount-secret';
+  h.flow.permissionResolver.resolveAccess = async () => ({ ...source.ctx });
+  h.flow.expenseActions = source.actions; h.flow.workflowTargets = source.actions.workflowTargets;
+  source.actions.prisma.client.branch = { findMany: async () => [{ id: 'branch-1', name: 'สาขา 1' }] };
+  const { lineConversationId } = await import('../line-conversation-context.service');
+  source.actions.prisma.client.aiConversation.findFirst = async () => ({ id: lineConversationId({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1',
+    channel: 'line', channelKind: 'USER', messagingChannelId: BASE_EVENT.messagingChannelId, chatKeyHash: chatKeyHashOf(BASE_EVENT) }), lifecycleEpoch: 1 });
+  const outcomes = new Map<string, any>(), save = h.flow.deliveryPlans.savePlan;
+  h.flow.deliveryPlans.savePlan = async (...args: any[]) => {
+    const saved = await save(...args);
+    outcomes.set(args[4], { id: args[1].producerId, companyId: 'company-1', webhookEventId: args[4], messagesJson: args[1].batches.flatMap((batch: any) => batch.primary.messages), authorizationJson: args[5], planId: saved.id });
+    return saved;
+  };
+  h.prisma.client.lineTurnOutcome.findMany = async () => {
+    const rows = [];
+    for (const outcome of [...outcomes.values()].reverse()) {
+      const row = await h.prisma.client.lineDeliveryPlan.findUnique({ where: { id: outcome.planId } });
+      if (row.status === 'ACCEPTED') rows.push({ ...outcome, deliveredAt: new Date(), deliveryPlan: { ...row, batchStateJson: row.states } });
+    }
+    return rows;
+  };
+  const update = h.prisma.client.lineTurnOutcome.updateMany;
+  h.prisma.client.lineTurnOutcome.updateMany = async (args: any) => {
+    if (args.data.authorizationJson && outcomes.has(args.where.webhookEventId)) Object.assign(outcomes.get(args.where.webhookEventId), args.data);
+    return update(args);
+  };
+  source.actions.cancelClaim = { execute: async (_ctx: any, id: string) => source.claims.find(claim => claim.id === id) };
+  const intake = h.flow.aiGateway.requestLineIntakeRoute;
+  h.flow.aiGateway.requestLineIntakeRoute = async (request: any, options: any) => ({ ...await intake(request, options), intent: 'UNSUPPORTED',
+    semanticSubrequests: [{ index: 0, kind: 'general', goal: request.messageText, requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] });
+  const reads: any[] = [];
+  h.flow.aiGateway.requestLineTurn = async (request: any) => { reads.push(request); return { requestId: request.requestId, replyText: 'ดูรายละเอียดจากรายการใบเบิกได้ค่ะ',
+    intent: 'business_read', agent: 'general', refused: false, sourceRefs: [], sourceLabels: [], toolsInvoked: [], webLinks: [], semanticCoverage: [{ index: 0, status: 'handled' }] }; };
+  await h.execute('เริ่ม', `action=chat-action&id=${workflow}`);
+  return { ...h, source, reads, outcomes };
+}
+
+it('M4 round 8 picker questions reach normal routing and a later requester amount still previews c-7', async t => {
+  const h = await r8ClaimPicker(t);
+  const terminal = r6EventLog(h.prisma);
+  for (const text of ['ใบแรกใครเป็นคนเบิกคะ', 'วันนี้มีงานอะไรต้องปิดบ้าง', 'ของสมชายยอด 1,877 บาท?']) {
+    const event = await h.execute(text);
+    assert.equal(h.reads.at(-1)?.messageText, text);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /เลือกรายการจากการ์ดนี้/);
+    await terminal(event.webhookEventId, 'completed');
+  }
+  await h.execute('ของสมชายยอด 1,877 บาท');
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending?.expenseId, 'c-7');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+});
+
+it('M4 round 8 claim filler and named requester ambiguities use only permitted claims', async t => {
+  const cancel = await r8ClaimPicker(t, 'reimbursement_cancel');
+  await cancel.execute('ใบเบิกร่าง 400 บาท');
+  assert.equal((await cancel.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`))?.expenseId, 'c-7');
+  for (const duplicate of [false, true]) {
+    const h = await r8ClaimPicker(t, 'approvals', duplicate);
+    await h.execute(duplicate ? 'ของสมชายยอด 1,877 บาท' : 'ของคนอื่นยอด 1,877 บาท');
+    assert.equal(await h.source.actions.pending(h.source.ctx, chatKeyHashOf(BASE_EVENT), h.source.ctx.requestId), null);
+    const ids = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).map(button => new URLSearchParams(button.action.data).get('id')).filter(Boolean);
+    if (duplicate) assert.deepEqual(ids.sort(), ['c-2', 'c-7']);
+    else assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกรายการจากการ์ดนี้/);
+  }
+});
+
+it('M4 round 8 document filler and spoken ordinals select their delivered row', async () => {
+  for (const text of ['บิลเลขที่ ทดสอบ-0003 ที่ให้เลือกเมื่อกี้นะคะ', 'อันแรก', 'ใบแรก', 'รายการแรก', 'อันที่ 1', 'ใบที่ 1 ได้ไหม']) {
+    const h = await m4PickerHarness();
+    assert.equal(await h.answer(text), true); assert.deepEqual(h.selected, ['listed-1'], text);
+  }
+});
+
+it('M4 round 8 count and total questions skip the classifier while imperative and yes-no starts retain it', async () => {
+  for (const text of ['ตอนนี้มีใบเบิกรออนุมัติกี่ใบ รวมเท่าไหร่', 'ใบเบิกมีเท่าไร', 'มีค่าใช้จ่ายอะไรบ้าง', 'รอใครบ้าง', 'มีกี่รายการ', 'รวมยอดเท่าไร', 'อนุมัติไปกี่ใบแล้ว']) {
+    const h = await b4WorkflowHarness(); h.event.messageText = text;
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), false, text);
+    assert.equal(h.calls.length, 0, text); assert.equal(h.event.messageText, text);
+  }
+  for (const text of ['มีใบเบิกรออนุมัติไหม', 'อนุมัติใบเบิก 1,877 บาทให้หน่อย', 'บันทึกจ่าย 400 บาท', 'อนุมัติใบเบิกให้หน่อย รวมเท่าไหร่', 'ขอให้อนุมัติใบเบิก 1,877 บาท รวมเท่าไหร่']) {
+    const h = await b4WorkflowHarness(); h.event.messageText = text;
+    await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open); assert.equal(h.calls.length, 1, text);
+  }
+});
+
+it('M4 round 8 an incomplete picker searches the typed document number once and accepts only permitted exact results', async t => {
+  for (const permitted of [true, false]) {
+    const h = await r7OffPagePicker(t), searches: string[] = [];
+    const pick = h.source.targets.pick.bind(h.source.targets);
+    h.source.targets.pick = async (ctx: any, chat: string, workflow: string, slots: any, page: number) => {
+      const result = await pick(ctx, chat, workflow, slots, page);
+      if (slots.search) {
+        searches.push(slots.search);
+        return { targets: permitted ? result.targets.filter((row: any) => row.documentNumbers.includes(slots.search)) : [], total: permitted ? 1 : 0, exhaustive: true };
+      }
+      return { ...result, targets: result.targets.filter((row: any) => row.id !== 'workflow-expense-c-2'), total: 400, exhaustive: false };
+    };
+    await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+    await h.execute('ใบเลขที่ ทดสอบ-0003');
+    assert.deepEqual(searches, ['ทดสอบ-0003']);
+    assert.deepEqual(h.source.previewed, permitted ? ['workflow-expense-c-2'] : []);
+    if (!permitted) assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกรายการจากการ์ดนี้/);
+    assert.equal(h.creates(), 0);
+  }
+});
+
+it('M4 round 8 paid count reads reach Tier 2 unchanged and free count reads keep R27 model-free', async t => {
+  const texts = ['ตอนนี้มีใบเบิกรออนุมัติกี่ใบ รวมเท่าไหร่', 'ใบเบิกมีเท่าไร', 'มีค่าใช้จ่ายอะไรบ้าง', 'รอใครบ้าง', 'มีกี่รายการ', 'รวมยอดเท่าไร'];
+  const h = await r8ClaimPicker(t), terminal = r6EventLog(h.prisma);
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('count reads must not reserve a classifier call');
+  for (const text of texts) {
+    const event = await h.execute(text);
+    assert.equal(h.reads.at(-1)?.messageText, text);
+    await terminal(event.webhookEventId, 'completed');
+    const { prisma } = makePrisma();
+    const free = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own', 'expense.update', 'expense.receipt.line_upload'],
+      intakeRouteFn: () => assert.fail('free read must keep R27'), aiGatewayFn: () => assert.fail('free read must keep R27') });
+    (free.useCase as any).aiGateway.requestLineWorkflowClassify = () => assert.fail('free read must bypass the classifier');
+    await free.useCase.execute({ ...BASE_EVENT, webhookEventId: `r8-free-${text}`, messageText: text });
+    assert.equal(free.intakeRequests.length, 0); assert.equal(free.getAiGatewayCalled(), false);
+    assert.match(JSON.stringify(free.sentMessages), /เมนูหลัก/);
+  }
+});
+
+it('M4 round 8 picker Thai questions bypass selection and non-identifying messages leave the picker open', async () => {
+  const questions = ['ไหม', 'มั้ย', 'ปะ', 'เปล่า', 'รึยัง', 'หรือยัง', 'กี่', 'เท่าไร', 'เท่าไหร่', 'ใคร', 'อะไร', 'ยังไง', 'อย่างไร', 'ทำไม', 'ที่ไหน'];
+  for (const text of [...questions.map(word => `ใบที่ 1 ${word}`), 'ค่าบริการ?', 'เล่าให้ฟังอีกนิด', 'วันนี้มีงานอะไรต้องปิดบ้าง']) {
+    const h = await m4PickerHarness();
+    assert.equal(await h.answer(text), false, text);
+    assert.deepEqual(h.selected, []); assert.notEqual(h.row.authorizationJson.workflowPickerClosed, true);
+    assert.equal(await h.answer('อันแรก'), true); assert.deepEqual(h.selected, ['listed-1']);
+  }
+});
+
+it('M4 round 8 a shared branch keeps its ambiguity despite leftover vendor words', async t => {
+  const h = await r7OffPagePicker(t);
+  h.source.prisma.client.branch.findMany = h.prisma.client.branch.findMany;
+  await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+  await h.execute('สาขา 1 ร้านนอกหน้า');
+  assert.deepEqual(h.source.previewed, []);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /เลือกรายการจากการ์ดนี้/);
+  const ids = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).map(button => new URLSearchParams(button.action.data).get('id')).filter(Boolean);
+  assert.equal(ids.length, 4); // Existing picker renders four of the matching permitted targets and its web exit.
+});
+
+it('M4 round 8 expense document search reaches the existing scoped list beyond the three-page ceiling', async t => {
+  for (const permitted of [true, false]) {
+    const h = await r7OffPagePicker(t), searches: string[] = [];
+    if (!permitted) h.source.records[4]!.branchId = 'other-branch';
+    h.source.targets.expenses.execute = async (ctx: any, filter: any) => {
+      const scoped = h.source.records.filter(row => ctx.scopes.branchIds.includes(row.branchId));
+      if (filter.search) {
+        searches.push(filter.search);
+        const data = scoped.filter(row => row.expenseNumber === filter.search || row.vendorDocumentNumber === filter.search);
+        return { data, total: data.length };
+      }
+      return { data: scoped.slice(0, 4), total: 400 };
+    };
+    await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+    await h.execute('ใบเลขที่ ทดสอบ-0003');
+    assert.deepEqual(searches, ['ทดสอบ-0003']);
+    assert.deepEqual(h.source.previewed, permitted ? ['workflow-expense-c-2'] : []);
+    assert.equal(h.creates(), 0);
+  }
 });

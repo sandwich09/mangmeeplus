@@ -59,6 +59,7 @@ const EXPECTED_IDS = [
   'claim-combined-receipt-category-reason',
   'claim-rejection-amount-selects-permitted-target',
   'workflow-picker-typed-document-number',
+  'workflow-picker-question-then-typed-row',
   'workflow-picker-off-page-named-bill',
   'action-preview-delete-by-document-number',
 ];

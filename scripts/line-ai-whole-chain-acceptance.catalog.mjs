@@ -668,6 +668,12 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 4 signed delete picker and typed document number reach the same press handler before capture or intake']],
   },
   {
+    id: 'workflow-picker-question-then-typed-row', fixture: 'repository',
+    assertions: { outcome: 'a_picker_question_reaches_the_advisor_and_a_later_named_row_continues', tool: 'questions_keep_normal_routing_without_consuming_the_picker',
+      mutation: 'zero_final_mutation_before_signed_confirmation', delivery: 'question_answer_then_the_named_claim_preview' },
+    evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 8 picker questions reach normal routing and a later requester amount still previews c-7']],
+  },
+  {
     id: 'workflow-picker-off-page-named-bill', fixture: 'repository',
     assertions: { outcome: 'off_page_named_bill_resolves_only_within_the_same_permitted_workflow', tool: 'existing_signed_press_handler_zero_model_calls',
       mutation: 'final_mutation_submits_only_the_named_bill_after_the_signed_confirm_press', delivery: 'ambiguous_matches_show_a_filtered_picker' },

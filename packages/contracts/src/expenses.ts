@@ -1259,6 +1259,8 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
 
 export type ListExpensesFilter = {
   companyId: string;
+  /** Search document numbers within the existing read scope. */
+  search?: string;
   branchId?: string;
   status?: ExpenseStatus;
   paymentStatus?: ExpensePaymentStatus;

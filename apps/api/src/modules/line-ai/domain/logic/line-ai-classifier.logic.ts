@@ -110,6 +110,26 @@ export function isPendingFieldAnswer(text: string, field: 'claim' | 'reason' | '
     && !/(?:อะไร|ยังไง|อย่างไร|ไหม|มั้ย|เท่าไร|เท่าไหร่|ทำไม|หรอ|เหรอ|บ้าง|หรือเปล่า|รึเปล่า|ไหน|ใคร|เมื่อไร|เมื่อไหร่)\s*(?:คะ|ค่ะ|ครับ|นะ|จ๊ะ|จ้า)?$|^(?:ทำไม|ยังไง|อย่างไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่)|^(?:what|how|why|when|where|who|which|can|could|is|are|do|does)\b/iu.test(value);
 }
 
+/** Shared cues for the delivered-card matcher and the permitted-list matcher. */
+export function lineWorkflowPickerText(rawText: string, claim = false) {
+  const text = mapThaiDigits(rawText.trim());
+  const ordinalMatch = /(?:อัน|ใบ|รายการ|ร่าง)ที่\s*(\d+)/u.exec(text);
+  const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
+  const requester = claim ? /ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
+  const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+  const question = /[?？]|ไหม|มั้ย|ปะ|เปล่า|รึยัง|หรือยัง|กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน/u
+    .test(text.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, ''));
+  const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
+  const explicit = ordinal !== undefined || documents.length > 0 || rounds.length > 0 || /สาขา\s*\S+/u.test(text) || !!requester;
+  return { question, ordinal, requester, documents, rounds, explicit };
+}
+
+/** Counts and lists remain advisor reads unless the person also asks to act. */
+export function isLineWorkflowCountRead(text: string): boolean {
+  return /กี่|เท่าไร|เท่าไหร่|รวม[^\n]*เท่า|อะไรบ้าง|ใครบ้าง/u.test(text)
+    && !/(?:^|และ|แล้ว|[,;\n])\s*(?:(?:ตอนนี้|ช่วย|ขอให้|ขอ|รบกวน|ให้)\s*)*(?:อนุมัติ|ไม่อนุมัติ|ส่ง(?:ตรวจ|อนุมัติ|ใบเบิก)|บันทึกจ่าย|จ่าย|ยกเลิก|ลบ|สร้าง|ทำใบ|เปิดใบเบิก|ออกหนังสือ)(?!ไป|มา|แล้ว)/u.test(text);
+}
+
 export const MANUAL_CLAIM_AMOUNT_QUESTION = 'ยอดเท่าไรคะ';
 export const MANUAL_CLAIM_AMOUNTS_QUESTION = 'รายการนี้ยอดเท่าไรคะ';
 export const MANUAL_CLAIM_DESCRIPTION_QUESTION = 'เป็นค่าอะไรคะ';

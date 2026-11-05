@@ -2782,3 +2782,21 @@ it('MC1 LINE creator picker reads only its own records for the two permitted act
   await assert.rejects(useCase.execute({ ...actor, permissions: ['expense.create'] }, {}, { lineAction: 'MARK_READY' }), ForbiddenException);
   await assert.rejects(useCase.execute(actor, { branchId: 'other' }, { lineAction: 'DELETE_DRAFT' }), ForbiddenException);
 });
+
+it('R8 document-number list search keeps paid and free tenant branch relation and source-draft filters', async () => {
+  for (const free of [false, true]) {
+    let where: any;
+    const repo = new PrismaExpenseRepository({ client: { expenseRecord: {
+      findMany: async (query: any) => { where = query.where; return []; }, count: async () => 0,
+    } } } as any);
+    await repo.listExpenses({ companyId: 'company-1', search: 'ทดสอบ-0003', createdByUserId: 'actor-1', pageSize: 100 } as any,
+      { branchIds: ['branch-1'] }, 'actor-1', free);
+    assert.equal(where.companyId, 'company-1'); assert.equal(where.createdByUserId, 'actor-1');
+    assert.deepEqual(where.OR, [{ branchId: { in: ['branch-1'] } }, { branchId: null }]);
+    assert.ok(where.AND.some((clause: any) => JSON.stringify(clause).includes('approverUserId')));
+    assert.ok(where.AND.some((clause: any) => JSON.stringify(clause) === JSON.stringify({ OR: [
+      { expenseNumber: { contains: 'ทดสอบ-0003', mode: 'insensitive' } }, { vendorDocumentNumber: { contains: 'ทดสอบ-0003', mode: 'insensitive' } },
+    ] })));
+    if (free) assert.ok(where.AND.some((clause: any) => JSON.stringify(clause).includes('LINE_UPLOAD') && JSON.stringify(clause).includes('NEEDS_REVIEW')));
+  }
+});
