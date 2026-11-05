@@ -19,6 +19,11 @@ function trace(row: ReliabilityFixture): ReliabilityTurnTrace {
     delivery: { status: 'ACCEPTED', requiredBatchIds: ['batch-1', 'batch-2'], accepted: [{ batchId: 'batch-1', wireHash: digest, acceptedAtMs: 2200, receiptId: 'receipt-1' }, { batchId: 'batch-2', wireHash: digest, acceptedAtMs: 2500, receiptId: 'receipt-2' }] },
     falseRefusalOrHandoff: false, validationFailures: [], criticalErrors: [], versions: { sourceCommit: 'a'.repeat(40), schema: digest, prompt: digest, registry: digest, model: digest, price: digest } };
 }
+test('corpus accepts a 24-turn conversation and refuses 25 turns', () => {
+  const long = (count: number) => { const row = fixture(); row.turns = Array.from({ length: count }, () => structuredClone(fixture().turns[0]!)); return row; };
+  validateReliabilityCorpus(corpus([long(24)]));
+  assert.throws(() => validateReliabilityCorpus(corpus([long(25)])), /CORPUS_TURN_LIMIT/);
+});
 test('corpus refuses family leakage, missing consent and unreviewed image labels without inventing reviewer evidence', () => {
   validateReliabilityCorpus(corpus());
   assert.throws(() => validateReliabilityCorpus(corpus(), true), /NOT_REVIEWED/);

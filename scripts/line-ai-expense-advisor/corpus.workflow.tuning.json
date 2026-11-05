@@ -2641,10 +2641,11 @@
       "journeyKind": "typed",
       "actors": [
         {
-          "key": "auditor-c",
-          "company": "C",
+          "key": "auditor-free-a",
+          "company": "A",
           "role": "AUDITOR_READONLY",
-          "branchScope": "all"
+          "branchScope": "all",
+          "freeSourceDrafts": true
         }
       ],
       "tasks": [
@@ -2667,10 +2668,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -2680,7 +2680,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           },
           "fixture": [
             {
@@ -2694,10 +2695,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -2707,7 +2707,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           }
         }
       ]
@@ -2855,10 +2856,11 @@
       "journeyKind": "typed",
       "actors": [
         {
-          "key": "auditor-c",
-          "company": "C",
+          "key": "auditor-free-a",
+          "company": "A",
           "role": "AUDITOR_READONLY",
-          "branchScope": "all"
+          "branchScope": "all",
+          "freeSourceDrafts": true
         }
       ],
       "tasks": [
@@ -2881,10 +2883,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -2894,7 +2895,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           },
           "fixture": [
             {
@@ -2908,10 +2910,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -2921,7 +2922,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           }
         }
       ]
@@ -3077,10 +3079,11 @@
       "journeyKind": "typed",
       "actors": [
         {
-          "key": "auditor-c",
-          "company": "C",
+          "key": "auditor-free-a",
+          "company": "A",
           "role": "AUDITOR_READONLY",
-          "branchScope": "all"
+          "branchScope": "all",
+          "freeSourceDrafts": true
         }
       ],
       "tasks": [
@@ -3103,10 +3106,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -3116,7 +3118,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           },
           "fixture": [
             {
@@ -3130,10 +3133,9 @@
           "expect": {
             "card": "refusal",
             "refusal": {
-              "reason": "permission",
+              "reason": "free",
               "wayOut": [
-                "เจ้าของกิจการ",
-                "เปิดเว็บ"
+                "เมนูหลัก"
               ]
             },
             "tags": {
@@ -3143,7 +3145,8 @@
                 "อนุมัติแล้ว",
                 "ออกหนังสือรับรองแล้ว"
               ]
-            }
+            },
+            "maxModelCalls": 0
           }
         }
       ]

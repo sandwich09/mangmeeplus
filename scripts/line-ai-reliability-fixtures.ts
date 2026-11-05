@@ -54,7 +54,8 @@ export function validateReliabilityCorpus(corpus: ReliabilityCorpus, acceptance 
       assets.set(asset.id, asset);
     }
     assert.ok(row.assets.reduce((n, a) => n + a.pages, 0) <= 20, 'CORPUS_PAGE_LIMIT');
-    assert.ok(row.turns.length > 0 && row.turns.length <= 20, 'CORPUS_TURN_LIMIT');
+    // 24, not 20: a workflow chain (eight vouchers, then a 50 ทวิ picker) takes 22 turns.
+    assert.ok(row.turns.length > 0 && row.turns.length <= 24, 'CORPUS_TURN_LIMIT');
     for (const turn of row.turns) {
       assert.ok(typeof turn.user === 'string' && turn.user.length <= 12000 && (turn.user.length > 0 || turn.attachmentIds.length), 'CORPUS_INPUT');
       assert.ok(new Set(turn.attachmentIds).size === turn.attachmentIds.length && turn.attachmentIds.every(id => assets.has(id)), 'CORPUS_UNKNOWN_ASSET');

@@ -398,3 +398,66 @@ it('M3 round 3 preflight resolves unlinked actors without inventing tenant acces
   corpus.conversations[0].turns[0].expect.dueDate = { formType: 'PND3', monthOffset: 0 };
   assert.throws(() => validateWorkflowPreflight(corpus, seed, now), /UNLINKED_PRIVATE_GOLD/);
 });
+
+describe('permission-refusal workflow gold', () => {
+  const refusal = { card: 'refusal', refusal: { reason: 'permission', wayOut: ['เจ้าของกิจการ'] } };
+  const corpus = (kind: string, actor: Record<string, unknown> = { key: 'auditor', company: 'C', role: 'AUDITOR_READONLY', branchScope: 'all' }) => ({
+    version: 2, seed: 'permission-gold', status: 'draft', conversations: [{ id: `permission-${kind}`, category: kind, journeyKind: 'typed', actors: [actor],
+      tasks: [{ id: 'task', kind, startTurn: 0, endTurn: 0, minimalTurns: 1, completable: false, goldTerminal: { effect: 'REFUSED', records: [] } }],
+      turns: [{ user: 'ทำรายการนี้', expect: structuredClone(refusal) }] }],
+  });
+
+  it('rejects the old auditor self-service refusals for claim, submit and own cancellation', async () => {
+    const tuning = JSON.parse(readFileSync(resolve(HERE, 'corpus.workflow.tuning.json'), 'utf8'));
+    const { FREE_EXPENSE_CHAT_REPLY } = await import('../../apps/api/src/modules/line-ai/domain/logic/free-expense-line.logic');
+    const { scoreWorkflowAnswer } = await import('./scorer');
+    for (const kind of ['reimbursement_claim', 'reimbursement_submit', 'reimbursement_cancel']) {
+      const id = `M3-${kind}-permission`;
+      const current = tuning.conversations.find((row: any) => row.id === id);
+      assert.doesNotThrow(() => validateWorkflowCorpus({ ...tuning, conversations: [current] }));
+      for (const turn of current.turns) {
+        assert.equal(turn.expect.maxModelCalls, 0);
+        assert.equal(turn.expect.refusal.reason, 'free');
+        assert.equal(scoreWorkflowAnswer(turn.expect, { deliveredText: FREE_EXPENSE_CHAT_REPLY, calls: [] }).ok, true);
+      }
+      const old = structuredClone(current);
+      old.actors = [{ key: 'auditor-c', company: 'C', role: 'AUDITOR_READONLY', branchScope: 'all' }];
+      for (const turn of old.turns) {
+        turn.expect.refusal = { reason: 'permission', wayOut: ['เจ้าของกิจการ', 'เปิดเว็บ'] };
+        delete turn.expect.maxModelCalls;
+        delete turn.expect.tags.must_mention_any;
+      }
+      assert.throws(() => validateWorkflowCorpus({ ...tuning, conversations: [old] }),
+        new RegExp(`${id}.*turns\\[0\\].*permission_refusal_contradicts_grant`));
+    }
+  });
+
+  it('accepts a record refusal when the role holds the permission but this record does not allow it', () => {
+    const assigned = corpus('approvals', { key: 'manager', company: 'C', role: 'MANAGER', branchScope: 'all' });
+    assert.throws(() => validateWorkflowCorpus(assigned), /permission_refusal_contradicts_grant:approvals/);
+    (assigned.conversations[0].turns[0].expect.refusal as { reason: string }).reason = 'record';
+    assert.doesNotThrow(() => validateWorkflowCorpus(assigned));
+  });
+
+  it('checks the acting actor on each refusal turn and skips kinds without one permission', () => {
+    const valid = corpus('expense_confirm');
+    assert.doesNotThrow(() => validateWorkflowCorpus(valid));
+    valid.conversations[0].actors.push({ key: 'owner', company: 'C', role: 'OWNER', branchScope: 'all' });
+    (valid.conversations[0].turns as any[]).push({ as: { key: 'owner' }, user: 'ยืนยันรายการนี้', expect: structuredClone(refusal) });
+    valid.conversations[0].tasks[0].endTurn = 1;
+    assert.throws(() => validateWorkflowCorpus(valid), /turns\[1\].*permission_refusal_contradicts_grant.*expense.confirm/);
+    for (const kind of ['open', 'unclear'])
+      assert.doesNotThrow(() => validateWorkflowCorpus(corpus(kind, { key: 'owner', company: 'C', role: 'OWNER', branchScope: 'all' })));
+  });
+
+  it('uses the creator-only seed role and package entitlement filtering', async () => {
+    assert.doesNotThrow(() => validateWorkflowCorpus(corpus('reimbursement_claim', { key: 'creator', kind: 'creator-only', company: 'B', role: 'STAFF', branchScope: 'all' })));
+    const { ROLE_GRANTS } = await import('../../apps/api/src/modules/auth/permission-registry');
+    const { TIER_FEATURE_PRESETS } = await import('../../packages/contracts/src/menu-entitlements');
+    const { filterPermissionsByEntitlement } = await import('../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic');
+    assert.ok(ROLE_GRANTS.OWNER.includes('wht.certificate.issue'));
+    assert.ok(!filterPermissionsByEntitlement([...ROLE_GRANTS.OWNER], new Set(TIER_FEATURE_PRESETS.STARTER_249)).includes('wht.certificate.issue'));
+    assert.doesNotThrow(() => validateWorkflowCorpus(corpus('wht_certificate', { key: 'owner-a', company: 'A', role: 'OWNER', branchScope: 'all' })));
+    assert.throws(() => validateWorkflowCorpus(corpus('wht_certificate', { key: 'owner-c', company: 'C', role: 'OWNER', branchScope: 'all' })), /permission_refusal_contradicts_grant/);
+  });
+});

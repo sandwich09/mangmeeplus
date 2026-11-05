@@ -14,6 +14,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { PERIOD_TOKENS, type PeriodToken } from './period';
 import { isKnownPlaceholder, referencedPlaceholders } from './template';
+import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry';
+import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
+import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 
 export const ROLES = ['OWNER', 'MANAGER', 'STAFF', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
 export type EvalRole = (typeof ROLES)[number];
@@ -114,7 +117,7 @@ export type WorkflowTurn = {
   as?: ActorRef; user?: string; press?: string; pressFrom?: { turn: number; actor?: ActorRef }; fixture?: WorkflowFixtureOp[];
   expect: { tier?: 0 | 1 | 2; label?: string; card?: 'picker' | 'choice' | 'question' | 'preview' | 'applied' | 'declined' | 'refusal' | 'answer' | 'credit_refusal' | 'expired';
     target?: string; preview?: WorkflowPreview; maxModelCalls?: number; mustNotCaptureAsField?: boolean; tags?: TurnTags;
-    knowledge?: KnowledgeGold; dueDate?: DueDateGold; refusal?: { reason: 'permission' | 'package' | 'free'; wayOut: readonly string[] } };
+    knowledge?: KnowledgeGold; dueDate?: DueDateGold; refusal?: { reason: 'permission' | 'package' | 'free' | 'record'; wayOut: readonly string[] } };
 };
 export type GoldRecord = {
   table: 'ReimbursementRequest' | 'ReimbursementLine' | 'ReimbursementPayment' | 'ExpenseRecord' | 'ExpensePayment'
@@ -138,6 +141,17 @@ const PAID_RECORDS: Partial<Record<WorkflowTerminalEffect, { table: GoldRecord['
   EXPENSE_PAID: { table: 'ExpensePayment', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
   REIMBURSEMENT_PAID: { table: 'ReimbursementPayment', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
   VOUCHER_PAID: { table: 'DisbursementVoucher', amount: 'paidAmount', date: 'paidDate', method: 'paymentMethod' },
+};
+
+// Seed COMPANY_DEFS (seed.ts:357–360), before the separate free source-drafts admission gate.
+const WORKFLOW_COMPANY_TIERS = { A: 'STARTER_249', B: 'PRO_999', C: 'ENTERPRISE_1999' } as const;
+// line-reimbursement-draft.use-case.ts:537; line-expense-action.service.ts:1102–1115;
+// line-voucher-action.service.ts:23. Open/read, voucher phases, and own-record expense
+// submit/delete have no single permission and are intentionally omitted.
+const WORKFLOW_PERMISSIONS: Readonly<Record<string, string>> = {
+  reimbursement_claim: 'reimbursement.create', reimbursement_submit: 'reimbursement.submit', reimbursement_cancel: 'reimbursement.cancel_own',
+  approvals: 'reimbursement.approve', reimbursement_reject: 'reimbursement.reject', reimbursement_pay: 'reimbursement.payment.record',
+  expense_confirm: 'expense.confirm', expense_void: 'expense.void', expense_pay: 'expense.payment.record', wht_certificate: 'wht.certificate.issue',
 };
 
 export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlySet<string>): asserts value is WorkflowCorpus {
@@ -190,7 +204,7 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
       }
       if (expect['refusal'] !== undefined) {
         const refusal = expect['refusal'];
-        assert.ok(isPlainObject(refusal) && ['permission', 'package', 'free'].includes(refusal['reason'] as string)
+        assert.ok(isPlainObject(refusal) && ['permission', 'package', 'free', 'record'].includes(refusal['reason'] as string)
           && Array.isArray(refusal['wayOut']) && refusal['wayOut'].length > 0 && refusal['wayOut'].every(nonEmptyString), `${answerPath}.refusal`);
         assert.ok(!expect['knowledge'] && !expect['dueDate'], `${answerPath}.refusal_must_not_leak_answer`);
       }
@@ -221,6 +235,15 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
       assert.ok(Number.isInteger(task['minimalTurns']) && (task['minimalTurns'] as number) > 0 && typeof task['completable'] === 'boolean', `${path}.task_metrics`);
       for (let index = task['startTurn'] as number; index <= (task['endTurn'] as number); index++) {
         assert.ok(!occupiedTurns.has(index), `${path}.task_overlap`); occupiedTurns.add(index);
+        const turn = turns[index] as WorkflowTurn, permission = WORKFLOW_PERMISSIONS[task['kind'] as string];
+        if (turn.expect.refusal?.reason === 'permission' && typeof permission === 'string') {
+          const actor = (actors as Actor[]).find(actor => actor.key === (turn.as?.key ?? (actors[0] as Actor).key))!;
+          // The creator-only fixture replaces STAFF grants with this role (seed.ts:470).
+          const permissions = actor.kind === 'unlinked' ? [] : filterPermissionsByEntitlement(
+            actor.kind === 'creator-only' ? ['expense.create', 'expense.update'] : [...ROLE_GRANTS[actor.role]],
+            new Set(TIER_FEATURE_PRESETS[WORKFLOW_COMPANY_TIERS[actor.company]]));
+          assert.ok(!permissions.includes(permission), `${path} (${raw['id']}).turns[${index}].permission_refusal_contradicts_grant:${task['kind']}:${permission}`);
+        }
       }
       const terminal = task['goldTerminal']; assert.ok(isPlainObject(terminal) && Array.isArray(terminal['records']), `${path}.gold_terminal`);
       assert.ok((['REIMBURSEMENT_DRAFT_SAVED','REIMBURSEMENT_SUBMITTED','REIMBURSEMENT_APPROVED','REIMBURSEMENT_REJECTED','REIMBURSEMENT_CANCELLED','REIMBURSEMENT_PAID','EXPENSE_MARKED_READY','EXPENSE_CONFIRMED','EXPENSE_DELETED','EXPENSE_VOIDED','EXPENSE_PAID','VOUCHER_CREATED','VOUCHER_SUBMITTED','VOUCHER_APPROVED','VOUCHER_PAID','WHT_ISSUED','SUBSTITUTE_PREPARED','DECLINED','ANSWERED','REFUSED'] as readonly unknown[]).includes(terminal['effect']), `${path}.gold_terminal.effect`);
