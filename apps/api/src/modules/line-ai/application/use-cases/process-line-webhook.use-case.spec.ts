@@ -907,7 +907,7 @@ describe('PWS-FOLLOW-STORE delivered knowledge memory', () => {
     const recentTurns = [{ webhookEventId: 'evt-help-first', createdAt: new Date(), userMessagePreview: 'สถานะเอกสารคืออะไร',
       replyPreview: null, intent: 'READ_DETAIL', agent: 'general', refused: false }];
     const db = makePrisma({ recentTurns });
-    db.prisma.client.lineTurnOutcome.findMany = async ({ where }: any) => where.webhookEventId.in.flatMap((id: string) => {
+    db.prisma.client.lineTurnOutcome.findMany = async ({ where }: any) => (where.webhookEventId?.in ?? [...db.outcomeStore.keys()]).flatMap((id: string) => {
       const outcome = db.outcomeStore.get(id);
       return outcome?.deliveredAt ? [{ webhookEventId: id, ...outcome }] : [];
     });
@@ -15750,7 +15750,7 @@ it('A4b expense picker reads both outstanding sets within three pages, includes 
     reads.push(filter);
     const count = filter.paymentStatus === 'PARTIALLY_PAID' || filter.page === 2 ? 1 : 100;
     return { data: Array.from({ length: count }, (_, i) => ({ id: `${filter.paymentStatus}-${filter.page}-${i}`, createdByUserId: ctx.userId,
-      status: 'CONFIRMED', paymentStatus: filter.paymentStatus, expenseDate: new Date(filter.paymentStatus === 'PARTIALLY_PAID' ? '2026-11-05' : '2019-01-01'),
+      status: 'CONFIRMED', updatedAt: new Date('2026-11-05'), paymentStatus: filter.paymentStatus, expenseDate: new Date(filter.paymentStatus === 'PARTIALLY_PAID' ? '2026-11-05' : '2019-01-01'),
       vendorNameSnapshot: 'ร้านทดสอบ', grandTotalAmount: '1000', currency: 'THB' })), total: filter.paymentStatus === 'PARTIALLY_PAID' ? 1 : 101 };
   } };
   const result = await service.pick(ctx, 'chat', 'expense_pay', {}, 1);
@@ -16653,4 +16653,994 @@ it('M4 round 2 get_options cannot capture pending values from retained earlier-t
   assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields');
   assert.ok((result.data as any).reimbursementDraft.fieldPaths.includes('lineChanges.0.values.amount'));
   assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount, undefined);
+});
+
+async function b4WorkflowHarness() {
+  const { prisma } = makePrisma();
+  const claim = manualClaimHarness();
+  const h = makeUseCase(prisma, { permissions: [...claim.ctx.permissions, 'reimbursement.submit', 'reimbursement.cancel_own'], config: { aiGatewayInternalSecret: 'secret' } });
+  const flow = h.useCase as any;
+  const event: any = { ...BASE_EVENT, webhookEventId: 'b4-typed', messageText: 'ส่งใบเบิกของฉันอนุมัติ' };
+  flow.boundConversations.set(event, { owner: claim.owner, epoch: 1, id: 'b4-conversation' });
+  flow.contextV2 = { projection: async () => ({ tasks: [] }) };
+  flow.answersOpenWork = async () => false;
+  const built = await createLineAiInputEvidence({ turnKey: 'b4-turn', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] });
+  flow.textEvidenceV2 = async () => built!.inputEvidence;
+  const calls: any[] = [], starts: any[] = [];
+  flow.aiGateway.requestLineWorkflowClassify = async (...args: any[]) => { calls.push(args); return decision; };
+  flow.handleWorkflowControl = async (...args: any[]) => { starts.push([structuredClone(args[0]), ...args.slice(1)]); };
+  flow.prisma.client.lineIntakePendingMedia.findFirst = async () => null;
+  flow.prisma.client.lineWebhookEventLog.findUnique = async () => ({ id: 'event-row', createdAt: new Date() });
+  const open = { openWaiting: [], recentCapturedExpenses: [], activeExpenseDrafts: [], substituteContext: { workflowState: 'none', hasPendingQuestion: false } };
+  let decision: any = { status: 'CLASSIFIED', label: 'reimbursement_submit', secondLabel: 'none', confidence: 0.99, secondConfidence: 0,
+    slots: { reference: 'none', ordinal: 0, personName: '', vendorName: '', descriptionText: '', amountText: '', dateText: '', reasonText: '', categoryText: '' },
+    schemaEnforcement: 'output_config', usage: [], modelId: 'test' };
+  return { ...h, flow, event, ctx: { ...claim.ctx, permissions: [...claim.ctx.permissions, 'reimbursement.submit', 'reimbursement.cancel_own'] }, open, calls, starts,
+    setDecision: (patch: any) => { decision = { ...decision, ...patch }; } };
+}
+
+it('B4 typed workflow starts its Tier 0 picker with one classifier call', async () => {
+  const h = await b4WorkflowHarness();
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), true);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.starts[0][0].workflowStart, 'reimbursement_submit');
+  assert.equal(h.intakeRequests.length, 0);
+});
+
+it('B4 low-confidence table offers two, one and duplicate-normalized workflow choices, while non-workflow falls back', async () => {
+  for (const [label, secondLabel, buttons] of [['reimbursement_submit', 'reimbursement_cancel', 3],
+    ['reimbursement_submit', 'read', 2], ['reimbursement_submit', 'reimbursement_submit', 2], ['read', 'reimbursement_submit', 0]] as const) {
+    const h = await b4WorkflowHarness();
+    h.setDecision({ label, secondLabel, confidence: 0.7, secondConfidence: 0.6 });
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), buttons > 0);
+    assert.equal(h.starts.length, 0);
+    if (buttons) {
+      const card = h.sentMessages.at(-1) as any;
+      assert.equal(card.quickReply.items.length, buttons);
+      assert.equal(card.quickReply.items.at(-1).action.label, 'อย่างอื่น');
+    }
+  }
+});
+
+it('B4 no permitted workflow path uses the existing refusal', async () => {
+  const h = await b4WorkflowHarness();
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, { ...h.ctx, permissions: [] }, null, h.open), true);
+  assert.equal(h.starts.length, 0);
+  assert.match(h.replies.join(' '), /สิทธิ์/);
+});
+
+it('B4 R7 excludes group, long text, media, pending work, open questions and parked images', async () => {
+  for (const kind of ['group', 'long', 'media', 'pending', 'question', 'task-question', 'image']) {
+    const h = await b4WorkflowHarness();
+    if (kind === 'group') h.event.channelKind = 'GROUP';
+    if (kind === 'long') h.event.messageText = 'ก'.repeat(1001);
+    if (kind === 'media') h.event.messageType = 'image';
+    if (kind === 'pending') h.flow.answersOpenWork = async () => true;
+    if (kind === 'question') (h.open.openWaiting as any[]).push({ id: 'open-question' });
+    if (kind === 'task-question') h.flow.contextV2.projection = async () => ({ tasks: [{ state: 'waiting_user', subrequests: [] }] });
+    if (kind === 'image') h.flow.prisma.client.lineIntakePendingMedia.findFirst = async () => ({ id: 'parked' });
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), false, kind);
+    assert.equal(h.calls.length, 0, kind);
+  }
+});
+
+it('R26 classifier fallback preserves package replies and business knowledge', async () => {
+  for (const label of ['read', 'howto', 'open', 'smalltalk', 'multi', 'unclear', undefined]) {
+    const h = await b4WorkflowHarness();
+    const before = structuredClone(h.event);
+    h.setDecision(label ? { label } : { status: 'UNAVAILABLE', errorCode: 'PROVIDER_TIMEOUT' });
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), false);
+    assert.deepEqual(h.event, before, 'Tier 2 receives the original message and proof');
+    assert.equal(h.starts.length, 0);
+  }
+});
+
+it('B4 other after sixty seconds uses a new admission with the original provenance and skips Tier 1', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
+  const h = await b4WorkflowHarness();
+  h.setDecision({ confidence: 0.7 });
+  await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+  const data = (h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data;
+  const token = new URLSearchParams(data).get('token');
+  const original = await h.flow.textEvidenceV2(h.event);
+  const accepted = Math.min(...original.parts.map((p: any) => p.acceptedAtMs));
+  t.mock.timers.tick(60000);
+  const selection = { ...h.event, webhookEventId: 'other-new-event', messageText: 'อย่างอื่น', workflowControl: { action: 'wf_choice', token, pick: 'other' } };
+  h.flow.boundConversations.set(selection, h.flow.boundConversations.get(h.event));
+  assert.equal(await h.flow.handleWorkflowChoice(selection, h.ctx, null), false);
+  assert.equal(selection.messageText, h.event.messageText);
+  assert.equal(selection.inputEvidence.parts[0].acceptedAtMs, accepted + 60000);
+  assert.equal(selection.inputEvidence.parts[0].eventIdHash, original.parts[0].eventIdHash);
+  assert.equal(selection.workflowTierTwoOnly, true);
+  assert.equal(await h.flow.tryWorkflowClassify(selection, h.ctx, null, h.open), false);
+  assert.equal(h.calls.length, 1);
+});
+
+it('B4 other on a new Bangkok date asks for the text again and rejects an unoffered or foreign choice', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
+  const h = await b4WorkflowHarness();
+  h.setDecision({ confidence: 0.7 });
+  await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+  const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data).get('token');
+  const selection: any = { ...h.event, webhookEventId: 'other-next-day', messageText: 'อย่างอื่น', workflowControl: { action: 'wf_choice', token, pick: 'other' } };
+  h.flow.boundConversations.set(selection, h.flow.boundConversations.get(h.event));
+  const foreign = { ...selection, workflowControl: { action: 'wf_choice', token, pick: 'expense_pay' } };
+  h.flow.boundConversations.set(foreign, h.flow.boundConversations.get(h.event));
+  assert.equal(await h.flow.handleWorkflowChoice(foreign, h.ctx, null), true);
+  assert.equal(h.starts.length, 0);
+  t.mock.timers.tick(86400000);
+  assert.equal(await h.flow.handleWorkflowChoice(selection, h.ctx, null), true);
+  assert.match(h.replies.at(-1)!, /พิมพ์บอกน้องมั่งมีอีกครั้ง/);
+});
+
+it('B4 credit refusal uses the existing credit card without a workflow or Tier 2 call', async () => {
+  const h = await b4WorkflowHarness();
+  const { HttpException } = await import('@nestjs/common');
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => { throw new HttpException({ code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' }, 429); };
+  let credit = 0;
+  h.flow.answerAiCreditRefusal = async () => { credit++; return true; };
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), true);
+  assert.equal(credit, 1);
+  assert.equal(h.starts.length, 0);
+});
+
+it('B4 typed claim slots use current-turn manual proofs and ignore an invented description', async () => {
+  for (const descriptionText of ['ค่าแท็กซี่', 'invented description', '250']) {
+    const h = manualClaimHarness();
+    const text = 'สร้างใบเบิกค่าแท็กซี่ 250 บาท 5/11/2569';
+    const evidence = (await createLineAiInputEvidence({ turnKey: 'typed-claim', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64), evidence,
+      slots: { descriptionText, amountText: '250', dateText: '5/11/2569' } });
+    const proposal = h.action().commandJson.accepted.proposal;
+    const values = proposal.lineChanges?.[0]?.values;
+    assert.equal(values?.amount?.value, '250');
+    assert.equal(values?.incurredDate?.value, '2026-11-05');
+    assert.equal(values?.description?.value, descriptionText === 'ค่าแท็กซี่' ? 'ค่าแท็กซี่' : undefined);
+    assert.equal(values?.amount?.proof.kind, 'USER_TEXT');
+  }
+});
+
+it('B4 whole-chain typed claim submit reaches the scoped picker with one classifier call and zero Tier 2', async () => {
+  const h = await b4WorkflowHarness();
+  const owner = h.flow.boundConversations.get(h.event);
+  const taskWrites: any[] = [];
+  const client = h.flow.prisma.client;
+  client.lineAiTaskRun = { findFirst: async () => null, createMany: async ({ data }: any) => taskWrites.push(...data), update: async () => ({}) };
+  client.$transaction = async (work: any) => work(client);
+  client.lineTurnOutcome = { findUnique: async () => null };
+  let firstLogRead = true;
+  h.flow.prisma.client.lineWebhookEventLog.findUnique = async () => {
+    if (firstLogRead) { firstLogRead = false; return null; }
+    return { id: 'event-row', companyId: h.ctx.companyId, createdAt: new Date(), processedAt: new Date(), status: 'workflow_targets' };
+  };
+  h.flow.bindConversation = async (event: object) => h.flow.boundConversations.set(event, owner);
+  h.flow.loadConversationContext = async () => undefined;
+  h.flow.loadOpenWorkContext = async () => h.open;
+  h.flow.prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  h.flow.prepareRetainedTaskSelection = async () => false;
+  h.flow.handleWorkflowControl = (ProcessLineWebhookUseCase.prototype as any).handleWorkflowControl;
+  let picks = 0;
+  h.flow.workflowTargets = { pick: async (_ctx: any, _chat: string, workflow: string) => {
+    picks++; assert.equal(workflow, 'reimbursement_submit'); return { targets: [], total: 0, exhaustive: true }; } };
+  h.flow.deliverRequiredMessages = async (_event: any, messages: any[]) => h.sentMessages.push(...messages);
+  await h.useCase.execute(h.event);
+  assert.equal(h.calls.length, 1);
+  assert.equal(picks, 1);
+  assert.equal(taskWrites[0]?.kind, 'reimbursement_submit');
+  assert.equal(taskWrites[0]?.entry, 'TYPED_CLASSIFIED');
+  assert.equal(h.intakeRequests.length, 0);
+  assert.equal(h.aiGatewayRequests.length, 0);
+  assert.match(JSON.stringify(h.sentMessages), /ใบเบิก/);
+});
+
+it('B4 confidence margin includes the exact threshold and normalizes a duplicate runner-up before starting', async () => {
+  for (const secondLabel of ['read', 'reimbursement_submit']) {
+    const h = await b4WorkflowHarness();
+    h.setDecision({ confidence: 0.95, secondConfidence: 0.8, secondLabel });
+    assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), true);
+    assert.equal(h.starts.length, 1);
+  }
+});
+
+it('B4 typed claim keeps proved slots while a branch selection is still missing', async () => {
+  const h = manualClaimHarness();
+  (h.adapter as any).prisma.client.companyMembership.findUnique = async () => ({ defaultBranchId: null });
+  (h.adapter as any).prisma.client.branch.findMany = async () => [
+    { id: 'branch-1', name: 'สาขาหนึ่ง', code: 'B1', type: 'STORE', updatedAt: new Date() },
+    { id: 'branch-2', name: 'สาขาสอง', code: 'B2', type: 'STORE', updatedAt: new Date() },
+  ];
+  const text = 'เบิกค่าแท็กซี่ 250 บาท 5/11/2569';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'typed-branch', parts: [{ partId: 'part-0',
+    eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const result = await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'b'.repeat(64), evidence,
+    slots: { descriptionText: 'ค่าแท็กซี่', amountText: '250', dateText: '5/11/2569' } });
+  assert.equal(result.status, 'needs_fields');
+  const accepted = h.action().commandJson.accepted;
+  assert.equal(accepted.options.selected.branchChoiceId, undefined);
+  assert.equal(accepted.proposal.lineChanges[0].values.amount.value, '250');
+});
+
+it('B4 workflow choices bind the owner, live for fifteen minutes and consume once without a second classifier', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
+  for (const seconds of [601, 901]) {
+    const h = await b4WorkflowHarness();
+    h.setDecision({ confidence: 0.7 });
+    await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+    const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items[0].action.data).get('token');
+    const selection = { ...h.event, webhookEventId: `choice-${seconds}`, workflowControl: { action: 'wf_choice', token, pick: 'reimbursement_submit' } };
+    h.flow.boundConversations.set(selection, h.flow.boundConversations.get(h.event));
+    assert.equal(await h.flow.handleWorkflowChoice(selection, { ...h.ctx, userId: 'other-user' }, null), true);
+    assert.equal(h.starts.length, 0);
+    t.mock.timers.tick(seconds * 1000);
+    assert.equal(await h.flow.handleWorkflowChoice(selection, h.ctx, null), true);
+    assert.equal(h.starts.length, seconds === 601 ? 1 : 0);
+    assert.equal(await h.flow.handleWorkflowChoice(selection, h.ctx, null), true);
+    assert.equal(h.starts.length, seconds === 601 ? 1 : 0);
+    assert.equal(h.calls.length, 1);
+  }
+});
+
+async function b4ForbiddenWorkflowEntry() {
+  const h = await b4WorkflowHarness();
+  const owner = h.flow.boundConversations.get(h.event);
+  h.event.messageText = 'ใครอนุมัติใบเบิกได้บ้าง';
+  h.event.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'forbidden-workflow', parts: [{ partId: 'part-0',
+    eventIdHash: 'c'.repeat(64), acceptedAtMs: Date.now(), rawText: h.event.messageText }] }))!.inputEvidence;
+  h.flow.textEvidenceV2 = async (event: any) => event.inputEvidence;
+  let firstLogRead = true;
+  h.flow.prisma.client.lineWebhookEventLog.findUnique = async () => {
+    if (firstLogRead) { firstLogRead = false; return null; }
+    return { id: 'event-row', companyId: h.ctx.companyId, createdAt: new Date() };
+  };
+  h.flow.bindConversation = async (event: object) => h.flow.boundConversations.set(event, owner);
+  h.flow.loadConversationContext = async () => undefined;
+  h.flow.loadOpenWorkContext = async () => h.open;
+  h.flow.prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+  h.flow.prepareRetainedTaskSelection = async () => false;
+  h.flow.reliabilityContext = async () => ({});
+  const turnGrant = { turnKey: h.event.inputEvidence.turnKey, authorityKind: 'webhook_event' };
+  h.flow.aiGateway.issueLineReliabilityGrant = async () => turnGrant;
+  h.flow.aiGateway.requestLineIntakeRoute = async (request: any) => {
+    h.intakeRequests.push(request);
+    return { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: h.event.messageText, requestedFilters: {}, requiredEvidence: [], dependsOn: [] }] };
+  };
+  h.flow.deliverPureGeneralV2 = async (event: any) => h.flow.deliverReply(event, 'ผู้มีสิทธิ์อนุมัติใบเบิกเป็นผู้อนุมัติได้ค่ะ');
+  return { ...h, turnGrant };
+}
+
+it('B4 low-confidence forbidden top label with howto reaches Tier 2 intake without a permission refusal', async () => {
+  const h = await b4ForbiddenWorkflowEntry();
+  h.setDecision({ label: 'approvals', confidence: 0.4, secondLabel: 'howto', secondConfidence: 0.3 });
+  const originalEvidence = structuredClone(h.event.inputEvidence);
+  await h.useCase.execute(h.event);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.intakeRequests.length, 1);
+  assert.equal(h.intakeRequests[0].messageText, 'ใครอนุมัติใบเบิกได้บ้าง');
+  assert.deepEqual(h.intakeRequests[0].inputEvidence, originalEvidence);
+  assert.strictEqual(h.intakeRequests[0].budgetGrantV2, h.turnGrant);
+  assert.equal(h.starts.length, 0);
+  assert.doesNotMatch(h.replies.join(' '), /ไม่มีสิทธิ์|สิทธิ์ไม่เพียงพอ/);
+  assert.match(h.replies.join(' '), /ผู้อนุมัติได้/);
+  assert.equal(h.sentMessages.some((message: any) => message.quickReply?.items.some((item: any) => item.action.label === 'อย่างอื่น')), false);
+});
+
+it('B4 high-confidence forbidden top label keeps the existing refusal', async () => {
+  const h = await b4ForbiddenWorkflowEntry();
+  h.setDecision({ label: 'approvals', confidence: 0.9, secondLabel: 'howto', secondConfidence: 0.4 });
+  await h.useCase.execute(h.event);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.intakeRequests.length, 0);
+  assert.equal(h.starts.length, 0);
+  assert.match(h.replies.join(' '), /สิทธิ์/);
+  assert.ok(h.sentMessages.some((message: any) => message.quickReply?.items.length));
+});
+
+it('B4 low-confidence forbidden top label offers only the permitted second workflow and other', async () => {
+  const h = await b4ForbiddenWorkflowEntry();
+  h.setDecision({ label: 'approvals', confidence: 0.7, secondLabel: 'reimbursement_submit', secondConfidence: 0.6 });
+  await h.useCase.execute(h.event);
+  assert.equal(h.intakeRequests.length, 0);
+  assert.equal(h.starts.length, 0);
+  assert.doesNotMatch(h.replies.join(' '), /ไม่มีสิทธิ์|สิทธิ์ไม่เพียงพอ/);
+  const card: any = h.sentMessages.at(-1);
+  assert.equal(card.text, 'ต้องการทำเรื่องนี้ใช่ไหมคะ');
+  assert.deepEqual(card.quickReply.items.map((item: any) => new URLSearchParams(item.action.data).get('pick')), ['reimbursement_submit', 'other']);
+});
+
+it('B4 low-confidence two forbidden workflow labels reach Tier 2 intake without an other-only card', async () => {
+  const h = await b4ForbiddenWorkflowEntry();
+  h.setDecision({ label: 'approvals', confidence: 0.7, secondLabel: 'expense_confirm', secondConfidence: 0.6 });
+  await h.useCase.execute(h.event);
+  assert.equal(h.intakeRequests.length, 1);
+  assert.equal(h.intakeRequests[0].messageText, h.event.messageText);
+  assert.strictEqual(h.intakeRequests[0].budgetGrantV2, h.turnGrant);
+  assert.equal(h.starts.length, 0);
+  assert.match(h.replies.join(' '), /ผู้อนุมัติได้/);
+  assert.equal(h.sentMessages.some((message: any) => message.quickReply?.items.some((item: any) => item.action.label === 'อย่างอื่น')), false);
+});
+
+it('M4 round 3 combined claim answer reaches the confirm card and the fourth press saves the draft', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 5, 5) });
+  const claim = await claimFragmentHarness();
+  await claim.run('สร้างใบเบิกค่าแท็กซี่ให้หน่อย', evidence => ({ fields: {},
+    lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่') } }] }));
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: claim.ctx.permissions,
+    aiGatewayFn: async () => { const options = await claim.adapter.getOptions(claim.ctx as any, { operation: 'CREATE', subrequestIndex: 0 });
+      return { toolsInvoked: ['reimbursement.draft.get_options'], replyText: 'เลือกหลักฐานได้เลยค่ะ', sourceRefs: options.sourceRefs }; } });
+  const flow = h.useCase as any, cards: any[][] = [];
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner: claim.owner, epoch: 1, id: 'claim-conversation' });
+  flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.reimbursementDrafts = claim.service; flow.reimbursementAdapter = claim.adapter;
+  flow.contextV2 = { projection: async () => ({ tasks: [] }), save: async () => true };
+  flow.deliverRequiredMessages = async (_event: unknown, messages: any[]) => cards.push(messages);
+  const send = async (text: string) => {
+    const inputEvidence = (await createLineAiInputEvidence({ turnKey: `combined-${cards.length}`, parts: [{ partId: 'part-0',
+      eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `combined-${cards.length}`, messageText: text, inputEvidence });
+  };
+  await send('250 บาท วันนี้');
+  assert.equal(claim.action().commandJson.accepted.proposal.lineChanges[0].values.amount.value, '250');
+  await send('ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน');
+  const result = await claim.service.get({ ...claim.input, actionId: claim.action().id });
+  assert.equal(result.status, 'preview', JSON.stringify(result));
+  if (result.status !== 'preview') return;
+  assert.equal(Number(result.preview.after.amount), 250);
+  assert.equal(result.preview.after.lines[0].incurredDate, '2026-11-05');
+  assert.equal(result.preview.after.lines[0].categoryKey, 'travel');
+  assert.equal(result.preview.after.lines[0].attachmentId ?? null, null);
+  assert.equal(result.preview.after.reason, 'ไปส่งเอกสารให้ร้าน');
+  assert.match(JSON.stringify(cards.at(-1)), /reimbursement_draft_confirm/);
+  const proof = claim.action().sourceProofJson.receipts.find((item: any) => item.fieldPath === 'fields.reason').proof;
+  assert.equal(proof.refs[0].rawSha256, (await createLineAiInputEvidence({ turnKey: 'proof', parts: [{ partId: 'part-0',
+    eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: 'ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน' }] }))!.inputEvidence.parts[0].rawSha256);
+  let writes = 0;
+  claim.repo.markDraftActionLineDelivered = async () => true;
+  claim.repo.applyDraftActionAtomic = async () => {
+    writes++;
+    const action = claim.action();
+    const request = { ...result.preview.after, id: 'saved-combined-claim', status: 'DRAFT', updatedAt: new Date() };
+    Object.assign(action, { status: 'APPLIED', requestId: request.id, resultJson: { actionId: action.id, operation: 'CREATE', requestId: request.id,
+      committedState: 'DRAFT', amount: request.amount, currency: 'THB', committedAt: new Date().toISOString(), appliedRequestUpdatedAt: new Date().toISOString() } });
+    return { kind: 'applied', action, request };
+  };
+  const saved = await claim.service.confirm({ ...claim.input, deliveryPlanId: 'delivered-combined-preview', control: {
+    action: 'reimbursement_draft_confirm', actionId: result.preview.actionId, previewRevision: result.preview.previewRevision, confirmationDigest: result.preview.confirmationDigest } });
+  assert.equal(saved.status, 'applied', JSON.stringify(saved));
+  assert.equal(writes, 1);
+  assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+it('M4 round 3 combined receipt and category leave an untyped reason pending', async () => {
+  const h = manualClaimHarness();
+  await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64) });
+  const lineText = 'ค่าแท็กซี่ 250 บาท';
+  const lineEvidence = (await createLineAiInputEvidence({ turnKey: 'pending-reason-line', parts: [{ partId: 'part-0',
+    eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: lineText }] }))!.inputEvidence;
+  await h.adapter.answerLine({ ...h.input, evidence: lineEvidence, text: lineText });
+  const text = 'ไม่มีใบเสร็จ หมวดค่าเดินทาง';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'combined-no-reason', parts: [{ partId: 'part-0',
+    eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const result = await h.adapter.answerReason({ ...h.input, evidence, text });
+  assert.equal(result?.status, 'needs_fields');
+  assert.equal(h.action().commandJson.accepted.proposal.fields.reason, undefined);
+});
+
+async function m4ClaimAmountHarness(duplicate = false) {
+  const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const claims: any[] = ['wrong', 'right', 'third'].map((id, index) => ({ id, requestNo: `RB-00${index + 1}`, requesterUserId: 'somchai',
+    branchId: 'branch-1', title: 'ค่าเดินทางของสมชาย', amount: index === 0 ? '2721' : index === 1 || duplicate ? '1877' : '900', currency: 'THB',
+    incurredDate: '2026-11-05', updatedAt: new Date().toISOString(), status: 'PENDING_APPROVAL', approvalSnapshotHash: 'snapshot', lines: [],
+    approvalActions: { canApprove: true, canReject: true } }));
+  const ctx: any = { requestId: 'amount-selection', companyId: 'company-1', userId: 'manager', membershipId: 'manager-membership', authProvider: 'line',
+    roles: ['MANAGER'], permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.read_related', 'reimbursement.approve', 'reimbursement.reject'], scopes: { branchIds: ['branch-1'] } };
+  const writes: string[] = [];
+  const decide = { execute: async (_ctx: any, id: string, ...args: any[]) => {
+    const claim = claims.find(item => item.id === id);
+    if (!args.at(-1)?.previewOnly) { writes.push(id); claim.status = 'REJECTED'; }
+    return claim;
+  } };
+  const prisma: any = { client: { aiConversation: { findFirst: async () => ({ id: 'amount-chat', lifecycleEpoch: 1 }) },
+    lineReadEvidence: { findMany: async () => [{ toolName: 'reimbursement.list_pending_approvals', inputJson: { chatKeyHash: 'amount-chat', readMemory: { shownItems: claims.map(claim => ({ id: claim.id })) } } }] } } };
+  const actions: any = new LineExpenseActionService(prisma, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'amount-secret', webBaseUrl: 'https://app.example.com' } as any,
+    { execute: async (_ctx: any, id: string) => claims.find(claim => claim.id === id) } as any, undefined, undefined, decide as any, decide as any);
+  actions.listClaims = { execute: async (request: any) => { assert.equal(request.userId, ctx.userId); assert.deepEqual(request.scopes.branchIds, ctx.scopes.branchIds);
+    return { items: claims, total: claims.length }; } };
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  actions.workflowTargets = new LineWorkflowTargetService({ execute: (...args: any[]) => actions.listClaims.execute(...args) } as any, actions);
+  const tool = new ExpenseActionPreviewTool(actions);
+  const text = 'ยอด 1,877 บาท';
+  const inputEvidence = (await createLineAiInputEvidence({ turnKey: 'amount-turn', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const toolCtx: any = { ...ctx, branchIds: ['branch-1'], chatKeyHash: 'amount-chat', locale: 'th-TH', inputEvidence };
+  return { actions, tool, toolCtx, ctx, claims, writes };
+}
+
+it('M4 round 3 claim amount corrects a wrong model rejection target before reason and signed confirmation', async () => {
+  const h = await m4ClaimAmountHarness();
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+  const pending = await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat');
+  assert.ok(pending, JSON.stringify(result));
+  assert.equal(pending.preview.record.amount, '1877');
+  assert.equal(h.writes.length, 0);
+  const reason = await h.actions.answerReason(h.ctx, 'amount-chat', 'ไม่มีหลักฐานแนบ');
+  assert.ok(reason.preview);
+  await h.actions.apply(h.ctx, 'amount-chat', { action: 'expense_action_confirm', token: reason.preview.token });
+  assert.deepEqual(h.writes, ['right']);
+  assert.equal(h.claims[0].status, 'PENDING_APPROVAL');
+});
+
+it('M4 round 3 two permitted claims with the same amount ask with the existing claim picker', async () => {
+  const h = await m4ClaimAmountHarness(true);
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+  assert.equal((result.data as any).preview, undefined);
+  assert.match((result.data as any).reply, /เลือกใบเบิก/);
+  const picker = await h.actions.pendingClaimPicker(h.ctx, 'amount-chat', h.ctx.requestId);
+  assert.ok(picker);
+  assert.equal(picker.result.targets.length, 2);
+  assert.deepEqual(picker.result.targets.map((item: any) => item.id), ['right', 'third']);
+  assert.equal(h.writes.length, 0);
+});
+
+it('M4 round 3 claim amount guard respects permitted options and approval targets', async () => {
+  for (const action of ['REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT']) {
+    const h = await m4ClaimAmountHarness();
+    await h.tool.execute(h.toolCtx, { action, reimbursementId: 'wrong' });
+    const pending = await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat');
+    assert.equal(pending.expenseId, 'right');
+    assert.equal(h.writes.length, 0);
+  }
+  const h = await m4ClaimAmountHarness();
+  h.claims[1].approvalActions.canReject = false;
+  await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+  assert.equal(await h.actions.pending(h.ctx, 'amount-chat'), null);
+  const picker = await h.actions.pendingClaimPicker(h.ctx, 'amount-chat', h.ctx.requestId);
+  assert.ok(picker);
+  assert.equal(picker.result.targets.some((claim: any) => claim.id === 'right'), false);
+  assert.equal(await h.actions.pendingClaimPicker({ ...h.ctx, userId: 'other-user' }, 'amount-chat', h.ctx.requestId), null);
+  assert.equal(await h.actions.pendingClaimPicker({ ...h.ctx, freeExpenseDrafts: true }, 'amount-chat', h.ctx.requestId), null);
+});
+
+it('M4 round 3 combined answer never invents a category or a missing receipt reason', async () => {
+  const h = manualClaimHarness();
+  h.repo.findPolicy = async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' });
+  await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64) });
+  const answer = async (text: string) => {
+    const evidence = (await createLineAiInputEvidence({ turnKey: `unknown-category-${text.length}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64),
+      acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    return await h.adapter.answerLine({ ...h.input, evidence, text }) ?? h.adapter.answerReason({ ...h.input, evidence, text });
+  };
+  await answer('ค่าแท็กซี่ 250 บาท');
+  const result = await answer('ไม่มีใบเสร็จ หมวดค่าเดินทางปลอม เหตุผลไปส่งเอกสารให้ร้าน');
+  assert.equal(result?.status, 'needs_fields');
+  const proposal = h.action().commandJson.accepted.proposal;
+  assert.equal(proposal.lineChanges[0].values.categoryChoiceId, undefined);
+  assert.equal(proposal.fields.missingReceiptReason, undefined);
+  assert.equal(proposal.fields.reason.value, 'ไปส่งเอกสารให้ร้าน');
+});
+
+it('M4 round 3 combined claim collection keeps the free-shop refusal boundary', async () => {
+  const h = await claimFragmentHarness();
+  await h.run('ค่าแท็กซี่', evidence => ({ fields: {}, lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่') } }] }));
+  const before = structuredClone(h.action());
+  const text = 'ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน';
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'free-claim-answer', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64),
+    acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const input = { ...h.input, ctx: { ...h.ctx, freeExpenseDrafts: true }, evidence, text };
+  assert.equal(await h.adapter.answerLine(input), null);
+  assert.equal(await h.adapter.answerReason(input), null);
+  assert.deepEqual(h.action(), before);
+});
+
+it('M4 round 3 ambiguous claim amount delivers the existing signed picker through the webhook', async t => {
+  const target = await m4ClaimAmountHarness(true);
+  const chat = chatKeyHashOf(BASE_EVENT);
+  target.toolCtx.membershipId = 'mem-1';
+  target.actions.prisma.client.lineReadEvidence.findMany = async () => [{ toolName: 'reimbursement.list_pending_approvals',
+    inputJson: { chatKeyHash: chat, readMemory: { shownItems: target.claims.map(claim => ({ id: claim.id })) } } }];
+  const { prisma } = makePrisma({ identityUserId: target.ctx.userId });
+  const delivered: any[][] = [];
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  const h = makeUseCase(prisma, { permissions: target.ctx.permissions, roles: ['MANAGER'], branchIds: ['branch-1'],
+    config: { aiGatewayInternalSecret: 'amount-secret' }, intakeRouteFn: () => structuredClone(FX17_LIVE.C03[2].route),
+    aiGatewayFn: async request => {
+      const result = await target.tool.execute({ ...target.toolCtx, chatKeyHash: chat, requestId: request.requestId, inputEvidence: request.inputEvidence },
+        { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+      return { requestId: request.requestId, replyText: 'ข้อความจากโมเดล', intent: 'unknown', agent: 'general', refused: false,
+        sourceRefs: result.sourceRefs, sourceLabels: [], toolsInvoked: ['expense.action.preview'], webLinks: [],
+        semanticCoverage: [{ index: 0, status: 'needs_user', question: 'เลือกใบเบิก' }] };
+    } });
+  const flow = h.useCase as any;
+  const owner = { companyId: target.ctx.companyId, userId: target.ctx.userId, membershipId: 'mem-1', channel: 'line', channelKind: 'USER',
+    messagingChannelId: BASE_EVENT.messagingChannelId, chatKeyHash: chat };
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner, id: 'amount-chat', epoch: 1 });
+  flow.loadConversationContext = async () => undefined;
+  flow.loadOpenWorkContext = async () => ({ openWaiting: [], activeExpenseDrafts: [], recentCapturedExpenses: [], substituteContext: { workflowState: 'none', hasPendingQuestion: false } });
+  flow.reliabilityContext = async () => ({}); flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareRetainedTaskSelection = async () => false;
+  flow.prepareTextGrantV2 = async (event: any) => { const grant = { turnKey: event.inputEvidence.turnKey }; flow.budgetGrantsV2.set(event, grant); return grant; };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, tasks: [] }), createTurn: async () => ({ id: 'amount-turn' }), save: async () => true };
+  flow.expenseActions = target.actions;
+  await fx20RealLineDelivery(t, flow, prisma, delivered);
+  await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'ambiguous-claim-picker', messageText: 'ยอด 1,877 บาท', inputEvidence: target.toolCtx.inputEvidence });
+  const message = delivered.at(-1)?.[0];
+  assert.ok(message, JSON.stringify(h.replies));
+  assert.match(JSON.stringify(message), /เลือกใบเบิกที่ไม่อนุมัติ/);
+  const buttons = flexButtons(message).map((button: any) => new URLSearchParams(button.action.data));
+  assert.deepEqual(buttons.map((button: URLSearchParams) => button.get('id')), ['right', 'third']);
+  assert.ok(buttons.every((button: URLSearchParams) => button.get('action') === 'wf_open' && button.get('sig')));
+  assert.doesNotMatch(JSON.stringify(message), /ข้อความจากโมเดล/);
+  assert.equal(target.writes.length, 0);
+});
+
+it('M4 round 3 claim payment uses the same amount target guard before requesting the transfer slip', async () => {
+  const h = await m4ClaimAmountHarness();
+  h.ctx.permissions.push('reimbursement.payment.record');
+  for (const claim of h.claims) Object.assign(claim, { status: 'APPROVED', paidAmount: '0', outstandingAmount: claim.amount, payout: {
+    version: 1, payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารทดสอบ', accountName: 'สมชาย', accountLast4: '1234', holderType: 'SELF' } });
+  await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_RECORD_PAYMENT', reimbursementId: 'wrong' });
+  const pending = await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat');
+  assert.equal(pending.expenseId, 'right');
+  assert.equal(pending.awaitingField, 'claimSlip');
+  assert.equal(h.writes.length, 0);
+});
+
+it('M4 round 3 incomplete permitted claim search asks instead of guessing a unique amount match', async () => {
+  const h = await m4ClaimAmountHarness();
+  let pages = 0;
+  h.actions.listClaims.execute = async () => { pages++; return { total: 301, items: [h.claims[1]] }; };
+  await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+  assert.equal(pages, 3);
+  const picker = await h.actions.pendingClaimPicker(h.ctx, 'amount-chat', h.ctx.requestId);
+  assert.equal(picker.result.exhaustive, false);
+  assert.equal(await h.actions.pending(h.ctx, 'amount-chat'), null);
+  assert.equal(h.writes.length, 0);
+});
+
+
+it('M4 round 3 repeated claim pages cannot prove an amount match is unique', async () => {
+  const h = await m4ClaimAmountHarness();
+  const repeated = [h.claims[1], ...Array.from({ length: 99 }, (_, index) => ({ ...h.claims[0], id: `other-${index}` }))];
+  h.actions.listClaims.execute = async () => ({ total: 101, items: repeated });
+  await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_REJECT', reimbursementId: 'wrong' });
+  assert.equal(await h.actions.pending(h.ctx, 'amount-chat'), null);
+  const picker = await h.actions.pendingClaimPicker(h.ctx, 'amount-chat', h.ctx.requestId);
+  assert.equal(picker.result.exhaustive, false);
+  assert.equal(h.writes.length, 0);
+});
+
+it('M4 round 3 a receipt answer is retained when its category is unknown or uses the existing bare category label', async () => {
+  for (const categoryText of ['หมวดที่ไม่รู้จัก', 'ค่าเดินทาง']) {
+    const h = manualClaimHarness();
+    await h.adapter.startFromWorkflow(h.ctx, h.owner, 1, { eventIdHash: 'a'.repeat(64) });
+    const answer = async (text: string) => {
+      const evidence = (await createLineAiInputEvidence({ turnKey: `receipt-category-${text.length}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64),
+        acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+      return await h.adapter.answerLine({ ...h.input, evidence, text }) ?? h.adapter.answerReason({ ...h.input, evidence, text });
+    };
+    await answer('ค่าแท็กซี่ 250 บาท');
+    assert.equal((await answer(`ไม่มีใบเสร็จ ${categoryText}`))?.status, 'needs_fields');
+    const proposal = h.action().commandJson.accepted.proposal;
+    assert.equal(proposal.lineChanges[0].values.attachmentChoiceId, null);
+    assert.equal(!!proposal.lineChanges[0].values.categoryChoiceId, categoryText === 'ค่าเดินทาง');
+    assert.equal(proposal.fields.reason, undefined);
+  }
+});
+
+async function m4PickerHarness(workflow = 'expense_delete', duplicate = false) {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read', 'expense.delete', 'ai.tool.invoke'], config: { aiGatewayInternalSecret: 'picker-secret' } });
+  const flow = h.useCase as any;
+  const ctx: any = { requestId: 'picker-answer', companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', roles: ['OWNER'],
+    permissions: ['line.ai.query', 'expense.read', 'expense.delete', 'ai.tool.invoke'], scopes: { branchIds: ['branch-1'] }, authProvider: 'line' };
+  const owner = { companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId, chatKeyHash: chatKeyHashOf(BASE_EVENT),
+    channelId: BASE_EVENT.messagingChannelId, recipientHash: 'recipient', accessFingerprint: 'access', conversationId: 'picker-chat', ownerEpoch: 1 };
+  const targets = [{ id: 'listed-1', label: 'ค่าบริการ', amount: '1000', currency: 'THB' },
+    { id: 'listed-2', label: 'ค่าเดินทาง', amount: duplicate ? '1000' : '711', currency: 'THB' }];
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  const card = buildExpenseWorkflowPicker({ targets, total: 2, exhaustive: true }, workflow as any, 'picker-secret', ctx.companyId, ctx.userId, 'https://app.example.com');
+  const row: any = { id: 'picker-outcome', webhookEventId: 'picker-start', companyId: ctx.companyId, deliveredAt: new Date(), messagesJson: [card],
+    authorizationJson: { workflowPicker: { owner: { ...owner } } } };
+  prisma.client.lineTurnOutcome.findMany = async () => [row];
+  prisma.client.lineTurnOutcome.updateMany = async ({ data }: any) => { Object.assign(row, data); return { count: 1 }; };
+  flow.quoteOwner = () => owner;
+  flow.expenseRepo = { findByIdWithRelations: async (_company: string, id: string) => ({ ...targets.find(t => t.id === id), branchId: 'branch-1',
+    expenseNumber: id === 'listed-1' ? 'ทดสอบ-0003' : 'ทดสอบ-0004', lines: [{ description: id === 'listed-1' ? 'ค่าบริการ' : 'ค่าเดินทาง' }] }) };
+  prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }];
+  const selected: string[] = [];
+  flow.expenseActions = { openWorkflow: async (_ctx: any, _chat: string, control: any) => { selected.push(control.id); return { reply: 'เตรียมการ์ดแล้ว' }; } };
+  let created = 0;
+  flow.captureExpenseNote = { execute: async () => { created++; throw new Error('picker text must never create'); } };
+  flow.deliverRequiredMessages = async (_event: any, messages: any[]) => h.sentMessages.push(...messages);
+  const answer = async (text: string) => {
+    const event: any = { ...BASE_EVENT, webhookEventId: `picker-${text}`, messageText: text };
+    flow.boundConversations.set(event, { owner, epoch: 1, id: 'picker-chat' });
+    event.inputEvidence = (await createLineAiInputEvidence({ turnKey: deliveryHash(['picker', text]), parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    return flow.handlePendingWorkflowPicker(event, ctx, null);
+  };
+  return { ...h, flow, prisma, ctx, row, card, selected, answer, created: () => created };
+}
+
+it('M4 round 4 delete picker typed document number selects its listed row without creating a draft', async () => {
+  const h = await m4PickerHarness();
+  assert.equal(await h.answer('ใบเลขที่ ทดสอบ-0003'), true);
+  assert.deepEqual(h.selected, ['listed-1']); assert.equal(h.created(), 0); assert.equal(h.intakeRequests.length, 0);
+});
+it('M4 round 4 voucher picker captures vendor and amount instead of a new expense', async () => {
+  const h = await m4PickerHarness('payment_voucher');
+  assert.equal(await h.answer('ค่าบริการ 1,000 บาท'), true);
+  assert.deepEqual(h.selected, ['listed-1']); assert.equal(h.created(), 0);
+});
+it('M4 round 4 an unlisted branch and a shared amount re-show the picker without creating', async () => {
+  for (const [duplicate, text] of [[false, 'ร่างค่าบริการ 711 บาท ที่สาขา 2'], [true, '1,000 บาท']] as const) {
+    const h = await m4PickerHarness('expense_delete', duplicate);
+    assert.equal(await h.answer(text), true); assert.deepEqual(h.selected, []); assert.equal(h.created(), 0);
+    assert.deepEqual(h.sentMessages.at(-1), h.card);
+    assert.match(JSON.stringify(h.sentMessages), /เลือกรายการจากการ์ดนี้/);
+  }
+});
+it('M4 round 4 greeting and a new request leave the delivered picker press valid', async () => {
+  const h = await m4PickerHarness();
+  for (const text of ['สวัสดี', 'เมนูหลัก', 'สร้างใบเบิกค่าแท็กซี่ 250 บาท', 'ใบเบิกคืออะไร?']) assert.equal(await h.answer(text), false);
+  assert.equal(await h.answer('ใบที่ 2'), true); assert.deepEqual(h.selected, ['listed-2']);
+  assert.equal(h.created(), 0);
+});
+it('M4 round 4 expired other-owner and consumed picker cannot authorize a typed selection', async () => {
+  for (const mode of ['expired', 'owner', 'closed']) {
+    const h = await m4PickerHarness();
+    if (mode === 'expired') h.row.deliveredAt = new Date(Date.now() - 16 * 60_000);
+    if (mode === 'owner') h.row.authorizationJson.workflowPicker.owner.userId = 'other';
+    if (mode === 'closed') h.row.authorizationJson.workflowPickerClosed = true;
+    assert.equal(await h.answer('ใบที่ 1'), false, mode); assert.deepEqual(h.selected, []);
+  }
+});
+
+it('M4 round 4 signed delete picker and typed document number reach the same press handler before capture or intake', async t => {
+  for (const [workflow, text, expected] of [
+    ['expense_delete', 'ใบเลขที่ ทดสอบ-0003', 'listed-1'],
+    ['payment_voucher', 'ค่าบริการ 1,000 บาท', 'listed-1'],
+    ['expense_delete', 'ร่างค่าบริการ 711 บาท ที่สาขา 2', undefined],
+    ['expense_delete', '1,000 บาท', undefined],
+  ] as const) {
+    const permissions = ['line.ai.query', 'ai.tool.invoke', 'expense.receipt.line_upload', 'expense.read', 'expense.delete', 'expense.disbursement.create'];
+    const h = await fx21bBoundWebhook(t, { source: `m4-round4-${workflow}-${expected ?? 'branch'}`, messageText: text,
+      route: { status: 'ROUTED', intent: 'EXPENSE_CAPTURE', language: 'th', confidence: 1, captureHints: { amount: '1000', vendorName: 'ค่าบริการ' } } }, permissions);
+    h.flow.config.aiGatewayInternalSecret = 'picker-secret';
+    const records: any[] = [{ id: 'listed-1', label: 'ค่าบริการ', amount: '1000', currency: 'THB', branchId: 'branch-1', expenseNumber: 'ทดสอบ-0003', lines: [{ description: 'ค่าบริการ' }] },
+      { id: 'listed-2', label: 'ค่าเดินทาง', amount: '711', currency: 'THB', branchId: 'branch-1', expenseNumber: 'ทดสอบ-0004', lines: [{ description: 'ค่าเดินทาง' }] }];
+    if (text === '1,000 บาท') records[1].amount = '1000';
+    h.flow.workflowTargets = { pick: async () => ({ targets: records, total: records.length, exhaustive: true }) };
+    h.flow.expenseRepo = { findByIdWithRelations: async (_company: string, id: string) => records.find(row => row.id === id), listRecentLineCaptures: async () => [], listCategories: async () => [] };
+    h.prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }];
+    const selected: string[] = [], expenseRows: any[] = [];
+    h.flow.captureExpenseNote = { execute: async (...args: any[]) => { expenseRows.push(args); assert.fail('picker answer created an expense'); } };
+    h.flow.expenseActions = { openWorkflow: async (_ctx: any, _chat: string, control: any) => { selected.push(control.id); return { reply: 'เตรียมการ์ดแล้ว' }; } };
+    const outcomes = new Map<string, any>();
+    const save = h.flow.deliveryPlans.savePlan;
+    h.flow.deliveryPlans.savePlan = async (...args: any[]) => {
+      const saved = await save(...args);
+      outcomes.set(args[4], { id: args[1].producerId, companyId: 'company-1', webhookEventId: args[4], messagesJson: args[1].batches.flatMap((batch: any) => batch.primary.messages),
+        authorizationJson: args[5], planId: saved.id });
+      return saved;
+    };
+    h.prisma.client.lineTurnOutcome.findMany = async () => {
+      const rows = [];
+      for (const outcome of [...outcomes.values()].reverse()) {
+        const row = await h.prisma.client.lineDeliveryPlan.findUnique({ where: { id: outcome.planId } });
+        if (row.status === 'ACCEPTED') rows.push({ ...outcome, deliveredAt: new Date(), deliveryPlan: { ...row, batchStateJson: row.states } });
+      }
+      return rows;
+    };
+    const update = h.prisma.client.lineTurnOutcome.updateMany;
+    h.prisma.client.lineTurnOutcome.updateMany = async (args: any) => {
+      if (args.data.authorizationJson && outcomes.has(args.where.webhookEventId)) Object.assign(outcomes.get(args.where.webhookEventId), args.data);
+      return update(args);
+    };
+    await h.execute('เริ่ม', new URLSearchParams({ action: 'chat-action', id: workflow }).toString());
+    assert.match(JSON.stringify(h.delivered.at(-1)), /เลือก/);
+    const picker = h.delivered.at(-1)![0];
+    if (expected) {
+      await h.execute('สวัสดี');
+      assert.match(JSON.stringify(h.delivered.at(-1)), /สวัสดี/);
+    }
+    if (workflow === 'payment_voucher') {
+      const button = flexButtons(picker).find((button: any) => new URLSearchParams(button.action.data).get('id') === 'listed-1');
+      assert.ok(button);
+      await h.execute('เลือก', button.action.data);
+      assert.deepEqual(selected, ['listed-1'], 'a greeting does not invalidate the original press');
+      selected.length = 0;
+      // A new delivered picker remains able to accept the observed typed vendor/amount answer.
+      await h.execute('เริ่ม', new URLSearchParams({ action: 'chat-action', id: workflow }).toString());
+    }
+    await h.execute(text);
+    assert.deepEqual(selected, expected ? [expected] : []);
+    assert.equal(expenseRows.length, 0); assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
+    if (!expected) assert.deepEqual(h.delivered.at(-1)!.at(-1), picker);
+  }
+});
+
+it('M4 round 4 listed branch name vendor words and bare document number select only their row', async () => {
+  for (const text of ['สาขา 1 ค่าบริการ 1,000 บาท', 'ค่าบริการ', 'ทดสอบ-0003', 'ค่าบริการ ๑,๐๐๐ บาท', 'ค่าบริการ 1000 ที่สาขา 1']) {
+    const h = await m4PickerHarness();
+    assert.equal(await h.answer(text), true); assert.deepEqual(h.selected, ['listed-1'], text);
+  }
+});
+it('M4 round 4 conflicting vendor text never overrides an amount match', async () => {
+  const h = await m4PickerHarness();
+  assert.equal(await h.answer('ค่าบริการ 711 บาท'), true); assert.deepEqual(h.selected, []);
+  assert.equal(await h.answer('ใบเลขที่ ทดสอบ-0003 ยอด 711'), true); assert.deepEqual(h.selected, []);
+  assert.deepEqual(h.sentMessages.at(-1), h.card); assert.equal(h.created(), 0);
+});
+it('M4 round 4 repeated picker keeps its first expiry and a consumed row never resurfaces', async () => {
+  const h = await m4PickerHarness('expense_delete', true);
+  const expiresAtMs = Date.now() + 60_000;
+  h.row.authorizationJson.workflowPicker.expiresAtMs = expiresAtMs;
+  assert.equal(await h.answer('1,000 บาท'), true);
+  const event: any = { ...BASE_EVENT, messageText: '1,000 บาท' };
+  h.flow.repeatedWorkflowPickerExpiry.set(event, expiresAtMs);
+  const authorization = h.flow.buildTurnAuthorizationJson(event, 'repeat', [h.card]);
+  assert.equal(authorization.workflowPicker.expiresAtMs, expiresAtMs);
+  assert.equal(await h.answer('ใบที่ 1'), true); assert.deepEqual(h.selected, ['listed-1']);
+  assert.equal(h.row.authorizationJson.workflowPickerClosed, true);
+  assert.equal(await h.answer('ใบที่ 2'), false); assert.deepEqual(h.selected, ['listed-1']);
+});
+
+it('M4 round 4 a vendor name starting with a request verb still answers the picker', async () => {
+  const h = await m4PickerHarness();
+  const read = h.flow.expenseRepo.findByIdWithRelations;
+  h.flow.expenseRepo.findByIdWithRelations = async (...args: any[]) => ({ ...await read(...args), vendorNameSnapshot: args[1] === 'listed-1' ? 'ขอนแก่นบริการ' : 'ผู้ขายอื่น' });
+  assert.equal(await h.answer('ขอนแก่นบริการ 1,000 บาท'), true);
+  assert.deepEqual(h.selected, ['listed-1']); assert.equal(h.created(), 0);
+});
+
+async function m5ActionTargetHarness(action = 'DELETE_DRAFT') {
+  const { LineExpenseActionService, ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const { LineDraftPreviewStore } = await import('../../../expenses/application/services/line-draft-preview.store');
+  const { GetExpenseUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+  const ctx: any = { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', requestId: 'm5-action', roles: ['OWNER'], authProvider: 'line',
+    permissions: ['line.ai.query', 'ai.tool.invoke', 'expense.read', 'expense.delete', 'expense.void', 'expense.review', 'expense.confirm', 'expense.payment.record', 'expense.disbursement.prepare'], scopes: { branchIds: ['branch-1'] } };
+  const records = ['wrong', 'gold', 'other'].map((id, index) => ({ ...savedMediaFixture(id), branchId: 'branch-1', currency: 'THB',
+    expenseNumber: index === 1 ? 'ทดสอบ-0010' : index === 0 ? 'ทดสอบ-0003' : 'ทดสอบ-0002', vendorDocumentNumber: `ใบผู้ขาย-${index + 1}`,
+    status: ['VOID', 'RECORD_PAYMENT', 'VOUCHER_CREATE'].includes(action) ? 'CONFIRMED' : action === 'CONFIRM' ? 'READY_FOR_CONFIRMATION' : 'DRAFT',
+    vendorNameSnapshot: 'ร้านทดสอบ', vendorCounterpartyId: null, grandTotalAmount: index === 1 ? '400' : '1455', netPayableAmount: index === 1 ? '400' : '1455',
+    outstandingAmount: index === 1 ? '400' : '1455', paidAmount: '0', paymentStatus: 'UNPAID', note: `ค่าน้ำมัน รอบ ${index + 1}`,
+    hasDeletionBlockingHistory: false, hasRetainedSubstituteReceiptEvidence: false, lines: [{ description: `ค่าน้ำมัน รอบ ${index + 1}` }] }));
+  const { prisma } = makePrisma();
+  prisma.client.aiConversation.findFirst = async () => ({ id: 'm5-chat', lifecycleEpoch: 1 });
+  prisma.client.lineReadEvidence = { findMany: async () => [{ toolName: 'expense.list_recent', inputJson: { chatKeyHash: 'm5-chat', readMemory: { tool: 'expense.list_recent', shownItems: records.map(row => ({ id: row.id })) } } }] };
+  const repo: any = { findByIdWithRelations: async (_company: string, id: string) => records.find(row => row.id === id), listRecentLineCaptures: async () => [], listCategories: async () => [] };
+  const get = new GetExpenseUseCase(repo);
+  const previewed: string[] = [], drafts: any[] = [];
+  const validator: any = { previewLineAction: async (_ctx: any, id: string) => { previewed.push(id); return { target: 'READY_FOR_CONFIRMATION' }; }, execute: () => assert.fail('preview cannot mutate') };
+  const voucher = new LineVoucherActionService(prisma, { previewLineAction: async (_ctx: any, _operation: string, input: any) => drafts.push(structuredClone(input.draft)) } as any, get, {} as any, {} as any, {} as any);
+  const actions: any = new LineExpenseActionService(prisma, repo, get, validator, validator, validator, validator, { routeContexts: async () => [] } as any,
+    new LineDraftPreviewStore<any>(), { aiGatewayInternalSecret: 'm5-secret', webBaseUrl: 'https://app.example.com' } as any,
+    undefined, undefined, undefined, undefined, undefined, validator, undefined, voucher);
+  const targets: any = new LineWorkflowTargetService({} as any, actions);
+  targets.expenses = { execute: async (request: any, filter: any) => {
+    assert.deepEqual(request.scopes.branchIds, ['branch-1']);
+    const data = records.filter(row => row.branchId === 'branch-1' && (!filter.paymentStatus || row.paymentStatus === filter.paymentStatus));
+    return { data, total: data.length };
+  } };
+  targets.voucherActions = voucher;
+  actions.workflowTargets = targets;
+  const tool = new ExpenseActionPreviewTool(actions);
+  const run = async (text: string, input: any = { action, expenseId: 'wrong' }) => {
+    const inputEvidence = (await createLineAiInputEvidence({ turnKey: deliveryHash(['m5', text]), parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    return tool.execute({ ...ctx, branchIds: ctx.scopes.branchIds, locale: 'th-TH', chatKeyHash: 'm5-chat', inputEvidence }, input);
+  };
+  return { ctx, records, actions, targets, tool, run, previewed, drafts, prisma };
+}
+
+it('M4 round 5 cancel follows the user amount and round instead of the model claim id', async () => {
+  const h = await m4ClaimAmountHarness();
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  h.ctx.userId = 'somchai'; h.ctx.permissions.push('reimbursement.cancel_own');
+  h.toolCtx.userId = h.ctx.userId; h.toolCtx.permissions = h.ctx.permissions;
+  Object.assign(h.claims[0], { amount: '1455', title: 'ค่าน้ำมัน รอบ 6', status: 'DRAFT' });
+  Object.assign(h.claims[1], { amount: '400', title: 'ค่าน้ำมัน รอบ 1', status: 'DRAFT' });
+  Object.assign(h.claims[2], { amount: '400', title: 'ค่าน้ำมัน รอบ 2', status: 'DRAFT' });
+  h.actions.workflowTargets = new LineWorkflowTargetService({ execute: (...args: any[]) => h.actions.listClaims.execute(...args) } as any, h.actions);
+  h.actions.cancelClaim = { execute: async (_ctx: any, id: string) => h.claims.find(claim => claim.id === id) };
+  const text = 'ค่าน้ำมัน รอบ 1 ยอด 400 ของฉัน';
+  h.toolCtx.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'm5-cancel', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_CANCEL', reimbursementId: 'wrong' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat')).expenseId, 'right');
+  assert.equal((result.data as any).preview.record.amount, '400'); assert.deepEqual(h.writes, []);
+});
+
+it('M4 round 5 delete by document number previews the named bill despite the wrong model id', async () => {
+  const h = await m5ActionTargetHarness();
+  const result = await h.run('บิลเลขที่ ทดสอบ-0002');
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.previewed, ['other']);
+  assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:m5-chat')).expenseId, 'other');
+});
+it('M4 round 5 void by document number previews only the named bill', async () => {
+  const h = await m5ActionTargetHarness('VOID');
+  const result = await h.run('บิลเลขที่ ทดสอบ-0010', { action: 'VOID', expenseId: 'wrong', reason: 'บันทึกซ้ำ' });
+  assert.ok((result.data as any).preview, JSON.stringify(result)); assert.deepEqual(h.previewed, ['gold']);
+});
+it('M4 round 5 voucher create removes a model-added bill from the named single-bill preview', async () => {
+  const h = await m5ActionTargetHarness('VOUCHER_CREATE');
+  const result = await h.run('สร้างใบเตรียมจ่ายบิลเลขที่ ทดสอบ-0010', { action: 'VOUCHER_CREATE', expenseIds: 'wrong,gold' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.drafts.at(-1).lines.map((line: any) => line.expenseId), ['gold']);
+});
+it('M4 round 5 duplicate and unpermitted identifiers show the existing picker without a preview', async () => {
+  for (const mode of ['duplicate', 'missing', 'branch']) {
+    const h = await m5ActionTargetHarness();
+    if (mode === 'duplicate') h.records[0].expenseNumber = 'ทดสอบ-0010';
+    if (mode === 'branch') h.records[1].branchId = 'branch-2';
+    const result = await h.run(`บิลเลขที่ ${mode === 'missing' ? 'ทดสอบ-0999' : 'ทดสอบ-0010'}`);
+    assert.equal((result.data as any).preview, undefined, mode); assert.deepEqual(h.previewed, []);
+    assert.equal(await h.actions.pending(h.ctx, 'm5-chat'), null);
+    assert.ok(await h.actions.pendingWorkflowPicker(h.ctx, 'm5-chat', h.ctx.requestId));
+  }
+});
+
+it('M4 round 5 submit confirm and pay resolve the exact THB amount before their validators', async () => {
+  for (const action of ['MARK_READY', 'CONFIRM', 'RECORD_PAYMENT']) {
+    const h = await m5ActionTargetHarness(action);
+    const result = await h.run('ยอด 400 บาท', { action, expenseId: 'wrong', paymentMethod: 'CASH' });
+    assert.ok((result.data as any).preview, `${action}: ${JSON.stringify(result)}`);
+    assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:m5-chat')).expenseId, 'gold');
+    assert.ok(h.previewed.every(id => id === 'gold'), action);
+  }
+});
+it('M4 round 5 claim submit selects the named request number', async () => {
+  const h = await m4ClaimAmountHarness();
+  h.ctx.userId = 'somchai'; h.ctx.permissions.push('reimbursement.submit');
+  h.toolCtx.userId = h.ctx.userId; h.toolCtx.permissions = h.ctx.permissions;
+  for (const claim of h.claims) claim.status = 'DRAFT';
+  h.actions.submitClaim = { execute: async (_ctx: any, id: string) => h.claims.find(claim => claim.id === id) };
+  h.toolCtx.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'm5-submit', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: 'ส่งใบเบิกเลขที่ RB-002' }] }))!.inputEvidence;
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_SUBMIT', reimbursementId: 'wrong' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat')).expenseId, 'right');
+});
+it('M4 round 5 voucher keeps every explicitly named bill and rejects an unnamed initial selection', async () => {
+  const h = await m5ActionTargetHarness('VOUCHER_CREATE');
+  const result = await h.run('รวมบิลเลขที่ ทดสอบ-0010 และบิลเลขที่ ทดสอบ-0002', { action: 'VOUCHER_CREATE', expenseIds: 'wrong,gold,other' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.drafts.at(-1).lines.map((line: any) => line.expenseId), ['gold', 'other']);
+  const fresh = await m5ActionTargetHarness('VOUCHER_CREATE');
+  const unnamed = await fresh.run('สร้างใบเตรียมจ่าย', { action: 'VOUCHER_CREATE', expenseIds: 'wrong,gold' });
+  assert.equal((unnamed.data as any).preview, undefined); assert.equal(fresh.drafts.length, 0);
+  assert.ok(await fresh.actions.pendingWorkflowPicker(fresh.ctx, 'm5-chat', fresh.ctx.requestId));
+});
+it('M4 round 5 an existing voucher task keeps its picked bills when the model proposes another bill', async () => {
+  const h = await m5ActionTargetHarness('VOUCHER_CREATE');
+  await h.run('รวมบิล 25 ใบ บิลเลขที่ ทดสอบ-0010', { action: 'VOUCHER_CREATE', expenseIds: 'gold' });
+  const result = await h.run('ผู้รับเงินร้านทดสอบ', { action: 'VOUCHER_CREATE', expenseIds: 'wrong,gold' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.drafts.at(-1).lines.map((line: any) => line.expenseId), ['gold']);
+  assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:m5-chat')).voucher.requestedBillCount, 25);
+});
+it('M4 round 5 stale provenance and conflicting identifiers never produce an action preview', async () => {
+  for (const mode of ['conflict', 'tampered', 'free']) {
+    const h = await m5ActionTargetHarness();
+    const text = 'บิลเลขที่ ทดสอบ-0010 ยอด 1455 บาท';
+    if (mode === 'conflict') {
+      const result = await h.run(text); assert.equal((result.data as any).preview, undefined);
+    } else {
+      const evidence = (await createLineAiInputEvidence({ turnKey: 'm5-guard', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+      if (mode === 'tampered') evidence.parts[0].rawText = 'บิลเลขที่ ทดสอบ-0003';
+      const result = await h.actions.preview({ ...h.ctx, freeExpenseDrafts: mode === 'free' }, 'm5-chat', { action: 'DELETE_DRAFT', expenseId: 'wrong' }, false, undefined, 'th', undefined, evidence);
+      assert.equal(result.preview, undefined);
+    }
+    assert.deepEqual(h.previewed, []);
+  }
+});
+
+it('M4 round 5 delete by document number reaches the correct signed confirmation through the webhook', async t => {
+  const source = await m5ActionTargetHarness();
+  const { ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const { lineConversationId } = await import('../line-conversation-context.service');
+  const text = 'ลบบิลเลขที่ ทดสอบ-0002';
+  const h = await fx21bBoundWebhook(t, { source: 'm5-delete-by-number', messageText: text,
+    route: { status: 'ROUTED', intent: 'EXPENSE_UPDATE_DRAFT', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: text, writeIntent: 'EXPENSE_UPDATE_DRAFT', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] } }, source.ctx.permissions);
+  h.flow.config.aiGatewayInternalSecret = 'm5-secret';
+  const chat = chatKeyHashOf(BASE_EVENT);
+  source.prisma.client.aiConversation.findFirst = async () => ({ id: lineConversationId({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1',
+    channel: 'line', channelKind: 'USER', messagingChannelId: BASE_EVENT.messagingChannelId, chatKeyHash: chat }), lifecycleEpoch: 1 });
+  h.flow.permissionResolver.resolveAccess = async () => ({ ...source.ctx });
+  h.flow.expenseActions = source.actions;
+  h.flow.expenseRepo = { listRecentLineCaptures: async () => [], listCategories: async () => [] };
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    const result = await new ExpenseActionPreviewTool(source.actions).execute({ ...source.ctx, requestId: request.requestId, branchIds: ['branch-1'], locale: 'th-TH', chatKeyHash: chat,
+      inputEvidence: request.inputEvidence }, { action: 'DELETE_DRAFT', expenseId: 'wrong' });
+    return { requestId: request.requestId, replyText: 'ลบร่างแล้ว', sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', refused: false,
+      toolsInvoked: ['expense.action.preview'], semanticCoverage: [{ index: 0, status: 'needs_user', question: (result.data as any).reply }] };
+  };
+  await h.execute();
+  assert.deepEqual(source.previewed, ['other']);
+  const pending = await source.actions.store.load(source.ctx.companyId, `expense-action:${chat}`);
+  assert.equal(pending.expenseId, 'other');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /ลบร่าง/);
+  const button = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).find((button: any) => button.action?.label === 'ลบร่าง');
+  assert.ok(button, JSON.stringify(h.delivered));
+  assert.equal(new URLSearchParams(button.action.data).get('token'), pending.preview.token);
+});
+
+it('M4 round 5 vendor document numbers use their existing literal format and are not money candidates', async () => {
+  const h = await m5ActionTargetHarness();
+  h.records[1].vendorDocumentNumber = 'AB/24';
+  const result = await h.run('ลบบิล AB/24');
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.previewed, ['gold']);
+});
+
+it('M4 round 5 a payment picker preserves the proven partial amount when the user picks a bill', async () => {
+  const h = await m5ActionTargetHarness('RECORD_PAYMENT');
+  Object.assign(h.records[1], { grandTotalAmount: '1000', netPayableAmount: '1000', outstandingAmount: '1000' });
+  const result = await h.run('จ่ายบางส่วน 400 บาท บิลเลขที่ ทดสอบ-0010', { action: 'RECORD_PAYMENT', expenseId: 'wrong', paidAmount: '400', paymentMethod: 'CASH' });
+  assert.equal((result.data as any).preview, undefined);
+  const picker = await h.actions.pendingWorkflowPicker(h.ctx, 'm5-chat', h.ctx.requestId);
+  assert.equal(picker.paymentIntent.pa, '400');
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  const card = buildExpenseWorkflowPicker(picker.result, picker.workflow, 'm5-secret', h.ctx.companyId, h.ctx.userId, 'https://app.example.com', picker.paymentIntent);
+  const data = flexButtons(card).find((button: any) => new URLSearchParams(button.action.data).get('id') === 'gold')!.action.data;
+  const { parseLineWorkflowControl } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  const opened = await h.actions.openWorkflow(h.ctx, 'm5-chat', parseLineWorkflowControl(data));
+  assert.equal(opened.preview.payment.paidAmount, '400');
+});
+
+it('M4 round 5 typed selection of a payment picker keeps the signed partial amount', async () => {
+  const h = await m4PickerHarness('expense_pay');
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  h.row.messagesJson = [buildExpenseWorkflowPicker({ targets: [{ id: 'listed-1', label: 'ค่าบริการ', amount: '1000', currency: 'THB' }], total: 1, exhaustive: true },
+    'expense_pay', 'picker-secret', h.ctx.companyId, h.ctx.userId, 'https://app.example.com', { pa: '400', pm: 'CASH' })];
+  const controls: any[] = [];
+  h.flow.expenseActions.openWorkflow = async (_ctx: any, _chat: string, control: any) => { controls.push(control); return { reply: 'เตรียมการ์ดแล้ว' }; };
+  assert.equal(await h.answer('ใบที่ 1'), true);
+  assert.equal(controls[0].id, 'listed-1'); assert.equal(controls[0].pa, '400'); assert.equal(controls[0].pm, 'CASH');
+});
+
+it('M4 round 5 payment disambiguation carries the user amount even when the model changes it', async () => {
+  for (const paidAmount of ['1000', 'not-a-number']) {
+    const h = await m5ActionTargetHarness('RECORD_PAYMENT');
+    Object.assign(h.records[1], { grandTotalAmount: '1000', netPayableAmount: '1000', outstandingAmount: '1000' });
+    const result = await h.run('จ่ายบางส่วน 400 บาท บิลเลขที่ ทดสอบ-0010', { action: 'RECORD_PAYMENT', expenseId: 'wrong', paidAmount });
+    assert.equal((result.data as any).preview, undefined);
+    const picker = await h.actions.pendingWorkflowPicker(h.ctx, 'm5-chat', h.ctx.requestId);
+    assert.equal(picker.paymentIntent.pa, '400');
+  }
+});
+
+it('M4 round 5 my claim never resolves to another requester with matching amount and round', async () => {
+  const h = await m4ClaimAmountHarness();
+  h.ctx.permissions.push('reimbursement.finance_review'); h.toolCtx.permissions = h.ctx.permissions;
+  for (const claim of h.claims) claim.status = 'DRAFT';
+  Object.assign(h.claims[1], { amount: '400', title: 'ค่าน้ำมัน รอบ 1', requesterUserId: 'another-user' });
+  h.actions.cancelClaim = { execute: async (_ctx: any, id: string) => h.claims.find(claim => claim.id === id) };
+  h.toolCtx.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'm5-my-claim', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64),
+    acceptedAtMs: Date.now(), rawText: 'ค่าน้ำมัน รอบ 1 ยอด 400 ของฉัน' }] }))!.inputEvidence;
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_CANCEL', reimbursementId: 'wrong' });
+  assert.equal((result.data as any).preview, undefined);
+  assert.equal(await h.actions.pending(h.ctx, 'amount-chat'), null);
+  assert.ok(await h.actions.pendingClaimPicker(h.ctx, 'amount-chat', h.ctx.requestId));
+});
+
+it('M4 round 5 legacy server grounding text enforces the same named-record guard', async () => {
+  const h = await m5ActionTargetHarness();
+  const result = await h.tool.execute({ ...h.ctx, branchIds: ['branch-1'], locale: 'th-TH', chatKeyHash: 'm5-chat', groundingText: 'ลบบิลเลขที่ ทดสอบ-0002' },
+    { action: 'DELETE_DRAFT', expenseId: 'wrong' });
+  assert.ok((result.data as any).preview, JSON.stringify(result));
+  assert.deepEqual(h.previewed, ['other']);
+});
+
+it('M4 round 5 invalid legacy user evidence cannot bypass the named-record guard', async () => {
+  const h = await m5ActionTargetHarness();
+  const result = await h.tool.execute({ ...h.ctx, branchIds: ['branch-1'], locale: 'th-TH', chatKeyHash: 'm5-chat', groundingText: 'ลบบิลเลขที่ ทดสอบ-0002\u0000' },
+    { action: 'DELETE_DRAFT', expenseId: 'wrong' });
+  assert.equal((result.data as any).preview, undefined); assert.deepEqual(h.previewed, []);
 });

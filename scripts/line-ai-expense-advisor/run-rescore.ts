@@ -108,7 +108,10 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
       }
       const workflow = tasks.at(-1);
       return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as?.key ?? conversation.actors[0]?.key ?? '',
-        inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence, schemaValid: classify.schemaValid, timedOut: classify.timedOut } : undefined,
+        inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence,
+          // B4's response carries status/errorCode; older stubs carried the flags directly.
+          schemaValid: classify.schemaValid ?? (classify.status !== 'UNAVAILABLE' || !/OUTPUT_INCOMPLETE|SCHEMA/u.test(String(classify.errorCode ?? ''))),
+          timedOut: classify.timedOut ?? (classify.status === 'UNAVAILABLE' && /TIMEOUT/u.test(String(classify.errorCode ?? ''))) } : undefined,
         calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         deliveredActions: [...deliveredActions, ...previews.map(preview => ({ type: 'preview', preview }))], preview: previews[0], latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),

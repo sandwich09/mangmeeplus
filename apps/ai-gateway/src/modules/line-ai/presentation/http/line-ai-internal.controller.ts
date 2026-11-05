@@ -17,6 +17,8 @@ import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-con
 import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-case';
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
+import { WorkflowClassifierAgent, type WorkflowClassifierResponse } from '../../agents/workflow-classifier.agent';
+import { LineWorkflowClassifyDto } from './line-ai-internal.dtos';
 import { APPROVED_PREPARED_FAMILY_KEYS } from '../../agents/prepared-simple-read-formatter';
 import { CASUAL_CONVERSATION_SYSTEM_PROMPT } from '../../agents/response-composer.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -474,6 +476,35 @@ export class LineAiInternalController {
     this.logger.log({ msg: 'LINE AI turn received', requestId: body.requestId, agent: 'tbd' });
 
     return this.turnUseCase.execute(body);
+  }
+
+  @Public()
+  @Post('line-workflow-classify')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Internal: classify one LINE workflow with its own budget authority' })
+  async lineWorkflowClassify(
+    @Headers('x-internal-secret') secret: string | undefined,
+    @Body() body: LineWorkflowClassifyDto,
+  ): Promise<WorkflowClassifierResponse> {
+    assertInternalSecret(secret, this.config.aiGatewayInternalSecret);
+    if (!body?.requestId || !body.companyId || !body.userId || typeof body.messageText !== 'string'
+      || !body.messageText.trim() || body.messageText.length > 1000 || !['th-TH', 'en-GB'].includes(body.locale)) {
+      throw new BadRequestException('Invalid workflow classify payload.');
+    }
+    const evidence = await verifyLineAiInputEvidence(body.inputEvidence, body.messageText);
+    const grant = parseAiBudgetGrantV2(body.budgetGrantV2);
+    const budget = currentBudgetState();
+    const caps = body.contractCapabilities;
+    if (!evidence || !grant || grant.authorityKind !== 'webhook_classify'
+      || grant.allowedProfileIds.length !== 1 || grant.allowedProfileIds[0] !== 'line-classify/2'
+      || grant.payerCompanyId !== body.companyId || grant.turnKey !== evidence.turnKey
+      || !Array.isArray(caps) || caps.length !== 2 || !caps.includes('input-evidence-v2') || !caps.includes('budget-envelope-v2')
+      || budget?.status !== 'active-v2' || budget.grant.signature !== grant.signature
+      || budget.grant.authorityKind !== 'webhook_classify' || budget.inputDigest !== evidence.joinedSha256) {
+      return { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] };
+    }
+    return new WorkflowClassifierAgent(createProvider(this.config, { timeoutMs: 4000 }))
+      .classify({ ...body, inputEvidence: evidence, budgetGrantV2: grant });
   }
 
   @Public()

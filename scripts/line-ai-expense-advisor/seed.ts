@@ -470,6 +470,8 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
   const creator = addActor('draft-creator', companies.A, 'STAFF', companies.A.branchIds);
   const creatorGrant = rows.find(row => row.model === 'membershipRole' && row.data.membershipId === creator.membershipId)!;
   creatorGrant.data.roleId = 'role-eval-draft-creator';
+  // The runtime checks a switched-to actor's role against its membership, as for the paid creators below.
+  Object.assign(creator, { runtimeRole: 'EVAL_DRAFT_CREATOR' });
   const paidCreators = new Map<string, WorkflowSeedActor>();
   for (const actor of members.filter(actor => actor.kind === 'creator-only')) {
     if (paidCreators.has(actor.key)) continue;

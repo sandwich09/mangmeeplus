@@ -1144,3 +1144,215 @@ it('R10 J6: capabilities → vendor command makes a fresh model intake with writ
   }
   assert.equal(calls, 2);
 });
+
+// B3 uses the real acceptance/settlement decorator with a provider and money seam made of stubs.
+import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, extractValueCandidatesV2, parseAiBudgetEnvelopeV2,
+  type AiUsageEntry, type LineWorkflowClassifyRequest } from '@watchdog-bms/contracts';
+import { appendUsage } from '../../../common/usage/usage-context';
+import { v2RenderedInput, withAiBudgetEnvelope } from '../../../common/usage/ai-budget-provider';
+import { WorkflowClassifierAgent, WORKFLOW_CLASSIFIER_LABELS, WORKFLOW_CLASSIFIER_SCHEMA,
+  WORKFLOW_CLASSIFIER_SYSTEM_PROMPT } from './workflow-classifier.agent';
+import { LINE_AI_THAI_BUSINESS_GLOSSARY } from './intent-router.agent';
+import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic';
+import type { ProviderOutput } from '../infrastructure/provider/provider.port';
+
+async function workflowClassifyRequest(messageText = 'ส่งใบเบิกของฉันให้อนุมัติหน่อย'): Promise<LineWorkflowClassifyRequest> {
+  const admittedAtMs = Date.now();
+  const built = await createLineAiInputEvidence({ turnKey: 'workflow-turn', parts: [{ partId: 'part-0',
+    eventIdHash: 'a'.repeat(64), acceptedAtMs: admittedAtMs, rawText: messageText }] });
+  assert.ok(built);
+  return { requestId: 'workflow-request', companyId: 'private-company-data', userId: 'private-user-data', locale: 'th-TH',
+    messageText, inputEvidence: built.inputEvidence, contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+    budgetGrantV2: { version: 2, turnKey: 'workflow-turn', authorityKind: 'webhook_classify', authorityId: 'event-1',
+      channelOwnerDigest: 'b'.repeat(64), attemptKey: 'classify-attempt', monthKey: '2026-11', payerCompanyId: 'private-company-data',
+      model: { provider: 'bedrock', modelId: 'test-model', region: 'ap-southeast-1' }, allowedProfileIds: ['line-classify/2'],
+      profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, maxTurnSlots: 2, maxRepairs: 1, admittedAtMs,
+      workDeadlineAtMs: admittedAtMs + 5000, finalDeadlineAtMs: admittedAtMs + 8000, nonce: 'nonce', issuerVersion: 'test:1', nextOrdinal: 0, signature: 'c'.repeat(64) } };
+}
+
+function workflowAnswer(overrides: Record<string, unknown> = {}) {
+  return { label: 'reimbursement_submit', second_label: 'none', confidence: 0.99, second_confidence: 0,
+    reference: 'this', ordinal: 0, person_name: '', vendor_name: '', description_text: '', amount_text: '',
+    date_text: '', reason_text: '', category_text: '', ...overrides };
+}
+
+async function runWorkflowClassifier(request: LineWorkflowClassifyRequest,
+  answer: (input: ProviderInput) => Promise<ProviderOutput>, afterSettle?: () => void) {
+  const inputs: ProviderInput[] = [], settled: AiUsageEntry[] = [];
+  const provider = withAiBudgetEnvelope({ generateText: async input => {
+    inputs.push(input);
+    appendUsage({ tag: 'line.workflow-classify', modelId: 'test-model', ok: true, inputTokens: 100, outputTokens: 50,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, usageBasis: 'PROVIDER_REPORTED' });
+    return answer(input);
+  } }, { modelId: 'test-model', companyId: request.companyId, log() {}, seam: {
+    step: async () => { throw new Error('legacy seam must not run'); },
+    stepV2: async invocation => {
+      const envelope = parseAiBudgetEnvelopeV2({ ...invocation, version: 2, reservationId: 'reservation-1',
+        invocationKey: `${request.companyId}#classify-attempt#provider-v2#${invocation.ordinal}`, tariffVersion: 'test:1' });
+      assert.ok(envelope);
+      return { ok: true, envelope };
+    },
+    settle: async input => { settled.push(structuredClone(input.entry)); afterSettle?.(); return 'recorded'; },
+  } });
+  const response = await runWithUsageContext({ companyId: request.companyId, budget: { status: 'active-v2',
+    grant: request.budgetGrantV2, inputDigest: request.inputEvidence.joinedSha256, sourceRoute: 'line-workflow-classify',
+    calls: 0, repairCount: 0 } }, () => new WorkflowClassifierAgent(provider).classify(request));
+  return { response, inputs, settled };
+}
+
+const workflowOutput = (answer = workflowAnswer()): ProviderOutput => ({ ok: true, text: JSON.stringify(answer),
+  completion: 'complete', schemaEnforcement: 'output_config' });
+
+describe('B3 one-call workflow classifier', () => {
+  it('uses a stable cacheable prompt with no shop data and a rendered bound within the classify profile', async () => {
+    assert.ok(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT.length >= 4000);
+    assert.ok(Buffer.byteLength(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT, 'utf8') <= 8000);
+    assert.ok(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT.includes(JSON.stringify(LINE_AI_THAI_BUSINESS_GLOSSARY)));
+    const request = await workflowClassifyRequest();
+    const first = await runWorkflowClassifier(request, async () => workflowOutput());
+    const second = await runWorkflowClassifier(await workflowClassifyRequest('ค่าใช้จ่ายของร้านลับ'), async () => workflowOutput());
+    assert.equal(first.response.status, 'CLASSIFIED', JSON.stringify(first.response));
+    assert.equal(first.inputs.length, 1);
+    const input = first.inputs[0]!;
+    assert.equal(input.systemPrompt, second.inputs[0]!.systemPrompt);
+    assert.doesNotMatch(input.systemPrompt!, /private-company-data|private-user-data|ร้านลับ|workflow-request/);
+    assert.equal(input.messages[0]!.text, request.messageText);
+    assert.equal(input.maxTokens, 256);
+    assert.equal(input.usageTag, 'line.workflow-classify');
+    assert.deepEqual(input.outputSchema, { name: 'line_workflow_classifier', schema: WORKFLOW_CLASSIFIER_SCHEMA });
+    assert.ok(input.deadlineAt! <= Date.now() + 4000);
+    assert.ok(input.signal instanceof AbortSignal);
+    assert.ok(v2RenderedInput({ ...input, messages: [{ role: 'user', text: 'ก'.repeat(1000) }] }).inputTokenBound <= 24576);
+    assert.deepEqual(first.response.usage.map(entry => entry.ok), [true]);
+  });
+
+  it('pins the exact required schema and the closed label enum', () => {
+    assert.deepEqual(WORKFLOW_CLASSIFIER_LABELS, ['reimbursement_claim', 'reimbursement_submit', 'reimbursement_cancel', 'approvals',
+      'reimbursement_reject', 'reimbursement_pay', 'expense_submit', 'expense_confirm', 'expense_delete', 'expense_void',
+      'expense_pay', 'payment_voucher', 'wht_certificate', 'substitute_receipt', 'read', 'howto', 'open', 'smalltalk', 'multi', 'unclear']);
+    assert.equal(WORKFLOW_CLASSIFIER_SCHEMA.additionalProperties, false);
+    assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.required, Object.keys(WORKFLOW_CLASSIFIER_SCHEMA.properties));
+    assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.properties.confidence, { type: 'number' });
+    assert.deepEqual(WORKFLOW_CLASSIFIER_SCHEMA.properties.ordinal, { type: 'integer' });
+  });
+
+  it('normalizes only exact message and candidate spans and retains the raw decision', async () => {
+    const request = await workflowClassifyRequest('ทำใบเบิก ค่าแท็กซี่ 250 บาท วันนี้ ไปส่งเอกสารให้ร้าน หมวดค่าเดินทาง');
+    const candidates = await extractValueCandidatesV2(request.inputEvidence, '2026-11-05');
+    assert.ok(candidates?.amounts.length);
+    assert.ok(candidates?.periods.some(candidate => candidate.kind === 'day'));
+    const raw = workflowAnswer({ label: 'reimbursement_claim', amount_text: candidates.amounts[0]!.span,
+      date_text: candidates.periods.find(candidate => candidate.kind === 'day')!.span, description_text: 'ค่าแท็กซี่', reason_text: 'ไปส่งเอกสารให้ร้าน', category_text: 'ค่าเดินทาง', person_name: 'ชื่อที่ไม่ได้พิมพ์' });
+    const { response, settled } = await runWorkflowClassifier(request, async () => workflowOutput(raw));
+    assert.equal(response.status, 'CLASSIFIED');
+    if (response.status !== 'CLASSIFIED') return;
+    assert.equal(response.slots.amountText, raw.amount_text);
+    assert.equal(response.slots.dateText, raw.date_text);
+    assert.equal(response.slots.descriptionText, 'ค่าแท็กซี่');
+    assert.equal(response.slots.reasonText, 'ไปส่งเอกสารให้ร้าน');
+    assert.equal(response.slots.categoryText, 'ค่าเดินทาง');
+    assert.equal(response.slots.personName, '');
+    assert.deepEqual(response.rawDecision, raw);
+    assert.equal(settled[0]!.ok, true);
+    const rejectedSpans = await runWorkflowClassifier(request, async () => workflowOutput(workflowAnswer({
+      amount_text: '25', date_text: 'วันนี้ ไปส่งเอกสารให้ร้าน', description_text: 'ค่าแท็กซี่ที่แต่งเพิ่ม' })));
+    assert.equal(rejectedSpans.response.status, 'CLASSIFIED');
+    if (rejectedSpans.response.status === 'CLASSIFIED') {
+      assert.equal(rejectedSpans.response.slots.amountText, '');
+      assert.equal(rejectedSpans.response.slots.dateText, '');
+      assert.equal(rejectedSpans.response.slots.descriptionText, '');
+    }
+  });
+
+  it('normalizes a duplicate second label before consumers compare confidence', async () => {
+    const raw = workflowAnswer({ second_label: 'reimbursement_submit', second_confidence: 0.98 });
+    const { response } = await runWorkflowClassifier(await workflowClassifyRequest(), async () => workflowOutput(raw));
+    assert.equal(response.status, 'CLASSIFIED');
+    if (response.status === 'CLASSIFIED') {
+      assert.equal(response.secondLabel, 'none');
+      assert.equal(response.secondConfidence, 0);
+      assert.equal(response.rawDecision.second_label, 'reimbursement_submit');
+      assert.equal(response.rawDecision.second_confidence, 0.98);
+    }
+  });
+
+  it('refuses invalid confidence, ordinal, labels or schema before settlement with no repair', async () => {
+    for (const invalid of [{ confidence: 1.1 }, { confidence: -0.1 }, { second_confidence: -0.1 },
+      { confidence: 0.5, second_confidence: 0.6 }, { ordinal: -1 }, { ordinal: 10 }, { ordinal: 1.5 },
+      { label: 'sales' }, { second_label: 'invented' }, { extra: 'not in schema' }, { person_name: null }]) {
+      const { response, inputs, settled } = await runWorkflowClassifier(await workflowClassifyRequest(), async () => workflowOutput(workflowAnswer(invalid)));
+      assert.equal(response.status, 'UNAVAILABLE', JSON.stringify(invalid));
+      assert.equal(inputs.length, 1);
+      assert.equal(settled[0]!.ok, false, 'failure is visible before the money seam settles');
+      assert.equal(response.usage[0]!.ok, false);
+    }
+  });
+
+  it('absorbs provider failure, timeout, malformed JSON and a slow response', async () => {
+    for (const code of ['PROVIDER_UNKNOWN', 'PROVIDER_TIMEOUT'] as const) {
+      const { response, settled } = await runWorkflowClassifier(await workflowClassifyRequest(), async () =>
+        ({ ok: false, error: { code, message: 'stub failure', retryable: false } }));
+      assert.equal(response.status, 'UNAVAILABLE');
+      assert.equal(response.usage[0]!.ok, false);
+      assert.equal(settled[0]!.ok, false);
+    }
+    const malformed = await runWorkflowClassifier(await workflowClassifyRequest(), async () => ({ ok: true, text: '{', schemaEnforcement: 'output_config' }));
+    assert.equal(malformed.response.status, 'UNAVAILABLE');
+    assert.equal(malformed.settled[0]!.ok, false);
+    const realNow = Date.now;
+    try {
+      const request = await workflowClassifyRequest();
+      const slow = await runWorkflowClassifier(request, async () => {
+        Date.now = () => realNow() + 4001;
+        return workflowOutput();
+      });
+      assert.equal(slow.response.status, 'UNAVAILABLE');
+      assert.equal(slow.response.usage[0]!.ok, false);
+      assert.equal(slow.settled[0]!.ok, false);
+    } finally { Date.now = realNow; }
+  });
+
+  it('keeps an accepted output successful when settlement consumes the remaining response time', async () => {
+    const realNow = Date.now;
+    try {
+      const request = await workflowClassifyRequest();
+      const { response, settled } = await runWorkflowClassifier(request, async () => workflowOutput(),
+        () => { Date.now = () => realNow() + 4001; });
+      assert.equal(settled[0]!.ok, true);
+      assert.equal(response.status, 'CLASSIFIED', 'a result accepted before settlement cannot become a charged failure afterwards');
+      assert.equal(response.usage[0]!.ok, true);
+    } finally { Date.now = realNow; }
+  });
+
+  it('aborts at the shorter remaining grant deadline', async () => {
+    const request = await workflowClassifyRequest();
+    request.budgetGrantV2.workDeadlineAtMs = Date.now() + 100;
+    const { response, settled, inputs } = await runWorkflowClassifier(request, input => new Promise(resolve => {
+      const hold = setTimeout(() => resolve(workflowOutput()), 1000);
+      input.signal!.addEventListener('abort', () => { clearTimeout(hold);
+        resolve({ ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'aborted', retryable: false } }); }, { once: true });
+    }));
+    assert.ok(inputs[0]!.deadlineAt! <= request.budgetGrantV2.workDeadlineAtMs);
+    assert.equal(response.status, 'UNAVAILABLE');
+    assert.equal(response.usage[0]!.ok, false);
+    assert.equal(settled[0]!.ok, false);
+  });
+
+  it('R26 non-workflow labels preserve knowledge and package replies', async () => {
+    const knowledge = 'VAT 7% คิดยังไงคะ ถ้าราคาสินค้ารวมภาษีแล้ว';
+    const data = 'ขอดูยอดขายของร้านเดือนนี้';
+    const wht = 'ออกหนังสือรับรอง 50 ทวิให้หน่อย';
+    const permissions = ['ai.tool.invoke', 'line.ai.query', 'expense.read', 'wht.certificate.issue'];
+    const features = ['expenses', 'expenses.list'];
+    for (const label of ['read', 'howto', 'open', 'smalltalk', 'multi', 'unclear']) {
+      const text = `${knowledge} และ ${data}`;
+      const { response } = await runWorkflowClassifier(await workflowClassifyRequest(text), async () => workflowOutput(workflowAnswer({ label })));
+      assert.equal(response.status, 'CLASSIFIED');
+      if (response.status === 'CLASSIFIED') assert.equal(response.label, label);
+      assert.equal(scopePolicyOverride(knowledge, 'general', permissions, features, 'th'), undefined);
+      assert.equal(scopePolicyOverride(data, 'read', permissions, features, 'th')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+      assert.equal(scopePolicyOverride(wht, 'write', permissions, features, 'th', 'wht.get_certificate')?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+      assert.equal(scopePolicyOverride(knowledge, 'general', permissions, features, 'th'), undefined, 'mixed knowledge clause remains answerable');
+    }
+  });
+});

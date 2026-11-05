@@ -1469,3 +1469,70 @@ it('A1 forwards read-only credit state to the budget authority', async () => {
   assert.deepEqual(await client.creditState('company', now), { ok: true });
   assert.deepEqual(received, ['company', now]);
 });
+
+it('B4 classify pins Sonnet while the turn keeps its company model and partner policy wins', async () => {
+  const original = globalThis.fetch;
+  const sonnet = 'global.anthropic.claude-sonnet-4-6', haiku = SPLIT_FIXTURE_MODEL_ID;
+  const policies: any[] = [], issued: any[] = [];
+  let partner: string | null = null;
+  const prisma = governedPrisma();
+  prisma.client.companyAiConfiguration.findUnique = async () => ({ modelId: partner });
+  const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://gateway.test/v1', aiGatewayInternalSecret: 'secret',
+    approvedAiModelIds: [sonnet, haiku], aiGlobalInferenceProfileApproved: true, aiGlobalInferenceProfileApprovalRef: 'reviewed', aiThbPerUsd: 33 } as any,
+    {} as any, undefined, prisma, { issue: async (input: any) => { issued.push(input); return { signature: 'issued' }; } } as any);
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)); policies.push(body.modelPolicy);
+    return new Response(JSON.stringify({ ready: true, inputContractVersion: 2, providerOutputVersion: 2, budgetContractVersion: 2,
+      profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, estimatorVersion: AI_BUDGET_ESTIMATOR_VERSION_V2,
+      model: { provider: 'bedrock', modelId: body.modelPolicy?.modelId ?? haiku, region: 'ap-southeast-1', contextTokens: 200000, maxOutputTokens: 4096 } }));
+  };
+  try {
+    const input = { owner: { owner: { companyId: 'company-1' } } } as any;
+    await client.issueLineReliabilityGrant('classify', { ...input, authorityKind: 'webhook_classify' });
+    await client.issueLineReliabilityGrant('turn', { ...input, authorityKind: 'webhook_event' });
+    partner = haiku;
+    await client.issueLineReliabilityGrant('partner', { ...input, authorityKind: 'webhook_classify' });
+    assert.deepEqual(policies, [{ modelId: sonnet }, undefined, { modelId: haiku }]);
+    assert.deepEqual(issued.map(row => row.model.modelId), [sonnet, haiku, haiku]);
+  } finally { globalThis.fetch = original; }
+});
+
+it('B4 replay reuses a stored classify decision without a second gateway call, and used without decision falls back', async () => {
+  const text = 'ส่งใบเบิกของฉันอนุมัติ';
+  const built = (await createLineAiInputEvidence({ turnKey: 'cached-turn', parts: [{ partId: 'p', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!;
+  const grant: any = { version: 2, turnKey: 'cached-turn', authorityKind: 'webhook_classify', authorityId: 'event', channelOwnerDigest: 'a'.repeat(64),
+    attemptKey: 'cached-attempt', monthKey: '2026-11', payerCompanyId: 'company-1', model: { provider: 'bedrock', modelId: SPLIT_FIXTURE_MODEL_ID, region: 'ap-southeast-1' },
+    allowedProfileIds: ['line-classify/2'], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2, maxTurnSlots: 2, maxRepairs: 1,
+    admittedAtMs: Date.now(), workDeadlineAtMs: Date.now() + 5000, finalDeadlineAtMs: Date.now() + 8000, nonce: 'nonce', issuerVersion: 'test:1', signature: 'b'.repeat(64), nextOrdinal: 0 };
+  let decision: any = null, used = false, gatewayCalls = 0, issued = 0;
+  const prisma = governedPrisma();
+  prisma.client.lineWebhookEventLog = { findUnique: async () => ({ classifyAuthorityJson: issued ? { grant } : null }) };
+  const authority = { validate: async () => true, readClassifyState: async () => ({ decision, used }),
+    storeClassifyDecision: async (_grant: any, _digest: string, value: any) => decision = value };
+  const client = new AiGatewayClient({ aiGatewayInternalSecret: 'secret', aiGatewayInternalUrl: 'http://gateway.test/v1' } as any,
+    {} as any, undefined, prisma, authority as any);
+  client.issueLineReliabilityGrant = async () => { issued++; return grant; };
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { assert.match(String(url), /line-workflow-classify$/); gatewayCalls++;
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.budgetGrantV2.authorityKind, 'webhook_classify');
+    assert.deepEqual(body.budgetGrantV2.allowedProfileIds, ['line-classify/2']);
+    assert.deepEqual(body.contractCapabilities, ['input-evidence-v2', 'budget-envelope-v2']);
+    return new Response(JSON.stringify({ status: 'CLASSIFIED', label: 'reimbursement_submit', secondLabel: 'none',
+      confidence: 0.99, secondConfidence: 0, slots: {}, schemaEnforcement: 'output_config', usage: [], modelId: SPLIT_FIXTURE_MODEL_ID })); };
+  try {
+    const request = { requestId: 'cached', companyId: 'company-1', userId: 'user-1', locale: 'th-TH' as const, messageText: text, inputEvidence: built.inputEvidence };
+    const admission: any = { authorityId: 'event', owner: { kind: 'PRIVATE', owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'member' }, epoch: 1 }, admittedAtMs: Date.now() };
+    const first = await client.requestLineWorkflowClassify(request, admission);
+    assert.deepEqual(await client.requestLineWorkflowClassify(request, admission), first);
+    assert.equal(gatewayCalls, 1);
+    assert.equal(issued, 1);
+    assert.equal(first.status, 'CLASSIFIED');
+    decision = { status: 'UNAVAILABLE', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetCode: 'AI_MONTHLY_BUDGET_EXCEEDED', usage: [] };
+    await assert.rejects(client.requestLineWorkflowClassify(request, admission), (error: any) => error.getResponse().code === 'AI_MONTHLY_BUDGET_EXCEEDED');
+    assert.equal(gatewayCalls, 1, 'replayed credit refusal keeps the same card without another call');
+    decision = null; used = true;
+    assert.equal((await client.requestLineWorkflowClassify(request, admission)).status, 'UNAVAILABLE');
+    assert.equal(gatewayCalls, 1);
+  } finally { globalThis.fetch = original; }
+});

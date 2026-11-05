@@ -1230,12 +1230,12 @@ export const LINE_CLAIM_PICKER_COPY = {
   incomplete: 'มีรายการมากเกินจะค้นในแชตค่ะ', interrupted: 'ยังค้นใบเบิกไม่ครบค่ะ กดค้นในเว็บ',
 };
 export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: ClaimWorkflowId,
-  secret: string, company: string, user: string, webBaseUrl = ''): LineReplyMessage {
+  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}): LineReplyMessage {
   const text = !result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
     : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow];
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((claim, index) => ({
     type: 'postback', label: `${(scrubRecordIdentifier(claim.requestNo, 30) ?? `ร่าง ${index + 1}`)} · ${formatClaimMoney(claim.amount, claim.currency, 'th')}`,
-    data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id),
+    data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id, payment),
   }));
   const webLabel = !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: webLabel,
@@ -1264,7 +1264,7 @@ export const LINE_EXPENSE_PICKER_COPY = {
     wht_certificate: 'ไม่มีใบเตรียมจ่ายที่ออก 50 ทวิได้ค่ะ', substitute_receipt: 'ไม่มีรายการที่ทำใบรับรองแทนใบเสร็จได้ค่ะ' },
 };
 export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, workflow: ExpenseWorkflowId,
-  secret: string, company: string, user: string, webBaseUrl = ''): LineReplyMessage {
+  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}): LineReplyMessage {
   const sellerName = scrubRecordText(result.sellerSearch, 60);
   const sellerText = result.sellerSearch === undefined ? undefined : result.total > 1
     ? ['ชื่อนี้ตรงกับผู้ขายหลายราย เลือกในเว็บหรือพิมพ์ชื่อให้ชัดขึ้นค่ะ',
@@ -1277,7 +1277,7 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((target, index) => ({
     label: `${scrubRecordText(target.label, 60) || `รายการ ${index + 1}`} · ${formatClaimMoney(target.amount, target.currency, 'th')}`,
     ...(workflow === 'substitute_receipt' ? { type: 'message' as const, text: String(index + 1) }
-      : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, EXPENSE_WORKFLOW_ACTIONS[workflow], target.id) }),
+      : { type: 'postback' as const, data: lineWorkflowOpenData(secret, company, user, EXPENSE_WORKFLOW_ACTIONS[workflow], target.id, payment) }),
   }));
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: !result.exhaustive ? 'ค้นในเว็บ' : result.sellerSearch !== undefined ? 'เปิดในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ',
     uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/expenses${workflow === 'wht_certificate' ? '/disbursement-vouchers' : workflow === 'substitute_receipt' ? '/substitute-receipts/new' : ''}` }

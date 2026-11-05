@@ -1,5 +1,9 @@
+import { createLineAiInputEvidence, extractValueCandidatesV2, mapThaiDigits, type LineWorkflowId } from '@watchdog-bms/contracts';
+import { LINE_CLAIM_PICKER_COPY, LINE_EXPENSE_PICKER_COPY } from '../domain/logic/line-business-card.logic';
+import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowRecordTargets, type LineWorkflowRecordTarget } from './line-workflow-target.service';
+import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ClaimWorkflowId, type ExpenseWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic/line-reimbursement-approval-control.logic';
-import type { LineWorkflowControl } from '@watchdog-bms/contracts';
+import type { LineAiInputEvidenceV2, LineWorkflowControl } from '@watchdog-bms/contracts';
 import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
 import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
@@ -15,13 +19,13 @@ import { LineVoucherActionService, VOUCHER_ACTIONS, isVoucherPayeeName, requeste
 import Decimal from 'decimal.js';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { verifyReimbursementApprovalOpenToken } from '../domain/logic/line-reimbursement-approval-control.logic';
-import { GetReimbursementDetailUseCase, SubmitReimbursementUseCase, CancelReimbursementUseCase } from '../../reimbursements/application/use-cases/reimbursement-request.use-case';
+import { ListReimbursementsUseCase, GetReimbursementDetailUseCase, SubmitReimbursementUseCase, CancelReimbursementUseCase } from '../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase, activeStepApprovers, hasFrozenAssignment } from '../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import type { ReimbursementRequestDetail, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
 import { todayCivilDate, expenseDateIsReadable } from '@watchdog-bms/contracts';
 import { calcPaymentAmounts, derivePaymentStatus } from '../../expenses/domain/logic/expense-totals.logic';
 import type { Prisma } from '../../../generated/prisma/client';
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { EXPENSE_STATUS_LABELS, EXPENSE_RECEIPT_SOURCE_TYPES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS, expenseEvidenceAssessment, expenseEvidenceImageMissing, expenseEvidenceInputError, expenseEvidenceFingerprint, isExpenseEvidenceFile, scrubRecordText, type ExpenseEvidenceAssessment, type RequestContext, type ToolResult } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -68,6 +72,11 @@ type StoredAction = {
   markReady?: boolean;
   category?: ActionCategory;
   review?: { assessment: ExpenseEvidenceAssessment; fingerprint: string; filesHash: string };
+};
+type StoredClaimPicker = {
+  previewId: string; companyId: string; userId: string; membershipId: string; chatKeyHash: string;
+  conversationId: string; ownerEpoch: number; requestId: string; workflow: ClaimWorkflowId | ExpenseWorkflowId; result: LineWorkflowTargets | LineWorkflowRecordTargets;
+  paymentIntent?: { pa: string; pm?: string; pd?: string };
 };
 type StoredEvidenceChoice = {
   language?: LineReplyLanguage;
@@ -219,8 +228,10 @@ export function parseExpenseActionControl(raw: unknown): ExpenseActionControl | 
 /** Preview is model-reachable; apply is called only by the signature-verified private webhook. */
 @Injectable()
 export class LineExpenseActionService {
+  @Inject(forwardRef(() => LineWorkflowTargetService)) private readonly workflowTargets!: Pick<LineWorkflowTargetService, 'pick'>;
   // Same shared TTL store, isolated namespace; repair choices never authorize a mutation.
   private get evidenceChoices() { return this.store as unknown as LineDraftPreviewStore<StoredEvidenceChoice>; }
+  private get claimPickers() { return this.store as unknown as LineDraftPreviewStore<StoredClaimPicker>; }
   private get repairs() { return this.store as unknown as LineDraftPreviewStore<StoredRepair>; }
   constructor(
     private readonly prisma: PrismaService,
@@ -246,6 +257,7 @@ export class LineExpenseActionService {
     @Optional() private readonly claimPayment?: RecordReimbursementPaymentUseCase,
     @Optional() private readonly initClaimSlip?: InitPaymentSlipUploadUseCase,
     @Optional() private readonly completeClaimSlip?: CompletePaymentSlipUploadUseCase,
+    @Optional() private readonly listClaims?: ListReimbursementsUseCase,
   ) {}
 
   private key(chat: string) { return `expense-action:${chat}`; }
@@ -454,22 +466,120 @@ export class LineExpenseActionService {
       ...(control.pa ? { paidAmount: control.pa } : {}) }, true, undefined, language);
   }
 
+  private async resolveNamedTargets(ctx: RequestContext, chat: string, action: ExpenseAction, workflow: LineWorkflowId, evidence: LineAiInputEvidenceV2, input: Record<string, unknown>): Promise<
+    { targets?: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>; requestedVoucherCount?: number } | { reply: string; webPath: string }> {
+    const webPath = `/companies/${ctx.companyId}/${this.isClaim(action) ? 'reimbursements' : 'expenses'}`;
+    const unavailable = { reply: LINE_CLAIM_PICKER_COPY.unavailable, webPath };
+    const candidates = await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
+    if (candidates?.completeness !== 'complete') return unavailable;
+    const text = mapThaiDigits(evidence.parts.map(part => part.rawText).join('\n'));
+    let documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
+    const rounds = [...text.matchAll(/รอบ\s*(\d+)/gu)].map(match => match[1]!);
+    const isTargetAmount = (amount: typeof candidates.amounts[number]) => {
+      if (amount.currencyToken) return /^(?:บาท|฿|THB|baht)$/iu.test(amount.currencyToken);
+      const raw = mapThaiDigits(evidence.parts.find(part => part.partId === amount.source.partId)!.rawText);
+      if (documents.some(document => {
+        const start = raw.indexOf(document);
+        return start >= 0 && amount.source.startUtf16 >= start && amount.source.endUtf16 <= start + document.length;
+      })) return false;
+      return ![...raw.matchAll(/(?:รอบ|สาขา|ใบที่|รายการที่)\s*\d+|(?:บิล|ใบ|เอกสาร)?เลขที่\s*[^\s,]+|[A-Za-zก-๙]+[-/]\d[\d/-]*|\d+\s*(?:ใบ|บิล)/gu)]
+        .some(match => amount.source.startUtf16 >= match.index && amount.source.endUtf16 <= match.index + match[0].length);
+    };
+    let amounts = candidates.amounts.filter(isTargetAmount);
+    let named = documents.length > 0 || rounds.length > 0 || amounts.length === 1;
+    if (!named && action !== 'VOUCHER_CREATE') return {};
+    if (!named && action === 'VOUCHER_CREATE') {
+      const pending = await this.store.load(ctx.companyId, this.key(chat));
+      if (pending?.voucher?.action === action && await this.bound(ctx, chat, pending)) {
+        // These source IDs were already accepted in this owner-bound task; a new model call cannot add a bill.
+        return { targets: pending.voucher.expenseIds!.map(id => ({ id, label: '', amount: '', currency: '' })), requestedVoucherCount: pending.voucher.requestedBillCount };
+      }
+    }
+    if (!this.workflowTargets) return unavailable;
+    await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
+    const result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
+    if (rounds.length && !this.isClaim(action)) {
+      for (const target of result.targets as LineWorkflowRecordTarget[]) {
+        const record = await this.repo.findByIdWithRelations(ctx.companyId, target.id, undefined, ctx.scopes);
+        target.roundText = [target.roundText, ...(record?.lines ?? []).map(line => line.description)].filter(Boolean).join(' ');
+      }
+    }
+    const numbers = (target: typeof result.targets[number]): string[] => 'requestNo' in target
+      ? target.requestNo ? [target.requestNo] : [] : (target as LineWorkflowRecordTarget).documentNumbers ?? [];
+    // Keep the most specific record-number spelling actually present in user text.
+    const literalNumbers = result.targets.flatMap(numbers).map(mapThaiDigits)
+      .filter(number => /[A-Za-zก-๙]/u.test(number) && text.includes(number));
+    documents = [...new Set([...documents.filter(document => !literalNumbers.some(number => number.includes(document) || document.endsWith(number))), ...literalNumbers])].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+    amounts = candidates.amounts.filter(isTargetAmount);
+    named = documents.length > 0 || rounds.length > 0 || amounts.length === 1;
+    const matches = (target: typeof result.targets[number]) => {
+      if (this.isClaim(action) && text.includes('ของฉัน') && (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId) return false;
+      if (amounts.length === 1 && (target.currency !== 'THB' || !new Decimal(target.amount).eq(amounts[0]!.value))) return false;
+      const label = 'title' in target ? target.title ?? '' : (target as LineWorkflowRecordTarget).roundText ?? '';
+      return rounds.every(round => [...mapThaiDigits(label).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round));
+    };
+    const eligible = result.targets.filter(matches);
+    const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => mapThaiDigits(number).includes(document))));
+    const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;
+    const unique = result.exhaustive && (documents.length ? byDocument.every(rows => rows.length === 1) : targets.length === 1)
+      && (action === 'VOUCHER_CREATE' || targets.length === 1);
+    if (named && unique) return { targets };
+    const previous = await this.store.load(ctx.companyId, this.key(chat));
+    if (previous) await this.store.discardIfCurrent(ctx.companyId, this.key(chat), previous.previewId);
+    const owner = (await this.owner(ctx, chat))!;
+    const filtered = { ...result, targets: (targets.length ? targets : result.targets).slice(0, 4) };
+    const paymentIntent = ['RECORD_PAYMENT', 'REIMBURSEMENT_RECORD_PAYMENT'].includes(action) && amounts.length === 1
+      && typeof input.paidAmount === 'string'
+      ? { pa: amounts[0]!.value, ...(typeof input.paymentMethod === 'string' ? { pm: input.paymentMethod } : {}),
+        ...(typeof input.paidAt === 'string' ? { pd: input.paidAt } : {}) } : undefined;
+    if (!await this.claimPickers.save({ previewId: randomUUID(), companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId!,
+      chatKeyHash: `expense-action-claim-picker:${chat}`, conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch,
+      requestId: ctx.requestId, workflow: workflow as ClaimWorkflowId | ExpenseWorkflowId, result: filtered as LineWorkflowTargets | LineWorkflowRecordTargets,
+      ...(paymentIntent ? { paymentIntent } : {}) })) return unavailable;
+    return { reply: this.isClaim(action) ? LINE_CLAIM_PICKER_COPY.choose[workflow as ClaimWorkflowId] : LINE_EXPENSE_PICKER_COPY.choose[workflow as ExpenseWorkflowId], webPath };
+  }
+
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
-    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th', requestedVoucherCount?: number): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th', requestedVoucherCount?: number, inputEvidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     const en = language === 'en';
+    if (ctx.freeExpenseDrafts) return { reply: EXPIRED };
     let action = input.action as ExpenseAction;
-    const id = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
-    if (!EXPENSE_ACTIONS.some(value => value === action) || typeof id !== 'string' || !id || id.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
+    const requestedId = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
+    if (!EXPENSE_ACTIONS.some(value => value === action) || typeof requestedId !== 'string' || !requestedId || requestedId.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
+    let id: string = requestedId;
     if (!chat || !ctx.membershipId || !this.config.aiGatewayInternalSecret || !await this.owner(ctx, chat)) return { reply: (en ? 'Please use a private chat.' : 'กรุณาทำรายการในแชตส่วนตัวค่ะ') };
-    const ids = action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
-    if (ids.length > DISBURSEMENT_VOUCHER_MAX_LINES) return { reply: en ? `Select up to ${DISBURSEMENT_VOUCHER_MAX_LINES} expenses and put the remaining expenses on another voucher.` : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines };
-    if (ids.some(id => !id || id.length > 200)) return { reply: en ? 'Select an expense shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ' };
-    if (!opened && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: (en ? 'Please select a record already shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ') };
+    let ids = action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
     let approvers: string[] | undefined;
     try {
+      let resolvedFromText = false;
+      let selected: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]> = [];
+      if (inputEvidence) {
+        const workflow = Object.entries({ ...CLAIM_WORKFLOW_ACTIONS, ...EXPENSE_WORKFLOW_ACTIONS }).find(([, value]) => value === action)?.[0] as LineWorkflowId | undefined;
+        if (workflow) {
+          const selection = await this.resolveNamedTargets(ctx, chat, action, workflow, inputEvidence, input);
+          if ('reply' in selection) return selection;
+          if (selection.targets) {
+            requestedVoucherCount ??= selection.requestedVoucherCount;
+            selected = selection.targets;
+            ids = selected.map(target => target.id);
+            id = ids[0]!;
+            input = { ...input, ...(this.isClaim(action) ? { reimbursementId: id } : { expenseId: id }),
+              ...(action === 'VOUCHER_CREATE' ? { expenseIds: ids.join(',') } : {}) };
+            resolvedFromText = true;
+          }
+        }
+      }
+      if (ids.length > DISBURSEMENT_VOUCHER_MAX_LINES) return { reply: en ? `Select up to ${DISBURSEMENT_VOUCHER_MAX_LINES} expenses and put the remaining expenses on another voucher.` : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines };
+      if (ids.some(id => !id || id.length > 200)) return { reply: en ? 'Select an expense shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ' };
+      if (!opened && !resolvedFromText && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: (en ? 'Please select a record already shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ') };
       const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input, language, requestedVoucherCount) : undefined;
       if (voucher) action = voucher.payload.action;
       const record = voucher?.record ?? await this.read(ctx, id, action);
+      for (const target of selected) {
+        const revision = 'updatedAt' in target ? target.updatedAt : target.revision;
+        const current = voucher?.payload.sources?.find(source => source.id === target.id)?.revision ?? record.updatedAt.toISOString();
+        if (revision && revision !== current) throw new ConflictException('expense_source_version_changed');
+      }
       if (action === 'RECORD_PAYMENT') {
         if (!ctx.permissions.includes('expense.payment.record')) return { reply: (en ? 'Ask the owner or an authorized payment recorder to do this.' : PERMISSION.RECORD_PAYMENT) };
         const expense = await this.getExpense.execute(ctx, id);
@@ -862,6 +972,18 @@ export class LineExpenseActionService {
   }
   async teamCapacityReply(ctx: RequestContext, action: 'BRANCH_CREATE' | 'EMPLOYEE_CREATE', language: 'th' | 'en') { return this.teams?.capacityReply(ctx, action, language) ?? null; }
   async answerTeam(ctx: RequestContext, chat: string, text: string) { return this.teams?.answer(ctx, chat, text) ?? null; }
+  async pendingWorkflowPicker(ctx: RequestContext, chat: string, requestId: string) {
+    const picker = await this.claimPickers.load(ctx.companyId, `expense-action-claim-picker:${chat}`);
+    if (!picker || picker.userId !== ctx.userId || picker.membershipId !== ctx.membershipId || picker.requestId !== requestId || ctx.freeExpenseDrafts) return null;
+    const owner = await this.owner(ctx, chat);
+    return owner?.id === picker.conversationId && owner.lifecycleEpoch === picker.ownerEpoch ? picker : null;
+  }
+
+  async pendingClaimPicker(ctx: RequestContext, chat: string, requestId: string) {
+    const picker = await this.pendingWorkflowPicker(ctx, chat, requestId);
+    return picker && Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, picker.workflow) ? { ...picker, workflow: picker.workflow as ClaimWorkflowId, result: picker.result as LineWorkflowTargets } : null;
+  }
+
   async pending(ctx: RequestContext, chat: string, requestId?: string): Promise<ExpenseActionPreview | null> {
     const team = await this.teams?.pending(ctx, chat, requestId);
     if (team) return team;
@@ -1193,9 +1315,16 @@ export class ExpenseActionPreviewTool implements ErpReadToolPort {
   readonly toolName = 'expense.action.preview';
   constructor(private readonly actions: LineExpenseActionService) {}
   async execute(ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> {
-    const result = await this.actions.preview({ requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId,
+    const text = ctx.groundingText;
+    const inputEvidence = ctx.inputEvidence ?? (text ? (await createLineAiInputEvidence({
+      turnKey: deliveryHash(['expense-action-input', ctx.requestId, ctx.chatKeyHash, text]),
+      parts: [{ partId: 'part-0', eventIdHash: deliveryHash([ctx.requestId, text]), acceptedAtMs: Date.now(), rawText: text }],
+    }))?.inputEvidence : undefined);
+    const result: Awaited<ReturnType<LineExpenseActionService['preview']>> = text && !inputEvidence
+      ? { reply: LINE_CLAIM_PICKER_COPY.unavailable, webPath: `/companies/${ctx.companyId}/expenses` }
+      : await this.actions.preview({ requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId,
       companyId: ctx.companyId, membershipId: ctx.membershipId ?? '', roles: ctx.roles ?? [], permissions: ctx.permissions,
-      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th', requestedVoucherBillCount(ctx.inputEvidence?.parts.map(part => part.rawText).join('\n') ?? ctx.groundingText));
+      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th', requestedVoucherBillCount(ctx.inputEvidence?.parts.map(part => part.rawText).join('\n') ?? ctx.groundingText), inputEvidence);
     return { toolName: this.toolName, status: 'ok', data: result, sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: result.webLabel ?? 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, ...(result.webPath ? { webPath: result.webPath } : {}) }], asOf: new Date().toISOString() };
   }
 }

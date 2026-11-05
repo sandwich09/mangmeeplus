@@ -73,7 +73,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
   constructor(
     @Inject(AppConfigService)
     @Optional()
-    private readonly config?: Pick<AppConfigService, 'redisUrl' | 'isProduction'>,
+    private readonly config?: Pick<AppConfigService, 'redisUrl' | 'isProduction'> & { ttlSeconds?: number },
   ) {}
 
   /** Specs inject an in-memory fake; production lazily connects ioredis. */
@@ -107,7 +107,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
         return Number(await redis.eval(
           "if redis.call('EXISTS',KEYS[2])==1 then return 0 end; redis.call('DEL',KEYS[3]); redis.call('SET',KEYS[1],ARGV[1],'EX',ARGV[2]); redis.call('SET',KEYS[4],ARGV[3],'EX',ARGV[4]); return 1",
           4, key, claimKey(entry.companyId, entry.chatKeyHash), appliedKey(entry.companyId, entry.chatKeyHash),
-          previewKey(entry.companyId, `recover:${entry.previewId}`), value, String(LINE_DRAFT_PREVIEW_TTL_SECONDS),
+          previewKey(entry.companyId, `recover:${entry.previewId}`), value, String(this.config?.ttlSeconds ?? LINE_DRAFT_PREVIEW_TTL_SECONDS),
           JSON.stringify(recovery), String(LINE_DRAFT_RECOVERY_TTL_SECONDS),
         )) === 1;
       }
@@ -116,13 +116,13 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
         return Number(await redis.eval(
           "if redis.call('EXISTS',KEYS[2])==1 then return 0 end; redis.call('DEL',KEYS[3]); redis.call('SET',KEYS[1],ARGV[1],'EX',ARGV[2]); return 1",
           3, key, claimKey(entry.companyId, entry.chatKeyHash), appliedKey(entry.companyId, entry.chatKeyHash),
-          value, String(LINE_DRAFT_PREVIEW_TTL_SECONDS),
+          value, String(this.config?.ttlSeconds ?? LINE_DRAFT_PREVIEW_TTL_SECONDS),
         )) === 1;
       }
       if (await redis.get(claimKey(entry.companyId, entry.chatKeyHash))) return false;
       await this.forget(entry.companyId, entry.chatKeyHash);
       if (recovery) await redis.set(previewKey(entry.companyId, `recover:${entry.previewId}`), JSON.stringify(recovery), 'EX', LINE_DRAFT_RECOVERY_TTL_SECONDS);
-      await redis.set(key, value, 'EX', LINE_DRAFT_PREVIEW_TTL_SECONDS);
+      await redis.set(key, value, 'EX', this.config?.ttlSeconds ?? LINE_DRAFT_PREVIEW_TTL_SECONDS);
       return true;
     } catch (err) {
       // A CONFIGURED Redis that FAILED is a different thing, and falling back to the per-process
@@ -315,7 +315,7 @@ export class LineDraftPreviewStore<T extends { previewId: string; companyId: str
     }
   }
 
-  private saveLocal(key: string, value: string, ttlSeconds = LINE_DRAFT_PREVIEW_TTL_SECONDS): boolean {
+  private saveLocal(key: string, value: string, ttlSeconds = this.config?.ttlSeconds ?? LINE_DRAFT_PREVIEW_TTL_SECONDS): boolean {
     if (this.config?.isProduction) return false;
     if (this.local.size > 1_000) {
       const now = Date.now();

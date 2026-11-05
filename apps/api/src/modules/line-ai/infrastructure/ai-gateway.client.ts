@@ -13,7 +13,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import {
   AI_DOCUMENT_OCR_TIMEOUT_MS, AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, aiGatewayClientTimeoutMs,
   AI_BUDGET_ESTIMATOR_VERSION_V2, AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
-  type AiBudgetGrantV2, type AiBudgetProfileIdV2,
+  type AiBudgetGrantV2, type AiBudgetProfileIdV2, type LineWorkflowClassifyRequest, type LineWorkflowClassifyResponse,
   LINE_TOOL_REGISTRY,
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   hasToolFeature,
@@ -76,6 +76,7 @@ import { LineAiBudgetAuthorityService, type IssueLineAiBudgetGrant } from '../ap
 import { resolveThbPerUsd } from '../application/ai-fx-rate';
 import { type AiModelPrices, type AiTariffV2 } from '../application/ai-model-pricing';
 
+export const LINE_CLASSIFY_MODEL_ID = 'global.anthropic.claude-sonnet-4-6';
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 /** Outlast a 90s page read and its one timeout retry, retaining both usage entries. */
@@ -159,7 +160,8 @@ export class AiGatewayClient {
   async issueLineReliabilityGrant(requestId: string,
     input: Omit<IssueLineAiBudgetGrant, 'model' | 'modelContextTokens' | 'modelMaxOutputTokens' | 'tariff'>): Promise<AiBudgetGrantV2 | null> {
     if (!this.budgetAuthority) return null;
-    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, input.owner.owner.companyId, this.config.approvedAiModelIds);
+    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, input.owner.owner.companyId, this.config.approvedAiModelIds)
+      ?? (input.authorityKind === 'webhook_classify' ? { modelId: LINE_CLASSIFY_MODEL_ID } : undefined);
     const capability = await this.postInternal<{
       ready: boolean; inputContractVersion: number; providerOutputVersion: number; budgetContractVersion: number;
       profileTableDigest: string; estimatorVersion: string;
@@ -184,6 +186,48 @@ export class AiGatewayClient {
       ...(reviewed.externalUsdPerUnit !== undefined ? { externalUsdPerUnit: reviewed.externalUsdPerUnit, searchContentInputTokensPerUnit: reviewed.searchContentInputTokensPerUnit } : {}) };
     return this.budgetAuthority.issue({ ...input, model: { provider: model.provider, modelId: model.modelId, region: model.region },
       modelContextTokens: model.contextTokens, modelMaxOutputTokens: model.maxOutputTokens, tariff });
+  }
+
+  async requestLineWorkflowClassify(request: Omit<LineWorkflowClassifyRequest, 'budgetGrantV2' | 'contractCapabilities'>,
+    admission: { authorityId: string; owner: Extract<IssueLineAiBudgetGrant['owner'], { kind: 'PRIVATE' }>; admittedAtMs: number }): Promise<LineWorkflowClassifyResponse> {
+    if (!this.budgetAuthority || await isFreeExpenseDraftCompany(this.prisma.client, request.companyId))
+      return { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] };
+    const parent = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { id: admission.authorityId }, select: { classifyAuthorityJson: true } });
+    const savedGrant = parseAiBudgetGrantV2((parent?.classifyAuthorityJson as { grant?: unknown } | null)?.grant);
+    const grant = savedGrant ?? await this.issueLineReliabilityGrant(request.requestId, { ...admission, authorityKind: 'webhook_classify',
+      turnKey: request.inputEvidence.turnKey, attemptKey: request.inputEvidence.turnKey, inputDigest: request.inputEvidence.joinedSha256,
+      requestKind: 'TEXT', coalescingExtraMs: 0, lane: 'classify', allowedProfileIds: ['line-classify/2'] });
+    if (!grant) return { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] };
+    const state = await this.budgetAuthority.readClassifyState(grant, request.inputEvidence.joinedSha256,
+      { companyId: request.companyId, userId: request.userId, membershipId: admission.owner.owner.membershipId });
+    if (!state) return { status: 'UNAVAILABLE', errorCode: 'AI_CONTRACT_UNSUPPORTED', usage: [] };
+    if (state.decision) {
+      const refusal = state.decision.status === 'UNAVAILABLE' && knownAiBudgetResponse({ errorCode: state.decision.budgetCode ?? state.decision.errorCode });
+      if (refusal) throw new HttpException(refusal, HttpStatus.TOO_MANY_REQUESTS);
+      return state.decision;
+    }
+    if (state.used) return { status: 'UNAVAILABLE', errorCode: 'AI_BUDGET_UNAVAILABLE', usage: [] };
+    const body: LineWorkflowClassifyRequest = { ...request, budgetGrantV2: grant,
+      contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'] };
+    let result: LineWorkflowClassifyResponse;
+    try {
+      await this.validateLineV2(body, { companyId: request.companyId, userId: request.userId, membershipId: admission.owner.owner.membershipId });
+      await this.assertRateLimit('llm', request.companyId);
+      result = await this.postInternal<LineWorkflowClassifyResponse>('/internal/ai/line-workflow-classify', body,
+        request.requestId, 8000, grant.monthKey);
+      const refusal = result.status === 'UNAVAILABLE' && knownAiBudgetResponse({ errorCode: result.budgetCode ?? result.errorCode });
+      if (refusal) throw new HttpException(refusal, HttpStatus.TOO_MANY_REQUESTS);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        const body = error.getResponse();
+        const refusal = typeof body === 'object' ? knownAiBudgetResponse(body) : null;
+        if (refusal) await this.budgetAuthority.storeClassifyDecision(grant, request.inputEvidence.joinedSha256,
+          { status: 'UNAVAILABLE', errorCode: refusal.code, budgetCode: refusal.code, usage: [] });
+        throw error;
+      }
+      result = { status: 'UNAVAILABLE', errorCode: error instanceof AiGatewayRequestError ? error.code : 'AI_CONTRACT_UNSUPPORTED', usage: [] };
+    }
+    return await this.budgetAuthority.storeClassifyDecision(grant, request.inputEvidence.joinedSha256, result) ?? result;
   }
 
   async creditState(companyId: string, now = new Date()) {

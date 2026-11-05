@@ -3320,3 +3320,22 @@ it('E44 semantic delivery answers e-WHT with the approved bank-remittance explan
     }
   }
 });
+
+it('R26 fixed package reply adds no tool or compose call', async () => {
+  const req = makeReq('ขอดูยอดขายของร้านเดือนนี้');
+  req.userContext.permissions = ['ai.tool.invoke', 'line.ai.query', 'expense.read'];
+  req.entitledFeatureKeys = ['expenses'];
+  req.semanticSubrequests = [{ index: 0, kind: 'read', goal: req.messageText, requestedFilters: {}, requiredEvidence: [], dependsOn: [] }];
+  let calls = 0, tools = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; assert.fail('fixed package reply must precede every model call'); };
+  let result;
+  try {
+    result = await new OrchestratorAgent({ invoke: async () => { tools++; assert.fail('an unavailable package cannot read shop data'); } } as any,
+      makeConfig()).run(req);
+  } finally { globalThis.fetch = original; }
+  assert.equal(calls, 0);
+  assert.equal(tools, 0);
+  assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
+  assert.equal(result.replyText, scopePolicyOverride(req.messageText, 'read', req.userContext.permissions, req.entitledFeatureKeys, 'th', undefined, req.packageOffers)!.text);
+});

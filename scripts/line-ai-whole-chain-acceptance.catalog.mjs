@@ -632,6 +632,47 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
       ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 2 get_options cannot capture pending values from retained earlier-turn evidence'],
     ],
   },
+  {
+    id: 'typed-claim-submit-one-classifier',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'typed_claim_submit_starts_the_permission_scoped_submit_picker',
+      tool: 'one_workflow_classifier_call_zero_tier_two_calls',
+      mutation: 'zero_final_mutation_before_signed_confirmation',
+      delivery: 'same_claim_submit_picker_as_the_workflow_button',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'B4 whole-chain typed claim submit reaches the scoped picker with one classifier call and zero Tier 2'],
+    ],
+  },
+  {
+    id: 'claim-combined-receipt-category-reason', fixture: 'repository',
+    assertions: { outcome: 'reimbursement_draft_saved_after_combined_pending_answer', tool: 'current_turn_fields_without_another_model_call',
+      mutation: 'one_final_mutation_draft_save_only_after_signed_confirmation', delivery: 'confirm_card_keeps_amount_date_category_reason_and_missing_receipt' },
+    evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 3 combined claim answer reaches the confirm card and the fourth press saves the draft']],
+  },
+  {
+    id: 'claim-rejection-amount-selects-permitted-target', fixture: 'repository',
+    assertions: { outcome: 'rejection_applies_only_to_the_amount_matched_claim', tool: 'server_matches_current_turn_thb_amount_against_permitted_claims',
+      mutation: 'signed_rejection_final_mutation_never_applies_to_the_wrong_model_target', delivery: 'equal_amounts_show_the_existing_claim_picker' },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 3 claim amount corrects a wrong model rejection target before reason and signed confirmation'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 3 two permitted claims with the same amount ask with the existing claim picker'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 3 ambiguous claim amount delivers the existing signed picker through the webhook'],
+    ],
+  },
+  {
+    id: 'workflow-picker-typed-document-number', fixture: 'repository',
+    assertions: { outcome: 'typed_document_number_selects_only_the_delivered_picker_row', tool: 'existing_signed_press_handler_zero_model_calls',
+      mutation: 'zero_business_mutation_from_picker_answer', delivery: 'ambiguous_answers_repeat_the_same_picker_with_its_original_expiry' },
+    evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 4 signed delete picker and typed document number reach the same press handler before capture or intake']],
+  },
+  {
+    id: 'action-preview-delete-by-document-number', fixture: 'repository',
+    assertions: { outcome: 'wrong_model_target_is_replaced_with_the_named_permitted_bill', tool: 'server_checks_current_user_evidence_before_preparing_the_action',
+      mutation: 'zero_final_mutation_before_signed_confirmation', delivery: 'signed_delete_confirmation_is_bound_to_the_named_bill' },
+    evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 5 delete by document number reaches the correct signed confirmation through the webhook']],
+  },
 ];
 
 export const LINE_AI_WHOLE_CHAIN_SUITES = [

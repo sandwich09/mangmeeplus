@@ -2,11 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { UnauthorizedException, BadRequestException, RequestMethod } from '@nestjs/common';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
 import { AI_BUDGET_STEP_BOUNDS, AI_BUDGET_IMAGE_TOKEN_CEILING, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
-import { runWithUsageContext, drainUsage } from '../../../../common/usage/usage-context';
+import { runWithUsageContext, drainUsage, appendUsage } from '../../../../common/usage/usage-context';
 import { providerInputTokenUpperBound } from '../../../../common/usage/ai-budget-provider';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { BASE64_MEDIA_ROUTES, LineAiInternalController, receiptIssuerText, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, shouldRereadReceiptImage, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
@@ -3377,4 +3377,135 @@ describe('receipt header recovery from the same synthetic transcription', () => 
     assert.equal(shouldRereadReceiptImage({ ok: true, fields: first as any, classification: classification(true) as any },
       'ใบเสร็จรับเงิน\nยอดรวมสินค้า 232.00\nรวม 197.20'), false);
   });
+});
+
+import { PATH_METADATA, METHOD_METADATA, INTERCEPTORS_METADATA } from '@nestjs/common/constants';
+import { validate } from 'class-validator';
+import { LineWorkflowClassifyDto } from './line-ai-internal.dtos';
+import { WorkflowClassifierAgent } from '../../agents/workflow-classifier.agent';
+
+async function b3ClassifyBody(): Promise<LineWorkflowClassifyDto> {
+  const qa = await r6QaRequest(0);
+  const text = 'ส่งใบเบิกของฉันให้อนุมัติหน่อย';
+  const built = await createLineAiInputEvidence({ turnKey: qa.turnId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] });
+  assert.ok(built);
+  return Object.assign(new LineWorkflowClassifyDto(), {
+    requestId: 'classifier-controller', companyId: qa.companyId, userId: qa.userId, locale: 'th-TH',
+    messageText: text, inputEvidence: built.inputEvidence,
+    budgetGrantV2: { ...qa.budgetGrantV2, authorityKind: 'webhook_classify', allowedProfileIds: ['line-classify/2'],
+      model: { provider: 'bedrock', modelId: 'test-model', region: 'ap-southeast-1' } },
+    contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'],
+  });
+}
+
+function b3Intercept(controller: LineAiInternalController, body: LineWorkflowClassifyDto) {
+  const context = { switchToHttp: () => ({ getRequest: () => ({ body, url: '/v1/internal/ai/line-workflow-classify' }) }) } as unknown as ExecutionContext;
+  return firstValueFrom(new AiUsageInterceptor().intercept(context, {
+    handle: () => defer(() => controller.lineWorkflowClassify('secret', body)),
+  } as CallHandler)) as Promise<any>;
+}
+
+describe('B3 workflow classify endpoint', () => {
+  const controller = () => new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'disabled', aiToolTimeoutMs: 4000 } as any, {} as any);
+
+  it('publishes the POST route under the usage interceptor and validates a concrete DTO', async () => {
+    const handler = LineAiInternalController.prototype.lineWorkflowClassify;
+    assert.equal(Reflect.getMetadata(PATH_METADATA, LineAiInternalController), 'internal/ai');
+    assert.equal(Reflect.getMetadata(PATH_METADATA, handler), 'line-workflow-classify');
+    assert.equal(Reflect.getMetadata(METHOD_METADATA, handler), RequestMethod.POST);
+    assert.ok(Reflect.getMetadata(INTERCEPTORS_METADATA, LineAiInternalController).includes(AiUsageInterceptor));
+    const body = await b3ClassifyBody();
+    assert.deepEqual(await validate(body), []);
+    assert.ok((await validate(Object.assign(new LineWorkflowClassifyDto(), body, { messageText: 'ก'.repeat(1001) }))).length);
+    assert.ok((await validate(Object.assign(new LineWorkflowClassifyDto(), body, { locale: 'unknown' }))).length);
+    assert.ok((await validate(Object.assign(new LineWorkflowClassifyDto(), body, { contractCapabilities: ['input-evidence-v2', 'input-evidence-v2'] }))).length);
+  });
+
+  it('refuses another authority kind or profile, mismatched evidence, or absent budget context before calling the agent', async () => {
+    const original = WorkflowClassifierAgent.prototype.classify;
+    let calls = 0;
+    WorkflowClassifierAgent.prototype.classify = async () => { calls += 1; return { status: 'UNAVAILABLE', errorCode: 'PROVIDER_UNKNOWN', usage: [] }; };
+    try {
+      const valid = await b3ClassifyBody();
+      await assert.rejects(() => controller().lineWorkflowClassify('wrong', valid), UnauthorizedException);
+      assert.equal((await controller().lineWorkflowClassify('secret', valid)).status, 'UNAVAILABLE');
+      for (const change of [
+        { budgetGrantV2: { ...valid.budgetGrantV2, authorityKind: 'webhook_event' } },
+        { budgetGrantV2: { ...valid.budgetGrantV2, allowedProfileIds: ['line-intake-text/2'] } },
+        { budgetGrantV2: { ...valid.budgetGrantV2, allowedProfileIds: ['line-classify/2', 'line-answer/2'] } },
+        { messageText: valid.messageText + ' forged' },
+        { companyId: 'other-company' },
+      ]) {
+        const result = await b3Intercept(controller(), Object.assign(new LineWorkflowClassifyDto(), valid, change));
+        assert.equal(result.status, 'UNAVAILABLE');
+        assert.equal(result.errorCode, 'AI_CONTRACT_UNSUPPORTED');
+      }
+      assert.equal(calls, 0);
+    } finally { WorkflowClassifierAgent.prototype.classify = original; }
+  });
+
+  it('runs a valid request through the interceptor with the pinned classifier authority', async () => {
+    const original = WorkflowClassifierAgent.prototype.classify;
+    const body = await b3ClassifyBody();
+    let seen: unknown;
+    WorkflowClassifierAgent.prototype.classify = async request => {
+      seen = request;
+      appendUsage({ tag: 'line.workflow-classify', modelId: 'test-model', ok: false, inputTokens: 1, outputTokens: 0,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 1, errorCode: 'PROVIDER_TIMEOUT' });
+      return { status: 'UNAVAILABLE', errorCode: 'PROVIDER_TIMEOUT', usage: [] };
+    };
+    try {
+      const response = await b3Intercept(controller(), body);
+      assert.equal(response.status, 'UNAVAILABLE');
+      assert.equal(response.usage.length, 1);
+      assert.equal(response.usage[0].ok, false);
+      assert.equal((seen as LineWorkflowClassifyDto).budgetGrantV2.authorityKind, 'webhook_classify');
+    } finally { WorkflowClassifierAgent.prototype.classify = original; }
+  });
+});
+
+it('B3 serves structured output through Bedrock and settles rejected classifier output before returning', async () => {
+  const originalSend = BedrockRuntimeClient.prototype.send, originalFetch = globalThis.fetch;
+  let sent: any;
+  const settlements: any[] = [];
+  const answer = { label: 'reimbursement_submit', second_label: 'reimbursement_submit', confidence: 0.99, second_confidence: 0.9,
+    reference: 'this', ordinal: 0, person_name: '', vendor_name: '', description_text: '', amount_text: '', date_text: '', reason_text: '', category_text: '' };
+  (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+    sent = command.input;
+    return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify(answer) }] } },
+      usage: { inputTokens: 100, outputTokens: 70, cacheReadInputTokens: 2000, cacheWriteInputTokens: 0 } };
+  };
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(url).endsWith('/budget-step')) {
+      const invocation = body.invocation;
+      assert.equal(invocation.profileId, 'line-classify/2');
+      assert.equal(body.repair, false);
+      return new Response(JSON.stringify({ ok: true, envelope: { ...invocation, version: 2, reservationId: 'classify-reservation',
+        invocationKey: `${invocation.grant.payerCompanyId}#${invocation.grant.attemptKey}#provider-v2#${invocation.ordinal}`, tariffVersion: 'test:1' } }));
+    }
+    assert.ok(String(url).endsWith('/budget-settle'));
+    settlements.push(body.usage);
+    return new Response(JSON.stringify({ result: 'settled' }));
+  };
+  const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+    bedrockRegion: 'ap-southeast-1', bedrockModelId: 'test-model', aiToolTimeoutMs: 4000, erpCoreInternalUrl: 'http://api.test/v1' } as any, {} as any);
+  try {
+    const response = await b3Intercept(controller, await b3ClassifyBody());
+    assert.equal(response.status, 'CLASSIFIED');
+    assert.equal(response.schemaEnforcement, 'output_config');
+    assert.equal(response.secondLabel, 'none');
+    assert.equal(response.rawDecision.second_label, 'reimbursement_submit');
+    assert.equal(response.usage.length, 1, 'the interceptor does not duplicate usage already returned by the agent');
+    assert.equal(settlements[0].ok, true);
+    assert.equal(sent.outputConfig.textFormat.type, 'json_schema');
+    assert.equal(sent.inferenceConfig.maxTokens, 256);
+    assert.ok(sent.system.some((block: any) => block.cachePoint));
+    assert.equal(sent.additionalModelRequestFields, undefined, 'Sonnet thinking stays at its disabled default');
+    answer.confidence = 1.1;
+    const rejected = await b3Intercept(controller, await b3ClassifyBody());
+    assert.equal(rejected.status, 'UNAVAILABLE');
+    assert.equal(rejected.usage[0].ok, false);
+    assert.equal(settlements[1].ok, false, 'invalid confidence is refused before billing settlement');
+  } finally { BedrockRuntimeClient.prototype.send = originalSend; globalThis.fetch = originalFetch; }
 });

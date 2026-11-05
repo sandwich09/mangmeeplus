@@ -5,7 +5,7 @@ import { ListCounterpartiesUseCase } from '../../accounting-documents/applicatio
 import { DisbursementVoucherUseCase } from '../../expenses/application/use-cases/disbursement-voucher.use-case';
 import { ListSubstituteReceiptCandidatesUseCase } from '../../expenses/application/use-cases/substitute-receipt.use-case';
 import { LineVoucherActionService } from './line-voucher-action.service';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { isExpenseDeletableState, type LineWorkflowId, type ReimbursementRequestSummary, type RequestContext, type ExpenseStatus, type ExpensePaymentStatus } from '@watchdog-bms/contracts';
 import { ListReimbursementsUseCase } from '../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { canTransition } from '../../reimbursements/domain/logic/reimbursement.logic';
@@ -13,7 +13,8 @@ import { LineExpenseActionService, type ExpenseAction } from './line-expense-act
 
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 
-export type LineWorkflowRecordTarget = { id: string; label: string; amount: string; currency: string };
+export type LineWorkflowRecordTarget = { id: string; label: string; amount: string; currency: string;
+  documentNumbers?: string[]; roundText?: string; revision?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
 type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string };
@@ -26,7 +27,7 @@ export class LineWorkflowTargetService {
   @Inject(DisbursementVoucherUseCase) private readonly vouchers!: DisbursementVoucherUseCase;
   @Inject(ListSubstituteReceiptCandidatesUseCase) private readonly candidates!: ListSubstituteReceiptCandidatesUseCase;
   @Inject(LineVoucherActionService) private readonly voucherActions!: LineVoucherActionService;
-  constructor(private readonly claims: ListReimbursementsUseCase, private readonly actions: LineExpenseActionService) {}
+  constructor(private readonly claims: ListReimbursementsUseCase, @Inject(forwardRef(() => LineExpenseActionService)) private readonly actions: Pick<LineExpenseActionService, 'permitted' | 'canSubmitClaim'>) {}
 
   pick(ctx: RequestContext, chat: string, workflow: ClaimWorkflowId, slots: WorkflowSlots, page: number): Promise<LineWorkflowTargets>;
   pick(ctx: RequestContext, chat: string, workflow: ExpenseWorkflowId, slots: WorkflowSlots, page: number): Promise<LineWorkflowRecordTargets>;
@@ -38,14 +39,15 @@ export class LineWorkflowTargetService {
     if (!Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, workflow)) return { targets: [], total: 0, exhaustive: true };
     const act = CLAIM_WORKFLOW_ACTIONS[workflow as ClaimWorkflowId];
     const targets = new Map<string, ReimbursementRequestSummary>();
-    let total = 0, scanned = 0;
+    let total = 0;
+    const scanned = new Set<string>();
     for (let page = 1; page <= 3; page++) {
       const result = await this.claims.execute(ctx, { page, pageSize: 100, search: slots.search,
         ...(act === 'REIMBURSEMENT_SUBMIT' ? { bucket: 'draft' as const }
           : act === 'REIMBURSEMENT_RECORD_PAYMENT' ? { bucket: 'payment' as const }
             : act === 'REIMBURSEMENT_APPROVE' || act === 'REIMBURSEMENT_REJECT' ? { status: 'PENDING_APPROVAL' as const } : {}) });
       total = result.total;
-      scanned += result.items.length;
+      for (const claim of result.items) scanned.add(claim.id);
       for (const claim of result.items) {
         if (claim.cancellationPending) continue;
         const allowed = act === 'REIMBURSEMENT_APPROVE' ? claim.approvalActions?.canApprove
@@ -57,7 +59,7 @@ export class LineWorkflowTargetService {
       }
       if (page * 100 >= total) break;
     }
-    return { targets: [...targets.values()], total, exhaustive: total <= 300 && scanned >= total };
+    return { targets: [...targets.values()], total, exhaustive: total <= 300 && scanned.size >= total };
   }
 
   private async readPages<T extends { id: string }, S>(sets: readonly S[], read: (set: S, page: number) => Promise<{ rows: T[]; total: number }>) {
@@ -128,6 +130,8 @@ export class LineWorkflowTargetService {
       if (action !== 'VOUCHER_CREATE' && !await this.actions.permitted(ctx, { expenseId: row.id, createdByUserId: row.createdByUserId, preview: { action } })) continue;
       if (action === 'VOUCHER_CREATE' && (row.reservedByDisbursementVoucherId || Number(row.outstandingAmount) <= 0)) continue;
       targets.push({ id: row.id, label: row.vendorNameSnapshot || row.expenseNumber || '', currency: row.currency,
+        documentNumbers: [row.expenseNumber, row.vendorDocumentNumber].filter((number): number is string => !!number),
+        roundText: [row.vendorNameSnapshot, row.note, row.internalMemo].filter(Boolean).join(' '), revision: row.updatedAt.toISOString(),
         amount: action === 'RECORD_PAYMENT' ? row.outstandingAmount ?? row.grandTotalAmount : row.grandTotalAmount });
     }
     return { targets, total: result.total, exhaustive: result.exhaustive, ...(latestOnly ? { latestOnly } : {}) };

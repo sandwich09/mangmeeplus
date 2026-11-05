@@ -55,6 +55,11 @@ const EXPECTED_IDS = [
   'stranger-text-before-door-zero-model',
   'claim-multi-message-accepted-provenance',
   'claim-options-only-turn-preserves-amount',
+  'typed-claim-submit-one-classifier',
+  'claim-combined-receipt-category-reason',
+  'claim-rejection-amount-selects-permitted-target',
+  'workflow-picker-typed-document-number',
+  'action-preview-delete-by-document-number',
 ];
 
 describe('LINE AI whole-chain acceptance catalog', () => {

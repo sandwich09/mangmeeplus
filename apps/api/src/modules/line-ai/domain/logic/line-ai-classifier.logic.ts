@@ -118,6 +118,7 @@ export const MANUAL_CLAIM_DESCRIPTION_QUESTION = 'เป็นค่าอะไ
 export async function parseManualClaimLine(
   evidence: import('@watchdog-bms/contracts').LineAiInputEvidenceV2,
   candidates: import('@watchdog-bms/contracts').LineAiValueCandidatesV2,
+  descriptionSpan?: string,
 ) {
   const verified = await verifyLineAiValueCandidatesV2(candidates, evidence);
   if (!verified || verified.completeness !== 'complete') return null;
@@ -148,6 +149,16 @@ export async function parseManualClaimLine(
     }
   }
   descriptions.sort((a, b) => b.value.length - a.value.length);
+  if (descriptionSpan !== undefined) {
+    const match = descriptions.find(candidate => descriptionSpan && candidate.value.includes(descriptionSpan));
+    descriptions.length = 0;
+    const ref = match?.proof.kind === 'USER_TEXT' ? match.proof.refs?.[0] : undefined;
+    if (match && ref && Array.from(descriptionSpan).length >= 2) {
+      const start = ref.startUtf16 + match.value.indexOf(descriptionSpan);
+      descriptions.push({ value: descriptionSpan, proof: { kind: 'USER_TEXT', refs: [{ ...ref,
+        startUtf16: start, endUtf16: start + descriptionSpan.length }] } });
+    }
+  }
   if (descriptions[0]) values.description = descriptions[0];
   const question = amounts.length > 1 ? MANUAL_CLAIM_AMOUNTS_QUESTION : !values.amount ? MANUAL_CLAIM_AMOUNT_QUESTION
     : !values.description ? MANUAL_CLAIM_DESCRIPTION_QUESTION : undefined;

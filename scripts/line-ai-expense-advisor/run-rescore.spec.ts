@@ -175,6 +175,7 @@ describe('workflow real-run entry point', () => {
     assert.ok(replay.fixtures[1].fixture.permissions.includes('expense.create'));
     assert.ok(['expense.read', 'expense.read_own', 'expense.read_related'].every(permission => !replay.fixtures[1].fixture.permissions.includes(permission)));
     assert.deepEqual(replay.fixtures[3].fixture.branches, ['branch-b-1']);
+    assert.equal(seed.actors['draft-creator']!.kind === 'unlinked' ? '' : (seed.actors['draft-creator'] as any).runtimeRole, 'EVAL_DRAFT_CREATOR', 'a switched-to draft creator resolves to its seeded role');
     const { freeExpenseDraftPermissions } = await import('../../apps/api/src/modules/system-partner-management/application/free-expense-access');
     assert.ok(replay.fixtures[2].fixture.permissions.length, 'a free owner keeps the free source-draft permissions');
     assert.deepEqual(replay.fixtures[2].fixture.permissions, freeExpenseDraftPermissions(replay.fixtures[2].fixture.permissions),
