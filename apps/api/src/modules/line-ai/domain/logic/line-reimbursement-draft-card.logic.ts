@@ -157,7 +157,7 @@ const BLOCKED_TEXT: Record<string, string> = {
   feature_disabled: 'ตอนนี้ปิดการบันทึกร่างใบเบิกจาก LINE ชั่วคราว ทำรายการในเว็บได้ค่ะ',
   unsupported_channel: 'ทำรายการใบเบิกได้เฉพาะในแชตส่วนตัวค่ะ',
   write_quiesced: 'ระบบใบเบิกกำลังปรับปรุงชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่ค่ะ',
-  invalid_provenance: 'ยังยืนยันที่มาของข้อมูลบางส่วนไม่ได้ กรุณาพิมพ์รายละเอียดการเบิกอีกครั้งค่ะ',
+  invalid_provenance: 'ยังทำรายการใบเบิกนี้ไม่ได้ ลองอีกครั้งหรือทำรายการในเว็บ',
   evidence_overflow: 'รายละเอียดใบเบิกยาวเกินกว่าจะทำใน LINE ได้ กรุณาแบ่งเป็นหลายใบ หรือทำรายการในเว็บค่ะ',
   source_changed: 'บิลหรือไฟล์ที่เลือกมีการเปลี่ยนแปลง กรุณาตรวจร่างใหม่อีกครั้งค่ะ',
   invalid_source: 'บิลหรือไฟล์ที่เลือกใช้เบิกไม่ได้ กรุณาเลือกบิลหรือไฟล์อื่นค่ะ',
@@ -219,7 +219,7 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
       forbidden: 'You cannot change this claim; ask the shop owner or an authorized administrator.',
       feature_disabled: 'Claim drafts are currently unavailable in LINE; please use the web app.',
       unsupported_channel: 'Please prepare claims in a private chat.', write_quiesced: 'Claims are temporarily unavailable; please try again shortly.',
-      invalid_provenance: 'Some details could not be verified; please send the claim details again.',
+      invalid_provenance: 'This claim action is unavailable; please try again or use the web app.',
       evidence_overflow: 'Please split the claim details into smaller requests.',
       field_too_long: 'Please shorten the claim details and send them again.', invalid_field: 'Please check the claim details and send them again.',
       rate_limited: 'Please wait a moment before requesting the draft again.', store_unavailable: 'The claim draft is unavailable; please try again.',
@@ -263,6 +263,12 @@ export function buildReimbursementDraftMessages(...args: Parameters<typeof reimb
         ...(submit?.type === 'postback' ? { choice: [submit, open] as const }
           : refusal && repair.uri !== open.uri ? { choice: [repair, open] as const } : { button: { icon: 'file' as const, action: repair } }) }, webBaseUrl);
       if (contents) return asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(message.text, 400), canonicalText: message.text, contents, ...(message.quickReply ? { quickReply: message.quickReply } : {}) });
+    }
+    if (result.status === 'blocked' && result.errorCode === 'invalid_provenance') {
+      message = { ...message, quickReply: { items: [{ type: 'action', action: { type: 'uri',
+        label: language === 'en' ? 'Open on web' : 'เปิดในเว็บ',
+        uri: `${webBaseUrl.replace(/\/$/u, '')}/companies/${encodeURIComponent(companyId)}/reimbursements`,
+      } }] } };
     }
     return claimTextCard(message, webBaseUrl, language);
   });

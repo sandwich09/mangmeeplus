@@ -22,6 +22,7 @@ import {
   SubstituteReceiptEvidenceUploadUseCase,
   SaveOwnSubstituteReceiptReviewUseCase,
   PreviewSubstituteReceiptUseCase,
+  collectSubstituteReceiptEligibilityIssues,
 } from './substitute-receipt.use-case';
 import { SetSignatureDerivedAssetUseCase } from './signature-asset.use-case';
 import { BadRequestException, ConflictException } from '@nestjs/common';
@@ -344,11 +345,12 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     };
     const codeIs = (expected: string) => (error: unknown) => {
       assert.equal((error as { getResponse(): { code?: string } }).getResponse().code, expected);
+      if (expected === 'substitute_receipt_too_many_lines') assert.match((error as any).getResponse().message, /สูงสุด 200 รายการ/);
       return true;
     };
 
     await assert.rejects(
-      () => make(expense({ lines: Array.from({ length: 9 }, () => expense().lines[0]) }))
+      () => make(expense({ lines: Array.from({ length: 201 }, () => expense().lines[0]) }))
         .execute(ctx('finance-1'), 'exp-1', input),
       codeIs('substitute_receipt_too_many_lines'),
     );
@@ -400,6 +402,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
 
   it('accepts the exact shared line and evidence boundary', async () => {
     const limits = SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS;
+    assert.equal(limits.maxExpenseLines, 200);
     let persisted = false;
     const repo = {
       findByIdWithRelations: async () => expense({
@@ -665,7 +668,7 @@ describe('substitute receipt signing lifecycle', () => {
         id: 'exp-1', expenseNumber: 'EXP-1', expenseDate: now.toISOString(), paymentDate: now.toISOString(),
         currency: 'THB', grandTotalAmount: '65.00', paymentMethod: 'CASH', paymentReference: null, category: 'cat-1',
         businessPurpose: 'ซื้อวัตถุดิบ',
-        lines: Array.from({ length: 9 }, (_, index) => ({ description: `รายการ ${index + 1}`, quantity: '1', amount: '7.22' })),
+        lines: Array.from({ length: 201 }, (_, index) => ({ description: `รายการ ${index + 1}`, quantity: '1', amount: '7.22' })),
       },
       originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', fundingSource: 'COMPANY' as const, reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
       payer: { userId: 'payer-1', name: 'สมชาย', position: 'พนักงาน', certifiedAt: now.toISOString() },
@@ -2543,4 +2546,13 @@ it('MC2 explicit LINE candidate reads preserve web scope and every eligibility f
   assert.deepEqual(reads[1], reads[0]);
   await assert.rejects(useCase.execute(line, filter), /authenticated web/);
   await assert.rejects(useCase.execute({ ...line, permissions: [] }, filter, { channel: 'line' }), /expense.review/);
+});
+
+it('200 bill rows remain eligible and 201 has the Thai line-limit issue', () => {
+  for (const count of [200, 201]) {
+    const issues = collectSubstituteReceiptEligibilityIssues(expense({ lines: Array.from({ length: count }, () => expense().lines[0]) }));
+    const issue = issues.find(item => item.code === 'substitute_receipt_too_many_lines');
+    if (count === 200) assert.equal(issue, undefined);
+    else assert.match(issue!.message, /สูงสุด 200 รายการ/);
+  }
 });

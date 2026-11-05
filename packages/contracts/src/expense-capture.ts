@@ -1,3 +1,4 @@
+import { EXPENSE_MAX_ITEM_LINES } from './expense-item-limits.js';
 /**
  * Buyer expense capture — read models, gateway contract and manifest shape.
  *
@@ -445,8 +446,8 @@ export type ExpenseCaptureAssembledObservations = ExpenseCaptureObservations & {
 
 /** Declared per-window ceilings of §4.3; past them `itemsTruncated` is true, never a silent cut. */
 export const EXPENSE_CAPTURE_OBSERVATION_LIMITS = {
-  maxItemsPerWindow: 120,
-  maxComponentsPerWindow: 40,
+  maxItemsPerWindow: EXPENSE_MAX_ITEM_LINES,
+  maxComponentsPerWindow: EXPENSE_MAX_ITEM_LINES,
   maxDocumentsPerWindow: 10,
   maxWindowTextChars: 12_000,
 } as const;

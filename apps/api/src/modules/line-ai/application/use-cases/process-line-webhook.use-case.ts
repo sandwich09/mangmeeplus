@@ -170,7 +170,7 @@ import {
 } from '../../domain/logic/line-file-attempt-answer.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
-import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion, type ReceiptOcrApplyOutcome } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { isStaleOcrApply, RECEIPT_REVIEW_REASONS, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion, type ReceiptOcrApplyOutcome } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
@@ -1548,16 +1548,16 @@ function receiptItemLines(
   fields: ReceiptOcrFieldResult | null | undefined,
   charges: readonly ExpenseChargeSummary[] = [],
 ): string[] {
-  const items = (fields?.lines ?? []).slice(0, 10)
+  const items = (fields?.lines ?? []).slice(0, 30)
     .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
-  return [...items, ...chargeSummaryLines(charges)];
+  return [...items, ...((fields?.lines?.length ?? 0) > 30 ? [`และอีก ${fields!.lines!.length - 30} รายการ`] : []), ...chargeSummaryLines(charges, 'th', 30 - items.length)];
 }
 
 /** Spec §5.1: the charge block, in one place, so the receipt card and the check-bill reply cannot
  *  drift apart. `label` already comes from `EXPENSE_LINE_CHARGE_KIND_LABELS` via `expenseLineCharges`
  *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
-function chargeSummaryLines(charges: readonly ExpenseChargeSummary[], language: 'th' | 'en' = 'th'): string[] {
-  if (language === 'en') { return charges.map(charge => `• ${({ SERVICE_CHARGE: 'Service charge', SHIPPING: 'Shipping', ROUNDING: 'Rounding', OTHER: 'Other charge' } as Record<string, string>)[charge.kind] ?? 'Additional charge'}: ${moneyLabel(charge.amount)} THB`); }
+function chargeSummaryLines(charges: readonly ExpenseChargeSummary[], language: 'th' | 'en' = 'th', limit = 30): string[] {
+  if (language === 'en') { return [...charges.slice(0, limit).map(charge => `• ${({ SERVICE_CHARGE: 'Service charge', SHIPPING: 'Shipping', ROUNDING: 'Rounding', OTHER: 'Other charge' } as Record<string, string>)[charge.kind] ?? 'Additional charge'}: ${moneyLabel(charge.amount)} THB`), ...(charges.length > limit ? [`And ${charges.length - limit} more items`] : [])]; }
 
   if (charges.length === 0) return [];
   const additional = charges.filter((charge) => charge.kind !== 'ROUNDING');
@@ -1566,9 +1566,11 @@ function chargeSummaryLines(charges: readonly ExpenseChargeSummary[], language: 
   return [
     ...(additional.length ? [
       `➕ ค่าใช้จ่ายเพิ่ม (${additional.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
-      ...additional.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
+      ...additional.slice(0, limit).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
     ] : []),
-    ...rounding.slice(0, 10).map((charge) => `• ปรับยอดปัดเศษ – ${moneyLabel(charge.amount)} บาท`),
+    ...(additional.length > limit ? [`และอีก ${additional.length - limit} รายการ`] : []),
+    ...rounding.slice(0, Math.max(0, limit - additional.length)).map((charge) => `• ปรับยอดปัดเศษ – ${moneyLabel(charge.amount)} บาท`),
+    ...(rounding.length > Math.max(0, limit - additional.length) ? [`และอีก ${rounding.length - Math.max(0, limit - additional.length)} รายการ`] : []),
   ];
 }
 
@@ -1611,7 +1613,31 @@ function formatReplyDate(value: string | undefined, language: 'th' | 'en' = 'th'
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-type PaypersReplyOptions = { language?: 'th' | 'en'; acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean };
+type PaypersReplyOptions = { missingFields?: readonly string[]; reviewReasons?: readonly string[]; language?: 'th' | 'en'; acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean };
+
+/** Use the saved review flags in text and cards, with field labels instead of wire keys. */
+function receiptReviewNote(missingFields: readonly string[] = [], reviewReasons: readonly string[] = [], language: 'th' | 'en' = 'th'): string | undefined {
+  const labels: Record<string, string> = {
+    vendor: 'ผู้ขาย', vendorName: 'ผู้ขาย', vendorTaxId: 'เลขประจำตัวผู้เสียภาษีของผู้ขาย',
+    vendorAddress: 'ที่อยู่ผู้ขาย', vendorBranchCode: 'สาขาผู้ขาย',
+    documentNumber: 'เลขที่เอกสาร', vendorDocumentNumber: 'เลขที่เอกสาร', lines: 'รายการ',
+    expenseDate: 'วันที่เอกสาร', amount: 'ยอดรวม', grandTotalAmount: 'ยอดรวม',
+    vatAmount: 'ภาษีมูลค่าเพิ่ม', vatRate: 'อัตราภาษีมูลค่าเพิ่ม', whtAmount: 'ภาษีหัก ณ ที่จ่าย',
+    additionalCharges: 'รายการ', category: 'หมวดหมู่ค่าใช้จ่าย',
+  };
+  const reasonFields: Array<[string, string]> = [
+    [RECEIPT_REVIEW_REASONS.dateUnverified, 'expenseDate'], [RECEIPT_REVIEW_REASONS.dateImplausible, 'expenseDate'],
+    [RECEIPT_REVIEW_REASONS.documentNumberUntrusted, 'documentNumber'], [RECEIPT_REVIEW_REASONS.sellerUnverified, 'vendorName'],
+    [RECEIPT_REVIEW_REASONS.itemsFolded, 'lines'], [RECEIPT_REVIEW_REASONS.chargesFolded, 'additionalCharges'],
+    [RECEIPT_REVIEW_REASONS.chargeVatUnknown, 'vatRate'], [RECEIPT_REVIEW_REASONS.vatRounding, 'vatAmount'],
+    [RECEIPT_REVIEW_REASONS.whtWithCharges, 'whtAmount'],
+    ['ยอดภาษีหัก ณ ที่จ่ายไม่สอดคล้องกับยอดเอกสาร', 'whtAmount'],
+    ['เก็บยอดสรุปแยกตามภาษีแล้ว', 'lines'],
+  ];
+  const fields = [...missingFields, ...reviewReasons.map(reason => reasonFields.find(([prefix]) => reason.startsWith(prefix))?.[1] ?? '')];
+  const checks = [...new Set(fields.map(field => labels[field] ?? 'ข้อมูลใบเสร็จ'))];
+  return checks.length ? `${language === 'en' ? 'Review expense' : 'ยังต้องตรวจ'}: ${checks.map(check => lineUiLabel(check, language)).join(', ')}` : undefined;
+}
 
 /** ONE reading of what the capture grounded, for the reply text and for the review card alike: a
  *  figure that is `undefined` here was not grounded, and neither of them may state it. */
@@ -1649,6 +1675,7 @@ function paypersReplyFacts(options: PaypersReplyOptions) {
   const foreignCurrency = options.fields?.currency && options.fields.currency !== 'THB' ? options.fields.currency : undefined;
   return {
     amount: amountValue && Number(toMoney4(amountValue)) > 0 ? money(amountValue) : undefined,
+    reviewNote: receiptReviewNote(options.missingFields, options.reviewReasons, options.language),
     docType: options.sourceDocumentType ? lineUiLabel(SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] ?? '', options.language ?? 'th') : undefined,
     vat: vatMode !== 'NO_VAT' && vatMode !== 'EXEMPT' && vatValue && Number(toMoney4(vatValue)) > 0 ? money(vatValue) : undefined,
     wht: whtValue && Number(toMoney4(whtValue)) > 0 ? money(whtValue) : undefined,
@@ -1688,7 +1715,7 @@ export function formatPaypersReply(
       ...(options.categoryName ? [`Category: ${options.categoryName}`] : []),
       ...(facts.vat ? [`VAT: ${facts.vat} THB`] : []), ...(facts.wht ? [`Withholding tax: ${facts.wht} THB`] : []),
       ...(facts.otherCharges ? [`Other charges: ${facts.otherCharges}`] : []),
-      facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, `Review expense: ${link}`].filter(Boolean).join('\n');
+      facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, facts.reviewNote, `Review expense: ${link}`].filter(Boolean).join('\n');
   }
   const parts = options.compact ? [
     '🧾 เก็บรูปและร่างแล้วค่ะ',
@@ -1711,6 +1738,7 @@ export function formatPaypersReply(
   ];
   if (facts.otherCharges) parts.push(`• ค่าบริการอื่นๆ – ${facts.otherCharges}`);
   if (facts.itemBlock) parts.push('', ...facts.itemBlock);
+  if (facts.reviewNote) parts.push('', facts.reviewNote);
   if (facts.textOnlyNote) parts.push('', facts.textOnlyNote);
   if (facts.duplicateNote) parts.push('', facts.duplicateNote);
   if (facts.addressAsk) parts.push('', facts.addressAsk);
@@ -1745,7 +1773,7 @@ function expenseDraftCardFacts(
     otherCharges: facts.otherCharges,
     status: (EXPENSE_STATUS_LABELS as Record<string, string>)[options.status ?? ''] ?? EXPENSE_STATUS_LABELS.NEEDS_REVIEW,
     notesBefore: [options.lead],
-    notesAfter: [options.language === 'en' ? undefined : facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail],
+    notesAfter: [options.language === 'en' ? undefined : facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, facts.reviewNote, options.tail],
   });
 }
 
@@ -1778,7 +1806,9 @@ return [ 'Details from the latest expense in this chat:', `Seller: ${fields.vend
 
   const fields = receiptSummaryFields(expense);
   const missing = expense.aiVerificationSummaryJson?.['missingFields'];
-  const missingFields = Array.isArray(missing) ? missing.filter((item): item is string => typeof item === 'string').slice(0, 10) : [];
+  const missingFields = Array.isArray(missing) ? missing.filter((item): item is string => typeof item === 'string') : [];
+  const reasons = expense.aiVerificationSummaryJson?.['reviewReasons'];
+  const reviewNote = receiptReviewNote(missingFields, Array.isArray(reasons) ? reasons.filter((reason): reason is string => typeof reason === 'string') : [], language);
   const sourceType = SOURCE_DOC_TYPE_REPLY_LABELS[expense.sourceDocumentType] ?? 'เอกสารค่าใช้จ่าย';
   const amount = Number(expense.grandTotalAmount) > 0
     ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1812,7 +1842,7 @@ return [ 'Details from the latest expense in this chat:', `Seller: ${fields.vend
     `• ยอดรายการปัจจุบัน – ${amount} ${expense.currency}`,
     `• หมวดค่าใช้จ่าย – ${categoryName ?? 'ยังไม่ระบุ'}`,
     `• หลักฐานรายจ่าย: ${TAX_EVIDENCE_STATUS_LABELS[expense.taxEvidenceStatus] ?? TAX_EVIDENCE_STATUS_LABELS.NEEDS_REVIEW}`,
-    ...(missingFields.length ? ['', `ยังต้องตรวจ: ${missingFields.join(', ')}`] : []),
+    ...(reviewNote ? ['', reviewNote] : []),
     '',
     'เปิดรายการในเว็บเพื่อตรวจข้อมูลก่อนทำต่อค่ะ',
     `เปิดตรวจสอบรายการ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`,
@@ -9250,7 +9280,11 @@ ${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}` : `↩
       && ref.entityType === 'reimbursement_draft_action' && typeof ref.entityId === 'string').map(ref => ref.entityId!))];
     let reimbursementMessages: LineReplyMessage[] = [];
     if (bound && actionIds.length === 1 && turnResponse.toolsInvoked.some(name => name.startsWith('reimbursement.draft.'))) {
-      const result = await this.reimbursementDrafts.get({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
+      const latestPreviewCall = turnResponse.toolCalls?.filter(call => call.name === 'reimbursement.draft.preview_create' || call.name === 'reimbursement.draft.preview_update').at(-1);
+      const current = await this.reimbursementDrafts.get({ ctx: expenseDraftCtx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: actionIds[0]! });
+      const result: LineReimbursementDraftResult = latestPreviewCall?.errorCode === 'invalid_provenance'
+        && (current.status === 'needs_fields' || current.status === 'needs_target' || current.status === 'preview')
+        ? { status: 'blocked', errorCode: 'invalid_provenance' } : current;
       this.deliveryReimbursements.set(event, { context: expenseDraftCtx, result });
       reimbursementMessages = await this.reimbursementDraftMessages(result, expenseDraftCtx, event);
       if (result.status === 'needs_fields' || result.status === 'needs_target') {
@@ -10984,7 +11018,9 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     let dateVerified = false;
     let dateStatus: ExpenseDocumentDateStatus = 'unverified';
     let dateAssumptions: string[] | undefined;
-    let reviewReasons: string[] = [];
+    let reviewReasons: string[] = Array.isArray(completedExpense.aiVerificationSummaryJson?.['reviewReasons'])
+      ? completedExpense.aiVerificationSummaryJson['reviewReasons'].filter((reason): reason is string => typeof reason === 'string') : [];
+    let applyMissingFields: string[] = [];
     let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
     if (ocrFields) {
       const applyOutcome = await this.timeStage(event.webhookEventId, 'receipt_ocr_apply', () => this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
@@ -11016,7 +11052,8 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       admissionAttempt.usablePersisted = ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
         && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount, ocr.classification?.documentKind === 'TRANSFER_SLIP');
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
-      reviewReasons = duplicateResult?.reviewReasons ?? [];
+      reviewReasons = [...new Set([...reviewReasons, ...(duplicateResult?.reviewReasons ?? [])])];
+      applyMissingFields = duplicateResult?.missingFields ?? [];
       dateVerified = duplicateResult?.dateVerified ?? false;
       dateStatus = duplicateResult?.dateStatus ?? 'unverified';
       dateAssumptions = duplicateResult?.dateAssumptions;
@@ -11050,6 +11087,8 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // Spec §5.2: an unverified date is a missing one, whatever the column holds. This is the flag the
     // web review form already reads (`expenseAiMissingFields`), so no second mechanism is invented.
     if (!dateVerified) missingFields.add('expenseDate');
+    for (const field of applyMissingFields) missingFields.add(field);
+    if (missingFields.has('vendorDocumentNumber')) missingFields.add('documentNumber');
 
     // The type arrives after OCR: use the normal expense write so its preset and reason
     // follow that final type under the VAT-registration lock and the same revision fence.
@@ -11088,7 +11127,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
           // Spec S1-R4: same resolved suggestion the web review form reads, so a below-threshold
           // category survives the LINE intake instead of being dropped after apply.
           ...(categorySuggestion ? { categorySuggestion } : {}),
-          missingFields: [...missingFields].slice(0, 20),
+          missingFields: [...missingFields],
           // Spec §5.1/§5.2: the same readable reasons the web upload path stores, so a draft captured
           // over LINE and one uploaded in the browser explain themselves the same way.
           ...(reviewReasons.length > 0 ? { reviewReasons } : {}),
@@ -11226,6 +11265,8 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
       const reconciliation = summary?.chargeReconciliation as { status?: unknown; chargesApplied?: unknown } | undefined;
       const options: PaypersReplyOptions = {
         questionText,
+        missingFields: Array.isArray(summary?.['missingFields']) ? summary['missingFields'].filter((field): field is string => typeof field === 'string') : [],
+        reviewReasons: Array.isArray(summary?.['reviewReasons']) ? summary['reviewReasons'].filter((reason): reason is string => typeof reason === 'string') : [],
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
         categoryName: category?.name,
@@ -12744,6 +12785,16 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
     if (applied && (isStaleOcrApply(applied) || !applied.committedUpdatedAt)) throw new ConflictException('Receipt changed before OCR could be saved');
     const appliedOutcome = applied;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
+    const priorSummary = captured.aiVerificationSummaryJson;
+    const missingFields = [...new Set([
+      ...(Array.isArray(priorSummary?.['missingFields']) ? priorSummary['missingFields'].filter((field): field is string => typeof field === 'string') : []),
+      ...(asked.ocrFields?.missingFields ?? []), ...(appliedOutcome?.missingFields ?? []),
+    ])];
+    if (missingFields.includes('vendorDocumentNumber') && !missingFields.includes('documentNumber')) missingFields.push('documentNumber');
+    const reviewReasons = [...new Set([
+      ...(Array.isArray(priorSummary?.['reviewReasons']) ? priorSummary['reviewReasons'].filter((reason): reason is string => typeof reason === 'string') : []),
+      ...(appliedOutcome?.reviewReasons ?? []),
+    ])];
     if (!existing) await this.expenseRepo.updateExpense({
       id: expenseId,
       companyId: ctx.companyId,
@@ -12757,12 +12808,12 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
         status: 'NOT_EXPENSE_DOCUMENT',
         recognizedFields: asked.ocrFields,
         classification,
-        missingFields: asked.ocrFields?.missingFields ?? [],
+        missingFields,
         // Merged, never dropped: this write replaces the whole JSON, so a reason the apply raised
         // is gone from the record — and from the web review banners — unless it is carried here.
         // Read totally: a summary field can never be the thing that throws a user's turn away and
         // strands the pending row it was about.
-        ...(appliedOutcome?.reviewReasons?.length ? { reviewReasons: appliedOutcome.reviewReasons } : {}),
+        ...(reviewReasons.length ? { reviewReasons } : {}),
         duplicateWarning: false,
         nextAction: 'check_bill_payment_decision_confirmed',
       },
@@ -12785,7 +12836,8 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
     const completed = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, access.scopes);
     if (!completed) throw new ConflictException('Receipt changed before the reply.');
     this.rememberReceiptDeliverySource(event, ctx, completed);
-    const reply = formatCheckBillDraftCreatedReply(continuation, completed.charges ?? [], replyLanguage(event));
+    const reply = [formatCheckBillDraftCreatedReply(continuation, completed.charges ?? [], replyLanguage(event)),
+      receiptReviewNote(missingFields, reviewReasons, replyLanguage(event))].filter(Boolean).join('\n\n');
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {

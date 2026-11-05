@@ -5,7 +5,7 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { LINE_CHAT_ACTIONS, lineChatAction, BUSINESS_DOCUMENT_REASON_CODES, aiBudgetV2OrdinalCeiling, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiResponsePreferenceCommand, parseLineAiSemanticSubrequests, lineAiReplyClarifications, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
+import { EXPENSE_MAX_ITEM_LINES, LINE_CHAT_ACTIONS, lineChatAction, BUSINESS_DOCUMENT_REASON_CODES, aiBudgetV2OrdinalCeiling, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiResponsePreferenceCommand, parseLineAiSemanticSubrequests, lineAiReplyClarifications, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiSemanticSubrequestV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { Logger } from '@nestjs/common';
@@ -1025,8 +1025,9 @@ function buildFeatureCatalog(draftEditEnabled = false, publicLookupEnabled = fal
     // requiredInputFields/optionalInputFields are the ONLY input field names a prepared plan may copy;
     // the parser + sanitizer reject anything else, so exposing the exact registry lists here keeps the
     // "fields that tool declares" instruction grounded and stops the model inventing input keys.
+    // Keep the intake offer bounded; the downstream action tool still supports 30 bills per voucher.
     return tool
-      ? { toolName: tool.name, sourceModule: tool.sourceModule, category: tool.category, agentHints: tool.supportedAgents, description: tool.description, businessSubjects: tool.businessSubjects, questionKinds: tool.questionKinds, requiredInputFields: tool.requiredInputFields ?? [], optionalInputFields: tool.optionalInputFields ?? [], inputEnumValues: tool.inputEnumValues ?? {} }
+      ? { toolName: tool.name, sourceModule: tool.sourceModule, category: tool.category, agentHints: tool.supportedAgents, description: tool.name === 'expense.action.preview' ? tool.description.replace('expenseIds, at most 30', 'expenseIds, at most 20') : tool.description, businessSubjects: tool.businessSubjects, questionKinds: tool.questionKinds, requiredInputFields: tool.requiredInputFields ?? [], optionalInputFields: tool.optionalInputFields ?? [], inputEnumValues: tool.inputEnumValues ?? {} }
       : { toolName, sourceModule: 'unknown', category: 'unknown', agentHints: [], description: '', businessSubjects: [], questionKinds: [], requiredInputFields: [], optionalInputFields: [], inputEnumValues: {} };
   };
   return {
@@ -1392,7 +1393,7 @@ function parseIntakePlan(
         captureHints.targetExpenseId = hints['targetExpenseId'];
       }
       if (Array.isArray(hints['items'])) {
-        if (hints['items'].length > 20) return reject('route_capture_items_too_many');
+        if (hints['items'].length > EXPENSE_MAX_ITEM_LINES) return reject('route_capture_items_too_many');
         const itemStringKeys = ['itemRef', 'sourceText', 'description', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'expenseCategoryId', 'taxTreatment'] as const;
         if (hints['items'].some((value) => value && typeof value === 'object' && !Array.isArray(value)
           && itemStringKeys.some((key) => typeof (value as Record<string, unknown>)[key] === 'string'

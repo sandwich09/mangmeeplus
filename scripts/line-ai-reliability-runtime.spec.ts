@@ -333,3 +333,12 @@ test('unlinked replay actors reach the before-link path without resolving a comp
     await assert.rejects(() => runtimeActorContext(actor, fallback, async () => ({ roles: [], scopes: { branchIds: ['branch-1'] } })), /REPLAY_ACTOR_ROLE_MISMATCH/);
   }
 });
+
+test('missing and ambiguous delivered press targets are scored failures without masking invalid origins', async () => {
+  const { resolveRuntimePostback, runtimePressReceipts } = await import('./line-ai-reliability-runtime');
+  assert.deepEqual(resolveRuntimePostback([], 'ยืนยัน'), { failure: 'press_target_not_delivered' });
+  const action = (data: string) => ({ type: 'postback', label: 'ยืนยัน', data });
+  assert.deepEqual(resolveRuntimePostback([action('one'), action('two')], 'ยืนยัน'), { failure: 'press_target_ambiguous' });
+  assert.deepEqual(resolveRuntimePostback([action('one')], 'ยืนยัน'), { data: 'one' });
+  assert.throws(() => runtimePressReceipts([], 1, { pressOrigin: { turn: 0 } }), /REPLAY_PRESS_ORIGIN_MISSING/);
+});

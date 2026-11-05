@@ -570,6 +570,22 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
       ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'settles waiting feedback before sending the final LINE reply'],
     ],
   },
+  {
+    id: 'claim-multi-message-accepted-provenance',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'one_claim_preview_with_accepted_amount_date_category_and_reason_across_three_turns',
+      tool: 'current_turn_proof_for_new_values_only_zero_model_calls_in_repository_replay',
+      mutation: 'collection_and_preview_only_zero_final_mutation',
+      delivery: 'confirm_card_or_retry_with_web_exit_without_repeating_accepted_details',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 multi-message claim accepts repeated old proofs and bare accepted values across the exact three turns'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 normalized amount echoes keep accepted money and changed amounts require fresh proof'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 provenance refusal offers the web exit without asking for all accepted claim details again'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 webhook shows the latest provenance refusal instead of the saved missing-field question'],
+    ],
+  },
 ];
 
 export const LINE_AI_WHOLE_CHAIN_SUITES = [

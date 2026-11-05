@@ -116,7 +116,7 @@ export class AccountingGetDocumentDetailTool implements ErpReadToolPort<{ docume
           vatAmount: doc.vatAmount, whtAmount: doc.whtAmount, grandTotalAmount: doc.grandTotalAmount,
           paidAmount: doc.paidAmount, outstandingAmount: doc.outstandingAmount,
           paymentStatus: doc.paymentStatus ?? null, postingStatus: doc.postingStatus,
-          lines: (doc.lines ?? []).slice(0, 10).map((line) => ({
+          lines: (doc.lines ?? []).map((line) => ({
             description: line.description, quantity: line.quantity, unit: line.unitName ?? null,
             unitPrice: line.unitPrice, lineTotalAmount: line.lineTotalAmount,
           })),
@@ -205,7 +205,7 @@ export class ExpenseGetDetailTool implements ErpReadToolPort<{ expenseId?: strin
           paidAmount: expense.paidAmount, outstandingAmount: expense.outstandingAmount,
           paymentStatus: expense.paymentStatus, duplicateStatus: expense.duplicateStatus,
           taxEvidenceStatus: expense.taxEvidenceStatus, postingStatus: expense.postingStatus,
-          lines: expense.lines.slice(0, 10).map((line) => ({
+          lines: expense.lines.map((line) => ({
             description: line.description, chargeKind: line.chargeKind ?? null, quantity: line.quantity,
             unitPrice: line.unitPrice, lineTotalAmount: line.lineTotalAmount,
           })),
@@ -300,7 +300,7 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
       // A LINE text-note draft keeps what the user said (e.g. "สามร้อย", then "350") in its collection
       // until the item is complete enough to become a line; without it the record reads as 0 (NAT-12).
       const collection = parseLineExpenseDraftContinuation(expense.sourceChannelMetadataJson?.['lineExpenseDraftContinuation']);
-      const staged = collection ? collection.items.filter((item) => !item.description || !item.quantity || (!item.unitPrice && !item.totalAmount)).slice(0, 10) : [];
+      const staged = collection ? collection.items.filter((item) => !item.description || !item.quantity || (!item.unitPrice && !item.totalAmount)) : [];
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
@@ -315,7 +315,7 @@ export class ExpenseExplainRecordTool implements ErpReadToolPort {
             currency: expense.currency,
           },
           lineGroups: {
-            products: products.slice(0, 10).map((line) => ({
+            products: products.map((line) => ({
               description: line.description, quantity: line.quantity,
               unitPrice: line.unitPrice, amount: line.lineSubtotalAmount,
             })),
@@ -475,7 +475,7 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
           // A step a correction round set aside is history: it is not the approval the claim stands on.
           approvalSteps: item.approvalSteps.filter((step) => step.invalidatedReason !== PAYOUT_CORRECTION_STEP_REASON).slice(0, 10)
             .map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null })),
-          payments: item.payments.slice(0, 10).map((payment) => ({ paymentNo: payment.paymentNo, status: payment.status, paidAmount: payment.paidAmount, paidAt: payment.paidAt })),
+          payments: item.payments.map((payment) => ({ paymentNo: payment.paymentNo, status: payment.status, paidAmount: payment.paidAmount, paidAt: payment.paidAt })),
           duplicateCount: item.duplicateCandidates.length,
           ...(item.duplicateBlocksPayment && {
             duplicateBlocksPayment: true,

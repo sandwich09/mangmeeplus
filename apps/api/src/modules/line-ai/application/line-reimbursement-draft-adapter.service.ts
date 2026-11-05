@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   extractValueCandidatesV2, lineAiRetainedTaskSourceMatchesProjection, parseLineAiTaskProjection, verifyLineAiRetainedTaskSource,
   type LineAiSourceRefV2,
+  LINE_REIMBURSEMENT_DRAFT_LIMITS,
   parseLineReimbursementDraftProposalV1,
   parseLineReimbursementSourceProofV1,
   type LineAiInputEvidenceV2,
@@ -597,7 +598,7 @@ export class LineReimbursementDraftAdapterService {
     for (const item of authority.candidates.periods) if (item.kind === 'day' && item.fromDate === item.toDate) {
       candidateValues[item.candidateId] = item.fromDate; candidateSources[item.candidateId] = item.source;
     }
-    const parsed = parseLineReimbursementDraftProposalV1(wrapper.proposal,
+    const parsed = parseLineReimbursementDraftProposalV1(this.newProposalValues(wrapper.proposal, accepted.proposal),
       { evidence: authority.evidence, candidateValues, candidateSources });
     if (!parsed || parsed.taskId !== active.taskId || parsed.taskRevision !== options.taskRevision || parsed.operation !== operation) {
       return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
@@ -1145,6 +1146,53 @@ export class LineReimbursementDraftAdapterService {
     return [...map.values()];
   }
 
+  /** Echoed fields keep their saved proof; only a changed value belongs to this turn. */
+  private newProposalValues(raw: unknown, previous: LineReimbursementDraftProposalV1 | undefined): unknown {
+    if (!previous || !object(raw) || raw['operation'] !== previous.operation) return raw;
+    if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > LINE_REIMBURSEMENT_DRAFT_LIMITS.proposalBytes
+      || Array.isArray(raw['lineChanges']) && raw['lineChanges'].length > LINE_REIMBURSEMENT_DRAFT_LIMITS.maxLineChanges) return raw;
+    const lineRefs = new Set<unknown>();
+    for (const change of Array.isArray(raw['lineChanges']) ? raw['lineChanges'] : []) {
+      if (!object(change) || change['operation'] === 'ADD') continue;
+      if (lineRefs.has(change['lineRef'])) return raw;
+      lineRefs.add(change['lineRef']);
+    }
+    const proposal = clone(raw);
+    const discard = (values: Record<string, unknown>, accepted: Record<string, unknown>): boolean => {
+      let removed = false;
+      for (const [key, saved] of Object.entries(accepted)) {
+        if (saved === undefined || values[key] === undefined) continue;
+        const incoming = values[key];
+        const value = object(incoming) && Object.keys(incoming).every(name => name === 'value' || name === 'proof') ? incoming['value'] : incoming;
+        const prior = object(saved) && 'value' in saved ? saved['value'] : saved;
+        let equal = isDeepStrictEqual(value, prior);
+        if (!equal && typeof value === 'string' && typeof prior === 'string') {
+          if (key === 'amount') {
+            try { equal = normalizeReimbursementAmount(value) === normalizeReimbursementAmount(prior); }
+            catch { equal = false; }
+          } else if (['description', 'purpose', 'reason', 'missingReceiptReason'].includes(key)) equal = value.trim() === prior.trim();
+        }
+        if (equal) { delete values[key]; removed = true; }
+      }
+      return removed;
+    };
+    if (object(proposal['fields'])) discard(proposal['fields'], previous.fields);
+    if (Array.isArray(proposal['lineChanges'])) {
+      const additions = previous.lineChanges?.filter(change => change.operation === 'ADD') ?? [];
+      proposal['lineChanges'] = proposal['lineChanges'].filter((change: unknown, index: number) => {
+        if (!object(change) || !object(change['values'])) return true;
+        if (change['operation'] === 'SET' && Object.keys(change).some(key => !['operation', 'lineRef', 'values'].includes(key))) return true;
+        // CREATE merges ADDs by position. UPDATE merges SETs by lineRef and appends every ADD.
+        const saved = previous.operation === 'CREATE' && change['operation'] === 'ADD' ? additions[index]
+          : change['operation'] === 'SET' ? previous.lineChanges?.find(item => item.operation === 'SET' && item.lineRef === change['lineRef']) : undefined;
+        if (!saved || saved.operation === 'REMOVE') return true;
+        const removed = discard(change['values'], saved.values);
+        return change['operation'] !== 'SET' || !removed || Object.keys(change['values']).length > 0;
+      });
+    }
+    return proposal;
+  }
+
   private mergeProposal(previous: LineReimbursementDraftProposalV1 | undefined, next: LineReimbursementDraftProposalV1): LineReimbursementDraftProposalV1 {
     if (!previous) return clone(next);
     const result = clone(previous);
@@ -1341,7 +1389,8 @@ export class LineReimbursementDraftAdapterService {
       entityId: key.actionId, permissionChecked: true, sourceType: 'ACTION' }], asOf: new Date().toISOString() };
   }
   private domainResult(toolName: string, key: LineReimbursementActionKey, result: LineReimbursementDraftResult): ToolResult {
-    return this.ok(toolName, key, { reimbursementDraft: result, actionLocator: this.locator(key) });
+    return { ...this.ok(toolName, key, { reimbursementDraft: result, actionLocator: this.locator(key) }),
+      ...(result.status === 'blocked' && result.errorCode === 'invalid_provenance' ? { errorCode: result.errorCode } : {}) };
   }
   private async staleAction(toolName: string, ctx: RequestContext, bound: Authority['owner'], actionId?: string): Promise<ToolResult> {
     if (actionId) {

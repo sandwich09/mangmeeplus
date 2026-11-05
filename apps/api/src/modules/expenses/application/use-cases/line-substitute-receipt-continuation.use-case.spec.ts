@@ -1,3 +1,4 @@
+import { SUBSTITUTE_RECEIPT_PDF_LIMITS } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1726,7 +1727,7 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
   it('refuses a scan that could never be composed into the issued document', async () => {
     // R11: linking it would certify and issue cleanly, and then every download would fail forever.
     const cases: Array<[string, { bytes: Buffer; mimeType: string } | null, RegExp]> = [
-      ['a scan with more pages than the artifact may hold', { bytes: await onePagePdf(6), mimeType: 'application/pdf' }, /6-page safety limit/],
+      ['a scan with more pages than the artifact may hold', { bytes: await onePagePdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1), mimeType: 'application/pdf' }, new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1}-page safety limit`)],
       ['bytes that are not a document at all', { bytes: Buffer.from('not a pdf'), mimeType: 'application/pdf' }, /cannot be read as a printable document/],
       ['an image type the composer cannot reproduce', { bytes: Buffer.from('x'), mimeType: 'image/heic' }, /must be a JPEG, PNG, or PDF/],
       ['an attachment that is no longer ACTIVE', null, /not ACTIVE/],

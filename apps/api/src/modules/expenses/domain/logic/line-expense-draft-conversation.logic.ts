@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lineUiLabel } from '../../../line-ai/domain/logic/line-language.logic';
 import Decimal from 'decimal.js';
 import {
+  EXPENSE_MAX_ITEM_LINES,
   extractValueCandidates,
   todayCivilDate,
   isAmbiguousDateCandidate,
@@ -13,9 +14,9 @@ import {
 } from '@watchdog-bms/contracts';
 import { EXPENSE_VENDOR_ADDRESS_MAX_LENGTH } from './expense-vendor-identity.logic';
 
-export const MAX_LINE_EXPENSE_DRAFT_ITEMS = 40;
+export const MAX_LINE_EXPENSE_DRAFT_ITEMS = EXPENSE_MAX_ITEM_LINES;
 const MAX_ITEMS = MAX_LINE_EXPENSE_DRAFT_ITEMS;
-export const MAX_CAPTURE_EXPENSE_DRAFT_ITEMS = 200;
+export const MAX_CAPTURE_EXPENSE_DRAFT_ITEMS = EXPENSE_MAX_ITEM_LINES;
 export const expenseDraftItemLimit = (state: { itemSource?: 'LINE_MEDIA_OCR' }) =>
   state.itemSource === 'LINE_MEDIA_OCR' ? MAX_CAPTURE_EXPENSE_DRAFT_ITEMS : MAX_ITEMS;
 const MAX_TEXT = 200;
@@ -439,7 +440,7 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
   if (state.itemSource !== undefined && state.itemSource !== 'LINE_MEDIA_OCR') return null;
   if (state.items.length > expenseDraftItemLimit(state) || new Set(state.items.map((item) => item?.itemRef)).size !== state.items.length) return null;
   if (state.items.some((item) => !item || typeof item !== 'object'
-    || !(state.itemSource ? /^I\d{2,3}$/u : /^I\d{2}$/u).test(String(item.itemRef))
+    || !/^I\d{2,3}$/u.test(String(item.itemRef))
     || typeof item.sourceText !== 'string' || item.sourceText.length > MAX_TEXT)) return null;
   if (state.unresolvedQuestions.length > expenseDraftItemLimit(state) * 5 + 4 || state.unresolvedQuestions.some((question) =>
     !question || typeof question !== 'object' || typeof question.id !== 'string'
@@ -826,6 +827,7 @@ export function formatLineExpenseDraftReply(input: {
 }): string {
   const state = input.state;
   const names = new Map(input.categories.map((category) => [category.id, category.name]));
+  const printableItems = state.items.filter(item => item.description && (item.quantity || item.totalAmount) && (item.unitPrice || item.totalAmount));
   if (input.language === 'en') {
     const fields: Record<string, string> = { vendorName: 'seller name', expenseDate: 'expense date', businessPurpose: 'business purpose',
       description: 'item or service', quantity: 'quantity and unit', price: 'unit price or total', expenseCategoryId: 'expense category', review: 'review the existing item on the web' };
@@ -834,8 +836,9 @@ export function formatLineExpenseDraftReply(input: {
     if (state.header.vendorName) lines.push(`Seller: ${state.header.vendorName}`);
     lines.push(`Date: ${state.header.expenseDate ? new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'Not provided'}`);
     if (state.header.businessPurpose) lines.push(`Purpose: ${state.header.businessPurpose}`);
-    for (const item of state.items) if (item.description && (item.quantity || item.totalAmount) && (item.unitPrice || item.totalAmount))
+    for (const item of printableItems.slice(0, 30))
       lines.push(`Item: ${item.description} · ${item.quantity ?? '1'}${item.unit ? ` ${lineUiLabel(item.unit, 'en')}` : ''} · ${item.unitPrice ? `${item.unitPrice} THB per unit` : `${item.totalAmount} THB`}`);
+    if (printableItems.length > 30) lines.push(`And ${printableItems.length - 30} more items`);
     if (state.status === 'CANCELLED') lines.push('Draft conversation cancelled; the existing draft and evidence are kept.');
     else if (state.status === 'INPUT_ENDED_COMPLETE') lines.push('Ready for an authorized reviewer; nothing has been posted.');
     else if (state.status === 'INPUT_ENDED_INCOMPLETE') lines.push('The details you provided are kept.');
@@ -854,9 +857,10 @@ export function formatLineExpenseDraftReply(input: {
   if (state.header.expenseDate) lines.push(`วันที่: ${new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`);
   else lines.push('วันที่: ยังไม่มีวันที่');
   if (state.header.businessPurpose) lines.push(`ใช้เพื่อ: ${state.header.businessPurpose}`);
-  for (const item of state.items) {
-    if (item.description && (item.quantity || item.totalAmount) && (item.unitPrice || item.totalAmount)) lines.push(`รายการ: ${item.description} ${item.quantity ?? '1'}${item.unit ? ` ${item.unit}` : ''} ${item.unitPrice ? `ราคา ${item.unitPrice} บาท/หน่วย` : `${item.totalAmount} บาท`}`);
+  for (const item of printableItems.slice(0, 30)) {
+    lines.push(`รายการ: ${item.description} ${item.quantity ?? '1'}${item.unit ? ` ${item.unit}` : ''} ${item.unitPrice ? `ราคา ${item.unitPrice} บาท/หน่วย` : `${item.totalAmount} บาท`}`);
   }
+  if (printableItems.length > 30) lines.push(`และอีก ${printableItems.length - 30} รายการ`);
   lines.push('ยังไม่ยืนยันรายการ');
   if (state.status === 'PAUSED' || state.status === 'PAUSED_INTERRUPTED') {
     return lines.join('\n');

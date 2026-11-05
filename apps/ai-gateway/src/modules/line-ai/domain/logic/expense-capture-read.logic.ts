@@ -13,6 +13,7 @@ import {
   BUSINESS_DOCUMENT_EVIDENCE_ROLES,
   BUSINESS_DOCUMENT_TRANSACTION_STATES,
   EXPENSE_CAPTURE_OBSERVATION_LIMITS,
+  EXPENSE_MAX_ITEM_LINES,
   extractValueCandidates,
   mapThaiDigits,
   todayCivilDate,
@@ -465,7 +466,7 @@ export function parseCaptureObservationsJson(
   }
 
   const payments: ExpenseCapturePaymentObservation[] = [];
-  for (const value of asArray(raw['payments']).slice(0, 20)) {
+  for (const value of asArray(raw['payments']).slice(0, EXPENSE_MAX_ITEM_LINES)) {
     const row = asRecord(value);
     if (!row) { rejectedRows += 1; continue; }
     const documentRef = trimmed(row['documentRef'], 64);
@@ -485,7 +486,7 @@ export function parseCaptureObservationsJson(
   }
 
   const refunds: ExpenseCaptureRefundObservation[] = [];
-  for (const value of asArray(raw['refunds']).slice(0, 20)) {
+  for (const value of asArray(raw['refunds']).slice(0, EXPENSE_MAX_ITEM_LINES)) {
     const row = asRecord(value);
     if (!row) { rejectedRows += 1; continue; }
     const documentRef = trimmed(row['documentRef'], 64);
@@ -502,7 +503,7 @@ export function parseCaptureObservationsJson(
   }
 
   const completeness = asRecord(raw['completeness']) ?? {};
-  itemsTruncated ||= asArray(raw['totals']).length > 40 || asArray(raw['payments']).length > 20 || asArray(raw['refunds']).length > 20;
+  itemsTruncated ||= asArray(raw['totals']).length > 40 || asArray(raw['payments']).length > EXPENSE_MAX_ITEM_LINES || asArray(raw['refunds']).length > EXPENSE_MAX_ITEM_LINES;
   const observations: ExpenseCaptureObservations = {
     documents,
     items,
@@ -557,33 +558,49 @@ const positiveInt = (value: unknown): number | undefined =>
 const optional = <T>(key: string, value: T | undefined): Record<string, T> =>
   (value === undefined ? {} : { [key]: value } as Record<string, T>);
 
-const SELLER_LABEL_LINE_RE = /^\s*(?:\[SELLER\]\s*)?(?:[#*|]+\s*)?(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร|ร้านค้า)(?:\s|[:：]))/i;
+const SELLER_LABEL_LINE_RE = /^\s*(?:\[SELLER\]\s*)?(?:[#*|]\s*)*(?:seller\b|issuer\b|(?:ผู้ขาย|ผู้ออกเอกสาร|ร้านค้า)(?=\s|[:：*|]|$))/i;
+const sellerValue = (value: string): string => value.trim().replace(/^[#*|:：\s]+|[*|\s]+$/g, '');
+const isSellerName = (value: string): boolean => /^[\p{L}\p{N}]/u.test(value)
+  && !/^(?:ผู้|ลงชื่อ|ลายมือ|ลายเซ็น|วันที่|ขอบคุณ|ที่อยู่|โทร|sign|authori[sz]ed|date\b|thank)/iu.test(value);
 
-/** The page labels its seller with a printed value (ผู้ขาย: ร้าน…, Seller: …, ร้านค้า …), as a
- *  marketplace order does beneath the platform's or courier's own header. A bare label over a
- *  signature line ("ผู้ขาย ........", "Seller's signature") is not a block. */
-export function hasLabelledSellerBlock(documentText: string): boolean {
-  return documentText.split('\n').some((line) => {
+/** Marketplace seller labels can put the name on the next non-empty line, optionally after ชื่อ.
+ * Signature captions never introduce an issuer, including a bare ผู้ขาย above ลงชื่อ. */
+export function receiptSellerBlock(documentText: string): { lineIndex: number; name?: string } | undefined {
+  const lines = documentText.split('\n');
+  for (const [lineIndex, line] of lines.entries()) {
     const label = SELLER_LABEL_LINE_RE.exec(line);
-    if (!label) return false;
-    const rest = line.slice(label[0].length);
-    // A signature caption ("ผู้ขาย ผู้รับเงิน", "Seller Signature", "ผู้ขาย ลงชื่อ") names a role, not the seller.
-    return /^[\s:：|*]*[\p{L}\p{N}]/u.test(rest)
-      && !/^[\s:：|*]*(?:ผู้|ลงชื่อ|ลายมือ|วันที่|ขอบคุณ|sign|authori[sz]ed|date\b|thank)/iu.test(rest);
-  });
+    if (!label) continue;
+    const rest = sellerValue(line.slice(label[0].length));
+    if (rest && !/^ชื่อ(?=[\s:：*]|$)/u.test(rest)) {
+      if (isSellerName(rest)) return { lineIndex };
+      continue;
+    }
+    const following = rest ? [rest] : lines.slice(lineIndex + 1).map(sellerValue).filter(Boolean);
+    if (/^ชื่อ(?:[:：])?$/.test(following[0] ?? '')) following.shift();
+    const value = following[0]?.replace(/^ชื่อ(?=[\s:：*]|$)[\s*]*[:：]?[\s*]*/u, '').trim();
+    const phone = value?.match(/\s*\(+\s*\+?\d[\d\s).\-]*\)+\s*$/)?.[0];
+    const name = phone && phone.replace(/\D/g, '').length >= 9 ? value!.slice(0, -phone.length).trim() : value;
+    if (name && isSellerName(name)) return { lineIndex, name };
+  }
+  return undefined;
+}
+
+export function hasLabelledSellerBlock(documentText: string): boolean {
+  return receiptSellerBlock(documentText) !== undefined;
 }
 
 /** Identity candidates belong to an issuer block, never to a lone number elsewhere on the page.
  *  When the page labels its seller block, that block alone is the issuer: the platform or logistics
  *  header above it is never the vendor, whichever block the transcription marked [SELLER]. */
 export function receiptIssuerText(documentText: string): string {
-  const labelledSeller = hasLabelledSellerBlock(documentText);
+  const sellerBlock = receiptSellerBlock(documentText);
+  const labelledSeller = sellerBlock !== undefined;
   const marked = labelledSeller ? [] : [...documentText.matchAll(/\[SELLER\]([\s\S]*?)\[\/SELLER\]/gi)].map((match) => match[1]);
   return (marked.length ? marked : [documentText]).map((block) => {
     let otherParty = labelledSeller;
     const issuerNames = new Set<string>();
-    return block!.split('\n').filter((line) => {
-      if (/^\s*(?:[#*|]+\s*)?(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ชื่อผู้ป่วย|ผู้ป่วย|ผู้รับสินค้า)(?:\s|[:：])|ชื่อ\s*\/\s*Patient)/i.test(line)) {
+    return block!.split('\n').filter((line, lineIndex) => {
+      if (/^\s*(?:[#*|]\s*)*(?:\[BUYER\]|buyer\b|customer\b|patient\b|bill\s+to\b|ship\s+to\b|cashier\b|(?:ชื่อลูกค้า|ลูกค้า|ผู้ซื้อ|ชื่อผู้ป่วย|ผู้ป่วย|ผู้รับสินค้า)(?=\s|[:：*|]|$)|ชื่อ\s*\/\s*Patient)/i.test(line)) {
         otherParty = true;
         return false;
       }
@@ -591,7 +608,7 @@ export function receiptIssuerText(documentText: string): string {
       const identifiedFooter = [...issuerNames].some(issuer => name === issuer || name.startsWith(`${issuer} `))
         || [...issuerNames].some(issuer => issuer.startsWith('โรงพยาบาล'))
           && /^\s*เลข(?:ประจำตัว)?ผู้เสียภาษี(?:อากร)?\s*ของ\s*โรงพยาบาล(?:\s|[:：])/.test(line);
-      if (identifiedFooter || SELLER_LABEL_LINE_RE.test(line)) otherParty = false;
+      if (identifiedFooter || (labelledSeller ? lineIndex === sellerBlock.lineIndex : SELLER_LABEL_LINE_RE.test(line))) otherParty = false;
       if (!otherParty && /^(?:โรงพยาบาล|บริษัท|ห้างหุ้นส่วน|HOSPITAL\b)/i.test(name)) issuerNames.add(name);
       return !otherParty;
     }).join('\n');

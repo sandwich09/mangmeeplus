@@ -17,7 +17,7 @@
  * getting 400s the moment this deploys.
  */
 import { Transform, Type } from 'class-transformer';
-import { ACCOUNTING_SOFTWARE_EXPORT_PRESETS, INPUT_VAT_REVIEWER_CONDITIONS, EXPENSE_STATUSES, EXPENSE_PAYMENT_STATUSES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, type SharedEvidenceFilter, normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
+import { EXPENSE_MAX_ITEM_LINES, ACCOUNTING_SOFTWARE_EXPORT_PRESETS, INPUT_VAT_REVIEWER_CONDITIONS, EXPENSE_STATUSES, EXPENSE_PAYMENT_STATUSES, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, type SharedEvidenceFilter, normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
 import {
   IsInt,
   IsBoolean,
@@ -82,7 +82,7 @@ export class ExpenseTotalsPreviewDto {
   @ValidateIf((_o, v) => v !== undefined) @IsIn(['CLAIMABLE', 'NON_CLAIMABLE', 'NEEDS_REVIEW']) inputVatClaimStatus?: InputVatClaimStatus;
   @ValidateIf((_o, v) => v !== undefined) @IsObject() vatSource?: ExpenseVatSourceInput;
   @ValidateIf((_o, v) => v !== undefined) @IsObject() whtInput?: ExpenseWhtInput;
-  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) removedSourceItemRefs?: string[];
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayMaxSize(EXPENSE_MAX_ITEM_LINES) @IsString({ each: true }) removedSourceItemRefs?: string[];
 }
 
 /** Shared upload-intent shape: the client names a file, the server reserves storage for it. */

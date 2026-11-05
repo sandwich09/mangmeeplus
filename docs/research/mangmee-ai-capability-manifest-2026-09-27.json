@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "1e0c06bd1613b8b31e79025b5faefb0e44bd82de",
+  "sourceRevision": "3c0eeaf8d77455d12b82c49777964eeb4bafac7f",
   "checkoutBranch": "land/expense-goal-20261104",
-  "checkoutDirty": false,
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "ca407dc8246eb200dbd096ba5a9705250f906403d40bebb5f01757e72a76c782"
+      "sha256": "8b557a81047dd8c6a473e8268a8dc142f70ae8aa25e9d90d32406a2f2e02fd05"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-voucher-action.service.ts",
-      "sha256": "2bc29d12a2a0ce3767cd90b8eae293b926dfbd752d170a2e4eca9907e85805b9"
+      "sha256": "94d1735036c1cbd15254a0d84f078f7619d96674507ea2a6bfa19c60a962d4c6"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-advisor-document-tools.use-case.ts",
@@ -89,7 +89,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "82c97d89b86353ac8cbe1bc021576d6df4a3c06e923c60111dd5a9858575468d"
+      "sha256": "ec9ab335f11639348afff1cb172e6694230ef0907bb9f0ae1cdf3d2462e8fe1d"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "7d12907cc02323e4cf90935fe4ea361688678d08ae2d12e5a2c109500e6501bd"
+      "sha256": "6b56132baf596be6fe8a7278672b86fc0a15c4cb88a2e070e9a0e741944e8393"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -241,7 +241,7 @@
     },
     {
       "path": "packages/contracts/src/ai-tools.ts",
-      "sha256": "95e896d38a6a214fd65e1c0a5b3fda880a4834539ba43d74cf00193e46c2e982"
+      "sha256": "1d2e61d2e88e995f800278ccbd0c0cff89df49a4c620415f5afa899438a49c05"
     },
     {
       "path": "packages/contracts/src/feature-entitlements.ts",
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-05T02:36:22.180Z",
-  "manifestDigest": "87d9653dee8e47d5e6fd518e4114bd770155b9271f134facca3ef1c92b527622"
+  "generatedAt": "2026-11-05T07:33:24.982Z",
+  "manifestDigest": "6ede91801d91d2e3b8858f76d14b7b9355c0017827a4bdf4dee9885fd16fa4f5"
 }

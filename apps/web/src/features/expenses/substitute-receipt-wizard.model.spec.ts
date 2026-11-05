@@ -67,10 +67,10 @@ test('validates and totals multi-line manual expenses deterministically', () => 
   assert.deepEqual(evaluateManualLinesReadiness([]), {
     ready: false, missingCount: 1, invalidLineIndexes: [],
   });
-  assert.deepEqual(evaluateManualLinesReadiness(Array.from({ length: 9 }, () => lines[0]!)), {
+  assert.deepEqual(evaluateManualLinesReadiness(Array.from({ length: 201 }, () => lines[0]!)), {
     ready: false, missingCount: 1, invalidLineIndexes: [],
   });
-  assert.equal(evaluateManualLinesReadiness(Array.from({ length: 8 }, () => lines[0]!)).ready, true);
+  assert.equal(evaluateManualLinesReadiness(Array.from({ length: 200 }, () => lines[0]!)).ready, true);
   assert.equal(isManualLineDecimal('99999999999999.9999'), true);
   assert.equal(isManualLineDecimal('100000000000000'), false);
   assert.equal(isManualLineDecimal('1.00001'), false);
@@ -93,7 +93,8 @@ test('filters candidate blockers before the user reaches prepare', () => {
     ...eligibleCandidate,
     aiVerificationSummaryJson: { classification: { documentKind: 'QUOTATION' } },
   }), false);
-  const tooManyLines = { ...eligibleCandidate, lines: Array.from({ length: 9 }, () => eligibleCandidate.lines[0]!) };
+  assert.equal(isSubstituteReceiptCandidateEligible({ ...eligibleCandidate, lines: Array.from({ length: 200 }, () => eligibleCandidate.lines[0]!) }), true);
+  const tooManyLines = { ...eligibleCandidate, lines: Array.from({ length: 201 }, () => eligibleCandidate.lines[0]!) };
   assert.equal(isSubstituteReceiptCandidateOtherwiseEligible(tooManyLines), true);
   assert.equal(substituteReceiptRenderabilityIssue(tooManyLines), 'too_many_lines');
   assert.equal(isSubstituteReceiptCandidateEligible(tooManyLines), false);
@@ -205,7 +206,7 @@ test('evaluates policy-driven evidence requirements', () => {
     policyReady: true, paymentCount: 0, requiresPaymentEvidence: false,
   }), { ready: true, missing: [], missingCount: 0 });
   assert.equal(substituteReceiptEvidenceRenderabilityIssue(
-    Array.from({ length: 9 }, (_, index) => ({ id: `att-${index}`, originalFileName: `${index}.pdf` })),
+    Array.from({ length: 31 }, (_, index) => ({ id: `att-${index}`, originalFileName: `${index}.pdf` })),
   ), 'too_many_evidence');
   assert.equal(substituteReceiptEvidenceRenderabilityIssue([
     { id: 'att-long', originalFileName: `${'ก'.repeat(252)}.pdf` },

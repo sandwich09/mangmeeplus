@@ -5,10 +5,13 @@ import { resolve } from 'node:path';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import { defer, firstValueFrom } from 'rxjs';
-import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
+import { AI_BUDGET_STEP_BOUNDS, AI_BUDGET_IMAGE_TOKEN_CEILING, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
+import { runWithUsageContext, drainUsage } from '../../../../common/usage/usage-context';
+import { providerInputTokenUpperBound } from '../../../../common/usage/ai-budget-provider';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, shouldRereadReceiptImage, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, receiptIssuerText, parseReceiptOcrJson, parseUtilityDocuments, receiptRereadImage, receiptItemsMismatch, shouldRereadReceiptImage, validateIntakeOnePassReceipt } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import type { BusinessDocumentClassification, LineAiTurnRequest, ReceiptOcrFieldResult } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 
@@ -1235,6 +1238,61 @@ describe('validated one-pass receipt', () => {
     ...overrides,
   });
 
+  it('accepts 20 one-pass item rows and sends 21, 31 and 200 to the full OCR path', () => {
+    for (const count of [20, 21, 31, 200]) {
+      const lines = Array.from({ length: count }, (_, i) => ({ description: `รายการ${i + 1}`, quantity: '1', amount: '10.00',
+        evidenceSignal: `รายการ${i + 1} 1 10.00`, confidence: 0.96 }));
+      const total = `${count * 10}.00`;
+      const text = ['ใบเสร็จ', 'ร้านกาแฟ', 'วันที่ 21/09/2026', ...lines.map(line => line.evidenceSignal), `ยอดรวม ${total}`, 'ชำระแล้ว'].join('\n');
+      const result = validateIntakeOnePassReceipt(plan({ documentText: text,
+        documentClassification: classification({ amountSignals: [total], settlementSignals: ['ชำระแล้ว'] }) }),
+      candidate({ lines, grandTotalAmount: total }), []);
+      if (count === 20) assert.equal(result?.fields.lines?.length, 20);
+      else assert.equal(result, undefined);
+    }
+  });
+
+  it('extracts all 31 and 200 rows after the router declines the bounded one-pass candidate', async () => {
+    const originalRoute = IntentRouterAgent.prototype.routeIntake;
+    const originalSend = BedrockRuntimeClient.prototype.send;
+    try {
+      for (const count of [31, 200]) {
+        const lines = Array.from({ length: count }, (_, i) => ({ description: `สินค้า ${i + 1}`, quantity: '1', amount: '10.00',
+          evidenceSignal: `สินค้า ${i + 1} 1 10.00`, confidence: 0.96 }));
+        const total = `${count * 10}.00`;
+        const text = ['ใบเสร็จ', 'ร้านกาแฟ', 'วันที่ 21/09/2026', ...lines.map(line => line.evidenceSignal), `ยอดรวม ${total}`, 'ชำระแล้ว'].join('\n');
+        const docClassification = classification({ evidenceSignals: ['ใบเสร็จ', 'ร้านกาแฟ'], amountSignals: [total], settlementSignals: ['ชำระแล้ว'] });
+        const fields = candidate({ lines, description: 'สินค้า', grandTotalAmount: total });
+        IntentRouterAgent.prototype.routeIntake = async () => plan({ documentText: text,
+          documentClassification: docClassification, receiptCandidate: fields });
+        let extractionCalls = 0;
+        (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+          extractionCalls += 1;
+          const content = command.input.messages.at(-1).content;
+          assert.ok(content.every((block: any) => !block.image && !block.document), 'full extraction reuses the complete intake read');
+          const input = JSON.stringify(content);
+          for (const line of lines) assert.ok(input.includes(line.evidenceSignal));
+          return { stopReason: 'end_turn', output: { message: { content: [{ text: JSON.stringify({ classification: docClassification, fields }) }] } } };
+        };
+        const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+          bedrockRegion: 'ap-southeast-1', bedrockModelId: 'test-model', documentAiModelId: 'test-model', aiToolTimeoutMs: 15_000 } as any, {} as any);
+        const routed = await controller.lineIntakeRoute('secret', { requestId: `route-${count}`, companyId: 'company-1',
+          userId: 'user-1', messageText: 'บันทึกบิลนี้', locale: 'th', permissions: ['expense.receipt.line_upload'] });
+        assert.equal(routed.onePassReceipt, undefined);
+        assert.equal(routed.documentText, text);
+        const result = await controller.receiptOcr('secret', { requestId: `read-${count}`, companyId: 'company-1', userId: 'user-1',
+          documentText: routed.documentText, attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' } });
+        assert.equal(result.status, 'ok');
+        assert.deepEqual(result.fields?.lines?.map(line => line.description), lines.map(line => line.description));
+        assert.equal(result.fields?.grandTotalAmount, total);
+        assert.equal(extractionCalls, 1);
+      }
+    } finally {
+      IntentRouterAgent.prototype.routeIntake = originalRoute;
+      BedrockRuntimeClient.prototype.send = originalSend;
+    }
+  });
+
   it('accepts a high-confidence settled receipt only after the existing evidence gates pass', () => {
     const result = validateIntakeOnePassReceipt(plan(), candidate(), []);
     assert.equal(result?.fields.grandTotalAmount, '65.00');
@@ -1309,7 +1367,7 @@ describe('validated one-pass receipt', () => {
     assert.equal(validateIntakeOnePassReceipt(plan({ documentText: oneItemText }), oneItem, [])?.fields.lines?.length, 1);
     assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: [candidate().lines[0]] }), []), undefined,
       'a one-row candidate whose item amount does not reconcile must fall back');
-    assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: Array.from({ length: 21 }, () => candidate().lines[0]) }), []), undefined,
+    assert.equal(validateIntakeOnePassReceipt(plan(), candidate({ lines: Array.from({ length: 31 }, () => candidate().lines[0]) }), []), undefined,
       'long receipts stay on the bounded OCR path instead of risking route truncation');
     const taxText = `${documentText}\nVAT 7%`;
     assert.equal(validateIntakeOnePassReceipt(plan({
@@ -2576,8 +2634,8 @@ describe('OCR-A partial row gates and field definitions', () => {
     }
   });
 
-  it('admits 45, 60 and 200 printed rows but flags an over-bound block', () => {
-    for (const count of [45, 60, 200, 201]) {
+  it('admits 31, 45, 60 and 200 printed rows but flags an over-bound block', () => {
+    for (const count of [31, 45, 60, 200, 201]) {
       const lines = Array.from({ length: count }, (_, i) => row(`สินค้า ${i + 1}`, '10.00', `สินค้า ${i + 1} 10.00`));
       const text = lines.map((line) => line.evidenceSignal).join('\n');
       const out = parse({ lines }, text)!;
@@ -2984,7 +3042,6 @@ import { createHash } from 'node:crypto';
 import { AI_BUDGET_PROFILE_TABLE_DIGEST_V2, LINE_DOCUMENT_QA_READER_VERSION, createLineAiInputEvidence, lineDocumentQaInputEvidenceText,
   type AiBudgetGrantV2, type LineDocumentQaGatewayRequest } from '@watchdog-bms/contracts';
 import { DocumentQaUseCase } from '../../application/document-qa.use-case';
-import { runWithUsageContext } from '../../../../common/usage/usage-context';
 const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const r6QaConfig: any = { lineAiDocumentQaEnabled: true, modelProvider: 'openai', openAiApiKey: 'synthetic', openAiModel: 'gpt-4.1-mini',
   openAiProcessingRegion: 'US', approvedAiProviders: ['openai'], approvedAiModelIds: ['gpt-4.1-mini'], approvedAiRegions: ['US'],
@@ -3068,4 +3125,256 @@ it('R6 public general rejects are absorbed', async () => {
       assert.equal(settlements[0].usage.ok, text === 'สวัสดีค่ะ');
     } finally { globalThis.fetch = original; }
   }
+});
+
+describe('marketplace receipt identity from real-layout synthetic transcription', () => {
+  for (const label of ['ผู้ขาย', '## ผู้ขาย', '**ผู้ขาย**', '## **ผู้ขาย**']) {
+    for (const nameLabel of ['', '**ชื่อ**\n\n']) it(`reads multiline ${label} with name label ${Boolean(nameLabel)}`, () => {
+      const page = `บริษัท แพลตฟอร์มสังเคราะห์ จำกัด\nใบเสร็จรับเงิน\n${label}\n\n${nameLabel}ร้านสินค้าสังเคราะห์ ((+66) 81-234-5678)\nที่อยู่\n9 ถนนสมมติ\nผู้ซื้อ: ลูกค้าสังเคราะห์\nรวม 100.00`;
+      const out = applyOcrValueCrossCheck({ vendorName: 'บริษัท แพลตฟอร์มสังเคราะห์ จำกัด' }, page);
+      assert.equal(out.vendorName, 'ร้านสินค้าสังเคราะห์');
+      assert.ok(!receiptIssuerText(page).includes('บริษัท แพลตฟอร์มสังเคราะห์ จำกัด'));
+    });
+  }
+
+  for (const layout of ['ผู้ขาย\nชื่อ: ร้านสินค้าสังเคราะห์', 'ผู้ขาย ชื่อ: ร้านสินค้าสังเคราะห์',
+    '## **ผู้ขาย**\n**ชื่อ:** ร้านสินค้าสังเคราะห์', 'ผู้ขาย ชื่อ ： ร้านสินค้าสังเคราะห์']) {
+    it(`strips the seller name label in ${layout.replace(/\n/g, ' / ')}`, () => {
+      const page = `บริษัท แพลตฟอร์มสังเคราะห์ จำกัด\n${layout} ((+66) 81-234-5678)\nที่อยู่\n9 ถนนสมมติ`;
+      const result = applyOcrValueCrossCheck({ vendorName: 'บริษัท แพลตฟอร์มสังเคราะห์ จำกัด' }, page);
+      assert.equal(result.vendorName, 'ร้านสินค้าสังเคราะห์');
+    });
+  }
+
+  it('keeps ชื่อ inside an actual seller name when no name-label delimiter is printed', () => {
+    const out = applyOcrValueCrossCheck({}, 'ผู้ขาย\nชื่อดีสังเคราะห์ ((+66) 81-234-5678)\nที่อยู่\n9 ถนนสมมติ');
+    assert.equal(out.vendorName, 'ชื่อดีสังเคราะห์');
+  });
+
+  it('removes a trailing phone while keeping parentheses belonging to the seller name', () => {
+    for (const suffix of ['', ' ((+66) 81-234-5678)', ' (081-234-5678)']) {
+      const out = applyOcrValueCrossCheck({ vendorName: 'บริษัท แพลตฟอร์มสังเคราะห์ จำกัด' },
+        `บริษัท แพลตฟอร์มสังเคราะห์ จำกัด\nผู้ขาย\nชื่อ\nร้านสินค้าสังเคราะห์ (2024)${suffix}\nที่อยู่\n9 ถนนสมมติ`);
+      assert.equal(out.vendorName, 'ร้านสินค้าสังเคราะห์ (2024)');
+    }
+  });
+
+  it('excludes a bare multiline buyer block from the recovered seller evidence', () => {
+    const page = 'ผู้ขาย\nชื่อ\nร้านสินค้าสังเคราะห์\nที่อยู่\n9 ถนนสมมติ\n## **ผู้ซื้อ**\nชื่อ\nบริษัท ผู้ซื้อสังเคราะห์ จำกัด\nที่อยู่\n8 ถนนสมมติ';
+    const seller = receiptIssuerText(page);
+    assert.ok(seller.includes('ร้านสินค้าสังเคราะห์'));
+    assert.ok(!seller.includes('บริษัท ผู้ซื้อสังเคราะห์ จำกัด'));
+    assert.ok(!seller.includes('8 ถนนสมมติ'));
+  });
+
+  it('keeps a normal tax invoice header when its seller caption ends the page', () => {
+    for (const caption of ['ผู้ขาย ผู้รับเงิน', 'ลงชื่อ .......... ผู้ขาย', '**ผู้ขาย**\nลงชื่อ ..........']) {
+      const page = `บริษัท ผู้ขายสังเคราะห์ จำกัด\nใบกำกับภาษี\nรวม 100.00\n${caption}`;
+      assert.equal(applyOcrValueCrossCheck({ vendorName: 'บริษัท ผู้ขายสังเคราะห์ จำกัด' }, page).vendorName,
+        'บริษัท ผู้ขายสังเคราะห์ จำกัด');
+    }
+  });
+
+  it('selects the receipt number over an extracted order number on either side of the page', () => {
+    for (const receiptLine of ['หมายเลขใบเสร็จ: RC-1234', '**หมายเลขใบเสร็จ**\nRC-1234', 'เลขที่ใบเสร็จ RC-1234', 'หมายเลขใบเสร็จ: RC - 1234']) {
+      for (const lines of [[receiptLine, 'หมายเลขคำสั่งซื้อ: 987-654'], ['หมายเลขคำสั่งซื้อ: 987-654', receiptLine]]) {
+        const out = applyOcrValueCrossCheck({ documentNumber: '987-654' }, lines.join('\n'));
+        assert.equal(out.documentNumber, 'RC-1234');
+      }
+    }
+  });
+
+  it('requires review when a receipt label exists without one clean receipt value', () => {
+    for (const receiptLine of ['หมายเลขใบเสร็จ\n[unreadable]', 'หมายเลขใบเสร็จ: 123O', 'หมายเลขใบเสร็จ: RC-1 RC-2']) {
+      const out = applyOcrValueCrossCheck({ documentNumber: '987-654' }, `${receiptLine}\nหมายเลขคำสั่งซื้อ: 987-654`);
+      assert.equal(out.documentNumber, undefined);
+      assert.ok(out.missingFields?.includes('documentNumber'));
+    }
+  });
+
+  it('rejects I/O/l at either edge of numeric-looking document numbers while preserving prefixes', () => {
+    for (const documentNumber of ['123O', 'O123', '123I', 'I123', '123l', 'l123', '12-O3']) {
+      const out = applyOcrValueCrossCheck({ documentNumber }, `หมายเลขใบเสร็จ ${documentNumber}`);
+      assert.equal(out.documentNumber, undefined, documentNumber);
+      assert.ok(out.missingFields?.includes('documentNumber'));
+    }
+    for (const documentNumber of ['SO-123', 'ORDER-1O', '12.O']) {
+      assert.equal(applyOcrValueCrossCheck({ documentNumber }, `เลขที่ ${documentNumber}`).documentNumber, documentNumber);
+    }
+  });
+});
+
+describe('receipt OCR tall-image reading', () => {
+  it('cuts a tall synthetic page into full-width overlapping images in top-to-bottom order', async () => {
+    const sharp = (await import('sharp')).default;
+    const { prepareReceiptReadImages } = await import('../../domain/logic/document-media.logic');
+    const width = 1190, height = 3796;
+    const pixels = Buffer.alloc(width * height * 3);
+    for (let y = 0; y < height; y++) pixels.fill(Math.floor(y * 255 / height), y * width * 3, (y + 1) * width * 3);
+    const page = await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+    const tiles = await prepareReceiptReadImages({ mimeType: 'image/png', contentBase64: page.toString('base64') });
+    assert.equal(tiles.length, 5);
+    const textOnlyBound = providerInputTokenUpperBound({ messages: [{ role: 'user', text: 'read' }] })!;
+    assert.equal(providerInputTokenUpperBound({ messages: [{ role: 'user', text: 'read' }], images: tiles }),
+      textOnlyBound + tiles.length * AI_BUDGET_IMAGE_TOKEN_CEILING, 'budget admission counts every tile');
+    const decoded = await Promise.all(tiles.map(tile => sharp(Buffer.from(tile.contentBase64, 'base64')).raw().toBuffer({ resolveWithObject: true })));
+    assert.deepEqual(decoded.map(tile => tile.info.width), [1190, 1190, 1190, 1190, 1190]);
+    assert.deepEqual(decoded.map(tile => tile.info.height), [966, 966, 966, 966, 320]);
+    for (const [index, tile] of decoded.entries()) {
+      assert.ok(Math.max(tile.info.width, tile.info.height) <= 1568);
+      assert.ok(tile.info.width * tile.info.height <= 1_150_000);
+      if (index === 0) continue;
+      const previous = decoded[index - 1]!;
+      assert.equal(previous.data[(869 * width + 500) * 3], tile.data[500 * 3], '97 px overlap starts 869 rows into the previous tile');
+      assert.ok(previous.data[0]! < tile.data[0]!, 'top-to-bottom order');
+    }
+  });
+
+  it('scales a 2000-wide tall source to 1568 before making bounded tiles', async () => {
+    const sharp = (await import('sharp')).default;
+    const { prepareReceiptReadImages } = await import('../../domain/logic/document-media.logic');
+    const bytes = await sharp({ create: { width: 2000, height: 6000, channels: 3, background: '#fff' } }).png().toBuffer();
+    const original = Buffer.from(bytes);
+    const tiles = await prepareReceiptReadImages({ mimeType: 'image/png', contentBase64: bytes.toString('base64') });
+    assert.ok(tiles.length > 1);
+    for (const tile of tiles) {
+      const size = await sharp(Buffer.from(tile.contentBase64, 'base64')).metadata();
+      assert.equal(size.width, 1568);
+      assert.ok(size.height! <= 1568);
+      assert.ok(size.width! * size.height! <= 1_150_000);
+    }
+    assert.deepEqual(bytes, original);
+  });
+
+  it('keeps a normal receipt and the ratio-two boundary as one image', async () => {
+    const sharp = (await import('sharp')).default;
+    const { prepareReceiptReadImages } = await import('../../domain/logic/document-media.logic');
+    for (const height of [800, 2000]) {
+      const page = await sharp({ create: { width: 1000, height, channels: 3, background: 'white' } }).png().toBuffer();
+      const original = { mimeType: 'image/png' as const, contentBase64: page.toString('base64') };
+      assert.deepEqual(await prepareReceiptReadImages(original), [await (await import('../../domain/logic/document-media.logic')).prepareDocumentImage(original)]);
+    }
+  });
+
+  it('reads tall tiles despite a forwarded overview and extracts from their combined transcription', async () => {
+    const sharp = (await import('sharp')).default;
+    const page = await sharp({ create: { width: 1190, height: 3796, channels: 3, background: 'white' } }).png().toBuffer();
+    const calls: any[] = [];
+    const original = BedrockRuntimeClient.prototype.send;
+    const text = 'ร้านสินค้าสังเคราะห์\nสินค้าเหนือ 1 40.00\nสินค้าใต้ 1 60.00\nรวม 100.00';
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      calls.push(command.input);
+      const imageCount = command.input.messages.at(-1).content.filter((block: any) => block.image).length;
+      return { stopReason: 'end_turn', usage: { inputTokens: imageCount ? imageCount * 1000 : 1000, outputTokens: 200 },
+        output: { message: { content: [{ text: JSON.stringify(imageCount ? { natural_text: text } : {
+          classification: classification(), fields: { vendorName: 'ร้านสินค้าสังเคราะห์', grandTotalAmount: '100.00',
+            lines: [{ description: 'สินค้าเหนือ', amount: '40.00', evidenceSignal: 'สินค้าเหนือ' },
+              { description: 'สินค้าใต้', amount: '60.00', evidenceSignal: 'สินค้าใต้' }] },
+        }) }] } } };
+    };
+    try {
+      const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+        bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+      const readLogs: any[] = [];
+      (controller as any).logger = { log: (entry: unknown) => readLogs.push(entry), warn: () => {} };
+      let recorded: any[] = [];
+      const result = await runWithUsageContext({ companyId: 'co' }, async () => {
+        const result = await controller.receiptOcr('secret', { requestId: 'tall-synthetic', companyId: 'co', userId: 'u',
+        documentText: 'ข้อความจากภาพรวมที่ย่อแล้ว ซึ่งต้องอ่านใหม่',
+        attachment: { id: 'a', mimeType: 'image/png', purpose: 'receipt', contentBase64: page.toString('base64') } });
+        recorded = drainUsage();
+        return result;
+      });
+      assert.equal(recorded.length, 2);
+      assert.equal(recorded[0].inputTokens, 5000, 'usage includes the provider tokens for all five tiles');
+      assert.equal(recorded[0].tag, 'ocr.receipt.image-read');
+      assert.equal(result.status, 'ok');
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].messages.at(-1).content.filter((block: any) => block.image).length, 5);
+      const tiledLog = readLogs.find(entry => entry.requestId === 'tall-synthetic');
+      assert.equal(tiledLog?.tileCount, 5);
+      assert.equal(tiledLog?.imageCount, 5);
+      assert.equal(tiledLog?.imageBytes, calls[0].messages.at(-1).content
+        .filter((block: any) => block.image).reduce((sum: number, block: any) => sum + block.image.source.bytes.byteLength, 0));
+      assert.match(calls[0].messages.at(-1).content[0].text, /overlapping|overlap/i);
+      assert.match(calls[1].system[0].text, /หมายเลขใบเสร็จ/);
+      assert.match(calls[1].system[0].text, /select the receipt number, never the order number/);
+      assert.match(calls[1].messages.at(-1).content[0].text, /สินค้าเหนือ/);
+      assert.match(calls[1].messages.at(-1).content[0].text, /สินค้าใต้/);
+      assert.equal(calls[1].messages.at(-1).content.filter((block: any) => block.image).length, 0);
+      calls.length = 0;
+      const normal = await sharp({ create: { width: 1190, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
+      await controller.receiptOcr('secret', { requestId: 'normal-synthetic', companyId: 'co', userId: 'u',
+        attachment: { id: 'b', mimeType: 'image/png', purpose: 'receipt', contentBase64: normal.toString('base64') } });
+      assert.equal(calls[0].messages.at(-1).content.filter((block: any) => block.image).length, 1);
+      const normalLog = readLogs.find(entry => entry.requestId === 'normal-synthetic');
+      assert.equal(normalLog?.tileCount, 0);
+      assert.equal(normalLog?.imageCount, 1);
+      assert.equal(normalLog?.imageBytes, calls[0].messages.at(-1).content.find((block: any) => block.image).image.source.bytes.byteLength);
+    } finally { BedrockRuntimeClient.prototype.send = original; }
+  });
+});
+
+
+describe('receipt header recovery from the same synthetic transcription', () => {
+  const PAGE = 'ใบเสร็จรับเงิน\nร้านสินค้าสังเคราะห์\nสินค้าก 1 120.00\nสินค้าข 1 112.00\nยอดรวมสินค้า 232.00\nคูปองส่วนลด -82.80\nการจัดส่ง 48.00\nจ่ายแล้ว รวม 197.20';
+  const first = { vendorName: 'ร้านสินค้าสังเคราะห์', subtotalAmount: '232.00', grandTotalAmount: '197.20', vatMode: 'NO_VAT' as const,
+    missingFields: ['discountAmount', 'additionalCharges'], lines: [
+      { description: 'สินค้าก', quantity: '1', amount: '120.00', evidenceSignal: 'สินค้าก 1 120.00' },
+      { description: 'สินค้าข', quantity: '1', amount: '112.00', evidenceSignal: 'สินค้าข 1 112.00' }] };
+  const recovered = { ...first, missingFields: [], discountAmount: '82.80',
+    additionalCharges: [{ kind: 'DELIVERY', description: 'การจัดส่ง', amount: '48.00', evidenceSignal: 'การจัดส่ง 48.00' }] };
+  const classification = (requiresClarification = false) => ({ contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE',
+    documentKind: 'RECEIPT', businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', confidence: 0.95,
+    evidenceRoles: ['EXPENSE_SUPPORT'], evidenceSignals: ['ใบเสร็จรับเงิน'], amountSignals: ['197.20'],
+    settlementSignals: ['จ่ายแล้ว'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification });
+
+  for (const retry of ['closed', 'open', 'rows-only'] as const) it(`uses one text recovery and ${retry === 'closed' ? 'keeps the closed header and rows' : retry === 'open' ? 'retains review when the retry is still open' : 'rejects closed rows with an open header'}`, async () => {
+    const closes = retry === 'closed';
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: any[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      calls.push(command.input);
+      return { stopReason: 'end_turn', usage: { inputTokens: 100, outputTokens: 100 },
+        output: { message: { content: [{ text: JSON.stringify({ fields: calls.length === 1 || retry === 'open' ? first
+          : retry === 'rows-only' ? { ...recovered, subtotalAmount: '240.00' } : recovered,
+          classification: classification(calls.length === 1 || retry === 'open') }) }] } } };
+    };
+    try {
+      const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+        bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+      const result = await runWithUsageContext({ companyId: 'co' }, async () => {
+        const result = await controller.receiptOcr('secret', { requestId: 'synthetic-header', companyId: 'co', userId: 'u',
+          documentText: PAGE, attachment: { id: 'a', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' } });
+        assert.equal(drainUsage().length, 2, 'both extractions are accounted for');
+        return result;
+      });
+      assert.equal(calls.length, 2, 'one extraction plus one recovery');
+      assert.ok(calls.every(call => call.messages.at(-1).content.every((block: any) => !block.image)));
+      assert.match(calls[1].messages.at(-1).content[0].text, /34\.80/);
+      assert.match(calls[1].messages.at(-1).content[0].text, /discount|coupon|shipping/i);
+      assert.match(calls[1].messages.at(-1).content[0].text, /คูปองส่วนลด -82\.80/);
+      assert.equal(result.status, 'ok');
+      assert.equal(receiptItemsMismatch(result.fields), !closes);
+      assert.equal(result.fields?.discountAmount, closes ? '82.80' : undefined);
+      assert.equal(result.fields?.additionalCharges?.[0]?.amount, closes ? '48.00' : undefined);
+      assert.equal(result.fields?.lines?.length, 2);
+    } finally { BedrockRuntimeClient.prototype.send = original; }
+  });
+
+  it('keeps the header tolerance and counts additional VAT once', () => {
+    const page = 'ส่วนลด / การจัดส่ง';
+    for (const [grandTotalAmount, expected] of [['231.95', false], ['231.94', true]] as const) {
+      assert.equal(shouldRereadReceiptImage({ ok: true, fields: { ...first, grandTotalAmount },
+        classification: classification(true) as any }, page), expected);
+    }
+    assert.equal(shouldRereadReceiptImage({ ok: true, fields: { ...first, subtotalAmount: '100.00',
+      grandTotalAmount: '107.00', vatMode: 'VAT_EXCLUDED', vatAmount: '7.00' },
+      classification: classification(true) as any }, page), false);
+  });
+
+  it('leaves a header gap without adjustment evidence on the existing review path', () => {
+    assert.equal(shouldRereadReceiptImage({ ok: true, fields: first as any, classification: classification(true) as any },
+      'ใบเสร็จรับเงิน\nยอดรวมสินค้า 232.00\nรวม 197.20'), false);
+  });
 });

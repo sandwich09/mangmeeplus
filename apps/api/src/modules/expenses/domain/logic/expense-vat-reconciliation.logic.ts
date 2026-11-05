@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
 import {
+  EXPENSE_MAX_ITEM_LINES,
   EXPENSE_VAT_SOURCE_INPUT_TYPES,
   type ExpenseLineChargeKind,
   type ExpenseVatCaptureSnapshotV1,
@@ -101,8 +102,8 @@ export function validateExpenseVatSourceInput(
   }
   const lines = source['lines'];
   if (lines !== undefined) {
-    if (!Array.isArray(lines) || lines.length === 0 || lines.length > 40) {
-      return 'vatSource.lines must contain 1 to 40 entries.';
+    if (!Array.isArray(lines) || lines.length === 0 || lines.length > EXPENSE_MAX_ITEM_LINES) {
+      return `vatSource.lines must contain 1 to ${EXPENSE_MAX_ITEM_LINES} entries.`;
     }
     if (inputType !== 'NONE' || rate !== undefined || amount !== undefined) {
       return 'Use either document VAT source or line VAT sources, not both.';

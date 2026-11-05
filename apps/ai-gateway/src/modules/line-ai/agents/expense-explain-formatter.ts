@@ -185,18 +185,21 @@ export function formatExpenseExplainReply(data: unknown, lineDraftEditEnabled = 
   const chargeRows = Array.isArray(groups['charges']) ? groups['charges'] as Array<Record<string, unknown>> : [];
   const terms = [`สินค้า ${subtotal}`];
   if (nonZero(totals['discountAmount'])) terms.push(`ลบส่วนลด ${discount}`);
-  for (const row of chargeRows.slice(0, 4)) {
+  const chargeTerms: string[] = [];
+  for (const row of chargeRows.slice(0, 30)) {
     const amount = money(row['amount']);
     // A charge label lands INSIDE the arithmetic line, so an unscrubbed one would read as part of
     // the sum. A refused label still gets its term — the amount is the load-bearing half.
     const label = safeText(row['label'], MAX_CHARGE_LABEL_CHARS, 'drop') ?? 'ค่าใช้จ่ายเพิ่ม';
-    if (amount) terms.push(`${label} ${amount}`);
+    if (amount) chargeTerms.push(`${label} ${amount}`);
   }
 
+  terms.push(...(chargeRows.length > 30 ? [`ค่าใช้จ่ายเพิ่มรวม ${charges}`] : chargeTerms));
   const lines = [
     `บิล ${vendor}${date ? ` ${date}` : ''}${docNumber ? ` เลขที่ ${docNumber}` : ''} ยอด ${grand} บาทค่ะ`,
     `มาจาก ${terms.join(' + ')} = ยอดที่ใช้คิด VAT ${taxable} แล้วบวก VAT ${vat} เป็น ${grand}`,
   ];
+  if (chargeRows.length > 30) lines.push(...chargeTerms, `และอีก ${chargeRows.length - 30} รายการ`);
   if (chargeRows.length > 0) {
     lines.push('ค่าใช้จ่ายเพิ่มแยกไว้เพื่อให้ตรวจกับบิลได้ค่ะ');
   }

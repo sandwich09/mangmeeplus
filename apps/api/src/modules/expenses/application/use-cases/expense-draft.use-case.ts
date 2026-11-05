@@ -3,7 +3,7 @@ import { eWhtRemittanceAllowed, normalizeWhtRemittance } from '../../domain/logi
 import { expenseHistoryChanges, type ExpenseHistoryChanges } from '../../domain/logic/expense-history.logic';
 import type { ExpenseDb } from '../../infrastructure/prisma-expense.repository';
 import { PrismaDisbursementVoucherRepository } from '../../infrastructure/prisma-disbursement-voucher.repository';
-import { E_WHT_WORDS, EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
+import { EXPENSE_MAX_ITEM_LINES, E_WHT_WORDS, EXPENSE_REVIEW_REQUEST_WORDS } from '@watchdog-bms/contracts';
 import { LinkAttachmentUseCase } from '../../../data-model-core/application/use-cases/link-attachment.use-case';
 import { DisbursementVoucherNoticeService } from '../services/disbursement-voucher-notice.service';
 import type { Prisma } from '../../../../generated/prisma/client';
@@ -616,7 +616,7 @@ export class UpdateExpenseDraftUseCase {
     if (removedSourceItems.length || input.removedSourceItemRefs !== undefined) {
       const state = persistedSourceState ?? reviewSourceState;
       if (!canReview || !state || !input.lines) throw new ForbiddenException('Only a reviewer may remove staged receipt rows.');
-      if (!Array.isArray(removedSourceItems) || removedSourceItems.length > 40
+      if (!Array.isArray(removedSourceItems) || removedSourceItems.length > EXPENSE_MAX_ITEM_LINES
         || new Set(removedSourceItems).size !== removedSourceItems.length
         || removedSourceItems.some((ref) => !state.items.some((item) => item.itemRef === ref)
           || input.lines!.some((line) => line.sourceItemRef === ref || (state.items.find((item) => item.itemRef === ref)?.lineId === line.id && line.id !== undefined)))) {

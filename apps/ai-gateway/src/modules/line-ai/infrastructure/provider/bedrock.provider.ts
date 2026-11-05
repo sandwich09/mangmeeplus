@@ -79,7 +79,7 @@ export class BedrockProvider implements IModelProvider {
     const attachmentBlocks = [...imageBlocks, ...documentBlocks];
     const lastUserIndex = input.messages.map((m) => m.role).lastIndexOf('user');
     const contextIndex = cacheableContextIndex(input.messages);
-    const contextBlocks = cacheableContextBlocks(input.cacheableContext);
+    const contextBlocks = cacheableContextBlocks(input);
     const command = new ConverseCommand({
       modelId: this.cfg.modelId,
       messages: input.messages.map((m, index) => ({
@@ -117,7 +117,8 @@ export class BedrockProvider implements IModelProvider {
       return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };
     }
     const contextIndex = cacheableContextIndex(input.messages);
-    const contextBlocks = cacheableContextBlocks(input.cacheableContext);
+    const contextBlocks = cacheableContextBlocks(input);
+    const cache = toolLoopCachePlan(input);
     const command = new ConverseCommand({
       modelId: this.cfg.modelId,
       messages: input.messages.map((m, index): Message => {
@@ -146,17 +147,18 @@ export class BedrockProvider implements IModelProvider {
         return { role: 'user', content: [...lead, { text: m.text }] };
       }),
       toolConfig: {
-        tools: input.tools.map((t) => ({
+        tools: [...input.tools.map((t) => ({
           toolSpec: {
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
             inputSchema: { json: t.inputSchema as never },
           },
-        })),
+        })), ...(cache.tools ? [CACHE_POINT] : [])],
       },
       ...systemBlocks(input.systemPrompt),
       inferenceConfig: { maxTokens: input.maxTokens ?? 1024 },
     });
+    for (const index of cache.messages) command.input.messages![index]!.content!.push(CACHE_POINT);
 
     return this.converse(command, input.usageTag, (response) => {
       const blocks = response.output?.message?.content ?? [];
@@ -280,6 +282,26 @@ export class BedrockProvider implements IModelProvider {
   }
 }
 
+/** Keep the previous input's endpoint as well as this input's endpoint: a tool follow-up can
+ *  read the exact prefix written by its predecessor. System checkpoints already cover tools.
+ *  Reserve system/tool/context slots before choosing up to two message points (Bedrock limit 4). */
+export function toolLoopCachePlan(input: ProviderToolsInput): { tools: boolean; messages: number[] } {
+  const toolChars = input.tools.length ? JSON.stringify(input.tools).length : 0;
+  const tools = toolChars >= CACHE_MIN_CHARS && (input.systemPrompt?.length ?? 0) < CACHE_MIN_CHARS;
+  let coveredChars = toolChars + (input.systemPrompt?.length ?? 0);
+  const contextIndex = cacheableContextIndex(input.messages);
+  const eligible: number[] = [];
+  input.messages.forEach((message, index) => {
+    if (index === contextIndex) coveredChars += input.cacheableContext?.length ?? 0;
+    coveredChars += message.role === 'tool_results' ? JSON.stringify(message.results).length
+      : (message.text?.length ?? 0) + (message.role === 'assistant' && message.toolCalls ? JSON.stringify(message.toolCalls).length : 0);
+    if (message.role !== 'assistant' && coveredChars >= CACHE_MIN_CHARS) eligible.push(index);
+  });
+  const remaining = 4 - Number(tools) - Number((input.systemPrompt?.length ?? 0) >= CACHE_MIN_CHARS)
+    - cacheableContextParts(input).filter(part => part.cache).length;
+  return { tools, messages: remaining > 0 ? eligible.slice(-Math.min(2, remaining)) : [] };
+}
+
 /** Tools and system precede messages in the cached prefix, so one system checkpoint covers
  *  toolConfig + system for `generateWithTools`. A sub-threshold system prompt gets no checkpoint of
  *  its own, but a later `cacheableContext` checkpoint still covers it — checkpoints cache
@@ -291,9 +313,21 @@ function systemBlocks(systemPrompt?: string): { system?: SystemContentBlock[] } 
 
 /** The context block is always rendered so model-visible content never depends on caching;
  *  only the checkpoint after it is size-gated. */
-function cacheableContextBlocks(cacheableContext?: string): ContentBlock[] {
-  if (!cacheableContext) return [];
-  return cacheableContext.length >= CACHE_MIN_CHARS ? [{ text: cacheableContext }, CACHE_POINT] : [{ text: cacheableContext }];
+function cacheableContextBlocks(input: ProviderInput | ProviderToolsInput): ContentBlock[] {
+  return cacheableContextParts(input).flatMap(({ text, cache }): ContentBlock[] => cache ? [{ text }, CACHE_POINT] : [{ text }]);
+}
+
+export function cacheableContextParts(input: ProviderInput | ProviderToolsInput): Array<{ text: string; cache: boolean }> {
+  const text = input.cacheableContext;
+  if (!text) return [];
+  const boundary = input.cacheableContextPrefixLength;
+  if (typeof boundary !== 'number' || !Number.isSafeInteger(boundary) || boundary <= 0 || boundary >= text.length) {
+    return [{ text, cache: text.length >= CACHE_MIN_CHARS }];
+  }
+  return [
+    { text: text.slice(0, boundary), cache: (input.systemPrompt?.length ?? 0) + boundary >= CACHE_MIN_CHARS },
+    { text: text.slice(boundary), cache: (input.systemPrompt?.length ?? 0) + text.length >= CACHE_MIN_CHARS },
+  ];
 }
 
 /** Which message carries the cacheable context: the first user turn, or the first message when

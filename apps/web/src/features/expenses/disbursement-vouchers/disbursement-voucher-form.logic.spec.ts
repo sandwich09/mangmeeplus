@@ -19,8 +19,8 @@ test('amounts must be positive with at most two decimals and never exceed rounde
   assert.equal(selectedTotal(['0.10', '0.20', '99999999999999.99']), '100000000000000.29');
 });
 test('twenty selected rows fit and the twenty-first is refused without losing the existing selection', () => {
-  assert.equal(selectionAllowed(19), true);
-  assert.equal(selectionAllowed(20), false);
+  assert.equal(selectionAllowed(29), true);
+  assert.equal(selectionAllowed(30), false);
 });
 test('command id is reused on unchanged retries and renewed on every form change including changing back', () => {
   let serial = 0; const mint = () => `command-${++serial}`;

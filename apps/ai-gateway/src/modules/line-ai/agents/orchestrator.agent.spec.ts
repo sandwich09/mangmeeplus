@@ -1974,7 +1974,7 @@ it('Round 2 A: semantic planner can only preview proven expense IDs; always on a
       provider: { generateText: async (input: any) => {
         providerCalls.push(input.usageTag);
         if (input.usageTag === 'line.loop') {
-          assert.match(JSON.stringify(input.messages), /expense.action.preview/u, 'preview is offered even when old draft flag is off');
+          assert.match(input.cacheableContext!, /expense.action.preview/u, 'preview is offered even when old draft flag is off');
           return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: tool.name, input: { expenseId: 'expense-action-id', action: 'VOID', reason: 'รายการซ้ำ' } }] }) };
         }
         return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'ยกเลิกแล้วค่ะ', sourceRefIds: [] }] }) };
@@ -2198,7 +2198,7 @@ it('Round 7A prepares counterparty cards with old draft switches off and forward
     const input = variant === 'counterparty' ? { action: 'UPDATE', counterpartyId: 'counterparty-id', addressText: '123 ถนนสุขุมวิท' } : { action: 'DELETE_DRAFT', expenseId: 'quoted-draft-id' };
     const response = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       provider: { generateText: async (request: any) => {
-        assert.equal(request.usageTag, 'line.loop', 'confirm preview needs no composer'); assert.match(JSON.stringify(request.messages), new RegExp(toolName.replaceAll('.', '\\.')));
+        assert.equal(request.usageTag, 'line.loop', 'confirm preview needs no composer'); assert.match(request.cacheableContext!, new RegExp(toolName.replaceAll('.', '\\.')));
         return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName, input }] }) };
       } } as any,
       invoke: async (meta, _ctx, input) => { calls.push({ name: meta.name, input }); return { toolName: meta.name, status: 'ok', asOf: new Date().toISOString(),
@@ -2240,7 +2240,7 @@ it('Round 7 B: team/branch writes always prepare human cards and role reads rema
     let calls = 0, composed = false;
     const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
       provider: { generateText: async (input: any) => {
-        if (input.usageTag === 'line.loop') { assert.match(JSON.stringify(input.messages), /company.action.preview/u); return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'company.action.preview', input: { action, employeeName: 'สมใจ', branchName: 'ลาดพร้าว' } }] }) }; }
+        if (input.usageTag === 'line.loop') { assert.match(input.cacheableContext!, /company.action.preview/u); return { ok: true, text: JSON.stringify({ calls: [{ index: 0, toolName: 'company.action.preview', input: { action, employeeName: 'สมใจ', branchName: 'ลาดพร้าว' } }] }) }; }
         composed = true; return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', text: 'บันทึกแล้วค่ะ' }] }) };
       } } as any,
       invoke: async (meta, _ctx, input) => { calls++; assert.equal(meta.name, 'company.action.preview'); assert.equal(input.action, action); return { toolName: meta.name, status: 'ok', data: { reply: 'กรุณาตรวจรายละเอียดแล้วกดยืนยันค่ะ', preview: { action } }, sourceRefs: [{ module: 'employee-access', entityType: 'company_action_preview', label: 'คำขอ', permissionChecked: true, sourceType: 'ACTION' }], asOf: new Date().toISOString() }; },
@@ -2464,12 +2464,14 @@ it('Fix-up 15: the existing two-round planner retains J7 text facts without requ
     userContext: { ...makeReq('').userContext, permissions: ['ai.tool.invoke', 'reimbursement.create'] },
     semanticSubrequests: [{ index: 0, kind: 'write' as const, writeIntent: 'REIMBURSEMENT_REQUEST_START' as const, goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: [] }] };
   const calls: any[] = [];
+  const plannerInputs: ProviderInput[] = [];
   let round = 0;
   const state: any = { status: 'active-v2', calls: 0, repairCount: 0, grant: { maxTurnSlots: 4 } };
   const result = await runWithUsageContext({ budget: state }, () => runSemanticTurnV2({ req,
     draftEditEnabled: false, reimbursementDraftEnabled: true, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
     provider: { generateText: async input => {
       assert.equal(input.usageTag, 'line.loop'); state.calls++;
+      plannerInputs.push(input);
       assert.match(input.systemPrompt!, /Never require an existing bill/);
       return { ok: true, text: JSON.stringify({ calls: [round++ === 0
         ? { index: 0, toolName: 'reimbursement.draft.get_options', input: { operation: 'CREATE', subrequestIndex: 0 } }
@@ -2480,6 +2482,20 @@ it('Fix-up 15: the existing two-round planner retains J7 text facts without requ
         data: { actionLocator: { taskId: actionId, actionId, operation: 'CREATE' }, options: { taskRevision: 1, choices: [] }, reimbursementDraft: { status: 'needs_fields' } } };
     } }));
   assert.deepEqual(calls.map(call => call.name), ['reimbursement.draft.get_options', 'reimbursement.draft.preview_create']);
+  assert.ok(plannerInputs[0]!.cacheableContext, 'claim evidence and catalogue have a cacheable prefix');
+  assert.equal(plannerInputs[1]!.cacheableContext, plannerInputs[0]!.cacheableContext, 'follow-up reads the byte-identical first-call prefix');
+  const prefix = JSON.parse(plannerInputs[0]!.cacheableContext!);
+  const catalogue = JSON.parse(plannerInputs[0]!.cacheableContext!.slice(0, plannerInputs[0]!.cacheableContextPrefixLength) + '}');
+  assert.deepEqual(Object.keys(catalogue), ['reimbursementProposalSchema', 'tools'], 'the cross-turn prefix contains no evidence, history or authority');
+  assert.equal(plannerInputs[1]!.cacheableContextPrefixLength, plannerInputs[0]!.cacheableContextPrefixLength);
+  assert.deepEqual(prefix.inputEvidence, evidence);
+  assert.deepEqual(prefix.valueCandidates, candidates);
+  assert.equal(prefix.messageText, text);
+  assert.deepEqual(prefix.semanticSubrequests, req.semanticSubrequests);
+  assert.ok(prefix.tools.some((tool: any) => tool.name === 'reimbursement.draft.get_options'));
+  assert.equal(prefix.previousToolResults, undefined, 'changing results cannot invalidate the prefix');
+  assert.deepEqual(JSON.parse(plannerInputs[0]!.messages[0]!.text), { previousToolResults: [] });
+  assert.equal(JSON.parse(plannerInputs[1]!.messages[0]!.text).previousToolResults[0].result.toolName, 'reimbursement.draft.get_options');
   assert.equal(calls[1]!.input.proposal.lineChanges[0].values.amount.value, '350');
   assert.equal(calls[1]!.input.proposal.lineChanges[0].values.incurredDate.value, '2026-10-15');
   assert.equal(result.semanticCoverage?.[0]?.status, 'needs_user');

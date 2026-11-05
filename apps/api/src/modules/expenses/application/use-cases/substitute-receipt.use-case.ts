@@ -7,6 +7,7 @@ import {
   EXPENSE_PAYMENT_METHODS,
   isCheckBillClassification,
   substituteReceiptRequiresPaymentEvidence,
+  SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE,
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
 } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -151,7 +152,7 @@ function assertSubstituteReceiptLinesRenderable(lines: ReadonlyArray<{ descripti
   if (lines.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines) {
     throw renderabilityError(
       'substitute_receipt_too_many_lines',
-      `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.`,
+      SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE,
     );
   }
   if (lines.some((line) => line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength)) {
@@ -231,7 +232,7 @@ export function collectSubstituteReceiptEligibilityIssues(
     issues.push({ code: 'reviewed_items_required', message: 'ต้องมีรายละเอียดรายการค่าใช้จ่ายที่ตรวจแล้วให้ครบก่อนค่ะ' });
   }
   if (expense.lines.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines) {
-    issues.push({ code: 'substitute_receipt_too_many_lines', message: `ใบรับรองแทนใบเสร็จรับเงิน 1 ใบรองรับได้สูงสุด ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} รายการ` });
+    issues.push({ code: 'substitute_receipt_too_many_lines', message: SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE });
   }
   if (expense.lines.some((line) => line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength)) {
     issues.push({ code: 'substitute_receipt_line_description_too_long', message: `รายละเอียดค่าใช้จ่ายแต่ละรายการต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} ตัวอักษร` });

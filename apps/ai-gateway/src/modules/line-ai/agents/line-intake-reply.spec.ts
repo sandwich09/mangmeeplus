@@ -40,7 +40,7 @@ const defects: Array<[string, (out: any) => any]> = [
   ['route_reimbursement_not_offered', o => ({ ...o, intent: 'REIMBURSEMENT_REQUEST_START' })],
   ['route_advisor_not_offered', o => ({ ...o, intent: 'ADVISOR_CONVERSATION' })],
   ['route_capture_hint_too_long', o => ({ ...o, intent: 'EXPENSE_DOCUMENT_CAPTURE', captureHints: { description: 'x'.repeat(5000) } })],
-  ['route_capture_items_too_many', o => ({ ...o, intent: 'EXPENSE_DOCUMENT_CAPTURE', captureHints: { items: Array(21).fill({}) } })],
+  ['route_capture_items_too_many', o => ({ ...o, intent: 'EXPENSE_DOCUMENT_CAPTURE', captureHints: { items: Array(201).fill({}) } })],
   ['route_capture_item_too_long', o => ({ ...o, intent: 'EXPENSE_DOCUMENT_CAPTURE', captureHints: { items: [{ description: 'x'.repeat(201) }] } })],
   ['route_document_invalid', o => ({ ...o, documentClassification: {} })],
   ['route_document_missing', o => ({ ...o, intent: 'BUSINESS_DOCUMENT_REFERENCE' })],

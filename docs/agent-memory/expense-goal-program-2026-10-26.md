@@ -108,6 +108,35 @@ Scope:
   - Several matching sellers show up to 3 names plus the web exit.
   - Verify: one API spec process hung about 7 h while the laptop slept. The controller stopped its own pid and reran the file alone (GREEN).
   - Journeys 107/108: the PWS-CHAIN seller field empties after save about once in 6 runs. The cause is a stale `getExpense` overwriting the saved draft; it is pre-existing, and lane sd1 is fixing it.
+- **Batch 16, landed 2026-11-05.** develop `f980b42f3`, main `c700760d5`.
+  - Free-shop month summary command (fl1).
+  - Stale-read guard on the expense review page (sd1, fixes PWS-CHAIN).
+  - Harness r8.
+- **Batch 17, landed 2026-11-05.** develop `16094beeb`, main `9292cac6e`.
+  - A8 whole-chain scenarios (24→41) and `line.workflow_control`.
+  - Free-answer scoring (lm1 r10).
+- **Batch 18, landed 2026-11-05.** develop `8fd5d664c`, main `43cc952d7`.
+  - `run-real` runs v2 corpora (lm1 r11/r12).
+  - e-WHT read-only Production results.
+- **Owner 2026-11-05, bill line limits:** "ตรวจทุกฟีเจอร์ที่เกี่ยวข้องกับรายการจ่ายในบิล ควรมีได้สูงสุด 30 รายการ", then agreed that rows inside one bill follow the AI read.
+  - Rows inside one bill: `EXPENSE_MAX_ITEM_LINES` = 200 everywhere (OCR, substitute receipt, typed drafts). The substitute receipt's 8-row limit was what blocked the owner's claim.
+  - Bills per voucher: 30. Bills per claim: 50, unchanged.
+  - The LINE intake still offers 20 bills per voucher until a paired live calibration (credit-levers procedure). Its card shows the count and the web exit.
+- **Owner 2026-11-05, real-model budget:** "อนุญาตให้ใช้เกินได้ นิดหน่อย 2,100-2,300 อนุมัติ".
+  - M4 runs tuning workflow, held-out workflow and advisor held-out, capped at 2,300 THB in total, re-runs included.
+  - A 2-conversation Bedrock smoke found three problems:
+    - LINE claims typed over several messages never reached a draft (`invalid_provenance` on re-sent values; live since 2026-10-17);
+    - turn-agent calls cached only the system prompt (about 2.6–2.9 THB per warm write turn);
+    - three harness bugs.
+- **Owner 2026-11-05, "AI ต้องอ่านถูก":** marketplace receipt reading was fixed against the 3 real images on Bedrock.
+  - Results: seller, receipt number, every row, discount and delivery are right on all three. One look-alike Thai letter (ฎ/ฏ) stays ambiguous at 22 px.
+  - Tall images are read as tiles the provider does not downscale, at about 3.5 THB per tall receipt.
+- **Batch 19 (this batch):**
+  - harness r13;
+  - the LINE multi-message claim fix;
+  - turn-agent cache points;
+  - the marketplace OCR fixes;
+  - bill line limits.
 - **Owner 2026-11-05 ("ทำตามแนะนำ"), from the free-shop ticket:**
   - free shops get a model-free month summary command in LINE (lane fl1);
   - a stranger who types before linking gets one line before the door card, which reverses the 2026-09-21 card-alone rule (lane fl1);

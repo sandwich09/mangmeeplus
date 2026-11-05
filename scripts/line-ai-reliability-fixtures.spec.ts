@@ -120,3 +120,13 @@ test('read-time fact oracle requires the actual source timestamp inside the boun
   actual.facts[0]!.asOf = new Date(1500).toISOString(); actual.facts[0]!.value = '1000.01';
   assert.equal(scoreReliabilityTrace(row, [actual], 0, '1500', 'unknown').factsCorrect, false);
 });
+
+test('opt-in infrastructure failure stops before resetting another conversation', async () => {
+  const first = fixture(), next = { ...fixture(), id: 'later' }, resets: string[] = [];
+  const result = await replayReliabilityCorpus(corpus([first, next]), { provenance: 'fixture',
+    reset: async row => { resets.push(row.id); }, turn: async () => { throw new Error('DB_DOWN'); },
+    afterFailure: async () => trace(first) }, { repeats: 2, cohort: '1000', cache: 'unknown', stopOnError: true });
+  assert.deepEqual(resets, [first.id]);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0]!.error, 'REPLAY_EXECUTION_FAILED');
+});

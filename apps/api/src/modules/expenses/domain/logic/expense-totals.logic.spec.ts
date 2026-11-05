@@ -920,3 +920,9 @@ it('R11 T1: whole-document VAT rounding needs the complete base, single known ra
     { ...input, sourceTaxableAmount: undefined },
   ]) assert.equal(reconcileExpenseVat(defective).snapshot.reconciliation.status, 'MISMATCH');
 });
+
+it('per-row VAT source accepts every one of 200 bill rows and refuses 201', () => {
+  const lines = Array.from({ length: 200 }, (_, i) => ({ lineNumber: i + 1, inputType: 'AMOUNT', vatAmount: '7' }));
+  assert.equal(validateExpenseVatSourceInput({ inputType: 'NONE', lines }, 'VAT_EXCLUDED', lines.map(line => line.lineNumber)), null);
+  assert.match(validateExpenseVatSourceInput({ inputType: 'NONE', lines: [...lines, { ...lines[0]!, lineNumber: 201 }] }, 'VAT_EXCLUDED', Array.from({ length: 201 }, (_, i) => i + 1))!, /1 to 200/);
+});

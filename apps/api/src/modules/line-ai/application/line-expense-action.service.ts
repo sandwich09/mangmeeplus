@@ -2,7 +2,7 @@ import { verifyLineWorkflowOpenSig, lineWorkflowOpenData } from '../domain/logic
 import type { LineWorkflowControl } from '@watchdog-bms/contracts';
 import { isPendingFieldAnswer } from '../domain/logic/line-ai-classifier.logic';
 import { REIMBURSEMENT_DRAFT_CHANGED } from '../domain/logic/line-reimbursement-draft-card.logic';
-import { E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, E_WHT_WORDS, eWhtRateKind, eWhtReducedRateOn, LINE_WORKFLOW_OPEN_ACTIONS, lineReplyLanguage } from '@watchdog-bms/contracts';
 import { lineUiLabel, lineDisplayDate, lineExpenseEvidenceNotes, type LineReplyLanguage } from '../domain/logic/line-language.logic';
 import { ListWhtIncomeCategoriesUseCase } from '../../procurement/application/use-cases/wht-income-category.use-case';
 import { RecordReimbursementPaymentUseCase } from '../../reimbursements/application/use-cases/reimbursement-finance.use-case';
@@ -11,7 +11,7 @@ import type { RecordReimbursementPaymentInput } from '@watchdog-bms/contracts';
 import { quoteRecordsFromPlan } from './line-quoted-message.service';
 import { parseDeliveryBatchStates, parseLineDeliveryPlan } from '../domain/logic/line-delivery-plan.logic';
 import { LineTeamActionService, TEAM_ACTION_LABELS, type TeamAction } from './line-team-action.service';
-import { LineVoucherActionService, VOUCHER_ACTIONS, isVoucherPayeeName, type VoucherAction, type VoucherActionPayload } from './line-voucher-action.service';
+import { LineVoucherActionService, VOUCHER_ACTIONS, isVoucherPayeeName, requestedVoucherBillCount, type VoucherAction, type VoucherActionPayload } from './line-voucher-action.service';
 import Decimal from 'decimal.js';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { verifyReimbursementApprovalOpenToken } from '../domain/logic/line-reimbursement-approval-control.logic';
@@ -455,18 +455,19 @@ export class LineExpenseActionService {
   }
 
   async preview(ctx: RequestContext, chat: string | undefined, input: Record<string, unknown>, opened = false,
-    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+    preparedCategory?: { category: ActionCategory; source: ExpenseRecordWithRelations }, language: LineReplyLanguage = 'th', requestedVoucherCount?: number): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     const en = language === 'en';
     let action = input.action as ExpenseAction;
     const id = this.isVoucher(action ?? '') && action !== 'VOUCHER_CREATE' ? input.voucherId : this.isClaim(action ?? '') ? input.reimbursementId : action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',')[0]?.trim() : input.expenseId;
     if (!EXPENSE_ACTIONS.some(value => value === action) || typeof id !== 'string' || !id || id.length > 200) return { reply: (en ? 'Which record and action would you like?' : 'ต้องการทำอะไรกับรายการไหนคะ') };
     if (!chat || !ctx.membershipId || !this.config.aiGatewayInternalSecret || !await this.owner(ctx, chat)) return { reply: (en ? 'Please use a private chat.' : 'กรุณาทำรายการในแชตส่วนตัวค่ะ') };
     const ids = action === 'VOUCHER_CREATE' && typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
-    if (ids.length > 20 || ids.some(id => !id || id.length > 200)) return { reply: (en ? 'Please select up to twenty expenses.' : 'ขอเลือกรายจ่ายไม่เกินยี่สิบรายการค่ะ') };
+    if (ids.length > DISBURSEMENT_VOUCHER_MAX_LINES) return { reply: en ? `Select up to ${DISBURSEMENT_VOUCHER_MAX_LINES} expenses and put the remaining expenses on another voucher.` : DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines };
+    if (ids.some(id => !id || id.length > 200)) return { reply: en ? 'Select an expense shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ' };
     if (!opened && !(await Promise.all(ids.map(id => this.grounded(ctx, chat, id, this.isVoucher(action) && action !== 'VOUCHER_CREATE' ? 'voucher' : this.isClaim(action))))).every(Boolean)) return { reply: (en ? 'Please select a record already shown in this chat.' : 'ขอเลือกจากรายการที่แสดงในแชตนี้ก่อนค่ะ') };
     let approvers: string[] | undefined;
     try {
-      const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input, language) : undefined;
+      const voucher = this.isVoucher(action) ? await this.vouchers!.prepare(ctx, action, id, input, language, requestedVoucherCount) : undefined;
       if (voucher) action = voucher.payload.action;
       const record = voucher?.record ?? await this.read(ctx, id, action);
       if (action === 'RECORD_PAYMENT') {
@@ -1093,7 +1094,7 @@ export class LineExpenseActionService {
     if (entry.awaitingField === 'paymentMethod' && !paymentMethod) return { reply: this.question(entry) };
     return this.preview(ctx, chat, { action: entry.preview.action, expenseId: entry.expenseId, reimbursementId: entry.expenseId, voucherId: entry.voucher?.id, handoffId: entry.voucher?.handoffs?.[0]?.id,
       ...(entry.voucher?.expenseIds ? { expenseIds: entry.voucher.expenseIds.join(',') } : {}),
-      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAmount: entry.preview.payment?.paidAmount, paidAt: entry.preview.payment?.paidAt ?? entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th');
+      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAmount: entry.preview.payment?.paidAmount, paidAt: entry.preview.payment?.paidAt ?? entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th', entry.voucher?.requestedBillCount);
   }
   async permitted(ctx: RequestContext, entry: Pick<StoredAction, 'voucher' | 'createdByUserId' | 'expenseId'> & { preview: Pick<ExpenseActionPreview, 'action'> }): Promise<boolean> {
     if (entry.voucher) { try { await this.vouchers!.authorize(ctx, entry.voucher.action); return true; } catch (error) { if (error instanceof HttpException) return false; throw error; } }
@@ -1194,7 +1195,7 @@ export class ExpenseActionPreviewTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> {
     const result = await this.actions.preview({ requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId,
       companyId: ctx.companyId, membershipId: ctx.membershipId ?? '', roles: ctx.roles ?? [], permissions: ctx.permissions,
-      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th');
+      scopes: { branchIds: ctx.branchIds, locationIds: ctx.locationIds }, authProvider: 'line' }, ctx.chatKeyHash, input, false, undefined, ctx.locale.startsWith('en') ? 'en' : 'th', requestedVoucherBillCount(ctx.inputEvidence?.parts.map(part => part.rawText).join('\n') ?? ctx.groundingText));
     return { toolName: this.toolName, status: 'ok', data: result, sourceRefs: [{ module: 'expenses', entityType: 'expense_action_preview', label: result.webLabel ?? 'คำขอทำรายการค่าใช้จ่าย', permissionChecked: true, ...(result.webPath ? { webPath: result.webPath } : {}) }], asOf: new Date().toISOString() };
   }
 }

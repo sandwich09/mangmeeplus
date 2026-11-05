@@ -227,21 +227,32 @@ describe('ocrVatSource', () => {
 });
 
 async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, existing: Record<string, unknown> = {}, todayIso?: string,
-  repoOverrides: Record<string, unknown> = {}, ensureVendorCounterparty?: { execute: (ctx: unknown, input: any) => Promise<any>; resolveOcrVendorName?: (ctx: any, taxId: string) => Promise<string | undefined> }, sourceDocumentType?: any, sourceAttachmentId?: string, ocrDocumentType?: any) {
+  repoOverrides: Record<string, unknown> = {}, ensureVendorCounterparty?: { execute: (ctx: unknown, input: any) => Promise<any>; resolveOcrVendorName?: (ctx: any, taxId: string) => Promise<string | undefined> }, sourceDocumentType?: any, sourceAttachmentId?: string, ocrDocumentType?: any, sourceOnly = false) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
     companyVatRegistrationFact: { findMany: async () => [] },
       expenseRecord: {
-      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson, ...existing }),
+      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson,
+        ...(sourceOnly ? { id: 'expense-1', companyId: 'company-1', createdByUserId: 'user-1', status: 'DRAFT', branchId: null } : {}), ...existing }),
       update: async (args: any) => { updates.push(args); },
     },
     expenseCategory: { findFirst: async () => null },
     expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
   };
+  if (sourceOnly) Object.assign(tx, {
+    $queryRaw: async () => [],
+    company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } }) },
+    billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+    billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null },
+    salesAttribution: { findUnique: async () => null },
+    companyMembership: { findFirst: async () => ({ branchScopeMode: 'ALL_BRANCHES', branchScopes: [],
+      roles: [{ role: { permissions: [{ permission: { key: 'expense.receipt.upload' } }] } }] }) },
+    companyFeatureEntitlement: { findMany: async () => [{ featureKey: 'expenses', enabled: true }] },
+  });
   const prisma = makeApplyPrisma(tx);
   const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo(repoOverrides) as any, ensureVendorCounterparty as any)
-    .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, { ...(todayIso ? { todayIso } : {}), ...(sourceDocumentType ? { sourceDocumentType } : {}), ...(sourceAttachmentId ? { sourceAttachmentId } : {}), ...(ocrDocumentType ? { ocrDocumentType } : {}) });
+    .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, { ...(sourceOnly ? { sourceOnly: true } : {}), ...(todayIso ? { todayIso } : {}), ...(sourceDocumentType ? { sourceDocumentType } : {}), ...(sourceAttachmentId ? { sourceAttachmentId } : {}), ...(ocrDocumentType ? { ocrDocumentType } : {}) });
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
 
@@ -610,11 +621,11 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.deepEqual(applied.lines.map((line: any) => line.quantity), ['1.0000', '2.0000']);
     // The bill prints the row amount, not the unit price: two wings for 298.00 is 149.00 each.
     assert.deepEqual(applied.lines.map((line: any) => line.unitPrice), ['524.0000', '149.0000']);
-    // The staff discount has no printed row, so it sits on the first item: 524 − 25 = 499.
-    assert.deepEqual(applied.lines.map((line: any) => line.discountAmount), ['25.0000', '0.0000']);
-    assert.deepEqual(applied.lines.map((line: any) => line.lineTotalAmount), ['499.0000', '298.0000']);
+    // The header discount is shared to the satang across its goods rows.
+    assert.deepEqual(applied.lines.map((line: any) => line.discountAmount), ['15.9400', '9.0600']);
+    assert.deepEqual(applied.lines.map((line: any) => line.lineTotalAmount), ['508.0600', '288.9400']);
     // The per-line VAT split has to add back up to the 52.14 the bill printed.
-    assert.deepEqual(applied.lines.map((line: any) => line.vatAmount), ['32.6400', '19.5000']);
+    assert.deepEqual(applied.lines.map((line: any) => line.vatAmount), ['33.2400', '18.9000']);
     assert.equal(applied.record.vatAmount, '52.1400');
     assert.equal(applied.record.grandTotalAmount, '797.0000', 'the recorded total must not move');
   });
@@ -644,8 +655,8 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.lines.length, 2);
     // The printed unit price is kept and the printed discount comes off it ONCE.
     assert.deepEqual(applied.lines.map((line: any) => line.unitPrice), ['250.0000', '250.0000']);
-    assert.deepEqual(applied.lines.map((line: any) => line.discountAmount), ['625.0000', '0.0000']);
-    assert.deepEqual(applied.lines.map((line: any) => line.lineTotalAmount), ['6875.0000', '5000.0000']);
+    assert.deepEqual(applied.lines.map((line: any) => line.discountAmount), ['375.0000', '250.0000']);
+    assert.deepEqual(applied.lines.map((line: any) => line.lineTotalAmount), ['7125.0000', '4750.0000']);
     assert.equal(applied.record.subtotalAmount, '12500.0000');
     assert.equal(applied.record.discountAmount, '625.0000');
     assert.equal(applied.record.vatAmount, '776.8700');
@@ -2172,7 +2183,7 @@ it('U1 OCR apply skips transfer-slip classification from both incoming OCR and s
 });
 
 
-it('R11 T1: capture source facts round trip 70 and 200 rows while typed text retains its 40-row bound', () => {
+it('R11 T1: capture source facts round trip 70 and 200 rows and typed text uses the same 200-row bound', () => {
   const categories = [{ id: 'cat', companyId: 'co', status: 'ACTIVE', name: 'สำนักงาน' }] as any;
   const base = { workflowId: 'wf', companyId: 'co', userId: 'u', expenseId: 'ex', chatKeyHash: 'chat', targetRevision: '2026-09-01T00:00:00.000Z', provisionalExpenseDate: '2026-09-01', categories };
   for (const count of [70, 200]) {
@@ -2191,7 +2202,7 @@ it('R11 T1: capture source facts round trip 70 and 200 rows while typed text ret
     const changed = applyExpenseSourceDraftInput(reloaded, { items: reloaded.items.map(item => ({ itemRef: item.itemRef, expenseCategoryId: 'cat' })) }, categories);
     assert.doesNotThrow(() => assertExpenseSourceDraftComplete({ lineExpenseDraftContinuation: changed.state }));
     const hints = { items: lines.map(line => ({ sourceText: `${line.description} 1 100`, description: line.description, quantity: '1', unitPrice: '100' })) };
-    assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: hints.items.map(item => item.sourceText).join(' '), hints }), /at most 40/);
+    assert.equal(buildInitialLineExpenseDraftContinuation({ ...base, messageText: hints.items.map(item => item.sourceText).join(' '), hints }).items.length, count);
   }
 });
 
@@ -2229,4 +2240,137 @@ describe('Fix-up 16 printed rounding and combined discount', () => {
     assert.equal(verifyDiscountAmount(fields).discountAmount, '10.00');
     assert.equal(completeVatFields(fields).taxableAmount, '90.00');
   });
+});
+
+describe('marketplace receipt apply safeguards', () => {
+  const TODAY = '2026-11-05';
+  const amounts = ['5.48', ...Array(13).fill('10.00'), '11.79'];
+  const receipt = (gap = '0.06') => ({
+    vendorName: 'ร้านสินค้าสังเคราะห์', expenseDate: TODAY, vatMode: 'NO_VAT',
+    subtotalAmount: (147.27 + Number(gap)).toFixed(2), discountAmount: '110.00',
+    grandTotalAmount: (62.27 + Number(gap)).toFixed(2),
+    lines: amounts.map((amount, index) => ({ description: `สินค้าสังเคราะห์ ${index + 1}`,
+      quantity: '1', unitPrice: amount, amount, evidenceSignal: `สินค้าสังเคราะห์ ${index + 1}` })),
+    additionalCharges: [{ kind: 'DELIVERY', description: 'ค่าจัดส่ง', amount: '25.00', evidenceSignal: 'ค่าจัดส่ง 25.00' }],
+  });
+
+  for (const sourceOnly of [false, true]) it(`enforces marketplace safeguards for ${sourceOnly ? 'never-paid source drafts' : 'paid shops'}`, async () => {
+    const out = await applyFields({ ...receipt(), documentNumber: '123O' }, null, {}, TODAY,
+      {}, undefined, undefined, undefined, undefined, sourceOnly);
+    assert.equal(out.lines.length, 17);
+    assert.equal(out.record.grandTotalAmount, '62.3300');
+    assert.equal(out.record.discountAmount, '110.0000');
+    assert.equal(out.record.vendorDocumentNumber, undefined);
+    assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.ok(out.result.missingFields?.includes('documentNumber'));
+    const folded = await applyFields(receipt('0.11'), null, {}, TODAY,
+      {}, undefined, undefined, undefined, undefined, sourceOnly);
+    assert.ok(folded.result.missingFields?.includes('lines'));
+    assert.ok(folded.record.aiVerificationSummaryJson.missingFields.includes('lines'));
+    assert.equal(folded.record.aiVerificationStatus, 'NEEDS_REVIEW');
+  });
+
+  for (const sourceOnly of [false, true]) it(`keeps recovered discount and delivery rows for ${sourceOnly ? 'never-paid source drafts' : 'paid shops'}`, async () => {
+    const fields = { vendorName: 'ร้านสินค้าสังเคราะห์', expenseDate: TODAY, vatMode: 'NO_VAT',
+      subtotalAmount: '232.00', grandTotalAmount: '197.20', lines: [
+        { description: 'สินค้าก', quantity: '1', amount: '120.00', evidenceSignal: 'สินค้าก 1 120.00' },
+        { description: 'สินค้าข', quantity: '1', amount: '112.00', evidenceSignal: 'สินค้าข 1 112.00' }] };
+    const incomplete = await applyFields({ ...fields, missingFields: ['discountAmount', 'additionalCharges'] }, null, {}, TODAY,
+      {}, undefined, undefined, undefined, undefined, sourceOnly);
+    assert.ok(incomplete.result.missingFields?.includes('lines'));
+    assert.equal(incomplete.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    const recovered = await applyFields({ ...fields, discountAmount: '82.80', additionalCharges: [
+      { kind: 'DELIVERY', description: 'การจัดส่ง', amount: '48.00', evidenceSignal: 'การจัดส่ง 48.00' }] }, null, {}, TODAY,
+      {}, undefined, undefined, undefined, undefined, sourceOnly);
+    assert.equal(recovered.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    assert.equal(recovered.lines.length, 3);
+    assert.equal(recovered.result.chargesApplied, 1);
+    assert.equal(recovered.record.grandTotalAmount, '197.2000');
+    assert.equal(recovered.record.discountAmount, '82.8000');
+  });
+
+  it('spreads a header coupon larger than the first item without losing any printed row', async () => {
+    const out = await applyFields(receipt('0'), null, {}, TODAY);
+    assert.equal(out.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    assert.equal(out.lines.length, 16);
+    assert.equal(out.record.discountAmount, '110.0000');
+    assert.equal(out.record.grandTotalAmount, '62.2700');
+    assert.equal(out.lines.slice(0, 15).reduce((sum, line) => sum + Number(line.discountAmount), 0).toFixed(2), '110.00');
+    assert.ok(out.lines.every(line => Number(line.discountAmount) <= Number(line.lineSubtotalAmount)));
+  });
+
+  for (const gap of ['0.01', '-0.01', '0.06', '-0.06', '0.10']) it(`keeps 15 printed rows and the printed total with ${gap} rounding`, async () => {
+    const out = await applyFields(receipt(gap), null, {}, TODAY);
+    assert.equal(out.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    assert.equal(out.lines.length, 17);
+    assert.equal(out.record.grandTotalAmount, (62.27 + Number(gap)).toFixed(4));
+    const rounding = out.lines.find(line => line.chargeKind === 'ROUNDING');
+    assert.equal(Number(rounding.unitPrice), Number(gap));
+    assert.equal(rounding.sourceLineText, 'ระบบคำนวณส่วนต่างจากยอดสุทธิที่พิมพ์บนเอกสาร');
+    assert.equal(rounding.whtAmount, '0.0000');
+    for (const line of out.lines) {
+      assert.equal(calcLineTotals({ ...line, vatMode: 'NO_VAT' }).lineTotalAmount, line.lineTotalAmount);
+    }
+  });
+
+  for (const gap of ['0.11', '-0.11']) it(`reviews a collapse outside the rounding cap ${gap}`, async () => {
+    const out = await applyFields(receipt(gap), null, {}, TODAY);
+    assert.equal(out.lines.length, 2, 'summary goods and delivery remain visible');
+    assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.ok(out.result.missingFields?.includes('lines'));
+    assert.ok(out.result.reviewReasons.some(reason => reason.includes('รายการ')));
+  });
+
+  it('does not use the document cap to forgive more than one satang per row', async () => {
+    const out = await applyFields({ expenseDate: TODAY, vatMode: 'NO_VAT', subtotalAmount: '100.03', grandTotalAmount: '100.03',
+      lines: [{ description: 'สินค้า ก', amount: '60.00' }, { description: 'สินค้า ข', amount: '40.00' }] }, null, {}, TODAY);
+    assert.equal(out.lines.length, 1);
+    assert.equal(out.record.grandTotalAmount, '100.0300');
+    assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.ok(out.result.missingFields?.includes('lines'));
+  });
+
+  it('preserves an existing reviewed document number and flags gateway-rejected identity fields', async () => {
+    const out = await applyFields({ documentNumber: '123O', expenseDate: TODAY, grandTotalAmount: '100.00',
+      missingFields: ['vendorName'] }, null, { reviewedAt: new Date(), vendorDocumentNumber: 'INV-123' }, TODAY);
+    assert.equal(out.record.vendorDocumentNumber, undefined, 'no update to the reviewed number');
+    assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.ok(out.result.missingFields?.includes('vendorName'));
+  });
+
+  it('reviews unusable item rows instead of silently keeping just the summary', async () => {
+    const fields = receipt('0');
+    fields.lines[1]!.amount = 'unreadable';
+    const out = await applyFields(fields, null, {}, TODAY);
+    assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.ok(out.result.missingFields?.includes('lines'));
+    assert.ok(out.result.reviewReasons.length > 0);
+  });
+
+  for (const documentNumber of ['123O', 'I123', '123l', '12-O3', '5I78O2', '๑๒๓O']) {
+    it(`requires review for numeric-looking document number ${documentNumber}`, async () => {
+      const fields = { documentNumber, expenseDate: TODAY, grandTotalAmount: '100.00' };
+      const out = await applyFields(fields, null, {}, TODAY);
+      assert.equal(out.record.vendorDocumentNumber, undefined);
+      assert.equal(out.record.aiVerificationStatus, 'NEEDS_REVIEW');
+      assert.ok(out.result.missingFields?.includes('documentNumber'));
+      assert.equal(out.record.aiVerifiedFieldsJson.documentNumber, documentNumber, 'raw provenance survives');
+    });
+  }
+
+  it('keeps ordinary alphanumeric and numeric document numbers', async () => {
+    for (const documentNumber of ['INV-0012', 'SO-123', '123-456']) {
+      const out = await applyFields({ documentNumber, expenseDate: TODAY, grandTotalAmount: '100' }, null, {}, TODAY);
+      assert.equal(out.record.vendorDocumentNumber, documentNumber);
+    }
+  });
+});
+
+it('pins OCR, capture and substitute-receipt row bounds to the shared 200-item contract', async () => {
+  const { EXPENSE_MAX_ITEM_LINES, SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXPENSE_CAPTURE_OBSERVATION_LIMITS } = await import('@watchdog-bms/contracts');
+  const { MAX_OCR_ITEM_LINES } = await import('./receipt-ocr-apply.service');
+  assert.equal(EXPENSE_MAX_ITEM_LINES, 200);
+  assert.equal(MAX_OCR_ITEM_LINES, EXPENSE_MAX_ITEM_LINES);
+  assert.equal(SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines, EXPENSE_MAX_ITEM_LINES);
+  assert.equal(EXPENSE_CAPTURE_OBSERVATION_LIMITS.maxItemsPerWindow, EXPENSE_MAX_ITEM_LINES);
 });

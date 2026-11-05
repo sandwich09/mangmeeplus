@@ -115,7 +115,8 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
         ...(observed.length ? { terminalEffect: observed[0], terminalEffects: [...new Set(observed)] } : {}),
         ...(workflow ? { workflowKind: workflow.kind, targetId: workflow.sourceId ?? undefined, deadEnd: workflow.deadEnd === true } : {}),
         ...(row.webhookEvents.some(event => (event as { status?: string }).status === 'free_expense_month_summary') && row.delivery?.status === 'ACCEPTED' && row.receipts.length ? { terminalEffect: 'ANSWERED' } : {}),
-        ...(row.action ? { pressedLabel: row.action.label } : {}),
+        ...(row.action && !row.replayFailure ? { pressedLabel: row.action.label } : {}),
+        ...(row.replayFailure ? { deadEnd: true } : {}),
         ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
           textModelAttempts: Math.max(row.gatewayResponses.length, reservations.length),
           toolCalls: row.toolResults.map(call => ({ tool: call.tool, input: call.input as Record<string, unknown> })) } : {}) };

@@ -16,8 +16,8 @@ export async function renderSubstitutePaperPreviewPages(bytes: Buffer): Promise<
     standardFontDataUrl: `${resources}/standard_fonts/`, cMapUrl: `${resources}/cmaps/`, cMapPacked: true });
   try {
     const document = await task.promise;
-    // Five scan pages, six attestation pages and up to six cancellation-detail pages.
-    if (document.numPages < 1 || document.numPages > 17) throw new Error('เอกสารมีจำนวนหน้าเกินขอบเขตที่รองรับ');
+    // A full generated form may be uploaded after signing; preview includes its attestation and cancellation details.
+    if (document.numPages < 1 || document.numPages > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 2 * SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) throw new Error('เอกสารมีจำนวนหน้าเกินขอบเขตที่รองรับ');
     const pages: string[] = [];
     for (let number = 1; number <= document.numPages; number += 1) {
       const page = await document.getPage(number);
@@ -50,12 +50,12 @@ const CONTENT_HEIGHT = A4_HEIGHT - (MARGIN * 2);
 /**
  * A certificate this long is already exceptional for this workflow. Keeping the decoded RGB
  * raster below ~96 MB prevents an authenticated oversized expense from exhausting an API worker.
- * `maxPages` leaves a page of slack above the worst input the renderability limits allow (5 pages)
- * — it used to be exactly that worst case, so any change to the layout broke the promise that
- * anything inside those limits renders at all.
+ * `maxPages` covers 200 wrapped rows plus the existing long notes and evidence filenames.
+ * Fixed sheets are rasterized one at a time, retaining the same per-raster memory bounds.
  */
 export const SUBSTITUTE_RECEIPT_PDF_LIMITS = Object.freeze({
-  maxPages: 6,
+  maxPages: 64,
+  maxScanPages: 64,
   maxRasterPixels: 32_000_000,
   maxRasterDimension: 50_000,
   maxSvgBytes: 8 * 1024 * 1024,
@@ -297,8 +297,8 @@ async function addWetSignedScanPages(pdf: PDFDocument, scan: { bytes: Buffer; mi
   if (scan.mimeType === 'application/pdf') {
     const source = await PDFDocument.load(scan.bytes);
     // +1 for the attestation page the composed artifact always ends with.
-    if (source.getPageCount() < 1 || source.getPageCount() + 1 > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) {
-      throw new Error(`Substitute-receipt PDF exceeds the ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit.`);
+    if (source.getPageCount() < 1 || source.getPageCount() > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages) {
+      throw new Error(`Substitute-receipt PDF exceeds the ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1}-page safety limit.`);
     }
     return (await pdf.copyPages(source, source.getPageIndices())).map((page) => pdf.addPage(page));
   }
@@ -336,16 +336,27 @@ export async function substituteWetSignedScanRejection(scan: { bytes: Buffer; mi
   }
 }
 
-/** `documentNumber` is passed in rather than parsed back out of the SVG: the caller already holds the
- * evidence row, and scraping rendered text would break silently the next time the layout changes. */
-export async function renderSubstituteReceiptPdf(
-  svg: Buffer,
-  documentNumber?: string,
-  options: PrintOptions = {},
-): Promise<Buffer> {
-  if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
-    throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
+/** Render fixed sheets independently, preserving the raster memory bound as documents grow. */
+function substituteReceiptSourcePages(svg: Buffer): Buffer[] {
+  const source = svg.toString('utf8');
+  const root = /<svg\b[^>]*>/.exec(source)?.[0];
+  const pageHeight = Number(root?.match(/data-pdf-page-height="(\d+)"/)?.[1]);
+  if (!pageHeight || !root) return [svg];
+  const height = Number(root.match(/\bheight="(\d+)"/)?.[1]);
+  const count = height / pageHeight;
+  if (!Number.isSafeInteger(count) || count < 1 || count > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) {
+    throw new Error(`Substitute-receipt PDF exceeds the ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit.`);
   }
+  const sheets = [...source.matchAll(/<svg\b[^>]* data-pdf-sheet="\d+"[^>]*>[\s\S]*?<\/svg>/g)];
+  if (sheets.length === count) return sheets.map(match => Buffer.from(match[0].replace(/ y="\d+"/, ''), 'utf8'));
+  return Array.from({ length: count }, (_, index) => Buffer.from(source.replace(root,
+    root.replace(/\bheight="\d+"/, `height="${pageHeight}"`)
+      .replace(/viewBox="[^"]*"/, `viewBox="0 ${index * pageHeight} 850 ${pageHeight}"`)
+      .replace(/ data-pdf-(?:page-height|breaks)="[^"]*"/g, ''))
+    .replace('height="100%"', `height="${height}"`), 'utf8'));
+}
+
+async function rasterizeSubstituteReceipt(svg: Buffer) {
   // Probe the vector's own size first (72 DPI = its SVG units) so the production density can be
   // fitted to the pixel budget instead of allocating past it and throwing.
   const printSvg = withoutSubstituteReceiptPrintMetadata(svg);
@@ -378,6 +389,19 @@ export async function renderSubstituteReceiptPdf(
     info.channels,
     paginationBreakRows(svg, info.height),
   );
+  return { data, info, slices };
+}
+
+/** `documentNumber` is passed in rather than parsed back out of the SVG: the caller already holds the
+ * evidence row, and scraping rendered text would break silently the next time the layout changes. */
+export async function renderSubstituteReceiptPdf(
+  svg: Buffer,
+  documentNumber?: string,
+  options: PrintOptions = {},
+): Promise<Buffer> {
+  if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
+    throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
+  }
   const pdf = await PDFDocument.create();
   const stampFont = await pdf.embedFont(StandardFonts.Helvetica);
   const sourceDigest = createHash('sha256').update(svg).digest('hex');
@@ -388,14 +412,23 @@ export async function renderSubstituteReceiptPdf(
   const stampSize = 7.5;
   let freeBottom = 0;
 
-  for (const [index, slice] of slices.entries()) {
+  const sourcePages = substituteReceiptSourcePages(svg);
+  const continuation = sourcePages.length > 1;
+  for (const sourcePage of sourcePages) {
+    const { data, info, slices } = await rasterizeSubstituteReceipt(sourcePage);
+    for (const [index, slice] of slices.entries()) {
     const rowBytes = info.width * info.channels;
     const slicePixels = data.subarray(slice.top * rowBytes, (slice.top + slice.height) * rowBytes);
-    const slicePng = await sharp(slicePixels, {
+    const encoder = sharp(slicePixels, {
       raw: { width: info.width, height: slice.height, channels: info.channels },
-    }).png().toBuffer();
+    });
+    // Native JPEG encoding avoids retaining/deflating hundreds of megapixels in JavaScript.
+    // Single-sheet copies keep their original lossless bytes.
+    const sliceImage = await (continuation ? encoder.jpeg({ quality: 95, chromaSubsampling: '4:4:4' }) : encoder.png()).toBuffer();
     const page = pdf.addPage([A4_WIDTH, A4_HEIGHT]);
-    const image = await pdf.embedPng(slicePng);
+    const image = await (continuation ? pdf.embedJpg(sliceImage) : pdf.embedPng(sliceImage));
+    // Encode now so pdf-lib releases this sheet's decoded pixels before the next sheet.
+    await image.embed();
     const scale = Math.min(CONTENT_WIDTH / image.width, CONTENT_HEIGHT / image.height);
     const width = image.width * scale;
     const height = image.height * scale;
@@ -426,6 +459,7 @@ export async function renderSubstituteReceiptPdf(
         opacity: 0.32,
       });
     }
+  }
   }
   if (isCancelled(options.stateStamp)) await addCancellationPresentation(pdf, options.cancellationReason, documentNumber, freeBottom);
   // Count any appended cancellation detail pages before writing optional legacy footers.

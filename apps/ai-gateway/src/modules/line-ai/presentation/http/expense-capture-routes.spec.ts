@@ -420,11 +420,11 @@ describe('capture observation parser', () => {
   });
 
   it('caps items and components and says so instead of cutting silently', () => {
-    const items = Array.from({ length: 130 }, (_, index) => ({
+    const items = Array.from({ length: 201 }, (_, index) => ({
       id: `0:${index}`, documentRef: 'd1', description: 'น้ำดื่ม', amount: '24.00', event: 'sale', evidenceSpan: 'น้ำดื่ม 2 24.00',
     }));
     const parsed = parse({ items });
-    assert.equal(parsed?.items.length, 120);
+    assert.equal(parsed?.items.length, 200);
     assert.equal(parsed?.completeness.itemsTruncated, true);
   });
 
@@ -746,5 +746,16 @@ it('R10 Q3: the recorded signature-only page is a stored empty-facts window; unr
   assert.ok(parsed); assert.deepEqual(parsed.documents, []); assert.deepEqual(parsed.completeness.pagesCovered, [2]);
   for (const text of ['ใบเสร็จ สินค้า 100.00 ผู้รับเงิน', 'ผู้รับเงิน [unreadable]', fixture.signaturePage + '\nวันที่ 26/09/2569']) {
     assert.equal(parseCaptureObservationsJson(JSON.stringify(empty), text), null, text);
+  }
+});
+
+it('retains 200 payment and refund observations and marks an overlong 201-row read incomplete', () => {
+  for (const count of [200, 201]) {
+    const parsed = parseCaptureObservationsJson(observationsJson({
+      payments: Array.from({ length: count }, () => ({ documentRef: 'd1', status: 'paid', amount: '24.00', evidenceSpan: 'น้ำดื่ม 2 24.00' })),
+      refunds: Array.from({ length: count }, () => ({ documentRef: 'd1', state: 'completed', amount: '24.00', evidenceSpan: 'น้ำดื่ม 2 24.00' })),
+    }), WINDOW_TEXT);
+    assert.equal(parsed?.payments.length, 200); assert.equal(parsed?.refunds.length, 200);
+    assert.equal(parsed?.completeness.itemsTruncated, count === 201);
   }
 });

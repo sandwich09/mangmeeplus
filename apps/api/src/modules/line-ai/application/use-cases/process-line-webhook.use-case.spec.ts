@@ -17,7 +17,7 @@ import { filterPermissionsByEntitlement } from '../../../employee-access/domain/
 import { ROLE_GRANTS } from '../../../auth/permission-registry';
 import { ExpenseCaptureReadRunnerService } from '../../../expenses/application/services/expense-capture-read-runner.service';
 import { ExpenseCaptureLineUseCase } from '../../../expenses/application/use-cases/expense-capture-line.use-case';
-import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { ReceiptOcrApplyService, RECEIPT_REVIEW_REASONS } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -448,7 +448,7 @@ describe('check-bill LINE reply UX', () => {
         apply: async () => ({
           committedUpdatedAt: new Date('2026-09-15T00:00:00.001Z'), candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false,
           chargeReconciliationStatus: 'RECONCILED_ITEM_LINES', chargesApplied: 1, charges,
-          reviewReasons: [reviewReason],
+          reviewReasons: [reviewReason], missingFields: ['lines', 'vendorName', 'vendorDocumentNumber'],
           dateVerified: true, dateAssumed: false, dateStatus: 'verified',
         }),
       },
@@ -481,10 +481,13 @@ describe('check-bill LINE reply UX', () => {
       { membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.receipt.line_upload'], scopes: {} },
       { id: 'pending-1', attachmentId: 'att-1', lineMessageId: 'line-msg-check', mimeType: 'image/jpeg' },
       '1',
-      { kind: 'CHECK_BILL_ACTION', ocrFields: { grandTotalAmount: '853.00', vatAmount: '56.00' } },
+      { kind: 'CHECK_BILL_ACTION', ocrFields: { grandTotalAmount: '853.00', vatAmount: '56.00', missingFields: ['vatRate', 'lines'] } },
     );
 
     assert.equal(outcome.outcome, 'handled');
+    assert.deepEqual(new Set(updates[0].aiVerificationSummaryJson.missingFields),
+      new Set(['vatRate', 'lines', 'vendorName', 'vendorDocumentNumber', 'documentNumber']));
+    assert.match(replies.join('\n'), /ยังต้องตรวจ: .*รายการ.*ผู้ขาย.*เลขที่เอกสาร/);
     assert.deepEqual(updates[0].aiVerificationSummaryJson.reviewReasons, [reviewReason],
       'the reasons the apply raised must survive the summary write');
     assert.match(replies.join('\n'), /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 72\.00\):/);
@@ -5175,6 +5178,61 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(ocrAudit?.metadataJson?.processingPath, 'one_pass');
   });
 
+  it('captures every row through full-read fallback at 31 and 200 rows for paid and free source drafts', async () => {
+    for (const free of [false, true]) for (const count of [31, 200]) {
+      const { prisma } = makePrisma();
+      const saved = savedMediaFixture(`fallback-${free}-${count}`);
+      const lines = Array.from({ length: count }, (_, index) => ({ description: `สินค้า ${index + 1}`, quantity: '1', amount: '10.00' }));
+      const total = `${count * 10}.00`;
+      const documentText = ['ใบเสร็จ', 'ร้านกาแฟ', ...lines.map(line => `${line.description} 10.00`), `รวม ${total}`, 'ชำระแล้ว'].join('\n');
+      let reads = 0, applies = 0;
+      const { useCase, auditEvents } = makeUseCase(prisma, {
+        freeExpenseDrafts: free,
+        permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', ...(free ? [] : ['expense.create'])],
+        intakeRouteFn: () => ({ ...ROUTED_EXPENSE_DOCUMENT, documentText, ocrAdmission: 'admitted' }),
+        receiptOcrFn: (request, options) => {
+          reads += 1;
+          assert.equal(request.documentText, free ? undefined : documentText, 'paid fallback forwards the entire read; free source drafts read directly');
+          assert.equal(options.ocrAlreadyAdmitted, !free);
+          return { status: 'ok', classification: receiptClassification(total), fields: {
+            vendorName: 'ร้านกาแฟ', expenseDate: '2026-09-21', grandTotalAmount: total, lines,
+          } };
+        },
+        initReceiptUpload: { execute: async () => ({ expenseId: saved.id, attachmentId: 'att-fallback' }) },
+        completeReceiptUpload: { execute: async () => ({ ...saved, duplicateStatus: 'NONE' }) },
+        receiptOcrApply: { apply: async (_ctx: any, id: string, fields: any, options: any) => {
+          applies += 1;
+          assert.equal(id, saved.id);
+          assert.equal(Boolean(options.sourceOnly), free);
+          assert.deepEqual(fields.lines, lines);
+          saved.lines = structuredClone(fields.lines);
+          saved.grandTotalAmount = fields.grandTotalAmount;
+          saved.updatedAt = new Date(saved.updatedAt.getTime() + 1);
+          return { committedUpdatedAt: saved.updatedAt, candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', charges: [] };
+        } },
+        expenseRepo: {
+          listCategories: async () => [], findById: async () => structuredClone(saved),
+          findByLineMessageId: async () => null,
+          findByIdWithRelations: async () => structuredClone(saved),
+          updateExpense: async ({ id, companyId, expectedUpdatedAt, ...data }: any) =>
+            updateSavedMedia(saved, { where: { id, companyId, updatedAt: expectedUpdatedAt }, data }),
+        },
+      });
+      prisma.client.expenseRecord.update = async (args: any) => updateSavedMedia(saved, args);
+      (useCase as any).downloadLineMedia = async () => ({ ok: true, media: {
+        fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+      } });
+      (useCase as any).uploadLineMedia = async () => undefined;
+      await useCase.executeReceiptUpload({ webhookEventId: `evt-${saved.id}`, lineUserId: 'line-user-secret',
+        replyToken: 'reply-fallback', lineMessageId: `message-${saved.id}`, messageType: 'image', messagingChannelId: 'msg-channel-1' }, 'บันทึกบิลนี้');
+      assert.equal(reads, 1);
+      assert.equal(applies, 1);
+      assert.deepEqual(saved.lines, lines);
+      assert.equal(auditEvents.find((row: any) => row.action === 'expense.ocr.request')?.metadataJson?.processingPath, 'receipt_ocr');
+    }
+  });
+
   // P10-L §15.1 / review G-01. The ceiling itself lives in `admitCompanyOcr` (one seam, one number);
   // the LINE lane's whole job is to ANSWER its refusal — the shop needs a bigger package, and the
   // generic "อ่านรูปนี้ไม่สำเร็จ" clarify would send it looking for a better photo instead.
@@ -7673,6 +7731,12 @@ describe('LINE grounded receipt item follow-up', () => {
     ]) assert.equal(isGroundedReceiptFollowUp(question), true, question);
   });
 
+  it('answers a question about all 30 printed bill rows without truncating the last item', () => {
+    const expense = expenseWithLines(Array.from({ length: 30 }, (_, i) => ({ description: `รายการที่ ${i + 1}`, quantity: '1', amount: '1.00' })));
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
+    for (let i = 1; i <= 30; i++) assert.ok(reply.includes(`• รายการที่ ${i} × 1`));
+  });
+
   it('answers only the printed line items and links to the selected expense record', () => {
     const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expenseWithLines([
       { description: 'กระดาษ A4', quantity: '2', amount: '100.00', evidenceSignal: 'กระดาษ A4 2 100' },
@@ -9280,6 +9344,49 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
+
+  for (const free of [false, true]) it(`keeps API receipt review flags and LINE warnings for ${free ? 'never-paid source drafts' : 'paid shops'}`, async () => {
+    const h = receiptHarness({ free });
+    const flow = h.useCase as any;
+    const gatewayMissing = ['vendorTaxId', 'lines', ...Array.from({ length: 18 }, (_, index) => `synthetic-${index}`)];
+    const apiMissing = ['lines', 'vendorName', 'vendorDocumentNumber'];
+    const sourceReason = 'ภาพบางส่วนอ่านไม่ชัด ตรวจกับใบเสร็จ';
+    const apiReason = 'เก็บยอดรวมไว้แล้ว ตรวจรายละเอียดรายการกับภาพใบเสร็จ';
+    const complete = flow.completeReceiptUpload.execute;
+    flow.completeReceiptUpload.execute = async (...args: any[]) => {
+      const saved = await complete(...args);
+      return { ...saved, aiVerificationSummaryJson: { reviewReasons: [sourceReason] } };
+    };
+    flow.aiGateway.requestReceiptOcr = async () => ({ status: 'ok', classification: receiptClassification('120.00'),
+      fields: { grandTotalAmount: '120.00', vendorName: 'ร้านสินค้าสังเคราะห์', documentNumber: '123O', missingFields: gatewayMissing } });
+    const apply = flow.receiptOcrApply.apply;
+    flow.receiptOcrApply.apply = async (...args: any[]) => {
+      assert.equal(Boolean(args[3].sourceOnly), free);
+      return { ...await apply(...args), missingFields: apiMissing, reviewReasons: [apiReason] };
+    };
+    const event = h.event();
+    await h.useCase.executeReceiptUpload(event);
+    const summary = h.expense().aiVerificationSummaryJson;
+    for (const field of [...gatewayMissing, ...apiMissing]) assert.ok(summary.missingFields.includes(field), field);
+    assert.equal(new Set(summary.missingFields).size, summary.missingFields.length, 'shared flags appear once');
+    assert.deepEqual(summary.reviewReasons, [sourceReason, apiReason]);
+    assert.equal(h.expense().aiVerificationStatus, 'NEEDS_REVIEW');
+    const savedReply = await flow.savedReceiptReply({ ...event, handoff: { userId: 'user-1' } }, 'company-1', 'saved-expense');
+    const warning = savedReply.texts.join('\n').split('\n').find((line: string) => line.startsWith('ยังต้องตรวจ:'));
+    assert.ok(warning, savedReply.texts.join('\n'));
+    for (const label of ['รายการ', 'ผู้ขาย', 'เลขที่เอกสาร']) assert.ok(warning.includes(label), label);
+    assert.doesNotMatch(warning, /vendorName|vendorDocumentNumber|synthetic-/);
+    assert.ok(!warning.includes(sourceReason));
+    assert.ok(!warning.includes(apiReason));
+    assert.equal(warning.match(/ข้อมูลใบเสร็จ/g)?.length, 1, 'unmapped reasons and fields share one label');
+    assert.equal(warning.match(/เลขที่เอกสาร/g)?.length, 1, 'document aliases share one visible label');
+    assert.ok(savedReply.draft.notes.includes(warning), 'the receipt card shares the same warning');
+    assert.ok(JSON.stringify(h.sends).includes(warning), 'the delivered LINE message contains the warning');
+    const followUp = formatGroundedReceiptFollowUp('https://app.example.com', 'company-1',
+      { ...h.expense(), lines: [], charges: [] }, undefined, 'บิลนี้เป็นเอกสารอะไร');
+    assert.match(followUp, /ยังต้องตรวจ: .*รายการ.*ผู้ขาย.*เลขที่เอกสาร/);
+    assert.doesNotMatch(followUp, /vendorName|vendorDocumentNumber|synthetic-/);
+  });
 
   it('R6 free unusable OCR preserves allowance and usable persistence consumes once', async () => {
     for (const usable of [false, true]) {
@@ -13034,7 +13141,8 @@ require('node:test').mock.timers.enable({ apis: ['Date'], now: replay.acceptedAt
 const providerRequests = [], calls = [];
 globalThis.fetch = async (_url, init) => {
   const body = JSON.parse(init.body); providerRequests.push(body);
-  const payload = JSON.parse(body.input[0].content[0].text);
+  // The catalogue/per-turn context and the per-call results arrive as newline-joined JSON objects.
+  const payload = Object.assign({}, ...body.input[0].content[0].text.split('\n').map(part => JSON.parse(part)));
   let response;
   if (String(body.instructions).startsWith('You plan one complete LINE request.')) {
     const read = replay.reads.find(row => ['reimbursement.list_pending_approvals', 'reimbursement.get_approval_backlog'].includes(row.tool));
@@ -13112,7 +13220,7 @@ for (const replay of FX29_QA) it(`Fix-up 29: exact eval route through Orchestrat
     if (replay.id.includes('T-100')) assert.equal(calls[0].input.documentStatus, 'NEEDS_REVIEW');
     if (replay.id.includes('T-111')) {
       assert.match(text, /4,188\.50.*23\.6%.*อันดับ 1/u);
-      const compose = JSON.parse(providerRequests[0].input[0].content[0].text);
+      const compose = Object.assign({}, ...providerRequests[0].input[0].content[0].text.split('\n').map((part: string) => JSON.parse(part)));
       assert.match(JSON.stringify(compose.derivedFacts), /23\.6% อันดับ 1/u);
     }
     if (replay.id.includes('T-158')) assert.match(text, /ส่งเข้ามาวันนี้[^\n]*32 รายการ/u);
@@ -15963,4 +16071,270 @@ it('A8 workflow control intake records the closed postback fields and ordered AP
   }
   assert.ok(intake.sourceReferences.some(row => row.path.endsWith('/line-message-buffer.service.ts')));
   assert.match(intake.dataBasis, /permission|access/);
+});
+
+function claimEvidenceValue(evidence: any, value: string) {
+  const start = evidence.parts[0].rawText.indexOf(value);
+  return { value, proof: { kind: 'USER_TEXT', refs: [{ partId: 'part-0', rawSha256: evidence.parts[0].rawSha256,
+    startUtf16: start, endUtf16: start + value.length }] } };
+}
+
+async function claimFragmentHarness() {
+  const h = manualClaimHarness();
+  await h.seed();
+  let authority: any;
+  (h.adapter as any).authority = async () => authority;
+  const options = h.action().commandJson.accepted.options;
+  let turn = 0;
+  const run = async (text: string, fragment: (evidence: any, candidates: any) => any, operation: 'CREATE' | 'UPDATE' = 'CREATE') => {
+    const action = h.action();
+    const evidence = (await createLineAiInputEvidence({ turnKey: `m4-${turn++}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const candidates = (await extractValueCandidatesV2(evidence, '2026-11-05'))!;
+    authority = { ctx: h.ctx, owner: { owner: h.owner, epoch: 1, taskRevision: options.taskRevision }, evidence, candidates,
+      acceptedRequest: { requestId: 'm4-claim' }, writeIndexes: [0], continuedActionId: action.id };
+    return h.adapter.preview(h.ctx, { action: { actionId: action.id, taskId: action.taskId, operation },
+      proposal: { schemaVersion: 1, taskId: action.taskId, taskRevision: options.taskRevision, operation, ...fragment(evidence, candidates) } }, operation);
+  };
+  return { ...h, run, options };
+}
+
+it('M4 multi-message claim accepts repeated old proofs and bare accepted values across the exact three turns', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 5, 5) });
+  const h = await claimFragmentHarness();
+  const { run, options } = h;
+  let description: any;
+  let result = await run('สร้างใบเบิกค่าแท็กซี่ให้หน่อย', evidence => {
+    description = claimEvidenceValue(evidence, 'ค่าแท็กซี่');
+    return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description } }] };
+  });
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  result = await run('250 บาท วันนี้', (_evidence, candidates) => {
+    const amount = candidates.amounts.find((item: any) => item.value === '250');
+    const date = candidates.dates.find((item: any) => item.isoDate === '2026-11-05')
+      ?? candidates.periods.find((item: any) => item.kind === 'day' && item.fromDate === '2026-11-05');
+    assert.ok(amount); assert.ok(date);
+    return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description,
+      amount: { value: '250', proof: { kind: 'USER_TEXT', refs: [amount.source], candidateId: amount.candidateId } },
+      incurredDate: { value: '2026-11-05', proof: { kind: 'USER_TEXT', refs: [date.source], candidateId: date.candidateId } } } }] };
+  });
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields', JSON.stringify(result));
+  assert.deepEqual(h.action().commandJson.accepted.proposal.lineChanges[0].values.description, description);
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount.value, '250');
+  const category = options.choices.find((choice: any) => choice.kind === 'CATEGORY' && choice.raw.key === 'travel');
+  assert.ok(category);
+  result = await run('ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน', evidence => ({
+    fields: { reason: claimEvidenceValue(evidence, 'ไปส่งเอกสารให้ร้าน') }, lineChanges: [{ operation: 'ADD', values: {
+      description: 'ค่าแท็กซี่', amount: '250.0000', incurredDate: '2026-11-05', categoryChoiceId: category.choiceId, attachmentChoiceId: null,
+    } }],
+  }));
+  const draft = (result.data as any).reimbursementDraft;
+  assert.equal(draft.status, 'preview', JSON.stringify(result));
+  assert.equal(draft.preview.after.amount, '250.0000');
+  assert.equal(draft.preview.after.lines[0].incurredDate, '2026-11-05');
+  assert.equal(draft.preview.after.lines[0].categoryKey, 'travel');
+  assert.equal(draft.preview.after.reason, 'ไปส่งเอกสารให้ร้าน');
+  const { buildReimbursementDraftMessages } = await import('../../domain/logic/line-reimbursement-draft-card.logic');
+  const card = JSON.stringify(buildReimbursementDraftMessages(draft, 'https://app.example.com', h.ctx.companyId));
+  assert.match(card, /reimbursement_draft_confirm/);
+  assert.match(card, /250\.00/);
+  assert.equal(h.action().status, 'PREVIEW');
+});
+
+
+it('M4 equal claim values retain saved proof while changed or untyped values stay blocked', async () => {
+  for (const mode of ['stale', 'bare', 'value-only', 'trimmed', 'changed-stale', 'changed-bare', 'never-typed', 'wrong-line'] as const) {
+    const h = await claimFragmentHarness();
+    let accepted: any;
+    await h.run('ค่าแท็กซี่', evidence => {
+      accepted = claimEvidenceValue(evidence, 'ค่าแท็กซี่');
+      return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description: accepted } }] };
+    });
+    const before = structuredClone(h.action().commandJson.accepted.proposal);
+    const result = await h.run('ไปส่งเอกสาร', evidence => {
+      const description = mode === 'stale' ? accepted : mode === 'bare' ? accepted.value
+        : mode === 'value-only' ? { value: accepted.value } : mode === 'trimmed' ? ` ${accepted.value} `
+          : mode === 'changed-stale' ? { ...accepted, value: 'ค่าอาหาร' } : mode === 'changed-bare' ? 'ค่าอาหาร'
+            : mode === 'never-typed' ? { ...claimEvidenceValue(evidence, 'ไปส่งเอกสาร'), value: 'ค่าอาหาร' } : accepted.value;
+      return { fields: { reason: claimEvidenceValue(evidence, 'ไปส่งเอกสาร') }, lineChanges: [
+        ...(mode === 'wrong-line' ? [{ operation: 'ADD', values: {} }] : []), { operation: 'ADD', values: { description } },
+      ] };
+    });
+    const draft = (result.data as any).reimbursementDraft;
+    if (['stale', 'bare', 'value-only', 'trimmed'].includes(mode)) {
+      assert.equal(draft.status, 'needs_fields', `${mode}: ${JSON.stringify(result)}`);
+      assert.deepEqual(h.action().commandJson.accepted.proposal.lineChanges[0].values.description, accepted);
+      assert.equal(h.action().commandJson.accepted.proposal.fields.reason.value, 'ไปส่งเอกสาร');
+    } else {
+      assert.equal(draft.status, 'blocked', mode);
+      assert.equal(draft.errorCode, 'invalid_provenance', mode);
+      assert.equal(result.errorCode, 'invalid_provenance', 'the existing tool trace carries this turn’s refusal to delivery');
+      assert.deepEqual(h.action().commandJson.accepted.proposal, before, 'blocked fragments keep all accepted facts');
+    }
+  }
+});
+
+it('M4 UPDATE echoes match the same lineRef and never authorize a different line or a new ADD', async () => {
+  for (const mode of ['same-line', 'other-line', 'new-add', 'extra-set-field', 'duplicate-set', 'too-many-changes'] as const) {
+    const h = await claimFragmentHarness();
+    let description: any;
+    await h.run('ค่าแท็กซี่', evidence => {
+      description = claimEvidenceValue(evidence, 'ค่าแท็กซี่');
+      return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description } }] };
+    });
+    const action = h.action(), now = new Date();
+    const request: any = { id: 'existing-claim', companyId: h.ctx.companyId, requesterUserId: h.ctx.userId, branchId: 'branch-1',
+      status: 'DRAFT', updatedAt: now, reason: 'ค่าแท็กซี่', currency: 'THB', amount: '500.0000', incurredDate: new Date('2026-11-05'), categoryKey: 'travel', receiptRequirementStatus: 'WAIVED_BY_POLICY',
+      lines: [1, 2].map(lineNo => ({ id: `saved-line-${lineNo}`, lineNo, incurredDate: new Date('2026-11-05'), description: 'ค่าแท็กซี่',
+        amount: '250.0000', categoryKey: 'travel', categoryLabelSnapshot: 'ค่าเดินทาง', updatedAt: now })) };
+    h.repo.findRequestById = async () => request;
+    const target = (h.adapter as any).choice(action.id, 'TARGET', 'ใบเบิกเดิม', now.toISOString(), { id: request.id });
+    const lines = request.lines.map((line: any) => (h.adapter as any).choice(action.id, 'LINE', 'รายการเดิม', now.toISOString(),
+      { id: line.id, requestId: request.id, requestUpdatedAt: now.toISOString(), lineNo: line.lineNo }));
+    const options = action.commandJson.accepted.options;
+    options.operation = 'UPDATE'; options.choices.push(target, ...lines);
+    action.operation = 'UPDATE';
+    action.commandJson.accepted.proposal = { ...action.commandJson.accepted.proposal, operation: 'UPDATE', targetRef: target.choiceId,
+      lineChanges: [{ operation: 'SET', lineRef: lines[0].choiceId, values: { description } }] };
+    const result = await h.run('ไปส่งเอกสาร', evidence => ({ targetRef: target.choiceId,
+      fields: { reason: claimEvidenceValue(evidence, 'ไปส่งเอกสาร') }, lineChanges: mode === 'new-add'
+        ? [{ operation: 'ADD', values: { description: description.value } }]
+        : [{ operation: 'SET', lineRef: lines[mode === 'other-line' ? 1 : 0].choiceId, values: { description: description.value }, ...(mode === 'extra-set-field' ? { unexpected: true } : {}) },
+          ...(['duplicate-set', 'too-many-changes'].includes(mode) ? Array.from({ length: mode === 'duplicate-set' ? 1 : 50 }, () => ({ operation: 'SET', lineRef: lines[0].choiceId, values: { description: description.value } })) : [])],
+    }), 'UPDATE');
+    const draft = (result.data as any).reimbursementDraft;
+    if (mode === 'same-line') {
+      assert.equal(draft.status, 'preview', JSON.stringify(result));
+      assert.equal(draft.preview.after.lines.length, 2);
+      assert.equal(draft.preview.after.reason, 'ไปส่งเอกสาร');
+    } else {
+      assert.equal(draft.status, 'blocked', mode);
+      assert.equal(draft.errorCode, 'invalid_provenance', mode);
+      assert.equal(result.errorCode, 'invalid_provenance', 'the existing tool trace carries this turn’s refusal to delivery');
+    }
+  }
+});
+
+
+it('M4 provenance refusal offers the web exit without asking for all accepted claim details again', async () => {
+  const { buildReimbursementDraftMessages } = await import('../../domain/logic/line-reimbursement-draft-card.logic');
+  for (const language of ['th', 'en'] as const) {
+    const messages = buildReimbursementDraftMessages({ status: 'blocked', errorCode: 'invalid_provenance' }, 'https://app.example.com', 'company-1', [], undefined, language);
+    const payload = JSON.stringify(messages);
+    assert.doesNotMatch(payload, /พิมพ์รายละเอียดการเบิกอีกครั้ง|send the claim details again|invalid_provenance/);
+    assert.match(payload, /ลองอีกครั้ง|try again/);
+    assert.ok(messages.some(message => message.quickReply?.items.some((item: any) => item.action.type === 'uri'
+      && item.action.uri === 'https://app.example.com/companies/company-1/reimbursements')));
+  }
+});
+
+
+it('M4 normalized amount echoes keep accepted money and changed amounts require fresh proof', async () => {
+  for (const mode of ['equal-stale', 'equal-bare', 'changed-stale', 'changed-bare', 'never-typed'] as const) {
+    const h = await claimFragmentHarness();
+    let amount: any;
+    await h.run('ค่าแท็กซี่ 250 บาท', (evidence, candidates) => {
+      const candidate = candidates.amounts.find((item: any) => item.value === '250');
+      amount = { value: '250', proof: { kind: 'USER_TEXT', refs: [candidate.source], candidateId: candidate.candidateId } };
+      return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่'), amount } }] };
+    });
+    const before = structuredClone(h.action().commandJson.accepted.proposal);
+    const result = await h.run('ไปส่งเอกสาร', evidence => ({ fields: { reason: claimEvidenceValue(evidence, 'ไปส่งเอกสาร') },
+      lineChanges: [{ operation: 'ADD', values: { amount: mode === 'equal-stale' ? { ...amount, value: '250.0000' }
+        : mode === 'equal-bare' ? '250.00' : mode === 'changed-stale' ? { ...amount, value: '900' }
+          : mode === 'changed-bare' ? '900' : { ...claimEvidenceValue(evidence, 'ไปส่งเอกสาร'), value: '900' } } }],
+    }));
+    const draft = (result.data as any).reimbursementDraft;
+    if (mode.startsWith('equal')) {
+      assert.equal(draft.status, 'needs_fields', mode);
+      assert.deepEqual(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount, amount);
+    } else {
+      assert.equal(draft.status, 'blocked', mode);
+      assert.equal(draft.errorCode, 'invalid_provenance', mode);
+      assert.equal(result.errorCode, 'invalid_provenance', 'the existing tool trace carries this turn’s refusal to delivery');
+      assert.deepEqual(h.action().commandJson.accepted.proposal, before);
+    }
+  }
+});
+
+it('M4 webhook shows the latest provenance refusal instead of the saved missing-field question', async () => {
+  const { prisma } = makePrisma();
+  prisma.client.lineIntakePendingMedia.findMany = async () => [];
+  const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac';
+  const delivered: any[][] = [];
+  let failed = true;
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke', 'reimbursement.create', 'reimbursement.read_own'], roles: ['STAFF'],
+    config: { lineAiReimbursementDraftWriteEnabled: true },
+    intakeRouteFn: request => ({ status: 'ROUTED', intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 1,
+      semanticSubrequests: [{ index: 0, kind: 'write', goal: request.messageText, writeIntent: 'REIMBURSEMENT_REQUEST_START', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }),
+    aiGatewayFn: request => ({ requestId: request.requestId, replyText: 'ขอรายละเอียดรายการ จำนวนเงิน และวันที่สำรองจ่าย',
+      intent: 'unknown', agent: 'general', durationMs: 1, refused: false, webLinks: [], sourceLabels: [],
+      sourceRefs: [{ module: 'reimbursements', entityType: 'reimbursement_draft_action', entityId: actionId, label: 'ร่างใบเบิก', permissionChecked: true }],
+      toolsInvoked: ['reimbursement.draft.preview_create'],
+      toolCalls: [{ name: 'reimbursement.draft.preview_create', status: 'ok', durationMs: 0, errorCode: 'invalid_provenance' },
+        ...(!failed ? [{ name: 'reimbursement.draft.preview_create', status: 'ok', durationMs: 0 }] : [])],
+      semanticCoverage: [{ index: 0, status: 'needs_user' }] }),
+  });
+  const flow = h.useCase as any;
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1' }, id: 'conversation', epoch: 1 });
+  flow.reliabilityContext = async () => ({});
+  flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.prepareTextGrantV2 = async (event: any) => {
+    const grant = { turnKey: event.inputEvidence.turnKey, nextOrdinal: 0, authorityKind: 'webhook_event', authorityId: 'accepted-edit', signature: 'fixture-signature', attemptKey: event.webhookEventId };
+    flow.budgetGrantsV2.set(event, grant); return grant;
+  };
+  flow.aiGateway.narrowLineReliabilityGrant = async (grant: any) => grant;
+  flow.preserveSemanticTask = async () => true;
+  flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }), projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }), createTurn: async () => ({ id: 'turn' }), save: async () => true };
+  flow.reimbursementDrafts = { active: async () => null, get: async () => ({ status: 'needs_fields', actionId, actionRevision: 0, fieldPaths: ['lineChanges.0.values.amount'] }) };
+  flow.reimbursementAdapter = { readDisplayOptions: async () => { assert.equal(failed, false, 'failed proof must not repeat the saved question'); return null; } };
+  flow.deliverMessages = async (_event: any, messages: any[]) => { delivered.push(messages); return 'ok'; };
+  for (const [index, text] of ['สร้างใบเบิกค่าแท็กซี่ให้หน่อย', 'แก้ข้อมูลใหม่แล้ว'].entries()) {
+    failed = index === 0;
+    const evidence = (await createLineAiInputEvidence({ turnKey: `m4-webhook-${index}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `m4-webhook-${index}`, messageText: text, inputEvidence: evidence });
+  }
+  assert.equal(delivered.length, 2);
+  assert.match(JSON.stringify(delivered[0]), /ลองอีกครั้ง/);
+  assert.match(JSON.stringify(delivered[0]), /เปิดในเว็บ/);
+  assert.doesNotMatch(JSON.stringify(delivered[0]), /ขอรายละเอียด|ขอเพิ่ม|จำนวนเงิน|วันที่สำรองจ่าย/);
+  assert.match(JSON.stringify(delivered[1]), /ยอดเงิน/);
+});
+
+describe('short LINE receipt review labels', () => {
+  const reasonLabels: Array<[string, string]> = [
+    [RECEIPT_REVIEW_REASONS.dateUnverified, 'วันที่เอกสาร'], [RECEIPT_REVIEW_REASONS.dateImplausible, 'วันที่เอกสาร'],
+    [RECEIPT_REVIEW_REASONS.documentNumberUntrusted, 'เลขที่เอกสาร'], [RECEIPT_REVIEW_REASONS.sellerUnverified, 'ผู้ขาย'],
+    [RECEIPT_REVIEW_REASONS.itemsFolded, 'รายการ'], [RECEIPT_REVIEW_REASONS.chargesFolded, 'รายการ'],
+    [`${RECEIPT_REVIEW_REASONS.chargeVatUnknown} (VAT ที่อธิบายไม่ได้ 0.21)`, 'อัตราภาษีมูลค่าเพิ่ม'],
+    [`${RECEIPT_REVIEW_REASONS.vatRounding} ต่างจากที่คำนวณ 0.21 บาท`, 'ภาษีมูลค่าเพิ่ม'],
+    [RECEIPT_REVIEW_REASONS.whtWithCharges, 'ภาษีหัก ณ ที่จ่าย'],
+    ['ยอดภาษีหัก ณ ที่จ่ายไม่สอดคล้องกับยอดเอกสาร กรุณาตรวจในเว็บ', 'ภาษีหัก ณ ที่จ่าย'],
+    ['เก็บยอดสรุปแยกตามภาษีแล้ว รายละเอียดยังต้องตรวจจากเอกสาร ส่วนลดรวมอยู่ในยอดแล้ว ไม่ต้องหักซ้ำ', 'รายการ'],
+  ];
+  for (const [reason, label] of reasonLabels) it(`maps ${reason} to one short field label`, () => {
+    const reply = formatPaypersReply('https://app.test', 'co', 'ex', { reviewReasons: [reason, reason] });
+    assert.equal(reply.split('\n').find(line => line.startsWith('ยังต้องตรวจ:')), `ยังต้องตรวจ: ${label}`);
+  });
+
+  it('deduplicates known reason fields and maps unknown reasons once without copying sentences', () => {
+    const reply = formatPaypersReply('https://app.test', 'co', 'ex', {
+      missingFields: ['vendorName', 'vendorDocumentNumber', 'lines'],
+      reviewReasons: ['ชื่อผู้ขายยังอ่านไม่ชัด ตรวจชื่อกับภาพใบเสร็จ', 'เลขที่เอกสารยังอ่านไม่ชัด ตรวจเลขที่กับภาพใบเสร็จ',
+        'เก็บยอดรวมไว้แล้ว ตรวจรายละเอียดรายการกับภาพใบเสร็จ', 'เหตุผลสังเคราะห์หนึ่ง', 'เหตุผลสังเคราะห์สอง'],
+    });
+    const note = reply.split('\n').find(line => line.startsWith('ยังต้องตรวจ:'));
+    assert.equal(note, 'ยังต้องตรวจ: ผู้ขาย, เลขที่เอกสาร, รายการ, ข้อมูลใบเสร็จ');
+    assert.doesNotMatch(note!, /ตรวจชื่อกับ|ตรวจเลขที่กับ|เก็บยอดรวม|เหตุผลสังเคราะห์/);
+  });
+});
+
+it('LINE shows 30 bill rows and an honest remainder plus the web link at 31 and 200', () => {
+  for (const count of [31, 200]) {
+    const expense = expenseWithLines(Array.from({ length: count }, (_, i) => ({ description: `สินค้า${i + 1}`, quantity: '1', amount: '1.00' })));
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
+    assert.equal((reply.match(/• สินค้า/g) || []).length, 30);
+    assert.match(reply, new RegExp(`และอีก ${count - 30} รายการ`));
+    assert.ok(reply.includes('/companies/company-1/expenses/expense-1'));
+    assert.ok(!reply.includes('• สินค้า31 '));
+  }
 });

@@ -29,6 +29,10 @@ PDF, PNG, JPEG, and system-generated substitute-receipt SVG documents must open 
    Closing or changing context invalidates the request and revokes any unpublished Blob URL.
 10. Enforce the same renderable certificate boundary in the wizard and API: at most 8 expense
     lines, 200 characters per line, 8 unique evidence files, and 255 characters per filename.
+    **Owner 2026-11-05:** the line limit is now `EXPENSE_MAX_ITEM_LINES` (200), the same as the
+    AI read. The certificate's rows are the bill's own rows, so a bill that saves must also be
+    certifiable. The PDF continues on new sheets with the table header and "(ต่อ)"; totals and
+    signatures appear once. Evidence files stay at 8.
 
 ## Scope
 

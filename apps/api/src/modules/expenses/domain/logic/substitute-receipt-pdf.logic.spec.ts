@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -323,12 +324,16 @@ describe('disbursement voucher printed document', () => {
     assert.doesNotMatch(direct, /บันทึกจ่ายโดยตรง/); assert.ok(!direct.includes('สมชาย'));
     assert.match(renderDisbursementVoucherSvg(snapshot({ origin: 'REISSUED', replacesDocumentNumber: 'PV-OLD' }), true).toString(), /ออกแทนใบเลขที่ PV-OLD/);
   });
-  it('wraps a 120-character Thai name and paginates twenty complete lines without splitting rows', async () => {
+  it('wraps a 120-character Thai name and paginates thirty complete lines without splitting rows', async () => {
     const base = snapshot(), longName = 'ก'.repeat(120);
-    const svg = renderDisbursementVoucherSvg(snapshot({ payee: { name: longName, basis: 'SINGLE' }, lines: Array.from({ length: 20 }, (_, i) => ({ ...base.lines[0], expenseNumber: `EXP-${i + 1}`, vendorName: longName })) }), true);
+    const svg = renderDisbursementVoucherSvg(snapshot({ payee: { name: longName, basis: 'SINGLE' }, lines: Array.from({ length: 30 }, (_, i) => ({ ...base.lines[0], expenseNumber: `EXP-${i + 1}`, vendorName: longName })) }), true);
     const source = svg.toString();
     assert.match(source, /data-pdf-breaks="[\d,]+"/); assert.ok(!source.includes(`>${longName}<`));
-    for (let i = 1; i <= 20; i++) assert.ok(source.includes(`EXP-${i}`));
+    for (let i = 1; i <= 30; i++) assert.ok(source.includes(`>EXP-${i}</text>`));
+    assert.match(source, /ใบสำคัญจ่าย \(ต่อ\)/);
+    assert.ok((source.match(/>เลขรายจ่าย</g) || []).length >= 2);
+    assert.equal((source.match(/>รวมเป็นเงิน</g) || []).length, 1);
+    assert.equal((source.match(/data-signature-block=/g) || []).length, 1);
     const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(svg, base.documentNumber));
     assert.ok(pdf.getPageCount() >= 2);
   });
@@ -512,9 +517,10 @@ describe('substitute receipt PDF', () => {
       assert.equal(slice.top, slices[index]!.top + slices[index]!.height);
     });
 
-    const tooTall = Buffer.alloc(width * 1_000 * channels, 255);
+    const tooTallHeight = 150 * (SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages + 1);
+    const tooTall = Buffer.alloc(width * tooTallHeight * channels, 255);
     assert.throws(
-      () => planSubstituteReceiptRasterSlices(tooTall, width, 1_000, channels),
+      () => planSubstituteReceiptRasterSlices(tooTall, width, tooTallHeight, channels),
       new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit`),
     );
   });
@@ -568,10 +574,11 @@ describe('substitute receipt PDF', () => {
     const svg = renderSubstituteReceiptSvg(snapshot);
     const breakAttribute = /data-pdf-breaks="([\d,]+)"/.exec(svg.toString('utf8'))?.[1];
     assert.ok(breakAttribute);
-    assert.ok(
-      breakAttribute.split(',').length >= snapshot.expense.lines.length + snapshot.evidence.length + 5,
-      'Every item and evidence attachment should contribute a semantic page-break boundary.',
-    );
+    const source = svg.toString('utf8');
+    assert.match(source, /data-pdf-page-height="1250"/);
+    assert.equal(new Set([...source.matchAll(/data-substitute-row="(\d+)"/g)].map(match => match[1])).size, snapshot.expense.lines.length);
+    assert.equal(breakAttribute.split(',').length, (source.match(/data-substitute-page=/g) || []).length - 1);
+    assert.ok(breakAttribute.split(',').every((value, index) => Number(value) === (index + 1) * 1250));
     const bytes = await renderSubstituteReceiptPdf(svg, snapshot.documentNumber);
     const pdf = await PDFDocument.load(bytes);
     assert.ok(pdf.getPageCount() >= 2);
@@ -584,7 +591,7 @@ describe('substitute receipt PDF', () => {
   });
 
   it('renders the shared worst-case prepare boundary within the PDF safety ceiling', async () => {
-    const thai = (length: number) => 'ก'.repeat(length);
+    const thai = (length: number) => 'ฒ'.repeat(length);
     const limits = SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS;
     const snapshot: SubstituteReceiptSnapshot = {
       documentNumber: 'SRC-BOUNDARY-V1',
@@ -731,14 +738,14 @@ describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
     // The budget counts the attestation page too: 6 scan pages + 1 is over the ceiling.
     await assert.rejects(
       renderSubstituteReceiptPaperArtifactPdf(
-        { bytes: await scanPdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages), mimeType: 'application/pdf' }, thaiSvg,
+        { bytes: await scanPdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1), mimeType: 'application/pdf' }, thaiSvg,
       ),
-      new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit`),
+      new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1}-page safety limit`),
     );
-    assert.equal(await substituteWetSignedScanRejection({ bytes: await scanPdf(5), mimeType: 'application/pdf' }), undefined);
+    assert.equal(await substituteWetSignedScanRejection({ bytes: await scanPdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages), mimeType: 'application/pdf' }), undefined);
     assert.match(
-      (await substituteWetSignedScanRejection({ bytes: await scanPdf(6), mimeType: 'application/pdf' }))!,
-      /6-page safety limit/,
+      (await substituteWetSignedScanRejection({ bytes: await scanPdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1), mimeType: 'application/pdf' }))!,
+      new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxScanPages + 1}-page safety limit`),
     );
     assert.match((await substituteWetSignedScanRejection({ bytes: Buffer.from('nope'), mimeType: 'application/pdf' }))!,
       /cannot be read as a printable document/);
@@ -746,4 +753,65 @@ describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
       /must be a JPEG, PNG, or PDF/);
     assert.equal(await substituteWetSignedScanRejection({ bytes: await photo('jpeg'), mimeType: 'image/jpeg' }), undefined);
   });
+});
+
+const oneLineSubstitute: SubstituteReceiptSnapshot = {"documentNumber": "SRC-ONE", "version": 1, "company": {"name": "ร้านทดสอบ", "branchName": null, "taxId": null}, "expense": {"id": "one", "expenseNumber": "EXP-ONE", "expenseDate": "2026-11-05", "paymentDate": "2026-11-05", "currency": "THB", "grandTotalAmount": "100", "paymentMethod": "CASH", "paymentReference": null, "category": null, "businessPurpose": "ใช้ในร้าน", "lines": [{"description": "ค่าเดินทาง", "quantity": "1", "amount": "100"}]}, "originalSourceDocumentType": "EXPENSE_NOTE_TEXT", "reasonCode": "OTHER", "missingReceiptReason": "ไม่มีใบเสร็จ", "payer": {"userId": "payer", "name": "สมใจ", "position": "", "certifiedAt": "2026-11-05"}, "certificationText": "รับรองว่าจ่ายแล้ว", "evidence": [], "note": null};
+const oneLineVoucher = {"payee": {"name": "ร้านทดสอบ"}, "documentNumber": "DV-ONE", "lines": [{"expenseNumber": "EXP-ONE", "expenseDate": "2026-11-05", "vendorName": "ร้านทดสอบ", "description": "ค่าเดินทาง", "grandTotal": "100", "wht": "0", "netPayable": "100", "amount": "100", "paidThisTime": "100", "outstandingAfter": "0"}], "total": "100", "totals": {"grandTotal": "100", "wht": "0", "paidThisTime": "100"}};
+
+it('keeps original one-line online, paper, preparation and paid SVG bytes unchanged', () => {
+  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  assert.equal(digest(renderSubstituteReceiptSvg(oneLineSubstitute)), '32bede84296a4e6c48ad876eb35b9a0c955c3cbd420d5f5303fa1922c824df01');
+  assert.equal(digest(renderSubstituteReceiptSvg(oneLineSubstitute, undefined, undefined, undefined, { paperForm: true })), '2a3ddd71c7afc99967ae891dfc69000fc31ef6a67cb0b170a27759f05fa586ec');
+  assert.equal(digest(renderDisbursementVoucherSvg(oneLineVoucher, false)), 'e08d872745c38a651be19e0f4dfa038ec8eec07701a2223df021f7ef58b6d9de');
+  assert.equal(digest(renderDisbursementVoucherSvg(oneLineVoucher, true)), 'a655a999a801ed67ea80c11427e839d6f0c84d738bdbddedc07c07aa5e1366eb');
+});
+
+it('prints all 200 substitute rows on online and paper continuation sheets, with one total and final signatures', async () => {
+  for (const paperForm of [false, true]) {
+    const snapshot = { ...oneLineSubstitute, expense: { ...oneLineSubstitute.expense, grandTotalAmount: '20000',
+      lines: Array.from({ length: 200 }, (_, i) => ({ description: `รายการที่ ${i + 1}`, quantity: '1', amount: '100' })) } };
+    const svg = renderSubstituteReceiptSvg(snapshot, undefined, undefined, undefined, { paperForm });
+    const source = svg.toString();
+    const pages = [...source.matchAll(/data-substitute-page="(\d+)">([\s\S]*?)<text x="805" y="1225"/g)];
+    assert.ok(pages.length > 1);
+    assert.equal((source.match(/data-substitute-row=/g) || []).length, 200);
+    assert.equal((source.match(/data-substitute-amount=/g) || []).length, 200);
+    assert.equal((source.match(/data-substitute-total=/g) || []).length, 1);
+    assert.equal((source.match(/data-substitute-signatures=/g) || []).length, 1);
+    assert.ok(pages.at(-1)![2]!.includes('data-substitute-signatures='));
+    for (let i = 1; i <= 200; i++) assert.ok(source.includes(`>รายการที่ ${i}</tspan>`));
+    for (const page of pages) {
+      if (page[2]!.includes('data-substitute-row=')) assert.ok(page[2]!.includes('รายละเอียดรายจ่าย'));
+      if (Number(page[1]) > 1) assert.ok(page[2]!.includes('(ต่อ)'));
+    }
+    for (const row of source.matchAll(/data-top="(\d+)" data-height="(\d+)"/g)) assert.ok(Number(row[1]) + Number(row[2]) <= 1190);
+    const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(svg, snapshot.documentNumber));
+    assert.equal(pdf.getPageCount(), pages.length);
+  }
+});
+
+it('continues oversized voucher descriptions without clipping and prints each amount only once', async () => {
+  for (const paid of [false, true]) {
+    const snapshot = { ...oneLineVoucher, total: '3000', totals: { grandTotal: '3000', wht: '0', paidThisTime: '3000' }, lines: Array.from({ length: 30 }, (_, i) => ({ ...oneLineVoucher.lines[0]!,
+      expenseNumber: `ROW-${i + 1}`, description: i === 0 ? 'รายละเอียด '.repeat(600) + 'ENDOFROW' : `รายการ ${i + 1}` })) };
+    const svg = renderDisbursementVoucherSvg(snapshot, paid);
+    const source = svg.toString();
+    assert.equal((source.match(/>100.00<\/text>/g) || []).length, 60, 'each of the 30 rows prints its gross and payment once');
+    assert.match(source.replace(/<[^>]*>/g, ''), /ENDOFROW/); assert.match(source, /ROW-1 \(ต่อ\)/);
+    assert.equal((source.match(/>รวมเป็นเงิน</g) || []).length, 1);
+    assert.equal((source.match(/data-signature-block=/g) || []).length, 1);
+    for (const text of source.matchAll(/<text[^>]+y="([\d.]+)"[^>]*>/g)) assert.ok(Number(text[1]) % 1250 <= 1225);
+    const pdf = await PDFDocument.load(await renderSubstituteReceiptPdf(svg));
+    assert.ok(pdf.getPageCount() > 2);
+  }
+});
+
+// The SVG is the renderer's own output and is byte-stable on every machine; the PDF bytes also
+// depend on the local libvips/font build (develop and this change match byte for byte on the same
+// machine, 2026-11-05), so only the SVG is pinned and the PDF stays a single sheet.
+it('keeps the one-row certificate identical to the original renderer', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T00:00:00Z').getTime() });
+  const svg = renderSubstituteReceiptSvg(oneLineSubstitute);
+  assert.equal(createHash('sha256').update(svg).digest('hex'), '32bede84296a4e6c48ad876eb35b9a0c955c3cbd420d5f5303fa1922c824df01');
+  assert.equal((await PDFDocument.load(await renderSubstituteReceiptPdf(svg, 'SRC-ONE'))).getPageCount(), 1);
 });

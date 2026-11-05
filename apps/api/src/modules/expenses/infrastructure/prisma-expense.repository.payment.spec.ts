@@ -2472,15 +2472,15 @@ describe('Disbursement voucher draft command integrity (real PostgreSQL)', () =>
     assert.equal((await clients[0]!.expenseRecord.findUniqueOrThrow({ where: { id: expenses[0]!.id } })).paidAmount.toFixed(4), '104.0000');
   });
 
-  it('a twenty-line document pays inside the twenty-second transaction timeout and reports elapsed milliseconds', async t => {
+  it('a thirty-line document pays inside the twenty-second transaction timeout and reports elapsed milliseconds', async t => {
     if (!ready) return t.skip(unreachable ?? 'DATABASE_URL is not set');
-    const { expenses, voucher } = await approvedForPayment(Array(20).fill('104'));
+    const { expenses, voucher } = await approvedForPayment(Array(30).fill('104'));
     const started = Date.now();
     const paid = await useCase(clients[0]!).pay(paymentContext(), voucher.id, lifecycleCommand(1));
     const elapsedMs = Date.now() - started;
-    console.log(`Disbursement voucher 20-line pay elapsed milliseconds: ${elapsedMs} (transaction timeout 20000)`);
-    assert.equal(paid.status, 'PAID'); assert.equal(paid.totalAmount, '2080.0000'); assert.ok(elapsedMs < 20000);
-    assert.equal(await clients[0]!.expensePayment.count({ where: { companyId, expenseId: { in: expenses.map(e => e.id) } } }), 20);
+    console.log(`Disbursement voucher 30-line pay elapsed milliseconds: ${elapsedMs} (transaction timeout 20000)`);
+    assert.equal(paid.status, 'PAID'); assert.equal(paid.totalAmount, '3120.0000'); assert.ok(elapsedMs < 20000);
+    assert.equal(await clients[0]!.expensePayment.count({ where: { companyId, expenseId: { in: expenses.map(e => e.id) } } }), 30);
   });
 
   const createDocumentSlip = (voucherId: string) => clients[0]!.attachmentObject.create({ data: {

@@ -1,6 +1,8 @@
 import { E_WHT_WORDS } from './tax.js';
 import { EXPENSE_CORRECTION_WORDS, type ExpensePaymentMethod } from './expenses.js';
 
+export const DISBURSEMENT_VOUCHER_MAX_LINES = 30;
+
 export const DISBURSEMENT_VOUCHER_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED'] as const;
 export type DisbursementVoucherStatus = (typeof DISBURSEMENT_VOUCHER_STATUSES)[number];
 export const DISBURSEMENT_VOUCHER_ORIGINS = ['PREPARED', 'DIRECT_PAYMENT', 'REISSUED'] as const;
@@ -118,7 +120,7 @@ export const DISBURSEMENT_VOUCHER_ERROR_WORDS = {
   disbursement_reissue_empty: 'ไม่มีการจ่ายที่ยังมีผลเหลืออยู่ในใบนี้ จึงไม่ต้องออกใบใหม่',
   disbursement_invalid_input: 'ข้อมูลใบเตรียมจ่ายไม่ถูกต้อง ให้ตรวจรายการ วันที่และวิธีจ่าย แล้วลองบันทึกใหม่',
   disbursement_lines_required: 'ยังไม่ได้เลือกรายจ่าย ให้เลือกอย่างน้อย 1 รายการก่อนบันทึก',
-  disbursement_too_many_lines: 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 20 รายการ แบ่งรายการที่เหลือไปทำอีกใบ',
+  disbursement_too_many_lines: `ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน ${DISBURSEMENT_VOUCHER_MAX_LINES} รายการ แบ่งรายการที่เหลือไปทำอีกใบ`,
   disbursement_duplicate_expense: 'เลือกรายจ่ายรายการเดิมซ้ำในใบเดียวกันไม่ได้ ให้เอารายการที่ซ้ำออกก่อน',
   disbursement_expense_unreadable: 'ไม่พบรายจ่ายที่เลือกหรือคุณไม่มีสิทธิ์อ่าน ให้เลือกรายจ่ายที่เปิดดูได้แล้วลองอีกครั้ง',
   disbursement_branch_mismatch: 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว ให้เลือกรายการจากสาขาเดียวกัน',

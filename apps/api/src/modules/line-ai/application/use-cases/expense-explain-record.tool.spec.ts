@@ -69,6 +69,20 @@ describe('expense.explain_record', () => {
     assert.equal(stopped.lineDraftItemsNotYetOnDocument[0].totalAmount, '350');
     assert.equal(stopped.lineDraftCollectionStopped, true);
     assert.equal((await new ExpenseExplainRecordTool(getExpense(), makeRepo().repo).execute(ctx as any, {})).data?.['lineDraftItemsNotYetOnDocument' as never], undefined);
+    note.sourceChannelMetadataJson.lineExpenseDraftContinuation.items = Array.from({ length: 30 }, (_, i) => ({
+      itemRef: `I${String(i + 1).padStart(2, '0')}`, sourceText: `รายการ ${i + 1}`, description: `รายการ ${i + 1}`, totalAmount: '350',
+    }));
+    const allItems = (await new ExpenseExplainRecordTool(getExpense(note), repo).execute(ctx as any, {})).data as any;
+    assert.equal(allItems.lineDraftItemsNotYetOnDocument.length, 30);
+    assert.equal(allItems.lineDraftItemsNotYetOnDocument[29].description, 'รายการ 30');
+  });
+
+  it('returns all 30 product rows rather than silently keeping the first ten', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => ({ ...BHC.lines[0]!, description: `รายการ ${i + 1}` }));
+    const data = (await new ExpenseExplainRecordTool(getExpense({ ...BHC, lines }), makeRepo().repo).execute(ctx as any, {})).data as any;
+    assert.equal(data.lineGroups.productCount, 30);
+    assert.equal(data.lineGroups.products.length, 30);
+    assert.equal(data.lineGroups.products[29].description, 'รายการ 30');
   });
 
   it('explains the newest record of THIS chat with the totals identity as real numbers', async () => {

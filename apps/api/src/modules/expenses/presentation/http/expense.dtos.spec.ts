@@ -487,3 +487,10 @@ it('R17 e-WHT setting requires a boolean DTO and rejects missing, null, string a
     await assert.rejects(() => pipe.transform(body, metadata), BadRequestException);
   }
 });
+
+it('source review permits 200 explicit removed-row references and refuses 201', async () => {
+  const body = { expectedUpdatedAt: '2026-11-05T00:00:00.000Z', lines: [{ lineNumber: 1, description: 'สินค้า', quantity: '1', unitPrice: '1' }],
+    removedSourceItemRefs: Array.from({ length: 200 }, (_, i) => `I${i + 1}`) };
+  assert.equal((await run(ExpenseTotalsPreviewDto, body)).removedSourceItemRefs.length, 200);
+  await assert.rejects(() => run(ExpenseTotalsPreviewDto, { ...body, removedSourceItemRefs: [...body.removedSourceItemRefs, 'I201'] }), BadRequestException);
+});

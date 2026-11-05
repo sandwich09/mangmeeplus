@@ -348,7 +348,7 @@ test('maps substitute-receipt render limits to stable actionable Thai copy', () 
   const lines = apiErrorMessage(apiError('layout rejected', {
     status: 400, code: 'substitute_receipt_too_many_lines',
   }));
-  assert.match(lines, /สูงสุด 8 รายการ/);
+  assert.match(lines, /สูงสุด 200 รายการ/);
   assert.match(lines, /แยก/);
   assert.match(translateApiError('substitute_receipt_line_description_too_long')!, /200 ตัวอักษร/);
   assert.match(translateApiError('substitute_receipt_too_many_evidence')!, /สูงสุด 8 ไฟล์/);

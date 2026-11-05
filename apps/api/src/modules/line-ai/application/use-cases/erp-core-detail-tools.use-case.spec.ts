@@ -71,13 +71,13 @@ describe('LINE ERP core detail tools', () => {
       paidAmount: '0', outstandingAmount: '100', postingStatus: 'NOT_POSTED', createdByUserId: 'u2',
       createdAt: new Date(), updatedAt: new Date(), internalMemo: 'secret',
       counterpartySnapshotJson: { displayName: 'ลูกค้า A', phone: 'secret' },
-      lines: Array.from({ length: 12 }, (_, i) => ({ description: `line${i}`, quantity: '1', unitPrice: '10', lineTotalAmount: '10' })),
+      lines: Array.from({ length: 30 }, (_, i) => ({ description: `line${i}`, quantity: '1', unitPrice: '10', lineTotalAmount: '10' })),
     }) } as any);
     const result = await tool.execute(ctx, { documentId: 'd1' });
     assert.equal(result.status, 'ok');
     assert.equal((result.data as any).counterpartyName, 'ลูกค้า A');
     assert.equal((result.data as any).internalMemo, undefined);
-    assert.equal((result.data as any).lines.length, 10);
+    assert.equal((result.data as any).lines.length, 30);
   });
 
   it('uses one snapshot aggregate for an exact receivable summary', async () => {
@@ -114,11 +114,13 @@ describe('LINE ERP core detail tools', () => {
   it('returns bounded expense detail and relies on source ABAC', async () => {
     let forwardedCtx: any;
     const tool = new ExpenseGetDetailTool({
-      execute: async (sourceCtx: any) => { forwardedCtx = sourceCtx; return expenseRecord(); },
+      execute: async (sourceCtx: any) => { forwardedCtx = sourceCtx; return expenseRecord({ lines: Array.from({ length: 30 }, (_, i) => ({ description: `รายการ ${i + 1}`, quantity: '1', unitPrice: '1', lineTotalAmount: '1' })) }); },
       categoryName: async () => null,
     } as any);
     const result = await tool.execute(ctx, { expenseId: 'e1' });
     assert.deepEqual(forwardedCtx.scopes.branchIds, ['b1']);
+    assert.equal((result.data as any).lines.length, 30);
+    assert.equal((result.data as any).lines[29].description, 'รายการ 30');
     assert.equal((result.data as any).attachmentCount, 1);
     assert.equal((result.data as any).attachments, undefined);
     // A record with no category, no reason and no payment says so plainly: null and zero, nothing invented.
@@ -194,11 +196,12 @@ describe('LINE ERP core detail tools', () => {
       financeReviewStatus: 'NOT_REVIEWED', paymentStatus: 'UNPAID', duplicateStatus: 'CLEAR', receiptRequirementStatus: 'SATISFIED',
       postingStatus: 'NOT_POSTED', paymentTotalAmount: '0', outstandingAmount: '100', createdAt: '', updatedAt: '', primaryAttachmentId: 'secret',
       approvalSteps: [{ id: 's1', sequenceNo: 1, approverUserId: 'secret-approver', status: 'PENDING', assignedAt: '' }],
-      payments: [], duplicateCandidates: [],
+      payments: Array.from({ length: 30 }, (_, i) => ({ paymentNo: i + 1, status: 'RECORDED', paidAmount: '1', paidAt: '2026-11-05' })), duplicateCandidates: [],
       payoutMethod: 'BANK_TRANSFER',
       payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 1, canRevealAccountNumber: true },
     }) } as any);
     const result = await detail.execute(ctx, { reimbursementId: 'rr1' });
+    assert.equal((result.data as any).payments.length, 30);
     // Payout spec §11.2: the claim's payout account never reaches an AI answer, masked or not.
     assert.doesNotMatch(JSON.stringify(result), /payout|6789|กสิกร|สมชาย/);
     // Step-journey spec §11/§13 (AC10): the AI's answer about a claim's status links straight to

@@ -159,12 +159,12 @@ export type ReliabilityReplayAdapter = {
 };
 
 /** Reuses the existing replay's sequential turn loop; exceptions never disappear from denominators. */
-export async function replayReliabilityCorpus(corpus: ReliabilityCorpus, adapter: ReliabilityReplayAdapter, options: { repeats: number; cohort: ReliabilityAttempt['cohort']; cache: ReliabilityAttempt['cache']; acceptance?: boolean }) {
+export async function replayReliabilityCorpus(corpus: ReliabilityCorpus, adapter: ReliabilityReplayAdapter, options: { repeats: number; cohort: ReliabilityAttempt['cohort']; cache: ReliabilityAttempt['cache']; acceptance?: boolean; stopOnError?: boolean }) {
   validateReliabilityCorpus(corpus, options.acceptance);
   assert.ok(Number.isInteger(options.repeats) && options.repeats >= 1 && options.repeats <= 10, 'INVALID_REPEATS');
   if (options.acceptance) { assert.ok(options.repeats >= 3, 'ACCEPTANCE_REPEATS'); assert.equal(adapter.provenance, 'real_provider', 'ACCEPTANCE_PROVIDER'); }
   const records: Array<{ scenarioId: string; repeat: number; traces: ReliabilityTurnTrace[]; error: string | null; attempt: ReliabilityAttempt }> = [];
-  for (let repeat = 0; repeat < options.repeats; repeat++) for (const row of corpus.fixtures) {
+  replay: for (let repeat = 0; repeat < options.repeats; repeat++) for (const row of corpus.fixtures) {
     const traces: ReliabilityTurnTrace[] = []; let error: string | null = null;
     try {
       await adapter.reset(row, repeat);
@@ -190,6 +190,7 @@ export async function replayReliabilityCorpus(corpus: ReliabilityCorpus, adapter
     }
     if (error) { attempt.completed = false; attempt.completeAcceptedMs = null; attempt.semanticCorrect = false; attempt.errorFamilies.push(error); if (!traces.length) attempt.costSatang = null; }
     records.push({ scenarioId: row.id, repeat, traces, error, attempt });
+    if (error && options.stopOnError) break replay;
   }
   return { corpusDigest: reliabilityDigest(corpus), provenance: adapter.provenance, records };
 }

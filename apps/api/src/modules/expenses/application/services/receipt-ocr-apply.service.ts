@@ -8,13 +8,16 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { Prisma } from '../../../../generated/prisma/client';
 import Decimal from 'decimal.js';
 import {
+  EXPENSE_MAX_ITEM_LINES,
   EXPENSE_LINE_CHARGE_KIND_LABELS,
+  EXPENSE_CALCULATED_ROUNDING_SOURCE,
   expenseLineCharges,
   receiptPayeeEntityKind,
   isAssumedDateReading,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
   todayCivilDate,
+  mapThaiDigits,
   type BuyerEntityKind,
   type ExpenseChargeSummary,
   type ExpenseDocumentDateStatus,
@@ -30,6 +33,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { reconcileExpenseDuplicateCandidates } from './expense-duplicate-detection';
+import { shareByBasis } from '../../domain/logic/expense-capture-facts.logic';
 import { calcDocumentTotals, calcLineTotals } from '../../domain/logic/expense-totals.logic';
 import { reconcileExpenseVat, vatSourceFromSnapshot } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
@@ -57,6 +61,9 @@ function validVatMode(value: string | undefined): 'NO_VAT' | 'VAT_INCLUDED' | 'V
 export const RECEIPT_REVIEW_REASONS = {
   dateUnverified: 'วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน',
   dateImplausible: 'วันที่ผิดปกติ',
+  documentNumberUntrusted: 'เลขที่เอกสารยังอ่านไม่ชัด ตรวจเลขที่กับภาพใบเสร็จ',
+  sellerUnverified: 'ชื่อผู้ขายยังอ่านไม่ชัด ตรวจชื่อกับภาพใบเสร็จ',
+  itemsFolded: 'เก็บยอดรวมไว้แล้ว ตรวจรายละเอียดรายการกับภาพใบเสร็จ',
   chargeVatUnknown: 'ค่าใช้จ่ายเพิ่มยังไม่รู้ VAT – ตรวจก่อนยืนยัน',
   chargesFolded: 'ค่าใช้จ่ายเพิ่มถูกรวมในยอดเดียว – ตรวจก่อนยืนยัน',
   vatRounding: 'บิลปัดเศษ VAT เป็นบาทเต็ม',
@@ -136,7 +143,7 @@ const MAX_OCR_ADDITIONAL_CHARGES = 10;
  *  decides whether the reviewer sees the document's real rows or a single folded summary line. */
 const MAX_WHOLE_BAHT_VAT_ROUNDING = 1;
 // Mirrors the gateway's bounded receipt item admission.
-const MAX_OCR_ITEM_LINES = 200;
+export const MAX_OCR_ITEM_LINES = EXPENSE_MAX_ITEM_LINES;
 
 /** A printed money figure that may legitimately be zero: a free or included item row. The expense
  *  model already allows a zero unit price ("the general expense flow supports free-of-charge lines"),
@@ -758,7 +765,7 @@ function prepareOcrLines(
   const rowsNetOfDiscount = itemRowsNetOfDocumentDiscount(fields, items);
   if (items.length >= 2) {
     const candidate = [
-      ...items.map((item, index) => {
+      ...items.map((item) => {
         const qty = positiveMoney(item.quantity) ?? 1;
         // usableItemLines already proved a printed amount; a free row must retain zero here too.
         const amount = nonNegativeMoney(item.amount)!;
@@ -782,14 +789,36 @@ function prepareOcrLines(
           whtRate,
           sourceLineText: item.evidenceSignal,
           aiLineConfidence: item.confidence,
-          // A document-level discount has no printed row to sit on, so it lands on the first item
-          // and `calcLineTotals` clamps it there; when that clamp loses part of it the totals stop
-          // matching and the whole split falls back to the summary line below.
-        }, vatMode, index === 0 ? toMoney4(fields.discountAmount) : '0');
+        }, vatMode);
       }),
     ];
+    // Reuse the capture domain's satang-exact header-discount allocation. A coupon can exceed
+    // the first row, so assigning it there would clamp away part of the printed discount.
+    const discounts = shareByBasis(new Decimal(toMoney4(fields.discountAmount)), candidate.map((line, index) => ({
+      id: String(index), weight: rowsNetOfDiscount
+        ? new Decimal(line.totals.lineSubtotalAmount).minus(toMoney4(items[index]!.amount))
+        : new Decimal(line.totals.lineSubtotalAmount),
+    })));
+    for (const [index, line] of candidate.entries()) {
+      line.totals = calcLineTotals({ ...line, vatMode, discountAmount: discounts.get(String(index))?.share.toFixed(4) ?? '0' });
+    }
     const proven = [...candidate, ...chargeLines('document')];
-    const totals = reconciledTotals(proven, fields);
+    const rowSubtotal = candidate.reduce((sum, line) => sum.plus(line.totals.lineSubtotalAmount), new Decimal(0));
+    const printedGap = new Decimal(toMoney4(fields.subtotalAmount)).minus(rowSubtotal).toDecimalPlaces(2);
+    const computed = calcDocumentTotals({ lines: proven.map(line => ({ ...line.totals, chargeKind: line.chargeKind })) });
+    const settlementGap = new Decimal(toMoney4(fields.grandTotalAmount)).minus(computed.grandTotalAmount).toDecimalPlaces(2);
+    const roundingLimit = Decimal.min(new Decimal(items.length).mul('0.01'), '0.10');
+    // Only a discrepancy printed between the item rows and their subtotal can explain this
+    // adjustment. A tax-only mismatch still follows the existing VAT review boundary.
+    if (printedSubtotal && fields.grandTotalAmount && !printedGap.isZero()
+      && printedGap.abs().lte(roundingLimit) && printedGap.eq(settlementGap)) {
+      proven.push(prepareLine({ description: 'ปรับเศษจากยอดรายการ', chargeKind: 'ROUNDING',
+        quantity: '1', unitPrice: printedGap.toFixed(2), vatRate: '0', whtRate: null,
+        sourceLineText: EXPENSE_CALCULATED_ROUNDING_SOURCE }, vatMode));
+    }
+    const rowsMatchSubtotal = !['NO_VAT', 'EXEMPT'].includes(vatMode) || !printedSubtotal || printedGap.isZero()
+      || (printedGap.abs().lte(roundingLimit) && printedGap.eq(settlementGap));
+    const totals = rowsMatchSubtotal ? reconciledTotals(proven, fields) : null;
     // The printed totals adding up WITH the charges taxed is the proof §5.1 asks for — no guess and
     // nothing to review. Only when they do not does the charge rate become an open question.
     if (totals) {
@@ -877,7 +906,7 @@ function prepareOcrLines(
     && Math.abs(settlementDifference) > 0 && Math.abs(settlementDifference) <= 0.02) {
     const rounding = prepareLine({ description: 'ปรับเศษจากจำนวนและราคาต่อหน่วย',
       chargeKind: 'ROUNDING', quantity: '1', unitPrice: settlementDifference.toFixed(2),
-      vatRate: '0', whtRate: null, sourceLineText: 'ระบบคำนวณส่วนต่างจากยอดสุทธิที่พิมพ์บนเอกสาร' }, vatMode);
+      vatRate: '0', whtRate: null, sourceLineText: EXPENSE_CALCULATED_ROUNDING_SOURCE }, vatMode);
     const lines = [summary, rounding];
     const totals = reconciledTotals(lines, fields);
     if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines, totals,
@@ -928,6 +957,8 @@ type AppliedReceiptCategory = {
 };
 
 type AppliedReceiptResult = AppliedReceiptCategory & {
+  /** Additional review fields found at the API trust boundary. */
+  missingFields?: string[];
   acceptedAmounts?: { grandTotalAmount: string; vatAmount: string; whtAmount: string; netPayableAmount: string; vatMode: string; discountAmount?: string };
   chargeReconciliationStatus: ReceiptChargeReconciliationStatus;
   /** Only with ITEMS_DID_NOT_RECONCILE: what the printed rows add up to, for the reviewer to compare. */
@@ -1012,8 +1043,21 @@ export class ReceiptOcrApplyService {
       options.todayIso ?? todayCivilDate(),
       completed.expenseDateAssumptions,
     );
+    const numericDocumentNumber = mapThaiDigits(completed.documentNumber ?? '').replace(/[\s-]/g, '');
+    const untrustedDocumentNumber = Boolean(numericDocumentNumber && /^[\dIOl]+$/.test(numericDocumentNumber)
+      && /(?:\d[IOl]|[IOl]\d)/.test(numericDocumentNumber));
+    const documentNumberNeedsReview = untrustedDocumentNumber || fields.missingFields?.includes('documentNumber');
+    const collapsedItems = Boolean(prepared && prepared.status !== 'RECONCILED_ITEM_LINES'
+      && ((fields.lines?.length ?? 0) >= 2 || fields.missingFields?.includes('lines')));
+    const reviewFields = [
+      ...(documentNumberNeedsReview ? ['documentNumber'] : []),
+      ...(fields.missingFields?.includes('vendorName') ? ['vendorName'] : []),
+      ...(collapsedItems ? ['lines'] : []),
+    ];
     let reviewReasons = [
-      ...(fields.missingFields?.includes('lines') ? ['อ่านรายละเอียดบางรายการไม่ครบ เก็บยอดรวมไว้แล้ว กรุณาตรวจรายการกับภาพใบเสร็จ'] : []),
+      ...(documentNumberNeedsReview ? [RECEIPT_REVIEW_REASONS.documentNumberUntrusted] : []),
+      ...(fields.missingFields?.includes('vendorName') ? [RECEIPT_REVIEW_REASONS.sellerUnverified] : []),
+      ...(collapsedItems || fields.missingFields?.includes('lines') ? [RECEIPT_REVIEW_REASONS.itemsFolded] : []),
       ...(dateReview.reason ? [dateReview.reason] : []),
       ...(prepared?.chargeReviewReasons ?? []),
     ];
@@ -1030,7 +1074,7 @@ export class ReceiptOcrApplyService {
     if (completed.vendorName) data['vendorNameSnapshot'] = completed.vendorName;
     if (completed.vendorTaxId) data['vendorTaxIdSnapshot'] = completed.vendorTaxId;
     if (completed.vendorBranchCode) data['vendorBranchCodeSnapshot'] = completed.vendorBranchCode;
-    if (completed.documentNumber) data['vendorDocumentNumber'] = completed.documentNumber;
+    if (completed.documentNumber && !untrustedDocumentNumber) data['vendorDocumentNumber'] = completed.documentNumber;
     const date = validDate(completed.expenseDate);
     if (date) data['expenseDate'] = date;
     const vatMode = validVatMode(completed.vatMode);
@@ -1051,7 +1095,7 @@ export class ReceiptOcrApplyService {
         // human edit with an old OCR summary; callers must fence their follow-up writes.
         const saved = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId: ctx.companyId }, select: { updatedAt: true } });
         await options.onUsablePersisted?.(tx);
-        return { ...result, candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt,
+        return { ...result, ...(reviewFields.length ? { missingFields: reviewFields } : {}), candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt,
           ...(autoSave && autoSave.result.case !== 'SKIPPED' ? { vendorCounterpartyAutoSave: autoSave.result } : {}) };
       };
       const currentExpense = await tx.expenseRecord.findFirst({
@@ -1064,6 +1108,7 @@ export class ReceiptOcrApplyService {
           expenseDate: true, aiVerificationSummaryJson: true,
           primaryAttachmentId: true,
           vendorEntityKindSnapshot: true,
+          vendorDocumentNumber: true,
           // For the vendor registry auto-save below: what the record already carries, so a re-read
           // that writes nothing new still matches against the right shop.
           captureSource: true, sourceReimbursementRequestId: true, vendorCounterpartyId: true,
@@ -1102,6 +1147,8 @@ export class ReceiptOcrApplyService {
         await assertFreeExpenseSourceActor(tx, { companyId: ctx.companyId, userId: ctx.userId, branchId: currentExpense.branchId });
       }
       const summary = currentExpense.aiVerificationSummaryJson as Record<string, unknown> | null;
+      if (untrustedDocumentNumber && !currentExpense.reviewedAt
+        && currentExpense.vendorDocumentNumber === completed.documentNumber) data['vendorDocumentNumber'] = null;
       // §16.4: `sourceStale` means "these values were read from the file that was REPLACED". This
       // read is of the file the record carries NOW, so the warning it raised has been answered and
       // must go with the values it was about. The synchronous lane composes a fresh summary and
@@ -1308,12 +1355,16 @@ export class ReceiptOcrApplyService {
           }
         }
       }
+      if (reviewFields.length) {
+        data['aiVerificationSummaryJson'] = { ...((data['aiVerificationSummaryJson'] ?? summary ?? {}) as Record<string, unknown>),
+          missingFields: [...new Set([...(fields.missingFields ?? []), ...reviewFields])], reviewReasons };
+      }
       // Durable PDF reads have no later synchronous summary write. Persist their date provenance
       // with the same fenced apply, so neither LINE nor source-draft review sees the upload day.
       if (options.sourceAttachmentId && options.sourceDocumentType && currentExpense.primaryAttachmentId === options.sourceAttachmentId && !currentExpense.reviewedAt) {
         const { expenseDate: _rawDate, ...recognized } = fields;
         const acceptedDate = dateReview.verified ? ((data['expenseDate'] as Date | undefined) ?? currentExpense.expenseDate)?.toISOString().slice(0, 10) : undefined;
-        const missing = new Set(fields.missingFields ?? []);
+        const missing = new Set([...(fields.missingFields ?? []), ...reviewFields]);
         if (acceptedDate) missing.delete('expenseDate'); else missing.add('expenseDate');
         data['aiVerificationSummaryJson'] = { ...((data['aiVerificationSummaryJson'] ?? summary ?? {}) as Record<string, unknown>),
           dateStatus: dateReview.status, missingFields: [...missing],

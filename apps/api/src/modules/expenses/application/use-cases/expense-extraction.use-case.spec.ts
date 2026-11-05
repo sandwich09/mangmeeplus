@@ -165,6 +165,21 @@ function makeUseCase(options: {
 }
 
 describe('RequestReceiptExtractionUseCase', () => {
+  for (const free of [false, true]) it(`carries API identity and collapsed-row review flags for ${free ? 'never-paid source drafts' : 'paid shops'}`, async () => {
+    const fixture = makeUseCase({ free, expense: { ...baseExpense, status: 'DRAFT' },
+      gatewayResult: { status: 'ok', classification: classification(), fields: { vendorName: 'ร้านสังเคราะห์',
+        expenseDate: '2026-11-05', grandTotalAmount: '321.00', missingFields: [] } },
+      applyResult: { missingFields: ['documentNumber', 'lines'], reviewReasons: ['เก็บยอดรวมไว้แล้ว ตรวจรายการกับภาพใบเสร็จ'] } });
+    const result = await fixture.useCase.execute(ctx(['expense.read', 'expense.ocr.request'], 'uploader-1'), 'expense-1');
+    assert.equal(result.status, 'ok');
+    assert.ok(result.missingFields?.includes('documentNumber'));
+    assert.ok(result.missingFields?.includes('lines'));
+    const summary = fixture.updates.find(update => update.aiVerificationSummaryJson?.status === 'OCR_EXTRACTED_NEEDS_REVIEW')!.aiVerificationSummaryJson;
+    assert.ok(summary.missingFields.includes('documentNumber'));
+    assert.ok(summary.missingFields.includes('lines'));
+    assert.equal(Boolean(fixture.applyCalls[0][3].sourceOnly), free);
+  });
+
   it('allows readable OCR requests, review, or creator upload access, and hides inaccessible records', async () => {
     for (const allowed of [
       ctx(['expense.read', 'expense.ocr.request']),

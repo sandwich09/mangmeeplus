@@ -734,3 +734,111 @@ it('R10 C47 remittance-only wording still describes tax withheld from payments',
     ['en-GB', 'Show October summary', 'October 2026: PND53 period total 30.00 THB, due 9 Nov 2026.'],
   ]) assert.equal(((await tool.execute({ ...baseCtx, permissions: ['wht.pnd53.read'], locale: locale!, groundingText }, { periodKey: '2026-10' })).data as any).message, expected);
 });
+
+it('LINE voucher creation accepts 30 paid-shop sources and refuses 31 with the shared Thai message', async () => {
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const previews: any[] = [];
+  const service = new LineVoucherActionService({ client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any,
+    { previewLineAction: async (_ctx: any, _action: string, input: any) => previews.push(input) } as any,
+    { execute: async (_ctx: any, id: string) => ({ id, vendorNameSnapshot: 'ร้านทดสอบ', outstandingAmount: '100', whtAmount: '0', updatedAt: new Date('2026-11-05'),
+      branchId: 'branch-1', expenseDate: new Date('2026-11-05'), currency: 'THB', status: 'CONFIRMED' }) } as any,
+    {} as any, {} as any, {} as any);
+  const ctx: any = { ...baseCtx, permissions: ['expense.disbursement.prepare'] };
+  const expenseIds = Array.from({ length: 30 }, (_, i) => `expense-${i + 1}`);
+  const prepared = await service.prepare(ctx, 'VOUCHER_CREATE', expenseIds[0]!, { expenseIds: expenseIds.join(',') });
+  assert.equal(prepared.payload.draft!.lines.length, 30);
+  assert.equal(previews[0].draft.lines.length, 30);
+  await assert.rejects(() => service.prepare(ctx, 'VOUCHER_CREATE', expenseIds[0]!, { expenseIds: [...expenseIds, 'expense-31'].join(',') }),
+    (error: any) => error.getResponse().code === 'disbursement_too_many_lines'
+      && error.getResponse().message === 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 30 รายการ แบ่งรายการที่เหลือไปทำอีกใบ');
+  assert.equal(previews.length, 1);
+});
+
+it('LINE action preview admits 30 voucher ids and refuses 31 before reading any source', async () => {
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const service: any = Object.create(LineExpenseActionService.prototype);
+  let prepared = 0;
+  service.config = { aiGatewayInternalSecret: 'test' };
+  service.owner = async () => true; service.grounded = async () => true;
+  service.vouchers = { prepare: async () => { prepared++; throw new Error('stop after admission'); } };
+  const ctx: any = { ...baseCtx, membershipId: 'member', permissions: ['expense.disbursement.prepare'] };
+  const ids = Array.from({ length: 30 }, (_, i) => `expense-${i + 1}`);
+  await assert.rejects(() => service.preview(ctx, 'chat', { action: 'VOUCHER_CREATE', expenseIds: ids.join(',') }), /stop after admission/);
+  assert.equal(prepared, 1);
+  const refused = await service.preview(ctx, 'chat', { action: 'VOUCHER_CREATE', expenseIds: [...ids, 'expense-31'].join(',') });
+  assert.equal(prepared, 1); assert.match(refused.reply, /30/);
+});
+
+
+it('LINE voucher preview states the selected bill count and preserves a known requested count', async () => {
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const { buildExpenseActionCard } = await import('../../domain/logic/line-expense-action-card.logic');
+  const { readLineSystemCard } = await import('../../domain/logic/line-system-card.fixture');
+  const service = new LineVoucherActionService({ client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any,
+    { previewLineAction: async () => undefined } as any,
+    { execute: async (_ctx: any, id: string) => ({ id, vendorNameSnapshot: 'ร้านทดสอบ', outstandingAmount: '100', whtAmount: '0', updatedAt: new Date('2026-11-05'),
+      branchId: 'branch-1', expenseDate: new Date('2026-11-05'), currency: 'THB', status: 'CONFIRMED' }) } as any,
+    {} as any, {} as any, {} as any);
+  const ctx: any = { ...baseCtx, permissions: ['expense.disbursement.prepare'] };
+  for (const [count, requested, language] of [[20, 25, 'th'], [25, 25, 'th'], [30, undefined, 'th'], [20, 25, 'en']] as const) {
+    const ids = Array.from({ length: count }, (_, i) => `expense-${i + 1}`);
+    const prepared = await service.prepare(ctx, 'VOUCHER_CREATE', ids[0]!, { expenseIds: ids.join(',') }, language, requested);
+    const fact = language === 'en' ? `Bills in this voucher: ${count}${requested ? ` · Requested: ${requested}` : ''}`
+      : `บิลในใบนี้ ${count} ใบ${requested ? ` · ขอไว้ ${requested} ใบ` : ''}`;
+    assert.equal(prepared.details[0], fact);
+    assert.equal(prepared.payload.requestedBillCount, requested);
+    assert.equal(prepared.payload.draft!.lines.length, count);
+    const preview: any = { previewId: 'count-preview', token: 'count-token', action: 'VOUCHER_CREATE', language,
+      expiresAt: new Date(Date.now() + 60000).toISOString(), summary: 'ตรวจจำนวนบิลก่อนสร้าง', details: prepared.details,
+      record: { vendorName: 'ร้านทดสอบ', amount: prepared.record.grandTotalAmount, currency: 'THB', date: '2026-11-05', status: 'ยืนยันแล้ว', nextStatus: 'ร่างใบเตรียมจ่าย' } };
+    const card = buildExpenseActionCard(preview, undefined, language, 'https://app.example.com');
+    assert.ok(readLineSystemCard(card).notes.includes(fact));
+    if (requested && count !== requested) assert.ok(prepared.details.includes(language === 'en'
+      ? 'If bills are missing, select Cancel and make it on the web.' : 'ถ้าบิลไม่ครบ กดไม่ทำ แล้วทำต่อในเว็บ'));
+  }
+});
+
+it('LINE voucher requested count comes only from explicit bill counts in the received text', async () => {
+  const { requestedVoucherBillCount } = await import('../line-voucher-action.service');
+  for (const text of ['รวมบิล 25 ใบเป็นใบเตรียมจ่าย', 'สร้างใบเตรียมจ่ายจาก 25 บิล', 'รวมใบเสร็จทั้งหมด ๒๕ ใบ', 'Create a voucher with 25 bills'])
+    assert.equal(requestedVoucherBillCount(text), 25, text);
+  for (const text of [undefined, 'สร้างใบเตรียมจ่าย 1 ใบ ยอด 2500 บาท', 'บิลใบที่ 25', 'รวมบิล 20 ใบ และบิล 25 ใบ'])
+    assert.equal(requestedVoucherBillCount(text), undefined, text);
+});
+
+it('LINE voucher preview tool forwards only the received-text bill count, never a model supplied count', async () => {
+  const { ExpenseActionPreviewTool } = await import('../line-expense-action.service');
+  const calls: any[][] = [];
+  const tool = new ExpenseActionPreviewTool({ preview: async (...args: any[]) => { calls.push(args); return { reply: 'review' }; } } as any);
+  await tool.execute({ ...baseCtx, groundingText: 'รวมบิล 25 ใบ' }, { action: 'VOUCHER_CREATE', expenseIds: 'expense-1', requestedBillCount: 99 });
+  await tool.execute(baseCtx, { action: 'VOUCHER_CREATE', expenseIds: 'expense-1', requestedBillCount: 99 });
+  assert.equal(calls[0]![6], 25);
+  assert.equal(calls[1]![6], undefined);
+  await tool.execute({ ...baseCtx, inputEvidence: { parts: [{ rawText: 'รวมบิล ๒๕ ใบ' }] } } as any, { action: 'VOUCHER_CREATE', expenseIds: 'expense-1' });
+  assert.equal(calls[2]![6], 25, 'semantic-v2 uses the verified received evidence');
+});
+
+it('LINE voucher preview count does not grant free source-draft users voucher access', async () => {
+  const { LineVoucherActionService } = await import('../line-voucher-action.service');
+  const service = new LineVoucherActionService({ client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any,
+    { previewLineAction: async () => assert.fail('free source drafts cannot preview a voucher') } as any,
+    { execute: async () => assert.fail('free source drafts cannot read voucher sources') } as any, {} as any, {} as any, {} as any);
+  await assert.rejects(() => service.prepare({ ...baseCtx, freeExpenseDrafts: true, permissions: ['expense.read_own', 'expense.receipt.line_upload'] } as any,
+    'VOUCHER_CREATE', 'expense-1', { expenseIds: 'expense-1' }, 'th', 25), ForbiddenException);
+});
+
+
+it('LINE voucher payee continuation keeps the original requested bill count', async () => {
+  const { LineExpenseActionService } = await import('../line-expense-action.service');
+  const service: any = Object.create(LineExpenseActionService.prototype);
+  const revision = new Date('2026-11-05').toISOString();
+  const entry = { awaitingField: 'payeeName', expenseId: 'expense-1', revision, digest: 'source-digest',
+    voucher: { id: 'expense-1', expenseIds: ['expense-1'], requestedBillCount: 25 }, preview: { action: 'VOUCHER_CREATE', language: 'th' } };
+  service.store = { load: async () => entry };
+  service.bound = async () => true;
+  service.read = async () => ({ updatedAt: new Date(revision), digest: 'source-digest' });
+  let args: any[] = [];
+  service.preview = async (...values: any[]) => { args = values; return { reply: 'review' }; };
+  await service.answerReason(baseCtx as any, 'chat', 'ร้านทดสอบ');
+  assert.equal(args[6], 25);
+});

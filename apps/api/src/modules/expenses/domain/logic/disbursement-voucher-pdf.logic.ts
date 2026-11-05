@@ -71,7 +71,7 @@ export function renderDisbursementVoucherSvg(snapshot: DisbursementVoucherPrintS
       if (!value) continue;
       for (const line of wrapText(value, 440, size)) { text(line, 35, leftY, 440, size, false, size === 17); leftY += size === 17 ? 28 : 22; }
     }
-    text(paid ? DISBURSEMENT_VOUCHER_WORDS.oncePaid : DISBURSEMENT_VOUCHER_WORDS.beforePaid, 815, 48, 320, 27, true, true);
+    text(`${paid ? DISBURSEMENT_VOUCHER_WORDS.oncePaid : DISBURSEMENT_VOUCHER_WORDS.beforePaid}${page ? ' (ต่อ)' : ''}`, 815, 48, 320, 27, true, true);
     let rightY = 80;
     if (!paid) { text(`ครั้งที่ ${snapshot.revision ?? 0} · ยังไม่ได้จ่ายเงิน`, 815, rightY, 300, 12, true); rightY += 22; }
     for (const [label, value] of [['เลขที่', snapshot.documentNumber], ['วันที่เอกสาร', snapshot.documentDate ? formatThaiExportDate(snapshot.documentDate) : null],
@@ -145,10 +145,21 @@ export function renderDisbursementVoucherSvg(snapshot: DisbursementVoucherPrintS
     const wrapped = cells.map((cell, i) => i === 2 ? [...(cell ? wrapText(cell, widths[i]! - 8, 12) : []), ...(vendor ? wrapText(vendor, widths[i]! - 8, 12) : [])] : cell ? [cell] : []);
     const height = (Math.max(1, ...wrapped.map(c => c.length)) - 1) * spacing.lineHeight + spacing.rowHeight;
     if (y + height > bottom) { newPage(); tableHeader(); }
-    parts.push(`<path d="M35 ${page * pageHeight + y - spacing.ruleToBaseline} H815" stroke="#ddd"/>`);
-    let x = 35;
-    wrapped.forEach((cell, i) => { cell.forEach((value, j) => { if (value) text(value, i >= 3 ? x + widths[i]! : x + 4, y + j * spacing.lineHeight, widths[i]! - 8, 12, i >= 3); }); x += widths[i]!; });
-    y += height;
+    const count = Math.max(1, ...wrapped.map(cell => cell.length));
+    for (let offset = 0; offset < count;) {
+      if (bottom - y < spacing.rowHeight) { newPage(); tableHeader(); }
+      const take = Math.min(count - offset, Math.floor((bottom - y - spacing.rowHeight) / spacing.lineHeight) + 1);
+      const fragmentHeight = (take - 1) * spacing.lineHeight + spacing.rowHeight;
+      const last = offset + take === count;
+      parts.push(`<path d="M35 ${page * pageHeight + y - spacing.ruleToBaseline} H815" stroke="#ddd"/>`);
+      let x = 35;
+      wrapped.forEach((cell, i) => {
+        const values = i === 2 ? cell.slice(offset, offset + take) : i >= 3 ? last ? cell : [] : offset ? cell.map(value => `${value} (ต่อ)`) : cell;
+        values.forEach((value, j) => { if (value) text(value, i >= 3 ? x + widths[i]! : x + 4, y + j * spacing.lineHeight, widths[i]! - 8, 12, i >= 3); }); x += widths[i]!;
+      });
+      y += fragmentHeight; offset += take;
+      if (!last) { newPage(); tableHeader(); }
+    }
   }
   y += 6;
   const sum = (field: 'grandTotal' | 'wht') => snapshot.lines.reduce((total, l) => total.plus(l[field]), new Decimal(0)).toFixed(2);
@@ -213,5 +224,5 @@ export function renderDisbursementVoucherSvg(snapshot: DisbursementVoucherPrintS
     page = i;
     text(`หน้า ${i + 1}/${pages}`, 815, 1220, 100, 11, true);
   }
-  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${(page + 1) * pageHeight}" viewBox="0 0 850 ${(page + 1) * pageHeight}" data-pdf-breaks="${breaks.join(',')}"><rect width="100%" height="100%" fill="white"/><g font-family="Noto Sans Thai, Tahoma, sans-serif" fill="#111">${parts.join('')}</g></svg>`);
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${(page + 1) * pageHeight}" viewBox="0 0 850 ${(page + 1) * pageHeight}" data-pdf-breaks="${breaks.join(',')}"${pages > 1 ? ` data-pdf-page-height="${pageHeight}"` : ''}><rect width="100%" height="100%" fill="white"/><g font-family="Noto Sans Thai, Tahoma, sans-serif" fill="#111">${parts.join('')}</g></svg>`);
 }

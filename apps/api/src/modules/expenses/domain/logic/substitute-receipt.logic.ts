@@ -282,11 +282,15 @@ export function renderSubstituteReceiptSvg(
     <text x="${x}" y="${signaturesStart + 118}" text-anchor="middle">ชื่อ (________________________________)</text>
     <text x="${x}" y="${signaturesStart + 150}" text-anchor="middle">ตำแหน่ง (ถ้ามี) _______________________</text>
     <text x="${x}" y="${signaturesStart + 182}" text-anchor="middle">วันที่ ________ / ________ / ____________</text>`;
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" data-pdf-breaks="${pdfBreaks.join(',')}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_TITLE)}">
-  <rect width="850" height="${height}" fill="#fff"/>
-  <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-    <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
+  const signatures = `${options.paperForm ? paperSignatureBlock(240, 'ผู้รับรองการจ่าย') + paperSignatureBlock(615, 'ผู้อนุมัติ') : `
+    ${payerSignatureBlock}
+    <line x1="105" y1="${signaturesStart + 92}" x2="375" y2="${signaturesStart + 92}" stroke="#222"/>
+    <text x="240" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion), 270)}>${xml(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion))}</text>
+    <text x="240" y="${signaturesStart + 140}" text-anchor="middle">${xml(snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง')}${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
+    ${approverBlock}
+    `}
+    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(selfSignedNote, 760)}>${xml(selfSignedNote)}</text>` : ''}`;
+  const heading = `<text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
     <text x="425" y="80" text-anchor="middle"${fitToWidth(`เลขใบแทน: ${snapshot.documentNumber}`, 750)}>เลขใบแทน: ${xml(snapshot.documentNumber)}</text>
     <text x="50" y="120"${fitToWidth(`กิจการ: ${snapshot.company.name}`, 410)}>กิจการ: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
@@ -296,7 +300,12 @@ export function renderSubstituteReceiptSvg(
     <text x="470" y="176">วันที่จ่าย: ${xml(snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-')}</text>
     <text x="50" y="204">หลักฐานต้นทาง: ${xml(DOCUMENT_TYPE_LABELS[snapshot.originalSourceDocumentType] ?? 'เอกสารค่าใช้จ่าย')}</text>
     <text x="470" y="204">วิธีชำระเงิน: ${xml(snapshot.expense.paymentMethod ? PAYMENT_METHOD_LABELS[snapshot.expense.paymentMethod] ?? 'อื่น ๆ' : '-')}</text>
-    ${payeeLines.length ? multilineText(50, 242, payeeLines, 22) : ''}
+    ${payeeLines.length ? multilineText(50, 242, payeeLines, 22) : ''}`;
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" data-pdf-breaks="${pdfBreaks.join(',')}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_TITLE)}">
+  <rect width="850" height="${height}" fill="#fff"/>
+  <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
+    ${heading}
     <g fill="none" stroke="#444" stroke-width="1.2">
       <rect x="45" y="${tableTop}" width="760" height="${tableBottom - tableTop}"/>
       <line x1="150" y1="${tableTop}" x2="150" y2="${rowY}"/>
@@ -322,17 +331,89 @@ export function renderSubstituteReceiptSvg(
     ${multilineText(60, certificationTop + 27, certificationLines, 22)}
     <text x="50" y="${evidenceTitleY}" font-weight="700">หลักฐานประกอบ/หลักฐานการจ่ายที่เชื่อมโยง</text>
     ${evidence}
-    ${options.paperForm ? paperSignatureBlock(240, 'ผู้รับรองการจ่าย') + paperSignatureBlock(615, 'ผู้อนุมัติ') : `
-    ${payerSignatureBlock}
-    <line x1="105" y1="${signaturesStart + 92}" x2="375" y2="${signaturesStart + 92}" stroke="#222"/>
-    <text x="240" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion), 270)}>${xml(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion))}</text>
-    <text x="240" y="${signaturesStart + 140}" text-anchor="middle">${xml(snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง')}${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
-    ${approverBlock}
-    `}
-    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(selfSignedNote, 760)}>${xml(selfSignedNote)}</text>` : ''}
+    ${signatures}
   </g>
 </svg>`;
+  if (height > 1250) {
+    return renderSubstituteReceiptContinuationPages(snapshot, heading, tableTop, signatures, signaturesStart,
+      [
+        ...(captureLines.length ? [{ lines: captureLines }] : []),
+        { lines: reasonLines }, { lines: purposeLines }, { lines: noteLines }, { lines: certificationLines, boxed: true },
+        { lines: ['หลักฐานประกอบ/หลักฐานการจ่ายที่เชื่อมโยง'], bold: true },
+        ...(snapshot.evidence.length ? snapshot.evidence.map(item => ({ lines: wrapText(`• ${item.originalFileName} — ${EVIDENCE_PURPOSE_LABELS[item.purpose] ?? 'หลักฐานประกอบ'}`, 720) })) : [{ lines: ['• ไม่มีเอกสารแนบเพิ่มเติม'] }]),
+      ]);
+  }
   return Buffer.from(svg, 'utf8');
+}
+
+/** Fixed sheets like the claim form: whole rows move together; an unusually tall row continues
+ * with its amount only on its final fragment. Each page is rasterized independently by the PDF. */
+function renderSubstituteReceiptContinuationPages(
+  snapshot: SubstituteReceiptSnapshot, heading: string, firstTableTop: number,
+  signatures: string, signaturesStart: number, paragraphs: { lines: string[]; boxed?: boolean; bold?: boolean }[],
+): Buffer {
+  const pageHeight = 1250, bottom = 1190;
+  const pages: string[][] = [[]];
+  let page = pages[0]!, y = firstTableTop;
+  page.push(heading);
+  const nextPage = () => {
+    page = []; pages.push(page); y = 125;
+    page.push(`<text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE} (ต่อ)</text>
+      <text x="425" y="80" text-anchor="middle"${fitToWidth(`เลขใบแทน: ${snapshot.documentNumber}`, 750)}>เลขใบแทน: ${xml(snapshot.documentNumber)}</text>`);
+  };
+  const ensure = (height: number) => { if (y + height > bottom) nextPage(); };
+  const tableHeader = () => {
+    page.push(`<rect x="45" y="${y}" width="760" height="38" fill="#f7f7f7" stroke="#444"/>
+      ${[[96, 'วัน เดือน ปี'], [355, 'รายละเอียดรายจ่าย'], [595, 'จำนวน'], [680, 'จำนวนเงิน'], [767, 'หมายเหตุ']].map(([x, label]) => `<text x="${x}" y="${y + 25}" text-anchor="middle">${label}</text>`).join('')}`);
+    y += 38;
+  };
+  tableHeader();
+  const sourceLines = snapshot.expense.lines.length ? snapshot.expense.lines : [{ description: '-', quantity: '-', amount: '0' }];
+  sourceLines.forEach((line, index) => {
+    const descriptions = wrapText(line.description, DESCRIPTION_WIDTH);
+    const notes = index === 0 && snapshot.note ? wrapText(snapshot.note, NOTE_WIDTH) : ['-'];
+    const count = Math.max(descriptions.length, notes.length);
+    const rowHeight = Math.max(36, count * 21 + 12);
+    if (y + rowHeight > bottom) { nextPage(); tableHeader(); }
+    for (let offset = 0; offset < count;) {
+      if (bottom - y < 36) { nextPage(); tableHeader(); }
+      const take = Math.min(count - offset, Math.floor((bottom - y - 12) / 21));
+      const height = Math.max(36, take * 21 + 12), last = offset + take === count;
+      page.push(`<g data-substitute-row="${index + 1}" data-row-continuation="${offset > 0}" data-top="${y}" data-height="${height}">
+        <rect x="45" y="${y}" width="760" height="${height}" fill="none" stroke="#bbb"/>
+        ${[150, 560, 630, 730].map(x => `<line x1="${x}" y1="${y}" x2="${x}" y2="${y + height}" stroke="#444"/>`).join('')}
+        <text x="54" y="${y + 24}"${fitToWidth(`${formatDate(snapshot.expense.expenseDate)}${offset ? ' (ต่อ)' : ''}`, 96)}>${xml(formatDate(snapshot.expense.expenseDate))}${offset ? ' (ต่อ)' : ''}</text>
+        ${multilineText(165, y + 24, descriptions.slice(offset, offset + take), 21, DESCRIPTION_WIDTH)}
+        ${last ? `<text x="615" y="${y + 24}" text-anchor="end"${fitToWidth(line.quantity, 60)}>${xml(line.quantity)}</text><text data-substitute-amount="${index + 1}" x="710" y="${y + 24}" text-anchor="end"${fitToWidth(money(line.amount), 90)}>${xml(money(line.amount))}</text>` : ''}
+        ${multilineText(742, y + 24, notes.slice(offset, offset + take), 21, NOTE_WIDTH)}</g>`);
+      y += height; offset += take;
+      if (!last) { nextPage(); tableHeader(); }
+    }
+  });
+  ensure(80);
+  page.push(`<g data-substitute-total="true"><text x="620" y="${y + 24}" text-anchor="end" font-weight="700">รวมทั้งสิ้น</text>
+    <text x="720" y="${y + 24}" text-anchor="end" font-weight="700">${xml(money(snapshot.expense.grandTotalAmount))}</text>
+    <text x="54" y="${y + 58}"${fitToWidth(`รวมเป็นตัวอักษร: ${thaiBahtText(snapshot.expense.grandTotalAmount)}`, BAHT_TEXT_WIDTH)}>รวมเป็นตัวอักษร: ${xml(thaiBahtText(snapshot.expense.grandTotalAmount))}</text></g>`);
+  y += 92;
+  for (const { lines, boxed, bold } of paragraphs) {
+    const padding = boxed ? 28 : 12;
+    if (lines.length * 22 + padding <= bottom - 125) ensure(lines.length * 22 + padding);
+    for (let offset = 0; offset < lines.length;) {
+      ensure(22 + padding);
+      const take = Math.min(lines.length - offset, Math.floor((bottom - y - padding) / 22));
+      const height = take * 22 + padding;
+      if (boxed) page.push(`<rect x="45" y="${y}" width="760" height="${height}" fill="#fafafa" stroke="#777"/>`);
+      page.push(`<g${bold ? ' font-weight="700"' : ''}>${multilineText(boxed ? 60 : 50, y + (boxed ? 27 : 18), lines.slice(offset, offset + take), 22, boxed ? 720 : 735)}</g>`);
+      y += height; offset += take;
+    }
+  }
+  // Translate the existing signature block intact; it occurs once on the final sheet.
+  const signatureHeight = 248;
+  ensure(signatureHeight);
+  page.push(`<g data-substitute-signatures="true" transform="translate(0 ${y - signaturesStart})">${signatures}</g>`);
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${pages.length * pageHeight}" viewBox="0 0 850 ${pages.length * pageHeight}" data-pdf-page-height="${pageHeight}" data-pdf-breaks="${pages.slice(1).map((_, i) => (i + 1) * pageHeight).join(',')}" role="img" aria-label="${SUBSTITUTE_RECEIPT_TITLE}">
+    <rect width="850" height="${pages.length * pageHeight}" fill="#fff"/>
+    <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">${pages.map((content, i) => `<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${pageHeight}" viewBox="0 0 850 ${pageHeight}" y="${i * pageHeight}" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111" data-pdf-sheet="${i + 1}" data-substitute-page="${i + 1}"><rect width="850" height="${pageHeight}" fill="#fff"/>${content.join('')}<text x="805" y="1225" text-anchor="end" font-size="12">หน้า ${i + 1}/${pages.length}</text></svg>`).join('')}</g></svg>`, 'utf8');
 }
 
 /** `fontSize` defaults to this sheet's body size; ใบสำคัญรับเงิน prints at 18 and passes its own. */

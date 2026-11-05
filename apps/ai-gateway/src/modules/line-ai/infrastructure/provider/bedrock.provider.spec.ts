@@ -11,6 +11,7 @@ import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createProvider } from './provider.factory';
 import { AnthropicApiProvider, anthropicModelId } from './anthropic-api.provider';
+import { providerInputTokenUpperBound, v2RenderedInput } from '../../../../common/usage/ai-budget-provider';
 import {
   AI_BUDGET_IMAGE_TOKEN_CEILING, AI_BUDGET_STEP_ATTEMPTS, AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
 } from '@watchdog-bms/contracts';
@@ -42,6 +43,76 @@ const LONG_PROMPT = 'p'.repeat(CACHE_MIN_CHARS);
 const SHORT_PROMPT = 'p'.repeat(CACHE_MIN_CHARS - 1);
 const LONG_CONTEXT = 'c'.repeat(CACHE_MIN_CHARS);
 const SHORT_CONTEXT = 'c'.repeat(CACHE_MIN_CHARS - 1);
+
+describe('LINE loop cache prefixes', () => {
+  for (const transport of ['bedrock', 'anthropic'] as const) {
+    it(`${transport}: separates the shared catalogue and per-turn prefix, preserving text and budget bounds`, async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: any[] = [];
+      const provider = transport === 'bedrock' ? makeProvider() : new AnthropicApiProvider({ apiKey: 'test', modelId: 'test', timeoutMs: 10000 });
+      if (transport === 'bedrock') (provider as any).client = { send: async (cmd: any) => { requests.push(cmd.input); return { stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } } }; } };
+      else globalThis.fetch = async (_url, init) => { requests.push(JSON.parse(String(init?.body))); return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] }); };
+      const catalogue = '{"tools":["' + LONG_CONTEXT + '"]';
+      const input: import('./provider.port').ProviderInput = { systemPrompt: LONG_PROMPT, cacheableContext: catalogue + ',"evidence":"company-a"}',
+        cacheableContextPrefixLength: catalogue.length, messages: [{ role: 'user', text: '{"previousToolResults":[]}' }], maxTokens: 2048 };
+      const contents = (req: any) => req.messages[0].content.filter((b: any) => !b.cachePoint);
+      const cached = (req: any, index: number) => transport === 'bedrock' ? !!req.messages[0].content[index * 2 + 1]?.cachePoint : !!contents(req)[index]?.cache_control;
+      try {
+        await provider.generateText(input);
+        await provider.generateText({ ...input, messages: [{ role: 'user', text: '{"previousToolResults":["result"]}' }] });
+        await provider.generateText({ ...input, cacheableContext: catalogue + ',"evidence":"company-b"}' });
+        for (const req of requests) {
+          assert.equal(cached(req, 0), true, 'catalogue is independently reusable next turn');
+          assert.equal(cached(req, 1), true, 'the full per-turn prefix is cached');
+        }
+        assert.equal(JSON.stringify(contents(requests[0]).slice(0, 2)), JSON.stringify(contents(requests[1]).slice(0, 2)), 'follow-up prefix bytes match');
+        assert.deepEqual(contents(requests[0])[0], contents(requests[2])[0], 'different company/turn retains only the shared catalogue prefix');
+        assert.notDeepEqual(contents(requests[0])[1], contents(requests[2])[1]);
+        assert.equal(contents(requests[0]).map((b: any) => b.text).join(''), input.cacheableContext! + input.messages[0]!.text, 'split does not rewrite any text');
+        const unsplit = { ...input, cacheableContextPrefixLength: undefined };
+        assert.deepEqual(v2RenderedInput(input), v2RenderedInput(unsplit), 'checkpoints never discount the reservation or alter content identity');
+        assert.equal(providerInputTokenUpperBound(input), Buffer.byteLength(input.systemPrompt! + input.cacheableContext! + input.messages[0]!.text), 'all cached text remains fully bounded');
+        await provider.generateWithTools({ ...input, tools: [{ name: 'read', description: LONG_CONTEXT, inputSchema: {} }], messages: [{ role: 'user', text: 'q' },
+          { role: 'assistant', toolCalls: [{ toolUseId: 't1', name: 'read', input: {} }] }, { role: 'tool_results', results: [{ toolUseId: 't1', content: 'result' }] }] });
+        const wire = JSON.stringify(requests[3]);
+        assert.equal((wire.match(transport === 'bedrock' ? /"cachePoint":/g : /"cache_control":/g) ?? []).length, 4, 'split context leaves only one tool-loop message slot');
+        await provider.generateText({ cacheableContext: 'short context', cacheableContextPrefixLength: 5, messages: [{ role: 'user', text: 'q' }] });
+        assert.doesNotMatch(JSON.stringify(requests[4]), /cachePoint|cache_control/, 'a short split prefix is not checkpointed');
+      } finally { globalThis.fetch = originalFetch; }
+    });
+    it(`${transport}: caches tools and the first/follow-up input prefixes without changing payload bytes`, async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: any[] = [];
+      const response = { stopReason: 'end_turn', output: { message: { content: [{ text: 'ok' }] } } };
+      const provider = transport === 'bedrock' ? makeProvider() : new AnthropicApiProvider({ apiKey: 'test', modelId: 'test', timeoutMs: 10000 });
+      if (transport === 'bedrock') (provider as any).client = { send: async (cmd: any) => { requests.push(cmd.input); return response; } };
+      else globalThis.fetch = async (_url, init) => { requests.push(JSON.parse(String(init?.body))); return Response.json({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] }); };
+      const tools = [{ name: 'read', description: LONG_CONTEXT, inputSchema: { type: 'object', properties: {} } }];
+      const messages: import('./provider.port').ProviderToolMessage[] = [{ role: 'user', text: 'question' }];
+      const pointCount = (value: any): number => Array.isArray(value) ? value.reduce((n, v) => n + pointCount(v), 0)
+        : value && typeof value === 'object' ? Number('cachePoint' in value || 'cache_control' in value) + Object.values(value).reduce<number>((n, v) => n + pointCount(v), 0) : 0;
+      const strip = (value: any): any => Array.isArray(value) ? value.filter(v => !v?.cachePoint).map(strip)
+        : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'cache_control').map(([key, v]) => [key, strip(v)])) : value;
+      const cached = (message: any) => transport === 'bedrock' ? !!message.content.at(-1)?.cachePoint : !!message.content.at(-1)?.cache_control;
+      try {
+        await provider.generateWithTools({ tools, messages });
+        messages.push({ role: 'assistant', toolCalls: [{ toolUseId: 't1', name: 'read', input: {} }] }, { role: 'tool_results', results: [{ toolUseId: 't1', content: 'result' }] });
+        await provider.generateWithTools({ tools, messages });
+        assert.equal(pointCount(transport === 'bedrock' ? requests[0].toolConfig : requests[0].tools), 1, 'standalone tool prefix');
+        assert.equal(cached(requests[0].messages[0]), true, 'first loop input is written');
+        assert.equal(cached(requests[1].messages[0]), true, 'follow-up retains the exact earlier breakpoint');
+        assert.equal(cached(requests[1].messages[2]), true, 'tool result prefix is written for the next call');
+        assert.equal(JSON.stringify(requests[1].messages[0]), JSON.stringify(requests[0].messages[0]));
+        assert.deepEqual(strip(requests[1]).messages.slice(0, 1), strip(requests[0]).messages);
+        assert.deepEqual(strip(transport === 'bedrock' ? requests[1].toolConfig : requests[1].tools), strip(transport === 'bedrock' ? requests[0].toolConfig : requests[0].tools));
+        await provider.generateWithTools({ tools, messages, systemPrompt: LONG_PROMPT, cacheableContext: LONG_CONTEXT });
+        assert.equal(pointCount(requests[2]), 4, 'system, context and two message points; system already covers tools');
+        await provider.generateWithTools({ tools: [{ ...tools[0]!, description: 'short' }], messages: [{ role: 'user', text: 'short' }] });
+        assert.equal(pointCount(requests[3]), 0, 'short prefixes are never checkpointed');
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+});
 
 describe('BedrockProvider error mapping', () => {
   it('exposes max_tokens on text generation', async () => {

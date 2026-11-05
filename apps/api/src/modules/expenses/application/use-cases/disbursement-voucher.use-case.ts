@@ -3,7 +3,7 @@ import { eWhtRateKind, type ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Optional, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYMENT_METHODS, civilDateToUtcDate, coerceCivilDate, isCivilDate,
+import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_STATUSES, DISBURSEMENT_VOUCHER_WORDS, EXPENSE_PAYMENT_METHODS, civilDateToUtcDate, coerceCivilDate, isCivilDate,
   DISBURSEMENT_VOUCHER_SLIP_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_UPLOAD_TAG, DISBURSEMENT_VOUCHER_SUPPORTING_PURPOSE, DISBURSEMENT_VOUCHER_SLIP_PURPOSE, DISBURSEMENT_VOUCHER_ATTACHMENT_TARGET_TYPE, REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   disbursementExpenseReasonMessage, disbursementVoucherError,
   type RequestContext, type CreateDisbursementVoucherDraftInput, type UpdateDisbursementVoucherDraftInput, type DisbursementVoucherHeader,
@@ -50,7 +50,7 @@ function validateInput(body: CreateDisbursementVoucherDraftInput, update: boolea
     || typeof body.commandId !== 'string' || !body.commandId.trim() || body.commandId.length > 128) throw invalid();
   if (!Array.isArray(body.lines)) throw invalid();
   if (!body.lines.length) throw new BadRequestException(disbursementVoucherError('disbursement_lines_required'));
-  if (body.lines.length > 20) throw new BadRequestException(disbursementVoucherError('disbursement_too_many_lines'));
+  if (body.lines.length > DISBURSEMENT_VOUCHER_MAX_LINES) throw new BadRequestException(disbursementVoucherError('disbursement_too_many_lines'));
   for (const line of body.lines) if (!line || typeof line !== 'object' || typeof line.expenseId !== 'string' || !line.expenseId.trim()
     || Object.keys(line).some(key => !['expenseId', 'amount'].includes(key))) throw invalid();
   if (new Set(body.lines.map(l => l.expenseId)).size !== body.lines.length) throw new BadRequestException(disbursementVoucherError('disbursement_duplicate_expense'));

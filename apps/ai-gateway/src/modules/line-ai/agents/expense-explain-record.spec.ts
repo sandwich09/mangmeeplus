@@ -629,3 +629,22 @@ it('PWS-FIXED-D bill explanation keeps every amount and uses the plain VAT base 
   for (const amount of ['1,520.00', '152.00', '117.04', '1,789.04']) assert.ok(reply.includes(amount));
   assert.doesNotMatch(reply, /ฐานภาษี/);
 });
+
+it('explains all 30 bill charge rows in the arithmetic sentence', () => {
+  const charges = Array.from({ length: 30 }, (_, i) => ({ kind: 'OTHER', label: `ค่าใช้จ่ายที่ ${i + 1}`, amount: '1.00', vatAmount: '0.00' }));
+  const reply = formatExpenseExplainReply({ ...BHC_EXPLAIN, lineGroups: { ...BHC_EXPLAIN.lineGroups, charges } });
+  assert.ok(reply);
+  for (let i = 1; i <= 30; i++) assert.ok(reply.includes(`ค่าใช้จ่ายที่ ${i} 1.00`));
+});
+
+it('LINE charge replies at 31 and 200 admit the remainder and use the full supplied total in the equation', () => {
+  for (const count of [31, 200]) {
+    const charges = Array.from({ length: count }, (_, i) => ({ kind: 'OTHER', label: `ค่าใช้จ่ายที่ ${i + 1}`, amount: '1.00', vatAmount: '0.00' }));
+    const reply = formatExpenseExplainReply({ ...BHC_EXPLAIN, lineGroups: { ...BHC_EXPLAIN.lineGroups, charges },
+      totals: { ...BHC_EXPLAIN.totals, chargesAmount: String(count) } })!;
+    assert.match(reply, new RegExp(`และอีก ${count - 30} รายการ`));
+    assert.match(reply, new RegExp(`ค่าใช้จ่ายเพิ่มรวม ${count}.00`));
+    assert.ok(reply.includes('ค่าใช้จ่ายที่ 30 1.00'));
+    assert.ok(!reply.includes('ค่าใช้จ่ายที่ 31 1.00'));
+  }
+});

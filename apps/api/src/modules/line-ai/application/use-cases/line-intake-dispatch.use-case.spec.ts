@@ -2387,7 +2387,8 @@ describe('LINE intake dispatch – media path', () => {
     for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
       assert.ok((h.replies[0] ?? '').includes(label), `reference receipt summary includes ${label}`);
     }
-    assert.doesNotMatch(h.replies[0] ?? '', /เลขที่เอกสาร|• VAT|• WHT/u, 'the concise summary omits document number and unknown taxes');
+    assert.doesNotMatch(h.replies[0] ?? '', /เลขเอกสาร|• เลขที่เอกสาร|• VAT|• WHT/u, 'the summary omits unread document-number and tax values');
+    assert.match(h.replies[0] ?? '', /ยังต้องตรวจ: เลขที่เอกสาร, ภาษีมูลค่าเพิ่ม/u, 'unread fields remain explicit review warnings');
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {

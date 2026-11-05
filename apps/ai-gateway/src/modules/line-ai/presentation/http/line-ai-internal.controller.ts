@@ -7,7 +7,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import sharp from 'sharp';
 import { extractJson } from '../../../../common/ai/extract-json';
 export { receiptIssuerText } from '../../domain/logic/expense-capture-read.logic';
-import { prepareDocumentImage, isLandscapeDocument, readWithTimeoutRetry } from '../../domain/logic/document-media.logic';
+import { prepareDocumentImage, prepareReceiptReadImages, isLandscapeDocument, readWithTimeoutRetry } from '../../domain/logic/document-media.logic';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { providerErrorEnvelope } from '../../../../common/usage/ai-budget-provider';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
@@ -25,7 +25,7 @@ import {
   MAX_CAPTURE_PAGE_TEXT_CHARS,
   captureReadPrompt,
   parseCaptureNaturalText,
-  hasLabelledSellerBlock, receiptIssuerText, parseCaptureObservationsJson,
+  hasLabelledSellerBlock, receiptSellerBlock, receiptIssuerText, parseCaptureObservationsJson,
   parseCaptureReadPages,
   parseCategorySuggestion,
 } from '../../domain/logic/expense-capture-read.logic';
@@ -623,6 +623,8 @@ export class LineAiInternalController {
     // values from — the §13 cross-check below is only meaningful against real read text.
     if (mimeType === 'application/pdf') return { status: 'failed', errorCode: 'PDF_CAPTURE_REQUIRED' };
     const isPdf = false;
+    const readImages = await prepareReceiptReadImages({ mimeType, contentBase64: body.attachment.contentBase64 });
+    const tiledRead = readImages.length > 1;
     const image = await prepareDocumentImage({ mimeType, contentBase64: body.attachment.contentBase64 });
     mimeType = image.mimeType;
     body.attachment = { ...body.attachment, mimeType, contentBase64: image.contentBase64 };
@@ -632,15 +634,19 @@ export class LineAiInternalController {
     // identical image). Stage 2 and the §13 cross-check are unchanged — they simply run against a
     // read that already happened. Anything missing or too short to be a page falls back.
     const forwardedText = typeof body.documentText === 'string' ? body.documentText.trim() : '';
-    const alternate = isPdf ? null : await receiptRereadImage(mimeType, image.contentBase64);
+    const alternate = isPdf || tiledRead ? null : await receiptRereadImage(mimeType, image.contentBase64);
     const hasAlternateView = alternate?.contentBase64 !== undefined && alternate.contentBase64 !== body.attachment.contentBase64;
-    const reusedRead = forwardedText.length >= MIN_FORWARDED_DOCUMENT_TEXT_CHARS
+    const reusedRead = !tiledRead && forwardedText.length >= MIN_FORWARDED_DOCUMENT_TEXT_CHARS
       && forwardedText.length <= MAX_FORWARDED_DOCUMENT_TEXT_CHARS;
     let stageOneText: string;
     if (reusedRead) {
       stageOneText = JSON.stringify({ natural_text: forwardedText });
     } else {
-      const stageOne = await this.readDocumentText(mimeType, image.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined);
+      const stageOneImages = tiledRead ? readImages : [...(hasAlternateView ? [alternate!] : []), image];
+      this.logger.log({ msg: 'receipt.ocr.read', requestId: body.requestId,
+        tileCount: tiledRead ? readImages.length : 0, imageCount: stageOneImages.length,
+        imageBytes: stageOneImages.reduce((total, part) => total + Buffer.from(part.contentBase64, 'base64').byteLength, 0) });
+      const stageOne = await this.readDocumentText(mimeType, image.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined, readImages);
       if (!stageOne.ok) {
         return { status: stageOne.status, errorCode: stageOne.errorCode, ...(stageOne.budgetScope ? { budgetScope: stageOne.budgetScope } : {}) };
       }
@@ -711,22 +717,27 @@ export class LineAiInternalController {
       }
     }
 
-    // One recovery call returns both a fresh visual transcription and fields. All existing
-    // evidence checks run against that transcription before a reconciled block may replace the first.
-    if (!repairedStructure && !isPdf && this.config.modelProvider === 'bedrock' && shouldRereadReceiptImage(understood)) {
+    // Spend the existing recovery call on missing header adjustments in the same read, or on a
+    // fresh visual read for item errors. Only reconciled fields may replace the first extraction.
+    if (!repairedStructure && !isPdf && this.config.modelProvider === 'bedrock' && shouldRereadReceiptImage(understood, documentText)) {
       fallbackReasons.add('ITEMS_INCOMPLETE');
+      const headerGap = receiptHeaderGap(understood.fields);
+      const headerWasOpen = headerGap !== undefined && Math.abs(headerGap) > 0.05;
+      const recoverHeader = headerWasOpen && RECEIPT_ADJUSTMENT_LINE_RE.test(documentText);
       this.logger.warn({
-        msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: 'image-reread',
+        msg: 'receipt.ocr.fallback', requestId: body.requestId, fallback: recoverHeader ? 'extract-reconcile' : 'image-reread',
         reasons: [...fallbackReasons],
       });
       const second = await this.understandReceiptText(provider, documentText, activeCategories, false,
-        await receiptRereadImage(mimeType, image.contentBase64));
+        recoverHeader ? undefined : tiledRead ? readImages : await receiptRereadImage(mimeType, image.contentBase64),
+        recoverHeader ? `The printed total is ${Math.abs(headerGap!).toFixed(2)} ${headerGap! > 0 ? 'less' : 'more'} than the extracted header amount (subtotal minus discount plus charges and any additional VAT). Re-read every printed discount/coupon/shipping line (ส่วนลด / คูปอง / การจัดส่ง / ค่าจัดส่ง). Copy the printed amounts; never invent an amount to close the gap.` : undefined);
       if (second.ok && second.fields?.lines?.length
         && !receiptItemsMismatch(second.fields) && sameUsableTotal(understood, second)
+        && (!headerWasOpen || Math.abs(receiptHeaderGap(second.fields) ?? Infinity) <= 0.05)
         && (!understood.fields?.documentNumber || !second.fields.documentNumber
           || understood.fields.documentNumber === second.fields.documentNumber)) {
         understood = second;
-        stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
+        if (!recoverHeader) stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
       }
     }
 
@@ -761,6 +772,7 @@ export class LineAiInternalController {
     modelId: string | undefined,
     label: string,
     alternate?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string },
+    readImages?: Array<{ mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }>,
   ): Promise<{ ok: true; text: string } | { ok: false; status: 'failed' | 'not_configured'; errorCode: string; budgetScope?: AiBudgetScope }> {
     const isPdf = mimeType === 'application/pdf';
     // Images go to whichever configured provider reads vision; a PDF still needs Bedrock, whose
@@ -772,12 +784,15 @@ export class LineAiInternalController {
     const reader = createProvider(this.config, { modelId, timeoutMs: image?.timeoutMs ?? AI_DOCUMENT_PAGE_TIMEOUT_MS });
     const read = await readWithTimeoutRetry(reader, {
       systemPrompt: bedrockOcrPrompt(isPdf ? 'PDF' : 'image'),
-      messages: [{ role: 'user', text: alternate
+      messages: [{ role: 'user', text: (readImages?.length ?? 0) > 1
+        ? 'These images are overlapping horizontal regions of ONE tall document in top-to-bottom order. Transcribe the whole document once, merging the overlap without duplicating rows. Keep every printed seller detail, document number and item row.'
+        : alternate
         ? 'Both images are different orientations of the SAME page. Read the clearest upright view once; they are not two documents. Transcribe only printed facts, with no translated or calculated additions.'
         : 'Transcribe the attached document.' }],
       ...(isPdf
         ? { documents: [{ mimeType: 'application/pdf' as const, contentBase64 }] }
-        : { images: [...(alternate ? [alternate] : []), { mimeType: image!.mimeType, contentBase64: image!.contentBase64 }] }),
+        : { images: readImages && readImages.length > 1 ? readImages
+          : [...(alternate ? [alternate] : []), { mimeType: image!.mimeType, contentBase64: image!.contentBase64 }] }),
       maxTokens: label === 'receipt' ? RECEIPT_EXTRACTION_MAX_TOKENS : 4096,
       usageTag: `ocr.${label === 'receipt' ? 'receipt' : 'bank-statement'}.${isPdf ? 'pdf' : 'image'}-read`,
     });
@@ -791,10 +806,11 @@ export class LineAiInternalController {
     documentText: string,
     activeCategories: Array<{ id: string; name: string }>,
     repair = false,
-    image?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string },
+    image?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string } | Array<{ mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }>,
+    reconciliationHint?: string,
   ): Promise<ReceiptUnderstanding> {
     const request = {
-      systemPrompt: RECEIPT_OCR_PROMPT + (image ? '\nRe-read the attached image, correcting missing or misaligned item rows. Return natural_text with a fresh complete transcription, together with fields and classification in the SAME JSON object. Use the image as evidence; the earlier OCR text may be wrong. Do not invent unreadable values.' : ''),
+      systemPrompt: RECEIPT_OCR_PROMPT + (Array.isArray(image) ? '\nThe attached images are overlapping regions of ONE tall page in top-to-bottom order. Merge overlapping rows once.' : '') + (image ? '\nRe-read the attached image, correcting missing or misaligned item rows. Return natural_text with a fresh complete transcription, together with fields and classification in the SAME JSON object. Use the image as evidence; the earlier OCR text may be wrong. Do not invent unreadable values.' : ''),
       messages: [{
         role: 'user' as const,
         text: [
@@ -804,11 +820,12 @@ export class LineAiInternalController {
           'OCR_TEXT_START',
           documentText,
           'OCR_TEXT_END',
+          ...(reconciliationHint ? [reconciliationHint] : []),
           ...(repair ? ['The previous response was structurally incomplete. Return only one complete JSON object with fields and classification. Include every classification property from the system schema, including confidence and evidenceRoles. Keep uncertainty and all business-document gates; do not invent facts to fill missing fields.'] : []),
         ].join('\n'),
       }],
       maxTokens: RECEIPT_EXTRACTION_MAX_TOKENS,
-      ...(image ? { images: [image] } : {}),
+      ...(image ? { images: Array.isArray(image) ? image : [image] } : {}),
       usageTag: image ? 'ocr.receipt.image-reread' : repair ? 'ocr.receipt.extract-repair' : 'ocr.receipt.extract',
     };
     const extraction = await (image ? provider.generateText(request) : readWithTimeoutRetry(provider, request));
@@ -1197,7 +1214,24 @@ export function receiptItemsMismatch(fields: ReceiptOcrResponse['fields'], minim
   return Number.isFinite(total) && Math.abs(total - money(fields.grandTotalAmount)) > 0.05;
 }
 
-export function shouldRereadReceiptImage(understanding: ReceiptUnderstanding): boolean {
+const RECEIPT_ADJUSTMENT_LINE_RE = /ส่วนลด|คูปอง|การจัดส่ง|ค่าจัดส่ง|discount|coupon|shipping|delivery/iu;
+
+/** Positive means the extracted header exceeds the printed payable. Never supplies a balancing value. */
+function receiptHeaderGap(fields: ReceiptOcrResponse['fields']): number | undefined {
+  if (!fields?.subtotalAmount || !fields.grandTotalAmount) return undefined;
+  const money = (value: string | undefined) => Number((value ?? '0').replace(/,/g, ''));
+  const header = money(fields.subtotalAmount) - Math.abs(money(fields.discountAmount))
+    + (fields.additionalCharges ?? []).reduce((sum, charge) => sum + money(charge.amount), 0)
+    + (fields.vatMode === 'VAT_EXCLUDED' ? money(fields.vatAmount) : 0);
+  const gap = header - money(fields.grandTotalAmount);
+  return Number.isFinite(gap) ? Number(gap.toFixed(2)) : undefined;
+}
+
+export function shouldRereadReceiptImage(understanding: ReceiptUnderstanding, documentText = ''): boolean {
+  if (understanding.ok && understanding.classification?.contentKind === 'DOCUMENT') {
+    const gap = receiptHeaderGap(understanding.fields);
+    if (gap !== undefined && Math.abs(gap) > 0.05 && RECEIPT_ADJUSTMENT_LINE_RE.test(documentText)) return true;
+  }
   if (!understanding.ok || !understanding.fields?.grandTotalAmount
     || (understanding.classification?.requiresClarification && !understanding.fields.missingFields?.includes('lines'))
     || understanding.classification?.contentKind !== 'DOCUMENT'
@@ -1273,7 +1307,7 @@ Fields (omit irrelevant or unknown fields): vendorName, vendorIdentityEvidence, 
 description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes. At either level, include unitPrice ONLY when that per-unit value is itself printed; never divide amount by quantity to derive it.
 vendorName is the exact legal issuer/payee name from the SELLER block; do not append a branch description or a patient name. Never expand a brand into a legal company name from memory, including when the header is cropped. vendorIdentityEvidence is one exact issuer-name span (up to 320 characters). vendorEntityKind is JURISTIC only for explicit issuer company/registered partnership wording, INDIVIDUAL only for an explicit personal issuer/payee name, otherwise omit it. A buyer/patient/cashier/contact is never the payee. When the page prints a ผู้ขาย / Seller / ร้านค้า block (a marketplace order), take vendorName, vendorTaxId and vendorAddress only from that block; the platform or logistics company in the page header is never the vendor. Use an ordinary transaction description without personal patient identifiers.
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
-documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". On a TRANSFER_SLIP, documentNumber is the printed bank transaction/reference number (รหัสอ้างอิง / เลขที่รายการ / Reference No.); remove all spaces and zero-width characters without changing its letters or digits. documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
+documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / หมายเลขใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When both a receipt number (หมายเลขใบเสร็จ / เลขที่ใบเสร็จ) and an order number (หมายเลขคำสั่งซื้อ / เลขที่คำสั่งซื้อ) are printed, select the receipt number, never the order number. When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". On a TRANSFER_SLIP, documentNumber is the printed bank transaction/reference number (รหัสอ้างอิง / เลขที่รายการ / Reference No.); remove all spaces and zero-width characters without changing its letters or digits. documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
 vendorAddress is the SELLER's own printed street address, copied as one exact span from the issuer/header block (labels: ที่อยู่ / ที่ตั้ง / สำนักงาน / Address, or the unlabelled lines printed directly under the issuer name). Join the printed lines with single spaces and copy them verbatim; omit vendorAddress entirely when the page prints no seller address, and omit it when the span would exceed 500 characters. A full tax invoice prints BOTH parties' addresses, exactly as it prints both tax ids — return the SELLER's (issuer header side) and NEVER the buyer's. The buyer block (ลูกค้า / ชื่อลูกค้า / นาม / ผู้ซื้อ / ได้รับเงินจาก / Bill to / Ship to / Customer) is the business that sent you this document; its address filed as the seller's is saved against that shop and reused on every later document, so when you cannot tell which party an address belongs to, omit vendorAddress and add "vendorAddress" to missingFields. Never reconstruct an address from memory of the brand or chain, and never complete a cropped one.
 buyerAsPrinted is that buyer block itself, returned separately, and ONLY when the document identifies a buyer (full tax invoices do; abbreviated tax invoices, receipts and cash bills legally need not, and there you omit buyerAsPrinted). It has exactly this shape: {"name":"printed buyer name","taxId":"the buyer's 13-digit tax id, digits only","branchCode":"00000 for สำนักงานใหญ่, otherwise the printed branch number of สาขาที่ N","addressText":"the printed buyer address as one exact span"}. Every property is optional and each value is copied verbatim from the buyer block. These values are evidence for a human reviewer only: none of them may ever also appear in vendorName, vendorTaxId, vendorBranchCode or vendorAddress.
@@ -1708,6 +1742,8 @@ export function applyOcrValueCrossCheck(
       missing.delete('vendorTaxId');
     }
   }
+  const multilineSellerName = receiptSellerBlock(mappedText)?.name;
+  if (multilineSellerName) { out.vendorName = multilineSellerName; missing.delete('vendorName'); }
   const normalizeIdentity = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
   // A labelled seller block is the only seller on the page: a name printed only outside it (the
   // platform or courier header of a marketplace order) is never the vendor, so it goes to review.
@@ -1722,11 +1758,29 @@ export function applyOcrValueCrossCheck(
   const entityKind = receiptPayeeEntityKind(out.vendorName, evidence);
   if (entityKind) { out.vendorEntityKind = entityKind; out.vendorIdentityEvidence = evidence; }
   else { delete out.vendorEntityKind; delete out.vendorIdentityEvidence; }
+  if (out.documentNumber && documentKind !== 'TRANSFER_SLIP') {
+    const lines = mappedText.split('\n').map(line => line.trim().replace(/^[#*|\s]+|[*|\s]+$/g, ''));
+    const receiptLabel = /^(?:หมายเลขใบเสร็จ(?:รับเงิน)?|เลขที่ใบเสร็จ(?:รับเงิน)?|receipt\s*(?:no\.?|number))(?=[\s:：*|]|$)[\s:：*|]*/i;
+    const orderLabel = /^(?:หมายเลขคำสั่งซื้อ|เลขที่คำสั่งซื้อ|order\s*(?:no\.?|number))(?=[\s:：*|]|$)[\s:：*|]*/i;
+    const labelledValues = (label: RegExp) => lines.flatMap((line, index) => {
+      const match = label.exec(line);
+      if (!match) return [];
+      const value = (line.slice(match[0].length) || lines.slice(index + 1).find(Boolean) || '').trim().replace(/\s*([-\/])\s*/g, '$1');
+      return /^[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)*$/.test(value) && /\d/.test(value) ? [value] : [];
+    });
+    if (lines.some(line => receiptLabel.test(line))
+      && labelledValues(orderLabel).includes(mapThaiDigits(out.documentNumber).trim())) {
+      const receipts = [...new Set(labelledValues(receiptLabel))];
+      if (receipts.length === 1) out.documentNumber = receipts[0];
+      else { delete out.documentNumber; missing.add('documentNumber'); }
+    }
+  }
   if (out.documentNumber) {
     const compactReference = (value: string) => value.replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '');
     const value = documentKind === 'TRANSFER_SLIP'
       ? compactReference(mapThaiDigits(out.documentNumber)) : mapThaiDigits(out.documentNumber).trim();
     const digitRuns = value.match(/\d+/g) ?? [];
+    const numericNumber = value.replace(/[\s-]/g, '');
     const compactNumber = (text: string) => text.replace(/[\s._-]/g, '');
     const bookParts = value.split('/');
     const bookNumber = bookParts.length === 2 && bookParts.every((part, index) => part.trim()
@@ -1735,8 +1789,8 @@ export function applyOcrValueCrossCheck(
       || isFullSpanDate(value)
       || (documentKind === 'TRANSFER_SLIP'
         ? !compactReference(mappedText).includes(value)
-        // I, O or l between digits (5I78O2) is a misread 1 or 0, even when the transcription printed it.
-        : digitRuns.length === 0 || /\d[IOl]+\d/.test(compactNumber(value))
+        // Numeric-looking tokens with I/O/l touching a digit are untrusted, including their edges.
+        : digitRuns.length === 0 || (/^[\dIOl]+$/.test(numericNumber) && /(?:\d[IOl]|[IOl]\d)/.test(numericNumber))
           || !(compactNumber(collapsedText).includes(compactNumber(value)) || bookNumber));
     if (invalid) {
       delete out.documentNumber;

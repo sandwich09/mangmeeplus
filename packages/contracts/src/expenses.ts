@@ -1,3 +1,4 @@
+import { EXPENSE_MAX_ITEM_LINES } from './expense-item-limits.js';
 import { E_WHT_WORDS } from './tax.js';
 import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL } from './reimbursements.js';
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
@@ -246,11 +247,13 @@ export type SubstituteReceiptReasonCode =
  * a draft that the API cannot safely turn into the authoritative SVG and its derived A4 PDF.
  */
 export const SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS = Object.freeze({
-  maxExpenseLines: 8,
+  maxExpenseLines: EXPENSE_MAX_ITEM_LINES,
   maxLineDescriptionLength: 200,
   maxEvidenceAttachments: 8,
   maxEvidenceFileNameLength: 255,
 });
+
+export const SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE = `ใบรับรอง 1 ใบรองรับได้สูงสุด ${EXPENSE_MAX_ITEM_LINES} รายการ แยกบันทึกเป็นหลายรายการค่าใช้จ่ายและจัดทำคนละใบ`;
 
 export const EXPENSE_SEQUENCE_KEY = 'expense.record';
 

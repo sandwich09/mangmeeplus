@@ -1237,6 +1237,16 @@ describe('LINE intake router – reimbursement semantic route (trusted capabilit
     assert.deepEqual(noCandidates.reimbursementHints, { missingFields: ['amount', 'incurredDate'] }, 'no candidates ⇒ nothing is accepted');
   });
 
+  it('keeps all 200 named expense items through the capture-hints parser', async () => {
+    const items = Array.from({ length: 200 }, (_, i) => ({ description: `รายการ${i + 1}`, sourceText: `รายการ${i + 1}` }));
+    const router = routerReturning({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+      semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID', captureHints: { items } });
+    const plan = await router.routeIntake(intake({ messageText: items.map(item => item.sourceText).join(' ') }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.captureHints?.items?.length, 200);
+    assert.equal(plan.captureHints?.items?.[199]?.description, 'รายการ200');
+  });
+
   it('an ordinary spend note keeps BUSINESS_EXPENSE + COMPANY_PAID and its capture hints through the parser', async () => {
     const router = routerReturning({
       intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97, semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID',
@@ -1766,6 +1776,13 @@ async function creditCapture(request: LineIntakeRouteRequest): Promise<ProviderI
 }
 
 describe('owner-approved credit payload and estimator', () => {
+  it('keeps the bounded intake voucher offer while the downstream action catalogue accepts 30 bills', async () => {
+    const input = await creditCapture(await creditRequest());
+    const offer = JSON.parse(input.cacheableContext!).enabledFeatures.find((feature: any) => feature.toolName === 'expense.action.preview');
+    assert.match(offer.description, /expenseIds, at most 20/);
+    assert.match(LINE_TOOL_REGISTRY.find(tool => tool.name === 'expense.action.preview')!.description, /expenseIds, at most 30/);
+  });
+
   it('shares only byte-identical static catalogue across tenants and keeps authority fresh per turn', async () => {
     const a = await creditRequest();
     const first = await creditCapture(a);

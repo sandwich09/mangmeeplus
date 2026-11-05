@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { DISBURSEMENT_VOUCHER_ERROR_WORDS, DISBURSEMENT_VOUCHER_WORDS, E_WHT_WORDS, eWhtPaymentMethodAllowed, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS, DISBURSEMENT_VOUCHER_WORDS, E_WHT_WORDS, eWhtPaymentMethodAllowed, EXPENSE_PAYMENT_METHODS, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, MetricGrid, cx } from '@/common/components/mangmee';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { SelectField, TextareaField, TextField } from '@/common/components/field';
@@ -85,7 +85,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
   const eWht = selectedRows.some(row => row.whtRemittance === 'E_WHT');
   const total = selectedTotal(Object.values(amounts));
   const rule = forceConfirmation ? 'confirm' : payeeRule(selectedRows);
-  const validSelection = selectedRows.length > 0 && selectedRows.length <= 20 && selectedRows.length === Object.keys(amounts).length
+  const validSelection = selectedRows.length > 0 && selectedRows.length <= DISBURSEMENT_VOUCHER_MAX_LINES && selectedRows.length === Object.keys(amounts).length
     && selectedRows.every(row => row.selectable && !amountError(amounts[row.expenseId]!, row.outstandingAmount))
     && (rule !== 'confirm' || fields.payeeConfirmed);
   const canSave = canPrepare && entryOpen && validSelection && Boolean(fields.payeeName.trim()) && (!['', 'BANK_TRANSFER'].includes(fields.plannedMethod) || !disbursementAccountError(fields)) && !stale && !bootLoading && !sourceLoading;
@@ -197,7 +197,7 @@ export function DisbursementVoucherDraftPage({ companyId, permissions, entryOpen
     const available = shown.rows.filter(row => row.selectable);
     const branch = lockedBranch ?? available[0]?.branchId;
     const choices = available.filter(row => row.branchId === branch);
-    if (checked && choices.length > 20) { setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines); return; }
+    if (checked && choices.length > DISBURSEMENT_VOUCHER_MAX_LINES) { setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines); return; }
     setAmounts(previous => { const next = { ...previous }; for (const row of choices) {
       if (checked) next[row.expenseId] ??= initialAmount(row.outstandingAmount); else delete next[row.expenseId];
     } return next; });

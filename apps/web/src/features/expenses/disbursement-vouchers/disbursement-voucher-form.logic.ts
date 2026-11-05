@@ -1,4 +1,4 @@
-import type { DisbursementPayableExpense } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_MAX_LINES, type DisbursementPayableExpense } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 
 const MONEY = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/;
@@ -45,7 +45,7 @@ export function payeeRule(rows: DisbursementPayableExpense[]): 'none' | 'warning
   if (sameKey && first.payeeKeyKind === 'NAME' && rows.every(row => !row.vendorTaxId?.trim())) return 'warning';
   return 'confirm';
 }
-export const selectionAllowed = (count: number) => count < 20;
+export const selectionAllowed = (count: number) => count < DISBURSEMENT_VOUCHER_MAX_LINES;
 export const nextDraftCommand = (current: string | null, changed: boolean, mint: () => string): string => changed || !current ? mint() : current;
 
 export function skipSingleExpenseSelection(entry: DisbursementPayableExpense | null | undefined, candidates: DisbursementPayableExpense[]): boolean {

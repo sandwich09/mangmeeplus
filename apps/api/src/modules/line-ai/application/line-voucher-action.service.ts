@@ -2,7 +2,7 @@ import { lineDisplayDate, type LineReplyLanguage } from '../domain/logic/line-la
 import { formatThaiDate } from '../domain/logic/line-draft-update-card.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { E_WHT_WORDS, E_WHT_REDUCED_RATE, WHT_HANDOFF_PAYEE_ADDRESS_MAX, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
+import { DISBURSEMENT_VOUCHER_MAX_LINES, disbursementVoucherError, E_WHT_WORDS, E_WHT_REDUCED_RATE, WHT_HANDOFF_PAYEE_ADDRESS_MAX, mapThaiDigits, todayCivilDate, scrubRecordText, whtPayeeAddress, type CreateDisbursementVoucherDraftInput, type PayDisbursementVoucherInput, type RequestContext, type ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { assertFeatureEnabled, loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
@@ -15,7 +15,7 @@ import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
 
 export const VOUCHER_ACTIONS = ['VOUCHER_CREATE', 'VOUCHER_SUBMIT', 'VOUCHER_APPROVE', 'VOUCHER_RETURN', 'VOUCHER_PAY', 'VOUCHER_CANCEL', 'WHT_CERTIFICATE_ISSUE'] as const;
 export type VoucherAction = typeof VOUCHER_ACTIONS[number];
-export type VoucherActionPayload = { action: VoucherAction; id: string; expenseIds?: string[]; draft?: CreateDisbursementVoucherDraftInput;
+export type VoucherActionPayload = { action: VoucherAction; id: string; expenseIds?: string[]; requestedBillCount?: number; draft?: CreateDisbursementVoucherDraftInput;
   sources?: { id: string; revision: string }[]; version?: number; reason?: string; payment?: PayDisbursementVoucherInput; handoffs?: { id: string; revision: string }[]; payeeAddress?: string };
 const PERMISSIONS: Record<VoucherAction, string[]> = {
   VOUCHER_CREATE: ['expense.disbursement.prepare'], VOUCHER_SUBMIT: ['expense.disbursement.prepare'],
@@ -30,6 +30,13 @@ export function isVoucherPayeeName(value: string): boolean {
   return name.length >= 2 && name.length <= 200 && /^[\p{L}\p{M}\p{N} .,&'’()\-]+$/u.test(name) && /\p{L}/u.test(name)
     && !/^(?:ขอ|ช่วย|ทำ|สร้าง|ส่ง|จ่าย|โอน|ยืนยัน|บันทึก|อนุมัติ|เปลี่ยน|แก้|ออก|ตรวจ|ดู|ให้|เอา|ซื้อ|ลบ|ยกเลิก|ต้องการ|(?:pay|send|show|change|update|delete|issue|confirm|do)\b)/iu.test(name)
     && !/(?:อนุมัติ|บันทึก|ใบสำคัญ|ใบเตรียม|จ่ายแล้ว|วันนี้|เมื่อวาน|โอนเงิน|ทำให้|ขอดู|ยกเลิก|พิมพ์ชื่อเอง|(?:ช่วย|สร้าง)(?:ใบ|รายการ|ให้|ทำ)|\b(?:approve|record|please|create|cancel|paid|transfer)\b)/iu.test(name);
+}
+
+/** Only an explicit, unambiguous bill count from the received text; never a model-supplied count. */
+export function requestedVoucherBillCount(text?: string): number | undefined {
+  const counts = new Set([...mapThaiDigits(text ?? '').matchAll(/(?:บิล|ใบเสร็จ|รายจ่าย)\s*(?:ทั้งหมด|จำนวน)?\s*([1-9]\d{0,3})\s*ใบ|(?<![\d.])([1-9]\d{0,3})\s*(?:บิล|ใบเสร็จ|bills?\b)/giu)]
+    .map(match => Number(match[1] ?? match[2])));
+  return counts.size === 1 ? [...counts][0] : undefined;
 }
 
 /** Business adapter only: signatures, ownership, grounding, locking and replay live in the shared action lane. */
@@ -100,7 +107,7 @@ export class LineVoucherActionService {
       vendorNameSnapshot: handoffs?.[0]?.prefill.payeeSnapshot.name ?? voucher.header.payeeName, grandTotalAmount: handoffs?.[0]?.prefill.grossAmount ?? voucher.header.totalAmount, currency: voucher.header.currency, status: voucher.header.status,
       claim: undefined as ReimbursementRequestDetail | undefined, digest: deliveryHash({ voucher, handoffs }) };
   }
-  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>, language: LineReplyLanguage = 'th'): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; allowedPaymentMethods?: Array<'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'>; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
+  async prepare(ctx: RequestContext, action: VoucherAction, id: string, input: Record<string, unknown>, language: LineReplyLanguage = 'th', requestedBillCount?: number): Promise<{ payload: VoucherActionPayload; details: string[]; awaitingField?: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod'; allowedPaymentMethods?: Array<'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'>; record: Awaited<ReturnType<LineVoucherActionService['read']>>; nextStatus: string }> {
     const en = language === 'en';
     await this.authorize(ctx, action);
     const payload: VoucherActionPayload = { action, id, ...(typeof input.reason === 'string' ? { reason: input.reason.trim() } : {}) };
@@ -109,7 +116,13 @@ export class LineVoucherActionService {
     let awaitingField: 'reason' | 'payeeName' | 'payeeAddress' | 'paymentMethod' | undefined;
     if (action === 'VOUCHER_CREATE') {
       payload.expenseIds = typeof input.expenseIds === 'string' ? input.expenseIds.split(',').map(id => id.trim()) : [id];
-      if (!payload.expenseIds.length || payload.expenseIds.length > 20 || new Set(payload.expenseIds).size !== payload.expenseIds.length) throw new BadRequestException();
+      if (payload.expenseIds.length > DISBURSEMENT_VOUCHER_MAX_LINES) throw new BadRequestException(disbursementVoucherError('disbursement_too_many_lines'));
+      if (!payload.expenseIds.length || new Set(payload.expenseIds).size !== payload.expenseIds.length) throw new BadRequestException();
+      if (Number.isSafeInteger(requestedBillCount) && requestedBillCount! > 0) payload.requestedBillCount = requestedBillCount;
+      details.push(en ? `Bills in this voucher: ${payload.expenseIds.length}${payload.requestedBillCount ? ` · Requested: ${payload.requestedBillCount}` : ''}`
+        : `บิลในใบนี้ ${payload.expenseIds.length} ใบ${payload.requestedBillCount ? ` · ขอไว้ ${payload.requestedBillCount} ใบ` : ''}`);
+      if (payload.requestedBillCount && payload.requestedBillCount !== payload.expenseIds.length) details.push(en
+        ? 'If bills are missing, select Cancel and make it on the web.' : 'ถ้าบิลไม่ครบ กดไม่ทำ แล้วทำต่อในเว็บ');
       const sources = await Promise.all(payload.expenseIds.map(id => this.expenses.execute(ctx, id)));
       const names = await Promise.all(sources.map(source => this.sourcePayee(ctx, source)));
       const payeeName = names[0] || (typeof input.payeeName === 'string' && isVoucherPayeeName(input.payeeName) ? input.payeeName.trim() : '');

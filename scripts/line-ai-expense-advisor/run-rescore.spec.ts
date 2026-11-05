@@ -4,10 +4,10 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { scenarioIdsIn, rescoreReportPath, workflowAttemptsFromEvidence } from './run-rescore';
 import { scoreAllTurns } from './gold-oracle-pass';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
@@ -314,5 +314,154 @@ describe('M3 delivered knowledge evidence', () => {
     const attempts = workflowAttemptsFromEvidence(corpus, [{ ...row, attemptId: 'one' }]);
     assert.deepEqual(attempts[0].turns[0].deliveredCards, [{ id: 'reimbursement.meaning', version: 6 }]);
     assert.match(attempts[0].turns[0].deliveredText!, /สำรองจ่ายให้ร้าน/);
+  });
+});
+
+describe('attempt spend attribution', () => {
+  it('excludes previous-run rows, keeps original attempt ownership and appends only changed invocation states', async () => {
+    const { captureSpend, readJsonLines } = await import('./eval-spend');
+    const root = mkdtempSync(join(tmpdir(), 'spend-attribution-')), path = join(root, 'spend.jsonl');
+    const databaseUrl = 'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_spend';
+    let rows: any[] = [{ invocationKey: 'old-run', status: 'SETTLED', upperBoundSatang: 449, evidenceJson: { customerChargedSatang: 449 } }];
+    let guardedTotal: string | undefined;
+    const pg = { async query(sql: string, values?: unknown[]) {
+      if (sql.startsWith('UPDATE eval_guard.ledger_satang')) guardedTotal = String(values?.[0]);
+      return { rows: sql.includes('current_database()') ? [{ name: 'watchdog_ai_reliability_replay_spend' }]
+        : sql.includes('FROM public."AiBudgetReservation"') ? rows : [] };
+    } };
+    try {
+      await captureSpend(pg, databaseUrl, path, 'previousRun', 'previousRun');
+      assert.equal(guardedTotal, '0');
+      await captureSpend(pg, databaseUrl, path, 'oracle');
+      assert.equal(readJsonLines(path).length, 1, 'the oracle cannot duplicate startup rows');
+      rows = [{ invocationKey: 'first', status: 'DISPATCHED', upperBoundSatang: 20 }];
+      await captureSpend(pg, databaseUrl, path, 'attempt-1');
+      rows = [{ invocationKey: 'first', status: 'SETTLED', upperBoundSatang: 20, evidenceJson: { customerChargedSatang: 10 } },
+        { invocationKey: 'second', status: 'SETTLED', upperBoundSatang: 30, evidenceJson: { customerChargedSatang: 25 } }];
+      await captureSpend(pg, databaseUrl, path, 'attempt-2');
+      await captureSpend(pg, databaseUrl, path, 'final');
+      const ledger = readJsonLines<any>(path);
+      assert.equal(ledger.length, 4, 'only the settlement appends a second state for an existing key');
+      assert.deepEqual(ledger.map(row => [row.invocationKey, row.attemptId]),
+        [['old-run', 'previousRun'], ['first', 'attempt-1'], ['first', 'attempt-1'], ['second', 'attempt-2']]);
+      assert.equal(ledger[0].scope, 'previousRun');
+      assert.equal(guardedTotal, '37');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+
+describe('smoke-run endings and spend', () => {
+  it('exits complete, scored-failure, cap and infrastructure-failure children with flushed checkpoints and correctly owned spend', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eval-smoke-endings-'));
+    const child = join(root, 'stub.cjs');
+    writeFileSync(child, String.raw`
+      const {writeFileSync} = require('node:fs');
+      const {join} = require('node:path');
+      const {runRealCli} = require(process.cwd()+'/scripts/line-ai-expense-advisor/run-real.ts');
+      const {resolveRuntimePostback} = require(process.cwd()+'/scripts/line-ai-reliability-runtime.ts');
+      const root = process.argv[2], mode = process.argv[3];
+      const free = mode === 'missing';
+      const actor = {key:'owner',company:free?'A':'B',role:'OWNER',branchScope:'all',...(free?{freeSourceDrafts:true}:{})};
+      const expect = {card:'answer',maxModelCalls:0};
+      const corpus = {version:2,seed:'smoke',status:'draft',classifierLabels:'messages',conversations:[
+        {id:'first',category:'read',journeyKind:'typed',actors:[actor],tasks:[{id:'read-first',kind:'read',startTurn:0,endTurn:2,
+          minimalTurns:3,completable:true,goldTerminal:{effect:'ANSWERED',records:[]}}],turns:[
+            {user:'ดูรายการ',expect},{press:'ไปต่อ',pressFrom:{turn:0},expect:{...expect,label:'ไปต่อ'}},{user:'ดูสรุป',expect}]},
+        {id:'second',category:'read',journeyKind:'typed',actors:[actor],tasks:[{id:'read-second',kind:'read',startTurn:0,endTurn:0,
+          minimalTurns:1,completable:true,goldTerminal:{effect:'ANSWERED',records:[]}}],turns:[{user:'ดูรายการ',expect}]}]};
+      const corpusPath = join(root,'corpus.json'), secretsPath = join(root,'synthetic.json');
+      writeFileSync(corpusPath,JSON.stringify(corpus));
+      writeFileSync(secretsPath,JSON.stringify({databaseUrl:'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_expense_advisor'}));
+      writeFileSync(join(root,'gateway.manifest.json'),JSON.stringify({transport:'bedrock'}));
+      let rows=[{invocationKey:'leftover',status:'SETTLED',upperBoundSatang:449,evidenceJson:{customerChargedSatang:449}}], cap=0;
+      const sent=[];
+      const pg={async connect(){},async end(){writeFileSync(join(root,'pg-ended'),'yes');},async query(sql,args){
+        if(sql.startsWith('UPDATE eval_guard.ledger_satang'))writeFileSync(join(root,'guard-total'),String(args[0]));
+        return {rows:sql.includes('current_database()')?[{name:'watchdog_ai_reliability_replay_expense_advisor'}]
+          :sql.includes('FROM public."AiBudgetReservation"')?structuredClone(rows)
+          :sql.startsWith('SELECT')&&sql.includes('cap_rejections')?[{value:cap}]:[]};}};
+      const oracle=async(...args)=>{await args[7]();rows=[];return {resultsByTurn:new Map(),factsByTurn:new Map(),resolvedCallsByTurn:new Map(),alternativeFactsByTurn:new Map()};};
+      const runtime=async(manifest,repo,hooks)=>{
+        const evidence=[];
+        for(const fixture of manifest.corpus.fixtures){
+          const attemptId='attempt-'+fixture.id;
+          await hooks.onBeforeReset(fixture,attemptId); rows=[];
+          let blocked, previous=[];
+          for(const [turnIndex,turn] of fixture.turns.entries()){
+            await hooks.onBeforeTurn(fixture,turnIndex,attemptId);
+            if(turnIndex===0)rows.push({invocationKey:fixture.id,status:'SETTLED',upperBoundSatang:30,
+              evidenceJson:{customerChargedSatang:fixture.id==='first'?10:20}});
+            if(mode==='failure')throw new Error('STUB_DATABASE_DOWN');
+            const selected=!blocked&&turn.action?resolveRuntimePostback(previous,turn.action.label):undefined;
+            const replayFailure=blocked?{reason:'turn_unreached',turnIndex,blockedByTurnIndex:blocked.turnIndex}
+              :selected?.failure?{reason:selected.failure,turnIndex}:undefined;
+            if(selected?.failure)blocked=replayFailure;
+            const action=data=>({type:'postback',label:'ไปต่อ',data});
+            const messages=replayFailure?[]:[{type:'text',text:'แสดงรายการแล้วค่ะ'},
+              ...(fixture.id==='first'&&turnIndex===0&&mode!=='missing'?[{type:'flex',contents:{footer:{contents:
+                [action('first-card'),...(mode==='ambiguous'?[action('different-card')]:[])]}}}]:[])];
+            if(!replayFailure)sent.push({conversationId:fixture.id,turnIndex});
+            const row={scenarioId:fixture.id,repeat:0,turnIndex,user:turn.user,attachmentIds:[],inputKind:turn.action?.type??'message',action:turn.action,
+              pressFrom:'owner',companyId:fixture.fixture.company,sourceSnapshot:fixture.id,snapshotDigest:manifest.snapshotDigests[fixture.id],
+              acceptedAtMs:0,modelWorkCompletedAtMs:0,receipts:messages.length?[{messages,at:10,receiptId:fixture.id+'-'+turnIndex}]:[],
+              toolResults:[],gatewayResponses:[],webhookEvents:free?[{status:'free_expense_month_summary'}]:[],providerUsage:[],reservations:[],
+              reviewState:{before:{draftActions:[],conversations:[],truncated:false},after:{draftActions:[],conversations:[],truncated:false}},
+              businessSnapshot:{business:{},collectionState:{}},unintendedEffects:[],workflowTasks:replayFailure?[]:[{kind:'read',status:'COMPLETED'}],
+              delivery:{status:replayFailure?'NONE':'ACCEPTED'},...(replayFailure?{replayFailure}:{})};
+            evidence.push(row);
+            if(mode==='cap')cap++;
+            try{await hooks.onTurn(row);}catch(error){if(error.message==='EVAL_CAP_REACHED')return {records:[],turnEvidence:[],runtimeDiagnostics:[]};throw error;}
+            previous=messages;
+          }
+          await hooks.onConversationComplete(fixture,attemptId);
+        }
+        writeFileSync(join(root,'sent.json'),JSON.stringify(sent));
+        return {records:[],turnEvidence:evidence,runtimeDiagnostics:[]};
+      };
+      setInterval(()=>{},1000); // A leaked third-party handle must not keep the CLI alive.
+      void runRealCli({environment:{MANGMEE_EVAL_OUTPUT_DIR:root,MANGMEE_EVAL_GATEWAY_URL:'http://127.0.0.1:19205/v1',
+        MANGMEE_EVAL_SECRETS_PATH:secretsPath,MANGMEE_EVAL_CORPUS:corpusPath,MANGMEE_EVAL_MAX_THB:'1'},pg,oracle,runtime});
+    `);
+    try {
+      for (const mode of ['complete', 'missing', 'ambiguous', 'cap', 'failure']) {
+        const directory = join(root, mode);
+        mkdirSync(directory);
+        const result = spawnSync(process.execPath, ['--import', 'tsx', child, directory, mode], { cwd: process.cwd(), timeout: 6000, encoding: 'utf8' });
+        assert.equal(result.error, undefined, `${mode} must exit without a parent kill`);
+        assert.equal(result.status, mode === 'complete' ? 0 : mode === 'cap' ? 2 : 1, result.stderr);
+        assert.equal(readFileSync(join(directory, 'pg-ended'), 'utf8'), 'yes');
+        const evidencePath = join(directory, readdirSync(directory).find(name => name.endsWith('.evidence.json'))!);
+        const saved = JSON.parse(readFileSync(evidencePath, 'utf8'));
+        assert.ok(readFileSync(evidencePath.replace('.evidence.json', '.report.md'), 'utf8').length);
+        assert.equal(saved.previousRun.length, 1);
+        assert.equal(saved.previousRun[0].invocationKey, 'leftover');
+        assert.equal(saved.previousRun[0].scope, 'previousRun');
+        assert.ok(saved.spend.every((row: any) => row.attemptId === `attempt-${row.invocationKey}`));
+        assert.equal(readFileSync(join(directory, 'guard-total'), 'utf8'), ['cap', 'failure'].includes(mode) ? '11' : '32');
+        const ledger = readFileSync(evidencePath.replace('.evidence.json', '.spend.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        assert.equal(ledger.length, ['cap', 'failure'].includes(mode) ? 2 : 3, 'oracle/final capture must not duplicate rows');
+        if (mode === 'cap' || mode === 'failure') {
+          assert.equal(saved.status, mode === 'cap' ? 'CAP_REACHED' : 'FAILED_RESUMABLE');
+          continue;
+        }
+        assert.equal(saved.status, 'COMPLETE');
+        assert.deepEqual(saved.progress.completedConversationIds, ['first', 'second']);
+        assert.equal(saved.summary.passed, mode === 'complete' ? 2 : 1);
+        assert.equal(saved.summary.failed, mode === 'complete' ? 0 : 1);
+        if (mode !== 'complete') {
+          const failed = saved.turnEvidence.find((row: any) => row.scenarioId === 'first' && row.turnIndex === 1);
+          assert.equal(failed.replayFailure.reason, mode === 'missing' ? 'press_target_not_delivered' : 'press_target_ambiguous');
+          assert.equal(saved.summary.failures[0].reasons[0].turnIndex, 1);
+          assert.equal(saved.turnEvidence.find((row: any) => row.scenarioId === 'first' && row.turnIndex === 2).replayFailure.reason, 'turn_unreached');
+          assert.deepEqual(JSON.parse(readFileSync(join(directory, 'sent.json'), 'utf8')),
+            [{ conversationId: 'first', turnIndex: 0 }, { conversationId: 'second', turnIndex: 0 }]);
+        }
+        const corpus = JSON.parse(readFileSync(join(directory, 'corpus.json'), 'utf8'));
+        const { scoreWorkflowCorpus } = await import('./scorer');
+        assert.deepEqual(scoreWorkflowCorpus({ corpus, attempts: workflowAttemptsFromEvidence(corpus, saved.turnEvidence, saved.progress.completedAttempts),
+          now: new Date(saved.startedAt), classifierLabels: 'messages', includeButtonBaseline: true }), saved.workflowMetrics);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

@@ -12,11 +12,14 @@ export type ProviderInput = {
   documents?: Array<{ mimeType: 'application/pdf'; contentBase64: string }>;
   systemPrompt?: string;
   maxTokens?: number;
-  /** Deterministic, byte-stable context rendered as the FIRST content block of the first
+  /** Deterministic, byte-stable context rendered as the leading text blocks of the first
    *  user message, before that message's text. Bedrock adds a cachePoint after it when
    *  long enough; OpenAI prepends it to the first user text (same model-visible content,
    *  no caching). Callers must pass byte-identical strings for identical logical context. */
   cacheableContext?: string;
+  /** Optional character boundary between the shared catalogue and per-turn context. Local
+   *  cache metadata only: splitting at this offset preserves the concatenated context bytes. */
+  cacheableContextPrefixLength?: number;
   /** Short call-site label for usage logs, e.g. 'ocr.receipt.extract'. */
   usageTag?: string;
   /** Local-only cancellation; never serialized to the provider wire. */
@@ -71,6 +74,7 @@ export type ProviderToolsInput = {
   maxTokens?: number;
   /** Same contract as `ProviderInput.cacheableContext`. */
   cacheableContext?: string;
+  cacheableContextPrefixLength?: number;
   /** Same contract as `ProviderInput.usageTag`. */
   usageTag?: string;
   /** Local-only cancellation/deadline. */

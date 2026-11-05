@@ -3,7 +3,7 @@ import type { ProviderError } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolsInput, ProviderToolsOutput } from './provider.port';
 import {
   type BedrockProviderConfig, CACHE_MIN_CHARS, THROTTLE_MAX_RETRIES, ProviderResponseError,
-  cacheableContextIndex, defaultThrottleSleep, jitteredThrottleBackoffMs, logProviderUsage,
+  cacheableContextIndex, cacheableContextParts, defaultThrottleSleep, jitteredThrottleBackoffMs, logProviderUsage, toolLoopCachePlan,
 } from './bedrock.provider';
 import { conservativeTimeoutUsage } from './provider-usage-estimate';
 import { validateProviderToolCalls } from './provider-output.logic';
@@ -25,6 +25,10 @@ export function anthropicModelId(modelId: string): string {
 
 function cachedText(text?: string): Record<string, unknown>[] {
   return text ? [{ type: 'text', text, ...(text.length >= CACHE_MIN_CHARS ? { cache_control: { type: 'ephemeral' } } : {}) }] : [];
+}
+
+function contextBlocks(input: ProviderInput | ProviderToolsInput): Record<string, unknown>[] {
+  return cacheableContextParts(input).map(({ text, cache }) => ({ type: 'text', text, ...(cache ? { cache_control: { type: 'ephemeral' } } : {}) }));
 }
 
 function precheck(input: { signal?: AbortSignal; deadlineAt?: number }): ProviderError | undefined {
@@ -53,7 +57,7 @@ export class AnthropicApiProvider implements IModelProvider {
     ];
     return this.messages({
       messages: input.messages.map((m, index) => ({ role: m.role, content: [
-        ...(index === contextIndex ? cachedText(input.cacheableContext) : []),
+        ...(index === contextIndex ? contextBlocks(input) : []),
         { type: 'text', text: m.text },
         ...(index === lastUserIndex ? attachments : []),
       ] })),
@@ -72,9 +76,10 @@ export class AnthropicApiProvider implements IModelProvider {
     const error = precheck(input);
     if (error) return { ok: false, error };
     const contextIndex = cacheableContextIndex(input.messages);
-    return this.messages({
+    const cache = toolLoopCachePlan(input);
+    const body: ApiRequest = {
       messages: input.messages.map((m, index): ApiMessage => {
-        const lead = index === contextIndex ? cachedText(input.cacheableContext) : [];
+        const lead = index === contextIndex ? contextBlocks(input) : [];
         if (m.role === 'tool_results') return { role: 'user', content: [...lead, ...m.results.map((r) => ({
           type: 'tool_result', tool_use_id: r.toolUseId, content: r.content, ...(r.isError ? { is_error: true } : {}),
         }))] };
@@ -87,7 +92,13 @@ export class AnthropicApiProvider implements IModelProvider {
       tools: input.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.inputSchema })),
       ...(input.systemPrompt ? { system: cachedText(input.systemPrompt) } : {}),
       max_tokens: input.maxTokens ?? 1024,
-    }, input, (response) => {
+    };
+    if (cache.tools) body.tools!.at(-1)!.cache_control = { type: 'ephemeral' };
+    for (const index of cache.messages) {
+      const block = body.messages[index]!.content.at(-1);
+      if (block) block.cache_control = { type: 'ephemeral' };
+    }
+    return this.messages(body, input, (response) => {
       const blocks = this.responseBlocks(response, ['tool_use', 'end_turn', 'max_tokens']);
       const text = blocks.flatMap((b) => b.type === 'text' && typeof b.text === 'string' && b.text ? [b.text] : []).join('\n');
       if (response.stop_reason === 'max_tokens') return {

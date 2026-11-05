@@ -260,7 +260,7 @@ export class RequestReceiptExtractionUseCase {
       // The usable header/lines already committed, even if a later human edit refuses this summary.
       usablePersisted = true;
       const missingFields = withEffectiveMissingFields(
-        response.fields.missingFields,
+        [...(duplicateResult.missingFields ?? []), ...(response.fields.missingFields ?? DEFAULT_MISSING_FIELDS)],
         duplicateResult.categoryId ?? expense.expenseCategoryId,
         ocrLineVatRateUnknown(response.fields),
         duplicateResult.dateVerified,

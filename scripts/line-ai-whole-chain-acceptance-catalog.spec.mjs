@@ -51,6 +51,7 @@ const EXPECTED_IDS = [
   'expired-card-recovery-after-redis-ttl',
   'free-expense-month-summary-zero-model',
   'stranger-text-before-door-zero-model',
+  'claim-multi-message-accepted-provenance',
 ];
 
 describe('LINE AI whole-chain acceptance catalog', () => {

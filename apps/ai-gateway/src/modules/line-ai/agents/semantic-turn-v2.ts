@@ -724,6 +724,8 @@ export async function runSemanticTurnV2(input: {
   // A second control round can turn a verified lookup into a preview; hinted read-only plans need only round 0.
   const hintedCalls = requiresTools ? plannerSkipCalls(inventory, offered, req, retained?.candidates, readContext) : undefined;
   if (hintedCalls) logger.log({ msg: 'line.ai.semantic_turn.planner_skipped', requestId: req.requestId, items: hintedCalls.length });
+  let controlContext: string | undefined;
+  let controlContextPrefixLength: number | undefined;
   for (let controlRound = 0; requiresTools && controlRound < 2; controlRound++) {
     if (controlRound) {
       const state = currentBudgetState();
@@ -750,14 +752,9 @@ export async function runSemanticTurnV2(input: {
       return valid ? { calls: calls as Array<Record<string, any>>, rawQuestions: rawQuestions as Array<Record<string, any>>, valid: true }
         : { calls: [], rawQuestions: [], valid: false };
     };
-    let checkedControl: ReturnType<typeof parseControl> | undefined;
-    const control = skipPlanner ? undefined : await provider.generateText({ acceptOutput: output => { checkedControl = parseControl(output.text); return checkedControl.valid; }, usageTag: 'line.loop', systemPrompt: CONTROL_PROMPT, maxTokens: 2048,
-      messages: [{ role: 'user', text: JSON.stringify({ messageText: req.messageText, semanticSubrequests: inventory,
-        inputEvidence: req.inputEvidence, valueCandidates: req.valueCandidates, taskProjection: req.taskProjection,
-        conversationContext: req.conversationContext,
-        ...(readContext ? { readContextCandidates: readContext.turns } : {}),
-        ...(retained ? { retainedTaskSource: retained.modelData } : {}),
-        previousToolResults: results,
+    // Catalogue and per-turn authority are separate cache prefixes; results always follow both.
+    if (!skipPlanner && controlContext === undefined) {
+      const catalogue = JSON.stringify({
         ...(input.reimbursementDraftEnabled ? { reimbursementProposalSchema: {
           schemaVersion: 1, taskId: 'API action.taskId', taskRevision: 'API options task revision', operation: 'CREATE|UPDATE', targetRef: 'API offered update target only',
           fields: { title: 'proposed value?', reason: 'proposed value?', missingReceiptReason: 'proposed value?' }, requesterChoiceId: 'API option?', branchChoiceId: 'API option?',
@@ -768,7 +765,18 @@ export async function runSemanticTurnV2(input: {
           alternativeProofs: ['USER_CHOICE:{choiceId,choiceRevision}', 'RECORD:{recordRef,revision,fieldPath}', 'SERVER_DEFAULT:{key:ACTOR_AS_REQUESTER|COMPANY_CURRENCY}'],
           limits: 'No invented IDs, values, receipts or source revisions. Only API choices. Missing evidence => ask once for missing fields. Never confirm/apply/submit/pay.' } } : {}),
         tools: offered.map(meta => ({ name: meta.name, description: meta.description, requiredInputFields: meta.requiredInputFields,
-          optionalInputFields: meta.optionalInputFields, inputEnumValues: meta.inputEnumValues })) }) }] });
+          optionalInputFields: meta.optionalInputFields, inputEnumValues: meta.inputEnumValues })) });
+      controlContextPrefixLength = catalogue.length - 1;
+      controlContext = catalogue.slice(0, -1) + ',' + JSON.stringify({ messageText: req.messageText, semanticSubrequests: inventory,
+        inputEvidence: req.inputEvidence, valueCandidates: req.valueCandidates, taskProjection: req.taskProjection,
+        conversationContext: req.conversationContext,
+        ...(readContext ? { readContextCandidates: readContext.turns } : {}),
+        ...(retained ? { retainedTaskSource: retained.modelData } : {}) }).slice(1);
+    }
+    let checkedControl: ReturnType<typeof parseControl> | undefined;
+    const control = skipPlanner ? undefined : await provider.generateText({ acceptOutput: output => { checkedControl = parseControl(output.text); return checkedControl.valid; }, usageTag: 'line.loop', systemPrompt: CONTROL_PROMPT, maxTokens: 2048,
+      cacheableContext: controlContext, cacheableContextPrefixLength: controlContextPrefixLength,
+      messages: [{ role: 'user', text: JSON.stringify({ previousToolResults: results }) }] });
     const { calls, rawQuestions, valid } = skipPlanner ? { calls: hintedCalls, rawQuestions: [], valid: true }
       : checkedControl ?? parseControl(control?.ok ? control.text : '');
     // C2/R-L2/R-L3: an unusable control round is a system-side planning outcome, not a customer

@@ -40,7 +40,7 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     assert.doesNotMatch(text, /D-[A-Z]|I\d{2}-/u);
     assert.match(text, /วันไหนคะ/u);
     assert.doesNotMatch(text, /ตอบรวมในข้อความเดียว|ซื้อจากร้าน/u);
-    assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'x', hints: { items: [...items, items[0]!] } }), /at most 40/);
+    assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'x', hints: { items: Array.from({ length: 201 }, () => items[0]!) } }), /at most 200/);
   });
 
   it('never turns a summary financial1/100 into missing OCR item facts on initial bind or stale refresh', () => {
@@ -110,4 +110,26 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     assert.equal(current.status, 'INPUT_ENDED_COMPLETE');
     assert.deepEqual(current.unresolvedQuestions, []);
   });
+});
+
+it('typed source drafts keep 41 and 200 items, reject 201, and survive source editing and reload', () => {
+  for (const count of [41, 200]) {
+    const items = Array.from({ length: count }, (_, i) => ({ sourceText: `สินค้า${i + 1}`, description: `สินค้า${i + 1}` }));
+    const state = buildInitialLineExpenseDraftContinuation({ ...base, messageText: items.map(item => item.sourceText).join(' '), hints: { items } });
+    assert.equal(state.items.length, count);
+    const edited = applyExpenseSourceDraftInput(state, { items: state.items.map(item => ({ itemRef: item.itemRef, quantity: '1', totalAmount: '1' })) }, categories);
+    assert.equal(parseLineExpenseDraftContinuation(JSON.parse(JSON.stringify(edited.state)))?.items.length, count);
+  }
+  assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'สินค้า',
+    hints: { items: Array.from({ length: 201 }, () => ({ sourceText: 'สินค้า', description: 'สินค้า' })) } }), /at most 200/);
+});
+
+it('typed draft replies show 30 priced rows plus the remaining count at 31 and 200', () => {
+  for (const count of [31, 200]) {
+    const state = empty();
+    state.items = Array.from({ length: count }, (_, i) => ({ ...state.items[0]!, itemRef: `I${i + 1}`, description: `สินค้า${i + 1}`, quantity: '1', totalAmount: '1' }));
+    const reply = formatLineExpenseDraftReply({ state, categories });
+    assert.equal((reply.match(/รายการ: สินค้า/g) || []).length, 30);
+    assert.match(reply, new RegExp(`และอีก ${count - 30} รายการ`));
+  }
 });

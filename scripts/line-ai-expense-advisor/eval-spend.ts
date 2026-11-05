@@ -59,7 +59,8 @@ export async function capRejectionCount(client: EvalPgClient): Promise<string> {
   return String((await client.query("SELECT CASE WHEN is_called THEN last_value ELSE 0 END AS value FROM eval_guard.cap_rejections")).rows[0]?.value ?? '0');
 }
 
-export async function captureSpend(client: EvalPgClient, databaseUrl: string, spendPath: string, attemptId: string): Promise<{ totalSatang: string; invocationKeys: string[] }> {
+export async function captureSpend(client: EvalPgClient, databaseUrl: string, spendPath: string, attemptId: string,
+  scope: 'currentRun' | 'previousRun' = 'currentRun'): Promise<{ totalSatang: string; invocationKeys: string[] }> {
   assertIsolatedReplayDatabase(databaseUrl);
   const expected = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
   assert.equal((await client.query('SELECT current_database() AS name')).rows[0]?.name, expected, 'EVAL_SPEND_DATABASE_MISMATCH');
@@ -71,15 +72,18 @@ export async function captureSpend(client: EvalPgClient, databaseUrl: string, sp
   for (const event of usage.rows) latestUsage.set(event.invocationKey, event);
   const latest = new Map<string, Record<string, any>>();
   for (const row of reservations.rows) latest.set(row.invocationKey, row);
+  const ledger = new Map<string, Record<string, any>>(readJsonLines<Record<string, any>>(spendPath).map(entry => [entry.invocationKey, entry]));
   const capturedAt = new Date().toISOString();
   const entries = [...latest.values()].map(row => {
+    const prior = ledger.get(row.invocationKey);
     const evidence = row.evidenceJson ?? {}, pricing = row.pricingSnapshot ?? {}, usageRow = latestUsage.get(row.invocationKey);
     const tariff = pricing.tariff, tokens = { input: evidence.inputTokens, output: evidence.outputTokens,
       cacheRead: evidence.cacheReadInputTokens, cacheWrite: evidence.cacheWriteInputTokens };
     const measured = row.usageBasis === 'PROVIDER_REPORTED' || evidence.providerUsageBasis === 'PROVIDER_REPORTED';
     const exact = measured && tariff && Object.values(tokens).every(Number.isSafeInteger) && Number.isSafeInteger(evidence.externalUnits)
       ? providerCostExact({ tokens, externalUnits: evidence.externalUnits, tariff, recordedCostSatang: Number(row.settledCostSatang ?? evidence.absorbedCostSatang ?? 0) }) : null;
-    return { attemptId, capturedAt, invocationKey: row.invocationKey, sourceRoute: row.sourceRoute, stepKind: row.stepKind,
+    return { attemptId: prior?.attemptId ?? attemptId, capturedAt, ...(prior?.scope === 'previousRun' || !prior && scope === 'previousRun' ? { scope: 'previousRun' } : {}),
+      invocationKey: row.invocationKey, sourceRoute: row.sourceRoute, stepKind: row.stepKind,
       status: row.status, usageBasis: row.usageBasis ?? evidence.providerUsageBasis ?? null,
       upperBoundSatang: Number(row.upperBoundSatang), settledCostSatang: row.settledCostSatang,
       customerSatang: evidence.customerChargedSatang ?? null, companyAbsorbedSatang: evidence.companyAbsorbedSatang ?? evidence.absorbedCostSatang ?? null,
@@ -87,17 +91,18 @@ export async function captureSpend(client: EvalPgClient, databaseUrl: string, sp
       providerCostBasis: measured ? 'measured' : ['RESERVED', 'DISPATCHED', 'UNRESOLVED'].includes(row.status) || row.usageBasis === 'OPERATOR_CHARGED_AT_BOUND' ? 'estimated' : 'unknown',
       ledgerSatang: spendSatang(row), tokens, externalUnits: evidence.externalUnits ?? null,
       usageEventKind: usageRow?.eventKind ?? null, usageEventBasis: usageRow?.usageBasis ?? null };
+  }).filter(entry => {
+    const prior = ledger.get(entry.invocationKey);
+    return !prior || JSON.stringify({ ...prior, capturedAt: undefined }) !== JSON.stringify({ ...entry, capturedAt: undefined });
   });
   mkdirSync(dirname(spendPath), { recursive: true });
   if (entries.length) {
     const fd = openSync(spendPath, 'a');
     try { for (const entry of entries) appendFileSync(fd, `${JSON.stringify(entry)}\n`); fsyncSync(fd); } finally { closeSync(fd); }
   }
-  const prior = readJsonLines<Record<string, any>>(spendPath);
-  const ledger = new Map<string, Record<string, any>>();
-  for (const entry of prior) ledger.set(entry.invocationKey, entry);
+  for (const entry of entries) ledger.set(entry.invocationKey, entry);
   const keys = [...ledger.keys()];
-  const total = [...ledger.values()].reduce((sum, row) => sum + BigInt(Math.trunc(row.ledgerSatang)), 0n);
+  const total = [...ledger.values()].filter(row => row.scope !== 'previousRun').reduce((sum, row) => sum + BigInt(Math.trunc(row.ledgerSatang)), 0n);
   await client.query('UPDATE eval_guard.ledger_satang SET amount = $1 WHERE id = true', [String(total)]);
   for (const key of keys) await client.query('INSERT INTO eval_guard.captured(invocation_key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
   return { totalSatang: String(total), invocationKeys: keys };

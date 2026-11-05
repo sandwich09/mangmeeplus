@@ -5,7 +5,7 @@ import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, EXECUTIVE_REASON_CODES, executiveSourceReasonText, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
-import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
+import { SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE, SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
 // The API answers business-rule failures in English (its messages double as
 // operator/log text). This is the single seam where those reach a Thai screen.
@@ -727,7 +727,7 @@ const CODE_LABELS: Record<string, string> = {
   tax_evidence_nonclaimable:
     'ใบรับรองแทนใบเสร็จใช้ขอคืนภาษีซื้อไม่ได้ เลือกหลักฐานรายจ่ายเป็น “ใช้ได้เมื่อมีหลักฐานอื่นประกอบ” หรือขอใบแทนใบกำกับภาษีจากผู้ขาย',
   substitute_receipt_too_many_lines:
-    `ใบรับรอง 1 ใบรองรับได้สูงสุด ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} รายการ แยกบันทึกเป็นหลายรายการค่าใช้จ่ายและจัดทำคนละใบ`,
+    SUBSTITUTE_RECEIPT_LINE_LIMIT_MESSAGE,
   substitute_receipt_line_description_too_long:
     `รายละเอียดค่าใช้จ่ายแต่ละรายการต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} ตัวอักษร กลับไปย่อรายละเอียดก่อนทำต่อ`,
   substitute_receipt_too_many_evidence:

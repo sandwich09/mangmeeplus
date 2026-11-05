@@ -290,7 +290,9 @@ export async function runReal(dependencies: {
     const maxThb = environment['MANGMEE_EVAL_MAX_THB'];
     assert.ok(maxThb, 'MANGMEE_EVAL_MAX_THB is required');
     await installEvalGuard(pg, databaseUrl.toString(), maxThb);
-    await captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'startup');
+    const capturePendingSpend = () => captureSpend(pg, databaseUrl.toString(), paths.spendPath,
+      progress.inFlightAttemptId ?? 'previousRun', progress.inFlightAttemptId ? 'currentRun' : 'previousRun');
+    await capturePendingSpend();
 
     const fullCorpus = JSON.parse(readFileSync(corpusPath, 'utf8')) as Corpus | WorkflowCorpus;
     if (fullCorpus.version === 2) validateWorkflowCorpus(fullCorpus);
@@ -323,13 +325,14 @@ export async function runReal(dependencies: {
       environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
     };
     const goldPass = await (dependencies.oracle ?? collectGoldResults)(REPO_ROOT, fullCorpus.version === 2 ? fullCorpus : requested, workflowSeed?.companies ?? companies, databaseUrl.toString(), redisUrl, secretsPath, now,
-      () => captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'oracle').then(() => undefined));
+      () => capturePendingSpend().then(() => undefined));
     const turnCounts = new Map<string, number>(), attemptByConversation = new Map<string, string>();
     let capReached = false;
     let capCount = await capRejectionCount(pg);
+    let runtimeError: unknown;
     const result = corpus.conversations.length ? await (dependencies.runtime ?? runLineReliabilityRuntime)(manifest, REPO_ROOT, {
       onBeforeReset: async (conversation, attemptId) => {
-        await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
+        await capturePendingSpend();
         if (capReached) throw new Error('EVAL_CAP_REACHED');
         attemptByConversation.set(conversation.id, attemptId);
         progress.inFlightConversationId = conversation.id; progress.inFlightAttemptId = attemptId;
@@ -348,24 +351,35 @@ export async function runReal(dependencies: {
         if (next !== capCount) { capReached = true; capCount = next; throw new Error('EVAL_CAP_REACHED'); }
       },
       onConversationComplete: async (conversation, attemptId) => {
+        await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
         if (capReached || turnCounts.get(conversation.id) !== requested.conversations.find(row => row.id === conversation.id)?.turns.length) return;
         progress.completedConversationIds = [...new Set([...progress.completedConversationIds, conversation.id])];
         progress.completedAttempts[conversation.id] = attemptId;
         progress.inFlightConversationId = null; progress.inFlightAttemptId = null;
         writeProgress(progressPath, progress);
       },
-    }) : { records: [], turnEvidence: [], runtimeDiagnostics: [] };
+    }).catch(error => { runtimeError = error; return { records: [], turnEvidence: [], runtimeDiagnostics: [] }; })
+      : { records: [], turnEvidence: [], runtimeDiagnostics: [] };
     for (const evidence of result.turnEvidence) {
       const attemptId = attemptByConversation.get(evidence.scenarioId);
       if (attemptId) appendJsonLine(paths.turnsPath, { ...evidence, attemptId });
     }
+    for (const row of result.records.filter(row => row.error)) {
+      progress.completedConversationIds = progress.completedConversationIds.filter(id => id !== row.scenarioId);
+      delete progress.completedAttempts[row.scenarioId];
+      progress.inFlightConversationId = row.scenarioId;
+      progress.inFlightAttemptId = attemptByConversation.get(row.scenarioId) ?? null;
+    }
     for (const row of result.records) if (!row.error && row.traces.length === requested.conversations.find(item => item.id === row.scenarioId)?.turns.length) {
       progress.completedConversationIds = [...new Set([...progress.completedConversationIds, row.scenarioId])];
       const attemptId = attemptByConversation.get(row.scenarioId);
-      if (attemptId) progress.completedAttempts[row.scenarioId] = attemptId;
+      if (attemptId) {
+        await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
+        progress.completedAttempts[row.scenarioId] = attemptId;
+      }
       if (progress.inFlightConversationId === row.scenarioId) { progress.inFlightConversationId = null; progress.inFlightAttemptId = null; }
     }
-    await captureSpend(pg, databaseUrl.toString(), paths.spendPath, progress.inFlightAttemptId ?? 'final');
+    await capturePendingSpend();
     writeProgress(progressPath, progress);
     const allEvidence = readJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(paths.turnsPath);
     const completedEvidence = completeAttemptEvidence(allEvidence, progress.completedAttempts);
@@ -373,34 +387,43 @@ export async function runReal(dependencies: {
     const completedPositions = completedCorpus.conversations.flatMap(conversation => conversation.turns.map((_, turnIndex) => ({ conversation, turnIndex })));
     const actualModel = { ...model, modelIds: [...new Set(allEvidence.flatMap(row => (row.providerUsage as Array<{ modelId?: string }>).map(call => call.modelId).filter((id): id is string => !!id)))] };
     const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
+    const spendLedger = new Map<string, any>();
+    for (const entry of readJsonLines<any>(paths.spendPath)) spendLedger.set(entry.invocationKey, entry);
+    const spend = [...spendLedger.values()].filter(entry => entry.scope !== 'previousRun');
+    const previousRun = [...spendLedger.values()].filter(entry => entry.scope === 'previousRun');
     if (capReached) {
-      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'CAP_REACHED', progress, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'CAP_REACHED', progress, turnEvidence: allEvidence, spend, previousRun, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      writeFileSync(paths.reportPath, `# Evaluation\n\nCAP_REACHED\n\nCompleted conversations ${progress.completedConversationIds.length}\n`);
       console.log(JSON.stringify({ event: 'CAP_REACHED', evidencePath: paths.evidencePath, progressPath })); process.exitCode = 2; return;
     }
     const incomplete = requested.version === 2 ? requested.conversations.some(row => !progress.completedConversationIds.includes(row.id))
       : progress.completedConversationIds.length < requested.conversations.length;
-    if (incomplete || completedPositions.some(({ conversation, turnIndex }) => !completedEvidence.some(row => row.scenarioId === conversation.id && row.turnIndex === turnIndex))) {
-      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'FAILED_RESUMABLE', progress, turnEvidence: allEvidence, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
-      throw new Error(`EVAL_FAILED_RESUMABLE:${progress.inFlightConversationId ?? 'unknown'}`);
+    if (runtimeError || result.records.some(row => row.error) || incomplete || completedPositions.some(({ conversation, turnIndex }) => !completedEvidence.some(row => row.scenarioId === conversation.id && row.turnIndex === turnIndex))) {
+      writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, status: 'FAILED_RESUMABLE', progress, turnEvidence: allEvidence, spend, previousRun, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      writeFileSync(paths.reportPath, `# Evaluation\n\nFAILED_RESUMABLE\n\nCompleted conversations ${progress.completedConversationIds.length}\n`);
+      throw runtimeError ?? new Error(`EVAL_FAILED_RESUMABLE:${progress.inFlightConversationId ?? 'unknown'}`);
     }
     if (completedCorpus.version === 2) {
       const classifierLabels = process.argv.includes('--classifier-labels=messages') ? 'messages' : completedCorpus.classifierLabels;
       const ids = new Set(completedCorpus.conversations.map(row => row.id));
       const attempts = workflowAttemptsFromEvidence(completedCorpus, allEvidence.filter(row => ids.has(row.scenarioId)), progress.completedAttempts);
       const workflowMetrics = scoreWorkflowCorpus({ corpus: completedCorpus, attempts, now, classifierLabels, includeButtonBaseline: true });
-      const failures = completedCorpus.conversations.filter(conversation => {
+      const failures = completedCorpus.conversations.flatMap(conversation => {
         const metrics = scoreWorkflowCorpus({ corpus: { ...completedCorpus, conversations: [conversation] },
           attempts: attempts.filter(attempt => attempt.conversationId === conversation.id), now, classifierLabels, includeButtonBaseline: true });
-        return metrics.W1.passed < metrics.W1.total || metrics.W2.passed < metrics.W2.total || metrics.W3.passed < metrics.W3.total
+        const reasons = completedEvidence.filter(row => row.scenarioId === conversation.id && row.replayFailure).map(row => row.replayFailure!);
+        const failed = metrics.W1.passed < metrics.W1.total || metrics.W2.passed < metrics.W2.total || metrics.W3.passed < metrics.W3.total
           || metrics.W6.wrongApplied > 0 || metrics.W6.wrongPreview > 0 || metrics.W9.invalidCalls > 0 || metrics.W12.machineTokenTurns > 0
           || metrics.W14.timeouts > 0 || metrics.W15.rejectedAndCharged > 0 || metrics.answerChecks?.some(check => !check.ok)
-          || metrics.buttonBaseline && metrics.buttonBaseline.passed < metrics.buttonBaseline.total;
-      }).map(conversation => ({ conversationId: conversation.id }));
+          || metrics.buttonBaseline && metrics.buttonBaseline.passed < metrics.buttonBaseline.total
+          || reasons.length > 0;
+        return failed ? [{ conversationId: conversation.id, ...(reasons.length ? { reasons } : {}) }] : [];
+      });
       const summary = { unit: 'conversation', total: completedCorpus.conversations.length,
         passed: completedCorpus.conversations.length - failures.length, failed: failures.length, failures };
       writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest,
-        corpusVersion: 2, classifierLabels, includeButtonBaseline: true, subset: subset ?? undefined, progress, workflowMetrics, summary,
-        turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+        status: 'COMPLETE', corpusVersion: 2, classifierLabels, includeButtonBaseline: true, subset: subset ?? undefined, progress, workflowMetrics, summary,
+        turnEvidence: allEvidence, spend, previousRun, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
       writeFileSync(paths.reportPath, renderWorkflowReport({ sourceCommit, now, corpus: completedCorpus, metrics: workflowMetrics, subset: subset ?? undefined }));
       console.log(JSON.stringify({ event: 'real_run_done', evidencePath: paths.evidencePath, reportPath: paths.reportPath, ...summary }));
       process.exitCode = summary.failed > 0 ? 1 : 0;
@@ -409,16 +432,20 @@ export async function runReal(dependencies: {
     const completedFlat = flattenTurns(completedCorpus);
     const scores = scoreAllTurns(completedFlat, completedEvidence, goldPass, now), summary = summarizeScores(scores);
     writeFileSync(paths.evidencePath, JSON.stringify({ startedAt: progress.startedAt, sourceCommit, model: actualModel, manifest: safeManifest, subset: subset ?? undefined,
-      progress, scores, summary, turnEvidence: allEvidence, spend: readJsonLines(paths.spendPath), runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
+      progress, scores, summary, turnEvidence: allEvidence, spend, previousRun, runtimeDiagnostics: result.runtimeDiagnostics }, null, 2));
     writeFileSync(paths.reportPath, renderReport({ sourceCommit, now, summary, scores, corpus: completedCorpus, turnEvidence: completedEvidence, subset: subset ?? undefined }));
     console.log(JSON.stringify({ event: 'real_run_done', evidencePath: paths.evidencePath, reportPath: paths.reportPath, total: summary.total, passed: summary.passed, failed: summary.failed }));
     process.exitCode = summary.failed > 0 ? 1 : 0;
   } finally { await pg.end(); }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runReal().catch((error) => {
+export async function runRealCli(dependencies: Parameters<typeof runReal>[0] = {}): Promise<never> {
+  try { await runReal(dependencies); }
+  catch (error) {
     console.error(JSON.stringify({ event: 'real_run_failed', message: error instanceof Error ? error.message : String(error) }));
     process.exitCode = 1;
-  });
+  }
+  process.exit(Number(process.exitCode ?? 0));
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) void runRealCli();

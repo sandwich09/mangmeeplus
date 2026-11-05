@@ -77,7 +77,7 @@ async function run(candidateId: string, draftResult?: Record<string, unknown>) {
 describe('semantic turn retained task source', () => {
   it('exposes only the selected historical clause/candidates and rejects a sibling candidate id', async () => {
     const accepted = await run((await fixture()).selectedId);
-    const payload = JSON.parse(accepted.prompts[0]!.messages[0]!.text);
+    const payload = JSON.parse(accepted.prompts[0]!.cacheableContext!);
     assert.equal(payload.messageText, 'ทำข้อ 1 ก่อน');
     assert.deepEqual(payload.inputEvidence, accepted.source.current.inputEvidence);
     assert.equal(payload.retainedTaskSource.selectedClause.text, accepted.source.selectedText);

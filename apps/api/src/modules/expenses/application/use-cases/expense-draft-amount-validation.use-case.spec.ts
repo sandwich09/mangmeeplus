@@ -542,6 +542,30 @@ function setup(storedLines: any[] = [product, automatic], extra: Record<string, 
   return { input, useCase, state: () => ({ writes, audits, storedLines, record }) };
 }
 
+for (const comma of [false, true]) for (const gap of ['0.06', '-0.06']) it(`preserves printed item rounding ${gap} ${comma ? 'with commas' : ''} through preview, save and repeated save`, async () => {
+  const goods = Array.from({ length: 15 }, (_, index) => ({ ...product, id: `goods-${index}`, lineNumber: index + 1,
+    quantity: '1', unitPrice: index === 0 ? (comma ? '1007.27' : '7.27') : '10', vatRate: '0', description: `สินค้าสังเคราะห์ ${index + 1}` }));
+  const adjustment = { ...automatic, id: 'rounding', lineNumber: 16, unitPrice: gap };
+  const gross = ((comma ? 1147.27 : 147.27) + Number(gap)).toFixed(2);
+  const rawMoney = (value: string) => comma ? Number(value).toLocaleString('en-US', { minimumFractionDigits: 2 }) : value;
+  const fixture = setup([...goods, adjustment], { vatMode: 'NO_VAT', vatAmount: '0', grandTotalAmount: gross,
+    aiVerifiedFieldsJson: { subtotalAmount: rawMoney(gross), grandTotalAmount: rawMoney(gross),
+      lines: goods.map(line => ({ description: line.description, amount: rawMoney(line.unitPrice) })) } });
+  fixture.input.vatSource = { inputType: 'NONE' };
+  fixture.input.lines![15]!.unitPrice = '9.99';
+  const preview = await fixture.useCase.execute(ctx, 'expense-1', fixture.input, { previewOnly: true });
+  assert.equal(preview.grandTotalAmount, Number(gross).toFixed(4));
+  assert.equal(preview.calculatedAdjustmentAmount, Number(gap).toFixed(4));
+  for (const attempt of [1, 2]) {
+    const saved = await fixture.useCase.execute(ctx, 'expense-1', fixture.input);
+    assert.equal(saved.grandTotalAmount, Number(gross).toFixed(4), `save ${attempt}`);
+  }
+  assert.equal(fixture.state().storedLines[15].sourceLineText, EXPENSE_CALCULATED_ROUNDING_SOURCE);
+  fixture.input.lines![0]!.unitPrice = '8.27';
+  const edited = await fixture.useCase.execute(ctx, 'expense-1', fixture.input, { previewOnly: true });
+  assert.equal(edited.calculatedAdjustmentAmount, '0.0000', 'editing goods invalidates the old printed adjustment');
+});
+
 it('fuel preview uses exact save arithmetic, ignores edited adjustment and performs zero writes', async () => {
   const { useCase, input, state } = setup();
   input.lines![1]!.unitPrice = '0.003';

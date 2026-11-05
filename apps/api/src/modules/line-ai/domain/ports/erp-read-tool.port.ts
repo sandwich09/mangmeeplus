@@ -21,8 +21,8 @@ export type ErpToolContext = {
    *  re-resolved from the verified actor delegation. Absent for a non-LINE caller. */
   chatKeyHash?: string;
   /** The message this turn is answering, forwarded verbatim by the API that received it, bounded
-   *  at the transport. Used by exactly one thing: the S-4 value-grounding guard (spec §5.4), which
-   *  needs to prove that a number a draft edit would write was actually said. It is never stored,
+   *  at the transport. The S-4 value-grounding guard (spec §5.4) proves a draft-edit number was
+   *  actually said; voucher previews also show an explicit requested bill count. The text is never stored,
    *  never logged, and grants nothing — with it absent, only numbers already on the record ground. */
   groundingText?: string;
   inputEvidence?: LineAiInputEvidenceV2;

@@ -30,10 +30,10 @@ function request(messageText: string, permissions: string[], requestedFilters: R
 
 function recordingProvider(responses: string[]) {
   const queue = [...responses];
-  const calls: Array<{ usageTag: string; systemPrompt: string; text: string }> = [];
+  const calls: Array<{ usageTag: string; systemPrompt: string; text: string; cacheableContext: string }> = [];
   const provider: IModelProvider = {
     async generateText(input: ProviderInput): Promise<ProviderOutput> {
-      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '', text: input.messages?.[0]?.text ?? '' });
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '', text: input.messages?.[0]?.text ?? '', cacheableContext: input.cacheableContext ?? '' });
       return { ok: true, text: queue.shift() ?? '{}' };
     },
   };
@@ -87,7 +87,7 @@ describe('advisor S3: reimbursement.get_approval_backlog wiring and prompt rules
 
     const control = calls.find((call) => call.usageTag === 'line.loop')!;
     assert.match(control.systemPrompt, /For whether reimbursement claims are stuck or who or where they are waiting .* call reimbursement\.get_approval_backlog, with input requester "me" only when the user asks about their own claims .* and never a person's name as input/);
-    assert.ok(JSON.parse(control.text).tools.some((tool: { name: string }) => tool.name === TOOL));
+    assert.ok(JSON.parse(control.cacheableContext).tools.some((tool: { name: string }) => tool.name === TOOL));
     assert.deepEqual(invoked, [{ requester: 'me' }]);
     const compose = calls.find((call) => call.usageTag === 'line.compose')!;
     assert.match(compose.systemPrompt, /the sharedPile is its own line \(claims several people can approve\) and is never added to, split among or named after any person/);

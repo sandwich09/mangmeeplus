@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { disbursementExpenseReasonMessage, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { disbursementExpenseReasonMessage, DISBURSEMENT_VOUCHER_MAX_LINES, DISBURSEMENT_VOUCHER_ERROR_WORDS } from '@watchdog-bms/contracts';
 import Link from 'next/link';
 import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { TextField } from '@/common/components/field';
@@ -92,7 +92,7 @@ export function DisbursementVoucherOtherExpenses({ companyId, amounts, onAdd, on
   const allAmounts = { ...amounts, ...selectedAmounts };
   const toggle = (row: DisbursementPayableExpense) => {
     if (!row.selectable) return;
-    if (!selectedAmounts[row.expenseId] && Object.keys(allAmounts).length >= 20) { setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines); return; }
+    if (!selectedAmounts[row.expenseId] && Object.keys(allAmounts).length >= DISBURSEMENT_VOUCHER_MAX_LINES) { setSelectionError(DISBURSEMENT_VOUCHER_ERROR_WORDS.disbursement_too_many_lines); return; }
     setSelectionError(null);
     setSelected(previous => previous.some(item => item.expenseId === row.expenseId) ? previous.filter(item => item.expenseId !== row.expenseId) : [...previous, row]);
   };

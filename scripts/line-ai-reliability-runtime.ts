@@ -61,6 +61,7 @@ export type ReliabilityRuntimeManifest = {
   bootstrapLaunchGates?: boolean;
 };
 export type RuntimeWireReceipt = { messages: unknown; at: number; receiptId: string; path: string; payloadHash: string };
+export type RuntimeReplayFailure = { reason: 'press_target_not_delivered' | 'press_target_ambiguous' | 'turn_unreached'; turnIndex: number; blockedByTurnIndex?: number };
 export type RuntimeTurnEvidence = {
   scenarioId: string; repeat: number; turnIndex: number; user: string; attachmentIds: string[];
   inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string;
@@ -75,6 +76,7 @@ export type RuntimeTurnEvidence = {
   businessSnapshotBefore?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
   workflowPreviews?: JsonRow[];
   workflowTasks?: JsonRow[];
+  replayFailure?: RuntimeReplayFailure;
   unintendedEffects?: ReliabilityTurnTrace['effects'];
   delivery: ReliabilityTurnTrace['delivery'];
 };
@@ -161,14 +163,21 @@ export function instrumentRuntimeMethod(target: any, method: string, instrument:
   target[method] = wrapper;
 }
 
-export function selectRuntimePostback(messages: unknown, label: string): string {
+export function resolveRuntimePostback(messages: unknown, label: string): { data?: string; failure?: 'press_target_not_delivered' | 'press_target_ambiguous' } {
   const choices = new Set<string>();
   const visit = (value: any, depth = 0): void => {
     if (!value || typeof value !== 'object' || depth > 30) return;
     if (value.type === 'postback' && value.label === label && typeof value.data === 'string') choices.add(value.data);
     else for (const child of Object.values(value)) visit(child, depth + 1);
   };
-  visit(messages); assert.equal(choices.size, 1, 'REPLAY_POSTBACK_NOT_UNIQUELY_DELIVERED'); return [...choices][0]!;
+  visit(messages);
+  return choices.size === 1 ? { data: [...choices][0]! } : { failure: choices.size ? 'press_target_ambiguous' : 'press_target_not_delivered' };
+}
+
+export function selectRuntimePostback(messages: unknown, label: string): string {
+  const selected = resolveRuntimePostback(messages, label);
+  assert.ok(selected.data !== undefined, 'REPLAY_POSTBACK_NOT_UNIQUELY_DELIVERED');
+  return selected.data;
 }
 
 /** Effects come from actual before/after rows, including writes that preceded a thrown timeout. */
@@ -413,11 +422,13 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
   const originalFetch = globalThis.fetch;
   let app: any, client: any, current: ReliabilityFixture | undefined, snapshot: RuntimeSourceSnapshot | undefined, repeat = 0, attemptId = '', unsafeToReset = false;
   let selectedCompanyId = '', selectedActorId = '';
+  let blockedPress: RuntimeReplayFailure | undefined;
+  let executionFailed = false;
   let processingWebhook = 0;
   let active: { acceptedAt: number; eventIds: string[]; before: Record<string, JsonRow[]>; usageIds: Set<string>; tools: ReliabilityTurnTrace['tools']; results: ToolResult[];
     responses: LineAiTurnResponse[]; deliveryCoverage: LineAiSemanticCoverageV2[] | null; missing: string[]; requests: string[]; completedAt: number | null; errors: string[]; critical: string[]; receipts: RuntimeWireReceipt[];
     toolResults: RuntimeTurnEvidence['toolResults']; gatewayResponses: RuntimeTurnEvidence['gatewayResponses']; reviewBefore: RuntimeReviewState;
-    inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string; previewEntries: JsonRow[]; lineUserId: string } | undefined;
+    inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string; previewEntries: JsonRow[]; lineUserId: string; infrastructureError?: unknown } | undefined;
   let turnStates: Array<NonNullable<typeof active>> = [];
   const turnEvidence: RuntimeTurnEvidence[] = [];
   const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
@@ -445,31 +456,38 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     return { draftActions: draftActions.slice(0, 100), conversations: conversations.slice(0, 100), truncated: draftActions.length > 100 || conversations.length > 100 };
   };
   globalThis.fetch = (async (input, init) => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.hostname === 'api.line.me') {
-      if (!url.pathname.startsWith('/v2/bot/message/') && url.pathname !== '/v2/bot/chat/loading/start') throw new Error('REPLAY_LINE_ENDPOINT_BLOCKED');
-      const receiptId = `sink-${randomUUID()}`;
-      if (url.pathname !== '/v2/bot/chat/loading/start') {
-        const body = JSON.parse(String(init?.body ?? '{}'));
-        assert.ok(active && Array.isArray(body.messages), 'REPLAY_UNSCOPED_SEND');
-        if (body.to !== undefined && body.to !== (current?.fixture.channelKind === 'USER' ? active.lineUserId : current?.fixture.chat)
-          || body.replyToken !== undefined && !active.eventIds.some(id => body.replyToken === `${id}-token`)) {
-          active.critical.push('cross_recipient_attempt'); throw new Error('REPLAY_WRONG_RECIPIENT');
+    try {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === 'api.line.me') {
+        if (!url.pathname.startsWith('/v2/bot/message/') && url.pathname !== '/v2/bot/chat/loading/start') throw new Error('REPLAY_LINE_ENDPOINT_BLOCKED');
+        const receiptId = `sink-${randomUUID()}`;
+        if (url.pathname !== '/v2/bot/chat/loading/start') {
+          const body = JSON.parse(String(init?.body ?? '{}'));
+          assert.ok(active && Array.isArray(body.messages), 'REPLAY_UNSCOPED_SEND');
+          if (body.to !== undefined && body.to !== (current?.fixture.channelKind === 'USER' ? active.lineUserId : current?.fixture.chat)
+            || body.replyToken !== undefined && !active.eventIds.some(id => body.replyToken === `${id}-token`)) {
+            active.critical.push('cross_recipient_attempt'); throw new Error('REPLAY_WRONG_RECIPIENT');
+          }
+          active.receipts.push({ messages: structuredClone(body.messages), at: Date.now(), receiptId, path: url.pathname, payloadHash: reliabilityDigest(body) });
         }
-        active.receipts.push({ messages: structuredClone(body.messages), at: Date.now(), receiptId, path: url.pathname, payloadHash: reliabilityDigest(body) });
+        return new Response('{}', { status: 200, headers: { 'x-line-request-id': receiptId } });
       }
-      return new Response('{}', { status: 200, headers: { 'x-line-request-id': receiptId } });
+      if (url.hostname === 'api-data.line.me') {
+        const id = decodeURIComponent(url.pathname.match(/\/message\/([^/]+)\/content$/)?.[1] ?? '');
+        const asset = snapshot?.assets[id]; assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
+        const bytes = runtimeAssetBytes(asset, repoRoot);
+        return new Response(bytes, { status: 200, headers: { 'content-type': asset.mimeType } });
+      }
+      // Presigned uploads/readers also use the explicitly validated local storage endpoint.
+      assert.ok([new URL(manifest.gatewayUrl).origin, `http://127.0.0.1:${manifest.apiPort}`,
+        ...(manifest.localStorageEndpoint ? [new URL(manifest.localStorageEndpoint).origin] : [])].includes(url.origin), 'REPLAY_EXTERNAL_API_EGRESS_BLOCKED');
+      const response = await originalFetch(input, init);
+      if (response.status >= 500 && active) active.infrastructureError = new Error('REPLAY_LOCAL_SERVICE_UNAVAILABLE');
+      return response;
+    } catch (error) {
+      if (active && !['AbortError', 'TimeoutError'].includes((error as Error).name)) active.infrastructureError = error;
+      throw error;
     }
-    if (url.hostname === 'api-data.line.me') {
-      const id = decodeURIComponent(url.pathname.match(/\/message\/([^/]+)\/content$/)?.[1] ?? '');
-      const asset = snapshot?.assets[id]; assert.ok(asset, 'REPLAY_UNKNOWN_ASSET');
-      const bytes = runtimeAssetBytes(asset, repoRoot);
-      return new Response(bytes, { status: 200, headers: { 'content-type': asset.mimeType } });
-    }
-    // Presigned uploads/readers also use the explicitly validated local storage endpoint.
-    assert.ok([new URL(manifest.gatewayUrl).origin, `http://127.0.0.1:${manifest.apiPort}`,
-      ...(manifest.localStorageEndpoint ? [new URL(manifest.localStorageEndpoint).origin] : [])].includes(url.origin), 'REPLAY_EXTERNAL_API_EGRESS_BLOCKED');
-    return originalFetch(input, init);
   }) as typeof fetch;
   const collect = async (row: ReliabilityFixture, turnIndex: number): Promise<ReliabilityTurnTrace> => {
     assert.ok(active, 'REPLAY_NO_ADMITTED_TURN');
@@ -537,7 +555,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       // before the very first one, exactly where a between-conversations pause belongs.
       if (app && CONVERSATION_PAUSE_MS > 0) { stage = 'conversation_pause'; await delay(CONVERSATION_PAUSE_MS); }
       if (app) { await app.close(); app = undefined; } active = undefined;
-      turnStates = [];
+      turnStates = []; blockedPress = undefined; executionFailed = false;
       current = row; repeat = ordinal; snapshot = manifest.snapshots[row.fixture.sourceSnapshot];
       attemptId = runtimeAttemptId(row.id, ordinal);
       selectedCompanyId = row.fixture.company; selectedActorId = row.fixture.actor;
@@ -628,6 +646,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       if (turnIndex > 0 && TURN_PAUSE_MS > 0) { stage = 'turn_pause'; await delay(TURN_PAUSE_MS); }
       stage = `turn:${turnIndex}`;
       assert.equal(current?.id, row.id); assert.ok(snapshot && app);
+      await redis.ping();
       active = undefined;
       const turn = row.turns[turnIndex]!, replayTurn = turn as typeof turn & RuntimeReplayTurn;
       const prefix = runtimeEventIdPrefix(attemptId, turnIndex), action = replayTurn.action;
@@ -637,31 +656,35 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         (userId, companyId) => app.get(PermissionResolverService).resolveAccess(userId, companyId));
       selectedCompanyId = actorContext.companyId;
       selectedActorId = actorContext.userId;
-      await executeRuntimeFixtureOperations(replayTurn.fixture ?? [], { databaseUrl: manifest.databaseUrl, client, redis,
+      if (!blockedPress) await executeRuntimeFixtureOperations(replayTurn.fixture ?? [], { databaseUrl: manifest.databaseUrl, client, redis,
         companyId: selectedCompanyId, userId: selectedActorId,
         chatKeyHash: hashMessagePreview(row.fixture.channelKind === 'USER' ? actorContext.lineUserId : row.fixture.chat), seedRows: snapshot.rows });
       const postbackLabel = action?.type === 'postback' ? action.label : (actor?.postbackLabels ?? snapshot.postbackLabels)?.[turnIndex];
-      const postbackData = postbackLabel ? selectRuntimePostback(runtimePressReceipts(turnStates, turnIndex, replayTurn), postbackLabel) : undefined;
+      const selection = !blockedPress && postbackLabel ? resolveRuntimePostback(runtimePressReceipts(turnStates, turnIndex, replayTurn), postbackLabel) : undefined;
+      const replayFailure: RuntimeReplayFailure | undefined = blockedPress ? { reason: 'turn_unreached', turnIndex, blockedByTurnIndex: blockedPress.turnIndex }
+        : selection?.failure ? { reason: selection.failure, turnIndex } : undefined;
+      if (selection?.failure) blockedPress = replayFailure;
+      const postbackData = selection?.data;
       if (postbackLabel && !action) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
       const source = { type: row.fixture.channelKind.toLowerCase(), userId: actorContext.lineUserId,
         ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
-      if (action?.type === 'uri') {
+      if (action?.type === 'uri' || replayFailure) {
         const at = Date.now(), before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));
         const review = await readReviewState();
         const state = { acceptedAt: at, eventIds: [], before, usageIds, tools: [], results: [], responses: [], deliveryCoverage: null, missing: [], requests: [],
-          completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: review, inputKind: 'uri', action, pressFrom: actorKey,
+          completedAt: null, errors: [], critical: [], receipts: [], toolResults: [], gatewayResponses: [], reviewBefore: review, inputKind: action?.type ?? 'message', action, pressFrom: actorKey,
           previewEntries: [], lineUserId: actorContext.lineUserId } as NonNullable<typeof active>;
         active = state; turnStates.push(state);
         const delivery = runtimeDeliveryEvidence([], [], []), businessSnapshot = runtimeBusinessSnapshot(before);
         const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
-          inputKind: 'uri', action, ...(actorKey ? { pressFrom: actorKey } : {}),
+          inputKind: state.inputKind, action, ...(actorKey ? { pressFrom: actorKey } : {}), ...(replayFailure ? { replayFailure } : {}),
           companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
           webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: at, modelWorkCompletedAtMs: null, receipts: [], toolResults: [], gatewayResponses: [],
           webhookEvents: [], providerUsage: [], reservations: [], reviewState: { before: review, after: review }, businessSnapshot, unintendedEffects: [], delivery });
         turnEvidence.push(evidence); await hooks.onTurn?.(evidence);
         return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
-          sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: at, outcome: 'web_handoff', taskId: null, askedSlots: [], tools: [], facts: [], effects: [],
-          modelCalls: 0, costSatang: 0, modelWorkCompletedAtMs: null, delivery, falseRefusalOrHandoff: false, validationFailures: [], criticalErrors: [], versions: manifest.versions };
+          sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: at, outcome: replayFailure ? 'unreached' : 'web_handoff', taskId: null, askedSlots: [], tools: [], facts: [], effects: [],
+          modelCalls: 0, costSatang: 0, modelWorkCompletedAtMs: null, delivery, falseRefusalOrHandoff: false, validationFailures: replayFailure ? [replayFailure.reason] : [], criticalErrors: [], versions: manifest.versions };
       }
       const assetIds = action?.type === 'camera' ? [action.assetId] : turn.attachmentIds;
       const messageText = action?.type === 'message' ? action.text : turn.user;
@@ -689,9 +712,11 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         await delay(50);
       }
       if (!settled) throw new Error('REPLAY_TERMINAL_TIMEOUT');
+      if (active.infrastructureError) throw active.infrastructureError;
       active.completedAt ??= Date.now(); return collect(row, turnIndex);
     },
     async afterFailure(row, index) {
+      executionFailed = true;
       if (!active) return null; active.errors.push('runtime_execution_failed');
       // A timed-out fire-and-forget job cannot be allowed to write into the next reset snapshot.
       unsafeToReset = await pendingWork() > 0;
@@ -711,7 +736,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         const evidence = turnEvidence.find(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === index);
         if (evidence) evidence.delivery = structuredClone(trace.delivery);
       }
-      await hooks.onConversationComplete?.(row, attemptId);
+      if (!executionFailed) await hooks.onConversationComplete?.(row, attemptId);
     },
   };
   for (const method of ['reset', 'turn', 'finalize'] as const) instrumentRuntimeMethod(adapter, method, async (original, args) => {
@@ -722,7 +747,7 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     await databaseLock.connect();
     const locked = await databaseLock.query("SELECT pg_try_advisory_lock(hashtext('line-reliability-runtime-reset')) AS locked");
     assert.equal(locked.rows[0]?.locked, true, 'REPLAY_DATABASE_IN_USE');
-    const replay = await replayReliabilityCorpus(manifest.corpus, adapter, { repeats: manifest.repeats, cohort: manifest.cohort, cache: 'unknown' });
+    const replay = await replayReliabilityCorpus(manifest.corpus, adapter, { repeats: manifest.repeats, cohort: manifest.cohort, cache: 'unknown', stopOnError: true });
     return { ...replay, turnEvidence, runtimeDiagnostics, boundary: { runtime: 'compiled_nest_api_postgres', line: 'synthetic_http_sink', nativeLineVerified: false, cacheStateVerified: false, activationEligible: false } };
   } finally { try { if (app) await app.close(); } finally { redis.disconnect(); await databaseLock.end(); globalThis.fetch = originalFetch; Logger.overrideLogger(true); } }
 }

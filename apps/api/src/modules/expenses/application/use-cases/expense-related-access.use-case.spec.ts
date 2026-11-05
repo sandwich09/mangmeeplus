@@ -974,11 +974,43 @@ describe('disbursement voucher drafts and visibility', () => {
     await assert.rejects(() => h.useCase.get(context({ companyId: 'other' }), draft.id), (e: any) => e.getStatus?.() === 404);
   });
 
+  it('never-paid source-drafts permissions still refuse 30-line substitute and voucher financial workflows', async () => {
+    const { freeExpenseDraftPermissions, isFreeExpenseDraftRoute } = await import('../../../system-partner-management/application/free-expense-access');
+    const permissions = freeExpenseDraftPermissions(['expense.read', 'expense.update', 'expense.receipt.upload', 'expense.review', 'expense.confirm', 'expense.disbursement.prepare']);
+    assert.deepEqual(permissions, ['expense.read', 'expense.update', 'expense.receipt.upload']);
+    assert.equal(isFreeExpenseDraftRoute('PATCH', '/v1/companies/company-1/expenses/expense-1'), true);
+    assert.equal(isFreeExpenseDraftRoute('POST', '/v1/companies/company-1/disbursement-vouchers'), false);
+    assert.equal(isFreeExpenseDraftRoute('POST', '/v1/companies/company-1/expenses/expense-1/substitute-receipts'), false);
+    const h = harness(Array.from({ length: 30 }, (_, i) => source(`expense-${i + 1}`)));
+    await assert.rejects(() => h.useCase.create(context({ permissions }), body({ lines: h.state.expenses.map((row: any) => ({ expenseId: row.id, amount: '1' })) })),
+      (error: any) => error.getResponse().code === 'disbursement_permission_denied');
+    assert.equal(h.state.vouchers.length, 0);
+  });
+
+  it('accepts 30 paid-shop voucher lines through create, update, submission and payment', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => source(`expense-${i + 1}`));
+    const h = harness(rows), lines = rows.map(row => ({ expenseId: row.id, amount: '1' }));
+    const draft = await h.useCase.create(context(), body({ lines }));
+    assert.equal(h.state.lines.length, 30);
+    assert.equal(draft.totalAmount, '30.0000');
+    await h.useCase.update(context(), draft.id, body({ commandId: 'update-30', expectedVersion: 0, lines }));
+    assert.equal(h.state.lines.length, 30);
+    assert.ok(h.state.expenses.every((row: any) => row.reservedByDisbursementVoucherId === null));
+    await assert.rejects(() => h.useCase.update(context(), draft.id, body({ commandId: 'update-31', expectedVersion: 1,
+      lines: [...lines, { expenseId: 'expense-31', amount: '1' }] })), refusal('disbursement_too_many_lines',
+      'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 30 รายการ แบ่งรายการที่เหลือไปทำอีกใบ'));
+    assert.equal(h.state.lines.length, 30);
+    await h.useCase.submit(context({ permissions: ['expense.disbursement.prepare', 'expense.disbursement.approve', 'expense.read'] }), draft.id, { ...command(1), approveNow: true });
+    assert.ok(h.state.expenses.every((row: any) => row.reservedByDisbursementVoucherId === draft.id));
+    assert.equal((await h.useCase.pay(payer(), draft.id, command(2))).status, 'PAID');
+    assert.equal(h.state.payments.length, 30);
+  });
+
   it('refuses empty, oversized, repeated and cross-branch selections with their own Thai sentences', async () => {
     const h = harness([source('a'), source('b', { branchId: 'branch-2' })]);
     const full = context({ scopes: {} });
     await assert.rejects(() => h.useCase.create(full, body({ lines: [] })), refusal('disbursement_lines_required', 'ยังไม่ได้เลือกรายจ่าย ให้เลือกอย่างน้อย 1 รายการก่อนบันทึก'));
-    await assert.rejects(() => h.useCase.create(full, body({ lines: Array.from({ length: 21 }, () => ({ expenseId: 'a', amount: '1' })) })), refusal('disbursement_too_many_lines', 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 20 รายการ แบ่งรายการที่เหลือไปทำอีกใบ'));
+    await assert.rejects(() => h.useCase.create(full, body({ lines: Array.from({ length: 31 }, () => ({ expenseId: 'a', amount: '1' })) })), refusal('disbursement_too_many_lines', 'ใบเตรียมจ่ายหนึ่งใบรวมได้ไม่เกิน 30 รายการ แบ่งรายการที่เหลือไปทำอีกใบ'));
     await assert.rejects(() => h.useCase.create(full, body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'a', amount: '1' }] })), refusal('disbursement_duplicate_expense', 'เลือกรายจ่ายรายการเดิมซ้ำในใบเดียวกันไม่ได้ ให้เอารายการที่ซ้ำออกก่อน'));
     await assert.rejects(() => h.useCase.create(full, body({ lines: [{ expenseId: 'a', amount: '1' }, { expenseId: 'b', amount: '1' }] })), refusal('disbursement_branch_mismatch', 'รายการที่เลือกอยู่คนละสาขา หนึ่งใบรวมได้เฉพาะรายการของสาขาเดียว ให้เลือกรายการจากสาขาเดียวกัน'));
     assert.equal(h.state.vouchers.length, 0);
