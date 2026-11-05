@@ -3,13 +3,13 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "2d3a5fa64d7e4faae1924fe04b646029fab7476e",
+  "sourceRevision": "15cfbb30e2191abff677130dd90ea579436bfc8c",
   "checkoutBranch": "land/expense-goal-20261104",
-  "checkoutDirty": false,
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "33cc9a3957b4780e107240284b68e2509a0d5841b997cec406fdfb8712c9044a"
+      "sha256": "868e4138479d7a69d9e4509fc5649e7c02ad0bfefc2dbd30ac85427f9f241404"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "a89cd9ff9a3c2f2f312c11199d1e2a0e4c6111ec4af36c5d189c9c33d891387b"
+      "sha256": "effea6b6375c5951b5c29cfb9fae742a8df7878252e340d35d0d6b7fe6e09204"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-05T13:33:02.213Z",
-  "manifestDigest": "f2907477e9b89b147e918ae39e4e723f4563403fd9a5ed44e1c0711d6625b99f"
+  "generatedAt": "2026-11-05T14:02:36.317Z",
+  "manifestDigest": "87e2aa638124f76cf99ae8faf7dc210444757ea155fa1fa56ce5252be6880a13"
 }

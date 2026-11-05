@@ -4,9 +4,10 @@ import {
   AI_BUDGET_PROFILE_TABLE_DIGEST_V2, AI_BUDGET_PROFILES_V2, AI_BUDGET_ESTIMATOR_VERSION_V2,
   aiBudgetV2CallAllowed, aiBudgetV2OrdinalCeiling, aiGatewayClientTimeoutMs,
   parseAiBudgetGrantV2, parseAiBudgetEnvelopeV2, lineDocumentQaInputEvidenceText, parseLineDocumentQaQuestions,
-  type LineDocumentQaAttachment,
+  type LineDocumentQaAttachment, type LineWorkflowClassifyResponse,
   type AiBudgetGrantV2, type AiBudgetInvocationV2, type AiBudgetEnvelopeV2, type AiBudgetProfileIdV2,
 } from '@watchdog-bms/contracts';
+import { deliveryHash } from '../domain/logic/line-delivery-plan.logic';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
@@ -29,11 +30,12 @@ type BudgetAuthority = {
    *  under this authority passes the cap (never a cap of 0). API-side only, like `fundingContext`. */
   admitOverCap?: true;
   serverRoute?: 'fixed_read';
+  decision?: LineWorkflowClassifyResponse;
 };
 export type IssueLineAiBudgetGrant = {
-  authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job'; authorityId: string; owner: AuthorityOwner;
+  authorityKind: AiBudgetGrantV2['authorityKind']; authorityId: string; owner: AuthorityOwner;
   turnKey: string; attemptKey: string; inputDigest: string; requestKind: 'TEXT' | 'IMAGE' | 'OTHER';
-  admittedAtMs: number; coalescingExtraMs: number; lane: 'general' | 'simple' | 'mixed' | 'public' | 'document_qa';
+  admittedAtMs: number; coalescingExtraMs: number; lane: 'general' | 'simple' | 'mixed' | 'public' | 'document_qa' | 'classify';
   model: AiBudgetGrantV2['model']; modelContextTokens: number; modelMaxOutputTokens: number; tariff: AiTariffV2;
   allowedProfileIds: AiBudgetProfileIdV2[];
   /** See `BudgetAuthority.admitOverCap`; decided by the admitted webhook producer only. */
@@ -44,7 +46,7 @@ const canonical = (value: unknown): string => value === null || typeof value !==
   : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
     : `{${Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
 const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
-const baseCeilings = { general: 10_000, simple: 15_000, mixed: 30_000, public: 40_000, document_qa: 15 * 60_000 };
+const baseCeilings = { classify: 8_000, general: 10_000, simple: 15_000, mixed: 30_000, public: 40_000, document_qa: 15 * 60_000 };
 export function documentQaAuthorityInputDigest(job: { questionText: string; attachmentsJson: unknown; questionsJson?: unknown }): string | null {
   if (typeof job.questionText !== 'string' || !job.questionText || !Array.isArray(job.attachmentsJson)) return null;
   const questions = job.questionsJson == null ? undefined : parseLineDocumentQaQuestions(job.questionsJson, job.questionText);
@@ -86,10 +88,15 @@ export class LineAiBudgetAuthorityService {
     try { return timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.sign(unsigned), 'hex')); } catch { return false; }
   }
   private parent(tx: any, kind: AiBudgetGrantV2['authorityKind']) {
-    if (kind === 'webhook_event') return tx.lineWebhookEventLog;
+    if (kind === 'webhook_event' || kind === 'webhook_classify') return tx.lineWebhookEventLog;
     if (kind === 'ledger_entry') return tx.lineLedgerDelivery;
     if (kind === 'qa_job') return tx.lineDocumentQaJob;
     throw new Error('AI_BUDGET_AUTHORITY_UNSUPPORTED');
+  }
+  private columns(kind: AiBudgetGrantV2['authorityKind']) {
+    return kind === 'webhook_classify'
+      ? { json: 'classifyAuthorityJson', revision: 'classifyAuthorityRevision' }
+      : { json: 'budgetAuthorityJson', revision: 'budgetAuthorityRevision' };
   }
   private async ownerCurrent(tx: any, owner: AuthorityOwner): Promise<boolean> {
     const scope = owner.owner;
@@ -114,6 +121,7 @@ export class LineAiBudgetAuthorityService {
   }
   private parentCurrent(row: any, kind: AiBudgetGrantV2['authorityKind'], owner: AuthorityOwner, now: Date): boolean {
     if (!row || row.companyId !== owner.owner.companyId) return false;
+    if (kind === 'webhook_classify' && owner.kind !== 'PRIVATE') return false;
     if (kind === 'qa_job') return owner.kind === 'PRIVATE'
       && row.userId === owner.owner.userId
       && row.ownerMembershipId === owner.owner.membershipId
@@ -131,6 +139,11 @@ export class LineAiBudgetAuthorityService {
   async issue(input: IssueLineAiBudgetGrant, now = new Date()): Promise<AiBudgetGrantV2 | null> {
     // QA must transfer the original turn counter; fresh issuance would buy two extra calls.
     if (input.authorityKind === 'qa_job') return null;
+    const classify = input.authorityKind === 'webhook_classify';
+    if (classify ? input.owner.kind !== 'PRIVATE' || input.lane !== 'classify' || input.requestKind !== 'TEXT'
+      || input.allowedProfileIds.length !== 1 || input.allowedProfileIds[0] !== 'line-classify/2'
+      || input.admitOverCap || input.serverRoute !== undefined
+      : input.lane === 'classify' || input.allowedProfileIds.includes('line-classify/2')) return null;
     if (!validAiTariffV2(input.tariff) || !sameModel(input.model, input.tariff)
       || !['TEXT', 'IMAGE', 'OTHER'].includes(input.requestKind)
       || !this.config.approvedAiModelIds.includes(input.model.modelId)
@@ -152,33 +165,40 @@ export class LineAiBudgetAuthorityService {
       monthKey: new Date(input.admittedAtMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }).slice(0, 7),
       payerCompanyId: input.owner.owner.companyId, model: { ...input.model },
       allowedProfileIds: [...input.allowedProfileIds], profileTableDigest: AI_BUDGET_PROFILE_TABLE_DIGEST_V2,
-      maxTurnSlots: input.owner.kind === 'PUBLIC_GENERAL' && input.lane === 'general' ? 2 : 4, maxRepairs: 1, admittedAtMs: input.admittedAtMs, workDeadlineAtMs: finalDeadlineAtMs - 3000,
+      maxTurnSlots: classify || input.owner.kind === 'PUBLIC_GENERAL' && input.lane === 'general' ? 2 : 4, maxRepairs: 1, admittedAtMs: input.admittedAtMs, workDeadlineAtMs: finalDeadlineAtMs - 3000,
       finalDeadlineAtMs, nonce: randomUUID(), nextOrdinal: 0, issuerVersion: 'line-budget-issuer:2',
       ...(input.owner.kind === 'PRIVATE' ? { membershipEpoch: input.owner.epoch, taskRevision: input.owner.taskRevision } : {}),
     };
     // Omit absent fields before canonical signing; JSON transport never preserves undefined.
     if (unsigned.taskRevision === undefined) delete unsigned.taskRevision;
-    const grant = parseAiBudgetGrantV2({ ...unsigned, signature: this.sign(unsigned) });
-    if (!grant || grant.workDeadlineAtMs <= now.getTime()) return null;
+    if (!classify && unsigned.workDeadlineAtMs <= now.getTime()) return null;
     return this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-budget-authority:${input.authorityKind}:${input.authorityId}`}))`;
       const delegate = this.parent(tx, input.authorityKind);
       const row = await delegate.findUnique({ where: { id: input.authorityId } });
-      if (!this.parentCurrent(row, input.authorityKind, input.owner, now) || !await this.ownerCurrent(tx, input.owner)) return null;
-      if (row.budgetAuthorityJson) {
-        const existing = row.budgetAuthorityJson as BudgetAuthority;
+      const columns = this.columns(input.authorityKind);
+      const currentParent = classify && row?.[columns.json]
+        ? row.companyId === input.owner.owner.companyId
+        : this.parentCurrent(row, input.authorityKind, input.owner, now);
+      if (!currentParent || !await this.ownerCurrent(tx, input.owner)) return null;
+      if (classify) unsigned.attemptKey = deliveryHash(['line-classify-v2', row.webhookEventId]);
+      const grant = parseAiBudgetGrantV2({ ...unsigned, signature: this.sign(unsigned) });
+      if (!grant) return null;
+      if (row[columns.json]) {
+        const existing = row[columns.json] as BudgetAuthority;
         // Replays return the original deadline, tariff and count; no grant refresh.
         return existing.version === 2 && !existing.transferredToQa && existing.inputDigest === input.inputDigest && existing.grant.turnKey === input.turnKey
           && existing.grant.channelOwnerDigest === digest(input.owner) && this.authentic(existing.grant) ? existing.grant : null;
       }
+      if (grant.workDeadlineAtMs <= now.getTime()) return null;
       const authority: BudgetAuthority = { version: 2, grant, owner: input.owner, tariff: structuredClone(input.tariff),
         requestKind: input.requestKind, inputDigest: input.inputDigest, modelContextTokens: input.modelContextTokens, modelMaxOutputTokens: input.modelMaxOutputTokens,
         coalescingExtraMs: input.coalescingExtraMs, nextOrdinal: 0, profileCounts: {}, repairCount: 0,
         ...(input.admitOverCap ? { admitOverCap: true as const } : {}),
         ...(input.serverRoute === 'fixed_read' ? { serverRoute: input.serverRoute } : {}) };
       if (Buffer.byteLength(JSON.stringify(authority)) > MAX_AUTHORITY_BYTES) return null;
-      const updated = await delegate.updateMany({ where: { id: row.id, budgetAuthorityRevision: row.budgetAuthorityRevision, budgetAuthorityJson: { equals: Prisma.DbNull } },
-        data: { budgetAuthorityJson: authority as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } });
+      const updated = await delegate.updateMany({ where: { id: row.id, [columns.revision]: row[columns.revision], [columns.json]: { equals: Prisma.DbNull } },
+        data: { [columns.json]: authority as unknown as Prisma.InputJsonValue, [columns.revision]: { increment: 1 } } });
       return updated.count === 1 ? grant : null;
     });
   }
@@ -189,7 +209,7 @@ export class LineAiBudgetAuthorityService {
     publicAdmission?: { channelKind: 'USER' | 'GROUP' | 'ROOM'; channelKeyHash: string; admissionId: string } }): Promise<boolean> {
     if (!this.authentic(grant) || grant.workDeadlineAtMs <= Date.now() || scope.companyId !== grant.payerCompanyId) return false;
     const row = await this.parent(this.prisma.client, grant.authorityKind).findUnique({ where: { id: grant.authorityId } });
-    const state = row?.budgetAuthorityJson as BudgetAuthority | undefined;
+    const state = row?.[this.columns(grant.authorityKind).json] as BudgetAuthority | undefined;
     if (!state || state.version !== 2 || state.transferredToQa || state.inputDigest !== inputDigest || state.grant.signature !== grant.signature
       || !this.parentCurrent(row, grant.authorityKind, state.owner, new Date())) return false;
     if (state.owner.kind === 'PRIVATE' && (scope.userId !== state.owner.owner.userId
@@ -208,9 +228,50 @@ export class LineAiBudgetAuthorityService {
     scope: { companyId: string; userId: string; membershipId?: string }): Promise<Extract<AuthorityOwner, { kind: 'PRIVATE' }> | null> {
     if (!await this.validate(grant, inputDigest, scope)) return null;
     const row = await this.parent(this.prisma.client, grant.authorityKind).findUnique({ where: { id: grant.authorityId } });
-    const state = row?.budgetAuthorityJson as BudgetAuthority | undefined;
+    const state = row?.[this.columns(grant.authorityKind).json] as BudgetAuthority | undefined;
     return state?.owner.kind === 'PRIVATE' && !state.transferredToQa && state.grant.signature === grant.signature
       ? structuredClone(state.owner) : null;
+  }
+
+  /** A cached decision survives webhook completion and the spend deadline. No decision after a
+   * dispatch means Tier 2, never another classifier call. Owner revocation still fences replay. */
+  async readClassifyState(grant: AiBudgetGrantV2, inputDigest: string,
+    scope: { companyId: string; userId: string; membershipId?: string }): Promise<{
+      decision: LineWorkflowClassifyResponse | null; used: boolean;
+    } | null> {
+    if (grant.authorityKind !== 'webhook_classify' || !this.authentic(grant)) return null;
+    const row = await this.parent(this.prisma.client, grant.authorityKind).findUnique({ where: { id: grant.authorityId } });
+    const state = row?.classifyAuthorityJson as BudgetAuthority | undefined;
+    if (!state || state.version !== 2 || state.grant.signature !== grant.signature || state.inputDigest !== inputDigest
+      || row.companyId !== scope.companyId || grant.payerCompanyId !== scope.companyId || state.owner.kind !== 'PRIVATE'
+      || state.owner.owner.userId !== scope.userId
+      || scope.membershipId !== undefined && state.owner.owner.membershipId !== scope.membershipId
+      || !await this.ownerCurrent(this.prisma.client, state.owner)) return null;
+    return { decision: state.decision ? structuredClone(state.decision) : null, used: state.nextOrdinal > 0 };
+  }
+
+  /** First decision wins under the same authority lock as issuance. Storing a result cannot
+   * refresh a grant or its dispatch counter, including after a timed-out provider call. */
+  async storeClassifyDecision(grant: AiBudgetGrantV2, inputDigest: string,
+    decision: LineWorkflowClassifyResponse, now = new Date()): Promise<LineWorkflowClassifyResponse | null> {
+    if (grant.authorityKind !== 'webhook_classify' || !this.authentic(grant)) return null;
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-budget-authority:${grant.authorityKind}:${grant.authorityId}`}))`;
+      const parent = this.parent(tx, grant.authorityKind);
+      const row = await parent.findUnique({ where: { id: grant.authorityId } });
+      const state = row?.classifyAuthorityJson as BudgetAuthority | undefined;
+      if (!state || state.version !== 2 || state.grant.signature !== grant.signature || state.inputDigest !== inputDigest
+        || row.companyId !== grant.payerCompanyId || state.owner.kind !== 'PRIVATE'
+        || !await this.ownerCurrent(tx, state.owner)) return null;
+      if (state.decision) return structuredClone(state.decision);
+      if (!this.parentCurrent(row, grant.authorityKind, state.owner, now)
+        || decision.status === 'CLASSIFIED' && state.profileCounts['line-classify/2'] !== 1) return null;
+      const next = { ...state, decision: structuredClone(decision) };
+      if (Buffer.byteLength(JSON.stringify(next)) > MAX_AUTHORITY_BYTES) return null;
+      const changed = await parent.updateMany({ where: { id: row.id, classifyAuthorityRevision: row.classifyAuthorityRevision },
+        data: { classifyAuthorityJson: next as unknown as Prisma.InputJsonValue, classifyAuthorityRevision: { increment: 1 } } });
+      return changed.count === 1 ? structuredClone(decision) : null;
+    });
   }
 
   /** Admission-only replay identity; a sealed grant remains unspendable by reserve/tools. */
@@ -280,7 +341,7 @@ export class LineAiBudgetAuthorityService {
   /** Called only by the admitted API producer after validating classification. Once narrowed,
    * retries return the same authority; they never refresh deadlines, counts or paid invocations. */
   async narrow(grant: AiBudgetGrantV2, lane: 'general' | 'simple' | 'mixed' | 'public', allowedProfileIds: AiBudgetProfileIdV2[], now = new Date()): Promise<AiBudgetGrantV2 | null> {
-    if (!this.authentic(grant) || !baseCeilings[lane] || !allowedProfileIds.length
+    if (grant.authorityKind === 'webhook_classify' || !this.authentic(grant) || !baseCeilings[lane] || !allowedProfileIds.length
       || allowedProfileIds.some(id => !['line-control/2', 'line-answer/2', 'public-lookup/2'].includes(id))) return null;
     return this.prisma.client.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-budget-authority:${grant.authorityKind}:${grant.authorityId}`}))`;
@@ -324,8 +385,9 @@ export class LineAiBudgetAuthorityService {
     if (!candidate || invocation.estimatorVersion !== AI_BUDGET_ESTIMATOR_VERSION_V2) return refused();
     const delegate = this.parent(this.prisma.client, grant.authorityKind);
     const row = await delegate.findUnique({ where: { id: grant.authorityId } });
-    const initial = row?.budgetAuthorityJson as BudgetAuthority | undefined;
-    if (!initial || initial.version !== 2 || initial.transferredToQa || initial.grant.signature !== grant.signature || !sameModel(grant.model, initial.tariff)) return refused();
+    const columns = this.columns(grant.authorityKind);
+    const initial = row?.[columns.json] as BudgetAuthority | undefined;
+    if (!initial || initial.version !== 2 || initial.decision || initial.transferredToQa || initial.grant.signature !== grant.signature || !sameModel(grant.model, initial.tariff)) return refused();
     const profile = AI_BUDGET_PROFILES_V2[invocation.profileId];
     const priced = priceRenderedAiInvocationV2(initial.tariff, invocation.inputTokenBound, invocation.requestedOutputTokens,
       'hostedToolUnits' in profile ? profile.hostedToolUnits : 0);
@@ -347,9 +409,9 @@ export class LineAiBudgetAuthorityService {
       authorizeAndClaim: async (tx, funding) => {
         const parent = this.parent(tx, grant.authorityKind);
         const current = await parent.findUnique({ where: { id: grant.authorityId } });
-        const authority = current?.budgetAuthorityJson as BudgetAuthority | undefined;
+        const authority = current?.[columns.json] as BudgetAuthority | undefined;
         if (grant.workDeadlineAtMs <= now.getTime() + Date.now() - startedWallMs) return false;
-        if (!authority || authority.transferredToQa || !this.parentCurrent(current, grant.authorityKind, authority.owner, now)
+        if (!authority || authority.decision || authority.transferredToQa || !this.parentCurrent(current, grant.authorityKind, authority.owner, now)
           || authority.grant.signature !== grant.signature || digest(authority.tariff) !== digest(initial.tariff)
           || authority.nextOrdinal !== invocation.ordinal || (authority.profileCounts[invocation.profileId] ?? 0) >= profile.maxCalls
           // A repair never spends an answer slot, and an answer never spends the repair (UAT 2026-09-29).
@@ -363,8 +425,8 @@ export class LineAiBudgetAuthorityService {
         const next: BudgetAuthority = { ...authority, nextOrdinal: authority.nextOrdinal + 1,
           repairCount: authority.repairCount + Number(repair), profileCounts: { ...authority.profileCounts, [invocation.profileId]: (authority.profileCounts[invocation.profileId] ?? 0) + 1 },
           ...(funding && !authority.fundingContext ? { fundingContext: { cycleKey: funding.cycleKey } } : {}) };
-        return (await parent.updateMany({ where: { id: grant.authorityId, budgetAuthorityRevision: current.budgetAuthorityRevision },
-          data: { budgetAuthorityJson: next as unknown as Prisma.InputJsonValue, budgetAuthorityRevision: { increment: 1 } } })).count === 1;
+        return (await parent.updateMany({ where: { id: grant.authorityId, [columns.revision]: current[columns.revision] },
+          data: { [columns.json]: next as unknown as Prisma.InputJsonValue, [columns.revision]: { increment: 1 } } })).count === 1;
       },
     });
     if (!result.ok) return result;

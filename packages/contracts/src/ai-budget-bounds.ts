@@ -213,6 +213,7 @@ export function parseAiBudgetEnvelope(
 export const AI_BUDGET_PROFILE_TABLE_VERSION_V2 = 'budget-profile-table/2' as const;
 export const AI_BUDGET_ESTIMATOR_VERSION_V2 = 'utf8-split-prefix-v4' as const;
 export const AI_BUDGET_PROFILES_V2 = {
+  'line-classify/2': { maxInputTokens: 24_576, maxOutputTokens: 1_024, maxCalls: 1 },
   'line-intake-text/2': { maxInputTokens: 160_000, maxOutputTokens: 4_096, maxCalls: 2 },
   'line-intake-image/2': { maxInputTokens: 160_000, maxOutputTokens: 8_000, maxCalls: 2 },
   'line-control/2': { maxInputTokens: 160_000, maxOutputTokens: 2_048, maxCalls: 3 },
@@ -221,14 +222,14 @@ export const AI_BUDGET_PROFILES_V2 = {
   'public-lookup/2': { maxInputTokens: 32_000, maxOutputTokens: 4_096, maxCalls: 1, hostedToolUnits: 2 },
 } as const;
 /** SHA-256 of the lexicographically canonical JSON form of version, estimatorVersion and profiles. */
-export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = 'eeea47e84c77574a300a88b69eee65cd164535364733950b2b5cfa78bfa7d0b6' as const;
+export const AI_BUDGET_PROFILE_TABLE_DIGEST_V2 = '515bdd2986e7abab957d8c90890015da57b69847fd9a5a2aa1cac6ad7f10419d' as const;
 export type AiBudgetProfileIdV2 = keyof typeof AI_BUDGET_PROFILES_V2;
 export type AiBudgetProfileBoundsV2 = (typeof AI_BUDGET_PROFILES_V2)[AiBudgetProfileIdV2];
 
 export type AiBudgetGrantV2 = {
   version: 2;
   turnKey: string;
-  authorityKind: 'webhook_event' | 'ledger_entry' | 'qa_job';
+  authorityKind: 'webhook_event' | 'webhook_classify' | 'ledger_entry' | 'qa_job';
   authorityId: string;
   channelOwnerDigest: string;
   attemptKey: string;
@@ -287,7 +288,7 @@ export function parseAiBudgetGrantV2(value: unknown): AiBudgetGrantV2 | undefine
   const modelRaw = model as Record<string, unknown>;
   const profileIds = raw['allowedProfileIds'];
   if (raw['version'] !== 2 || typeof raw['turnKey'] !== 'string' || !SAFE_ID.test(raw['turnKey'])
-    || !['webhook_event', 'ledger_entry', 'qa_job'].includes(String(raw['authorityKind']))
+    || !['webhook_event', 'webhook_classify', 'ledger_entry', 'qa_job'].includes(String(raw['authorityKind']))
     || typeof raw['authorityId'] !== 'string' || !SAFE_ID.test(raw['authorityId'])
     || typeof raw['channelOwnerDigest'] !== 'string' || !HEX_256.test(raw['channelOwnerDigest'])
     || typeof raw['attemptKey'] !== 'string' || !SAFE_ID.test(raw['attemptKey'])

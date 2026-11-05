@@ -2551,3 +2551,326 @@ it('real PostgreSQL: R24 concurrent replay links one task and increments its eve
     await client.$disconnect();
   }
 });
+
+async function classifyAuthorityFixture() {
+  const { LineAiBudgetAuthorityService } = await import('./line-ai-budget-authority.service');
+  const now = new Date();
+  const hash = 'a'.repeat(64);
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const owner = { companyId: 'classify-company', userId: 'classify-user', membershipId: 'classify-member',
+    channel: 'line' as const, channelKind: 'USER' as const, messagingChannelId: 'shared-test', chatKeyHash: hash };
+  const row: any = { id: 'classify-event', webhookEventId: 'original-line-event', companyId: owner.companyId,
+    status: 'processing', budgetAuthorityJson: null, budgetAuthorityRevision: 0, classifyAuthorityJson: null, classifyAuthorityRevision: 0 };
+  const writes: any[] = [];
+  const tx: any = {
+    $executeRaw: async () => 1,
+    companyMembership: { findFirst: async () => ({ id: owner.membershipId }) },
+    billingAccount: { findMany: async () => [] },
+    companyPlanTerm: { findUnique: async () => null },
+    aiConversation: { findFirst: async () => ({ id: 'context', taskStateJson: null }) },
+    lineWebhookEventLog: {
+      findUnique: async () => structuredClone(row),
+      updateMany: async ({ where, data }: any) => {
+        for (const key of ['budgetAuthorityRevision', 'classifyAuthorityRevision']) {
+          if (where[key] !== undefined && row[key] !== where[key]) return { count: 0 };
+        }
+        writes.push(structuredClone(data));
+        for (const [key, value] of Object.entries(data)) {
+          row[key] = key.endsWith('Revision') ? row[key] + (value as any).increment : structuredClone(value);
+        }
+        return { count: 1 };
+      },
+    },
+  };
+  tx.lineLedgerDelivery = tx.lineWebhookEventLog;
+  const { splitPrisma } = await import('./company-ai-budget-prisma.fixture');
+  const money = splitPrisma({ total: 100000, chat: 50000, ocr: 50000 }, tx);
+  const service = new LineAiBudgetAuthorityService(money.prisma,
+    { approvedAiModelIds: [modelId], aiGatewayInternalSecret: 'classify-test', lineMessagingChannelId: 'shared-test', aiMonthlyBudgetSatang: 100000 } as any);
+  const input: import('./line-ai-budget-authority.service').IssueLineAiBudgetGrant = {
+    authorityKind: 'webhook_classify', authorityId: row.id, owner: { kind: 'PRIVATE', owner, epoch: 0 },
+    turnKey: 'original-turn', attemptKey: 'caller-must-not-control-this', inputDigest: hash, requestKind: 'TEXT',
+    admittedAtMs: now.getTime(), coalescingExtraMs: 0, lane: 'classify',
+    model: { provider: 'bedrock', modelId, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
+    tariff: { version: 'classify-test:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+      usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, allowedProfileIds: ['line-classify/2'],
+  };
+  return { service, input, row, writes, owner, now, money };
+}
+
+it('B2 classify issue, validation and owner resolution use separate columns and keep the turn grant intact', async () => {
+  const { deliveryHash } = await import('../domain/logic/line-delivery-plan.logic');
+  const { service, input, row, writes, owner, now } = await classifyAuthorityFixture();
+  const turnInput = { ...input, authorityKind: 'webhook_event' as const, lane: 'public' as const,
+    allowedProfileIds: ['line-intake-text/2' as const], attemptKey: 'existing-turn-attempt' };
+  const turn = await service.issue(turnInput, now);
+  assert.ok(turn);
+  const before = structuredClone(row.budgetAuthorityJson);
+  const classify = await service.issue(input, now);
+  assert.ok(classify);
+  assert.equal(classify.authorityKind, 'webhook_classify');
+  assert.equal(classify.attemptKey, deliveryHash(['line-classify-v2', row.webhookEventId]));
+  assert.equal(classify.maxTurnSlots, 2);
+  assert.deepEqual(classify.allowedProfileIds, ['line-classify/2']);
+  assert.equal(classify.finalDeadlineAtMs, now.getTime() + 8000);
+  assert.equal(classify.workDeadlineAtMs, now.getTime() + 5000);
+  assert.equal(await service.validate(classify, input.inputDigest, owner), true);
+  assert.deepEqual(await service.resolvePrivateOwner(classify, input.inputDigest, owner), input.owner);
+  assert.equal(await service.validate(classify, input.inputDigest, { ...owner, userId: 'other' }), false);
+  assert.equal(await service.validate(classify, 'b'.repeat(64), owner), false);
+  assert.equal(await service.narrow(classify, 'simple', ['line-answer/2'], now), null);
+  assert.equal(await service.transferToDocumentQa(classify, 'job', input.inputDigest, now), null);
+  assert.deepEqual(row.budgetAuthorityJson, before);
+  assert.equal(row.budgetAuthorityRevision, 1);
+  assert.equal(row.classifyAuthorityRevision, 1);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(await service.issue({ ...input, attemptKey: 'another-caller-key' }, now), classify);
+  assert.deepEqual(await service.issue(turnInput, now), turn);
+  assert.equal(turn.maxTurnSlots, 4);
+  assert.equal(turn.attemptKey, 'existing-turn-attempt');
+});
+
+it('B2 classify cannot use a public owner, turn profiles, another lane or an over-cap bypass', async () => {
+  const { service, input, now, writes } = await classifyAuthorityFixture();
+  for (const change of [
+    { owner: { kind: 'PUBLIC_GENERAL', owner: input.owner.owner } },
+    { allowedProfileIds: ['line-intake-text/2'] },
+    { allowedProfileIds: ['line-classify/2', 'line-answer/2'] },
+    { lane: 'public' }, { requestKind: 'IMAGE' }, { admitOverCap: true }, { serverRoute: 'fixed_read' },
+    { authorityKind: 'webhook_event' }, { authorityKind: 'ledger_entry' },
+  ]) {
+    assert.equal(await service.issue({ ...input, ...change } as any, now), null, JSON.stringify(change));
+  }
+  assert.equal(writes.length, 0);
+});
+
+it('B2 classify replay returns its first decision and a used authority without a decision signals Tier 2', async () => {
+  const { service, input, row, owner, now } = await classifyAuthorityFixture();
+  const grant = await service.issue(input, now);
+  assert.ok(grant);
+  assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision: null, used: false });
+  row.classifyAuthorityJson.nextOrdinal = 1;
+  row.classifyAuthorityJson.profileCounts['line-classify/2'] = 1;
+  assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision: null, used: true });
+  const decision: import('@watchdog-bms/contracts').LineWorkflowClassifyResponse = {
+    status: 'CLASSIFIED', label: 'reimbursement_claim', secondLabel: 'none', confidence: 0.99, secondConfidence: 0,
+    slots: { reference: 'none', ordinal: 0, personName: '', vendorName: '', descriptionText: 'ค่าแท็กซี่',
+      amountText: '', dateText: '', reasonText: '', categoryText: '' },
+    schemaEnforcement: 'output_config', usage: [], modelId: input.model.modelId,
+  };
+  assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest, decision, now), decision);
+  const savedRevision = row.classifyAuthorityRevision;
+  assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest,
+    { status: 'UNAVAILABLE', errorCode: 'PROVIDER_TIMEOUT', usage: [] }, now), decision);
+  assert.equal(row.classifyAuthorityRevision, savedRevision);
+  assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision, used: true });
+  row.status = 'completed';
+  mock.method(Date, 'now', () => grant.finalDeadlineAtMs + 1);
+  try {
+    assert.deepEqual(await service.issue(input, new Date(grant.finalDeadlineAtMs + 1)), grant, 'completed event replay reuses the expired grant and cached decision');
+    assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision, used: true });
+    assert.equal(await service.readClassifyState(grant, input.inputDigest, { ...owner, userId: 'other' }), null);
+    assert.equal(await service.readClassifyState(grant, 'b'.repeat(64), owner), null);
+    assert.equal(await service.readClassifyState({ ...grant, attemptKey: 'tampered' }, input.inputDigest, owner), null);
+  } finally { mock.restoreAll(); }
+});
+
+const classifyInvocation = (grant: import('@watchdog-bms/contracts').AiBudgetGrantV2, ordinal = 0,
+  profileId: import('@watchdog-bms/contracts').AiBudgetProfileIdV2 = 'line-classify/2'): import('@watchdog-bms/contracts').AiBudgetInvocationV2 => ({
+  grant, ordinal, profileId, inputTokenBound: 1024, requestedOutputTokens: 100,
+  estimatorVersion: 'utf8-split-prefix-v4', promptVersion: 'classify-test:1',
+  inputDigest: 'a'.repeat(64), payloadDigest: 'b'.repeat(64), schemaDigest: 'c'.repeat(64),
+});
+
+it('B2 classify reserves once, replays without a second hold and leaves intake ordinal zero available', async () => {
+  const { service, input, row, now, money } = await classifyAuthorityFixture();
+  const turn = await service.issue({ ...input, authorityKind: 'webhook_event', lane: 'public',
+    allowedProfileIds: ['line-intake-text/2'], attemptKey: 'separate-turn' }, now);
+  const grant = await service.issue(input, now);
+  assert.ok(turn);
+  assert.ok(grant);
+  const turnBefore = structuredClone(row.budgetAuthorityJson);
+  const first = await service.reserve(classifyInvocation(grant), false, now);
+  assert.ok(first.ok);
+  assert.equal(money.reservations.size, 1);
+  assert.deepEqual(row.budgetAuthorityJson, turnBefore);
+  const replay = await service.reserve(classifyInvocation(grant), false, now);
+  assert.equal(replay.ok, false);
+  assert.equal(money.reservations.size, 1);
+  // Complete the first call so the profile limit, rather than an in-flight hold, fences ordinal 1.
+  [...money.reservations.values()][0].status = 'SETTLED';
+  assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
+  assert.equal((await service.reserve(classifyInvocation(grant, 1), true, now)).ok, false);
+  assert.equal(row.classifyAuthorityJson.nextOrdinal, 1);
+  assert.equal(row.classifyAuthorityJson.profileCounts['line-classify/2'], 1);
+  const intake = await service.reserve(classifyInvocation(turn, 0, 'line-intake-text/2'), false, now);
+  assert.ok(intake.ok);
+  assert.equal(money.reservations.size, 2);
+  assert.equal(row.budgetAuthorityJson.nextOrdinal, 1);
+  const decision = { status: 'UNAVAILABLE' as const, errorCode: 'PROVIDER_TIMEOUT', usage: [] };
+  assert.deepEqual(await service.storeClassifyDecision(grant, input.inputDigest, decision, now), decision);
+  assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
+  assert.equal(money.reservations.size, 2);
+});
+
+it('B2 a cached no-call decision also prevents a fresh classify reservation', async () => {
+  const { service, input, now, money } = await classifyAuthorityFixture();
+  const grant = await service.issue(input, now);
+  assert.ok(grant);
+  const decision = { status: 'UNAVAILABLE' as const, errorCode: 'CLASSIFIER_UNAVAILABLE', usage: [] };
+  assert.ok(await service.storeClassifyDecision(grant, input.inputDigest, decision, now));
+  assert.equal((await service.reserve(classifyInvocation(grant), false, now)).ok, false);
+  assert.equal(money.reservations.size, 0);
+});
+
+it('B2 classify and intake refuse an exhausted paid budget before creating a hold', async () => {
+  for (const classify of [true, false]) {
+    const { service, input, now, money } = await classifyAuthorityFixture();
+    money.monthUsage.costSatang = 100000;
+    money.buckets.get('CHAT')!.costSatang = 50000;
+    const grant = await service.issue(classify ? input : { ...input, authorityKind: 'webhook_event', lane: 'public',
+      allowedProfileIds: ['line-intake-text/2'] }, now);
+    assert.ok(grant);
+    const result = await service.reserve(classifyInvocation(grant, 0, classify ? 'line-classify/2' : 'line-intake-text/2'), false, now);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'exceeded');
+    assert.equal(money.reservations.size, 0);
+  }
+});
+
+it('B2 classify and intake both require a paid package after credit cutover, including never-paid shops', async () => {
+  for (const classify of [true, false]) {
+    const { service, input, row, now, money } = await classifyAuthorityFixture();
+    const configuration = await money.prisma.client.companyAiConfiguration.findUnique({});
+    configuration.aiCreditCutoverAt = new Date(0);
+    const grant = await service.issue(classify ? input : { ...input, authorityKind: 'webhook_event', lane: 'public',
+      allowedProfileIds: ['line-intake-text/2'] }, now);
+    assert.ok(grant);
+    const result = await service.reserve(classifyInvocation(grant, 0, classify ? 'line-classify/2' : 'line-intake-text/2'), false, now);
+    assert.equal(result.ok, false);
+    if (!result.ok && result.reason !== 'already_claimed') {
+      assert.equal(result.aiCredit, 'PACKAGE_REQUIRED');
+    } else assert.fail('the refusal must come from the existing credit gate');
+    assert.equal(money.reservations.size, 0);
+    assert.equal(row[classify ? 'classifyAuthorityJson' : 'budgetAuthorityJson'].nextOrdinal, 0);
+  }
+});
+
+it('real PostgreSQL: B2 classify races once, caches its decision and preserves the turn authority', async t => {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+    return t.skip('DATABASE_URL is not set');
+  }
+  const { LineAiBudgetAuthorityService } = await import('./line-ai-budget-authority.service');
+  const { LineConversationContextService } = await import('./line-conversation-context.service');
+  const { settleAiBudgetStep } = await import('./company-ai-budget-reservation');
+  const { deliveryHash } = await import('../domain/logic/line-delivery-plan.logic');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  const companyId = `classify-${randomUUID()}`;
+  const userId = `${companyId}-user`;
+  const modelId = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  let created = false;
+  try {
+    const unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'OCR_REQUIRE_POSTGRES');
+    if (unreachable) return t.skip(unreachable);
+    await client.company.create({ data: { id: companyId, name: companyId } });
+    created = true;
+    await client.user.create({ data: { id: userId, displayName: 'Classify test', status: 'ACTIVE' } });
+    const member = await client.companyMembership.create({ data: { companyId, userId, status: 'ACTIVE' } });
+    await client.companyAiConfiguration.create({ data: { companyId, monthlyBudgetSatang: 100000,
+      budgetMode: 'SPLIT', chatMonthlyBudgetSatang: 50000, ocrMonthlyBudgetSatang: 50000 } });
+    const prisma = { client } as any;
+    const service = new LineAiBudgetAuthorityService(prisma, { approvedAiModelIds: [modelId],
+      aiGatewayInternalSecret: 'classify-pg-test', lineMessagingChannelId: 'shared-test' } as any);
+    const owner = { companyId, userId, membershipId: member.id, channel: 'line' as const, channelKind: 'USER' as const,
+      messagingChannelId: 'shared-test', chatKeyHash: 'a'.repeat(64) };
+    const context = await new LineConversationContextService(prisma).admit(owner);
+    const event = await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: `${companyId}-original`, eventType: 'message', status: 'processing' } });
+    const now = new Date();
+    const input: import('./line-ai-budget-authority.service').IssueLineAiBudgetGrant = {
+      authorityKind: 'webhook_classify', authorityId: event.id, owner: { kind: 'PRIVATE', owner, epoch: context.lifecycleEpoch },
+      turnKey: event.id, attemptKey: 'ignored-caller-key', inputDigest: 'a'.repeat(64), requestKind: 'TEXT',
+      admittedAtMs: now.getTime(), coalescingExtraMs: 0, lane: 'classify',
+      model: { provider: 'bedrock', modelId, region: 'ap-southeast-1' }, modelContextTokens: 200000, modelMaxOutputTokens: 4096,
+      tariff: { version: 'classify-pg:1', provider: 'bedrock', modelId, region: 'ap-southeast-1', thbPerUsd: 33,
+        usdPerMTok: { input: 0.25, output: 1.25, cacheRead: 0.03, cacheWrite: 0.3 } }, allowedProfileIds: ['line-classify/2'],
+    };
+    const turn = await service.issue({ ...input, authorityKind: 'webhook_event', lane: 'public',
+      allowedProfileIds: ['line-intake-text/2'], attemptKey: `${companyId}-turn` }, now);
+    assert.ok(turn);
+    const before = (await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: event.id } })).budgetAuthorityJson;
+    const grants = await Promise.all([service.issue(input, now), service.issue(input, now)]);
+    const grant = grants[0];
+    assert.ok(grant);
+    assert.deepEqual(grants[1], grant);
+    assert.equal(grant.attemptKey, deliveryHash(['line-classify-v2', event.webhookEventId]));
+    assert.equal(await service.validate(grant, input.inputDigest, owner), true);
+    assert.equal(await service.narrow(grant, 'simple', ['line-answer/2'], now), null);
+    assert.equal(await service.transferToDocumentQa(grant, 'unused-job', input.inputDigest, now), null);
+    const results = await Promise.all([service.reserve(classifyInvocation(grant), false, now), service.reserve(classifyInvocation(grant), false, now)]);
+    assert.equal(results.filter(result => result.ok).length, 1);
+    const first = results.find(result => result.ok)!;
+    assert.ok(first.ok);
+    assert.equal(await settleAiBudgetStep(prisma, { invocationKey: first.envelope.invocationKey, meta: { sourceRoute: 'line-ai-v2' },
+      entry: { modelId, tag: 'line.workflow-classify', ok: true, inputTokens: 100, outputTokens: 10,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' } as never }), 'settled');
+    assert.equal((await service.reserve(classifyInvocation(grant, 1), false, now)).ok, false);
+    assert.equal((await service.reserve(classifyInvocation(grant, 1), true, now)).ok, false);
+    assert.deepEqual(await service.readClassifyState(grant, input.inputDigest, owner), { decision: null, used: true });
+    const decision: import('@watchdog-bms/contracts').LineWorkflowClassifyResponse = {
+      status: 'CLASSIFIED', label: 'reimbursement_submit', secondLabel: 'none', confidence: 0.99, secondConfidence: 0,
+      slots: { reference: 'this', ordinal: 0, personName: '', vendorName: '', descriptionText: '', amountText: '', dateText: '', reasonText: '', categoryText: '' },
+      schemaEnforcement: 'output_config', usage: [], modelId,
+    };
+    const decisions = await Promise.all([service.storeClassifyDecision(grant, input.inputDigest, decision, now),
+      service.storeClassifyDecision(grant, input.inputDigest, { status: 'UNAVAILABLE', errorCode: 'PROVIDER_TIMEOUT', usage: [] }, now)]);
+    assert.deepEqual(decisions[0], decisions[1], 'first persisted decision wins under contention');
+    assert.deepEqual((await service.readClassifyState(grant, input.inputDigest, owner))?.decision, decisions[0]);
+    const after = await client.lineWebhookEventLog.findUniqueOrThrow({ where: { id: event.id } });
+    assert.deepEqual(after.budgetAuthorityJson, before);
+    assert.equal(after.budgetAuthorityRevision, 1);
+    assert.equal((after.classifyAuthorityJson as any).nextOrdinal, 1);
+    assert.deepEqual(await service.issue(input, now), grant);
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 1);
+    assert.ok((await service.reserve(classifyInvocation(turn, 0, 'line-intake-text/2'), false, now)).ok);
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 2);
+    await client.companyAiConfiguration.update({ where: { companyId }, data: { aiCreditCutoverAt: new Date(0) } });
+    const freeEvent = await client.lineWebhookEventLog.create({ data: { companyId, webhookEventId: `${companyId}-no-package`, eventType: 'message', status: 'processing' } });
+    const freeGrant = await service.issue({ ...input, authorityId: freeEvent.id, turnKey: freeEvent.id }, now);
+    assert.ok(freeGrant);
+    const refused = await service.reserve(classifyInvocation(freeGrant), false, now);
+    assert.equal(refused.ok, false);
+    if (!refused.ok && refused.reason !== 'already_claimed') assert.equal(refused.aiCredit, 'PACKAGE_REQUIRED');
+    assert.equal(await client.aiBudgetReservation.count({ where: { companyId } }), 2);
+  } finally {
+    if (created) {
+      await client.lineWebhookEventLog.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.user.deleteMany({ where: { id: userId } });
+    }
+    await client.$disconnect();
+  }
+});
+
+it('B2 ledger grants keep their original columns, owner validation and reservation path', async () => {
+  const { service, input, row, owner, now, money } = await classifyAuthorityFixture();
+  row.status = 'PREPARING';
+  row.userId = owner.userId;
+  row.expiresAt = new Date(now.getTime() + 60000);
+  const grant = await service.issue({ ...input, authorityKind: 'ledger_entry', lane: 'general',
+    allowedProfileIds: ['line-intake-text/2'], attemptKey: 'original-ledger' }, now);
+  assert.ok(grant);
+  assert.equal(grant.attemptKey, 'original-ledger');
+  assert.equal(grant.maxTurnSlots, 4);
+  assert.equal(await service.validate(grant, input.inputDigest, owner), true);
+  assert.deepEqual(await service.resolvePrivateOwner(grant, input.inputDigest, owner), input.owner);
+  assert.equal((await service.reserve(classifyInvocation(grant, 0, 'line-intake-text/2'), false, now)).ok, true);
+  assert.equal(money.reservations.size, 1);
+  assert.equal(row.budgetAuthorityJson.nextOrdinal, 1);
+  assert.equal(row.budgetAuthorityRevision, 2);
+  assert.equal(row.classifyAuthorityJson, null);
+  assert.equal(row.classifyAuthorityRevision, 0);
+  assert.equal(await service.readClassifyState(grant, input.inputDigest, owner), null);
+  assert.equal(await service.issue({ ...input, authorityKind: 'qa_job' }, now), null, 'QA still requires transfer');
+});

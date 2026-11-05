@@ -71,6 +71,7 @@ import { collectGoldResults, scoreAllTurns } from './gold-oracle-pass';
 import { gitHeadSha } from './oracle';
 import { ROLE_GRANTS } from '../../apps/api/src/modules/auth/permission-registry';
 import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/employee-access/domain/logic/feature-gate.logic';
+import { freeExpenseDraftPermissions } from '../../apps/api/src/modules/system-partner-management/application/free-expense-access';
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { renderUserText } from './template';
 import { renderReport, renderWorkflowReport } from './report';
@@ -248,7 +249,9 @@ export function buildWorkflowReplay(corpus: WorkflowCorpus, seed: WorkflowSeed, 
     const enabledFeatures = seed.rows.filter(row => row.model === 'companyFeatureEntitlement' && row.data.companyId === company.companyId && row.data.enabled).map(row => String(row.data.featureKey));
     const roles = new Set(seed.rows.filter(row => row.model === 'membershipRole' && row.data.membershipId === first.membershipId).map(row => row.data.roleId));
     const grants = new Set(seed.rows.filter(row => row.model === 'rolePermission' && roles.has(row.data.roleId)).map(row => row.data.permissionId));
-    const permissions = filterPermissionsByEntitlement(seed.rows.filter(row => row.model === 'permission' && grants.has(row.data.id)).map(row => String(row.data.key)), new Set(enabledFeatures)).sort();
+    const entitled = filterPermissionsByEntitlement(seed.rows.filter(row => row.model === 'permission' && grants.has(row.data.id)).map(row => String(row.data.key)), new Set(enabledFeatures));
+    // A free shop's members resolve to the free source-draft set (prisma-permission-resolver.repository.ts:130).
+    const permissions = (company.tierKey === 'FREE_TRIAL_15' ? freeExpenseDraftPermissions(entitled) : entitled).sort();
     snapshots[conversation.id] = { rows: seed.rows, lineUserId: first.lineUserId, assets: {},
       actors: Object.fromEntries(conversation.actors.map(actor => [actor.key, resolveWorkflowActor(actor, seed)])) };
     return {

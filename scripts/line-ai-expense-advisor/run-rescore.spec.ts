@@ -175,6 +175,10 @@ describe('workflow real-run entry point', () => {
     assert.ok(replay.fixtures[1].fixture.permissions.includes('expense.create'));
     assert.ok(['expense.read', 'expense.read_own', 'expense.read_related'].every(permission => !replay.fixtures[1].fixture.permissions.includes(permission)));
     assert.deepEqual(replay.fixtures[3].fixture.branches, ['branch-b-1']);
+    const { freeExpenseDraftPermissions } = await import('../../apps/api/src/modules/system-partner-management/application/free-expense-access');
+    assert.ok(replay.fixtures[2].fixture.permissions.length, 'a free owner keeps the free source-draft permissions');
+    assert.deepEqual(replay.fixtures[2].fixture.permissions, freeExpenseDraftPermissions(replay.fixtures[2].fixture.permissions),
+      'a free shop member resolves to the free source-draft set, as the permission resolver does');
     assert.ok(Object.values(replay.snapshots).every(snapshot => snapshot.rows === seed.rows));
     const withFixture = structuredClone(corpus);
     withFixture.conversations[1].turns[0].fixture = [{ op: 'setCredit', state: 'exhausted' }];

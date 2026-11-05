@@ -553,6 +553,28 @@ describe('withAiBudgetEnvelope: step ordering and refusals', () => {
 });
 
 describe('withAiBudgetEnvelope: v2 budget envelope', () => {
+  it('B2 maps only the classify usage tag to the separately granted classifier profile', async () => {
+    const log = trace(), seam = v2Seam(log), state = activeV2State();
+    state.grant = { ...state.grant, authorityKind: 'webhook_classify', maxTurnSlots: 2,
+      allowedProfileIds: ['line-classify/2'] };
+    const original = seam.stepV2!;
+    const profiles: string[] = [];
+    seam.stepV2 = async (invocation, repair) => {
+      profiles.push(invocation.profileId);
+      return original(invocation, repair);
+    };
+    const result = await runWithUsageContext({ companyId: 'co-1', budget: state }, () =>
+      guarded(fakeProvider(log), seam, log).generateText(textInput({ usageTag: 'line.workflow-classify', maxTokens: 1024 })));
+    assert.equal(result.ok, true);
+    assert.deepEqual(profiles, ['line-classify/2']);
+    assert.equal(log.events.filter(event => event === 'provider').length, 1);
+    const turnLog = trace();
+    const refused = await runWithUsageContext({ companyId: 'co-1', budget: activeV2State() }, () =>
+      guarded(fakeProvider(turnLog), v2Seam(turnLog), turnLog).generateText(textInput({ usageTag: 'line.workflow-classify', maxTokens: 1024 })));
+    assert.equal(refused.ok, false);
+    assert.equal(turnLog.events.includes('provider'), false);
+  });
+
   it('carries the original work deadline into the provider without changing payload or refreshing time', async () => {
     const log = trace(), provider = guarded(fakeProvider(log), v2Seam(log), log), state = activeV2State();
     const input = textInput({ usageTag: 'line.loop', maxTokens: 1024, deadlineAt: state.grant.workDeadlineAtMs - 500 });

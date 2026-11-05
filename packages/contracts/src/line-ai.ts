@@ -2272,6 +2272,22 @@ export const LINE_WORKFLOW_IDS = [
   'substitute_receipt',
 ] as const;
 export type LineWorkflowId = typeof LINE_WORKFLOW_IDS[number];
+
+export type LineWorkflowClassifyRequest = {
+  requestId: string; companyId: string; userId: string; locale: 'th-TH' | 'en-GB';
+  messageText: string; inputEvidence: LineAiInputEvidenceV2;
+  budgetGrantV2: AiBudgetGrantV2;
+  contractCapabilities: ['input-evidence-v2', 'budget-envelope-v2'];
+};
+export type LineWorkflowLabel = LineWorkflowId | 'read' | 'howto' | 'open' | 'smalltalk' | 'multi' | 'unclear';
+export type LineWorkflowClassifyResponse =
+  | { status: 'CLASSIFIED'; label: LineWorkflowLabel; secondLabel: LineWorkflowLabel | 'none';
+      confidence: number; secondConfidence: number;
+      slots: { reference: 'this' | 'last_shown' | 'named' | 'none'; ordinal: number; personName: string; vendorName: string;
+               descriptionText: string; amountText: string; dateText: string; reasonText: string; categoryText: string };
+      schemaEnforcement: 'output_config' | 'strict_tool'; usage: AiUsageEntry[]; modelId: string }
+  | { status: 'UNAVAILABLE'; errorCode: string; budgetCode?: string; usage: AiUsageEntry[] };
+
 export const LINE_WORKFLOW_OPEN_ACTIONS = [
   'MARK_READY', 'CONFIRM', 'DELETE_DRAFT', 'VOID', 'REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL',
   'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT', 'RECORD_PAYMENT',

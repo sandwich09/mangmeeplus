@@ -113,6 +113,7 @@ function sha256(value: string): string {
 
 function v2ProfileFor(input: ProviderInput | ProviderToolsInput): AiBudgetProfileIdV2 | undefined {
   const tag = input.usageTag ?? '';
+  if (tag === 'line.workflow-classify') return 'line-classify/2';
   if (tag === 'line.intake-route') return ('images' in input && ((input.images?.length ?? 0) > 0 || (input.documents?.length ?? 0) > 0))
     ? 'line-intake-image/2' : 'line-intake-text/2';
   if (tag.startsWith('ocr.')) return 'document-qa/2';
