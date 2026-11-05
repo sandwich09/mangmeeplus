@@ -466,8 +466,8 @@ export class LineExpenseActionService {
       ...(control.pa ? { paidAmount: control.pa } : {}) }, true, undefined, language);
   }
 
-  private async resolveNamedTargets(ctx: RequestContext, chat: string, action: ExpenseAction, workflow: LineWorkflowId, evidence: LineAiInputEvidenceV2, input: Record<string, unknown>): Promise<
-    { targets?: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>; requestedVoucherCount?: number } | { reply: string; webPath: string }> {
+  async resolveNamedTargets(ctx: RequestContext, chat: string, action: ExpenseAction, workflow: LineWorkflowId, evidence: LineAiInputEvidenceV2, input: Record<string, unknown>, pickerAnswer = false): Promise<
+    { targets?: Array<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>; requestedVoucherCount?: number; exhaustive?: boolean } | { reply: string; webPath: string }> {
     const webPath = `/companies/${ctx.companyId}/${this.isClaim(action) ? 'reimbursements' : 'expenses'}`;
     const unavailable = { reply: LINE_CLAIM_PICKER_COPY.unavailable, webPath };
     const candidates = await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok'));
@@ -487,8 +487,8 @@ export class LineExpenseActionService {
     };
     let amounts = candidates.amounts.filter(isTargetAmount);
     let named = documents.length > 0 || rounds.length > 0 || amounts.length === 1;
-    if (!named && action !== 'VOUCHER_CREATE') return {};
-    if (!named && action === 'VOUCHER_CREATE') {
+    if (!named && action !== 'VOUCHER_CREATE' && !pickerAnswer) return {};
+    if (!named && action === 'VOUCHER_CREATE' && !pickerAnswer) {
       const pending = await this.store.load(ctx.companyId, this.key(chat));
       if (pending?.voucher?.action === action && await this.bound(ctx, chat, pending)) {
         // These source IDs were already accepted in this owner-bound task; a new model call cannot add a bill.
@@ -496,12 +496,19 @@ export class LineExpenseActionService {
       }
     }
     if (!this.workflowTargets) return unavailable;
-    await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
+    if (!pickerAnswer) await this.claimPickers.discard(ctx.companyId, `expense-action-claim-picker:${chat}`);
     const result = await this.workflowTargets.pick(ctx, chat, workflow, {}, 1);
-    if (rounds.length && !this.isClaim(action)) {
+    if ((rounds.length || pickerAnswer) && !this.isClaim(action) && action !== 'WHT_CERTIFICATE_ISSUE') {
       for (const target of result.targets as LineWorkflowRecordTarget[]) {
         const record = await this.repo.findByIdWithRelations(ctx.companyId, target.id, undefined, ctx.scopes);
         target.roundText = [target.roundText, ...(record?.lines ?? []).map(line => line.description)].filter(Boolean).join(' ');
+        if (pickerAnswer) target.branchId = record?.branchId ?? undefined;
+      }
+    }
+    if (pickerAnswer && action === 'WHT_CERTIFICATE_ISSUE' && /สาขา/u.test(text)) {
+      if (!this.vouchers) return unavailable;
+      for (const target of result.targets as LineWorkflowRecordTarget[]) {
+        target.branchId = (await this.vouchers.read(ctx, { action, id: target.id, handoffs: [] })).branchId ?? undefined;
       }
     }
     const numbers = (target: typeof result.targets[number]): string[] => 'requestNo' in target
@@ -512,7 +519,26 @@ export class LineExpenseActionService {
     documents = [...new Set([...documents.filter(document => !literalNumbers.some(number => number.includes(document) || document.endsWith(number))), ...literalNumbers])].sort((a, b) => text.indexOf(a) - text.indexOf(b));
     amounts = candidates.amounts.filter(isTargetAmount);
     named = documents.length > 0 || rounds.length > 0 || amounts.length === 1;
+    if (pickerAnswer && amounts.length > 1) return { targets: [], exhaustive: result.exhaustive };
+    const normalize = (value: string) => mapThaiDigits(value).toLocaleLowerCase().replace(/\s+/gu, '');
+    const branches = pickerAnswer ? await this.prisma.client.branch.findMany({ where: { companyId: ctx.companyId,
+      id: { in: result.targets.flatMap(target => target.branchId ? [target.branchId] : []) } }, select: { id: true, name: true } }) : [];
+    const namedBranches = branches.filter(branch => {
+      const at = normalize(text).indexOf(normalize(branch.name));
+      return at >= 0 && !/\d/u.test(normalize(text).charAt(at + normalize(branch.name).length));
+    });
+    let remaining = text;
+    if (pickerAnswer) {
+      for (const document of documents) remaining = remaining.replaceAll(document, '');
+      for (const amount of amounts) remaining = remaining.replace(mapThaiDigits(amount.span), '').replace(amount.currencyToken ?? /$^/u, '');
+      for (const branch of namedBranches) remaining = remaining.replaceAll(mapThaiDigits(branch.name), '');
+      remaining = remaining.replace(/รอบ\s*\d+|(?:ที่)?สาขา\s*[^\s?？]+/gu, '')
+        .replace(/(?:บิล|ใบ|เอกสาร)?เลขที่|เลขเอกสาร|จำนวนเงิน|ยอด|บาท|ร่าง|ใบนี้|รายการนี้|ผู้ขาย|คำอธิบาย|ของฉัน|[?？·,]/gu, '').trim();
+    }
+    const searchWords = pickerAnswer ? remaining.split(/\s+/u).map(normalize).filter(word => word.length >= 3) : [];
     const matches = (target: typeof result.targets[number]) => {
+      if (pickerAnswer && ((/สาขา\s*/u.test(text) || namedBranches.length) && !namedBranches.some(branch => branch.id === target.branchId)
+        || searchWords.some(word => !normalize(['title' in target ? target.title : (target as LineWorkflowRecordTarget).label, (target as LineWorkflowRecordTarget).roundText].filter(Boolean).join(' ')).includes(word)))) return false;
       if (this.isClaim(action) && text.includes('ของฉัน') && (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId) return false;
       if (amounts.length === 1 && (target.currency !== 'THB' || !new Decimal(target.amount).eq(amounts[0]!.value))) return false;
       const label = 'title' in target ? target.title ?? '' : (target as LineWorkflowRecordTarget).roundText ?? '';
@@ -523,6 +549,7 @@ export class LineExpenseActionService {
     const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;
     const unique = result.exhaustive && (documents.length ? byDocument.every(rows => rows.length === 1) : targets.length === 1)
       && (action === 'VOUCHER_CREATE' || targets.length === 1);
+    if (pickerAnswer) return { targets: byDocument.some(rows => !rows.length) ? [] : targets, exhaustive: result.exhaustive };
     if (named && unique) return { targets };
     const previous = await this.store.load(ctx.companyId, this.key(chat));
     if (previous) await this.store.discardIfCurrent(ctx.companyId, this.key(chat), previous.previewId);

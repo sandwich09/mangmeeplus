@@ -14,7 +14,7 @@ import { LineExpenseActionService, type ExpenseAction } from './line-expense-act
 import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from '../domain/logic/line-reimbursement-approval-control.logic';
 
 export type LineWorkflowRecordTarget = { id: string; label: string; amount: string; currency: string;
-  documentNumbers?: string[]; roundText?: string; revision?: string };
+  documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
 type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string };
@@ -86,7 +86,8 @@ export class LineWorkflowTargetService {
       });
       const targets: LineWorkflowRecordTarget[] = [];
       for (const row of result.rows) if (await this.voucherActions.canOfferCertificate(ctx, row.id)) {
-        targets.push({ id: row.id, label: row.payeeName || row.documentNumber || '', amount: row.totalAmount, currency: 'THB' });
+        targets.push({ id: row.id, label: row.payeeName || row.documentNumber || '', amount: row.totalAmount, currency: 'THB',
+          documentNumbers: row.documentNumber ? [row.documentNumber] : [] });
       }
       return { targets, total: result.total, exhaustive: result.exhaustive };
     }

@@ -16691,7 +16691,7 @@ it('B4 low-confidence table offers two, one and duplicate-normalized workflow ch
   for (const [label, secondLabel, buttons] of [['reimbursement_submit', 'reimbursement_cancel', 3],
     ['reimbursement_submit', 'read', 2], ['reimbursement_submit', 'reimbursement_submit', 2], ['read', 'reimbursement_submit', 0]] as const) {
     const h = await b4WorkflowHarness();
-    h.setDecision({ label, secondLabel, confidence: 0.7, secondConfidence: 0.6 });
+    h.setDecision({ label, secondLabel, confidence: 0.65, secondConfidence: 0.6 });
     assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), buttons > 0);
     assert.equal(h.starts.length, 0);
     if (buttons) {
@@ -16738,7 +16738,7 @@ it('R26 classifier fallback preserves package replies and business knowledge', a
 it('B4 other after sixty seconds uses a new admission with the original provenance and skips Tier 1', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
   const h = await b4WorkflowHarness();
-  h.setDecision({ confidence: 0.7 });
+  h.setDecision({ confidence: 0.65 });
   await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
   const data = (h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data;
   const token = new URLSearchParams(data).get('token');
@@ -16759,7 +16759,7 @@ it('B4 other after sixty seconds uses a new admission with the original provenan
 it('B4 other on a new Bangkok date asks for the text again and rejects an unoffered or foreign choice', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
   const h = await b4WorkflowHarness();
-  h.setDecision({ confidence: 0.7 });
+  h.setDecision({ confidence: 0.65 });
   await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
   const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data).get('token');
   const selection: any = { ...h.event, webhookEventId: 'other-next-day', messageText: 'อย่างอื่น', workflowControl: { action: 'wf_choice', token, pick: 'other' } };
@@ -16864,7 +16864,7 @@ it('B4 workflow choices bind the owner, live for fifteen minutes and consume onc
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-05T05:00:00Z') });
   for (const seconds of [601, 901]) {
     const h = await b4WorkflowHarness();
-    h.setDecision({ confidence: 0.7 });
+    h.setDecision({ confidence: 0.65 });
     await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
     const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items[0].action.data).get('token');
     const selection = { ...h.event, webhookEventId: `choice-${seconds}`, workflowControl: { action: 'wf_choice', token, pick: 'reimbursement_submit' } };
@@ -16938,7 +16938,7 @@ it('B4 high-confidence forbidden top label keeps the existing refusal', async ()
 
 it('B4 low-confidence forbidden top label offers only the permitted second workflow and other', async () => {
   const h = await b4ForbiddenWorkflowEntry();
-  h.setDecision({ label: 'approvals', confidence: 0.7, secondLabel: 'reimbursement_submit', secondConfidence: 0.6 });
+  h.setDecision({ label: 'approvals', confidence: 0.65, secondLabel: 'reimbursement_submit', secondConfidence: 0.6 });
   await h.useCase.execute(h.event);
   assert.equal(h.intakeRequests.length, 0);
   assert.equal(h.starts.length, 0);
@@ -16950,7 +16950,7 @@ it('B4 low-confidence forbidden top label offers only the permitted second workf
 
 it('B4 low-confidence two forbidden workflow labels reach Tier 2 intake without an other-only card', async () => {
   const h = await b4ForbiddenWorkflowEntry();
-  h.setDecision({ label: 'approvals', confidence: 0.7, secondLabel: 'expense_confirm', secondConfidence: 0.6 });
+  h.setDecision({ label: 'approvals', confidence: 0.65, secondLabel: 'expense_confirm', secondConfidence: 0.6 });
   await h.useCase.execute(h.event);
   assert.equal(h.intakeRequests.length, 1);
   assert.equal(h.intakeRequests[0].messageText, h.event.messageText);
@@ -17697,7 +17697,7 @@ it('R6 invalid and expired wf_choice finish with ask-again', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T05:00:00Z') });
   for (const expired of [false, true]) {
     const h = await b4WorkflowHarness();
-    h.setDecision({ confidence: 0.7 });
+    h.setDecision({ confidence: 0.65 });
     await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
     const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data).get('token');
     if (expired) t.mock.timers.tick(901_000);
@@ -17714,7 +17714,7 @@ it('R6 choice save failure finishes with ask-again', async () => {
   const h = await b4WorkflowHarness();
   const terminal = r6EventLog(h.flow.prisma);
   h.flow.workflowChoiceStore = { save: async () => false };
-  h.setDecision({ confidence: 0.7 });
+  h.setDecision({ confidence: 0.65 });
   assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), true);
   await terminal(h.event.webhookEventId, 'clarification_required');
 });
@@ -17774,4 +17774,177 @@ it('R6 observed auditor submit refusal completes the webhook so replay cannot di
   assert.equal(row.status, 'forbidden');
   assert.equal(await h.flow.claimWebhookEvent(event.webhookEventId, event.lineUserId), false);
   assert.equal(h.delivered.length, 1);
+});
+
+async function r7OffPagePicker(t: TestContext) {
+  const source = await m5ActionTargetHarness('MARK_READY');
+  const ids = ['expense-company-c-4', 'expense-company-c-10', 'workflow-expense-c-5', 'workflow-expense-c-4', 'workflow-expense-c-2'];
+  const numbers = ['อื่น-0001', 'อื่น-0002', 'ทดสอบ-0006', 'ทดสอบ-0005', 'ทดสอบ-0003'];
+  const template = source.records[0]!;
+  source.records.splice(0, source.records.length, ...ids.map((id, i) => ({ ...template, id, expenseNumber: numbers[i]!,
+    vendorDocumentNumber: `ผู้ขาย-${i + 1}`, vendorNameSnapshot: i === 4 ? 'ร้านนอกหน้า' : 'ร้านทดสอบ',
+    grandTotalAmount: String(500 + i), netPayableAmount: String(500 + i), outstandingAmount: String(500 + i),
+    note: `ค่าน้ำมัน รอบ ${i + 1}`, lines: [{ description: `ค่าน้ำมัน รอบ ${i + 1}` }] })));
+  const h = await fx21bBoundWebhook(t, { source: 'r7-off-page', messageText: 'ใบเลขที่ ทดสอบ-0003', route: {} }, source.ctx.permissions);
+  Object.assign(h.flow.config, { aiGatewayInternalSecret: 'm5-secret' });
+  const { lineConversationId } = await import('../line-conversation-context.service');
+  const chat = chatKeyHashOf(BASE_EVENT);
+  source.prisma.client.aiConversation.findFirst = async () => ({ id: lineConversationId({ companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1',
+    channel: 'line', channelKind: 'USER', messagingChannelId: BASE_EVENT.messagingChannelId, chatKeyHash: chat }), lifecycleEpoch: 1 });
+  h.flow.permissionResolver.resolveAccess = async () => ({ ...source.ctx });
+  h.flow.expenseActions = source.actions; h.flow.expenseRepo = source.actions.repo;
+  h.prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }];
+  h.flow.workflowTargets = { pick: async (...args: any[]) => {
+    const result = await source.targets.pick(...args);
+    return { ...result, targets: result.targets.filter((row: any) => ids.slice(0, 4).includes(row.id)) };
+  } };
+  let classifyCalls = 0;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => {
+    classifyCalls++; return { status: 'CLASSIFIED', label: 'expense_submit', secondLabel: 'none', confidence: 0.99, secondConfidence: 0,
+      slots: {}, schemaEnforcement: 'output_config', usage: [], modelId: 'test' };
+  };
+  const outcomes = new Map<string, any>();
+  const save = h.flow.deliveryPlans.savePlan;
+  h.flow.deliveryPlans.savePlan = async (...args: any[]) => {
+    const saved = await save(...args);
+    outcomes.set(args[4], { id: args[1].producerId, companyId: 'company-1', webhookEventId: args[4], messagesJson: args[1].batches.flatMap((batch: any) => batch.primary.messages),
+      authorizationJson: args[5], planId: saved.id });
+    return saved;
+  };
+  h.prisma.client.lineTurnOutcome.findMany = async () => {
+    const rows = [];
+    for (const outcome of [...outcomes.values()].reverse()) {
+      const row = await h.prisma.client.lineDeliveryPlan.findUnique({ where: { id: outcome.planId } });
+      if (row.status === 'ACCEPTED') rows.push({ ...outcome, deliveredAt: new Date(), deliveryPlan: { ...row, batchStateJson: row.states } });
+    }
+    return rows;
+  };
+  const update = h.prisma.client.lineTurnOutcome.updateMany;
+  h.prisma.client.lineTurnOutcome.updateMany = async (args: any) => {
+    if (args.data.authorizationJson && outcomes.has(args.where.webhookEventId)) Object.assign(outcomes.get(args.where.webhookEventId), args.data);
+    return update(args);
+  };
+  let creates = 0;
+  h.flow.captureExpenseNote = { execute: async () => { creates++; assert.fail('picker answer must not create'); } };
+  const applied: string[] = [];
+  source.actions.ready.execute = async (_ctx: any, id: string) => {
+    applied.push(id); const row = source.records.find(record => record.id === id)!;
+    row.status = 'READY_FOR_CONFIRMATION'; row.updatedAt = new Date(row.updatedAt.getTime() + 1); return row;
+  };
+  return { ...h, source, applied, creates: () => creates, classifyCalls: () => classifyCalls };
+}
+
+it('M4 round 7 off-page named submit bill previews and the signed press applies only that bill', async t => {
+  const h = await r7OffPagePicker(t);
+  await h.execute('ส่งตรวจรายจ่ายที่ยังเป็นร่าง');
+  assert.equal(h.classifyCalls(), 1);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /workflow-expense-c-2/);
+  await h.execute('ใบเลขที่ ทดสอบ-0003');
+  assert.deepEqual(h.source.previewed, ['workflow-expense-c-2']);
+  const button = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).find((button: any) => button.action?.label === 'ส่งตรวจ');
+  assert.ok(button, JSON.stringify(h.delivered.at(-1)));
+  assert.deepEqual(h.applied, []);
+  await h.execute('ส่งตรวจ', button.action.data);
+  assert.deepEqual(h.applied, ['workflow-expense-c-2']);
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
+  assert.equal(h.classifyCalls(), 1, 'the picker answer and confirmation add no text model call');
+});
+
+it('M4 round 7 off-page unpermitted and missing bills re-show the same picker without preview', async t => {
+  for (const forbidden of [true, false]) {
+    const h = await r7OffPagePicker(t);
+    if (forbidden) h.source.records[4]!.branchId = 'other-branch';
+    await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+    const picker = h.delivered.at(-1)![0];
+    await h.execute(forbidden ? 'ใบเลขที่ ทดสอบ-0003' : 'ใบเลขที่ ทดสอบ-9999');
+    assert.deepEqual(h.delivered.at(-1)!.at(-1), picker);
+    assert.deepEqual(h.source.previewed, []); assert.deepEqual(h.applied, []); assert.equal(h.creates(), 0);
+  }
+});
+
+it('M4 round 7 several permitted off-page matches deliver only their filtered picker', async t => {
+  const h = await r7OffPagePicker(t);
+  h.source.records.push({ ...h.source.records[4]!, id: 'off-page-twin' });
+  await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+  // Both matches are omitted from the delivered page, but remain in the permitted list.
+  await h.execute('ใบเลขที่ ทดสอบ-0003');
+  const ids = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).map((button: any) => new URLSearchParams(button.action.data).get('id')).filter(Boolean);
+  assert.deepEqual(ids.sort(), ['off-page-twin', 'workflow-expense-c-2']);
+  assert.deepEqual(h.source.previewed, []); assert.equal(h.creates(), 0);
+});
+
+it('M4 round 7 off-page amount round and vendor answers reuse the permitted-list resolver', async t => {
+  for (const text of ['504 บาท', 'รอบ 5', 'ร้านนอกหน้า', 'ร้านนอกหน้า?', 'บิลเลขที่ ทดสอบ-0003', 'สาขา 1 ร้านนอกหน้า', 'ทดสอบ-0003 ร้านนอกหน้า 504 บาท รอบ 5']) {
+    const h = await r7OffPagePicker(t);
+    h.source.prisma.client.branch.findMany = h.prisma.client.branch.findMany;
+    await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+    await h.execute(text);
+    assert.deepEqual(h.source.previewed, ['workflow-expense-c-2'], text);
+    assert.equal(h.creates(), 0);
+  }
+});
+
+it('M4 round 7 off-page branch alone selects only a permitted branch target', async t => {
+  const h = await r7OffPagePicker(t);
+  h.source.records[4]!.branchId = 'branch-2';
+  h.source.ctx.scopes.branchIds.push('branch-2');
+  h.source.targets.expenses.execute = async (ctx: any) => {
+    const data = h.source.records.filter(row => ctx.scopes.branchIds.includes(row.branchId));
+    return { data, total: data.length };
+  };
+  h.source.prisma.client.branch.findMany = h.prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }, { id: 'branch-2', name: 'สาขา 2' }];
+  await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+  await h.execute('สาขา 2');
+  assert.deepEqual(h.source.previewed, ['workflow-expense-c-2']);
+});
+
+it('M4 round 7 incomplete searches and conflicting identifiers never auto-select an off-page bill', async t => {
+  for (const text of ['ใบเลขที่ ทดสอบ-0003 ยอด 400 บาท', 'ใบเลขที่ ทดสอบ-0003 504 บาท 400 บาท', 'ใบเลขที่ ทดสอบ-0003 สาขา 2', 'ใบเลขที่ ทดสอบ-0003 ร้านอื่น', 'ใบเลขที่ ทดสอบ-0003 รอบ 1', 'ใบเลขที่ ทดสอบ-0003 และเลขที่ ทดสอบ-9999', 'ใบเลขที่ ทดสอบ-0003']) {
+    const h = await r7OffPagePicker(t);
+    if (text === 'ใบเลขที่ ทดสอบ-0003') {
+      const pick = h.source.targets.pick.bind(h.source.targets);
+      h.source.targets.pick = async (...args: any[]) => ({ ...await pick(...args), exhaustive: false });
+    }
+    await h.execute('ส่งตรวจ', 'action=chat-action&id=expense_submit');
+    await h.execute(text);
+    assert.deepEqual(h.source.previewed, [], text);
+    assert.equal(h.creates(), 0);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /เลือก|ยังค้น|ค้นในเว็บ/);
+  }
+});
+
+it('M4 round 7 card rows remain first and free shops never read the fallback list', async () => {
+  const h = await m4PickerHarness();
+  h.flow.expenseActions.resolveNamedTargets = async () => assert.fail('listed rows and free shops must not use the fallback');
+  assert.equal(await h.answer('ใบเลขที่ ทดสอบ-0003'), true);
+  assert.deepEqual(h.selected, ['listed-1']);
+  h.ctx.freeExpenseDrafts = true;
+  assert.equal(await h.answer('ใบเลขที่ ทดสอบ-9999'), false);
+});
+
+it('M4 round 7 off-page signed controls preserve the picker payment fields', async () => {
+  const h = await m4PickerHarness('expense_pay');
+  const { buildExpenseWorkflowPicker } = await import('../../domain/logic/line-business-card.logic');
+  h.row.messagesJson = [buildExpenseWorkflowPicker({ targets: [{ id: 'listed-1', label: 'ค่าบริการ', amount: '1000', currency: 'THB' }], total: 1, exhaustive: true },
+    'expense_pay', 'picker-secret', h.ctx.companyId, h.ctx.userId, 'https://app.example.com', { pm: 'CASH', pd: '2026-11-05', pa: '400' })];
+  h.flow.expenseActions.resolveNamedTargets = async () => ({ targets: [{ id: 'off-page', label: 'ร้านใหม่', amount: '1000', currency: 'THB' }], exhaustive: true });
+  let pressed: any;
+  h.flow.expenseActions.openWorkflow = async (_ctx: any, _chat: any, control: any) => { pressed = control; return { reply: 'เตรียมการ์ดแล้ว' }; };
+  assert.equal(await h.answer('ใบเลขที่ ใหม่-0001'), true);
+  assert.equal(pressed.id, 'off-page');
+  assert.equal(pressed.pm, 'CASH'); assert.equal(pressed.pd, '2026-11-05'); assert.equal(pressed.pa, '400');
+  const { verifyLineWorkflowOpenSig } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  assert.equal(verifyLineWorkflowOpenSig('picker-secret', h.ctx.companyId, h.ctx.userId, pressed.act, pressed.id, pressed.pm, pressed.pd, pressed.pa, pressed.sig), true);
+});
+
+it('M4 round 7 certificate picker branch matching reads only already-permitted voucher targets', async () => {
+  const h = await m5ActionTargetHarness();
+  const reads: string[] = [];
+  h.targets.pick = async () => ({ targets: [{ id: 'permitted-voucher', label: 'ผู้รับเงิน', amount: '1000', currency: 'THB', documentNumbers: ['จ่าย-0001'] }], total: 1, exhaustive: true });
+  h.actions.vouchers.read = async (_ctx: any, payload: any) => { reads.push(payload.id); return { branchId: 'branch-1' }; };
+  h.prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }];
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'r7-wht-branch', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: 'สาขา 1' }] }))!.inputEvidence;
+  const selected = await h.actions.resolveNamedTargets(h.ctx, 'm5-chat', 'WHT_CERTIFICATE_ISSUE', 'wht_certificate', evidence, {}, true);
+  assert.deepEqual(selected.targets.map((row: any) => row.id), ['permitted-voucher']);
+  assert.deepEqual(reads, ['permitted-voucher']); assert.equal(h.drafts.length, 0);
 });

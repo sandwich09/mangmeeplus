@@ -668,6 +668,13 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 4 signed delete picker and typed document number reach the same press handler before capture or intake']],
   },
   {
+    id: 'workflow-picker-off-page-named-bill', fixture: 'repository',
+    assertions: { outcome: 'off_page_named_bill_resolves_only_within_the_same_permitted_workflow', tool: 'existing_signed_press_handler_zero_model_calls',
+      mutation: 'final_mutation_submits_only_the_named_bill_after_the_signed_confirm_press', delivery: 'ambiguous_matches_show_a_filtered_picker' },
+    evidence: [['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 7 off-page named submit bill previews and the signed press applies only that bill'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 7 several permitted off-page matches deliver only their filtered picker']],
+  },
+  {
     id: 'action-preview-delete-by-document-number', fixture: 'repository',
     assertions: { outcome: 'wrong_model_target_is_replaced_with_the_named_permitted_bill', tool: 'server_checks_current_user_evidence_before_preparing_the_action',
       mutation: 'zero_final_mutation_before_signed_confirmation', delivery: 'signed_delete_confirmation_is_bound_to_the_named_bill' },

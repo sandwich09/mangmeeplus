@@ -2186,8 +2186,9 @@ export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, '
     item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null, ...(item.reasonCode ? [item.reasonCode] : [])]));
 }
 
-export const WORKFLOW_CLASSIFY_CONFIDENCE_THRESHOLD = 0.80;
-export const WORKFLOW_CLASSIFY_MARGIN_THRESHOLD = 0.15;
+// B5, 2026-11-06: set from 191 real classifier decisions on the tuning corpus (right starts 35 -> 41 of 46, choice cards 17 -> 10).
+export const WORKFLOW_CLASSIFY_CONFIDENCE_THRESHOLD = 0.70;
+export const WORKFLOW_CLASSIFY_MARGIN_THRESHOLD = 0.10;
 type StoredWorkflowChoice = { previewId: string; companyId: string; userId: string; chatKeyHash: string; ownerEpoch: number;
   options: LineWorkflowId[]; rawText: string; originalAcceptedAtMs: number; originalBangkokDate: string;
   originalEventIdHash: string; classifierDecision: Extract<LineWorkflowClassifyResponse, { status: 'CLASSIFIED' }> };
@@ -4143,15 +4144,35 @@ export class ProcessLineWebhookUseCase {
       if (hasKnownWords && !wordMatch || searchWords.some(searchWord => !words(row).some(word => normalized(word).includes(searchWord)))) return false;
       return !!ordinal || numberMatch || wordMatch || amounts.length === 1 || namedBranches.length > 0;
     });
-    if (/[?？]/u.test(text) && !hasTarget) return false;
     if (matches.length === 1 && candidates?.completeness === 'complete') {
       event.workflowControl = matches[0]!.control;
       try { await this.handleWorkflowControl(event, ctx, features); }
       finally { delete event.workflowControl; }
       return true;
     }
+    let message = picker.message;
+    if (!matches.length && !ordinal && workflow && evidence && candidates?.completeness === 'complete') {
+      const selection = await this.expenseActions.resolveNamedTargets?.(ctx, chatKeyHashOf(event), act, workflow, evidence, {}, true)
+        .catch(error => { if (!(error instanceof ForbiddenException)) throw error; return undefined; });
+      if (selection && 'targets' in selection && selection.targets?.length) {
+        const first = picker.rows[0]!.control;
+        const paymentIntent = { ...(first.pm ? { pm: first.pm } : {}), ...(first.pd ? { pd: first.pd } : {}), ...(first.pa ? { pa: first.pa } : {}) };
+        const result = { targets: selection.targets, total: selection.targets.length, exhaustive: selection.exhaustive === true };
+        message = Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, workflow)
+          ? buildExpenseWorkflowPicker(result as LineWorkflowRecordTargets, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent)
+          : buildClaimWorkflowPicker(result as LineWorkflowTargets, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent);
+        const row = result.exhaustive && result.targets.length === 1 ? this.workflowPickerRows([message])?.rows[0] : undefined;
+        if (row) {
+          event.workflowControl = row.control;
+          try { await this.handleWorkflowControl(event, ctx, features); await this.closeWorkflowPicker(picker); }
+          finally { delete event.workflowControl; }
+          return true;
+        }
+      }
+    }
+    if (/[?？]/u.test(text) && !hasTarget && message === picker.message) return false;
     this.repeatedWorkflowPickerExpiry.set(event, picker.expiry);
-    await this.deliverRequiredMessages(event, [{ type: 'text', text: 'เลือกรายการจากการ์ดนี้' }, picker.message]);
+    await this.deliverRequiredMessages(event, [{ type: 'text', text: 'เลือกรายการจากการ์ดนี้' }, message]);
     await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
     return true;
   }
