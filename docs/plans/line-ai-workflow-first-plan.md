@@ -121,6 +121,16 @@ The cost lever is therefore the **size** of the cached prefix and the **number**
 - typed journey ทั้งสองชุด + retained advisor held-out (knowledge/package boundaries included) (measurement §3) บน commit ของ main ที่ระบุ
 - บันทึกใน `docs/research/line-ai-workflow-baseline-2026-10.md` และ memory
 - ตรวจ: รายงานครบ; ledger ≤ เพดาน
+- **Status 2026-11-05:**
+  - **Budget.** The owner raised the programme cap to 2,300 THB, re-runs included ("แผนทดสอบ AI จริง อนุญาตให้ใช้เกินได้ นิดหน่อย 2,100-2,300 อนุมัติ").
+  - **Harness fixes before the run.** These landed on develop/main:
+    - compact streamed turn evidence: the first full tuning run had run out of memory at 114 turns;
+    - resume after a kill;
+    - a 24-turn replay limit: one held-out chain has 22 turns;
+    - permission-refusal gold checked against the role table: three tuning rows were wrong, because every role holds self-service claim permissions;
+    - a new unscored refusal label `record`, for "the role may, this record may not". Four held-out rows were relabelled before the first held-out run, and no scored field changed.
+  - **Running.** The baseline runs on main `efd65cbf5`: tuning, then held-out workflow, then advisor held-out.
+  - **Sequencing.** It runs before P7 and Phase B land. P7.4's acceptance is measured in the post-fix run instead; that costs the same, because Phase B needs that run anyway.
 
 ---
 
@@ -237,6 +247,12 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 - `ai-budget-provider.ts:126–162`: outputSchema ใน `textBytes`, `schemaDigest`, `payloadDigest` (ไม่มี = byte เดิม)
 - MC4: ตรวจ SDK; MC3: probe บน UAT ด้วย schema จริงกับ `global.anthropic.claude-sonnet-4-6` ตาม runbook (Owner รับทราบก่อน) — ไม่ผ่านทั้งสองทาง = หยุด Phase B
 - ตรวจ: `bedrock.provider.spec.ts`, `ai-usage.interceptor.spec.ts`
+- **Status 2026-11-05:**
+  - **Code done** on branch `codex/phase-b1-20261105` (`360bb97e0`), not yet landed. Bedrock sends `outputConfig.textFormat` (`json_schema`). Inputs without a schema keep identical bytes and digests. OpenAI, disabled and the local Anthropic transport refuse a schema.
+  - **MC4 closed:** SDK 3.1075.0 has `outputConfig` and tool `strict`.
+  - **MC3 closed** by one local Bedrock probe: valid JSON under `output_config`. The cold call took 5,625 ms, 826 input and 78 output tokens.
+  - **Timeout.** The cold call is over the 4,000 ms classifier timeout, so B5's post-deploy grammar warm-up call stays required.
+  - **UAT probe.** Replaced by this local probe, against the same model id and region. B5's UAT release still exercises it.
 
 ### B2 Contracts + classify authority (ขึ้นกับ B1 ผ่าน)
 - `packages/contracts/src/ai-budget-bounds.ts`: authorityKind `'webhook_classify'` (parser :285–322), profile `line-classify/2` (24,576 / 1,024 / 1), digest ใหม่ — ไม่แก้ฟังก์ชัน slot (:339–351)

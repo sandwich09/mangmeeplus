@@ -264,3 +264,11 @@ Final source/id/excerpt/path/table and whitespace document checks passed on 2026
 | P7.3 / P7.1 | Due-date follow-ups and ภ.ง.ด.3: `erp-advisor-document-tools.use-case.ts` accepts `formType: 'PND3' \| 'PND53'` with the same `pnd53PaperDueDay` rule and guards; the help path keeps the Q4 delivery rule | `erp-tax-tools.use-case.spec.ts` PWS-PND3-DUE, PWS-DUE-FOLLOW (next/previous/named month); the webhook help-route spec | API specs |
 | P7.4 / P7.1–P7.3 + step 9 Phase A | About 30 question→follow-up conversations added to the step 9 M3 corpus; measured in the one real-model run | Corpus + scorer cases | Real-model run inside the 2,000 THB cap |
 
+**Status 2026-11-05:**
+- **P7.1** (card ids and versions in the turn record) and **P7.2** are in a lane on branch `codex/p7-followups-20261105`, not landed.
+- **P7.2 card rule, controller decision:**
+  - Runtime product-help cards are all `risk: 'R1'` and carry no `allowedNumericFacts`, so every card is treated as low risk and there is no HIGH branch.
+  - The allowed numbers and dates are those in the card's own title, summary and body. A reply with any other number falls back to the card's summary as written.
+  - "ยกตัวอย่าง" uses the card's steps when its text has no number.
+- **P7.4** is measured in the run after Phase B lands, not in the M4 baseline. The baseline records the "before" for the same 30 Q5 conversations.
+

@@ -149,6 +149,19 @@ Scope:
   - step 11 Phase 5: docs, rollback set R (BL1 independent review) and read-only Production checks BL3 + REDUCED-rate-1 count (owner MFA); UAT on the owner's order;
   - step 9: A8 release gate, then M4, the one real-model run (held-out workflow corpus round 2 in lane ho1).
 - **Owner 2026-11-04:** LINE follow-up questions approved ("ได้ ตามแนะนำ"): remember the last card id, explain it more simply from approved text, due-date follow-ups and ภ.ง.ด.3; one real-model test run after the cost work (within the 2,000 THB programme cap).
+- **2026-11-05, step 9 M4 (owner cap 2,300 THB total, re-runs included):**
+  - **Landed** (develop `26187f60a` = main `efd65cbf5`):
+    - the multi-message LINE claim fix (each typed answer is saved in its own turn);
+    - compact streamed eval evidence with resume;
+    - a 24-turn replay limit;
+    - permission gold checked against the role table;
+    - the unscored `record` refusal label.
+  - **Baseline running** on that main: tuning, then held-out workflow, then advisor held-out. About 190 THB was spent before it.
+  - **Not landed:**
+    - Phase B B1 (provider JSON schema; MC3/MC4 closed) on `codex/phase-b1-20261105`;
+    - B2 in a lane;
+    - P7.1/P7.2 (card memory and a simpler re-explain) on `codex/p7-followups-20261105`.
+  - **Typed workflow requests** fail in the baseline as expected: Phase B (the Tier 1 classifier) is not built yet.
 - **Later:** step 7 Phase 4; step 9 M3/M4 and Phases B–C; step 5 last, with the owner.
 
 ## Verification

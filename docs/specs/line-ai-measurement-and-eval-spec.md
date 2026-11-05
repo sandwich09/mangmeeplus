@@ -110,6 +110,10 @@ type WorkflowTurn = {
     preview?: { action: string; target: string; amount?: string; reason?: string; payeeName?: string; paymentMethod?: string; paidDate?: string };
     maxModelCalls?: number;
     mustNotCaptureAsField?: boolean;
+    // 2026-11-05: 'permission' must be true of the role table after entitlement filtering
+    // (validateWorkflowCorpus checks it); 'record' = the role may, this record may not (assignment,
+    // payout account, state). The reason is not scored; wayOut and the refusal wording are.
+    refusal?: { reason: 'permission' | 'package' | 'free' | 'record'; wayOut: string[] };
     // ป้ายเดิม: no_tool, must_answer, must_not_refuse, must_mention_any, must_not_claim
   };
 };
