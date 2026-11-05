@@ -12,10 +12,10 @@ import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { extractJson } from '../../../common/ai/extract-json';
 import { currentBudgetState } from '../../../common/usage/usage-context';
 import { LINE_CHAT_ACTIONS_CONTEXT, modelConversationContext } from './line-model-context';
-import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
+import { approvedKnowledgeFollowUp, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
-import { buildCapabilityHelp, claimsCompletedWrite, safeModelLineText } from './response-composer.agent';
+import { buildCapabilityHelp, claimsCompletedWrite, groundedNumbers, preservesGrounding, preservesSemanticGrounding, safeModelLineText } from './response-composer.agent';
 import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
@@ -632,6 +632,13 @@ export async function runSemanticTurnV2(input: {
 }): Promise<AgentRunResult> {
   let req = resolveExpenseReadReferences(input.req);
   const { provider } = input, started = Date.now();
+  let followUp = input.approvedKnowledgeEnabled && req.approvedKnowledge && !req.attachments?.length
+    ? approvedKnowledgeFollowUp(activeProductHelpPack(), productKnowledgeAccess(req.userContext.permissions,
+      req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], !!req.userContext.membershipId,
+      lineReplyLanguage(req.messageText)), req.messageText, req.conversationContext?.lastKnowledgeCards) : undefined;
+  if (followUp) req = { ...req, selectedKnowledgeCardIds: followUp.cards.map(card => card.id), howToActionId: undefined,
+    semanticSubrequests: followUp.cards.map((_card, index) => ({ index, kind: 'help', goal: req.messageText,
+      requiredEvidence: [], requestedFilters: {}, dependsOn: [], evidenceRefs: req.semanticSubrequests?.[0]?.evidenceRefs ?? [] })) };
   const inventory = req.semanticSubrequests!.map(item => item.kind !== 'write'
     && documentExplanationTopic(evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText))
     ? { ...item, kind: 'general' as const, toolHint: undefined } : item);
@@ -640,7 +647,7 @@ export async function runSemanticTurnV2(input: {
   req = { ...req, conversationContext: modelConversationContext(req.conversationContext, req.taskProjection,
     !!retained, !!req.openClarifications?.length) };
   const readContext = conversationReadCandidates(req.conversationContext, req.valueCandidates);
-  const language = req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
+  const language = followUp ? lineReplyLanguage(req.messageText) : req.language ?? lineReplyLanguage(req.messageText, req.responsePreferences?.language);
   const plan = { status: 'ROUTABLE' as const, language, intents: [], refusals: [], requiresHumanReview: false };
   const results: Array<{ index: number; result: ToolResult }> = [], questions = new Map<number, string>(), forced = new Map<number, { status: LineAiSemanticCoverageV2['status']; reasonCode: string; text: string }>();
   // H3 (tuning-7, T-107-b/T-111-b): a call that fails binding/routing is skipped in the moment (see
@@ -1137,7 +1144,11 @@ export async function runSemanticTurnV2(input: {
   }
   const knowledge = input.approvedKnowledgeEnabled && req.approvedKnowledge === true
     ? renderApprovedKnowledge(activeProductHelpPack(), req.selectedKnowledgeCardIds, productKnowledgeAccess(req.userContext.permissions,
-      req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId) : null;
+      req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [], true, language), req.userContext.companyId, followUp?.cards) : null;
+  if (followUp && !knowledge) {
+    followUp = undefined;
+    req = { ...req, selectedKnowledgeCardIds: undefined };
+  }
   const actionHelps = new Map<number, NonNullable<ReturnType<typeof productHelpAction>>>();
   const helpFor = (actionId?: unknown, selectedKnowledgeCardIds?: readonly string[], text?: string, toolHint?: string) => productHelpAction({ actionId, language, text, toolHint,
     generalHelpEnabled: input.approvedKnowledgeEnabled && req.approvedKnowledge === true, packageOffers: req.packageOffers, selectedKnowledgeCardIds, permissions: req.userContext.permissions, companyId: req.userContext.companyId,
@@ -1147,7 +1158,7 @@ export async function runSemanticTurnV2(input: {
     if (help) actionHelps.set(index, help);
   }
   const selectedHelp = inventory.filter(item => item.kind === 'help');
-  if (selectedHelp.length === 1) {
+  if (selectedHelp.length === 1 && !followUp) {
     const help = helpFor(req.howToActionId, req.selectedKnowledgeCardIds, itemText.get(selectedHelp[0]!.index) ?? selectedHelp[0]!.goal, selectedHelp[0]!.toolHint);
     if (help && !scopePolicyForcedIndices.has(selectedHelp[0]!.index) && !documentExplanationTopic(itemText.get(selectedHelp[0]!.index) ?? '')) {
       const due = await productHelpWithData(req, help, ctx, input.invoke);
@@ -1171,6 +1182,10 @@ export async function runSemanticTurnV2(input: {
     toolResults: results.map(entry => ({ index: entry.index, result: entry.result,
       sources: entry.result.sourceRefs.map(ref => ({ ...ref, id: sourceId(ref) })) })), questions: [...questions].map(([index, text]) => ({ index, text })),
     approvedHelp: knowledge?.replyText,
+    ...(followUp ? { approvedHelpFollowUp: { style: followUp.style,
+      instruction: 'Re-explain each indexed card using only its title, summary and body in simpler Thai. For example give one example using only that card text and its numbers. When a card has no numbers, copy its body steps in their original order. Preserve every condition and exception. Add no fact, step, promise, button, action, URL or completed work. Answer text is the body only, without a title. Use only that card\'s allowedNumbers, including dates. If unable, copy its summary exactly.',
+      cards: followUp.cards.map((card, index) => ({ index, title: card.title, summary: card.summary, body: card.body,
+        allowedNumbers: [...groundedNumbers(`${card.title}\n${card.summary}\n${card.body}`)] })) } } : {}),
     productActionFacts: LINE_CHAT_ACTIONS.filter(action => canUseLineChatAction(action.id, req.userContext.permissions, entitledFeatureKeys == null ? null : new Set(entitledFeatureKeys))).map(({ title, sentence }) => ({ title, sentence })),
     forcedOutcomes: [...forced].map(([index, value]) => ({ index, ...value })),
     documentExplanations: inventory.flatMap(item => documentExplanationTopic(itemText.get(item.index) ?? '')
@@ -1192,7 +1207,8 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && (object(entry.result.data.reimbursementDraft) || ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(entry.result.toolName)))).map(item => item.index));
-  const needsComposition = inventory.some(item => !(req.selectedKnowledgeCardIds?.length && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
+  const followUpNeedsComposition = followUp && (followUp.style !== 'example' || followUp.cards.some(card => groundedNumbers(`${card.title}\n${card.summary}\n${card.body}`).size > 0));
+  const needsComposition = followUp ? !!followUpNeedsComposition : inventory.some(item => !(req.selectedKnowledgeCardIds?.length && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   const sourcesCover = (answer: { sourceRefIds?: string[] }, good: ToolResult[]) => {
@@ -1217,7 +1233,7 @@ export async function runSemanticTurnV2(input: {
     });
   };
   let lastProse: Record<string, unknown> | undefined;
-  for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
+  for (let attempt = 0; needsComposition && attempt < (followUp ? 1 : 2); attempt++) {
     if (attempt) {
       const state = currentBudgetState();
       if (state?.status !== 'active-v2' || state.repairCount >= state.grant.maxRepairs || state.calls >= aiBudgetV2OrdinalCeiling(state.grant)) break;
@@ -1227,7 +1243,7 @@ export async function runSemanticTurnV2(input: {
       const candidate = json(text);
       const helps = new Map(actionHelps);
     if (Array.isArray(candidate?.helpActions)) for (const selection of candidate.helpActions) {
-      if (!object(selection) || !inventory.some(item => item.index === selection.index && ['help', 'general'].includes(item.kind))
+      if (followUp || !object(selection) || !inventory.some(item => item.index === selection.index && ['help', 'general'].includes(item.kind))
         || capabilityIndices.has(Number(selection.index)) || scopePolicyForcedIndices.has(Number(selection.index))
         || documentExplanationTopic(itemText.get(Number(selection.index)) ?? '')) continue;
       const help = helpFor(selection.actionId, undefined, itemText.get(Number(selection.index)),
@@ -1305,6 +1321,7 @@ export async function runSemanticTurnV2(input: {
   // one read of the reader's open work. Model prose never fills a row; an item answered any other way
   // has no entry here and is drawn as its sentence.
   const layouts = new Map<number, LineAiAnswerCardLayout>();
+  const followUpCards: NonNullable<AgentRunResult['presentation']>['cards'] = [];
   const percentAsked = PERCENT_ASKED_PATTERN.test(req.messageText);
   for (const item of inventory) {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
@@ -1329,7 +1346,20 @@ export async function runSemanticTurnV2(input: {
     // would matter here anyway (those only ever populate when no successful result exists).
     const nameIssue = nameIssues.get(item.index);
     const actionHelp = actionHelps.get(item.index);
-    if (actionHelp) {
+    if (followUp && knowledge) {
+      const card = followUp.cards[item.index]!;
+      const sourceText = `${card.title}\n${card.summary}\n${card.body}`;
+      let body = card.summary;
+      if (followUp.style === 'example' && !groundedNumbers(sourceText).size) body = card.body;
+      else if (composed?.status === 'handled' && preservesGrounding(sourceText, composed.text)
+        && preservesSemanticGrounding([sourceText, 'ตัวอย่าง เช่น สมมติ หมายถึง'], composed.text)) body = composed.text;
+      const reviewed = knowledge.presentation.cards[item.index]!;
+      followUpCards.push({ ...reviewed, text: body });
+      answer = { index: item.index, status: 'handled', text: `${card.title}\n${body}`,
+        sourceRefIds: [sourceId(knowledge.sourceRefs[item.index]!)] };
+      modelComposed = false;
+    }
+    else if (actionHelp) {
       answer = { index: item.index, status: actionHelp.allowed ? 'handled' : 'denied', text: actionHelp.replyText,
         sourceRefIds: [...new Set([...good.flatMap(result => result.sourceRefs.map(sourceId)), ...actionHelp.sourceRefs.map(sourceId), ...(knowledge?.sourceRefs.map(sourceId) ?? [])])].slice(0, 8) };
       modelComposed = false;
@@ -1561,7 +1591,7 @@ export async function runSemanticTurnV2(input: {
     }
     const explanation = documentExplanationReply(itemText.get(item.index) ?? '', entitledFeatureKeys, req.userContext.permissions, language, req.packageOffers);
     if (explanation && !scopePolicyForcedIndices.has(item.index)) answer = { index: item.index, status: 'handled', text: explanation };
-    answer.text = lineCustomerWording(answer.text);
+    if (!followUp) answer.text = lineCustomerWording(answer.text);
     if (!comparisonFollowers.has(item.index)) texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),
       ...(answer.sourceRefIds ? { sourceRefIds: answer.sourceRefIds } : {}), ...(answer.status === 'needs_user' ? { question: answer.text.slice(0, 500) } : {}) });
@@ -1607,7 +1637,10 @@ export async function runSemanticTurnV2(input: {
     ? expenseComparisonCardLayout(onlyComparison, percentAsked, webLinks.length > 0) : undefined;
   const layout = single ?? backlog ?? comparisonLayout;
   const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
-  return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
+  const semanticCoverage = followUp ? (input.req.semanticSubrequests ?? [{ index: 0 }]).map(item => ({ index: item.index,
+    status: 'handled' as const, sourceRefIds: sourceRefs.map(sourceId) })) : coverage;
+  return { plan, outputs, replyText, semanticCoverage, sourceRefs, webLinks,
+    ...(followUpCards.length ? { presentation: { kind: 'answer_cards' as const, cards: followUpCards } } : {}),
     ...(actionHelps.size ? { presentation: { kind: 'answer_cards' as const, cards: inventory.map(item => actionHelps.get(item.index)?.presentation.cards[0] ?? { text: texts[item.index] ?? replyText }) } } : {}),
     ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,
       ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(webLinks[0] ? { webLink: webLinks[0] } : {}) }] } } : {}),

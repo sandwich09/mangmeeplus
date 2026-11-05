@@ -12,6 +12,8 @@ export type ProviderInput = {
   documents?: Array<{ mimeType: 'application/pdf'; contentBase64: string }>;
   systemPrompt?: string;
   maxTokens?: number;
+  /** Provider-enforced JSON schema for the text response. */
+  outputSchema?: { name: string; schema: Record<string, unknown> };
   /** Deterministic, byte-stable context rendered as the leading text blocks of the first
    *  user message, before that message's text. Bedrock adds a cachePoint after it when
    *  long enough; OpenAI prepends it to the first user text (same model-visible content,
@@ -33,7 +35,7 @@ export type ProviderInput = {
 export type ProviderCompletion = 'complete' | 'output_limit' | 'blocked' | 'unknown';
 
 export type ProviderOutput =
-  | { ok: true; text: string; completion?: ProviderCompletion; providerStopReason?: string; stopReason?: 'end_turn' | 'max_tokens' | 'other' }
+  | { ok: true; text: string; schemaEnforcement?: 'output_config' | 'strict_tool'; completion?: ProviderCompletion; providerStopReason?: string; stopReason?: 'end_turn' | 'max_tokens' | 'other' }
   | { ok: false; error: ProviderError };
 
 // ── Item 10F: native tool-use (Bedrock Converse toolConfig / OpenAI function calling) ──
@@ -45,6 +47,8 @@ export type ProviderToolSpec = {
   description?: string;
   /** JSON-schema object for the tool input. */
   inputSchema: Record<string, unknown>;
+  /** Ask Bedrock to enforce this tool's input schema. */
+  strict?: boolean;
 };
 
 export type ProviderToolCall = {
@@ -85,7 +89,7 @@ export type ProviderToolsInput = {
 };
 
 export type ProviderToolsOutput =
-  | { ok: true; text: string; toolCalls: ProviderToolCall[]; completion?: ProviderCompletion; providerStopReason?: string; stopReason: 'tool_use' | 'end_turn' | 'max_tokens' | 'other' }
+  | { ok: true; text: string; toolCalls: ProviderToolCall[]; schemaEnforcement?: 'output_config' | 'strict_tool'; completion?: ProviderCompletion; providerStopReason?: string; stopReason: 'tool_use' | 'end_turn' | 'max_tokens' | 'other' }
   | { ok: false; error: ProviderError };
 
 export interface IModelProvider {

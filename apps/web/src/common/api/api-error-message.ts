@@ -1299,6 +1299,7 @@ const CODE_LABELS: Record<string, string> = {
   rating_invalid: 'คะแนนต้องอยู่ในช่วงที่กำหนด กรุณาเลือกใหม่',
   feedback_request_id_required: 'ไม่พบรายการคำแนะนำที่ต้องการให้คะแนน กรุณาโหลดข้อมูลใหม่',
   PROVIDER_UNKNOWN: 'ไม่พบผู้ให้บริการ AI ที่ตั้งค่าไว้ กรุณาติดต่อผู้ดูแลระบบ',
+  PROVIDER_CONTRACT_UNSUPPORTED: 'ยังตอบคำขอนี้ไม่ได้ ติดต่อทีมงานมั่งมี',
   INVALID_BROADCAST_TOPIC: 'หัวข้อข้อความประกาศไม่ถูกต้อง กรุณาเลือกหัวข้อใหม่',
   AI_BROADCAST_UNAVAILABLE: 'ยังสร้างข้อความประกาศด้วย AI ไม่ได้ กรุณาลองใหม่ภายหลังหรือเขียนข้อความเอง',
   AI_LLM_RATE_LIMITED: 'มีการใช้ AI ถี่เกินไป กรุณารอสักครู่แล้วลองใหม่',

@@ -1517,3 +1517,65 @@ it('Exam D: a zero-token provider failure logs its exception class and HTTP stat
     assert.doesNotMatch(JSON.stringify(captured.lines), /private user text/);
   } finally { captured.restore(); }
 });
+
+describe('B1 provider output schema', () => {
+  const outputSchema = { name: 'workflow_classifier', schema: { type: 'object', additionalProperties: false,
+    required: ['label'], properties: { label: { type: 'string', enum: ['read'] } } } };
+
+  it('renders the exact Bedrock output format and preserves the request without a schema', async () => {
+    const provider = makeProvider();
+    const requests: any[] = [];
+    (provider as any).client = { send: async (command: any) => { requests.push(command.input); return {
+      stopReason: 'end_turn', output: { message: { content: [{ text: '{"label":"read"}' }] } },
+    }; } };
+    const input = { systemPrompt: 'Classify.', messages: [{ role: 'user' as const, text: 'ส่งใบเบิกของฉันให้อนุมัติหน่อย' }], maxTokens: 256 };
+    const plain = await provider.generateText(input);
+    const structured = await provider.generateText({ ...input, outputSchema } as any);
+    assert.deepEqual(requests[0], { modelId: 'test-model', messages: [{ role: 'user', content: [{ text: input.messages[0].text }] }],
+      system: [{ text: 'Classify.' }], inferenceConfig: { maxTokens: 256 } });
+    const { outputConfig, ...withoutSchema } = requests[1];
+    assert.equal(JSON.stringify(withoutSchema), JSON.stringify(requests[0]));
+    assert.deepEqual(outputConfig, { textFormat: { type: 'json_schema', structure: { jsonSchema: {
+      name: outputSchema.name, schema: JSON.stringify(outputSchema.schema),
+    } } } });
+    assert.equal(structured.ok, true);
+    if (structured.ok) assert.equal((structured as any).schemaEnforcement, 'output_config');
+    assert.equal('schemaEnforcement' in plain, false);
+  });
+
+  it('maps a refusal invalid JSON missing required fields and incomplete output to failed output', async () => {
+    for (const [stopReason, text] of [['guardrail_intervened', 'refused'], ['end_turn', 'ไม่ใช่เจสัน'], ['end_turn', '{}'], ['max_tokens', '{"label":"read"}']]) {
+      const provider = makeProvider();
+      (provider as any).client = { send: async () => ({ stopReason, output: { message: { content: [{ text }] } } }) };
+      const result = await provider.generateText({ messages: [{ role: 'user', text: 'ทดสอบ' }], outputSchema } as any);
+      assert.equal(result.ok, false, `${stopReason}: ${text}`);
+      if (!result.ok) assert.ok(['PROVIDER_BLOCKED', 'PROVIDER_OUTPUT_INCOMPLETE'].includes(result.error.code));
+    }
+  });
+
+  it('renders strict tools and reports strict_tool only for a strict returned call', async () => {
+    const provider = makeProvider();
+    let request: any;
+    (provider as any).client = { send: async (command: any) => { request = command.input; return {
+      stopReason: 'tool_use', output: { message: { content: [{ toolUse: { toolUseId: 't1', name: outputSchema.name, input: { label: 'read' } } }] } },
+    }; } };
+    const input = { messages: [{ role: 'user' as const, text: 'ทดสอบ' }], tools: [{ name: outputSchema.name, inputSchema: outputSchema.schema, strict: true }] };
+    const result = await provider.generateWithTools(input);
+    assert.equal(request.toolConfig.tools[0].toolSpec.strict, true);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal((result as any).schemaEnforcement, 'strict_tool');
+    const ordinary = await provider.generateWithTools({ ...input, tools: [{ name: outputSchema.name, inputSchema: outputSchema.schema }] });
+    assert.equal('strict' in request.toolConfig.tools[0].toolSpec, false);
+    assert.equal('schemaEnforcement' in ordinary, false);
+  });
+
+  it('refuses Anthropic output schemas when this checkout has no structured-output SDK contract', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => { assert.fail('unsupported structured output must fail before dispatch'); };
+    try {
+      const result = await new AnthropicApiProvider({ apiKey: 'test', modelId: 'test', timeoutMs: 10000 }).generateText({ messages: [], outputSchema } as any);
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, 'PROVIDER_CONTRACT_UNSUPPORTED');
+    } finally { globalThis.fetch = original; }
+  });
+});

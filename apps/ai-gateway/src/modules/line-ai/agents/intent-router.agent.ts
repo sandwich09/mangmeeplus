@@ -635,7 +635,7 @@ export class IntentRouterAgent {
     const knowledgeMetadata = caps.approvedKnowledge && this.knowledge.enabled && !hasAttachment
       ? offeredKnowledgeMetadata(this.knowledge.pack ?? activeProductHelpPack(),
         productKnowledgeAccess(request.permissions, request.enabledFeatures ?? [], true,
-          /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en'), request.messageText)
+          /[\u0E00-\u0E7F]/u.test(request.messageText) ? 'th' : 'en'), request.messageText, request.conversationContext?.lastKnowledgeCards)
       : [];
 
     const semanticV2 = request.inputEvidence !== undefined;

@@ -29,3 +29,9 @@ describe('DisabledProvider.generateWithTools (item 10F)', () => {
     if (!result.ok) assert.equal(result.error.code, 'PROVIDER_DISABLED');
   });
 });
+
+it('B1 refuses outputSchema with the contract error while disabled', async () => {
+  const result = await new DisabledProvider().generateText({ messages: [], outputSchema: { name: 'classifier', schema: { type: 'object' } } } as any);
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.error.code, 'PROVIDER_CONTRACT_UNSUPPORTED');
+});

@@ -27,6 +27,45 @@ const rehash = (pack: ProductKnowledgePack) => {
 };
 
 describe('approved product knowledge eligibility, source integrity and rendering', () => {
+  it('PWS-FOLLOW-OFFER includes exact remembered versions as candidates without selecting them', () => {
+    const pack = activeProductHelpPack();
+    const owner = { ...access(), permissions: pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions]),
+      featureKeys: null, capabilities: pack.cards.flatMap(card => card.requiredCapabilities) };
+    const ordinary = offeredKnowledgeMetadata(pack, owner, 'เปิดร้านยังไง');
+    const remembered = eligibleKnowledgeCards(pack, owner).filter(card => !ordinary.some(row => row.id === card.id)).slice(-5);
+    assert.equal(remembered.length, 5);
+    const refs = remembered.map(({ id, version }) => ({ id, version }));
+    const offered = offeredKnowledgeMetadata(pack, owner, 'เปิดร้านยังไง', refs);
+    for (const ref of refs) assert.ok(offered.some(row => row.id === ref.id && row.version === ref.version));
+    assert.ok(offered.length <= 12 && Buffer.byteLength(JSON.stringify(offered)) <= 12 * 1024);
+    assert.equal(parseSelectedKnowledgeCardIds(undefined, offered), undefined);
+    assert.equal(renderApprovedKnowledge(pack, undefined, owner, 'company-A'), null);
+    assert.deepEqual(offeredKnowledgeMetadata(pack, owner, 'เปิดร้านยังไง', []), ordinary, 'absent memory preserves the original offer bytes');
+  });
+
+  it('PWS-FOLLOW-OFFER rechecks permissions, features, capabilities, membership and exact versions', () => {
+    const pack = reviewed();
+    const card = pack.cards.find(card => card.id === 'expense.find')!;
+    const refs = [{ id: card.id, version: card.version }];
+    assert.ok(offeredKnowledgeMetadata(pack, access(), 'ไม่เข้าใจ', refs).some(row => row.id === card.id));
+    for (const changed of [{ permissions: [] }, { featureKeys: [] }, { capabilities: [] }, { member: false }, { now: new Date(pack.effectiveTo) }]) {
+      assert.ok(!offeredKnowledgeMetadata(pack, { ...access(), ...changed }, 'ไม่เข้าใจ', refs).some(row => row.id === card.id));
+    }
+    const unrelated = 'xyzxyz';
+    const ordinary = offeredKnowledgeMetadata(activeProductHelpPack(), access(), unrelated);
+    const outside = eligibleKnowledgeCards(activeProductHelpPack(), access()).find(row => !ordinary.some(offered => row.id === offered.id))!;
+    assert.ok(outside);
+    assert.deepEqual(offeredKnowledgeMetadata(activeProductHelpPack(), access(), unrelated, [{ id: outside.id, version: outside.version + 1 }]), ordinary);
+  });
+
+  it('PWS-FOLLOW-OFFER free source-draft access cannot recover paid cards from memory', () => {
+    const pack = activeProductHelpPack();
+    const paid = pack.cards.find(card => card.id === 'pnd53.prepare')!;
+    const free = { ...access(), permissions: ['expense.read', 'expense.read_own', 'expense.update', 'expense.receipt.line_upload'],
+      featureKeys: ['expenses'], capabilities: [] };
+    assert.ok(!offeredKnowledgeMetadata(pack, free, 'ไม่เข้าใจ', [{ id: paid.id, version: paid.version }]).some(row => row.id === paid.id));
+  });
+
   it('LINE-HELP-APPROVE bounds relevant owner and staff offers before the model sees them', () => {
     const pack = activeProductHelpPack();
     const owner = { ...access(), permissions: [...new Set(pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions]))],

@@ -1657,6 +1657,34 @@ describe('approved knowledge selection in the existing semantic route', () => {
     status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
     intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }],
   };
+  it('PWS-FOLLOW-OFFER intake carries remembered ids as per-turn DATA without selecting or changing cached bytes', async () => {
+    const { activeProductHelpPack } = await import('./approved-product-help');
+    const { eligibleKnowledgeCards, offeredKnowledgeMetadata, productKnowledgeAccess } = await import('./approved-knowledge');
+    const pack = activeProductHelpPack();
+    const request = { ...await creditRequest('ไม่เข้าใจ'),
+      permissions: [...new Set(pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions]))],
+      enabledFeatures: [...new Set(pack.cards.flatMap(card => card.featureKeys))], capabilities: { approvedKnowledge: true } };
+    const access = productKnowledgeAccess(request.permissions, request.enabledFeatures, true, 'th');
+    const ordinary = offeredKnowledgeMetadata(pack, access, request.messageText);
+    const previous = eligibleKnowledgeCards(pack, access).find(card => !ordinary.some(row => row.id === card.id))!;
+    assert.ok(previous);
+    const inputs: ProviderInput[] = [];
+    const router = new IntentRouterAgent({ generateText: async input => {
+      inputs.push(input);
+      return { ok: true, text: JSON.stringify({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }) };
+    } }, true, { enabled: true });
+    await router.routeIntake(request);
+    await router.routeIntake({ ...request, conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+      lastKnowledgeCards: [{ id: previous.id, version: previous.version }] } });
+    const baseline = inputs[0]!, withMemory = inputs[1]!;
+    const data = JSON.parse(withMemory.messages[0]!.text);
+    assert.ok(data.approvedKnowledge.some((row: { id: string }) => row.id === previous.id));
+    assert.deepEqual(data.conversationContext.lastKnowledgeCards, [{ id: previous.id, version: previous.version }]);
+    assert.equal(withMemory.systemPrompt, baseline.systemPrompt);
+    assert.equal(withMemory.cacheableContext, baseline.cacheableContext);
+    assert.equal((await router.routeIntake(request)).selectedKnowledgeCardIds, undefined);
+    assert.equal(JSON.stringify(inputs[2]), JSON.stringify(baseline), 'a turn without stored cards is byte-identical');
+  });
   it('selects help with the same model call while retaining the independent business read', async () => {
     let calls = 0; let input: ProviderInput | undefined;
     const router = new IntentRouterAgent({ generateText: async (value) => {

@@ -23,7 +23,7 @@ import { expenseNameResolutionIssue, expenseNameResolutionReplyText } from '../d
 import { APPROVED_PREPARED_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote, formatExpenseSummary, formatPreparedSimpleRead, isEnglish, openWorkCardLayout, preparedTerminalReply, thaiExpenseAsOfLabel } from './prepared-simple-read-formatter';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { draftUpdateCardLayout, formatDraftUpdateReply } from './draft-update-formatter';
-import { offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
+import { approvedKnowledgeFollowUp, offeredKnowledgeMetadata, productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { GROUNDING_TEXT_MAX } from '../infrastructure/erp-tool.client';
 import { CoverageCriticAgent } from './coverage-critic.agent';
@@ -1154,6 +1154,14 @@ export class OrchestratorAgent {
   }
 
   private async runTurn(req: LineAiTurnRequest): Promise<AgentRunResult> {
+    const followUp = req.approvedKnowledge && !req.attachments?.length && approvedKnowledgeFollowUp(activeProductHelpPack(),
+      productKnowledgeAccess(req.userContext.permissions, req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys ?? [],
+        !!req.userContext.membershipId, lineReplyLanguage(req.messageText)), req.messageText, req.conversationContext?.lastKnowledgeCards);
+    if (followUp) return runSemanticTurnV2({ req,
+      provider: createProvider(this.config, { modelId: req.modelPolicy?.modelId }),
+      invoke: (meta, context, args) => this.erpTools.invoke(meta, context, args),
+      draftEditEnabled: true, reimbursementDraftEnabled: true,
+      publicLookupEnabled: this.config.lineAiPublicLookupEnabled, approvedKnowledgeEnabled: true });
     // Items 1-3 (spec §2/§3 rows 17-18, §8, §11): checked before the prepared-simple fast lane
     // below, which only re-verifies input shape/period grounding (`preparedSimplePreCallCheck`) —
     // never topic/action scope. A turn with more than one subrequest never qualifies for that fast
@@ -1349,7 +1357,7 @@ export class OrchestratorAgent {
     // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
     const router = new IntentRouterAgent(provider, true, { enabled: knowledgeEnabled });
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications,
-      knowledgeEnabled ? offeredKnowledgeMetadata(activeProductHelpPack(), knowledgeAccess(), req.messageText) : undefined);
+      knowledgeEnabled ? offeredKnowledgeMetadata(activeProductHelpPack(), knowledgeAccess(), req.messageText, req.conversationContext?.lastKnowledgeCards) : undefined);
     this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
     // Spec §5.5 / evidence E4: a trusted business-read intake about the caller's own record must

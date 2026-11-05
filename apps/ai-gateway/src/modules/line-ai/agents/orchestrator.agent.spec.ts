@@ -1857,6 +1857,31 @@ describe('run-level expense follow-up execution', () => {
 });
 
 describe('approved knowledge orchestration', () => {
+  it('PWS-FOLLOW-SIMPLER the normal orchestrator entry resolves remembered help with one compose and no router or action call', async () => {
+    const { activeProductHelpPack } = await import('./approved-product-help');
+    const card = activeProductHelpPack().cards.find(card => card.id === 'expense.status')!;
+    const req = makeReq('ไม่ เข้า ใจ ค่ะ');
+    req.approvedKnowledge = true;
+    req.userContext.permissions = ['line.ai.query', 'expense.read'];
+    req.entitledFeatureKeys = ['expenses'];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [], lastKnowledgeCards: [{ id: card.id, version: card.version }] };
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: 'อธิบายอีกที', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }];
+    let calls = 0;
+    globalThis.fetch = async (_url, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      const payload = JSON.parse(body.input[0].content[0].text);
+      assert.equal(payload.approvedHelpFollowUp.style, 'simpler');
+      return jsonMockResponse({ ok: true, json: async () => ({ status: 'completed', output_text: JSON.stringify({
+        answers: [{ index: 0, status: 'handled', text: 'สถานะเอกสารบอกการตรวจ ส่วนสถานะการจ่ายบอกว่าจ่ายให้ผู้ขายหรือยังค่ะ' }],
+      }) }) });
+    };
+    const result = await new OrchestratorAgent({ invoke: async () => assert.fail('re-explanation must not invoke tools') } as any, makeConfig()).run(req);
+    assert.equal(calls, 1);
+    assert.equal(result.presentation?.cards[0]?.title, card.title);
+    assert.equal(result.replyText, `${card.title}\nสถานะเอกสารบอกการตรวจ ส่วนสถานะการจ่ายบอกว่าจ่ายให้ผู้ขายหรือยังค่ะ`);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+  });
   async function withReviewedPack(run: () => Promise<void>) {
     const { activeProductHelpPack } = await import('./approved-product-help');
     const { knowledgePackHash } = await import('./approved-knowledge');

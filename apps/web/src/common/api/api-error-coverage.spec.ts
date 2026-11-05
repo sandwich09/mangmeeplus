@@ -515,3 +515,7 @@ it('PWS-ERROR code and regex period refusals agree and unknown facts stay unknow
     assert.match(message, /ผู้ทำบัญชีตรวจ/);
   }
 });
+
+it('B1 gives the unsupported provider contract a Thai sentence and support exit', () => {
+  assert.equal(apiErrorMessage({ code: 'PROVIDER_CONTRACT_UNSUPPORTED', status: 422 }), 'ยังตอบคำขอนี้ไม่ได้ ติดต่อทีมงานมั่งมี');
+});

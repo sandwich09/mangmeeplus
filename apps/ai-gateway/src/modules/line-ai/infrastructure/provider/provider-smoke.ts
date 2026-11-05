@@ -20,6 +20,8 @@ import type { AiGatewayConfigService } from '../../../../common/config/ai-gatewa
 import { OpenAiProvider } from './openai.provider';
 import { DisabledProvider } from './disabled.provider';
 import type { IModelProvider } from './provider.port';
+import { validateProviderStructuredText } from './provider-output.logic';
+import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-context';
 
 const provider = process.env['MODEL_PROVIDER'] ?? 'disabled';
 const region = process.env['BEDROCK_REGION'];
@@ -28,6 +30,23 @@ const openAiKey = process.env['OPENAI_API_KEY'];
 const openAiModel = process.env['OPENAI_MODEL'] ?? 'gpt-4.1-mini';
 const timeoutMs = Number(process.env['AI_TOOL_TIMEOUT_MS'] ?? '15000');
 const showPrompt = process.env['AI_PROMPT_LOGGING_ENABLED'] === 'true';
+const probeOutputSchema = process.env['PROVIDER_SMOKE_OUTPUT_SCHEMA'] === '1';
+
+const CLASSIFIER_LABELS = ['reimbursement_claim', 'reimbursement_submit', 'reimbursement_cancel', 'approvals',
+  'reimbursement_reject', 'reimbursement_pay', 'expense_submit', 'expense_confirm', 'expense_delete', 'expense_void',
+  'expense_pay', 'payment_voucher', 'wht_certificate', 'substitute_receipt', 'read', 'howto', 'open', 'smalltalk', 'multi', 'unclear'];
+const CLASSIFIER_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['label', 'second_label', 'confidence', 'second_confidence', 'reference', 'ordinal', 'person_name', 'vendor_name',
+    'description_text', 'amount_text', 'date_text', 'reason_text', 'category_text'],
+  properties: {
+    label: { type: 'string', enum: CLASSIFIER_LABELS }, second_label: { type: 'string', enum: [...CLASSIFIER_LABELS, 'none'] },
+    confidence: { type: 'number' }, second_confidence: { type: 'number' },
+    reference: { type: 'string', enum: ['this', 'last_shown', 'named', 'none'] }, ordinal: { type: 'integer' },
+    person_name: { type: 'string' }, vendor_name: { type: 'string' }, description_text: { type: 'string' },
+    amount_text: { type: 'string' }, date_text: { type: 'string' }, reason_text: { type: 'string' }, category_text: { type: 'string' },
+  },
+};
 
 // ponytail: minimal Thai query; one-word answer keeps cost/latency low for smoke
 const TEST_MESSAGE = 'ตอบด้วยคำเดียวในภาษาไทย: ยืนยัน';
@@ -56,11 +75,22 @@ function buildProvider(): IModelProvider {
 void (async () => {
   const p = buildProvider();
   const start = Date.now();
-  const result = await p.generateText({
-    messages: [{ role: 'user', text: TEST_MESSAGE }],
-    maxTokens: 64,
+  const call = () => p.generateText({
+    messages: [{ role: 'user', text: probeOutputSchema ? 'ส่งใบเบิกของฉันให้อนุมัติหน่อย' : TEST_MESSAGE }],
+    maxTokens: probeOutputSchema ? 256 : 64,
+    ...(probeOutputSchema ? { outputSchema: { name: 'line_workflow_classifier', schema: CLASSIFIER_SCHEMA } } : {}),
   });
+  const { result, usage } = probeOutputSchema
+    ? await runWithUsageContext({}, async () => ({ result: await call(), usage: drainUsage() }))
+    : { result: await call(), usage: [] };
   const durationMs = Date.now() - start;
+
+  if (probeOutputSchema) {
+    const validJson = result.ok && validateProviderStructuredText(result.text, CLASSIFIER_SCHEMA);
+    console.log(JSON.stringify({ ok: result.ok, provider, schemaEnforcement: result.ok ? result.schemaEnforcement ?? null : null,
+      validJson, durationMs, usage, ...(!result.ok ? { errorCode: result.error.code } : {}) }));
+    process.exit(result.ok && validJson ? 0 : 1);
+  }
 
   if (result.ok) {
     const text = showPrompt ? result.text : `[${result.text.length} chars – set AI_PROMPT_LOGGING_ENABLED=true to show]`;

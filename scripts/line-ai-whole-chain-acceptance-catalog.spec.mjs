@@ -14,6 +14,8 @@ const EXPECTED_IDS = [
   'handwritten-cash-bill',
   'handwritten-multi-entry-ledger',
   'owner-daily-closing-shorthand',
+  'help-card-memory-follow-up',
+  'help-card-simpler-follow-up',
   'ambiguous-urgency-after-image',
   'receipt-choice-plus-substitute-request',
   'substitute-request-four-missing-fields',

@@ -60,6 +60,12 @@ export function validateProviderToolCalls(calls: ProviderToolCall[], tools: read
   });
 }
 
+/** Structured text must parse and satisfy the same schema subset as tool arguments. */
+export function validateProviderStructuredText(text: string, schema: Record<string, unknown>): boolean {
+  try { return matchesSchema(JSON.parse(text), schema); }
+  catch { return false; }
+}
+
 /** Parse and validate the entire provider tool batch; any bad call invalidates every call in it. */
 export function parseProviderToolCalls(
   calls: Array<{ callId?: unknown; name?: unknown; arguments?: unknown }>,

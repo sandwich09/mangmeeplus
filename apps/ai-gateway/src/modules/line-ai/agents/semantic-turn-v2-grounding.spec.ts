@@ -9,6 +9,118 @@ import assert from 'node:assert/strict';
 import { extractValueCandidates, type LineAiTurnRequest, type ToolResult } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
+import { activeProductHelpPack } from './approved-product-help';
+import { knowledgePackHash } from './approved-knowledge';
+
+describe('PWS-FOLLOW-SIMPLER reviewed product help', () => {
+  const pack = activeProductHelpPack();
+  const card = (id: string) => pack.cards.find(card => card.id === id)!;
+  async function follow(text = 'ไม่เข้าใจ', ids = ['expense.status'], answer = 'สถานะเอกสารบอกการตรวจ ส่วนสถานะการจ่ายบอกว่าจ่ายให้ผู้ขายหรือยังค่ะ',
+    options: { memory?: boolean; version?: number; permissions?: string[]; features?: string[]; approved?: boolean } = {}) {
+    const req = request();
+    req.messageText = text;
+    req.approvedKnowledge = options.approved ?? true;
+    req.selectedKnowledgeCardIds = ['shop.open']; // The exact follow-up resolves the remembered answer instead.
+    req.userContext.permissions = options.permissions ?? [...new Set(['line.ai.query', ...pack.cards.flatMap(card => [...card.permissionAnyOf, ...card.requiredPermissions])])];
+    req.entitledFeatureKeys = options.features ?? [...new Set(pack.cards.flatMap(card => card.featureKeys))];
+    req.semanticSubrequests = [{ index: 0, kind: 'general', goal: text, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }];
+    req.conversationContext = { windowMinutes: 15, maxTurns: 15, recentTurns: [],
+      ...(options.memory === false ? {} : { lastKnowledgeCards: ids.map(id => ({ id, version: options.version ?? card(id).version })) }) };
+    const calls: ProviderInput[] = [];
+    const result = await runSemanticTurnV2({ req,
+      provider: { generateText: async input => {
+        calls.push(input);
+        return { ok: true, text: JSON.stringify({ answers: ids.map((id, index) => ({ index, status: 'handled', text: answer,
+          sourceRefIds: [`knowledge:approved_product_help:${pack.id}:${pack.version}:${id}:${card(id).version}`] })) }) };
+      } }, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => assert.fail('a help follow-up cannot read or prepare an action') });
+    return { result, calls };
+  }
+
+  it('PWS-FOLLOW-SIMPLER card answer then ไม่เข้าใจ explains the same card with its title and one existing compose call', async () => {
+    const first = await runSemanticTurnV2({ req: { ...request(), messageText: 'ยืนยันแล้วแปลว่าจ่ายแล้วไหม', approvedKnowledge: true,
+      selectedKnowledgeCardIds: ['expense.status'], entitledFeatureKeys: ['expenses'],
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: 'สถานะเอกสาร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] },
+      provider: { generateText: async () => assert.fail('the first reviewed answer is deterministic') },
+      draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
+      invoke: async () => assert.fail('the first reviewed answer needs no tool') });
+    assert.equal(first.replyText, `${card('expense.status').title}\n${card('expense.status').body}`);
+    const { result, calls } = await follow();
+    assert.equal(result.replyText, `${card('expense.status').title}\nสถานะเอกสารบอกการตรวจ ส่วนสถานะการจ่ายบอกว่าจ่ายให้ผู้ขายหรือยังค่ะ`);
+    assert.equal(result.presentation?.cards[0]?.title, card('expense.status').title);
+    assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+    assert.equal(result.presentation?.cards[0]?.chatActionIds, undefined);
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.compose']);
+    assert.equal(JSON.parse(calls[0]!.messages[0]!.text).approvedHelpFollowUp.style, 'simpler');
+  });
+
+  it('PWS-FOLLOW-SIMPLER matches only the seven whole follow-ups with spaces and polite endings', async () => {
+    for (const text of ['ไม่เข้าใจ', 'หมายความว่าไง', 'งง ค่ะ', 'อธิบาย อีก ที ครับ', 'ง่าย กว่า นี้ นะคะ', 'แปลว่าอะไรคะ', 'ยกตัวอย่าง']) {
+      const { result } = await follow(text);
+      assert.ok(result.replyText.startsWith(`${card('expense.status').title}\n`), text);
+    }
+    for (const text of ['ไม่เข้าใจ แล้วค่าใช้จ่ายเดือนนี้เท่าไหร่', 'ช่วยยกตัวอย่างการลบข้อมูล', 'งงเรื่องอื่น']) {
+      const { calls } = await follow(text);
+      assert.equal(JSON.parse(calls[0]!.messages[0]!.text).approvedHelpFollowUp, undefined, text);
+    }
+  });
+
+  it('PWS-FOLLOW-SIMPLER requires memory, exact current version, eligibility and API admission', async () => {
+    for (const options of [{ memory: false }, { version: 999 }, { permissions: [] }, { features: [] }, { approved: false }]) {
+      const { calls } = await follow('ไม่เข้าใจ', ['expense.status'], 'คำตอบทั่วไปค่ะ', options);
+      assert.equal(JSON.parse(calls[0]!.messages[0]!.text).approvedHelpFollowUp, undefined, JSON.stringify(options));
+    }
+  });
+
+  it('PWS-FOLLOW-SIMPLER drops a card retired before the render recheck from compose DATA', async () => {
+    const original = structuredClone(pack);
+    queueMicrotask(() => { pack.status = 'RETIRED'; pack.contentHash = knowledgePackHash(pack); });
+    try {
+      const { result, calls } = await follow();
+      assert.equal(JSON.parse(calls[0]!.messages[0]!.text).approvedHelpFollowUp, undefined);
+      assert.deepEqual(result.sourceRefs, []);
+      assert.notEqual(result.semanticCoverage?.[0]?.status, 'handled');
+    } finally { Object.assign(pack, original); }
+  });
+
+  it('PWS-FOLLOW-SIMPLER derives allowed numbers and dates only from the selected card text', async () => {
+    const text = 'ค่าบริการที่จ่ายถึง 31 ธ.ค. 2570 หัก 1% ค่ะ';
+    const { result, calls } = await follow('ยกตัวอย่างค่ะ', ['wht.e-wht'], text);
+    assert.equal(result.replyText, `${card('wht.e-wht').title}\n${text}`);
+    assert.equal(JSON.parse(calls[0]!.messages[0]!.text).approvedHelpFollowUp.style, 'example');
+  });
+
+  it('PWS-FOLLOW-SIMPLER an out-of-card number or date falls back to the summary as written', async () => {
+    for (const text of ['หัก 999999 บาทค่ะ', 'หัก ๙๙๙๙๙๙ บาทค่ะ', 'หัก 2% ค่ะ', 'จ่ายถึง 31 ธ.ค. 2571 ค่ะ', 'จ่ายถึง 31 มกราคม 2570 ค่ะ']) {
+      const { result, calls } = await follow('ง่ายกว่านี้', ['wht.e-wht'], text);
+      assert.equal(result.replyText, `${card('wht.e-wht').title}\n${card('wht.e-wht').summary}`, text);
+      assert.equal(calls.length, 1, 'failed rewriting never starts another model call');
+    }
+  });
+
+  it('PWS-FOLLOW-SIMPLER new action, promise or completed write falls back to the summary', async () => {
+    for (const text of ['กดปุ่มลบข้อมูลทั้งหมดค่ะ', 'ระบบคืนเงินให้แน่นอนค่ะ', 'บันทึกจ่ายให้แล้วค่ะ']) {
+      const { result } = await follow('ไม่เข้าใจ', ['expense.status'], text);
+      assert.equal(result.replyText, `${card('expense.status').title}\n${card('expense.status').summary}`, text);
+      assert.deepEqual(result.outputs, []);
+      assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+    }
+  });
+
+  it('PWS-FOLLOW-SIMPLER example without numbers preserves the body steps in their reviewed order with zero model calls', async () => {
+    const { result, calls } = await follow('ยกตัวอย่างหน่อยค่ะ', ['voucher.create']);
+    assert.equal(result.replyText, `${card('voucher.create').title}\n${card('voucher.create').body}`);
+    assert.equal(calls.length, 0);
+  });
+
+  it('PWS-FOLLOW-SIMPLER multiple remembered cards are grounded independently', async () => {
+    const { result } = await follow('ง่ายกว่านี้', ['expense.status', 'wht.e-wht'], 'หัก 1% ค่ะ');
+    assert.equal(result.presentation?.cards[0]?.text, card('expense.status').summary);
+    assert.equal(result.presentation?.cards[1]?.title, card('wht.e-wht').title);
+    assert.equal(result.presentation?.cards[1]?.text, 'หัก 1% ค่ะ');
+    assert.equal(result.semanticCoverage?.length, 1, 'several cards still answer the one accepted follow-up clause');
+  });
+});
 
 const MESSAGE_TEXT = 'ขอดู confirmed เดือนนี้หน่อยค่ะ';
 const TODAY = '2026-09-28';

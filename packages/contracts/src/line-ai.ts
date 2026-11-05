@@ -299,6 +299,9 @@ export type LineAiConversationContext = {
   maxTurns: number;
   lastTurnAt?: string;
   recentTurns: LineAiConversationContextTurn[];
+  /** IDs and exact versions of the latest delivered knowledge answer in this window.
+   * DATA for candidate retrieval only. Current eligibility and selection are checked again. */
+  lastKnowledgeCards?: Array<{ id: string; version: number }>;
   /** Latest fully evidenced expense summary delivered in this same chat and current access scope. */
   deliveredExpenseSummary?: LineAiDeliveredExpenseSummary;
   /** Spec §4 R-M2: at most 3 read-tool results delivered in this same chat and current access scope,
@@ -2119,6 +2122,7 @@ export type LineAiTurnResponse = {
 export type ProviderErrorCode =
   | 'PROVIDER_DISABLED'
   | 'PROVIDER_CONFIG_MISSING'
+  | 'PROVIDER_CONTRACT_UNSUPPORTED'
   | 'PROVIDER_THROTTLED'
   | 'PROVIDER_ACCESS_NOT_READY'
   | 'PROVIDER_TIMEOUT'

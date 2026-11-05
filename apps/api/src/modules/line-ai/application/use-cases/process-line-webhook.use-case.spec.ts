@@ -900,6 +900,114 @@ const BASE_EVENT = Object.freeze({
   messagingChannelId: 'msg-channel-1',
 });
 
+describe('PWS-FOLLOW-STORE delivered knowledge memory', () => {
+  const cards = [{ id: 'expense.status', version: 1 }];
+  const config = { lineAiTerminalOutcomeReplayEnabled: true };
+  async function deliveredHelp(delivered = true, refs = cards) {
+    const recentTurns = [{ webhookEventId: 'evt-help-first', createdAt: new Date(), userMessagePreview: 'สถานะเอกสารคืออะไร',
+      replyPreview: null, intent: 'READ_DETAIL', agent: 'general', refused: false }];
+    const db = makePrisma({ recentTurns });
+    db.prisma.client.lineTurnOutcome.findMany = async ({ where }: any) => where.webhookEventId.in.flatMap((id: string) => {
+      const outcome = db.outcomeStore.get(id);
+      return outcome?.deliveredAt ? [{ webhookEventId: id, ...outcome }] : [];
+    });
+    const options = {
+      permissions: ['line.ai.query'], config,
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({ requestId: 'help-request', replyText: 'ข้อความคำตอบที่ห้ามนำไปเก็บในบริบท',
+        sourceRefs: refs.map(({ id, version }) => ({ module: 'knowledge', entityType: 'approved_product_help',
+          entityId: `mangmee-product-help:7:${id}:${version}`, label: 'สถานะเอกสาร', permissionChecked: true })), sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'general', refused: false, toolsInvoked: [], durationMs: 0 }),
+      ...(!delivered ? { sendReplyFn: async () => 'failed_other', sendPushFn: async () => 'failed_other' } : {}),
+    };
+    const first = makeUseCase(db.prisma, options);
+    await first.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-help-first', messageText: 'สถานะเอกสารคืออะไร' });
+    const saved = db.outcomeStore.get('evt-help-first');
+    const next = makeUseCase(db.prisma, options);
+    const flow = next.useCase as any;
+    const event = { ...BASE_EVENT, webhookEventId: 'evt-help-next', messageText: 'ไม่เข้าใจ' };
+    flow.deliveryAccess.set(event, { userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1',
+      fingerprint: saved?.authorizationJson?.knowledgeMemory?.fingerprint });
+    return { ...db, first, next, flow, event, saved, recentTurns };
+  }
+
+  it('PWS-FOLLOW-STORE paid help stores ids and versions only and a fresh instance returns them as DATA', async () => {
+    const h = await deliveredHelp();
+    assert.ok(h.saved?.deliveredAt);
+    assert.deepEqual(h.saved.authorizationJson?.knowledgeMemory?.cards, cards);
+    assert.doesNotMatch(JSON.stringify(h.saved.authorizationJson.knowledgeMemory), /ข้อความคำตอบ|สถานะเอกสาร/);
+    assert.equal((h.aiTurns[0] as any).data.replyPreview, 'ข้อความคำตอบที่ห้ามนำไปเก็บในบริบท');
+    await h.next.useCase.execute(h.event);
+    assert.deepEqual(h.next.intakeRequests[0]?.conversationContext?.lastKnowledgeCards, cards);
+    assert.deepEqual(h.next.aiGatewayRequests[0]?.conversationContext?.lastKnowledgeCards, cards);
+    assert.doesNotMatch(JSON.stringify(h.next.intakeRequests[0]?.conversationContext), /ข้อความคำตอบ/);
+  });
+
+  it('PWS-FOLLOW-STORE expires with the existing 15-minute and 15-turn window', async () => {
+    const h = await deliveredHelp();
+    h.recentTurns[0]!.createdAt = new Date(Date.now() - 16 * 60_000);
+    assert.equal(await h.flow.loadConversationContext('company-1', 'user-1', h.event), undefined);
+    h.recentTurns[0]!.createdAt = new Date(Date.now() - 60_000);
+    h.recentTurns.push(...Array.from({ length: 15 }, (_, index) => ({ ...h.recentTurns[0]!,
+      webhookEventId: `newer-${index}`, createdAt: new Date(Date.now() - index * 1000) })));
+    const context = await h.flow.loadConversationContext('company-1', 'user-1', h.event);
+    assert.equal(context.recentTurns.length, 15);
+    assert.equal(context.lastKnowledgeCards, undefined);
+  });
+
+  it('PWS-FOLLOW-STORE retains all delivered card versions and takes the latest delivered knowledge answer', async () => {
+    const refs = [...cards, { id: 'expense.draft', version: 3 }];
+    const h = await deliveredHelp(true, refs);
+    assert.deepEqual(h.saved.authorizationJson.knowledgeMemory.cards, refs);
+    const olderAt = new Date(Date.now() - 60_000);
+    h.recentTurns.push({ ...h.recentTurns[0]!, webhookEventId: 'older-help', createdAt: olderAt });
+    h.outcomeStore.set('older-help', { ...h.saved, deliveredAt: olderAt, authorizationJson: {
+      ...h.saved.authorizationJson, knowledgeMemory: { ...h.saved.authorizationJson.knowledgeMemory,
+        cards: [{ id: 'expense.find', version: 2 }] } } });
+    assert.deepEqual((await h.flow.loadConversationContext('company-1', 'user-1', h.event)).lastKnowledgeCards, refs);
+    // The shared builder is used by legacy outcomes and savePlan on delivery-plan-v2.
+    const firstEvent = { ...BASE_EVENT, webhookEventId: 'plan-proof' };
+    h.flow.deliveryAccess.set(firstEvent, h.flow.deliveryAccess.get(h.event));
+    h.flow.deliverySources.set(firstEvent, { requestId: 'plan-request', ids: [], knowledgeCards: refs });
+    assert.deepEqual(h.flow.buildTurnAuthorizationJson(firstEvent, 'plan-producer').knowledgeMemory.cards, refs);
+  });
+
+  it('PWS-FOLLOW-STORE rejects another company, user, chat, membership or access scope', async () => {
+    const h = await deliveredHelp();
+    assert.deepEqual((await h.flow.loadConversationContext('company-1', 'user-1', h.event)).lastKnowledgeCards, cards);
+    for (const [field, value] of [['companyId', 'company-other'], ['userId', 'user-other'], ['membershipId', 'mem-other'],
+      ['fingerprint', 'changed'], ['chatKeyHash', 'other-chat'], ['recipientHash', 'other-recipient']]) {
+      const proof = h.saved.authorizationJson.knowledgeMemory;
+      const original = proof[field!]; proof[field!] = value;
+      assert.equal((await h.flow.loadConversationContext('company-1', 'user-1', h.event)).lastKnowledgeCards, undefined, field);
+      proof[field!] = original;
+    }
+    assert.equal((await h.flow.loadConversationContext('company-other', 'user-1', h.event)).lastKnowledgeCards, undefined);
+    assert.equal((await h.flow.loadConversationContext('company-1', 'user-other', h.event)).lastKnowledgeCards, undefined);
+    assert.equal(await h.flow.loadConversationContext('company-1', 'user-1', { ...h.event, pushTargetId: 'group' }), undefined);
+  });
+
+  it('PWS-FOLLOW-STORE excludes failed delivery and malformed or unbounded references', async () => {
+    const failed = await deliveredHelp(false);
+    assert.equal((await failed.flow.loadConversationContext('company-1', 'user-1', failed.event)).lastKnowledgeCards, undefined);
+    const h = await deliveredHelp();
+    for (const invalid of [[{ id: 'expense.status', version: 0 }], [{ id: '../other', version: 1 }],
+      [{ id: 'expense.status', version: 1, body: 'reply text' }], [...cards, ...cards], Array(6).fill(cards[0])]) {
+      h.saved.authorizationJson.knowledgeMemory.cards = invalid;
+      assert.equal((await h.flow.loadConversationContext('company-1', 'user-1', h.event)).lastKnowledgeCards, undefined);
+    }
+  });
+
+  it('PWS-FOLLOW-STORE free source-draft shops keep R27 and make zero text-model calls', async () => {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read', 'expense.receipt.line_upload'],
+      intakeRouteFn: () => assert.fail('free shops cannot enter text intake'), aiGatewayFn: () => assert.fail('free shops cannot enter the text gateway') });
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'ไม่เข้าใจ' });
+    assert.equal(h.intakeRequests.length, 0);
+    assert.equal(h.aiGatewayRequests.length, 0);
+  });
+});
+
 describe('R19 same-draft file read retry', () => {
   function fileHarness(free: boolean) {
     const { prisma } = makePrisma();

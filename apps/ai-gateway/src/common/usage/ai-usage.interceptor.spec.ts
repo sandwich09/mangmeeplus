@@ -12,7 +12,7 @@ import {
   appendUsage, currentBudgetState, currentUsageCompanyId, drainUsage, runWithUsageContext,
   type BudgetRequestState,
 } from './usage-context';
-import { pdfPageUpperBound, withAiBudgetEnvelope } from './ai-budget-provider';
+import { pdfPageUpperBound, providerInputTokenUpperBound, v2RenderedInput, withAiBudgetEnvelope } from './ai-budget-provider';
 import { createAiBudgetSeam, type AiBudgetSeam, type AiBudgetSettleOutcome, type AiBudgetStepOutcome, type AiBudgetStepV2Outcome } from './ai-budget-seam';
 import {
   SETTLE_EVIDENCE_MAX_AGE_MS, SETTLE_EVIDENCE_MAX_ENTRIES,
@@ -1207,4 +1207,35 @@ describe('R6 unusable output is classified before settlement', () => {
       });
     });
   }
+});
+
+
+describe('B1 output schema budget identity', () => {
+  const input: ProviderInput = { systemPrompt: 'Classify the workflow.', messages: [{ role: 'user', text: 'ส่งใบเบิกของฉันให้อนุมัติหน่อย' }], maxTokens: 256 };
+  it('pins the existing schema-free bytes and digests', () => {
+    const expected = { inputTokenBound: 5120, payloadDigest: '87d7cbb809786801e300db4f435359e0704d67b7ad3b6b42715d2c51947e3a3a',
+      schemaDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945' };
+    assert.deepEqual(v2RenderedInput(input), expected);
+    assert.deepEqual(v2RenderedInput({ ...input, outputSchema: undefined } as any), expected);
+  });
+  it('counts canonical UTF-8 schema bytes and changes both digests', () => {
+    const schema = { type: 'object', required: ['label'], additionalProperties: false, properties: { label: { type: 'string', description: 'ก'.repeat(1000) } } };
+    const structured = { ...input, outputSchema: { name: 'classifier', schema } };
+    const plain = v2RenderedInput(input), rendered = v2RenderedInput(structured);
+    assert.notEqual(rendered.payloadDigest, plain.payloadDigest);
+    assert.notEqual(rendered.schemaDigest, plain.schemaDigest);
+    assert.ok(rendered.inputTokenBound >= plain.inputTokenBound + Buffer.byteLength('ก'.repeat(1000), 'utf8') - 1024);
+    const reordered = { ...structured, outputSchema: { schema: { properties: schema.properties, additionalProperties: false, required: ['label'], type: 'object' }, name: 'classifier' } };
+    assert.deepEqual(v2RenderedInput(reordered), rendered);
+    assert.notEqual(v2RenderedInput({ ...structured, outputSchema: { ...structured.outputSchema, name: 'different' } }).schemaDigest, rendered.schemaDigest);
+    assert.ok(providerInputTokenUpperBound(structured)! >= providerInputTokenUpperBound(input)! + Buffer.byteLength(JSON.stringify(schema), 'utf8'));
+  });
+});
+
+it('B1 includes output schema text in conservative timeout usage', async () => {
+  const plain: ProviderInput = { messages: [{ role: 'user', text: 'ทดสอบ' }], maxTokens: 256 };
+  const structured = { ...plain, outputSchema: { name: 'classifier', schema: { type: 'object', description: 'ก'.repeat(1000) } } };
+  const before = await conservativeTimeoutUsage(plain);
+  const after = await conservativeTimeoutUsage(structured);
+  assert.ok(after.inputTokens! >= before.inputTokens! + 900);
 });

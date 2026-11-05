@@ -62,6 +62,36 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     ],
   },
   {
+    id: 'help-card-memory-follow-up',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'same_eligible_card_offered_after_delivered_answer_and_vague_follow_up',
+      tool: 'ids_and_versions_only_with_current_eligibility_rechecked',
+      mutation: 'zero_business_mutation',
+      delivery: 'confirmed_same_user_company_chat_within_fifteen_minutes_and_fifteen_turns',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'PWS-FOLLOW-STORE paid help stores ids and versions only and a fresh instance returns them as DATA'],
+      ['apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.spec.ts', 'PWS-FOLLOW-OFFER rechecks permissions, features, capabilities, membership and exact versions'],
+      ['apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.spec.ts', 'PWS-FOLLOW-OFFER intake carries remembered ids as per-turn DATA without selecting or changing cached bytes'],
+    ],
+  },
+  {
+    id: 'help-card-simpler-follow-up',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'card_answer_then_vague_follow_up_reexplains_the_same_eligible_card',
+      tool: 'existing_compose_only_with_card_text_numeric_and_semantic_guards',
+      mutation: 'zero_business_mutation',
+      delivery: 'card_title_and_grounded_simpler_body_or_verbatim_summary_fallback',
+    },
+    evidence: [
+      ['apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2-grounding.spec.ts', 'PWS-FOLLOW-SIMPLER card answer then ไม่เข้าใจ explains the same card with its title and one existing compose call'],
+      ['apps/ai-gateway/src/modules/line-ai/agents/semantic-turn-v2-grounding.spec.ts', 'PWS-FOLLOW-SIMPLER an out-of-card number or date falls back to the summary as written'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'PWS-FOLLOW-STORE free source-draft shops keep R27 and make zero text-model calls'],
+    ],
+  },
+  {
     id: 'ambiguous-urgency-after-image',
     fixture: 'repository',
     assertions: {

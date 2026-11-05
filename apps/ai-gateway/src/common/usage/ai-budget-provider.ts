@@ -132,9 +132,11 @@ export function v2RenderedInput(input: ProviderInput | ProviderToolsInput, model
     ? { role: message.role, results: message.results.map((result) => ({ toolUseId: result.toolUseId, content: result.content, isError: result.isError })) }
     : { role: message.role, text: message.text, ...('toolCalls' in message && message.toolCalls ? { toolCalls: message.toolCalls } : {}) });
   const tools = 'tools' in input ? input.tools : undefined;
+  const outputSchema = 'outputSchema' in input ? input.outputSchema : undefined;
   const payload = {
     systemPrompt: input.systemPrompt ?? '', cacheableContext: input.cacheableContext ?? '', messages,
     ...(tools ? { tools } : {}),
+    ...(outputSchema ? { outputSchema } : {}),
     ...('images' in input && input.images ? { images: input.images } : {}),
     ...('documents' in input && input.documents ? { documents: input.documents } : {}),
   };
@@ -145,6 +147,7 @@ export function v2RenderedInput(input: ProviderInput | ProviderToolsInput, model
   // Constant identity excludes permission/package-dependent catalogue entries. Unknown parts
   // retain bytes; reviewed finite catalogue entries have independent cache-checkpoint evidence.
   textBytes = calibratedIntakeTextBound(input, modelId) ?? textBytes;
+  if (outputSchema) textBytes += bytes(`,"outputSchema":${canonicalJson(outputSchema)}`);
   if ('images' in input) textBytes += (input.images?.length ?? 0) * AI_BUDGET_IMAGE_TOKEN_CEILING;
   if ('documents' in input) {
     for (const document of input.documents ?? []) {
@@ -157,7 +160,7 @@ export function v2RenderedInput(input: ProviderInput | ProviderToolsInput, model
   return {
     inputTokenBound,
     payloadDigest: sha256(canonical),
-    schemaDigest: sha256(canonicalJson(tools ?? [])),
+    schemaDigest: sha256(canonicalJson(outputSchema ? { tools: tools ?? [], outputSchema } : tools ?? [])),
   };
 }
 
@@ -174,6 +177,7 @@ export function providerInputTokenUpperBound(
   input: ProviderInput | ProviderToolsInput,
 ): number | undefined {
   let total = bytes(input.systemPrompt) + bytes(input.cacheableContext);
+  if ('outputSchema' in input && input.outputSchema) total += bytes(canonicalJson(input.outputSchema));
   if ('tools' in input) {
     total += bytes(JSON.stringify(input.tools));
     for (const message of input.messages) {

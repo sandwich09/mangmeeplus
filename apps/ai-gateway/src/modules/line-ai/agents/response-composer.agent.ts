@@ -718,7 +718,7 @@ function boundCasualReply(reply: string, fallback: string, requireCompleteBounda
 // Grounding guard: the polished reply must be non-empty, not runaway-long, and introduce no
 // number that is absent from the grounded reply (commas ignored). This is what stops the
 // language layer from inventing or altering business figures.
-function groundedNumbers(text: string): Set<string> {
+export function groundedNumbers(text: string): Set<string> {
   const matches = asciiDigits(text).match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
   return new Set(matches.map((m) => m.replace(/,/g, '')));
 }
@@ -735,7 +735,7 @@ function asciiDigits(text: string): string {
   return text.replace(/[๐-๙]/g, (digit) => String(THAI_DIGITS.indexOf(digit)));
 }
 
-function preservesGrounding(grounded: string, polished: string): boolean {
+export function preservesGrounding(grounded: string, polished: string): boolean {
   if (!polished) return false;
   if (polished.length > grounded.length * 3 + 80) return false;
   const allowed = groundedNumbers(grounded);
@@ -939,7 +939,7 @@ export function safeModelLineText(text: string, english = !/[ก-๙]/u.test(tex
  * aliases must be present in the deterministic/source text. False positives fall back to the
  * deterministic card; false negatives would expose invented business facts.
  */
-function preservesSemanticGrounding(sourceTexts: string[], answer: string): boolean {
+export function preservesSemanticGrounding(sourceTexts: string[], answer: string): boolean {
   if (claimsCompletedWrite(answer)) return false;
   const source = sourceTexts.join('\n');
   const allowedWords = new Set(wordTokens(source));

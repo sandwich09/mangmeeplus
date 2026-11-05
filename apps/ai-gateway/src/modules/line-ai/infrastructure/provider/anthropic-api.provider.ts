@@ -47,6 +47,8 @@ export class AnthropicApiProvider implements IModelProvider {
   constructor(private readonly cfg: AnthropicApiProviderConfig) {}
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
+    // This checkout has no Anthropic SDK structured-output contract to render safely.
+    if (input.outputSchema) return { ok: false, error: { code: 'PROVIDER_CONTRACT_UNSUPPORTED', message: 'Structured output is unsupported by this provider.', retryable: false } };
     const error = precheck(input);
     if (error) return { ok: false, error };
     const contextIndex = cacheableContextIndex(input.messages);

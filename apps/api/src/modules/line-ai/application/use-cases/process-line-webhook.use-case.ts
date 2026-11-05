@@ -1287,6 +1287,18 @@ function validLineAiReadMemoryShownItem(value: unknown): boolean {
 const READ_MEMORY_STRING_FIELDS = ['documentStatus', 'paymentStatus', 'categoryId', 'categoryName', 'vendorId', 'vendorName', 'branchId', 'branchName'] as const;
 const READ_MEMORY_ENTRY_KEYS = new Set(['tool', 'period', ...READ_MEMORY_STRING_FIELDS, 'groupBy', 'answerShape', 'shownItems', 'asOf']);
 
+function validKnowledgeCardRefs(raw: unknown): LineAiConversationContext['lastKnowledgeCards'] {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 5) return undefined;
+  const cards: NonNullable<LineAiConversationContext['lastKnowledgeCards']> = [];
+  for (const value of raw) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== 2 || typeof value.id !== 'string' || !/^[a-z][a-z0-9.-]{0,79}$/.test(value.id)
+      || !Number.isSafeInteger(value.version) || value.version < 1 || cards.some(card => card.id === value.id)) return undefined;
+    cards.push({ id: value.id, version: value.version });
+  }
+  return cards;
+}
+
 /** Spec §4 R-M2: defense in depth on `readMemory` this same service wrote into `lineTurnOutcome` — a
  *  malformed entry, or one carrying any field outside LineAiReadMemory's own known list (an `amount`
  *  would already fail here, R-M6), drops the WHOLE stored batch for that turn rather than admit a
@@ -2220,7 +2232,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; membershipId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
   private readonly taskActionSources = new WeakMap<object, { action: ExpenseActionPreview['action']; id: string }>();
-  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean; recentReads?: LineAiConversationContext['recentReads'] }>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null; expenseSummary?: LineAiConversationContext['deliveredExpenseSummary']; expenseCriterionConfirmation?: boolean; recentReads?: LineAiConversationContext['recentReads']; knowledgeCards?: LineAiConversationContext['lastKnowledgeCards'] }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
@@ -6492,6 +6504,11 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
         entries: sources.recentReads,
       } } : {}),
+      ...(access && sources?.knowledgeCards?.length && noOtherSource ? { knowledgeMemory: {
+        userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,
+        fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event), recipientHash,
+        cards: sources.knowledgeCards,
+      } } : {}),
     };
   }
 
@@ -9606,6 +9623,15 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     response: LineAiTurnResponse,
     event: LineTextEvent | LineReceiptUploadEvent,
   ): Promise<string> {
+    const knowledgeSources = response.sourceRefs.filter(source => source.module === 'knowledge'
+      && source.entityType === 'approved_product_help' && source.permissionChecked);
+    const knowledgeCards = validKnowledgeCardRefs([...new Map(knowledgeSources.flatMap(source => {
+      const match = source.entityId?.match(/^[a-z][a-z0-9.-]*:[1-9]\d*:([a-z][a-z0-9.-]{0,79}):([1-9]\d*)$/);
+      return match ? [[match[1]!, { id: match[1]!, version: Number(match[2]) }] as const] : [];
+    })).values()]);
+    if (!response.refused && knowledgeCards) this.deliverySources.set(event, {
+      ...(this.deliverySources.get(event) ?? { requestId: response.requestId, ids: [] }), knowledgeCards,
+    });
     const owner = this.conversationOwner(companyId, userId, event);
     const bound = this.boundConversations.get(event);
     if (owner && !bound) throw new Error('LINE_CONTEXT_ADMISSION_REQUIRED');
@@ -9862,6 +9888,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     });
     let deliveredExpenseSummary: LineAiConversationContext['deliveredExpenseSummary'];
     let recentReads: LineAiReadMemory[] | undefined;
+    let lastKnowledgeCards: LineAiConversationContext['lastKnowledgeCards'];
     const current = this.deliveryAccess.get(event);
     const chatKeyHash = chatKeyHashOf(event);
     if (current && typeof this.prisma.client.lineTurnOutcome?.findMany === 'function') {
@@ -9870,6 +9897,18 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
         where: { webhookEventId: { in: eventIds }, deliveredAt: { not: null } },
         select: { webhookEventId: true, deliveredAt: true, authorizationJson: true },
       }).catch(() => []) : [];
+      const provedKnowledge = outcomes.flatMap(outcome => {
+        const root = outcome.authorizationJson as Record<string, unknown> | null;
+        const saved = root?.['knowledgeMemory'] as Record<string, unknown> | undefined;
+        if (!outcome.deliveredAt || !saved || saved['userId'] !== userId || saved['companyId'] !== companyId
+          || saved['membershipId'] !== current.membershipId || saved['fingerprint'] !== current.fingerprint
+          || saved['chatKeyHash'] !== chatKeyHash
+          || saved['recipientHash'] !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')) return [];
+        const cards = validKnowledgeCardRefs(saved['cards']);
+        const at = new Date(outcome.deliveredAt).getTime();
+        return cards && Number.isFinite(at) && at >= since.getTime() ? [{ at, cards }] : [];
+      });
+      lastKnowledgeCards = provedKnowledge.sort((a, b) => b.at - a.at)[0]?.cards;
       const proved = outcomes.flatMap(outcome => {
         const root = outcome.authorizationJson as Record<string, unknown> | null;
         const saved = root?.['expenseSummary'] as Record<string, unknown> | undefined;
@@ -9931,6 +9970,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
       ...(captures.length ? { recentCapturedExpenses: captures.map(item => ({ id: item.id })) } : {}),
       recentTurns,
       ...(deliveredExpenseSummary ? { deliveredExpenseSummary } : {}),
+      ...(lastKnowledgeCards ? { lastKnowledgeCards } : {}),
     };
   }
 

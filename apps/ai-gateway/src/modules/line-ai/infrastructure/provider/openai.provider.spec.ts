@@ -382,3 +382,13 @@ describe('OpenAI no-result accounting', () => {
     } finally { globalThis.fetch = originalFetch; capture.restore(); }
   });
 });
+
+it('B1 refuses outputSchema before OpenAI dispatch', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { assert.fail('unsupported schema must never reach OpenAI'); };
+  try {
+    const result = await makeProvider().generateText({ messages: [], outputSchema: { name: 'classifier', schema: { type: 'object' } } } as any);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, 'PROVIDER_CONTRACT_UNSUPPORTED');
+  } finally { globalThis.fetch = original; }
+});

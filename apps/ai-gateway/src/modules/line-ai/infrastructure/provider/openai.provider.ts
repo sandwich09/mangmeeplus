@@ -90,6 +90,7 @@ export class OpenAiProvider implements IModelProvider {
   constructor(private readonly cfg: OpenAiProviderConfig) {}
 
   async generateText(input: ProviderInput): Promise<ProviderOutput> {
+    if (input.outputSchema) return { ok: false, error: { code: 'PROVIDER_CONTRACT_UNSUPPORTED', message: 'Structured output is unsupported by this provider.', retryable: false } };
     if (input.usageTag === 'line.public.lookup') return this.generatePublicLookup(input);
     if (input.signal?.aborted || (input.deadlineAt !== undefined && input.deadlineAt <= Date.now())) {
       return { ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'Provider work deadline elapsed before dispatch.', retryable: false } };

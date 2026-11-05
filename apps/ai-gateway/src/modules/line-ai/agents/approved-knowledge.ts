@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { LineAiAnswerPresentation, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
+import type { LineAiAnswerPresentation, LineAiConversationContext, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
 import { LINE_TOOL_REGISTRY, hasToolPermissions, hasToolFeature } from '@watchdog-bms/contracts';
 
 export const KNOWLEDGE_RELEASE = '2.4.0';
@@ -116,13 +116,27 @@ export function eligibleKnowledgeCards(pack: ProductKnowledgePack, access: Knowl
     && card.requiredCapabilities.every((operation) => access.capabilities.includes(operation)));
 }
 
+/** A whole follow-up phrase plus delivered references selects a card, after current access checks. */
+export function approvedKnowledgeFollowUp(pack: ProductKnowledgePack, access: KnowledgeAccess, text: string,
+  lastKnowledgeCards?: LineAiConversationContext['lastKnowledgeCards']) {
+  const phrase = text.replace(/\s+/gu, '').match(/^(ไม่เข้าใจ|หมายความว่าไง|งง|อธิบายอีกที|ง่ายกว่านี้|แปลว่าอะไร|ยกตัวอย่าง)(?:หน่อย|ที|นะ|ครับ|ค่ะ|คะ|จ้ะ|จ้า)*[?？.!]*$/u);
+  if (!phrase || !Array.isArray(lastKnowledgeCards) || !lastKnowledgeCards.length) return undefined;
+  const eligible = eligibleKnowledgeCards(pack, access);
+  const cards = [...new Map(lastKnowledgeCards.slice(0, 5).flatMap(ref => {
+    const card = eligible.find(card => card.id === ref?.id && card.version === ref.version);
+    return card ? [[card.id, card] as const] : [];
+  })).values()];
+  return cards.length ? { style: phrase[1] === 'ยกตัวอย่าง' ? 'example' as const : 'simpler' as const, cards } : undefined;
+}
+
 function questionBigrams(text: string): Set<string> {
   const chars = Array.from(text.normalize('NFC').toLowerCase().replace(/\s+/gu, ''));
   return new Set(chars.length < 2 ? chars : chars.slice(1).map((char, index) => chars[index]! + char));
 }
 
 /** Rank only eligible guide metadata; bodies and full-set render checks stay outside the offer. */
-export function offeredKnowledgeMetadata(pack: ProductKnowledgePack, access: KnowledgeAccess, messageText = ''): KnowledgeMetadata[] {
+export function offeredKnowledgeMetadata(pack: ProductKnowledgePack, access: KnowledgeAccess, messageText = '',
+  lastKnowledgeCards?: LineAiConversationContext['lastKnowledgeCards']): KnowledgeMetadata[] {
   const query = questionBigrams(messageText);
   const ranked = eligibleKnowledgeCards(pack, access).map((card, order) => ({ card, order,
     score: Math.max(0, ...[card.title, ...card.questions].map(text => {
@@ -132,9 +146,13 @@ export function offeredKnowledgeMetadata(pack: ProductKnowledgePack, access: Kno
     })),
   })).sort((a, b) => b.score - a.score || a.order - b.order);
   const relevant = ranked.filter(row => row.score >= 0.25);
+  // Memory only offers currently eligible exact versions. It never selects or authorizes a card.
+  const rememberedRefs = Array.isArray(lastKnowledgeCards) ? lastKnowledgeCards.slice(0, 5) : [];
+  const remembered = ranked.filter(({ card }) => rememberedRefs.some(ref => ref?.id === card.id && ref.version === card.version));
+  const candidates = [...remembered, ...(relevant.length ? relevant : ranked).filter(row => !remembered.includes(row))];
   const offered: KnowledgeMetadata[] = [];
   // Low-confidence/short questions still get a bounded, stable fallback for semantic selection.
-  for (const { card } of relevant.length ? relevant : ranked) {
+  for (const { card } of candidates) {
     if (offered.length === 12) break;
     const row = metadata(card);
     if (Buffer.byteLength(JSON.stringify([...offered, row])) <= 12 * 1024) offered.push(row);
@@ -149,7 +167,8 @@ export function parseSelectedKnowledgeCardIds(value: unknown, offered: readonly 
 }
 
 /** Render immutable reviewed body bytes, not model-authored URLs or claims. Recheck access/time NOW. */
-export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: unknown, access: KnowledgeAccess, companyId: string): {
+export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: unknown, access: KnowledgeAccess, companyId: string,
+  expectedCards?: LineAiConversationContext['lastKnowledgeCards']): {
   replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[]; presentation: LineAiAnswerPresentation;
 } | null {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(companyId)) return null;
@@ -157,6 +176,7 @@ export function renderApprovedKnowledge(pack: ProductKnowledgePack, selected: un
   const ids = parseSelectedKnowledgeCardIds(selected, eligible);
   if (!ids?.length) return null;
   const cards = ids.map((id) => eligible.find((card) => card.id === id)!);
+  if (expectedCards && cards.some(card => !expectedCards.some(ref => ref.id === card.id && ref.version === card.version))) return null;
   const webLinks = cards.map((card) => ({ label: card.title, path: card.sourceURL.replace('{companyId}', encodeURIComponent(companyId)) }));
   return {
     replyText: cards.map((card) => `${card.title}\n${card.body}`).join('\n\n'),

@@ -77,7 +77,8 @@ export async function conservativeTimeoutUsage(
   bounds: { maxInputTokens: number; maxOutputTokens: number } | undefined = currentBudgetEnvelope()?.bounds,
 ): Promise<TokenUsage> {
   const text = JSON.stringify({ systemPrompt: input.systemPrompt ?? '', cacheableContext: input.cacheableContext ?? '',
-    messages: input.messages, ...('tools' in input ? { tools: input.tools } : {}) });
+    messages: input.messages, ...('tools' in input ? { tools: input.tools } : {}),
+    ...('outputSchema' in input && input.outputSchema ? { outputSchema: input.outputSchema } : {}) });
   let estimated = Math.ceil(Buffer.byteLength(text, 'utf8') / 3.14);
   if ('images' in input) {
     for (const image of input.images ?? []) {

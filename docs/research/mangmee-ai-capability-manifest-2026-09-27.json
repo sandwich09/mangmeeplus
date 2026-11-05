@@ -3,17 +3,17 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "3fce234153d2eeff03dcb6fabf7900da17a42864",
+  "sourceRevision": "2d3a5fa64d7e4faae1924fe04b646029fab7476e",
   "checkoutBranch": "land/expense-goal-20261104",
-  "checkoutDirty": true,
+  "checkoutDirty": false,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
-      "sha256": "825dc407c9c37c314ec4a67445dda02d94c539e726093ab0bfd1ce920bb8967c"
+      "sha256": "33cc9a3957b4780e107240284b68e2509a0d5841b997cec406fdfb8712c9044a"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-knowledge.ts",
-      "sha256": "5c202d1be45a7001b4df16f1a928b31ad21af42674912083b1c63a1254a2c104"
+      "sha256": "24633d1525ac21539ac68943a4265f5d9b0c07fbffdd555e605b4f79ca204cc2"
     },
     {
       "path": "apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "6b56132baf596be6fe8a7278672b86fc0a15c4cb88a2e070e9a0e741944e8393"
+      "sha256": "c0635e779651d5ea6da3754cc611dbc9a8674aed25a8218a8d14004a8841e5ff"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -249,7 +249,7 @@
     },
     {
       "path": "packages/contracts/src/line-ai.ts",
-      "sha256": "f9e486b1c42ad5dffd5fcf94d2520489aa5d622783558c0b048517afd7794bd5"
+      "sha256": "a89cd9ff9a3c2f2f312c11199d1e2a0e4c6111ec4af36c5d189c9c33d891387b"
     },
     {
       "path": "packages/contracts/src/menu-entitlements.ts",
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-05T08:34:28.308Z",
-  "manifestDigest": "6ede91801d91d2e3b8858f76d14b7b9355c0017827a4bdf4dee9885fd16fa4f5"
+  "generatedAt": "2026-11-05T13:33:02.213Z",
+  "manifestDigest": "f2907477e9b89b147e918ae39e4e723f4563403fd9a5ed44e1c0711d6625b99f"
 }

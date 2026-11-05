@@ -4,7 +4,7 @@ import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolCall, P
 import type { AiUsageEntry, ProviderError } from '@watchdog-bms/contracts';
 import { appendUsage, currentUsageCompanyId } from '../../../../common/usage/usage-context';
 import { conservativeTimeoutUsage } from './provider-usage-estimate';
-import { validateProviderToolCalls } from './provider-output.logic';
+import { validateProviderStructuredText, validateProviderToolCalls } from './provider-output.logic';
 
 export type BedrockProviderConfig = {
   region: string;
@@ -92,6 +92,9 @@ export class BedrockProvider implements IModelProvider {
       })),
       ...systemBlocks(input.systemPrompt),
       inferenceConfig: { maxTokens: input.maxTokens ?? 2048 },
+      ...(input.outputSchema ? { outputConfig: { textFormat: { type: 'json_schema' as const,
+        structure: { jsonSchema: { name: input.outputSchema.name, schema: JSON.stringify(input.outputSchema.schema) } },
+      } } } : {}),
     });
 
     return this.converse(command, input.usageTag, (response) => {
@@ -101,8 +104,11 @@ export class BedrockProvider implements IModelProvider {
       if (response.stopReason !== 'end_turn' && response.stopReason !== 'max_tokens') throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
       const text = blocks.flatMap((block) => typeof block.text === 'string' && block.text ? [block.text] : []).join('\n');
       if (!text.trim()) throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
+      if (input.outputSchema && (response.stopReason !== 'end_turn' || !validateProviderStructuredText(text, input.outputSchema.schema)))
+        throw new ProviderResponseError('PROVIDER_OUTPUT_INCOMPLETE');
       return {
         text,
+        ...(input.outputSchema ? { schemaEnforcement: 'output_config' as const } : {}),
         completion: response.stopReason === 'end_turn' ? 'complete' as const : 'output_limit' as const,
         providerStopReason: response.stopReason,
         stopReason: response.stopReason === 'end_turn' ? 'end_turn' as const : 'max_tokens' as const,
@@ -152,6 +158,7 @@ export class BedrockProvider implements IModelProvider {
             name: t.name,
             ...(t.description ? { description: t.description } : {}),
             inputSchema: { json: t.inputSchema as never },
+            ...(t.strict !== undefined ? { strict: t.strict } : {}),
           },
         })), ...(cache.tools ? [CACHE_POINT] : [])],
       },
@@ -178,6 +185,8 @@ export class BedrockProvider implements IModelProvider {
       if (toolUses.some((call) => !call.toolUseId || !call.name || call.input === undefined)
         || !validateProviderToolCalls(toolUses, input.tools)) throw new ProviderResponseError('PROVIDER_TOOL_ARGUMENT_INVALID');
       return { text, toolCalls: toolUses, completion: 'complete' as const, providerStopReason: response.stopReason,
+        ...(toolUses.length && toolUses.every(call => input.tools.find(tool => tool.name === call.name)?.strict === true)
+          ? { schemaEnforcement: 'strict_tool' as const } : {}),
         stopReason: response.stopReason === 'tool_use' ? 'tool_use' as const : 'end_turn' as const };
     }, input);
   }

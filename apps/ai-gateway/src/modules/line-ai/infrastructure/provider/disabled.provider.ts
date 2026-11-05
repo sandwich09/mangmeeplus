@@ -3,6 +3,7 @@ import type { IModelProvider, ProviderInput, ProviderOutput, ProviderToolsInput,
 /** Returned when MODEL_PROVIDER=disabled; safe for local no-key runs. */
 export class DisabledProvider implements IModelProvider {
   async generateText(_input: ProviderInput): Promise<ProviderOutput> {
+    if (_input.outputSchema) return { ok: false, error: { code: 'PROVIDER_CONTRACT_UNSUPPORTED', message: 'Structured output is unsupported by this provider.', retryable: false } };
     return {
       ok: false,
       error: {
