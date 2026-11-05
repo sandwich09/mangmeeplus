@@ -101,6 +101,22 @@ const INTAKE_DEFINITIONS = [
     ],
   },
   {
+    operation: 'line.workflow_control', release: 'R2', enabledByDefault: true,
+    controller: LineWebhookController, handler: ['lineWebhook', 'legacyLineWebhook'],
+    inputSchemaVersion: 'LineWorkflowControl/v1',
+    supportedFields: ['postback.data.action', 'postback.data.id', 'postback.data.act', 'postback.data.sig', 'postback.data.pm', 'postback.data.pd', 'postback.data.pa', 'postback.data.token', 'postback.data.pick'],
+    featureKeys: ['expenses', 'reimbursement', 'wht_50bis'], requiredPermissions: [], anyOfPermissions: [], runtimeFlagNames: [],
+    channelKinds: ['USER', 'GROUP', 'ROOM'],
+    dataBasis: 'Signature-verified wf_open/wf_choice/chat-action/fixed-read controls use exact-key parsing and ordered worker buffering. Action handlers recheck current owner, action-specific permission, feature and source state; target and payment fields on wf_open are HMAC-bound to company and user. Workflow navigation collects conversation state or prepares a preview, and fixed-read uses the server-owned expense-month read plan. Business writes retain their existing signed confirmation boundary. Free shops return through their model-free access gates. This entry proves API routing only, not downstream business results.',
+    sourceReferences: [
+      { path: WEBHOOK_PATH, symbol: 'LineWebhookController.handleLineWebhook postback parsing' },
+      { path: 'apps/api/src/modules/line-ai/domain/logic/line-reimbursement-approval-control.logic.ts', symbol: 'parseLineWorkflowControl/lineWorkflowOpenSig/verifyLineWorkflowOpenSig' },
+      { path: 'apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts', symbol: 'parseLineFixedReadControl/linePostbackCommandText' },
+      { path: 'apps/api/src/modules/line-ai/application/line-message-buffer.service.ts', symbol: 'LineMessageBufferService ordered control dispatch and replay' },
+      { path: PROCESS_WEBHOOK_PATH, symbol: 'handleWorkflowControl/handleFixedRead' },
+    ],
+  },
+  {
     operation: 'line.receipt_capture', release: 'R1', enabledByDefault: true,
     controller: LineWebhookController, handler: ['lineWebhook', 'legacyLineWebhook'],
     inputSchemaVersion: 'line-messaging-webhook-unversioned',

@@ -50,6 +50,18 @@ describe('rescoreReportPath', () => {
 });
 
 describe('workflowAttemptsFromEvidence (M1c)', () => {
+  it('counts an accepted free_expense_month_summary as an answered task with Flex text and model evidence', () => {
+    const corpus = { conversations: [{ id: 'free', actors: [{ key: 'reader', freeSourceDrafts: true }], turns: [{ expect: { card: 'answer', maxModelCalls: 0 } }] }] } as any;
+    const row = { ...fakeEvidence('free', 0), attemptId: 'one', webhookEvents: [{ status: 'free_expense_month_summary' }],
+      receipts: [{ messages: [{ type: 'flex', contents: { type: 'text', text: 'ยังไม่ยืนยัน 100 บาท' } }], at: 10, receiptId: 'reply' }],
+      gatewayResponses: [{ method: 'requestLineIntakeRoute', response: {} }] } as any;
+    const turn = workflowAttemptsFromEvidence(corpus, [row])[0].turns[0];
+    assert.equal(turn.terminalEffect, 'ANSWERED');
+    assert.match(turn.deliveredText!, /ยังไม่ยืนยัน 100 บาท/);
+    assert.equal(turn.textModelAttempts, 1);
+    for (const overrides of [{ receipts: [] }, { delivery: { status: 'INCOMPLETE' } }, { webhookEvents: [{ status: 'free_expense_ai_not_allowed' }] }])
+      assert.equal(workflowAttemptsFromEvidence(corpus, [{ ...row, ...overrides }])[0].turns[0].terminalEffect, undefined);
+  });
   it('rescores the saved businessSnapshot rows in one complete attempt per conversation', () => {
     const corpus = { version: 2, seed: 'synthetic', status: 'draft', conversations: [{ id: 'workflow-1', category: 'expense', journeyKind: 'typed',
       actors: [{ key: 'owner', company: 'A', role: 'OWNER', branchScope: 'all' }], tasks: [], turns: [{ user: 'show', expect: {} }, { press: 'continue', expect: { label: 'continue' } }] }] } as any;

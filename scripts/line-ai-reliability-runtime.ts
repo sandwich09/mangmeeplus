@@ -207,7 +207,8 @@ export function runtimeSemanticOutcome(coverage: LineAiSemanticCoverageV2[], eve
     feature_disabled: 'feature_unavailable', timeout: 'temporarily_unavailable', provider_unavailable: 'temporarily_unavailable',
     budget_refusal: 'temporarily_unavailable' };
   const terminal = events.filter(event => event.status !== 'batched');
-  const observed = [...new Set(terminal.map(event => classes[classifyLineAiTerminalOutcome(event.status, event.errorCode) ?? ''] ?? `event:${event.status}`))];
+  const observed = [...new Set(terminal.map(event => event.status === 'free_expense_month_summary' ? 'answered'
+    : classes[classifyLineAiTerminalOutcome(event.status, event.errorCode) ?? ''] ?? `event:${event.status}`))];
   return observed.length === 1 ? observed[0]! : observed.length ? observed.sort().join('+') : 'missing_terminal_event';
 }
 

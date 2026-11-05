@@ -225,6 +225,7 @@ No implementation here. P04 owns B7 typed-choice/signed-apply safety; P10 owns B
 - W00 regenerate + api intake `line.workflow_control` (`apps/api/src/modules/line-ai/line-ai-capability-manifest.ts`)
 - live replay: button journey ชุดจูน (W3 = 100%, 0 การเรียก) + typed journey ทั้งชุด
 - proof stack → UAT ตาม runbook (บันทึก run id) → Owner เดินจริงบน LINE → Production เมื่อ Owner สั่ง
+- **Status 2026-11-05:** code parts done (whole-chain catalog 24 → 41 scenarios, including the owner's 2026-11-05 free month summary and stranger entry, all zero-model; intake `line.workflow_control`; W00 regenerated). Still open: the live replay, which runs as the M4 typed-journey replay on a named main commit; then proof stack → UAT → owner walk → Production, all on the owner's order.
 
 ---
 

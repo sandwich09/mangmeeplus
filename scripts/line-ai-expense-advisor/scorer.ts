@@ -558,10 +558,18 @@ const dueDateInText = (date: string, text: string): boolean => {
 
 export function scoreWorkflowAnswer(expect: WorkflowTurn['expect'], evidence: {
   deliveredText?: string; deliveredCards?: Array<{ id: string; version: number }>; calls: readonly unknown[]; toolCalls?: CapturedToolCall[]; textModelAttempts?: number;
-}, resolved: { dueDate?: string; periodKey?: string } = {}): CheckResult {
+  terminalEffect?: string; unintendedEffects?: WorkflowEffect[];
+}, resolved: { dueDate?: string; periodKey?: string; freeAnswer?: boolean } = {}): CheckResult {
   const reasons: string[] = [], text = evidence.deliveredText ?? '';
-  if (expect.maxModelCalls !== undefined && Math.max(evidence.calls.length, evidence.textModelAttempts ?? 0) > expect.maxModelCalls) reasons.push('max_model_calls_exceeded');
-  if (expect.tags) reasons.push(...scoreTags(expect.tags, { deliveredText: text, toolCalls: evidence.toolCalls ?? [], modelCalls: evidence.calls.length, latencyMs: null, costSatang: null }).reasons);
+  const maxModelCalls = resolved.freeAnswer ? 0 : expect.maxModelCalls;
+  if (maxModelCalls !== undefined && Math.max(evidence.calls.length, evidence.textModelAttempts ?? 0) > maxModelCalls) reasons.push('max_model_calls_exceeded');
+  const tags = resolved.freeAnswer ? { ...expect.tags, must_answer: true, must_not_refuse: true } : expect.tags;
+  if (tags) reasons.push(...scoreTags(tags, { deliveredText: text, toolCalls: evidence.toolCalls ?? [], modelCalls: evidence.calls.length, latencyMs: null, costSatang: null }).reasons);
+  if (resolved.freeAnswer) {
+    if (evidence.terminalEffect !== 'ANSWERED') reasons.push('free_answer_not_delivered');
+    if (evidence.unintendedEffects?.length) reasons.push('free_answer_business_change');
+    if (/ยังไม่รวมคำถาม|ยังตอบ.*ไม่ได้|ไม่มีสิทธิ์/.test(text)) reasons.push('must_not_refuse_violated');
+  }
   if (expect.knowledge) {
     const gold = expect.knowledge;
     if (evidence.deliveredCards?.length !== 1 || !evidence.deliveredCards.some(card => card.id === gold.cardId && card.version === gold.version)) reasons.push('knowledge_card_mismatch');
@@ -638,6 +646,8 @@ export function scoreWorkflowCorpus(input: {
   const latest = new Map<string, WorkflowRunAttempt>();
   for (const row of input.attempts) if (row.complete) latest.set(row.conversationId, row);
   const allTurns = [...latest.values()].flatMap(row => row.turns), conversations = input.corpus.conversations;
+  const isFreeAnswer = (conversation: WorkflowConversation, turn: WorkflowTurn) => turn.expect.card === 'answer' && !turn.expect.refusal
+    && conversation.actors.find(actor => actor.key === (turn.as?.key ?? conversation.actors[0]?.key))?.freeSourceDrafts === true;
   const bindings = new Map(conversations.map(conversation => [conversation.id, bindWorkflowCreatedReferences(conversation.tasks, latest.get(conversation.id)?.turns ?? [], input.now)]));
   const tasks = conversations.flatMap(conversation => conversation.tasks.map(task => ({ conversation, task,
     attempt: latest.get(conversation.id), turns: latest.get(conversation.id)?.turns.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn) ?? [] })));
@@ -657,7 +667,8 @@ export function scoreWorkflowCorpus(input: {
     const conversation = conversations.find(conversation => conversation.tasks.includes(task))!;
     const preview = conversation.turns[task.previewTurn ?? (task.confirmTurn ?? -1) - 1]?.expect.preview;
     const score = scoreWorkflowTask(task, turns, preview, input.now, bindings.get(conversation.id));
-    return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview;
+    return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview
+      && turns.every(turn => !isFreeAnswer(conversation, conversation.turns[turn.turnIndex]!) || scoreWorkflowAnswer(conversation.turns[turn.turnIndex]!.expect, turn, { freeAnswer: true }).ok);
   }).length;
   const turnDeltas = tasks.map(({ task, turns }) => turns.length - task.minimalTurns);
   const calls = allTurns.flatMap(turn => turn.calls);
@@ -697,14 +708,14 @@ export function scoreWorkflowCorpus(input: {
   const baselineCalls = input.baseline?.filter(row => typedIds.has(row.conversationId))
     .flatMap(row => row.turns.flatMap(turn => turn.calls.map(callExactCost).filter((cost): cost is string => cost !== null))) ?? [];
   const answerTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ conversation, turn, turnIndex })))
-    .filter(({ turn }) => turn.expect.knowledge || turn.expect.dueDate || turn.expect.refusal);
+    .filter(({ conversation, turn }) => turn.expect.knowledge || turn.expect.dueDate || turn.expect.refusal || isFreeAnswer(conversation, turn));
   const seed = answerTurns.some(({ turn }) => turn.expect.dueDate) && input.now ? buildWorkflowSeed(input.now, conversations.flatMap(row => row.actors)) : undefined;
   const answerChecks = answerTurns.map(({ conversation, turn, turnIndex }) => {
     const evidence = latest.get(conversation.id)?.turns.find(row => row.turnIndex === turnIndex);
     const actor = conversation.actors.find(row => row.key === (turn.as?.key ?? conversation.actors[0]?.key))!;
     const dueDate = turn.expect.dueDate && seed && input.now && actor.kind !== 'unlinked' ? resolveWorkflowDueDate(turn.expect.dueDate, seed.rows, seed.companies[actor.company].companyId, input.now) : undefined;
     const periodKey = turn.expect.dueDate && input.now ? workflowMonthKey(input.now, turn.expect.dueDate.monthOffset) : undefined;
-    return { conversationId: conversation.id, turnIndex, ...(evidence ? scoreWorkflowAnswer(turn.expect, evidence, { dueDate, periodKey }) : { ok: false, reasons: ['answer_evidence_missing'] }) };
+    return { conversationId: conversation.id, turnIndex, ...(evidence ? scoreWorkflowAnswer(turn.expect, evidence, { dueDate, periodKey, freeAnswer: isFreeAnswer(conversation, turn) }) : { ok: false, reasons: ['answer_evidence_missing'] }) };
   });
   return {
     ...(input.classifierLabels === 'messages' ? { buttonBaseline: ratio(buttonsPassed, buttonTurns.length) } : {}),

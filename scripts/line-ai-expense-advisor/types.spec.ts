@@ -7,6 +7,29 @@ import { validateCorpus, validateWorkflowCorpus, flattenTurns, parseFailedConver
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+describe('free actor model-free turns (owner 2026-11-05)', () => {
+  const corpus = (expect: Record<string, unknown>) => ({ version: 2, seed: 'free-answer', status: 'draft', conversations: [{
+    id: 'free-reader', category: 'read', journeyKind: 'typed', actors: [{ key: 'reader', company: 'A', role: 'OWNER', branchScope: 'all', freeSourceDrafts: true }],
+    tasks: [], turns: [{ user: 'ดูใบที่อัปโหลด', expect }],
+  }] });
+  it('keeps a free refusal valid only with zero model calls', () => {
+    const expect = { card: 'refusal', maxModelCalls: 0, refusal: { reason: 'free', wayOut: ['เมนูหลัก'] } };
+    assert.doesNotThrow(() => validateWorkflowCorpus(corpus(expect)));
+    assert.throws(() => validateWorkflowCorpus(corpus({ ...expect, maxModelCalls: 1 })), /free_zero_model/);
+  });
+  it('accepts a model-free answer without knowledge, due date, preview or refusal', () => {
+    const expect = { card: 'answer', maxModelCalls: 0, tags: { must_answer: true, must_not_refuse: true } };
+    assert.doesNotThrow(() => validateWorkflowCorpus(corpus(expect)));
+    for (const extra of [
+      { knowledge: { cardId: 'vat', version: 1, requiredFacts: [], forbiddenFacts: [], allowedNumericFacts: [] } },
+      { dueDate: { formType: 'PND3', monthOffset: 0 } }, { preview: { action: 'pay', target: 'expense' } },
+      { refusal: { reason: 'permission', wayOut: ['เมนูหลัก'] } }, { card: 'question' },
+    ]) assert.throws(() => validateWorkflowCorpus(corpus({ ...expect, ...extra })), /free_zero_model/);
+    for (const maxModelCalls of [undefined, 1])
+      assert.throws(() => validateWorkflowCorpus(corpus({ ...expect, maxModelCalls })), /free_zero_model/);
+  });
+});
+
 function validConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: 'conv-1', company: 'A', role: 'OWNER',

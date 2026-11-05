@@ -85,12 +85,15 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
         ? message.quickReply.items.map((item: Record<string, any>) => ({ type: 'choice', label: item.action?.label ?? item.label })) : []);
       const latencyMs = row.receipts.length ? Math.max(...row.receipts.map(receipt => receipt.at)) - row.acceptedAtMs : null;
       const expect = conversation.turns[row.turnIndex]?.expect;
-      const answerGold = expect?.knowledge || expect?.dueDate || expect?.refusal;
+      const actorKey = conversation.turns[row.turnIndex]?.as?.key ?? conversation.actors[0]?.key;
+      const freeAnswer = expect?.card === 'answer' && !expect.refusal && conversation.actors.find(actor => actor.key === actorKey)?.freeSourceDrafts;
+      const answerGold = expect?.knowledge || expect?.dueDate || expect?.refusal || freeAnswer;
       return { attemptId: row.attemptId!, conversationId: row.scenarioId, turnIndex: row.turnIndex, actorKey: row.pressFrom ?? conversation.turns[row.turnIndex]?.as ?? conversation.actors[0]?.key ?? '',
         inputKind: row.inputKind ?? 'message', classifier: classify ? { label: classify.label, confidence: classify.confidence, schemaValid: classify.schemaValid, timedOut: classify.timedOut } : undefined,
         calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),
+        ...(row.webhookEvents.some(event => (event as { status?: string }).status === 'free_expense_month_summary') && row.delivery?.status === 'ACCEPTED' && row.receipts.length ? { terminalEffect: 'ANSWERED' } : {}),
         ...(row.action ? { pressedLabel: row.action.label } : {}),
         ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
           textModelAttempts: Math.max(row.gatewayResponses.length, reservations.length),

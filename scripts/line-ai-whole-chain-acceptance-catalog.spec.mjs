@@ -34,6 +34,23 @@ const EXPECTED_IDS = [
   'permission-revoked-between-turns',
   'same-media-redelivered',
   'agentcore-ecs-source-mismatch',
+  'claim-by-buttons-zero-model',
+  'claim-new-line-deterministic',
+  'credit-out-mid-claim',
+  'next-step-after-ten-minutes',
+  'pending-reason-intervening-question',
+  'pending-payee-intervening-question',
+  'greeting-bound-chat-zero-model',
+  'fixed-read-button-zero-model',
+  'workflow-button-during-support-pause',
+  'claim-edit-route-unchanged',
+  'partial-payment-next-step-keeps-amount',
+  'invalid-token-vs-expired-card',
+  'buffered-workflow-control-survives',
+  'fixed-read-unavailable-honest',
+  'expired-card-recovery-after-redis-ttl',
+  'free-expense-month-summary-zero-model',
+  'stranger-text-before-door-zero-model',
 ];
 
 describe('LINE AI whole-chain acceptance catalog', () => {
@@ -44,6 +61,16 @@ describe('LINE AI whole-chain acceptance catalog', () => {
       assert.deepEqual(Object.keys(scenario.assertions).sort(), ['delivery', 'mutation', 'outcome', 'tool']);
       for (const value of Object.values(scenario.assertions)) assert.match(value, /^[a-z0-9_]+$/);
       assert.ok(scenario.evidence.length > 0, `${scenario.id} needs runnable evidence`);
+    }
+  });
+
+  it('keeps the owner month summary and stranger entry model-free with no business write', () => {
+    for (const id of ['free-expense-month-summary-zero-model', 'stranger-text-before-door-zero-model']) {
+      const scenario = LINE_AI_WHOLE_CHAIN_SCENARIOS.find(row => row.id === id);
+      assert.ok(scenario, id);
+      assert.equal(scenario.fixture, 'repository');
+      assert.match(scenario.assertions.tool, /zero_model_calls/);
+      assert.match(scenario.assertions.mutation, /zero_business_mutation/);
     }
   });
 

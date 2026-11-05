@@ -337,6 +337,239 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
       ['infra/prod-ecs-express/production-serving-mode.spec.sh', 'AGENTCORE_EXPECTED_SOURCE_COMMIT'],
     ],
   },
+  {
+    id: 'claim-by-buttons-zero-model',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'sold_workflow_buttons_reach_owned_collection_or_preview',
+      tool: 'api_owned_controls_zero_model_calls',
+      mutation: 'draft_collection_or_preview_zero_final_mutation',
+      delivery: 'owned_choices_and_same_reply_permission_exit',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3c button and manual line reach receipt category and reason with zero AI reservations'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A4a paid claim picker and signed open bypass credit and models while free shops retain R27'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A4b paid expense and certificate buttons bypass credit and models while free shops retain R27'],
+    ],
+  },
+  {
+    id: 'claim-new-line-deterministic',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'manual_amount_description_and_bangkok_date_have_user_text_proofs',
+      tool: 'deterministic_user_text_parser_zero_model_calls',
+      mutation: 'collection_fields_only_zero_final_mutation',
+      delivery: 'one_missing_field_or_source_backed_amount_choices',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts', 'R5 manual claim USER_TEXT proofs:'],
+      ['apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts', 'R5 manual claim line asks one missing-field question without choosing among amounts'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3c exact legacy labels and a selected ambiguous amount use only persisted claim choices'],
+    ],
+  },
+  {
+    id: 'credit-out-mid-claim',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'existing_claim_collection_continues_after_credit_exhaustion',
+      tool: 'owned_field_answers_zero_model_calls_zero_credit_admission',
+      mutation: 'same_draft_action_zero_final_mutation',
+      delivery: 'current_receipt_category_reason_and_confirmation_preview',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3c button and manual line reach receipt category and reason with zero AI reservations'],
+    ],
+  },
+  {
+    id: 'next-step-after-ten-minutes',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'signed_next_step_opens_a_fresh_preview_after_thirty_minutes',
+      tool: 'api_owned_signed_open_zero_model_calls',
+      mutation: 'preview_only_zero_final_mutation',
+      delivery: 'payment_intent_and_target_survive_preview_expiry',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 partial payment recovery keeps 400 of 1000 after thirty minutes and rejects another owner'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 signed payment-next controls preserve payment intent and English control language'],
+    ],
+  },
+  {
+    id: 'pending-reason-intervening-question',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'question_preserves_reason_then_ordinary_reason_binds_to_same_card',
+      tool: 'pending_field_guard_before_intake',
+      mutation: 'zero_field_write_for_question_zero_final_mutation_before_signed_confirm',
+      delivery: 'question_keeps_pending_card_and_reason_reopens_confirmation',
+    },
+    evidence: [
+      ['apps/api/src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts', 'Fix-up 17A: void asks one reason and binds the answer to the pending expense card'],
+      ['apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts', 'A3b reason fields accept command verbs as ordinary words and reject exact commands'],
+    ],
+  },
+  {
+    id: 'pending-payee-intervening-question',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'question_preserves_payee_address_and_numbered_address_resumes',
+      tool: 'pending_field_guard_before_intake',
+      mutation: 'zero_write_for_question_zero_final_mutation',
+      delivery: 'same_card_reappears_with_the_answered_address',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3b an expense question preserves its pending payee field and a numbered address answers it'],
+    ],
+  },
+  {
+    id: 'greeting-bound-chat-zero-model',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'bound_standalone_greeting_returns_before_v2_model_admission',
+      tool: 'zero_model_calls_zero_reservations',
+      mutation: 'zero_business_mutation',
+      delivery: 'one_greeting_response',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A8 bound standalone greeting needs no model or reservation'],
+    ],
+  },
+  {
+    id: 'fixed-read-button-zero-model',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'expense_month_uses_server_owned_single_metric_read',
+      tool: 'fixed_read_ordinal_zero_zero_model_calls',
+      mutation: 'zero_business_mutation',
+      delivery: 'prepared_month_answer_or_permission_scoped_free_summary',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'R22 expense month uses only the server fixed-read grant and recovers without a model fallback on paid and free paths'],
+      ['apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.spec.ts', 'shows a complete broad expense summary while preserving source-backed details and counts on request'],
+    ],
+  },
+  {
+    id: 'workflow-button-during-support-pause',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'typed_answers_stay_paused_and_explicit_workflow_buttons_remain_available',
+      tool: 'owned_control_dispatch_zero_model_calls',
+      mutation: 'no_typed_field_mutation_zero_final_mutation',
+      delivery: 'support_pause_or_current_control_response_on_paid_and_free_paths',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3b support contact pauses typed claim answers while workflow buttons remain available on paid and free paths'],
+    ],
+  },
+  {
+    id: 'claim-edit-route-unchanged',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'update_selectors_and_guarded_requester_refresh_keep_existing_edit_route',
+      tool: 'existing_update_preview_and_requester_lookup',
+      mutation: 'zero_financial_write_before_existing_signed_final_mutation_boundary',
+      delivery: 'legacy_update_choices_and_current_requester_snapshot',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A3a CREATE selectors are bound postbacks while UPDATE selectors stay byte-identical'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'UPDATE claim previews refresh a legacy login snapshot through the guarded requester lookup'],
+    ],
+  },
+  {
+    id: 'partial-payment-next-step-keeps-amount',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'partial_payment_keeps_exact_amount_method_and_date_across_recovery',
+      tool: 'signed_payment_intent_and_existing_payment_use_case',
+      mutation: 'existing_confirm_then_payment_final_mutations_only_after_their_signed_cards',
+      delivery: 'four_hundred_of_one_thousand_never_resets_to_full_balance',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 partial payment recovery keeps 400 of 1000 after thirty minutes and rejects another owner'],
+      ['apps/api/src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts', 'Fix-up 17A C01: confirm then payment retains'],
+    ],
+  },
+  {
+    id: 'invalid-token-vs-expired-card',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'unknown_token_has_menu_exit_and_owned_expiry_has_signed_recovery',
+      tool: 'api_owned_token_and_recovery_checks_zero_model_calls',
+      mutation: 'zero_final_mutation',
+      delivery: 'expired_card_offers_prepare_new_card_without_repairing_bad_tokens',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 expired cards offer signed recovery and unknown tokens keep the targetless menu exit'],
+    ],
+  },
+  {
+    id: 'buffered-workflow-control-survives',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'pending_and_frozen_controls_keep_company_switch_order',
+      tool: 'ordered_worker_dispatch_zero_model_calls',
+      mutation: 'zero_business_mutation',
+      delivery: 'fixed_read_after_company_switch_uses_the_new_company',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/line-message-buffer.service.spec.ts', 'R23 fresh frozen replay and company switch retain control order'],
+    ],
+  },
+  {
+    id: 'fixed-read-unavailable-honest',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'prepared_read_refusal_ends_with_neutral_copy_and_web_exit',
+      tool: 'zero_model_calls_zero_fallback_model_calls',
+      mutation: 'zero_business_mutation',
+      delivery: 'no_model_answer_or_wrong_fallback_copy_after_prepared_refusal',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'R22 expense month uses only the server fixed-read grant and recovers without a model fallback on paid and free paths'],
+    ],
+  },
+  {
+    id: 'expired-card-recovery-after-redis-ttl',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'recovery_record_survives_preview_ttl_and_owner_is_rechecked',
+      tool: 'owned_recovery_store_and_signed_open_zero_model_calls',
+      mutation: 'zero_final_mutation_until_fresh_confirmation',
+      delivery: 'fresh_preview_keeps_original_partial_payment_and_cleans_recovery_on_cancel',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 recovery records outlive previews for seven days and are removed explicitly'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'A5 partial payment recovery keeps 400 of 1000 after thirty minutes and rejects another owner'],
+    ],
+  },
+  {
+    id: 'free-expense-month-summary-zero-model',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'free_member_reads_uploaded_bills_in_the_bangkok_month_and_current_scope',
+      tool: 'permission_scoped_expense_list_zero_model_calls_zero_credit_calls',
+      mutation: 'zero_business_mutation_zero_ocr_allowance_consumption',
+      delivery: 'monthly_summary_then_expense_list_uri_and_main_menu',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'matches every exact alias with optional prefixes, suffixes and spaces without any gateway call'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'uses the Bangkok month, uploadedAt list lens, scoped actor and ordered quick reply URI'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'keeps near misses and members without read permission on the existing refusal'],
+    ],
+  },
+  {
+    id: 'stranger-text-before-door-zero-model',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'unlinked_typed_message_gets_one_explanation_before_the_door_card',
+      tool: 'zero_model_calls_zero_classifier_calls',
+      mutation: 'zero_business_mutation',
+      delivery: 'waiting_feedback_settles_before_explanation_then_signup_doors',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'settles waiting feedback before sending the final LINE reply'],
+    ],
+  },
 ];
 
 export const LINE_AI_WHOLE_CHAIN_SUITES = [
@@ -515,6 +748,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-restart.spec.ts',
       'src/modules/billing/application/billing-deal-subscription-cancel.spec.ts',
       'src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts',
+      'src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts',
+      'src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts',
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts',

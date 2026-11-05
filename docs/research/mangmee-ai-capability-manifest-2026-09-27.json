@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "26ed23b4b34fb14f1b80c9f68fe5106de87e6083",
+  "sourceRevision": "1e0c06bd1613b8b31e79025b5faefb0e44bd82de",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -50,6 +50,10 @@
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
       "sha256": "ca407dc8246eb200dbd096ba5a9705250f906403d40bebb5f01757e72a76c782"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
+      "sha256": "36c9a6ba6e36953c01c6b48195643479a19f5fda567c9936a31b8cedd2b92968"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-quoted-message.service.ts",
@@ -160,6 +164,14 @@
       "sha256": "febaa5c2c3d8f61a424f8f0c49dde7864cd7f6dc7b7a311b14f9835ead00da21"
     },
     {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-reimbursement-approval-control.logic.ts",
+      "sha256": "6e3bf48c1573b184dc03fe8b2e7600a1d6b0bbcc14b0768999366987534ce25c"
+    },
+    {
+      "path": "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts",
+      "sha256": "95087b052dafc8d47fa890ca06c4a4e31fbdfc33c01b91ae05c4516befc747a6"
+    },
+    {
       "path": "apps/api/src/modules/line-ai/infrastructure/public-lookup.ts",
       "sha256": "0458db22d4a62b11dba5cd15dfaaa4fa178b3467d9514fb090a32962cbab3a52"
     },
@@ -169,7 +181,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai-capability-manifest.ts",
-      "sha256": "f23b3718bacc8880604cd1dcdef1bd3fce829537d296d2db185e21bfe26114ee"
+      "sha256": "22c4b82595db4f2903546f3112551a40cd5ef32abf97185161677debc80efcc3"
     },
     {
       "path": "apps/api/src/modules/line-ai/line-ai.module.ts",
@@ -8082,6 +8094,72 @@
       ]
     },
     {
+      "operation": "line.workflow_control",
+      "execution": "api_intake",
+      "implementation": "wired",
+      "inputSchemaVersion": "LineWorkflowControl/v1",
+      "supportedFields": [
+        "postback.data.action",
+        "postback.data.id",
+        "postback.data.act",
+        "postback.data.sig",
+        "postback.data.pm",
+        "postback.data.pd",
+        "postback.data.pa",
+        "postback.data.token",
+        "postback.data.pick"
+      ],
+      "permissionPolicyRef": "current ProcessLineWebhookUseCase access/feature gates; operation-specific permission rule is documented below",
+      "authorization": {
+        "requiredPermissionsAllOf": [],
+        "anyOfPermissions": [],
+        "requiredRoles": [],
+        "roleRestrictions": "permission resolver and owner-bound handler; no role override from LINE event body",
+        "featureKeys": [
+          "expenses",
+          "reimbursement",
+          "wht_50bis"
+        ],
+        "actorDelegationRequired": "downstream private tools require API-resolved owner/access"
+      },
+      "channelKinds": [
+        "USER",
+        "GROUP",
+        "ROOM"
+      ],
+      "runtimeFlagNames": [],
+      "enabledByDefault": true,
+      "dataBasis": "Signature-verified wf_open/wf_choice/chat-action/fixed-read controls use exact-key parsing and ordered worker buffering. Action handlers recheck current owner, action-specific permission, feature and source state; target and payment fields on wf_open are HMAC-bound to company and user. Workflow navigation collects conversation state or prepares a preview, and fixed-read uses the server-owned expense-month read plan. Business writes retain their existing signed confirmation boundary. Free shops return through their model-free access gates. This entry proves API routing only, not downstream business results.",
+      "runtimeContractVersion": 1,
+      "release": "R2",
+      "routeRefs": [
+        "POST /line/webhook",
+        "POST /webhooks/line"
+      ],
+      "sourceReferences": [
+        {
+          "path": "apps/api/src/modules/auth/presentation/line-webhook.controller.ts",
+          "symbol": "LineWebhookController.handleLineWebhook postback parsing"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/domain/logic/line-reimbursement-approval-control.logic.ts",
+          "symbol": "parseLineWorkflowControl/lineWorkflowOpenSig/verifyLineWorkflowOpenSig"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts",
+          "symbol": "parseLineFixedReadControl/linePostbackCommandText"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
+          "symbol": "LineMessageBufferService ordered control dispatch and replay"
+        },
+        {
+          "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
+          "symbol": "handleWorkflowControl/handleFixedRead"
+        }
+      ]
+    },
+    {
       "operation": "line.receipt_capture",
       "execution": "api_intake",
       "implementation": "wired",
@@ -8757,7 +8835,8 @@
         "voucher.list_recent"
       ],
       "apiIntakes": [
-        "line.receipt_capture"
+        "line.receipt_capture",
+        "line.workflow_control"
       ],
       "assistantCoverage": "partial_or_scoped",
       "sourceReferences": [
@@ -8795,9 +8874,10 @@
       "lineCapabilityGroups": [],
       "registryOperations": [],
       "apiIntakes": [
-        "line.reimbursement_draft_confirmation"
+        "line.reimbursement_draft_confirmation",
+        "line.workflow_control"
       ],
-      "assistantCoverage": "registered_unwired_or_flagged_off",
+      "assistantCoverage": "partial_or_scoped",
       "sourceReferences": [
         {
           "path": "packages/contracts/src/feature-entitlements.ts",
@@ -8962,7 +9042,9 @@
         "wht.calculate_withholding",
         "wht.get_month_summary"
       ],
-      "apiIntakes": [],
+      "apiIntakes": [
+        "line.workflow_control"
+      ],
       "assistantCoverage": "partial_or_scoped",
       "sourceReferences": [
         {
@@ -9407,7 +9489,8 @@
         "voucher.list_recent"
       ],
       "apiIntakes": [
-        "line.receipt_capture"
+        "line.receipt_capture",
+        "line.workflow_control"
       ],
       "status": "assistant_wired_or_intake",
       "note": "Family mapping is a capability-coverage index, not a data-completeness claim."
@@ -9459,7 +9542,9 @@
         "wht.calculate_withholding",
         "wht.get_month_summary"
       ],
-      "apiIntakes": [],
+      "apiIntakes": [
+        "line.workflow_control"
+      ],
       "status": "assistant_wired_or_intake",
       "note": "Family mapping is a capability-coverage index, not a data-completeness claim."
     },
@@ -9569,7 +9654,8 @@
         "reimbursement.list_pending_approvals"
       ],
       "apiIntakes": [
-        "line.reimbursement_draft_confirmation"
+        "line.reimbursement_draft_confirmation",
+        "line.workflow_control"
       ],
       "status": "assistant_wired_or_intake",
       "note": "Family mapping is a capability-coverage index, not a data-completeness claim."
@@ -10173,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-05T02:03:24.343Z",
-  "manifestDigest": "eae00cb1b6a24cbcbe6c0e4f256dd65eb52e4c3438def854523d2030e87408ae"
+  "generatedAt": "2026-11-05T02:36:22.180Z",
+  "manifestDigest": "87d9653dee8e47d5e6fd518e4114bd770155b9271f134facca3ef1c92b527622"
 }

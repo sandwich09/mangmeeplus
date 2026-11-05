@@ -10,6 +10,25 @@ import type { Turn } from './types';
 
 const NOW = new Date('2026-09-27T06:00:00.000Z'); // 13:00 Bangkok, 27 Sep 2026
 
+it('free answers require delivered summaries, no refusal, zero model calls and zero business changes', () => {
+  const corpus = { version: 2, seed: 'free-answer', status: 'draft', conversations: [{ id: 'free-reader', category: 'read', journeyKind: 'typed',
+    actors: [{ key: 'reader', company: 'A', role: 'OWNER', branchScope: 'all', freeSourceDrafts: true }],
+    tasks: [{ id: 'summary', kind: 'advisor', startTurn: 0, endTurn: 0, minimalTurns: 1, completable: true, goldTerminal: { effect: 'ANSWERED', records: [] } }],
+    turns: [{ user: 'ดูใบที่อัปโหลด', expect: { card: 'answer', maxModelCalls: 0 } }] }] } as any;
+  const turn = { turnIndex: 0, calls: [], effects: [], unintendedEffects: [], businessSnapshot: { business: {}, collectionState: {} }, deliveredActions: [],
+    deliveredText: 'ยังไม่ยืนยัน 100 บาท', terminalEffect: 'ANSWERED', latencyMs: 10 };
+  const score = (overrides = {}) => scoreWorkflowCorpus({ corpus, attempts: [{ attemptId: 'one', conversationId: 'free-reader', complete: true, turns: [{ ...turn, ...overrides }] }] } as any);
+  assert.deepEqual(score().answerChecks, [{ conversationId: 'free-reader', turnIndex: 0, ok: true, reasons: [] }]);
+  assert.deepEqual(score().W3, { passed: 1, total: 1 });
+  for (const overrides of [{ textModelAttempts: 1 }, { calls: [{ tokens: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } }] },
+    { deliveredText: '' }, { deliveredText: 'ยังตอบคำถามนี้ไม่ได้' }, { deliveredText: 'สิทธิ์ใช้ฟรียังไม่รวมคำถาม พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ' },
+    { terminalEffect: undefined }, { unintendedEffects: [{ kind: 'ExpenseRecord.update', recordId: 'x' }] }]) {
+    assert.equal(score(overrides).answerChecks?.[0]?.ok, false, JSON.stringify(overrides));
+    assert.deepEqual(score(overrides).W3, { passed: 0, total: 1 });
+  }
+  assert.equal(score({ unintendedEffects: [{ kind: 'ExpenseRecord.update', recordId: 'x' }] }).W6.wrongApplied, 1);
+});
+
 function evidence(overrides: Partial<CapturedEvidence> = {}): CapturedEvidence {
   return { toolCalls: [], deliveredText: '', latencyMs: 1000, modelCalls: 1, costSatang: 50, ...overrides };
 }

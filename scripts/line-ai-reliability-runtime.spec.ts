@@ -8,6 +8,10 @@ import { join, resolve } from 'node:path';
 import { assertIsolatedReplayDatabase, captureRuntimeTurnEvidence, runLineReliabilityRuntime, runtimeAttachmentMessage, runtimeFailureDiagnostic, runtimeAskedSlots, runtimeDatabaseEffects, runtimeBusinessSnapshot, runtimeBusinessEffects, runtimeAttemptId, runtimeEventIdPrefix, runtimeAssetMessageId, resetRuntimeAfterHook, runtimeDeliveryEvidence, runtimeSourceFacts, runtimeSourceId, runtimeSemanticOutcome, instrumentRuntimeMethod, selectRuntimePostback, type RuntimeTurnEvidence } from './line-ai-reliability-runtime';
 import { capRejectionCount, installEvalGuard } from './line-ai-expense-advisor/eval-spend';
 
+test('free_expense_month_summary is a delivered read outcome', () => {
+  assert.equal(runtimeSemanticOutcome([], [{ status: 'free_expense_month_summary' }], []), 'answered');
+});
+
 test('real PostgreSQL: eval_guard blocks an over-cap reservation and preserves the rejection sequence', { skip: !process.env['BILLING_TEST_DATABASE_URL'] }, async () => {
   const databaseUrl = process.env['BILLING_TEST_DATABASE_URL']!;
   assertIsolatedReplayDatabase(databaseUrl);

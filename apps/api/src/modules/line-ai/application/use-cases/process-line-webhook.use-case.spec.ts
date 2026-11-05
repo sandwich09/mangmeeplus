@@ -2101,7 +2101,9 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('settles waiting feedback before sending the final LINE reply', async () => {
     const { prisma } = makePrisma({ identityUserId: null });
-    const { useCase, replies, sentMessageBatches } = makeUseCase(prisma);
+    const { useCase, replies, sentMessageBatches, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      intakeRouteFn: () => assert.fail('stranger entry must not classify'), aiGatewayFn: () => assert.fail('stranger entry must not call a model'),
+    });
     let settled = false;
 
     await useCase.execute({
@@ -2111,6 +2113,8 @@ describe('ProcessLineWebhookUseCase', () => {
     });
 
     assert.equal(settled, true);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
     // Waiting feedback settles before the explanation and door reply (owner 2026-11-05).
     assert.equal(replies[0], 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
     assert.match(sentMessageBatches[0][1]?.altText ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
@@ -15924,4 +15928,39 @@ describe('owner 2026-11-05 free expense month summary', () => {
       assert.equal(h.replies[0]!.includes('พิมพ์ ‘สรุปร่างเดือนนี้’ เพื่อดูใบที่ส่งเข้าเดือนนี้'), permissions.some(p => p.startsWith('expense.read')));
     }
   });
+});
+
+
+it('A8 bound standalone greeting needs no model or reservation', async () => {
+  const { prisma } = makePrisma();
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'ai.tool.invoke'],
+    config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'] },
+    intakeRouteFn: () => assert.fail('greeting must not classify'), aiGatewayFn: () => assert.fail('greeting must not call a model') });
+  const flow = h.useCase as any;
+  const claim = manualClaimHarness();
+  flow.bindConversation = async (event: object) => flow.boundConversations.set(event, { owner: claim.owner, epoch: 1, id: 'greeting-conversation' });
+  flow.reconcileDeliveredSemanticTasks = async () => undefined;
+  flow.aiGateway.issueLineReliabilityGrant = () => assert.fail('greeting must not reserve');
+  const event = { ...BASE_EVENT, messageText: 'สวัสดี' };
+  await h.useCase.execute(event);
+  assert.equal(flow.boundConversations.has(event), true);
+  assert.match(h.replies.join(' '), /สวัสดี/);
+  assert.equal(h.intakeRequests.length, 0);
+  assert.equal(h.aiGatewayRequests.length, 0);
+});
+
+it('A8 workflow control intake records the closed postback fields and ordered API routing without a runtime flag', async () => {
+  const { buildLineAiCapabilityManifest } = await import('../../line-ai-capability-manifest');
+  const manifest = buildLineAiCapabilityManifest();
+  const intake = manifest.apiIntakes.find(row => row.operation === 'line.workflow_control');
+  assert.ok(intake);
+  assert.equal(intake.implementation, 'wired');
+  assert.equal(intake.enabledByDefault, true);
+  assert.deepEqual(intake.runtimeFlagNames, []);
+  assert.deepEqual(intake.authorization.requiredPermissionsAllOf, []);
+  for (const field of ['action', 'id', 'act', 'sig', 'pm', 'pd', 'pa', 'token', 'pick']) {
+    assert.ok(intake.supportedFields.some(supported => supported === `postback.data.${field}`), field);
+  }
+  assert.ok(intake.sourceReferences.some(row => row.path.endsWith('/line-message-buffer.service.ts')));
+  assert.match(intake.dataBasis, /permission|access/);
 });

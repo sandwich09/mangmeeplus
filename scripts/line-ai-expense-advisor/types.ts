@@ -194,8 +194,10 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
         assert.ok(!expect['knowledge'] && !expect['dueDate'], `${answerPath}.refusal_must_not_leak_answer`);
       }
       const actorKey = (turn['as'] as ActorRef | undefined)?.key ?? (actors[0] as Actor).key;
-      if ((actors.find(actor => (actor as Actor).key === actorKey) as Actor).freeSourceDrafts)
-        assert.ok(expect['maxModelCalls'] === 0 && (expect['refusal'] as { reason?: string } | undefined)?.reason === 'free', `${answerPath}.free_zero_model_refusal`);
+      if ((actors.find(actor => (actor as Actor).key === actorKey) as Actor).freeSourceDrafts) {
+        const answer = expect['card'] === 'answer' && ['knowledge', 'dueDate', 'preview', 'refusal'].every(key => expect[key] === undefined);
+        assert.ok(expect['maxModelCalls'] === 0 && ((expect['refusal'] as { reason?: string } | undefined)?.reason === 'free' || answer), `${answerPath}.free_zero_model_refusal_or_answer`);
+      }
       if (typeof turn['user'] === 'string') for (const key of referencedPlaceholders(turn['user'])) assert.ok(isKnownPlaceholder(key), `${answerPath}.placeholder:${key}`);
       if (expect['label'] !== undefined) assert.ok(nonEmptyString(expect['label']), `${path}.turns[${ti}].expect.label`);
       if (expect['preview'] !== undefined) assert.ok(isPlainObject(expect['preview']) && nonEmptyString(expect['preview']['action']) && nonEmptyString(expect['preview']['target']), `${path}.turns[${ti}].expect.preview`);
