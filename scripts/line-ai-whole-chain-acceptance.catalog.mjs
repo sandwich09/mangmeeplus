@@ -586,6 +586,22 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
       ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 webhook shows the latest provenance refusal instead of the saved missing-field question'],
     ],
   },
+  {
+    id: 'claim-options-only-turn-preserves-amount',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'reimbursement_draft_saved_with_250_today_travel_reason_and_no_receipt',
+      tool: 'get_options_captures_current_turn_values_without_preview_or_model_calls',
+      mutation: 'one_signed_draft_save_zero_submit_or_payment_final_mutation',
+      delivery: 'confirm_card_then_saved_receipt_after_fourth_user_turn',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 2 exact four turns save a claim when the model only reads options for the amount'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 2 signed webhook saves the four-turn claim with'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 2 get_options preserves the last preview missing fields'],
+      ['apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts', 'M4 round 2 get_options cannot capture pending values from retained earlier-turn evidence'],
+    ],
+  },
 ];
 
 export const LINE_AI_WHOLE_CHAIN_SUITES = [

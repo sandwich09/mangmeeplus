@@ -4,10 +4,10 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { scenarioIdsIn, rescoreReportPath, workflowAttemptsFromEvidence } from './run-rescore';
 import { scoreAllTurns } from './gold-oracle-pass';
 import type { RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
@@ -26,7 +26,8 @@ describe('workflow real-run entry point', () => {
     writeFileSync(corpusPath, JSON.stringify(corpus));
     writeFileSync(secretsPath, JSON.stringify({ databaseUrl: 'postgresql://synthetic:synthetic@127.0.0.1:15440/watchdog_ai_reliability_replay_expense_advisor' }));
     writeFileSync(join(root, 'gateway.manifest.json'), JSON.stringify({ transport: 'bedrock' }));
-    const queries: string[] = [], gatewayInputs: any[] = [];
+    const queries: string[] = [], gatewayInputs: any[] = [], fullEvidence: any[] = [];
+    const unrelated = Array.from({ length: 1000 }, (_, index) => ({ id: `unrelated-${index}`, status: 'DRAFT', note: 'x'.repeat(4096) }));
     let runtimeRuns = 0, oracleRuns = 0, capCounter = 0, interruptFirstRun = true, capNextRun = false, wrongWriteNext = false;
     const pg = { async connect() {}, async end() {}, async query(sql: string) {
       queries.push(sql);
@@ -75,8 +76,8 @@ describe('workflow real-run entry point', () => {
           ...(turn.action ? { postback: selectRuntimePostback(preceding, turn.action.label) } : {}) });
         const receipt = { messages, at: 10 + turnIndex, receiptId: `stub-${turnIndex}` };
         const paidAmount = wrongWrite ? '999.00' : '1000.00';
-        const before = { ExpenseRecord: [{ id: 'workflow-expense-b-9', status: 'CONFIRMED', paymentStatus: 'UNPAID', paidAmount: '0.00' }], ExpensePayment: [] };
-        const after = turnIndex ? { ExpenseRecord: [{ id: 'workflow-expense-b-9', status: 'CONFIRMED', paymentStatus: wrongWrite ? 'PARTIALLY_PAID' : 'PAID', paidAmount }],
+        const before = { ExpenseRecord: [{ id: 'workflow-expense-b-9', status: 'CONFIRMED', paymentStatus: 'UNPAID', paidAmount: '0.00' }, ...unrelated], ExpensePayment: [] };
+        const after = turnIndex ? { ExpenseRecord: [{ id: 'workflow-expense-b-9', status: 'CONFIRMED', paymentStatus: wrongWrite ? 'PARTIALLY_PAID' : 'PAID', paidAmount }, ...unrelated],
           ExpensePayment: [{ id: 'stub-payment', expenseId: 'workflow-expense-b-9', status: 'RECORDED', amount: paidAmount, paidAt: '2026-11-04T00:00:00.000Z', paymentMethod: 'CASH' }] } : before;
         const evidence = { ...fakeEvidence(fixture.id, turnIndex), user: turn.user, inputKind: turn.action?.type ?? 'message', action: turn.action,
           pressFrom: turn.pressFrom, companyId: 'company-b', sourceSnapshot: fixture.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[fixture.fixture.sourceSnapshot],
@@ -86,6 +87,7 @@ describe('workflow real-run entry point', () => {
           workflowPreviews: runtimeDeliveredPreviews([receipt], [previewEntry], renderStubPreview),
           workflowTasks: [{ kind: 'expense_pay', status: turnIndex ? 'COMPLETED' : 'OPEN', sourceId: 'workflow-expense-b-9', deadEnd: false }],
           unintendedEffects: runtimeBusinessEffects(before, after) };
+        fullEvidence.push({ ...evidence, attemptId: `stub-attempt-${runtimeRuns}` });
         turns.push(evidence);
         if (capNextRun) { capCounter++; capNextRun = false; }
         try { await hooks.onTurn(evidence); }
@@ -104,7 +106,10 @@ describe('workflow real-run entry point', () => {
       const evidencePath = join(root, readdirSync(root).find(name => name.endsWith('.evidence.json'))!);
       const saved = JSON.parse(readFileSync(evidencePath, 'utf8'));
       assert.equal(saved.corpusVersion, 2);
-      assert.equal(saved.turnEvidence.length, 5, 'abandoned turn plus append and final evidence remain readable through deduplication');
+      assert.ok(Math.max(...readFileSync(evidencePath.replace('.evidence.json', '.turns.jsonl'), 'utf8').trim().split('\n').map(line => Buffer.byteLength(line))) < 50000, 'checkpoint rows must omit unrelated full-table records');
+      assert.deepEqual(saved.workflowMetrics, scoreWorkflowCorpus({ corpus: selectedCorpus, now: new Date(saved.startedAt), classifierLabels: 'messages', includeButtonBaseline: true,
+        attempts: workflowAttemptsFromEvidence(selectedCorpus, fullEvidence, saved.progress.completedAttempts) }));
+      assert.equal(saved.turnEvidence.length, 3, 'one abandoned turn and two completed turns survive checkpoint deduplication');
       assert.ok(saved.turnEvidence.every((row: any) => row.providerUsage.length === 0));
       assert.equal(saved.progress.completedAttempts[selectedCorpus.conversations[0].id], 'stub-attempt-2');
       assert.deepEqual(workflowAttemptsFromEvidence(selectedCorpus, saved.turnEvidence, saved.progress.completedAttempts).map(attempt => attempt.complete), [false, true]);
@@ -462,6 +467,149 @@ describe('smoke-run endings and spend', () => {
         assert.deepEqual(scoreWorkflowCorpus({ corpus, attempts: workflowAttemptsFromEvidence(corpus, saved.turnEvidence, saved.progress.completedAttempts),
           now: new Date(saved.startedAt), classifierLabels: 'messages', includeButtonBaseline: true }), saved.workflowMetrics);
       }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+
+describe('compact workflow checkpoints', () => {
+  it('bounds a 300-turn stub run and resumes killed processes with equal completed-run scores and exactly-once partial spend', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'workflow-memory-'));
+    const childPath = join(root, 'memory-stub.cjs');
+    writeFileSync(childPath, String.raw`
+      const assert = require('node:assert/strict');
+      const fs = require('node:fs');
+      const {join} = require('node:path');
+      const {runReal} = require(process.cwd()+'/scripts/line-ai-expense-advisor/run-real.ts');
+      const {runtimeBusinessSnapshot,runtimeBusinessEffects} = require(process.cwd()+'/scripts/line-ai-reliability-runtime.ts');
+      const directory = process.argv[2], mode = process.argv[3], count = Number(process.argv[4]);
+      const corpusPath = join(directory,'corpus.json'), secretsPath = join(directory,'synthetic.json');
+      const reservationsPath = join(directory,'reservations.json'), generationPath = join(directory,'generation.json');
+      const generation = fs.existsSync(generationPath) ? Number(fs.readFileSync(generationPath,'utf8'))+1 : 1;
+      fs.writeFileSync(generationPath,String(generation));
+      const corpus = {version:2,seed:'memory',status:'draft',classifierLabels:'messages',conversations:Array.from({length:count},(_,index)=>{
+        const company = index%2 ? 'B' : 'A', lower = company.toLowerCase(), free = company==='A';
+        return {id:'memory-'+index,category:'read',journeyKind:'typed',actors:[{key:'owner-'+lower,company,role:'OWNER',branchScope:'all',...(free?{freeSourceDrafts:true}:{})}],
+          tasks:[{id:'read',kind:'read',startTurn:0,endTurn:2,minimalTurns:3,completable:true,goldTerminal:{effect:'ANSWERED',records:[
+            {table:'ExpenseRecord',ref:'$seed:workflow-expense-'+lower+'-0',status:'DRAFT',amount:'1000.00'}]}}],
+          turns:['ดูใบที่อัปโหลด','สรุปร่างเดือนนี้','ดูใบที่ส่ง'].map(user=>({user,expect:{card:'answer',maxModelCalls:0}}))};
+      })};
+      fs.writeFileSync(corpusPath,JSON.stringify(corpus));
+      fs.writeFileSync(secretsPath,JSON.stringify({databaseUrl:'postgresql://test:test@127.0.0.1:15440/watchdog_ai_reliability_replay_expense_advisor'}));
+      fs.writeFileSync(join(directory,'gateway.manifest.json'),JSON.stringify({transport:'bedrock'}));
+      let rows = fs.existsSync(reservationsPath) ? JSON.parse(fs.readFileSync(reservationsPath,'utf8')) : [];
+      const persistRows = () => fs.writeFileSync(reservationsPath,JSON.stringify(rows));
+      const pg = {async connect(){},async end(){},async query(sql,args){
+        if(sql.startsWith('UPDATE eval_guard.ledger_satang'))fs.writeFileSync(join(directory,'guard-total'),String(args[0]));
+        return {rows:sql.includes('current_database()')?[{name:'watchdog_ai_reliability_replay_expense_advisor'}]
+          :sql.includes('FROM public."AiBudgetReservation"')?structuredClone(rows):[]};
+      }};
+      const oracle = async(...args)=>{
+        await args[7]();
+        const spend = fs.readdirSync(directory).find(name=>name.endsWith('.spend.jsonl'));
+        fs.writeFileSync(join(directory,'captured-before-oracle'),spend?fs.readFileSync(join(directory,spend),'utf8'):'');
+        rows=[];persistRows();
+        return {resultsByTurn:new Map(),factsByTurn:new Map(),resolvedCallsByTurn:new Map(),alternativeFactsByTurn:new Map()};
+      };
+      let peakHeap = 0, sent = 0;
+      const measure = () => {peakHeap=Math.max(peakHeap,process.memoryUsage().heapUsed);};
+      const runtime = async(manifest,repo,hooks)=>{
+        assert.equal(manifest.streamTurnEvidence,true);
+        for(const fixture of manifest.corpus.fixtures){
+          const attemptId = fixture.id+':attempt-'+generation;
+          await hooks.onBeforeReset(fixture,attemptId);rows=[];persistRows();
+          for(const [turnIndex,turn] of fixture.turns.entries()){
+            await hooks.onBeforeTurn(fixture,turnIndex,attemptId);
+            if(turnIndex===0){rows=[{invocationKey:attemptId+':reservation',status:'SETTLED',upperBoundSatang:3,evidenceJson:{customerChargedSatang:1}}];persistRows();}
+            const raw = {ExpenseRecord:[{id:'workflow-expense-a-0',status:'DRAFT',grandTotalAmount:'1000.00'},
+              {id:'workflow-expense-b-0',status:'DRAFT',grandTotalAmount:'1000.00'},
+              ...Array.from({length:2000},(_,index)=>({id:'unused-'+index,status:'DRAFT',note:index+':'+('x'.repeat(2048))}))]};
+            const snapshot = runtimeBusinessSnapshot(raw), company = fixture.fixture.company, lower = company==='company-a'?'a':'b';
+            const messages = [{type:'text',text:'ยังไม่ยืนยัน 1,000 บาท'}];
+            const evidence = {scenarioId:fixture.id,repeat:0,turnIndex,user:turn.user,attachmentIds:[],inputKind:'message',pressFrom:turn.pressFrom,
+              companyId:company,sourceSnapshot:fixture.id,snapshotDigest:manifest.snapshotDigests[fixture.id],acceptedAtMs:0,modelWorkCompletedAtMs:1,
+              receipts:[{messages,at:10,receiptId:fixture.id+'-'+turnIndex}],toolResults:[],gatewayResponses:[],webhookEvents:lower==='a'?[{status:'free_expense_month_summary'}]:[],providerUsage:[],reservations:[],
+              reviewState:{before:{draftActions:[],conversations:[],truncated:false},after:{draftActions:[],conversations:[],truncated:false}},
+              businessSnapshotBefore:snapshot,businessSnapshot:snapshot,unintendedEffects:runtimeBusinessEffects(raw,raw),
+              workflowTasks:[{kind:'read',status:'COMPLETED',sourceId:'workflow-expense-'+lower+'-0'}],delivery:{status:'ACCEPTED'}};
+            measure();await hooks.onTurn(evidence);sent++;measure();
+            if(mode==='kill-in-flight'&&fixture.id==='memory-1'&&turnIndex===0){
+              fs.writeFileSync(join(directory,'ready'),'in-flight');await new Promise(()=>{setInterval(()=>{},1000);});
+            }
+          }
+          await hooks.onConversationComplete(fixture,attemptId);
+          if(mode==='kill-after-complete'&&fixture.id==='memory-19'){
+            fs.writeFileSync(join(directory,'ready'),'complete');await new Promise(()=>{setInterval(()=>{},1000);});
+          }
+        }
+        return {records:[],turnEvidence:[],runtimeDiagnostics:[]};
+      };
+      const progress = fs.readdirSync(directory).find(name=>name.endsWith('.progress.json'));
+      (async()=>{
+        await runReal({environment:{MANGMEE_EVAL_OUTPUT_DIR:directory,MANGMEE_EVAL_GATEWAY_URL:'http://127.0.0.1:19205/v1',
+          MANGMEE_EVAL_CORPUS:corpusPath,MANGMEE_EVAL_SECRETS_PATH:secretsPath,MANGMEE_EVAL_MAX_THB:'100',
+          ...(progress?{MANGMEE_EVAL_RESUME:join(directory,progress)}:{})},pg,oracle,runtime});
+        measure();
+        fs.writeFileSync(join(directory,'memory.json'),JSON.stringify({peakHeap,peakRss:process.resourceUsage().maxRSS*1024,sent}));
+        process.exit(Number(process.exitCode??0));
+      })().catch(error=>{console.error(error);process.exit(1);});
+    `);
+    const launch = async (directory: string, mode: string, count: number) => {
+      const child = spawn(process.execPath, ['--max-old-space-size=768', '--import', 'tsx', childPath, directory, mode, String(count)], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal }));
+      });
+      const timeout = setTimeout(() => child.kill('SIGKILL'), 90000);
+      try {
+        if (mode.startsWith('kill-')) {
+          const deadline = Date.now()+45000;
+          while (!existsSync(join(directory, 'ready'))) {
+            assert.equal(child.exitCode, null, output);
+            assert.ok(Date.now()<deadline, output || 'stub did not reach its checkpoint');
+            await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          child.kill('SIGKILL');
+          assert.equal((await closed).signal, 'SIGKILL');
+        } else assert.equal((await closed).code, 0, output);
+      } finally { clearTimeout(timeout); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }
+    };
+    const saved = (directory: string) => JSON.parse(readFileSync(join(directory, readdirSync(directory).find(name => name.endsWith('.evidence.json'))!), 'utf8'));
+    try {
+      const baseline = join(root, 'baseline'), resumed = join(root, 'resumed'), partial = join(root, 'partial');
+      for (const directory of [baseline, resumed, partial]) mkdirSync(directory);
+      await launch(baseline, 'finish', 100);
+      const full = saved(baseline), memory = JSON.parse(readFileSync(join(baseline, 'memory.json'), 'utf8'));
+      assert.equal(full.summary.passed, 100);
+      assert.equal(full.turnEvidence.length, 300);
+      assert.ok(memory.peakHeap < 1024**3, JSON.stringify(memory));
+      assert.ok(memory.peakRss < 1024**3, JSON.stringify(memory));
+      assert.ok(Object.values(full.manifest.snapshots).every((snapshot: any) => snapshot.rows === undefined && snapshot.rowCount > 0));
+      assert.ok(full.turnEvidence.every((row: any) => row.businessSnapshotFormat === 'changed-rows-v1' && row.businessSnapshot.business.ExpenseRecord.length === 1));
+      console.log(JSON.stringify({ event: 'workflow_memory_bound', turns: 300, peakHeapMiB: memory.peakHeap/1024**2, peakRssMiB: memory.peakRss/1024**2 }));
+      await launch(resumed, 'kill-after-complete', 100);
+      await launch(resumed, 'finish', 100);
+      const resumedEvidence = saved(resumed);
+      assert.deepEqual(resumedEvidence.workflowMetrics, full.workflowMetrics);
+      assert.equal(JSON.parse(readFileSync(join(resumed, 'memory.json'), 'utf8')).sent, 240, 'the 20 completed conversations are skipped');
+      assert.equal(resumedEvidence.spend.length, 100);
+      assert.equal(readFileSync(join(resumed, 'guard-total'), 'utf8'), readFileSync(join(baseline, 'guard-total'), 'utf8'));
+      assert.deepEqual(resumedEvidence.spend.map((row: any) => row.ledgerSatang), full.spend.map((row: any) => row.ledgerSatang));
+      await launch(partial, 'kill-in-flight', 2);
+      const progressPath = join(partial, readdirSync(partial).find(name => name.endsWith('.progress.json'))!);
+      assert.equal(JSON.parse(readFileSync(progressPath, 'utf8')).inFlightAttemptId, 'memory-1:attempt-1');
+      const spendPath = progressPath.replace('.progress.json', '.spend.jsonl');
+      appendFileSync(spendPath, '{"torn":');
+      appendFileSync(progressPath.replace('.progress.json', '.turns.jsonl'), '{"torn":');
+      await launch(partial, 'finish', 2);
+      const partialEvidence = saved(partial);
+      assert.equal(partialEvidence.summary.passed, 2);
+      assert.equal(partialEvidence.spend.length, 3, 'the paid partial attempt and retry each count once');
+      assert.equal(readFileSync(join(partial, 'guard-total'), 'utf8'), '6');
+      assert.equal(JSON.parse(readFileSync(join(partial, 'memory.json'), 'utf8')).sent, 3, 'only the in-flight conversation replays from turn zero');
+      assert.ok(readFileSync(join(partial, 'captured-before-oracle'), 'utf8').includes('memory-1:attempt-1:reservation'));
+      assert.equal(partialEvidence.progress.completedAttempts['memory-1'], 'memory-1:attempt-2');
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

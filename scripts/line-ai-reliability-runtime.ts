@@ -16,7 +16,8 @@ import type { ReliabilityAttempt } from './line-ai-reliability-evaluation';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../apps/api/src/common/pipes/validation-pipe.options';
 import { hashMessagePreview } from '../apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic';
 import { workflowCreditState } from './line-ai-expense-advisor/seed';
-import type { WorkflowFixtureOp } from './line-ai-expense-advisor/types';
+import type { GoldRecord, WorkflowFixtureOp } from './line-ai-expense-advisor/types';
+import { workflowSnapshotRows } from './line-ai-expense-advisor/oracle';
 import { todayCivilDate } from '../packages/contracts/src/civil-date';
 
 type JsonRow = Record<string, any>;
@@ -48,7 +49,7 @@ export type RuntimeReplayAction =
   | { type: 'uri'; label: string; uri: string; pressFrom?: string }
   | { type: 'camera'; label: string; assetId: string; pressFrom?: string };
 export type RuntimeReplayTurn = { action?: RuntimeReplayAction; pressFrom?: string; pressOrigin?: { turn: number; actor?: string }; fixture?: WorkflowFixtureOp[] };
-export type RuntimeReplayFixture = ReliabilityFixture & { turns: Array<ReliabilityFixture['turns'][number] & RuntimeReplayTurn> };
+export type RuntimeReplayFixture = ReliabilityFixture & { turns: Array<ReliabilityFixture['turns'][number] & RuntimeReplayTurn>; evidenceRecords?: GoldRecord[] };
 export type RuntimeReplayCorpus = Omit<ReliabilityCorpus, 'fixtures'> & { fixtures: RuntimeReplayFixture[] };
 export type ReliabilityRuntimeManifest = {
   version: 2; corpus: RuntimeReplayCorpus; snapshots: Record<string, RuntimeSourceSnapshot>;
@@ -59,6 +60,8 @@ export type ReliabilityRuntimeManifest = {
   environment: Record<string, string>; repeats: number; cohort: ReliabilityAttempt['cohort'];
   /** Opt-in ordinary SYSTEM baseline, using the real bootstrap; negative-gate fixtures leave this off. */
   bootstrapLaunchGates?: boolean;
+  /** Stream compact workflow records through onTurn, retaining only the current conversation until delivery finalization. */
+  streamTurnEvidence?: boolean;
 };
 export type RuntimeWireReceipt = { messages: unknown; at: number; receiptId: string; path: string; payloadHash: string };
 export type RuntimeReplayFailure = { reason: 'press_target_not_delivered' | 'press_target_ambiguous' | 'turn_unreached'; turnIndex: number; blockedByTurnIndex?: number };
@@ -74,6 +77,8 @@ export type RuntimeTurnEvidence = {
   reviewState: { before: RuntimeReviewState; after: RuntimeReviewState };
   businessSnapshot?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
   businessSnapshotBefore?: { business: Record<string, JsonRow[]>; collectionState: Record<string, JsonRow[]> };
+  businessSnapshotFormat?: 'changed-rows-v1';
+  businessTableDigests?: { before: Record<string, string>; after: Record<string, string> };
   workflowPreviews?: JsonRow[];
   workflowTasks?: JsonRow[];
   replayFailure?: RuntimeReplayFailure;
@@ -284,6 +289,32 @@ export function runtimeBusinessEffects(before: Record<string, JsonRow[]>, after:
   });
 }
 
+function businessTableDigests(snapshot: NonNullable<RuntimeTurnEvidence['businessSnapshot']>): Record<string, string> {
+  return Object.fromEntries([...new Set([...Object.keys(snapshot.business), ...Object.keys(snapshot.collectionState)])].map(table => {
+    const rows = new Map<string, JsonRow>();
+    for (const row of [...(snapshot.business[table] ?? []), ...(snapshot.collectionState[table] ?? [])]) rows.set(String(row.id), { ...rows.get(String(row.id)), ...row });
+    return [table, reliabilityDigest([...rows.values()].sort((a, b) => String(a.id).localeCompare(String(b.id))))];
+  }));
+}
+
+/** The existing effect observer supplies changed ids; gold selects only records needed at later task boundaries. */
+export function compactRuntimeTurnEvidence<T extends RuntimeTurnEvidence>(evidence: T, records: GoldRecord[], created = new Set<string>()): T {
+  for (const effect of evidence.unintendedEffects ?? []) if (effect.kind.endsWith('.create') || effect.kind.startsWith('ReimbursementDraftAction.')) created.add(`${effect.kind.split('.')[0]}:${effect.recordId}`);
+  if (evidence.businessSnapshotFormat === 'changed-rows-v1') return evidence;
+  const before = evidence.businessSnapshotBefore ?? { business: {}, collectionState: {} };
+  const after = evidence.businessSnapshot ?? { business: {}, collectionState: {} };
+  const keys = new Set((evidence.unintendedEffects ?? []).map(effect => `${effect.kind.split('.')[0]}:${effect.recordId}`));
+  const createdTables = new Set(records.filter(record => record.ref.startsWith('$created:')).map(record => record.table));
+  for (const key of created) if (createdTables.has(key.split(':')[0] as GoldRecord['table']) || key.startsWith('ReimbursementDraftAction:')) keys.add(key);
+  for (const row of after.collectionState.ReimbursementDraftAction ?? []) keys.add(`ReimbursementDraftAction:${row.id}`);
+  const select = (snapshot: typeof after) => ({ business: workflowSnapshotRows(snapshot.business, records, keys),
+    collectionState: snapshot.collectionState.ReimbursementDraftAction?.length
+      ? { ReimbursementDraftAction: snapshot.collectionState.ReimbursementDraftAction.filter(row => keys.has(`ReimbursementDraftAction:${row.id}`)) } : {} });
+  return { ...evidence, businessSnapshotFormat: 'changed-rows-v1',
+    businessTableDigests: { before: businessTableDigests(before), after: businessTableDigests(after) },
+    businessSnapshotBefore: select(before), businessSnapshot: select(after) };
+}
+
 export async function resetRuntimeAfterHook<T>(onBeforeReset: ((conversation: ReliabilityFixture, attemptId: string) => Promise<void> | void) | undefined,
   conversation: ReliabilityFixture, attemptId: string, reset: () => Promise<T>): Promise<T> {
   await onBeforeReset?.(conversation, attemptId);
@@ -431,6 +462,15 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
     inputKind?: RuntimeReplayAction['type']; action?: RuntimeReplayAction; pressFrom?: string; previewEntries: JsonRow[]; lineUserId: string; infrastructureError?: unknown } | undefined;
   let turnStates: Array<NonNullable<typeof active>> = [];
   const turnEvidence: RuntimeTurnEvidence[] = [];
+  const createdEvidenceRecords = new Set<string>();
+  const saveEvidence = async (input: RuntimeTurnEvidence) => {
+    const records = (current as RuntimeReplayFixture | undefined)?.evidenceRecords;
+    const evidence = captureRuntimeTurnEvidence(records ? compactRuntimeTurnEvidence(input, records, createdEvidenceRecords) : input);
+    const previous = turnEvidence.findIndex(item => item.scenarioId === evidence.scenarioId && item.repeat === evidence.repeat && item.turnIndex === evidence.turnIndex);
+    if (previous < 0) turnEvidence.push(evidence); else turnEvidence[previous] = evidence;
+    await hooks.onTurn?.(evidence);
+    return evidence;
+  };
   const runtimeDiagnostics: Array<{ scenarioId: string; repeat: number; phase: string; stage: string; error: ReturnType<typeof runtimeFailureDiagnostic> }> = [];
   let stage = 'initializing';
   // Opt-in pacing between turns/fixtures, to stay under a Bedrock account's throttling in a real
@@ -523,10 +563,13 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       ? ['th', 'en'].flatMap(language => buildReimbursementDraftMessages({ status: 'preview', preview: entry.preview }, webBaseUrl ?? '', selectedCompanyId, [], undefined, language))
       : buildExpenseActionCard(entry.preview, undefined, entry.preview.language ?? 'th', webBaseUrl));
     const businessEffects = runtimeBusinessEffects(state.before, after);
-    const changedRecords = new Set(businessEffects.map(effect => `${effect.kind.split('.')[0]}:${effect.recordId}`));
-    const beforeBusiness = Object.fromEntries(Object.entries(runtimeBusinessSnapshot(state.before).business)
-      .map(([table, rows]) => [table, rows.filter(record => changedRecords.has(`${table}:${record.id}`))]));
-    const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
+    const beforeSnapshot = runtimeBusinessSnapshot(state.before);
+    if (!(row as RuntimeReplayFixture).evidenceRecords) {
+      const changedRecords = new Set(businessEffects.map(effect => `${effect.kind.split('.')[0]}:${effect.recordId}`));
+      beforeSnapshot.business = Object.fromEntries(Object.entries(beforeSnapshot.business).map(([table, rows]) => [table, rows.filter(record => changedRecords.has(`${table}:${record.id}`))]));
+      beforeSnapshot.collectionState = {};
+    }
+    const evidence = await saveEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
       inputKind: state.inputKind ?? (turn.attachmentIds.length ? 'camera' : 'message'), ...(state.action ? { action: state.action } : {}), ...(state.pressFrom ? { pressFrom: state.pressFrom } : {}),
       companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
       webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: state.acceptedAt, modelWorkCompletedAtMs: state.completedAt,
@@ -538,17 +581,16 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       reservations: holds.map(({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt }: any) =>
         ({ id, invocationKey, sourceRoute, stepKind, bucket, status, upperBoundSatang, settledCostSatang, usageBasis, pricingSnapshot, evidenceJson, createdAt, dispatchedAt, settledAt })),
       reviewState: { before: state.reviewBefore, after: await readReviewState() }, businessSnapshot,
-      businessSnapshotBefore: { business: beforeBusiness, collectionState: {} }, workflowPreviews, workflowTasks, unintendedEffects: businessEffects, delivery });
+      businessSnapshotBefore: beforeSnapshot, workflowPreviews, workflowTasks, unintendedEffects: businessEffects, delivery });
     if (evidence.reviewState.before.truncated || evidence.reviewState.after.truncated) state.errors.push('review_state_truncated');
-    const previous = turnEvidence.findIndex(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === turnIndex);
-    if (previous < 0) turnEvidence.push(evidence); else turnEvidence[previous] = evidence;
-    await hooks.onTurn?.(evidence);
-    return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
+    const trace: ReliabilityTurnTrace = { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
       sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: state.acceptedAt, outcome, taskId: new Set(taskIds).size === 1 ? taskIds[0] : null,
       askedSlots: [...new Set(state.missing)], tools: state.tools, facts: runtimeSourceFacts(state.results, cited), effects: businessEffects,
       modelCalls: calls.length + unreported.length, costSatang: unreported.length || calls.some((item: any) => item.usageBasis !== 'PROVIDER_REPORTED') ? null : calls.reduce((sum: number, item: any) => sum + item.costSatang, 0),
       modelWorkCompletedAtMs: state.completedAt, delivery, falseRefusalOrHandoff: false, validationFailures: state.errors,
       criticalErrors: state.critical, versions: manifest.versions };
+    if (manifest.streamTurnEvidence) { state.before = {}; state.results = []; state.responses = []; state.previewEntries = []; state.toolResults = []; state.gatewayResponses = []; state.usageIds.clear(); }
+    return trace;
   };
   const adapter: ReliabilityReplayAdapter = {
     // A local LINE sink cannot prove native delivery even when the selected Gateway uses a live model.
@@ -560,7 +602,8 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       // before the very first one, exactly where a between-conversations pause belongs.
       if (app && CONVERSATION_PAUSE_MS > 0) { stage = 'conversation_pause'; await delay(CONVERSATION_PAUSE_MS); }
       if (app) { await app.close(); app = undefined; } active = undefined;
-      turnStates = []; blockedPress = undefined; executionFailed = false;
+      turnStates = []; blockedPress = undefined; executionFailed = false; createdEvidenceRecords.clear();
+      if (manifest.streamTurnEvidence) turnEvidence.length = 0;
       current = row; repeat = ordinal; snapshot = manifest.snapshots[row.fixture.sourceSnapshot];
       attemptId = runtimeAttemptId(row.id, ordinal);
       selectedCompanyId = row.fixture.company; selectedActorId = row.fixture.actor;
@@ -681,12 +724,12 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
           previewEntries: [], lineUserId: actorContext.lineUserId } as NonNullable<typeof active>;
         active = state; turnStates.push(state);
         const delivery = runtimeDeliveryEvidence([], [], []), businessSnapshot = runtimeBusinessSnapshot(before);
-        const evidence = captureRuntimeTurnEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
+        await saveEvidence({ scenarioId: row.id, repeat, turnIndex, user: turn.user, attachmentIds: turn.attachmentIds,
           inputKind: state.inputKind, action, ...(actorKey ? { pressFrom: actorKey } : {}), ...(replayFailure ? { replayFailure } : {}),
           companyId: selectedCompanyId, sourceSnapshot: row.fixture.sourceSnapshot, snapshotDigest: manifest.snapshotDigests[row.fixture.sourceSnapshot]!,
           webBaseUrl: app.get(AppConfigService).webBaseUrl, acceptedAtMs: at, modelWorkCompletedAtMs: null, receipts: [], toolResults: [], gatewayResponses: [],
           webhookEvents: [], providerUsage: [], reservations: [], reviewState: { before: review, after: review }, businessSnapshot, unintendedEffects: [], delivery });
-        turnEvidence.push(evidence); await hooks.onTurn?.(evidence);
+        if (manifest.streamTurnEvidence) state.before = {};
         return { inputDigest: reliabilityDigest({ user: turn.user, attachmentIds: turn.attachmentIds }), scopeDigest: reliabilityDigest(row.fixture),
           sourceSnapshot: row.fixture.sourceSnapshot, acceptedAtMs: at, outcome: replayFailure ? 'unreached' : 'web_handoff', taskId: null, askedSlots: [], tools: [], facts: [], effects: [],
           modelCalls: 0, costSatang: 0, modelWorkCompletedAtMs: null, delivery, falseRefusalOrHandoff: false, validationFailures: replayFailure ? [replayFailure.reason] : [], criticalErrors: [], versions: manifest.versions };
@@ -739,9 +782,13 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
         const outcomes = await client.lineTurnOutcome.findMany({ where: { webhookEventId: { in: state.eventIds } } });
         trace.delivery = runtimeDeliveryEvidence(plans, outcomes, receipts);
         const evidence = turnEvidence.find(item => item.scenarioId === row.id && item.repeat === repeat && item.turnIndex === index);
-        if (evidence) evidence.delivery = structuredClone(trace.delivery);
+        if (evidence) {
+          evidence.delivery = structuredClone(trace.delivery);
+          if (manifest.streamTurnEvidence) await hooks.onTurn?.(evidence);
+        }
       }
       if (!executionFailed) await hooks.onConversationComplete?.(row, attemptId);
+      if (manifest.streamTurnEvidence) turnEvidence.length = 0;
     },
   };
   for (const method of ['reset', 'turn', 'finalize'] as const) instrumentRuntimeMethod(adapter, method, async (original, args) => {

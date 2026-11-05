@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, createReadStream, fsyncSync, mkdirSync, openSync, readFileSync, statSync, truncateSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createInterface } from 'node:readline';
 import { assertIsolatedReplayDatabase } from '../line-ai-reliability-runtime';
 import { providerCostExact } from './scorer';
 
@@ -72,7 +73,7 @@ export async function captureSpend(client: EvalPgClient, databaseUrl: string, sp
   for (const event of usage.rows) latestUsage.set(event.invocationKey, event);
   const latest = new Map<string, Record<string, any>>();
   for (const row of reservations.rows) latest.set(row.invocationKey, row);
-  const ledger = new Map<string, Record<string, any>>(readJsonLines<Record<string, any>>(spendPath).map(entry => [entry.invocationKey, entry]));
+  const ledger = new Map<string, Record<string, any>>(readJsonLines<Record<string, any>>(spendPath, true).map(entry => [entry.invocationKey, entry]));
   const capturedAt = new Date().toISOString();
   const entries = [...latest.values()].map(row => {
     const prior = ledger.get(row.invocationKey);
@@ -108,9 +109,46 @@ export async function captureSpend(client: EvalPgClient, databaseUrl: string, sp
   return { totalSatang: String(total), invocationKeys: keys };
 }
 
-export function readJsonLines<T>(path: string): T[] {
-  try { return readFileSync(path, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as T); }
+export function readJsonLines<T>(path: string, recoverTrailing = false): T[] {
+  try {
+    const text = readFileSync(path, 'utf8'), lines = text.split('\n'), rows: T[] = [];
+    let offset = 0;
+    for (const [index, line] of lines.entries()) {
+      if (!line) continue;
+      try { rows.push(JSON.parse(line) as T); }
+      catch (error) {
+        if (!recoverTrailing || index !== lines.length - 1 || text.endsWith('\n')) throw error;
+        truncateSync(path, offset); return rows;
+      }
+      offset += Buffer.byteLength(line) + 1;
+    }
+    if (recoverTrailing && text && !text.endsWith('\n')) appendFileSync(path, '\n');
+    return rows;
+  }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+}
+
+/** Reads legacy multi-megabyte turn lines one at a time, repairing only a torn final append. */
+export async function* streamJsonLines<T>(path: string): AsyncGenerator<T> {
+  let size: number;
+  try { size = statSync(path).size; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+  const input = createReadStream(path), lines = createInterface({ input, crlfDelay: Infinity });
+  let offset = 0;
+  try {
+    for await (const line of lines) {
+      const start = offset; offset += Buffer.byteLength(line) + 1;
+      if (!line) continue;
+      let row: T;
+      try { row = JSON.parse(line) as T; }
+      catch (error) {
+        if (offset <= size) throw new Error('EVAL_CHECKPOINT_JSONL_CORRUPT', { cause: error });
+        truncateSync(path, start); return;
+      }
+      yield row;
+    }
+    if (offset > size) appendFileSync(path, '\n');
+  } finally { lines.close(); input.destroy(); }
 }
 
 export function appendJsonLine(path: string, value: unknown): void {

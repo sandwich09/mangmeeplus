@@ -52,6 +52,7 @@ const EXPECTED_IDS = [
   'free-expense-month-summary-zero-model',
   'stranger-text-before-door-zero-model',
   'claim-multi-message-accepted-provenance',
+  'claim-options-only-turn-preserves-amount',
 ];
 
 describe('LINE AI whole-chain acceptance catalog', () => {

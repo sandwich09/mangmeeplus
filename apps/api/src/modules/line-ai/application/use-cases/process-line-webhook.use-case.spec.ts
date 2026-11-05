@@ -16086,13 +16086,15 @@ async function claimFragmentHarness() {
   (h.adapter as any).authority = async () => authority;
   const options = h.action().commandJson.accepted.options;
   let turn = 0;
-  const run = async (text: string, fragment: (evidence: any, candidates: any) => any, operation: 'CREATE' | 'UPDATE' = 'CREATE') => {
+  const run = async (text: string, fragment: (evidence: any, candidates: any) => any, operation: 'CREATE' | 'UPDATE' = 'CREATE', optionsOnly = false) => {
     const action = h.action();
     const evidence = (await createLineAiInputEvidence({ turnKey: `m4-${turn++}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
     const candidates = (await extractValueCandidatesV2(evidence, '2026-11-05'))!;
     authority = { ctx: h.ctx, owner: { owner: h.owner, epoch: 1, taskRevision: options.taskRevision }, evidence, candidates,
       acceptedRequest: { requestId: 'm4-claim' }, writeIndexes: [0], continuedActionId: action.id };
-    return h.adapter.preview(h.ctx, { action: { actionId: action.id, taskId: action.taskId, operation },
+    const ctx = { ...h.ctx, inputEvidence: evidence };
+    if (optionsOnly) return h.adapter.getOptions(ctx, { operation, subrequestIndex: 0, actionId: action.id, taskId: action.taskId });
+    return h.adapter.preview(ctx, { action: { actionId: action.id, taskId: action.taskId, operation },
       proposal: { schemaVersion: 1, taskId: action.taskId, taskRevision: options.taskRevision, operation, ...fragment(evidence, candidates) } }, operation);
   };
   return { ...h, run, options };
@@ -16337,4 +16339,210 @@ it('LINE shows 30 bill rows and an honest remainder plus the web link at 31 and 
     assert.ok(reply.includes('/companies/company-1/expenses/expense-1'));
     assert.ok(!reply.includes('• สินค้า31 '));
   }
+});
+
+
+it('M4 round 2 get_options preserves the last preview missing fields', async () => {
+  const h = await claimFragmentHarness();
+  const first = await h.run('สร้างใบเบิกค่าแท็กซี่ให้หน่อย', evidence => ({ fields: {},
+    lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่') } }],
+  }));
+  const missing = (first.data as any).reimbursementDraft.fieldPaths;
+  assert.ok(missing.includes('lineChanges.0.values.amount'));
+  assert.ok(missing.includes('lineChanges.0.values.attachmentChoiceId'));
+  const read = await h.run('เลือกหลักฐาน', () => assert.fail('options read makes no proposal'), 'CREATE', true);
+  assert.deepEqual((read.data as any).reimbursementDraft.fieldPaths, missing);
+  assert.deepEqual(h.action().commandJson.fieldPaths, missing);
+});
+
+it('M4 round 2 exact four turns save a claim when the model only reads options for the amount', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 5, 5) });
+  const h = await claimFragmentHarness();
+  h.ctx.permissions = h.ctx.permissions.filter((permission: string) => permission !== 'reimbursement.finance_review');
+  const category = h.options.choices.find((choice: any) => choice.kind === 'CATEGORY' && choice.raw.key === 'travel');
+  const first = await h.run('สร้างใบเบิกค่าแท็กซี่ให้หน่อย', evidence => ({ fields: {},
+    lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่'), categoryChoiceId: category.choiceId } }],
+  }));
+  assert.deepEqual((first.data as any).reimbursementDraft.fieldPaths, ['lineChanges.0.values.amount', 'lineChanges.0.values.attachmentChoiceId']);
+  h.action().commandJson.accepted.admission = { requestId: 'typed-start', subrequestIndex: 0 };
+  const second = await h.run('250 บาท วันนี้', () => assert.fail('the observed model only calls get_options'), 'CREATE', true);
+  assert.equal((second.data as any).reimbursementDraft.status, 'needs_fields');
+  const values = h.action().commandJson.accepted.proposal.lineChanges[0].values;
+  assert.equal(values.amount?.value, '250');
+  assert.equal(values.incurredDate?.value, '2026-11-05');
+  assert.equal(values.description.value, 'ค่าแท็กซี่');
+  const third = await h.run('ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน', evidence => ({
+    fields: { reason: claimEvidenceValue(evidence, 'ไปส่งเอกสารให้ร้าน') },
+    lineChanges: [{ operation: 'ADD', values: { description: 'ค่าแท็กซี่', amount: '250', categoryChoiceId: category.choiceId, attachmentChoiceId: null } }],
+  }));
+  const draft = (third.data as any).reimbursementDraft;
+  assert.equal(draft.status, 'preview', JSON.stringify(third));
+  assert.equal(draft.preview.after.amount, '250.0000');
+  assert.equal(draft.preview.after.lines[0].incurredDate, '2026-11-05');
+  assert.equal(draft.preview.after.lines[0].categoryKey, 'travel');
+  assert.equal(draft.preview.after.lines[0].categoryLabel, 'ค่าเดินทาง');
+  assert.equal(draft.preview.after.reason, 'ไปส่งเอกสารให้ร้าน');
+  assert.equal(draft.preview.after.lines[0].attachmentId, undefined);
+  assert.equal(h.action().commandJson.lines[0].attachmentId, null);
+  const { buildReimbursementDraftMessages } = await import('../../domain/logic/line-reimbursement-draft-card.logic');
+  const messages = buildReimbursementDraftMessages(draft, 'https://app.example.com', h.ctx.companyId);
+  const confirm = messages.flatMap(message => flexButtons(message)).find((button: any) => new URLSearchParams(button.action?.data).get('action') === 'reimbursement_draft_confirm')!.action;
+  assert.equal(confirm.label, 'บันทึกร่าง');
+  let writes = 0;
+  const action = h.action();
+  h.repo.markDraftActionLineDelivered = async (input: any) => input.confirmationDigest === action.confirmationDigest;
+  h.repo.applyDraftActionAtomic = async (input: any) => {
+    assert.equal(input.previewRevision, action.previewRevision);
+    assert.equal(input.confirmationDigest, action.confirmationDigest);
+    writes++;
+    const request = { id: action.id, requestNo: 'CL-001', status: 'DRAFT', amount: action.commandJson.header.amount, currency: 'THB', updatedAt: new Date() };
+    action.status = 'APPLIED';
+    action.resultJson = { actionId: action.id, operation: 'CREATE', requestId: request.id, committedState: 'DRAFT', amount: request.amount, currency: 'THB', committedAt: new Date().toISOString() };
+    return { kind: 'applied', action, request };
+  };
+  assert.equal(writes, 0);
+  const result = await h.service.confirm({ ...h.input, control: confirm.data, deliveryPlanId: 'm4-round2-delivered' });
+  assert.equal(result.status, 'applied', JSON.stringify(result));
+  assert.equal(writes, 1);
+  assert.equal(h.action().status, 'APPLIED', 'REIMBURSEMENT_DRAFT_SAVED');
+});
+
+for (const optionsOnly of [false, true]) it(`M4 round 2 signed webhook saves the four-turn claim with ${optionsOnly ? 'options-only fallback' : 'Tier 0 capture'}`, async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 5, 5) });
+  const texts = ['สร้างใบเบิกค่าแท็กซี่ให้หน่อย', '250 บาท วันนี้', 'ไม่มีใบเสร็จ หมวดค่าเดินทาง เหตุผลไปส่งเอกสารให้ร้าน'];
+  const claim = manualClaimHarness();
+  claim.ctx.permissions = claim.ctx.permissions.filter((permission: string) => permission !== 'reimbursement.finance_review');
+  claim.owner.chatKeyHash = chatKeyHashOf(BASE_EVENT);
+  await claim.seed();
+  const route = { status: 'ROUTED', intent: 'REIMBURSEMENT_REQUEST_START', language: 'th', confidence: 1,
+    reimbursementHints: { description: 'ค่าแท็กซี่' },
+    semanticSubrequests: [{ index: 0, kind: 'write', goal: texts[0], writeIntent: 'REIMBURSEMENT_REQUEST_START', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+  const h = await fx21bBoundWebhook(t, { source: `m4-round2-${optionsOnly}`, messageText: texts[0], route }, claim.ctx.permissions);
+  h.flow.config.lineAiReimbursementDraftWriteEnabled = true;
+  h.flow.reimbursementDrafts = claim.service;
+  h.flow.reimbursementAdapter = optionsOnly ? new Proxy(claim.adapter, { get(target, key) {
+    if (key === 'answerLine') return async (input: any) => input.text === texts[1] ? null : target.answerLine(input);
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) : claim.adapter;
+  let authority: any, writes = 0, saved: any;
+  const calls: Array<{ text: string; tools: string[] }> = [];
+  (claim.adapter as any).authority = async () => authority;
+  claim.repo.markDraftActionLineDelivered = async (input: any) => input.confirmationDigest === claim.action().confirmationDigest;
+  claim.repo.findRequestById = async () => saved ?? null;
+  claim.repo.applyDraftActionAtomic = async (input: any) => {
+    const action = claim.action();
+    assert.equal(input.previewRevision, action.previewRevision);
+    assert.equal(input.confirmationDigest, action.confirmationDigest);
+    assert.equal(input.owner.actorUserId, claim.ctx.userId);
+    writes++;
+    saved = { ...action.commandJson, ...action.commandJson.header, id: action.id, requestNo: 'CL-001', status: 'DRAFT', updatedAt: new Date() };
+    action.status = 'APPLIED'; action.requestId = saved.id;
+    action.resultJson = { actionId: action.id, operation: 'CREATE', requestId: saved.id, committedState: 'DRAFT', amount: saved.amount, currency: 'THB', committedAt: new Date().toISOString() };
+    return { kind: 'applied', action, request: saved };
+  };
+  h.flow.aiGateway.requestLineTurn = async (request: any) => {
+    authority = { ctx: { ...claim.ctx, requestId: request.requestId }, owner: { owner: claim.owner, epoch: 1, taskRevision: 0 },
+      evidence: request.inputEvidence, candidates: request.valueCandidates, acceptedRequest: request, writeIndexes: [0], continuedActionId: claim.action().id };
+    const ctx = { ...claim.ctx, inputEvidence: request.inputEvidence };
+    const action = claim.action();
+    const results = [await claim.adapter.getOptions(ctx, { operation: 'CREATE', subrequestIndex: 0, actionId: action.id, taskId: action.taskId })];
+    if (request.messageText !== texts[1]) {
+      const options = claim.action().commandJson.accepted.options;
+      const category = options.choices.find((choice: any) => choice.kind === 'CATEGORY' && choice.raw.key === 'travel');
+      const first = request.messageText === texts[0];
+      results.push(await claim.adapter.preview(ctx, { action: { actionId: action.id, taskId: action.taskId, operation: 'CREATE' },
+        proposal: { schemaVersion: 1, taskId: action.taskId, taskRevision: options.taskRevision, operation: 'CREATE',
+          fields: first ? {} : { reason: claimEvidenceValue(request.inputEvidence, 'ไปส่งเอกสารให้ร้าน') },
+          lineChanges: [{ operation: 'ADD', values: { description: first ? claimEvidenceValue(request.inputEvidence, 'ค่าแท็กซี่') : 'ค่าแท็กซี่',
+            categoryChoiceId: category.choiceId, ...(first ? {} : { amount: '250', attachmentChoiceId: null }) } }] } }, 'CREATE'));
+    }
+    calls.push({ text: request.messageText, tools: results.map(result => result.toolName) });
+    const result = results.at(-1)!;
+    return { requestId: request.requestId, replyText: 'เลือกหลักฐานหรือรายการที่จะเบิกได้เลยค่ะ', sourceRefs: result.sourceRefs,
+      sourceLabels: [], webLinks: [], intent: 'unknown', agent: 'general', durationMs: 0, refused: false,
+      toolsInvoked: results.map(item => item.toolName), toolCalls: results.map(item => ({ name: item.toolName, status: item.status, durationMs: 0, ...(item.errorCode ? { errorCode: item.errorCode } : {}) })),
+      semanticCoverage: [{ index: 0, status: 'needs_user' }] };
+  };
+  await h.execute(texts[0]);
+  assert.deepEqual(claim.action().commandJson.fieldPaths, ['lineChanges.0.values.amount', 'lineChanges.0.values.attachmentChoiceId']);
+  await h.execute(texts[1]);
+  const collected = claim.action().commandJson.accepted.proposal.lineChanges[0].values;
+  assert.equal(collected.amount.value, '250');
+  assert.equal(collected.incurredDate.value, '2026-11-05');
+  assert.equal(collected.amount.proof.refs[0].rawSha256, (await createLineAiInputEvidence({ turnKey: 'm4-proof', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: texts[1] }] }))!.inputEvidence.parts[0].rawSha256);
+  const amountCall = calls.find(call => call.text === texts[1]);
+  assert.deepEqual(amountCall?.tools ?? [], optionsOnly ? ['reimbursement.draft.get_options'] : []);
+  await h.execute(texts[2]);
+  assert.equal(claim.action().status, 'PREVIEW', JSON.stringify(h.delivered.at(-1)));
+  const preview = claim.action().previewJson.after;
+  assert.equal(preview.amount, '250.0000'); assert.equal(preview.incurredDate, '2026-11-05');
+  assert.equal(preview.lines[0].categoryLabel, 'ค่าเดินทาง'); assert.equal(preview.reason, 'ไปส่งเอกสารให้ร้าน');
+  assert.equal(claim.action().commandJson.lines[0].attachmentId, null);
+  const confirm = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).find((button: any) => new URLSearchParams(button.action?.data).get('action') === 'reimbursement_draft_confirm')!.action;
+  assert.equal(confirm.label, 'บันทึกร่าง'); assert.equal(writes, 0);
+  await h.execute('บันทึกร่าง', confirm.data);
+  assert.equal(writes, 1);
+  assert.equal(saved.status, 'DRAFT', 'REIMBURSEMENT_DRAFT_SAVED');
+  assert.equal(saved.amount, '250.0000');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /บันทึกร่างใบเบิกแล้ว/);
+});
+
+it('M4 round 2 pending typed answers keep question command line identity and owner guards', async () => {
+  for (const mode of ['question', 'command', 'multiple-lines', 'linked-source', 'expired', 'other-owner'] as const) {
+    const h = await claimFragmentHarness();
+    await h.run('ค่าแท็กซี่', evidence => ({ fields: {}, lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่') } }] }));
+    const accepted = h.action().commandJson.accepted;
+    if (mode === 'multiple-lines') accepted.proposal.lineChanges.push(structuredClone(accepted.proposal.lineChanges[0]));
+    if (mode === 'linked-source') accepted.proposal.lineChanges[0].values.linkedExpenseChoiceId = accepted.options.choices.find((choice: any) => choice.kind === 'SOURCE').choiceId;
+    if (mode === 'expired') accepted.options.expiresAt = new Date(Date.now() - 1).toISOString();
+    const text = mode === 'question' ? 'ใบเบิกคืออะไร' : mode === 'command' ? 'เบิกค่าแท็กซี่ 250' : '250 บาท วันนี้';
+    const evidence = (await createLineAiInputEvidence({ turnKey: `m4-guard-${mode}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const before = structuredClone(h.action());
+    assert.equal(await h.adapter.answerLine({ ...h.input, ownerEpoch: mode === 'other-owner' ? 2 : 1, evidence, text }), null, mode);
+    assert.deepEqual(h.action(), before, mode);
+  }
+});
+
+it('M4 round 2 no receipt uses the existing choice and records its reason from the answering turn', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 5, 5) });
+  const h = await claimFragmentHarness();
+  h.repo.findPolicy = async () => ({ currency: 'THB', requireReceipt: true, allowMissingReceiptWithReason: true, status: 'ACTIVE' });
+  const category = h.options.choices.find((choice: any) => choice.kind === 'CATEGORY');
+  await h.run('ค่าแท็กซี่ 250 บาท วันนี้', (evidence, candidates) => {
+    const amount = candidates.amounts[0];
+    return { fields: {}, lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่'), categoryChoiceId: category.choiceId,
+      amount: { value: '250', proof: { kind: 'USER_TEXT', refs: [amount.source], candidateId: amount.candidateId } } } }] };
+  });
+  const answer = async (text: string, kind: 'receipt' | 'reason') => {
+    const evidence = (await createLineAiInputEvidence({ turnKey: `m4-missing-${kind}`, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
+    const input = { ...h.input, evidence, text };
+    return { result: await (kind === 'receipt' ? h.adapter.answerLine(input) : h.adapter.answerReason(input)), evidence };
+  };
+  const receipt = await answer('ไม่มีใบเสร็จ', 'receipt');
+  assert.equal(receipt.result?.status, 'needs_fields');
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.attachmentChoiceId, null);
+  assert.deepEqual(h.action().commandJson.fieldPaths, ['fields.missingReceiptReason']);
+  assert.equal(h.action().commandJson.accepted.proposal.fields.missingReceiptReason, undefined, 'no receipt is not an invented reason');
+  const reason = await answer('ร้านไม่ออกใบเสร็จ', 'reason');
+  assert.equal(reason.result?.status, 'preview', JSON.stringify(reason.result));
+  if (reason.result?.status !== 'preview') assert.fail('missing-receipt answer must finish collection');
+  assert.equal(reason.result.preview.after.missingReceiptReason, 'ร้านไม่ออกใบเสร็จ');
+  const proof = h.action().sourceProofJson.receipts.find((item: any) => item.fieldPath === 'fields.missingReceiptReason');
+  assert.equal(proof.proof.kind, 'USER_TEXT');
+  assert.equal(proof.proof.refs[0].rawSha256, reason.evidence.parts[0].rawSha256);
+  assert.notEqual(proof.proof.refs[0].rawSha256, receipt.evidence.parts[0].rawSha256);
+});
+
+it('M4 round 2 get_options cannot capture pending values from retained earlier-turn evidence', async () => {
+  const h = await claimFragmentHarness();
+  await h.run('ค่าแท็กซี่', evidence => ({ fields: {}, lineChanges: [{ operation: 'ADD', values: { description: claimEvidenceValue(evidence, 'ค่าแท็กซี่') } }] }));
+  const oldEvidence = (await createLineAiInputEvidence({ turnKey: 'm4-retained-old', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: '900 บาท วันนี้' }] }))!.inputEvidence;
+  const oldCandidates = await extractValueCandidatesV2(oldEvidence, '2026-11-05');
+  const resolveAuthority = (h.adapter as any).authority;
+  (h.adapter as any).authority = async (...args: any[]) => ({ ...await resolveAuthority(...args), evidence: oldEvidence, candidates: oldCandidates });
+  const result = await h.run('ข้อมูลที่ขาดคืออะไร', () => assert.fail('no proposal'), 'CREATE', true);
+  assert.equal((result.data as any).reimbursementDraft.status, 'needs_fields');
+  assert.ok((result.data as any).reimbursementDraft.fieldPaths.includes('lineChanges.0.values.amount'));
+  assert.equal(h.action().commandJson.accepted.proposal.lineChanges[0].values.amount, undefined);
 });

@@ -45,6 +45,7 @@ import { LineReimbursementDraftService } from './line-reimbursement-draft.servic
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const OPTION_TTL_MS = 10 * 60_000;
+const NO_RECEIPT_ANSWER = /^(?:ไม่มีใบเสร็จ(?:$|[\s,，])|no receipt(?:$|[\s,.]))/iu;
 const PAGE_SIZE = 20;
 const OPTION_FAMILIES = ['branch', 'requester', 'category', 'source', 'attachment', 'target', 'line'] as const;
 type OptionFamily = typeof OPTION_FAMILIES[number];
@@ -293,13 +294,25 @@ export class LineReimbursementDraftAdapterService {
     if (newLine || selected.length === 1) return this.choose({ ...input, control: { action: 'reimbursement_choice',
       ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: newLine ? 'new-line' : selected[0]!.choiceId } });
     if (/^(?:เลือกสาขา|เลือกผู้ขอเบิก|เบิกบิล|Choose (?:branch|requester):|Claim expense:)/u.test(text)) return this.draftService.get({ ...input, actionId: active.id });
-    if (accepted.admission?.source !== 'workflow') return null;
+    const lines = accepted.proposal.lineChanges?.filter(change => change.operation === 'ADD') ?? [];
+    if (lines.length > 1 || lines.some(line => line.values.linkedExpenseChoiceId)) return null;
+    const fields = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
+    if (NO_RECEIPT_ANSWER.test(text) && isPendingFieldAnswer(text, 'claim')) {
+      if (fields.some(path => path.endsWith('.attachmentChoiceId')) && /^(?:ไม่มีใบเสร็จ(?: ขอเบิกรายการใหม่นี้)?|no receipt(?: for this new claim item)?)$/iu.test(text))
+        return this.choose({ ...input, control: { action: 'reimbursement_choice',
+          ...this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto).control, choice: 'no-receipt' } });
+      return null; // A combined answer keeps its other fields on the proposal path.
+    }
     const view = this.publicOptions(accepted.options, accepted.proposal, accepted.awaitingPhoto);
     if (view.collection.lineChosen || !accepted.options.selected.branchChoiceId || !accepted.options.selected.requesterChoiceId || accepted.awaitingPhoto) return null;
     if (!isPendingFieldAnswer(text, 'claim')) return null;
     const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
     const parsed = candidates && await parseManualClaimLine(input.evidence, candidates);
     if (!parsed) return this.draftService.get({ ...input, actionId: active.id });
+    // A pending answer fills the missing line fields, keeping already accepted facts.
+    if (lines[0]?.values.description) delete parsed.values.description;
+    if (lines[0]?.values.amount) delete parsed.values.amount;
+    if (!Object.keys(parsed.values).length && !parsed.amountChoices.length) return null;
     const candidateValues = Object.fromEntries([...candidates!.amounts.map(item => [item.candidateId, item.value]),
       ...candidates!.dates.map(item => [item.candidateId, item.isoDate]), ...candidates!.periods.map(item => [item.candidateId, item.fromDate])]);
     const candidateSources = Object.fromEntries([...candidates!.amounts, ...candidates!.dates, ...candidates!.periods].map(item => [item.candidateId, item.source]));
@@ -514,6 +527,19 @@ export class LineReimbursementDraftAdapterService {
         }
         return this.domainResult('reimbursement.draft.get_options', key, result);
       }
+      // A tool-only options turn must retain the same current-turn answer as Tier 0.
+      // Retained task evidence can belong to an older turn and cannot fill a pending field.
+      const part = authority.evidence.parts.length === 1 ? authority.evidence.parts[0] : undefined;
+      if (key.operation === 'CREATE' && input.operation === 'CREATE' && part
+        && authority.evidence.joinedSha256 === ctx.inputEvidence?.joinedSha256) {
+        const answerInput = { ctx: authority.ctx, owner, ownerEpoch: authority.owner.epoch, evidence: authority.evidence, text: part.rawText };
+        const answer = await this.answerLine(answerInput) ?? await this.answerReason(answerInput);
+        if (answer) {
+          if (answer.status !== 'needs_fields') return this.domainResult('reimbursement.draft.get_options', key, answer);
+          active = await this.drafts.active(authority.ctx, actionOwner);
+          if (!active || active.id !== key.actionId) return this.staleAction('reimbursement.draft.get_options', authority.ctx, authority.owner, key.actionId);
+        }
+      }
     } else {
       const taskId = stableUuid(['reimbursement-draft-task', owner, authority.retainedTaskRef
         ?? [authority.acceptedRequest['requestId'], authority.evidence.turnKey, ctx.budgetGrantV2!.attemptKey, input.subrequestIndex]]);
@@ -541,12 +567,18 @@ export class LineReimbursementDraftAdapterService {
       const prior = active ? this.accepted(active) : undefined;
       // Keep proven intake facts even if the planner times out after this options read.
       const proposal = prior?.proposal ?? this.intakeProposal(authority, options);
-      const accepted: Accepted = { schemaVersion: 1, options, admission: { requestId: String(authority.acceptedRequest['requestId']),
+      const accepted: Accepted = { schemaVersion: 1, options, admission: { ...prior?.admission, requestId: String(authority.acceptedRequest['requestId']),
         subrequestIndex: input.subrequestIndex, ...(authority.retainedTaskRef ? { taskId: authority.retainedTaskRef.taskId, taskSubrequestIndex: authority.retainedTaskRef.subrequestIndex } : {}) },
         ...(proposal ? { proposal } : {}), ...(prior?.awaitingPhoto ? { awaitingPhoto: true } : {}),
         ...(prior?.suggestedCategoryChoiceId ? { suggestedCategoryChoiceId: prior.suggestedCategoryChoiceId } : {}), ...(prior?.receipts ? { receipts: prior.receipts } : {}) };
-      const saved = await this.drafts.saveTrustedOptions({ ctx: authority.ctx, owner: actionOwner, key, accepted,
-        fieldPaths: proposal ? this.missingFields(proposal) : [] });
+      let fieldPaths = prior?.proposal ? (active!.commandJson as { fieldPaths?: string[] }).fieldPaths ?? []
+        : proposal ? this.missingFields(proposal) : [];
+      if (proposal?.operation === 'CREATE') {
+        const hydrated = await this.hydrateCreate(authority.ctx, options, proposal, this.proposalReceipts(proposal),
+          accepted.awaitingPhoto, accepted.admission?.source === 'workflow');
+        fieldPaths = hydrated.missing;
+      }
+      const saved = await this.drafts.saveTrustedOptions({ ctx: authority.ctx, owner: actionOwner, key, accepted, fieldPaths });
       if (!('id' in saved)) return this.domainResult('reimbursement.draft.get_options', key, saved);
       if (saved.status === 'PREVIEW' || saved.status === 'APPLIED') {
         const result = await this.draftService.get({ ctx: authority.ctx, owner, ownerEpoch: authority.owner.epoch, actionId: saved.id });
@@ -607,6 +639,13 @@ export class LineReimbursementDraftAdapterService {
       // The new fragment was verified against THIS turn above. Prior fields were verified when saved;
       // their exact historical spans are deliberately absent from this turn, so do not reparse them as new input.
       const proposal = this.mergeProposal(accepted.proposal, parsed);
+      const missing = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
+      const noReceipt = authority.evidence.joinedSha256 === ctx.inputEvidence?.joinedSha256
+        && authority.evidence.parts.length === 1 && NO_RECEIPT_ANSWER.test(authority.evidence.parts[0]!.rawText.trim())
+        && isPendingFieldAnswer(authority.evidence.parts[0]!.rawText, 'claim');
+      const lines = proposal.lineChanges?.filter(change => change.operation === 'ADD') ?? [];
+      if (operation === 'CREATE' && noReceipt && missing.some(path => path.endsWith('.attachmentChoiceId')) && lines.length === 1
+        && !lines[0]!.values.linkedExpenseChoiceId && lines[0]!.values.attachmentChoiceId === undefined) lines[0]!.values.attachmentChoiceId = null;
       if (!proposal || proposal.taskId !== active.taskId || proposal.taskRevision !== options.taskRevision
         || proposal.operation !== operation) throw new Error('INVALID_REIMBURSEMENT_PROVENANCE');
       if (authority.allowedSourceRefs && this.proposalReceipts(parsed).some(receipt => receipt.proof.kind === 'USER_TEXT'

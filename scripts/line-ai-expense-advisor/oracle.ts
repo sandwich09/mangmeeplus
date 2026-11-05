@@ -133,6 +133,23 @@ function linkedToGoldParent(table: string, row: Record<string, unknown>, parents
   return false;
 }
 
+/** Keep gold records and the same parent/child relationships the oracle actually checks. */
+export function workflowSnapshotRows(snapshot: BusinessRows, records: GoldRecord[], keys: Set<string>): BusinessRows {
+  const selected = new Set(keys);
+  for (const record of records) if (record.ref.startsWith('$seed:')) selected.add(`${record.table}:${record.ref.slice(6)}`);
+  let previousSize = -1;
+  while (selected.size !== previousSize) {
+    previousSize = selected.size;
+    const parents = Object.entries(snapshot).flatMap(([table, rows]) => rows.filter(row => selected.has(`${table}:${row.id}`)).map(row => ({ table, row })));
+    for (const [table, rows] of Object.entries(snapshot)) for (const row of rows) {
+      if (linkedToGoldParent(table, row, parents, snapshot, true)
+        || table === 'ExpenseLine' && selected.has(`ExpenseRecord:${row.expenseId}`)
+        || table === 'ExpenseCategory' && parents.some(parent => parent.table === 'ExpenseRecord' && parent.row.expenseCategoryId === row.id)) selected.add(`${table}:${row.id}`);
+    }
+  }
+  return Object.fromEntries(Object.entries(snapshot).map(([table, rows]) => [table, rows.filter(row => selected.has(`${table}:${row.id}`))]).filter(([, rows]) => rows.length));
+}
+
 /** Resolve explicit seed/created records and one-based child ordinals without accepting orphan rows. */
 export function resolveGoldRecord(record: GoldRecord, snapshot: BusinessRows, records: GoldRecord[], bindings: Record<string, string> = {}): Record<string, unknown> | undefined {
   const rows = snapshot[record.table] ?? [];

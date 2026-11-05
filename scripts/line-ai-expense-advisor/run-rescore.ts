@@ -30,7 +30,7 @@
  * CLI: --classifier-labels=messages opts into message-only W1 and the separate button baseline.
  */
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,6 +161,8 @@ function corpusForRescore(corpus: Corpus, evidencePath: string, turnEvidence: re
 async function main(): Promise<void> {
   const evidencePath = process.env['MANGMEE_EVAL_EVIDENCE'];
   assert.ok(evidencePath, 'MANGMEE_EVAL_EVIDENCE is required (path to a previous run-real.ts *.evidence.json)');
+  assert.ok(statSync(evidencePath).size <= 128 * 1024 * 1024,
+    'EVAL_EVIDENCE_TOO_LARGE: resume its progress.json to compact the turns checkpoint before rescoring');
 
   const saved = JSON.parse(readFileSync(evidencePath, 'utf8')) as SavedEvidenceFile;
   assert.ok(Array.isArray(saved.turnEvidence) && saved.turnEvidence.length > 0, `${evidencePath}: no turnEvidence to rescore`);

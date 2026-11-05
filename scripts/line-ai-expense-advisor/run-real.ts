@@ -58,11 +58,11 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runLineReliabilityRuntime, validateRuntimeFixtureOperations, type ReliabilityRuntimeManifest, type RuntimeReplayFixture, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
+import { compactRuntimeTurnEvidence, runLineReliabilityRuntime, validateRuntimeFixtureOperations, type ReliabilityRuntimeManifest, type RuntimeReplayFixture, type RuntimeSourceSnapshot, type RuntimeTurnEvidence } from '../line-ai-reliability-runtime';
 import { reliabilityDigest, type ReliabilityFixture } from '../line-ai-reliability-fixtures';
 import { validateCorpus, validateWorkflowCorpus, flattenTurns, selectConversations, parseFailedConversationIds, type Corpus, type EvalCompany, type WorkflowCorpus } from './types';
 import { buildCompanySeed, buildWorkflowSeed, resolveWorkflowActor, type CompanySeed, type WorkflowSeed } from './seed';
@@ -74,7 +74,7 @@ import { filterPermissionsByEntitlement } from '../../apps/api/src/modules/emplo
 import { TIER_FEATURE_PRESETS } from '../../packages/contracts/src/menu-entitlements';
 import { renderUserText } from './template';
 import { renderReport, renderWorkflowReport } from './report';
-import { appendJsonLine, capRejectionCount, captureSpend, installEvalGuard, readJsonLines, type EvalPgClient } from './eval-spend';
+import { appendJsonLine, capRejectionCount, captureSpend, installEvalGuard, readJsonLines, streamJsonLines, type EvalPgClient } from './eval-spend';
 import { validateWorkflowPreflight } from './run-preflight';
 import { workflowAttemptsFromEvidence } from './run-rescore';
 
@@ -132,6 +132,26 @@ function completeAttemptEvidence(rows: RuntimeTurnEvidence[], complete: Record<s
     const attemptId = (row as RuntimeTurnEvidence & { attemptId?: string }).attemptId;
     return attemptId && complete[row.scenarioId] === attemptId;
   });
+}
+
+/** Compact old checkpoints while streaming them, before a resumed run appends any new turn. */
+export async function readWorkflowTurnEvidence(path: string, corpus: WorkflowCorpus, rewrite = false) {
+  const rows = new Map<string, RuntimeTurnEvidence & { attemptId?: string }>(), created = new Map<string, Set<string>>();
+  const temporary = `${path}.compact.tmp`;
+  if (rewrite) writeFileSync(temporary, '');
+  try {
+    for await (const row of streamJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(path)) {
+      const conversation = corpus.conversations.find(conversation => conversation.id === row.scenarioId);
+      assert.ok(conversation, `EVAL_CHECKPOINT_CONVERSATION_UNKNOWN:${row.scenarioId}`);
+      const attempt = `${row.scenarioId}\u0000${row.attemptId}`;
+      if (!created.has(attempt)) created.set(attempt, new Set());
+      const compact = compactRuntimeTurnEvidence(row, conversation.tasks.flatMap(task => task.goldTerminal.records), created.get(attempt));
+      rows.set(`${attempt}\u0000${row.turnIndex}`, compact);
+      if (rewrite) appendJsonLine(temporary, compact);
+    }
+    if (rewrite) renameSync(temporary, path);
+    return [...rows.values()];
+  } finally { if (rewrite) rmSync(temporary, { force: true }); }
 }
 
 export type SubsetSelection = { onlyIds: string[]; description: string };
@@ -233,6 +253,7 @@ export function buildWorkflowReplay(corpus: WorkflowCorpus, seed: WorkflowSeed, 
       actors: Object.fromEntries(conversation.actors.map(actor => [actor.key, resolveWorkflowActor(actor, seed)])) };
     return {
       id: conversation.id, familyId: conversation.id, split: 'development', language: 'th', paraphrase: false, fixedRegression: false,
+      evidenceRecords: conversation.tasks.flatMap(task => task.goldTerminal.records),
       capabilities: ['C01'], provenance: { kind: 'synthetic', sourceId: conversation.id, consentRef: null, reviewedBy: null, reviewedAt: null },
       fixture: { clock: now.toISOString(), timezone: 'Asia/Bangkok', company: company.companyId,
         actor: first.userId ?? `unlinked-${firstActor.key}`, channelKind: 'USER', messagingChannelId: company.messagingChannelId,
@@ -298,6 +319,7 @@ export async function runReal(dependencies: {
     if (fullCorpus.version === 2) validateWorkflowCorpus(fullCorpus);
     else validateCorpus(fullCorpus);
     if (fullCorpus.version === 2) writeFileSync(paths.spendPath, '', { flag: 'a' });
+    if (fullCorpus.version === 2 && resumePath) await readWorkflowTurnEvidence(paths.turnsPath, fullCorpus, true);
     const subset = resolveSubsetSelection(environment);
     const requested = fullCorpus.version === 2
       ? { ...fullCorpus, conversations: selectConversations(fullCorpus, subset?.onlyIds ?? null) }
@@ -322,11 +344,18 @@ export async function runReal(dependencies: {
         'apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts', 'apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts',
       ].map(sha256File)), registry: sha256File('packages/contracts/src/ai-tools.ts'), model: reliabilityDigest(model), price: sha256File('apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.ts') },
       apiPort: API_PORT, gatewayUrl, databaseUrl: databaseUrl.toString(), redisUrl,
+      ...(corpus.version === 2 ? { streamTurnEvidence: true } : {}),
       environment: { ...PRODUCTION_AI_ENV.api, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: DETERMINISTIC_FAMILIES }, repeats: 1, cohort: '1000', bootstrapLaunchGates: true,
     };
     const goldPass = await (dependencies.oracle ?? collectGoldResults)(REPO_ROOT, fullCorpus.version === 2 ? fullCorpus : requested, workflowSeed?.companies ?? companies, databaseUrl.toString(), redisUrl, secretsPath, now,
       () => capturePendingSpend().then(() => undefined));
-    const turnCounts = new Map<string, number>(), attemptByConversation = new Map<string, string>();
+    const turnCounts = new Map<string, Set<number>>(), attemptByConversation = new Map<string, string>(), createdRecords = new Map<string, Set<string>>();
+    const checkpointTurn = (evidence: RuntimeTurnEvidence, attemptId: string) => {
+      const attempt = `${evidence.scenarioId}\u0000${attemptId}`;
+      if (!createdRecords.has(attempt)) createdRecords.set(attempt, new Set());
+      const records = fullCorpus.version === 2 ? fullCorpus.conversations.find(row => row.id === evidence.scenarioId)!.tasks.flatMap(task => task.goldTerminal.records) : undefined;
+      appendJsonLine(paths.turnsPath, { ...(records ? compactRuntimeTurnEvidence(evidence, records, createdRecords.get(attempt)) : evidence), attemptId });
+    };
     let capReached = false;
     let capCount = await capRejectionCount(pg);
     let runtimeError: unknown;
@@ -345,14 +374,15 @@ export async function runReal(dependencies: {
       onTurn: async evidence => {
         const attemptId = attemptByConversation.get(evidence.scenarioId);
         assert.ok(attemptId, 'EVAL_ATTEMPT_MISSING');
-        appendJsonLine(paths.turnsPath, { ...evidence, attemptId });
-        turnCounts.set(evidence.scenarioId, (turnCounts.get(evidence.scenarioId) ?? 0) + 1);
+        checkpointTurn(evidence, attemptId);
+        if (!turnCounts.has(evidence.scenarioId)) turnCounts.set(evidence.scenarioId, new Set());
+        turnCounts.get(evidence.scenarioId)!.add(evidence.turnIndex);
         const next = await capRejectionCount(pg);
         if (next !== capCount) { capReached = true; capCount = next; throw new Error('EVAL_CAP_REACHED'); }
       },
       onConversationComplete: async (conversation, attemptId) => {
         await captureSpend(pg, databaseUrl.toString(), paths.spendPath, attemptId);
-        if (capReached || turnCounts.get(conversation.id) !== requested.conversations.find(row => row.id === conversation.id)?.turns.length) return;
+        if (capReached || turnCounts.get(conversation.id)?.size !== requested.conversations.find(row => row.id === conversation.id)?.turns.length) return;
         progress.completedConversationIds = [...new Set([...progress.completedConversationIds, conversation.id])];
         progress.completedAttempts[conversation.id] = attemptId;
         progress.inFlightConversationId = null; progress.inFlightAttemptId = null;
@@ -362,8 +392,9 @@ export async function runReal(dependencies: {
       : { records: [], turnEvidence: [], runtimeDiagnostics: [] };
     for (const evidence of result.turnEvidence) {
       const attemptId = attemptByConversation.get(evidence.scenarioId);
-      if (attemptId) appendJsonLine(paths.turnsPath, { ...evidence, attemptId });
+      if (attemptId) checkpointTurn(evidence, attemptId);
     }
+    if (fullCorpus.version === 2) result.turnEvidence.length = 0;
     for (const row of result.records.filter(row => row.error)) {
       progress.completedConversationIds = progress.completedConversationIds.filter(id => id !== row.scenarioId);
       delete progress.completedAttempts[row.scenarioId];
@@ -381,12 +412,15 @@ export async function runReal(dependencies: {
     }
     await capturePendingSpend();
     writeProgress(progressPath, progress);
-    const allEvidence = readJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(paths.turnsPath);
+    const allEvidence = fullCorpus.version === 2 ? await readWorkflowTurnEvidence(paths.turnsPath, fullCorpus)
+      : readJsonLines<RuntimeTurnEvidence & { attemptId?: string }>(paths.turnsPath);
     const completedEvidence = completeAttemptEvidence(allEvidence, progress.completedAttempts);
     const completedCorpus = { ...requested, conversations: requested.conversations.filter(row => progress.completedConversationIds.includes(row.id)) } as Corpus | WorkflowCorpus;
     const completedPositions = completedCorpus.conversations.flatMap(conversation => conversation.turns.map((_, turnIndex) => ({ conversation, turnIndex })));
     const actualModel = { ...model, modelIds: [...new Set(allEvidence.flatMap(row => (row.providerUsage as Array<{ modelId?: string }>).map(call => call.modelId).filter((id): id is string => !!id)))] };
-    const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]' };
+    const safeManifest = { ...manifest, databaseUrl: '[redacted]', gatewayUrl: '[redacted-local]', ...(fullCorpus.version === 2 ? {
+      snapshots: Object.fromEntries(Object.entries(manifest.snapshots).map(([key, snapshot]) => [key,
+        { ...snapshot, rows: undefined, rowCount: snapshot.rows.length, digest: manifest.snapshotDigests[key] }])) } : {}) };
     const spendLedger = new Map<string, any>();
     for (const entry of readJsonLines<any>(paths.spendPath)) spendLedger.set(entry.invocationKey, entry);
     const spend = [...spendLedger.values()].filter(entry => entry.scope !== 'previousRun');
