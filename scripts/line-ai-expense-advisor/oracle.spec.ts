@@ -351,3 +351,81 @@ describe('M3 round 3 opt-in actors and seller truncation', () => {
     assert.equal(seed.rows.filter(row => row.model === 'accountingCounterparty' && row.data.companyId === 'company-b' && row.data.displayName === 'ผู้ขายชื่อซ้ำ').length, 4);
   });
 });
+
+describe('created LINE claim gold', () => {
+  const claim = () => {
+    const task = { id: 'task', kind: 'reimbursement_claim', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+      goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [{ table: 'ReimbursementRequest', ref: '$created:task',
+        amount: '250.00', reason: 'ไปส่งเอกสารให้ร้าน', categoryName: 'ค่าเดินทาง' }] } } as any;
+    const business = {
+      ReimbursementRequest: [{ id: 'claim', companyId: 'company-c', status: 'DRAFT', amount: '250.0000', reason: 'ไปส่งเอกสารให้ร้าน', categoryKey: 'category-c-travel', categoryLabelSnapshot: null as string | null }],
+      ReimbursementLine: [{ id: 'line', companyId: 'company-c', reimbursementRequestId: 'claim', lineNo: 1, amount: '250.0000',
+        incurredDate: new Date('2026-11-06T04:00:00Z'), categoryLabelSnapshot: 'ค่าเดินทาง' as string | null, description: 'ค่าแท็กซี่' }],
+      ReimbursementDraftAction: [{ id: 'action', companyId: 'company-c', status: 'APPLIED', requestId: 'claim' }],
+    };
+    const preview = { action: 'reimbursement_draft_confirm', target: '$created:task' };
+    const turns = [{ turnIndex: 0, businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], preview: { ...preview, target: 'claim' } },
+      { turnIndex: 1, businessSnapshot: { business, collectionState: {} }, unintendedEffects: [
+        { kind: 'ReimbursementDraftAction.update', recordId: 'action' }, { kind: 'ReimbursementLine.create', recordId: 'line' },
+        { kind: 'ReimbursementRequest.create', recordId: 'claim' },
+      ] }] as any;
+    return { task, business, turns, preview };
+  };
+
+  it('matches the reported 250-baht claim and accepts its created line and applied draft action', async () => {
+    const { task, turns, preview } = claim();
+    const expected = { wrongApplied: 0, wrongPreview: 0, terminalMatches: true, businessChanges: 3 };
+    assert.deepEqual(checkWorkflowGold(task, turns, preview), expected);
+    const { compactRuntimeTurnEvidence } = await import('../line-ai-reliability-runtime');
+    const created = new Set<string>();
+    assert.deepEqual(checkWorkflowGold(task, turns.map((turn: any) => compactRuntimeTurnEvidence(turn, task.goldTerminal.records, created)), preview), expected);
+  });
+
+  it('uses request snapshot, first matching line snapshot, then the seeded category key', () => {
+    const { task, business, turns } = claim();
+    business.ReimbursementRequest[0].categoryLabelSnapshot = 'ค่าเดินทาง';
+    business.ReimbursementLine[0].categoryLabelSnapshot = 'ค่าออฟฟิศ';
+    assert.equal(checkWorkflowGold(task, turns).terminalMatches, true);
+    business.ReimbursementRequest[0].categoryLabelSnapshot = null;
+    business.ReimbursementLine.unshift({ ...business.ReimbursementLine[0], id: 'later', lineNo: 2, categoryLabelSnapshot: 'ค่าเดินทาง' });
+    assert.equal(checkWorkflowGold(task, turns).terminalMatches, false, 'lineNo 1 takes precedence over the array order');
+    business.ReimbursementLine.splice(0, 1);
+    business.ReimbursementLine[0].categoryLabelSnapshot = null;
+    assert.equal(checkWorkflowGold(task, turns).terminalMatches, true);
+    business.ReimbursementRequest[0].categoryKey = 'category-c-office';
+    assert.equal(checkWorkflowGold(task, turns).terminalMatches, false, 'a different category key cannot satisfy the travel gold');
+  });
+
+  it('rejects new or changed lines during seeded claim approval and later approval of a previously created claim', () => {
+    for (const ref of ['$seed:claim', '$created:previous-task']) for (const operation of ['create', 'update']) {
+      const { task, business, turns } = claim();
+      task.kind = 'approvals';
+      task.goldTerminal = { effect: 'REIMBURSEMENT_APPROVED', records: [{ table: 'ReimbursementRequest', ref, status: 'APPROVED' }] };
+      business.ReimbursementRequest[0].status = 'APPROVED';
+      turns[1].unintendedEffects = [{ kind: 'ReimbursementRequest.update', recordId: 'claim' }, { kind: `ReimbursementLine.${operation}`, recordId: 'line' }];
+      assert.equal(checkWorkflowGold(task, turns, undefined, undefined, { 'ReimbursementRequest:$created:previous-task': 'claim' }).wrongApplied, 1);
+    }
+  });
+
+  it('rejects an orphan line, early writes and a line update outside the created-line exception', () => {
+    const { task, business, turns } = claim();
+    business.ReimbursementLine[0].reimbursementRequestId = 'other';
+    assert.equal(checkWorkflowGold(task, turns).wrongApplied, 1);
+    business.ReimbursementLine[0].reimbursementRequestId = 'claim';
+    turns[1].unintendedEffects[1].kind = 'ReimbursementLine.update';
+    assert.equal(checkWorkflowGold(task, turns).wrongApplied, 1);
+    turns[1].unintendedEffects[1].kind = 'ReimbursementLine.create';
+    turns[0].businessSnapshot = turns[1].businessSnapshot;
+    turns[0].unintendedEffects = turns[1].unintendedEffects;
+    turns[1].unintendedEffects = [];
+    assert.equal(checkWorkflowGold(task, turns).wrongApplied, 3);
+  });
+
+  it('continues to count claim writes as wrong when the free-shop gold refuses the request', () => {
+    const { task, business, turns } = claim();
+    for (const rows of Object.values(business)) for (const row of rows) row.companyId = 'company-a';
+    task.goldTerminal = { effect: 'REFUSED', records: [] };
+    delete task.confirmTurn;
+    assert.equal(checkWorkflowGold(task, turns).wrongApplied, 3);
+  });
+});

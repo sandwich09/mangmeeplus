@@ -16975,10 +16975,13 @@ it('M4 round 3 combined claim answer reaches the confirm card and the fourth pre
   flow.reimbursementDrafts = claim.service; flow.reimbursementAdapter = claim.adapter;
   flow.contextV2 = { projection: async () => ({ tasks: [] }), save: async () => true };
   flow.deliverRequiredMessages = async (_event: unknown, messages: any[]) => cards.push(messages);
+  const terminal = r6EventLog(prisma);
   const send = async (text: string) => {
+    const webhookEventId = `combined-${cards.length}`;
     const inputEvidence = (await createLineAiInputEvidence({ turnKey: `combined-${cards.length}`, parts: [{ partId: 'part-0',
       eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
-    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `combined-${cards.length}`, messageText: text, inputEvidence });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId, messageText: text, inputEvidence });
+    await terminal(webhookEventId, 'clarification_required');
   };
   await send('250 บาท วันนี้');
   assert.equal(claim.action().commandJson.accepted.proposal.lineChanges[0].values.amount.value, '250');
@@ -17166,6 +17169,7 @@ it('M4 round 3 ambiguous claim amount delivers the existing signed picker throug
   flow.contextV2 = { projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, tasks: [] }), createTurn: async () => ({ id: 'amount-turn' }), save: async () => true };
   flow.expenseActions = target.actions;
   await fx20RealLineDelivery(t, flow, prisma, delivered);
+  const terminal = r6EventLog(prisma);
   await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'ambiguous-claim-picker', messageText: 'ยอด 1,877 บาท', inputEvidence: target.toolCtx.inputEvidence });
   const message = delivered.at(-1)?.[0];
   assert.ok(message, JSON.stringify(h.replies));
@@ -17175,6 +17179,7 @@ it('M4 round 3 ambiguous claim amount delivers the existing signed picker throug
   assert.ok(buttons.every((button: URLSearchParams) => button.get('action') === 'wf_open' && button.get('sig')));
   assert.doesNotMatch(JSON.stringify(message), /ข้อความจากโมเดล/);
   assert.equal(target.writes.length, 0);
+  await terminal('ambiguous-claim-picker', 'clarification_required');
 });
 
 it('M4 round 3 claim payment uses the same amount target guard before requesting the transfer slip', async () => {
@@ -17643,4 +17648,130 @@ it('M4 round 5 invalid legacy user evidence cannot bypass the named-record guard
   const result = await h.tool.execute({ ...h.ctx, branchIds: ['branch-1'], locale: 'th-TH', chatKeyHash: 'm5-chat', groundingText: 'ลบบิลเลขที่ ทดสอบ-0002\u0000' },
     { action: 'DELETE_DRAFT', expenseId: 'wrong' });
   assert.equal((result.data as any).preview, undefined); assert.deepEqual(h.previewed, []);
+});
+
+function r6EventLog(prisma: any) {
+  const rows = new Map<string, any>();
+  const find = prisma.client.lineWebhookEventLog.findUnique;
+  prisma.client.lineWebhookEventLog.findUnique = async (query: any) => {
+    const row = await find(query);
+    return row ? { ...row, ...rows.get(query.where.webhookEventId) } : row;
+  };
+  const update = prisma.client.lineWebhookEventLog.updateMany;
+  prisma.client.lineWebhookEventLog.updateMany = async (query: any) => {
+    const result = await update(query);
+    if (result.count === 1 && query.where.webhookEventId) {
+      const row = rows.get(query.where.webhookEventId) ?? { status: 'received', processedAt: null, payloadJson: { text: 'retained input' } };
+      Object.assign(row, query.data); rows.set(query.where.webhookEventId, row);
+    }
+    return result;
+  };
+  return async (id: string, status: string) => {
+    const row = rows.get(id);
+    assert.equal(row?.status, status);
+    assert.notEqual(row.status, 'received');
+    assert.ok(row.processedAt instanceof Date);
+    assert.equal(row.payloadJson, (await import('../../../../generated/prisma/client')).Prisma.DbNull);
+  };
+}
+
+it('R6 M3-expense_submit-permission delivers the R9-pass refusal once and finishes the event', async () => {
+  const h = await b4WorkflowHarness();
+  const terminal = r6EventLog(h.flow.prisma);
+  h.event.messageText = 'ส่งตรวจรายจ่ายที่ยังเป็นร่าง';
+  h.setDecision({ label: 'expense_submit', confidence: 0.82 });
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, { ...h.ctx, permissions: ['line.ai.query', 'ai.tool.invoke'] }, null, h.open), true);
+  assert.equal(h.calls.length, 1); assert.equal(h.replies.length, 1);
+  assert.match(h.replies[0]!, /สิทธิ์/);
+  await terminal(h.event.webhookEventId, 'forbidden');
+});
+
+it('R6 classified module-disabled refusal finishes the event', async () => {
+  const h = await b4WorkflowHarness();
+  const terminal = r6EventLog(h.flow.prisma);
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, new Set(), h.open), true);
+  await terminal(h.event.webhookEventId, 'expense_module_unavailable');
+});
+
+it('R6 invalid and expired wf_choice finish with ask-again', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T05:00:00Z') });
+  for (const expired of [false, true]) {
+    const h = await b4WorkflowHarness();
+    h.setDecision({ confidence: 0.7 });
+    await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open);
+    const token = new URLSearchParams((h.sentMessages.at(-1) as any).quickReply.items.at(-1).action.data).get('token');
+    if (expired) t.mock.timers.tick(901_000);
+    const event = { ...h.event, webhookEventId: `r6-choice-${expired}`, workflowControl: { action: 'wf_choice', token: expired ? token : 'unknown', pick: 'other' } };
+    h.flow.boundConversations.set(event, h.flow.boundConversations.get(h.event));
+    const terminal = r6EventLog(h.flow.prisma);
+    assert.equal(await h.flow.handleWorkflowChoice(event, h.ctx, null), true);
+    assert.match(h.replies.at(-1)!, /พิมพ์บอกน้องมั่งมีอีกครั้ง/);
+    await terminal(event.webhookEventId, 'clarification_required');
+  }
+});
+
+it('R6 choice save failure finishes with ask-again', async () => {
+  const h = await b4WorkflowHarness();
+  const terminal = r6EventLog(h.flow.prisma);
+  h.flow.workflowChoiceStore = { save: async () => false };
+  h.setDecision({ confidence: 0.7 });
+  assert.equal(await h.flow.tryWorkflowClassify(h.event, h.ctx, null, h.open), true);
+  await terminal(h.event.webhookEventId, 'clarification_required');
+});
+
+it('R6 re-shown pending picker finishes the event without creating', async () => {
+  const h = await m4PickerHarness('expense_delete', true);
+  const terminal = r6EventLog(h.prisma);
+  assert.equal(await h.answer('1,000 บาท'), true);
+  assert.equal(h.created(), 0);
+  await terminal('picker-1,000 บาท', 'workflow_targets');
+});
+
+it('R6 disabled workflow button finishes both paid and free events', async () => {
+  for (const freeExpenseDrafts of [false, true]) {
+    const h = await b4WorkflowHarness();
+    const terminal = r6EventLog(h.flow.prisma);
+    h.event.workflowStart = 'expense_delete';
+    await (ProcessLineWebhookUseCase.prototype as any).handleWorkflowControl.call(h.flow, h.event, { ...h.ctx, freeExpenseDrafts }, freeExpenseDrafts ? null : new Set());
+    assert.equal(h.replies.length, 1);
+    await terminal(h.event.webhookEventId, 'expense_module_unavailable');
+  }
+});
+
+it('R6 unavailable workflow signing and an unbound classified claim finish their events', async () => {
+  for (const kind of ['secret', 'owner']) {
+    const h = await b4WorkflowHarness();
+    const terminal = r6EventLog(h.flow.prisma);
+    if (kind === 'secret') {
+      h.flow.config.aiGatewayInternalSecret = undefined;
+      h.event.workflowStart = 'reimbursement_submit';
+      await (ProcessLineWebhookUseCase.prototype as any).handleWorkflowControl.call(h.flow, h.event, h.ctx, null);
+      await terminal(h.event.webhookEventId, 'completed');
+    } else {
+      h.flow.boundConversations.delete(h.event);
+      await h.flow.startClassifiedWorkflow(h.event, h.ctx, null, 'reimbursement_claim', {});
+      await terminal(h.event.webhookEventId, 'completed');
+    }
+  }
+});
+
+it('R6 observed auditor submit refusal completes the webhook so replay cannot dispatch it again', async t => {
+  const h = await fx21bBoundWebhook(t, { source: 'r6-auditor-submit', messageText: 'ส่งตรวจรายจ่ายที่ยังเป็นร่าง', route: {} },
+    ['line.ai.query', 'ai.tool.invoke', 'expense.read']);
+  const terminal = r6EventLog(h.prisma);
+  const classify = await b4WorkflowHarness();
+  classify.setDecision({ label: 'expense_submit', confidence: 0.82 });
+  let calls = 0;
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => { calls++; return classify.flow.aiGateway.requestLineWorkflowClassify(); };
+  const event = await h.execute();
+  assert.equal(calls, 1);
+  assert.equal(h.delivered.length, 1);
+  assert.match(JSON.stringify(h.delivered), /สิทธิ์/);
+  assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
+  await terminal(event.webhookEventId, 'forbidden');
+  // The recovery/duplicate admission uses the same durable status, not the old received payload.
+  const row = await h.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId: event.webhookEventId } });
+  assert.equal(row.status, 'forbidden');
+  assert.equal(await h.flow.claimWebhookEvent(event.webhookEventId, event.lineUserId), false);
+  assert.equal(h.delivered.length, 1);
 });

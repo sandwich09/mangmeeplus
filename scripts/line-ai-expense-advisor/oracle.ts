@@ -116,6 +116,11 @@ function recordMatches(record: GoldRecord, row: Record<string, unknown>, snapsho
     const seededCategory = CATEGORIES.find(candidate => row.expenseCategoryId === `category-${String(row.companyId).replace('company-', '')}-${candidate.key}`);
     row = { ...row, description: row.description ?? line?.description, categoryName: row.categoryName ?? category?.name ?? seededCategory?.name };
   }
+  if (record.table === 'ReimbursementRequest') {
+    const line = (snapshot.ReimbursementLine ?? []).filter(candidate => candidate.reimbursementRequestId === row.id).sort((a, b) => Number(a.lineNo) - Number(b.lineNo))[0];
+    const seededCategory = CATEGORIES.find(candidate => typeof row.categoryKey === 'string' && row.categoryKey.endsWith(candidate.key));
+    row = { ...row, categoryName: row.categoryName ?? row.categoryLabelSnapshot ?? line?.categoryLabelSnapshot ?? seededCategory?.name };
+  }
   return Object.entries(record).every(([key, expected]) => ['table', 'ref', 'phase'].includes(key)
     || goldValue(row, key) === goldValue({ [key]: expected }, key));
 }
@@ -200,8 +205,11 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
       || bindings[`${record.table}:${record.ref}`] === effect.recordId))
       ?? records.find(record => record.table === table && record.ref === `$seed:${effect.recordId}`);
     if (explicit?.phase === 'collect' && turn.turnIndex < (task.confirmTurn ?? Infinity)) continue;
+    const createdClaimLine = effect.kind === 'ReimbursementLine.create' && records.some(record => record.table === 'ReimbursementRequest'
+      && record.ref.startsWith('$created:') && resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)?.id === row?.reimbursementRequestId
+      && turn.unintendedEffects.some(parent => parent.kind === 'ReimbursementRequest.create' && parent.recordId === row?.reimbursementRequestId));
     const allowed = turn.turnIndex === task.confirmTurn && (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'
-      || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business));
+      || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business, createdClaimLine));
     if (!allowed) wrongApplied++;
   }
   const previewTurn = window.find(turn => turn.turnIndex === (task.previewTurn ?? (task.confirmTurn ?? -1) - 1));

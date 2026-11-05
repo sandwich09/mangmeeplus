@@ -3879,12 +3879,17 @@ export class ProcessLineWebhookUseCase {
     workflow: LineWorkflowId, decision: Extract<LineWorkflowClassifyResponse, { status: 'CLASSIFIED' }>, evidence = event.inputEvidence): Promise<void> {
     if (!this.mayStartWorkflow(workflow, ctx, features)) {
       await this.deliverReply(event, features !== null && !features.has('expenses') ? EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)] : LINE_CLAIM_PICKER_COPY.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+      const moduleUnavailable = ctx.freeExpenseDrafts || features !== null && !features.has('expenses');
+      await this.updateEventLog(event.webhookEventId, moduleUnavailable ? 'expense_module_unavailable' : 'forbidden', undefined, ctx.companyId);
       return;
     }
     this.classifiedWorkflowStarts.set(event, workflow);
     if (workflow === 'reimbursement_claim') {
       const bound = this.boundConversations.get(event);
-      if (!bound || !this.reimbursementAdapter) return;
+      if (!bound || !this.reimbursementAdapter) {
+        await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+        return;
+      }
       const result = await this.reimbursementAdapter.startFromWorkflow(ctx, bound.owner, bound.epoch,
         { eventIdHash: deliveryHash(event.webhookEventId), evidence, slots: decision.slots });
       await this.deliverReimbursementCollection(event, ctx, result);
@@ -3908,7 +3913,11 @@ export class ProcessLineWebhookUseCase {
     const store = this.workflowChoices();
     const saved = await store.load(ctx.companyId, key);
     const bound = this.boundConversations.get(event);
-    const invalid = async () => { await this.deliverReply(event, 'พิมพ์บอกน้องมั่งมีอีกครั้งได้เลยค่ะ'); return true; };
+    const invalid = async () => {
+      await this.deliverReply(event, 'พิมพ์บอกน้องมั่งมีอีกครั้งได้เลยค่ะ');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return true;
+    };
     if (!saved || saved.userId !== ctx.userId || !bound || saved.ownerEpoch !== bound.epoch
       || control.pick !== 'other' && !saved.options.includes(control.pick)) return invalid();
     if (!await store.claimCurrent(ctx.companyId, key, saved.previewId)) return invalid();
@@ -3985,12 +3994,16 @@ export class ProcessLineWebhookUseCase {
       originalAcceptedAtMs: Math.min(...evidence.parts.map(part => part.acceptedAtMs)),
       originalBangkokDate: new Date(Math.min(...evidence.parts.map(part => part.acceptedAtMs))).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
       originalEventIdHash: evidence.parts[0]!.eventIdHash, classifierDecision: decision };
-    if (!await this.workflowChoices().save(saved)) { await this.deliverReply(event, 'พิมพ์บอกน้องมั่งมีอีกครั้งได้เลยค่ะ'); return true; }
+    if (!await this.workflowChoices().save(saved)) {
+      await this.deliverReply(event, 'พิมพ์บอกน้องมั่งมีอีกครั้งได้เลยค่ะ');
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+      return true;
+    }
     await this.deliverRequiredMessages(event, [{ type: 'text', text: options.length > 1 ? 'ต้องการทำเรื่องไหนคะ' : 'ต้องการทำเรื่องนี้ใช่ไหมคะ',
       quickReply: lineChoiceQuickReply([...options.map(id => ({ label: lineChatAction(id)?.title ?? 'สร้างใบเบิก', text: lineChatAction(id)?.title ?? 'สร้างใบเบิก',
         data: new URLSearchParams({ action: 'wf_choice', token, pick: id }).toString() })),
       { label: 'อย่างอื่น', text: 'อย่างอื่น', data: new URLSearchParams({ action: 'wf_choice', token, pick: 'other' }).toString() }]) }]);
-    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+    await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
     return true;
   }
 
@@ -4145,7 +4158,9 @@ export class ProcessLineWebhookUseCase {
 
   private async handleWorkflowControl(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null, slots: { search?: string; vendorName?: string } = {}): Promise<void> {
     if (ctx.freeExpenseDrafts || features !== null && !features.has('expenses')) {
-      await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)], lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }])); return;
+      await this.deliverReply(event, EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)], lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+      await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', undefined, ctx.companyId);
+      return;
     }
     const control = event.workflowControl;
     if (control?.action === 'wf_open') {
@@ -4164,7 +4179,9 @@ export class ProcessLineWebhookUseCase {
     const copy = expenseWorkflow ? LINE_EXPENSE_PICKER_COPY : LINE_CLAIM_PICKER_COPY;
     const secret = this.config.aiGatewayInternalSecret;
     if (!secret) { await this.deliverReply(event, copy.unavailable,
-      lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }])); return; }
+      lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+      return; }
     let result;
     try {
       if (expenseWorkflow) {
@@ -4198,7 +4215,7 @@ export class ProcessLineWebhookUseCase {
     }
     await this.deliverRequiredMessages(event, [buildClaimWorkflowPicker(result, workflow, secret,
       ctx.companyId, ctx.userId, this.config.webBaseUrl)]);
-    await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
+    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
   }
 
   private async handleExpenseActionPostback(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null): Promise<void> {
@@ -9657,7 +9674,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     });
     await this.updateEventLog(
       event.webhookEventId,
-      terminalStatusForLineTurn(turnResponse),
+      claimPickerMessage ? 'clarification_required' : terminalStatusForLineTurn(turnResponse),
       turnResponse.errorCode,
       companyId,
     );
