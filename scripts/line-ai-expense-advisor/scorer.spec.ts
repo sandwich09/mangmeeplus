@@ -732,3 +732,63 @@ it('M3 retains the existing W1 label denominator for Tier 0 buttons', () => {
     turns: [{ press: 'อนุมัติ', expect: { tier: 0, label: 'อนุมัติ', maxModelCalls: 0 } }] }] } as any;
   assert.deepEqual(scoreWorkflowCorpus({ corpus, attempts: [] }).W1, { passed: 0, total: 1 });
 });
+
+it('M3 round 3 excludes press labels from opt-in classifier W1 and checks the actual button baseline', () => {
+  const corpus = { version: 2, seed: 'new-corpus', status: 'draft', conversations: [{ id: 'typed', category: 'expense', journeyKind: 'typed', actors: [], tasks: [], turns: [
+    { user: 'อนุมัติใบเบิก', expect: { label: 'approvals' } }, { press: 'อนุมัติ', expect: { label: 'อนุมัติ' } },
+  ] }] } as any;
+  const turns = [0, 1].map(turnIndex => ({ attemptId: 'one', conversationId: 'typed', turnIndex, actorKey: 'owner', inputKind: turnIndex ? 'postback' : 'message',
+    calls: [], effects: [], businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], deliveredActions: [], latencyMs: null,
+    classifier: { label: turnIndex ? 'irrelevant-model-label' : 'approvals' }, ...(turnIndex ? { pressedLabel: 'อนุมัติ' } : {}) }));
+  const input = { corpus, classifierLabels: 'messages', attempts: [{ attemptId: 'one', conversationId: 'typed', complete: true, turns }] } as any;
+  const result = scoreWorkflowCorpus(input);
+  assert.deepEqual(result.W1, { passed: 1, total: 1 });
+  assert.deepEqual(result.buttonBaseline, { passed: 1, total: 1 });
+  turns[1].pressedLabel = 'ปุ่มอื่น'; assert.deepEqual(scoreWorkflowCorpus(input).buttonBaseline, { passed: 0, total: 1 });
+  assert.deepEqual(scoreWorkflowCorpus({ ...input, classifierLabels: undefined }).W1, { passed: 1, total: 2 });
+});
+
+it('M3 round 3 scores an earlier created record in a later task using conversation bindings', () => {
+  const first = { id: 'create', kind: 'reimbursement_claim', startTurn: 0, endTurn: 1, confirmTurn: 1, goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [{ table: 'ReimbursementRequest', ref: '$created:create', status: 'DRAFT' }] }, minimalTurns: 2, completable: true };
+  const later = { id: 'submit', kind: 'reimbursement_submit', startTurn: 2, endTurn: 3, confirmTurn: 3, goldTerminal: { effect: 'REIMBURSEMENT_SUBMITTED', records: [{ table: 'ReimbursementRequest', ref: '$created:create', status: 'PENDING_APPROVAL' }] }, minimalTurns: 2, completable: true };
+  const previews = [{ action: 'create', target: '$created:create' }, { action: 'submit', target: '$created:create' }];
+  const corpus = { version: 2, seed: 'new', status: 'draft', conversations: [{ id: 'c', category: 'claim', journeyKind: 'typed', actors: [], tasks: [later, first], turns: [
+    { user: 'สร้างใบเบิก', expect: { preview: previews[0] } }, { press: 'บันทึกร่าง', expect: {} }, { user: 'ส่งอนุมัติ', expect: { preview: previews[1] } }, { press: 'ส่งอนุมัติ', expect: {} },
+  ] }] } as any;
+  const turns = [0, 1, 2, 3].map(turnIndex => ({ attemptId: 'one', conversationId: 'c', turnIndex, actorKey: 'owner', inputKind: 'message', calls: [], effects: [], deliveredActions: [], latencyMs: null,
+    businessSnapshot: { business: { ReimbursementRequest: turnIndex ? [{ id: 'created', status: turnIndex === 3 ? 'PENDING_APPROVAL' : 'DRAFT' }] : [] }, collectionState: {} },
+    unintendedEffects: turnIndex === 1 ? [{ kind: 'ReimbursementRequest.create', recordId: 'created' }] : turnIndex === 3 ? [{ kind: 'ReimbursementRequest.update', recordId: 'created' }] : [],
+    ...(turnIndex % 2 === 0 ? { preview: { ...previews[turnIndex / 2], target: 'created' } } : {}), terminalEffect: turnIndex === 1 ? 'REIMBURSEMENT_DRAFT_SAVED' : turnIndex === 3 ? 'REIMBURSEMENT_SUBMITTED' : undefined }));
+  const result = scoreWorkflowCorpus({ corpus, attempts: [{ attemptId: 'one', conversationId: 'c', complete: true, turns }] } as any);
+  assert.deepEqual(result.W6, { wrongApplied: 0, wrongPreview: 0 }); assert.deepEqual(result.W3, { passed: 2, total: 2 });
+});
+
+it('M3 round 3 preserves legacy metrics for every visible workflow corpus', async () => {
+  const { readFileSync } = await import('node:fs'), { createHash } = await import('node:crypto');
+  const hashes = { 'oracle-sample': 'e39f9943c4c469b56d8a93f61a87b9cbd72797890a86c769aefee8e52cd6cb6c',
+    sample: '96109ae2b5640eaacd8cbec3742b10e30943a4adbe7b0658f20427ba41ff0640', tuning: 'f5ec5116b68195b2413e259f95c9714aeea4a777ad1582ed75b5c355401fd6b4' };
+  for (const [name, expected] of Object.entries(hashes)) {
+    const corpus = JSON.parse(readFileSync(new URL(`./corpus.workflow.${name}.json`, import.meta.url), 'utf8'));
+    const attempts = corpus.conversations.map((conversation: any) => ({ attemptId: 'complete', conversationId: conversation.id, complete: true,
+      turns: conversation.turns.map((turn: any, turnIndex: number) => ({ attemptId: 'complete', conversationId: conversation.id, turnIndex, actorKey: conversation.actors[0].key,
+        inputKind: turn.press ? 'postback' : 'message', calls: [], effects: [], businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], deliveredActions: [], deliveredText: 'รับทราบ',
+        latencyMs: 100, terminalEffect: 'ANSWERED', classifier: { label: turn.expect.label } })) }));
+    assert.equal(createHash('sha256').update(JSON.stringify(scoreWorkflowCorpus({ corpus, attempts }))).digest('hex'), expected, name);
+  }
+});
+
+it('M3 round 3 corpus scoring accepts only the correct named declined preview with zero writes', () => {
+  const task = { id: 'declined', kind: 'expense_pay', startTurn: 0, endTurn: 1, previewTurn: 0, goldTerminal: { effect: 'DECLINED', records: [] }, minimalTurns: 2, completable: true };
+  const preview = { action: 'pay', target: '$seed:expense', amount: '100.00' };
+  const corpus = { version: 2, seed: 'declined', status: 'draft', conversations: [{ id: 'declined', category: 'expense', journeyKind: 'typed', actors: [], tasks: [task],
+    turns: [{ user: 'จ่ายรายการนี้', expect: { preview } }, { press: 'ไม่ทำ', expect: { label: 'ไม่ทำ' } }] }] } as any;
+  const turns = [0, 1].map(turnIndex => ({ attemptId: 'one', conversationId: 'declined', turnIndex, actorKey: 'owner', inputKind: 'message', calls: [], effects: [],
+    businessSnapshot: { business: {}, collectionState: {} }, unintendedEffects: [], deliveredActions: [], latencyMs: null,
+    ...(turnIndex === 0 ? { preview: { ...preview, target: 'expense' } } : { terminalEffect: 'DECLINED' }) })) as any[];
+  const input = { corpus, attempts: [{ attemptId: 'one', conversationId: 'declined', complete: true, turns }] };
+  assert.deepEqual(scoreWorkflowCorpus(input).W6, { wrongApplied: 0, wrongPreview: 0 });
+  assert.deepEqual(scoreWorkflowCorpus(input).W3, { passed: 1, total: 1 });
+  turns[0].preview.target = 'other'; assert.equal(scoreWorkflowCorpus(input).W6.wrongPreview, 1);
+  turns[0].preview.target = 'expense'; turns[1].unintendedEffects = [{ kind: 'ExpenseRecord.delete', recordId: 'expense' }];
+  assert.equal(scoreWorkflowCorpus(input).W6.wrongApplied, 1);
+});

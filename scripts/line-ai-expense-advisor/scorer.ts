@@ -12,7 +12,7 @@
  *    ตรงกับผลของ gold query" / A1), plus the turn's tags (no_tool, must_answer, must_not_refuse,
  *    must_mention_any, must_not_claim, forbidden_tools).
  */
-import { checkWorkflowGold, knowledgeNumericFacts, resolveWorkflowDueDate } from './oracle';
+import { bindWorkflowCreatedReferences, checkWorkflowGold, knowledgeNumericFacts, resolveWorkflowDueDate } from './oracle';
 import { buildWorkflowSeed } from './seed';
 import { workflowMonthKey } from './template';
 import { resolveBusinessReadPeriod } from '../../apps/api/src/modules/line-ai/domain/logic/business-read-source.logic';
@@ -544,6 +544,7 @@ export type WorkflowTurnEvidence = {
   deliveredCards?: Array<{ id: string; version: number }>;
   toolCalls?: CapturedToolCall[];
   textModelAttempts?: number;
+  pressedLabel?: string;
   workflowKind?: string; targetId?: string; pickerTargets?: string[]; terminalEffect?: string; deadEnd?: boolean; tier?: 0 | 1 | 2;
 };
 
@@ -589,8 +590,8 @@ export function scoreWorkflowAnswer(expect: WorkflowTurn['expect'], evidence: {
   return { ok: reasons.length === 0, reasons };
 }
 
-export function scoreWorkflowTask(task: WorkflowTask, evidence: WorkflowTurnEvidence[], goldPreview?: Record<string, unknown>, now?: Date) {
-  return checkWorkflowGold(task, evidence, goldPreview, now);
+export function scoreWorkflowTask(task: WorkflowTask, evidence: WorkflowTurnEvidence[], goldPreview?: Record<string, unknown>, now?: Date, bindings?: Record<string, string>) {
+  return checkWorkflowGold(task, evidence, goldPreview, now, bindings);
 }
 
 export type WorkflowAttempt = { attemptId: string; complete: boolean; providerCostExact: string; customerSatang?: number; companyAbsorbedSatang?: number; turns?: WorkflowTurnEvidence[] };
@@ -612,6 +613,7 @@ export type WorkflowMetrics = {
   W14: { timeouts: number; calls: number }; W15: { rejectedAndCharged: number };
   cacheCohorts: Record<'cold' | 'warm' | 'mixed' | 'none', number>; attemptSpendExact: string;
   answerChecks?: Array<{ conversationId: string; turnIndex: number; ok: boolean; reasons: string[] }>;
+  buttonBaseline?: { passed: number; total: number };
 };
 const ratio = (passed: number, total: number) => ({ passed, total });
 const medianNumber = (numbers: number[], fraction: number) => {
@@ -630,13 +632,19 @@ export function scoreWorkflowCorpus(input: {
   corpus: WorkflowCorpus; attempts: WorkflowRunAttempt[]; baseline?: WorkflowRunAttempt[];
   advisorBefore?: { A2: number; A3: number }; advisorAfter?: { A2: number; A3: number };
   now?: Date;
+  /** Opt-in for new workflow evaluations; omitted preserves historical W1 bytes. */
+  classifierLabels?: 'messages';
 }): WorkflowMetrics {
   const latest = new Map<string, WorkflowRunAttempt>();
   for (const row of input.attempts) if (row.complete) latest.set(row.conversationId, row);
   const allTurns = [...latest.values()].flatMap(row => row.turns), conversations = input.corpus.conversations;
+  const bindings = new Map(conversations.map(conversation => [conversation.id, bindWorkflowCreatedReferences(conversation.tasks, latest.get(conversation.id)?.turns ?? [], input.now)]));
   const tasks = conversations.flatMap(conversation => conversation.tasks.map(task => ({ conversation, task,
     attempt: latest.get(conversation.id), turns: latest.get(conversation.id)?.turns.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn) ?? [] })));
-  const labelTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ turn, turnIndex, attempt: latest.get(conversation.id) }))).filter(row => row.turn.expect.label !== undefined);
+  const labelTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ turn, turnIndex, attempt: latest.get(conversation.id) })))
+    .filter(row => row.turn.expect.label !== undefined && (input.classifierLabels !== 'messages' || !row.turn.press));
+  const buttonTurns = conversations.flatMap(conversation => conversation.turns.map((turn, turnIndex) => ({ turn, turnIndex, attempt: latest.get(conversation.id) }))).filter(row => row.turn.press);
+  const buttonsPassed = buttonTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.pressedLabel === row.turn.press).length;
   const W1Passed = labelTurns.filter(row => row.attempt?.turns.find(turn => turn.turnIndex === row.turnIndex)?.classifier?.label === row.turn.expect.label).length;
   const W2Tasks = tasks.filter(({ task }) => task.kind !== 'advisor');
   const W2Passed = W2Tasks.filter(({ conversation, task, attempt, turns }) => {
@@ -644,10 +652,11 @@ export function scoreWorkflowCorpus(input: {
     return start?.workflowKind === task.kind && (!expected || start.targetId === expected || start.pickerTargets?.includes(expected));
   }).length;
   const taskScores = tasks.map(({ conversation, task, turns }) => ({ conversation, task, turns, score: scoreWorkflowTask(task, turns,
-    task.confirmTurn === undefined ? undefined : conversation.turns[task.confirmTurn - 1]?.expect.preview, input.now) }));
+    conversation.turns[task.previewTurn ?? (task.confirmTurn ?? -1) - 1]?.expect.preview, input.now, bindings.get(conversation.id)) }));
   const W3Tasks = tasks.filter(({ task }) => task.completable), W3Passed = W3Tasks.filter(({ task, turns }) => {
-    const preview = task.confirmTurn === undefined ? undefined : conversations.find(conversation => conversation.tasks.includes(task))?.turns[task.confirmTurn - 1]?.expect.preview;
-    const score = scoreWorkflowTask(task, turns, preview, input.now);
+    const conversation = conversations.find(conversation => conversation.tasks.includes(task))!;
+    const preview = conversation.turns[task.previewTurn ?? (task.confirmTurn ?? -1) - 1]?.expect.preview;
+    const score = scoreWorkflowTask(task, turns, preview, input.now, bindings.get(conversation.id));
     return turns.some(turn => turn.terminalEffect === task.goldTerminal.effect) && !turns.some(turn => turn.deadEnd) && score.terminalMatches && !score.wrongApplied && !score.wrongPreview;
   }).length;
   const turnDeltas = tasks.map(({ task, turns }) => turns.length - task.minimalTurns);
@@ -693,11 +702,12 @@ export function scoreWorkflowCorpus(input: {
   const answerChecks = answerTurns.map(({ conversation, turn, turnIndex }) => {
     const evidence = latest.get(conversation.id)?.turns.find(row => row.turnIndex === turnIndex);
     const actor = conversation.actors.find(row => row.key === (turn.as?.key ?? conversation.actors[0]?.key))!;
-    const dueDate = turn.expect.dueDate && seed && input.now ? resolveWorkflowDueDate(turn.expect.dueDate, seed.rows, seed.companies[actor.company].companyId, input.now) : undefined;
+    const dueDate = turn.expect.dueDate && seed && input.now && actor.kind !== 'unlinked' ? resolveWorkflowDueDate(turn.expect.dueDate, seed.rows, seed.companies[actor.company].companyId, input.now) : undefined;
     const periodKey = turn.expect.dueDate && input.now ? workflowMonthKey(input.now, turn.expect.dueDate.monthOffset) : undefined;
     return { conversationId: conversation.id, turnIndex, ...(evidence ? scoreWorkflowAnswer(turn.expect, evidence, { dueDate, periodKey }) : { ok: false, reasons: ['answer_evidence_missing'] }) };
   });
   return {
+    ...(input.classifierLabels === 'messages' ? { buttonBaseline: ratio(buttonsPassed, buttonTurns.length) } : {}),
     ...(answerChecks.length ? { answerChecks } : {}),
     W1: ratio(W1Passed, labelTurns.length), W2: ratio(W2Passed, W2Tasks.length), W3: ratio(W3Passed, W3Tasks.length),
     W4: { medianDelta: medianNumber(deltas, 0.5), p90Delta: medianNumber(deltas, 0.9) },

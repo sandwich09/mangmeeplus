@@ -100,7 +100,9 @@ export type Corpus = {
 };
 
 export type ActorRef = { key: string };
-export type Actor = { key: string; company: EvalCompany; role: EvalRole; branchScope: 'all' | { branches: string[] }; freeSourceDrafts?: true };
+export type MemberActor = { key: string; kind?: 'member' | 'creator-only'; company: EvalCompany; role: EvalRole; branchScope: 'all' | { branches: string[] }; freeSourceDrafts?: true };
+export type UnlinkedActor = { key: string; kind: 'unlinked'; company?: never; role?: never; branchScope?: never; freeSourceDrafts?: never };
+export type Actor = MemberActor | UnlinkedActor;
 export type KnowledgeGold = { cardId: string; version: number; requiredFacts: string[]; forbiddenFacts: string[]; allowedNumericFacts: string[] };
 export type DueDateGold = { formType: 'PND3' | 'PND53'; monthOffset: -1 | 0 | 1 };
 export type WorkflowFixtureOp =
@@ -126,7 +128,7 @@ export type WorkflowTerminalEffect = 'REIMBURSEMENT_DRAFT_SAVED' | 'REIMBURSEMEN
   | 'REIMBURSEMENT_CANCELLED' | 'REIMBURSEMENT_PAID' | 'EXPENSE_MARKED_READY' | 'EXPENSE_CONFIRMED' | 'EXPENSE_DELETED' | 'EXPENSE_VOIDED'
   | 'EXPENSE_PAID' | 'VOUCHER_CREATED' | 'VOUCHER_SUBMITTED' | 'VOUCHER_APPROVED' | 'VOUCHER_PAID' | 'WHT_ISSUED' | 'SUBSTITUTE_PREPARED'
   | 'DECLINED' | 'ANSWERED' | 'REFUSED';
-export type WorkflowTask = { id: string; kind: string; startTurn: number; endTurn: number; confirmTurn?: number;
+export type WorkflowTask = { id: string; kind: string; startTurn: number; endTurn: number; confirmTurn?: number; previewTurn?: number;
   goldTerminal: { effect: WorkflowTerminalEffect; records: GoldRecord[] }; minimalTurns: number; completable: boolean; journeyId?: string };
 export type WorkflowConversation = { id: string; actors: Actor[]; category: string; journeyKind: 'typed' | 'button'; credit?: 'normal' | 'exhausted'; tasks: WorkflowTask[]; turns: WorkflowTurn[] };
 export type WorkflowCorpus = { version: 2; seed: string; status: 'draft' | 'reviewed'; conversations: WorkflowConversation[] };
@@ -151,7 +153,13 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
     for (const actor of actors) {
       assert.ok(isPlainObject(actor) && nonEmptyString(actor['key']) && !actorKeys.has(actor['key'] as string), `${path}.actor`);
       actorKeys.add(actor['key'] as string);
+      if (actor['kind'] === 'unlinked') {
+        assert.ok(['company', 'role', 'branchScope', 'freeSourceDrafts'].every(key => actor[key] === undefined), `${path}.unlinked_actor_scope`);
+        continue;
+      }
+      assert.ok(actor['kind'] === undefined || ['member', 'creator-only'].includes(actor['kind'] as string), `${path}.actor_kind`);
       assert.ok((COMPANIES as readonly unknown[]).includes(actor['company']) && (ROLES as readonly unknown[]).includes(actor['role']), `${path}.actor_scope`);
+      if (actor['kind'] === 'creator-only') assert.ok(actor['company'] === 'B' && actor['role'] === 'STAFF' && actor['freeSourceDrafts'] === undefined, `${path}.creator_only_paid_B`);
       if (actor['freeSourceDrafts'] !== undefined) assert.equal(actor['freeSourceDrafts'], true, `${path}.freeSourceDrafts`);
       (actor['freeSourceDrafts'] ? freeCompanies : paidCompanies).add(actor['company'] as string);
       const scope = actor['branchScope'];
@@ -214,6 +222,11 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
       const terminal = task['goldTerminal']; assert.ok(isPlainObject(terminal) && Array.isArray(terminal['records']), `${path}.gold_terminal`);
       assert.ok((['REIMBURSEMENT_DRAFT_SAVED','REIMBURSEMENT_SUBMITTED','REIMBURSEMENT_APPROVED','REIMBURSEMENT_REJECTED','REIMBURSEMENT_CANCELLED','REIMBURSEMENT_PAID','EXPENSE_MARKED_READY','EXPENSE_CONFIRMED','EXPENSE_DELETED','EXPENSE_VOIDED','EXPENSE_PAID','VOUCHER_CREATED','VOUCHER_SUBMITTED','VOUCHER_APPROVED','VOUCHER_PAID','WHT_ISSUED','SUBSTITUTE_PREPARED','DECLINED','ANSWERED','REFUSED'] as readonly unknown[]).includes(terminal['effect']), `${path}.gold_terminal.effect`);
       const effect = terminal['effect'] as WorkflowTerminalEffect, confirmTurn = task['confirmTurn'] as number | undefined;
+      if (task['previewTurn'] !== undefined) {
+        const previewTurn = task['previewTurn'] as number;
+        assert.ok(effect === 'DECLINED' && Number.isInteger(previewTurn) && previewTurn >= (task['startTurn'] as number) && previewTurn < (task['endTurn'] as number)
+          && isPlainObject((turns[previewTurn] as Record<string, any> | undefined)?.['expect']?.['preview']), `${path}.previewTurn`);
+      }
       if (!WORKFLOW_WRITE_EXEMPTIONS.has(effect)) {
         assert.ok(Number.isInteger(confirmTurn) && confirmTurn! >= (task['startTurn'] as number) && confirmTurn! <= (task['endTurn'] as number), `${path}.confirmTurn_required`);
         const previewTurn = confirmTurn! - 1;

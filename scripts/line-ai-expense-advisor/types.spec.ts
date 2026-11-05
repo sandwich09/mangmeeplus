@@ -335,3 +335,35 @@ describe('M3 tuning corpus and Q5 gold', () => {
     for (const id of ids) assert.equal(conversations.filter((row: any) => row.id === id).length, 1, id);
   });
 });
+
+describe('M3 round 3 optional schema extensions', () => {
+  const corpus = () => ({ version: 2, seed: 'r3', status: 'draft', conversations: [{ id: 'decline', category: 'expense', journeyKind: 'typed',
+    actors: [{ key: 'owner', company: 'B', role: 'OWNER', branchScope: 'all' }], turns: [{ user: 'จ่ายรายการนี้', expect: { preview: { action: 'pay', target: '$seed:expense' } } }, { press: 'ไม่ทำ', expect: { label: 'ไม่ทำ' } }],
+    tasks: [{ id: 'decline', kind: 'expense_pay', startTurn: 0, endTurn: 1, previewTurn: 0, goldTerminal: { effect: 'DECLINED', records: [] }, minimalTurns: 2, completable: true }] }] });
+  it('allows an explicit preview turn only on DECLINED and requires its preview inside the task', () => {
+    assert.doesNotThrow(() => validateWorkflowCorpus(corpus()));
+    for (const value of [-1, 2, 0.5]) { const bad = corpus(); bad.conversations[0].tasks[0].previewTurn = value; assert.throws(() => validateWorkflowCorpus(bad), /previewTurn/); }
+    const missing = corpus(); missing.conversations[0].turns[0].expect = {} as any; assert.throws(() => validateWorkflowCorpus(missing), /previewTurn/);
+    const answered = corpus(); answered.conversations[0].tasks[0].goldTerminal.effect = 'ANSWERED'; assert.throws(() => validateWorkflowCorpus(answered), /previewTurn/);
+  });
+  it('allows missing company/role only for unlinked actors and confines creator-only to paid B', () => {
+    const unknown = corpus(); unknown.conversations[0].actors = [{ key: 'unknown', kind: 'unlinked' }] as any;
+    assert.doesNotThrow(() => validateWorkflowCorpus(unknown));
+    const ordinary = structuredClone(unknown); delete (ordinary.conversations[0].actors[0] as any).kind; assert.throws(() => validateWorkflowCorpus(ordinary), /actor_scope/);
+    const extra = structuredClone(unknown); (extra.conversations[0].actors[0] as any).company = 'B'; assert.throws(() => validateWorkflowCorpus(extra), /unlinked/);
+    const creator = corpus(); Object.assign(creator.conversations[0].actors[0], { kind: 'creator-only', role: 'STAFF' }); assert.doesNotThrow(() => validateWorkflowCorpus(creator));
+    Object.assign(creator.conversations[0].actors[0], { freeSourceDrafts: true }); assert.throws(() => validateWorkflowCorpus(creator), /creator_only/);
+  });
+});
+
+it('M3 round 3 preflight resolves unlinked actors without inventing tenant access', async () => {
+  const { buildWorkflowSeed } = await import('./seed');
+  const { validateWorkflowPreflight } = await import('./run-preflight');
+  const actors = [{ key: 'new-line-user', kind: 'unlinked' }] as const;
+  const corpus = { version: 2, seed: 'before-link', status: 'draft', conversations: [{ id: 'unlinked', category: 'boundary', journeyKind: 'typed', actors,
+    turns: [{ user: 'สวัสดี', expect: { maxModelCalls: 0 } }], tasks: [] }] } as any;
+  const now = new Date('2026-11-05T04:00:00Z'), seed = buildWorkflowSeed(now, [...actors]);
+  assert.equal(validateWorkflowPreflight(corpus, seed, now).actorAssignments, 1);
+  corpus.conversations[0].turns[0].expect.dueDate = { formType: 'PND3', monthOffset: 0 };
+  assert.throws(() => validateWorkflowPreflight(corpus, seed, now), /UNLINKED_PRIVATE_GOLD/);
+});

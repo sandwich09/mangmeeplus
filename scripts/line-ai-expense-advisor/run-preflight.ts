@@ -48,7 +48,15 @@ export function validateWorkflowPreflight(corpus: WorkflowCorpus, seeds: Record<
   for (const conversation of corpus.conversations) for (const turn of conversation.turns) {
     const actor = turn.as ? conversation.actors.find(row => row.key === turn.as!.key) : conversation.actors[0];
     assert.ok(actor, `WORKFLOW_ACTOR_MISSING:${conversation.id}`);
+    if (actor.kind === 'unlinked') {
+      assert.ok('actors' in seeds, 'WORKFLOW_UNLINKED_SEED_REQUIRED');
+      resolveWorkflowActor(actor, seeds); actorAssignments++;
+      assert.ok(!turn.expect.knowledge && !turn.expect.dueDate, `WORKFLOW_UNLINKED_PRIVATE_GOLD:${conversation.id}`);
+      if (turn.press) presses++;
+      continue;
+    }
     const company = ('companies' in seeds ? seeds.companies : seeds)[actor.company];
+    if (actor.kind === 'creator-only') assert.ok('actors' in seeds, 'WORKFLOW_CREATOR_ONLY_SEED_REQUIRED');
     if ('actors' in seeds) resolveWorkflowActor(actor, seeds);
     assert.ok(company.users[actor.role], `WORKFLOW_ACTOR_SEED_MISSING:${conversation.id}:${actor.key}`);
     if (actor.branchScope !== 'all') assert.ok(actor.branchScope.branches.every(branch => company.branchIds.includes(branch)), `WORKFLOW_BRANCH_SCOPE_UNKNOWN:${actor.key}`);

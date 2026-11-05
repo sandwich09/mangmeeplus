@@ -27,6 +27,7 @@
  *   MANGMEE_EVAL_CORPUS         default scripts/line-ai-expense-advisor/corpus.sample.json
  *   MANGMEE_EVAL_SECRETS_PATH   default /tmp/mangmee-latency-pilot-20260927/runtime-secrets.json
  *   MANGMEE_EVAL_REDIS_URL      default redis://127.0.0.1:16389/13
+ * CLI: --classifier-labels=messages opts into message-only W1 and the separate button baseline.
  */
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -90,6 +91,7 @@ export function workflowAttemptsFromEvidence(corpus: WorkflowCorpus, rows: Saved
         calls, effects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         businessSnapshot: row.businessSnapshot ?? { business: {}, collectionState: {} }, unintendedEffects: (row.unintendedEffects ?? []).map(effect => ({ kind: effect.kind, recordId: effect.recordId })),
         deliveredActions, preview: undefined, latencyMs, deliveredText: receipts.flatMap(message => typeof message.text === 'string' ? [message.text] : []).join('\n'),
+        ...(row.action ? { pressedLabel: row.action.label } : {}),
         ...(answerGold ? { deliveredCards: deliveredKnowledgeCards(row), deliveredText: toCapturedEvidence(row).deliveredTextExcludingQuickReplies,
           textModelAttempts: Math.max(row.gatewayResponses.length, reservations.length),
           toolCalls: row.toolResults.map(call => ({ tool: call.tool, input: call.input as Record<string, unknown> })) } : {}) };
@@ -143,7 +145,7 @@ async function main(): Promise<void> {
     validateWorkflowCorpus(rawCorpus);
     const corpus = rawCorpus as WorkflowCorpus;
     const attempts = workflowAttemptsFromEvidence(corpus, saved.turnEvidence);
-    const metrics = scoreWorkflowCorpus({ corpus, attempts, now: new Date(saved.startedAt) });
+    const metrics = scoreWorkflowCorpus({ corpus, attempts, now: new Date(saved.startedAt), classifierLabels: process.argv.includes('--classifier-labels=messages') ? 'messages' : undefined });
     const reportPath = rescoreReportPath(evidencePath, new Date());
     writeFileSync(reportPath, `# Offline workflow rescore\n\nEvidence: \`${evidencePath}\`\n\nCorpus: \`${CORPUS_PATH}\`\n\n\`\`\`json\n${JSON.stringify(metrics, null, 2)}\n\`\`\`\n`);
     console.log(JSON.stringify({ event: 'workflow_rescore_done', reportPath, attempts: attempts.length, completeAttempts: attempts.filter(attempt => attempt.complete).length }));

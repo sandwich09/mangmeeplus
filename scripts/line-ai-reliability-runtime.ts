@@ -16,6 +16,18 @@ import type { ReliabilityAttempt } from './line-ai-reliability-evaluation';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../apps/api/src/common/pipes/validation-pipe.options';
 
 type JsonRow = Record<string, any>;
+export type RuntimeReplayActor =
+  | { kind: 'unlinked'; lineUserId: string; postbackLabels?: Record<number, string> }
+  | { kind?: 'member' | 'creator-only'; companyId: string; userId: string; lineUserId?: string; role: string; runtimeRole?: string; branchIds: string[]; postbackLabels?: Record<number, string> };
+export async function runtimeActorContext(actor: RuntimeReplayActor | undefined, fallback: { companyId: string; userId: string; lineUserId: string },
+  resolveAccess: (userId: string, companyId: string) => Promise<{ roles: string[]; scopes: { branchIds: string[] } }>) {
+  if (!actor) return fallback;
+  if (actor.kind === 'unlinked') return { companyId: '', userId: '', lineUserId: actor.lineUserId };
+  const access = await resolveAccess(actor.userId, actor.companyId);
+  assert.ok(access.roles.includes(actor.runtimeRole ?? actor.role), 'REPLAY_ACTOR_ROLE_MISMATCH');
+  assert.deepEqual([...access.scopes.branchIds].sort(), [...actor.branchIds].sort(), 'REPLAY_ACTOR_BRANCH_SCOPE_MISMATCH');
+  return { companyId: actor.companyId, userId: actor.userId, lineUserId: actor.lineUserId ?? actor.userId };
+}
 export type RuntimeSourceSnapshot = {
   /** Ordered real Prisma create arguments; contains no expected result/tool response. */
   rows: Array<{ model: string; data: JsonRow }>;
@@ -24,7 +36,7 @@ export type RuntimeSourceSnapshot = {
   /** Exact button label to click on a later turn, selected only from the preceding accepted wire. */
   postbackLabels?: Record<number, string>;
   /** Optional workflow replay actors; omitted snapshots retain the original single-actor seed. */
-  actors?: Record<string, { companyId: string; userId: string; role: string; branchIds: string[]; postbackLabels?: Record<number, string> }>;
+  actors?: Record<string, RuntimeReplayActor>;
 };
 export type RuntimeReplayAction =
   | { type: 'postback'; label: string; pressFrom?: string }
@@ -512,17 +524,14 @@ export async function runLineReliabilityRuntime(manifest: ReliabilityRuntimeMani
       const prefix = runtimeEventIdPrefix(attemptId, turnIndex), action = replayTurn.action;
       const actorKey = replayTurn.pressFrom ?? action?.pressFrom, actor = actorKey ? snapshot.actors?.[actorKey] : undefined;
       if (actorKey) assert.ok(actor, 'REPLAY_UNKNOWN_PRESS_ACTOR');
-      selectedCompanyId = actor?.companyId ?? row.fixture.company;
-      selectedActorId = actor?.userId ?? row.fixture.actor;
-      if (actor) {
-        const access = await app.get(PermissionResolverService).resolveAccess(actor.userId, actor.companyId);
-        assert.ok(access.roles.includes(actor.role), 'REPLAY_ACTOR_ROLE_MISMATCH');
-        assert.deepEqual([...access.scopes.branchIds].sort(), [...actor.branchIds].sort(), 'REPLAY_ACTOR_BRANCH_SCOPE_MISMATCH');
-      }
+      const actorContext = await runtimeActorContext(actor, { companyId: row.fixture.company, userId: row.fixture.actor, lineUserId: snapshot.lineUserId },
+        (userId, companyId) => app.get(PermissionResolverService).resolveAccess(userId, companyId));
+      selectedCompanyId = actorContext.companyId;
+      selectedActorId = actorContext.userId;
       const postbackLabel = action?.type === 'postback' ? action.label : (actor?.postbackLabels ?? snapshot.postbackLabels)?.[turnIndex];
       const postbackData = postbackLabel ? selectRuntimePostback(precedingReceipts, postbackLabel) : undefined;
       if (postbackLabel && !action) assert.ok(turn.user === postbackLabel && !turn.attachmentIds.length, 'REPLAY_POSTBACK_INPUT_MISMATCH');
-      const source = { type: row.fixture.channelKind.toLowerCase(), userId: actor?.userId ?? snapshot.lineUserId,
+      const source = { type: row.fixture.channelKind.toLowerCase(), userId: actorContext.lineUserId,
         ...(row.fixture.channelKind === 'GROUP' ? { groupId: row.fixture.chat } : row.fixture.channelKind === 'ROOM' ? { roomId: row.fixture.chat } : {}) };
       if (action?.type === 'uri') {
         const at = Date.now(), before = await readEffects(), usageIds = new Set<string>((await client.aiUsageEvent.findMany({ select: { id: true } })).map((item: any) => item.id));

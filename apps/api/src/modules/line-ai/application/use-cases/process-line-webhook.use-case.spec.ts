@@ -2101,7 +2101,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('settles waiting feedback before sending the final LINE reply', async () => {
     const { prisma } = makePrisma({ identityUserId: null });
-    const { useCase, replies } = makeUseCase(prisma);
+    const { useCase, replies, sentMessageBatches } = makeUseCase(prisma);
     let settled = false;
 
     await useCase.execute({
@@ -2111,9 +2111,9 @@ describe('ProcessLineWebhookUseCase', () => {
     });
 
     assert.equal(settled, true);
-    // The refusal an unrecognised account gets is the door card now (§3.1); what this test is
-    // about is that the waiting-feedback settle ran BEFORE it, whatever the refusal says.
-    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
+    // Waiting feedback settles before the explanation and door reply (owner 2026-11-05).
+    assert.equal(replies[0], 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
+    assert.match(sentMessageBatches[0][1]?.altText ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
   });
 
   // LINE userIds are provider-scoped; resolve the approved Messaging binding first.
@@ -2172,12 +2172,13 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('still reports unlinked when neither the scoped nor the fallback lookup finds an identity', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityUserId: null });
-    const { useCase, replies } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    const { useCase, replies, sentMessageBatches } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-unlinked' });
 
     assert.equal(identityQueries.length, 2);
-    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
+    assert.equal(replies[0], 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
+    assert.match(sentMessageBatches[0][1]?.altText ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
     assert.equal((updates.at(-1) as any).data.status, 'unlinked');
   });
 
@@ -3570,11 +3571,12 @@ describe('ProcessLineWebhookUseCase', () => {
   // OTHER unlinked-shaped refusal below (no membership, resolver failure) keeps the old reply.
   it('answers an unrecognised LINE account with the signup doors', async () => {
     const { prisma } = makePrisma({ identityUserId: null });
-    const { useCase, replies } = makeUseCase(prisma);
+    const { useCase, replies, sentMessageBatches } = makeUseCase(prisma);
 
     await useCase.execute({ ...BASE_EVENT });
 
-    assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
+    assert.equal(replies[0], 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย');
+    assert.match(sentMessageBatches[0][1]?.altText ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
     assert.equal(/เชื่อมต่อบัญชี/.test(replies[0] ?? ''), false);
   });
 
@@ -14173,8 +14175,9 @@ describe('free expense LINE boundary', () => {
     const { prisma } = makePrisma({ identityUserId: null });
     const h = makeUseCase(prisma, { config: { lineLiffId: '1234567890-Abc' } });
     await h.useCase.executeReceiptUpload({ ...BASE_EVENT, messageType: 'image', lineMessageId: 'guest-photo' } as any);
-    const cards = JSON.stringify(h.sentMessages);
+    const cards = JSON.stringify(h.sentMessageBatches);
     assert.match(cards, /เปิดร้านใหม่/); assert.equal(h.intakeRequests.length, 0);
+    assert.deepEqual(h.sentMessageBatches[0].map((message: any) => message.type), ['text', 'flex']);
   });
 });
 
@@ -15225,6 +15228,7 @@ it('R22 expense month uses only the server fixed-read grant and recovers without
         semanticCoverage: [{ index: 0, status: scenario === 'success' ? 'handled' : 'unsupported', reasonCode: scenario === 'success' ? undefined : 'PREPARED_READ_UNAVAILABLE' }] }) });
     const flow = h.useCase as any, grants: any[] = [], lanes: any[] = [];
     flow.expenseActions = { answerReason: async () => assert.fail('a fixed-read button cannot bind to a pending reason') };
+    if (scenario === 'free') flow.editableExpenses = { execute: async () => ({ data: [], total: 0 }) };
     flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }) };
     flow.aiGateway.creditState = async () => assert.fail('buttons do not read credit');
     flow.aiGateway.issueLineReliabilityGrant = async (_request: string, input: any) => { grants.push(input); return { turnKey: input.turnKey }; };
@@ -15235,11 +15239,11 @@ it('R22 expense month uses only the server fixed-read grant and recovers without
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fixed-month-${scenario}`, messageText: 'ดูค่าใช้จ่ายเดือนนี้', fixedReadControl: { id: 'expense_month' } });
     assert.equal(taskWrites.length, 1, 'the normal webhook entry records one text task');
     assert.equal(taskWrites[0].kind, 'read');
-    assert.equal(taskUpdates[0].status, scenario === 'success' ? 'COMPLETED' : 'REFUSED');
+    assert.equal(taskUpdates[0].status, scenario === 'success' || scenario === 'free' ? 'COMPLETED' : 'REFUSED');
     assert.equal(h.intakeRequests.length, 0);
     if (scenario === 'free' || scenario === 'denied') {
       assert.equal(grants.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
-      if (scenario === 'free') assert.match(JSON.stringify(delivered), /สิทธิ์ใช้ฟรี/);
+      if (scenario === 'free') assert.match(JSON.stringify(delivered), /เดือนนี้ยังไม่มีใบที่ส่งเข้าค่ะ/);
     } else {
       assert.equal(grants.length, 1); assert.equal(grants[0].serverRoute, 'fixed_read');
       assert.deepEqual(lanes, [['simple', ['line-answer/2']]]);
@@ -15793,4 +15797,131 @@ it('A4b free substitute buttons give only the main menu to a member without list
   (h.useCase as any).aiGateway.creditState = () => assert.fail('free button must not read credit');
   await h.useCase.execute({ ...BASE_EVENT, messageText: 'ทำใบรับรองแทนใบเสร็จ', workflowStart: 'substitute_receipt' });
   assert.deepEqual(h.sentMessages.at(-1)?.quickReply?.items.map((item: any) => item.action), [{ type: 'message', label: 'เมนูหลัก', text: 'เมนูหลัก' }]);
+});
+
+describe('owner 2026-11-05 free expense month summary', () => {
+  const aliases = ['ดูใบที่อัปโหลด', 'ใบที่อัปโหลด', 'ดูใบที่ส่ง', 'สรุปร่างเดือนนี้', 'สรุปค่าใช้จ่ายเดือนนี้', 'ดูค่าใช้จ่ายเดือนนี้', 'ค่าใช้จ่ายเดือนนี้'];
+  function summaryHarness(permissions = ['expense.read_own'], records: any[] = []) {
+    const state = makePrisma();
+    const h = makeUseCase(state.prisma, { freeExpenseDrafts: true, permissions, branchIds: ['branch-1'] });
+    const reads: any[] = [];
+    const noQuota = async () => assert.fail('free summary must not read or consume OCR quota');
+    Object.assign(state.prisma.client.companyOcrUsageEvent, { count: noQuota, findMany: noQuota, create: noQuota, updateMany: noQuota });
+    state.prisma.client.companyPlanTerm.updateMany = noQuota;
+    (h.useCase as any).editableExpenses = { execute: async (ctx: any, filter: any) => {
+      reads.push({ ctx, filter });
+      const start = (filter.page - 1) * filter.pageSize;
+      return { data: records.slice(start, start + filter.pageSize), total: records.length, page: filter.page, pageSize: filter.pageSize };
+    } };
+    for (const method of ['creditState', 'requestLineTurn', 'requestLineIntakeRoute', 'requestLineWorkflowClassify', 'requestReceiptOcr']) {
+      (h.useCase as any).aiGateway[method] = () => assert.fail(`free summary called ${method}`);
+    }
+    return { ...h, ...state, reads };
+  }
+  const row = (index: number, extra: Record<string, unknown> = {}) => ({ id: `month-${index}`, status: 'NEEDS_REVIEW',
+    paymentStatus: 'UNPAID', vendorNameSnapshot: `ผู้ขาย ${index}`, grandTotalAmount: '450.00',
+    uploadedAt: new Date('2026-11-02T00:00:00+07:00'), expenseDate: new Date('2019-01-01'), ...extra });
+
+  it('matches every exact alias with optional prefixes, suffixes and spaces without any gateway call', async () => {
+    for (const alias of aliases) for (const prefix of ['', 'ขอ', 'ช่วย', 'น้องมั่งมี', 'น้องมั่งมีช่วยขอ']) {
+      for (const suffix of ['', 'ค่ะ', 'คะ', 'ครับ', 'หน่อย', 'นะ', 'หน่อยนะคะ']) {
+        const h = summaryHarness();
+        await h.useCase.execute({ ...BASE_EVENT, messageText: ` ${prefix} ${alias.split('').join(' ')} ${suffix} `.normalize('NFD') });
+        assert.equal(h.replies[0], 'เดือนนี้ยังไม่มีใบที่ส่งเข้าค่ะ', `${prefix}${alias}${suffix}`);
+        assert.equal(h.reads.length, 1);
+        assert.equal((h.updates.at(-1) as any).data.status, 'free_expense_month_summary');
+      }
+    }
+  });
+  it('keeps near misses and members without read permission on the existing refusal', async () => {
+    for (const text of ['ดูรายการ', 'ดูค่าใช้จ่ายเดือนนี้แล้วจ่ายเลย', 'ค่าใช้จ่ายเดือนก่อน', 'สรุปร่างเดือนนี้ให้หน่อย']) {
+      const h = summaryHarness();
+      await h.useCase.execute({ ...BASE_EVENT, messageText: text });
+      assert.match(h.replies[0]!, /สิทธิ์ใช้ฟรียังไม่รวมคำถาม/);
+      assert.equal(h.reads.length, 0);
+    }
+    const h = summaryHarness(['expense.receipt.line_upload']);
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'ขอดูค่าใช้จ่ายเดือนนี้' });
+    assert.match(h.replies[0]!, /สิทธิ์ใช้ฟรียังไม่รวมคำถาม/);
+    assert.equal(h.reads.length, 0);
+  });
+  it('uses the Bangkok month, uploadedAt list lens, scoped actor and ordered quick reply URI', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-31T17:01:00Z') });
+    const h = summaryHarness(['expense.read_own', 'expense.receipt.line_upload']);
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'ขอดูค่าใช้จ่ายเดือนนี้' });
+    assert.deepEqual(h.reads[0].filter, { uploadedFromDate: '2026-11-01', uploadedToDate: '2026-11-30', page: 1, pageSize: 200 });
+    assert.equal(h.reads[0].ctx.freeExpenseDrafts, true);
+    assert.deepEqual(h.reads[0].ctx.scopes, { branchIds: ['branch-1'] });
+    assert.match(h.replies[0]!, /ส่งรูปบิลหรือใบเสร็จมาได้เลยค่ะ/);
+    assert.deepEqual(h.sentMessages[0].quickReply.items.map((item: any) => item.action), [
+      { type: 'uri', label: 'เปิดรายการค่าใช้จ่าย', uri: 'https://app.example.com/companies/company-1/expenses?dateField=uploadedAt&fromDate=2026-11-01&toDate=2026-11-30' },
+      { type: 'message', label: 'เมนูหลัก', text: 'เมนูหลัก' },
+    ]);
+  });
+  it('uses the real list use case to preserve own, related and branch read scopes', async () => {
+    const { ListExpensesUseCase } = await import('../../../expenses/application/use-cases/expense-draft.use-case');
+    for (const permission of ['expense.read_own', 'expense.read_related', 'expense.read']) {
+      const h = summaryHarness([permission]);
+      const calls: any[] = [];
+      // This fixture exercises the list authorization and scope derivation, with no database access.
+      (h.useCase as any).editableExpenses = new ListExpensesUseCase({
+        commercialAccessDb: {
+          company: { findUnique: async () => ({ status: 'ACTIVE', planTerm: { tierKey: 'FREE_TRIAL_15', termEndsAt: new Date(0) } }) },
+          billingAccount: { findMany: async () => [] }, billingInvoice: { findFirst: async () => null },
+          billingReceiptGrant: { findFirst: async () => null }, packageChangeRequest: { findFirst: async () => null },
+          salesAttribution: { findUnique: async () => null },
+        },
+        listExpenses: async (...args: any[]) => {
+          calls.push(args); return { data: [], total: 0, page: 1, pageSize: 200 };
+        },
+      } as any);
+      await h.useCase.execute({ ...BASE_EVENT, messageText: 'สรุปร่างเดือนนี้' });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0].createdByUserId, permission === 'expense.read_own' ? 'user-1' : undefined);
+      assert.deepEqual(calls[0][1], { branchIds: ['branch-1'] });
+      assert.equal(calls[0][2], permission === 'expense.read_related' ? 'user-1' : undefined);
+      assert.equal(calls[0][3], true, 'free source-draft restriction reaches the repository');
+    }
+  });
+  it('shows five newest rows, scrubs sellers, uses upload dates and totals every page exactly', async () => {
+    const records = Array.from({ length: 201 }, (_, i) => row(i, { grandTotalAmount: '0.10' }));
+    records[0] = row(0, { vendorNameSnapshot: 'https://secret.example 1234567890123', grandTotalAmount: '0.10' });
+    const h = summaryHarness(['expense.read'], records);
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'ดูใบที่อัปโหลด' });
+    const text = h.replies[0]!;
+    assert.match(text, /^เดือนนี้ส่งเข้า 201 ใบ/);
+    assert.equal(text.split('\n').filter(line => line.startsWith('•')).length, 5);
+    assert.match(text, /• 2 พ.ย. ไม่ระบุผู้ขาย 0.10 บาท · รอตรวจ/);
+    assert.match(text, /และอีก 196 ใบ/);
+    assert.match(text, /ยังไม่ยืนยัน 20.10 บาท/);
+    assert.doesNotMatch(text, /ยืนยันแล้ว|secret|1234567890123|2019|ผู้ขาย 5/);
+    assert.equal(h.reads.length, 2);
+  });
+  it('omits zero money parts and row amounts and preserves nonzero confirmed totals', async () => {
+    for (const status of ['DRAFT', 'CONFIRMED']) {
+      const h = summaryHarness(['expense.read'], [row(0, { status, grandTotalAmount: '0' }), row(1, { status, grandTotalAmount: '12.50' })]);
+      await h.useCase.execute({ ...BASE_EVENT, messageText: 'สรุปร่างเดือนนี้' });
+      assert.doesNotMatch(h.replies[0]!, / 0.00 บาท/);
+      assert.match(h.replies[0]!, status === 'CONFIRMED' ? /ยืนยันแล้ว 12.50 บาท/ : /ยังไม่ยืนยัน 12.50 บาท/);
+      assert.doesNotMatch(h.replies[0]!, status === 'CONFIRMED' ? /ยังไม่ยืนยัน/ : /ยืนยันแล้ว/);
+    }
+  });
+  it('omits parts that round to zero satang', async () => {
+    const h = summaryHarness(['expense.read'], [row(0, { grandTotalAmount: '0.0001' })]);
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'สรุปร่างเดือนนี้' });
+    assert.match(h.replies[0]!, /^เดือนนี้ส่งเข้า 1 ใบ/);
+    assert.doesNotMatch(h.replies[0]!, /0.00 บาท|ยังไม่ยืนยัน|ยืนยันแล้ว/);
+  });
+  it('keeps large monetary totals exact to the satang without binary rounding', async () => {
+    const h = summaryHarness(['expense.read'], [row(0, { grandTotalAmount: '99999999999999.99' }), row(1, { grandTotalAmount: '0.02' })]);
+    await h.useCase.execute({ ...BASE_EVENT, messageText: 'สรุปร่างเดือนนี้' });
+    assert.match(h.replies[0]!, /ยังไม่ยืนยัน 100,000,000,000,000.01 บาท/);
+  });
+  it('offers the menu command hint only to readers', async () => {
+    for (const permissions of [[], ['expense.receipt.line_upload'], ['expense.read_own'], ['expense.read_related'], ['expense.read']]) {
+      const h = summaryHarness(permissions);
+      await h.useCase.execute({ ...BASE_EVENT, messageText: 'เมนูหลัก' });
+      assert.equal(h.replies[0]!.includes('พิมพ์ ‘สรุปร่างเดือนนี้’ เพื่อดูใบที่ส่งเข้าเดือนนี้'), permissions.some(p => p.startsWith('expense.read')));
+    }
+  });
 });

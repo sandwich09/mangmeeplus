@@ -120,15 +120,15 @@ export function resolveGoldRecord(record: GoldRecord, snapshot: BusinessRows, re
 }
 
 /** The same M-R6 checks serve live scoring and offline snapshot rescore. */
-export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], goldPreview?: WorkflowPreview | Record<string, unknown>, now = new Date()) {
+export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], goldPreview?: WorkflowPreview | Record<string, unknown>, now = new Date(), bindings: Record<string, string> = {}) {
   const renderDates = <T extends Record<string, unknown>>(record: T): T => Object.fromEntries(Object.entries(record).map(([key, value]) =>
     [key, ['date', 'paidDate'].includes(key) && typeof value === 'string' ? renderUserText(value, now) : value])) as T;
   task = { ...task, goldTerminal: { ...task.goldTerminal, records: task.goldTerminal.records.map(record => renderDates(record)) } };
   if (goldPreview) goldPreview = renderDates(goldPreview);
   const window = evidence.filter(turn => turn.turnIndex >= task.startTurn && turn.turnIndex <= task.endTurn);
   const snapshot = window.at(-1)?.businessSnapshot.business ?? {}, records = task.goldTerminal.records;
-  const bindings: Record<string, string> = {};
   for (const record of records.filter(candidate => candidate.ref.startsWith('$created:'))) {
+    if (bindings[`${record.table}:${record.ref}`]) continue;
     const createdIds = new Set(window.flatMap(turn => turn.unintendedEffects.filter(effect => effect.kind === `${record.table}.create`).map(effect => effect.recordId)));
     const candidates = (snapshot[record.table] ?? []).filter(row => createdIds.has(String(row.id)) && recordMatches(record, row, snapshot));
     if (candidates.length === 1) bindings[`${record.table}:${record.ref}`] = String(candidates[0]!.id);
@@ -143,18 +143,20 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
   });
   let wrongApplied = 0;
   for (const turn of window) for (const effect of turn.unintendedEffects) {
+    if (task.goldTerminal.effect === 'DECLINED') { wrongApplied++; continue; }
     const table = effect.kind.split('.')[0]!;
     const row = (turn.businessSnapshot.business[table] ?? []).find(candidate => candidate.id === effect.recordId)
       ?? parents.find(parent => parent.table === table && parent.row.id === effect.recordId)?.row
       ?? window.filter(prior => prior.turnIndex < turn.turnIndex).reverse().flatMap(prior => prior.businessSnapshot.business[table] ?? []).find(candidate => candidate.id === effect.recordId);
-    const explicit = records.find(record => record.table === table && resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)?.id === effect.recordId)
+    const explicit = records.find(record => record.table === table && (resolveGoldRecord(record, turn.businessSnapshot.business, records, bindings)?.id === effect.recordId
+      || bindings[`${record.table}:${record.ref}`] === effect.recordId))
       ?? records.find(record => record.table === table && record.ref === `$seed:${effect.recordId}`);
     if (explicit?.phase === 'collect' && turn.turnIndex < (task.confirmTurn ?? Infinity)) continue;
     const allowed = turn.turnIndex === task.confirmTurn && (explicit ? effect.kind.endsWith('.delete') && task.goldTerminal.effect === 'EXPENSE_DELETED'
       || !!row && recordMatches(explicit, row, turn.businessSnapshot.business) : !!row && linkedToGoldParent(table, row, parents, turn.businessSnapshot.business));
     if (!allowed) wrongApplied++;
   }
-  const previewTurn = window.find(turn => turn.turnIndex === (task.confirmTurn ?? -1) - 1);
+  const previewTurn = window.find(turn => turn.turnIndex === (task.previewTurn ?? (task.confirmTurn ?? -1) - 1));
   const actualPreview = previewTurn?.preview ?? previewTurn?.deliveredActions?.find(action => action.type === 'preview')?.preview;
   let wrongPreview = goldPreview ? Number(!actualPreview || Object.entries(goldPreview).some(([key, value]) => {
     if (key === 'target' && typeof value === 'string') {
@@ -165,6 +167,13 @@ export function checkWorkflowGold(task: WorkflowTask, evidence: GoldTurn[], gold
   })) : Number(!!actualPreview);
   wrongPreview += window.filter(turn => turn !== previewTurn && (turn.preview || turn.deliveredActions?.some(action => action.type === 'preview'))).length;
   return { wrongApplied, wrongPreview, terminalMatches, businessChanges: window.reduce((sum, turn) => sum + turn.unintendedEffects.length, 0) };
+}
+
+/** Fresh bindings for one conversation attempt; producer snapshots precede later state changes. */
+export function bindWorkflowCreatedReferences(tasks: WorkflowTask[], evidence: GoldTurn[], now = new Date()): Record<string, string> {
+  const bindings: Record<string, string> = {};
+  for (const task of [...tasks].sort((a, b) => a.startTurn - b.startTurn)) checkWorkflowGold(task, evidence, undefined, now, bindings);
+  return bindings;
 }
 
 export const TOOL_MODULES: Record<string, { file: string; exportName: string }> = {

@@ -247,3 +247,61 @@ it('M3 knowledge gold rejects a fact or numeric allowance outside the reviewed c
   assert.throws(() => resolveKnowledgeGold({ ...gold, requiredFacts: ['ยื่นให้แล้ว'] }), /FACT_OUTSIDE_CARD/);
   assert.throws(() => resolveKnowledgeGold({ ...gold, version: 999 }), /CARD_MISSING/);
 });
+
+describe('M3 round 3 preview and conversation bindings', () => {
+  const declined = { id: 'decline', kind: 'expense_pay', startTurn: 0, endTurn: 1, previewTurn: 0,
+    goldTerminal: { effect: 'DECLINED', records: [] }, minimalTurns: 2, completable: true } as any;
+  const preview = { action: 'pay', target: '$seed:expense', amount: '100.00' };
+  const turn = (turnIndex: number, business: any = {}, unintendedEffects: any[] = [], actual?: any) => ({ turnIndex,
+    businessSnapshot: { business, collectionState: {} }, unintendedEffects, ...(actual ? { preview: actual } : {}) });
+  it('accepts the named declined preview and rejects a different target or every applied change', () => {
+    const rows = [turn(0, {}, [], { action: 'pay', target: 'expense', amount: '100.0000' }), turn(1)];
+    assert.deepEqual(checkWorkflowGold(declined, rows, preview), { wrongApplied: 0, wrongPreview: 0, terminalMatches: true, businessChanges: 0 });
+    assert.equal(checkWorkflowGold(declined, [turn(0, {}, [], { ...preview, target: 'other' }), turn(1)], preview).wrongPreview, 1);
+    assert.equal(checkWorkflowGold(declined, [...rows.slice(0, 1), turn(1, { ExpenseRecord: [{ id: 'expense' }] }, [{ kind: 'ExpenseRecord.update', recordId: 'expense' }])], preview).wrongApplied, 1);
+    const withCollect = { ...declined, goldTerminal: { effect: 'DECLINED', records: [{ table: 'ExpenseRecord', ref: '$seed:expense', phase: 'collect' }] } };
+    assert.equal(checkWorkflowGold(withCollect, [turn(0, { ExpenseRecord: [{ id: 'expense' }] }, [{ kind: 'ExpenseRecord.create', recordId: 'expense' }], preview), turn(1)], preview).wrongApplied, 1);
+  });
+  it('binds earlier created rows once per conversation despite later status changes and task ordering', async () => {
+    const { bindWorkflowCreatedReferences } = await import('./oracle');
+    const created = { id: 'new-claim', kind: 'reimbursement_claim', startTurn: 0, endTurn: 1, confirmTurn: 1,
+      goldTerminal: { effect: 'REIMBURSEMENT_DRAFT_SAVED', records: [{ table: 'ReimbursementRequest', ref: '$created:new-claim', status: 'DRAFT' }] }, minimalTurns: 2, completable: true } as any;
+    const submitted = { id: 'send-claim', kind: 'reimbursement_submit', startTurn: 2, endTurn: 3, confirmTurn: 3,
+      goldTerminal: { effect: 'REIMBURSEMENT_SUBMITTED', records: [{ table: 'ReimbursementRequest', ref: '$created:new-claim', status: 'PENDING_APPROVAL' }] }, minimalTurns: 2, completable: true } as any;
+    const rows = [turn(0), turn(1, { ReimbursementRequest: [{ id: 'new-row', status: 'DRAFT' }] }, [{ kind: 'ReimbursementRequest.create', recordId: 'new-row' }]),
+      turn(2, { ReimbursementRequest: [{ id: 'new-row', status: 'DRAFT' }] }, [], { action: 'submit', target: 'new-row' }),
+      turn(3, { ReimbursementRequest: [{ id: 'new-row', status: 'PENDING_APPROVAL' }] }, [{ kind: 'ReimbursementRequest.update', recordId: 'new-row' }])];
+    const bindings = bindWorkflowCreatedReferences([submitted, created], rows, NOW);
+    const result = checkWorkflowGold(submitted, rows, { action: 'submit', target: '$created:new-claim' }, NOW, bindings);
+    assert.equal(result.terminalMatches, true); assert.equal(result.wrongApplied, 0); assert.equal(result.wrongPreview, 0);
+    assert.equal(checkWorkflowGold(submitted, rows, undefined, NOW, {}).terminalMatches, false, 'another conversation cannot inherit the binding');
+    assert.equal(checkWorkflowGold(submitted, [turn(2, {}, [], { action: 'submit', target: 'other' }), rows[3]!], { action: 'submit', target: '$created:new-claim' }, NOW, bindings).wrongPreview, 1);
+    assert.deepEqual(bindWorkflowCreatedReferences([created], rows.map(row => ({ ...row, unintendedEffects: [] })), NOW), {}, 'a snapshot alone cannot prove creation');
+    const deleted = { ...submitted, kind: 'expense_delete', goldTerminal: { effect: 'EXPENSE_DELETED', records: [{ table: 'ExpenseRecord', ref: '$created:draft' }] } } as any;
+    const removed = [turn(2, { ExpenseRecord: [{ id: 'draft-row' }] }, [], { action: 'delete', target: 'draft-row' }), turn(3, {}, [{ kind: 'ExpenseRecord.delete', recordId: 'draft-row' }])];
+    const removal = checkWorkflowGold(deleted, removed, { action: 'delete', target: '$created:draft' }, NOW, { 'ExpenseRecord:$created:draft': 'draft-row' });
+    assert.equal(removal.terminalMatches, true); assert.equal(removal.wrongApplied, 0); assert.equal(removal.wrongPreview, 0);
+  });
+});
+
+describe('M3 round 3 opt-in actors and seller truncation', () => {
+  it('seeds an unlinked LINE identity without a company role and a paid creator without list-read grants', () => {
+    const unlinked = { key: 'before-link', kind: 'unlinked' } as const;
+    const creator = { key: 'paid-creator', kind: 'creator-only', company: 'B', role: 'STAFF', branchScope: 'all' } as const;
+    const seed = buildWorkflowSeed(NOW, [unlinked, creator] as any);
+    const unknown = resolveWorkflowActor(unlinked as any, seed) as any, paid = resolveWorkflowActor(creator as any, seed) as any;
+    assert.ok(unknown.lineUserId.startsWith('U'));
+    assert.equal(unknown.companyId, undefined); assert.equal(unknown.role, undefined);
+    assert.ok(!seed.rows.some(row => row.model === 'externalIdentity' && row.data.providerUserId === unknown.lineUserId && row.data.status === 'ACTIVE'));
+    const grants = seed.rows.filter(row => row.model === 'membershipRole' && row.data.membershipId === paid.membershipId).map(row => row.data.roleId);
+    const permissions = seed.rows.filter(row => row.model === 'rolePermission' && grants.includes(row.data.roleId)).map(row => row.data.permissionId);
+    assert.ok(permissions.includes('perm-expense_create'));
+    for (const permission of ['expense_read', 'expense_read_own', 'expense_read_related']) assert.ok(!permissions.includes(`perm-${permission}`));
+    for (const status of ['DRAFT', 'NEEDS_REVIEW']) assert.ok(seed.rows.some(row => row.model === 'expenseRecord' && row.data.companyId === 'company-b' && row.data.createdByUserId === paid.userId && row.data.status === status));
+    assert.equal(seed.companies.B.tierKey, 'PRO_999');
+    assert.deepEqual(seed, buildWorkflowSeed(NOW, [unlinked, creator] as any));
+    assert.equal(buildWorkflowSeed(NOW).actors['paid-creator'], undefined);
+    assert.throws(() => resolveWorkflowActor(creator as any, buildWorkflowSeed(NOW)), /CREATOR_ONLY_SEED_MISSING/);
+    assert.equal(seed.rows.filter(row => row.model === 'accountingCounterparty' && row.data.companyId === 'company-b' && row.data.displayName === 'ผู้ขายชื่อซ้ำ').length, 4);
+  });
+});

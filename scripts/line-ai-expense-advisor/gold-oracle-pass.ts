@@ -169,7 +169,7 @@ export async function collectGoldResults(
     if (corpus.version === 2) {
       const seed = buildWorkflowSeed(now, corpus.conversations.flatMap(conversation => conversation.actors));
       await applySeedRows(oracle.prisma as never, seed.rows);
-      for (const companyKey of new Set(corpus.conversations.flatMap(conversation => conversation.actors).filter(actor => actor.freeSourceDrafts).map(actor => actor.company)))
+      for (const companyKey of new Set(corpus.conversations.flatMap(conversation => conversation.actors).filter(actor => actor.kind !== 'unlinked' && actor.freeSourceDrafts).map(actor => actor.company!)))
         assert.ok(await isFreeExpenseDraftCompany(oracle.prisma as never, seed.companies[companyKey].companyId, now), `WORKFLOW_FREE_PREDICATE_FAILED:${companyKey}`);
       const snapshot: Record<string, Array<Record<string, unknown>>> = {};
       for (const table of [...GOLD_TABLES, 'ExpenseLine', 'ExpenseCategory']) {
@@ -181,6 +181,10 @@ export async function collectGoldResults(
         for (const [turnIndex, turn] of conversation.turns.entries()) {
           const actor = conversation.actors.find(candidate => candidate.key === (turn.as?.key ?? conversation.actors[0]!.key))!;
           const seeded = resolveWorkflowActor(actor, seed);
+          if (seeded.kind === 'unlinked') {
+            assert.ok(!turn.expect.knowledge && !turn.expect.dueDate, `WORKFLOW_UNLINKED_PRIVATE_GOLD:${conversation.id}`);
+            actorAssignments++; continue;
+          }
           const ctx = await oracle.resolveActorContext({ userId: seeded.userId, companyId: seeded.companyId });
           assert.deepEqual([...(ctx.branchIds as string[])].sort(), [...seeded.branchIds].sort(), `WORKFLOW_ACTOR_BRANCH_MISMATCH:${actor.key}`);
           actorAssignments++;

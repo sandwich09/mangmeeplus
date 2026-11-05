@@ -91,6 +91,7 @@ const PERMISSION_REFUSAL_STATUSES = new Set([
 ]);
 const DELIVERED_STATUSES = new Set([
   'completed',
+  'free_expense_month_summary',
   'company_context_listed',
   'company_context_switched',
 ]);

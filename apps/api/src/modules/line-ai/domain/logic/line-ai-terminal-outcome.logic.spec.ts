@@ -21,6 +21,7 @@ describe('LINE AI terminal outcome logic', () => {
     assert.equal(classifyLineAiTerminalOutcome('received'), null);
     assert.equal(classifyLineAiTerminalOutcome('response_ready'), null);
     assert.equal(classifyLineAiTerminalOutcome('completed'), 'delivered');
+    assert.equal(classifyLineAiTerminalOutcome('free_expense_month_summary'), 'delivered');
     assert.equal(classifyLineAiTerminalOutcome('clarification_required'), 'clarification');
     assert.equal(classifyLineAiTerminalOutcome('rate_limited'), 'intentional_noop');
     assert.equal(classifyLineAiTerminalOutcome('batched'), 'intentional_noop');

@@ -39,7 +39,7 @@ import { buildLineDeliveryPlan, deliveryHash, lineDeliveryPlanId, parseLineDeliv
 import { parseAcceptedLedgerRequest } from '../line-ledger-accepted-request';
 import { LineConversationContextService, lineConversationId, type LineConversationOwner } from '../line-conversation-context.service';
 import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
-import { FREE_EXPENSE_CHAT_REPLY, FREE_EXPENSE_TEXT_EDIT_REPLY, FREE_EXPENSE_TEXT_EDIT_SUPPORT_REPLY, freeExpenseMenuReply, isExplicitFinalFinancialRequest, isExplicitSourceEditRequest } from '../../domain/logic/free-expense-line.logic';
+import { FREE_EXPENSE_CHAT_REPLY, FREE_EXPENSE_TEXT_EDIT_REPLY, FREE_EXPENSE_TEXT_EDIT_SUPPORT_REPLY, freeExpenseMenuReply, isFreeExpenseMonthSummaryRequest, isExplicitFinalFinancialRequest, isExplicitSourceEditRequest } from '../../domain/logic/free-expense-line.logic';
 import { completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot, claimFreeExpenseQuotaNotice, releaseFreeExpenseQuotaNotice } from '../free-expense-quota';
 import { freeExpenseQuotaNoticeTextTh, FREE_EXPENSE_IN_FLIGHT_TEXT_TH, FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
@@ -2776,14 +2776,15 @@ export class ProcessLineWebhookUseCase {
    * Read from the application table directly, like every other state this turn reads: the row is
    * keyed by the same (channel, LINE user) pair the identity lookup above uses.
    *
-   * `welcome` (Owner 2026-09-21) puts the first hello in front of the DOOR card, and only there: a
-   * stranger who merely typed is answered by the card alone, and an application already travelling
-   * gets its status card — whose footer has no "เปิดร้านใหม่" for the greeting's step 1 to name.
+   * `welcome` keeps the first hello for follow events. Owner 2026-11-05 adds a short explanation
+   * before the door for a stranger who types. An open application keeps its status card alone.
    */
   private async entryDoorMessages(lineUserId: string, welcome = false, language: 'th' | 'en' = 'th'): Promise<LineReplyMessage[]> {
     const pending = await this.findOpenLineSignup(lineUserId);
     if (!pending) {
-      if (!welcome) return [this.doorCard(language)];
+      if (!welcome) return [{ type: 'text', text: language === 'en'
+        ? 'I can help once you open a shop or link your account. Choose below.'
+        : 'น้องมั่งมีจะตอบได้หลังเปิดร้านหรือเชื่อมบัญชีแล้วค่ะ เลือกจากการ์ดด้านล่างได้เลย' }, this.doorCard(language)];
       // R-C4 (§18.2): the how-to picture showed no "choose a package" step, and a locked shop cannot
       // take the steps it did show. Withdrawn until a new asset under a NEW file name exists (LINE
       // caches by URL; apps/web/public is a Release Contracts trigger — the old PNG stays untouched).
@@ -2793,6 +2794,36 @@ export class ProcessLineWebhookUseCase {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
     }), language)];
+  }
+
+  private async freeExpenseMonthSummary(ctx: RequestContext, fromDate: string, toDate: string): Promise<string> {
+    const rows: ExpenseRecord[] = [];
+    for (let page = 1; ; page += 1) {
+      const result = await this.editableExpenses.execute(ctx, { uploadedFromDate: fromDate, uploadedToDate: toDate, page, pageSize: 200 });
+      rows.push(...result.data);
+      if (rows.length >= result.total) break;
+      if (!result.data.length) throw new ServiceUnavailableException('Expense list incomplete');
+    }
+    if (!rows.length) return ['เดือนนี้ยังไม่มีใบที่ส่งเข้าค่ะ',
+      ...(['expense.receipt.upload', 'expense.receipt.line_upload'].some(key => ctx.permissions.includes(key))
+        ? ['ส่งรูปบิลหรือใบเสร็จมาได้เลยค่ะ'] : [])].join('\n');
+    const money = (value: string) => new Prisma.Decimal(value).toFixed(2).replace(/\B(?=(\d{3})+\.)/gu, ',');
+    const date = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short' });
+    const pending = rows.filter(row => !['CONFIRMED', 'VOIDED', 'REJECTED'].includes(row.status))
+      .reduce((sum, row) => sum.plus(row.grandTotalAmount), new Prisma.Decimal(0));
+    const confirmed = rows.filter(row => row.status === 'CONFIRMED')
+      .reduce((sum, row) => sum.plus(row.grandTotalAmount), new Prisma.Decimal(0));
+    return [`เดือนนี้ส่งเข้า ${rows.length} ใบ`, ...rows.slice(0, 5).map(row => {
+      const seller = scrubRecordText(row.vendorNameSnapshot, 60) || 'ไม่ระบุผู้ขาย';
+      const amount = new Prisma.Decimal(row.grandTotalAmount).toDecimalPlaces(2).isZero() ? '' : ` ${money(row.grandTotalAmount)} บาท`;
+      const status = row.status === 'CONFIRMED'
+        ? row.paymentStatus === 'PAID' ? 'จ่ายแล้ว' : row.paymentStatus === 'PARTIALLY_PAID' ? 'จ่ายบางส่วน' : 'รอจ่าย'
+        : ['VOIDED', 'REJECTED'].includes(row.status) ? EXPENSE_STATUS_LABELS[row.status] : 'รอตรวจ';
+      return `• ${date.format(row.uploadedAt)} ${seller}${amount} · ${status}`;
+    }), ...(rows.length > 5 ? [`และอีก ${rows.length - 5} ใบ`] : []),
+    [pending.toDecimalPlaces(2).isZero() ? '' : `ยังไม่ยืนยัน ${money(pending.toString())} บาท`,
+      confirmed.toDecimalPlaces(2).isZero() ? '' : `ยืนยันแล้ว ${money(confirmed.toString())} บาท`].filter(Boolean).join(' · '),
+    ].filter(Boolean).join('\n');
   }
 
   /**
@@ -6681,12 +6712,12 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       VOUCHER_CANCEL: 'payment_voucher', VOUCHER_RETURN: 'payment_voucher', WHT_CERTIFICATE_ISSUE: 'wht_certificate' };
     const declined = claim?.status === 'cancelled' || row.status === 'expense_action_cancelled';
     const kind = event.workflowStart ?? (action ? kinds[action] : undefined) ?? (claim || event.reimbursementDraftControl || event.reimbursementChoiceControl
-      ? 'reimbursement_claim' : event.fixedReadControl ? 'read' : staffMenuCommand(event.messageText) ? 'open'
+      ? 'reimbursement_claim' : event.fixedReadControl || row.status === 'free_expense_month_summary' ? 'read' : staffMenuCommand(event.messageText) ? 'open'
         : isExactStandaloneGreeting(event.messageText.trim()) ? 'smalltalk' : row.status === 'completed'
           ? this.deliverySources.get(event)?.ids?.length ? 'read' : 'open' : 'unknown');
     const completed = claim?.status === 'applied' || expense?.applied === true
       || row.status === 'completed' && ['read', 'open', 'smalltalk', 'unknown'].includes(kind)
-      || row.status.startsWith('staff_menu_');
+      || row.status.startsWith('staff_menu_') || row.status === 'free_expense_month_summary';
     const refused = /forbidden|blocked|unavailable|not_included|feature_disabled|reimbursement_stale|reimbursement_invalid|ai_credit|ai_timeout/u.test(row.status);
     const status: LineTaskObservation['status'] = completed ? 'COMPLETED' : declined ? 'DECLINED' : refused ? 'REFUSED' : 'OPEN';
     const pressed = !!(event.workflowStart || event.workflowControl || event.fixedReadControl || event.expenseActionControl
@@ -6839,8 +6870,8 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
       // has no account to link. The same card the door sends, so both entrances agree — and a
       // `follow` from a stranger lands here too, which is what makes G-03 an answer. A follow ALSO
-      // gets the greeting in front of it (Owner 2026-09-21); a typed message gets the card alone,
-      // because the hello belongs to the moment the friend was added.
+      // gets the greeting in front of it. Owner 2026-11-05 gives a typed stranger the short
+      // explanation before the door, while an open application keeps its status card alone.
       const invitedEntry = publicCommand === 'follow';
       await this.deliverRequiredMessages(event, await this.entryDoorMessages(event.lineUserId, invitedEntry, replyLanguage(event)));
       // L-B follow-up (c): adding the OA as a friend is the INVITED first step of this flow, not an
@@ -7223,20 +7254,28 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     if (resolvedAccess.freeExpenseDrafts) {
       const showsMenu = menuCommand === 'main' || isCapabilityQuestion(event.messageText);
       const mayRead = ['expense.read', 'expense.read_own', 'expense.read_related'].some(key => resolvedAccess.permissions.includes(key));
-      const text = showsMenu
-        ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
-        : isExplicitFinalFinancialRequest(event.messageText)
-          ? 'สิทธิ์ใช้ฟรียังยืนยัน อนุมัติ หรือจ่ายไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ'
-          : isExplicitSourceEditRequest(event.messageText)
-            ? mayRead && resolvedAccess.permissions.includes('expense.update')
-              ? FREE_EXPENSE_TEXT_EDIT_REPLY
-              : FREE_EXPENSE_TEXT_EDIT_SUPPORT_REPLY
-            : FREE_EXPENSE_CHAT_REPLY;
+      const summaryRequested = mayRead && isFreeExpenseMonthSummaryRequest(event.messageText);
+      const month = todayCivilDate('Asia/Bangkok').slice(0, 7);
+      const fromDate = `${month}-01`;
+      const toDate = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+      const text = summaryRequested
+        ? await this.freeExpenseMonthSummary({ requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+          membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles, permissions: resolvedAccess.permissions,
+          scopes: resolvedAccess.scopes, authProvider: 'line', freeExpenseDrafts: true }, fromDate, toDate)
+        : showsMenu
+          ? freeExpenseMenuReply(this.config.webBaseUrl, companyId, resolvedAccess.permissions)
+          : isExplicitFinalFinancialRequest(event.messageText)
+            ? 'สิทธิ์ใช้ฟรียังยืนยัน อนุมัติ หรือจ่ายไม่ได้ พิมพ์ ‘เมนูหลัก’ เพื่อดูทางเลือกค่ะ'
+            : isExplicitSourceEditRequest(event.messageText)
+              ? mayRead && resolvedAccess.permissions.includes('expense.update')
+                ? FREE_EXPENSE_TEXT_EDIT_REPLY
+                : FREE_EXPENSE_TEXT_EDIT_SUPPORT_REPLY
+              : FREE_EXPENSE_CHAT_REPLY;
       // A1/G21: a member who can read the list gets it first; everyone keeps the approved เมนูหลัก exit.
       await this.deliverReply(event, text, showsMenu ? undefined : lineChoiceQuickReply([
-        ...(mayRead && this.config.webBaseUrl ? [{ label: 'เปิดรายการค่าใช้จ่าย', text: '', uri: `${this.config.webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(companyId)}/expenses` }] : []),
+        ...(mayRead && this.config.webBaseUrl ? [{ label: 'เปิดรายการค่าใช้จ่าย', text: '', uri: `${this.config.webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(companyId)}/expenses${summaryRequested ? `?dateField=uploadedAt&fromDate=${fromDate}&toDate=${toDate}` : ''}` }] : []),
         { label: 'เมนูหลัก', text: 'เมนูหลัก' }]));
-      await this.updateEventLog(event.webhookEventId, menuCommand === 'main' ? 'staff_menu_main' : 'free_chat_not_included', undefined, companyId);
+      await this.updateEventLog(event.webhookEventId, summaryRequested ? 'free_expense_month_summary' : menuCommand === 'main' ? 'staff_menu_main' : 'free_chat_not_included', undefined, companyId);
       return;
     }
 

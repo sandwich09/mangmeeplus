@@ -69,16 +69,18 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER, disburs
   const names = [...readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8').matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(m => m[1]!);
   const nodes: Array<{ tag: string; props: any }> = [];
   const landingEffects: Array<() => void> = [];
+  const loadEffects: Array<() => void> = [];
   const replacements: Array<{ route: string; options: unknown }> = [];
   let html = ''; const successes: string[] = []; const routes: string[] = [];
   function render() {
-    let index = 0; nodes.length = 0; landingEffects.length = 0;
+    let index = 0; nodes.length = 0; landingEffects.length = 0; loadEffects.length = 0;
     const realState = runtime.useState, realCreate = runtime.createElement, realEffect = runtime.useEffect;
     const focusEffects: Array<() => void> = [];
     runtime.useEffect = (fn: () => void, deps: unknown[]) => {
       realEffect(fn, deps);
       if (String(fn).includes('reviewFocus')) focusEffects.push(fn);
       if (String(fn).includes('sectionLanding')) landingEffects.push(fn);
+      if (String(fn).includes('void load()')) loadEffects.push(fn);
     };
     runtime.useState = (init: any) => {
       const pair = realState(init), name = names[index++];
@@ -108,7 +110,7 @@ function harness(initial: Record<string, any> = {}, permissions = OWNER, disburs
     await new Promise(resolve => setImmediate(resolve));
     return render();
   }
-  return { state, render, act, successes, nodes, routes, landingEffects, replacements };
+  return { state, render, act, successes, nodes, routes, landingEffects, loadEffects, replacements };
 }
 function text(value: any): string {
   if (Array.isArray(value)) return value.map(text).join('');
@@ -117,6 +119,102 @@ function text(value: any): string {
 }
 function visible(html: string) { return html.replace(/<[^>]+>/g, ' '); }
 function dialog(html: string) { return html.slice(html.indexOf('<section data-dialog')); }
+
+function sourceDraftExpense(vendorName: string | null, updatedAt: string) {
+  return expense({ status: 'DRAFT', updatedAt, sourceDraft: {
+    status: 'PAUSED_INTERRUPTED', canEdit: true,
+    header: { vendorName, expenseDate: '2026-10-03', businessPurpose: null },
+    items: [], missingFields: [],
+  } });
+}
+
+test('PWS-CHAIN an older read arriving after the source save refresh keeps the saved seller in free and paid shops', async () => {
+  const { certificateHarness } = require('./expense-certificate-test-harness');
+  const { ExpenseSourceDraftCard } = require('./ExpenseSourceDraftCard');
+  for (const freeExpenseDrafts of [true, false]) {
+    const older = sourceDraftExpense(null, '2026-10-04T01:00:00.000Z');
+    const saved = sourceDraftExpense('ร้านที่บันทึก', '2026-10-04T01:00:01.000Z');
+    const page = harness({ detail: older, freeExpenseDrafts }, ['expense.read', 'expense.receipt.upload']);
+    let finishOlderRead!: (detail: any) => void;
+    const slowRead = new Promise(resolve => { finishOlderRead = resolve; });
+    let reads = 0;
+    const get = stub(api, 'getExpense', () => ++reads === 1 ? slowRead : Promise.resolve(saved));
+    const update = stub(api, 'updateExpenseSourceDraft', async (_company: string, _expense: string, revision: string, changes: any) => {
+      assert.equal(revision, older.updatedAt);
+      assert.equal(changes.vendorName, 'ร้านที่บันทึก');
+      return saved;
+    });
+    try {
+      page.render();
+      page.loadEffects[0]!();
+      assert.equal(reads, 1);
+      let props = page.nodes.find(node => node.tag === 'ExpenseSourceDraftCard')!.props;
+      const card = certificateHarness(() => {
+        const effect = runtime.useEffect;
+        // Exercise the form reset, without mounting the shared fields' browser-only effects.
+        runtime.useEffect = (fn: () => void, deps?: unknown[]) => {
+          if (deps?.length === 1 && deps[0] === props.sourceDraft) effect(fn, deps);
+        };
+        return h(ExpenseSourceDraftCard, props);
+      });
+      card.render(true);
+      card.find('input', (props: any) => props['aria-label'] === 'ชื่อผู้ขาย').onChange({ target: { value: 'ร้านที่บันทึก' } });
+      card.render();
+      await card.find('button', (props: any) => text(props.children) === 'บันทึกร่าง').onClick();
+      await card.settle();
+      assert.equal(update.mock.callCount(), 1);
+      assert.equal(reads, 2);
+      assert.equal(page.state.detail, saved);
+      // Keep the same mounted form and apply its sourceDraft reset effect after each page update.
+      page.render();
+      props = page.nodes.find(node => node.tag === 'ExpenseSourceDraftCard')!.props;
+      card.render(true);
+      card.render();
+      assert.equal(card.find('input', (props: any) => props['aria-label'] === 'ชื่อผู้ขาย').value, 'ร้านที่บันทึก');
+      finishOlderRead(older);
+      await card.settle();
+      page.render();
+      props = page.nodes.find(node => node.tag === 'ExpenseSourceDraftCard')!.props;
+      card.render(true);
+      card.render();
+      assert.equal(card.find('input', (props: any) => props['aria-label'] === 'ชื่อผู้ขาย').value, 'ร้านที่บันทึก');
+      assert.equal(page.state.detail, saved);
+      card.cleanup();
+    } finally { get.mock.restore(); update.mock.restore(); }
+  }
+});
+
+test('PWS-CHAIN a newer read replaces the older detail and seller in free and paid shops', async () => {
+  for (const freeExpenseDrafts of [true, false]) {
+    const older = sourceDraftExpense(null, '2026-10-04T01:00:00.000Z');
+    const newer = sourceDraftExpense('ร้านล่าสุด', '2026-10-04T01:00:01.000Z');
+    const page = harness({ detail: older, freeExpenseDrafts }, ['expense.read', 'expense.receipt.upload']);
+    const get = stub(api, 'getExpense', async () => newer);
+    try {
+      page.render();
+      page.loadEffects[0]!();
+      await new Promise(resolve => setImmediate(resolve));
+      page.render();
+      assert.equal(page.state.detail, newer);
+      assert.equal(page.nodes.find(node => node.tag === 'input' && node.props['aria-label'] === 'ชื่อผู้ขาย')!.props.value, 'ร้านล่าสุด');
+    } finally { get.mock.restore(); }
+  }
+});
+
+test('PWS-CHAIN first reads, different expenses and equal timestamps still replace detail', async () => {
+  const incoming = sourceDraftExpense('ร้านล่าสุด', '2026-10-04T01:00:00.000Z');
+  for (const detail of [null, { ...incoming, id: 'another-expense', updatedAt: '2026-10-05T01:00:00.000Z' },
+    sourceDraftExpense(null, '2026-10-04T08:00:00+07:00')]) {
+    const page = harness({ detail, freeExpenseDrafts: true }, ['expense.read', 'expense.receipt.upload']);
+    const get = stub(api, 'getExpense', async () => incoming);
+    try {
+      page.render();
+      page.loadEffects[0]!();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(page.state.detail, incoming);
+    } finally { get.mock.restore(); }
+  }
+});
 
 test('confirming a claim receipt duplicate warns before confirmation about payment, cancellation and irreversibility only for claim sources', () => {
   for (const sourceReimbursementRequestId of ['claim-1', null]) {

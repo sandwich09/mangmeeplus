@@ -22,7 +22,7 @@ import { ALL_FEATURE_ENTITLEMENT_KEYS } from '../../packages/contracts/src/featu
 import { civilPeriodKey, todayCivilDate, DEFAULT_COMPANY_TIME_ZONE } from '../../packages/contracts/src/civil-date';
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION, legalAcceptanceStatements } from '../../packages/contracts/src/legal-acceptance';
 import { claimSnapshotFields, computeSnapshotHash } from '../../apps/api/src/modules/reimbursements/domain/logic/reimbursement.logic';
-import { ROLES, type Actor, type EvalRole, type EvalCompany } from './types';
+import { ROLES, type Actor, type MemberActor, type UnlinkedActor, type EvalRole, type EvalCompany } from './types';
 import { workflowMonthKey } from './template';
 
 export type SeedRow = { model: string; data: Record<string, unknown> };
@@ -402,14 +402,25 @@ export function buildCompanySeed(companyKey: EvalCompany, now = new Date()): Com
   return { companyKey, companyId, tierKey: def.tierKey, branchIds, messagingChannelId, users, rows, categoryIds };
 }
 
-export type WorkflowSeedActor = CompanyUser & { companyId: string; role: EvalRole; branchIds: string[] };
-export type WorkflowSeed = { companies: Record<EvalCompany, CompanySeed>; rows: SeedRow[]; actors: Record<string, WorkflowSeedActor>; digest: string };
-const actorScopeKey = (actor: Actor) => `${actor.company}:${actor.role}:${actor.branchScope === 'all' ? 'all' : [...actor.branchScope.branches].sort().join(',')}`;
+export type WorkflowSeedActor = CompanyUser & { companyId: string; role: EvalRole; branchIds: string[]; runtimeRole?: string; kind?: 'member' | 'creator-only' };
+export type UnlinkedWorkflowSeedActor = { kind: 'unlinked'; lineUserId: string; companyId?: never; userId?: never; role?: never; branchIds?: never; membershipId?: never };
+export type WorkflowSeed = { companies: Record<EvalCompany, CompanySeed>; rows: SeedRow[]; actors: Record<string, WorkflowSeedActor | UnlinkedWorkflowSeedActor>; digest: string };
+const actorScopeKey = (actor: MemberActor) => `${actor.company}:${actor.role}:${actor.branchScope === 'all' ? 'all' : [...actor.branchScope.branches].sort().join(',')}`;
 
-export function resolveWorkflowActor(actor: Actor, seed: WorkflowSeed): WorkflowSeedActor {
+export function resolveWorkflowActor(actor: MemberActor, seed: WorkflowSeed): WorkflowSeedActor;
+export function resolveWorkflowActor(actor: UnlinkedActor, seed: WorkflowSeed): UnlinkedWorkflowSeedActor;
+export function resolveWorkflowActor(actor: Actor, seed: WorkflowSeed): WorkflowSeedActor | UnlinkedWorkflowSeedActor;
+export function resolveWorkflowActor(actor: Actor, seed: WorkflowSeed): WorkflowSeedActor | UnlinkedWorkflowSeedActor {
+  if (actor.kind === 'unlinked') {
+    const resolved = seed.actors[actor.key];
+    assert.ok(resolved?.kind === 'unlinked', `WORKFLOW_UNLINKED_ACTOR_MISSING:${actor.key}`);
+    assert.ok(!seed.rows.some(row => row.model === 'externalIdentity' && row.data.providerUserId === resolved.lineUserId && row.data.status === 'ACTIVE'), `WORKFLOW_UNLINKED_IDENTITY_ACTIVE:${actor.key}`);
+    return resolved;
+  }
   const resolved = seed.actors[actor.key]?.companyId === seed.companies[actor.company].companyId
     ? seed.actors[actor.key] : seed.actors[actorScopeKey(actor)];
-  assert.ok(resolved, `WORKFLOW_ACTOR_SEED_MISSING:${actor.key}`);
+  assert.ok(resolved && resolved.kind !== 'unlinked', `WORKFLOW_ACTOR_SEED_MISSING:${actor.key}`);
+  if (actor.kind === 'creator-only') assert.ok(resolved.kind === 'creator-only' && resolved.runtimeRole === 'EVAL_DRAFT_CREATOR', `WORKFLOW_CREATOR_ONLY_SEED_MISSING:${actor.key}`);
   const expectedBranches = actor.branchScope === 'all' ? seed.companies[actor.company].branchIds : actor.branchScope.branches;
   assert.equal(resolved.role, actor.role, `WORKFLOW_ACTOR_ROLE_MISMATCH:${actor.key}`);
   assert.deepEqual([...resolved.branchIds].sort(), [...expectedBranches].sort(), `WORKFLOW_ACTOR_BRANCH_MISMATCH:${actor.key}`);
@@ -419,7 +430,8 @@ export function resolveWorkflowActor(actor: Actor, seed: WorkflowSeed): Workflow
 /** One deterministic snapshot for workflow replay and its oracle, retaining legacy advisor seeds. */
 export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): WorkflowSeed {
   const companies = { A: buildCompanySeed('A', now), B: buildCompanySeed('B', now), C: buildCompanySeed('C', now) };
-  for (const companyKey of new Set(requestedActors.filter(actor => actor.freeSourceDrafts).map(actor => actor.company))) {
+  const members = requestedActors.filter((actor): actor is MemberActor => actor.kind !== 'unlinked');
+  for (const companyKey of new Set(members.filter(actor => actor.freeSourceDrafts).map(actor => actor.company))) {
     const company = companies[companyKey];
     company.tierKey = 'FREE_TRIAL_15';
     const term = company.rows.find(row => row.model === 'companyPlanTerm')!;
@@ -427,7 +439,8 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
     Object.assign(term.data, { tierKey: 'FREE_TRIAL_15', termStartAt: new Date(now.getTime() - 30 * 86400000), termEndsAt: new Date(now.getTime() - 86400000) });
   }
   const rows = [...SHARED_ACCESS_ROWS, ...Object.values(companies).flatMap(company => company.rows.slice(SHARED_ACCESS_ROWS.length))];
-  const actors: Record<string, WorkflowSeedActor> = {};
+  const actors: WorkflowSeed['actors'] = {};
+  for (const actor of requestedActors.filter(actor => actor.kind === 'unlinked')) actors[actor.key] = { kind: 'unlinked', lineUserId: `U${sha256Hex(`unlinked:${actor.key}`).slice(0, 32)}` };
   for (const company of Object.values(companies)) for (const role of ROLES) {
     actors[actorScopeKey({ company: company.companyKey, role, key: '', branchScope: 'all' })] = { ...company.users[role], companyId: company.companyId, role, branchIds: company.branchIds };
   }
@@ -441,8 +454,9 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
       if (row.model === 'user' && rows.some(existing => existing.model === 'user' && existing.data.id === userId)) continue;
       rows.push({ model: row.model, data });
     }
-    actors[key] = { userId, membershipId, lineUserId, companyId: company.companyId, role, branchIds: branches };
-    return actors[key]!;
+    const seeded = { userId, membershipId, lineUserId, companyId: company.companyId, role, branchIds: branches };
+    actors[key] = seeded;
+    return seeded;
   };
   addActor('limited-manager', companies.B, 'MANAGER', companies.B.branchIds.slice(0, 1));
   addActor('dual-a', companies.A, 'OWNER', companies.A.branchIds, 'dual');
@@ -452,7 +466,18 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
   const creator = addActor('draft-creator', companies.A, 'STAFF', companies.A.branchIds);
   const creatorGrant = rows.find(row => row.model === 'membershipRole' && row.data.membershipId === creator.membershipId)!;
   creatorGrant.data.roleId = 'role-eval-draft-creator';
-  for (const actor of requestedActors) {
+  const paidCreators = new Map<string, WorkflowSeedActor>();
+  for (const actor of members.filter(actor => actor.kind === 'creator-only')) {
+    if (paidCreators.has(actor.key)) continue;
+    assert.ok(actor.company === 'B' && actor.role === 'STAFF' && !actor.freeSourceDrafts && companies.B.tierKey === 'PRO_999', 'WORKFLOW_CREATOR_ONLY_PAID_B');
+    const branches = actor.branchScope === 'all' ? companies.B.branchIds : actor.branchScope.branches;
+    assert.ok(branches.length && branches.every(branch => companies.B.branchIds.includes(branch)), `WORKFLOW_BRANCH_SCOPE_UNKNOWN:${actor.key}`);
+    const paid = addActor(actor.key, companies.B, 'STAFF', branches);
+    Object.assign(paid, { kind: 'creator-only', runtimeRole: 'EVAL_DRAFT_CREATOR' });
+    rows.find(row => row.model === 'membershipRole' && row.data.membershipId === paid.membershipId)!.data.roleId = 'role-eval-draft-creator';
+    paidCreators.set(actor.key, paid);
+  }
+  for (const actor of members) {
     const company = companies[actor.company];
     if (actor.branchScope === 'all' || actors[actor.key]?.companyId === company.companyId) continue;
     const branches = [...actor.branchScope.branches].sort();
@@ -491,7 +516,14 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
         ...(wht === '0.00' ? {} : { whtCategoryCode: '40_2', whtRate: '3.00', vendorEntityKindSnapshot: 'INDIVIDUAL' }) } });
       rows.push({ model: 'expenseLine', data: { id: `${id}-line1`, companyId: company.companyId, expenseId: id, lineNumber: 1, description: 'ค่าบริการ', quantity: '1', unitPrice: '1000.00', lineSubtotalAmount: '1000.00', lineTotalAmount: '1000.00', expenseCategoryId: company.categoryIds[3] } });
     }
-    for (let index = 0; index < 2; index++) rows.push({ model: 'accountingCounterparty', data: { id: `duplicate-vendor-${company.companyKey}-${index}`, companyId: company.companyId, type: 'VENDOR', displayName: 'ผู้ขายชื่อซ้ำ', createdByUserId: company.users.OWNER.userId } });
+    if (company.companyKey === 'B') for (const [key, paid] of paidCreators) for (const index of [0, 3]) {
+      const sourceId = `workflow-expense-b-${index}`, id = `workflow-${key}-${index === 0 ? 'draft' : 'needs-review'}`;
+      const expense = rows.find(row => row.model === 'expenseRecord' && row.data.id === sourceId)!;
+      const line = rows.find(row => row.model === 'expenseLine' && row.data.expenseId === sourceId)!;
+      rows.push({ model: 'expenseRecord', data: { ...expense.data, id, createdByUserId: paid.userId, branchId: paid.branchIds[0], vendorDocumentNumber: `ผู้บันทึก-${sha256Hex(key).slice(0, 12)}-${index}` } },
+        { model: 'expenseLine', data: { ...line.data, id: `${id}-line1`, expenseId: id } });
+    }
+    for (let index = 0; index < (company.companyKey === 'B' ? 4 : 2); index++) rows.push({ model: 'accountingCounterparty', data: { id: `duplicate-vendor-${company.companyKey}-${index}`, companyId: company.companyId, type: 'VENDOR', displayName: 'ผู้ขายชื่อซ้ำ', createdByUserId: company.users.OWNER.userId } });
     for (const [index, status] of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID', 'CANCELLED'].entries()) {
       const id = `voucher-${company.companyKey.toLowerCase()}-${status.toLowerCase()}`;
       const expenseId = `workflow-expense-${company.companyKey.toLowerCase()}-${11 + index}`;

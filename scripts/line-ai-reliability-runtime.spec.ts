@@ -200,3 +200,21 @@ test('failure diagnostics retain assertion and Prisma code but never arbitrary s
   assert.deepEqual(diagnostic, { name: 'PrismaClientKnownRequestError', code: 'P2002', assertion: undefined, model: 'User', target: ['email'] });
   assert.ok(!JSON.stringify(diagnostic).includes('secret'));
 });
+
+test('unlinked replay actors reach the before-link path without resolving a company role', async () => {
+  const { runtimeActorContext } = await import('./line-ai-reliability-runtime');
+  let calls = 0;
+  const fallback = { companyId: 'company-b', userId: 'owner-b', lineUserId: 'Ulinked' };
+  const resolveAccess = async () => { calls++; throw new Error('must not resolve an unlinked identity'); };
+  assert.deepEqual(await runtimeActorContext({ kind: 'unlinked', lineUserId: 'Uunknown' }, fallback, resolveAccess), { companyId: '', userId: '', lineUserId: 'Uunknown' });
+  assert.equal(calls, 0);
+  assert.deepEqual(await runtimeActorContext(undefined, fallback, resolveAccess), fallback);
+  const creator = { companyId: 'company-b', userId: 'creator', lineUserId: 'Ucreator', role: 'STAFF', runtimeRole: 'EVAL_DRAFT_CREATOR', branchIds: ['branch-1'] };
+  assert.deepEqual(await runtimeActorContext(creator, fallback, async () => ({ roles: ['EVAL_DRAFT_CREATOR'], scopes: { branchIds: ['branch-1'] } })), { companyId: 'company-b', userId: 'creator', lineUserId: 'Ucreator' });
+  for (const companyId of ['company-paid', 'company-free']) {
+    const actor = { companyId, userId: 'member', lineUserId: 'Umember', role: 'STAFF', branchIds: ['branch-1'] };
+    assert.deepEqual(await runtimeActorContext(actor, fallback, async () => ({ roles: ['STAFF'], scopes: { branchIds: ['branch-1'] } })), { companyId, userId: 'member', lineUserId: 'Umember' });
+    await assert.rejects(() => runtimeActorContext(actor, fallback, async () => ({ roles: ['STAFF'], scopes: { branchIds: ['branch-2'] } })), /REPLAY_ACTOR_BRANCH_SCOPE_MISMATCH/);
+    await assert.rejects(() => runtimeActorContext(actor, fallback, async () => ({ roles: [], scopes: { branchIds: ['branch-1'] } })), /REPLAY_ACTOR_ROLE_MISMATCH/);
+  }
+});

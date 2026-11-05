@@ -87,11 +87,35 @@ Scope:
   - Bug fix: the getting-started guide turned null entitlements into [] and hid 11 of 16 sections for shops without entitlement rows.
   - Old PG-only test pin: approved voucher reminder reads "อนุมัติแล้ว รอจ่าย".
   - Plan docs: step 9 cost-first order (owner 2026-11-04 "ก่อนทดสอบ ai ให้แก้เรื่อง ลดค่าใช้จ่ายเอไอ และ แคชก่อน"); CACHE-1 decided from Production counts: keep the 5-minute cache.
+- **Batch 11, landed 2026-11-04.** develop `3e581fd12`, main `a9a857ee8`. Step 6 P6.5 closing journeys, plus a 390 px top-bar overflow fix (real bug: switchers and page title wider than the phone).
+- **Batch 12, landed 2026-11-05.** develop `94001693e`, main `638d3ec4e`. Fixes from a free-shop customer ticket (2026-11-04):
+  - marketplace receipts take the seller from the "ผู้ขาย" field, not the platform header;
+  - a 13-digit run beside a phone number is not a tax id;
+  - "คูปอง" counts as a discount;
+  - document numbers with I/O go to review;
+  - free shops get a package way out;
+  - the expense list can count by "วันที่ส่งเข้า";
+  - file types are written in English (JPEG, PNG, HEIC, HEIF, GIF, PDF);
+  - LINE company switching shows "บริษัท n · ชื่อร้าน" instead of the id.
+  - A web suite went out red (owner-role wording); fixed in batch 13. Lesson: list every RED line before pushing.
+- **Batch 13, landed 2026-11-05.** develop `4c65362b2`, main `8b96ee08f`. Step 9 Phase A1–A7.
+  - The LINE basis line says "รายการที่ยังไม่ยืนยัน".
+  - lm1 M2/M-R6/M3 tuning corpus.
+  - The task-run insert is atomic (`createMany` + `skipDuplicates`; the R24 real-PG race caught it).
+- **Batch 14, landed 2026-11-05.** develop `5ce1f50e4`, main `a740d7279`. Step 11 e-WHT code (Phases 1–4).
+- **Batch 15, landed 2026-11-05.** develop `214e91102`, main `0badd6c2a`. Step 9 Phase A4b: substitute-receipt and seller pickers without a model.
+  - MC2 closed: LINE lists are read-only, and the signed continuation is unchanged.
+  - Several matching sellers show up to 3 names plus the web exit.
+  - Verify: one API spec process hung about 7 h while the laptop slept. The controller stopped its own pid and reran the file alone (GREEN).
+  - Journeys 107/108: the PWS-CHAIN seller field empties after save about once in 6 runs. The cause is a stale `getExpense` overwriting the saved draft; it is pre-existing, and lane sd1 is fixing it.
+- **Owner 2026-11-05 ("ทำตามแนะนำ"), from the free-shop ticket:**
+  - free shops get a model-free month summary command in LINE (lane fl1);
+  - a stranger who types before linking gets one line before the door card, which reverses the 2026-09-21 card-alone rule (lane fl1);
+  - the customer's two wrong drafts are repaired after a read-only Production check and the owner's OK on the change list.
 - **Held (not on develop):**
   - step 10 weekly summary (lane ws1) through 5.5 journeys: waits for the controller's fake-LINE proof and the LINE OA cost figure (5.5);
-  - step 11 e-WHT (lane ew1) through Phase 3.4/3.6: 3.5 journey in progress, then Phase 4–5;
-  - step 6 P6.5 closing journeys: 7 failed in the browser (test-only), being fixed (pw1:12);
-  - step 9 Phase A (lane wf1): A1/A2/A6c committed; A3a/A3c/A3b in progress.
+  - step 11 Phase 5: docs, rollback set R (BL1 independent review) and read-only Production checks BL3 + REDUCED-rate-1 count (owner MFA); UAT on the owner's order;
+  - step 9: A8 release gate, then M4, the one real-model run (held-out workflow corpus round 2 in lane ho1).
 - **Owner 2026-11-04:** LINE follow-up questions approved ("ได้ ตามแนะนำ"): remember the last card id, explain it more simply from approved text, due-date follow-ups and ภ.ง.ด.3; one real-model test run after the cost work (within the 2,000 THB programme cap).
 - **Later:** step 7 Phase 4; step 9 M3/M4 and Phases B–C; step 5 last, with the owner.
 

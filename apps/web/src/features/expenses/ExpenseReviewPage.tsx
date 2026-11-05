@@ -145,6 +145,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   const onRefresh = () => undefined;
   const onGoJournal = () => router.push(`/companies/${companyId}/journal?sourceId=${encodeURIComponent(expenseId)}`);
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
+  const replaceDetail = useCallback((incoming: ExpenseDetail) => {
+    setDetail(current => current?.id === incoming.id && Date.parse(current.updatedAt) > Date.parse(incoming.updatedAt)
+      ? current
+      : incoming);
+  }, []);
   const [reviewTotals, setReviewTotals] = useState<ExpenseReviewTotalsState | null>(null);
   const [totalsRetry, setTotalsRetry] = useState(0);
   // Called before the loading/error early returns — hooks cannot live behind them.
@@ -435,8 +440,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { setDetail(await getExpense(companyId, expenseId)); } catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId, expenseId]);
+    try { replaceDetail(await getExpense(companyId, expenseId)); } catch (e) { setError(err(e)); } finally { setLoading(false); }
+  }, [companyId, expenseId, replaceDetail]);
   useEffect(() => { setCorrectionReason(''); void load(); }, [load]);
 
   /** One operation id per (intent, file, revision); a retry of the same thing reuses it verbatim. */
@@ -497,7 +502,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
           if ((file?.status === 'DONE' || file?.status === 'PARTIAL') && file.applied !== false) {
             const refreshed = await getExpense(companyId, expenseId);
             if (cancelled) return;
-            setDetail(refreshed);
+            replaceDetail(refreshed);
           }
           setReadState(file);
         })
@@ -505,7 +510,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
         .finally(() => { polling = false; });
     }, 3_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [companyId, expenseId, detail?.primaryAttachmentId, readRunning]);
+  }, [companyId, expenseId, detail?.primaryAttachmentId, readRunning, replaceDetail]);
 
   useEffect(() => {
     const stored = consumeStoredNoticeOnce<ExtractionNotice>(window.sessionStorage, expenseNoticeKey(expenseId), expenseId, noticeConsumedRef);
@@ -556,7 +561,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
       && !(code?.startsWith('expense_confirmation_') && code.endsWith('_changed'))) return null;
     try {
       const refreshed = await getExpense(companyId, expenseId);
-      setDetail(refreshed); setConflictReload(false);
+      replaceDetail(refreshed); setConflictReload(false);
       paymentAttemptRef.current = null; setPaymentFailure(null);
       setPaidAmount(expensePaymentFormState(refreshed.outstandingAmount, '', paidAt).prefill);
       if (operation === 'payment' && refreshed.status !== 'CONFIRMED') return refreshed.correctionOpenedAt
@@ -734,7 +739,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
         setPaymentNotice(PAYMENT_SAVED_REFRESH_NOTICE);
         return;
       }
-      setDetail(refreshed);
+      replaceDetail(refreshed);
       setPaymentSlip(null); setPaymentSlipId(undefined);
       paymentAttemptRef.current = null;
       setPaidAmount(expensePaymentFormState(refreshed.outstandingAmount, '', paidAt).prefill); setPaymentFailure(null); setPaymentNotice(null);
@@ -923,11 +928,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
         });
       }
       setNotice(extractionNotice(outcome.result, locale));
-      if (outcome.recoveredDetail) setDetail(outcome.recoveredDetail);
+      if (outcome.recoveredDetail) replaceDetail(outcome.recoveredDetail);
       else {
         const refreshed = await getExpense(companyId, expenseId);
         if (runId !== extractionRunIdRef.current) return;
-        setDetail(refreshed);
+        replaceDetail(refreshed);
       }
       if (runId !== extractionRunIdRef.current) return;
       onRefresh();
@@ -1655,7 +1660,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} freeExpenseDrafts={freeExpenseDrafts} permissions={uiPermissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} freeExpenseDrafts={freeExpenseDrafts} permissions={uiPermissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} onBusyChange={setReviewSaving} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onDirtyChange={setDataDirty} onSaved={async () => { replaceDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   // Vendor-address Slice 2, review fix 1: on a tax-code invoice the way forward is the line's Tax
@@ -2222,7 +2227,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
                       sourceDraft={visibleSourceDraft}
                       locale={locale}
                       readOnlyMessage={readySourceDraftMessage}
-                      onSaved={setDetail}
+                      onSaved={replaceDetail}
                     />}
                     {freeExpenseDrafts && !visibleSourceDraft && <InfoBanner message={t('expenses.source_draft_not_available', locale)} />}
                   </>
@@ -2442,7 +2447,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, f
                 const answer = await reopenExpense(companyId, expenseId, correctionReason.trim(), correctionCertificate ? true : undefined);
                 cancelledCertificate = answer?.cancelledCertificate;
               }
-              setDetail(await getExpense(companyId, expenseId));
+              replaceDetail(await getExpense(companyId, expenseId));
               dialogOpenerRef.current = null;
               setCorrectionAction(null); setCorrectionReason('');
               paymentAttemptRef.current = null; setPaymentFailure(null); setPaymentNotice(null);
