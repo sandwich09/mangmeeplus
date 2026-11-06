@@ -503,10 +503,16 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
     for (const row of rows.filter(row => row.data.companyId === company.companyId)) {
       if (row.model === 'reimbursementRequest') {
         row.data.requesterDisplayNameSnapshot = Number(String(row.data.id).split('-').at(-1)) % 2 ? 'สมชาย' : 'สมชัย';
+        // Submit and approval need receipt evidence; seeded claims use the policy's no-receipt reason.
+        Object.assign(row.data, { missingReceiptReason: 'ร้านไม่ออกใบเสร็จ', receiptRequirementStatus: 'MISSING_WITH_REASON' });
+        // Submit needs a payout method; cash needs no account. Submitted rows keep their approval hash.
+        if (row.data.status === 'DRAFT') row.data.payoutMethod = 'CASH';
         if (row.data.status === 'APPROVED') row.data.paymentStatus = 'UNPAID';
       }
       if (row.model === 'reimbursementApprovalStep' && row.data.status === 'PENDING') row.data.assignedApproverUserIdsJson = [String(row.data.id).endsWith('-1-step1') ? company.users.AUDITOR_READONLY.userId : company.users.MANAGER.userId];
     }
+    rows.push({ model: 'reimbursementPolicy', data: { id: `reimbursement-policy-${company.companyKey}`, companyId: company.companyId, branchId: null,
+      defaultApproverRoles: ['MANAGER'], allowMissingReceiptWithReason: true, createdByUserId: company.users.OWNER.userId } });
     const template = rows.find(row => row.model === 'expenseRecord' && row.data.companyId === company.companyId)!;
     for (let index = 0; index < (company.companyKey === 'B' ? 310 : 16); index++) {
       const id = `workflow-expense-${company.companyKey.toLowerCase()}-${index}`;

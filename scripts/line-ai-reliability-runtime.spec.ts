@@ -69,6 +69,9 @@ test('preview evidence requires the delivered card to match its stored signed pa
   assert.deepEqual(runtimeDeliveredPreviews([], [entry], render), []);
   assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, contents: { ...message.contents, amount: '999.00' } }] }], [entry], render)[0]?.action, 'UNVERIFIED_PREVIEW');
   assert.equal(runtimeDeliveredPreviews([{ messages: [message] }], [], render)[0]?.action, 'UNVERIFIED_PREVIEW');
+  const canonical = (value: any) => ({ ...render(value), canonicalText: 'ตรวจการจ่าย\nผู้ขาย\n250.00 บาท' });
+  assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, altText: 'ตรวจการจ่าย\nผู้ขาย\n250.00 บาท' }] }], [entry], canonical)[0]?.action, 'RECORD_PAYMENT', 'delivery may send the canonical text as altText');
+  assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, altText: 'อื่น' }] }], [entry], canonical)[0]?.action, 'UNVERIFIED_PREVIEW');
   const claim = { preview: { actionId: 'draft', previewRevision: 2, confirmationDigest: 'digest', targetRef: 'claim-a',
     after: { amount: '250.00', reason: 'ค่าเดินทาง', requesterDisplayName: 'ผู้เบิก' } } };
   const claimCard = { type: 'flex', altText: 'ตรวจใบเบิก', contents: { action: { type: 'postback',

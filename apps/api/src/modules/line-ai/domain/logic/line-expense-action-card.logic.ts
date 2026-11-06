@@ -12,6 +12,7 @@ import type { LineSystemCardAction } from './line-system-card.logic';
 export function buildExpenseActionCard(preview: ExpenseActionPreview, reply?: string, language: LineReplyLanguage = preview.language ?? 'th', webBaseUrl?: string): LineReplyMessage {
   const r = preview.record;
   const team = Object.hasOwn(TEAM_ACTION_LABELS, preview.action);
+  const claim = preview.action.startsWith('REIMBURSEMENT_');
   const actionLabel = lineUiLabel(EXPENSE_ACTION_LABELS[preview.action], language);
   const headline = language === 'en' ? (reply ? `Completed: ${actionLabel}.` : `Please review the details, then select ${actionLabel}.`) : reply ?? preview.summary;
   const lines = [headline, scrubRecordText(r.vendorName, 160), ...(!team ? [`${r.amount} ${r.currency === 'THB' ? language === 'en' ? 'THB' : 'บาท' : r.currency}`, lineDisplayDate(r.date, language)] : []), reply ? lineUiLabel(r.status, language) : `${lineUiLabel(r.status, language)} → ${lineUiLabel(r.nextStatus, language)}`,
@@ -37,9 +38,9 @@ export function buildExpenseActionCard(preview: ExpenseActionPreview, reply?: st
   const legacy = message as Extract<LineReplyMessage, { type: 'flex' }>;
   const en = language === 'en';
   const actions = ((legacy.contents as any).footer?.contents ?? []).map((entry: any) => entry.action as LineSystemCardAction);
-  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: en ? ['Expense', actionLabel] : ['ค่าใช้จ่าย', actionLabel] },
+  const contents = drawLineSystemCard({ mascot: 'general', header: { lines: claim ? [lineUiLabel('ใบเบิก', language), actionLabel] : en ? ['Expense', actionLabel] : ['ค่าใช้จ่าย', actionLabel] },
     rows: [
-      { label: en ? 'Seller / payee' : 'ผู้ขาย / ผู้รับเงิน', value: scrubRecordText(r.vendorName, 160) },
+      { label: claim ? lineUiLabel('ผู้เบิก', language) : en ? 'Seller / payee' : 'ผู้ขาย / ผู้รับเงิน', value: scrubRecordText(r.vendorName, 160) },
       ...(!team ? [{ label: en ? 'Amount' : 'ยอดเงิน', value: formatClaimMoney(r.amount, r.currency, language), total: true },
         { label: en ? 'Date' : 'วันที่', value: r.date ? lineDisplayDate(r.date, language) : '' }] : []),
       { label: en ? 'Status' : 'สถานะ', value: reply ? lineUiLabel(r.status, language) : `${lineUiLabel(r.status, language)} → ${lineUiLabel(r.nextStatus, language)}` },

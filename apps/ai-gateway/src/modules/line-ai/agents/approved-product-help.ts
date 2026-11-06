@@ -1,5 +1,5 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
-import { E_WHT_WORDS, EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
+import { E_WHT_WORDS, EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES, LINE_CHAT_ACTIONS, LINE_TOOL_REGISTRY, TOOL_MODULE_FEATURE_KEYS, LINE_RECEIPT_CAPTURE_FEATURE_KEY, hasToolFeature, lineChatAction, canUseLineChatAction, mayOfferWorkflow, type LineAiAnswerPresentation } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, productKnowledgeAccess, renderApprovedKnowledge, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 import { NEW_PRODUCT_HELP_CARDS, V6_REVISED_BODIES, PLAIN_WORDS_HELP_DRAFTS } from './product-help-draft-cards';
 import { featureLimitReplyText, featurePackageOffer, permissionAlternative, permissionLimitReplyText, toolPermissionReplyText, scopePolicyWebLinks, type ScopePolicyLanguage } from '../domain/logic/line-ai-scope-policy.logic';
@@ -231,12 +231,15 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
             : /ยืนยัน|confirm/iu.test(text) ? 'expense_confirm' : undefined : undefined;
   const action = lineChatAction(input.actionId || mapped.length || input.toolHint === 'reimbursement.list_pending_approvals' ? operation : undefined)
     ?? lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
-  const actionAllowed = (candidate: (typeof LINE_CHAT_ACTIONS)[number]) => canUseLineChatAction(candidate.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
-    && (!candidate.tool || !input.availableToolNames || input.availableToolNames.includes(candidate.tool));
+  const actionAllowed = (candidate: (typeof LINE_CHAT_ACTIONS)[number]) => 'workflow' in candidate && candidate.workflow
+    ? mayOfferWorkflow(candidate.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
+    : canUseLineChatAction(candidate.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
+      && (!candidate.tool || !input.availableToolNames || input.availableToolNames.includes(candidate.tool));
   const language = input.language ?? 'th';
   const pack = activeProductHelpPack();
   const access = productKnowledgeAccess(input.permissions, input.featureKeys, true, language);
-  const selectedHelp = input.generalHelpEnabled !== false && !requestsProductAction(text) && !input.selectedKnowledgeCardIds?.includes('wht.pnd53-due');
+  const workflowHowTo = input.actionId && action && 'workflow' in action && action.workflow;
+  const selectedHelp = input.generalHelpEnabled !== false && !workflowHowTo && !requestsProductAction(text) && !input.selectedKnowledgeCardIds?.includes('wht.pnd53-due');
   const deniedCard = selectedHelp ? pack.cards.find(card => input.selectedKnowledgeCardIds?.includes(card.id) && (
     !card.requiredPermissions.every(permission => input.permissions.includes(permission))
     || card.permissionAnyOf.length > 0 && !card.permissionAnyOf.some(permission => input.permissions.includes(permission))
@@ -269,7 +272,8 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
   const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
   const entitled = input.featureKeys === null ? null : new Set(input.featureKeys);
   const missingFeature = entitled === null ? undefined
-    : action.id === 'expense_capture' && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY) ? LINE_RECEIPT_CAPTURE_FEATURE_KEY
+    : 'workflow' in action && action.workflow && !entitled.has('expenses') ? 'expenses'
+      : action.id === 'expense_capture' && !entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY) ? LINE_RECEIPT_CAPTURE_FEATURE_KEY
       : action.id === 'wht_certificate' && !entitled.has('wht_50bis') ? 'wht_50bis'
         : action.id === 'pnd53' && !entitled.has('wht_pnd53') ? 'wht_pnd53'
           : tool && !hasToolFeature(tool, entitled) ? (tool.featureKeys ?? TOOL_MODULE_FEATURE_KEYS[tool.sourceModule])?.find(key => !entitled.has(key)) : undefined;

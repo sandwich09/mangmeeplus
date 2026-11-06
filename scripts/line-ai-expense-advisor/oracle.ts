@@ -120,6 +120,8 @@ function recordMatches(record: GoldRecord, row: Record<string, unknown>, snapsho
     const line = (snapshot.ReimbursementLine ?? []).filter(candidate => candidate.reimbursementRequestId === row.id).sort((a, b) => Number(a.lineNo) - Number(b.lineNo))[0];
     const seededCategory = CATEGORIES.find(candidate => typeof row.categoryKey === 'string' && row.categoryKey.endsWith(candidate.key));
     row = { ...row, categoryName: row.categoryName ?? row.categoryLabelSnapshot ?? line?.categoryLabelSnapshot ?? seededCategory?.name };
+    // Without finance review an approved claim moves straight on to READY_FOR_PAYMENT.
+    if (record.status === 'APPROVED' && row.status === 'READY_FOR_PAYMENT') row = { ...row, status: 'APPROVED' };
   }
   return Object.entries(record).every(([key, expected]) => ['table', 'ref', 'phase'].includes(key)
     || goldValue(row, key) === goldValue({ [key]: expected }, key));
@@ -132,6 +134,10 @@ function linkedToGoldParent(table: string, row: Record<string, unknown>, parents
   if (table === 'ReimbursementApprovalStep') return has('ReimbursementRequest', row.reimbursementRequestId);
   if (table === 'ReimbursementDraftAction' && row.status === 'APPLIED') return has('ReimbursementRequest', row.requestId);
   if (table === 'DisbursementVoucherLine') return has('DisbursementVoucher', row.voucherId) || has('ExpenseRecord', row.expenseId);
+  // Approval projects each claim line into an employee-payable expense of that claim.
+  if (table === 'ExpenseRecord' && row.sourceReimbursementRequestId) return has('ReimbursementRequest', row.sourceReimbursementRequestId);
+  if (table === 'ExpenseLine') return has('ExpenseRecord', row.expenseId) || (snapshot.ExpenseRecord ?? []).some(expense => expense.id === row.expenseId
+    && (!expense.companyId || expense.companyId === row.companyId) && has('ReimbursementRequest', expense.sourceReimbursementRequestId));
   if (table === 'WhtCertificateHistory') return has('ExpenseRecord', row.expenseId) || has('WhtCertificateHandoff', row.handoffId);
   if (table === 'WhtCertificateHandoff') return has('ExpensePayment', row.sourcePaymentId)
     || (snapshot.WhtCertificateHistory ?? []).some(history => history.handoffId === row.id && (!row.companyId || !history.companyId || history.companyId === row.companyId) && has('ExpenseRecord', history.expenseId));

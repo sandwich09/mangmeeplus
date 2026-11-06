@@ -1,7 +1,7 @@
 import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
 import { formatClaimMoney } from './line-reimbursement-draft-card.logic';
 import type { LineWorkflowTargets, LineWorkflowRecordTargets } from '../../application/line-workflow-target.service';
-import { lineReplyLanguage, lineCustomerText, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
+import { lineDisplayDate, lineReplyLanguage, lineCustomerText, lineUiLabel, lineSourceLabel, lineControlData, type LineReplyLanguage } from './line-language.logic';
 import { scrubRecordText, scrubRecordIdentifier, AI_BUDGET_REFUSAL_CODES, mayOfferWorkflow, canUseLineChatAction, lineChatAction, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
@@ -1231,15 +1231,17 @@ export const LINE_CLAIM_PICKER_COPY = {
 };
 export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: ClaimWorkflowId,
   secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}): LineReplyMessage {
-  const text = !result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
-    : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow];
+  const receiptBlocked = workflow === 'reimbursement_submit' && result.exhaustive && !result.targets.length ? result.receiptBlocked?.[0] : undefined;
+  const receiptFix = receiptBlocked ? `ใบเบิก ${formatClaimMoney(receiptBlocked.amount, receiptBlocked.currency, 'th')} วันที่ ${lineDisplayDate(receiptBlocked.incurredDate, 'th')} ยังขาดใบเสร็จ เปิดใบเบิกเพื่อแนบใบเสร็จ${receiptBlocked.allowMissingReceiptWithReason ? 'หรือใส่เหตุผลที่ไม่มีใบเสร็จ' : ''}ก่อนส่งอนุมัติค่ะ` : undefined;
+  const text = receiptFix ?? (!result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
+    : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((claim, index) => ({
     type: 'postback', label: `${(scrubRecordIdentifier(claim.requestNo, 30) ?? `ร่าง ${index + 1}`)} · ${formatClaimMoney(claim.amount, claim.currency, 'th')}`,
     data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id, payment),
   }));
-  const webLabel = !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
+  const webLabel = receiptBlocked ? 'เปิดใบเบิก' : !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: webLabel,
-    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements` }
+    uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements${receiptBlocked ? `/${encodeURIComponent(receiptBlocked.id)}` : ''}` }
     : { type: 'message', label: 'เปิดเมนู', text: 'เมนูหลัก' };
   if (!actions.length) return { type: 'text', text, quickReply: { items: [{ type: 'action', action: exit }] } };
   if (!result.exhaustive || result.total > 4) actions.push(exit);

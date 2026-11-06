@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent, claimsCompletedWrite } from './response-composer.agent';
-import { extractValueCandidates, parseLineAiAnswerCardLayout, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { extractValueCandidates, mayOfferWorkflow, parseLineAiAnswerCardLayout, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
 
 // A valid, already-bounded prepared plan for a permitted inventory read (matches makeReq permissions).
@@ -2360,7 +2360,7 @@ describe('Fix-up 17B: uncovered how-to answers select a checked action in the ex
         } }, invoke: async () => assert.fail('help navigation never reads or mutates ERP') });
       // Feature-denied WHT is answered by the existing entitlement guard before composition.
       assert.equal(calls, 1);
-      const allowed = access !== 'permission-denied' && (access !== 'feature-denied' || ['reimbursement_claim', 'payout_account', 'team_member', 'branch', 'branch_edit', 'package_purchase', 'approvals', 'team'].includes(action.id));
+      const allowed = access !== 'permission-denied' && (access !== 'feature-denied' || ['payout_account', 'team_member', 'branch', 'branch_edit', 'package_purchase', 'team'].includes(action.id));
       assert.equal(result.semanticCoverage?.[0]?.status, allowed ? 'handled' : result.semanticCoverage?.[0]?.reasonCode === 'PACKAGE_FEATURE_NOT_ENABLED' ? 'unsupported' : 'denied');
       assert.doesNotMatch(result.replyText, /ยังไม่มีคู่มือ|ความสามารถปัจจุบัน|\n|^\d[.)]/);
       assert.match(result.replyText, /ค่ะ$/);
@@ -2683,7 +2683,8 @@ describe('Exam C1: canonical role × every chat action', () => {
       const tool = LINE_TOOL_REGISTRY.find(tool => tool.name === action.tool);
       const mayUseTool = !tool || tool.requiredPermissions.every(key => permissions.includes(key))
         && (!tool.anyOfPermissions?.length || tool.anyOfPermissions.some(key => permissions.includes(key)));
-      const expected = action.id === 'expense_capture' ? LINE_RECEIPT_CAPTURE_PERMISSIONS.some(key => permissions.includes(key))
+      const expected = 'workflow' in action && action.workflow ? mayOfferWorkflow(action.id, permissions, null)
+        : action.id === 'expense_capture' ? LINE_RECEIPT_CAPTURE_PERMISSIONS.some(key => permissions.includes(key))
         : (action.id === 'expense_search' || permissions.includes(action.permission)) && mayUseTool;
       const result = productHelpAction({ actionId: action.id, permissions, featureKeys: null, companyId: 'shop' })!;
       assert.equal(result.allowed, expected);

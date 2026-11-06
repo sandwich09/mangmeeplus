@@ -18,7 +18,7 @@ export type LineWorkflowRecordTarget = { id: string; label: string; amount: stri
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
   latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
 type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string };
-export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean };
+export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[] };
 
 @Injectable()
 export class LineWorkflowTargetService {
@@ -27,7 +27,7 @@ export class LineWorkflowTargetService {
   @Inject(DisbursementVoucherUseCase) private readonly vouchers!: DisbursementVoucherUseCase;
   @Inject(ListSubstituteReceiptCandidatesUseCase) private readonly candidates!: ListSubstituteReceiptCandidatesUseCase;
   @Inject(LineVoucherActionService) private readonly voucherActions!: LineVoucherActionService;
-  constructor(private readonly claims: ListReimbursementsUseCase, @Inject(forwardRef(() => LineExpenseActionService)) private readonly actions: Pick<LineExpenseActionService, 'permitted' | 'canSubmitClaim'>) {}
+  constructor(private readonly claims: ListReimbursementsUseCase, @Inject(forwardRef(() => LineExpenseActionService)) private readonly actions: Pick<LineExpenseActionService, 'permitted' | 'canSubmitClaim'> & Partial<Pick<LineExpenseActionService, 'claimSubmitReadiness'>>) {}
 
   pick(ctx: RequestContext, chat: string, workflow: ClaimWorkflowId, slots: WorkflowSlots, page: number): Promise<LineWorkflowTargets>;
   pick(ctx: RequestContext, chat: string, workflow: ExpenseWorkflowId, slots: WorkflowSlots, page: number): Promise<LineWorkflowRecordTargets>;
@@ -39,6 +39,7 @@ export class LineWorkflowTargetService {
     if (!Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, workflow)) return { targets: [], total: 0, exhaustive: true };
     const act = CLAIM_WORKFLOW_ACTIONS[workflow as ClaimWorkflowId];
     const targets = new Map<string, ReimbursementRequestSummary>();
+    const receiptBlocked = new Map<string, ReimbursementRequestSummary>();
     let total = 0;
     const scanned = new Set<string>();
     for (let page = 1; page <= 3; page++) {
@@ -50,16 +51,20 @@ export class LineWorkflowTargetService {
       for (const claim of result.items) scanned.add(claim.id);
       for (const claim of result.items) {
         if (claim.cancellationPending) continue;
+        const readiness = act === 'REIMBURSEMENT_SUBMIT' ? await this.actions.claimSubmitReadiness?.(ctx, claim.id) : undefined;
         const allowed = act === 'REIMBURSEMENT_APPROVE' ? claim.approvalActions?.canApprove
           : act === 'REIMBURSEMENT_REJECT' ? claim.approvalActions?.canReject
-            : act === 'REIMBURSEMENT_SUBMIT' ? await this.actions.canSubmitClaim(ctx, claim.id)
+            : act === 'REIMBURSEMENT_SUBMIT' ? readiness?.ready ?? await this.actions.canSubmitClaim(ctx, claim.id)
               : (act !== 'REIMBURSEMENT_CANCEL' || canTransition(claim.status, 'CANCELLED'))
                 && await this.actions.permitted(ctx, { expenseId: claim.id, createdByUserId: claim.requesterUserId, preview: { action: act as ExpenseAction } });
         if (allowed) targets.set(claim.id, claim);
+        else if (readiness && 'receiptMissing' in readiness && readiness.receiptMissing
+          && claim.status === 'DRAFT' && claim.requesterUserId === ctx.userId) receiptBlocked.set(claim.id, claim);
       }
       if (page * 100 >= total) break;
     }
-    return { targets: [...targets.values()], total, exhaustive: total <= 300 && scanned.size >= total };
+    return { targets: [...targets.values()], total, exhaustive: total <= 300 && scanned.size >= total,
+      ...(receiptBlocked.size ? { receiptBlocked: [...receiptBlocked.values()] } : {}) };
   }
 
   private async readPages<T extends { id: string }, S>(sets: readonly S[], read: (set: S, page: number) => Promise<{ rows: T[]; total: number }>) {

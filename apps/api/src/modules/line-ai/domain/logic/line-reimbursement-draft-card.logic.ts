@@ -187,7 +187,7 @@ function reimbursementDraftMessages(result: LineReimbursementDraftResult, webBas
       rows: [...previewRows(preview.after, language), ...previewChanges(preview, language)], notes: previewNotes(preview, language),
       choice: [
         { type: 'postback', label: en ? 'Save draft' : 'บันทึกร่าง', data: data('reimbursement_draft_confirm') },
-        { type: 'postback', label: en ? 'Cancel draft' : 'ยกเลิกร่างนี้', data: data('reimbursement_draft_cancel') },
+        { type: 'postback', label: lineUiLabel('ไม่ทำ', language), data: data('reimbursement_draft_cancel') },
       ],
     }, webBaseUrl);
     if (contents) return [asCompleteLineCard({ type: 'flex', altText: lineMessagePreview(text, 400), canonicalText: text, contents })];

@@ -2210,6 +2210,7 @@ function draftRoutingRevisions(drafts: readonly LineExpenseDraftRouteContext[]):
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
   private readonly repeatedWorkflowPickerExpiry = new WeakMap<object, number>();
+  private readonly workflowPickerReasons = new WeakMap<object, string>();
   private readonly classifiedWorkflowStarts = new WeakMap<object, LineWorkflowId>();
   private workflowChoiceStore?: LineDraftPreviewStore<StoredWorkflowChoice>;
   private workflowChoices() {
@@ -4064,7 +4065,7 @@ export class ProcessLineWebhookUseCase {
       if (!secret || !picker.rows.every(({ control: c }) => verifyLineWorkflowOpenSig(secret, owner.companyId, owner.userId, c.act, c.id, c.pm ?? '', c.pd ?? '', c.pa ?? '', c.sig))) return null;
       // Rehydrate only the validated, delivered server picker; its wire payload stays identical.
       asCompleteLineCard(picker.message);
-      return { ...picker, outcome, expiry };
+      return { ...picker, outcome, expiry, reason: typeof root?.workflowPicker?.reason === 'string' ? root.workflowPicker.reason : undefined };
     }
     return null;
   }
@@ -4178,6 +4179,7 @@ export class ProcessLineWebhookUseCase {
       }
     }
     if (!hasTarget) return false;
+    if (picker.reason) this.workflowPickerReasons.set(event, picker.reason);
     this.repeatedWorkflowPickerExpiry.set(event, picker.expiry);
     await this.deliverRequiredMessages(event, [{ type: 'text', text: 'เลือกรายการจากการ์ดนี้' }, message]);
     await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
@@ -4190,14 +4192,19 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', undefined, ctx.companyId);
       return;
     }
+    const typedReason = /(?:เพราะ|เหตุผล)\s*(.+)$/u.exec(event.messageText)?.[1]?.trim();
+    if (typedReason) this.workflowPickerReasons.set(event, typedReason);
     const control = event.workflowControl;
     if (control?.action === 'wf_open') {
       const picker = await this.latestWorkflowPicker(event);
-      const result = await this.expenseActions.openWorkflow(ctx, chatKeyHashOf(event), control, replyLanguage(event));
+      const reason = ['REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_REJECT', 'VOID'].includes(control.act)
+        ? typedReason ?? (picker?.rows[0]?.control.act === control.act ? picker.reason : undefined) : undefined;
+      const result = await this.expenseActions.openWorkflow(ctx, chatKeyHashOf(event), control, replyLanguage(event), reason);
       if (picker?.rows.some(row => row.control.id === control.id && row.control.sig === control.sig)) await this.closeWorkflowPicker(picker);
       if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
+      const choices = !result.preview && control.act === 'CONFIRM' ? await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) : undefined;
       await this.deliverRequiredMessages(event, [result.preview ? buildExpenseActionCard(result.preview, undefined, replyLanguage(event), this.config.webBaseUrl)
-        : { type: 'text', text: result.reply, quickReply: lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]) }]);
+        : { type: 'text', text: result.reply, quickReply: lineChoiceQuickReply(choices?.length ? choices : [{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]) }]);
       await this.updateEventLog(event.webhookEventId, result.preview ? 'expense_action_prepared' : 'clarification_required', undefined, ctx.companyId);
       return;
     }
@@ -6818,7 +6825,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event);
     const picker = this.workflowPickerRows(messages), owner = picker && this.quoteOwner(event);
     return { v: 1, producerId,
-      ...(owner ? { workflowPicker: { owner, ...(this.repeatedWorkflowPickerExpiry.has(event) ? { expiresAtMs: this.repeatedWorkflowPickerExpiry.get(event)! } : {}) } } : {}),
+      ...(owner ? { workflowPicker: { owner, ...(this.workflowPickerReasons.has(event) ? { reason: this.workflowPickerReasons.get(event)! } : {}), ...(this.repeatedWorkflowPickerExpiry.has(event) ? { expiresAtMs: this.repeatedWorkflowPickerExpiry.get(event)! } : {}) } } : {}),
       ...(topic ? { publicPolicy: { topic, recipientHash } } : {}),
       ...(access && sources?.ids?.length === 0 && sources.expenseCriterionConfirmation === true && noOtherSource ? { access: {
         kind: 'expense_criterion_confirmation', userId: access.userId, companyId: access.companyId, membershipId: access.membershipId,

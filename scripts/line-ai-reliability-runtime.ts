@@ -386,7 +386,9 @@ export function runtimeDeliveredPreviews(receipts: Array<{ messages: unknown }>,
       : candidate.preview?.token === control.get('token'));
     const expected = entry && render(entry);
     const candidates = Array.isArray(expected) ? expected : [expected];
-    const verified = candidates.some(candidate => candidate && reliabilityDigest(candidate.contents) === reliabilityDigest(message.contents) && candidate.altText === message.altText);
+    // Delivery may carry the card's full canonical text as altText; the contents digest is the binding.
+    const verified = candidates.some(candidate => candidate && reliabilityDigest(candidate.contents) === reliabilityDigest(message.contents)
+      && [candidate.altText, candidate.canonicalText].includes(message.altText));
     if (!entry || !verified) { previews.push({ action: 'UNVERIFIED_PREVIEW', target: entry?.expenseId ?? '' }); continue; }
     const preview = entry.preview, payment = preview.payment ?? entry.claim?.payment ?? entry.voucher?.payment;
     const paidDate = payment?.paidAt ?? payment?.paidDate;

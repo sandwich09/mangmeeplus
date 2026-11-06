@@ -917,7 +917,7 @@ function round3Harness(action: ExpenseAction = 'REIMBURSEMENT_SUBMIT') {
   service.payment = new RecordExpensePaymentUseCase({ findById: async () => h.record,
     recordPaymentAtomic: async (input: any) => { calls.push({ kind: 'RECORD_PAYMENT', input }); h.record.updatedAt = new Date(h.record.updatedAt.getTime() + 1000); h.record.paidAmount = input.amount; return { expense: { ...h.record } }; },
   } as any, { log: async () => {} } as any);
-  const input = { action, ...(action === 'RECORD_PAYMENT' ? { expenseId: h.record.id } : { reimbursementId: claim.id }), ...(action === 'REIMBURSEMENT_REJECT' ? { reason: 'หลักฐานไม่ครบ' } : {}) };
+  const input = { action, ...(action === 'RECORD_PAYMENT' ? { expenseId: h.record.id } : { reimbursementId: claim.id }), ...(action === 'REIMBURSEMENT_REJECT' ? { reason: 'หลักฐานไม่ครบ' } : action === 'REIMBURSEMENT_CANCEL' ? { reason: 'บันทึกซ้ำ' } : {}) };
   return { ...h, service, claim, calls, input, preview: () => h.actions.preview(h.ctx, 'private-action', input) };
 }
 
@@ -930,6 +930,7 @@ describe('Round 3 reimbursement and payment confirm cards', () => {
       assert.equal((await h.actions.apply(h.ctx, 'private-action', control)).status, 'applied');
       assert.equal((await h.actions.apply(h.ctx, 'private-action', control)).status, 'replayed');
       const writes = h.calls.filter(c => !c.args?.at(-1).previewOnly); assert.equal(writes.length, 1); assert.equal(writes[0].kind, action);
+      if (action === 'REIMBURSEMENT_CANCEL') assert.equal(writes[0].args[2], 'บันทึกซ้ำ');
       assert.equal((writes[0].input?.expectedUpdatedAt ?? writes[0].args.at(-1).expectedUpdatedAt).toISOString(), '2026-10-15T01:00:00.000Z');
     });
     it(`${action}: denies missing permission/status, stale revision and forged/cross-actor/chat tokens without writes`, async () => {

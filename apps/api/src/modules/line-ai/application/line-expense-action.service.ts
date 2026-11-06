@@ -353,10 +353,11 @@ export class LineExpenseActionService {
       : entry.awaitingField === 'claimSlip' ? 'Please send the transfer slip to prepare reimbursement confirmation.'
         : entry.awaitingField === 'paymentMethod' ? 'Was payment by cash, bank transfer, card or cheque?'
           : entry.awaitingField === 'payeeAddress' ? 'What payee address should appear on the tax certificate?'
+            : entry.preview.action === 'REIMBURSEMENT_CANCEL' ? 'Why are you cancelling this claim?'
             : entry.preview.action === 'VOID' ? 'Why are you voiding this expense?'
               : entry.preview.action === 'VOUCHER_RETURN' ? 'Why are you returning this voucher for correction?'
                 : entry.preview.action === 'VOUCHER_CANCEL' ? 'Why are you cancelling this voucher?' : 'Why are you rejecting this claim?';
-    return entry.awaitingField === 'payeeName' ? 'ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ' : entry.awaitingField === 'claimSlip' ? 'ส่งสลิปโอนมาได้เลยค่ะ น้องจะเตรียมการ์ดบันทึกจ่ายคืน' : entry.preview.action === 'VOID' ? 'ยกเลิกรายการนี้เพราะอะไรคะ' : entry.awaitingField === 'paymentMethod' ? 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ' : entry.awaitingField === 'payeeAddress' ? 'ขอที่อยู่ผู้รับเงินที่จะพิมพ์บน 50 ทวิค่ะ' : entry.preview.action === 'VOUCHER_RETURN' ? 'ส่งใบเตรียมจ่ายนี้กลับแก้ไขเพราะอะไรคะ' : entry.preview.action === 'VOUCHER_CANCEL' ? 'ยกเลิกใบเตรียมจ่ายนี้เพราะอะไรคะ' : 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ'; }
+    return entry.awaitingField === 'payeeName' ? 'ขอชื่อผู้รับเงินสำหรับใบเตรียมจ่ายนี้ค่ะ' : entry.awaitingField === 'claimSlip' ? 'ส่งสลิปโอนมาได้เลยค่ะ น้องจะเตรียมการ์ดบันทึกจ่ายคืน' : entry.preview.action === 'REIMBURSEMENT_CANCEL' ? 'ยกเลิกใบเบิกนี้เพราะอะไรคะ' : entry.preview.action === 'VOID' ? 'ยกเลิกรายการนี้เพราะอะไรคะ' : entry.awaitingField === 'paymentMethod' ? 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ' : entry.awaitingField === 'payeeAddress' ? 'ขอที่อยู่ผู้รับเงินที่จะพิมพ์บน 50 ทวิค่ะ' : entry.preview.action === 'VOUCHER_RETURN' ? 'ส่งใบเตรียมจ่ายนี้กลับแก้ไขเพราะอะไรคะ' : entry.preview.action === 'VOUCHER_CANCEL' ? 'ยกเลิกใบเตรียมจ่ายนี้เพราะอะไรคะ' : 'ไม่อนุมัติใบเบิกนี้เพราะอะไรคะ'; }
   private async read(ctx: RequestContext, id: string, action: ExpenseAction, voucher?: VoucherActionPayload) {
     if (voucher) return this.vouchers!.read(ctx, voucher);
     if (!this.isClaim(action)) {
@@ -365,7 +366,7 @@ export class LineExpenseActionService {
     }
     const claim = await this.getClaim!.execute(ctx, id);
     return { id: claim.id, branchId: claim.branchId ?? null, createdByUserId: claim.requesterUserId,
-      updatedAt: new Date(claim.updatedAt), expenseDate: new Date(claim.incurredDate), vendorNameSnapshot: claim.title,
+      updatedAt: new Date(claim.updatedAt), expenseDate: new Date(claim.incurredDate), vendorNameSnapshot: claim.requesterDisplayNameSnapshot,
       grandTotalAmount: claim.amount, currency: claim.currency, status: claim.status, claim,
       digest: deliveryHash({ id: claim.id, updatedAt: claim.updatedAt, status: claim.status, amount: claim.amount,
         hash: claim.approvalSnapshotHash, payout: claim.payout, lines: claim.lines }),
@@ -391,13 +392,13 @@ export class LineExpenseActionService {
       await this.validateClaim(ctx, claim, 'REIMBURSEMENT_SUBMIT');
       return { ready: true as const };
     } catch (error) {
-      return { ready: false as const, ...this.claimSubmitRefusal(error, ctx, id, language) };
+      return { ready: false as const, ...this.claimSubmitRefusal(error, ctx, id, language, true) };
     }
   }
   async canSubmitClaim(ctx: RequestContext, id: string): Promise<boolean> {
     return (await this.claimSubmitReadiness(ctx, id)).ready;
   }
-  private claimSubmitRefusal(error: unknown, ctx: RequestContext, id: string, language: LineReplyLanguage) {
+  private claimSubmitRefusal(error: unknown, ctx: RequestContext, id: string, language: LineReplyLanguage, includeReceiptBlocker = false) {
     if (!(error instanceof HttpException)) throw error;
     const response = error.getResponse();
     const code = typeof response === 'object' && response ? String((response as any).code ?? (response as any).message ?? error.message) : String(response);
@@ -436,7 +437,7 @@ export class LineExpenseActionService {
     } else if (/lines_required|too_many_lines|line_|amount_|incurred_date/u.test(code)) {
       reply = en ? 'Complete the claim item details before submitting.' : 'เติมรายละเอียดรายการเบิกให้ครบก่อนส่งอนุมัติค่ะ';
     }
-    return { reply, webPath, webLabel };
+    return { reply, webPath, webLabel, ...(includeReceiptBlocker && /^(?:missing_receipt|missing_receipt_reason_required)$/u.test(code) ? { receiptMissing: true } : {}) };
   }
   private async recentSlip(ctx: RequestContext, chat: string, expenseId: string) {
     const rows = await this.repo.listRecentLineCaptures({ companyId: ctx.companyId, createdByUserId: ctx.userId,
@@ -456,14 +457,14 @@ export class LineExpenseActionService {
       || slip.updatedAt.toISOString() !== evidence.revision || slip.primaryAttachmentId !== evidence.attachmentId
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
-  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th'): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     if (ctx.freeExpenseDrafts || !verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
       control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: EXPIRED };
     return this.preview(ctx, chat, { action: control.act,
       ...(this.isClaim(control.act) ? { reimbursementId: control.id } : this.isVoucher(control.act) && control.act !== 'VOUCHER_CREATE'
         ? { voucherId: control.id } : { expenseId: control.id }),
       ...(control.pm ? { paymentMethod: control.pm } : {}), ...(control.pd ? { paidAt: control.pd } : {}),
-      ...(control.pa ? { paidAmount: control.pa } : {}) }, true, undefined, language);
+      ...(control.pa ? { paidAmount: control.pa } : {}), ...(reason ? { reason } : {}) }, true, undefined, language);
   }
 
   async resolveNamedTargets(ctx: RequestContext, chat: string, action: ExpenseAction, workflow: LineWorkflowId, evidence: LineAiInputEvidenceV2, input: Record<string, unknown>, pickerAnswer = false): Promise<
@@ -680,7 +681,7 @@ export class LineExpenseActionService {
         }
       }
       if (action === 'DELETE_DRAFT') await this.remove.previewLineAction(ctx, record.id);
-      const awaitingReason = (action === 'REIMBURSEMENT_REJECT' || action === 'VOID') && !reason;
+      const awaitingReason = (action === 'REIMBURSEMENT_REJECT' || action === 'REIMBURSEMENT_CANCEL' || action === 'VOID') && !reason;
       if (action === 'VOID') await this.voidExpense.previewLineAction(ctx, record.id, awaitingReason ? 'รอเหตุผลจากผู้ใช้' : reason ?? '');
       if (record.claim && action !== 'REIMBURSEMENT_RECORD_PAYMENT') await this.validateClaim(ctx, record.claim, action, awaitingReason ? 'รอเหตุผลจากผู้อนุมัติ' : reason);
       let payment: RecordExpensePaymentInput | undefined, evidence: StoredAction['evidence'];

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stripLineExternalBrowserParam, type LineAiTurnResponse } from '@watchdog-bms/contracts';
@@ -31,6 +32,87 @@ import { buildContactCard, STAFF_OA_URL } from './line-staff-menu.logic';
 import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import * as cardBuilders from './line-business-card.logic';
+
+it('CARDS-1 workflow how-tos retain their postback when a reviewed card is selected and recheck R21', async () => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
+  for (const [id, cardId, question] of [
+    ['expense_submit', 'expense.confirm', 'ส่งตรวจค่าใช้จ่ายต้องทำยังไง'],
+    ['reimbursement_cancel', 'claim.cancel', 'ยกเลิกใบเบิกต้องทำยังไง'],
+    ['payment_voucher', 'voucher.create', 'สร้างใบเตรียมจ่ายต้องทำยังไง'],
+  ]) for (const allowed of [true, false]) {
+    const entry = LINE_CHAT_ACTIONS.find(action => action.id === id)!;
+    const permissions = allowed ? ['ai.tool.invoke', entry.permission, 'expense.read', 'reimbursement.read_own'] : [];
+    const result = await runSemanticTurnV2({ req: { requestId: 'cards-howto', webhookEventId: 'cards-howto', messageText: question!, messagePreviewHash: 'a'.repeat(16),
+      approvedKnowledge: true, selectedKnowledgeCardIds: [cardId!], howToActionId: entry.id, entitledFeatureKeys: ['expenses', 'reimbursement'],
+      userContext: { lineUserId: 'line', internalUserId: 'user', companyId: 'company', membershipId: 'member', permissions, roles: [], locale: 'th-TH' },
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: question!, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] },
+      provider: { generateText: async () => assert.fail('selected how-to needs no added model call') }, invoke: async () => assert.fail('how-to cannot perform the action'),
+      approvedKnowledgeEnabled: true, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false });
+    const quick = cardBuilders.productHelpQuickReply({ ...result, refused: false } as any, permissions, new Set(['expenses', 'reimbursement']));
+    if (allowed) {
+      assert.equal(result.replyText, entry.sentence);
+      assert.deepEqual(quick?.items[0]?.action, { type: 'postback', label: 'ให้น้องทำให้', data: `action=chat-action&id=${id}` });
+    } else {
+      assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
+      assert.equal(quick, undefined);
+    }
+  }
+});
+
+it('CARDS-1 R21 navigation accepts creator and finance rights and requires the expense feature', async () => {
+  const { productHelpAction } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/approved-product-help');
+  for (const [id, permission] of [['expense_submit', 'expense.update'], ['expense_delete', 'expense.update'],
+    ['reimbursement_cancel', 'reimbursement.finance_review'], ['substitute_receipt', 'expense.read']]) {
+    for (const featureKeys of [['expenses'], []]) {
+      const help = productHelpAction({ actionId: id, permissions: [permission!], featureKeys })!;
+      assert.equal(help.allowed, featureKeys.length > 0, `${id}/${featureKeys}`);
+      const quick = cardBuilders.productHelpQuickReply({ ...help, refused: false } as any, [permission!], new Set(featureKeys));
+      assert.equal(quick?.items[0]?.action.type, featureKeys.length ? 'postback' : undefined);
+    }
+  }
+});
+
+it('CARDS-2 claim action previews use Claim and Requester while expense void bytes stay pinned', async () => {
+  const { buildExpenseActionCard } = await import('./line-expense-action-card.logic');
+  const base: any = { token: 'preview.' + 'a'.repeat(43), previewId: 'preview', action: 'VOID', summary: 'ตรวจรายการก่อนยกเลิกค่ะ', reason: 'บันทึกซ้ำ',
+    expiresAt: '2026-11-06T12:30:00Z', record: { vendorName: 'ร้านทดสอบ', amount: '170.0000', currency: 'THB', date: '2026-11-05', status: 'ยืนยันแล้ว', nextStatus: 'ยกเลิกแล้ว' } };
+  const hashes = ['4d08293bf618a54e988dd1b6237aa52c592b2da2d6b8c4d9cac81043153884a6', '62c5c5b90d5bfbd5807329587d9987f0951c65a5cae2a6c122bc14e8f185ec2b',
+    '8eea80ef6b5868032e4d355124612a4a75865659f0df156cf74e4f82bb9293eb', 'ccdebf7b99c308ba8c6496dc143a9b268bc8c9ce04e7c8cbe74ab9d539efac55'];
+  let index = 0;
+  for (const language of ['th', 'en'] as const) for (const reply of [undefined, 'ยกเลิกรายการแล้วค่ะ']) {
+    const expense = buildExpenseActionCard(base, reply, language, 'https://app.example.com');
+    assert.equal(createHash('sha256').update(JSON.stringify(expense)).digest('hex'), hashes[index++]);
+    for (const action of ['REIMBURSEMENT_SUBMIT', 'REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT', 'REIMBURSEMENT_RECORD_PAYMENT']) {
+      const claim = readLineSystemCard(buildExpenseActionCard({ ...base, action, record: { ...base.record, vendorName: 'สมชาย' } }, reply, language, 'https://app.example.com'));
+      assert.equal(claim.header[0], language === 'th' ? 'ใบเบิก' : 'Claim');
+      assert.ok(claim.rows.some(row => row[0] === (language === 'th' ? 'ผู้เบิก' : 'Requester') && row[2] === 'สมชาย'));
+    }
+  }
+});
+
+it('CARDS-3 declining a claim proposal uses the common label and forwards the same unsaved proposal control', async () => {
+  const { buildReimbursementDraftMessages } = await import('./line-reimbursement-draft-card.logic');
+  const { LineReimbursementDraftService } = await import('../../application/line-reimbursement-draft.service');
+  const { LineReimbursementDraftUseCase } = await import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case');
+  const { lineControlLanguage, lineUiLabel } = await import('./line-language.logic');
+  const actionId = '018fbad0-4d4e-7cc7-8e43-0123456789ac', digest = 'a'.repeat(64);
+  const owner: any = { companyId: 'company', userId: 'user', membershipId: 'member', channel: 'line', channelKind: 'USER', messagingChannelId: 'oa', chatKeyHash: 'b'.repeat(64) };
+  const ctx: any = { companyId: owner.companyId, userId: owner.userId, membershipId: owner.membershipId };
+  const seen: any[] = [];
+  const service = new LineReimbursementDraftService(new LineReimbursementDraftUseCase({ cancelDraftAction: async (input: any) => { seen.push(input); return 'cancelled'; } } as any, {} as any, {} as any));
+  for (const language of ['th', 'en'] as const) {
+    const preview: any = { actionId, previewRevision: 2, confirmationDigest: digest, operation: 'CREATE', warnings: [], diff: [],
+      after: { requesterDisplayName: 'สมชาย', amount: '170', currency: 'THB', incurredDate: '2026-11-05', reason: 'ไปส่งเอกสาร', receiptRequirementStatus: 'ATTACHED', signatureImpact: 'NONE', lines: [] } };
+    const card = readLineSystemCard(buildReimbursementDraftMessages({ status: 'preview', preview }, 'https://app.example.com', 'company', [], undefined, language)[0]!);
+    const decline: any = card.actions.find(action => action.type === 'postback' && new URLSearchParams(action.data).get('action') === 'reimbursement_draft_cancel');
+    assert.equal(decline?.label, lineUiLabel('ไม่ทำ', language));
+    assert.deepEqual(await service.cancel({ ctx, owner, ownerEpoch: 1, control: lineControlLanguage(decline.data).data }), { status: 'cancelled', actionId });
+    assert.equal(seen.at(-1).actionId, actionId);
+    assert.equal(seen.at(-1).previewRevision, 2);
+    assert.equal(seen.at(-1).confirmationDigest, digest);
+  }
+});
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { isLineSystemCard, readLineSystemBubble, readLineSystemCard } from './line-system-card.fixture';
 import { lineMessagePreview } from './line-message-preview.logic';

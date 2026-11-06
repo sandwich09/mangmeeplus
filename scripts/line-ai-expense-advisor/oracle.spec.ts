@@ -327,6 +327,22 @@ describe('M3 round 3 preview and conversation bindings', () => {
     const removed = [turn(2, { ExpenseRecord: [{ id: 'draft-row' }] }, [], { action: 'delete', target: 'draft-row' }), turn(3, {}, [{ kind: 'ExpenseRecord.delete', recordId: 'draft-row' }])];
     const removal = checkWorkflowGold(deleted, removed, { action: 'delete', target: '$created:draft' }, NOW, { 'ExpenseRecord:$created:draft': 'draft-row' });
     assert.equal(removal.terminalMatches, true); assert.equal(removal.wrongApplied, 0); assert.equal(removal.wrongPreview, 0);
+    const withLine = [turn(2, { ExpenseRecord: [{ id: 'draft-row' }], ExpenseLine: [{ id: 'draft-row-line1', expenseId: 'draft-row' }, { id: 'other-line', expenseId: 'other' }] }, [], { action: 'delete', target: 'draft-row' }),
+      turn(3, {}, [{ kind: 'ExpenseLine.delete', recordId: 'draft-row-line1' }, { kind: 'ExpenseRecord.delete', recordId: 'draft-row' }])];
+    assert.equal(checkWorkflowGold(deleted, withLine, { action: 'delete', target: '$created:draft' }, NOW, { 'ExpenseRecord:$created:draft': 'draft-row' }).wrongApplied, 0, 'the deleted draft takes its own line');
+    withLine[1]!.unintendedEffects.push({ kind: 'ExpenseLine.delete', recordId: 'other-line' });
+    assert.equal(checkWorkflowGold(deleted, withLine, { action: 'delete', target: '$created:draft' }, NOW, { 'ExpenseRecord:$created:draft': 'draft-row' }).wrongApplied, 1, 'another expense line is still wrong');
+  });
+  it('scores an approval that moves the claim to payment and projects its expense as the gold claim', () => {
+    const approve = { id: 'approve', kind: 'approvals', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+      goldTerminal: { effect: 'REIMBURSEMENT_APPROVED', records: [{ table: 'ReimbursementRequest', ref: '$seed:claim', status: 'APPROVED' }] } } as any;
+    const after = { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'READY_FOR_PAYMENT' }],
+      ExpenseRecord: [{ id: 'projection', companyId: 'c', status: 'CONFIRMED', sourceReimbursementRequestId: 'claim' }, { id: 'stray', companyId: 'c', sourceReimbursementRequestId: 'other' }],
+      ExpenseLine: [{ id: 'projection-line', companyId: 'c', expenseId: 'projection' }] };
+    const effects = [{ kind: 'ReimbursementRequest.update', recordId: 'claim' }, { kind: 'ExpenseRecord.create', recordId: 'projection' }, { kind: 'ExpenseLine.create', recordId: 'projection-line' }];
+    const result = checkWorkflowGold(approve, [turn(0, { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'PENDING_APPROVAL' }] }), turn(1, after, effects)]);
+    assert.equal(result.terminalMatches, true); assert.equal(result.wrongApplied, 0);
+    assert.equal(checkWorkflowGold(approve, [turn(0), turn(1, after, [...effects, { kind: 'ExpenseRecord.create', recordId: 'stray' }])]).wrongApplied, 1, 'another claim projection is wrong');
   });
 });
 
@@ -337,6 +353,9 @@ describe('M3 round 3 opt-in actors and seller truncation', () => {
     const seed = buildWorkflowSeed(NOW, [unlinked, creator] as any);
     const unknown = resolveWorkflowActor(unlinked as any, seed) as any, paid = resolveWorkflowActor(creator as any, seed) as any;
     assert.ok(unknown.lineUserId.startsWith('U'));
+    const claims = seed.rows.filter(row => row.model === 'reimbursementRequest' && row.data.companyId === paid.companyId);
+    assert.ok(claims.length && claims.every(row => row.data.missingReceiptReason && row.data.receiptRequirementStatus === 'MISSING_WITH_REASON'), 'seeded claims pass the receipt gate');
+    assert.equal(seed.rows.filter(row => row.model === 'reimbursementPolicy' && row.data.companyId === paid.companyId && row.data.allowMissingReceiptWithReason).length, 1);
     assert.equal(unknown.companyId, undefined); assert.equal(unknown.role, undefined);
     assert.ok(!seed.rows.some(row => row.model === 'externalIdentity' && row.data.providerUserId === unknown.lineUserId && row.data.status === 'ACTIVE'));
     const grants = seed.rows.filter(row => row.model === 'membershipRole' && row.data.membershipId === paid.membershipId).map(row => row.data.roleId);

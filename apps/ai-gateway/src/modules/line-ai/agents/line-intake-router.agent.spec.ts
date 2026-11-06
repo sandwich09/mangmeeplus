@@ -1363,3 +1363,9 @@ it('R8 workflow classifier treats เปิดใบเบิก as create while
   assert.match(claim, /เปิดใบเบิกค่าแท็กซี่ 250 บาทให้ที/);
   assert.match(claim, /เปิดดูใบเบิก.*open.*read/);
 });
+
+it('R9 classifier distinguishes paying a service expense from reimbursing a claimant', () => {
+  const pay = WORKFLOW_CLASSIFIER_SYSTEM_PROMPT.split('expense_pay:')[1]!.split('payment_voucher:')[0]!;
+  assert.match(pay, /บันทึกจ่ายค่าบริการค้างจ่าย/);
+  for (const words of ['บันทึกจ่าย', 'จ่ายเงิน', 'ค่า', 'ใบเบิก', 'คืน', 'ผู้เบิก', 'จ่ายคืนใบเบิก', 'โอนคืนผู้เบิก', 'reimbursement_pay']) assert.ok(pay.includes(words), words);
+});

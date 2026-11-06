@@ -12209,7 +12209,7 @@ for (const wrongRoute of ['expense', 'general', 'owner-20261019']) it(`UAT2 W1: 
     const delivered = h.delivered.at(-1)!;
     assert.equal(delivered.length, 1); assert.equal(delivered[0].type, 'flex');
     const texts = lineSystemCardTexts(delivered[0].contents).join('\n');
-    for (const fact of ['ร่างใบเบิก', 'สมชาย ใจดี', 'สำนักงานใหญ่', '170.00 บาท', '5 ต.ค. 2569', 'V.COLD BREW', 'ค่าอาหารและเครื่องดื่ม', 'ใบเสร็จจากบิล 261005-08-00190 · Starbucks Coffee', 'บันทึกร่าง', 'ยกเลิกร่างนี้']) assert.ok(texts.includes(fact), fact);
+    for (const fact of ['ร่างใบเบิก', 'สมชาย ใจดี', 'สำนักงานใหญ่', '170.00 บาท', '5 ต.ค. 2569', 'V.COLD BREW', 'ค่าอาหารและเครื่องดื่ม', 'ใบเสร็จจากบิล 261005-08-00190 · Starbucks Coffee', 'บันทึกร่าง', 'ไม่ทำ']) assert.ok(texts.includes(fact), fact);
     assert.doesNotMatch(texts, /sandwich|Head Office|^-$|:\s*-(?:\s|$)|ระบบคำนวณ|สถานะหลังบันทึก/mu);
     const { lineFlexBodyProblems } = await import('../../domain/logic/line-system-card-limits.logic');
     assert.deepEqual(lineFlexBodyProblems(delivered[0].contents), []);
@@ -14194,6 +14194,7 @@ it('Z5 submit readiness: every real submit refusal has the exact localized repai
     flow.expenseActions = actions; flow.updateEventLog = async () => {};
     const event: any = { language, messageText: language === 'th' ? 'ส่งอนุมัติ' : 'submit it', lineUserId: 'line-user', sourceType: 'user', sourceId: 'line-user', webhookEventId: 'z5-event' };
     const readiness = await actions.claimSubmitReadiness(ctx, claim.id, language as 'th' | 'en');
+    assert.equal('receiptMissing' in readiness && readiness.receiptMissing === true, /^(missing_receipt|missing_receipt_reason_required)$/.test(c.name));
     const saved = await flow.reimbursementDraftMessages({ status: 'applied', receipt: { requestId: claim.id, currentState: 'DRAFT', amount: '170', currency: 'THB' } }, ctx, event);
     assert.deepEqual(lineFlexBodyProblems(saved[0].contents), []);
     let delivered: any[] = []; flow.deliverRequiredMessages = async (_event: any, messages: any[]) => { delivered = messages; };
@@ -14207,7 +14208,8 @@ it('Z5 submit readiness: every real submit refusal has the exact localized repai
     } else {
       const label = ('labels' in c ? c.labels! : ['เปิดใบเบิก', 'Open claim'])[index];
       const path = `/companies/company-1/reimbursements${'path' in c ? c.path : '/saved-claim'}`;
-      assert.deepEqual(readiness, { ready: false, reply: c.text[index], webLabel: label, webPath: path });
+      assert.deepEqual(readiness, { ready: false, reply: c.text[index], webLabel: label, webPath: path,
+        ...(/^(missing_receipt|missing_receipt_reason_required)$/.test(c.name) ? { receiptMissing: true } : {}) });
       assert.deepEqual(readLineSystemCard(saved[0]).notes, [c.text[index]]);
       assert.ok(flexButtons(saved[0]).some(button => button.action.label === label && button.action.uri === `https://app.example.com${path}`));
       assert.equal(flexButtons(saved[0]).filter(button => button.action.type === 'postback').length, 0);
@@ -17456,7 +17458,7 @@ it('M4 round 5 cancel follows the user amount and round instead of the model cla
   h.actions.cancelClaim = { execute: async (_ctx: any, id: string) => h.claims.find(claim => claim.id === id) };
   const text = 'ค่าน้ำมัน รอบ 1 ยอด 400 ของฉัน';
   h.toolCtx.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'm5-cancel', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: text }] }))!.inputEvidence;
-  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_CANCEL', reimbursementId: 'wrong' });
+  const result = await h.tool.execute(h.toolCtx, { action: 'REIMBURSEMENT_CANCEL', reimbursementId: 'wrong', reason: 'บันทึกซ้ำ' });
   assert.ok((result.data as any).preview, JSON.stringify(result));
   assert.equal((await h.actions.store.load(h.ctx.companyId, 'expense-action:amount-chat')).expenseId, 'right');
   assert.equal((result.data as any).preview.record.amount, '400'); assert.deepEqual(h.writes, []);
@@ -17996,6 +17998,35 @@ async function r8ClaimPicker(t: TestContext, workflow = 'approvals', duplicate =
   return { ...h, source, reads, outcomes };
 }
 
+for (const [workflow, action] of [['expense_submit', 'MARK_READY'], ['reimbursement_cancel', 'REIMBURSEMENT_CANCEL'], ['payment_voucher', 'VOUCHER_CREATE']]) {
+  it(`CARDS-1 paid ${workflow} how-to postback opens its existing picker with zero model calls`, async t => {
+    const h: any = workflow === 'reimbursement_cancel' ? await r8ClaimPicker(t, workflow) : await r7OffPagePicker(t);
+    if (workflow === 'payment_voucher') h.source.records.forEach((record: any) => { record.status = 'CONFIRMED'; });
+    const response: any = { refused: false, presentation: { cards: [{ chatActionId: workflow }] } };
+    const button: any = productHelpQuickReply(response, h.source.ctx.permissions, new Set(['expenses', 'reimbursement']))!.items[0]!.action;
+    assert.equal(button.label, 'ให้น้องทำให้'); assert.equal(button.type, 'postback');
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('the button cannot call the classifier');
+    h.flow.aiGateway.requestLineIntakeRoute = async () => assert.fail('the button cannot call intake');
+    h.flow.aiGateway.requestLineTurn = async () => assert.fail('the button cannot call a model turn');
+    await h.execute(button.label, button.data);
+    const controls = h.delivered.at(-1)!.flatMap((message: any) => flexButtons(message)).map((button: any) => new URLSearchParams(button.action.data));
+    assert.ok(controls.some((control: URLSearchParams) => control.get('action') === 'wf_open' && control.get('act') === action), JSON.stringify(h.delivered.at(-1)));
+  });
+
+  it(`CARDS-1 free source-draft ${workflow} press preserves R27 and cannot open a paid picker`, async t => {
+    const h: any = workflow === 'reimbursement_cancel' ? await r8ClaimPicker(t, workflow) : await r7OffPagePicker(t);
+    h.source.ctx.freeExpenseDrafts = true;
+    h.source.ctx.permissions = ['expense.read', 'expense.update', 'expense.receipt.line_upload'];
+    h.flow.permissionResolver.resolveAccess = async () => ({ ...h.source.ctx });
+    h.flow.workflowTargets.pick = async () => assert.fail('a free shop cannot read the paid picker');
+    h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('free shops cannot call the classifier');
+    h.flow.aiGateway.requestLineIntakeRoute = async () => assert.fail('free shops cannot call intake');
+    h.flow.aiGateway.requestLineTurn = async () => assert.fail('free shops cannot call a model turn');
+    await h.execute('ให้น้องทำให้', `action=chat-action&id=${workflow}`);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /action=wf_open/);
+  });
+}
+
 it('M4 round 8 picker questions reach normal routing and a later requester amount still previews c-7', async t => {
   const h = await r8ClaimPicker(t);
   const terminal = r6EventLog(h.prisma);
@@ -18122,5 +18153,108 @@ it('M4 round 8 expense document search reaches the existing scoped list beyond t
     assert.deepEqual(searches, ['ทดสอบ-0003']);
     assert.deepEqual(h.source.previewed, permitted ? ['workflow-expense-c-2'] : []);
     assert.equal(h.creates(), 0);
+  }
+});
+
+it('M4 round 9 cancel collects a reason then the signed press cancels only that claim with it', async t => {
+  for (const inline of [false, true, 'start']) {
+    const h = await r8ClaimPicker(t, 'reimbursement_cancel');
+    const cancelled: Array<{ id: string; reason: string }> = [];
+    h.source.actions.cancelClaim.execute = async (_ctx: any, id: string, reason: string, _attested: any, line: any) => {
+      const claim = h.source.claims.find(row => row.id === id)!;
+      if (!line?.previewOnly) { cancelled.push({ id, reason }); claim.status = 'CANCELLED'; claim.updatedAt = new Date(Date.now() + 1).toISOString(); }
+      return claim;
+    };
+    if (inline === 'start') {
+      h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'reimbursement_cancel', confidence: 0.99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+      await h.execute('ยกเลิกใบเบิกของฉัน เพราะบันทึกซ้ำ');
+    }
+    await h.execute(inline === true ? 'ใบเบิกร่าง 400 บาท เพราะบันทึกซ้ำ' : 'ใบเบิกร่าง 400 บาท');
+    if (!inline) {
+      assert.match(JSON.stringify(h.delivered.at(-1)), /ยกเลิกใบเบิกนี้เพราะอะไรคะ/);
+      assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+      await h.execute('บันทึกซ้ำ');
+    }
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending.expenseId, 'c-7'); assert.equal(pending.preview.action, 'REIMBURSEMENT_CANCEL');
+    assert.equal(pending.preview.record.amount, '400'); assert.equal(pending.preview.reason, 'บันทึกซ้ำ');
+    assert.deepEqual(cancelled, []);
+    const button = h.delivered.at(-1)!.flatMap(message => flexButtons(message)).find(button => button.action.label === 'ยกเลิกใบเบิก');
+    assert.ok(button, JSON.stringify(h.delivered.at(-1)));
+    await h.execute('ยกเลิกใบเบิก', button.action.data);
+    assert.deepEqual(cancelled, [{ id: 'c-7', reason: 'บันทึกซ้ำ' }]);
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.aiGatewayRequests.length, 0);
+  }
+});
+
+it('M4 round 9 workflow confirm delivers the existing evidence choices and choosing one prepares CONFIRM', async t => {
+  const h = await r7OffPagePicker(t);
+  const { BadRequestException } = await import('@nestjs/common');
+  for (const row of h.source.records) Object.assign(row, { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', primaryAttachmentId: null, attachments: [], aiVerificationSummaryJson: null });
+  h.source.actions.updateDraft = {};
+  h.source.actions.confirm.previewLineAction = async (_ctx: any, _id: string, assessment: any) => {
+    if (!assessment) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED' });
+  };
+  await h.execute('ยืนยันรายการ', 'action=chat-action&id=expense_confirm');
+  await h.execute('ใบเลขที่ ทดสอบ-0006');
+  const choices = h.delivered.at(-1)!.flatMap(message => message.quickReply?.items ?? []).map(item => item.action);
+  assert.ok(choices.some(choice => choice.label === 'ส่งรูปใบเสร็จ'), JSON.stringify(h.delivered.at(-1)));
+  const original = choices.find(choice => choice.label === 'มีตัวจริง'); assert.ok(original);
+  await h.execute(original.text);
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending.preview.action, 'CONFIRM'); assert.equal(pending.expenseId, 'workflow-expense-c-5');
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  assert.equal(h.intakeRequests.length, 0); assert.equal(h.creates(), 0);
+});
+
+it('M4 round 9 submit picker names a receipt-blocked own draft and the policy fix without another list', async () => {
+  const { LineWorkflowTargetService } = await import('../line-workflow-target.service');
+  const { buildClaimWorkflowPicker, LINE_CLAIM_PICKER_COPY } = await import('../../domain/logic/line-business-card.logic');
+  for (const allowMissingReceiptWithReason of [false, true]) {
+    const claim: any = { id: 'receipt-blocked', requesterUserId: 'user-1', status: 'DRAFT', title: 'ค่าเดินทาง รอบ 1', amount: '400', currency: 'THB', incurredDate: '2026-11-05', receiptRequirementStatus: 'REQUIRED', allowMissingReceiptWithReason };
+    let lists = 0;
+    const service = new LineWorkflowTargetService({ execute: async () => { lists++; return { items: [claim], total: 1 }; } } as any,
+      { canSubmitClaim: async () => false, claimSubmitReadiness: async () => ({ ready: false, receiptMissing: true }), permitted: async () => true } as any);
+    const result = await service.pick({ companyId: 'company-1', userId: 'user-1' } as any, 'receipt-chat', 'reimbursement_submit', {}, 1);
+    const card = buildClaimWorkflowPicker(result, 'reimbursement_submit', 'secret', 'company-1', 'user-1', 'https://web.example.test');
+    assert.equal(card.type, 'text'); assert.match((card as any).text, /400\.00.*ยังขาดใบเสร็จ เปิดใบเบิกเพื่อแนบใบเสร็จ/);
+    // Saved claims are edited on the web (no chat edit workflow), so the card names only the web fix.
+    if (allowMissingReceiptWithReason) assert.match((card as any).text, /หรือใส่เหตุผลที่ไม่มีใบเสร็จ/);
+    else assert.doesNotMatch((card as any).text, /เหตุผล/);
+    assert.match((card as any).quickReply.items[0].action.uri, /reimbursements\/receipt-blocked$/);
+    assert.equal(lists, 1);
+  }
+  for (const items of [[], [{ id: 'other-blocker', status: 'DRAFT', requesterUserId: 'user-1' }]]) {
+    const service = new LineWorkflowTargetService({ execute: async () => ({ items, total: items.length }) } as any,
+      { canSubmitClaim: async () => false, claimSubmitReadiness: async () => ({ ready: false }), permitted: async () => true } as any);
+    const result = await service.pick({ companyId: 'company-1', userId: 'user-1' } as any, 'receipt-chat', 'reimbursement_submit', {}, 1);
+    assert.equal((buildClaimWorkflowPicker(result, 'reimbursement_submit', 'secret', 'company-1', 'user-1') as any).text, LINE_CLAIM_PICKER_COPY.empty.reimbursement_submit);
+  }
+});
+
+it('M4 round 9 a receipt with a usable saved assessment goes straight to the CONFIRM preview', async t => {
+  for (const originalInHand of [false, true]) {
+    const h = await r7OffPagePicker(t);
+    const { BadRequestException } = await import('@nestjs/common');
+    for (const row of h.source.records) Object.assign(row, { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY',
+      primaryAttachmentId: originalInHand ? null : 'receipt-file', attachments: originalInHand ? [] : [{ id: 'receipt-file', status: 'ACTIVE', purpose: 'expense.receipt' }],
+      aiVerificationSummaryJson: originalInHand ? { documentEvidenceDraft: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true } } : null });
+    h.source.actions.updateDraft = {};
+    h.source.actions.confirm.previewLineAction = async (_ctx: any, _id: string, assessment: any) => { if (!assessment) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED' }); };
+    await h.execute('ยืนยันรายการ', 'action=chat-action&id=expense_confirm');
+    await h.execute('ใบเลขที่ ทดสอบ-0006');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /เลือกหลักฐานที่ใช้/);
+  }
+});
+
+it('M4 round 9 free source-draft shops cannot open cancel or confirmation states', async () => {
+  const { lineWorkflowOpenSig } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  const h = await m5ActionTargetHarness();
+  const ctx = { ...h.ctx, freeExpenseDrafts: true };
+  for (const act of ['CONFIRM', 'REIMBURSEMENT_CANCEL']) {
+    const result = await h.actions.openWorkflow(ctx, 'm5-chat', { action: 'wf_open', act, id: 'gold', sig: lineWorkflowOpenSig('m5-secret', ctx.companyId, ctx.userId, act, 'gold') });
+    assert.equal(result.preview, undefined); assert.deepEqual(h.previewed, []);
+    assert.equal(await h.actions.store.load(ctx.companyId, 'expense-action:m5-chat'), null);
   }
 });

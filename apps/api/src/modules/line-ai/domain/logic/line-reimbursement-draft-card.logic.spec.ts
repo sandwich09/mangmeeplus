@@ -78,7 +78,7 @@ describe('LINE reimbursement preview speaks plain Thai (Owner rule 2026-09-27/29
       assert.ok(texts.includes(language === 'th' ? 'คุณเอ' : 'คุณเอ'));
       assert.ok(texts.includes(':'));
       assert.ok(texts.includes(language === 'th' ? 'บันทึกร่าง' : 'Save draft'));
-      assert.ok(texts.includes(language === 'th' ? 'ยกเลิกร่างนี้' : 'Cancel draft'));
+      assert.ok(texts.includes(language === 'th' ? 'ไม่ทำ' : 'Cancel action'));
       assert.ok(texts.includes(language === 'th' ? 'ยังไม่ได้บันทึกค่ะ' : 'Not saved yet.'));
       for (const value of texts) assert.doesNotMatch(value, /^-$|:\s*-(?:\s|$)/u);
       assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
