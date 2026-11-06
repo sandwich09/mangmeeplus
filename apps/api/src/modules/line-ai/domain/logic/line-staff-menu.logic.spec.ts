@@ -1102,6 +1102,27 @@ it('Round 3 pending-approval menu offers approval/rejection buttons for each sco
   const data = JSON.stringify(card.contents); assert.match(data, /expense_action_approve/u); assert.match(data, /expense_action_reject/u);
   assert.doesNotMatch(card.canonicalText!, /ไปทำในเว็บ|เปิดในเว็บ/u);
 });
+// Owner 2026-11-06: the approve card showed only number, name and amount, had no way to the web, and
+// must use the locked card design.
+it('the approve card is the locked design: what the claim is for, both answers and the claims page', () => {
+  const context = { displayName: 'สมใจ', roleLabel: 'เจ้าของ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', permissions: ['reimbursement.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.com' };
+  const rows = [{ label: 'เรื่อง', value: 'ค่าน้ำมันรถส่งของ · ค่าเดินทาง' }, { label: 'ผู้เบิก', value: 'คุณต้น' }, { label: 'ยอดเงิน', value: '500.00 บาท', total: true }, { label: 'วันที่', value: '5 พ.ย. 2569' }];
+  const item = { title: 'RB-1', rows, buttons: reimbursementApprovalButtons('secret', 'company', 'user', 'claim') };
+  const card = buildPendingApprovalCard(context, { reimbursement: { total: 1, items: [item] } }, '6 พ.ย. 2569');
+  assert.equal(card.type, 'flex'); if (card.type !== 'flex') return;
+  assert.deepEqual(lineSystemCardTexts(card.contents), ['ใบเบิกรออนุมัติ', 'RB-1', 'เรื่อง', ':', 'ค่าน้ำมันรถส่งของ · ค่าเดินทาง', 'ผู้เบิก', ':', 'คุณต้น',
+    'ยอดเงิน', ':', '500.00 บาท', 'วันที่', ':', '5 พ.ย. 2569', 'ข้อมูล ณ 6 พ.ย. 2569', 'อนุมัติ', 'ไม่อนุมัติ', 'ดูใบเบิกรออนุมัติในเว็บ']);
+  const data = JSON.stringify(card.contents);
+  assert.match(data, /expense_action_approve/u); assert.match(data, /expense_action_reject/u);
+  assert.match(data, /"uri":"https:\/\/app\.example\.com\/companies\/company\/reimbursements\?tab=approvals"/u);
+  assert.deepEqual(lineFlexBodyProblems(card.contents), []);
+  // Two claims: one card each, side by side.
+  const two = buildPendingApprovalCard(context, { reimbursement: { total: 2, items: [item, { ...item, title: 'RB-2' }] } });
+  assert.equal(two.type === 'flex' && (two.contents as { type: string }).type, 'carousel');
+  // No https base for the pictures: the plain card, still with the details and the web button.
+  const plain = buildPendingApprovalCard({ ...context, webBaseUrl: 'http://127.0.0.1:3000' }, { reimbursement: { total: 1, items: [{ ...item, detail: 'คุณต้น · 500.00 บาท' }] } });
+  assert.match(JSON.stringify(plain), /คุณต้น · 500\.00 บาท/u); assert.match(JSON.stringify(plain), /ดูใบเบิกรออนุมัติในเว็บ/u);
+});
 it('Round 3 claim controls preserve other entitled approval queues and remain hidden without claim permission', () => {
   const pending = { reimbursement: { total: 1, items: [{ title: 'ใบเบิกค่าเดินทาง', buttons: reimbursementApprovalButtons('secret', 'company', 'user', 'claim') }] }, procurement: { total: 1, items: [{ title: 'คำขอซื้ออุปกรณ์' }] } };
   const context = { displayName: 'สมใจ', roleLabel: 'ผู้จัดการ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', permissions: ['reimbursement.approve', 'procurement.purchase_request.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.com' };

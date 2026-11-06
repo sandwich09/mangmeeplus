@@ -1406,7 +1406,10 @@ export class PrismaExpenseRepository {
       companyId: filter.companyId,
       ...(!filter.branchId ? branchScopeWhere({ branchIds: scope.branchIds }) : {}),
       ...(filter.branchId ? { branchId: filter.branchId } : {}),
-      ...(explicitStatus ? { status: explicitStatus } : { status: { notIn: ['REJECTED', 'VOIDED'] } }),
+      // LINE's "รอตรวจสอบ / ยังไม่ยืนยัน" is the web's ยังไม่ยืนยัน tab: every status before confirmation,
+      // so a fully read receipt waiting to be confirmed is counted too (owner 2026-11-06).
+      ...(explicitStatus === 'NEEDS_REVIEW' ? { status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] } }
+        : explicitStatus ? { status: explicitStatus } : { status: { notIn: ['REJECTED', 'VOIDED'] } }),
       ...(filter.paymentStatus ? { paymentStatus: filter.paymentStatus } : {}),
       ...(filter.vendorCounterpartyId ? { vendorCounterpartyId: filter.vendorCounterpartyId } : {}),
       ...(filter.expenseCategoryId ? { expenseCategoryId: filter.expenseCategoryId } : {}),

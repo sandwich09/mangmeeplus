@@ -104,6 +104,7 @@ import {
   draftUpdateMoveSuggestionReply,
   draftUpdateCanonicalDiff,
   formatRecordLabel,
+  formatThaiDate,
 } from '../../domain/logic/line-draft-update-card.logic';
 import {
   CHECK_BILL_PAYMENT_CHOICES,
@@ -2492,7 +2493,18 @@ export class ProcessLineWebhookUseCase {
           items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => ({
             title: row.requestNo ?? (language === 'en' ? 'Claim' : 'คำขอเบิกเงิน'),
             ...(this.config.aiGatewayInternalSecret ? { buttons: reimbursementApprovalButtons(this.config.aiGatewayInternalSecret, ctx.companyId, ctx.userId, row.id, language) } : {}),
-            detail: [row.requesterDisplayNameSnapshot, bahtText(row.amount, language)].filter(Boolean).join(' · '),
+            // What it is for, who and how much, and the day it was spent: enough to decide from LINE.
+            detail: [
+              [row.title, row.categoryLabelSnapshot].filter(Boolean).join(' · '),
+              [row.requesterDisplayNameSnapshot, bahtText(row.amount, language)].filter(Boolean).join(' · '),
+              row.incurredDate ? `${language === 'en' ? 'Date' : 'วันที่'} ${formatThaiDate(row.incurredDate)}` : '',
+            ].filter(Boolean).join('\n'),
+            rows: [
+              ...(row.title || row.categoryLabelSnapshot ? [{ label: language === 'en' ? 'For' : 'เรื่อง', value: [row.title, row.categoryLabelSnapshot].filter(Boolean).join(' · ') }] : []),
+              ...(row.requesterDisplayNameSnapshot ? [{ label: language === 'en' ? 'Requester' : 'ผู้เบิก', value: row.requesterDisplayNameSnapshot }] : []),
+              { label: language === 'en' ? 'Amount' : 'ยอดเงิน', value: bahtText(row.amount, language), total: true },
+              ...(row.incurredDate ? [{ label: language === 'en' ? 'Date' : 'วันที่', value: formatThaiDate(row.incurredDate) }] : []),
+            ],
           })),
         };
       }

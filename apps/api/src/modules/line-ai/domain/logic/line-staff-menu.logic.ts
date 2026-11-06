@@ -3,7 +3,7 @@ import { fileReadRetryPostbackCommand, isFileReadRetryCommand } from './line-fil
 import { linePaymentEvidencePostbackCommand } from './line-payment-evidence-reply.logic';
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
-import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
+import type { LineSystemCard, LineSystemCardAction, LineSystemCardRow } from './line-system-card.logic';
 import { drawLineSystemCard } from './line-system-card-limits.logic';
 import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText, lineChatAction, mayOfferWorkflow, parseLineFixedReadControl } from '@watchdog-bms/contracts';
 
@@ -684,7 +684,7 @@ const APPROVAL_SURFACES = [
 export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number]['key'];
 
 /** One waiting record: what identifies it (its number) and, when the queue says, who asked and how much. */
-export type PendingApprovalItem = { title: string; detail?: string; buttons?: Record<string, unknown>[] };
+export type PendingApprovalItem = { title: string; detail?: string; buttons?: Record<string, unknown>[]; rows?: LineSystemCardRow[] };
 
 /** What the approver has waiting: `total` is the whole queue, `items` the records the card may show.
  *  A key left out means that queue could not be read — the card then links out without a count
@@ -780,6 +780,47 @@ function pendingApprovalDesignedCard(
   ] };
 }
 
+/**
+ * Claims the member can decide from LINE, on the locked design (owner 2026-11-06: "การ์ดต้องเข้า theme
+ * เดิม"): one card per claim with what it is for, who asked, the amount and the day, the approve and
+ * reject answers side by side and the claims page under them. Other queues follow as their own card.
+ * `undefined` when a card cannot be drawn whole: the plain card is sent instead.
+ */
+function pendingClaimDesignedCards(
+  surfaces: ReturnType<typeof availableApprovalSurfaces>, pending: PendingApprovalSnapshot, actionable: PendingApprovalItem[],
+  base: string | undefined, companySegment: string, webBaseUrl: string | undefined, asOfLabel: string | undefined,
+): { contents: Record<string, unknown>; lines: string[] } | undefined {
+  const claims = surfaces.find(surface => surface.key === 'reimbursement')!;
+  const web = base ? { action: { type: 'uri' as const, label: claims.open, uri: `${base}${companySegment}${claims.path}` }, icon: 'list' as const } : undefined;
+  const total = pending.reimbursement!.total;
+  const lines: string[] = [`ใบเบิกรออนุมัติ: พบ ${total} รายการ`];
+  const bubbles: Record<string, unknown>[] = [];
+  for (const [index, item] of actionable.entries()) {
+    const [approve, reject, ...extra] = item.buttons!.map(entry => entry.action as LineSystemCardAction);
+    if (!approve || !reject || extra.length) return undefined;
+    const rows = item.rows ?? (item.detail ? [{ label: 'รายละเอียด', value: item.detail }] : []);
+    const notes = [
+      ...(asOfLabel?.trim() ? [`ข้อมูล ณ ${asOfLabel.trim()}`] : []),
+      ...(index === actionable.length - 1 && actionable.length < total ? [`แสดง ${actionable.length} รายการแรก ดูทั้งหมดได้ในเว็บ`] : []),
+    ];
+    const contents = drawLineSystemCard({
+      mascot: 'review', header: { lines: [actionable.length > 1 ? `ใบเบิกรออนุมัติ ${index + 1}/${actionable.length}` : 'ใบเบิกรออนุมัติ', item.title] },
+      rows, ...(notes.length ? { notes } : {}), choice: [approve, reject], ...(web ? { button: web } : {}),
+    }, webBaseUrl);
+    if (!contents) return undefined;
+    bubbles.push(contents);
+    lines.push(item.title, ...rows.map(row => `${row.label}: ${row.value.replace(/\n/gu, ' · ')}`));
+  }
+  const others = surfaces.filter(surface => surface.key !== 'reimbursement');
+  if (others.some(surface => pending[surface.key])) {
+    const rest = pendingApprovalDesignedCard(others, pending, base ? others.map(surface => ({ label: surface.open, uri: `${base}${companySegment}${surface.path}` })) : [], webBaseUrl, asOfLabel);
+    if (!rest) return undefined;
+    bubbles.push(rest.contents); lines.push(...rest.lines);
+  }
+  if (web) lines.push(`${web.action.label}: ${web.action.uri}`);
+  return { contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles }, lines };
+}
+
 export function buildPendingApprovalCard(context: StaffMenuContext, pending: PendingApprovalSnapshot = {}, asOfLabel?: string): LineReplyMessage {
   const base = context.webBaseUrl?.replace(/\/$/, '');
   const permissions = new Set(context.permissions);
@@ -802,17 +843,24 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
     return { type: 'flex', altText: lines[0]!, canonicalText: lines.join('\n'), contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [ { type: 'text', text: lines[0]!, wrap: true }, ...actionable.map(item => ({ type: 'box', layout: 'vertical', contents: [{ type: 'text', text: [item.title, item.detail].filter(Boolean).join(' · '), wrap: true }, ...item.buttons!] })) ] } } };
   }
   const actionable = surfaces.some(surface => surface.key === 'reimbursement') ? pending.reimbursement?.items.filter(item => item.buttons?.length) ?? [] : [];
+  const designedClaims = actionable.length ? pendingClaimDesignedCards(surfaces, pending, actionable, base, companySegment, context.webBaseUrl, asOfLabel) : undefined;
+  if (designedClaims) return { type: 'flex', altText, canonicalText: designedClaims.lines.join('\n'), contents: designedClaims.contents };
   if (actionable.length) {
     const others = surfaces.filter(surface => surface.key !== 'reimbursement');
     const otherLines = others.flatMap(surface => {
       const queue = pending[surface.key];
       return queue ? [`${surface.label} (${queue.total})`, ...queue.items.map(item => [item.title, item.detail].filter(Boolean).join(' · '))] : [];
     });
-    const links = base ? others.map(surface => ({ type: 'button', style: 'primary', action: { type: 'uri', label: surface.label, uri: `${base}${companySegment}${surface.path}` } })) : [];
-    const lines = [`รายการรออนุมัติ ${total} รายการค่ะ`, ...actionable.map(item => [item.title, item.detail].filter(Boolean).join(' · ')), ...otherLines];
+    // Every queue keeps its way to the web, the claims queue too (owner 2026-11-06).
+    const links = base ? surfaces.map(surface => ({ type: 'button', style: surface.key === 'reimbursement' ? 'secondary' : 'primary', action: { type: 'uri', label: surface.key === 'reimbursement' ? surface.open : surface.label, uri: `${base}${companySegment}${surface.path}` } })) : [];
+    const lines = [`รายการรออนุมัติ ${total} รายการค่ะ`, ...actionable.map(item => [item.title, item.detail?.replace(/\n/gu, ' · ')].filter(Boolean).join(' · ')), ...otherLines];
     return { type: 'flex', altText, canonicalText: [...lines, ...links.map(link => `${link.action.label}: ${link.action.uri}`)].join('\n'), contents: { type: 'bubble', body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
       { type: 'text', text: lines[0], weight: 'bold', wrap: true },
-      ...actionable.map(item => ({ type: 'box', layout: 'vertical', spacing: 'sm', contents: [{ type: 'text', text: [item.title, item.detail].filter(Boolean).join(' · '), wrap: true }, ...item.buttons!] })),
+      ...actionable.map(item => ({ type: 'box', layout: 'vertical', spacing: 'sm', contents: [
+        { type: 'text', text: item.title, weight: 'bold', wrap: true },
+        ...(item.detail ? [{ type: 'text', text: item.detail, size: 'sm', color: '#475467', wrap: true }] : []),
+        ...item.buttons!,
+      ] })),
       ...otherLines.map(text => ({ type: 'text', text, wrap: true })),
     ] }, ...(links.length ? { footer: { type: 'box', layout: 'vertical', contents: links } } : {}) } };
   }

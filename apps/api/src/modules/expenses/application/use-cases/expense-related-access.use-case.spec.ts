@@ -2800,3 +2800,13 @@ it('R8 document-number list search keeps paid and free tenant branch relation an
     if (free) assert.ok(where.AND.some((clause: any) => JSON.stringify(clause).includes('LINE_UPLOAD') && JSON.stringify(clause).includes('NEEDS_REVIEW')));
   }
 });
+
+// Owner 2026-11-06: LINE "ใบเสร็จที่ยังไม่ยืนยัน" said 0 while the web's ยังไม่ยืนยัน tab had two
+// fully read receipts waiting to be confirmed.
+it('the AI review filter counts every status before confirmation, as the web tab does', () => {
+  const where = (status?: string) => (new PrismaExpenseRepository({} as any) as any).aiExpenseWhere(
+    { companyId: 'company-1', fromDate: '2026-11-01', toDate: '2026-11-30', ...(status ? { status } : {}) }, { branchIds: null });
+  assert.deepEqual(where('NEEDS_REVIEW').status, { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] });
+  assert.equal(where('CONFIRMED').status, 'CONFIRMED');
+  assert.deepEqual(where().status, { notIn: ['REJECTED', 'VOIDED'] });
+});

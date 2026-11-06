@@ -109,7 +109,8 @@ export type LineSystemCard = {
   /** …or several, one under the other, each named by what it opens (owner 2026-10-05: an answer with
    *  several places to open names every one of them). Drawn only when there is no `button`. */
   buttons?: ReadonlyArray<{ action: LineSystemCardAction; icon: LineSystemCardIcon }>;
-  /** …or the two answers to a question, side by side: the first is the dark one. */
+  /** …or the two answers to a question, side by side: the first is the dark one. A `button` with a
+   *  choice is drawn under it (the claim card's way to the web, owner 2026-11-06). */
   choice?: readonly [LineSystemCardAction, LineSystemCardAction];
 };
 
@@ -267,7 +268,8 @@ function footer(card: LineSystemCard, webBaseUrl: string): Flex | undefined {
   ]);
   const contents = card.choice
     ? [{ type: 'box', layout: 'horizontal', spacing: '8px', contents: card.choice.map((entry, index) =>
-      button(entry, index === 0, [label(entry, index === 0, { align: 'center' })], { flex: 1 })) }]
+      button(entry, index === 0, [label(entry, index === 0, { align: 'center' })], { flex: 1 })) },
+    ...(card.button ? [link(card.button)] : [])]
     : card.button ? [link(card.button)]
       : card.buttons?.length ? card.buttons.map(link)
         : undefined;
