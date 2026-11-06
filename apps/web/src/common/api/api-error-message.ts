@@ -26,6 +26,9 @@ function taxPeriodRefusal(formType?: unknown, periodKey?: unknown): string {
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  demo_read_limit_reached: 'ลิงก์ทดลองนี้อ่านเอกสารครบ 3 ใบแล้วค่ะ เปิดร้านจริงฟรีเพื่อส่งต่อได้เลยนะคะ',
+  demo_action_unavailable: 'ในระบบจำลองทำรายการนี้ไม่ได้ค่ะ ลองดูในแชท LINE จำลอง หรือเปิดร้านจริงฟรี',
+  demo_link_expired: 'ลิงก์เดโม่นี้หมดอายุแล้วค่ะ ขอลิงก์ใหม่จากทีมดูแลได้เลยนะคะ',
   expense_e_wht_not_enabled: E_WHT_WORDS['S-8'],
   expense_ewht_payment_method: E_WHT_WORDS['W-R1'],
   expense_ewht_cash_payment_exists: E_WHT_WORDS['W-R2'],

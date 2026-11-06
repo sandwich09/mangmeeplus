@@ -4,9 +4,12 @@ import { LineMessagingCredentialsService } from '../../../common/config/line-mes
  * LINE reply adapter – sends reply/push messages via Messaging API.
  * Does not log access tokens or authorization headers.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
+import { isVirtualDemoTarget, withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
+import { PrismaService } from '../../../common/database/prisma.service';
+import type { Prisma } from '../../../generated/prisma/client';
+import { storeDemoReply } from '../../sales-demo/application/demo-chat-sink';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { LINE_FLEX_PREVIEW_LIMIT, lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 
@@ -141,15 +144,17 @@ export class LineReplyAdapter {
   private readonly LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
   private readonly LINE_LOADING_URL = 'https://api.line.me/v2/bot/chat/loading/start';
 
-  constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly config: AppConfigService) {}
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly config: AppConfigService, @Optional() private readonly prisma?: PrismaService) {}
 
   async sendReply(replyToken: string, messages: LineReplyMessage[], onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    if (isVirtualDemoTarget(replyToken)) return this.sendVirtual(replyToken, messages);
     return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages, undefined, onSent);
   }
 
   /** Push delivery consumes the OA monthly message quota (replies are free).
    *  Used for expired-token fallback, slow-turn feedback, and receipt acknowledgement (spec §10). */
   async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID(), onSent?: (ids: string[]) => Promise<void>): Promise<LineDeliveryResult> {
+    if (isVirtualDemoTarget(to)) return this.sendVirtual(to, messages, operationId);
     return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages), onSent);
   }
 
@@ -158,6 +163,10 @@ export class LineReplyAdapter {
     if (!parseOutcomeMessages(input.messages) || input.messages.some(m => m.type === 'flex' && m.canonicalText !== undefined)
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.pushRetryKey)
       || !input.target || !Number.isFinite(input.timeoutMs) || input.timeoutMs < 500) return { kind: 'rejected', code: 'INVALID_FROZEN_WIRE', rejection: 'PERMANENT' };
+    if (isVirtualDemoTarget(input.target, input.channelId)) {
+      const result = await this.sendVirtual(input.target, input.messages, input.transport === 'PUSH' ? input.pushRetryKey : undefined);
+      return result === 'ok' ? { kind: 'accepted', code: 'API_ACCEPTED' } : { kind: 'unknown', code: 'VIRTUAL_STORE_FAILED' };
+    }
     try {
       const credentials = await this.lineCredentials.get();
       if (input.channelId !== undefined && input.channelId !== credentials.channelId) return { kind: 'rejected', code: 'CHANNEL_CHANGED', rejection: 'PERMANENT' };
@@ -189,6 +198,8 @@ export class LineReplyAdapter {
    *  the request (its successful HTTP response) so the caller can record `loading_accepted`
    *  server-side (latency/autonomy §12); device-visible render timing stays UAT-only. */
   async startLoadingAnimation(chatId: string): Promise<boolean> {
+    // The durable buffer/job rows drive web typing state, so there is no second flag to clear.
+    if (isVirtualDemoTarget(chatId)) return true;
     try {
       const accessToken = (await this.lineCredentials.get()).accessToken;
       if (!accessToken) return false;
@@ -209,6 +220,17 @@ export class LineReplyAdapter {
     } catch (err) {
       this.logger.debug?.({ msg: 'LINE loading animation failed', ...safeLineErrorDetails(err) });
       return false;
+    }
+  }
+
+  private async sendVirtual(target: string, messages: LineReplyMessage[], operationId?: string): Promise<LineDeliveryResult> {
+    try {
+      if (!this.prisma) return 'failed_other';
+      await storeDemoReply(this.prisma.client, target, providerMessages(messages) as unknown as Prisma.InputJsonValue, operationId);
+      return 'ok';
+    } catch {
+      this.logger.warn({ msg: 'demo.chat.delivery_failed' });
+      return 'failed_other';
     }
   }
 

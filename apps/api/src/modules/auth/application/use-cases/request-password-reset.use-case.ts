@@ -30,7 +30,7 @@ export class RequestPasswordResetUseCase {
       if(recent.length>=5||recent[0]&&recent[0].createdAt.getTime()>now.getTime()-60000)return null;
       const rawToken=generateEmailRecoveryToken(user),expiresAt=new Date(now.getTime()+30*60000);
       const token=await tx.passwordResetToken.create({data:{userId,tokenHash:hashToken(rawToken),expiresAt}});
-      const attempt=await this.delivery.prepare({purpose:'password_reset',recipient:user.email!,deadlineAt:expiresAt,intentKey:`email-reset:${token.id}`},tx);
+      const attempt=await this.delivery.prepare({companyId:member.companyId,purpose:'password_reset',recipient:user.email!,deadlineAt:expiresAt,intentKey:`email-reset:${token.id}`},tx);
       await tx.passwordResetToken.updateMany({where:{userId,status:'PENDING',id:{not:token.id}},data:{status:'REVOKED'}});
       await tx.auditLog.create({data:{companyId:member.companyId,actorUserId:userId,action:AuditAction.AUTH_PASSWORD_RESET_REQUEST,targetType:'PasswordResetToken',targetId:token.id,
         requestId:input.requestId??token.id,result:'SUCCESS',riskLevel:'MEDIUM',metadataJson:{channel:'EMAIL',attemptId:attempt.id}}});

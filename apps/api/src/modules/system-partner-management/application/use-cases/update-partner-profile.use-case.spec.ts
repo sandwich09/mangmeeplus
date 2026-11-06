@@ -334,3 +334,15 @@ describe('CompanyTeamNoteService', () => {
   });
 
 });
+
+
+it('admin profile changes cannot create or remove the system-only DEMO classification', async () => {
+  const normal = makePrisma();
+  await assert.rejects(new UpdatePartnerProfileUseCase(normal, getDetailStub, configStub).execute(makeCmd({ name: undefined, reportClassification: 'DEMO' })), UnprocessableEntityException);
+  assert.equal(normal.updateCalled(), false);
+  for (const classification of ['CUSTOMER', 'TEST', null]) {
+    const demo = makePrisma({ labels: { reportClassification: 'DEMO' } });
+    await assert.rejects(new UpdatePartnerProfileUseCase(demo, getDetailStub, configStub).execute(makeCmd({ name: undefined, reportClassification: classification })), UnprocessableEntityException);
+    assert.equal(demo.updateCalled(), false);
+  }
+});

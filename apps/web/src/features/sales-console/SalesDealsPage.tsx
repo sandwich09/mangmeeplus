@@ -7,6 +7,8 @@ import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listSalesDeals } from './sales.api';
+import { SalesDemoLinkDialog } from './SalesDemoLinkDialog';
+import { ActionGroup } from '@/common/components/actions/ActionGroup';
 import { dealBadges, dealPaymentNote, dealTermText, formatBaht, SALES_DEAL_STATUS_META } from './sales-console.logic';
 import { SalesDealBadges, SalesDealStatusBadge, SalesEmpty, SalesNotice } from './SalesConsoleParts';
 
@@ -41,6 +43,7 @@ export default function SalesDealsPage() {
   const [filter, setFilter] = useState<SalesDealStatus | 'ALL'>('ALL');
   const [deals, setDeals] = useState<SalesDealView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [demoOpen, setDemoOpen] = useState(false);
 
   const load = useCallback((status: SalesDealStatus | 'ALL', signal?: AbortSignal) => {
     setError(null);
@@ -60,7 +63,10 @@ export default function SalesDealsPage() {
       eyebrow="ทีมขายมั่งมี"
       title="ดีล"
       description="ข้อเสนอพิเศษที่คุณสร้างให้ร้านค้า ตั้งแต่ฉบับร่างจนลูกค้าเปิดใช้งาน"
-      actions={<Link href="/sales/deals/new" className="mangmee-btn mangmee-btn-primary">สร้างดีลใหม่</Link>}
+      actions={<ActionGroup>
+        <button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => setDemoOpen(true)}>สร้างลิงก์เดโม่</button>
+        <Link href="/sales/deals/new" className="mangmee-btn mangmee-btn-primary">สร้างดีลใหม่</Link>
+      </ActionGroup>}
     >
       {/* Nine statuses do not fit 390 px: without these two the labels wrapped to three lines and
           the last chips were clipped. One scrolling row keeps every 44 px target reachable. */}
@@ -74,6 +80,7 @@ export default function SalesDealsPage() {
       </div>
 
       {error && <SalesNotice tone="error">{error}</SalesNotice>}
+      {demoOpen && <SalesDemoLinkDialog onClose={() => setDemoOpen(false)} />}
 
       {deals === null ? <LoadingState label="กำลังโหลดดีล…" />
         : deals.length === 0 ? <SalesEmpty>ยังไม่มีดีลในสถานะนี้</SalesEmpty>

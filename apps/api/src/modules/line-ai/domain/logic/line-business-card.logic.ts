@@ -1,3 +1,4 @@
+import { DEMO_CREDIT_EXHAUSTED_TEXT, DEMO_CREDIT_INSUFFICIENT_TEXT } from '@watchdog-bms/contracts';
 import Decimal from 'decimal.js';
 import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
 import { formatClaimMoney } from './line-reimbursement-draft-card.logic';
@@ -885,7 +886,11 @@ export function buildAiBudgetExceededMessage(
   canManagePlan: boolean,
   language: LineReplyLanguage = 'th',
   webBaseUrl?: string,
+  demo = false,
 ): LineReplyMessage {
+  if (demo) return { type: 'text',
+    text: refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? DEMO_CREDIT_INSUFFICIENT_TEXT : DEMO_CREDIT_EXHAUSTED_TEXT,
+    quickReply: { items: [{ type: 'action', action: { type: 'uri', label: 'เปิดร้านจริงฟรี', uri: new URL('/', webBaseUrl).toString() } }] } };
   const en = language === 'en', insufficient = refusal?.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient;
   const chat = refusal?.budgetScope === 'CHAT';
   const title = en ? `${chat ? 'Chat AI' : 'AI'} credit ${insufficient ? 'is insufficient' : 'used up this month'}`

@@ -34,11 +34,12 @@ import { DataRightsModule } from './modules/data-rights/data-rights.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { ExternalSignupModule } from './modules/external-signup/external-signup.module';
 import { ExecutiveBusinessModule } from './modules/executive-business/executive-business.module';
+import { SalesDemoModule } from './modules/sales-demo/sales-demo.module';
 import { SalesConsoleModule } from './modules/sales-console/sales-console.module';
 import { ExecutiveReportBuildModule } from './modules/executive-business/executive-report-build.module';
 
 @Module({
-  imports: [HomeThemeModule, ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule, ExecutiveBusinessModule, ExecutiveReportBuildModule],
+  imports: [HomeThemeModule, ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, SalesDemoModule, BillingModule, ExecutiveBusinessModule, ExecutiveReportBuildModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

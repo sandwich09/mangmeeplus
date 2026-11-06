@@ -283,6 +283,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
           },
         }
       : envelope;
+    // Greeting/menu commands intentionally bypass company/legal resolution. They can create the
+    // chat state first, so resolve the reserved virtual coordinate against company DATA too.
+    const demoCompanyId = legal.companyId ?? (envelope.messagingChannelId === 'demo-web' && envelope.lineUserId.startsWith('Vdemo') ? envelope.lineUserId.slice(5) : undefined);
+    const demo = !!demoCompanyId && (await this.prisma.client.company.findUnique({ where: { id: demoCompanyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
     const acceptedAt = await this.acceptEvent(acceptedEnvelope, legal.status !== 'required');
     if (acceptedAt === null) return;
     // Everything below is synchronous: no interleaving between state reads and
@@ -290,7 +294,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
     try {
       // Keep the payer for cohort accounting, separate from private rollout scope.
       this.appendAccepted(orphanReplay ? { ...acceptedEnvelope, item: { ...acceptedEnvelope.item, admitOverCap: true } } : acceptedEnvelope,
-        acceptedAt, legal.companyId, !!publicAdmission);
+        acceptedAt, legal.companyId, !!publicAdmission, demo);
     } catch (error) {
       // The event row exists but the payload never reached memory. Mark it
       // immediately reclaimable before returning non-2xx to LINE.
@@ -438,12 +442,12 @@ export class LineMessageBufferService implements OnModuleDestroy {
     this.logger.log({ msg: 'line.ai.accepted', surface: 'employee_oa', webhookEventId });
   }
 
-  private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string, publicAdmission = false): void {
+  private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string, publicAdmission = false, demo = false): void {
     const key = `${envelope.messagingChannelId}:${envelope.chatId}:${envelope.lineUserId}`;
     let state = this.chats.get(key);
     if (!state) {
       state = {
-        reliabilityV2: this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled
+        reliabilityV2: demo || this.config.lineAiReliabilityV2Mode === 'on' && this.config.lineAiDeliveryPlanV2Enabled
           && (companyId && !publicAdmission
             ? isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId)
               && isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)

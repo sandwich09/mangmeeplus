@@ -253,6 +253,15 @@ export class AiGatewayClient {
     if (evidence.inputEvidence.joinedSha256 !== input.inputDigest) return { status: 'failed', errorCode: 'QA_INPUT_DIGEST_MISMATCH' };
     await this.validateLineV2(request, { companyId: input.companyId, userId: input.userId });
     await this.assertRateLimit('llm', input.companyId);
+    if ((await this.prisma.client.company.findUnique({ where: { id: input.companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO') {
+      for (const attachmentId of new Set(input.pages.map(page => page.attachmentId))) {
+        const source = await this.prisma.client.lineIntakePendingMedia.findFirst({ where: { companyId: input.companyId, userId: input.userId, attachmentId }, select: { lineMessageId: true } });
+        // The image router and question reader can read the same upload; use its admission fence.
+        const admission = await admitCompanyOcr(this.prisma, { companyId: input.companyId, sourceRoute: 'receipt-ocr-line',
+          requestId: source?.lineMessageId ?? `demo-qa-file:${attachmentId}`, enforceReceiptQuota: true });
+        if (!admission.allowed && admission.reason !== 'duplicate') return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+      }
+    }
     return this.postInternal<LineDocumentQaGatewayResponse>('/internal/ai/line-document-qa', request,
       input.requestId, 2 * AI_DOCUMENT_OCR_TIMEOUT_MS + 10_000, input.budgetGrantV2.monthKey, 'document');
   }

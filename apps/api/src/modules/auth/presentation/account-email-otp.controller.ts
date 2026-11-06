@@ -31,7 +31,7 @@ type AccountRequest = Request & { context: RequestContext };
 function caller(req: AccountRequest) {
   const tokenId = extractSid(req);
   if (!tokenId) throw new UnauthorizedException('Session is required.');
-  return { userId: req.context.userId, tokenId, requestId: req.context.requestId };
+  return { companyId: req.context.companyId, userId: req.context.userId, tokenId, requestId: req.context.requestId };
 }
 
 @Controller('auth/account/email/otp')

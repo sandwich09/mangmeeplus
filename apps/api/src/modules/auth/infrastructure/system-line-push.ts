@@ -1,4 +1,4 @@
-import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
+import { isVirtualDemoTarget, withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
 
 /**
  * What one push attempt did. `retryAfterSeconds` is LINE's own answer to "when may I try again",
@@ -34,6 +34,8 @@ export function parseLineRetryAfterSeconds(value: string | null): number | undef
  */
 export async function pushLineMessages(input: {
   token: string;
+  channelId?: string;
+  isDemo?: boolean;
   lineUserId: string;
   messages: unknown[];
   /** Same key on every retry of one logical message; LINE dedupes on it. */
@@ -43,6 +45,10 @@ export async function pushLineMessages(input: {
   /** R-B1 is for OUR app's links. `false` = a shop talking to its own customers (CRM), sent as written. */
   externalBrowser?: boolean;
 }): Promise<LinePushOutcome> {
+  if (input.isDemo || isVirtualDemoTarget(input.lineUserId, input.channelId)) {
+    console.info('[system-line-push] demo outbound suppressed');
+    return { ok: true };
+  }
   try {
     const res = await fetch(input.url ?? LINE_PUSH_URL, {
       method: 'POST',

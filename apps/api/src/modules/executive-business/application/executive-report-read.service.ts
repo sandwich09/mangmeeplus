@@ -721,7 +721,7 @@ export class ExecutiveReportReadService {
     const sources = { billing: build.billingDataThrough, activity: build.asOf, aiCost: build.asOf, profile: build.asOf };
     const known = Object.values(sources).filter((at): at is Date => at !== null).map((at) => at.getTime());
     const newest = Math.max(...known);
-    const excluded = rows.filter((row) => row.reportClassification === 'TEST' || row.reportClassification === 'INTERNAL');
+    const excluded = rows.filter((row) => row.reportClassification === 'TEST' || row.reportClassification === 'INTERNAL' || row.reportClassification === 'DEMO');
     const sellerLabel = (code: string) => L.referringSales[code] ?? [...data.sellers.values()].find((seller) => seller.salesCode === code)?.label ?? code;
     return {
       requestId: ctx.requestId,

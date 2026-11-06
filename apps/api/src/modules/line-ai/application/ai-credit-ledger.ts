@@ -113,6 +113,7 @@ export type AiCreditFunding =
  * Chooses the lots that hold `units` for one call (spec §5.3). A turn that already holds credit
  * keeps its `pinnedCycleKey`, so a turn crossing a cycle boundary stays on the cycle it was admitted
  * in (A36); lots are judged valid `asOf` the turn's admission. Writes only the cycle lot, if new.
+ * DEMO is the exception to the paid-cycle rule: added lots only, even if a cycle exists.
  * Caller holds L1.
  */
 export async function planAiCreditFunding(tx: any, input: {
@@ -122,7 +123,11 @@ export async function planAiCreditFunding(tx: any, input: {
   const { companyId, asOf } = input;
   let cycleKey: string;
   let cycleLot: { id: string; units: number; sourceKind: string; availableAt: Date; expiresAt: Date } | null;
-  if (input.pinnedCycleKey) {
+  const demo = (await tx.company.findUnique({ where: { id: companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
+  if (demo) {
+    cycleKey = `demo:${companyId}`;
+    cycleLot = null;
+  } else if (input.pinnedCycleKey) {
     cycleKey = input.pinnedCycleKey;
     cycleLot = await tx.aiCreditGrant.findFirst({ where: { companyId, sourceKey: `cycle:${cycleKey}`, revokedAt: null },
       select: { id: true, units: true, sourceKind: true, availableAt: true, expiresAt: true } });
@@ -264,11 +269,13 @@ export type AiCreditBalance = {
  * the operator, readiness and later the customer summary agree. Read-only — a cycle nobody has used
  * yet is projected at `allowance`, not created. Package credit counts only for the cycle in force;
  * added credit only while a paid package is in force (D2), otherwise it is kept but not available.
+ * DEMO uses added credit without a cycle and never projects a package allowance.
  */
 export async function readAiCreditBalance(tx: any, input: {
   companyId: string; at: Date; allowance: (cycle: AiCreditCycle) => AiCreditAllowance;
 }): Promise<AiCreditBalance> {
-  const cycle = await readAiCreditCycle(tx, input.companyId, input.at);
+  const demo = (await tx.company.findUnique({ where: { id: input.companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
+  const cycle = demo ? null : await readAiCreditCycle(tx, input.companyId, input.at);
   const grants = await tx.aiCreditGrant.findMany({
     where: { companyId: input.companyId, OR: [
       ...(cycle ? [{ sourceKey: `cycle:${cycle.cycleKey}` }] : []),
@@ -289,7 +296,7 @@ export async function readAiCreditBalance(tx: any, input: {
   });
   const cycleLot = lots.find(lot => lot.sourceKind === 'INCLUDED_CYCLE');
   const packageRemainingUnits = cycle ? cycleLot?.availableUnits ?? input.allowance(cycle).units : 0;
-  const additionalRemainingUnits = cycle
+  const additionalRemainingUnits = cycle || demo
     ? lots.filter(lot => lot.sourceKind !== 'INCLUDED_CYCLE' && lot.availableAt <= input.at).reduce((sum, lot) => sum + lot.availableUnits, 0) : 0;
   return { cycle, packageRemainingUnits, additionalRemainingUnits, totalRemainingUnits: packageRemainingUnits + additionalRemainingUnits, lots };
 }

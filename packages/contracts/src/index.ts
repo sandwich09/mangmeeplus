@@ -25,6 +25,8 @@ export type RequestContext = {
   roles: string[];
   permissions: string[];
   freeExpenseDrafts?: boolean;
+  /** Set by the auth guard for a sales demo shop (`reportClassification = 'DEMO'`). */
+  isDemo?: boolean;
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: { branchIds?: string[]; locationIds?: string[]; teamIds?: string[] };
   authProvider: AuthProvider;
@@ -305,3 +307,5 @@ export * from './company-team-note.js';
 export * from './home-theme.js';
 
 export * from './expense-item-limits.js';
+
+export * from './demo-chat.js';

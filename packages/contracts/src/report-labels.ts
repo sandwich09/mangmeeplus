@@ -1,13 +1,17 @@
 import { DBD_TSIC_ACTIVITIES } from './dbd-tsic-master.js';
 
 /**
- * The two labels the System Admin puts on a company for the executive report
+ * The report labels stored on a company for the executive report
  * (executive backend spec §12.2 and §15). The admin page, the partner API and the report build all
  * read these lists, so a value is spelled in one place.
  */
 
 /** Who the company is to Mangmee. `null` on a company = not classified yet; only CUSTOMER is counted. */
-export const REPORT_CLASSIFICATIONS = ['CUSTOMER', 'TEST', 'INTERNAL'] as const;
+export const REPORT_CLASSIFICATIONS = ['CUSTOMER', 'TEST', 'INTERNAL', 'DEMO'] as const;
+export const CLASSIFICATION_WORDS = {
+  ALL: 'ทุกประเภท', CUSTOMER: 'ลูกค้าจริง', TEST: 'บริษัททดสอบ',
+  INTERNAL: 'บริษัทของมั่งมี', DEMO: 'เดโม่', UNCLASSIFIED: 'ยังไม่ได้จัดประเภท',
+} as const;
 export type ReportClassification = typeof REPORT_CLASSIFICATIONS[number];
 export function isReportClassification(value: unknown): value is ReportClassification {
   return (REPORT_CLASSIFICATIONS as readonly unknown[]).includes(value);

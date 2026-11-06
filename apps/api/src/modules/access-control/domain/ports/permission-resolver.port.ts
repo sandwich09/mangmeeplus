@@ -2,6 +2,8 @@ export interface ResolvedAccess {
   membershipId: string;
   companyId: string;
   freeExpenseDrafts?: boolean;
+  isDemo?: boolean;
+  demoExpiresAt?: string;
   roles: string[];        // role keys e.g. OWNER, ADMIN
   /** Display-only package availability; never grants the reader a permission. */
   availablePermissions?: string[];

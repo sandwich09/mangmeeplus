@@ -1,3 +1,4 @@
+import { DEMO_READ_LIMIT_TEXT } from '@watchdog-bms/contracts';
 import type { LineReplyLanguage } from '../../domain/logic/line-language.logic';
 import { LinkLinePaymentEvidenceUseCase } from '../../../expenses/application/use-cases/link-line-payment-evidence.use-case';
 import { linePaymentEvidenceReply } from '../../domain/logic/line-payment-evidence-reply.logic';
@@ -815,6 +816,7 @@ function readClassification(payload: Record<string, unknown>): any {
 
 
 function freeCaptureRefusal(payload: Record<string, unknown>): string | null {
+  if (readString(payload, 'errorCode') === 'demo_read_limit_reached') return DEMO_READ_LIMIT_TEXT;
   const code = readString(payload, 'errorCode');
   if (code === 'FREE_MULTI_DOCUMENT_UNSUPPORTED') return FREE_EXPENSE_MULTI_DOCUMENT_TEXT_TH;
   if (code === 'FREE_DOCUMENTS_IN_FLIGHT') return FREE_EXPENSE_IN_FLIGHT_TEXT_TH;

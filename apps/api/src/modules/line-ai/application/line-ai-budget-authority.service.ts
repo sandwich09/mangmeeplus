@@ -152,7 +152,11 @@ export class LineAiBudgetAuthorityService {
       || !Number.isSafeInteger(input.modelMaxOutputTokens) || input.modelMaxOutputTokens < 1
       || !Number.isSafeInteger(input.coalescingExtraMs) || input.coalescingExtraMs < 0 || input.coalescingExtraMs > 6000
       || !/^[0-9a-f]{64}$/.test(input.inputDigest) || !baseCeilings[input.lane]) return null;
-    if (input.authorityKind === 'webhook_event' && input.owner.kind === 'PRIVATE'
+    // A private webhook turn starts at intake. The one exception is the server-decided fixed read
+    // (the standing "ค่าใช้จ่ายเดือนนี้" button), which answers directly on the simple lane.
+    const fixedRead = input.serverRoute === 'fixed_read' && input.lane === 'simple'
+      && input.allowedProfileIds.every(id => id === 'line-answer/2');
+    if (input.authorityKind === 'webhook_event' && input.owner.kind === 'PRIVATE' && !fixedRead
       && input.allowedProfileIds.some(id => id !== 'line-intake-text/2' && id !== 'line-intake-image/2')) return null;
     if (input.owner.kind === 'PUBLIC_GENERAL'
       && input.allowedProfileIds.some(id => id !== 'line-answer/2' && id !== 'public-lookup/2')) return null;

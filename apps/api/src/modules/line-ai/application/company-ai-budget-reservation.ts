@@ -1106,7 +1106,7 @@ export async function readCompanyAiCreditState(tx: any, config: AppConfigService
   const balance = await readAiCreditBalance(tx, { companyId, at: now,
     allowance: cycle => aiCreditCycleAllowance({ row: budget.row, totalSatang: budget.totalSatang,
       override: budget.override, monthKey, at: cycle.start }) });
-  if (!balance.cycle) return aiCreditRefusal({ ok: false, cause: 'PACKAGE_REQUIRED', availableUnits: 0 });
+  if (!balance.cycle && (await tx.company.findUnique({ where: { id: companyId }, select: { reportClassification: true } }))?.reportClassification !== 'DEMO') return aiCreditRefusal({ ok: false, cause: 'PACKAGE_REQUIRED', availableUnits: 0 });
   if (balance.totalRemainingUnits <= 0) return aiCreditRefusal({ ok: false, cause: 'EXHAUSTED', availableUnits: 0 });
   return { ok: true as const };
 }

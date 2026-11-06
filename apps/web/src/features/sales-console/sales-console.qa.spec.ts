@@ -15,7 +15,7 @@ import { apiErrorMessage } from '../../common/api/api-error-message';
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
   'SalesEventBatchForm.tsx', 'SalesEventBatchPage.tsx', 'SalesEventsPage.tsx',
-  'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
+  'SalesDemoLinkDialog.tsx', 'SalesMyWorkPage.tsx', 'SalesMyProfilePage.tsx', 'SalesProfileEditor.tsx', 'SalesReportsPage.tsx', 'SalesTeamPage.tsx',
   // Sales-event report view of /sales/reports (SD-E).
   'SalesEventReportSection.tsx',
 ];

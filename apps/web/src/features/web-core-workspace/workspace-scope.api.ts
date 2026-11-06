@@ -22,10 +22,12 @@ export type MyContext = {
   manualExpenseWebEntry?: boolean;
   disbursementVoucherWebEntry?: boolean;
   freeExpenseDrafts?: boolean;
+  isDemo?: boolean;
+  demoExpiresAt?: string;
   entitledFeatureKeys?: string[] | null;
 };
 
-type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry' | 'freeExpenseDrafts' | 'entitledFeatureKeys'>;
+type AccessContext = Pick<MyContext, 'roles' | 'roleNames' | 'permissions' | 'scopes' | 'manualExpenseWebEntry' | 'disbursementVoucherWebEntry' | 'freeExpenseDrafts' | 'entitledFeatureKeys' | 'isDemo' | 'demoExpiresAt'>;
 
 export function accessContextFingerprint(context: AccessContext): string {
   const sorted = (items: readonly string[] | undefined) => [...new Set(items ?? [])].sort();
@@ -41,6 +43,8 @@ export function accessContextFingerprint(context: AccessContext): string {
     manualExpenseWebEntry: context.manualExpenseWebEntry !== false,
     disbursementVoucherWebEntry: context.disbursementVoucherWebEntry === true,
     freeExpenseDrafts: context.freeExpenseDrafts === true,
+    isDemo: context.isDemo === true,
+    demoExpiresAt: context.demoExpiresAt ?? null,
     systemWhtCertificates: shopHasSystemWhtCertificates(context.entitledFeatureKeys),
   });
 }

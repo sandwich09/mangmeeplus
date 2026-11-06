@@ -18,7 +18,7 @@ export const EMAIL_SECURITY_NOTICE_EVENT = 'auth.email.security_notice';
 const OTP_REQUEST_ACTION = 'auth.email.otp.requested';
 /** Shared with the company recipient OTP (billing): one wrong-code budget of 20 per hour per user. */
 export const OTP_WRONG_ACTION = 'auth.email.otp.invalid';
-type Caller = { userId: string; tokenId: string; requestId: string };
+type Caller = { companyId?: string; userId: string; tokenId: string; requestId: string };
 type RequestInput = Caller & { newEmail: string; requestKey: string; expectedEmailRevision: number; currentPassword?: string };
 type OtpConfig = Pick<AppConfigService, 'isLocal' | 'appEnv' | 'deploymentIdentity' | 'emailProvider' | 'postmarkServerId' |
   'emailOtpHmacKey' | 'emailOtpHmacKeyVersion' | 'postmarkUatAllowedRecipients'>;
@@ -192,7 +192,7 @@ export class AccountEmailOtpService {
       if (retryAfterSeconds > 0) throw emailError('EMAIL_OTP_RATE_LIMITED', 'กรุณารอก่อนขอรหัสใหม่', 429, { retryAfterSeconds });
       const id = randomUUID(), expiresAt = new Date(now.getTime() + EMAIL_OTP_TTL_MS);
       // prepare/audit failures roll back replacement, preserving the previous working code.
-      const attempt = await this.delivery.prepare({ purpose: 'email_verification', recipient: email, deadlineAt: expiresAt,
+      const attempt = await this.delivery.prepare({ companyId: input.companyId, purpose: 'email_verification', recipient: email, deadlineAt: expiresAt,
         intentKey: `email-otp:${id}` }, tx).catch(error => {
           if (error instanceof PostmarkSendError) throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสไม่ได้ กรุณาตรวจอีเมลหรือติดต่อทีมงาน', 503);
           throw error;
@@ -302,7 +302,7 @@ export class AccountEmailOtpService {
       let noticeAttemptId: string | undefined;
       if (user.email && user.emailVerifiedAt) {
         const notice = await tx.emailSendAttempt.create({ data: { id: randomUUID(), intentKey: `email-security:${token.id}`, generation: 1,
-          purpose: 'account_security', recipient: user.email, provider: 'postmark', providerServerId: this.config.postmarkServerId!,
+          companyId: input.companyId, purpose: 'account_security', recipient: user.email, provider: 'postmark', providerServerId: this.config.postmarkServerId!,
           stream: this.config.postmarkMessageStream } });
         noticeAttemptId = notice.id;
       }

@@ -220,7 +220,7 @@ export class BillingEmailRecipient {
       let noticeAttemptId: string | undefined;
       if (proposed.previousEmail && proposed.previousEmail.trim().toLowerCase() !== target.email.trim().toLowerCase() && this.config.postmarkServerId) {
         const notice = await tx.emailSendAttempt.create({ data: { id: randomUUID(), intentKey: `billing-recipient-notice:${row.id}`, generation: 1,
-          purpose: 'billing_status', recipient: proposed.previousEmail.trim().toLowerCase(), provider: 'postmark', providerServerId: this.config.postmarkServerId,
+          companyId: account.companyId, purpose: 'billing_status', recipient: proposed.previousEmail.trim().toLowerCase(), provider: 'postmark', providerServerId: this.config.postmarkServerId,
           stream: this.config.postmarkMessageStream, status: 'READY' } });
         noticeAttemptId = notice.id;
       }

@@ -1,3 +1,4 @@
+import { assertDemoReadAvailable } from '../../../sales-demo/application/demo-read-limit';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
@@ -504,6 +505,7 @@ export class CompleteExpenseCaptureFileUseCase {
         readJobId: job?.id ?? null, uploadState: existing.uploadState, replayed: true,
       };
     }
+    if (ctx.authProvider !== 'line') await assertDemoReadAvailable(this.capture.client, ctx);
     if (existing.uploadState !== 'PENDING_UPLOAD') {
       throw conflict('expense_capture_file_state_invalid', 'ไฟล์นี้ถูกตัดออกหรือถูกปฏิเสธแล้ว กรุณาแนบไฟล์ใหม่');
     }

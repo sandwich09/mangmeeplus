@@ -1,3 +1,4 @@
+import { isVirtualDemoTarget } from '@watchdog-bms/contracts';
 import { finishDocumentWaitingNotifications } from '../../infrastructure/document-notification-state';
 import { reimbursementApprovalButtons, reimbursementPaymentButton } from '../../../line-ai/domain/logic/line-reimbursement-approval-control.logic';
 import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
@@ -390,6 +391,11 @@ export class ProcessQueuedDeliveryUseCase {
       })
       : null;
 
+    // A demo owner's only LINE identity is the virtual demo chat (`demo-web`, `Vdemo…`); never push to it.
+    if (identity && isVirtualDemoTarget(identity.providerUserId, identity.providerChannelId)) {
+      console.info('[notification-delivery] demo outbound suppressed');
+      return this.deliveries.update(companyId, deliveryId, { status: 'suppressed', attemptCount: delivery.attemptCount + 1, errorCode: 'DEMO_OUTBOUND_SUPPRESSED' });
+    }
     if (!identity || !token || !configuredChannelId) {
       return this.deliveries.update(companyId, deliveryId, {
         status: 'skipped',
@@ -837,7 +843,12 @@ export async function pushLineMessage(
   lineUserId: string,
   message: { type: 'flex'; altText: string; contents: Record<string, unknown> },
   deliveryId: string,
+  channelId?: string,
 ) {
+  if (isVirtualDemoTarget(lineUserId, channelId)) {
+    console.info('[notification-delivery] demo outbound suppressed');
+    return { status: 'suppressed' as const, errorCode: 'DEMO_OUTBOUND_SUPPRESSED' };
+  }
   try {
     const res = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',

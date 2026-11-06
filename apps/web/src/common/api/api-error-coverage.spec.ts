@@ -84,6 +84,8 @@ const NOT_USER_FACING = new Set([
   // callers (webhook replay, ledger drain, receipt notifier). `API_ACCEPTED` is the success value.
   'API_ACCEPTED', 'CHANNEL_CHANGED', 'CHANNEL_UNAVAILABLE', 'FLEX_REJECTED', 'INVALID_FROZEN_WIRE',
   'PROVIDER_ACCEPTANCE_UNKNOWN', 'PROVIDER_REJECTED', 'RATE_LIMITED', 'REPLY_TOKEN_REJECTED',
+  // The demo chat's stored-reply failure (`LineReplyAdapter` virtual target), same family as above.
+  'VIRTUAL_STORE_FAILED',
   // Receipt-result notification outcomes (`line-capture-result-notifier.use-case.ts`): the
   // accepted/retryable/permanent verdicts it returns to the notification worker.
   'CAPTURE_ACCESS_OR_SOURCE_CHANGED', 'CAPTURE_CHECKPOINT_LOST', 'CAPTURE_LEASE_CHANGED', 'CAPTURE_MORE_BATCHES',

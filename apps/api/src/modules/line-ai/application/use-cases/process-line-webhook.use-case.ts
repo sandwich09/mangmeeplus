@@ -1,3 +1,5 @@
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
+import { DEMO_READ_LIMIT_TEXT, isVirtualDemoTarget } from '@watchdog-bms/contracts';
 import { matchLineClaimTargets } from '../../domain/logic/line-ai-classifier.logic';
 import { LineDraftPreviewStore } from '../../../expenses/application/services/line-draft-preview.store';
 import { LINE_CHAT_ACTIONS, LINE_WORKFLOW_IDS, lineChatAction, mayOfferWorkflow, type LineWorkflowId, type LineWorkflowClassifyResponse } from '@watchdog-bms/contracts';
@@ -2282,6 +2284,8 @@ export class ProcessLineWebhookUseCase {
   @Inject(ListCounterpartiesUseCase) private readonly editableCounterparties!: ListCounterpartiesUseCase;
   @Inject(GetCounterpartyUseCase) private readonly getEditableCounterparty!: GetCounterpartyUseCase;
 
+  @Inject(ATTACHMENT_STORAGE) private readonly demoAttachmentStorage!: AttachmentStoragePort;
+
   constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
@@ -3006,6 +3010,15 @@ export class ProcessLineWebhookUseCase {
     ) ?? undefined;
   }
 
+  private async isDemoCompany(companyId: string): Promise<boolean> {
+    return (await this.prisma.client.company.findUnique({ where: { id: companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
+  }
+
+  /** The sales demo chat arrives only on the virtual `demo-web` channel; a real LINE webhook never carries it. */
+  private static isDemoChat(event: { messagingChannelId?: string }): boolean {
+    return isVirtualDemoTarget(undefined, event.messagingChannelId);
+  }
+
   /** §15.1: "ช่วงทดลอง" is only true of the trial tier; every other shop hears about its package. */
   private async isTrialTier(companyId: string): Promise<boolean> {
     const term = await this.prisma.client.companyPlanTerm.findUnique({
@@ -3029,7 +3042,7 @@ export class ProcessLineWebhookUseCase {
     canManagePlan: boolean,
   ): Promise<boolean> {
     if (!isAiBudgetPermanentRefusal(refusal.budgetErrorCode)) return false;
-    await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan, replyLanguage(event), this.config.webBaseUrl)]);
+    await this.deliverRequiredMessages(event, [buildAiBudgetExceededMessage(await this.isTrialTier(companyId), refusal, canManagePlan, replyLanguage(event), this.config.webBaseUrl, ProcessLineWebhookUseCase.isDemoChat(event))]);
     await this.updateEventLog(
       event.webhookEventId,
       refusal.budgetErrorCode === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded',
@@ -3528,7 +3541,7 @@ export class ProcessLineWebhookUseCase {
         await this.prisma.client.lineSupportMessage.update({ where: { id: claimed.id }, data: { mediaError: 'media_limit_reached' } });
         return;
       }
-      const downloaded = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
+      const downloaded = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize, event.lineUserId);
       // Handed to the receipt lane on the event (the `SAVED_LINE_RECEIPT` pattern), so a photo on a
       // live case costs LINE and the clock one download, not two. Only a success travels: a failed
       // fetch here must not decide the receipt lane's own retry.
@@ -3814,7 +3827,9 @@ export class ProcessLineWebhookUseCase {
           intentPlan: { status: 'ROUTABLE', language, requiresHumanReview: false, refusals: [], intents: [
             { intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: [fixed.tool], missingContext: [] }] },
           proposedCalls: [{ toolName: fixed.tool, input }] },
-        semanticSubrequests: [{ index: 0, kind: 'read', goal: event.messageText, requestedFilters: input, requiredEvidence: [], dependsOn: [] }],
+        semanticSubrequests: [{ index: 0, kind: 'read', goal: event.messageText, requestedFilters: input, requiredEvidence: [], dependsOn: [],
+          evidenceRefs: event.inputEvidence.parts.filter(part => part.rawText.length).map(part => ({ partId: part.partId,
+            startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 })) }],
       };
       const response = await this.aiGateway.requestLineTurn(request);
       if (response.refused || response.semanticCoverage?.[0]?.status !== 'handled') { await unavailable(); return; }
@@ -5759,7 +5774,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
   private async bindConversation(event: LineTextEvent | LineReceiptUploadEvent): Promise<void> {
     const access = this.deliveryAccess.get(event);
     if (!access) return;
-    const owner = this.conversationOwner(access.companyId, access.userId, event);
+    const owner = await this.conversationOwner(access.companyId, access.userId, event);
     if (!owner) return;
     const row = await this.contextV2.admit(owner);
     this.boundConversations.set(event, { owner, id: row.id, epoch: row.lifecycleEpoch });
@@ -6332,7 +6347,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       if (owner.count !== 1) return 'failed_other';
     }
     const bound = this.boundConversations.get(event);
-    if (this.config.lineAiDeliveryPlanV2Enabled && this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event) && bound) {
+    if (bound && (ProcessLineWebhookUseCase.isDemoChat(event) || this.config.lineAiDeliveryPlanV2Enabled && this.config.lineAiTerminalOutcomeReplayEnabled) && !this.intermediateDeliveries.has(event)) {
       const result = await this.sendMessagesV2(event as LineTextEvent, messages);
       if (result !== 'ok') await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_DELIVERY_V2_PENDING');
       return this.rememberDelivery(event, result);
@@ -9575,7 +9590,7 @@ View expenses: ${listLink}` : `ยังไม่พบรายการจา�
       if (failure.replyKind === 'budget_exceeded') {
         await this.deliverRequiredMessages(event, [
           buildAiBudgetExceededMessage(await this.isTrialTier(companyId), { budgetErrorCode: failure.budgetCode, budgetScope: failure.budgetScope },
-            resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY), replyLanguage(event), this.config.webBaseUrl),
+            resolvedAccess.permissions.includes(PLAN_MANAGE_PERMISSION_KEY), replyLanguage(event), this.config.webBaseUrl, ProcessLineWebhookUseCase.isDemoChat(event)),
         ]);
         if (ledgerTurnId && this.ledger) {
           await this.ledger.ack(
@@ -10007,7 +10022,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
   }): Promise<void> {
     try {
       await this.timeStage(input.webhookEventId, 'persistence', async () => {
-        const owner = this.conversationOwner(input.companyId, input.userId, input.event);
+        const owner = await this.conversationOwner(input.companyId, input.userId, input.event);
         const conversationId = owner ? this.boundConversations.get(input.event)?.id : `line-${input.companyId}-${input.userId}`;
         if (!conversationId) throw new Error('LINE_CONTEXT_ADMISSION_REQUIRED');
         if (!owner) await this.prisma.client.aiConversation.upsert({
@@ -10054,7 +10069,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     if (!response.refused && knowledgeCards) this.deliverySources.set(event, {
       ...(this.deliverySources.get(event) ?? { requestId: response.requestId, ids: [] }), knowledgeCards,
     });
-    const owner = this.conversationOwner(companyId, userId, event);
+    const owner = await this.conversationOwner(companyId, userId, event);
     const bound = this.boundConversations.get(event);
     if (owner && !bound) throw new Error('LINE_CONTEXT_ADMISSION_REQUIRED');
     const conv = owner ? { id: bound!.id } : await this.prisma.client.aiConversation.upsert({
@@ -10233,17 +10248,18 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
-  private conversationOwner(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): LineConversationOwner | null {
+  private async conversationOwner(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): Promise<LineConversationOwner | null> {
     const access = this.deliveryAccess.get(event);
-    if (this.config.lineAiReliabilityV2Mode !== 'on' || !isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId)
-      || !this.config.lineAiDeliveryPlanV2Enabled || !isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)
+    const demo = ProcessLineWebhookUseCase.isDemoChat(event);
+    if ((!demo && (this.config.lineAiReliabilityV2Mode !== 'on' || !isLineAiRolloutAllowed(this.config.lineAiReliabilityV2CompanyIds, companyId)
+      || !this.config.lineAiDeliveryPlanV2Enabled || !isLineAiRolloutAllowed(this.config.lineAiDeliveryPlanV2WriteCompanyIds, companyId)))
       || !event.messagingChannelId || (event.pushTargetId && event.pushTargetId !== event.lineUserId) || !access?.membershipId) return null;
     return { companyId, userId, membershipId: access.membershipId, channel: 'line', channelKind: 'USER', messagingChannelId: event.messagingChannelId, chatKeyHash: chatKeyHashOf(event) };
   }
 
   private async loadConversationContext(companyId: string, userId: string, event: LineTextEvent | LineReceiptUploadEvent): Promise<LineAiConversationContext | undefined> {
     if (event.pushTargetId && event.pushTargetId !== event.lineUserId) return undefined;
-    const owner = this.conversationOwner(companyId, userId, event);
+    const owner = await this.conversationOwner(companyId, userId, event);
     if (owner) await this.contextV2.admit(owner);
     const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
     const rows = await this.prisma.client.aiTurn.findMany({
@@ -10619,7 +10635,7 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
 
     // สัญญา v3: a live support case has already fetched these bytes for its thread (`storeSupportMedia`).
     const downloaded = (event as SupportMediaDownloadCarrier)[SUPPORT_MEDIA_DOWNLOAD]
-      ?? await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize));
+      ?? await this.timeStage(event.webhookEventId, 'receipt_download', () => this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize, event.lineUserId));
     if (!downloaded.ok) {
       // §17.5: the reason is recorded BEFORE the payload scrub, so "ไฟล์เมื่อกี้ทำไมส่งไม่ได้" is
       // answerable after a restart from a row that never held the payload in the first place.
@@ -11120,6 +11136,11 @@ View claim: ${absoluteWebLink(this.config.webBaseUrl, claimHandoff.webPath!)}` :
     // `tryExtractReceiptFields` forwards here as the same code — so this branch only has to answer,
     // never to count. Answered before `decideLineBusinessDocument` because the generic OCR-governance
     // clarify ("what is this picture?") is the wrong reply to a shop that needs a bigger package.
+    if (ocr.errorCode === 'demo_read_limit_reached') {
+      await this.deliverReply(event, DEMO_READ_LIMIT_TEXT);
+      await this.updateEventLog(event.webhookEventId, 'demo_read_limit', ocr.errorCode, companyId);
+      return;
+    }
     if (ocr.errorCode === 'FREE_DOCUMENT_LIMIT_REACHED' || ocr.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT') {
       const allowance = await freeExpenseAllowanceSnapshot(this.prisma, companyId);
       await this.deliverReply(event, ocr.errorCode === 'FREE_DOCUMENTS_IN_FLIGHT'
@@ -12267,7 +12288,7 @@ View record: ${link}` : `เก็บรายการนี้ไว้แล�
       if (intent.uploadRequired !== false) {
         // Unchanged behaviour: this lane still throws. The typed reason is recorded on the way past
         // so a later "ไฟล์เมื่อกี้…" question is not blind to a resume that could not fetch bytes.
-        const resumed = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize);
+        const resumed = await this.downloadLineMedia(event.lineMessageId, event.messageType, event.fileName, event.fileSize, event.lineUserId);
         if (!resumed.ok) {
           await this.recordIntakeAttempt(event, {
             companyId: ctx.companyId, stage: 'DOWNLOAD', reasonCode: resumed.reason, outcome: 'REJECTED',
@@ -12625,7 +12646,7 @@ ${ordered.map((row, i) => pendingMediaOrderLabel(row, i, true, replyLanguage(eve
       if (!terminal || !['FAILED', 'EXPIRED', 'CANCELED'].includes(terminal.status)
         || terminal.companyId !== owner.companyId || terminal.userId !== owner.userId || terminal.ownerMembershipId !== owner.membershipId
         || terminal.ownerEpoch !== owner.ownerEpoch || terminal.messagingChannelId !== owner.messagingChannelId || terminal.chatKeyHash !== owner.chatKeyHash) return false;
-      const text = terminal.status === 'CANCELED' ? (replyLanguage(event) === 'en' ? "This file-reading task was cancelled; no expense was created." : 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้')
+      const text = terminal.errorCode === 'demo_read_limit_reached' ? DEMO_READ_LIMIT_TEXT : terminal.status === 'CANCELED' ? (replyLanguage(event) === 'en' ? "This file-reading task was cancelled; no expense was created." : 'ยกเลิกงานอ่านไฟล์นี้แล้ว ยังไม่ได้สร้างรายการให้')
         : terminal.status === 'EXPIRED' ? (replyLanguage(event) === 'en' ? "The file-reading task expired, but the file is retained; ask again, and no expense has been created." : 'งานอ่านไฟล์นี้หมดเวลาแล้ว ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้งได้เลยค่ะ ยังไม่ได้สร้างรายการให้')
           : (replyLanguage(event) === 'en' ? "The file could not be read for this question, but is retained; ask again, send a clearer file, or choose another page, and no expense has been created." : 'ยังอ่านไฟล์นี้เพื่อตอบคำถามไม่สำเร็จ ไฟล์ยังเก็บไว้ พิมพ์ถามอีกครั้ง ส่งไฟล์ที่ชัดกว่า หรือเลือกหน้าใหม่ได้ค่ะ ยังไม่ได้สร้างรายการให้');
       const said = documentQaAskedWords(terminal);
@@ -14315,8 +14336,31 @@ ${continued.replyText}` : `แนบหลักฐานให้แล้ว�
    * Both callers keep their behaviour: a failure is still the download-failed reply and still the
    * retryable release; `resumeCapturedReceipt` still throws.
    */
-  private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number): Promise<LineMediaDownloadResult> {
+  private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number, chatId?: string): Promise<LineMediaDownloadResult> {
     const maxBytes = this.config.uploadMaxBytes;
+    if (lineMessageId.startsWith('demo-att:')) {
+      if (!chatId?.startsWith('Vdemo') || !await this.isDemoCompany(chatId.slice(5))) return { ok: false, reason: 'download_failed' };
+      const attachment = await this.prisma.client.attachmentObject.findFirst({ where: {
+        id: lineMessageId.slice(9), companyId: chatId.slice(5), status: 'ACTIVE', deletedAt: null,
+        metadataJson: { path: ['demoChat'], equals: true },
+      } });
+      if (!attachment) return { ok: false, reason: 'download_failed' };
+      if (attachment.byteSize <= 0 || attachment.byteSize > maxBytes || (fileSize !== undefined && (fileSize <= 0 || fileSize > maxBytes))) {
+        return { ok: false, reason: 'oversize_declared', declaredFileSize: attachment.byteSize };
+      }
+      const object = await this.demoAttachmentStorage.getObject({ bucket: attachment.bucket, objectKey: attachment.objectKey,
+        objectVersionId: attachment.objectVersionId ?? undefined }).catch(() => null);
+      if (!object) return { ok: false, reason: 'download_failed' };
+      const bytes = object.bytes;
+      if (bytes.length > maxBytes) return { ok: false, reason: 'oversize_measured', measuredByteSize: bytes.length };
+      const checksumSha256 = createHash('sha256').update(bytes).digest('hex');
+      if (bytes.length !== attachment.byteSize || checksumSha256 !== attachment.checksumSha256) return { ok: false, reason: 'download_failed' };
+      // Callers still run lineMediaRejectionReason (MIME/signature/malware) on these exact bytes.
+      return { ok: true, media: { fileName: attachment.originalFileName, mimeType: normalizeAttachmentMimeType(attachment.mimeType, bytes),
+        byteSize: bytes.length, checksumSha256, bytes, contentBase64: messageType === 'image' ? bytes.toString('base64') : undefined } };
+    }
+    // Reserved virtual chats must never fall through to LINE's content endpoint.
+    if (chatId?.startsWith('Vdemo')) return { ok: false, reason: 'download_failed' };
     const accessToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
     if (!accessToken) return { ok: false, reason: 'credentials_unavailable' };
     // The webhook's own metadata, before a byte is fetched: §17.5 forbids downloading past the

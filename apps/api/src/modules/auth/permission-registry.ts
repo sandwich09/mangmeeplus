@@ -122,6 +122,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // Sales console (spec §9/§10). Platform-tenant authority for มั่งมี's own sales team — NOT the
   // tenant role `SALES`, which is a shop employee (S06). None of these reads a shop's business or
   // financial data: `sales.company.search` returns name/status/package/province and nothing else.
+  { key: 'sales.demo_link.create', description: 'Create a three-day demo link', riskLevel: 'HIGH' },
   { key: 'sales.console.read',          description: 'Open the sales console and read own deals',   riskLevel: 'LOW' },
   { key: 'sales.company.search',        description: 'Search shops by name (limited fields, audited)', riskLevel: 'MEDIUM' },
   { key: 'sales.deal.create',           description: 'Create, edit and submit a sales deal',        riskLevel: 'MEDIUM' },
@@ -580,7 +581,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'system.data_rights.manage',
     // Sales console: the Owner is the single admin, so every sales authority lands here too —
     // including the PII key neither sales role may ever hold (R5/R11/S10).
-    ...SALES_PERMISSION_KEYS,
+    ...SALES_PERMISSION_KEYS, 'sales.demo_link.create',
   ],
   MANGMEE_EXECUTIVE: [
     'account.session.read', 'account.password.change', 'account.identity.link', 'system.executive.read',
@@ -604,12 +605,12 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   // `account.identity.unlink` stays out, matching every other role.
   MANGMEE_SALES_LEAD: [
     'account.session.read', 'account.password.change', 'account.identity.link',
-    'sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
+    'sales.demo_link.create', 'sales.console.read', 'sales.company.search', 'sales.deal.create', 'sales.deal.approve',
     'sales.team.manage', 'sales.report.read', 'sales.event.manage',
   ],
   MANGMEE_SALES: [
     'account.session.read', 'account.password.change', 'account.identity.link',
-    'sales.console.read', 'sales.company.search', 'sales.deal.create',
+    'sales.demo_link.create', 'sales.console.read', 'sales.company.search', 'sales.deal.create',
   ],
   COMPANY_VIEW: [
     ...REIMBURSEMENT_SELF_SERVICE_PERMISSIONS,

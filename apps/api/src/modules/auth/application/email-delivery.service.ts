@@ -1,3 +1,4 @@
+import { assertNotDemoCompany, assertNotDemoEmailRecipient } from '../../sales-demo/application/demo-company-access';
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -13,7 +14,7 @@ function recoveryAt(generation: number, minimumSeconds = 60): Date {
   const seconds = (RETRY_MINUTES[Math.min(generation - 1, 3)] ?? 60) * 60;
   return new Date(Date.now() + Math.max(minimumSeconds, seconds * (1 + Math.random() * 0.2)) * 1000);
 }
-export type PreparedMail = { purpose: string; recipient: string; signupRequestId?: string; deadlineAt?: Date; intentKey?: string };
+export type PreparedMail = { companyId?: string; purpose: string; recipient: string; signupRequestId?: string; deadlineAt?: Date; intentKey?: string };
 
 @Injectable()
 export class EmailDeliveryService {
@@ -27,6 +28,8 @@ export class EmailDeliveryService {
 
   async prepare(input: PreparedMail, transaction?: Prisma.TransactionClient): Promise<EmailSendAttempt> {
     const run = async (tx: Prisma.TransactionClient) => {
+      if (input.companyId) await assertNotDemoCompany(tx, input.companyId);
+      await assertNotDemoEmailRecipient(tx, input.recipient);
       const recipient = input.recipient.trim().toLowerCase();
       const serverId = this.config.postmarkServerId;
       if (!serverId) throw new PostmarkSendError('CONFIG', 'missing_server_id');
@@ -51,7 +54,7 @@ export class EmailDeliveryService {
       const previous = await tx.emailSendAttempt.findFirst({ where: { intentKey }, orderBy: { generation: 'desc' } });
       if (previous) {
         if (previous.provider !== 'postmark' || previous.providerServerId !== serverId || previous.stream !== this.config.postmarkMessageStream ||
-            previous.purpose !== input.purpose || previous.recipient !== recipient || previous.signupRequestId !== (input.signupRequestId ?? null)) {
+            (previous.companyId !== null && previous.companyId !== (input.companyId ?? null)) || previous.purpose !== input.purpose || previous.recipient !== recipient || previous.signupRequestId !== (input.signupRequestId ?? null)) {
           throw new PostmarkSendError('PERMANENT', 'intent_binding_mismatch');
         }
         if (['READY', 'SENDING', 'UNKNOWN'].includes(previous.status)) throw new PostmarkSendError('UNKNOWN', 'pending_reconciliation');
@@ -67,7 +70,7 @@ export class EmailDeliveryService {
       if (input.deadlineAt && input.deadlineAt <= new Date()) throw new PostmarkSendError('PERMANENT', 'proof_expired');
       const attempt = await tx.emailSendAttempt.create({ data: {
         id: randomUUID(), intentKey, generation: (previous?.generation ?? 0) + 1,
-        purpose: input.purpose, signupRequestId: input.signupRequestId, deadlineAt: previous?.deadlineAt ?? input.deadlineAt,
+        companyId: input.companyId, purpose: input.purpose, signupRequestId: input.signupRequestId, deadlineAt: previous?.deadlineAt ?? input.deadlineAt,
         possibleDuplicate: previous?.possibleDuplicate || previous?.errorCode === 'delivery_unconfirmed_possible_duplicate',
         provider: 'postmark', providerServerId: serverId, stream: this.config.postmarkMessageStream, recipient,
         nextRecoveryAt: new Date(Date.now() + 60_000),
@@ -80,13 +83,15 @@ export class EmailDeliveryService {
     return transaction ? run(transaction) : this.prisma.client.$transaction(run);
   }
 
-  async prepareReviewedBilling(input:{intentKey:string;recipient:string;expectedLatestId:string|null},tx:Prisma.TransactionClient) {
+  async prepareReviewedBilling(input:{companyId?:string;intentKey:string;recipient:string;expectedLatestId:string|null},tx:Prisma.TransactionClient) {
+    if (input.companyId) await assertNotDemoCompany(tx, input.companyId);
+    await assertNotDemoEmailRecipient(tx, input.recipient);
     const recipient=input.recipient.trim().toLowerCase(),serverId=this.config.postmarkServerId,stream=this.config.postmarkMessageStream;
     if(!this.isPostmark||!serverId||!stream||!input.intentKey.startsWith('billing-notice:'))throw new PostmarkSendError('CONFIG','mail_provider_unavailable');
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.intentKey},0))`;
     const attempts=await tx.emailSendAttempt.findMany({where:{intentKey:input.intentKey},orderBy:{generation:'desc'},take:6}),previous=attempts[0];
     if((previous?.id??null)!==input.expectedLatestId)throw new PostmarkSendError('PERMANENT','recovery_source_changed');
-    if(attempts.some(a=>a.provider!=='postmark'||a.providerServerId!==serverId||a.stream!==stream||a.purpose!=='billing_status'||a.recipient!==recipient||a.signupRequestId))throw new PostmarkSendError('PERMANENT','intent_binding_mismatch');
+    if(attempts.some(a=>a.provider!=='postmark'||a.providerServerId!==serverId||a.stream!==stream||(a.companyId!==null&&a.companyId!==(input.companyId??null))||a.purpose!=='billing_status'||a.recipient!==recipient||a.signupRequestId))throw new PostmarkSendError('PERMANENT','intent_binding_mismatch');
     if(attempts.some(a=>a.status==='ACCEPTED'||a.deliveredAt||a.providerMessageId))throw new PostmarkSendError('PERMANENT','prior_generation_accepted');
     if(attempts.some(a=>a.status==='SUPPRESSED'||a.suppressedAt)||await tx.emailSuppression.findUnique({where:{providerServerId_stream_recipient:{providerServerId:serverId,stream,recipient}}}))throw new PostmarkSendError('SUPPRESSED','inactive_recipient');
     if(previous?.deadlineAt&&previous.deadlineAt<=new Date())throw new PostmarkSendError('PERMANENT','proof_expired');
@@ -94,13 +99,15 @@ export class EmailDeliveryService {
     if(previous&&['SENDING','UNKNOWN'].includes(previous.status))throw new PostmarkSendError('UNKNOWN','pending_reconciliation');
     if(previous&&(!['CONFIG','PERMANENT','RETRY'].includes(previous.status)||previous.generation>=5))throw new PostmarkSendError('PERMANENT','recovery_required');
     if(previous?.nextRecoveryAt&&previous.nextRecoveryAt>new Date())throw new PostmarkSendError('RETRY','backoff');
-    return tx.emailSendAttempt.create({data:{id:randomUUID(),intentKey:input.intentKey,generation:(previous?.generation??0)+1,purpose:'billing_status',recipient,
+    return tx.emailSendAttempt.create({data:{id:randomUUID(),intentKey:input.intentKey,generation:(previous?.generation??0)+1,companyId:input.companyId,purpose:'billing_status',recipient,
       provider:'postmark',providerServerId:serverId,stream,status:'READY',deadlineAt:previous?.deadlineAt,
       possibleDuplicate:previous?.possibleDuplicate||previous?.errorCode==='delivery_unconfirmed_possible_duplicate'}});
   }
 
   async send(attempt: EmailSendAttempt, content: { subject: string; html: string; text: string }, beforeDispatch?: () => Promise<void>): Promise<string> {
     const current = await this.prisma.client.emailSendAttempt.findUnique({ where: { id: attempt.id } });
+    if (current?.companyId) await assertNotDemoCompany(this.prisma.client, current.companyId);
+    await assertNotDemoEmailRecipient(this.prisma.client, current?.recipient ?? attempt.recipient);
     if (current?.status === 'ACCEPTED' && current.providerMessageId) return current.providerMessageId;
     if (!current || !['READY','SENDING'].includes(current.status) || current.suppressedAt) throw new PostmarkSendError('PERMANENT', 'attempt_not_sendable');
     if (current.dispatchStartedAt) throw new PostmarkSendError('UNKNOWN', 'pending_reconciliation');

@@ -1,3 +1,4 @@
+import { assertNotDemoCompany } from '../../sales-demo/application/demo-company-access';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingDeliveryView } from '@watchdog-bms/contracts';
@@ -160,7 +161,7 @@ export class BillingNotificationsService {
     if(source.blockedReason||source.sourceHash!==sourceHash)throw billingError('CONTROL_PREVIEW_STALE','รายการหรือผู้รับเปลี่ยนแล้ว กรุณาเปิดรายการส่งเดิมและตรวจสอบใหม่');
     if(source.kind==='EMAIL'){
       const {outbox,attempt,intentKey,recipient}=source.mail;
-      const prepared=await this.email.prepareReviewedBilling({intentKey,recipient:recipient!,expectedLatestId:attempt?.id??null},tx);
+      const prepared=await this.email.prepareReviewedBilling({companyId,intentKey,recipient:recipient!,expectedLatestId:attempt?.id??null},tx);
       const changed=await tx.outboxEvent.updateMany({where:{id:outbox.id,companyId,updatedAt:outbox.updatedAt,status:outbox.status},data:{status:'PENDING',availableAt:new Date(),claimToken:null,lockedAt:null,lockedBy:null,
         headersJson:{...(outbox.headersJson as Prisma.InputJsonObject??{}),billingRecovery:{operationId,attemptId:prepared.id,binding:source.binding}}}});
       if(!changed.count)throw billingError('CONTROL_PREVIEW_STALE','รายการอีเมลเปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุด');
@@ -229,6 +230,7 @@ export class BillingNotificationsService {
   }
 
   private async source(row: OutboxEvent, tx: Prisma.TransactionClient = this.prisma.client) {
+    if (row.companyId) await assertNotDemoCompany(tx, row.companyId);
     const lease = await tx.outboxEvent.findFirst({ where: { id: row.id, status: 'PROCESSING', claimToken: row.claimToken,
       lockedAt: { gt: new Date(Date.now() - 300000) } } });
     if (!lease) throw new Error('billing.notification_lease_lost');
@@ -317,7 +319,7 @@ export class BillingNotificationsService {
     }
     const attempt = recovery?await this.prisma.client.emailSendAttempt.findFirstOrThrow({where:{id:recovery.attemptId,intentKey:`billing-notice:${row.id}`,
       purpose:'billing_status',signupRequestId:null,provider:'postmark',providerServerId:this.config.postmarkServerId,stream:this.config.postmarkMessageStream,recipient}}):
-      await this.email.prepare({ purpose: 'billing_status', recipient, intentKey: `billing-notice:${row.id}` });
+      await this.email.prepare({ companyId: company.id, purpose: 'billing_status', recipient, intentKey: `billing-notice:${row.id}` });
     try {
       const current=await this.source(row);
       if(recovery){
@@ -349,7 +351,7 @@ export class BillingNotificationsService {
   private async sendRecipientNotice(intentKey: string, content: ReturnType<typeof renderBillingStatusEmail>) {
     try {
       let attempt = await this.prisma.client.emailSendAttempt.findFirstOrThrow({ where: { intentKey }, orderBy: { generation: 'desc' } });
-      if (attempt.status === 'RETRY' && attempt.generation < 5) attempt = await this.email.prepare({ purpose: 'billing_status', recipient: attempt.recipient, intentKey });
+      if (attempt.status === 'RETRY' && attempt.generation < 5) attempt = await this.email.prepare({ companyId: attempt.companyId ?? undefined, purpose: 'billing_status', recipient: attempt.recipient, intentKey });
       if (['READY', 'SENDING'].includes(attempt.status) && !attempt.dispatchStartedAt) await this.email.send(attempt, content);
     } catch (error) { if (!(error instanceof PostmarkSendError) || error.kind !== 'SUPPRESSED') throw error; }
   }

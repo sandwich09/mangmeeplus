@@ -1174,3 +1174,70 @@ describe('sold 50 ทวิ signature read boundary', () => {
     await assert.rejects(() => get.call(value, ctx, 'another-company'), ForbiddenException);
   });
 });
+
+describe('DEMO outbound and paid action wall', () => {
+  const paths = [
+    ['POST', '/v1/companies/c1/billing/quote'],
+    ['POST', '/v1/companies/c1/billing/checkout'],
+    ['POST', '/v1/companies/c1/billing/collection/preview'],
+    ['POST', '/v1/companies/c1/billing/collection/id/submit'],
+    ['POST', '/v1/companies/c1/billing/recipient/otp/request'],
+    ['POST', '/v1/companies/c1/billing/documents/id/resend'],
+    ['POST', '/v1/companies/c1/package-change-requests'],
+    ['POST', '/v1/companies/c1/settings/employees'],
+    ['POST', '/v1/companies/c1/settings/employees/e1/complete'],
+    ['POST', '/v1/companies/c1/settings/employees/e1/credentials/regenerate'],
+    ['POST', '/v1/companies/c1/settings/employees/e1/line-link-token'],
+    ['POST', '/v1/auth/password/change'],
+    ['POST', '/v1/auth/me/password/set'],
+    ['PATCH', '/v1/auth/me/contact'],
+    ['POST', '/v1/auth/me/email/unverified'],
+    ['POST', '/v1/auth/account/email'],
+    ['POST', '/v1/auth/account/email/otp/request'],
+    ['POST', '/v1/auth/account/email/otp/challenge/resend'],
+    ['POST', '/v1/auth/line/link'],
+    ['POST', '/v1/auth/line/link/oauth'],
+    ['POST', '/v1/auth/line/employee-link'],
+    ['POST', '/v1/auth/line/qr/approve'],
+    ['POST', '/v1/auth/account-merge'],
+    ['POST', '/v1/companies/c1/expenses/e1/signature-fill'],
+    ['POST', '/v1/companies/c1/ai/suggestions/requests'],
+    ['POST', '/v1/companies/c1/banking/bank-accounts/b1/statement-imports/extract'],
+    ['POST', '/v1/companies/c1/crm/conversations/a1/ai/summary'],
+    ['POST', '/v1/companies/c1/crm/conversations/a1/ai/reply-draft'],
+    ['POST', '/v1/companies/c1/crm/customers/ai-profile-extract'],
+    ['POST', '/v1/companies/c1/crm/campaigns/generate'],
+    ['POST', '/v1/companies/c1/crm/campaigns/campaign/send'],
+    ['POST', '/v1/companies/c1/crm/conversations/a1/messages'],
+    ['PUT', '/v1/companies/c1/crm/conversations/a1/auto-reply'],
+  ];
+  for (const [method, path] of paths) {
+    it(`refuses DEMO ${method} ${path} and preserves CUSTOMER access`, async () => {
+      const demoResolve = { execute: async (...args: Parameters<typeof noopResolve.execute>) => ({ ...await noopResolve.execute(...args), isDemo: true }) } as any;
+      const demoGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, demoResolve, localConfig, noopPrisma, acceptedLegal);
+      await assert.rejects(demoGuard.canActivate(makeContext({ authHeader: 'Bearer token', method, path })),
+        (error: any) => error.getStatus() === 403 && JSON.stringify(error.getResponse()) === JSON.stringify({ code: 'demo_action_unavailable' }));
+      const customerGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
+      assert.equal(await customerGuard.canActivate(makeContext({ authHeader: 'Bearer token', method, path })), true);
+    });
+  }
+  it('keeps normal sample reads and local expense edits available', async () => {
+    const resolve = { execute: async () => ({ ...await noopResolve.execute('test-sub', 'req'), isDemo: true }) } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, noopPrisma, acceptedLegal);
+    for (const [method, path] of [['GET', '/v1/auth/me'], ['GET', '/v1/companies/c1/settings/employees'], ['POST', '/v1/companies/c1/expenses/e1/confirm']]) {
+      assert.equal(await guard.canActivate(makeContext({ authHeader: 'Bearer token', method, path })), true);
+    }
+  });
+  it('uses the signed demo tenant by default and refuses a different tenant hint', async () => {
+    let selected: string | undefined;
+    const verifier = { verify: async () => ({ subject: 'test-sub', tokenId: 'sid', provider: 'demo', demoCompanyId: 'demo-company' }) } as any;
+    const resolve = { execute: async (_: string, __: string, ___: string, companyId: string) => {
+      selected = companyId; return { ...await noopResolve.execute('test-sub', 'req'), companyId, isDemo: true };
+    } } as any;
+    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, resolve, localConfig, noopPrisma, acceptedLegal);
+    assert.equal(await guard.canActivate(makeContext({ authHeader: 'Bearer token', path: '/v1/auth/me' })), true);
+    assert.equal(selected, 'demo-company');
+    await assert.rejects(guard.canActivate(makeContext({ authHeader: 'Bearer token', path: '/v1/auth/me', xCompanyId: 'other' })),
+      (error: any) => error.getResponse().code === 'demo_action_unavailable');
+  });
+});

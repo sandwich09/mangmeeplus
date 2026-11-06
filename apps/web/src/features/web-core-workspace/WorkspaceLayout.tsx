@@ -45,6 +45,8 @@ import { checklistIsComplete } from '@/features/company-profile/company-profile.
 import { canOpenManualWeb } from '@/features/expenses/manual-expense-entry.logic';
 import { canOpenDisbursementVoucherWeb } from '@/features/expenses/disbursement-voucher-entry.logic';
 import { useProfileChecklist } from '@/features/company-profile/use-profile-checklist';
+import { DemoLineChat } from '@/features/sales-demo/DemoLineChat';
+import { DemoSessionBanner } from '@/features/sales-demo/DemoSessionBanner';
 
 type Props = {
   children: React.ReactNode;
@@ -309,14 +311,14 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
   const navItems = useMemo(
     () => groupNavItems(allNavItems, SIDEBAR_GROUP_ORDER)
       .flatMap((g) => g.items)
-      .filter((item) => DESIGN_HANDOFF_NAV_RANK.has(item.key))
+      .filter((item) => DESIGN_HANDOFF_NAV_RANK.has(item.key) && !(session.isDemo && item.key === 'billing'))
       .sort((a, b) => DESIGN_HANDOFF_NAV_RANK.get(a.key)! - DESIGN_HANDOFF_NAV_RANK.get(b.key)!)
       .map((item) => (item.key === 'settings' && setupIncomplete ? {
         ...item,
         attention: true,
         subItems: item.subItems?.map((sub) => (sub.key === 'settings.company-profile' && shopDetailsIncomplete ? { ...sub, badgeLabel: 'ยังไม่ครบ' } : sub)),
       } : item.key === 'billing' ? { ...item, trailing: packageMenuTrailing(notice, cardRenewal) } : item)),
-    [allNavItems, setupIncomplete, shopDetailsIncomplete, notice, cardRenewal],
+    [allNavItems, setupIncomplete, shopDetailsIncomplete, notice, cardRenewal, session.isDemo],
   );
 
   // Resolved from the full menu list, not the design-handoff subset above: a menu the sidebar
@@ -349,8 +351,8 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
           </div>
         }
         headerExtras={!freeExpenseDrafts && session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
-        banner={<PlanTermBanner companyId={companyId} notice={notice} freeExpenseDrafts={freeExpenseDrafts} />}
-        sidebarFooter={!freeExpenseDrafts ? <PlanTermSidebarCard companyId={companyId} /> : undefined}
+        banner={session.isDemo ? <DemoSessionBanner expiresAt={session.demoExpiresAt} /> : <PlanTermBanner companyId={companyId} notice={notice} freeExpenseDrafts={freeExpenseDrafts} />}
+        sidebarFooter={!freeExpenseDrafts && !session.isDemo ? <PlanTermSidebarCard companyId={companyId} /> : undefined}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.
@@ -377,6 +379,7 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null, 
           </div>
         )}</MenuFilterProvider>
       </WorkspaceShell>
+      {session.isDemo && <DemoLineChat key={companyId} companyId={companyId} />}
       </div>
     </BranchFilterProvider>
   );

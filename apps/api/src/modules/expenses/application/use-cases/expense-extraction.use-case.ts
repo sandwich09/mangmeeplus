@@ -1,3 +1,5 @@
+import { assertDemoReadAvailable } from '../../../sales-demo/application/demo-read-limit';
+import { DEMO_READ_LIMIT_TEXT } from '@watchdog-bms/contracts';
 import { GetExpenseUseCase } from './expense-draft.use-case';
 import { completeCompanyOcrAdmissionWithinTransaction, freeExpenseAllowanceSnapshot } from '../../../line-ai/application/free-expense-quota';
 import { isFreeExpenseDraftCompany } from '../../../system-partner-management/application/free-expense-access';
@@ -80,6 +82,7 @@ export class RequestReceiptExtractionUseCase {
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseExtractionResult> {
+    await assertDemoReadAvailable(this.prisma.client, ctx);
     return observeCustomerJourney(
       this.audit,
       {
@@ -156,6 +159,7 @@ export class RequestReceiptExtractionUseCase {
       // before any provider ran, so nothing was spent and nothing needs releasing — this only has to
       // answer. A 409 with a code, not one of the `failed` outcomes: those all render as
       // "the read failed, try again", and trying again is the one thing that cannot work here.
+      if (response.errorCode === 'demo_read_limit_reached') throw new ForbiddenException({ code: response.errorCode, message: DEMO_READ_LIMIT_TEXT });
       if (response.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
         await this.auditOutcome(ctx, expenseId, 'receipt_quota_exceeded', attachment.id, 0, undefined, undefined, response.errorCode);
         const { usedCount, planLimit, tierKey, cadence, expiresAt, monthlyAllowance } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);

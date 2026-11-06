@@ -1,5 +1,6 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, GoneException, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { demoActionUnavailable, isDemoUnavailableRoute } from '../../sales-demo/application/demo-company-access';
 import { isFreeExpenseDraftRoute } from '../../system-partner-management/application/free-expense-access';
 import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -175,7 +176,7 @@ export class AuthGuard implements CanActivate {
     const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
     const headerCompanyId = req.headers['x-company-id'] as string | undefined;
     const routeCompanyId = req.params?.['companyId'] as string | undefined;
-    const companyId = headerCompanyId ?? routeCompanyId;
+    let companyId = headerCompanyId ?? routeCompanyId;
 
     const authHeader = req.headers['authorization'] as string | undefined;
     // ponytail: cookie fallback for browser clients; Bearer header is primary
@@ -186,10 +187,25 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing authentication token.');
     }
 
+    if (req.method === 'POST' && /^\/v1\/companies\/[^/]+\/demo-chat\/(messages|files)$/.test(cleanPath)) {
+      const demo = await this.watchdogVerifier.verifyDemoExpiry(rawToken).catch(() => null);
+      if (demo && demo.demoCompanyId === companyId) {
+        const link = await this.prisma.client.salesDemoLink.findUnique({ where: { companyId }, include: { company: { select: { reportClassification: true, planTerm: true } } } });
+        if (link?.company?.reportClassification === 'DEMO' && (link.revokedAt || link.expiresAt <= new Date()
+          || link.company.planTerm?.termDisabledAt || link.company.planTerm && link.company.planTerm.termEndsAt <= new Date())) {
+          const owner = await this.prisma.client.companyMembership.findFirst({ where: { companyId, userId: demo.subject,
+            status: 'ACTIVE', roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } } }, select: { id: true } });
+          const session = await this.prisma.client.authSession.findUnique({ where: { tokenId: demo.tokenId }, select: { userId: true, status: true } });
+          if (owner && session?.userId === demo.subject && session.status === 'ACTIVE') throw new GoneException({ code: 'demo_link_expired' });
+        }
+      }
+    }
+
     let subject: string | undefined;
     let tokenId: string | undefined;
     let authProvider: 'watchdog' | 'dev' | undefined;
     let sessionProvider: string | undefined;
+    let demoCompanyId: string | undefined;
 
     // Try WatchDog JWT first
     try {
@@ -197,6 +213,7 @@ export class AuthGuard implements CanActivate {
       subject = result.subject;
       tokenId = result.tokenId;
       sessionProvider = result.provider;
+      demoCompanyId = result.demoCompanyId;
       authProvider = 'watchdog';
     } catch {
       // fall through to dev verifier
@@ -233,6 +250,11 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Session is expired or revoked.');
     }
 
+    if (sessionProvider === 'demo') {
+      if (!demoCompanyId || (companyId && companyId !== demoCompanyId)) throw demoActionUnavailable();
+      companyId = demoCompanyId;
+    }
+
     // Header and route are two representations of one tenant selection, never independent
     // authorities. Enforce this centrally so a controller missing assertRouteCompany cannot
     // execute company B's URL against company A's request context.
@@ -262,6 +284,9 @@ export class AuthGuard implements CanActivate {
       }
       throw error;
     }
+
+    if (/^\/v1\/companies\/[^/]+\/demo-chat(?:\/|$)/.test(cleanPath) && !req.context.isDemo) throw new NotFoundException();
+    if (req.context.isDemo && isDemoUnavailableRoute(req.method, reqPath)) throw demoActionUnavailable();
 
     // Block business module access until temporary password is changed.
     // Null credential (LINE-only users) is treated as no block.

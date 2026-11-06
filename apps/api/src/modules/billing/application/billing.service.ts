@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, TIER_FEATURE_PRESETS, billingOffer, billingProductKind, type BillingProductKind, type BillingCatalog, type BillingPolicy, type BillingQuote,
   type BillingCheckoutBody, type BillingCheckoutResult, type BillingStatus, type BillingAction, type BillingInvoiceItem, type BillingAttemptView,
   type BillingPurchaseMode, type BillingOffer } from '@watchdog-bms/contracts';
+import { assertNotDemoCompany } from '../../sales-demo/application/demo-company-access';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import type { BillingAccount, Prisma } from '../../../generated/prisma/client';
@@ -667,6 +668,7 @@ export class BillingService {
   }
 
   async checkout(context: RequestContext, body: BillingCheckoutBody, key: string): Promise<BillingCheckoutResult> {
+    await assertNotDemoCompany(this.prisma.client, context.companyId);
     if (!/^[a-zA-Z0-9_-]{16,120}$/.test(key)) throw billingError('BILLING_IDEMPOTENCY_REQUIRED', 'กรุณาเริ่มตรวจสอบรายการใหม่');
     if (!this.stripe.enabled) throw billingError('BILLING_NOT_READY', 'ระบบชำระเงินยังไม่เปิดให้บริการ');
     const requestHash = hashBilling({ quoteId: body.quoteId, consentRevision: body.consentRevision, accepted: body.accepted, channel: body.channel });

@@ -12,7 +12,16 @@ export class WatchdogJwtVerifierAdapter implements IJwtVerifier {
     private readonly config: AppConfigService,
   ) {}
 
-  async verify(token: string): Promise<{ subject: string; tokenId: string; provider?: string }> {
+  async verify(token: string) { return this.verifyClaims(token); }
+
+  /** Used only to return 410, never to authorize a request. */
+  async verifyDemoExpiry(token: string) {
+    const identity = await this.verifyClaims(token, true);
+    if (identity.provider !== 'demo' || !identity.demoCompanyId) throw new UnauthorizedException();
+    return identity;
+  }
+
+  private async verifyClaims(token: string, ignoreExpiration = false): Promise<{ subject: string; tokenId: string; provider?: string; demoCompanyId?: string }> {
     const secret = this.config.authJwtSecret;
     if (!secret) {
       throw new UnauthorizedException('WatchDog JWT secret is not configured.');
@@ -23,11 +32,12 @@ export class WatchdogJwtVerifierAdapter implements IJwtVerifier {
     const { issuer, audience } = jwtClaimIdentity(this.config);
 
     try {
-      const payload = await this.jwtService.verifyAsync<WatchdogJwtPayload & { provider?: string }>(token, {
+      const payload = await this.jwtService.verifyAsync<WatchdogJwtPayload & { provider?: string; demoCompanyId?: string }>(token, {
         secret,
         algorithms: [JWT_ALGORITHM],
         issuer,
         audience,
+        ignoreExpiration,
       });
       if (payload.type === 'refresh') {
         throw new UnauthorizedException('Refresh token cannot authorize requests.');
@@ -40,6 +50,7 @@ export class WatchdogJwtVerifierAdapter implements IJwtVerifier {
       return {
         subject: payload.sub,
         tokenId: payload.sid,
+        ...(typeof payload.demoCompanyId === 'string' ? { demoCompanyId: payload.demoCompanyId } : {}),
         ...(typeof payload.provider === 'string' ? { provider: payload.provider } : {}),
       };
     } catch {

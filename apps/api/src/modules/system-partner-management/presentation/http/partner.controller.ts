@@ -29,7 +29,6 @@ import {
   PARTNER_ADJUSTMENT_REASON_MAX_LENGTH,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
-  REPORT_CLASSIFICATIONS,
   REPORT_INDUSTRY_GROUPS,
   USER_LEGAL_IDENTITY_CHANGE_KINDS,
   VAT_FACT_STATUSES,
@@ -93,7 +92,7 @@ export class UpdateProfileBodyDto {
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() email?: string;
   // Executive spec §12.2, §15: null clears the label (IsOptional lets null through to the use case).
-  @IsIn([...REPORT_CLASSIFICATIONS]) @IsOptional() reportClassification?: ReportClassification | null;
+  @IsIn(['CUSTOMER', 'TEST', 'INTERNAL']) @IsOptional() reportClassification?: ReportClassification | null;
   @IsIn(REPORT_INDUSTRY_GROUPS.map((group) => group.key)) @IsOptional() reportIndustryGroup?: ReportIndustryGroup | null;
 }
 

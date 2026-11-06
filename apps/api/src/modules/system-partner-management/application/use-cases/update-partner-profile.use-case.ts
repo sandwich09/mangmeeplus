@@ -49,7 +49,7 @@ export class UpdatePartnerProfileUseCase {
     // the audit row below records both labels' before and after.
     const labels: Record<string, { from: string | null; to: string | null }> = {};
     if (cmd.reportClassification !== undefined) {
-      if (cmd.reportClassification !== null && !isReportClassification(cmd.reportClassification)) throw new UnprocessableEntityException('ประเภทบริษัทสำหรับรายงานไม่ถูกต้อง');
+      if (existing.reportClassification === 'DEMO' || (cmd.reportClassification !== null && (!isReportClassification(cmd.reportClassification) || cmd.reportClassification === 'DEMO'))) throw new UnprocessableEntityException('ประเภทบริษัทสำหรับรายงานไม่ถูกต้อง');
       if (cmd.companyId === PLATFORM_TENANT_ID && cmd.reportClassification !== 'INTERNAL') {
         throw new UnprocessableEntityException('บริษัทของระบบเป็นประเภทภายในเสมอ');
       }

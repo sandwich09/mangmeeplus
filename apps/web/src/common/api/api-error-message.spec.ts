@@ -714,3 +714,10 @@ test('PWS-ERROR sold codes and exact messages use the approved plain Thai', () =
   assert.equal(translateApiError('Accounting period 2026-09 is not open; reopen it before voiding.'), 'ยกเลิกเอกสารของเดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจรายการนี้ต่อ');
   assert.equal(translateApiError('PND3/2026-09 is locked; use an adjustment or amended filing workflow.'), 'แก้รายการในรอบภาษี ภ.ง.ด.3 เดือน 09/2569 ไม่ได้ ให้ผู้ทำบัญชีตรวจต่อ');
 });
+
+
+test('demo refusal names the simulated chat and free real-shop path', () => {
+  const expected = 'ในระบบจำลองทำรายการนี้ไม่ได้ค่ะ ลองดูในแชท LINE จำลอง หรือเปิดร้านจริงฟรี';
+  assert.equal(translateApiError('demo_action_unavailable'), expected);
+  assert.equal(apiErrorMessage({ status: 403, code: 'demo_action_unavailable' }), expected);
+});

@@ -1093,6 +1093,7 @@ export class AuthController {
       entitledFeatureKeys: req.context.entitledFeatureKeys,
       roleNames: Object.fromEntries((membership?.roles ?? []).map(({ role }) => [role.key, role.name])),
       permissions,
+      ...(req.context.isDemo ? { isDemo: true, demoExpiresAt: req.context.demoExpiresAt } : {}),
       ...(req.context.freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       scopes,
       authProvider,

@@ -2503,6 +2503,8 @@ it('A1 creditState reads an empty budget without creating rows or sweeping holds
         'companyAiMonthlyUsage.findUnique': spent ? { costSatang: spent } : null,
         'companyAiMonthlyBucketUsage.findMany': [], 'aiBudgetReservation.groupBy': [], 'aiBudgetReservation.count': 0,
         'billingAccount.findMany': [], 'companyPlanTerm.findUnique': null, 'aiCreditGrant.findMany': [],
+        // A read-only DEMO check (sales demo links fund chat from added credit lots only).
+        'company.findUnique': { reportClassification: null },
       };
       const tx = new Proxy({}, { get: (_target, table: string) => new Proxy({}, { get: (_delegate, method: string) => async () => {
         const key = `${table}.${method}`;

@@ -277,6 +277,7 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
   });
 
   it('counts only CUSTOMER companies created before the month ended, and keeps the rest apart', async () => {
+    await company('demo', { reportClassification: 'DEMO', createdAt: at('2026-08-15T00:00:00Z') });
     await company('tester', { reportClassification: 'TEST', createdAt: at('2026-08-15T00:00:00Z') });
     await receipt('tester', await paidInvoice('tester', 24_900), 24_900, '2026-09-10T04:00:00Z');
     await company('unlabelled', { createdAt: at('2026-08-15T00:00:00Z') });
@@ -294,6 +295,8 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal((await monthRow('newcomer', '2026-10'))!.reportClassification, 'CUSTOMER');
     // Excluded companies keep their money as their own figure, so the month still reconciles with the provider.
     assert.deepEqual(of('TEST').map((row) => [row.companyId, row.receiptsSatang - row.refundsSatang]), [['tester', 24_900]]);
+    assert.deepEqual(of('DEMO').map(row => row.companyId), ['demo']);
+    assert.equal((await profile('demo')).reportClassification, 'DEMO');
     assert.deepEqual(of('INTERNAL').map((row) => row.companyId), [PLATFORM_TENANT_ID]);
     assert.deepEqual(of(null), []);
     // The round still says how many shops wait for a label: the labelling work left (spec §16.1).

@@ -360,3 +360,15 @@ describe('free expense source access', () => {
     assert.equal(denied.permissions.includes('expense.receipt.upload'), false, 'explicit feature deny remains authoritative');
   });
 });
+
+describe('DEMO request context projection', () => {
+  it('resolves DEMO and its exact plan expiry, leaving CUSTOMER metadata absent', async () => {
+    const expiresAt = new Date('2026-11-09T01:02:03.456Z');
+    for (const classification of ['DEMO', 'CUSTOMER']) {
+      const { resolver } = makePrismaResolver(makeMembership({ company: { status: 'ACTIVE', reportClassification: classification, planTerm: { termEndsAt: expiresAt } } }));
+      const resolved = await resolver.resolveForUser({ userId: 'owner', companyId: 'co-1' });
+      assert.equal(resolved.isDemo, classification === 'DEMO' ? true : undefined);
+      assert.equal(resolved.demoExpiresAt, classification === 'DEMO' ? expiresAt.toISOString() : undefined);
+    }
+  });
+});

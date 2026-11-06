@@ -7,6 +7,7 @@ type Row = {
   companyId: string;
   companyName: string;
   companyStatus: string;
+  reportClassification?: string;
   termEndsAt: Date;
   termStartAt?: Date;
   renewCount?: number;
@@ -36,6 +37,7 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
 
   const matches = (row: typeof state[number], where: any, now: Date): boolean => {
     if (where.company?.status && row.companyStatus !== where.company.status) return false;
+    if (where.company?.OR && row.reportClassification === 'DEMO') return false;
     if (where.termEndsAt?.lte && row.termEndsAt > where.termEndsAt.lte) return false;
     if (where.termEndsAt?.gt && row.termEndsAt <= where.termEndsAt.gt) return false;
     void now;
@@ -49,7 +51,7 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
       companyPlanTerm: {
         findUnique: async ({ where }: any) => {
           const row = state.find(item => item.companyId === where.companyId);
-          return row ? { ...row, company: { name: row.companyName, status: row.companyStatus } } : null;
+          return row ? { ...row, company: { name: row.companyName, status: row.companyStatus, reportClassification: row.reportClassification } } : null;
         },
         update: async ({ where, data }: any) => {
           const row = state.find(item => item.companyId === where.companyId)!;
@@ -324,6 +326,22 @@ describe('PlanTermSweepUseCase — grandfathered companies', () => {
     const result = await world.sweep.execute();
     assert.deepEqual(result, { expired: 0, warned: 0, failures: 0 });
     assert.equal(world.lifecycle.calls.length, 0);
+    assert.equal(world.notifications.calls.length, 0);
+  });
+});
+
+
+describe('DEMO plan term sweep', () => {
+  it('sends no 7/3/1-day warnings and disables the demo at expiry without outbound notices', async () => {
+    const now = new Date();
+    const world = makeWorld([1, 3, 7].map(days => ({ companyId: `demo-${days}`, companyName: 'ร้านตัวอย่าง', companyStatus: 'ACTIVE',
+      reportClassification: 'DEMO', termEndsAt: new Date(now.getTime() + days * DAY_MS) })));
+    assert.deepEqual(await world.sweep.execute(), { expired: 0, warned: 0, failures: 0 });
+    assert.equal(world.notifications.calls.length, 0);
+    for (const row of world.state) row.termEndsAt = new Date(Date.now() - 1);
+    const expired = await world.sweep.execute();
+    assert.deepEqual(expired, { expired: 3, warned: 0, failures: 0 });
+    assert.ok(world.state.every(row => row.companyStatus === 'DISABLED'));
     assert.equal(world.notifications.calls.length, 0);
   });
 });

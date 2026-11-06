@@ -17,7 +17,8 @@ test('partner report filters round trip in URL, reset page, and clear without lo
 
 test('report field choices use contract keys and industry words; platform offers only internal', async () => {
   const { classificationOptions, industryOptions } = await logic();
-  assert.deepEqual(classificationOptions(false).map(x => x.value), ['', ...REPORT_CLASSIFICATIONS]);
+  // DEMO is set only by the system when a sales demo link opens; an admin cannot choose it.
+  assert.deepEqual(classificationOptions(false).map(x => x.value), ['', ...REPORT_CLASSIFICATIONS.filter(value => value !== 'DEMO')]);
   assert.deepEqual(classificationOptions(true), [{ value: 'INTERNAL', label: 'บริษัทของมั่งมี' }]);
   assert.deepEqual(industryOptions.slice(1), REPORT_INDUSTRY_GROUPS.map(x => ({ value: x.key, label: x.label })));
 });

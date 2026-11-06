@@ -13,6 +13,8 @@ export type WebSession = {
   permissions: string[];
   /** Server-verified source-only expense draft mode; absent is false. */
   freeExpenseDrafts?: boolean;
+  isDemo?: boolean;
+  demoExpiresAt?: string;
   scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';
   /** Set while a temporary password is pending: the API 403s this session out of every business route. */

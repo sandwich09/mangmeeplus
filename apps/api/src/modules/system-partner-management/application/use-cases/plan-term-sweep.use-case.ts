@@ -77,7 +77,7 @@ export class PlanTermSweepUseCase {
         const changed = await this.prisma.client.$transaction(async (tx) => {
           await lockPlanTermCompany(tx, candidate.companyId);
           const row = await tx.companyPlanTerm.findUnique({
-            where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true } } },
+            where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true, reportClassification: true } } },
           });
           if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt > now) return false;
           // Sales-deals spec R2 (Owner 2026-09-20): a zero-day term nobody renewed never had a
@@ -95,7 +95,7 @@ export class PlanTermSweepUseCase {
           await tx.companyPlanTerm.update({ where: { companyId: row.companyId }, data: {
             termDisabledAt: now, expiredNotifiedAt: now,
           } });
-          if (lockReason !== 'no_package' && !await isFreeExpenseDraftCompany(tx, row.companyId, now)) {
+          if (row.company.reportClassification !== 'DEMO' && lockReason !== 'no_package' && !await isFreeExpenseDraftCompany(tx, row.companyId, now)) {
             // NotificationEvent/Recipient/Delivery are already a durable queue. Commit them
             // with the claim; the existing delivery worker owns all later network attempts.
             await this.notify(row.companyId, row.company.name, {
@@ -119,7 +119,7 @@ export class PlanTermSweepUseCase {
   private async sweepWarnings(now: Date, limit: number): Promise<{ count: number; failures: number }> {
     const widest = Math.max(...WARNING_LADDER_DAYS);
     const upcoming = await this.prisma.client.companyPlanTerm.findMany({
-      where: { termEndsAt: { gt: now, lte: new Date(now.getTime() + widest * DAY_MS) }, company: { status: 'ACTIVE' } },
+      where: { termEndsAt: { gt: now, lte: new Date(now.getTime() + widest * DAY_MS) }, company: { status: 'ACTIVE', OR: [{ reportClassification: null }, { reportClassification: { not: 'DEMO' } }] } },
       select: { companyId: true }, orderBy: { termEndsAt: 'asc' }, take: limit,
     });
     let count = 0;
@@ -129,9 +129,9 @@ export class PlanTermSweepUseCase {
         const changed = await this.prisma.client.$transaction(async (tx) => {
           await lockPlanTermCompany(tx, candidate.companyId);
           const row = await tx.companyPlanTerm.findUnique({
-            where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true } } },
+            where: { companyId: candidate.companyId }, include: { company: { select: { status: true, name: true, reportClassification: true } } },
           });
-          if (!row || row.company.status !== 'ACTIVE' || row.termEndsAt <= now) return false;
+          if (!row || row.company.reportClassification === 'DEMO' || row.company.status !== 'ACTIVE' || row.termEndsAt <= now) return false;
           const billing = row.billingReceiptAccountId ? await tx.billingAccount.findUnique({ where: { id: row.billingReceiptAccountId } }) : null;
           const nextStep = !this.selfServeBilling ? '' : ['CARD_ONCE', 'PROMPTPAY_ONCE'].includes(billing?.renewalMode ?? '')
             ? ' แพ็กเกจแบบชำระครั้งเดียวซื้อแพ็กเกจใหม่ได้ในหน้าการชำระเงินค่ะ' : billing?.renewalMode === 'PROMPTPAY_RENEW'

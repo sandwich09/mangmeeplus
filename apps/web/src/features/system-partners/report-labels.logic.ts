@@ -16,13 +16,13 @@ export const reportLabelWords = {
   saved: 'บันทึกข้อมูลสำหรับรายงานแล้ว รายงานจะแสดงค่าที่แก้หลังอัปเดตข้อมูลรอบถัดไป',
   save: 'บันทึกข้อมูลสำหรับรายงาน', readOnly: 'คุณดูข้อมูลนี้ได้ แต่ไม่มีสิทธิ์แก้ไข',
 };
-const CLASSIFICATION_WORDS = { ALL: 'ทุกประเภท', CUSTOMER: 'ลูกค้าจริง', TEST: 'บริษัททดสอบ', INTERNAL: 'บริษัทของมั่งมี', UNCLASSIFIED: 'ยังไม่ได้จัดประเภท' };
+const CLASSIFICATION_WORDS = { ALL: 'ทุกประเภท', CUSTOMER: 'ลูกค้าจริง', TEST: 'บริษัททดสอบ', INTERNAL: 'บริษัทของมั่งมี', DEMO: 'เดโม่', UNCLASSIFIED: 'ยังไม่ได้จัดประเภท' };
 const UNSET = 'ไม่ระบุ';
 export const classificationFilterOptions = PARTNER_REPORT_CLASSIFICATION_FILTERS.map(value => ({ value, label: CLASSIFICATION_WORDS[value] }));
 export const industryFilterOptions = PARTNER_REPORT_INDUSTRY_GROUP_FILTERS.map(value => ({ value, label: value === 'ALL' ? 'ทุกกลุ่ม' : UNSET }));
 export function classificationOptions(isPlatformCompany: boolean) {
   return isPlatformCompany ? [{ value: 'INTERNAL', label: CLASSIFICATION_WORDS.INTERNAL }]
-    : [{ value: '', label: CLASSIFICATION_WORDS.UNCLASSIFIED }, ...REPORT_CLASSIFICATIONS.map(value => ({ value, label: CLASSIFICATION_WORDS[value] }))];
+    : [{ value: '', label: CLASSIFICATION_WORDS.UNCLASSIFIED }, ...REPORT_CLASSIFICATIONS.filter(value => value !== 'DEMO').map(value => ({ value, label: CLASSIFICATION_WORDS[value] }))];
 }
 export const industryOptions = [{ value: '', label: UNSET }, ...REPORT_INDUSTRY_GROUPS.map(group => ({ value: group.key, label: group.label }))];
 export function reportIndustryLabel(key: PartnerReportLabelsDto['effectiveIndustryGroup']): string {

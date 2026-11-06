@@ -48,3 +48,10 @@ test('the package row uses the shell notice once, keeps it on billing paths, and
   assert.match(source, /'billing',\s*'roles',\s*'settings'/);
   assert.match(source, /employeePageMenuKey\(companyId, pathname, navItems\) \?\? resolveMenuKey\(pathname, collectMenuTargets\(navItems\)\)/);
 });
+
+
+test('demo shell hides package navigation, renewal reminders and purchase recovery while keeping the demo banner', () => {
+  assert.match(source, /!\(session\.isDemo && item\.key === 'billing'\)/);
+  assert.match(source, /sidebarFooter=\{!freeExpenseDrafts && !session\.isDemo \?/);
+  assert.match(source, /banner=\{session\.isDemo \? <DemoSessionBanner/);
+});

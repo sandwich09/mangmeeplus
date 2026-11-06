@@ -1367,3 +1367,29 @@ describe('CreateCompanyOnboardingUseCase report classification', () => {
     assert.equal('reportClassifiedAt' in adminData, false);
   });
 });
+
+it('creates a credential-free DEMO, explicit entitlements and the exact term inside an ambient transaction', async () => {
+  const prisma = makePrisma({}), expiresAt = new Date(Date.now() + 3 * 86_400_000);
+  const { TIER_FEATURE_PRESETS } = await import('@watchdog-bms/contracts');
+  const entitlements: { entitlements?: any } = {};
+  const terms: any[] = [], updates: any[] = [];
+  await prisma.client.$transaction(async (tx: any) => {
+    Object.assign(tx, entitlementTx(entitlements));
+    tx.companyPlanTerm = {
+      upsert: async (args: any) => { terms.push(args); return args.create; },
+      update: async (args: any) => { updates.push(args); return args.data; },
+    };
+    prisma.client.$transaction = async () => { throw new Error('nested_transaction_forbidden'); };
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
+      ownerUsername: undefined, ownerAuth: { kind: 'demo' }, reportClassification: 'DEMO', allowDuplicateCompanyName: true,
+      planTier: 'ENTERPRISE_1999', planExpiresAt: expiresAt, entitledFeatureKeys: TIER_FEATURE_PRESETS.ENTERPRISE_1999,
+    }), tx);
+  });
+  assert.equal(prisma.companyCreates()[0].data.reportClassification, 'DEMO');
+  assert.equal(prisma.userCreates()[0].data.username, null);
+  assert.equal(prisma.userCreates()[0].data.email, undefined); assert.equal(prisma.userCreates()[0].data.phoneNumber, undefined);
+  assert.deepEqual(prisma.credentialCreates(), []); assert.deepEqual(prisma.lineTokenCreates(), []);
+  assert.equal(terms[0].create.tierKey, 'ENTERPRISE_1999'); assert.equal(updates[0].data.termEndsAt, expiresAt);
+  assert.deepEqual(prisma.planTermUpserts(), [], 'no best-effort term write outside the transaction');
+  assert.deepEqual(entitlements.entitlements.data.filter((row: any) => row.enabled).map((row: any) => row.featureKey).sort(), [...TIER_FEATURE_PRESETS.ENTERPRISE_1999].sort());
+});

@@ -1,3 +1,4 @@
+import { assertDemoReadAvailable } from '../../../sales-demo/application/demo-read-limit';
 import { REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } from '../../../reimbursements/domain/reimbursement.constants';
 import { looksLikeAccountNumber } from '@watchdog-bms/contracts';
@@ -76,6 +77,7 @@ export class InitReceiptUploadUseCase {
     if (!ctx.permissions.includes('expense.receipt.upload') && !ctx.permissions.includes('expense.receipt.line_upload') && !ctx.permissions.includes('expense.create')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
     }
+    if (ctx.authProvider !== 'line' && this.prisma) await assertDemoReadAvailable(this.prisma.client, ctx);
     const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     const freeUpload = freeExpenseDrafts || Boolean(options?.freeOcrReservation);
     if (options?.freeOcrReservation && (ctx.authProvider !== 'line' || cmd.captureSource !== 'LINE_UPLOAD'
@@ -357,6 +359,7 @@ export class CompleteReceiptUploadUseCase {
     cmd: CompleteReceiptUploadCommand,
     options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
+    if (ctx.authProvider !== 'line' && this.prisma) await assertDemoReadAvailable(this.prisma.client, ctx);
     const freeExpenseDrafts = await expenseDraftAccess(ctx, this.repo.commercialAccessDb);
     const expense = await this.repo.findById(ctx.companyId, cmd.expenseId);
     if (!expense) throw new NotFoundException(`Expense ${cmd.expenseId} not found`);

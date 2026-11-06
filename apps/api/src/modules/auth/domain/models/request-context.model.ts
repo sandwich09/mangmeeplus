@@ -17,6 +17,8 @@ export type RequestContext = {
   permissions: string[];
   /** Server-resolved source-only draft access; missing means no free entitlement. */
   freeExpenseDrafts?: boolean;
+  isDemo?: boolean;
+  demoExpiresAt?: string;
   entitlementDeniedPermissions?: Record<string, string>;
   scopes: {
     branchIds?: string[];

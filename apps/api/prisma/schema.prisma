@@ -352,7 +352,7 @@ model Company {
   referralSource                    String?
   // ── Executive report labels (executive backend spec §12.2, §15). Set by the System Admin on the
   // partner page, never by the shop. Strings validated in the application, not Prisma enums.
-  /// 'CUSTOMER' | 'TEST' | 'INTERNAL'; null = not classified yet. Only CUSTOMER is in the report's population.
+  /// 'CUSTOMER' | 'TEST' | 'INTERNAL' | 'DEMO'; null = not classified yet. Only CUSTOMER is in the report's population.
   reportClassification              String?
   reportClassifiedAt                DateTime?
   /// Who chose the label; null with a time = the system did (signup provisioning, the one-time data task).
@@ -361,6 +361,8 @@ model Company {
   reportIndustryGroup               String?
   createdAt                         DateTime                                  @default(now())
   updatedAt                         DateTime                                  @updatedAt
+  demoChatMessages                  DemoChatMessage[]
+  salesDemoLink                     SalesDemoLink?
   memberships                       CompanyMembership[]
   bindings                          LineChannelBinding[]
   auditLogs                         AuditLog[]
@@ -596,6 +598,7 @@ model User {
   lineReadEvidence        LineReadEvidence[]
   lineLedgerDeliveries    LineLedgerDelivery[]
   lineDocumentQaJobs      LineDocumentQaJob[]
+  salesDemoLinks          SalesDemoLink[]
   sessions                AuthSession[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
@@ -4278,7 +4281,7 @@ model ExecutiveCompanyProfile {
   buildId                     String
   companyCreatedAt            DateTime
   companyStatus               String
-  /// 'CUSTOMER' | 'TEST' | 'INTERNAL'; null = not classified. The platform company is always INTERNAL.
+  /// 'CUSTOMER' | 'TEST' | 'INTERNAL' | 'DEMO'; null = not classified. The platform company is always INTERNAL.
   reportClassification        String?
   /// Report industry group key; null = the shop has none (INDUSTRY_NOT_PROVIDED).
   industryGroup               String?
@@ -10580,6 +10583,7 @@ model LineIntakeState {
 
 // Transactional mail transport evidence. Never stores a token, body or credential.
 model EmailSendAttempt {
+  companyId          String?
   id                 String   @id @default(uuid())
   intentKey          String
   generation         Int
@@ -11094,4 +11098,37 @@ model ExpenseInputVatDecision {
   decidedByUserId String
   decidedAt DateTime @default(now())
   @@index([companyId, expenseId, decidedAt])
+}
+
+/// Sales demo link (docs/specs/sales-demo-link-spec-th.md): only the token's sha256 is stored; one DEMO shop per link.
+model DemoChatMessage {
+  id             String   @id @default(cuid())
+  companyId      String
+  chatId         String
+  direction      String
+  messagesJson   Json
+  webhookEventId String?
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // Inbound association: a virtual reply token must resolve to exactly this chat.
+  replyToken     String?  @unique
+  deliveryKey    String?  @unique
+  createdAt      DateTime @default(now())
+
+  @@index([companyId, createdAt, id])
+  @@index([webhookEventId])
+}
+
+model SalesDemoLink {
+  aiCreditUnits   Int      @default(80)
+  id              String   @id @default(cuid())
+  tokenHash       String   @unique
+  createdByUserId String
+  expiresAt       DateTime
+  companyId       String?  @unique
+  openedAt        DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  createdBy User     @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
 }

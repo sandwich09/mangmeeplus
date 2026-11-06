@@ -1,3 +1,4 @@
+import type { Prisma } from '../../../../generated/prisma/client';
 import { emailSecurityBinding } from '../../../auth/domain/logic/email-otp.logic';
 import { emailUserInclude } from '../../../auth/application/account-email-state';
 import { ConflictException, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -90,6 +91,7 @@ export type CreateCompanyOnboardingCommand = {
     | { kind: 'password' }
     | { kind: 'line'; providerUserId: string; channelId: string; displayName?: string }
     | { kind: 'line-link-later' }
+    | { kind: 'demo' }
     | { kind: 'email'; verifiedAt: Date };
   /**
    * Clickwrap evidence collected before this account existed (on LIFF), replayed into
@@ -131,6 +133,9 @@ export type CreateCompanyOnboardingCommand = {
    */
   planTier?: PlanTierKey;
   planDays?: number;
+  planExpiresAt?: Date;
+  entitledFeatureKeys?: readonly string[];
+  reportClassification?: 'DEMO';
   /**
    * P10-0: stamp `CompanySignupRequest.companyId` INSIDE this transaction. Without it there is a
    * window between "the company committed" and "the fence recorded which company" — and a
@@ -186,7 +191,7 @@ export class CreateCompanyOnboardingUseCase {
     private readonly legal: LegalAcceptanceService,
   ) {}
 
-  async execute(cmd: CreateCompanyOnboardingCommand): Promise<CreateCompanyOnboardingResult> {
+  async execute(cmd: CreateCompanyOnboardingCommand, transaction?: Prisma.TransactionClient): Promise<CreateCompanyOnboardingResult> {
     const companyContactEmail = cmd.companyContactEmail === undefined ? undefined : requireLineContactEmail(cmd.companyContactEmail);
     const unverifiedOwnerEmail = cmd.unverifiedOwnerEmail === undefined ? undefined : requireLineContactEmail(cmd.unverifiedOwnerEmail);
     const attachUserId = cmd.claimedOwner?.attachUserId;
@@ -195,7 +200,11 @@ export class CreateCompanyOnboardingUseCase {
     // A LINE-only owner the admin console opens: no identity to bind yet, so the only differences
     // from the default path are "no username" and "no temporary password". Everything else — the
     // owner LINE-link QR included — is the path that already exists.
-    const lineLinkLater = cmd.ownerAuth?.kind === 'line-link-later';
+    const demoOwner = cmd.ownerAuth?.kind === 'demo';
+    if (demoOwner && (cmd.reportClassification !== 'DEMO' || !cmd.planExpiresAt || attach || cmd.ownerUsername || cmd.claimedOwner || companyContactEmail || unverifiedOwnerEmail)) {
+      throw new UnprocessableEntityException('demo_owner_requires_isolated_company');
+    }
+    const lineLinkLater = cmd.ownerAuth?.kind === 'line-link-later' || demoOwner;
     const emailOwner = cmd.ownerAuth?.kind === 'email' ? cmd.ownerAuth : null;
     if (emailOwner && (!cmd.claimedOwner?.email || attach || !cmd.linkSignupRequestId)) {
       throw new UnprocessableEntityException('email_owner_requires_verified_signup');
@@ -252,7 +261,7 @@ export class CreateCompanyOnboardingUseCase {
       : false;
     // A LINE-first owner is linked by this very transaction, so a QR to link them would be a QR to
     // link what is already linked. An admin can still reissue one later for account recovery (§9).
-    const issueLineLink = !ownerHasLine && !lineOwner;
+    const issueLineLink = !ownerHasLine && !lineOwner && !demoOwner;
 
     // A claim-verified owner sets their own password at the link, so no temporary one is ever
     // minted, encrypted or handed over for this path (spec §2 rule 4: no temp password, ever).
@@ -265,7 +274,7 @@ export class CreateCompanyOnboardingUseCase {
     // Owner QR travels with the credential handoff and lives 72h like the temporary password; regenerate-temporary-password reissues it.
     const lineLinkToken = issueLineLink ? generateLineLinkToken(OWNER_LINE_LINK_TOKEN_TTL_MS) : undefined;
 
-    const result = await this.prisma.client.$transaction(async (tx) => {
+    const create = async (tx: Prisma.TransactionClient) => {
       // Audit H-31: the admin knows the company's tax id at handover, and until now there was
       // nowhere to put it — company.legal_identity.manage lives inside the company, so the number
       // could not be captured until the owner first logged in. Writing it here goes through the
@@ -280,6 +289,7 @@ export class CreateCompanyOnboardingUseCase {
           // Executive spec §12.2 (Q16): a shop from the normal signup is a customer from its first day; one the
           // admin creates by hand stays unclassified until the admin labels it. No user id: the system chose.
           ...(cmd.linkSignupRequestId ? { reportClassification: 'CUSTOMER', reportClassifiedAt: new Date() } : {}),
+          ...(cmd.reportClassification ? { reportClassification: cmd.reportClassification, reportClassifiedAt: new Date() } : {}),
         },
       });
       if (taxId) {
@@ -580,7 +590,7 @@ export class CreateCompanyOnboardingUseCase {
       // modulePackage 'starter' mirrors the admin console's "เริ่มต้น" preset button exactly:
       // enabled iff the key is in the preset (the preset lists submenus explicitly, so membership
       // is the whole decision — same rows applyPreset would submit).
-      const starterKeys = (cmd.modulePackage ?? 'starter') === 'starter'
+      const starterKeys = cmd.entitledFeatureKeys ? new Set<string>(cmd.entitledFeatureKeys) : (cmd.modulePackage ?? 'starter') === 'starter'
         ? new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys)
         : null;
       const entitlementRows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
@@ -680,8 +690,15 @@ export class CreateCompanyOnboardingUseCase {
         await tx.emailAccessChallenge.updateMany({ where: { signupRequestId: cmd.linkSignupRequestId!, email: claimed!.email!, status: 'VERIFIED', userId: null },
           data: { userId: owner.id, securityBindingHash: emailSecurityBinding(currentOwner) } });
       }
+      // Demo expiry is mandatory and atomic with creation. An unbounded demo must never commit.
+      if (cmd.planExpiresAt) {
+        await applyPlanTermPreset({ client: tx }, company.id, cmd.planTier ?? ONBOARDING_DEFAULT_TIER, cmd.planDays ?? DEFAULT_TERM_DAYS, cmd.requestingAdminUserId);
+        await tx.companyPlanTerm.update({ where: { companyId: company.id }, data: { termEndsAt: cmd.planExpiresAt } });
+      }
       return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
-    }, { maxWait: 5_000, timeout: 15_000 });
+    };
+    const result = transaction ? await create(transaction)
+      : await this.prisma.client.$transaction(create, { maxWait: 5_000, timeout: 15_000 });
 
     // P29 §4A: every admin-created company starts on STARTER for 30 days, and a provisioning caller
     // may name a different preset. Deliberately AFTER the commit and never inside it — a company
@@ -691,7 +708,7 @@ export class CreateCompanyOnboardingUseCase {
     const planTier = cmd.planTier ?? ONBOARDING_DEFAULT_TIER;
     const planDays = cmd.planDays ?? DEFAULT_TERM_DAYS;
     try {
-      await applyPlanTermPreset(
+      if (!cmd.planExpiresAt) await applyPlanTermPreset(
         this.prisma,
         result.company.id,
         planTier,

@@ -67,6 +67,14 @@ describe('v2 durable grant and global dispatch fencing on PostgreSQL', { skip: !
     return settleAiBudgetStep(prisma, { invocationKey: key, meta: { sourceRoute: 'line-ai-v2' }, entry: { modelId: model, tag: 'fixture', ok: true,
       inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, usageBasis: 'PROVIDER_REPORTED' } as never });
   }
+  it('a private webhook grant may answer directly only for the server-decided fixed read', async () => {
+    const { input, grant } = await fixture('fixed-read', 'SPLIT', false,
+      { lane: 'simple', serverRoute: 'fixed_read', allowedProfileIds: ['line-answer/2'] });
+    assert.ok(grant);
+    const { serverRoute: _route, ...withoutRoute } = input;
+    assert.equal(await service.issue({ ...withoutRoute, authorityId: `${input.authorityId}-plain` }), null);
+    assert.equal(await service.issue({ ...input, authorityId: `${input.authorityId}-mixed`, allowedProfileIds: ['line-answer/2', 'line-control/2'] }), null);
+  });
   it('R10 Q1: webhook counterparty intake reserves ordinal zero before narrowing the real grant', async () => {
     const { ProcessLineWebhookUseCase } = await import('./use-cases/process-line-webhook.use-case');
     const { grant, owner } = await fixture('counterparty-intake', 'SPLIT', false);

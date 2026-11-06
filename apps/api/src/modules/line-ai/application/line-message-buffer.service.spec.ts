@@ -67,6 +67,7 @@ function makeHarness(opts: {
 
   const prisma = {
     client: {
+      company: { findUnique: async () => ({ reportClassification: 'CUSTOMER' }) },
       lineWebhookEventLog: {
         create: async ({ data }: any) => {
           if (opts.eventStoreUnavailable) throw new Error('database unavailable');

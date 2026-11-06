@@ -344,6 +344,14 @@ describe('AuthController me()', () => {
     },
   } as any;
 
+  it('adds demo metadata only for the resolved DEMO company', async () => {
+    const demoExpiresAt = '2026-11-09T01:02:03.456Z';
+    const demo = await makeMeController(null).me({ context: { ...context.context, isDemo: true, demoExpiresAt } } as any);
+    assert.equal(demo.isDemo, true); assert.equal(demo.demoExpiresAt, demoExpiresAt);
+    const customer = await makeMeController(null).me(context);
+    assert.equal('isDemo' in customer, false); assert.equal('demoExpiresAt' in customer, false);
+  });
+
   it('reports a pending temporary password', async () => {
     const result = await makeMeController(true).me(context);
     assert.equal(result.mustChangePassword, true);

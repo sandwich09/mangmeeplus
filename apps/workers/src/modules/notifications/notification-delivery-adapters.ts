@@ -1,3 +1,4 @@
+import { isVirtualDemoTarget } from '@watchdog-bms/contracts';
 /**
  * Notification Delivery Adapters (Item 06)
  * Web and LINE delivery adapters.
@@ -12,6 +13,8 @@ export type DeliveryResult = {
 };
 
 export type LineDeliveryInput = {
+  channelId?: string;
+  reportClassification?: string;
   lineUserId: string;
   channelAccessToken: string;
   message: string;
@@ -75,6 +78,10 @@ export function processWebDelivery(): DeliveryResult {
 // Skips if no lineUserId or no channelAccessToken.
 
 export async function processLineDelivery(input: LineDeliveryInput): Promise<DeliveryResult> {
+  if (input.reportClassification === 'DEMO' || isVirtualDemoTarget(input.lineUserId, input.channelId)) {
+    console.info('[notification-delivery] demo outbound suppressed');
+    return { status: 'suppressed', errorCode: 'DEMO_OUTBOUND_SUPPRESSED' };
+  }
   if (!input.lineUserId || !input.channelAccessToken) {
     return { status: 'skipped', errorCode: 'NO_LINE_IDENTITY', errorMessage: 'No linked LINE identity or channel config' };
   }

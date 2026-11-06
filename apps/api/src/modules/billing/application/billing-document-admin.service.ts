@@ -335,12 +335,12 @@ export class BillingDocumentAdminService {
       if (this.appConfig.postmarkServerId) {
         if (p.previousEmail && p.previousEmail.trim().toLowerCase() !== p.target.email) {
           const notice = await tx.emailSendAttempt.create({ data: { id: randomUUID(), intentKey: `billing-recipient-notice:${row.id}`, generation: 1,
-            purpose: 'billing_status', recipient: p.previousEmail.trim().toLowerCase(), provider: 'postmark', providerServerId: this.appConfig.postmarkServerId,
+            companyId: account.companyId, purpose: 'billing_status', recipient: p.previousEmail.trim().toLowerCase(), provider: 'postmark', providerServerId: this.appConfig.postmarkServerId,
             stream: this.appConfig.postmarkMessageStream, status: 'READY' } });
           noticeAttemptId = notice.id;
         }
         const newNotice = await tx.emailSendAttempt.create({ data: { id: randomUUID(), intentKey: `billing-recipient-notice:${row.id}:new`, generation: 1,
-          purpose: 'billing_status', recipient: p.target.email, provider: 'postmark', providerServerId: this.appConfig.postmarkServerId,
+          companyId: account.companyId, purpose: 'billing_status', recipient: p.target.email, provider: 'postmark', providerServerId: this.appConfig.postmarkServerId,
           stream: this.appConfig.postmarkMessageStream, status: 'READY' } });
         newNoticeAttemptId = newNotice.id;
       }

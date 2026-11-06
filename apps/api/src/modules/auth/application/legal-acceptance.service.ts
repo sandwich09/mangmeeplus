@@ -245,12 +245,13 @@ export class LegalAcceptanceService {
     const roles = membership.roles.map((entry) => entry.role.key).sort();
     const capacity = legalAcceptanceCapacity(roles);
     const systemOperator = roles.includes('SYSTEM_ADMIN');
-    const records = systemOperator ? [] : await this.loadCurrentRecords(locator.userId);
+    const demo = membership.company.reportClassification === 'DEMO';
+    const records = systemOperator || demo ? [] : await this.loadCurrentRecords(locator.userId);
     const currentPair = this.findCoherentCurrentPair(records, locator.userId);
     const acceptedAt = latestAcceptedAt(currentPair);
 
     return {
-      required: !systemOperator && acceptedAt === null,
+      required: !systemOperator && !demo && acceptedAt === null,
       acceptedAt,
       companyId: membership.companyId,
       companyName: membership.company.name,
@@ -621,7 +622,7 @@ export class LegalAcceptanceService {
       select: {
         id: true,
         companyId: true,
-        company: { select: { name: true } },
+        company: { select: { name: true, reportClassification: true } },
         roles: { select: { role: { select: { key: true } } } },
       },
     });

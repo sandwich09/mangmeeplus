@@ -1,0 +1,35 @@
+# Agent Memory: sales-demo-link
+
+Status: 2026-11-06 owner: no new server, build on the live system ("ทำเดโม่ต่อ"). Three Codex lanes running (api xhigh, data high, web high; gpt-6.1-sol) in worktrees mangmee-worktrees/sales-demo-{api,data,web}; controller merges into codex/sales-demo-link-20261106.
+Owner: Owner / Claude
+Scope: public 3-day demo link on the live system (one DEMO shop per link) with a sample restaurant and a scripted LINE chat panel.
+Decisions:
+- Owner 2026-11-06: scripted chat (no AI); a link, separate whole system, no login, link lives 3 days, looks like the real system, LINE chat beside it marked as a simulation.
+- Restaurant sample shop on package 1999 (owner's earlier choice for the sample shop).
+- Demo behaviour keyed on company data (`reportClassification = 'DEMO'`), never on an env switch.
+- Link = DB row SalesDemoLink with only the sha256 of a 24-byte random token (like LINE handoff tokens); one shop copy per link; the session ends with the link.
+- Login reuses the existing LINE handoff-token → session path.
+Open questions: none from the owner.
+Contracts fixed across lanes: POST /v1/sales/demo-links → {url, expiresAt}; POST /v1/auth/demo/open {token} → handoff-shaped tokens or 410 demo_link_expired; /auth/me isDemo + demoExpiresAt; 403 demo_action_unavailable; populateDemoCompany(prisma, {companyId, ownerUserId, branchId, now}) in apps/api/src/modules/sales-demo/application/demo-sample-data.ts.
+Expiry reuses companyPlanTerm.termEndsAt (AuthGuard company_term_expired + PlanTermSweep) and AuthSession.expiresAt cap.
+Artifacts:
+- docs/specs/sales-demo-link-spec-th.md
+- docs/plans/sales-demo-link-plan-th.md
+- Worktree: /Users/thawatchai/Project/MangmeeYungYuen/mangmee-worktrees/sales-demo-link-20261106 (branch codex/sales-demo-link-20261106, from origin/develop 68adf7255)
+Verification (2026-11-06, integration branch):
+- API + web typecheck pass. New PG specs pass on local Postgres :15432: sales-demo.pg.spec.ts 7/7, demo-sample-data.pg.spec.ts 7/7 (env SALES_DEMO_TEST_DATABASE_URL / DEMO_SAMPLE_TEST_DATABASE_URL). Unit: api lane 329/329, data 5/5, web 190/190 + 20/20. New API spec files are NOT registered in apps/api/package.json (owner forbids package.json edits); run them explicitly.
+- Local stack (API :3001 dist/dev-3001, web :3000 dev, docker project `demo-link`): sales agent mints link → /d/<token> lands on the DEMO dashboard in ~4 s (first open), banner + Messenger pop-up work at 390 and 1556 px, chat figures match the dashboard (M0 26,310.00).
+- Bugs found and fixed: claim nested line collided with ReimbursementRequest_fallback_line trigger; web DEMO label word missing; PG spec lacked staff roles.
+- Open UI points: hide plan-term sidebar card (`ต่ออายุ`) for demo; broken mascot avatar in chat; empty chat needs a greeting bubble; no receipt images in sample data.
+Round 2 (real LINE AI, owner 2026-11-06) — merged on this branch:
+- Virtual LINE channel: DEMO owner gets ExternalIdentity Vdemo<companyId> on channel `demo-web` + LineChannelBinding; web posts go through LineMessageBufferService.enqueue; LineReplyAdapter stores every reply/push for virtual targets in DemoChatMessage (never calls LINE); media bytes come from our storage via `demo-att:<attachmentId>`.
+- Credit: SALES_EVENT grant aiCredit*100 satang per link (mint body aiCredit 1–300, default 80); DEMO without a package cycle is funded from added lots only; reads capped by CompanyAiConfiguration.ocrMonthlyLimit = 3.
+- Live local proof (AI gateway with local Anthropic key on :19305; launch gates synced with apps/api/prisma/sync-feature-launch-gates.ts — without it the bot answers "ผู้ช่วยพักให้บริการชั่วคราว"): summary question → real summary card (26,310.00 confirmed + 8,297.50 drafts), credit 80→76; receipt photo → read and draft card, reads 1/3; duplicate photo → "ตรงกับบิลที่เก็บไว้แล้ว" without using a read; PDF → asks question-vs-record (worker-driven capture read not run locally); 1-credit link → demo refusal text; 0 calls to api.line.me; employee create / billing quote / password change / other company → 403.
+- Not proven locally: PDF capture read result (needs workers), hitting the 4th read live (unit-tested), HEIC decode (Sharp build lacks HEIC).
+
+Round 3 (owner review on the local stack, 2026-11-06):
+- Chat no longer jumps to the bottom while scrolling up; docked window 380 × up to 760 px; pressed button label shown instead of "เลือกจากการ์ด".
+- Locked LINE card design needs an https web base (LINE accepts only https images/links): the local stack now serves web on https://localhost:3000 with a self-signed cert (`next dev --experimental-https --experimental-https-key/-cert`), API WEB_BASE_URL https://localhost:3000.
+- LIVE-SYSTEM bug fixed on this branch: the standing LINE quick reply "ค่าใช้จ่ายเดือนนี้" (fixed-read) always answered "ตอนนี้ยังดูยอดให้ไม่ได้ค่ะ" — (1) budget authority refused private webhook grants that were not intake (6b197daf8), (2) the prepared semantic subrequest lacked evidenceRefs so the gateway refused it (ad0646455). Proven live in the demo chat.
+- Per-request DEMO company reads removed: demo chat detected by channel `demo-web`; uploads use RequestContext.isDemo; notifications check the identity id. New API specs registered in .github/workflows/extended-tests.yml (package.json untouched).
+- Verification at 89cfa5396: API full suite pass; web full suite 5,255 pass; gateway 2,792 pass; PG sales-demo 7/7, demo-sample-data 7/7, budget-authority 18/18; API + web typecheck pass.

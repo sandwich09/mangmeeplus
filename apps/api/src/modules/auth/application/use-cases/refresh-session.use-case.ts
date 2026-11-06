@@ -213,27 +213,31 @@ export class RefreshSessionUseCase {
   ): Promise<AuthTokensResult> {
     const { issuer, audience } = jwtClaimIdentity(this.config);
     // ponytail: carry the origin claim across rotation; old tokens without it are password sessions
-    const basePayload = { sub: payload.sub, sid: tokenId, provider: payload.provider ?? 'watchdog' };
+    if (payload.provider === 'demo' && !payload.demoCompanyId) throw new UnauthorizedException('Demo company claim is required.');
+    const basePayload = { sub: payload.sub, sid: tokenId, provider: payload.provider ?? 'watchdog',
+      ...(payload.provider === 'demo' ? { demoCompanyId: payload.demoCompanyId } : {}) };
     const signOptions = { secret, algorithm: JWT_ALGORITHM, issuer, audience } as const;
 
     // ponytail: re-resolve permissions on refresh so revoked roles are reflected immediately
     let permissions: string[] = [];
     if (this.permissionResolver) {
       try {
-        const resolved = await this.permissionResolver.resolveAccess(payload.sub);
+        const resolved = await this.permissionResolver.resolveAccess(payload.sub, payload.demoCompanyId);
         permissions = resolved.permissions;
       } catch {
         // no active membership → empty permissions
       }
     }
 
-    const accessToken = this.jwtService.sign({ ...basePayload, permissions }, { ...signOptions, expiresIn: ACCESS_EXPIRES_IN });
-    // L-01: the family rides the refresh token unchanged across every rotation, so a token that is
-    // several generations stale still identifies its family without a table of retired ids. The
-    // database row is the only source; a pre-L-01 session has none and its tokens stay claimless.
+    const now = Date.now();
+    if (session.expiresAt.getTime() <= now) throw new UnauthorizedException('Session expiry has passed.');
+    const issuedAt = Math.floor(now / 1000);
+    const accessExpiry = Math.min(issuedAt + ACCESS_EXPIRES_IN, session.expiresAt.getTime() / 1000);
+    const accessExpiresIn = Math.min(ACCESS_EXPIRES_IN, (session.expiresAt.getTime() - now) / 1000);
+    const accessToken = this.jwtService.sign({ ...basePayload, permissions, iat: issuedAt, exp: accessExpiry }, signOptions);
     const refreshToken = this.jwtService.sign(
-      { ...basePayload, type: 'refresh', ...(session.familyId ? { fid: session.familyId } : {}) },
-      { ...signOptions, expiresIn: Math.floor((session.expiresAt.getTime() - Date.now()) / 1000) },
+      { ...basePayload, type: 'refresh', ...(session.familyId ? { fid: session.familyId } : {}),
+        iat: issuedAt, exp: session.expiresAt.getTime() / 1000 }, signOptions,
     );
 
     await this.audit?.log({
@@ -246,6 +250,6 @@ export class RefreshSessionUseCase {
       ...(reason === 'grace_replay' ? { riskLevel: 'LOW' as const, metadataJson: { reason } } : {}),
     });
 
-    return { accessToken, refreshToken, expiresIn: ACCESS_EXPIRES_IN };
+    return { accessToken, refreshToken, expiresIn: accessExpiresIn };
   }
 }

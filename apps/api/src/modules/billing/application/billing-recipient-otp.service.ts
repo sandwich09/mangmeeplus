@@ -77,7 +77,7 @@ export class BillingRecipientOtpService {
       if (retryAfterSeconds > 0) throw emailError('EMAIL_OTP_RATE_LIMITED', 'กรุณารอก่อนขอรหัสใหม่', 429, { retryAfterSeconds });
       const id = randomUUID(), expiresAt = new Date(now.getTime() + EMAIL_OTP_TTL_MS);
       // prepare/audit failures roll back the replacement, keeping the previous working code.
-      const attempt = await this.delivery.prepare({ purpose: 'email_verification', recipient: email, deadlineAt: expiresAt,
+      const attempt = await this.delivery.prepare({ companyId: input.companyId, purpose: 'email_verification', recipient: email, deadlineAt: expiresAt,
         intentKey: `billing-recipient-otp:${id}` }, tx).catch(error => {
           if (error instanceof PostmarkSendError) throw emailError('EMAIL_DELIVERY_UNAVAILABLE', 'ยังส่งรหัสไม่ได้ กรุณาตรวจอีเมลหรือติดต่อทีมงาน', 503);
           throw error;

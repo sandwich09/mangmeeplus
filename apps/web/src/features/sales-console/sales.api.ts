@@ -66,6 +66,14 @@ export function createSalesDeal(body: SalesDealSaveBody): Promise<SalesDealView>
   return apiFetch<SalesDealView>('/v1/sales/deals', { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
 }
 
+export type SalesDemoLink = { url: string; expiresAt: string; aiCredit: number };
+
+export function createSalesDemoLink(aiCredit = 80): Promise<SalesDemoLink> {
+  return apiFetch<SalesDemoLink>('/v1/sales/demo-links', {
+    method: 'POST', body: JSON.stringify({ aiCredit }), suppressErrorToast: true,
+  });
+}
+
 export function saveSalesDeal(id: string, body: SalesDealSaveBody): Promise<SalesDealView> {
   return apiFetch<SalesDealView>(`/v1/sales/deals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body), suppressErrorToast: true });
 }

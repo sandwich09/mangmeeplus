@@ -50,7 +50,7 @@ const PLAN_WOULD_BLOCK_ACTION = 'plan.receipt_quota.would_block';
 export type CompanyOcrAdmission =
   | ({ allowed: true; usedCount: number; monthlyLimit: number | null } & CompanyOcrAdmissionIdentity)
   | { allowed: false; reason: 'disabled' }
-  | { allowed: false; reason: 'exceeded'; usedCount: number; monthlyLimit: number }
+  | { allowed: false; reason: 'exceeded'; usedCount: number; monthlyLimit: number; isDemo?: boolean }
   /** The shop's plan ran out, not the platform's ops brake — a sales moment, not an outage. */
   | { allowed: false; reason: 'plan_exceeded'; usedCount: number; monthlyLimit: number; tierKey: string | null }
   | { allowed: false; reason: 'plan_inactive' }
@@ -59,6 +59,7 @@ export type CompanyOcrAdmission =
   | { allowed: false; reason: 'unavailable' };
 
 export type CompanyOcrErrorCode =
+  | 'demo_read_limit_reached'
   | 'OCR_FEATURE_DISABLED'
   | 'OCR_MONTHLY_LIMIT_EXCEEDED'
   | 'OCR_REQUEST_ALREADY_ADMITTED'
@@ -72,7 +73,7 @@ export function companyOcrErrorCode(decision: Exclude<CompanyOcrAdmission, { all
   if (decision.reason === 'free_exceeded') return 'FREE_DOCUMENT_LIMIT_REACHED';
   if (decision.reason === 'free_in_flight') return 'FREE_DOCUMENTS_IN_FLIGHT';
   if (decision.reason === 'disabled') return 'OCR_FEATURE_DISABLED';
-  if (decision.reason === 'exceeded') return 'OCR_MONTHLY_LIMIT_EXCEEDED';
+  if (decision.reason === 'exceeded') return decision.isDemo ? 'demo_read_limit_reached' : 'OCR_MONTHLY_LIMIT_EXCEEDED';
   if (decision.reason === 'plan_exceeded') return 'RECEIPT_QUOTA_EXCEEDED';
   if (decision.reason === 'plan_inactive') return 'BILLING_ACCESS_INACTIVE';
   if (decision.reason === 'duplicate') return 'OCR_REQUEST_ALREADY_ADMITTED';
@@ -325,10 +326,11 @@ export async function admitCompanyOcr(
         where: { companyId_monthKey: { companyId: input.companyId, monthKey } },
         select: { usedCount: true },
       });
-      const usedCount = current?.usedCount ?? 0;
-      const monthlyLimit = configuration?.ocrMonthlyLimit ?? null;
+      const demo = (await tx.company.findUnique({ where: { id: input.companyId }, select: { reportClassification: true } }))?.reportClassification === 'DEMO';
+      const usedCount = demo ? await tx.companyOcrUsageEvent.count({ where: { companyId: input.companyId } }) : current?.usedCount ?? 0;
+      const monthlyLimit = demo ? Math.min(3, configuration?.ocrMonthlyLimit ?? 3) : configuration?.ocrMonthlyLimit ?? null;
       if (monthlyLimit !== null && usedCount >= monthlyLimit) {
-        return { allowed: false, reason: 'exceeded', usedCount, monthlyLimit } as const;
+        return { allowed: false, reason: 'exceeded', usedCount, monthlyLimit, ...(demo ? { isDemo: true } : {}) } as const;
       }
 
       // The commercial layer. Checked AFTER the ops brake so the platform's own limit keeps its

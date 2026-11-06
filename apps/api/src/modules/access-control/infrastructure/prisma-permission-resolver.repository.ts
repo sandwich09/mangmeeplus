@@ -26,7 +26,7 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
           },
         },
         branchScopes: { select: { branchId: true } },
-        company: { select: { status: true, planTerm: { select: { termDisabledAt: true } } } },
+        company: { select: { status: true, reportClassification: true, planTerm: { select: { termDisabledAt: true, termEndsAt: true } } } },
       },
     } as const;
 
@@ -128,6 +128,7 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       companyId: membership.companyId,
       roles,
       permissions: freeExpenseDrafts && !roles.includes('SYSTEM_ADMIN') ? freeExpenseDraftPermissions(permissions) : permissions,
+      ...(membership.company.reportClassification === 'DEMO' ? { isDemo: true, demoExpiresAt: membership.company.planTerm?.termEndsAt.toISOString() } : {}),
       ...(freeExpenseDrafts ? { freeExpenseDrafts: true } : {}),
       entitlementDeniedPermissions,
       availablePermissions: filterPermissionsByEntitlement(PERMISSIONS.map(permission => permission.key), entitled),

@@ -68,7 +68,7 @@ describe('accessContextFingerprint', () => {
     const unrelated = { ...base, displayName: 'ชื่อใหม่', legalAcceptanceRequired: true, entitledFeatureKeys: ['expenses', 'inventory'] };
     assert.equal(accessContextFingerprint(base), accessContextFingerprint(unrelated));
     assert.deepEqual(Object.keys(JSON.parse(accessContextFingerprint(base))).sort(),
-      ['branchIds', 'disbursementVoucherWebEntry', 'freeExpenseDrafts', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles', 'systemWhtCertificates']);
+      ['branchIds', 'demoExpiresAt', 'disbursementVoucherWebEntry', 'freeExpenseDrafts', 'isDemo', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles', 'systemWhtCertificates']);
   });
 
   it('changes when the disbursement-voucher setting changes without a permission change', () => {
@@ -93,4 +93,12 @@ describe('accessContextFingerprint', () => {
     assert.equal(canOpenDisbursementVoucherWeb({ ...base, permissions: [], disbursementVoucherWebEntry: true }, 'co'), false);
     assert.equal(canOpenDisbursementVoucherWeb(null, 'co'), false);
   });
+});
+
+it('demo identity and expiry refresh workspace UI while absent fields preserve ordinary sessions', () => {
+  const context = { roles: [], permissions: [] };
+  assert.equal(accessContextFingerprint(context), accessContextFingerprint({ ...context, isDemo: false }));
+  assert.notEqual(accessContextFingerprint(context), accessContextFingerprint({ ...context, isDemo: true }));
+  assert.notEqual(accessContextFingerprint({ ...context, isDemo: true, demoExpiresAt: '2026-11-09T00:00:00Z' }),
+    accessContextFingerprint({ ...context, isDemo: true, demoExpiresAt: '2026-11-10T00:00:00Z' }));
 });

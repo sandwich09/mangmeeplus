@@ -174,7 +174,7 @@ export class ExecutiveReportBuildUseCase {
     const months = kind === 'FULL' ? executiveMonths(firstMonth, currentMonth) : executiveMonths(previousMonth < firstMonth ? firstMonth : previousMonth, currentMonth);
     const firstBuildAt = firstBuild._min.asOf ?? asOf;
 
-    // A company nobody labelled yet counts as a customer, so the report shows every account by default; TEST and INTERNAL are the labels that take one out.
+    // A company nobody labelled yet counts as a customer, so the report shows every account by default; TEST, INTERNAL and DEMO take one out.
     const classificationOf = (company: CompanyRow) => reportClassificationOf(company) ?? 'CUSTOMER';
     const monthRows: Prisma.ExecutiveCompanyMonthCreateManyInput[] = [], monthHeaders: Prisma.ExecutiveReportMonthCreateManyInput[] = [];
     const activityOf = new Map<string, { firstAt: Date | null; lastAt: Date | null; lastLineAt: Date | null; aiRequests30: number }>();

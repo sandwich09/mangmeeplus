@@ -76,7 +76,7 @@ export type PartnerCompanySummaryDto = {
 };
 
 /** `GET /v1/system/partners` filters beside `q` and `status` (executive spec §16.1). ALL is the default of both. */
-export const PARTNER_REPORT_CLASSIFICATION_FILTERS = ['ALL', 'CUSTOMER', 'TEST', 'INTERNAL', 'UNCLASSIFIED'] as const;
+export const PARTNER_REPORT_CLASSIFICATION_FILTERS = ['ALL', 'CUSTOMER', 'TEST', 'INTERNAL', 'DEMO', 'UNCLASSIFIED'] as const;
 export type PartnerReportClassificationFilter = typeof PARTNER_REPORT_CLASSIFICATION_FILTERS[number];
 /** UNSET: neither the admin's group nor a group from the shop's business type — the report shows "ไม่ระบุ". */
 export const PARTNER_REPORT_INDUSTRY_GROUP_FILTERS = ['ALL', 'UNSET'] as const;

@@ -21,6 +21,7 @@ export type WatchdogJwtPayload = {
   exp: number;
   nbf?: number;
   iat?: number;
+  demoCompanyId?: string;
   type?: 'refresh';
 };
 
@@ -32,6 +33,7 @@ export type WatchdogIssuedJwtPayload = {
   aud?: string | string[];
   exp: number;
   iat?: number;
+  demoCompanyId?: string;
   type?: 'refresh';      // present only on refresh tokens
   // L-01: AuthSession.familyId — refresh tokens only, and absent on tokens issued before L-01.
   // It survives rotation so a retired token id can still be traced to its (live) family.

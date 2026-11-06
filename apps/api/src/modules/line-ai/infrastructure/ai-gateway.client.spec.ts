@@ -1234,7 +1234,9 @@ describe('AiGatewayClient v2 transport', () => {
     let validated = 0;
     const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'synthetic' } as any,
       { issue: () => { throw new Error('QA must not issue a business delegation'); } } as any, undefined,
-      { client: new Proxy({}, { get: () => { throw new Error('QA must not create a legacy hold or duplicate usage'); } }) } as any,
+      // Only the read-only DEMO check may touch the database (a customer company is not DEMO).
+      { client: new Proxy({}, { get: (_target, table) => table === 'company' ? { findUnique: async () => ({ reportClassification: null }) }
+        : (() => { throw new Error('QA must not create a legacy hold or duplicate usage'); })() }) } as any,
       { validate: async (received: unknown, digest: string, scope: unknown) => {
         validated++; assert.deepEqual(received, grant); assert.equal(digest, inputDigest);
         assert.deepEqual(scope, { companyId: 'company-1', userId: 'user-1' }); return true;
