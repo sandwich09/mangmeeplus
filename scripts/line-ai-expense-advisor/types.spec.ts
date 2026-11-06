@@ -376,6 +376,7 @@ describe('M3 round 3 optional schema extensions', () => {
     for (const value of [-1, 2, 0.5]) { const bad = corpus(); bad.conversations[0].tasks[0].previewTurn = value; assert.throws(() => validateWorkflowCorpus(bad), /previewTurn/); }
     const missing = corpus(); missing.conversations[0].turns[0].expect = {} as any; assert.throws(() => validateWorkflowCorpus(missing), /previewTurn/);
     const answered = corpus(); answered.conversations[0].tasks[0].goldTerminal.effect = 'ANSWERED'; assert.throws(() => validateWorkflowCorpus(answered), /previewTurn/);
+    const unnamed = corpus(); delete (unnamed.conversations[0].tasks[0] as any).previewTurn; assert.throws(() => validateWorkflowCorpus(unnamed), /previewTurn_required/, 'a declined card needs its turn');
   });
   it('allows missing company/role only for unlinked actors and confines creator-only to paid B', () => {
     const unknown = corpus(); unknown.conversations[0].actors = [{ key: 'unknown', kind: 'unlinked' }] as any;

@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 import { lineWorkflowOpenData, CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowId, type ClaimWorkflowId } from './line-reimbursement-approval-control.logic';
 import { formatClaimMoney } from './line-reimbursement-draft-card.logic';
 import type { LineWorkflowTargets, LineWorkflowRecordTargets } from '../../application/line-workflow-target.service';
@@ -1230,10 +1231,13 @@ export const LINE_CLAIM_PICKER_COPY = {
   incomplete: 'มีรายการมากเกินจะค้นในแชตค่ะ', interrupted: 'ยังค้นใบเบิกไม่ครบค่ะ กดค้นในเว็บ',
 };
 export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: ClaimWorkflowId,
-  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}): LineReplyMessage {
+  secret: string, company: string, user: string, webBaseUrl = '', payment: { pm?: string; pd?: string; pa?: string } = {}, language: LineReplyLanguage = 'th'): LineReplyMessage {
   const receiptBlocked = workflow === 'reimbursement_submit' && result.exhaustive && !result.targets.length ? result.receiptBlocked?.[0] : undefined;
   const receiptFix = receiptBlocked ? `ใบเบิก ${formatClaimMoney(receiptBlocked.amount, receiptBlocked.currency, 'th')} วันที่ ${lineDisplayDate(receiptBlocked.incurredDate, 'th')} ยังขาดใบเสร็จ เปิดใบเบิกเพื่อแนบใบเสร็จ${receiptBlocked.allowMissingReceiptWithReason ? 'หรือใส่เหตุผลที่ไม่มีใบเสร็จ' : ''}ก่อนส่งอนุมัติค่ะ` : undefined;
-  const text = receiptFix ?? (!result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
+  const approvals = workflow === 'approvals' && result.exhaustive && result.targets.length ? lineUiLabel('มีใบเบิกรอคุณอนุมัติ {count} ใบ{total} เลือกใบที่จะอนุมัติได้เลยค่ะ', language)
+    .replace('{count}', String(result.targets.length)).replace('{total}', new Set(result.targets.map(claim => claim.currency)).size === 1
+      ? lineUiLabel(' รวม {amount}', language).replace('{amount}', formatClaimMoney(result.targets.reduce((sum, claim) => sum.plus(claim.amount), new Decimal(0)).toFixed(2), result.targets[0]!.currency, language)) : '') : undefined;
+  const text = receiptFix ?? approvals ?? (!result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
     : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((claim, index) => ({
     type: 'postback', label: `${(scrubRecordIdentifier(claim.requestNo, 30) ?? `ร่าง ${index + 1}`)} · ${formatClaimMoney(claim.amount, claim.currency, 'th')}`,

@@ -457,10 +457,19 @@ export class LineExpenseActionService {
       || slip.updatedAt.toISOString() !== evidence.revision || slip.primaryAttachmentId !== evidence.attachmentId
       || !isBranchInScope(ctx.scopes ?? {}, slip.branchId)) throw new ConflictException('expense_source_version_changed');
   }
-  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
+  async paymentIntentFromText(text: string, evidence?: LineAiInputEvidenceV2): Promise<Partial<RecordExpensePaymentInput>> {
+    const paymentMethod = /เงินสด|^CASH$/iu.test(text) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(text) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(text) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(text) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(text) ? 'OTHER' : undefined;
+    const input = evidence?.parts.map(part => part.rawText).join('\n') === text ? evidence : (await createLineAiInputEvidence({ turnKey: deliveryHash(text), parts: [{ partId: 'part-0', eventIdHash: deliveryHash(text), acceptedAtMs: Date.now(), rawText: text }] }))?.inputEvidence;
+    const today = input?.parts[0] ? new Date(input.parts[0].acceptedAtMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }) : todayCivilDate('Asia/Bangkok');
+    const candidates = input ? await extractValueCandidatesV2(input, today) : undefined;
+    const amounts = candidates?.amounts.filter(item => item.currencyToken ? /^(?:บาท|฿|THB|baht)$/iu.test(item.currencyToken) : paymentMethod && !lineWorkflowPickerText(text).explicit) ?? [];
+    const dates = [...(candidates?.dates.map(item => item.isoDate) ?? []), ...(candidates?.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => item.fromDate) ?? [])];
+    return { ...(paymentMethod ? { paymentMethod } : {}), ...(amounts.length === 1 ? { paidAmount: amounts[0]!.value } : {}), ...(dates.length === 1 ? { paidAt: dates[0]! } : {}) };
+  }
+  async openWorkflow(ctx: RequestContext, chat: string, control: Extract<LineWorkflowControl, { action: 'wf_open' }>, language: LineReplyLanguage = 'th', reason?: string, typedPayment?: Partial<RecordExpensePaymentInput>): Promise<{ preview?: ExpenseActionPreview; reply: string; webPath?: string; webLabel?: string }> {
     if (ctx.freeExpenseDrafts || !verifyLineWorkflowOpenSig(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId,
       control.act, control.id, control.pm ?? '', control.pd ?? '', control.pa ?? '', control.sig)) return { reply: EXPIRED };
-    return this.preview(ctx, chat, { action: control.act,
+    return this.preview(ctx, chat, { action: control.act, ...(control.act === 'RECORD_PAYMENT' ? { ...typedPayment, requirePaymentMethod: true } : {}),
       ...(this.isClaim(control.act) ? { reimbursementId: control.id } : this.isVoucher(control.act) && control.act !== 'VOUCHER_CREATE'
         ? { voucherId: control.id } : { expenseId: control.id }),
       ...(control.pm ? { paymentMethod: control.pm } : {}), ...(control.pd ? { paidAt: control.pd } : {}),
@@ -767,7 +776,7 @@ export class LineExpenseActionService {
       if (paymentIntent) preview.details = [...(preview.details ?? []), en ? `After confirming, record payment for ${lineDisplayDate(String(paymentIntent.paidAt), language)}.` : `หลังยืนยัน กดบันทึกจ่ายวันที่ ${formatThaiDate(String(paymentIntent.paidAt))}ค่ะ`];
       const entry: StoredAction = { previewId: preview.previewId, companyId: ctx.companyId, userId: ctx.userId, membershipId: ctx.membershipId,
         chatKeyHash: this.key(chat), conversationId: owner.id, ownerEpoch: owner.lifecycleEpoch, expenseId: record.id,
-        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}), ...(typeof input.paidAmount === 'string' ? { paidAmount: input.paidAmount } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, allowedPaymentMethods, awaitingField: allowedPaymentMethods ? 'paymentMethod' : awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
+        branchId: record.branchId, createdByUserId: record.createdByUserId, revision: record.updatedAt.toISOString(), digest: record.digest, requestId: ctx.requestId, preview, review, markReady, paymentIntent: paymentIntent ?? (voucher ? { ...(typeof input.paidAt === 'string' ? { paidAt: input.paidAt } : {}), ...(typeof input.paymentMethod === 'string' ? { paymentMethod: input.paymentMethod } : {}), ...(typeof input.paidAmount === 'string' ? { paidAmount: input.paidAmount } : {}) } : undefined), category: preparedCategory?.category, evidence, awaitingReason, voucher: voucher?.payload, allowedPaymentMethods, awaitingField: allowedPaymentMethods || action === 'RECORD_PAYMENT' && input.requirePaymentMethod && !payment?.paymentMethod ? 'paymentMethod' : awaitingClaimSlip ? 'claimSlip' : voucher?.awaitingField,
         ...(record.claim ? { claim: { ...(claimPayment ? { payment: claimPayment } : {}), payoutSubmitToken: record.claim.payout?.submitToken, hash: record.claim.approvalSnapshotHash, payoutVersion: record.claim.payout?.version, thirdParty: record.claim.payout?.holderType === 'THIRD_PARTY' } } : {}) };
       if (preparedCategory) preview.details = [`${preparedCategory.category.kind === 'wht' ? 'จ่ายค่าอะไร' : 'หมวดค่าใช้จ่าย'}: ${scrubRecordText(preparedCategory.category.name, 100)}`, ...(preview.details ?? [])];
       preview.token = `${entry.previewId}.${this.sign(entry)}`;
@@ -1233,11 +1242,11 @@ export class LineExpenseActionService {
         paidAmount: entry.claim!.payment!.paidAmount, paidAt: entry.claim!.payment!.paidAt, slipAttachmentId: intent.attachmentId }, true, undefined, language);
     } catch (error) { return { reply: this.refusal(error, 'REIMBURSEMENT_RECORD_PAYMENT', undefined, language), webPath: `/companies/${ctx.companyId}/reimbursements/${entry.expenseId}` }; }
   }
-  async answerReason(ctx: RequestContext, chat: string, reason: string): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
+  async answerReason(ctx: RequestContext, chat: string, reason: string, evidence?: LineAiInputEvidenceV2): Promise<{ preview?: ExpenseActionPreview; reply: string; cancelled?: true; taskSource?: { action: ExpenseAction; id: string } } | null> {
     const entry = await this.store.load(ctx.companyId, this.key(chat));
     if (!(entry?.awaitingReason || entry?.awaitingField) || !await this.bound(ctx, chat, entry)) return null;
     const language: LineReplyLanguage = /[\u0E00-\u0E7F]/u.test(reason) ? 'th' : entry.awaitingField && entry.awaitingField !== 'reason' ? entry.preview.language ?? 'th' : lineReplyLanguage(reason, entry.preview.language ?? 'th');
-    if (!/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim()) && !isPendingFieldAnswer(reason, entry.awaitingField === 'payeeName' || entry.awaitingField === 'payeeAddress' ? 'payee' : 'reason')) return null;
+    if (!/^(ไม่ทำ|ยกเลิก|cancel)$/iu.test(reason.trim()) && !(entry.awaitingField === 'paymentMethod' && entry.preview.action === 'RECORD_PAYMENT') && !isPendingFieldAnswer(reason, entry.awaitingField === 'payeeName' || entry.awaitingField === 'payeeAddress' ? 'payee' : 'reason')) return null;
     const record = await this.read(ctx, entry.expenseId, entry.preview.action, entry.voucher).catch(() => null);
     if (!record || record.updatedAt.toISOString() !== entry.revision || record.digest !== entry.digest) {
       await this.store.discard(ctx.companyId, this.key(chat)); return { reply: language === 'en' ? 'This expense changed; please review its current state.' : EXPENSE_ACTION_CHANGED };
@@ -1249,7 +1258,8 @@ export class LineExpenseActionService {
       if (!isVoucherPayeeName(reason)) return null;
     }
     if (entry.awaitingField === 'claimSlip') return { reply: this.question(entry) };
-    const paymentMethod = entry.awaitingField === 'paymentMethod' ? /เงินสด|^CASH$/iu.test(reason) ? 'CASH' : /โอน|^BANK_TRANSFER$/iu.test(reason) ? 'BANK_TRANSFER' : /บัตร|^CARD$/iu.test(reason) ? 'CARD' : /เช็ค|เช็ก|^CHEQUE$/iu.test(reason) ? 'CHEQUE' : /อื่น|^OTHER$/iu.test(reason) ? 'OTHER' : undefined : undefined;
+    const paymentAnswer = entry.awaitingField === 'paymentMethod' ? await this.paymentIntentFromText(reason, evidence) : {};
+    const paymentMethod = paymentAnswer.paymentMethod;
     if (entry.allowedPaymentMethods && (!paymentMethod || !entry.allowedPaymentMethods.includes(paymentMethod as 'BANK_TRANSFER' | 'CHEQUE' | 'OTHER'))) {
       entry.paymentMethodQuestion = !paymentMethod;
       entry.preview.token = `${entry.previewId}.${this.sign(entry)}`;
@@ -1259,7 +1269,7 @@ export class LineExpenseActionService {
     if (entry.awaitingField === 'paymentMethod' && !paymentMethod) return { reply: this.question(entry) };
     return this.preview(ctx, chat, { action: entry.preview.action, expenseId: entry.expenseId, reimbursementId: entry.expenseId, voucherId: entry.voucher?.id, handoffId: entry.voucher?.handoffs?.[0]?.id,
       ...(entry.voucher?.expenseIds ? { expenseIds: entry.voucher.expenseIds.join(',') } : {}),
-      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAmount: entry.preview.payment?.paidAmount, paidAt: entry.preview.payment?.paidAt ?? entry.voucher?.payment?.paidDate } : { reason }) }, true, undefined, entry.preview.language ?? 'th', entry.voucher?.requestedBillCount);
+      ...(entry.awaitingField === 'payeeName' ? { payeeName: reason } : entry.awaitingField === 'payeeAddress' ? { payeeAddress: reason } : paymentMethod ? { paymentMethod, paidAmount: entry.preview.payment?.paidAmount, paidAt: entry.preview.payment?.paidAt ?? entry.voucher?.payment?.paidDate, ...(entry.preview.action === 'RECORD_PAYMENT' ? paymentAnswer : {}) } : { reason }) }, true, undefined, entry.preview.language ?? 'th', entry.voucher?.requestedBillCount);
   }
   async permitted(ctx: RequestContext, entry: Pick<StoredAction, 'voucher' | 'createdByUserId' | 'expenseId'> & { preview: Pick<ExpenseActionPreview, 'action'> }): Promise<boolean> {
     if (entry.voucher) { try { await this.vouchers!.authorize(ctx, entry.voucher.action); return true; } catch (error) { if (error instanceof HttpException) return false; throw error; } }

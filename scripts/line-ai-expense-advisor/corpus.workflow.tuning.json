@@ -2588,6 +2588,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -2807,6 +2808,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -3026,6 +3028,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -3251,6 +3254,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -3469,6 +3473,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -3687,6 +3692,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -3869,10 +3875,10 @@
           "expect": {
             "card": "applied",
             "tier": 0,
-            "label": "ยืนยัน",
+            "label": "ตรวจแล้ว ยืนยัน",
             "maxModelCalls": 0
           },
-          "press": "ยืนยัน",
+          "press": "ตรวจแล้ว ยืนยัน",
           "pressFrom": {
             "turn": 1
           }
@@ -3901,6 +3907,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -4114,6 +4121,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -4332,6 +4340,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -4565,6 +4574,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -4785,6 +4795,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 1,
           "minimalTurns": 3,
           "completable": true
         }
@@ -7952,6 +7963,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -8028,6 +8040,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -8104,6 +8117,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -8180,6 +8194,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 3,
           "minimalTurns": 5,
           "completable": true
         }
@@ -8260,6 +8275,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 3,
           "minimalTurns": 5,
           "completable": true
         }
@@ -8342,6 +8358,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -8418,6 +8435,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 2,
           "minimalTurns": 4,
           "completable": true
         }
@@ -8494,6 +8512,7 @@
             "effect": "DECLINED",
             "records": []
           },
+          "previewTurn": 3,
           "minimalTurns": 5,
           "completable": true
         }
@@ -8720,10 +8739,10 @@
           "expect": {
             "card": "applied",
             "tier": 0,
-            "label": "ยืนยัน",
+            "label": "ตรวจแล้ว ยืนยัน",
             "maxModelCalls": 0
           },
-          "press": "ยืนยัน",
+          "press": "ตรวจแล้ว ยืนยัน",
           "pressFrom": {
             "turn": 1
           },

@@ -15793,6 +15793,7 @@ it('A4b paid expense and certificate buttons bypass credit and models while free
       aiGatewayFn: () => assert.fail('picker must not invoke a model') });
     const flow = h.useCase as any;
     flow.aiGateway.creditState = async () => assert.fail('a button never reads credit');
+    flow.expenseActions = { paymentIntentFromText: async () => ({}) };
     const workflows: string[] = [];
     flow.workflowTargets = { pick: async (_ctx: unknown, _chat: string, workflow: string) => {
       workflows.push(workflow); return { targets: [], total: 0, exhaustive: true };
@@ -17259,7 +17260,7 @@ async function m4PickerHarness(workflow = 'expense_delete', duplicate = false) {
     expenseNumber: id === 'listed-1' ? 'ทดสอบ-0003' : 'ทดสอบ-0004', lines: [{ description: id === 'listed-1' ? 'ค่าบริการ' : 'ค่าเดินทาง' }] }) };
   prisma.client.branch.findMany = async () => [{ id: 'branch-1', name: 'สาขา 1' }];
   const selected: string[] = [];
-  flow.expenseActions = { openWorkflow: async (_ctx: any, _chat: string, control: any) => { selected.push(control.id); return { reply: 'เตรียมการ์ดแล้ว' }; } };
+  flow.expenseActions = { paymentIntentFromText: async () => ({}), openWorkflow: async (_ctx: any, _chat: string, control: any) => { selected.push(control.id); return { reply: 'เตรียมการ์ดแล้ว' }; } };
   let created = 0;
   flow.captureExpenseNote = { execute: async () => { created++; throw new Error('picker text must never create'); } };
   flow.deliverRequiredMessages = async (_event: any, messages: any[]) => h.sentMessages.push(...messages);
@@ -17998,6 +17999,64 @@ async function r8ClaimPicker(t: TestContext, workflow = 'approvals', duplicate =
   return { ...h, source, reads, outcomes };
 }
 
+for (const [workflow, action, cardId, text] of [
+  ['expense_submit', 'MARK_READY', 'expense.confirm', 'ส่งตรวจค่าใช้จ่ายต้องทำยังไง'],
+  ['expense_confirm', 'CONFIRM', 'expense.confirm', 'ยืนยันค่าใช้จ่ายต้องทำยังไง'],
+  ['expense_delete', 'DELETE_DRAFT', 'expense.confirm', 'ลบร่างค่าใช้จ่ายต้องทำยังไง'],
+  ['expense_void', 'VOID', 'expense.confirm', 'ยกเลิกค่าใช้จ่ายต้องทำยังไง'],
+  ['expense_pay', 'RECORD_PAYMENT', 'payment.record', 'บันทึกจ่ายค่าใช้จ่ายต้องทำยังไง'],
+  ['payment_voucher', 'VOUCHER_CREATE', 'voucher.create', 'สร้างใบเตรียมจ่ายต้องทำยังไง'],
+  ['reimbursement_submit', 'REIMBURSEMENT_SUBMIT', 'claim.submit', 'ส่งใบเบิกอนุมัติต้องทำยังไง'],
+  ['reimbursement_cancel', 'REIMBURSEMENT_CANCEL', 'claim.cancel', 'ยกเลิกใบเบิกต้องทำยังไง'],
+]) it(`CARDS-R2 reviewed ${workflow} how-to delivers its button then opens the picker without model calls`, async t => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const h: any = workflow!.startsWith('reimbursement_') ? await r8ClaimPicker(t, 'reimbursement_cancel') : await r7OffPagePicker(t);
+  h.source.ctx.permissions.push('reimbursement.submit');
+  if (h.source.records) h.source.records.forEach((record: any) => { record.status = action === 'CONFIRM' ? 'READY_FOR_CONFIRMATION'
+    : ['VOID', 'RECORD_PAYMENT', 'VOUCHER_CREATE'].includes(action!) ? 'CONFIRMED' : 'DRAFT'; });
+  if (workflow === 'reimbursement_submit') h.source.actions.submitClaim = { execute: async (_ctx: any, id: string, _input: any, options: any) => {
+    assert.equal(options.previewOnly, true); return h.source.claims.find((claim: any) => claim.id === id);
+  } };
+  h.flow.config.lineAiApprovedKnowledgeEnabled = true;
+  h.prisma.client.companyFeatureEntitlement.findMany = async () => ['ai_line_assistant', 'expenses', 'reimbursement'].map(featureKey => ({ featureKey, enabled: true }));
+  const calls: string[] = [];
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => { calls.push('classify'); return { status: 'CLASSIFIED', label: 'howto', secondLabel: 'none', confidence: 0.92,
+    secondConfidence: 0, slots: {}, schemaEnforcement: 'output_config', usage: [], modelId: 'test' }; };
+  h.flow.aiGateway.requestLineIntakeRoute = async () => { calls.push('intake'); return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.99,
+    selectedKnowledgeCardIds: [cardId], semanticSubrequests: [{ index: 0, kind: 'help', goal: text, requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] }; };
+  h.flow.aiGateway.requestLineTurn = async (req: any) => {
+    calls.push('turn'); assert.equal(req.howToActionId, undefined);
+    const result = await runSemanticTurnV2({ req, approvedKnowledgeEnabled: true, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false,
+      provider: { generateText: async () => assert.fail('reviewed help needs no additional model call') }, invoke: async () => assert.fail('help cannot execute tools') });
+    return { ...result, requestId: req.requestId, intent: 'help', agent: 'general', refused: false, sourceLabels: [], toolsInvoked: [], durationMs: 1 };
+  };
+  await h.execute(text);
+  assert.deepEqual(calls, ['classify', 'intake', 'turn'], JSON.stringify(h.delivered.at(-1)));
+  const buttons = h.delivered.at(-1)!.flatMap((message: any) => message.quickReply?.items ?? []);
+  const button = buttons.find((item: any) => item.action.label === 'ให้น้องทำให้')?.action;
+  assert.deepEqual(button, { type: 'postback', label: 'ให้น้องทำให้', data: `action=chat-action&id=${workflow}` });
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => assert.fail('press cannot classify');
+  h.flow.aiGateway.requestLineIntakeRoute = async () => assert.fail('press cannot use intake');
+  h.flow.aiGateway.requestLineTurn = async () => assert.fail('press cannot use a model turn');
+  await h.execute(button.label, button.data);
+  const controls = h.delivered.at(-1)!.flatMap((message: any) => flexButtons(message)).map((button: any) => new URLSearchParams(button.action.data));
+  assert.ok(controls.some((control: URLSearchParams) => control.get('action') === 'wf_open' && control.get('act') === action), JSON.stringify(h.delivered.at(-1)));
+});
+
+it('CARDS-R2 free source-draft how-tos offer no paid workflow button and bypass every model seam', async () => {
+  for (const text of ['ส่งตรวจค่าใช้จ่ายต้องทำยังไง', 'ยืนยันค่าใช้จ่ายต้องทำยังไง', 'ลบร่างค่าใช้จ่ายต้องทำยังไง', 'ยกเลิกค่าใช้จ่ายต้องทำยังไง',
+    'บันทึกจ่ายค่าใช้จ่ายต้องทำยังไง', 'สร้างใบเตรียมจ่ายต้องทำยังไง', 'ส่งใบเบิกอนุมัติต้องทำยังไง', 'ยกเลิกใบเบิกต้องทำยังไง']) {
+    const { prisma } = makePrisma();
+    const h = makeUseCase(prisma, { freeExpenseDrafts: true, permissions: ['expense.read_own', 'expense.update', 'expense.receipt.line_upload'],
+      intakeRouteFn: () => assert.fail('free how-to cannot call intake'), aiGatewayFn: () => assert.fail('free how-to cannot call a model turn') });
+    (h.useCase as any).aiGateway.requestLineWorkflowClassify = async () => assert.fail('free how-to cannot classify');
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `cards-r2-free-${text}`, messageText: text });
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.getAiGatewayCalled(), false);
+    assert.doesNotMatch(JSON.stringify(h.sentMessages), /ให้น้องทำให้|action=chat-action|action=wf_open/);
+    assert.match(JSON.stringify(h.sentMessages), /เมนูหลัก/);
+  }
+});
+
 for (const [workflow, action] of [['expense_submit', 'MARK_READY'], ['reimbursement_cancel', 'REIMBURSEMENT_CANCEL'], ['payment_voucher', 'VOUCHER_CREATE']]) {
   it(`CARDS-1 paid ${workflow} how-to postback opens its existing picker with zero model calls`, async t => {
     const h: any = workflow === 'reimbursement_cancel' ? await r8ClaimPicker(t, workflow) : await r7OffPagePicker(t);
@@ -18257,4 +18316,77 @@ it('M4 round 9 free source-draft shops cannot open cancel or confirmation states
     assert.equal(result.preview, undefined); assert.deepEqual(h.previewed, []);
     assert.equal(await h.actions.store.load(ctx.companyId, 'expense-action:m5-chat'), null);
   }
+});
+
+
+it('M4 round 10 workflow payment asks its method and captures the answer without creating an expense', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 10, 6, 5) });
+  for (const [answer, method, amount, date] of [
+    ['จ่ายเงินสด 1,000 บาท วันนี้', 'CASH', '1000', '2026-11-06'],
+    ['โอน', 'BANK_TRANSFER', '1000.00', '2026-11-06'],
+    ['จ่ายเงินสด 400 บาท เมื่อวาน', 'CASH', '400', '2026-11-05'],
+  ]) {
+    const h = await r7OffPagePicker(t);
+    for (const row of h.source.records) Object.assign(row, { status: 'CONFIRMED', grandTotalAmount: '1000', netPayableAmount: '1000', outstandingAmount: '1000', paidAmount: '0', paymentStatus: 'UNPAID' });
+    let repositoryCreates = 0;
+    h.source.actions.repo.create = async () => { repositoryCreates++; assert.fail('method answer cannot create an expense'); };
+    await h.execute('บันทึกจ่ายค่าบริการค้างจ่าย', 'action=chat-action&id=expense_pay');
+    await h.execute('ใบเลขที่ ทดสอบ-0006');
+    assert.match(JSON.stringify(h.delivered.at(-1)), /จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ/);
+    assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    const waiting = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(waiting.awaitingField, 'paymentMethod');
+    await h.execute(answer!);
+    const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+    assert.equal(pending.preview.action, 'RECORD_PAYMENT'); assert.equal(pending.expenseId, 'workflow-expense-c-5');
+    assert.equal(pending.preview.payment.paymentMethod, method); assert.equal(Number(pending.preview.payment.paidAmount), Number(amount));
+    assert.equal(pending.preview.payment.paidAt, date);
+    assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+    assert.equal(repositoryCreates, 0); assert.equal(h.creates(), 0);
+    assert.equal(h.intakeRequests.length, 0); assert.equal(h.classifyCalls(), 0);
+  }
+});
+
+it('M4 round 10 an unreadable payment method re-asks once and retains the payment action', async t => {
+  const h = await r7OffPagePicker(t);
+  for (const row of h.source.records) Object.assign(row, { status: 'CONFIRMED' });
+  await h.execute('บันทึกจ่าย', 'action=chat-action&id=expense_pay');
+  await h.execute('ใบเลขที่ ทดสอบ-0006');
+  const before = h.delivered.length;
+  await h.execute('จ่ายแล้ว 502 บาท');
+  assert.equal(h.delivered.length, before + 1);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ/);
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending.awaitingField, 'paymentMethod');
+  assert.equal(h.creates(), 0); assert.equal(h.intakeRequests.length, 0); assert.equal(h.classifyCalls(), 0);
+});
+
+it('M4 round 10 a method typed in the workflow start or signed control skips the question', async t => {
+  const h = await r7OffPagePicker(t);
+  for (const row of h.source.records) Object.assign(row, { status: 'CONFIRMED' });
+  h.flow.aiGateway.requestLineWorkflowClassify = async () => ({ status: 'CLASSIFIED', label: 'expense_pay', confidence: 0.99, secondLabel: 'none', secondConfidence: 0, slots: {} });
+  await h.execute('บันทึกจ่ายค่าบริการด้วยเงินสด');
+  await h.execute('ใบเลขที่ ทดสอบ-0006');
+  const pending = await h.source.actions.store.load('company-1', `expense-action:${chatKeyHashOf(BASE_EVENT)}`);
+  assert.equal(pending.preview.payment.paymentMethod, 'CASH'); assert.equal(pending.awaitingField, undefined);
+  assert.match(JSON.stringify(h.delivered.at(-1)), /expense_action_confirm/);
+  assert.doesNotMatch(JSON.stringify(h.delivered.at(-1)), /จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ/);
+  assert.equal(h.creates(), 0);
+});
+
+it('M4 round 10 free source-draft shops cannot open the payment-method action', async () => {
+  const h = await m5ActionTargetHarness('RECORD_PAYMENT');
+  const { lineWorkflowOpenSig } = await import('../../domain/logic/line-reimbursement-approval-control.logic');
+  const ctx = { ...h.ctx, freeExpenseDrafts: true };
+  const result = await h.actions.openWorkflow(ctx, 'm5-chat', { action: 'wf_open', act: 'RECORD_PAYMENT', id: 'gold', sig: lineWorkflowOpenSig('m5-secret', ctx.companyId, ctx.userId, 'RECORD_PAYMENT', 'gold') });
+  assert.equal(result.preview, undefined); assert.deepEqual(h.previewed, []);
+  assert.equal(await h.actions.store.load(ctx.companyId, 'expense-action:m5-chat'), null);
+});
+
+it('M4 round 10 payment answers ignore evidence belonging to a different message', async () => {
+  const h = await m5ActionTargetHarness('RECORD_PAYMENT');
+  const evidence = (await createLineAiInputEvidence({ turnKey: 'old-payment', parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: 'เงินสด 400 บาท เมื่อวาน' }] }))!.inputEvidence;
+  assert.deepEqual(await h.actions.paymentIntentFromText('โอน', evidence), { paymentMethod: 'BANK_TRANSFER' });
+  for (const text of ['ใบที่ 2 เงินสด', 'เงินสด สาขา 2', 'เงินสด รอบ 1'])
+    assert.deepEqual(await h.actions.paymentIntentFromText(text), { paymentMethod: 'CASH' }, text);
 });

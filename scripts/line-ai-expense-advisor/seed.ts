@@ -522,6 +522,9 @@ export function buildWorkflowSeed(now: Date, requestedActors: Actor[] = []): Wor
       rows.push({ model: 'expenseRecord', data: { ...template.data, id, vendorDocumentNumber: `ทดสอบ-${String(index + 1).padStart(4, '0')}`, status, expenseDate, vendorCounterpartyId: null, vendorNameSnapshot: 'ผู้รับเงินนอกคู่ค้า',
         sourceDocumentType: index < 2 ? 'EXPENSE_NOTE_TEXT' : 'RECEIPT', taxEvidenceStatus: index === 0 ? 'SUPPORTING_ONLY' : 'NEEDS_REVIEW', currency: 'THB', missingReceiptReason: index === 0 ? 'ผู้ขายไม่มีใบเสร็จ' : null,
         ...(index === 0 ? { paymentMethod: 'CASH', paidAt: expenseDate } : {}),
+        // Ready for confirmation: the reviewer settled the document type and noted the original paper is on file.
+        ...(status === 'READY_FOR_CONFIRMATION' ? { taxEvidenceStatus: 'SUPPORTING_ONLY', aiVerificationSummaryJson: { ...(template.data.aiVerificationSummaryJson as Record<string, unknown> | null ?? {}),
+          documentEvidenceDraft: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [], reason: '', originalDocumentAvailable: true } } } : {}),
         createdByUserId: company.companyKey === 'A' && index < 3 ? creator.userId : company.users.STAFF.userId,
         expenseCategoryId: company.categoryIds[3], paymentStatus: 'UNPAID', paidAmount: '0.00', grandTotalAmount: '1000.00', subtotalAmount: '1000.00', taxableAmount: '1000.00',
         netPayableAmount: wht === '0.00' ? '1000.00' : '970.00', outstandingAmount: wht === '0.00' ? '1000.00' : '970.00', whtAmount: wht,

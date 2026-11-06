@@ -2184,10 +2184,14 @@ it('Y1/Y4: one signed press runs ready → web evidence review → confirm with 
     assert.equal(paymentOpen.act, 'RECORD_PAYMENT');
     let paymentPreviews = 0;
     service.payment = { previewLineAction: async (ctx: RequestContext, id: string) => { assert.equal(ctx, h.ctx); assert.equal(id, h.record.id); paymentPreviews++; } };
-    const opened = await h.actions.openWorkflow(h.ctx, 'private-action', paymentOpen); assert.ok(opened.preview, opened.reply); assert.equal(opened.preview.action, 'RECORD_PAYMENT');
+    const question = await h.actions.openWorkflow(h.ctx, 'private-action', paymentOpen);
+    assert.equal(question.preview, undefined); assert.equal(question.reply, 'จ่ายด้วยเงินสด โอนเงิน บัตร หรือเช็คคะ');
+    const opened = (await h.actions.answerReason(h.ctx, 'private-action', 'เงินสด'))!;
+    assert.ok(opened.preview, opened.reply); assert.equal(opened.preview.action, 'RECORD_PAYMENT');
+    assert.equal(opened.preview.payment!.paymentMethod, 'CASH');
     assert.match(opened.preview.details!.join(' '), /วันที่ \d+ [ก-๙.]+ 25\d{2}/u);
     assert.doesNotMatch(opened.preview.details!.join(' '), /วันที่ \d{4}-\d{2}-\d{2}/u);
-    assert.equal(paymentPreviews, 1); assert.equal(h.state.writes.length, 1, 'opening payment never pays');
+    assert.equal(paymentPreviews, 2); assert.equal(h.state.writes.length, 1, 'opening payment and answering its method never pay');
   }
 });
 

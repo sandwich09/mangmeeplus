@@ -39,6 +39,8 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 }
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
+  'มีใบเบิกรอคุณอนุมัติ {count} ใบ{total} เลือกใบที่จะอนุมัติได้เลยค่ะ': 'You have {count} claims awaiting your approval{total}. Choose a claim to approve.',
+  ' รวม {amount}': ', totalling {amount}',
   [EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL]: 'Document image not attached', 'ส่งรูปเอกสาร': 'Send document photo',
   'บันทึกค่าใช้จ่าย': 'Record expense', 'สร้างใบเบิก': 'Create claim', 'ทำใบรับรองแทนใบเสร็จ': 'Substitute receipt', 'ค้นหาค่าใช้จ่าย': 'Find expenses',
   'ดูใบเบิกรออนุมัติ': 'Review claims', 'เพิ่มคู่ค้า': 'Add counterparty', 'เลือกแพ็กเกจ': 'Choose package', 'ดูยอดขาย': 'View sales', 'ค้นหาสินค้า': 'Find products',

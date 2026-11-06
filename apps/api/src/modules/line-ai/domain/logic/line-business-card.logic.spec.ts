@@ -33,6 +33,53 @@ import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-m
 import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import * as cardBuilders from './line-business-card.logic';
 
+it('CARDS-R2 reviewed workflow help keeps its reviewed bytes and offers exactly one permitted workflow', async () => {
+  const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
+  const { activeProductHelpPack } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/approved-product-help');
+  const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
+  for (const [id, cardId, text] of [
+    ['expense_submit', 'expense.confirm', 'ส่งตรวจค่าใช้จ่ายต้องทำยังไง'],
+    ['expense_confirm', 'expense.confirm', 'ยืนยันค่าใช้จ่ายต้องทำยังไง'],
+    ['expense_delete', 'expense.confirm', 'ลบร่างค่าใช้จ่ายต้องทำยังไง'],
+    ['expense_void', 'expense.confirm', 'ยกเลิกค่าใช้จ่ายต้องทำยังไง'],
+    ['expense_pay', 'payment.record', 'บันทึกจ่ายค่าใช้จ่ายต้องทำยังไง'],
+    ['payment_voucher', 'voucher.create', 'สร้างใบเตรียมจ่ายต้องทำยังไง'],
+    ['reimbursement_submit', 'claim.submit', 'ส่งใบเบิกอนุมัติต้องทำยังไง'],
+    ['reimbursement_cancel', 'claim.cancel', 'ยกเลิกใบเบิกต้องทำยังไง'],
+  ]) {
+    const entry = LINE_CHAT_ACTIONS.find(action => action.id === id)!;
+    const card = activeProductHelpPack().cards.find(card => card.id === cardId)!;
+    assert.ok(card, cardId);
+    const permissions = ['ai.tool.invoke', entry.permission, ...card.permissionAnyOf, 'expense.read', 'expense.review', 'reimbursement.read_own'];
+    const result = await runSemanticTurnV2({ req: { requestId: 'cards-reviewed', webhookEventId: 'cards-reviewed', messageText: text!, messagePreviewHash: 'a'.repeat(16),
+      approvedKnowledge: true, selectedKnowledgeCardIds: [cardId!], entitledFeatureKeys: ['expenses', 'reimbursement'],
+      userContext: { lineUserId: 'line', internalUserId: 'user', companyId: 'company', membershipId: 'member', permissions, roles: [], locale: 'th-TH' },
+      semanticSubrequests: [{ index: 0, kind: 'help', goal: text!, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] },
+      provider: { generateText: async () => assert.fail('reviewed help cannot add a model call') }, invoke: async () => assert.fail('help cannot execute a workflow'),
+      approvedKnowledgeEnabled: true, draftEditEnabled: true, reimbursementDraftEnabled: true, publicLookupEnabled: false });
+    assert.equal(result.presentation?.cards[0]?.title, card.title);
+    assert.equal(result.presentation?.cards[0]?.text, card.body);
+    assert.equal(result.replyText, `${card.title}\n${card.body}`);
+    const quick = cardBuilders.productHelpQuickReply({ ...result, refused: false } as any, permissions, new Set(['expenses', 'reimbursement']));
+    assert.deepEqual(quick?.items.map(item => item.action), [{ type: 'postback', label: 'ให้น้องทำให้', data: `action=chat-action&id=${id}` }], id);
+  }
+});
+
+// An explanation keeps its reviewed card's next step (PWS-LINE-HELP-ANSWER Q4); only ambiguity and access remove it.
+it('CARDS-R2 reviewed help never offers two workflows, denied access or free access', async () => {
+  const { productHelpAction } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/approved-product-help');
+  for (const [text, cardIds, permissions, featureKeys] of [
+    ['ส่งตรวจและยืนยันค่าใช้จ่ายต้องทำยังไง', ['expense.confirm'], ['expense.review', 'expense.confirm'], ['expenses']],
+    ['ยกเลิกใบเบิกและส่งตรวจค่าใช้จ่ายต้องทำยังไง', ['claim.cancel', 'expense.confirm'], ['expense.review', 'reimbursement.cancel_own'], ['expenses', 'reimbursement']],
+    ['ส่งตรวจค่าใช้จ่ายและสร้างใบเตรียมจ่ายต้องทำยังไง', ['expense.confirm', 'voucher.create'], ['expense.review', 'expense.confirm', 'expense.disbursement.prepare'], ['expenses']],
+    ['ส่งตรวจค่าใช้จ่ายต้องทำยังไง', ['expense.confirm'], ['expense.confirm'], ['expenses']],
+    ['ส่งตรวจค่าใช้จ่ายต้องทำยังไง', ['expense.confirm'], ['expense.review'], []],
+  ] as const) {
+    const help = productHelpAction({ text, selectedKnowledgeCardIds: cardIds, permissions, featureKeys, companyId: 'company' });
+    assert.equal(cardBuilders.productHelpQuickReply({ ...help, refused: false } as any, permissions, new Set(featureKeys)), undefined, text);
+  }
+});
+
 it('CARDS-1 workflow how-tos retain their postback when a reviewed card is selected and recheck R21', async () => {
   const { runSemanticTurnV2 } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/semantic-turn-v2');
   const { LINE_CHAT_ACTIONS } = await import('@watchdog-bms/contracts');
@@ -1639,4 +1686,22 @@ it('R22 substitute navigation has the named English capability button', async ()
   const { productHelpQuickReply } = await import('./line-business-card.logic');
   const response: any = { refused: false, presentation: { cards: [{ chatActionIds: ['substitute_receipt'] }] } };
   assert.equal(productHelpQuickReply(response, ['expense.review'], new Set(['expenses']), 'en')!.items[0]!.action.label, 'Substitute receipt');
+});
+
+
+it('R10 exhaustive approvals state the permitted count and currency total only', () => {
+  const claims: any[] = [{ id: 'one', requestNo: 'RB-1', amount: '1000.25', currency: 'THB' }, { id: 'two', requestNo: 'RB-2', amount: '1065.75', currency: 'THB' }];
+  const card = (targets: any[], exhaustive = true, total = targets.length) => buildClaimWorkflowPicker({ targets, total, exhaustive }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com');
+  assert.match(JSON.stringify(card(claims)), /มีใบเบิกรอคุณอนุมัติ 2 ใบ รวม 2,066.00 บาท เลือกใบที่จะอนุมัติได้เลยค่ะ/);
+  assert.match(JSON.stringify(card(claims, false, 301)), /มีรายการมากเกินจะค้นในแชตค่ะ/);
+  assert.doesNotMatch(JSON.stringify(card(claims, false, 301)), /รวม 2,066/);
+  assert.match(JSON.stringify(card([])), /ไม่มีใบเบิกรอคุณอนุมัติค่ะ/);
+  const mixed = card([claims[0], { ...claims[1], currency: 'USD' }]);
+  assert.match(JSON.stringify(mixed), /มีใบเบิกรอคุณอนุมัติ 2 ใบ เลือกใบที่จะอนุมัติได้เลยค่ะ/);
+  assert.doesNotMatch(JSON.stringify(mixed), /รวม /);
+});
+
+it('R10 approvals totals use the existing English label map', () => {
+  const card = buildClaimWorkflowPicker({ targets: [{ id: 'one', requestNo: 'RB-1', amount: '1000', currency: 'THB' } as any, { id: 'two', requestNo: 'RB-2', amount: '1066', currency: 'THB' } as any], total: 2, exhaustive: true }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com', {}, 'en');
+  assert.match(JSON.stringify(card), /You have 2 claims awaiting your approval, totalling 2,066.00 THB. Choose a claim to approve./);
 });

@@ -216,20 +216,25 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
   const text = input.text ?? '';
   const claim = /ใบเบิก|เบิกเงิน|reimbursement|claim/iu.test(text);
   const expense = /ค่าใช้จ่าย|รายจ่าย|expense|บิล/iu.test(text);
-  // Specific operation beats broad creation guides selected for the same document family.
-  const operation = claim
-    ? /ไม่อนุมัติ|ปฏิเสธ|reject/iu.test(text) ? 'reimbursement_reject'
-      : /จ่ายคืน|จ่ายเงิน|จ่ายใบเบิก|โอน|บันทึกจ่าย|\bpay/iu.test(text) ? 'reimbursement_pay'
-        : /ยกเลิก|cancel/iu.test(text) ? 'reimbursement_cancel'
-          : /ส่ง.*อนุมัติ|submit/iu.test(text) ? 'reimbursement_submit'
-            : /อนุมัติ|approve/iu.test(text) ? 'approvals'
-              : /สร้าง|ทำ|create/iu.test(text) ? 'reimbursement_claim' : undefined
-    : expense ? /ลบ|delete/iu.test(text) ? 'expense_delete'
-      : /ยกเลิก|void|cancel/iu.test(text) ? 'expense_void'
-        : /บันทึกจ่าย|ชำระ|จ่ายเงิน|จ่าย(?:ค่าใช้จ่าย|รายจ่าย|บิล)|\bpay/iu.test(text) ? 'expense_pay'
-          : /ส่งตรวจ|ส่ง.*ตรวจ|submit/iu.test(text) ? 'expense_submit'
-            : /ยืนยัน|confirm/iu.test(text) ? 'expense_confirm' : undefined : undefined;
-  const action = lineChatAction(input.actionId || mapped.length || input.toolHint === 'reimbursement.list_pending_approvals' ? operation : undefined)
+  // Resolve once for both reviewed cards and explicit action help; two named workflows offer neither.
+  const claimSubmit = /ส่ง.*อนุมัติ|submit/iu.test(text);
+  const claimReject = /ไม่อนุมัติ|ปฏิเสธ|reject/iu.test(text);
+  const operations = ([
+    ['reimbursement_reject', claim && claimReject],
+    ['reimbursement_pay', claim && /จ่ายคืน|จ่ายเงิน|จ่ายใบเบิก|โอน|บันทึกจ่าย|\bpay/iu.test(text)],
+    ['reimbursement_cancel', claim && /ยกเลิก|cancel/iu.test(text)],
+    ['reimbursement_submit', claim && claimSubmit],
+    ['approvals', claim && !claimSubmit && !claimReject && /อนุมัติ|approve/iu.test(text)],
+    ['reimbursement_claim', claim && /สร้าง|ทำใบเบิก|create/iu.test(text)],
+    ['expense_delete', expense && /ลบ|delete/iu.test(text)],
+    ['expense_void', expense && /ยกเลิก|void|cancel/iu.test(text)],
+    ['expense_pay', expense && /บันทึกจ่าย|ชำระ|จ่ายเงิน|จ่าย(?:ค่าใช้จ่าย|รายจ่าย|บิล)|\bpay/iu.test(text)],
+    ['expense_submit', expense && /ส่งตรวจ|ส่ง.*ตรวจ|submit/iu.test(text)],
+    ['expense_confirm', expense && /ยืนยัน|confirm/iu.test(text)],
+    ['payment_voucher', /(?:สร้าง|ทำ|create).*(?:ใบเตรียมจ่าย|ใบสำคัญจ่าย|voucher)/iu.test(text)],
+  ] as const).filter(([, matches]) => matches).map(([id]) => id);
+  const operation = operations.length === 1 ? operations[0] : undefined;
+  const action = operations.length > 1 ? undefined : lineChatAction(input.actionId || mapped.length || input.selectedKnowledgeCardIds?.length || input.toolHint === 'reimbursement.list_pending_approvals' ? operation : undefined)
     ?? lineChatAction(input.actionId) ?? (mapped.length === 1 ? mapped[0] : undefined);
   const actionAllowed = (candidate: (typeof LINE_CHAT_ACTIONS)[number]) => 'workflow' in candidate && candidate.workflow
     ? mayOfferWorkflow(candidate.id, input.permissions, input.featureKeys === null ? null : new Set(input.featureKeys))
@@ -261,7 +266,9 @@ export function productHelpAction(input: { actionId?: unknown; text?: string; to
   if (general) {
     const cards = general.presentation.cards.map((card, index) => {
       const id = input.selectedKnowledgeCardIds![index]!;
-      const linked = LINE_CHAT_ACTIONS.find(candidate => candidate.helpTopics.some(topic => topic === id));
+      const linked = index === 0 && (operation || input.actionId) && action && 'workflow' in action && action.workflow ? action
+        // The card's own next step stays; text naming two workflows offers no workflow start.
+        : LINE_CHAT_ACTIONS.find(candidate => candidate.helpTopics.some(topic => topic === id) && (operations.length < 2 || !('workflow' in candidate)));
       return { ...card,
         ...(linked && actionAllowed(linked) ? { chatActionId: linked.id } : {}) };
     });

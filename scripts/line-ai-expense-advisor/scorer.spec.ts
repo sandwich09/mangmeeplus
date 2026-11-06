@@ -809,7 +809,7 @@ it('M3 round 3 scores an earlier created record in a later task using conversati
 it('pins visible workflow metrics with oracle-validated W5 completion', async () => {
   const { readFileSync } = await import('node:fs'), { createHash } = await import('node:crypto');
   const hashes = { 'oracle-sample': '95fb6cd038d9b2ecdabcb38decf1c44ea8139385d2003accf9bb6291787871e1',
-    sample: '96109ae2b5640eaacd8cbec3742b10e30943a4adbe7b0658f20427ba41ff0640', tuning: 'f5ec5116b68195b2413e259f95c9714aeea4a777ad1582ed75b5c355401fd6b4' };
+    sample: '96109ae2b5640eaacd8cbec3742b10e30943a4adbe7b0658f20427ba41ff0640', tuning: 'e9595e8c50b14417e21341aaad178d65e79c7c8333ad386f3de2f9a27dbb63c2' };
   for (const [name, expected] of Object.entries(hashes)) {
     const corpus = JSON.parse(readFileSync(new URL(`./corpus.workflow.${name}.json`, import.meta.url), 'utf8'));
     const attempts = corpus.conversations.map((conversation: any) => ({ attemptId: 'complete', conversationId: conversation.id, complete: true,

@@ -356,6 +356,8 @@ describe('M3 round 3 opt-in actors and seller truncation', () => {
     const claims = seed.rows.filter(row => row.model === 'reimbursementRequest' && row.data.companyId === paid.companyId);
     assert.ok(claims.length && claims.every(row => row.data.missingReceiptReason && row.data.receiptRequirementStatus === 'MISSING_WITH_REASON'), 'seeded claims pass the receipt gate');
     assert.equal(seed.rows.filter(row => row.model === 'reimbursementPolicy' && row.data.companyId === paid.companyId && row.data.allowMissingReceiptWithReason).length, 1);
+    const ready = seed.rows.filter(row => row.model === 'expenseRecord' && row.data.companyId === paid.companyId && String(row.data.id).startsWith('workflow-expense-') && row.data.status === 'READY_FOR_CONFIRMATION');
+    assert.ok(ready.length && ready.every(row => row.data.taxEvidenceStatus === 'SUPPORTING_ONLY' && row.data.aiVerificationSummaryJson?.documentEvidenceDraft?.originalDocumentAvailable === true), 'ready rows carry the reviewed original-paper route');
     assert.equal(unknown.companyId, undefined); assert.equal(unknown.role, undefined);
     assert.ok(!seed.rows.some(row => row.model === 'externalIdentity' && row.data.providerUserId === unknown.lineUserId && row.data.status === 'ACTIVE'));
     const grants = seed.rows.filter(row => row.model === 'membershipRole' && row.data.membershipId === paid.membershipId).map(row => row.data.roleId);

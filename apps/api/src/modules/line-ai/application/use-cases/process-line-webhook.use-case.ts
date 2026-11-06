@@ -4012,7 +4012,7 @@ export class ProcessLineWebhookUseCase {
   private workflowPickerRows(messages: LineReplyMessage[]) {
     for (const message of [...messages].reverse()) {
       const title = message.type === 'flex' ? message.altText : message.type === 'text' ? message.text : '';
-      if (!/^(?:เลือก|ยังค้น|มีรายการมากเกิน|Choose|Select|Too many)/u.test(title)) continue;
+      if (!/^(?:เลือก|ยังค้น|มีรายการมากเกิน|มีใบเบิกรอคุณอนุมัติ|Choose|Select|Too many|You have)/u.test(title)) continue;
       const rows: Array<{ label: string; control: Extract<NonNullable<LineTextEvent['workflowControl']>, { action: 'wf_open' }> }> = [];
       const visit = (node: unknown): void => {
         if (!node || typeof node !== 'object') return;
@@ -4168,7 +4168,7 @@ export class ProcessLineWebhookUseCase {
         const result = { targets: selection.targets, total: selection.targets.length, exhaustive: selection.exhaustive === true };
         message = Object.hasOwn(EXPENSE_WORKFLOW_ACTIONS, workflow)
           ? buildExpenseWorkflowPicker(result as LineWorkflowRecordTargets, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent)
-          : buildClaimWorkflowPicker(result as LineWorkflowTargets, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent);
+          : buildClaimWorkflowPicker(result as LineWorkflowTargets, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl, paymentIntent, replyLanguage(event));
         const row = (result.exhaustive || selection.searchedExact) && result.targets.length === 1 ? this.workflowPickerRows([message])?.rows[0] : undefined;
         if (row) {
           event.workflowControl = row.control;
@@ -4199,7 +4199,7 @@ export class ProcessLineWebhookUseCase {
       const picker = await this.latestWorkflowPicker(event);
       const reason = ['REIMBURSEMENT_CANCEL', 'REIMBURSEMENT_REJECT', 'VOID'].includes(control.act)
         ? typedReason ?? (picker?.rows[0]?.control.act === control.act ? picker.reason : undefined) : undefined;
-      const result = await this.expenseActions.openWorkflow(ctx, chatKeyHashOf(event), control, replyLanguage(event), reason);
+      const result = await this.expenseActions.openWorkflow(ctx, chatKeyHashOf(event), control, replyLanguage(event), reason, control.act === 'RECORD_PAYMENT' ? await this.expenseActions.paymentIntentFromText(event.messageText, event.inputEvidence) : undefined);
       if (picker?.rows.some(row => row.control.id === control.id && row.control.sig === control.sig)) await this.closeWorkflowPicker(picker);
       if (result.preview) this.deliveryExpenseActions.set(event, { context: ctx, chat: chatKeyHashOf(event), requestId: ctx.requestId, preview: result.preview });
       const choices = !result.preview && control.act === 'CONFIRM' ? await this.expenseActionRepairChoices(event, ctx, chatKeyHashOf(event), undefined, replyLanguage(event)) : undefined;
@@ -4221,7 +4221,9 @@ export class ProcessLineWebhookUseCase {
     try {
       if (expenseWorkflow) {
         const records = await this.workflowTargets.pick(ctx, chatKeyHashOf(event), expenseWorkflow, slots, 1);
-        const picker = buildExpenseWorkflowPicker(records, expenseWorkflow, secret, ctx.companyId, ctx.userId, this.config.webBaseUrl);
+        const payment = expenseWorkflow === 'expense_pay' ? await this.expenseActions.paymentIntentFromText(event.messageText, event.inputEvidence) : undefined;
+        const picker = buildExpenseWorkflowPicker(records, expenseWorkflow, secret, ctx.companyId, ctx.userId, this.config.webBaseUrl,
+          { ...(payment?.paymentMethod ? { pm: payment.paymentMethod } : {}), ...(payment?.paidAt ? { pd: payment.paidAt } : {}), ...(payment?.paidAmount ? { pa: payment.paidAmount } : {}) });
         if (expenseWorkflow === 'substitute_receipt' && records.targets.length && this.substituteReceiptContinuation) {
           const candidates = records.targets.slice(0, 4).map(target => ({ id: target.id, label: target.label }));
           const waiting = this.ledger ? (await this.ledger.openWaitingUser(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId))
@@ -4249,7 +4251,7 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, ctx.companyId); return;
     }
     await this.deliverRequiredMessages(event, [buildClaimWorkflowPicker(result, workflow, secret,
-      ctx.companyId, ctx.userId, this.config.webBaseUrl)]);
+      ctx.companyId, ctx.userId, this.config.webBaseUrl, {}, replyLanguage(event))]);
     await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
   }
 
@@ -7513,7 +7515,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const answer = await this.expenseActions?.answerReason?.(reasonCtx, chatKeyHashOf(event), event.messageText);
+      const answer = await this.expenseActions?.answerReason?.(reasonCtx, chatKeyHashOf(event), event.messageText, event.inputEvidence);
       if (answer) {
         if (answer.taskSource) this.taskActionSources.set(event, answer.taskSource);
         // A bare payee/category value is continuation data; retain its signed proposal’s language.
@@ -9643,7 +9645,7 @@ ${resumeCapsules.map(item => item.replace(/^↩️\s*/, '')).join('\n')}` : `↩
       ? buildExpenseWorkflowPicker(claimPicker.result as LineWorkflowRecordTargets, claimPicker.workflow as ExpenseWorkflowId,
         this.config.aiGatewayInternalSecret!, companyId, identity.userId, this.config.webBaseUrl, claimPicker.paymentIntent)
       : buildClaimWorkflowPicker(claimPicker.result as LineWorkflowTargets, claimPicker.workflow as ClaimWorkflowId,
-        this.config.aiGatewayInternalSecret!, companyId, identity.userId, this.config.webBaseUrl, claimPicker.paymentIntent) : undefined;
+        this.config.aiGatewayInternalSecret!, companyId, identity.userId, this.config.webBaseUrl, claimPicker.paymentIntent, replyLanguage(event)) : undefined;
     const claimHandoff = !actionPreview && turnResponse.toolsInvoked.includes('expense.action.preview')
       ? turnResponse.sourceRefs.find(ref => ref.entityType === 'expense_action_preview'
         && ref.permissionChecked && ref.webPath?.startsWith(`/companies/${companyId}/reimbursements/`)) : undefined;

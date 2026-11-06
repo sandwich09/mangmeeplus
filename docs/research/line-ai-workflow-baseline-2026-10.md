@@ -103,3 +103,53 @@ Plan: `docs/plans/line-ai-workflow-first-plan.md` M4. Measurement rules: `docs/s
 
 ### Held-out caveat
 The `wfp-r8` classes were found or confirmed on this held-out run, and the tuning corpus shows the same classes. The next run on this held-out set therefore measures progress but is not blind for those classes. MA3/MA6 acceptance needs a fresh held-out set written by a separate lane.
+
+## Rounds 8 and 9, measured 2026-11-06
+
+### What was run
+- **Round 8, tuning.** Main `4fd63d67d`: the picker takes only answers that name a record, and count questions are reads. Tuning 166.74 THB, advisor held-out 60.00 THB.
+- **Round 9 and cards round 1, tuning.** Main `266126123`. Tuning 165.26 THB, advisor held-out 57.04 THB.
+  - Round 9: a claim cancel asks for the reason, a workflow confirm shows its evidence choices, the pay example, and the receipt-blocked submit names its fix.
+  - Cards round 1: claim cards say ใบเบิก / ผู้เบิก, and every confirmation card declines with "ไม่ทำ".
+  - Harness fix `a6ee4843d` (the first three items below) is included.
+- **Programme spend.** 1,643 THB for all real-model eval runs so far, proofs included, inside the 2,300 THB cap.
+
+### The harness, not the product, failed these tasks
+Round 8 already applied the gold record for delete, void, reject, mark-ready and voucher. The scorer still failed them for five harness reasons:
+1. **Every action card was unverified.** Delivery sends the card's canonical text as `altText`. The verifier compared `altText` only, although the contents digest was equal. It now binds on the digest and accepts either text.
+2. **Deleting a draft deletes its line.** The scorer counted that line as a wrong change. Claim approval also projects an expense of the claim and moves it to `READY_FOR_PAYMENT`, which counted as wrong too. Both now score as the gold record.
+3. **Seeded claims could never be submitted or approved.** They had no receipt, no reason and no payout method. The workflow seed now has a policy that allows a no-receipt reason, gives every claim one, and gives drafts the cash payout method.
+   - That policy also makes claim creation ask "ไม่มีใบเสร็จเพราะอะไรคะ" after "ไม่มีใบเสร็จ". That is correct for a shop with this policy, so the two tuning claim-create tasks now need one more turn than their gold.
+4. **Declined tasks had no `previewTurn`.** This affected 19 tuning decline tasks. Each correct declined card counted as an extra wrong preview. The gold now names that turn, and the validator requires it. Both held-out sets already comply.
+5. **Ready-to-confirm seed receipts had no image and an unresolved document type**, so a chat confirm always stopped at the evidence choice. They now carry the reviewer's settled type and the saved original-paper assessment. The tuning confirm press uses the card's real label "ตรวจแล้ว ยืนยัน".
+
+### Results on the tuning corpus (115 conversations)
+
+| Metric | After round 8 (scored) | After round 9 (decline turns fixed) |
+|---|---|---|
+| W1 classifier label | 49/58 | 50/58 |
+| W3 completable tasks | 40/72 | **56/72 (77.8%)** |
+| Workflow tasks finished | 1/32 | 17/32 |
+| W6 wrong applied | 1 (harness) | 2 (one real bug: a new draft and its line, below) |
+| W9 / W14 | 0 / 0 of 190 | 0 / 0 of 187 |
+| W8 p50 / p95, ms | 5,854 / 13,248 | 4,571 / 13,101 |
+
+- **W1 count questions.** Seven W1 "misses" are count questions that round 8 routes to a read without the classifier. All of their read tasks pass.
+- **Finishing in every case:** approvals, reject, cancel, submit, delete, void, mark-ready and voucher, both confirm and decline.
+
+### Still open on the tuning corpus
+- **Action how-tos have no "ให้น้องทำให้".** This covers all 8 `M3-button-*` conversations. They answer through the reviewed-help route, which never receives the workflow action id. Fix: cards round 2.
+- **Record payment.** The card was prepared without asking the method (§6.1 lists "วิธีจ่าย"). The method answer "จ่ายเงินสด 1,000 บาท วันนี้" was then saved as a **new expense draft**, a real wrong change. Fix: round 10.
+- **Count and total on the approvals picker.** "มีใบเบิกรออนุมัติไหม" opens the picker, which never states the count or the total. Fix: round 10.
+
+### Advisor held-out (W11)
+60/71 (84.5%) after both rounds, against 64/71 before Phase B. The misses:
+- 4 are the stale out-of-package gold;
+- 1 is the approvals question above;
+- 2 (round 9 run) were `PROVIDER_THROTTLED` on the intake route, which the user saw as "ระบบตอบไม่ได้ตอนนี้";
+- the rest are model read misses: a dropped `limit 5`, an extra `PAID` filter, and the CE-year date read.
+
+### Bedrock throttling recurs
+The round 9 advisor run had 16 throttled calls between about 09:08 and 09:20; two reached the user and retries recovered the rest. The earlier window was 04:22–05:39. The tuning runs, at the same pace, had none.
+
+Phase B adds one classifier call to every typed message, so read the Sonnet 4.6 quotas of the Production account (owner MFA) before the release.

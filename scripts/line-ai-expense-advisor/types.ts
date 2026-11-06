@@ -252,6 +252,10 @@ export function validateWorkflowCorpus(value: unknown, knownSeedKeys?: ReadonlyS
         const previewTurn = task['previewTurn'] as number;
         assert.ok(effect === 'DECLINED' && Number.isInteger(previewTurn) && previewTurn >= (task['startTurn'] as number) && previewTurn < (task['endTurn'] as number)
           && isPlainObject((turns[previewTurn] as Record<string, any> | undefined)?.['expect']?.['preview']), `${path}.previewTurn`);
+      } else if (effect === 'DECLINED') {
+        // Without previewTurn the scorer counts the declined card as an extra wrong preview.
+        const shown = turns.slice(task['startTurn'] as number, (task['endTurn'] as number) + 1).some(turn => isPlainObject((turn as Record<string, any>)?.['expect']?.['preview']));
+        assert.ok(!shown, `${path}.previewTurn_required`);
       }
       if (!WORKFLOW_WRITE_EXEMPTIONS.has(effect)) {
         assert.ok(Number.isInteger(confirmTurn) && confirmTurn! >= (task['startTurn'] as number) && confirmTurn! <= (task['endTurn'] as number), `${path}.confirmTurn_required`);
