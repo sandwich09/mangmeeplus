@@ -106,7 +106,7 @@ function controlActions(message: LineReplyMessage): Array<{ type: 'postback'; la
 }
 const INLINE_REAUTHORIZED_ACTIONS = ['wf_open', 'wf_choice', 'fixed-read', 'file-read-retry', 'reimbursement_choice',
   'payment-evidence', 'expense_action_payment', 'expense_action_wht', 'expense_action_next', 'expense_action_submit',
-  'expense_action_transfer', 'expense_action_cheque'];
+  'expense_action_transfer', 'expense_action_cheque', 'expense_action_approve', 'expense_action_reject'];
 /** Inline evidence association and payment/tax-preview opening reauthorize on tap. */
 function authorizedInlineActions(message: LineReplyMessage, authorization: DeliveryAuthorizationV2, inlineOnly = false): boolean {
   const actions = controlActions(message).filter(action => !inlineOnly
@@ -132,6 +132,10 @@ function authorizedInlineActions(message: LineReplyMessage, authorization: Deliv
     if (['expense_action_transfer', 'expense_action_cheque'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
       && ['action', 'token'].every(key => params.getAll(key).length === 1)
       && authorization.proofs.some(proof => proof.kind === 'EXPENSE_PAYMENT_METHOD' && Array.isArray(proof.controls) && proof.controls.includes(params.toString()));
+    // A claim's approve/reject button (the approval list card) carries a token signed for this company, user and
+    // claim; a tap re-verifies it and only opens the permission-checked preview, which has its own confirm.
+    if (['expense_action_approve', 'expense_action_reject'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
+      && params.getAll('token').length === 1 && /^[A-Za-z0-9_-]{1,128}\.[A-Za-z0-9_-]{43}$/u.test(params.get('token') ?? '');
     if (['expense_action_payment', 'expense_action_wht', 'expense_action_next'].includes(params.get('action') ?? '')) return [...params.keys()].length === 2
       && authorization.proofs.some(proof => proof.kind === 'EXPENSE_ACTION_PREVIEW' && proof.applied === true && proof.token === params.get('token'));
     const retryCommand = fileReadRetryPostbackCommand(params.toString());

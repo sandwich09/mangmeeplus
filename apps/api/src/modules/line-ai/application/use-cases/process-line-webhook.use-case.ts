@@ -544,7 +544,7 @@ const CAPABILITY_ENTITLEMENT_NOTE = '💡 ปุ่ม “บริการข�
  *  this turn is — a distinct status so it can still be counted apart from a bare refusal. */
 const CAPABILITY_ENTITLEMENT_STATUS = 'staff_menu_capability_entitlements';
 const capabilityEntitlementReply = (lead: string, entitled: ReadonlySet<string> | null, language: 'th' | 'en' = 'th'): LineReplyMessage[] =>
-  [{ type: 'text', text: `${lead}\n${language === 'en' ? LEGACY_LINE_COPY_EN.CAPABILITY_ENTITLEMENT_NOTE : CAPABILITY_ENTITLEMENT_NOTE}` }, buildServiceEntitlementMessage(entitled, language)];
+  [{ type: 'text', text: `${lead}\n${language === 'en' ? LEGACY_LINE_COPY_EN.CAPABILITY_ENTITLEMENT_NOTE : CAPABILITY_ENTITLEMENT_NOTE}` }, asCompleteLineCard(buildServiceEntitlementMessage(entitled, language))];
 const ASSISTANT_TALK_GREETING = 'น้องมั่งมีมาแล้วค่ะ เลือกเมนูที่ต้องการใช้งานได้เลยค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = { th: '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ', en: "You cannot manage signatures; ask the shop owner or an authorized administrator." };
 const SIGNATURE_NEED_IMAGE_REPLY = { th: '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ', en: "Please send a clear photo of your signature on a plain background." };
@@ -7605,7 +7605,8 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       return;
     }
     if (menuCommand === 'services') {
-      await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys, replyLanguage(event))]);
+      // Demo 2026-11-06: these menu cards show their whole text, so a delivery plan sends the card, not its text.
+      await this.deliverRequiredMessages(event, [asCompleteLineCard(buildServiceEntitlementMessage(entitledFeatureKeys, replyLanguage(event)))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
       return;
     }
@@ -7631,7 +7632,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
           companyId);
         return;
       }
-      await this.deliverRequiredMessages(event, [event.messageText.trim() === WELCOME_RECEIPT_COMMAND
+      await this.deliverRequiredMessages(event, [asCompleteLineCard(event.messageText.trim() === WELCOME_RECEIPT_COMMAND
         ? buildWelcomeReceiptCapturePrompt() : buildReceiptCapturePrompt({ ...({
         displayName: identity.user.displayName,
         roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
@@ -7641,7 +7642,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         webBaseUrl: this.config.webBaseUrl,
         companyId,
         isOwner: resolvedAccess.roles.includes('OWNER'),
-      }), language: replyLanguage(event) })]);
+      }), language: replyLanguage(event) }))]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
       return;
     }
@@ -7857,7 +7858,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
       }
       const message = menuCommand === 'main'
-        ? buildStaffMainMenu({ ...(menuContext), language: replyLanguage(event) })
+        ? asCompleteLineCard(buildStaffMainMenu({ ...(menuContext), language: replyLanguage(event) }))
         : menuCommand === 'query'
           ? buildStaffQueryMenu({ ...(menuContext), language: replyLanguage(event) })
           // The card shows its whole text, so a delivery plan may send the card itself (text stays the fallback).

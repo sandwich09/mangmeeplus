@@ -965,7 +965,10 @@ describe('Round 3 reimbursement and payment confirm cards', () => {
     assert.equal(h.calls.filter(c => !c.args?.at(-1).previewOnly).length, 0);
     assert.equal((await h.actions.apply({ ...h.ctx, userId: 'other' }, 'private-action', control)).status, 'blocked');
     const reject = parseExpenseActionControl((buttons[1]!.action as any).data)!;
-    assert.equal((await h.actions.apply(h.ctx, 'private-action', reject)).reply, 'ให้ผู้อนุมัติที่ใบเบิกนี้รออยู่ดำเนินการค่ะ');
+    const refused = await h.actions.apply(h.ctx, 'private-action', reject);
+    assert.equal(refused.reply, 'ให้ผู้อนุมัติที่ใบเบิกนี้รออยู่ดำเนินการค่ะ');
+    // Demo 2026-11-06: a refused approve/reject tap opens that claim, never a dead end.
+    assert.deepEqual(refused.status === 'blocked' && [refused.webPath, refused.webLabel], [`/companies/${h.ctx.companyId}/reimbursements/${h.claim.id}`, 'เปิดใบเบิก']);
   });
   it('Fix-up 22A: signed saved-claim submit opens the existing preview and rechecks actor, company, action and signature', async () => {
     const { reimbursementApprovalOpenToken } = await import('../../../line-ai/domain/logic/line-reimbursement-approval-control.logic');

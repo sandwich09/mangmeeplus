@@ -6,9 +6,10 @@ import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, linePostbackCommandText, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, STAFF_OA_URL, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
-import { buildPublicPolicyCardMessage } from './line-business-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage } from './line-business-card.logic';
 import { lineSystemCardTexts } from './line-system-card.logic';
 import { lineFlexBodyProblems } from './line-system-card-limits.logic';
+import { buildLineDeliveryPlan } from './line-delivery-plan.logic';
 
 for (const path of [
   '../../../../common/security/liff-page.security.ts',
@@ -1170,4 +1171,21 @@ it('R22 new workflow buttons preserve every existing main-menu action within the
   const menu = buildStaffMainMenu(wide).quickReply!.items;
   assert.ok(menu.length <= 13);
   assert.deepEqual(menu.slice(-existing.length), existing);
+});
+
+// Demo 2026-11-06: a delivery plan sends the approval card with its approve/reject buttons only when each
+// button is a signed claim token, which the tap re-verifies; any other button of that name stays text.
+it('a delivery plan keeps signed approve/reject buttons and refuses a forged one', () => {
+  const createdAt = new Date().toISOString(), expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+  const authorization = { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt, proofs: [],
+    actor: { userId: 'user', companyId: 'co-1', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa-1', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 1 } } as const;
+  const context = { displayName: 'ผู้อนุมัติ', roleLabel: 'เจ้าของกิจการ', branchScopeLabel: 'ทุกสาขา', permissions: ['reimbursement.approve'], entitledFeatureKeys: null, webBaseUrl: 'https://app.example.test', companyId: 'co-1', isOwner: true };
+  const sent = (buttons: Record<string, unknown>[]) => {
+    const card = asCompleteLineCard(buildPendingApprovalCard(context, { reimbursement: { total: 1, items: [{ title: 'RB-202611-00001', detail: '500.00 บาท', buttons }] } }));
+    return buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'event-1', createdAt, expiresAt, readyAt: createdAt, firstDispatchDeadlineAt: expiresAt,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: (card as { canonicalText: string }).canonicalText, sourceProofIds: [], required: true }] },
+      businessResult: null, authorization: authorization as never, control: null, preferredMessages: [card] }).batches[0]!.primary.messages[0]!.type;
+  };
+  assert.equal(sent(reimbursementApprovalButtons('secret', 'co-1', 'user', 'rb-1')), 'flex');
+  assert.equal(sent([{ type: 'button', action: { type: 'postback', label: 'อนุมัติ', data: 'action=expense_action_approve&token=rb-1&amount=1' } }]), 'text');
 });

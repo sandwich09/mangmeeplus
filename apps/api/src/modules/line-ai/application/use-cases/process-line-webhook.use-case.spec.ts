@@ -4514,6 +4514,37 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
   });
 
+  // Demo 2026-11-06 (owner: "แก้เลย และตรวจสอบทุกอันด้วย"): on a bound chat every reply goes through a delivery
+  // plan, which keeps a card only when it is a complete presentation and each of its buttons re-checks on tap.
+  // "✅ รายการรออนุมัติ" arrived as bare text without its approve/reject buttons; the main menu, the receipt
+  // prompt and the services card arrived as text too.
+  it('menu cards reach a bound chat as cards, with every button kept', async () => {
+    const createdAt = new Date().toISOString(), expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+    const authorization = { v: 2, kind: 'PRIVATE', issuedAt: createdAt, expiresAt, proofs: [],
+      actor: { userId: 'user-1', companyId: 'company-1', membershipId: 'member', requestId: 'request', accessFingerprint: 'fingerprint', channelId: 'oa-1', channel: 'line', channelKind: 'USER', recipientHash: 'recipient', chatKeyHash: 'chat', conversationId: 'line-v2:conversation', ownerEpoch: 1 } } as const;
+    const planned = (message: any) => buildLineDeliveryPlan({ producerKind: 'WEBHOOK', producerId: 'event-1', createdAt, expiresAt, readyAt: createdAt, firstDispatchDeadlineAt: expiresAt,
+      answer: { status: 'COMPLETE', pendingSubrequestIds: [], items: [{ kind: 'answer', text: message.canonicalText, sourceProofIds: [], required: true }] },
+      businessResult: null, authorization: authorization as any, control: null, preferredMessages: [message] }).batches[0]!;
+    for (const messageText of ['เมนูหลัก', '📷 ถ่ายใบเสร็จ', 'บริการของเรา', '✅ รายการรออนุมัติ']) {
+      const { prisma } = makePrisma({ displayName: 'พิมพ์ชนก' });
+      const { useCase, sentMessages } = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'expense.create', 'reimbursement.approve'], config: { aiGatewayInternalSecret: 'secret' },
+        approvalQueues: { reimbursement: { execute: async () => [{ id: 'rb-1', requestNo: 'RB-202611-00001', requesterDisplayNameSnapshot: 'คุณต้น', amount: '500' }] } },
+      });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-card-${messageText.length}`, messageText });
+      const message = sentMessages.find((sent: any) => sent.type === 'flex');
+      assert.ok(message, messageText);
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, messageText);
+      const batch = planned(message);
+      assert.equal(batch.primary.messages[0]!.type, 'flex', messageText);
+      assert.deepEqual(batch.primary.messages[0]!.quickReply, message.quickReply, messageText);
+      if (messageText.includes('อนุมัติ')) {
+        assert.match(JSON.stringify(batch.primary.messages[0]), /expense_action_approve.*expense_action_reject/u);
+        assert.deepEqual(batch.fallback!.messages[0]!.quickReply?.items.map((item: any) => item.action.label).slice(0, 2), ['อนุมัติ', 'ไม่อนุมัติ']);
+      }
+    }
+  });
+
   // UAT 2026-09-06 (spec §2.2 delta รอบ 6). The support pause sits above every menu handler, so a
   // customer waiting on a human got "ส่งข้อความถึงทีมงานแล้ว" for the menu button — the assistant
   // was not the thing being silenced, the product was. A menu card costs no model call.

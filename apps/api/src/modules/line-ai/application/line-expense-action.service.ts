@@ -1086,7 +1086,9 @@ export class LineExpenseActionService {
     if (control.action === 'expense_action_approve' || control.action === 'expense_action_reject' || control.action === 'expense_action_submit') {
       if (!verifyReimbursementApprovalOpenToken(this.config.aiGatewayInternalSecret ?? '', ctx.companyId, ctx.userId, control.token, control.action)) return { status: 'blocked', reply: language === 'en' ? 'This confirmation expired; please request a new card.' : EXPIRED };
       const result = await this.preview(ctx, chat, { reimbursementId: control.token.split('.')[0], action: control.action === 'expense_action_submit' ? 'REIMBURSEMENT_SUBMIT' : control.action === 'expense_action_approve' ? 'REIMBURSEMENT_APPROVE' : 'REIMBURSEMENT_REJECT' }, true, undefined, language);
-      return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', ...result };
+      // Demo 2026-11-06: "ยังไม่ได้อนุมัติใบเบิกค่ะ เปิดใบเบิกในเว็บ…" came with no link; the refusal opens that claim.
+      return result.preview ? { status: 'prepared', reply: result.reply, preview: result.preview } : { status: 'blocked', ...result,
+        webPath: result.webPath ?? `/companies/${ctx.companyId}/reimbursements/${encodeURIComponent(control.token.split('.')[0]!)}`, webLabel: result.webLabel ?? (language === 'en' ? 'Open claim' : 'เปิดใบเบิก') };
     }
     if (control.action === 'expense_action_transfer' || control.action === 'expense_action_cheque') {
       const entry = await this.store.load(ctx.companyId, this.key(chat));
