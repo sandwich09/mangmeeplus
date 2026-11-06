@@ -1705,3 +1705,11 @@ it('R10 approvals totals use the existing English label map', () => {
   const card = buildClaimWorkflowPicker({ targets: [{ id: 'one', requestNo: 'RB-1', amount: '1000', currency: 'THB' } as any, { id: 'two', requestNo: 'RB-2', amount: '1066', currency: 'THB' } as any], total: 2, exhaustive: true }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com', {}, 'en');
   assert.match(JSON.stringify(card), /You have 2 claims awaiting your approval, totalling 2,066.00 THB. Choose a claim to approve./);
 });
+
+it('R11 claim rows name requester reason and amount without calling pending or approved claims drafts', () => {
+  for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED']) {
+    const card = buildClaimWorkflowPicker({ targets: [{ id: 'claim', requestNo: null, status, requesterDisplayNameSnapshot: 'สมชาย', reason: 'ค่าเดินทาง รอบ 4', amount: '1200', currency: 'THB' } as any], total: 1, exhaustive: true }, 'approvals', 'secret', 'company', 'user', 'https://app.example.com');
+    const label = readLineSystemCard(card as any).actions.find((a: any) => a.type === 'postback')!.label;
+    assert.ok(label.length <= 40, label); assert.match(label, /สมชาย/); assert.match(label, /รอบ 4/); assert.match(label, /1,200.00/); assert.doesNotMatch(label, /ร่าง/);
+  }
+});

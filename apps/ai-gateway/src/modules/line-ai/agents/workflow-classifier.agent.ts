@@ -27,7 +27,7 @@ export const WORKFLOW_CLASSIFIER_SYSTEM_PROMPT = `Classify one LINE message for 
 Workflow definitions and short examples
 reimbursement_claim: Create claims for shop advances, even incomplete; not definitions/edits. "สร้างใบเบิกค่าแท็กซี่ให้หน่อย". "เปิดใบเบิก", "ขอเปิดใบเบิก" or "เปิดบิลเบิก" + amount, purpose or "ให้ที" creates: "เปิดใบเบิกค่าแท็กซี่ 250 บาทให้ที"; "เปิดดูใบเบิก…" stays open/read.
 reimbursement_submit: Send an existing reimbursement claim for approval. Example "ส่งใบเบิกของฉันให้อนุมัติหน่อย". The claim must already exist. Sending is different from an approver deciding to approve it.
-reimbursement_cancel: Cancel an existing reimbursement claim. Example "ยกเลิกใบเบิกนี้". Do not infer cancellation merely because a question asks whether cancellation is possible.
+reimbursement_cancel: Cancel/withdraw a claim or draft: "ถอนใบเบิก"/"ดึงกลับใบเบิก". Questions alone never cancel.
 approvals: Show claims awaiting the person's approval, or approve one existing claim. Example "มีใบเบิกรออนุมัติไหม" or "อนุมัติใบเบิกนี้". Do not use this for changing the approval policy or assigning approvers.
 reimbursement_reject: Reject a reimbursement claim at the approval step. Example "ไม่อนุมัติใบเบิกนี้". A reason explicitly written by the person can be copied into reason_text.
 reimbursement_pay: Record money returned to a claimant on an existing reimbursement claim. Example "จ่ายคืนใบเบิกนี้แล้ว". Do not confuse returning the advanced money with recording a supplier expense payment.

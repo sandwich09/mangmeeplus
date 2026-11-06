@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e7c4228026eec3c696fa76986420d2c97cb26676",
-  "sourceRevision": "3d23f470669c7b9f16d477b037a36d8d3bb41313",
+  "sourceRevision": "be61e2c61b64d03692e2e266fdc3511928539747",
   "checkoutBranch": "land/expense-goal-20261104",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-expense-action.service.ts",
-      "sha256": "4920f292bb56e4f05270296ee5912e9ed1eac72a32dde6e4e13088b8205f4256"
+      "sha256": "d1d21c71cee479b38c78723235d14e21fb68c5b864fcc0cdfd1f7ecf1a1fa615"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/line-message-buffer.service.ts",
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "9fe69f4cceae4892bf5e3db6933c2197958ca6ae0fbb5dc7a4dd5d39c8f23fb1"
+      "sha256": "4fc2776cfabee523d271af5c7f802b848a22ba15951fc2cdce10d0ce74eb5c6e"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -10259,6 +10259,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-11-06T02:51:55.585Z",
-  "manifestDigest": "c941b1aa39e6b65218f912ee80a1e3f1eb1d84e09c0ee92cedb35ba77964007f"
+  "generatedAt": "2026-11-06T06:47:09.004Z",
+  "manifestDigest": "5ee81403fe0708449c9a6d10075173c63b6f7c58a6e8439dc3f52fabbd696d21"
 }

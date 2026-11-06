@@ -104,7 +104,8 @@ function goldValue(row: Record<string, any>, key: string): unknown {
     whtAmount: row.whtAmount ?? row.withheldAmount ?? snapshot.whtAmount,
   };
   const value = Object.hasOwn(aliases, key) ? aliases[key] : row[key];
-  if ((key === 'date' || key === 'paidDate') && value != null) return todayCivilDate('Asia/Bangkok', new Date(String(value)));
+  // Snapshot timestamps carry no zone; they are UTC (a Bangkok-midnight payment reads 17:00 the day before).
+  if ((key === 'date' || key === 'paidDate') && value != null) return todayCivilDate('Asia/Bangkok', new Date(/T[\d:.]+$/u.test(String(value)) ? `${value}Z` : String(value)));
   if (['amount', 'paidAmount', 'whtAmount'].includes(key) && value != null) return String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   return value;
 }
@@ -134,8 +135,9 @@ function linkedToGoldParent(table: string, row: Record<string, unknown>, parents
   if (table === 'ReimbursementApprovalStep') return has('ReimbursementRequest', row.reimbursementRequestId);
   if (table === 'ReimbursementDraftAction' && row.status === 'APPLIED') return has('ReimbursementRequest', row.requestId);
   if (table === 'DisbursementVoucherLine') return has('DisbursementVoucher', row.voucherId) || has('ExpenseRecord', row.expenseId);
-  // Approval projects each claim line into an employee-payable expense of that claim.
-  if (table === 'ExpenseRecord' && row.sourceReimbursementRequestId) return has('ReimbursementRequest', row.sourceReimbursementRequestId);
+  // Approval projects each claim line into an employee-payable expense of that claim; a submitted voucher reserves the expenses on its lines.
+  if (table === 'ExpenseRecord' && (row.sourceReimbursementRequestId || row.reservedByDisbursementVoucherId)) return has('ReimbursementRequest', row.sourceReimbursementRequestId)
+    || has('DisbursementVoucher', row.reservedByDisbursementVoucherId);
   if (table === 'ExpenseLine') return has('ExpenseRecord', row.expenseId) || (snapshot.ExpenseRecord ?? []).some(expense => expense.id === row.expenseId
     && (!expense.companyId || expense.companyId === row.companyId) && has('ReimbursementRequest', expense.sourceReimbursementRequestId));
   if (table === 'WhtCertificateHistory') return has('ExpenseRecord', row.expenseId) || has('WhtCertificateHandoff', row.handoffId);

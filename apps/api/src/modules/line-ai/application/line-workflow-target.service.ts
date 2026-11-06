@@ -16,9 +16,9 @@ import { CLAIM_WORKFLOW_ACTIONS, EXPENSE_WORKFLOW_ACTIONS, type ExpenseWorkflowI
 export type LineWorkflowRecordTarget = { id: string; label: string; amount: string; currency: string;
   documentNumbers?: string[]; roundText?: string; revision?: string; branchId?: string };
 export type LineWorkflowRecordTargets = { targets: LineWorkflowRecordTarget[]; total: number; exhaustive: boolean;
-  latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
+  latestPaidWithoutWithholding?: boolean; latestOnly?: boolean; sellers?: Array<{ id: string; label: string }>; sellerSearch?: string };
 type WorkflowSlots = { search?: string; vendorName?: string; vendorCounterpartyId?: string };
-export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[] };
+export type LineWorkflowTargets = { targets: ReimbursementRequestSummary[]; total: number; exhaustive: boolean; receiptBlocked?: ReimbursementRequestSummary[]; notAssigned?: ReimbursementRequestSummary[] };
 
 @Injectable()
 export class LineWorkflowTargetService {
@@ -40,6 +40,7 @@ export class LineWorkflowTargetService {
     const act = CLAIM_WORKFLOW_ACTIONS[workflow as ClaimWorkflowId];
     const targets = new Map<string, ReimbursementRequestSummary>();
     const receiptBlocked = new Map<string, ReimbursementRequestSummary>();
+    const notAssigned = new Map<string, ReimbursementRequestSummary>();
     let total = 0;
     const scanned = new Set<string>();
     for (let page = 1; page <= 3; page++) {
@@ -57,6 +58,7 @@ export class LineWorkflowTargetService {
             : act === 'REIMBURSEMENT_SUBMIT' ? readiness?.ready ?? await this.actions.canSubmitClaim(ctx, claim.id)
               : (act !== 'REIMBURSEMENT_CANCEL' || canTransition(claim.status, 'CANCELLED'))
                 && await this.actions.permitted(ctx, { expenseId: claim.id, createdByUserId: claim.requesterUserId, preview: { action: act as ExpenseAction } });
+        if (!allowed && ['REIMBURSEMENT_APPROVE', 'REIMBURSEMENT_REJECT'].includes(act)) notAssigned.set(claim.id, claim);
         if (allowed) targets.set(claim.id, claim);
         else if (readiness && 'receiptMissing' in readiness && readiness.receiptMissing
           && claim.status === 'DRAFT' && claim.requesterUserId === ctx.userId) receiptBlocked.set(claim.id, claim);
@@ -64,6 +66,7 @@ export class LineWorkflowTargetService {
       if (page * 100 >= total) break;
     }
     return { targets: [...targets.values()], total, exhaustive: total <= 300 && scanned.size >= total,
+      ...(notAssigned.size ? { notAssigned: [...notAssigned.values()] } : {}),
       ...(receiptBlocked.size ? { receiptBlocked: [...receiptBlocked.values()] } : {}) };
   }
 
@@ -94,7 +97,10 @@ export class LineWorkflowTargetService {
         targets.push({ id: row.id, label: row.payeeName || row.documentNumber || '', amount: row.totalAmount, currency: 'THB',
           documentNumbers: row.documentNumber ? [row.documentNumber] : [] });
       }
-      return { targets, total: result.total, exhaustive: result.exhaustive };
+      const latest = [...result.rows].sort((a, b) => String(b.paidDate ?? b.createdAt ?? '').localeCompare(String(a.paidDate ?? a.createdAt ?? '')) || b.id.localeCompare(a.id))[0];
+      const detail = !targets.length && latest ? await this.vouchers.get(ctx, latest.id, true).catch(() => undefined) : undefined;
+      const latestPaidWithoutWithholding = !!detail?.lines.length && detail.lines.every(line => Number(line.whtAmount) === 0);
+      return { targets, total: result.total, exhaustive: result.exhaustive, ...(latestPaidWithoutWithholding ? { latestPaidWithoutWithholding: true } : {}) };
     }
     if (workflow === 'substitute_receipt') {
       const result = await this.readPages([null], async (_set, page) => {

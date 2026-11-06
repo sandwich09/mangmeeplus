@@ -155,6 +155,9 @@ describe('M-R6 derived child rows obey confirmation turn', () => {
       const row = { id: 'paid', amount: '100.0000', paidAmount: '100.0000', totalAmount: '100.0000', paidAt: '2026-09-27T18:00:00Z', paidMethod: 'CASH', paymentMethod: 'CASH' };
       const goldTask = { ...task, goldTerminal: { ...task.goldTerminal, records: [record] } };
       assert.equal(checkWorkflowGold(goldTask, [{ turnIndex: 1, businessSnapshot: { business: { [table]: [row] }, collectionState: {} }, unintendedEffects: [] }]).terminalMatches, true, table);
+      // Snapshot timestamps carry no zone: Bangkok midnight of the 28th is stored as 17:00 on the 27th (UTC).
+      const zoneless = { ...row, paidAt: '2026-09-27T17:00:00' };
+      assert.equal(checkWorkflowGold(goldTask, [{ turnIndex: 1, businessSnapshot: { business: { [table]: [zoneless] }, collectionState: {} }, unintendedEffects: [] }]).terminalMatches, true, `${table} zoneless`);
     }
   });
 });
@@ -343,6 +346,17 @@ describe('M3 round 3 preview and conversation bindings', () => {
     const result = checkWorkflowGold(approve, [turn(0, { ReimbursementRequest: [{ id: 'claim', companyId: 'c', status: 'PENDING_APPROVAL' }] }), turn(1, after, effects)]);
     assert.equal(result.terminalMatches, true); assert.equal(result.wrongApplied, 0);
     assert.equal(checkWorkflowGold(approve, [turn(0), turn(1, after, [...effects, { kind: 'ExpenseRecord.create', recordId: 'stray' }])]).wrongApplied, 1, 'another claim projection is wrong');
+  });
+  it('scores a voucher submit that reserves the expense on its line as the gold voucher', () => {
+    const submit = { id: 'submit', kind: 'payment_voucher', startTurn: 0, endTurn: 1, confirmTurn: 1, minimalTurns: 2, completable: true,
+      goldTerminal: { effect: 'VOUCHER_SUBMITTED', records: [{ table: 'DisbursementVoucher', ref: '$created:create', status: 'PENDING_APPROVAL' }] } } as any;
+    const after = { DisbursementVoucher: [{ id: 'voucher', companyId: 'c', status: 'PENDING_APPROVAL' }], DisbursementVoucherLine: [{ id: 'voucher-line', voucherId: 'voucher', expenseId: 'bill' }],
+      ExpenseRecord: [{ id: 'bill', companyId: 'c', reservedByDisbursementVoucherId: 'voucher' }, { id: 'stray', companyId: 'c', reservedByDisbursementVoucherId: 'other' }] };
+    const effects = [{ kind: 'DisbursementVoucher.update', recordId: 'voucher' }, { kind: 'DisbursementVoucherLine.update', recordId: 'voucher-line' }, { kind: 'ExpenseRecord.update', recordId: 'bill' }];
+    const bindings = { 'DisbursementVoucher:$created:create': 'voucher' };
+    const result = checkWorkflowGold(submit, [turn(0), turn(1, after, effects)], undefined, NOW, { ...bindings });
+    assert.equal(result.terminalMatches, true); assert.equal(result.wrongApplied, 0);
+    assert.equal(checkWorkflowGold(submit, [turn(0), turn(1, after, [...effects, { kind: 'ExpenseRecord.update', recordId: 'stray' }])], undefined, NOW, { ...bindings }).wrongApplied, 1, 'an expense reserved by another voucher is wrong');
   });
 });
 

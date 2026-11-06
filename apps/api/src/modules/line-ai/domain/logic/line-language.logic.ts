@@ -39,6 +39,12 @@ export function lineControlData(data: string, language: LineReplyLanguage): stri
 }
 /** Fixed UI vocabulary only. Never translate arbitrary vendor names, descriptions or evidence. */
 const EN_LABELS: Record<string, string> = {
+  'บันทึกจ่ายค่าใช้จ่าย': 'Record expense payment', 'ส่งตรวจค่าใช้จ่าย': 'Send expense for review', 'ยืนยันค่าใช้จ่าย': 'Confirm expense', 'ลบร่างค่าใช้จ่าย': 'Delete expense draft', 'ยกเลิกค่าใช้จ่าย': 'Void expense',
+  'ส่งใบเบิกอนุมัติ': 'Submit claim', 'อนุมัติใบเบิก': 'Approve claim', 'ไม่อนุมัติใบเบิก': 'Reject claim', 'บันทึกจ่ายคืนใบเบิก': 'Record claim payment',
+  'ผู้มีสิทธิ์สร้างใบเบิก': 'An authorized claim creator', 'ผู้มีสิทธิ์ส่งใบเบิกอนุมัติ': 'An authorized claim submitter', 'ผู้มีสิทธิ์ยกเลิกใบเบิก': 'An authorized claim canceller',
+  'ผู้มีสิทธิ์ไม่อนุมัติใบเบิก': 'An authorized claim reviewer', 'ผู้มีสิทธิ์บันทึกจ่ายคืนใบเบิก': 'An authorized reimbursement payer', 'ผู้มีสิทธิ์บันทึกจ่ายค่าใช้จ่าย': 'An authorized expense payer', 'ผู้อนุมัติใบเบิกที่ได้รับมอบหมาย': 'The assigned claim approver',
+  'ผู้มีสิทธิ์ส่งตรวจค่าใช้จ่าย': 'An authorized expense reviewer', 'ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย': 'An authorized expense confirmer', 'ผู้มีสิทธิ์ลบร่างค่าใช้จ่าย': 'An authorized expense draft editor',
+  'ผู้มีสิทธิ์ยกเลิกค่าใช้จ่าย': 'An authorized expense reviewer', 'ผู้มีสิทธิ์จัดทำใบเตรียมจ่าย': 'An authorized voucher preparer', 'ผู้มีสิทธิ์เตรียมใบรับรองแทนใบเสร็จ': 'An authorized substitute receipt preparer', 'ผู้มีสิทธิ์ออกหนังสือรับรอง': 'An authorized withholding certificate issuer',
   'มีใบเบิกรอคุณอนุมัติ {count} ใบ{total} เลือกใบที่จะอนุมัติได้เลยค่ะ': 'You have {count} claims awaiting your approval{total}. Choose a claim to approve.',
   ' รวม {amount}': ', totalling {amount}',
   [EXPENSE_DOCUMENT_IMAGE_MISSING_LABEL]: 'Document image not attached', 'ส่งรูปเอกสาร': 'Send document photo',

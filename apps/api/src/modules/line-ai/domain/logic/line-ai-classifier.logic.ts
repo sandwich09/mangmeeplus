@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 /**
  * Pure domain logic for LINE AI message classification.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
@@ -5,7 +6,6 @@
 import { verifyLineAiValueCandidatesV2, mapThaiDigits, type LineAiIntent, type LineAiAgent, LINE_CHAT_ACTIONS } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { staffMenuCommand } from './line-staff-menu.logic';
-
 // Thai and English mutation keywords that LINE must block
 const MUTATION_KEYWORDS_TH = [
   'สั่งซื้อ', 'สั่งขาย', 'ชำระ', 'โอนเงิน', 'จ่ายเงิน', 'ลบ', 'แก้ไข',
@@ -115,7 +115,7 @@ export function lineWorkflowPickerText(rawText: string, claim = false) {
   const text = mapThaiDigits(rawText.trim());
   const ordinalMatch = /(?:อัน|ใบ|รายการ|ร่าง)ที่\s*(\d+)/u.exec(text);
   const ordinal = /(?:อัน|ใบ|รายการ)แรก/u.test(text) ? 1 : ordinalMatch ? Number(ordinalMatch[1]) : undefined;
-  const requester = claim ? /ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
+  const requester = claim ? /(?:^|\s|ใบเบิก)ของ(.+?)(?=\s|ยอด|จำนวน|รอบ|สาขา|บาท|มีรอ|รอ(?:ฉัน|คุณ)|\d|[?？]|$)/u.exec(text)?.[1]?.trim().replace(/(?:นะคะ|นะครับ|ค่ะ|ครับ|คะ)$/u, '').trim() : undefined;
   const documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
   const question = /[?？]|ไหม|มั้ย|ปะ|เปล่า|รึยัง|หรือยัง|กี่|เท่าไร|เท่าไหร่|ใคร|อะไร|ยังไง|อย่างไร|ทำไม|ที่ไหน/u
     .test(text.replace(/(?:หน่อย)?ได้(?:ไหม|มั้ย|ปะ)/gu, ''));
@@ -183,4 +183,26 @@ export async function parseManualClaimLine(
   const question = amounts.length > 1 ? MANUAL_CLAIM_AMOUNTS_QUESTION : !values.amount ? MANUAL_CLAIM_AMOUNT_QUESTION
     : !values.description ? MANUAL_CLAIM_DESCRIPTION_QUESTION : undefined;
   return { values, question, amountChoices: amounts.length > 1 ? amounts.slice(0, 4).map(item => ({ label: `${Number(item.value).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`, text: item.span })) : [] };
+}
+
+/** Match only user locators against the already-permitted claim rows. */
+export function matchLineClaimTargets<T>(text: string, rows: T[], amounts: Array<{ value: string; span: string; currencyToken?: string }>, userId: string): T[] {
+  const parsed = lineWorkflowPickerText(text, true), normalize = (s: string) => mapThaiDigits(s).toLowerCase().replace(/\s+/gu, '');
+  const money = amounts.filter(a => a.currencyToken ? /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(a.currencyToken)
+    : !new RegExp(`(?:รอบ|สาขา|ใบที่|รายการที่|อันที่)\\s*${a.span}(?!\\d)`, 'u').test(text));
+  const words = (r: any) => [r.title, r.reason, r.categoryLabelSnapshot, r.requesterDisplayNameSnapshot, r.note, r.internalMemo, ...(r.lines ?? []).map((l: any) => l.description)].filter(Boolean).join(' ');
+  let rest = text;
+  for (const a of money) rest = rest.replace(a.span, '');
+  rest = rest.replace(/รอบ\s*\d+|ของ\S+|(?:อัน|ใบ|รายการ)ที่\s*\d+|บาท|บ\.?(?=\s|$)|ยอด|จำนวนเงิน|ค่ะ|ครับ|คะ|ใบเบิก|ร่าง/gu, '').trim();
+  const terms = rest.split(/\s+/u).filter(s => s.length >= 3);
+  if (!parsed.explicit && !money.length && (!terms.length || /แก้|เปลี่ยน/u.test(text))) return [];
+  return rows.filter((row, index) => {
+    const r = row as any, corpus = words(r);
+    return (parsed.ordinal === undefined || parsed.ordinal === index + 1)
+      && (!parsed.requester || (parsed.requester === 'ฉัน' ? r.requesterUserId === userId : normalize(r.requesterDisplayNameSnapshot ?? '').includes(normalize(parsed.requester))))
+      && parsed.rounds.every(round => [...mapThaiDigits(corpus).matchAll(/รอบ\s*(\d+)/gu)].some(m => m[1] === round))
+      && parsed.documents.every(d => normalize(r.requestNo ?? '').includes(normalize(d)))
+      && money.length <= 1 && (!money.length || (!r.currency || r.currency === 'THB') && new Decimal(r.amount ?? 0).eq(money[0]!.value))
+      && (parsed.explicit || money.length === 1 || terms.every(term => normalize(corpus).includes(normalize(term))));
+  });
 }

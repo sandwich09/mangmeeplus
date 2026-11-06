@@ -1369,3 +1369,8 @@ it('R9 classifier distinguishes paying a service expense from reimbursing a clai
   assert.match(pay, /บันทึกจ่ายค่าบริการค้างจ่าย/);
   for (const words of ['บันทึกจ่าย', 'จ่ายเงิน', 'ค่า', 'ใบเบิก', 'คืน', 'ผู้เบิก', 'จ่ายคืนใบเบิก', 'โอนคืนผู้เบิก', 'reimbursement_pay']) assert.ok(pay.includes(words), words);
 });
+
+it('R11 classifier treats withdrawing a claim as cancellation without claiming voucher payment support', () => {
+  assert.match(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT, /ถอนใบเบิก.*ดึงกลับใบเบิก/);
+  assert.ok(Buffer.byteLength(WORKFLOW_CLASSIFIER_SYSTEM_PROMPT) <= 8000);
+});

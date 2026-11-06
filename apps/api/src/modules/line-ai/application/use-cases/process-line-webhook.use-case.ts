@@ -1,3 +1,4 @@
+import { matchLineClaimTargets } from '../../domain/logic/line-ai-classifier.logic';
 import { LineDraftPreviewStore } from '../../../expenses/application/services/line-draft-preview.store';
 import { LINE_CHAT_ACTIONS, LINE_WORKFLOW_IDS, lineChatAction, mayOfferWorkflow, type LineWorkflowId, type LineWorkflowClassifyResponse } from '@watchdog-bms/contracts';
 import { recordLineTaskEvent, lineTaskSummary, type LineTaskObservation } from '../line-ai-task-metrics';
@@ -3880,7 +3881,11 @@ export class ProcessLineWebhookUseCase {
   private async startClassifiedWorkflow(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null,
     workflow: LineWorkflowId, decision: Extract<LineWorkflowClassifyResponse, { status: 'CLASSIFIED' }>, evidence = event.inputEvidence): Promise<void> {
     if (!this.mayStartWorkflow(workflow, ctx, features)) {
-      await this.deliverReply(event, features !== null && !features.has('expenses') ? EXPENSE_FEATURE_DISABLED_REPLY[replyLanguage(event)] : LINE_CLAIM_PICKER_COPY.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
+      const language = replyLanguage(event), action = lineChatAction(workflow)!;
+      const refusal = language === 'en' ? `You cannot ${lineUiLabel(action.title, language).toLowerCase()}; ask ${lineUiLabel(action.responsible, language).toLowerCase()} to do it.`
+        : `คุณยังไม่มีสิทธิ์${action.title} ให้${action.responsible}ทำให้ค่ะ`;
+      await this.deliverReply(event, features !== null && !features.has('expenses') ? EXPENSE_FEATURE_DISABLED_REPLY[language] : refusal,
+        lineChoiceQuickReply([{ label: language === 'en' ? 'Main menu' : 'เปิดเมนู', text: 'เมนูหลัก' }]));
       const moduleUnavailable = ctx.freeExpenseDrafts || features !== null && !features.has('expenses');
       await this.updateEventLog(event.webhookEventId, moduleUnavailable ? 'expense_module_unavailable' : 'forbidden', undefined, ctx.companyId);
       return;
@@ -4092,7 +4097,7 @@ export class ProcessLineWebhookUseCase {
     const candidates = evidence ? await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok')) : undefined;
     const documentCue = /(?:ใบเลขที่|เลขที่|เลขเอกสาร|[A-Za-zก-๙]+-\d)/u.test(text);
     const amounts = candidates?.amounts.filter(amount => {
-      if (amount.currencyToken) return /^(?:บาท|฿|THB|baht)$/iu.test(amount.currencyToken);
+      if (amount.currencyToken) return /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken);
       const source = amount.source, raw = evidence?.parts.find(part => part.partId === source?.partId)?.rawText;
       if (!source || raw === undefined) return false;
       // Ordinals, branch numbers and document identifiers are locators, not payment amounts.
@@ -4115,7 +4120,7 @@ export class ProcessLineWebhookUseCase {
     const normalized = (value: string) => mapThaiDigits(value).toLocaleLowerCase().replace(/\s+/gu, '');
     const documents = (record: Record<string, any> | null | undefined): string[] =>
       [record?.expenseNumber, record?.vendorDocumentNumber, record?.requestNo, record?.documentNumber].filter((value): value is string => typeof value === 'string' && !!value);
-    const words = (row: typeof records[number]): string[] => [row.record?.vendorNameSnapshot, row.record?.title, row.record?.label,
+    const words = (row: typeof records[number]): string[] => [row.record?.vendorNameSnapshot, row.record?.title, row.record?.label, row.record?.reason, row.record?.categoryLabelSnapshot, row.record?.requesterDisplayNameSnapshot,
       ...(row.record?.lines ?? []).map((line: any) => line.description), row.label.split(' · ')[0]]
       .filter((value): value is string => typeof value === 'string' && !!value);
     const branchMatches = (name: string) => {
@@ -4133,7 +4138,9 @@ export class ProcessLineWebhookUseCase {
     const hasKnownDocument = records.some(row => documents(row.record).some(number => normalized(text).includes(normalized(number))));
     const hasKnownWords = records.some(row => words(row).some(word => normalized(text).includes(normalized(word))));
     let hasTarget = parsed.explicit || !!branchText || amounts.length > 0 || documentCue || hasKnownDocument || hasKnownWords || namedBranches.length > 0;
+    const claimMatches = act.startsWith('REIMBURSEMENT_') ? matchLineClaimTargets(text, records.map(row => row.record ?? { id: row.control.id }), candidates?.amounts ?? [], ctx.userId) : undefined;
     const matches = records.filter((row, index) => {
+      if (claimMatches) return claimMatches.some(claim => claim.id === row.control.id) && (!(branchText || namedBranches.length) || namedBranches.some(branch => branch.id === row.record?.branchId));
       const r = row.record;
       const numberMatch = documents(r).some(value => normalized(text).includes(normalized(value)));
       const wordMatch = words(row).some(value => normalized(text).includes(normalized(value)));
@@ -4183,6 +4190,24 @@ export class ProcessLineWebhookUseCase {
     this.repeatedWorkflowPickerExpiry.set(event, picker.expiry);
     await this.deliverRequiredMessages(event, [{ type: 'text', text: 'เลือกรายการจากการ์ดนี้' }, message]);
     await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
+    return true;
+  }
+
+  private async startNamedWorkflowTarget(event: LineTextEvent, ctx: RequestContext, features: Set<string> | null, workflow: LineWorkflowId): Promise<boolean> {
+    if (!this.classifiedWorkflowStarts.has(event) || !this.expenseActions?.resolveNamedTargets) return false;
+    const action = ({ ...CLAIM_WORKFLOW_ACTIONS, ...EXPENSE_WORKFLOW_ACTIONS } as Record<string, string>)[workflow];
+    const evidence = await this.textEvidenceV2(event);
+    if (!action || !evidence) return false;
+    const selected = await this.expenseActions.resolveNamedTargets(ctx, chatKeyHashOf(event), action as any, workflow, evidence, {}, true);
+    if (!('targets' in selected) || !selected.hasIdentifier || !selected.exhaustive || selected.targets?.length !== 1) return false;
+    const target = selected.targets[0]!;
+    const card = Object.hasOwn(CLAIM_WORKFLOW_ACTIONS, workflow)
+      ? buildClaimWorkflowPicker({ targets: [target as any], total: 1, exhaustive: true }, workflow as ClaimWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl)
+      : buildExpenseWorkflowPicker({ targets: [target as any], total: 1, exhaustive: true }, workflow as ExpenseWorkflowId, this.config.aiGatewayInternalSecret!, ctx.companyId, ctx.userId, this.config.webBaseUrl);
+    const control = this.workflowPickerRows([card])?.rows[0]?.control;
+    if (!control) return false;
+    event.workflowControl = control;
+    try { await this.handleWorkflowControl(event, ctx, features); } finally { delete event.workflowControl; }
     return true;
   }
 
@@ -4239,6 +4264,7 @@ export class ProcessLineWebhookUseCase {
           await this.deliverSubstituteWorkflow(event, ctx, result, waiting, result.status === 'TARGET_REQUIRED' ? picker : undefined);
           return;
         }
+        if (records.exhaustive && await this.startNamedWorkflowTarget(event, ctx, features, expenseWorkflow)) return;
         await this.deliverRequiredMessages(event, [picker]);
         await this.updateEventLog(event.webhookEventId, 'workflow_targets', undefined, ctx.companyId);
         return;
@@ -4250,6 +4276,28 @@ export class ProcessLineWebhookUseCase {
       await this.deliverReply(event, copy.forbidden, lineChoiceQuickReply([{ label: 'เปิดเมนู', text: 'เมนูหลัก' }]));
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, ctx.companyId); return;
     }
+    if (result.exhaustive && !result.targets.length && ['approvals', 'reimbursement_reject'].includes(workflow)) {
+      const evidence = await this.textEvidenceV2(event), text = event.messageText;
+      const parsed = lineWorkflowPickerText(text, true);
+      const requester = parsed.requester ?? slots.search;
+      const candidates = evidence ? await extractValueCandidatesV2(evidence, todayCivilDate('Asia/Bangkok')) : undefined;
+      const permission = workflow === 'approvals' ? 'reimbursement.approve' : 'reimbursement.reject';
+      const known = matchLineClaimTargets(text, result.notAssigned ?? [], candidates?.amounts ?? [], ctx.userId);
+      const named = parsed.explicit || (candidates?.amounts.length ?? 0) > 0;
+      const reply = !ctx.permissions.includes(permission)
+        ? `คุณยังไม่มีสิทธิ์${workflow === 'approvals' ? 'อนุมัติ' : 'ไม่อนุมัติ'}ใบเบิก ให้${lineChatAction(workflow)?.responsible ?? 'ผู้มีสิทธิ์อนุมัติใบเบิก'}ตรวจรายการนี้ค่ะ`
+        : requester && !parsed.rounds.length && !parsed.documents.length && !candidates?.amounts.length
+          ? `ไม่มีใบเบิกของ${scrubRecordText(requester, 60)}รอคุณอนุมัติค่ะ`
+          : known.length === 1 ? 'ใบเบิกนี้ไม่ได้รอคุณอนุมัติค่ะ' : named ? 'ไม่พบใบเบิกนี้ในรายการที่คุณอนุมัติได้ค่ะ' : undefined;
+      if (reply) {
+        const card = buildClaimWorkflowPicker(result, workflow, secret, ctx.companyId, ctx.userId, this.config.webBaseUrl);
+        if (card.type === 'text') card.text = reply;
+        await this.deliverRequiredMessages(event, [card]);
+        await this.updateEventLog(event.webhookEventId, ctx.permissions.includes(permission) ? 'clarification_required' : 'forbidden', undefined, ctx.companyId);
+        return;
+      }
+    }
+    if (result.exhaustive && await this.startNamedWorkflowTarget(event, ctx, features, workflow)) return;
     await this.deliverRequiredMessages(event, [buildClaimWorkflowPicker(result, workflow, secret,
       ctx.companyId, ctx.userId, this.config.webBaseUrl, {}, replyLanguage(event))]);
     await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
@@ -6036,6 +6084,7 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
     result: import('../../../reimbursements/application/use-cases/line-reimbursement-draft.use-case').LineReimbursementDraftResult) {
     this.deliveryReimbursements.set(event, { context: ctx, result });
     let messages = await this.reimbursementDraftMessages(result, ctx, event);
+    const missingMessages = messages;
     const bound = this.boundConversations.get(event);
     if (bound && (result.status === 'needs_fields' || result.status === 'needs_target')) {
       const options = await this.reimbursementAdapter.readDisplayOptions({ ctx, owner: bound.owner, ownerEpoch: bound.epoch, actionId: result.actionId });
@@ -6044,6 +6093,14 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
         const choices = buildReimbursementOptionsMessages(options, this.config.webBaseUrl ?? '', replyLanguage(event));
         if (choices.length) messages = choices;
       }
+    }
+    if (bound && result.status === 'needs_fields' && await this.reimbursementAdapter.repeatedCollectionQuestion({ ctx, owner: bound.owner, ownerEpoch: bound.epoch,
+      actionId: result.actionId, fieldPaths: result.fieldPaths, question: messages.map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.canonicalText ?? message.altText : '').join(' ') })) {
+      const en = replyLanguage(event) === 'en';
+      await this.deliverReply(event, missingMessages.map(message => message.type === 'text' ? message.text : '').filter(Boolean).join(' '),
+        lineChoiceQuickReply([{ label: this.config.webBaseUrl ? en ? 'Open claim draft' : 'เปิดร่างใบเบิก' : en ? 'Main menu' : 'เมนูหลัก', text: '',
+          ...(this.config.webBaseUrl ? { uri: `${this.config.webBaseUrl.replace(/\/$/u, '')}/companies/${encodeURIComponent(ctx.companyId)}/reimbursements/draft-actions/${encodeURIComponent(result.actionId)}` } : { text: 'เมนูหลัก' }) }]));
+      return;
     }
     await this.deliverRequiredMessages(event, messages);
   }

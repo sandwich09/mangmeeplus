@@ -153,3 +153,86 @@ Round 8 already applied the gold record for delete, void, reject, mark-ready and
 The round 9 advisor run had 16 throttled calls between about 09:08 and 09:20; two reached the user and retries recovered the rest. The earlier window was 04:22–05:39. The tuning runs, at the same pace, had none.
 
 Phase B adds one classifier call to every typed message, so read the Sonnet 4.6 quotas of the Production account (owner MFA) before the release.
+
+## Round 10 and the blind gate, measured 2026-11-06
+
+### What was run
+- **Tuning, round 10 and cards round 2.** Main `b974497b4`. Tuning 147.76 THB.
+  - Round 10: a payment asks its method, the answer never becomes a new expense, and the approvals picker states the count and the total.
+  - Cards round 2: reviewed-help how-tos offer the one workflow they name.
+- **Blind gate.** Blind held-out v2: 164 conversations, written by a separate lane before the round 9–10 seed changes and never shown to a fixing lane.
+  - 147 conversations ran within the 240 THB cap (232.92 THB). The other 17 (smalltalk, free shop and unlinked) ran after, for 14.29 THB.
+  - Three conversations the controller saw while fixing are left out of the gate decision. That leaves a gate set of 156 completable tasks.
+- **Advisor held-out (W11).** 54.24 THB.
+- **Harness fixes.**
+  - `64ab7aeae` accepts the card link that delivery opens outside LINE, and reads zone-less snapshot times as UTC.
+  - `498063d71` counts a voucher submit's expense reservation as part of the gold voucher.
+
+### Tuning (115 conversations)
+- **W3: 65/72 (90.3%)**, with wrong applied 0. Workflow tasks finish 25/32.
+- **Finishing every time:** record payment and all eight "ให้น้องทำให้" how-to paths.
+- **Left:**
+  - 4 confirm tasks: the harness link fix above, not yet re-run.
+  - 2 claim-create tasks: the policy's no-receipt reason question, with stale gold.
+  - 1 advisor answer.
+
+### Blind gate (MA3/MA6): not met
+| Metric | Gate set | Gate |
+|---|---|---|
+| W3 completable tasks | 85/156 (54.5%) | ≥ 95% |
+| W6 wrong applied | 4 changes in one conversation (real) | 0 |
+| W1 classifier label | 102/136 | — |
+| W2 | 69/106 | — |
+| W14 timeouts | 1 of 228 calls | — |
+
+**By kind:**
+- **Finished every time:**
+  - expense void 4/4;
+  - claim pay-back 3/3;
+  - smalltalk 5/5;
+  - the free-shop refusals (R27) 6/6.
+- **Mostly:**
+  - voucher 15/20;
+  - expense delete 9/12;
+  - expense submit 4/5;
+  - advisor 45/63.
+- **Not at all:**
+  - claim create 0/10;
+  - approve 0/6;
+  - reject 0/5;
+  - claim cancel 0/3;
+  - claim submit 0/3;
+  - substitute receipt 0/3.
+
+**The real wrong change.** A typed pick on the claim-edit picker failed with `invalid_provenance`. The next edit instruction then built its preview for **another** draft of the same user, and the press saved it.
+
+**Product causes,** about 46 of the 71 failed tasks:
+1. **The claim matcher.** The typed-pick matcher never reads a claim's `reason`, category or requester name, and a typed round vetoes every claim. The claim picker rows also say "ร่าง N" for claims that wait for approval or payment.
+2. **A target named in the first message** still opens the full picker.
+3. **"ไม่มีใบเบิกรอคุณอนุมัติ"** is told to a user without the approve right, to an approver whose named claim waits on someone else, and to a requester-filtered question. This breaks the house rule that wording must be true in every case.
+4. **Claim creation loops** on the category question after "ไม่มีใบเสร็จ …", and a typed category with a polite ending is not taken.
+5. **The substitute-receipt picker** ignores the typed pick, and its collector then asks "which expense" forever.
+6. **Every refused workflow** is answered with the claim wording "ยังไม่มีสิทธิ์เปิดใบเบิก".
+7. **The 50 ทวิ refusal** after a payment without withholding gives no reason.
+8. **Classifier confidence.** "ถอนใบเบิก" and paying an approved voucher fall below the threshold.
+
+**Harness, seed and gold causes,** 25 tasks:
+- 6 tasks drifted with the seed: the blind set was written before the seed made claims submittable and ready receipts confirmable.
+- 7 tasks assume an accountant records payments, but `ROLE_GRANTS` does not give accountants `expense.payment.record`.
+- 10 correct replies log no workflow task, so the harness cannot score them:
+  - six model-text refusals;
+  - two free-shop menu replies, the support request and the package card;
+  - two unlinked-user link cards.
+- 2 tasks use the creator-only fixture, which has no LINE AI access.
+
+Even with all 25 counted as passes, W3 would be 110/156 (70.5%). The gate fails on product grounds.
+
+### Advisor held-out (W11)
+- **Score:** 57/71 (80.3%).
+- **Throttling:** five misses were `PROVIDER_THROTTLED` between 05:08 and 05:11 UTC, which the user saw as "ระบบตอบช้ากว่าปกติ", and one was a router schema error. Without these six, the score is 62/71.
+- **Other misses:** the four stale out-of-package rows are unchanged.
+
+### Next
+- **Fixes.** Rounds `wfp-r11` and `cards-r3` take the eight product causes above.
+- **New blind set.** A new lane writes blind held-out v3 whose gold is checked against today's seed and `ROLE_GRANTS`.
+- **Budget.** The programme has spent about 2,100 THB of the 2,300 THB cap, so the re-measure needs the owner's approval for more budget.

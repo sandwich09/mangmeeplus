@@ -1,3 +1,4 @@
+import { matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
 import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -73,7 +74,9 @@ type StoredOptions = {
   pages: Partial<Record<OptionFamily, { returned: number; hasMore: boolean; continuation?: string }>>;
 };
 type Accepted = {
+  collectionQuestion?: { key: string; count: number };
   schemaVersion: 1;
+  pickedTargetRef?: string;
   options: StoredOptions;
   proposal?: LineReimbursementDraftProposalV1;
   suggestedCategoryChoiceId?: string;
@@ -161,6 +164,18 @@ export class LineReimbursementDraftAdapterService {
       if (result) return result;
     }
     return 'id' in saved ? this.draftService.get({ ctx, owner, ownerEpoch, actionId: saved.id }) : saved;
+  }
+
+  async repeatedCollectionQuestion(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number; actionId: string; fieldPaths: string[]; question?: string }): Promise<boolean> {
+    if (input.ctx.freeExpenseDrafts) return false;
+    const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
+    const accepted = active && this.accepted(active);
+    if (!active || active.id !== input.actionId || active.status !== 'COLLECTING' || !accepted) return false;
+    const key = digest(input.question ?? input.fieldPaths), count = accepted.collectionQuestion?.key === key ? accepted.collectionQuestion.count + 1 : 1;
+    const saved = await this.drafts.saveTrustedOptions({ ...input, owner: this.actionOwner(input.owner, input.ownerEpoch),
+      key: { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation },
+      accepted: { ...accepted, collectionQuestion: { key, count } } });
+    return 'id' in saved && count >= 3;
   }
 
   /** Read-only delivery view; only options still authorized for the same current owner can be printed. */
@@ -283,6 +298,34 @@ export class LineReimbursementDraftAdapterService {
     if (input.ctx.freeExpenseDrafts) return null;
     const active = await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     const accepted = active && this.accepted(active);
+    if (active?.status === 'COLLECTING' && active.operation === 'UPDATE' && accepted && Date.parse(accepted.options.expiresAt) > Date.now() && !accepted.pickedTargetRef) {
+      const choices = accepted.options.choices.filter(choice => choice.kind === 'TARGET');
+      const rows = (await Promise.all(choices.map(choice => this.repo.findRequestById(input.ctx.companyId, String(choice.raw['id']), true)))).filter((row): row is NonNullable<typeof row> => !!row && this.canUpdate(input.ctx, row));
+      const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
+      const matches = candidates?.completeness === 'complete' ? matchLineClaimTargets(input.text.replace(/^(?:เลือกใบเบิกที่จะแก้|Choose claim:)\s*/u, ''), rows, candidates.amounts, input.ctx.userId) : [];
+      if (matches.length !== 1) return { status: 'needs_target', actionId: active.id, actionRevision: active.previewRevision };
+      const choice = choices.find(choice => choice.raw['id'] === matches[0]!.id)!;
+      await this.currentChoice(input.ctx, choice, accepted.options);
+      const key = { actionId: active.id, taskId: active.taskId, actionOrdinal: active.actionOrdinal, operation: active.operation };
+      const options = await this.buildOptions(input.ctx, key, accepted.options.taskRevision, { operation: 'UPDATE', subrequestIndex: 0, targetRef: choice.choiceId }, accepted.options);
+      const proposal: LineReimbursementDraftProposalV1 = { schemaVersion: 1, taskId: active.taskId, taskRevision: options.taskRevision, operation: 'UPDATE', targetRef: choice.choiceId, fields: {} };
+      await this.drafts.saveTrustedOptions({ ctx: input.ctx, owner: this.actionOwner(input.owner, input.ownerEpoch), key, accepted: { ...accepted, options, proposal, pickedTargetRef: choice.choiceId }, fieldPaths: ['fields'] });
+      return { status: 'needs_fields', actionId: active.id, actionRevision: active.previewRevision, fieldPaths: ['fields'] };
+    }
+    if (active?.status === 'COLLECTING' && active.operation === 'UPDATE' && accepted?.pickedTargetRef && accepted.proposal && Date.parse(accepted.options.expiresAt) > Date.now()) {
+      const proposal = clone(accepted.proposal), reason = /^(?:แก้|เปลี่ยน)เหตุผล(?:เป็น)?\s*(.+)$/u.exec(input.text)?.[1]?.trim();
+      if (reason) {
+        const refs = input.evidence.parts.flatMap(part => { const start = part.rawText.indexOf(reason); return start < 0 ? [] : [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + reason.length }]; });
+        const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId, taskRevision: accepted.options.taskRevision, operation: 'UPDATE', fields: { reason: { value: reason, proof: { kind: 'USER_TEXT', refs } } } }, { evidence: input.evidence, candidateValues: {}, candidateSources: {} });
+        if (fragment?.fields.reason) { proposal.fields.reason = fragment.fields.reason; return this.proposeCollected(input, active, { ...accepted, proposal }); }
+      }
+      const lines = accepted.options.choices.filter(choice => choice.kind === 'LINE');
+      if (/แก้ยอด|เปลี่ยนยอด/u.test(input.text) && lines.length === 1) {
+        const candidates = await extractValueCandidatesV2(input.evidence, todayCivilDate('Asia/Bangkok'));
+        const parsed = candidates && await parseManualClaimLine(input.evidence, candidates);
+        if (parsed?.values.amount) { proposal.lineChanges = [{ operation: 'SET', lineRef: lines[0]!.choiceId, values: { amount: parsed.values.amount } }]; return this.proposeCollected(input, active, { ...accepted, proposal }); }
+      }
+    }
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
       || Date.parse(accepted.options.expiresAt) <= Date.now()) return null;
     const text = input.text.trim();
@@ -361,7 +404,7 @@ export class LineReimbursementDraftAdapterService {
       const categories = options.choices.filter(choice => {
         if (choice.kind !== 'CATEGORY' || !remaining.slice(start).startsWith(choice.label)) return false;
         const suffix = remaining.slice(start + choice.label.length);
-        return !suffix || /^[\s,;]/u.test(suffix) || suffix.startsWith('เหตุผล');
+        return !suffix || /^(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|[\s,;.!])*$/u.test(suffix) || /^[\s,;]/u.test(suffix) || suffix.startsWith('เหตุผล');
       });
       if (categories.length === 1) {
         await this.currentChoice(input.ctx, this.findChoice(accepted.options, categories[0]!.choiceId, 'CATEGORY'), accepted.options);
@@ -374,9 +417,11 @@ export class LineReimbursementDraftAdapterService {
     const next = { ...accepted, proposal, awaitingPhoto: noReceipt ? false : accepted.awaitingPhoto };
     const reason = remaining.match(/(?:^|[\s,;])เหตุผล\s*[:：]?\s*.+$/u)?.[0].trim();
     const fields = (active.commandJson as { fieldPaths?: string[] }).fieldPaths ?? [];
-    const answer = reason ?? ((line.values.categoryChoiceId || options.collection.categoryChosen)
+    const missingReason = noReceipt && !prefix && !reason && effectivePolicy(await this.repo.findPolicy(input.ctx.companyId, null)).allowMissingReceiptWithReason
+      ? remaining.replace(/(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|[\s.!])+$/u, '').trim() : '';
+    const answer = reason || (missingReason ? `เหตุผล ${missingReason}` : '') || ((line.values.categoryChoiceId || options.collection.categoryChosen)
       && fields.some(field => field === 'fields.reason' || field === 'fields.missingReceiptReason') ? remaining : '');
-    const result = answer ? await this.answerReason({ ...input, text: answer, collected: { active, accepted: next } }) : null;
+    const result = answer ? await this.answerReason({ ...input, text: answer, collected: { active, accepted: next, missingReceiptReason: !!missingReason } }) : null;
     const saved = result ?? await this.proposeCollected(input, active, next);
     if (noReceipt) await this.photoIntents.discard(input.ctx.companyId, `claim-photo:${input.owner.chatKeyHash}`);
     return saved;
@@ -385,7 +430,7 @@ export class LineReimbursementDraftAdapterService {
   /** Only the field the current claim collection is asking owns this plain answer. */
   async answerReason(input: { ctx: RequestContext; owner: LineConversationOwner; ownerEpoch: number;
     evidence: LineAiInputEvidenceV2; text: string; purposeFallback?: boolean;
-    collected?: { active: ReimbursementDraftActionRecord; accepted: Accepted } }): Promise<LineReimbursementDraftResult | null> {
+    collected?: { active: ReimbursementDraftActionRecord; accepted: Accepted; missingReceiptReason?: boolean } }): Promise<LineReimbursementDraftResult | null> {
     if (input.ctx.freeExpenseDrafts) return null;
     const active = input.collected?.active ?? await this.drafts.active(input.ctx, this.actionOwner(input.owner, input.ownerEpoch));
     // The persisted preview owns a plain answer even when intake omitted its continuation hint.
@@ -401,19 +446,19 @@ export class LineReimbursementDraftAdapterService {
     if (!active || active.status !== 'COLLECTING' || active.operation !== 'CREATE' || !accepted?.proposal
       || Date.parse(accepted.options.expiresAt) <= Date.now() || accepted.awaitingPhoto) return null;
     const fields = (active.commandJson as { fieldPaths?: string[] })?.fieldPaths ?? [];
-    const missingReceiptReason = fields.includes('fields.missingReceiptReason');
+    const missingReceiptReason = fields.includes('fields.missingReceiptReason') || !!input.collected && input.collected.accepted.proposal?.lineChanges?.some(line => line.operation === 'ADD' && line.values.attachmentChoiceId === null) && effectivePolicy(await this.repo.findPolicy(input.ctx.companyId, null)).allowMissingReceiptWithReason;
     const view = this.publicOptions(accepted.options, accepted.proposal);
     const part = input.evidence.parts.length === 1 ? input.evidence.parts[0] : undefined;
     if (!part || !part.rawText.includes(value)) return null;
     if (!explicitReason && view.collection.receiptChosen && !view.collection.categoryChosen) {
-      const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === value.replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, ''));
+      const categories = accepted.options.choices.filter(choice => choice.kind === 'CATEGORY' && choice.label === value.replace(/^เลือกหมวดค่าใช้จ่าย\s*/u, '').replace(/(?:(?:ค่ะ|คะ|ครับ|จ้า|จ้ะ|นะ|ด้วย)|\s)+$/u, ''));
       return categories.length === 1 ? this.choose({ ...input, control: { action: 'reimbursement_choice',
         ...view.control, choice: categories[0]!.choiceId } }) : this.draftService.get({ ...input, actionId: active.id });
     }
     if (!explicitReason && ((!view.reasonQuestion && !fields.includes('fields.reason') && !missingReceiptReason)
       || !view.collection.receiptChosen || !view.collection.categoryChosen)) return null;
     const start = part.rawText.indexOf(value);
-    const field = missingReceiptReason && !explicitReason ? 'missingReceiptReason' : 'reason';
+    const field = missingReceiptReason && (!input.collected || input.collected.missingReceiptReason) ? 'missingReceiptReason' : 'reason';
     const fragment = parseLineReimbursementDraftProposalV1({ schemaVersion: 1, taskId: active.taskId,
       taskRevision: accepted.options.taskRevision, operation: 'CREATE', fields: { [field]: { value,
         proof: { kind: 'USER_TEXT', refs: [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: start, endUtf16: start + value.length }] } } } },
@@ -538,6 +583,12 @@ export class LineReimbursementDraftAdapterService {
     const proposal = accepted.proposal!, key: LineReimbursementActionKey = { actionId: active.id, taskId: active.taskId,
       actionOrdinal: active.actionOrdinal, operation: active.operation };
     await this.validateProposalProofs(input.ctx, accepted.options, proposal);
+    if (active.operation === 'UPDATE') {
+      const hydrated = await this.hydrateUpdate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal));
+      const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
+      if (!sourceProof || !hydrated.request) return { status: 'needs_fields', actionId: active.id, fieldPaths: hydrated.missing, actionRevision: active.previewRevision };
+      return this.draftService.propose({ ...input, proposal: { key, status: 'ready', operation: 'UPDATE', requestId: hydrated.requestId!, expectedRequestUpdatedAt: hydrated.expectedRequestUpdatedAt!, request: hydrated.request, sourceProof, targetRef: proposal.targetRef } });
+    }
     const hydrated = await this.hydrateCreate(input.ctx, accepted.options, proposal, this.proposalReceipts(proposal), accepted.awaitingPhoto, accepted.admission?.source === 'workflow');
     const sourceProof = parseLineReimbursementSourceProofV1({ schemaVersion: 1, receipts: hydrated.receipts });
     if (!sourceProof) return { status: 'blocked', errorCode: 'invalid_provenance' };
@@ -610,13 +661,14 @@ export class LineReimbursementDraftAdapterService {
 
     if (key.operation !== input.operation && !(active?.status === 'COLLECTING' && key.operation === 'CREATE' && input.operation === 'UPDATE')) return this.domainResult('reimbursement.draft.get_options', key,
       { status: 'blocked', errorCode: 'invalid_field', fieldPaths: ['operation'] });
-    const previous = active ? this.accepted(active)?.options : undefined;
+    const previousAccepted = active ? this.accepted(active) : undefined;
+    const previous = input.operation === 'UPDATE' && previousAccepted ? { ...previousAccepted.options, selected: { ...previousAccepted.options.selected, targetRef: previousAccepted.pickedTargetRef } } : previousAccepted?.options;
     const decodedPage = input.continuation ? this.decodeContinuation(input.continuation, key.actionId, previous?.revision) : undefined;
     if (input.continuation && !decodedPage) return this.domainResult('reimbursement.draft.get_options', key,
       { status: 'blocked', errorCode: 'source_changed', fieldPaths: ['continuation'] });
     try {
       const options = await this.buildOptions(authority.ctx, key, authority.owner.taskRevision ?? 0,
-        input, previous, decodedPage ?? undefined, { owner: authority.owner.owner, epoch: authority.owner.epoch }, {
+        { ...input, ...(input.operation === 'UPDATE' ? { targetRef: previousAccepted?.pickedTargetRef } : {}) }, previous, decodedPage ?? undefined, { owner: authority.owner.owner, epoch: authority.owner.epoch }, {
           ...(authority.candidates.amounts.length === 1 ? { amount: authority.candidates.amounts[0]!.value } : {}),
           ...(authority.candidates.dates.length === 1 ? { incurredDate: authority.candidates.dates[0]!.isoDate }
             : authority.candidates.periods.length === 1 && authority.candidates.periods[0]!.kind === 'day' && authority.candidates.periods[0]!.fromDate === authority.candidates.periods[0]!.toDate
@@ -625,7 +677,7 @@ export class LineReimbursementDraftAdapterService {
       const prior = active ? this.accepted(active) : undefined;
       // Keep proven intake facts even if the planner times out after this options read.
       const proposal = prior?.proposal ?? this.intakeProposal(authority, options);
-      const accepted: Accepted = { schemaVersion: 1, options, admission: { ...prior?.admission, requestId: String(authority.acceptedRequest['requestId']),
+      const accepted: Accepted = { schemaVersion: 1, options, ...(prior?.pickedTargetRef ? { pickedTargetRef: prior.pickedTargetRef } : {}), admission: { ...prior?.admission, requestId: String(authority.acceptedRequest['requestId']),
         subrequestIndex: input.subrequestIndex, ...(authority.retainedTaskRef ? { taskId: authority.retainedTaskRef.taskId, taskSubrequestIndex: authority.retainedTaskRef.subrequestIndex } : {}) },
         ...(proposal ? { proposal } : {}), ...(prior?.awaitingPhoto ? { awaitingPhoto: true } : {}),
         ...(prior?.suggestedCategoryChoiceId ? { suggestedCategoryChoiceId: prior.suggestedCategoryChoiceId } : {}), ...(prior?.receipts ? { receipts: prior.receipts } : {}) };
@@ -679,7 +731,7 @@ export class LineReimbursementDraftAdapterService {
     if (authority.candidates.completeness !== 'complete') {
       return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'evidence_overflow' });
     }
-    if (operation === 'UPDATE' && (!object(wrapper.proposal) || typeof wrapper.proposal['targetRef'] !== 'string')) {
+    if (operation === 'UPDATE' && (!accepted.pickedTargetRef || !object(wrapper.proposal) || wrapper.proposal['targetRef'] !== accepted.pickedTargetRef || typeof wrapper.proposal['targetRef'] !== 'string')) {
       return this.domainResult(toolName, key, { status: 'needs_target', actionId: active.id, actionRevision: active.previewRevision });
     }
     const candidateValues: Record<string, string> = {}, candidateSources: Record<string, any> = {};
@@ -728,7 +780,7 @@ export class LineReimbursementDraftAdapterService {
         if (!sourceProof) return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
         result = hydrated.missing.length
           ? await this.draftService.propose({ ctx: authority.ctx, owner, ownerEpoch, proposal: { key, status: 'needs_fields',
-              accepted: { schemaVersion: 1, options, proposal, ...(accepted.awaitingPhoto ? { awaitingPhoto: true } : {}), suggestedCategoryChoiceId, receipts: hydrated.receipts, ...(accepted.admission ? { admission: accepted.admission } : {}) }, sourceProof,
+              accepted: { schemaVersion: 1, options, proposal, ...(accepted.pickedTargetRef ? { pickedTargetRef: accepted.pickedTargetRef } : {}), ...(accepted.awaitingPhoto ? { awaitingPhoto: true } : {}), suggestedCategoryChoiceId, receipts: hydrated.receipts, ...(accepted.admission ? { admission: accepted.admission } : {}) }, sourceProof,
               fieldPaths: hydrated.missing } })
           : await this.draftService.propose({ ctx: authority.ctx, owner, ownerEpoch,
               proposal: { key, status: 'ready', operation: 'CREATE', request: hydrated.request!, sourceProof } });
@@ -738,7 +790,7 @@ export class LineReimbursementDraftAdapterService {
         if (!sourceProof) return this.domainResult(toolName, key, { status: 'blocked', errorCode: 'invalid_provenance' });
         result = hydrated.missing.length
           ? await this.draftService.propose({ ctx: authority.ctx, owner, ownerEpoch, proposal: { key, status: 'needs_fields',
-              accepted: { schemaVersion: 1, options, proposal, ...(accepted.awaitingPhoto ? { awaitingPhoto: true } : {}), suggestedCategoryChoiceId, receipts: hydrated.receipts, ...(accepted.admission ? { admission: accepted.admission } : {}) }, sourceProof,
+              accepted: { schemaVersion: 1, options, proposal, ...(accepted.pickedTargetRef ? { pickedTargetRef: accepted.pickedTargetRef } : {}), ...(accepted.awaitingPhoto ? { awaitingPhoto: true } : {}), suggestedCategoryChoiceId, receipts: hydrated.receipts, ...(accepted.admission ? { admission: accepted.admission } : {}) }, sourceProof,
               fieldPaths: hydrated.missing, ...(hydrated.requestId ? { requestId: hydrated.requestId } : {}),
               ...(hydrated.expectedRequestUpdatedAt ? { expectedRequestUpdatedAt: hydrated.expectedRequestUpdatedAt } : {}) } })
           : await this.draftService.propose({ ctx: authority.ctx, owner, ownerEpoch,

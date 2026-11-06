@@ -72,6 +72,10 @@ test('preview evidence requires the delivered card to match its stored signed pa
   const canonical = (value: any) => ({ ...render(value), canonicalText: 'ตรวจการจ่าย\nผู้ขาย\n250.00 บาท' });
   assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, altText: 'ตรวจการจ่าย\nผู้ขาย\n250.00 บาท' }] }], [entry], canonical)[0]?.action, 'RECORD_PAYMENT', 'delivery may send the canonical text as altText');
   assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...message, altText: 'อื่น' }] }], [entry], canonical)[0]?.action, 'UNVERIFIED_PREVIEW');
+  const linked = (value: any) => ({ ...render(value), contents: { ...render(value).contents, link: { type: 'uri', uri: 'https://web.test/companies/c/expenses/e' } } });
+  const external = { ...linked(entry), contents: { ...linked(entry).contents, link: { type: 'uri', uri: 'https://web.test/companies/c/expenses/e?openExternalBrowser=1' } } };
+  assert.equal(runtimeDeliveredPreviews([{ messages: [external] }], [entry], linked)[0]?.action, 'RECORD_PAYMENT', 'delivery opens web links outside LINE');
+  assert.equal(runtimeDeliveredPreviews([{ messages: [{ ...external, contents: { ...external.contents, link: { type: 'uri', uri: 'https://web.test/other' } } }] }], [entry], linked)[0]?.action, 'UNVERIFIED_PREVIEW');
   const claim = { preview: { actionId: 'draft', previewRevision: 2, confirmationDigest: 'digest', targetRef: 'claim-a',
     after: { amount: '250.00', reason: 'ค่าเดินทาง', requesterDisplayName: 'ผู้เบิก' } } };
   const claimCard = { type: 'flex', altText: 'ตรวจใบเบิก', contents: { action: { type: 'postback',

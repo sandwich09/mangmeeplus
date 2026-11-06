@@ -1,3 +1,4 @@
+import { matchLineClaimTargets } from '../domain/logic/line-ai-classifier.logic';
 import { createLineAiInputEvidence, extractValueCandidatesV2, mapThaiDigits, type LineWorkflowId } from '@watchdog-bms/contracts';
 import { LINE_CLAIM_PICKER_COPY, LINE_EXPENSE_PICKER_COPY } from '../domain/logic/line-business-card.logic';
 import { LineWorkflowTargetService, type LineWorkflowTargets, type LineWorkflowRecordTargets, type LineWorkflowRecordTarget } from './line-workflow-target.service';
@@ -462,7 +463,7 @@ export class LineExpenseActionService {
     const input = evidence?.parts.map(part => part.rawText).join('\n') === text ? evidence : (await createLineAiInputEvidence({ turnKey: deliveryHash(text), parts: [{ partId: 'part-0', eventIdHash: deliveryHash(text), acceptedAtMs: Date.now(), rawText: text }] }))?.inputEvidence;
     const today = input?.parts[0] ? new Date(input.parts[0].acceptedAtMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }) : todayCivilDate('Asia/Bangkok');
     const candidates = input ? await extractValueCandidatesV2(input, today) : undefined;
-    const amounts = candidates?.amounts.filter(item => item.currencyToken ? /^(?:บาท|฿|THB|baht)$/iu.test(item.currencyToken) : paymentMethod && !lineWorkflowPickerText(text).explicit) ?? [];
+    const amounts = candidates?.amounts.filter(item => item.currencyToken ? /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(item.currencyToken) : paymentMethod && !lineWorkflowPickerText(text).explicit) ?? [];
     const dates = [...(candidates?.dates.map(item => item.isoDate) ?? []), ...(candidates?.periods.filter(item => item.kind === 'day' && item.fromDate === item.toDate).map(item => item.fromDate) ?? [])];
     return { ...(paymentMethod ? { paymentMethod } : {}), ...(amounts.length === 1 ? { paidAmount: amounts[0]!.value } : {}), ...(dates.length === 1 ? { paidAt: dates[0]! } : {}) };
   }
@@ -488,7 +489,7 @@ export class LineExpenseActionService {
     let documents = [...text.matchAll(/(?:บิล|ใบ|เอกสาร)?เลขที่\s*([^\s,]+)|[A-Za-zก-๙]+[-/]\d[\d/-]*/gu)].map(match => match[1] ?? match[0]);
     const rounds = parsed.rounds;
     const isTargetAmount = (amount: typeof candidates.amounts[number]) => {
-      if (amount.currencyToken) return /^(?:บาท|฿|THB|baht)$/iu.test(amount.currencyToken);
+      if (amount.currencyToken) return /^(?:บาท|บ\.?|฿|THB|baht)$/iu.test(amount.currencyToken);
       const raw = mapThaiDigits(evidence.parts.find(part => part.partId === amount.source.partId)!.rawText);
       if (documents.some(document => {
         const start = raw.indexOf(document);
@@ -554,8 +555,9 @@ export class LineExpenseActionService {
     }
     const searchWords = pickerAnswer ? remaining.split(/\s+/u).map(normalize).filter(word => word.length >= 3) : [];
     const strongIdentifier = parsed.explicit || amounts.length === 1;
-    const targetWords = (target: typeof result.targets[number]) => normalize(['title' in target ? target.title : (target as LineWorkflowRecordTarget).label, (target as LineWorkflowRecordTarget).roundText].filter(Boolean).join(' '));
-    const hasIdentifier = strongIdentifier || result.targets.some(target => searchWords.length > 0 && searchWords.every(word => targetWords(target).includes(word)));
+    const targetWords = (target: typeof result.targets[number]) => normalize(['title' in target ? target.title : (target as LineWorkflowRecordTarget).label, 'reason' in target ? target.reason : '', 'categoryLabelSnapshot' in target ? target.categoryLabelSnapshot : '', 'requesterDisplayNameSnapshot' in target ? target.requesterDisplayNameSnapshot : '', (target as LineWorkflowRecordTarget).roundText].filter(Boolean).join(' '));
+    const namedClaims = this.isClaim(action) && pickerAnswer ? matchLineClaimTargets<LineWorkflowRecordTarget | LineWorkflowTargets['targets'][number]>(text, result.targets, candidates.amounts, ctx.userId) : undefined;
+    const hasIdentifier = strongIdentifier || !!namedClaims?.length || result.targets.some(target => searchWords.length > 0 && searchWords.every(word => targetWords(target).includes(word)));
     const matches = (target: typeof result.targets[number]) => {
       if (pickerAnswer && parsed.requester && (parsed.requester === 'ฉัน'
         ? (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId
@@ -564,10 +566,10 @@ export class LineExpenseActionService {
         || !strongIdentifier && searchWords.some(word => !targetWords(target).includes(word)))) return false;
       if (this.isClaim(action) && text.includes('ของฉัน') && (target as LineWorkflowTargets['targets'][number]).requesterUserId !== ctx.userId) return false;
       if (amounts.length === 1 && (target.currency !== 'THB' || !new Decimal(target.amount).eq(amounts[0]!.value))) return false;
-      const label = 'title' in target ? target.title ?? '' : (target as LineWorkflowRecordTarget).roundText ?? '';
+      const label = 'title' in target ? [target.title, target.reason, target.categoryLabelSnapshot].filter(Boolean).join(' ') : (target as LineWorkflowRecordTarget).roundText ?? '';
       return rounds.every(round => [...mapThaiDigits(label).matchAll(/รอบ\s*(\d+)/gu)].some(match => match[1] === round));
     };
-    const eligible = result.targets.filter(matches);
+    const eligible = namedClaims ? namedClaims.filter(target => !/สาขา/u.test(text) || namedBranches.some(branch => branch.id === target.branchId)) : result.targets.filter(matches);
     const byDocument = documents.map(document => eligible.filter(target => numbers(target).some(number => searchedDocument
       ? normalize(number) === normalize(searchedDocument) : mapThaiDigits(number).includes(document))));
     const targets = documents.length ? [...new Map(byDocument.flat().map(target => [target.id, target])).values()] : eligible;

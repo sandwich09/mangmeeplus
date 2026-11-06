@@ -386,8 +386,10 @@ export function runtimeDeliveredPreviews(receipts: Array<{ messages: unknown }>,
       : candidate.preview?.token === control.get('token'));
     const expected = entry && render(entry);
     const candidates = Array.isArray(expected) ? expected : [expected];
-    // Delivery may carry the card's full canonical text as altText; the contents digest is the binding.
-    const verified = candidates.some(candidate => candidate && reliabilityDigest(candidate.contents) === reliabilityDigest(message.contents)
+    // Delivery may carry the card's full canonical text as altText and opens web links outside LINE;
+    // the contents digest, without that link parameter, is the binding.
+    const delivered = (value: unknown) => reliabilityDigest(JSON.parse(JSON.stringify(value ?? null).replace(/[?&]openExternalBrowser=1/gu, '')));
+    const verified = candidates.some(candidate => candidate && delivered(candidate.contents) === delivered(message.contents)
       && [candidate.altText, candidate.canonicalText].includes(message.altText));
     if (!entry || !verified) { previews.push({ action: 'UNVERIFIED_PREVIEW', target: entry?.expenseId ?? '' }); continue; }
     const preview = entry.preview, payment = preview.payment ?? entry.claim?.payment ?? entry.voucher?.payment;

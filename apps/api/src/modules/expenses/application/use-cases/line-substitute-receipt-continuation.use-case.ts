@@ -1,3 +1,4 @@
+import { lineWorkflowPickerText } from '../../../line-ai/domain/logic/line-ai-classifier.logic';
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1714,13 +1715,22 @@ export class LineSubstituteReceiptContinuationUseCase {
       .map((row) => ({ row, state: stateFromMetadata(row.sourceChannelMetadataJson) }))
       .filter((item): item is { row: typeof rows[number]; state: LineSubstituteReceiptContinuation } =>
         !!item.state && ACTIVE_STATUSES.has(item.state.status));
-    const selection = ordinalSelection(input.messageText, Math.max(states.length, input.recentCandidates.length));
+    let selection = ordinalSelection(input.messageText, Math.max(states.length, input.recentCandidates.length));
+    const typedPick = lineWorkflowPickerText(input.messageText);
+    if (selection === null && !typedPick.question && typedPick.documents.length) {
+      const offered = await Promise.all(input.recentCandidates.slice(0, 5).map(candidate => this.repo.findByIdWithRelations(ctx.companyId, candidate.id, undefined, ctx.scopes ?? {})));
+      const normalize = (text: string) => text.toLocaleLowerCase().replace(/\s+/gu, '');
+      const matches = offered.flatMap((expense, index) => expense && typedPick.documents.every(document => [expense.expenseNumber, expense.vendorDocumentNumber]
+        .some(number => number && normalize(number).includes(normalize(document)))) ? [index] : []);
+      if (matches.length === 1) selection = matches[0]!;
+    }
     const boundIds = input.boundCandidateExpenseIds;
     if (boundIds && (boundIds.length === 0 || boundIds.length > 5 || new Set(boundIds).size !== boundIds.length
       || JSON.stringify(boundIds) !== JSON.stringify(input.recentCandidates.map(item => item.id)))) {
       return targetOutOfScope(ctx.companyId, input.webBaseUrl, (language === 'en' ? 'The offered expenses changed; please check the current list on the web.' : 'รายการที่เคยให้เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ'), language);
     }
-    const chosenId = boundIds?.[selection ?? (boundIds.length === 1 ? 0 : -1)];
+    const chosenId = boundIds?.[selection ?? (boundIds.length === 1 ? 0 : -1)]
+      ?? (selection === null && states.length === 1 && boundIds?.includes(states[0]!.state.expenseId) ? states[0]!.state.expenseId : undefined);
     let selected = boundIds ? states.find(item => item.state.expenseId === chosenId)
       : states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
     // A brand-new OPEN workflow (none → OPEN) is a real state transition that may persist even without an

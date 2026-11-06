@@ -8,7 +8,7 @@ import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import type { ExpenseActionPreview } from '../../application/line-expense-action.service';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
 import { lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardAction, type LineSystemCardRow } from './line-system-card.logic';
-import { drawLineSystemCard, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
+import { drawLineSystemCard, LINE_FLEX_ACTION_LABEL_MAX, LINE_SYSTEM_CARD_BUTTONS_MAX, lineSystemCardPillHolds } from './line-system-card-limits.logic';
 import type { ReceiptProgress } from './line-receipt-status.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
@@ -1239,10 +1239,14 @@ export function buildClaimWorkflowPicker(result: LineWorkflowTargets, workflow: 
       ? lineUiLabel(' รวม {amount}', language).replace('{amount}', formatClaimMoney(result.targets.reduce((sum, claim) => sum.plus(claim.amount), new Decimal(0)).toFixed(2), result.targets[0]!.currency, language)) : '') : undefined;
   const text = receiptFix ?? approvals ?? (!result.exhaustive ? result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : LINE_CLAIM_PICKER_COPY.interrupted
     : result.targets.length ? LINE_CLAIM_PICKER_COPY.choose[workflow] : LINE_CLAIM_PICKER_COPY.empty[workflow]);
-  const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((claim, index) => ({
-    type: 'postback', label: `${(scrubRecordIdentifier(claim.requestNo, 30) ?? `ร่าง ${index + 1}`)} · ${formatClaimMoney(claim.amount, claim.currency, 'th')}`,
-    data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id, payment),
-  }));
+  const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map(claim => {
+    const amount = formatClaimMoney(claim.amount, claim.currency, language).replace(' บาท', '');
+    const caption = claim.requestNo || [claim.requesterDisplayNameSnapshot, claim.reason || claim.categoryLabelSnapshot || lineUiLabel('ใบเบิก', language)].filter(Boolean).join(' ');
+    const limit = LINE_FLEX_ACTION_LABEL_MAX - amount.length - 3;
+    const label = claim.requestNo ? scrubRecordIdentifier(claim.requestNo, limit) ?? lineUiLabel('ใบเบิก', language) : scrubRecordText(caption, limit);
+    return { type: 'postback', label: `${label} · ${amount}`,
+      data: lineWorkflowOpenData(secret, company, user, CLAIM_WORKFLOW_ACTIONS[workflow], claim.id, payment) };
+  });
   const webLabel = receiptBlocked ? 'เปิดใบเบิก' : !result.exhaustive ? 'ค้นในเว็บ' : result.total > 4 ? 'ดูทั้งหมดในเว็บ' : 'เปิดในเว็บ';
   const exit: LineSystemCardAction = webBaseUrl ? { type: 'uri', label: webLabel,
     uri: `${webBaseUrl.replace(/\/$/, '')}/companies/${encodeURIComponent(company)}/reimbursements${receiptBlocked ? `/${encodeURIComponent(receiptBlocked.id)}` : ''}` }
@@ -1279,7 +1283,7 @@ export function buildExpenseWorkflowPicker(result: LineWorkflowRecordTargets, wo
   const text = !result.exhaustive ? [result.total > 300 ? LINE_CLAIM_PICKER_COPY.incomplete : 'ยังค้นรายการไม่ครบค่ะ กดค้นในเว็บ',
     ...(sellerText && result.total > 1 ? [sellerText] : [])].join('\n')
     : sellerText ?? (result.targets.length ? result.latestOnly ? 'เลือกจากรายการล่าสุดได้เลยค่ะ' : LINE_EXPENSE_PICKER_COPY.choose[workflow]
-      : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
+      : workflow === 'wht_certificate' && result.latestPaidWithoutWithholding ? 'ใบเตรียมจ่ายที่จ่ายล่าสุดไม่ได้หักภาษี ณ ที่จ่าย จึงไม่มี 50 ทวิให้ออกค่ะ' : LINE_EXPENSE_PICKER_COPY.empty[workflow]);
   const actions: LineSystemCardAction[] = result.targets.slice(0, 4).map((target, index) => ({
     label: `${scrubRecordText(target.label, 60) || `รายการ ${index + 1}`} · ${formatClaimMoney(target.amount, target.currency, 'th')}`,
     ...(workflow === 'substitute_receipt' ? { type: 'message' as const, text: String(index + 1) }
