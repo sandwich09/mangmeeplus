@@ -1441,10 +1441,26 @@ function formatReimbursementGetSummarySingleMetric(output: SpecialistOutput, ctx
       // "นับเฉพาะใบที่จ่ายได้จริง"); the card states the same split, in the same order.
       ...(isCount(duplicateBlocked) && duplicateBlocked > 0 ? [{ label: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, value: `${groupThousands(String(duplicateBlocked))} รายการ` }] : []),
       ...(overdue > 0 ? [{ label: 'เกินกำหนด', value: `${groupThousands(String(overdue))} รายการ` }] : []),
-    ],
+      // Owner 2026-11-06: counts alone did not say which claims. The first ones, unpaid first.
+      ...summaryClaimRows(data?.['unpaidApprovedItems'], 'รอจ่าย'),
+      ...summaryClaimRows(data?.['pendingApprovalItems'], 'รออนุมัติ'),
+    ].slice(0, 9),
     ...cardNotes([scopeNote(data?.['accessScope'])]),
   });
   return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
+}
+
+/** One row a claim, labelled by its state: its number, what it is for, who and how much under it. */
+function summaryClaimRows(items: unknown, state: string): Array<{ label: string; value: string }> {
+  if (!Array.isArray(items)) return [];
+  return items.slice(0, 3).flatMap((raw) => {
+    const item = raw as Record<string, unknown>;
+    if (!isMoney(item['amount'])) return [];
+    const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const value = [text(item['requestNo']), text(item['title']), [text(item['requesterDisplayName']), `${moneyText(item['amount'])} บาท`].filter(Boolean).join(' · ')]
+      .filter(Boolean).join(' · ');
+    return [{ label: state, value }];
+  });
 }
 
 /** Same Thai wording the web app already shows for these exact status values
@@ -1741,6 +1757,48 @@ export function preparedTerminalReply(output: SpecialistOutput, ctx: PreparedFor
 }
 
 /** Exact compiled registry: `${tool}::${answerShape}` → formatter. Add one verified family at a time. */
+/**
+ * "รายชื่อคู่ค้า" (owner 2026-11-06: 15–17 s, the writer spent 9.5 s retyping the list). The tool's own rows,
+ * verbatim: each name with its kind and a stopped state, the count, and the web list. A search that found
+ * more than it returned says how many it shows.
+ */
+function formatCounterpartySearchList(output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {
+  const data = sourceData(output, 'counterparty.search');
+  const total = data?.['total'];
+  const items = data?.['items'];
+  if (!isCount(total) || !Array.isArray(items) || items.length > total) return { kind: 'unverified' };
+  const english = isEnglish(ctx);
+  const kinds: Record<string, [string, string]> = { INDIVIDUAL: ['บุคคลธรรมดา', 'individual'], JURISTIC: ['นิติบุคคล', 'company'] };
+  const rows: Array<{ name: string; detail: string }> = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'unverified' };
+    const item = raw as Record<string, unknown>;
+    const name = typeof item['displayName'] === 'string' ? item['displayName'].trim() : '';
+    if (!name) return { kind: 'unverified' };
+    const kind = typeof item['entityKind'] === 'string' ? kinds[item['entityKind']]?.[english ? 1 : 0] : undefined;
+    const stopped = item['status'] !== undefined && item['status'] !== 'ACTIVE' ? (english ? 'inactive' : 'ปิดใช้งาน') : undefined;
+    rows.push({ name, detail: [kind, stopped].filter(Boolean).join(' · ') });
+  }
+  const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
+  const moreText = total > rows.length
+    ? (english ? `Showing ${rows.length} of ${total}` : `แสดง ${rows.length} จาก ${groupThousands(String(total))} ราย ดูทั้งหมดได้ในเว็บ`) : '';
+  const headline = english ? `Counterparties: ${total}` : `คู่ค้าในระบบ ${groupThousands(String(total))} ราย${total === 0 ? '' : 'ค่ะ'}`;
+  const lines = rows.map((row) => `\n• ${row.name}${row.detail ? ` (${row.detail})` : ''}`).join('');
+  const replyText = `${headline}${lines}${moreText ? `\n${moreText}` : ''}${sourceText}${asOfLine(output.asOf, english)}`;
+  const asOfDay = asOfDayLabel(output.asOf);
+  const layout = english ? undefined : cardLayout({
+    context: 'open_work',
+    header: ['คู่ค้า', total === 0 ? 'ไม่พบรายการ' : `พบ ${groupThousands(String(total))} ราย`],
+    rows: [
+      ...rows.slice(0, 12).map((row) => ({ label: row.detail || 'คู่ค้า', value: row.name })),
+      ...(asOfDay ? [{ label: 'ข้อมูล ณ', value: asOfDay }] : []),
+    ],
+    ...cardNotes([moreText]),
+    ...(webLinks[0] ? { linkLabel: 'ดูคู่ค้าในเว็บ' } : {}),
+  });
+  return { kind: 'answer', replyText, sourceRefs, webLinks, ...(layout ? { layout } : {}) };
+}
+
 const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: PreparedFormatContext) => PreparedFormatResult> =
   new Map([
     [preparedFamilyKey('sales.get_sales_summary', 'single_metric'), formatSalesSummarySingleMetric],
@@ -1755,6 +1813,7 @@ const COMPILED_FORMATTERS: ReadonlyMap<string, (output: SpecialistOutput, ctx: P
     [preparedFamilyKey('expense.get_daily_closing', 'single_metric'), formatExpenseDailyClosingSingleMetric],
     [preparedFamilyKey('tax.get_vat_summary', 'single_metric'), formatTaxVatSummarySingleMetric],
     [preparedFamilyKey('inventory.list_low_stock', 'list'), formatInventoryLowStockList],
+    [preparedFamilyKey('counterparty.search', 'list'), formatCounterpartySearchList],
     // `answerShape` is untrusted advice that selects a renderer and nothing else, and both read shapes of
     // these two questions have the SAME verified deterministic answer ("ยอดค้างจ่ายเท่าไหร่" vs "เจ้าหนี้ราย
     // ไหนค้าง", "ลูกค้าใหม่กี่ราย" vs "ลูกค้าใหม่มีใครบ้าง"). Registering both keys therefore adds no new
@@ -1791,6 +1850,10 @@ export const APPROVED_PREPARED_FAMILY_KEYS: ReadonlySet<string> = activePrepared
   'reimbursement.list_pending_approvals::list', 'reimbursement.get_summary::single_metric', 'expense.get_detail::single_metric',
   'reimbursement.get_detail::single_metric',
 ]);
+
+/** Drawn only after its read, never offered to the router (its intake bytes and credit hold stay as calibrated):
+ *  the counterparty list is the tool's own names verbatim, nothing for a writer to judge (owner 2026-11-06). */
+export const CODED_ONLY_FAMILY_KEYS: ReadonlySet<string> = new Set(['counterparty.search::list']);
 
 /** Format via the compiled family, or `unverified` when the family/shape has no formatter. */
 export function formatPreparedSimpleRead(familyKey: string, output: SpecialistOutput, ctx: PreparedFormatContext): PreparedFormatResult {

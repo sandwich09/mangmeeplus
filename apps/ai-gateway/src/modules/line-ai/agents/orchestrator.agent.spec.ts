@@ -3354,7 +3354,7 @@ describe('semantic turn v2: code-built answers for reads that a card holds', () 
       semanticSubrequests: [{ index: 0, kind: 'read', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
       userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership', permissions, roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' } as LineAiTurnRequest['userContext'] };
     const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
-      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.list_recent::list']),
+      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.list_recent::list', 'reimbursement.get_summary::single_metric']),
       provider: { generateText: async (input: any) => { tags.push(input.usageTag);
         return { ok: true, text: input.usageTag === 'line.loop' ? JSON.stringify({ calls: [{ index: 0, toolName, input: {} }] }) : '{}' }; } },
       invoke: async (meta: any) => ({ toolName: meta.name, status: 'ok', asOf, sourceRefs: [ref(meta.name)], facts: [], data: reads[meta.name] }) as any });
@@ -3372,6 +3372,28 @@ describe('semantic turn v2: code-built answers for reads that a card holds', () 
     assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
     assert.ok(result.replyText.includes('ร้านสมใจ'), result.replyText);
     assert.ok(result.presentation?.kind === 'answer_cards' && result.presentation.cards[0]?.layout, JSON.stringify(result.presentation));
+  });
+
+  // Owner 2026-11-06: "รายชื่อคู่ค้า" took 15–17 s, 9.5 s of it the writer retyping the names.
+  const counterparties = { 'counterparty.search': { total: 2, items: [
+    { id: 'c1', displayName: 'บริษัท ผักสดดี จำกัด', taxId: '0105555000001', branchCode: null, entityKind: 'JURISTIC', status: 'ACTIVE' },
+    { id: 'c2', displayName: 'คุณสมศรี ใจดี', taxId: null, branchCode: null, entityKind: 'INDIVIDUAL', status: 'INACTIVE' }] } };
+  it('a counterparty list is its verified card, with no compose call', async () => {
+    const { tags, result } = await turn('รายชื่อคู่ค้า', 'counterparty.search', ['accounting.counterparty.read'], counterparties);
+    assert.ok(!tags.includes('line.compose'), tags.join(','));
+    assert.equal(result.replyText.split('\n').slice(0, 3).join('\n'), 'คู่ค้าในระบบ 2 รายค่ะ\n• บริษัท ผักสดดี จำกัด (นิติบุคคล)\n• คุณสมศรี ใจดี (บุคคลธรรมดา · ปิดใช้งาน)');
+    assert.ok(result.presentation?.kind === 'answer_cards' && result.presentation.cards[0]?.layout, JSON.stringify(result.presentation));
+  });
+  it('the claims summary is its verified card, naming the claims, with no compose call', async () => {
+    const { tags, result } = await turn('ใบเบิกที่รอจ่าย', 'reimbursement.get_summary', ['reimbursement.read'], { 'reimbursement.get_summary': {
+      pendingApprovalCount: 0, unpaidApprovedCount: 1, overdueApprovalCount: 0, totalUnpaidAmount: '240.0000', duplicateBlockedCount: 0, accessScope: 'company',
+      unpaidApprovedItems: [{ requestNo: 'RB-2', title: 'ซื้อน้ำแข็งด่วน', requesterDisplayName: 'คุณต้น', amount: '240.0000' }], pendingApprovalItems: [] } });
+    assert.ok(!tags.includes('line.compose'), tags.join(','));
+    assert.match(JSON.stringify(result.presentation), /RB-2 · ซื้อน้ำแข็งด่วน · คุณต้น · 240\.00 บาท/u);
+  });
+  it('a question about one counterparty field still composes', async () => {
+    const { tags } = await turn('ผักสดดีเลขผู้เสียภาษีอะไร', 'counterparty.search', ['accounting.counterparty.read'], counterparties);
+    assert.ok(tags.includes('line.compose'), tags.join(','));
   });
 
   it('"มีงานค้างไหม" is the waiting-work card, with no compose call', async () => {

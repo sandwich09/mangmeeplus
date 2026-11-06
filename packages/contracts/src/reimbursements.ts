@@ -2271,6 +2271,8 @@ export type ReimbursementClaimFormPreview = {
 
 // ---- Read-only AI/LINE summary ----
 
+export type ReimbursementAiSummaryItem = { requestNo: string | null; title: string | null; requesterDisplayName: string | null; amount: string };
+
 export type ReimbursementAiSummary = {
   pendingApprovalCount: number;
   unpaidApprovedCount: number;
@@ -2278,6 +2280,10 @@ export type ReimbursementAiSummary = {
   totalUnpaidAmount: string;
   /** Unpaid claims excluded from the payment figures by the duplicate predicate; absent in older output. */
   duplicateBlockedCount?: number;
+  /** The first claims behind the two counts (at most 5 each), so a LINE answer names them (owner
+   *  2026-11-06). `amount` is what is still owed for an unpaid claim. Absent in older output. */
+  unpaidApprovedItems?: ReimbursementAiSummaryItem[];
+  pendingApprovalItems?: ReimbursementAiSummaryItem[];
   /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the same own/related/
    *  company permission check `GetReimbursementAiSummaryUseCase` already applies above. */
   accessScope: 'own' | 'related' | 'company';

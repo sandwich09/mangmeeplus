@@ -47,6 +47,21 @@ function toCtx(ctx: ErpToolContext): RequestContext {
 
 // ---- inventory.search_products ----
 
+/** The web list showing what the answer counted (owner 2026-11-06: the button opened the whole list):
+ *  its month, its ยังไม่ยืนยัน/ยืนยันแล้ว tab, unpaid only, its branch. The web ignores what it does not know. */
+export function expenseListWebPath(companyId: string, filter: {
+  branchId?: string | null; period: { fromDate: string; toDate: string }; documentStatus?: string; paymentStatus?: string;
+}): string {
+  const query = new URLSearchParams();
+  if (filter.period.fromDate.slice(0, 7) === filter.period.toDate.slice(0, 7)) query.set('month', filter.period.fromDate.slice(0, 7));
+  if (filter.documentStatus === 'NEEDS_REVIEW') query.set('chip', 'pending');
+  else if (filter.documentStatus === 'CONFIRMED') query.set('chip', 'confirmed');
+  if (filter.paymentStatus === 'UNPAID') query.set('view', 'unpaid');
+  if (filter.branchId) query.set('branchId', filter.branchId);
+  const text = query.toString();
+  return `/companies/${companyId}/expenses${text ? `?${text}` : ''}`;
+}
+
 @Injectable()
 export class InventorySearchProductsTool implements ErpReadToolPort {
   toolName = 'inventory.search_products';
@@ -452,7 +467,7 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
       // A branch-scoped answer must not deep-link to the all-branches list, or the web view
       // contradicts the figures the user just read. `branchId` is a resolved id by here — the
       // unresolved case returned the branch catalog above and never reaches this link.
-      webPath: `/companies/${ctx.companyId}/expenses${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`,
+      webPath: expenseListWebPath(ctx.companyId, { branchId, period, documentStatus: input.documentStatus, paymentStatus: input.paymentStatus }),
     }];
     const soleCurrency = snapshot.byCurrency.length === 1 ? snapshot.byCurrency[0] : undefined;
     const sumStatuses = (statuses: readonly string[]) => snapshot.byStatus

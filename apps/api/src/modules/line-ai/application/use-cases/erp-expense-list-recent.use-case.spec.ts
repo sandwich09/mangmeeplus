@@ -188,7 +188,7 @@ describe('ExpenseListRecentTool', () => {
     assert.equal(data.truncated, undefined);
     assert.deepEqual(data.items.map((i: { status: string }) => i.status), ['NEEDS_REVIEW']);
     // No branch asked for, no branch in the link: the web list opens on the same all-branches scope.
-    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses');
+    assert.match(result.sourceRefs[0]?.webPath!, /^\/companies\/c1\/expenses\?month=\d{4}-\d{2}$/u);
   });
 
   // Item 1 (spec R-A1 row 18, eval: 15 turns): the tool echoes whatever `accessScope`
@@ -218,7 +218,7 @@ describe('ExpenseListRecentTool', () => {
     const result = await makeTool([expense({})], [{ id: 'branch-1', name: 'สาขาหนึ่ง' }])
       .execute(baseCtx, { branchId: 'branch-1' });
 
-    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+    assert.match(result.sourceRefs[0]?.webPath!, /^\/companies\/c1\/expenses\?month=\d{4}-\d{2}&branchId=branch-1$/u);
   });
 
   // Live UAT 2026-08-29: the model passed the branch NAME the user said, the raw value filtered
@@ -228,7 +228,7 @@ describe('ExpenseListRecentTool', () => {
     const result = await tool.execute(baseCtx, { branchId: 'สาธุประดิษฐ์' });
 
     assert.equal(filters[0]?.branchId, 'branch-1');
-    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+    assert.match(result.sourceRefs[0]?.webPath!, /^\/companies\/c1\/expenses\?month=\d{4}-\d{2}&branchId=branch-1$/u);
   });
 
   it('spec §4 R-M1: echoes the resolved branch display name in queryApplied, not the raw id/code/name the caller sent', async () => {
@@ -244,7 +244,7 @@ describe('ExpenseListRecentTool', () => {
     const result = await tool.execute(baseCtx, { branchId: 'STP' });
 
     assert.equal(filters[0]?.branchId, 'branch-1');
-    assert.equal(result.sourceRefs[0]?.webPath, '/companies/c1/expenses?branchId=branch-1');
+    assert.match(result.sourceRefs[0]?.webPath!, /^\/companies\/c1\/expenses\?month=\d{4}-\d{2}&branchId=branch-1$/u);
   });
 
   it('asks for a disambiguating branch code when exact names collide', async () => {
@@ -780,4 +780,13 @@ describe('Exam G4: bilingual entity words resolve only against the company catal
     assert.equal((resolveNameCandidate('Travel', [...catalog, { id: 'english', name: 'Travel' }], CATEGORY_NAME_STRIP_PREFIXES) as any).id, 'english');
     assert.equal(resolveNameCandidate('fuel', catalog, VENDOR_NAME_STRIP_PREFIXES).kind, 'not_found');
   });
+});
+
+// Owner 2026-11-06: the web button opened the whole list, not what the answer counted.
+it('the web link opens the month, tab and unpaid view the answer counted', async () => {
+  const { expenseListWebPath } = await import('./erp-tools.use-case');
+  const nov = { fromDate: '2026-11-01', toDate: '2026-11-06' };
+  assert.equal(expenseListWebPath('c1', { period: nov, documentStatus: 'NEEDS_REVIEW' }), '/companies/c1/expenses?month=2026-11&chip=pending');
+  assert.equal(expenseListWebPath('c1', { period: nov, documentStatus: 'CONFIRMED', paymentStatus: 'UNPAID', branchId: 'b 1' }), '/companies/c1/expenses?month=2026-11&chip=confirmed&view=unpaid&branchId=b+1');
+  assert.equal(expenseListWebPath('c1', { period: { fromDate: '2026-10-01', toDate: '2026-11-06' } }), '/companies/c1/expenses');
 });

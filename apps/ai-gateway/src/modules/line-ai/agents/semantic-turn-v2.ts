@@ -16,7 +16,7 @@ import { approvedKnowledgeFollowUp, productKnowledgeAccess, renderApprovedKnowle
 import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
 import { buildCapabilityHelp, claimsCompletedWrite, groundedNumbers, preservesGrounding, preservesSemanticGrounding, safeModelLineText } from './response-composer.agent';
-import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, backlogCardText, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, CODED_ONLY_FAMILY_KEYS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, backlogCardText, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
@@ -410,7 +410,11 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
 /** Advisor Q2: what "งานค้างของฉัน" reads — the caller's own queues first, then the day's checklist. */
 const MY_PENDING_WORK_TOOLS = ['expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals', 'expense.get_daily_closing'];
 /** The reads of many records whose verified card is the whole answer (see `codedReads` in the turn). */
-const CODED_READ_TOOLS: ReadonlySet<string> = new Set(['expense.list_recent', 'expense.get_breakdown', 'expense.get_daily_closing']);
+/** "รายชื่อคู่ค้า", "คู่ค้ามีใครบ้าง", "ดูคู่ค้าทั้งหมด", "list counterparties". */
+const COUNTERPARTY_LIST_QUESTION = /รายชื่อ|มีใครบ้าง|มีกี่ราย|ทั้งหมด|\blist\b|\ball\b/iu;
+const CODED_READ_TOOLS: ReadonlySet<string> = new Set(['expense.list_recent', 'expense.get_breakdown', 'expense.get_daily_closing', 'counterparty.search',
+  // Owner 2026-11-06: "ใบเบิกที่รอจ่าย" in a chat with history composed for 8.8 s (19.6 s turn).
+  'reimbursement.get_summary', 'reimbursement.list_pending_approvals']);
 
 /** A router-decided period/window hint is a business-level guess made before any specific tool is
  *  chosen — see the drop-vs-reject note in `bindRequestedReadFilters` below. */
@@ -1226,8 +1230,10 @@ export async function runSemanticTurnV2(input: {
       || comparisonByIndex.has(item.index) || emptyBacklogText.has(item.index)) continue;
     const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
     if (assigned.length !== 1 || assigned[0]!.status !== 'ok' || !CODED_READ_TOOLS.has(assigned[0]!.toolName)) continue;
+    // A question about one counterparty's field (its tax id, its address) wants that field, not the list.
+    if (assigned[0]!.toolName === 'counterparty.search' && !COUNTERPARTY_LIST_QUESTION.test(itemText.get(item.index) ?? req.messageText)) continue;
     const read = readPeriod(assigned, (readContext?.candidates ?? req.valueCandidates)?.periods ?? []);
-    const coded = deterministicReadFallback(assigned, language, req.userContext.locale, enabledFamilies,
+    const coded = deterministicReadFallback(assigned, language, req.userContext.locale, new Set([...enabledFamilies, ...CODED_ONLY_FAMILY_KEYS]),
       itemText.get(item.index) ?? req.messageText, assumedYearNote(read?.period, read?.asOf, language === 'en'));
     if (coded.status === 'handled' && coded.layout) codedReads.set(item.index, coded);
   }

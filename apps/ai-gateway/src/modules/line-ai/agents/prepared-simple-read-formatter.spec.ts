@@ -39,7 +39,7 @@ describe('prepared-simple-read compiled formatter registry', () => {
   it('exposes exactly the compiled families (sales, F1 expense, R-L4 list/breakdown/reimbursement, F2 accounting, F3 daily, F4–F7 R5 — compiled ≠ active)', () => {
     assert.deepEqual([...COMPILED_PREPARED_FAMILY_KEYS],
       [SALES, EXPENSE, EXPENSE_LIST, EXPENSE_DETAIL, BREAKDOWN, REIMBURSEMENT_APPROVALS, REIMBURSEMENT_SUMMARY, REIMBURSEMENT_DETAIL,
-        ACCOUNTING, DAILY, VAT, LOW_STOCK, AP, AP_LIST, CRM, CRM_LIST]);
+        ACCOUNTING, DAILY, VAT, LOW_STOCK, 'counterparty.search::list', AP, AP_LIST, CRM, CRM_LIST]);
     // Compiling a family does NOT enable it: the operator allowlist is empty by default, so the lane
     // stays dormant until each family passes its own blind pairwise eval (plan Phase 5 gate).
     assert.deepEqual([...activePreparedFamilies([])], []);
@@ -1575,6 +1575,19 @@ const reimbursementSummaryData = (over: Record<string, unknown> = {}): Record<st
 });
 
 describe('R-L4 F11 reimbursement.get_summary::single_metric — สรุปเบิกจ่าย', () => {
+  // Owner 2026-11-06: "ใบเบิกที่รอจ่าย" gave counts only, not which claims.
+  it('names the first claims behind the counts on the card, unpaid first', () => {
+    const r = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData({
+      unpaidApprovedItems: [{ requestNo: 'RB-2', title: 'ซื้อน้ำแข็งด่วน', requesterDisplayName: 'คุณต้น', amount: '240.0000' }],
+      pendingApprovalItems: [{ requestNo: 'RB-1', title: null, requesterDisplayName: 'คุณต้น', amount: '500.0000' }, { requestNo: null, title: null, requesterDisplayName: null, amount: 'x' }],
+    }), '2026-11-06T09:00:00.000Z'), TH);
+    assert.equal(r.kind, 'answer'); if (r.kind !== 'answer') return;
+    const rows = (r.layout as { rows?: Array<{ label: string; value: string }> }).rows!;
+    assert.deepEqual(rows.slice(-2), [
+      { label: 'รอจ่าย', value: 'RB-2 · ซื้อน้ำแข็งด่วน · คุณต้น · 240.00 บาท' },
+      { label: 'รออนุมัติ', value: 'RB-1 · คุณต้น · 500.00 บาท' },
+    ]);
+  });
   it('Round 4: says duplicate-blocked count beside payable numbers in Thai and English, with legacy and zero unchanged', () => {
     for (const language of [TH, EN]) {
       const old = formatPreparedSimpleRead(REIMBURSEMENT_SUMMARY, summaryOutput(reimbursementSummaryData()), language);

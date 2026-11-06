@@ -1,7 +1,7 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
   reimbursementDuplicateWait, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
-  type RequestContext, type ReimbursementAiSummary,
+  type RequestContext, type ReimbursementAiSummary, type ReimbursementAiSummaryItem,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -42,6 +42,10 @@ export class GetReimbursementAiSummaryUseCase {
     let unpaidApproved = 0;
     let duplicateBlocked = 0;
     let totalUnpaid = d('0');
+    const unpaidItems: ReimbursementAiSummaryItem[] = [];
+    const pendingItems: ReimbursementAiSummaryItem[] = [];
+    const item = (r: (typeof all)[number], amount: string): ReimbursementAiSummaryItem =>
+      ({ requestNo: r.requestNo ?? null, title: r.title ?? null, requesterDisplayName: r.requesterDisplayNameSnapshot ?? null, amount });
 
     for (const r of all) {
       // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no
@@ -52,6 +56,7 @@ export class GetReimbursementAiSummaryUseCase {
       if (r.status === 'PENDING_APPROVAL' && payoutCorrectionPhase(r) !== 'AWAITING_REQUESTER') {
         const policy = effectivePolicyForRequest(r, currentPolicy);
         pendingApproval++;
+        if (pendingItems.length < 5) pendingItems.push(item(r, decStr(d(r.amount))));
         const waitingSince = approvalWaitStartedAt(r);
         const age = waitingSince ? ageHours(waitingSince, now) : 0;
         if (isSlaRisk(age, policy.slaHours)) overdueApproval++;
@@ -59,6 +64,7 @@ export class GetReimbursementAiSummaryUseCase {
       if ((r.status === 'FINANCE_REVIEW' || r.status === 'READY_FOR_PAYMENT' || r.status === 'PARTIALLY_PAID') && r.paymentStatus !== 'PAID') {
         if (claimDuplicateBlocksPayment(r, currentPolicy)) { duplicateBlocked++; continue; }
         unpaidApproved++;
+        if (unpaidItems.length < 5) unpaidItems.push(item(r, decStr(d(r.outstandingAmount))));
         totalUnpaid = totalUnpaid.add(d(r.outstandingAmount));
       }
     }
@@ -74,6 +80,8 @@ export class GetReimbursementAiSummaryUseCase {
       overdueApprovalCount: overdueApproval,
       totalUnpaidAmount: decStr(totalUnpaid),
       duplicateBlockedCount: duplicateBlocked,
+      unpaidApprovedItems: unpaidItems,
+      pendingApprovalItems: pendingItems,
       // Item 1 (spec R-A1 row 18): mirrors the requesterUserId/relatedUserId precedence above exactly
       // (related wins whenever canReadRelated is true, same as `relatedUserId` there).
       accessScope: canReadAll ? 'company' : canReadRelated ? 'related' : 'own',
