@@ -50,9 +50,12 @@ export function readOverlayBounds(anchor?: HTMLElement | null, panel?: HTMLEleme
     if (modalChrome && rect.top >= column.bottom) bars.push({ ...rect.toJSON(), edge: 'bottom' });
     if (!['sticky', 'fixed'].includes(css.position)) continue;
     if (rect.height >= (viewport.bottom - viewport.top) / 2 && rect.width < (viewport.right - viewport.left) * 0.9) continue;
-    const top = parseFloat(css.top), bottom = parseFloat(css.bottom);
-    if (Number.isFinite(top) && rect.top <= viewport.top + top + 1) bars.push({ ...rect.toJSON(), edge: 'top' });
-    if (Number.isFinite(bottom) && rect.bottom >= viewport.bottom - bottom - 1) bars.push({ ...rect.toJSON(), edge: 'bottom' });
+    // A fixed element reports a used px `top` even when only `bottom` pins it (a floating chat button at the
+    // bottom right read as a bar across the top, so every list above it closed as it opened — demo 2026-11-06).
+    // Which edge it sits on is told by which half of the screen it is in.
+    const top = parseFloat(css.top), bottom = parseFloat(css.bottom), middle = (viewport.top + viewport.bottom) / 2;
+    if (Number.isFinite(top) && rect.top <= viewport.top + top + 1 && rect.top < middle) bars.push({ ...rect.toJSON(), edge: 'top' });
+    if (Number.isFinite(bottom) && rect.bottom >= viewport.bottom - bottom - 1 && rect.bottom > middle) bars.push({ ...rect.toJSON(), edge: 'bottom' });
   }
   const bounds = overlayEdges(viewport, bars);
   // The panel is portaled outside the scrolling sheet; only its trigger must stay inside it.

@@ -94,3 +94,22 @@ test('MOBILE-1 normal-flow dialog action bars reserve space for portaled calenda
     assert.deepEqual(readOverlayBounds(anchor as any), { top: 0, bottom: 575, left: 0, right: 375 });
   } finally { Object.assign(globals, previous); }
 });
+
+// Demo 2026-11-06: a fixed chat button at the bottom right (computed top 759px, bottom 81px) was read as a
+// top bar, so the VAT and evidence lists above it closed the moment they opened.
+test('a floating button pinned to the bottom is a bottom bar, never a top one', () => {
+  const globals = globalThis as any;
+  const previous = { window: globals.window, document: globals.document, getComputedStyle: globals.getComputedStyle };
+  const rect = { top: 759, bottom: 819, left: 1480, right: 1540, width: 60, height: 60 };
+  const button = { hasAttribute: () => false, contains: () => false, closest: () => null, getBoundingClientRect: () => ({ ...rect, toJSON: () => rect }) };
+  const root = { querySelectorAll: () => [button] };
+  const anchorRect = { top: 394, bottom: 434, left: 846, right: 1483 };
+  const anchor = { closest: () => root, getBoundingClientRect: () => anchorRect };
+  try {
+    globals.window = { innerHeight: 900, innerWidth: 1556 }; globals.document = { body: root };
+    globals.getComputedStyle = () => ({ position: 'fixed', visibility: 'visible', display: 'block', top: '759px', bottom: '81px' });
+    const bounds = readOverlayBounds(anchor as any);
+    assert.deepEqual(bounds, { top: 0, bottom: 759, left: 0, right: 1556 });
+    assert.equal(placeAnchoredPanel(anchorRect, bounds, 240, 300)?.side, 'below');
+  } finally { Object.assign(globals, previous); }
+});
