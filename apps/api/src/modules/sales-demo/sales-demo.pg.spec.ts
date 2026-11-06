@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../generated/prisma/client';
 import { SalesDemoService } from './application/sales-demo.service';
+import { purgeDemoCompany } from './application/demo-purge';
 import { IssueTokenUseCase } from '../auth/application/use-cases/issue-token.use-case';
 import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { hashLineHandoffToken } from '../auth/domain/logic/line-handoff.logic';
@@ -118,5 +119,29 @@ describe('sales demo links on real PostgreSQL', { skip: !databaseUrl }, () => {
     const row = await client.salesDemoLink.findUniqueOrThrow({ where: { tokenHash: hashLineHandoffToken(tokenOf(link)) } });
     assert.equal(row.companyId, null); assert.equal(row.openedAt, null);
     await demo.open(tokenOf(link), 'retry'); assert.equal(await client.company.count(), before + 1);
+  });
+  it('erases an expired demo shop with its files and users, keeps the link and other shops', async () => {
+    const keep = await demo.open(tokenOf(await demo.mint(context)), 'keep');
+    const link = await demo.mint(context), opened = await demo.open(tokenOf(link), 'purge'), companyId = opened.companyId;
+    const userIds = (await client.companyMembership.findMany({ where: { companyId } })).map(row => row.userId);
+    assert.ok(userIds.length > 1 && await client.expenseRecord.count({ where: { companyId } }) > 0);
+    await client.demoChatMessage.create({ data: { companyId, chatId: 'c', direction: 'in', messagesJson: [] } });
+    await client.attachmentObject.create({ data: { companyId, storageProvider: 'local', bucket: 'b', objectKey: `demo/${companyId}/receipt.jpg`,
+      originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1, uploadedByUserId: userIds[0] } });
+    const deleted: string[] = [], storage = { deleteObject: async (file: { objectKey: string }) => { deleted.push(file.objectKey); } } as any;
+    await purgeDemoCompany(client, storage, companyId, new Date());
+    assert.equal(await client.company.count({ where: { id: companyId } }), 1, 'not expired yet');
+    deleted.length = 0;
+    await client.companyPlanTerm.update({ where: { companyId }, data: { termEndsAt: new Date(Date.now() - 1) } });
+    await client.salesDemoLink.update({ where: { tokenHash: hashLineHandoffToken(tokenOf(link)) }, data: { expiresAt: new Date(Date.now() - 1) } });
+    await purgeDemoCompany(client, storage, companyId, new Date());
+    assert.deepEqual(deleted, [`demo/${companyId}/receipt.jpg`]);
+    assert.equal(await client.company.count({ where: { id: companyId } }), 0);
+    assert.equal(await client.user.count({ where: { id: { in: userIds } } }), 0);
+    assert.equal(await client.expenseRecord.count({ where: { companyId } }), 0);
+    const row = await client.salesDemoLink.findUniqueOrThrow({ where: { tokenHash: hashLineHandoffToken(tokenOf(link)) } });
+    assert.equal(row.companyId, null); assert.ok(row.openedAt);
+    await assert.rejects(demo.open(tokenOf(link), 'after'), (error: any) => error.getStatus() === 410);
+    assert.equal(await client.company.count({ where: { id: keep.companyId } }), 1);
   });
 });

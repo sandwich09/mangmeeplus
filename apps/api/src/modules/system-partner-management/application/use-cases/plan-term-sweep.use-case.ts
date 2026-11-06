@@ -16,17 +16,21 @@ import {
   warningMessageTh,
 } from '../../domain/logic/plan-term.logic';
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
+import { purgeDemoCompany } from '../../../sales-demo/application/demo-purge';
 
 /** Trigger keys — must also be listed in IMPLEMENTED_TRIGGER_KEYS or LINE delivery is suppressed. */
 export const PLAN_TERM_EXPIRING_TRIGGER = 'plan_term_expiring';
 export const PLAN_TERM_EXPIRED_TRIGGER = 'plan_term_expired';
 
 const SWEEP_BATCH_LIMIT = 200;
+const DEMO_PURGE_LIMIT = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type PlanTermSweepResult = {
   expired: number;
   warned: number;
+  purged: number;
   failures: number;
 };
 
@@ -47,6 +51,7 @@ export class PlanTermSweepUseCase {
     private readonly lifecycle: PartnerLifecycleTransitionUseCase,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
+    @Optional() @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort | null = null,
   ) {}
 
   private get selfServeBilling(): boolean {
@@ -57,11 +62,32 @@ export class PlanTermSweepUseCase {
     const now = new Date();
     const expiry = await this.sweepExpiry(now, limit);
     const warnings = await this.sweepWarnings(now, limit);
+    const demos = await this.purgeDemos(now);
     return {
       expired: expiry.count,
       warned: warnings.count,
-      failures: expiry.failures + warnings.failures,
+      purged: demos.count,
+      failures: expiry.failures + warnings.failures + demos.failures,
     };
+  }
+
+  /** Sales demo spec: an expired demo shop is erased; runs after expiry so it is already closed. */
+  private async purgeDemos(now: Date): Promise<{ count: number; failures: number }> {
+    const due = await this.prisma.client.companyPlanTerm.findMany({
+      where: { termEndsAt: { lte: now }, company: { reportClassification: 'DEMO' } },
+      select: { companyId: true }, orderBy: { termEndsAt: 'asc' }, take: DEMO_PURGE_LIMIT,
+    });
+    let count = 0;
+    let failures = 0;
+    for (const candidate of due) {
+      try {
+        if (await purgeDemoCompany(this.prisma.client, this.storage, candidate.companyId, now)) count++;
+      } catch (error) {
+        failures++;
+        logSweepFailure('sales_demo_purge_failed', candidate.companyId, error);
+      }
+    }
+    return { count, failures };
   }
 
   /** Candidate selection is not authority: renew/admin writes take the same Company lock. */
