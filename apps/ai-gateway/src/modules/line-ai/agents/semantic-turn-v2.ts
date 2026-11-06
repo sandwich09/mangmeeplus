@@ -16,7 +16,7 @@ import { approvedKnowledgeFollowUp, productKnowledgeAccess, renderApprovedKnowle
 import { activeProductHelpPack, productHelpAction } from './approved-product-help';
 import { ADVISOR_CONVERSATION_GUIDANCE, ADVISOR_TAX_GUIDANCE } from './advisor-domain-guidance';
 import { buildCapabilityHelp, claimsCompletedWrite, groundedNumbers, preservesGrounding, preservesSemanticGrounding, safeModelLineText } from './response-composer.agent';
-import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, backlogCardText, expenseComparisonCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
@@ -1037,6 +1037,13 @@ export async function runSemanticTurnV2(input: {
       && entry.result.toolName === BACKLOG_TOOL ? emptyApprovalBacklogReplyText(entry.result.data, language === 'en') : undefined);
     if (texts.length > 0 && texts.every(Boolean)) emptyBacklogText.set(item.index, [...new Set(texts)].join('\n'));
   }
+  // Sales demo 2026-11-06, "มีงานค้างไหม": composing the three queue reads (~16k tokens in) timed out twice and the
+  // turn ran out of time. When the waiting-work card holds the whole answer, the reply is that card's own words.
+  const waitingResults = [...new Set(results.map(entry => entry.result))];
+  const waitingCard = language !== 'en' && myPendingWorkQuestion(req.messageText) && inventory.every(item => item.kind === 'read'
+    && !forced.has(item.index) && !questions.has(item.index) && !nameIssues.has(item.index) && results.some(entry => entry.index === item.index))
+    && waitingResults.every(result => result.status === 'ok' && BACKLOG_TOOLS.has(result.toolName)) ? backlogCardLayout(waitingResults) : undefined;
+  if (waitingCard) for (const item of inventory) emptyBacklogText.set(item.index, backlogCardText(waitingCard));
   // Item 3(a)/(b) (223-turn eval batch 2): "เทียบกับเดือนที่แล้ว"/"ทำไม...เยอะจัง" kept failing
   // compose because the model computed its own cross-period difference/percentage or breakdown
   // share and grounding correctly rejected a number no tool result actually contained. Compute the

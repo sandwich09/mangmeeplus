@@ -1327,10 +1327,11 @@ describe('design lock: the v2 turn attaches a card layout built from the tool re
     };
 
     it('three questions the router split, three reads: one card whose text is the whole reply and whose rows are the reads\'', async () => {
-      const result = await run(request('มีงานค้างอะไรบ้าง', 3), [THREE_CALLS, THREE_ANSWERS], (toolName) => READS[toolName]!());
+      // Sales demo 2026-11-06: composing these reads timed out the turn. The card's own words are the reply, and no
+      // compose answer is queued: a compose call would get "{}" and leave the items unanswered.
+      const result = await run(request('มีงานค้างอะไรบ้าง', 3), [THREE_CALLS], (toolName) => READS[toolName]!());
       assert.deepEqual(result.semanticCoverage?.map((entry) => entry.status), ['handled', 'handled', 'handled']);
-      // Owner 2026-10-16: preserve every answer and its scope without numbered text lists.
-      assert.match(result.replyText, /^ใบรับรองแทนใบเสร็จที่รอให้เซ็นหรืออนุมัติ: ไม่มีค้างอยู่เลยค่ะ ✅\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ\n\nรายการเบิกจ่าย/u);
+      assert.equal(result.replyText, ['งานค้าง ณ 5 ต.ค. 2569', ...LAYOUT.rows.map((row) => `• ${row.label}: ${row.value}`), ...LAYOUT.notes].join('\n'));
       assert.deepEqual(result.presentation, { kind: 'answer_cards', cards: [{
         text: result.replyText, layout: LAYOUT,
         sourceLabels: ['ใบรับรองแทนใบเสร็จ', 'รายการเบิกจ่ายรออนุมัติ', 'สรุปปิดร้าน 5 ต.ค. 2569'],

@@ -1705,6 +1705,13 @@ export function backlogCardLayout(results: ReadonlyArray<{ toolName: string; dat
   });
 }
 
+/** The waiting-work card as its sentences: the card's own header, rows and notes, one per line, so the
+ *  reply says exactly what the card shows. */
+export function backlogCardText(layout: LineAiAnswerCardLayout): string {
+  const [title, state] = layout.header;
+  return [state.startsWith('ณ ') ? `${title} ${state}` : state, ...layout.rows.map((row) => `• ${row.label}: ${row.value}`), ...(layout.notes ?? [])].join('\n');
+}
+
 /**
  * Authoritative deterministic terminal copy for a prepared read that did NOT reach a verified success —
  * an unavailable/error/failed source, or a success the compiled formatter could not verify. It states an
