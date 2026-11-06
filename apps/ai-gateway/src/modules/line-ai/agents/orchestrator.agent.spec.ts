@@ -2189,7 +2189,7 @@ describe('round 5A document advisor orchestrator', () => {
     const r = await orchestrator.run(req); assert.equal(calls, 1); assert.equal(r.replyText, message);
     assert.doesNotMatch(r.replyText, /3%|30 บาท|CAT_/);
   });
-  it('U2 Starter explains 50 ทวิ through the general composer without reading shop data', async () => {
+  it('U2 Starter explains 50 ทวิ from the reviewed explanation without reading shop data or composing', async () => {
     let calls = 0, modelCalls = 0;
     const explanation = '50 ทวิคือหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ ให้ผู้รับเงินใช้เป็นหลักฐานภาษีค่ะ';
     globalThis.fetch = async () => { modelCalls++; return new Response(JSON.stringify({ status: 'completed', output_text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: explanation }] }) }), { status: 200, headers: { 'content-type': 'application/json' } }); };
@@ -2199,7 +2199,7 @@ describe('round 5A document advisor orchestrator', () => {
     req.inputEvidence = (await createLineAiInputEvidence({ turnKey: 'u2', parts: [{ partId: 'text', rawText: req.messageText, eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now() }] }))!.inputEvidence;
     req.budgetGrantV2 = {} as any;
     const result = await new OrchestratorAgent({ invoke: async () => { calls++; throw new Error('must not read'); } } as any, makeConfig()).run(req);
-    assert.equal(calls, 0); assert.equal(modelCalls, 1);
+    assert.equal(calls, 0); assert.equal(modelCalls, 0);
     assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ภาษีที่หักไว้.*จดเลขที่ใบ 50 ทวิ ที่ทำนอกระบบ.*ธุรกิจ 1,999 บาท/);
     assert.doesNotMatch(result.replyText, /ENTERPRISE|ทำได้เลย/);
     assert.deepEqual(result.webLinks, [{ label: 'ดูแพ็กเกจ', path: '/companies/company-1/billing?channel=line' }]);
@@ -2293,7 +2293,8 @@ it('R10 Q4: social replies can refer to an earlier draft and keep useful text wh
 });
 
 
-describe('U2 document explanations precede a package limit and keep the general composer', () => {
+// Demo 2026-11-06: the reviewed explanation is the whole answer, so no compose call is spent on it (it took 14 s).
+describe('U2 document explanations precede a package limit, with no compose call', () => {
   for (const [question, explanation] of [
     ['50 ทวิ คืออะไร', '50 ทวิคือหนังสือรับรองยอดเงินที่จ่ายและภาษีที่หักไว้ ให้ผู้รับเงินใช้เป็นหลักฐานภาษีค่ะ'],
     ['ภงด.53 คืออะไร', 'ภงด.53 คือแบบนำส่งภาษีหัก ณ ที่จ่ายสำหรับการจ่ายเงินให้นิติบุคคลค่ะ'],
@@ -2309,8 +2310,7 @@ describe('U2 document explanations precede a package limit and keep the general 
       draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: true,
       invoke: async () => { throw new Error('general explanation must not read shop documents'); },
     });
-    assert.deepEqual(calls.map(call => call.usageTag), ['line.compose']);
-    assert.match(JSON.stringify(calls[0]), /one or two sentences of general knowledge/);
+    assert.deepEqual(calls.map(call => call.usageTag), []);
     assert.match(result.replyText, /ภาษี|จ่ายเงินจริง/);
     assert.match(result.replyText, /แพ็กเกจ.*[0-9,]+ บาทต่อเดือนค่ะ$/);
     assert.doesNotMatch(result.replyText, /ENTERPRISE|STARTER|ทำได้เลย/);
@@ -2820,7 +2820,8 @@ it('Exam C2/C4: a polite explanation cannot become action help even when both mo
     provider: { generateText: async () => { calls++; return { ok: true, text: JSON.stringify({ helpActions: [{ index: 0, actionId: 'wht_certificate' }],
       answers: [{ index: 0, status: 'handled', text: '50 ทวิรับรองยอดที่จ่ายและภาษีที่หักไว้ให้ผู้รับเงินใช้เป็นหลักฐานค่ะ' }] }) }; } },
     invoke: async () => assert.fail('a concept must not invoke ERP or start an action') });
-  assert.equal(calls, 1);
+  // Demo 2026-11-06: the reviewed explanation is the answer, so the selectors are never even asked.
+  assert.equal(calls, 0);
   assert.match(result.replyText, /หนังสือรับรอง 50 ทวิ.*ยอดที่จ่ายและภาษีที่หักไว้/u);
   assert.match(result.replyText, /ธุรกิจ.*1,999/u);
   assert.equal(result.presentation?.cards[0]?.chatActionId, undefined);
@@ -3339,4 +3340,51 @@ it('R26 fixed package reply adds no tool or compose call', async () => {
   assert.equal(tools, 0);
   assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'PACKAGE_FEATURE_NOT_ENABLED');
   assert.equal(result.replyText, scopePolicyOverride(req.messageText, 'read', req.userContext.permissions, req.entitledFeatureKeys, 'th', undefined, req.packageOffers)!.text);
+});
+
+// Demo 2026-11-06: reads whose verified card is the whole answer are answered from that card, never composed —
+// composing them took the writer 12–15 s of a 15 s step ("มีงานค้างไหม" timed out twice).
+describe('semantic turn v2: code-built answers for reads that a card holds', () => {
+  const asOf = '2026-10-05T07:41:00.000Z';
+  const ref = (entityType: string) => ({ id: `x:${entityType}:summary`, label: entityType, module: 'expenses', entityType, permissionChecked: true as const, asOf, webPath: '/companies/company/expenses' });
+  const turn = async (messageText: string, toolName: string, permissions: string[], reads: Record<string, unknown>) => {
+    const tags: string[] = [];
+    const req: LineAiTurnRequest = { requestId: 'req-coded', webhookEventId: 'event-coded', messageText, messagePreviewHash: 'f'.repeat(16),
+      valueCandidates: extractValueCandidates(messageText, '2026-10-05'),
+      semanticSubrequests: [{ index: 0, kind: 'read', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: { lineUserId: 'line-user', internalUserId: 'user', companyId: 'company', membershipId: 'membership', permissions, roles: ['owner'], branchIds: [], locationIds: [], locale: 'th-TH' } as LineAiTurnRequest['userContext'] };
+    const result = await runSemanticTurnV2({ req, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      enabledDeterministicFamilies: new Set(['expense.list_recent::single_metric', 'expense.list_recent::list']),
+      provider: { generateText: async (input: any) => { tags.push(input.usageTag);
+        return { ok: true, text: input.usageTag === 'line.loop' ? JSON.stringify({ calls: [{ index: 0, toolName, input: {} }] }) : '{}' }; } },
+      invoke: async (meta: any) => ({ toolName: meta.name, status: 'ok', asOf, sourceRefs: [ref(meta.name)], facts: [], data: reads[meta.name] }) as any });
+    return { tags, result };
+  };
+
+  it('a list of expenses is its verified card, with no compose call', async () => {
+    const items = [{ id: 'e1', expenseDate: '2026-10-01T00:00:00.000Z', vendorNameSnapshot: 'ร้านสมใจ', status: 'CONFIRMED', paymentStatus: 'PAID', grandTotalAmount: '300.5' },
+      { id: 'e2', expenseDate: '2026-10-02T00:00:00.000Z', vendorNameSnapshot: 'Grab', status: 'CONFIRMED', paymentStatus: 'UNPAID', grandTotalAmount: '437' }];
+    const { tags, result } = await turn('ขอ list รายการล่าสุดหน่อยค่ะ', 'expense.list_recent', ['expense.read'], { 'expense.list_recent': { total: 2,
+      period: { fromDate: '2026-10-01', toDate: '2026-10-05', defaultedToCurrentMonth: false },
+      summary: { countedItems: 2, cancelledCount: 0, totalAmount: '737.5', pendingAmount: '0', draftAmount: '0', confirmedAmount: '737.5', paidAmount: '300.5', unpaidAmount: '437' },
+      totalsByCurrency: [{ currency: 'THB', count: 2, totalAmount: '737.5', paidAmount: '300.5', outstandingAmount: '437' }], items } });
+    assert.ok(!tags.includes('line.compose'), tags.join(','));
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.ok(result.replyText.includes('ร้านสมใจ'), result.replyText);
+    assert.ok(result.presentation?.kind === 'answer_cards' && result.presentation.cards[0]?.layout, JSON.stringify(result.presentation));
+  });
+
+  it('"มีงานค้างไหม" is the waiting-work card, with no compose call', async () => {
+    const section = (total: number) => ({ totals: [], items: { total, shown: 0, remaining: total, items: [] } });
+    const counted = (count: number) => ({ count, items: { total: count, shown: 0, remaining: count, items: [] } });
+    const { tags, result } = await turn('มีงานค้างไหม', 'expense.get_daily_closing', ['expense.read', 'expense.read_related', 'reimbursement.approve', 'reimbursement.read'], {
+      'expense.list_substitute_receipts_to_sign': { accessScope: 'own', total: 0, asPayer: { count: 0, items: [] }, asApprover: { count: 0, items: [] } },
+      'reimbursement.list_pending_approvals': { total: 0, items: [] },
+      'expense.get_daily_closing': { date: '2026-10-05', timezone: 'Asia/Bangkok', accessScope: 'company',
+        occurredToday: { totals: [], paid: [], outstanding: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+        submittedToday: { count: 0 }, dueEndOfDay: section(0), overdue: section(0), unscheduledOutstanding: section(0),
+        pendingReview: counted(21), evidenceBlockers: counted(0), duplicateRisks: counted(0) } });
+    assert.ok(!tags.includes('line.compose'), tags.join(','));
+    assert.match(result.replyText, /^งานค้าง ณ 5 ต\.ค\. 2569\n• รอตรวจสอบ: 21 รายการ/u);
+  });
 });

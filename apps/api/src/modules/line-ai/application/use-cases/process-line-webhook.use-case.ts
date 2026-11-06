@@ -12,7 +12,7 @@ import { lineControlData, lineControlLanguage, lineDisplayDate, lineUiLabel, lin
 import { lineReplyLanguage } from '@watchdog-bms/contracts';
 import { LineSubstituteReceiptActionService, buildSubstituteReceiptActionCard, buildSubstituteReceiptFactsCard, type SubstituteActionPreview } from '../line-substitute-receipt-action.service';
 import { LineQuotedMessageService, quoteReadMemory, quoteRecordsFromReads, validQuoteRecords, type LineQuotedRecord, type LineQuoteOwner } from '../line-quoted-message.service';
-import { LineCounterpartyService, buildCounterpartyCard, isLineCounterpartyCommand, type CounterpartyPreview } from '../line-counterparty.service';
+import { LineCounterpartyService, buildCounterpartyCard, buildCounterpartySavedCard, isLineCounterpartyCommand, type CounterpartyPreview } from '../line-counterparty.service';
 import { LinePackagePurchaseService, buildPackagePurchaseCard, isPackagePurchaseIntent, isPackagePurchaseAnswer, type PackagePurchaseView } from '../line-package-purchase.service';
 import { reimbursementApprovalButtons } from '../../domain/logic/line-reimbursement-approval-control.logic';
 import { LineExpenseActionService, expenseActionNextStepChoices, paidExpenseReply, type ExpenseActionPreview } from '../line-expense-action.service';
@@ -4544,7 +4544,10 @@ export class ProcessLineWebhookUseCase {
     } else {
       if (repaired) reply = `${reply}\n${repaired.reply}`;
       const choices = repaired ? await this.expenseActionRepairChoices(event, ctx, chatKeyHash, undefined, replyLanguage(event)) : null;
-      if (choices?.length) await this.deliverReply(event, reply, lineChoiceQuickReply(choices));
+      // Demo 2026-11-06 (50 ทวิ flow): the saved change with its next steps is the outcome card, its choices the quick reply.
+      const card = choices?.length ? buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId) : undefined;
+      if (card) await this.deliverRequiredMessages(event, [inheritCompleteLineBusinessAnswerPresentation(card, { ...card, quickReply: lineChoiceQuickReply(choices!) })]);
+      else if (choices?.length) await this.deliverReply(event, reply, lineChoiceQuickReply(choices));
       else await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
         buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
     }
@@ -7512,7 +7515,8 @@ The claim has not been saved; confirm the card when ready, or reply “cancel”
       if (result.status === 'applied' || result.status === 'replayed') await this.counterpartyTask(event, control.token, true, result.source);
       const remaining = (result.status === 'applied' || result.status === 'replayed') && this.semanticTaskMappings.has(event)
         ? await this.remainingTaskChoiceMessages(event) : [];
-      await this.deliverRequiredMessages(event, [{ type: 'text', text: result.reply }, ...remaining]);
+      const saved = result.saved && buildCounterpartySavedCard(result.reply, result.saved, this.config.webBaseUrl, companyId, replyLanguage(event));
+      await this.deliverRequiredMessages(event, [saved ?? { type: 'text', text: result.reply }, ...remaining]);
       await this.updateEventLog(event.webhookEventId, `counterparty_${result.status}`, undefined, companyId);
       return;
     }

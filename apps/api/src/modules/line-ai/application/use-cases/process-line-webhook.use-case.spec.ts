@@ -10848,6 +10848,30 @@ it('G2: picking a category prepares the existing draft edit and its confirm post
   assert.match(JSON.stringify(h.sentMessageBatches.at(-1)), /expense_action_confirm/u);
 });
 
+// Demo 2026-11-06 (50 ทวิ flow, C05): a confirmed edit whose next step needs a choice was plain text; it is the
+// outcome card, with those choices as its quick reply, so a delivery plan sends the card.
+it('a confirmed edit with next-step choices is the outcome card, choices kept', async () => {
+  const { prisma } = makePrisma();
+  const preview: any = { previewId: '550e8400-e29b-41d4-a716-446655440001', expenseId: 'c05-expense', recordType: 'expense', tool: 'expense.draft.set_header',
+    record: { vendorName: 'บริษัท ป้ายสวย จำกัด', expenseDate: '2026-11-06', statusLabel: 'พร้อมยืนยัน' },
+    diff: [{ field: 'line.1.category', label: 'บรรทัด 1 หมวดค่าใช้จ่าย', before: null, after: 'ค่าบริการ', kind: 'text' }],
+    totalsBefore: { grandTotalAmount: '10000.00' }, totalsAfter: { grandTotalAmount: '10000.00' }, warnings: [], expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const draftUpdate = { enabled: true, preview: async () => ({ status: 'preview', preview }), pendingPreview: async () => preview,
+    apply: async () => ({ status: 'applied', preview, expenseId: preview.expenseId }) };
+  const h = makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.confirm', 'expense.update'], draftUpdate, config: { webBaseUrl: 'https://app.example.test' } });
+  const flow = h.useCase as any;
+  flow.expenseActions = { afterRepairEdit: async () => ({ reply: 'ตรวจหลักฐานเพื่อยืนยันรายจ่ายก่อนสร้างใบเตรียมจ่ายและออกหนังสือรับรอง 50 ทวิค่ะ' }),
+    apply: () => assert.fail('an edit-confirm must not execute the final expense action') };
+  flow.expenseActionRepairChoices = async () => [{ label: 'ตรวจเพื่อยืนยัน', text: 'ตรวจเพื่อยืนยัน' }, { label: 'ส่งรูปใบเสร็จ', text: 'ส่งรูปใบเสร็จ' }];
+  const event = { ...BASE_EVENT, webhookEventId: 'c05-edit-confirm', messageText: 'ยืนยันการแก้ไข', draftUpdatePreviewId: preview.previewId };
+  await flow.handleDraftUpdatePostback(event, { companyId: 'company-1', userId: 'user-1', permissions: ['expense.update'] }, { permissions: ['expense.update'], roles: [] }, true);
+  const sent = h.sentMessages.at(-1)!;
+  assert.equal(sent.type, 'flex');
+  assert.equal(isCompleteLineBusinessAnswerPresentation(sent), true);
+  assert.match(sent.canonicalText, /แก้ให้แล้วค่ะ[\s\S]*50 ทวิ/u);
+  assert.deepEqual(sent.quickReply.items.map((item: any) => item.action.label), ['ตรวจเพื่อยืนยัน', 'ส่งรูปใบเสร็จ']);
+});
+
 it('round 5A delivers only API-issued WHT catalog message buttons for this read turn', async () => {
   const { prisma } = makePrisma();
   const h = makeUseCase(prisma, {
@@ -13142,6 +13166,13 @@ it('Fix-up 26 U1: exact ondev C07 webhook/router uses the signed saved counterpa
   assert.equal(writes, 1); assert.equal(counterparty.billingAddressJson.addressText, replay.route.semanticSubrequests[0].requestedFilters.addressText);
   assert.equal(counterparty.billingAddressJson.locked, true); assert.equal(counterparty.billingAddressJson.postalCode, '11000');
   assert.match(JSON.stringify(h.delivered.at(-1)), /บันทึกข้อมูลคู่ค้าแล้วค่ะ/);
+  // Demo 2026-11-06: the saved supplier is the locked card — header, the saved rows, and a button that opens it.
+  const saved = h.delivered.at(-1)!.find((m: any) => m.type === 'flex');
+  // `delivered` is the real wire after the delivery plan: a card here is a card the plan kept.
+  assert.ok(saved && isLineSystemCard(saved), JSON.stringify(h.delivered.at(-1)).slice(0, 300));
+  assert.deepEqual(lineSystemCardTexts(saved.contents).slice(0, 2), ['คู่ค้า', 'บันทึกแล้ว']);
+  assert.match(JSON.stringify(saved.contents), new RegExp(`/counterparties/${id}`));
+  assert.ok(lineSystemCardTexts(saved.contents).includes('ที่อยู่'), lineSystemCardTexts(saved.contents).join(' / '));
   await h.execute('ยืนยันบันทึก', confirm.action.data); assert.equal(writes, 1);
   assert.equal(h.intakeRequests.length, 1, 'the exact text still uses metered intake; signed presses do not call a model');
 });
@@ -13361,7 +13392,8 @@ for (const replay of FX29_QA) it(`Fix-up 29: exact eval route through Orchestrat
     if (replay.id.includes('outofperm-approvals')) {
       assert.ok(calls.length > 0); assert.doesNotMatch(text, /ไม่มีสิทธิ์ดู|รอคุณอนุมัติ/u);
     }
-    if (replay.id.includes('T-122')) { assert.match(text, /ภาษี.*กรมสรรพากร/u); assert.doesNotMatch(text, /แพ็กเกจ|แพ็กธุรกิจ/u); assert.equal(providerRequests.length, 1); }
+    // Demo 2026-11-06: the reviewed withholding explanation is the answer, so nothing is composed for it.
+    if (replay.id.includes('T-122')) { assert.match(text, /ภาษี.*กรมสรรพากร/u); assert.doesNotMatch(text, /แพ็กเกจ|แพ็กธุรกิจ/u); assert.equal(providerRequests.length, 0); }
     if (replay.id.includes('T-100')) assert.equal(calls[0].input.documentStatus, 'NEEDS_REVIEW');
     if (replay.id.includes('T-111')) {
       assert.match(text, /4,188\.50.*23\.6%.*อันดับ 1/u);

@@ -409,6 +409,8 @@ function validInput(meta: ToolMeta, input: unknown, req: LineAiTurnRequest,
 
 /** Advisor Q2: what "งานค้างของฉัน" reads — the caller's own queues first, then the day's checklist. */
 const MY_PENDING_WORK_TOOLS = ['expense.list_substitute_receipts_to_sign', 'reimbursement.list_pending_approvals', 'expense.get_daily_closing'];
+/** The reads of many records whose verified card is the whole answer (see `codedReads` in the turn). */
+const CODED_READ_TOOLS: ReadonlySet<string> = new Set(['expense.list_recent', 'expense.get_breakdown', 'expense.get_daily_closing']);
 
 /** A router-decided period/window hint is a business-level guess made before any specific tool is
  *  chosen — see the drop-vs-reject note in `bindRequestedReadFilters` below. */
@@ -1214,10 +1216,29 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && (object(entry.result.data.reimbursementDraft) || ['expense.action.preview', 'counterparty.action.preview', 'company.action.preview'].includes(entry.result.toolName)))).map(item => item.index));
+  // Demo 2026-11-06 audit: one expense read whose family the verified formatter draws as a card still went to the
+  // writer, 12 s of a 15 s step. That card is the whole answer, so the reply is its sentence and nothing is composed.
+  // A why or comparison question, several reads of one item, one record's detail (a question about one field of it
+  // wants that field), or a shape the formatter cannot draw still composes.
+  const codedReads = new Map<number, ReturnType<typeof deterministicReadFallback>>();
+  if (!followUp && !WHY_OR_COMPARE_PATTERN.test(req.messageText) && !myPendingWorkQuestion(req.messageText)) for (const item of inventory) {
+    if (item.kind !== 'read' || forced.has(item.index) || questions.has(item.index) || nameIssues.has(item.index)
+      || comparisonByIndex.has(item.index) || emptyBacklogText.has(item.index)) continue;
+    const assigned = results.filter(entry => entry.index === item.index).map(entry => entry.result);
+    if (assigned.length !== 1 || assigned[0]!.status !== 'ok' || !CODED_READ_TOOLS.has(assigned[0]!.toolName)) continue;
+    const read = readPeriod(assigned, (readContext?.candidates ?? req.valueCandidates)?.periods ?? []);
+    const coded = deterministicReadFallback(assigned, language, req.userContext.locale, enabledFamilies,
+      itemText.get(item.index) ?? req.messageText, assumedYearNote(read?.period, read?.asOf, language === 'en'));
+    if (coded.status === 'handled' && coded.layout) codedReads.set(item.index, coded);
+  }
   const followUpNeedsComposition = followUp && (followUp.style !== 'example' || followUp.cards.some(card => groundedNumbers(`${card.title}\n${card.summary}\n${card.body}`).size > 0));
   const needsComposition = followUp ? !!followUpNeedsComposition : inventory.some(item => !(req.selectedKnowledgeCardIds?.length && scopePolicyForcedIndices.has(item.index)) && !(item.kind === 'help' && (knowledge || actionHelps.has(item.index))) && !capabilityIndices.has(item.index) && !actionHelps.has(item.index) && (!forced.has(item.index) || item.kind === 'help' && !req.howToActionId) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
-    && !emptyBacklogText.has(item.index));
+    && !emptyBacklogText.has(item.index) && !codedReads.has(item.index)
+    // Demo 2026-11-06 ("VAT คืออะไร", 14 s of a 15 s step): the reviewed explanation below replaces whatever is
+    // composed for this item, so composing it only spent the turn's time.
+    && !(documentExplanationReply(itemText.get(item.index) ?? '', entitledFeatureKeys, req.userContext.permissions, language, req.packageOffers)
+      && !scopePolicyForcedIndices.has(item.index)));
   const sourcesCover = (answer: { sourceRefIds?: string[] }, good: ToolResult[]) => {
     const allowed = new Set(good.flatMap(result => result.sourceRefs.map(sourceId)));
     return good.length > 0 && !!answer.sourceRefIds?.length && answer.sourceRefIds.every(id => allowed.has(id));
@@ -1401,6 +1422,12 @@ export async function runSemanticTurnV2(input: {
     else if (emptyBacklogText.has(item.index)) {
       answer = { index: item.index, status: 'handled', text: emptyBacklogText.get(item.index)!,
         sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+      modelComposed = false;
+    }
+    else if (codedReads.has(item.index)) {
+      const coded = codedReads.get(item.index)!;
+      answer = { index: item.index, status: 'handled', text: coded.replyText, reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: coded.sourceRefIds };
+      layouts.set(item.index, coded.layout!);
       modelComposed = false;
     }
     // A complete comparison always uses its computed answer, including when compose ran for an

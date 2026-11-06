@@ -1270,7 +1270,9 @@ describe('exam A: current-message language survives Thai account defaults', () =
         semanticSubrequests: [{ index: 0, kind: 'general', goal: 'Explain VAT', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }] },
         provider: { async generateText(input: any) { const payload = JSON.parse(input.messages[0].text); sent.push(payload); return { ok: true, text: JSON.stringify({ answers: [{ index: 0, status: 'handled', topic: 'business', text: payload.language === 'en' ? 'VAT is a tax on goods and services.' : 'VAT คือภาษีมูลค่าเพิ่มค่ะ' }] }) }; } },
         draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false, invoke: async () => assert.fail('No ERP read is needed.') });
-      assert.equal(result.plan.language, expected); assert.equal(sent[0].language, expected); assert.equal(sent[0].responsePreferences.language, expected);
+      // Demo 2026-11-06: a reviewed explanation (VAT) is answered without composing; any compose still gets the message's language.
+      assert.equal(result.plan.language, expected);
+      for (const payload of sent) { assert.equal(payload.language, expected); assert.equal(payload.responsePreferences.language, expected); }
       if (expected === 'en') assert.doesNotMatch(result.replyText, /[\u0E00-\u0E7F]/u); else assert.match(result.replyText, /ค่ะ/u);
     });
   }

@@ -10,6 +10,8 @@ import { loadEntitledFeatureKeys } from '../../employee-access/application/entit
 import { LineDraftPreviewStore } from '../../expenses/application/services/line-draft-preview.store';
 import type { ErpReadToolPort, ErpToolContext } from '../domain/ports/erp-read-tool.port';
 import { asCompleteLineCard } from '../domain/logic/line-business-card.logic';
+import { drawLineSystemCard } from '../domain/logic/line-system-card-limits.logic';
+import { absoluteWebLink } from '../../../common/http/web-link';
 import { canonicalDeliveryJson } from '../domain/logic/line-delivery-plan.logic';
 import type { LineReplyMessage } from '../infrastructure/line-reply.adapter';
 
@@ -51,6 +53,21 @@ export function buildCounterpartyCard(preview: CounterpartyPreview, language: Li
     footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: (['counterparty_confirm', 'counterparty_cancel'] as const).map((action, i) => ({
       type: 'button', style: i ? 'secondary' : 'primary', action: { type: 'postback', label: language === 'en' ? i ? 'Cancel action' : 'Confirm save' : i ? 'ไม่ทำ' : 'ยืนยันบันทึก', data: lineControlData(new URLSearchParams({ action, token: preview.token }).toString(), language) },
     })) } } });
+}
+/** Demo 2026-11-06: the saved supplier on the locked System OA card — what was saved, and a button that
+ *  opens it on the web. No https base or a row the card cannot hold is no card; the reply stays its text. */
+export function buildCounterpartySavedCard(reply: string, saved: { id: string; rows: Array<{ label: string; value: string }> },
+  webBaseUrl: string | undefined, companyId: string, language: LineReplyLanguage = 'th'): LineReplyMessage | undefined {
+  const uri = absoluteWebLink(webBaseUrl, `/companies/${encodeURIComponent(companyId)}/counterparties/${encodeURIComponent(saved.id)}`);
+  const label = language === 'en' ? 'Open supplier' : 'เปิดคู่ค้าในเว็บ';
+  const contents = uri.startsWith('https://') ? drawLineSystemCard({ mascot: 'general', header: { lines: language === 'en' ? ['Supplier', 'Saved'] : ['คู่ค้า', 'บันทึกแล้ว'] },
+    rows: saved.rows, button: { action: { type: 'uri', label, uri }, icon: 'list' } }, webBaseUrl) : undefined;
+  return contents && asCompleteLineCard({ type: 'flex', altText: reply, contents,
+    canonicalText: [reply, ...saved.rows.map(row => `${row.label}: ${row.value}`), `${label}: ${uri}`].join('\n') });
+}
+function savedRows(patch: Patch, language: LineReplyLanguage): Array<{ label: string; value: string }> {
+  return (Object.keys(LABELS) as Array<keyof Patch>).filter(key => patch[key] !== undefined && patch[key] !== '')
+    .map(key => ({ label: language === 'en' ? ({ displayName: 'Name', legalName: 'Legal name', taxId: 'Tax ID', addressText: 'Address', branchCode: 'Tax branch', entityKind: 'Payee type' } as const)[key] : LABELS[key], value: display(patch[key], key, language) }));
 }
 function context(ctx: ErpToolContext): RequestContext {
   return { requestId: ctx.requestId ?? '', authSubject: ctx.userId, userId: ctx.userId, companyId: ctx.companyId,
@@ -176,11 +193,11 @@ export class LineCounterpartyService {
     if (!row || row.updatedAt.toISOString() !== revision) throw new NotFoundException();
     return { id: row.id, name: row.displayName, taxId: row.taxId ?? null, address: counterpartyAddressText(row.billingAddressJson), entityKind: row.entityKind ?? null };
   }
-  async apply(ctx: RequestContext, chat: string, control: CounterpartyControl, language: LineReplyLanguage = 'th'): Promise<{ status: 'applied' | 'replayed' | 'blocked' | 'cancelled'; reply: string; source?: { id: string; revision: string } }> {
+  async apply(ctx: RequestContext, chat: string, control: CounterpartyControl, language: LineReplyLanguage = 'th'): Promise<{ status: 'applied' | 'replayed' | 'blocked' | 'cancelled'; reply: string; source?: { id: string; revision: string }; saved?: { id: string; rows: Array<{ label: string; value: string }> } }> {
     const previous = await this.store.loadApplied(ctx.companyId, this.key(chat));
     if (previous?.applied && await this.bound(ctx, chat, previous, control.token)) {
       try { const row = await this.authorize(ctx, previous.applied.id); return row?.updatedAt.toISOString() === previous.applied.revision
-        ? { status: 'replayed', reply: language === 'en' ? 'This supplier has already been saved.' : 'บันทึกคู่ค้ารายการนี้แล้วค่ะ', source: previous.applied } : { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; } catch { return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; }
+        ? { status: 'replayed', reply: language === 'en' ? 'This supplier has already been saved.' : 'บันทึกคู่ค้ารายการนี้แล้วค่ะ', source: previous.applied, saved: { id: previous.applied.id, rows: savedRows(previous.patch, language) } } : { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; } catch { return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED }; }
     }
     const claim = await this.store.claimCurrent(ctx.companyId, this.key(chat), control.token.split('.')[0]!);
     if (!claim) return { status: 'blocked', reply: language === 'en' ? 'This supplier proposal expired or changed; please prepare a new card.' : EXPIRED };
@@ -195,7 +212,7 @@ export class LineCounterpartyService {
       entry.applied = { id: row.id, revision: row.updatedAt.toISOString() };
       await this.store.remember(ctx.companyId, this.key(chat), entry);
       await this.store.discard(ctx.companyId, this.key(chat));
-      return { status: 'applied', reply: language === 'en' ? 'Supplier details saved.' : 'บันทึกข้อมูลคู่ค้าแล้วค่ะ', source: entry.applied };
+      return { status: 'applied', reply: language === 'en' ? 'Supplier details saved.' : 'บันทึกข้อมูลคู่ค้าแล้วค่ะ', source: entry.applied, saved: { id: row.id, rows: savedRows(entry.patch, language) } };
     } catch (error) { if (!(error instanceof HttpException)) throw error; return { status: 'blocked', reply: language === 'en' ? error instanceof ForbiddenException || error instanceof NotFoundException ? 'Ask the shop owner or an authorized administrator to manage this supplier.' : 'Please review the supplier details and prepare a new card.' : this.refusal(error) }; }
     finally { await this.store.releaseClaim(ctx.companyId, this.key(chat), claim.token); }
   }
