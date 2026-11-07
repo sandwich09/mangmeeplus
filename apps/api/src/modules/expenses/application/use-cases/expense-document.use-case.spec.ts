@@ -2451,6 +2451,78 @@ describe('pack v2 packet sources', () => {
     assert.equal(maximum, 1);
     console.log('PACK_V2_60_FILE_TIMING', JSON.stringify({ planMs: Math.round(planned - start), downloadMs: Math.round(performance.now() - planned), zipBytes: downloaded.bytes.length, maxRssKiB: process.resourceUsage().maxRSS }));
   });
+  // A 3-minute benchmark; run it on purpose: ACCOUNTANT_PACK_ENVELOPE=1.
+  it('pack v2 300 expense envelope', { skip: process.env.ACCOUNTANT_PACK_ENVELOPE !== '1' && 'set ACCOUNTANT_PACK_ENVELOPE=1 to run the 300-expense benchmark' }, async () => {
+    const { PDFDocument } = await import('pdf-lib');
+    const padded = async (label: string, size: number) => {
+      const bytes = await pdf(label);
+      assert.ok(bytes.length < size);
+      return Buffer.concat([bytes, Buffer.alloc(size - bytes.length, 32)]);
+    };
+    const receipt = await padded('RECEIPT', 500_000), proof = await padded('PAYMENT', 250_000), claim = await padded('SIGNED CLAIM', 250_000);
+    const rows = Array.from({ length: 300 }, (_, index) => ({ id: `e${String(index).padStart(3, '0')}`, expenseNumber: `EXP-${String(index).padStart(3, '0')}`,
+      sourceReimbursementRequestId: `claim-${Math.floor(index / 10)}`, sourceReimbursementLineId: `line-${index}`,
+      attachments: [{ id: `receipt-e${String(index).padStart(3, '0')}`, status: 'ACTIVE', mimeType: 'application/pdf', purpose: 'expense.receipt.primary', byteSize: receipt.length, originalFileName: 'receipt.pdf' }] }));
+    const payments = rows.map(row => ({ id: `payment-${row.id}`, expenseId: row.id, paidAt: new Date('2026-10-01'), paidAtConfirmed: true, paymentMethod: 'CASH', amount: '100' }));
+    let request = 'plan', active = 0, maximum = 0, current: { id?: string } | undefined, largestPacket = 0;
+    const counts: Record<string, Record<string, number>> = {};
+    const create = PDFDocument.create;
+    // A mock call history would retain every PDF destination and distort the memory measurement.
+    PDFDocument.create = async (...args: Parameters<typeof PDFDocument.create>) => {
+      const document = await create(...args), owner: { id?: string } = {};
+      active++; maximum = Math.max(maximum, active); current = owner;
+      const save = document.save.bind(document);
+      document.save = async (...options: Parameters<typeof document.save>) => {
+        try { const data = await save(...options); largestPacket = Math.max(largestPacket, data.length); return data; }
+        finally { active--; if (current === owner) current = undefined; }
+      };
+      return document;
+    };
+    const read = async (_: unknown, command: { attachmentId: string }) => {
+      if (command.attachmentId.startsWith('receipt-') && current && !current.id) {
+        current.id = command.attachmentId.slice('receipt-'.length);
+        const records = counts[request] ??= {};
+        records[current.id] = (records[current.id] ?? 0) + 1;
+      }
+      return command.attachmentId.startsWith('receipt-') ? receipt : command.attachmentId.startsWith('paper-') ? claim : proof;
+    };
+    const { useCase } = fixture(rows, {
+      expensePayment: { findMany: async () => payments },
+      attachmentObject: { findFirst: async () => ({ mimeType: 'application/pdf' }) },
+      attachmentLink: { findMany: async (query: any) => payments.filter(payment => query.where.targetId.in.includes(payment.id)).map(payment => ({ targetId: payment.id,
+        attachment: { id: `proof-${payment.expenseId}`, status: 'ACTIVE', mimeType: 'application/pdf', byteSize: proof.length, originalFileName: 'proof.pdf' } })) },
+    }, {}, { executeSignedForExport: async (_: unknown, id: string) => ({ requestNo: `RB-${id}`, attachmentId: `paper-${id}` }) }, read);
+    const idleRss = process.memoryUsage().rss;
+    let peakRss = idleRss;
+    const memorySample = setInterval(() => { peakRss = Math.max(peakRss, process.memoryUsage().rss); }, 50);
+    const metrics = { planMs: 0, partMs: [] as number[], partCount: 0, fileCount: 0, largestPacket: 0, maximumPacketBuilds: 0, incrementalRssBytes: 0, builds: counts };
+    const start = performance.now();
+    try {
+      const plan = await useCase.planBundle(reader, { yearMonth: '2026-10' });
+      metrics.planMs = Math.round(performance.now() - start); metrics.partCount = plan.partCount; metrics.fileCount = plan.fileCount;
+      assert.equal(plan.fileCount, 930); assert.equal(plan.counts.claimForms, 30); assert.equal(plan.counts.recordPacks, 300); assert.equal(plan.partCount, 16);
+      assert.ok(metrics.planMs <= 30_000, `plan exceeded 30 s: ${metrics.planMs} ms`);
+      for (let part = 1; part <= plan.partCount; part++) {
+        request = `part-${part}`;
+        const partStart = performance.now();
+        const result = await useCase.downloadBundle(reader, { yearMonth: '2026-10' }, part);
+        metrics.partMs.push(Math.round(performance.now() - partStart));
+        assert.ok(result.bytes.length > 0);
+      }
+      assert.ok(metrics.partMs.every(ms => ms <= 30_000), 'a part exceeded 30 s');
+      assert.ok(metrics.partMs.reduce((sum, ms) => sum + ms, 0) <= 510_000, '16 parts exceeded 8.5 min');
+      assert.ok(largestPacket <= 750_000, 'synthetic packet exceeded the fixture ceiling');
+      assert.equal(maximum, 1);
+    } finally {
+      clearInterval(memorySample);
+      PDFDocument.create = create; metrics.largestPacket = largestPacket; metrics.maximumPacketBuilds = maximum;
+      metrics.incrementalRssBytes = Math.max(peakRss, process.memoryUsage().rss) - idleRss;
+      console.log('PACK_V2_ENVELOPE', JSON.stringify({ ...metrics, builds: Object.fromEntries(Object.entries(counts).map(([name, records]) => [name, rows.reduce((histogram: Record<string, number>, row) => {
+        const value = String(records[row.id] ?? 0); histogram[value] = (histogram[value] ?? 0) + 1; return histogram;
+      }, {})])) }));
+      console.log('PACK_V2_ENVELOPE_BUILD_COUNTS', JSON.stringify(counts));
+    }
+  });
   it('pack v2 deduplicates current signed claim assets', async () => {
     const { PreviewReimbursementClaimFormUseCase } = await import('../../../reimbursements/application/use-cases/reimbursement-claim-form.use-case');
     const row: any = { id: 'claim', branchId: 'b1', requesterUserId: reader.userId, status: 'PAID', requestNo: 'RB-1', financeReviewStatus: 'NOT_REQUIRED',

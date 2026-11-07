@@ -5,7 +5,11 @@
  * Downloads are opened as archives so the Thai sheets and the actual installment facts are checked.
  */
 import { inflateRawSync } from 'node:zlib';
-import type { Page, Response } from '@playwright/test';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { posix, resolve } from 'node:path';
+import type { APIRequestContext, Page, Response } from '@playwright/test';
 import { test, expect } from '../harness/fixtures';
 import { chooseThemedOption, json, unique } from '../harness/e2e-utils';
 import { loginAs, QA_ACCOUNTS } from '../harness/roles';
@@ -46,12 +50,21 @@ const headers = {
 };
 function workbookSheets(buffer: Buffer, bundled = false, partCount = 1) {
   const files = unzip(buffer);
-  const names = [...files.get('xl/workbook.xml')!.toString().matchAll(/<sheet\b[^>]*name="([^"]+)"/g)].map(match => decodeXml(match[1]!));
-  const expectedNames = Object.keys(headers).filter(name => bundled || name !== 'ไฟล์ทั้งหมด');
+  const declarations = [...files.get('xl/workbook.xml')!.toString().matchAll(/<sheet\b([^>]+)>/g)];
+  const names = declarations.map(match => decodeXml(match[1]!.match(/name="([^"]+)"/)![1]!));
+  const relations = new Map([...files.get('xl/_rels/workbook.xml.rels')!.toString().matchAll(/<Relationship\b([^>]+)>/g)].map(match => {
+    const attributes = match[1]!;
+    return [attributes.match(/Id="([^"]+)"/)![1]!, decodeXml(attributes.match(/Target="([^"]+)"/)![1]!)];
+  }));
+  const expectedNames = Object.keys(headers).filter(name => (bundled || name !== 'ไฟล์ทั้งหมด') && (!['การจ่าย', 'หัก ณ ที่จ่าย'].includes(name) || names.includes(name)));
   expectedNames.splice(expectedNames.indexOf('ไฟล์ทั้งหมด') < 0 ? expectedNames.indexOf('เกี่ยวกับไฟล์นี้') : expectedNames.indexOf('ไฟล์ทั้งหมด'), 0, 'รายงานภาษีซื้อ');
   expect(names).toEqual(expectedNames);
   return new Map(names.map((name, index) => {
-    const xml = files.get(`xl/worksheets/sheet${index + 1}.xml`)!.toString();
+    const relationId = declarations[index]![1]!.match(/r:id="([^"]+)"/)![1]!;
+    const target = relations.get(relationId)!;
+    expect(target).not.toMatch(/^[a-z]+:/i);
+    const path = posix.normalize(target.startsWith('/') ? target.slice(1) : posix.join('xl', target));
+    const xml = files.get(path)!.toString();
     expect(decodeXml(xml)).not.toMatch(/HYPERLINK\("http/i);
     const data = rows(xml);
     if (name === 'รายงานภาษีซื้อ') {
@@ -548,4 +561,247 @@ test('@journey expense reads fail visibly, keep filters and recover through ล�
       if (title === 'ลายเซ็นของฉัน') await expect(main.getByRole('button', { name: /^(เพิ่มลายเซ็น|เปลี่ยนลายเซ็น)$/ })).toBeVisible(AFTER_PRESS);
     } finally { await page.unroute(matches); }
   });
+});
+
+const accountantAccessNote = 'ผู้ทำบัญชีที่เชิญเข้าร้านดาวน์โหลดเองได้ตามสิทธิ์ที่ได้รับ';
+const apiRequire = createRequire(resolve('apps/api/package.json'));
+
+/** Only the disposable local proof database is used. Downloads still pass through real HTTP guards. */
+async function packFixture(api: APIRequestContext, request: APIRequestContext, companyId: string, count: number, withVoucher = false) {
+  const connectionString = process.env['DATABASE_URL'];
+  if (!connectionString) throw new Error('DATABASE_URL is required for the pack v2 proof fixture');
+  expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(connectionString).hostname);
+  const { PrismaPg } = apiRequire('@prisma/adapter-pg');
+  const dist = process.env['API_DIST_DIR'] ?? `dist/e2e-${process.env['API_PORT'] ?? '3001'}`;
+  const { PrismaClient } = apiRequire(resolve(`apps/api/${dist}/apps/api/src/generated/prisma/client.js`));
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  try {
+    const owner = await db.user.findUniqueOrThrow({ where: { username: QA_ACCOUNTS.OWNER.username } });
+    const branches = [];
+    for (const suffix of ['VISIBLE', 'HIDDEN']) branches.push(await db.branch.create({ data: {
+      companyId, code: unique(suffix).slice(-35), name: unique(`สาขาชุดเอกสาร ${suffix}`), type: 'BRANCH', status: 'ACTIVE',
+    } }));
+    const date = dayOfLastMonth(3), signed = await readFile(resolve('apps/api/src/modules/expenses/domain/logic/expense-record-signed.fixture.pdf'));
+    const { PDFDocument } = apiRequire('pdf-lib');
+    const paper = await PDFDocument.create(); paper.addPage().drawText('SYNTHETIC RECEIPT');
+    const small = Buffer.from(await paper.save());
+    const receipt = Buffer.concat([small, Buffer.alloc(500_000 - small.length, 32)]);
+    const upload = async (bytes: Buffer, branchId: string, label: string) => {
+      const checksumSha256 = createHash('sha256').update(bytes).digest('hex');
+      const intent = await json<{ attachmentId: string; uploadUrl: string; uploadHeaders: Record<string, string> }>(await api.post(`companies/${companyId}/attachments/upload-intent`, {
+        data: { originalFileName: `${unique(label)}.pdf`, mimeType: 'application/pdf', byteSize: bytes.length, branchId, visibility: 'INTERNAL' },
+      }));
+      const uploaded = await request.put(intent.uploadUrl, { data: bytes, headers: { ...intent.uploadHeaders, 'Content-Type': 'application/pdf' } });
+      expect(uploaded.status()).toBe(200);
+      await json(await api.post(`companies/${companyId}/attachments/${intent.attachmentId}/complete`, { data: { byteSize: bytes.length, checksumSha256 } }));
+      return intent.attachmentId;
+    };
+    const records = [];
+    for (let index = 0; index <= count; index++) {
+      const branchId = branches[index === count ? 1 : 0]!.id;
+      const attachmentId = await upload(index === 0 ? signed : receipt, branchId, 'หลักฐานทดสอบ');
+      const row = await db.expenseRecord.create({ data: {
+        companyId, branchId, expenseNumber: unique('EXP-PACK'), status: 'CONFIRMED', expenseDate: date,
+        vendorNameSnapshot: unique(index === count ? 'ผู้ขายนอกสาขา' : 'ผู้ขายชุดเอกสาร'), currency: 'THB',
+        sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'NON_CLAIMABLE',
+        primaryAttachmentId: attachmentId, subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', netPayableAmount: '100',
+        paidAmount: index === count - 1 ? '50' : '100', outstandingAmount: index === count - 1 ? '50' : '0',
+        paymentStatus: index === count - 1 ? 'PARTIALLY_PAID' : 'PAID', paidAt: date, createdByUserId: owner.id,
+        lines: { create: { companyId, lineNumber: 1, description: 'รายจ่ายทดสอบ', quantity: '1', unitPrice: '100', taxableAmount: '100', lineSubtotalAmount: '100', lineTotalAmount: '100' } },
+      } });
+      await db.attachmentLink.create({ data: { companyId, attachmentId, targetType: 'expense.record', targetId: row.id, purpose: 'expense.receipt.primary', linkedByUserId: owner.id } });
+      const payment = await db.expensePayment.create({ data: { companyId, expenseId: row.id, amount: index === count - 1 ? '50' : '100', paidAt: date, paidAtConfirmed: true, paymentMethod: 'CASH', createdByUserId: owner.id, postingStatus: 'not_required' } });
+      records.push({ ...row, paymentId: payment.id });
+    }
+    const claim = await db.reimbursementRequest.create({ data: { companyId, branchId: branches[0]!.id, requestNo: unique('RB-PACK'), requesterUserId: owner.id,
+      requesterDisplayNameSnapshot: owner.displayName, reason: 'ทดสอบชุดเอกสาร', categoryKey: 'OTHER', amount: '200', incurredDate: date,
+      status: 'APPROVED', paymentStatus: 'PAID', paymentTotalAmount: '200', outstandingAmount: '0', approvedAt: date, createdByUserId: owner.id } });
+    for (let index = 0; index < 2; index++) {
+      const line = await db.reimbursementLine.create({ data: { companyId, reimbursementRequestId: claim.id, lineNo: index + 1, incurredDate: date,
+        description: 'รายจ่ายจากใบเบิก', categoryKey: 'OTHER', amount: '100', linkedExpenseId: records[index]!.id } });
+      await db.expenseRecord.update({ where: { id: records[index]!.id }, data: { sourceReimbursementRequestId: claim.id, sourceReimbursementLineId: line.id } });
+    }
+    const claimAttachmentId = await upload(signed, branches[0]!.id, 'ใบเบิกเซ็นแล้ว');
+    const link = await db.attachmentLink.create({ data: { companyId, attachmentId: claimAttachmentId, targetType: 'reimbursement_request', targetId: claim.id,
+      purpose: 'reimbursement.claim_form.signed', linkedByUserId: owner.id } });
+    await db.attachmentObject.update({ where: { id: claimAttachmentId }, data: { metadataJson: { reimbursementSignedCopyAck: { linkId: link.id,
+      acknowledgedByUserId: owner.id, acknowledgedAt: new Date().toISOString() } } } });
+    let voucher: { id: string; documentNumber: string | null } | undefined;
+    if (withVoucher) voucher = await db.disbursementVoucher.create({ data: { companyId, branchId: branches[0]!.id, documentNumber: unique('PV-PACK'),
+      status: 'PAID', origin: 'DIRECT_PAYMENT', payeeName: 'ผู้รับเงินทดสอบ', payeeBasis: 'PREPARER_CONFIRMED', totalAmount: '200',
+      preparedByUserId: owner.id, paidByUserId: owner.id, paidDate: date, paidSnapshotJson: {}, pdfAttachmentId: claimAttachmentId,
+      lines: { create: records.slice(0, 2).map((row, position) => ({ companyId, expenseId: row.id, position, amount: '100', expensePaymentId: row.paymentId, coversPaymentId: row.paymentId })) } } });
+    test.info().annotations.push({ type: 'pack-v2-fixture', description: JSON.stringify({ companyId, branchIds: branches.map(branch => branch.id), expenseIds: records.map(row => row.id), claimId: claim.id, voucherId: voucher?.id }) });
+    return { db, branches, records, claim, voucher, signed };
+  } catch (error) { await db.$disconnect(); throw error; }
+}
+
+async function actualBundle(api: APIRequestContext, companyId: string, selection: { expenseIds: string[] }, part: number) {
+  const response = await api.post(`companies/${companyId}/expenses/accountant-package/bundle/${part}`, { data: selection, timeout: 120_000 });
+  if (!response.ok()) throw new Error(`Bundle ${part} failed with ${response.status()}: ${await response.text()}`);
+  return unzip(await response.body());
+}
+
+test('@journey invited accountant downloads pack v2 within assigned scope', async ({ pageAs, apiAs, request, companyId }) => {
+  test.setTimeout(300_000);
+  const owner = await apiAs('OWNER'), fixture = await packFixture(owner, request, companyId, 3, true);
+  const { db, records, branches, claim, voucher } = fixture;
+  let membership: any;
+  try {
+    const user = await db.user.findUniqueOrThrow({ where: { username: QA_ACCOUNTS.ACCOUNTANT.username } });
+    membership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: user.id } }, include: { branchScopes: true, roles: { include: { role: true } } } });
+    expect(membership.roles.some((role: any) => role.role.key === 'ACCOUNTANT')).toBe(true);
+    await db.membershipBranchScope.deleteMany({ where: { membershipId: membership.id } });
+    await db.companyMembership.update({ where: { id: membership.id }, data: { branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: branches[0]!.id } });
+    await db.membershipBranchScope.create({ data: { membershipId: membership.id, branchId: branches[0]!.id } });
+    const accountant = await apiAs('ACCOUNTANT'), page = await pageAs('ACCOUNTANT');
+    const selection = { expenseIds: [records[0]!.id, records[2]!.id, records[3]!.id] };
+    const plan = await json<{ counts: { recordPacks: number; claimForms: number; vouchers: number }; partCount: number }>(await accountant.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: selection }));
+    expect(plan.counts).toMatchObject({ recordPacks: 2, claimForms: 0, vouchers: 0 });
+    const sheetsResponse = await accountant.post(`companies/${companyId}/expenses/accountant-package`, { data: selection });
+    expect(sheetsResponse.ok()).toBe(true);
+    const workbook = workbookSheets(Buffer.from((await sheetsResponse.json()).indexXlsxBase64, 'base64'));
+    expect(workbook.get('รายการค่าใช้จ่าย')!.flat()).toEqual(expect.arrayContaining([records[0]!.expenseNumber, records[2]!.expenseNumber]));
+    const files = await actualBundle(accountant, companyId, selection, 1);
+    expect(files.has(`ชุดเอกสารรายการ/${records[2]!.expenseNumber}.pdf`)).toBe(true);
+    const { PDFDocument } = apiRequire('pdf-lib');
+    expect((await PDFDocument.load(files.get(`ชุดเอกสารรายการ/${records[2]!.expenseNumber}.pdf`)!)).getPageCount()).toBeGreaterThan(1);
+    const visibleText = [...files.keys(), ...workbookSheets(files.get('สารบัญ.xlsx')!, true, plan.partCount).values()].flat(3).join(' ');
+    for (const hidden of [records[1]!.expenseNumber, records[3]!.expenseNumber, claim.requestNo, voucher!.documentNumber]) expect(visibleText).not.toContain(hidden);
+    const denied = await accountant.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: { branchId: branches[1]!.id } });
+    expect(denied.status()).toBe(403);
+    await page.goto(`/companies/${companyId}/expenses?month=${records[0]!.expenseDate.toISOString().slice(0, 7)}`, FIRST_SIGHT);
+    await page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+    await expect(page.getByRole('dialog').getByText(accountantAccessNote, { exact: true })).toBeVisible(AFTER_PRESS);
+    const download = await pressForDownloadBuffer(page, () => page.getByRole('dialog').getByRole('button', { name: 'ดาวน์โหลด Excel', exact: true }).click());
+    expect(workbookSheets(download.buffer).get('รายการค่าใช้จ่าย')!.flat()).not.toContain(records[3]!.expenseNumber);
+  } finally {
+    if (membership) {
+      await db.membershipBranchScope.deleteMany({ where: { membershipId: membership.id } });
+      if (membership.branchScopes.length) await db.membershipBranchScope.createMany({ data: membership.branchScopes.map((scope: any) => ({ membershipId: membership.id, branchId: scope.branchId })) });
+      await db.companyMembership.update({ where: { id: membership.id }, data: { branchScopeMode: membership.branchScopeMode, defaultBranchId: membership.defaultBranchId } });
+    }
+    await db.$disconnect();
+  }
+});
+
+test('@journey pack v2 export states and accountant hint at 390 1280 1556', async ({ pageAs, companyId }) => {
+  test.setTimeout(300_000);
+  const page = await pageAs('OWNER');
+  const endpoint = `**/api/v1/companies/${companyId}/expenses/accountant-package/bundle-plan`;
+  const plan = { fileCount: 63, partCount: 2, missingReceiptCount: 1,
+    counts: { receipts: 30, paymentSlips: 0, substituteReceipts: 0, vouchers: 0, supportingFiles: 1, whtCertificates: 0, claimForms: 1, recordPacks: 31 } };
+  // Only output states are controlled. The session, commercial gate and route remain real.
+  for (const width of [390, 1280, 1556]) {
+    await page.setViewportSize({ width, height: 1000 });
+    let release!: () => void;
+    const pending = new Promise<void>(done => { release = done; });
+    await page.route(endpoint, async route => { await pending; await route.fulfill({ json: plan }); });
+    await page.goto(`/companies/${companyId}/expenses/evidence`, FIRST_SIGHT);
+    const card = page.getByText(accountantAccessNote, { exact: true }).locator('..');
+    await expect(card).toBeVisible(AFTER_PRESS);
+    await expect(card.getByRole('status').filter({ hasText: 'กำลังนับไฟล์...' })).toBeVisible();
+    const capture = async (state: string) => {
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(await card.locator('button:visible, p:visible').evaluateAll(elements => elements.every(element => element.scrollWidth <= element.clientWidth))).toBe(true);
+      await test.info().attach(`pack-v2-${width}-${state}`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+    };
+    await capture('loading'); release();
+    const parts = card.getByRole('button', { name: /^ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี/ });
+    await expect(parts).toHaveCount(2, AFTER_PRESS);
+    await expect(parts.first()).toHaveClass(/mangmee-btn-primary/);
+    await expect(parts.nth(1)).toHaveClass(/mangmee-btn-secondary/);
+    await expect(card.locator('.mangmee-btn-primary')).toHaveCount(1);
+    await expect(card).toContainText('ใบเบิก 1'); await expect(card).toContainText('ชุดเอกสารรายการ 31');
+    await expect(async () => {
+      const sizes = await card.locator('.mangmee-actions > button').evaluateAll(buttons => buttons.map(button => { const box = button.getBoundingClientRect(); return [Math.round(box.width), Math.round(box.height)]; }));
+      expect(sizes).toHaveLength(3);
+      for (const size of sizes) expect(size).toEqual(sizes[0]);
+    }).toPass();
+    await capture('multipart');
+    const bundle = `**/api/v1/companies/${companyId}/expenses/accountant-package/bundle/1`;
+    await page.route(bundle, route => route.fulfill({ status: 503, json: { message: 'ดาวน์โหลดไม่ได้ ลองอีกครั้ง' } }));
+    await parts.first().click(); await expect(card.getByRole('alert')).toBeVisible(AFTER_PRESS);
+    await expect(card.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true })).toBeVisible();
+    await capture('download-failed');
+    await card.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
+    await expect(card.getByRole('alert')).toHaveCount(0, AFTER_PRESS);
+    await page.unroute(bundle);
+    await page.route(bundle, route => route.fulfill({ contentType: 'application/zip', body: Buffer.from('504b0506000000000000000000000000000000000000', 'hex') }));
+    const recovered = await pressForDownloadBuffer(page, () => parts.first().click());
+    expect(recovered.name).toMatch(/\.zip$/); await page.unroute(bundle);
+    await page.unroute(endpoint);
+    await page.route(endpoint, route => route.fulfill({ json: { ...plan, fileCount: 2, partCount: 1, missingReceiptCount: 0,
+      counts: { ...plan.counts, receipts: 1, supportingFiles: 0, claimForms: 0, recordPacks: 1 } } }));
+    await page.reload(FIRST_SIGHT);
+    await expect(parts).toHaveCount(1, AFTER_PRESS); await capture('normal');
+    await page.unroute(endpoint);
+    await page.route(endpoint, route => route.fulfill({ json: { ...plan, fileCount: 0, partCount: 0, missingReceiptCount: 0 } }));
+    await page.reload(FIRST_SIGHT);
+    await expect(card.getByText(/ยังไม่มีไฟล์หลักฐาน/)).toBeVisible(AFTER_PRESS); await capture('empty');
+    await page.unroute(endpoint);
+    await page.route(endpoint, route => route.fulfill({ status: 403, json: { code: 'FREE_EXPENSE_DRAFTS_ONLY' } }));
+    await page.reload(FIRST_SIGHT);
+    await expect(card.getByRole('alert')).toBeVisible(AFTER_PRESS); await capture('denied');
+    await card.getByRole('link', { name: 'กลับไปรายการค่าใช้จ่าย', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/expenses$`), AFTER_PRESS);
+    await page.unroute(endpoint);
+    await page.getByRole('button', { name: 'ส่งออก Excel ให้สำนักงานบัญชี', exact: true }).click();
+    await expect(page.getByRole('dialog').getByText(accountantAccessNote, { exact: true })).toBeVisible(AFTER_PRESS);
+    await page.getByRole('dialog').getByRole('button', { name: 'ปิด', exact: true }).click();
+  }
+});
+
+test('@journey pack v2 workbook and extracted packet links reconcile', async ({ apiAs, request, companyId }) => {
+  test.setTimeout(300_000);
+  const api = await apiAs('OWNER'), fixture = await packFixture(api, request, companyId, 31);
+  const { db, records, claim, signed } = fixture;
+  try {
+    const selection = { expenseIds: records.slice(0, 31).map(row => row.id) };
+    const standalone = await api.post(`companies/${companyId}/expenses/accountant-package`, { data: selection });
+    expect(standalone.ok()).toBe(true);
+    const sheets = workbookSheets(Buffer.from((await standalone.json()).indexXlsxBase64, 'base64'));
+    expect(sheets.get('รายการค่าใช้จ่าย')!).toHaveLength(31);
+    const sum = (values: string[]) => values.reduce((total, value) => total + Math.round(Number(value.replace(/,/g, '')) * 100), 0);
+    const expenseRows = sheets.get('รายการค่าใช้จ่าย')!;
+    const summary = sheets.get('สรุปรายเดือน')!.find(row => row[0] === 'รายจ่ายที่เลือก')!;
+    expect(sum([summary[5]!])).toBe(sum(expenseRows.map(row => row[14]!)));
+    expect(sum([summary[8]!])).toBe(sum(expenseRows.map(row => row[19]!)));
+    expect(sum([summary[9]!])).toBe(sum(expenseRows.map(row => row[20]!)));
+    const plan = await json<{ partCount: number; counts: { claimForms: number; recordPacks: number } }>(await api.post(`companies/${companyId}/expenses/accountant-package/bundle-plan`, { data: selection }));
+    expect(plan.partCount).toBeGreaterThan(1); expect(plan.counts).toMatchObject({ claimForms: 1, recordPacks: 31 });
+    const extracted = new Map<string, Buffer>(), locations = new Map<string, number>();
+    const packetReferences: Array<{ part: number; value: string }> = [];
+    let crossPart = false;
+    for (let part = 1; part <= plan.partCount; part++) {
+      const files = await actualBundle(api, companyId, selection, part);
+      for (const [name, bytes] of files) if (name !== 'สารบัญ.xlsx') { expect(extracted.has(name)).toBe(false); extracted.set(name, bytes); locations.set(name, part); }
+      const bundled = workbookSheets(files.get('สารบัญ.xlsx')!, true, plan.partCount);
+      expect(bundled.get('สรุปรายเดือน')).toEqual(sheets.get('สรุปรายเดือน'));
+      for (const row of bundled.get('รายการค่าใช้จ่าย')!) packetReferences.push({ part, value: row.at(-1)! });
+      crossPart ||= bundled.get('รายการค่าใช้จ่าย')!.some(row => /^อยู่ในชุดที่ \d+: ชุดเอกสารรายการ\//.test(row.at(-1)!));
+      const xml = [...unzip(files.get('สารบัญ.xlsx')!).values()].map(value => value.toString()).join(' ');
+      expect(decodeXml(xml)).toMatch(/HYPERLINK\("#'รายการค่าใช้จ่าย'!A/);
+    }
+    expect(crossPart).toBe(true);
+    for (const reference of packetReferences) {
+      const remote = reference.value.match(/^อยู่ในชุดที่ (\d+): (.+)$/);
+      const path = remote ? remote[2]! : reference.value;
+      expect(path).toMatch(/^ชุดเอกสารรายการ\//);
+      expect(locations.get(path)).toBe(remote ? Number(remote[1]) : reference.part);
+    }
+    const claimFiles = [...extracted.keys()].filter(name => name.startsWith('ใบเบิก/'));
+    expect(claimFiles).toHaveLength(1); expect(claimFiles[0]).toContain(claim.requestNo);
+    const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    const protectedOriginal = [...extracted].find(([name]) => name.startsWith('เอกสารค่าใช้จ่าย/') && name.includes(records[0]!.expenseNumber))!;
+    expect(digest(protectedOriginal[1])).toBe(digest(signed)); expect(digest(extracted.get(claimFiles[0]!)!)).toBe(digest(signed));
+    const { PDFDocument } = apiRequire('pdf-lib');
+    expect((await PDFDocument.load(extracted.get(`ชุดเอกสารรายการ/${records[0]!.expenseNumber}.pdf`)!)).getPageCount()).toBe(1);
+    for (const row of records.slice(0, 31)) expect(locations.has(`ชุดเอกสารรายการ/${row.expenseNumber}.pdf`)).toBe(true);
+    const partial = await actualBundle(api, companyId, { expenseIds: [records[0]!.id] }, 1);
+    expect([...partial.keys()].some(name => name.startsWith('ใบเบิก/'))).toBe(false);
+    const partialSheets = workbookSheets(partial.get('สารบัญ.xlsx')!, true);
+    expect(partialSheets.get('ต้องตามเอกสาร')!.flat()).toContain('ใบเบิกรวมรายการนอกชุดที่เลือก จึงไม่ได้รวมใบนี้');
+    expect([...partial.keys()].join(' ')).not.toContain(records[1]!.expenseNumber);
+  } finally { await db.$disconnect(); }
 });

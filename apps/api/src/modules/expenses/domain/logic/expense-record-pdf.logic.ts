@@ -157,7 +157,8 @@ export async function buildExpenseRecordPdf(input: {
   for (let start = 0; start < wrapped.length; start += 35) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="850" height="1150"><rect width="850" height="1150" fill="white"/><g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="16" fill="#111">${wrapped.slice(start, start + 35).map((line, index) => `<text x="35" y="${45 + index * 29}">${escapeHtml(line)}</text>`).join('')}</g></svg>`;
     // Fixed-size sheets already have explicit breaks, so render their Thai SVG directly without a second PDF composition.
-    const image = await destination.embedPng(await sharp(Buffer.from(svg), { density: 144, limitInputPixels: LIMITS.maxRasterPixels }).png().toBuffer());
+    const image = await destination.embedJpg(await sharp(Buffer.from(svg), { density: 144, limitInputPixels: LIMITS.maxRasterPixels })
+      .jpeg({ quality: 95, chromaSubsampling: '4:4:4' }).toBuffer());
     await image.embed();
     const page = destination.insertPage(indexPosition + start / 35, [WIDTH, HEIGHT]);
     page.drawImage(image, { x: MARGIN, y: FOOTER + MARGIN, width: WIDTH - MARGIN * 2, height: HEIGHT - FOOTER - MARGIN * 2 });

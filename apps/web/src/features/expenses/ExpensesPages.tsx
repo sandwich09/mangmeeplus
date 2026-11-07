@@ -3060,6 +3060,7 @@ export function ExpenseListPage({ companyId, caps, userId, onSelect, freeExpense
           <AccountingExportFormatSelect value={exportFormat} disabled={exporting} onChange={value => { setExportFormat(value); setSoftwareResult(null); setExportNotice(null); setExportError(null); setExported(false); }} />
           {exportFormat === 'purchase_journal' && !['all', 'confirmed'].includes(activeChip) && <div className="space-y-2">{!exportError && <p className="text-sm">{t('expenses.export_confirmed_only', locale)}</p>}<ActionGroup align="start"><button type="button" className={ghostClass} onClick={() => { setChip('confirmed'); setExportError(null); }}>{t('expenses.export_view_confirmed', locale)}</button></ActionGroup></div>}
           {softwareResult && <AccountingExportFeedback result={softwareResult} busy={exporting} onFallback={() => void exportExcel(true)} onChangeDates={() => setExportOpen(false)} />}
+          <p className="text-sm text-gray-500">ผู้ทำบัญชีที่เชิญเข้าร้านดาวน์โหลดเองได้ตามสิทธิ์ที่ได้รับ</p>
           <EvidenceBundleDownload companyId={companyId} enabled={exportOpen} showCounts onReturnToExpenses={() => setExportOpen(false)}
             request={{ fromDate, toDate, dateField: periodDateField, ...(branchId ? { branchId } : {}) }} />
           {exportError && <ErrorBanner message={exportError} />}

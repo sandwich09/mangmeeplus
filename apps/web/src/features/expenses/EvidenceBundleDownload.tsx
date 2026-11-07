@@ -15,7 +15,8 @@ export function EvidenceBundleActions({ plan, busy, allMonths, onDownload, showC
   const split = plan.partCount > 1 ? `แบ่งเป็น ${plan.partCount} ชุด` : '';
   // The accountant bundle says it in one line: the file count, then only the kinds of paper it holds.
   const papers = showCounts && plan.counts ? ([['เอกสารค่าใช้จ่าย', plan.counts.receipts], ['ใบรับรองแทนใบเสร็จ', plan.counts.substituteReceipts], ['หลักฐานการจ่าย', plan.counts.paymentSlips],
-    ['ใบสำคัญจ่าย', plan.counts.vouchers], ['50 ทวิ', plan.counts.whtCertificates]] as const).filter(([, count]) => count > 0).map(([name, count]) => `${name} ${count}`) : null;
+    ['ใบสำคัญจ่าย', plan.counts.vouchers], ['เอกสารประกอบการจ่าย', plan.counts.supportingFiles ?? 0], ['50 ทวิ', plan.counts.whtCertificates],
+    ['ใบเบิก', plan.counts.claimForms ?? 0], ['ชุดเอกสารรายการ', plan.counts.recordPacks ?? 0]] as const).filter(([, count]) => count > 0).map(([name, count]) => `${name} ${count}`) : null;
   return <div className="space-y-2">
     <p className="text-sm text-gray-700" role="status">{plan.fileCount === 0
       ? `${period}ยังไม่มีไฟล์หลักฐาน`
@@ -24,7 +25,7 @@ export function EvidenceBundleActions({ plan, busy, allMonths, onDownload, showC
     {showCounts && plan.missingReceiptCount > 0 && <p className="text-sm text-warning-700" role="status">ยังไม่มีใบเสร็จ {plan.missingReceiptCount} รายการ</p>}
     {(plan.partCount > 0 || excelAction) && <ActionGroup align="start">
       {excelAction}
-      {Array.from({ length: plan.partCount }, (_, index) => <button key={index} type="button" className={accountant ? primaryButtonClass : secondaryButtonClass}
+      {Array.from({ length: plan.partCount }, (_, index) => <button key={index} type="button" className={accountant && index === 0 ? primaryButtonClass : secondaryButtonClass}
         disabled={busy} aria-busy={busy} onClick={() => onDownload(index + 1)}>
         {accountant ? `ดาวน์โหลดชุดเอกสารให้สำนักงานบัญชี${plan.partCount > 1 ? ` ชุดที่ ${index + 1} จาก ${plan.partCount}` : ''}` : plan.partCount === 1 ? 'ดาวน์โหลดไฟล์ทั้งหมด' : `ไฟล์ชุดที่ ${index + 1} จาก ${plan.partCount}`}
       </button>)}

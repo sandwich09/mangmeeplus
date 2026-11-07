@@ -97,7 +97,7 @@ test('accounting evidence uses the primary bundle action and keeps split archive
     assert.doesNotMatch(html, /ดาวน์โหลดไฟล์ทั้งหมด/);
     const buttons = view.nodes.filter(node => node.tag === 'button');
     assert.equal(buttons.length, parts);
-    for (const button of buttons) { assert.match(button.props.className, /primary/); button.props.onClick(); }
+    buttons.forEach((button, index) => { assert.match(button.props.className, index === 0 ? /primary/ : /secondary/); button.props.onClick(); });
     assert.deepEqual(downloads, Array.from({ length: parts }, (_, i) => i + 1));
     view.cleanup();
   }
@@ -119,4 +119,14 @@ test('bundle hints and actions match available files', () => {
     } else assert.doesNotMatch(html, /แตกไฟล์ ZIP ก่อน/);
     view.cleanup();
   }
+});
+
+test('accountant counts include supporting files signed claims and record packets', () => {
+  const plan = { fileCount: 11, partCount: 2, counts: { receipts: 2, substituteReceipts: 1, paymentSlips: 2, vouchers: 1, supportingFiles: 1, whtCertificates: 1, claimForms: 1, recordPacks: 2 }, missingReceiptCount: 0 };
+  const view = certificateHarness(() => h(EvidenceBundleActions, { accountant: true, plan, showCounts: true, busy: true, allMonths: false, onDownload() {} }));
+  assert.match(view.render(), /เอกสารประกอบการจ่าย 1 · 50 ทวิ 1 · ใบเบิก 1 · ชุดเอกสารรายการ 2/);
+  const buttons = view.nodes.filter(node => node.tag === 'button');
+  assert.equal(buttons.filter(button => button.props.className.includes('primary')).length, 1);
+  for (const button of buttons) { assert.equal(button.props.disabled, true); assert.equal(button.props['aria-busy'], true); }
+  view.cleanup();
 });

@@ -184,3 +184,39 @@ Next: Controller reviews scope, protected-PDF classification, signed-claim selec
   - Pre-existing reds only: pins, the workers demo spec, billing R-A7.
 - **Known risk for P5.** Each plan and each part download rebuilds every record packet to measure it, and the convergence loop can rebuild them again. P5 must measure this against spec §3 budgets: plan ≤ 30 s, part ≤ 30 s, 16 parts ≤ 8.5 min, RSS ≤ 256 MiB.
 - **Next:** P4 (access note, guide, help-pack hash), then P5 (journeys, browser at 390/1280/1556, the 300-expense envelope).
+
+## Pack v2 round 3 landed, 2026-11-07
+- **Plan P4 (screen part).**
+  - The export dialog and the export card carry the qualified access note: "ผู้ทำบัญชีที่เชิญเข้าร้านดาวน์โหลดเองได้ตามสิทธิ์ที่ได้รับ".
+  - `EvidenceBundleActions` shows the claim-form and record-packet counts.
+  - The first part button stays primary; the other parts use the secondary classes.
+- **Held: the guide wording and the help-pack bump.** The lane also edited the export section of `expenses-guide.content.ts` and bumped the owner-approved help pack v7 → v8. Both were split off, because a guide edit changes the approved pack hash. They are queued for the 2026-12-27 pack review; re-derive the hashes then.
+- **P5 test code.**
+  - **Journeys.** Three pack v2 journeys and a sheet-by-name reader in `e2e/journeys/evidence-and-settings.journey.spec.ts`.
+  - **Envelope test.** `pack v2 300 expense envelope` is a 3-minute benchmark on synthetic in-memory bytes at spec §3 sizes. It runs only with `ACCOUNTANT_PACK_ENVELOPE=1`.
+- **Build cost.** Record-packet covers are now JPEG, which cut plan time from 45.7 s to 11.5 s.
+- **Envelope results, synthetic bytes, no PostgreSQL:**
+
+  | Measure | Result | Budget |
+  |---|---|---|
+  | Plan | 11.5 s | ≤ 30 s |
+  | Each part | 11–13.6 s | ≤ 30 s |
+  | 16 parts | 193.6 s | ≤ 8.5 min |
+  | RSS | +240 MiB | ≤ 256 MiB |
+
+  - The run produced 930 files.
+  - The largest packet was 167 KB.
+  - At most 1 packet was built at a time.
+- **RSS is close to its budget.** The real-HTTP proof must re-measure it.
+- **Round 2 follow-ups.** Neither came from round 2; both exist on untouched develop, so both are left alone:
+  - XLSX cents are lost at 99999999999999.985;
+  - the signature check accepts a header without decoding the file.
+- **Verification (batch35):** see the landing commit. Focused checks before landing:
+  - web specs 80 pass;
+  - approved-knowledge 18 pass;
+  - pack v2 15 pass and 1 skipped (the envelope).
+- **Still open (P5 controller checks):**
+  - the real-PG `prisma-expense.repository.payment.spec.ts`;
+  - the proof-stack journeys (`--grep 'pack v2|invited accountant|free shops'`);
+  - browser checks at 390, 1280 and 1556 px;
+  - the real-HTTP 300-expense proof.

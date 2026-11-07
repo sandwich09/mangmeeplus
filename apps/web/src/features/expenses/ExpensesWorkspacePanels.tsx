@@ -973,6 +973,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
           {canExport && !freeExpenseDrafts && !error && (
             <MangmeeCard className="space-y-3 p-4">
               <div className="w-full sm:w-72"><AccountingExportFormatSelect value={exportFormat} disabled={exporting} onChange={setExportFormat} /></div>
+              <p className="text-sm text-gray-500">ผู้ทำบัญชีที่เชิญเข้าร้านดาวน์โหลดเองได้ตามสิทธิ์ที่ได้รับ</p>
               <EvidenceBundleDownload accountant showCounts companyId={companyId} request={exportFilters} enabled={!loading && !!view} key={JSON.stringify([companyId, exportFilters])}
                 excelAction={<button type="button" className={ghostClass} onClick={() => void exportPackage()} disabled={exporting || loading} aria-busy={Boolean(exporting || loading)}>{exporting ? 'กำลังสร้าง...' : 'ดาวน์โหลด Excel'}</button>} />
               {exportEmpty && <div className="space-y-2">
